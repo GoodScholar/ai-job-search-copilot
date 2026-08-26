@@ -1,0 +1,72 @@
+services:
+  postgres:
+    image: postgres@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+    environment:
+      POSTGRES_DB: job_copilot
+      POSTGRES_USER: job_copilot
+      POSTGRES_PASSWORD: local_only_job_copilot
+    ports: ["${POSTGRES_PORT:-54320}:5432"]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U job_copilot -d job_copilot"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  redis:
+    image: redis@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
+    ports: ["${REDIS_PORT:-63790}:6379"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  minio:
+    image: minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    command: server /data --console-address :9001
+    environment:
+      MINIO_ROOT_USER: job_copilot
+      MINIO_ROOT_PASSWORD: local_only_job_copilot_secret
+    ports:
+      - "${MINIO_API_PORT:-59000}:9000"
+      - "${MINIO_CONSOLE_PORT:-59001}:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+  minio-init:
+    image: minio/mc@sha256:09f93f534cde415d192bb6084dd0e0ddd1715fb602f8a922ad121fd2bf0f8b44
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - >-
+        mc alias set local http://minio:9000 job_copilot local_only_job_copilot_secret
+        && mc mb --ignore-existing local/career-documents
+    restart: "no"
+
+  mailpit:
+    image: axllent/mailpit@sha256:c96991d9bef73594c246d89ca81411d4e916f03e76a7d2d72fa2ab5dd3c9ce24
+    ports:
+      - "${MAILPIT_HTTP_PORT:-58025}:8025"
+      - "${MAILPIT_SMTP_PORT:-51025}:1025"
+    healthcheck:
+      test: ["CMD", "/mailpit", "readyz"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
+volumes:
+  minio-data:
+  postgres-data:
+  redis-data:

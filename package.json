@@ -4,6 +4,13 @@
   "packageManager": "pnpm@11.5.2",
   "engines": { "node": ">=22.22.2" },
   "scripts": {
+    "dev": "node scripts/local-runtime.mjs",
+    "dev:down": "docker compose down",
+    "test:runtime": "node --test scripts/local-runtime.test.mjs",
+    "test": "pnpm test:runtime && pnpm -r --if-present test",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "build": "pnpm -r --if-present build",
+    "lint": "pnpm -r --if-present lint",
     "dev:web": "pnpm --filter web dev",
     "lint:web": "pnpm --filter web lint",
     "test:web": "pnpm --filter web test",
