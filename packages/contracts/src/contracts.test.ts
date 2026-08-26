@@ -1,0 +1,31 @@
+import { describe, expect, it } from "vitest";
+import { ApiProblemSchema } from "./api-problem";
+import { StartDevSessionRequestSchema } from "./auth";
+import { WorkerHeartbeatSchema } from "./runtime";
+import { WorkbenchHomeSchema } from "./workbench";
+
+describe("shared contracts", () => {
+  it("rejects error payloads without a request id", () => {
+    expect(ApiProblemSchema.safeParse({ code: "AUTH_REQUIRED", message: "请先登录" }).success)
+      .toBe(false);
+  });
+
+  it("accepts only the real empty workbench in this slice", () => {
+    expect(WorkbenchHomeSchema.parse({
+      account: { userId: "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3" },
+      summary: { recommendations: 0, pendingFacts: 0, runningAgentRuns: 0, applications: 0 },
+    }).summary.recommendations).toBe(0);
+  });
+
+  it("rejects an empty Dev Auth subject", () => {
+    expect(StartDevSessionRequestSchema.safeParse({ subject: "" }).success).toBe(false);
+  });
+
+  it("rejects a worker heartbeat from another contract version", () => {
+    expect(WorkerHeartbeatSchema.safeParse({
+      workerId: "worker-1",
+      recordedAt: "2026-08-26T13:00:00.000Z",
+      contractVersion: 2,
+    }).success).toBe(false);
+  });
+});

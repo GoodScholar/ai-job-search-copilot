@@ -1,0 +1,21 @@
+{
+  "name": "@job-copilot/database",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "drizzle-orm": "0.45.2",
+    "postgres": "3.4.9"
+  },
+  "devDependencies": {
+    "@testcontainers/postgresql": "12.1.0",
+    "drizzle-kit": "0.31.10",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}
