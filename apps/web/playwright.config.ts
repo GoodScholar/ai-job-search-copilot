@@ -1,20 +1,28 @@
 import { defineConfig, devices } from "@playwright/test";
+import { fileURLToPath } from "node:url";
 
-const port = process.env.PLAYWRIGHT_PORT ?? "3000";
+const port = "3120";
 const baseURL = `http://127.0.0.1:${port}`;
+const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 export default defineConfig({
   testDir: "./e2e",
+  globalTeardown: "./e2e/global-teardown.ts",
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
+  workers: 1,
   use: {
     baseURL,
     trace: "on-first-retry",
   },
   webServer: {
-    command: `pnpm dev --hostname 127.0.0.1 --port ${port}`,
-    url: baseURL,
-    reuseExistingServer: !process.env.CI,
+    command: "pnpm dev:test",
+    cwd: repositoryRoot,
+    reuseExistingServer: false,
+    gracefulShutdown: { signal: "SIGTERM", timeout: 30_000 },
+    stdout: "pipe",
+    wait: { stdout: /本地测试运行时已就绪/ },
+    timeout: 120_000,
   },
   projects: [
     {

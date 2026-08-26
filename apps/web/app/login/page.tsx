@@ -1,5 +1,11 @@
 import { getPublicAuthMode, resolveLoginReturnTo } from "@/lib/auth-mode";
+import { Button } from "@/components/ui/button";
 import { startDevSessionAction } from "./actions";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "登录 | AI Job Search Copilot",
+};
 
 type LoginPageProps = {
   searchParams: Promise<{ returnTo?: string | string[] }>;
@@ -27,7 +33,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
             <p className="mt-5 text-[var(--muted)] leading-7">正式邀请制 Beta 将使用微信登录</p>
             <form action={startDevSessionAction} className="mt-6">
               <input name="returnTo" type="hidden" value={safeReturnTo} />
-              <button className="button" type="submit">使用本地体验账户登录</button>
+              <Button className="min-h-11 px-4" size="lg" type="submit">使用本地体验账户登录</Button>
             </form>
           </>
         ) : null}
