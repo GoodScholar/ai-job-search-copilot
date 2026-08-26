@@ -29,19 +29,7 @@ function run(command, args) {
 async function main() {
   await prepareInfrastructure({ run });
 
-  const child = spawn(
-    "pnpm",
-    ["--parallel", "--stream", "--filter", "web", "--filter", "api", "--filter", "worker", "dev"],
-    {
-      stdio: "inherit",
-      env: {
-        ...process.env,
-        DEV_AUTH_SHARED_SECRET: process.env.DEV_AUTH_SHARED_SECRET ?? randomBytes(32).toString("hex"),
-        PORT: process.env.WEB_PORT ?? "3020",
-        API_PORT: process.env.API_PORT ?? "3021",
-      },
-    },
-  );
+  const child = startApplications();
 
   const forwardSignal = (signal) => child.kill(signal);
   process.once("SIGINT", () => forwardSignal("SIGINT"));
@@ -53,6 +41,24 @@ async function main() {
   child.once("exit", (code, signal) => {
     process.exitCode = code ?? (signal ? 1 : 0);
   });
+}
+
+export function startApplications({ spawnProcess = spawn, env = process.env } = {}) {
+  return spawnProcess(
+    "pnpm",
+    ["--parallel", "--stream", "--filter", "web", "--filter", "api", "--filter", "worker", "dev"],
+    {
+      stdio: "inherit",
+      env: {
+        ...env,
+        APP_ENV: "local",
+        AUTH_MODE: "dev",
+        DEV_AUTH_SHARED_SECRET: env.DEV_AUTH_SHARED_SECRET ?? randomBytes(32).toString("hex"),
+        PORT: env.WEB_PORT ?? "3020",
+        API_PORT: env.API_PORT ?? "3021",
+      },
+    },
+  );
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
