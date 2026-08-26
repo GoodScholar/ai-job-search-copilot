@@ -1,0 +1,3 @@
+# Use an Agent mission control as the workbench home
+
+The workbench home will combine high-value recommendations, items awaiting user confirmation, and the current Agent run status instead of acting as only a job feed or an application board. Top-level navigation is organized around user outcomes—home, recommendations, applications, and profile—rather than exposing Agent subsystems or a one-time funnel. This keeps the product understandable for ordinary job seekers while making autonomous background work and approval boundaries visible; detailed recommendation and application workflows remain separate destinations.

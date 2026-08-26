@@ -1,0 +1,44 @@
+{
+  "title": "确定『晨间求职内参』首屏构图",
+  "question": "三版都沿用已确认的视觉世界。请选择最终构图；也可以指出要合并或修改的部分。",
+  "options": [
+    {
+      "id": "briefing-dossier",
+      "label": "每日推荐简报",
+      "kicker": "完整产品全景",
+      "lineage": "研究员晨报与编辑批注",
+      "thesis": "用一份居中的今日推荐简报，同时呈现岗位、证据、缺口与待确认事项。",
+      "palette": ["#F3F5F2", "#18201C", "#246A49", "#C98532", "#D5DDD6"],
+      "materials": ["冷白档案纸", "编辑批注", "证据索引标签"],
+      "viewport": "左侧给出产品承诺，中央展示完整推荐简报，右侧固定证据、缺口与审批窄栏。",
+      "risk": "信息最完整，但首屏任务焦点略分散，Agent 的持续行动感偏弱。",
+      "comp": ".impeccable/mocks/decision/model-pick-morning-brief.png"
+    },
+    {
+      "id": "evidence-first",
+      "label": "证据优先",
+      "kicker": "信任最强",
+      "lineage": "事实核验报告与证据映射",
+      "thesis": "先证明推荐为什么成立，再邀请用户开始使用。",
+      "palette": ["#F4F6F2", "#17201C", "#246A49", "#D08A35", "#D6DED7"],
+      "materials": ["核验报告纸", "履历证据连线", "岗位要求标签"],
+      "viewport": "左侧强调『值得投，不只是一个分数』，右侧以履历证据到岗位要求的映射作为唯一主视觉。",
+      "risk": "解释力最强，但容易把产品缩窄成匹配分析工具，弱化每日协作流程。",
+      "comp": ".impeccable/mocks/landing/morning-brief-evidence-first.png"
+    },
+    {
+      "id": "daily-actions",
+      "label": "今日行动优先",
+      "kicker": "推荐",
+      "lineage": "晨间任务内参与可审批工作台",
+      "thesis": "把 Agent 每天整理好的三件高价值求职行动直接摆在用户面前。",
+      "palette": ["#F3F5F2", "#18201C", "#246A49", "#C98532", "#D5DDD6"],
+      "materials": ["叠放简报纸", "状态签条", "审批印记"],
+      "viewport": "左侧用『今天，只处理最值得投的 3 件事』建立结果承诺，中央叠放推荐、事实确认与简历审阅三张行动简报，右侧显示 Agent 状态。",
+      "risk": "Agent 感和转化最强，但需要在第二屏补足完整证据链，避免显得只是任务清单。",
+      "comp": ".impeccable/mocks/landing/morning-brief-daily-actions.png"
+    }
+  ],
+  "buildPath": {"value": "comp", "toggle": true},
+  "steer": true
+}
