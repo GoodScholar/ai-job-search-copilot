@@ -188,6 +188,60 @@ test("a startup signal aborts and settles pending readiness before cleanup", asy
   assert.deepEqual(events, ["prepare", "migrate", "start", "waiting", "readiness-aborted", "cleanup"]);
 });
 
+test("the default readiness wiring forwards startup signals to fetch", async () => {
+  const signalSource = new EventEmitter();
+  const child = createControlledChild();
+  let fetchSignal;
+  let fetchCanSucceed = false;
+  let rejectFetch;
+  let resolveFetchStarted;
+  const fetchStarted = new Promise((resolve) => {
+    resolveFetchStarted = resolve;
+  });
+  const fetchImpl = (_url, { signal } = {}) => {
+    if (fetchCanSucceed) {
+      return Promise.resolve({ ok: true });
+    }
+    fetchSignal = signal;
+    resolveFetchStarted();
+    return new Promise((_resolve, reject) => {
+      rejectFetch = reject;
+      signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  };
+
+  const runtime = runRuntime({
+    config: createRuntimeConfig({ test: true }),
+    signalSource,
+    prepare: async () => {},
+    migrate: async () => {},
+    start: () => child,
+    fetchImpl,
+    cleanup: async () => {},
+  });
+  child.kill = (signal) => {
+    child.killed = true;
+    child.sentSignal = signal;
+    queueMicrotask(() => child.emit("exit", 0, null));
+    return true;
+  };
+
+  try {
+    await fetchStarted;
+    signalSource.emit("SIGTERM");
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(fetchSignal?.aborted, true);
+    assert.equal(child.sentSignal, "SIGTERM");
+
+    assert.deepEqual(await runtime, { exitCode: 143 });
+  } finally {
+    fetchCanSucceed = true;
+    rejectFetch?.(new Error("test cleanup"));
+    await runtime.catch(() => {});
+  }
+});
+
 test("a child exiting cleanly before readiness fails with exit code 1", async () => {
   const child = createControlledChild();
   let readinessSignal;

@@ -222,10 +222,11 @@ function applicationExitError({ code, signal }) {
 export async function runRuntime({
   config,
   signalSource = process,
+  fetchImpl = fetch,
   prepare = ({ config: runtimeConfig }) => prepareInfrastructure({ config: runtimeConfig, run }),
   migrate = ({ config: runtimeConfig }) => runDatabaseMigrations({ config: runtimeConfig }),
   start = ({ config: runtimeConfig }) => startApplications({ config: runtimeConfig }),
-  waitForReady = ({ config: runtimeConfig }) => waitForRuntime({ config: runtimeConfig }),
+  waitForReady = ({ config: runtimeConfig, signal }) => waitForRuntime({ config: runtimeConfig, fetchImpl, signal }),
   cleanup = ({ config: runtimeConfig }) => cleanupInfrastructure({ config: runtimeConfig, run }),
 } = {}) {
   let child;
