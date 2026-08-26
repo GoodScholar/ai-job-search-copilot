@@ -82,11 +82,14 @@ export function BriefingStack({
                   </span>
                   <span>示例</span>
                 </span>
-                <span className="briefing-card-glance">
-                  <span>{briefing.label}</span>
-                  <strong>{briefing.state}</strong>
-                </span>
-                <BriefingContent id={briefing.id} />
+                {isActive ? (
+                  <BriefingContent id={briefing.id} />
+                ) : (
+                  <span className="briefing-card-glance">
+                    <span>{briefing.label}</span>
+                    <strong>{briefing.state}</strong>
+                  </span>
+                )}
               </span>
             </button>
           );

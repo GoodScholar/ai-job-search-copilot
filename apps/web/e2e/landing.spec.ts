@@ -104,6 +104,24 @@ test("桌面端可直接点击露出的档案纸将其置前", async ({ page }, 
   await expect(facts).toHaveAttribute("aria-selected", "true");
 });
 
+test("桌面待处理纸可辨识并可直接点击第三张纸置前", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "Desktop Chrome", "仅在桌面检查待处理纸的可辨性与鼠标操作");
+
+  await page.goto("/");
+
+  const facts = page.getByRole("tab", { name: briefingTabs[1] });
+  const resume = page.getByRole("tab", { name: briefingTabs[2] });
+
+  await expect(facts).toContainText("确认 2 条候选事实");
+  await expect(facts).toContainText("待你确认");
+  await expect(resume).toContainText("审核 1 份定制简历");
+  await expect(resume).toContainText("待你审核");
+
+  await resume.click();
+
+  await expect(resume).toHaveAttribute("aria-selected", "true");
+});
+
 test("键盘按顺序到达导航、CTA 与三张简报 tab，并可切换简报", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "Desktop Chrome", "iOS WebKit 仿真不支持硬件 Tab 焦点序列");
 

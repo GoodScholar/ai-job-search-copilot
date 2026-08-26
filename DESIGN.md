@@ -2,9 +2,9 @@
 name: AI Job Search Copilot
 description: 面向主动求职者的晨间行动内参。
 colors:
-  ground: "#f3f5f2"
-  surface: "#fafbf8"
-  ink: "#18201c"
+  ground: "#f4f6f3"
+  surface: "#fffefa"
+  ink: "#15211d"
   muted: "#657069"
   emerald: "#246a49"
   emerald-strong: "#18553a"
@@ -78,7 +78,7 @@ components:
 ### Secondary
 
 - **审批琥珀**：用于指向“由你确认后才继续”的注记箭头。
-- **审批墨色**：用于审批说明和候选事实的未确认状态。
+- **审批墨色**：由审批琥珀派生，用于审批说明和候选事实的未确认状态，并保持 AA 对比度角色。
 
 ### Neutral
 
@@ -137,7 +137,7 @@ components:
 ### Action Briefing Tabs
 
 - **Style:** 每张纸本身是可点击的 `tab`，当前项与 `tabpanel` 通过 `aria-controls` 和 `aria-labelledby` 关联。
-- **State:** 当前纸完整展示；另外两张仍显示任务类型和关键状态。方向键、Home、End 可切换并将焦点移到活动纸；非活动详情标记为 `aria-hidden`，不造成三篇连续阅读。
+- **State:** 当前纸只展示详情标题，避免与摘要标题重复；另外两张只显示任务类型和关键状态。方向键、Home、End 可切换并将焦点移到活动纸；非活动详情标记为 `aria-hidden`，不造成三篇连续阅读。
 - **Motion:** 纸张只在三种明确排序间切换；`prefers-reduced-motion` 下立即完成状态切换。
 
 ### Status Strip

@@ -24,9 +24,9 @@
 }
 
 :root {
-  --ground: #f3f5f2;
-  --surface: #fafbf8;
-  --ink: #18201c;
+  --ground: #f4f6f3;
+  --surface: #fffefa;
+  --ink: #15211d;
   --muted: #657069;
   --emerald: #246a49;
   --emerald-strong: #18553a;
@@ -479,21 +479,6 @@ body {
   font-size: 0.82rem;
 }
 
-.briefing-card:not([data-active="true"]) .briefing-card-glance {
-  margin-top: 1rem;
-}
-
-.briefing-card:not([data-active="true"]) .briefing-card-title,
-.briefing-card:not([data-active="true"]) .briefing-meta,
-.briefing-card:not([data-active="true"]) .briefing-evidence,
-.briefing-card:not([data-active="true"]) .briefing-gap,
-.briefing-card:not([data-active="true"]) .briefing-checklist,
-.briefing-card:not([data-active="true"]) .briefing-candidate-note,
-.briefing-card:not([data-active="true"]) .briefing-markdown,
-.briefing-card:not([data-active="true"]) .briefing-footnote {
-  visibility: hidden;
-}
-
 .briefing-card-heading span {
   color: var(--muted);
   font-weight: 500;
@@ -587,15 +572,11 @@ body {
   padding: 0.85rem 0;
 }
 
-.briefing-markdown p {
+.briefing-markdown span {
   margin: 0.35rem 0;
   font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
   font-size: 0.78rem;
   line-height: 1.55;
-}
-
-.briefing-markdown span {
-  margin: 0.2rem 0;
 }
 
 .briefing-footnote {
@@ -726,10 +707,6 @@ body {
     padding: clamp(1.25rem, 3vw, 2.2rem);
     transform: translate(18%, 2.8%) rotate(1deg) scale(0.94);
     width: auto;
-  }
-
-  .briefing-card:not([data-active="true"]) .briefing-card-glance {
-    margin-top: 1rem;
   }
 
   .copilot-status {
