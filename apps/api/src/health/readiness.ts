@@ -1,10 +1,14 @@
-import { WorkerHeartbeatSchema, type WorkerHeartbeat } from "@job-copilot/contracts/runtime";
+import {
+  ReadinessResultSchema,
+  WorkerHeartbeatSchema,
+  type ReadinessDependencyStatus,
+  type ReadinessResult as RuntimeReadinessResult,
+  type WorkerHeartbeat,
+} from "@job-copilot/contracts/runtime";
 
 const WORKER_HEARTBEAT_KEY = "job-copilot:worker:heartbeat:v1";
 const WORKER_HEARTBEAT_FRESHNESS_MS = 10_000;
 export const READINESS_CHECKS = Symbol("READINESS_CHECKS");
-
-type DependencyStatus = "ready" | "not_ready";
 
 export type ReadinessDependencies = {
   postgres: () => Promise<boolean>;
@@ -14,10 +18,7 @@ export type ReadinessDependencies = {
   worker: () => Promise<boolean>;
 };
 
-export type ReadinessResult = {
-  status: "ready" | "not_ready";
-  dependencies: Record<keyof ReadinessDependencies, DependencyStatus>;
-};
+export type ReadinessResult = RuntimeReadinessResult;
 
 export async function checkReadiness(checks: ReadinessDependencies): Promise<ReadinessResult> {
   const [postgres, redis, minio, mailpit, worker] = await Promise.all([
@@ -29,10 +30,10 @@ export async function checkReadiness(checks: ReadinessDependencies): Promise<Rea
   ]);
   const dependencies = { postgres, redis, minio, mailpit, worker };
 
-  return {
+  return ReadinessResultSchema.parse({
     status: Object.values(dependencies).every((status) => status === "ready") ? "ready" : "not_ready",
     dependencies,
-  };
+  });
 }
 
 export async function readFreshHeartbeat(input: {
@@ -57,7 +58,7 @@ export async function readFreshHeartbeat(input: {
   }
 }
 
-async function checkDependency(check: () => Promise<boolean>): Promise<DependencyStatus> {
+async function checkDependency(check: () => Promise<boolean>): Promise<ReadinessDependencyStatus> {
   try {
     return await check() ? "ready" : "not_ready";
   } catch {

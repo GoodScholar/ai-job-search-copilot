@@ -3,8 +3,10 @@ import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fa
 import { APP_FILTER } from "@nestjs/core";
 import { Test } from "@nestjs/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { ReadinessResponseSchema, RuntimeNotReadyProblemSchema } from "@job-copilot/contracts/runtime";
 import { ApiProblemFilter } from "../common/api-problem.filter.js";
 import { RequestIdHook } from "../common/request-id.hook.js";
+import { configureOpenApi } from "../api-documentation.js";
 import { HealthController } from "./health.controller.js";
 import { checkReadiness, READINESS_CHECKS, type ReadinessDependencies } from "./readiness.js";
 
@@ -72,6 +74,7 @@ describe("GET /health/ready", () => {
       ],
     }).compile();
     app = module.createNestApplication<NestFastifyApplication>(new FastifyAdapter());
+    configureOpenApi(app);
     await app.init();
   });
 
@@ -84,6 +87,7 @@ describe("GET /health/ready", () => {
     });
 
     expect(response.statusCode).toBe(503);
+    expect(RuntimeNotReadyProblemSchema.safeParse(response.json()).success).toBe(true);
     expect(response.json()).toEqual({
       code: "RUNTIME_NOT_READY",
       message: "运行依赖未就绪",
@@ -113,6 +117,7 @@ describe("GET /health/ready", () => {
     });
 
     expect(response.statusCode).toBe(200);
+    expect(ReadinessResponseSchema.safeParse(response.json()).success).toBe(true);
     expect(response.json()).toEqual({
       status: "ready",
       dependencies: {
@@ -123,5 +128,18 @@ describe("GET /health/ready", () => {
         worker: "ready",
       },
     });
+  });
+
+  it("documents the runtime problem as the only readiness error extension", async () => {
+    const response = await app.getHttpAdapter().getInstance().inject({
+      method: "GET",
+      url: "/openapi.json",
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().components.schemas).toEqual(expect.objectContaining({
+      ReadinessResponseDto_Output: expect.anything(),
+      RuntimeNotReadyProblemDto: expect.anything(),
+    }));
   });
 });

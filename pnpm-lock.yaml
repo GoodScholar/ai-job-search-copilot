@@ -178,6 +178,9 @@ importers:
       '@nestjs/cli':
         specifier: 11.0.24
         version: 11.0.24(@types/node@26.3.0)(esbuild@0.28.2)
+      '@testcontainers/redis':
+        specifier: 12.1.0
+        version: 12.1.0
       '@types/node':
         specifier: ^26.3.0
         version: 26.3.0
@@ -2056,6 +2059,9 @@ packages:
 
   '@testcontainers/postgresql@12.1.0':
     resolution: {integrity: sha512-Pjf2VSVNirEPfz36nidyrVAnZvc2YhajOznY4VgyEsvfTd5qiMNOuPq96drREvxAUtXl5SFLX7vXj7sSq4aTcA==}
+
+  '@testcontainers/redis@12.1.0':
+    resolution: {integrity: sha512-WRiS1Lhc+e/DHXDnCmMZtm8Wv64zYlRGNV04rvtn8kxIS2aVz5lgsP+Su/cfBzHJ0/vwdVKW+YJ3nUrXYbQxqw==}
 
   '@testing-library/dom@10.4.1':
     resolution: {integrity: sha512-o4PXJQidqJl82ckFaXUeoAW+XysPLauYI43Abki5hABd853iMhitooc6znOnczgbTYmEP6U6/y1ZyKAIsvMKGg==}
@@ -7707,6 +7713,15 @@ snapshots:
       tailwindcss: 4.3.3
 
   '@testcontainers/postgresql@12.1.0':
+    dependencies:
+      testcontainers: 12.1.0
+    transitivePeerDependencies:
+      - bare-abort-controller
+      - bare-buffer
+      - react-native-b4a
+      - supports-color
+
+  '@testcontainers/redis@12.1.0':
     dependencies:
       testcontainers: 12.1.0
     transitivePeerDependencies:
