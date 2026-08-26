@@ -130,16 +130,20 @@ describe("GET /health/ready", () => {
     });
   });
 
-  it("documents the runtime problem as the only readiness error extension", async () => {
+  it("binds each readiness status to its approved OpenAPI schema", async () => {
     const response = await app.getHttpAdapter().getInstance().inject({
       method: "GET",
       url: "/openapi.json",
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json().components.schemas).toEqual(expect.objectContaining({
-      ReadinessResponseDto_Output: expect.anything(),
-      RuntimeNotReadyProblemDto: expect.anything(),
-    }));
+    const responses = response.json().paths["/health/ready"].get.responses;
+
+    expect(responses["200"].content["application/json"].schema).toEqual({
+      $ref: "#/components/schemas/ReadinessResponseDto_Output",
+    });
+    expect(responses["503"].content["application/json"].schema).toEqual({
+      $ref: "#/components/schemas/RuntimeNotReadyProblemDto",
+    });
   });
 });
