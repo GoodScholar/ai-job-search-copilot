@@ -180,50 +180,113 @@ function stopApplications(child, signal = "SIGTERM") {
 }
 
 function waitForApplicationExit(child) {
-  return new Promise((resolve) => child.once("exit", resolve));
+  return new Promise((resolve) => child.once("exit", (code, signal) => resolve({ code, signal })));
 }
 
-async function main() {
-  const config = createRuntimeConfig({ test: process.argv.includes("--test") });
+function signalExitCode(signal) {
+  return signal === "SIGINT" ? 130 : 143;
+}
+
+function applicationExitError({ code, signal }) {
+  const error = new Error(signal
+    ? `应用进程被 ${signal} 终止`
+    : `应用进程以退出码 ${code} 结束`);
+  error.exitCode = signal ? signalExitCode(signal) : (code ?? 1);
+  return error;
+}
+
+export async function runRuntime({
+  config,
+  signalSource = process,
+  prepare = ({ config: runtimeConfig }) => prepareInfrastructure({ config: runtimeConfig, run }),
+  migrate = ({ config: runtimeConfig }) => runDatabaseMigrations({ config: runtimeConfig }),
+  start = ({ config: runtimeConfig }) => startApplications({ config: runtimeConfig }),
+  waitForReady = ({ config: runtimeConfig }) => waitForRuntime({ config: runtimeConfig }),
+  cleanup = ({ config: runtimeConfig }) => cleanupInfrastructure({ config: runtimeConfig, run }),
+} = {}) {
   let child;
-  let cleanedUp = false;
-  const cleanup = async () => {
-    if (!cleanedUp) {
-      cleanedUp = true;
-      await cleanupInfrastructure({ config, run });
+  let childExit;
+  let childExited = false;
+  let requestedSignal;
+  let resolveSignal;
+  const signalReceived = new Promise((resolve) => {
+    resolveSignal = resolve;
+  });
+  const requestShutdown = (signal) => {
+    if (!requestedSignal) {
+      requestedSignal = signal;
+      resolveSignal(signal);
     }
   };
-  const shutdown = async (signal) => {
-    stopApplications(child, signal);
-    await cleanup();
-  };
+  const handleSigint = () => requestShutdown("SIGINT");
+  const handleSigterm = () => requestShutdown("SIGTERM");
+  signalSource.once("SIGINT", handleSigint);
+  signalSource.once("SIGTERM", handleSigterm);
 
-  const handleSignal = (signal, exitCode) => {
-    void shutdown(signal).finally(() => {
-      process.exit(exitCode);
-    });
+  const awaitChildExit = async () => {
+    const result = await childExit;
+    childExited = true;
+    return result;
   };
-  process.once("SIGINT", () => handleSignal("SIGINT", 130));
-  process.once("SIGTERM", () => handleSignal("SIGTERM", 143));
 
   try {
-    await prepareInfrastructure({ config, run });
+    await prepare({ config });
     if (config.test) {
-      await runDatabaseMigrations({ config });
+      await migrate({ config });
     }
-    child = startApplications({ config });
-    await waitForRuntime({ config });
+    child = start({ config });
+    childExit = waitForApplicationExit(child);
+
+    const readyOrShutdown = await Promise.race([
+      waitForReady({ config }).then(() => ({ type: "ready" })),
+      signalReceived.then((signal) => ({ type: "signal", signal })),
+      awaitChildExit().then((result) => ({ type: "exit", result })),
+    ]);
+
+    if (readyOrShutdown.type === "exit") {
+      throw applicationExitError(readyOrShutdown.result);
+    }
+
+    if (readyOrShutdown.type === "signal") {
+      stopApplications(child, readyOrShutdown.signal);
+      await awaitChildExit();
+      return { exitCode: signalExitCode(readyOrShutdown.signal) };
+    }
+
     console.log("本地测试运行时已就绪");
-    await waitForApplicationExit(child);
+    const exitOrShutdown = await Promise.race([
+      signalReceived.then((signal) => ({ type: "signal", signal })),
+      awaitChildExit().then((result) => ({ type: "exit", result })),
+    ]);
+
+    if (exitOrShutdown.type === "signal") {
+      stopApplications(child, exitOrShutdown.signal);
+      await awaitChildExit();
+      return { exitCode: signalExitCode(exitOrShutdown.signal) };
+    }
+
+    if (exitOrShutdown.result.code !== 0 || exitOrShutdown.result.signal) {
+      throw applicationExitError(exitOrShutdown.result);
+    }
+    return { exitCode: 0 };
   } finally {
-    stopApplications(child);
-    await cleanup();
+    signalSource.removeListener("SIGINT", handleSigint);
+    signalSource.removeListener("SIGTERM", handleSigterm);
+    if (child && !childExited) {
+      stopApplications(child, requestedSignal ?? "SIGTERM");
+      await awaitChildExit();
+    }
+    await cleanup({ config });
   }
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  main().catch((error) => {
-    console.error(error);
-    process.exitCode = 1;
-  });
+  const config = createRuntimeConfig({ test: process.argv.includes("--test") });
+  runRuntime({ config }).then(
+    ({ exitCode }) => { process.exitCode = exitCode; },
+    (error) => {
+      console.error(error);
+      process.exitCode = error.exitCode ?? 1;
+    },
+  );
 }

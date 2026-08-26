@@ -1,6 +1,19 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import test from "node:test";
-import { createRuntimeConfig, prepareInfrastructure, startApplications } from "./local-runtime.mjs";
+import { createRuntimeConfig, prepareInfrastructure, runRuntime, startApplications } from "./local-runtime.mjs";
+
+function createControlledChild() {
+  const child = new EventEmitter();
+  child.pid = 12345;
+  child.killed = false;
+  child.kill = (signal) => {
+    child.killed = true;
+    child.sentSignal = signal;
+    return true;
+  };
+  return child;
+}
 
 test("starts compose and waits for healthy dependencies before applications", async () => {
   const calls = [];
@@ -104,4 +117,71 @@ test("test runtime passes its isolated service addresses to every application", 
   assert.equal(options.env.DEV_AUTH_SHARED_SECRET, "issue-2-e2e-dev-auth-shared-secret");
   assert.match(options.env.NODE_OPTIONS, /--import=tsx/);
   assert.equal(options.env.UNRELATED_VALUE, "preserved");
+});
+
+test("signal waits for the controlled application child before isolated cleanup", async () => {
+  const events = [];
+  const signalSource = new EventEmitter();
+  const child = createControlledChild();
+  const runtime = runRuntime({
+    config: createRuntimeConfig({ test: true }),
+    signalSource,
+    prepare: async () => events.push("prepare"),
+    migrate: async () => events.push("migrate"),
+    start: () => {
+      events.push("start");
+      return child;
+    },
+    waitForReady: async () => events.push("ready"),
+    cleanup: async () => events.push("cleanup"),
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  signalSource.emit("SIGTERM");
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(events, ["prepare", "migrate", "start", "ready"]);
+  assert.equal(child.sentSignal, "SIGTERM");
+
+  child.emit("exit", 0, null);
+  assert.deepEqual(await runtime, { exitCode: 143 });
+  assert.deepEqual(events, ["prepare", "migrate", "start", "ready", "cleanup"]);
+});
+
+test("a ready application child exiting nonzero fails after isolated cleanup", async () => {
+  const events = [];
+  const child = createControlledChild();
+  const runtime = runRuntime({
+    config: createRuntimeConfig({ test: true }),
+    signalSource: new EventEmitter(),
+    prepare: async () => events.push("prepare"),
+    migrate: async () => events.push("migrate"),
+    start: () => child,
+    waitForReady: async () => events.push("ready"),
+    cleanup: async () => events.push("cleanup"),
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  child.emit("exit", 7, null);
+
+  await assert.rejects(runtime, (error) => error.exitCode === 7);
+  assert.deepEqual(events, ["prepare", "migrate", "ready", "cleanup"]);
+});
+
+test("a ready application child terminated by a signal fails with that signal exit code", async () => {
+  const child = createControlledChild();
+  const runtime = runRuntime({
+    config: createRuntimeConfig({ test: true }),
+    signalSource: new EventEmitter(),
+    prepare: async () => {},
+    migrate: async () => {},
+    start: () => child,
+    waitForReady: async () => {},
+    cleanup: async () => {},
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  child.emit("exit", null, "SIGTERM");
+
+  await assert.rejects(runtime, (error) => error.exitCode === 143);
 });
