@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Headers, HttpCode, HttpStatus, Inject, Post, Req, UseGuards } from "@nestjs/common";
-import { ApiBearerAuth, ApiBody, ApiForbiddenResponse, ApiNoContentResponse, ApiUnauthorizedResponse } from "@nestjs/swagger";
+import { ApiBearerAuth, ApiBody, ApiForbiddenResponse, ApiHeader, ApiNoContentResponse, ApiUnauthorizedResponse } from "@nestjs/swagger";
 import { ApiProblemSchema } from "@job-copilot/contracts/api-problem";
 import { StartDevSessionRequestSchema, StartDevSessionResponseSchema } from "@job-copilot/contracts/auth";
 import type { RuntimeConfig } from "@job-copilot/domain/runtime-config";
@@ -30,6 +30,11 @@ export class AuthController {
 
   @Post("dev/sessions")
   @ApiBody({ type: StartDevSessionDto })
+  @ApiHeader({
+    name: "x-dev-auth-secret",
+    required: true,
+    description: "仅本地 Dev Auth 使用的服务端共享密钥",
+  })
   @ZodResponse({ type: StartDevSessionResponseDto, status: HttpStatus.CREATED })
   @ApiForbiddenResponse({ type: ApiProblem })
   async startDevSession(
@@ -50,7 +55,7 @@ export class AuthController {
 
   @Delete("sessions/current")
   @UseGuards(SessionGuard)
-  @ApiBearerAuth()
+  @ApiBearerAuth("bearerAuth")
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiNoContentResponse()
   @ApiUnauthorizedResponse({ type: ApiProblem })

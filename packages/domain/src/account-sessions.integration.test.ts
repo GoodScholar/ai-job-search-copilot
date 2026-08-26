@@ -10,7 +10,7 @@ import {
   sessions as sessionTable,
 } from "@job-copilot/database";
 import { createAccountSessions } from "./account-sessions";
-import { createAuditTrail } from "./audit-trail";
+import { createAuditTrail, type AuditTrail } from "./audit-trail";
 
 const requestId = "18cd2fca-a70e-413a-8b83-9bea881370c4";
 const nextRequestId = "6f361134-8fb3-4b75-a926-55412d9c40b9";
@@ -74,6 +74,8 @@ describe("account sessions", () => {
       .where(eq(sessionTable.userId, first.account.userId));
     expect(storedSession?.tokenHash).not.toBe(first.sessionToken);
     expect(storedSession?.tokenHash).toMatch(/^[a-f0-9]{64}$/);
+    await expect(database.select({ eventType: auditEvents.eventType }).from(auditEvents)
+      .where(eq(auditEvents.eventType, "auth.session_authenticated"))).resolves.toEqual([]);
   });
 
   it("rejects an expired session", async () => {
@@ -207,5 +209,34 @@ describe("account sessions", () => {
       database.select().from(sessionTable),
       database.select().from(auditEvents),
     ])).resolves.toEqual([accountsBefore, sessionsBefore, auditsBefore]);
+  });
+
+  it("rolls back the account and session when the required start audit cannot be appended", async () => {
+    const rejectingAuditTrail: AuditTrail = {
+      append: async () => { throw new Error("audit storage unavailable"); },
+      bind: () => rejectingAuditTrail,
+      query: async () => [],
+    };
+    const sessions = createAccountSessions({
+      db: database,
+      tokenSource: () => "atomic-start-session-token",
+      sessionTtlMs: 60_000,
+      auditTrail: rejectingAuditTrail,
+    });
+    const [accountsBefore, sessionsBefore] = await Promise.all([
+      database.select().from(jobAccounts),
+      database.select().from(sessionTable),
+    ]);
+
+    await expect(sessions.startDevSession({
+      subject: "audit-must-be-atomic",
+      now,
+      requestId: "d561b1d5-296a-447f-9128-34c22a769ec2",
+    })).rejects.toThrow(/audit storage unavailable/);
+
+    await expect(Promise.all([
+      database.select().from(jobAccounts),
+      database.select().from(sessionTable),
+    ])).resolves.toEqual([accountsBefore, sessionsBefore]);
   });
 });

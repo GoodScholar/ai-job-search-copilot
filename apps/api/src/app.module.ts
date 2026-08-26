@@ -7,11 +7,11 @@ import { ApiProblemFilter } from "./common/api-problem.filter.js";
 import { RequestIdHook } from "./common/request-id.hook.js";
 import { RuntimeConfigModule } from "./config/runtime-config.module.js";
 import { HealthModule } from "./health/health.module.js";
-import { WorkbenchController } from "./workbench/workbench.controller.js";
+import { WorkbenchModule } from "./workbench/workbench.module.js";
 
 @Module({
-  imports: [RuntimeConfigModule, AuthModule, HealthModule],
-  controllers: [AccountsController, WorkbenchController],
+  imports: [RuntimeConfigModule, AuthModule, HealthModule, WorkbenchModule],
+  controllers: [AccountsController],
   providers: [
     RequestIdHook,
     { provide: APP_PIPE, useClass: ZodValidationPipe },

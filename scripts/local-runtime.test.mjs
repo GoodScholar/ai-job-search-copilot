@@ -22,6 +22,12 @@ test("database package exposes the documented db:migrate command", async () => {
   assert.equal(packageJson.scripts["db:migrate"], "drizzle-kit migrate --config=drizzle.config.ts");
 });
 
+test("runtime tests run without Node's subprocess wrapper to avoid IPC serialization failures", async () => {
+  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+
+  assert.equal(packageJson.scripts["test:runtime"], "node scripts/local-runtime.test.mjs");
+});
+
 test("local runtime migrates before starting applications", async () => {
   const events = [];
   const child = createControlledChild();

@@ -14,7 +14,7 @@ class AccountProjectionDto extends createZodDto(AccountProjectionSchema) {}
 
 @Controller("v1/accounts")
 @UseGuards(SessionGuard)
-@ApiBearerAuth()
+@ApiBearerAuth("bearerAuth")
 export class AccountsController {
   constructor(@Inject(AUDIT_TRAIL) private readonly auditTrail: AuditTrail) {}
 

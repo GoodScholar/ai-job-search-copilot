@@ -23,7 +23,7 @@ describe("audit trail", () => {
     await container?.stop();
   });
 
-  it("rejects sensitive metadata instead of storing it", async () => {
+  it("rejects metadata outside the event-specific allowlist instead of storing it", async () => {
     const auditTrail = createAuditTrail({ db: database, clock: () => now });
 
     await expect(auditTrail.append({
@@ -31,11 +31,13 @@ describe("audit trail", () => {
       eventType: "auth.session_started",
       outcome: "success",
       requestId,
-      metadata: { sessionToken: "must-not-be-stored" },
-    })).rejects.toThrow(/敏感审计字段/);
+      reasonCode: "AUTH_SESSION_STARTED",
+      resourceType: "session",
+      metadata: { sessionToken: "must-not-be-stored" } as never,
+    })).rejects.toThrow(/字段白名单/);
   });
 
-  it("stores and returns a redacted audit event", async () => {
+  it("accepts only the metadata shape assigned to each approved event", async () => {
     const auditTrail = createAuditTrail({ db: database, clock: () => now });
 
     await auditTrail.append({
@@ -46,18 +48,60 @@ describe("audit trail", () => {
       reasonCode: "AUTH_SESSION_STARTED",
       requestId,
       resourceType: "session",
-      metadata: { provider: "dev", attempts: 1, trusted: true },
+      metadata: { provider: "dev" },
     });
 
-    await expect(auditTrail.query({ userId })).resolves.toEqual([expect.objectContaining({
+    await auditTrail.append({
+      userId,
+      actorUserId: userId,
+      eventType: "auth.session_ended",
+      outcome: "success",
+      reasonCode: "AUTH_SESSION_ENDED",
+      requestId: "2d5d9ef3-0b02-4514-9f1a-7cda8e3f1736",
+      resourceType: "session",
+      metadata: {},
+    });
+    await auditTrail.append({
+      userId,
+      actorUserId: userId,
+      eventType: "auth.session_rejected",
+      outcome: "denied",
+      reasonCode: "AUTH_SESSION_REVOKED",
+      requestId: "54b36840-180d-4344-87c1-f414f79ef70b",
+      resourceType: "session",
+      metadata: {},
+    });
+    await auditTrail.append({
+      userId,
+      actorUserId: userId,
+      eventType: "account.access_rejected",
+      outcome: "denied",
+      reasonCode: "ACCOUNT_NOT_FOUND",
+      requestId: "b9bbd306-e072-4e86-9019-6c49d3d0f751",
+      resourceType: "account",
+      resourceId: "b016711c-9834-43d6-a3cb-859880710b61",
+      metadata: {},
+    });
+
+    await expect(auditTrail.append({
+      userId,
+      eventType: "auth.session_ended",
+      outcome: "success",
+      requestId: "949434d5-96a8-43e8-8e94-644248583da3",
+      reasonCode: "AUTH_SESSION_ENDED",
+      resourceType: "session",
+      metadata: { provider: "dev" } as never,
+    })).rejects.toThrow(/字段白名单/);
+
+    await expect(auditTrail.query({ userId })).resolves.toEqual(expect.arrayContaining([expect.objectContaining({
       userId,
       actorUserId: userId,
       eventType: "auth.session_started",
       outcome: "success",
       reasonCode: "AUTH_SESSION_STARTED",
       requestId,
-      metadata: { provider: "dev", attempts: 1, trusted: true },
+      metadata: { provider: "dev" },
       occurredAt: now,
-    })]);
+    })]));
   });
 });

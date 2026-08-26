@@ -32,6 +32,8 @@ pnpm install && pnpm dev
 pnpm dev:down
 ```
 
+若 `pnpm dev` 仍在另一个终端运行，先在该终端按 `Ctrl-C`，它会先停止 Web、API 和 Worker，再清理由 Compose 管理的依赖。`pnpm dev:down` 本身只关闭 Compose 管理的基础设施（以及残留测试资源），不会终止其他终端中的应用进程。
+
 ## 登录与当前范围
 
 本地运行时启用 **Dev Auth**，仅用于本地开发和测试；它不是生产认证方案，也不能用于正式环境。正式 Beta 将使用微信登录，当前仅保留相应的产品与适配边界，尚未实现真实微信 OAuth 流程。

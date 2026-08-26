@@ -8,20 +8,21 @@ export class DomainError extends Error {
   }
 }
 
-export async function getWorkbenchHome(input: {
-  db: Database;
-  userId: string;
-}): Promise<WorkbenchHome> {
-  const [account] = await input.db.select({ userId: jobAccounts.id })
-    .from(jobAccounts)
-    .where(and(eq(jobAccounts.id, input.userId), eq(jobAccounts.status, "active")));
+export type GetWorkbenchHome = (input: { userId: string }) => Promise<WorkbenchHome>;
 
-  if (!account) {
-    throw new DomainError("ACCOUNT_NOT_FOUND");
-  }
+export function createWorkbenchHome(input: { db: Database }): GetWorkbenchHome {
+  return async ({ userId }) => {
+    const [account] = await input.db.select({ userId: jobAccounts.id })
+      .from(jobAccounts)
+      .where(and(eq(jobAccounts.id, userId), eq(jobAccounts.status, "active")));
 
-  return {
-    account,
-    summary: { recommendations: 0, pendingFacts: 0, runningAgentRuns: 0, applications: 0 },
+    if (!account) {
+      throw new DomainError("ACCOUNT_NOT_FOUND");
+    }
+
+    return {
+      account,
+      summary: { recommendations: 0, pendingFacts: 0, runningAgentRuns: 0, applications: 0 },
+    };
   };
 }

@@ -3,6 +3,7 @@ import { ApiProblemSchema } from "./api-problem";
 import { StartDevSessionRequestSchema } from "./auth";
 import { ReadinessDependenciesSchema, RuntimeNotReadyProblemSchema, WorkerHeartbeatSchema } from "./runtime";
 import { WorkbenchHomeSchema } from "./workbench";
+import { parseFreshWorkerHeartbeat } from "./runtime";
 
 describe("shared contracts", () => {
   it("rejects error payloads without a request id", () => {
@@ -27,6 +28,22 @@ describe("shared contracts", () => {
       recordedAt: "2026-08-26T13:00:00.000Z",
       contractVersion: 2,
     }).success).toBe(false);
+  });
+
+  it("shares strict worker heartbeat freshness parsing between runtime participants", () => {
+    const heartbeat = JSON.stringify({
+      workerId: "worker-1",
+      recordedAt: "2026-08-26T10:00:00.000Z",
+      contractVersion: 1,
+    });
+
+    expect(parseFreshWorkerHeartbeat(heartbeat, new Date("2026-08-26T10:00:10.000Z"))).toEqual({
+      workerId: "worker-1",
+      recordedAt: "2026-08-26T10:00:00.000Z",
+      contractVersion: 1,
+    });
+    expect(parseFreshWorkerHeartbeat(heartbeat, new Date("2026-08-26T10:00:10.001Z"))).toBeNull();
+    expect(parseFreshWorkerHeartbeat("not-json", new Date("2026-08-26T10:00:00.000Z"))).toBeNull();
   });
 
   it("keeps dependency statuses as the only strict runtime problem extension", () => {

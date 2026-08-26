@@ -36,7 +36,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-it("starts only the fixed local experience identity and validates the return path", async () => {
+it("starts a local session, stores its opaque cookie, and redirects untrusted return paths home", async () => {
   startDevSession.mockResolvedValue({
     sessionToken: "a".repeat(43),
     expiresAt: "2026-09-02T08:00:00.000Z",
@@ -46,11 +46,11 @@ it("starts only the fixed local experience identity and validates the return pat
 
   await expect(startDevSessionAction(formData)).rejects.toThrow("redirect:/home");
 
-  expect(startDevSession).toHaveBeenCalledWith({ subject: "local-primary" });
   expect(writeSessionCookie).toHaveBeenCalledWith(
     "a".repeat(43),
     new Date("2026-09-02T08:00:00.000Z"),
   );
+  expect(redirect).toHaveBeenCalledWith("/home");
 });
 
 it("only clears the cookie after the API confirms the session is ended or invalid", async () => {

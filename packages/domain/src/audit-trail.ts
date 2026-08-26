@@ -1,8 +1,67 @@
 import { asc, eq } from "drizzle-orm";
 import { auditEvents, type Database } from "@job-copilot/database";
+import { z } from "zod";
 
-type AuditMetadataValue = string | number | boolean;
-export type AuditMetadata = Record<string, AuditMetadataValue>;
+type AuditDatabase = Pick<Database, "insert" | "select">;
+type AuditMetadata = Record<string, unknown>;
+
+const EmptyMetadataSchema = z.object({}).strict();
+const StartedSessionMetadataSchema = z.object({ provider: z.literal("dev") }).strict();
+
+const AuditEventInputSchema = z.discriminatedUnion("eventType", [
+  z.object({
+    userId: z.uuid().optional(),
+    actorUserId: z.uuid().optional(),
+    eventType: z.literal("auth.session_started"),
+    occurredAt: z.date().optional(),
+    requestId: z.uuid(),
+    outcome: z.literal("success"),
+    reasonCode: z.literal("AUTH_SESSION_STARTED"),
+    resourceType: z.literal("session"),
+    metadata: StartedSessionMetadataSchema,
+  }).strict(),
+  z.object({
+    userId: z.uuid().optional(),
+    actorUserId: z.uuid().optional(),
+    eventType: z.literal("auth.session_ended"),
+    occurredAt: z.date().optional(),
+    requestId: z.uuid(),
+    outcome: z.literal("success"),
+    reasonCode: z.literal("AUTH_SESSION_ENDED"),
+    resourceType: z.literal("session"),
+    metadata: EmptyMetadataSchema,
+  }).strict(),
+  z.object({
+    userId: z.uuid().optional(),
+    actorUserId: z.uuid().optional(),
+    eventType: z.literal("auth.session_rejected"),
+    occurredAt: z.date().optional(),
+    requestId: z.uuid(),
+    outcome: z.literal("denied"),
+    reasonCode: z.enum([
+      "AUTH_SESSION_NOT_FOUND",
+      "AUTH_SESSION_REVOKED",
+      "AUTH_SESSION_EXPIRED",
+      "AUTH_ACCOUNT_INACTIVE",
+    ]),
+    resourceType: z.literal("session"),
+    metadata: EmptyMetadataSchema,
+  }).strict(),
+  z.object({
+    userId: z.uuid().optional(),
+    actorUserId: z.uuid().optional(),
+    eventType: z.literal("account.access_rejected"),
+    occurredAt: z.date().optional(),
+    requestId: z.uuid(),
+    outcome: z.literal("denied"),
+    reasonCode: z.literal("ACCOUNT_NOT_FOUND"),
+    resourceType: z.literal("account"),
+    resourceId: z.uuid(),
+    metadata: EmptyMetadataSchema,
+  }).strict(),
+]);
+
+type AuditEventInput = z.input<typeof AuditEventInputSchema>;
 
 export type AuditEvent = {
   userId: string | null;
@@ -18,60 +77,38 @@ export type AuditEvent = {
 };
 
 export type AuditTrail = {
-  append(input: {
-    userId?: string;
-    actorUserId?: string;
-    eventType: string;
-    occurredAt?: Date;
-    requestId: string;
-    outcome: string;
-    reasonCode?: string;
-    resourceType?: string;
-    resourceId?: string;
-    metadata?: AuditMetadata;
-  }): Promise<void>;
+  append(input: AuditEventInput): Promise<void>;
+  bind(database: AuditDatabase): AuditTrail;
   query(input: { userId: string }): Promise<AuditEvent[]>;
 };
 
-const sensitiveMetadataKey = /token|cookie|secret|subject|resume|document/i;
-
-function validateMetadata(metadata: AuditMetadata): void {
-  for (const [key, value] of Object.entries(metadata)) {
-    if (sensitiveMetadataKey.test(key)) {
-      throw new Error(`敏感审计字段不能写入：${key}`);
-    }
-    if (typeof value === "string" && value.length > 128) {
-      throw new Error(`审计元数据字符串不能超过 128 字符：${key}`);
-    }
-    if (typeof value === "number" && !Number.isFinite(value)) {
-      throw new Error(`审计元数据必须是有限数值：${key}`);
-    }
-    if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
-      throw new Error(`审计元数据值类型不受支持：${key}`);
-    }
-  }
-}
-
 export function createAuditTrail(input: {
-  db: Database;
+  db: AuditDatabase;
   clock: () => Date;
 }): AuditTrail {
   return {
     async append(event): Promise<void> {
-      const metadata = event.metadata ?? {};
-      validateMetadata(metadata);
+      const result = AuditEventInputSchema.safeParse(event);
+      if (!result.success) {
+        throw new Error("审计事件不符合字段白名单");
+      }
+      const parsed = result.data;
+      const metadata = parsed.metadata ?? {};
       await input.db.insert(auditEvents).values({
-        userId: event.userId,
-        actorUserId: event.actorUserId,
-        eventType: event.eventType,
-        occurredAt: event.occurredAt ?? input.clock(),
-        requestId: event.requestId,
-        outcome: event.outcome,
-        reasonCode: event.reasonCode ?? "NONE",
-        resourceType: event.resourceType,
-        resourceId: event.resourceId,
+        userId: parsed.userId,
+        actorUserId: parsed.actorUserId,
+        eventType: parsed.eventType,
+        occurredAt: parsed.occurredAt ?? input.clock(),
+        requestId: parsed.requestId,
+        outcome: parsed.outcome,
+        reasonCode: parsed.reasonCode ?? "NONE",
+        resourceType: parsed.resourceType,
+        resourceId: "resourceId" in parsed ? parsed.resourceId : undefined,
         metadata,
       });
+    },
+    bind(database): AuditTrail {
+      return createAuditTrail({ db: database, clock: input.clock });
     },
     async query({ userId }): Promise<AuditEvent[]> {
       const rows = await input.db.select({

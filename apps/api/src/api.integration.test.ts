@@ -178,6 +178,25 @@ describe("authenticated workbench HTTP API", () => {
       "/health/live": expect.anything(),
     }));
     expect(document.components.schemas.ApiProblem).toBeDefined();
+    expect(document.components.securitySchemes.bearerAuth).toEqual({
+      type: "http",
+      scheme: "bearer",
+      bearerFormat: "opaque-session-token",
+    });
+    expect(document.paths["/v1/auth/dev/sessions"].post.parameters).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        in: "header",
+        name: "x-dev-auth-secret",
+        required: true,
+      }),
+    ]));
+    for (const [path, method] of [
+      ["/v1/auth/sessions/current", "delete"],
+      ["/v1/accounts/{userId}", "get"],
+      ["/v1/workbench/home", "get"],
+    ] as const) {
+      expect(document.paths[path][method].security).toEqual([{ bearerAuth: [] }]);
+    }
   });
 
   it("refuses to bootstrap Dev Auth in production", async () => {

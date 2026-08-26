@@ -67,19 +67,18 @@ export function createAccountSessions(input: {
         }
 
         await transaction.insert(sessions).values({ userId: identity.userId, tokenHash, expiresAt });
+        await input.auditTrail.bind(transaction).append({
+          userId: identity.userId,
+          actorUserId: identity.userId,
+          eventType: "auth.session_started",
+          occurredAt: now,
+          requestId,
+          outcome: "success",
+          reasonCode: "AUTH_SESSION_STARTED",
+          resourceType: "session",
+          metadata: { provider: "dev" },
+        });
         return { userId: identity.userId };
-      });
-
-      await input.auditTrail.append({
-        userId: account.userId,
-        actorUserId: account.userId,
-        eventType: "auth.session_started",
-        occurredAt: now,
-        requestId,
-        outcome: "success",
-        reasonCode: "AUTH_SESSION_STARTED",
-        resourceType: "session",
-        metadata: { provider: "dev" },
       });
 
       return { account, sessionToken, expiresAt };
@@ -153,17 +152,6 @@ export function createAccountSessions(input: {
         return null;
       }
 
-      await input.auditTrail.append({
-        userId: session.userId,
-        actorUserId: session.userId,
-        eventType: "auth.session_authenticated",
-        occurredAt: now,
-        requestId,
-        outcome: "success",
-        reasonCode: "AUTH_SESSION_AUTHENTICATED",
-        resourceType: "session",
-        metadata: {},
-      });
       return { userId: session.userId };
     },
 

@@ -10,7 +10,7 @@
     "dev": "node scripts/local-runtime.mjs",
     "dev:test": "exec node scripts/local-runtime.mjs --test",
     "dev:down": "docker compose down",
-    "test:runtime": "node --test scripts/local-runtime.test.mjs",
+    "test:runtime": "node scripts/local-runtime.test.mjs",
     "test": "pnpm test:runtime && pnpm -r --if-present test",
     "typecheck": "pnpm -r --if-present typecheck",
     "build": "pnpm -r --if-present build",
