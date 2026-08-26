@@ -1,6 +1,8 @@
 CREATE TABLE "job_accounts" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"created_at" timestamp with time zone DEFAULT now() NOT NULL
+	"status" varchar(16) DEFAULT 'active' NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 
 CREATE TABLE "external_identities" (
@@ -24,7 +26,14 @@ CREATE TABLE "sessions" (
 CREATE TABLE "audit_events" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,
+	"actor_user_id" uuid,
 	"event_type" varchar(64) NOT NULL,
+	"occurred_at" timestamp with time zone NOT NULL,
+	"request_id" uuid NOT NULL,
+	"outcome" varchar(32) NOT NULL,
+	"reason_code" varchar(64) NOT NULL,
+	"resource_type" varchar(64),
+	"resource_id" uuid,
 	"metadata" jsonb NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
@@ -32,3 +41,4 @@ CREATE TABLE "audit_events" (
 ALTER TABLE "external_identities" ADD CONSTRAINT "external_identities_user_id_job_accounts_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."job_accounts"("id") ON DELETE no action ON UPDATE no action;
 ALTER TABLE "sessions" ADD CONSTRAINT "sessions_user_id_job_accounts_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."job_accounts"("id") ON DELETE no action ON UPDATE no action;
 ALTER TABLE "audit_events" ADD CONSTRAINT "audit_events_user_id_job_accounts_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."job_accounts"("id") ON DELETE no action ON UPDATE no action;
+ALTER TABLE "audit_events" ADD CONSTRAINT "audit_events_actor_user_id_job_accounts_id_fk" FOREIGN KEY ("actor_user_id") REFERENCES "public"."job_accounts"("id") ON DELETE no action ON UPDATE no action;

@@ -2,7 +2,9 @@ import { jsonb, pgTable, primaryKey, timestamp, uuid, varchar } from "drizzle-or
 
 export const jobAccounts = pgTable("job_accounts", {
   id: uuid("id").primaryKey().defaultRandom(),
+  status: varchar("status", { length: 16 }).notNull().default("active"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const externalIdentities = pgTable("external_identities", {
@@ -24,7 +26,14 @@ export const sessions = pgTable("sessions", {
 export const auditEvents = pgTable("audit_events", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  actorUserId: uuid("actor_user_id").references(() => jobAccounts.id),
   eventType: varchar("event_type", { length: 64 }).notNull(),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+  requestId: uuid("request_id").notNull(),
+  outcome: varchar("outcome", { length: 32 }).notNull(),
+  reasonCode: varchar("reason_code", { length: 64 }).notNull(),
+  resourceType: varchar("resource_type", { length: 64 }),
+  resourceId: uuid("resource_id"),
   metadata: jsonb("metadata").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
