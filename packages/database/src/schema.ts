@@ -25,7 +25,7 @@ export const sessions = pgTable("sessions", {
 
 export const auditEvents = pgTable("audit_events", {
   id: uuid("id").primaryKey().defaultRandom(),
-  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  userId: uuid("user_id").references(() => jobAccounts.id),
   actorUserId: uuid("actor_user_id").references(() => jobAccounts.id),
   eventType: varchar("event_type", { length: 64 }).notNull(),
   occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),

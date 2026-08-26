@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { and, eq, gt, isNull } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { externalIdentities, jobAccounts, sessions, type Database } from "@job-copilot/database";
+import { z } from "zod";
 import type { AuditTrail } from "./audit-trail";
 
 export type StartedSession = {
@@ -11,12 +12,20 @@ export type StartedSession = {
 
 export type AuthenticatedAccount = { userId: string };
 
+const RequestIdSchema = z.uuid();
+
 function hashSessionToken(sessionToken: string): string {
   return createHash("sha256").update(sessionToken).digest("hex");
 }
 
 export function createSessionToken(): string {
   return randomBytes(32).toString("base64url");
+}
+
+function validateRequestId(requestId: string): void {
+  if (!RequestIdSchema.safeParse(requestId).success) {
+    throw new Error("requestId 必须是 UUID");
+  }
 }
 
 export function createAccountSessions(input: {
@@ -35,6 +44,7 @@ export function createAccountSessions(input: {
 } {
   return {
     async startDevSession({ subject, now, requestId }): Promise<StartedSession> {
+      validateRequestId(requestId);
       const sessionToken = input.tokenSource();
       const expiresAt = new Date(now.getTime() + input.sessionTtlMs);
       const tokenHash = hashSessionToken(sessionToken);
@@ -76,18 +86,70 @@ export function createAccountSessions(input: {
     },
 
     async authenticateSession({ sessionToken, now, requestId }): Promise<AuthenticatedAccount | null> {
+      validateRequestId(requestId);
       const tokenHash = hashSessionToken(sessionToken);
-      const [session] = await input.db.select({ userId: sessions.userId })
+      const [session] = await input.db.select({
+        userId: sessions.userId,
+        revokedAt: sessions.revokedAt,
+        expiresAt: sessions.expiresAt,
+        accountStatus: jobAccounts.status,
+      })
         .from(sessions)
         .innerJoin(jobAccounts, eq(jobAccounts.id, sessions.userId))
-        .where(and(
-          eq(sessions.tokenHash, tokenHash),
-          isNull(sessions.revokedAt),
-          gt(sessions.expiresAt, now),
-          eq(jobAccounts.status, "active"),
-        ));
+        .where(eq(sessions.tokenHash, tokenHash));
 
       if (!session) {
+        await input.auditTrail.append({
+          eventType: "auth.session_rejected",
+          occurredAt: now,
+          requestId,
+          outcome: "denied",
+          reasonCode: "AUTH_SESSION_NOT_FOUND",
+          resourceType: "session",
+          metadata: {},
+        });
+        return null;
+      }
+      if (session.revokedAt) {
+        await input.auditTrail.append({
+          userId: session.userId,
+          actorUserId: session.userId,
+          eventType: "auth.session_rejected",
+          occurredAt: now,
+          requestId,
+          outcome: "denied",
+          reasonCode: "AUTH_SESSION_REVOKED",
+          resourceType: "session",
+          metadata: {},
+        });
+        return null;
+      }
+      if (session.expiresAt <= now) {
+        await input.auditTrail.append({
+          userId: session.userId,
+          actorUserId: session.userId,
+          eventType: "auth.session_rejected",
+          occurredAt: now,
+          requestId,
+          outcome: "denied",
+          reasonCode: "AUTH_SESSION_EXPIRED",
+          resourceType: "session",
+          metadata: {},
+        });
+        return null;
+      }
+      if (session.accountStatus !== "active") {
+        await input.auditTrail.append({
+          userId: session.userId,
+          actorUserId: session.userId,
+          eventType: "auth.session_rejected",
+          occurredAt: now,
+          requestId,
+          outcome: "denied",
+          reasonCode: "AUTH_ACCOUNT_INACTIVE",
+          resourceType: "session",
+          metadata: {},
+        });
         return null;
       }
 
@@ -106,6 +168,7 @@ export function createAccountSessions(input: {
     },
 
     async endSession({ sessionToken, now, requestId }): Promise<void> {
+      validateRequestId(requestId);
       const tokenHash = hashSessionToken(sessionToken);
       const [revokedSession] = await input.db.update(sessions).set({ revokedAt: now })
         .where(and(eq(sessions.tokenHash, tokenHash), isNull(sessions.revokedAt)))

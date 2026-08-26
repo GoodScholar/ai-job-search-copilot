@@ -8,6 +8,13 @@
       "when": 1788100000000,
       "tag": "0000_identity_audit",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1788100010000,
+      "tag": "0001_allow_unattributed_audit_events",
+      "breakpoints": true
     }
   ]
 }

@@ -5,7 +5,7 @@ type AuditMetadataValue = string | number | boolean;
 export type AuditMetadata = Record<string, AuditMetadataValue>;
 
 export type AuditEvent = {
-  userId: string;
+  userId: string | null;
   actorUserId: string | null;
   eventType: string;
   occurredAt: Date;
@@ -19,7 +19,7 @@ export type AuditEvent = {
 
 export type AuditTrail = {
   append(input: {
-    userId: string;
+    userId?: string;
     actorUserId?: string;
     eventType: string;
     occurredAt?: Date;
