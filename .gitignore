@@ -1,7 +1,5 @@
-.DS_Store
 .worktrees/
 .superpowers/sdd/
-.impeccable/questions/
 node_modules/
 .next/
 out/
@@ -10,3 +8,5 @@ playwright-report/
 test-results/
 .env
 .env.local
+.DS_Store
+.impeccable/questions/
