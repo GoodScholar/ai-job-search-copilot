@@ -53,6 +53,7 @@
 type StartDevSession = (input: {
   subject: string;
   now: Date;
+  requestId: string;
 }) => Promise<{
   account: { userId: string };
   sessionToken: string;
@@ -62,11 +63,13 @@ type StartDevSession = (input: {
 type AuthenticateSession = (input: {
   sessionToken: string;
   now: Date;
+  requestId: string;
 }) => Promise<{ userId: string } | null>;
 
 type EndSession = (input: {
   sessionToken: string;
   now: Date;
+  requestId: string;
 }) => Promise<void>;
 
 type GetWorkbenchHome = (input: {
@@ -130,6 +133,7 @@ Worker 与运行就绪检查通过版本化心跳契约通信。Redis 是操作�
 
 - `POST /v1/auth/dev/sessions`：仅本地环境和正确服务端共享密钥可调用。根据合成 `subject` 创建或复用求职账户并创建会话。
 - `DELETE /v1/auth/sessions/current`：验证 Bearer 会话 Token 后撤销当前会话。
+- `GET /v1/accounts/:userId`：返回当前求职账户的最小资源投影；路径账户与会话账户不一致时统一返回 `404`，用于固化资源所有权边界。
 - `GET /v1/workbench/home`：验证会话，从会话推导 `user_id`，返回当前账户的工作台摘要。
 - `GET /health/live`：只表示 API 进程可响应。
 - `GET /health/ready`：检查 PostgreSQL、Redis、MinIO、Mailpit 与 Worker 心跳，并为每项依赖返回明确状态。
