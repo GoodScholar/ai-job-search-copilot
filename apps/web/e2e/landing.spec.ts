@@ -1,10 +1,10 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
-const briefingButtons = [
-  "查看岗位推荐",
-  "查看确认 2 条候选事实",
-  "查看审核 1 份定制简历",
+const briefingTabs = [
+  "AI 应用工程师（示例）",
+  "确认 2 条候选事实（示例）",
+  "审核 1 份定制简历（示例）",
 ] as const;
 
 test("1440×900 首屏同时展示核心行动信息", async ({ page }, testInfo) => {
@@ -19,18 +19,14 @@ test("1440×900 首屏同时展示核心行动信息", async ({ page }, testInfo
     page.getByRole("main").getByRole("link", { name: "微信登录体验" }).first(),
   ).toBeInViewport();
 
-  for (const label of [
-    "AI 应用工程师（示例）",
-    "确认 2 条候选事实（示例）",
-    "审核 1 份定制简历（示例）",
-  ]) {
-    await expect(page.getByRole("article", { name: label })).toBeInViewport();
+  for (const label of briefingTabs) {
+    await expect(page.getByRole("tab", { name: label })).toBeInViewport();
   }
 
   await expect(page.getByText("由你确认后才继续")).toBeInViewport();
 });
 
-test("390×844 首屏先展示标题与 CTA，再展示行动简报", async ({ page }, testInfo) => {
+test("390×844 首屏保留品牌和主 CTA，并先展示标题与行动简报", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "Mobile Safari", "仅在移动端验收内容顺序");
 
   await page.goto("/");
@@ -41,6 +37,7 @@ test("390×844 首屏先展示标题与 CTA，再展示行动简报", async ({ p
   });
   const cta = page.getByRole("main").getByRole("link", { name: "微信登录体验" }).first();
   const briefingStack = page.getByLabel("今日行动简报");
+  const navigation = page.getByRole("navigation", { name: "主导航" });
 
   await expect(heading).toBeInViewport();
   await expect(cta).toBeInViewport();
@@ -57,6 +54,22 @@ test("390×844 首屏先展示标题与 CTA，再展示行动简报", async ({ p
   expect(briefingBox).not.toBeNull();
   expect(headingBox!.y).toBeLessThan(ctaBox!.y);
   expect(ctaBox!.y).toBeLessThan(briefingBox!.y);
+  await expect(navigation.getByRole("link", { name: "工作方式" })).toBeHidden();
+  await expect(navigation.getByRole("link", { name: "证据与控制" })).toBeHidden();
+  await expect(navigation.getByRole("link", { name: "微信登录体验" })).toBeVisible();
+});
+
+test("移动端三处登录 CTA 均满足 44px 触控高度", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "Mobile Safari", "仅在移动端检查触控尺寸");
+
+  await page.goto("/");
+
+  const heights = await page.getByRole("link", { name: "微信登录体验" }).evaluateAll((links) =>
+    links.map((link) => link.getBoundingClientRect().height),
+  );
+
+  expect(heights).toHaveLength(3);
+  expect(heights.every((height) => height >= 44)).toBe(true);
 });
 
 test("移动端页面没有横向滚动", async ({ page }, testInfo) => {
@@ -80,7 +93,18 @@ test("首页通过自动可访问性检查", async ({ page }) => {
   expect(results.violations).toEqual([]);
 });
 
-test("键盘按顺序到达导航、CTA 与三张简报，并可切换简报", async ({ page }, testInfo) => {
+test("桌面端可直接点击露出的档案纸将其置前", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "Desktop Chrome", "仅在桌面检查错位纸张的鼠标操作");
+
+  await page.goto("/");
+
+  const facts = page.getByRole("tab", { name: briefingTabs[1] });
+  await facts.click();
+
+  await expect(facts).toHaveAttribute("aria-selected", "true");
+});
+
+test("键盘按顺序到达导航、CTA 与三张简报 tab，并可切换简报", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "Desktop Chrome", "iOS WebKit 仿真不支持硬件 Tab 焦点序列");
 
   await page.goto("/");
@@ -91,8 +115,8 @@ test("键盘按顺序到达导航、CTA 与三张简报，并可切换简报", a
   const evidenceLink = navigation.getByRole("link", { name: "证据与控制" });
   const headerCta = navigation.getByRole("link", { name: "微信登录体验" });
   const heroCta = page.getByRole("main").getByRole("link", { name: "微信登录体验" }).first();
-  const [recommendation, facts, resume] = briefingButtons.map((name) =>
-    page.getByRole("button", { name }),
+  const [recommendation, facts, resume] = briefingTabs.map((name) =>
+    page.getByRole("tab", { name }),
   );
 
   await page.keyboard.press("Tab");
@@ -107,19 +131,17 @@ test("键盘按顺序到达导航、CTA 与三张简报，并可切换简报", a
   await expect(heroCta).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(recommendation).toBeFocused();
-  await expect(recommendation).toHaveAttribute("aria-pressed", "true");
+  await expect(recommendation).toHaveAttribute("aria-selected", "true");
 
-  await page.keyboard.press("Tab");
+  await page.keyboard.press("ArrowRight");
   await expect(facts).toBeFocused();
-  await page.keyboard.press("Enter");
-  await expect(facts).toHaveAttribute("aria-pressed", "true");
-  await expect(recommendation).toHaveAttribute("aria-pressed", "false");
+  await expect(facts).toHaveAttribute("aria-selected", "true");
+  await expect(recommendation).toHaveAttribute("aria-selected", "false");
 
-  await page.keyboard.press("Tab");
+  await page.keyboard.press("ArrowRight");
   await expect(resume).toBeFocused();
-  await page.keyboard.press("Space");
-  await expect(resume).toHaveAttribute("aria-pressed", "true");
-  await expect(facts).toHaveAttribute("aria-pressed", "false");
+  await expect(resume).toHaveAttribute("aria-selected", "true");
+  await expect(facts).toHaveAttribute("aria-selected", "false");
 });
 
 test("CTA 进入登录边界并提供本地开发说明", async ({ page }) => {
@@ -135,15 +157,17 @@ test("CTA 进入登录边界并提供本地开发说明", async ({ page }) => {
   await expect(page.getByRole("region", { name: "登录尚未开放" })).toBeVisible();
 });
 
-test("减少动态效果时简报立即完成切换", async ({ page }) => {
+test("减少动态效果时简报立即完成切换并显示活动内容", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/");
 
-  const recommendation = page.getByRole("button", { name: "查看岗位推荐" });
-  const resume = page.getByRole("button", { name: "查看审核 1 份定制简历" });
+  const recommendation = page.getByRole("tab", { name: briefingTabs[0] });
+  const resume = page.getByRole("tab", { name: briefingTabs[2] });
 
-  await resume.click();
+  await resume.focus();
+  await page.keyboard.press("Enter");
 
-  expect(await resume.getAttribute("aria-pressed")).toBe("true");
-  expect(await recommendation.getAttribute("aria-pressed")).toBe("false");
+  await expect(resume).toHaveAttribute("aria-selected", "true");
+  await expect(recommendation).toHaveAttribute("aria-selected", "false");
+  await expect(page.getByRole("tabpanel")).toContainText("Markdown 简历草稿");
 });

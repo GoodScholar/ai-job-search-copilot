@@ -2,20 +2,25 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { BriefingStack } from "./briefing-stack";
 
-it("lets the user bring a briefing to the front", async () => {
+it("uses tabs to bring a briefing forward without exposing inactive details", async () => {
   const user = userEvent.setup();
   render(<BriefingStack />);
 
-  expect(screen.getByText("AI 应用工程师").closest("article")).toHaveAttribute(
-    "data-active",
-    "true",
-  );
+  const recommendation = screen.getByRole("tab", { name: "AI 应用工程师（示例）" });
+  const facts = screen.getByRole("tab", { name: "确认 2 条候选事实（示例）" });
 
-  await user.click(
-    screen.getByRole("button", { name: "查看确认 2 条候选事实" }),
+  expect(screen.getByRole("tablist", { name: "切换行动简报" })).toBeInTheDocument();
+  expect(recommendation).toHaveAttribute("aria-selected", "true");
+  expect(recommendation).toHaveAttribute("aria-controls", "briefing-panel-recommendation");
+  expect(screen.getByRole("tabpanel")).toHaveAttribute(
+    "aria-labelledby",
+    "briefing-tab-recommendation",
   );
+  expect(screen.getAllByRole("tabpanel", { hidden: true })).toHaveLength(3);
 
-  expect(
-    screen.getByText("确认 2 条候选事实").closest("article"),
-  ).toHaveAttribute("data-active", "true");
+  await user.click(facts);
+
+  expect(facts).toHaveAttribute("aria-selected", "true");
+  expect(recommendation).toHaveAttribute("aria-selected", "false");
+  expect(screen.getByRole("tabpanel")).toHaveTextContent("项目包含大模型评测相关经验");
 });

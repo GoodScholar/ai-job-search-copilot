@@ -3,14 +3,14 @@ import { buttonVariants } from "@/components/ui/button";
 
 export function MarketingHeader() {
   return (
-    <header>
-      <div className="container flex min-h-16 items-center justify-between gap-6">
-        <Link href="/">AI Job Search Copilot</Link>
-        <nav aria-label="主导航" className="flex items-center gap-5">
-          <a href="#how-it-works">工作方式</a>
-          <a href="#evidence-and-control">证据与控制</a>
+    <header className="marketing-header">
+      <div className="container marketing-header-inner">
+        <Link className="marketing-brand" href="/">AI Job Search Copilot</Link>
+        <nav aria-label="主导航" className="marketing-nav">
+          <a className="marketing-nav-anchor" href="#how-it-works">工作方式</a>
+          <a className="marketing-nav-anchor" href="#evidence-and-control">证据与控制</a>
           <Link
-            className={buttonVariants({ variant: "default", size: "lg" })}
+            className={`${buttonVariants({ variant: "default", size: "lg" })} marketing-cta`}
             href="/login?returnTo=%2F"
           >
             微信登录体验

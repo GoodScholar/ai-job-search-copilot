@@ -1,13 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 export type BriefingId = "recommendation" | "facts" | "resume";
 
 const briefings = [
-  { id: "recommendation", label: "AI 应用工程师", action: "查看岗位推荐" },
-  { id: "facts", label: "确认 2 条候选事实", action: "查看确认 2 条候选事实" },
-  { id: "resume", label: "审核 1 份定制简历", action: "查看审核 1 份定制简历" },
+  { id: "recommendation", label: "AI 应用工程师", state: "匹配 91" },
+  { id: "facts", label: "确认 2 条候选事实", state: "待你确认" },
+  { id: "resume", label: "审核 1 份定制简历", state: "待你审核" },
 ] as const;
 
 type BriefingStackProps = {
@@ -18,76 +18,128 @@ export function BriefingStack({
   initialId = "recommendation",
 }: BriefingStackProps) {
   const [activeId, setActiveId] = useState<BriefingId>(initialId);
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const activeIndex = briefings.findIndex(({ id }) => id === activeId);
+
+  function selectBriefing(id: BriefingId) {
+    setActiveId(id);
+  }
+
+  function handleTabKeyDown(
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    index: number,
+  ) {
+    const nextIndexByKey: Record<string, number> = {
+      ArrowRight: (index + 1) % briefings.length,
+      ArrowDown: (index + 1) % briefings.length,
+      ArrowLeft: (index - 1 + briefings.length) % briefings.length,
+      ArrowUp: (index - 1 + briefings.length) % briefings.length,
+      Home: 0,
+      End: briefings.length - 1,
+    };
+    const nextIndex = nextIndexByKey[event.key];
+
+    if (nextIndex === undefined) {
+      return;
+    }
+
+    event.preventDefault();
+    const nextBriefing = briefings[nextIndex];
+    selectBriefing(nextBriefing.id);
+    tabRefs.current[nextIndex]?.focus();
+  }
 
   return (
     <div className="briefing-stack" aria-label="今日行动简报">
-      <div className="briefing-switcher" aria-label="切换行动简报">
-        {briefings.map((briefing) => (
-          <button
-            aria-pressed={briefing.id === activeId}
-            className="briefing-switcher-button"
-            key={briefing.id}
-            onClick={() => setActiveId(briefing.id)}
-            type="button"
-          >
-            {briefing.action}
-          </button>
-        ))}
-      </div>
-
-      <div className="briefing-cards">
+      <div aria-label="切换行动简报" className="briefing-cards" role="tablist">
         {briefings.map((briefing, index) => {
           const position = (index - activeIndex + briefings.length) % briefings.length;
           const isActive = briefing.id === activeId;
 
           return (
-            <article
+            <button
+              aria-controls={`briefing-panel-${briefing.id}`}
               aria-label={`${briefing.label}（示例）`}
+              aria-selected={isActive}
               className="briefing-card"
               data-active={isActive}
               data-position={position}
+              id={`briefing-tab-${briefing.id}`}
               key={briefing.id}
+              onClick={() => selectBriefing(briefing.id)}
+              onKeyDown={(event) => handleTabKeyDown(event, index)}
+              ref={(node) => {
+                tabRefs.current[index] = node;
+              }}
+              role="tab"
+              tabIndex={isActive ? 0 : -1}
+              type="button"
             >
-              <div className="briefing-card-heading">
-                <p>
-                  {String(index + 1).padStart(2, "0")} / {isActive ? "当前优先" : "待处理"}
-                </p>
-                <span>示例</span>
-              </div>
-              {briefing.id === "recommendation" ? <RecommendationBriefing /> : null}
-              {briefing.id === "facts" ? <FactsBriefing /> : null}
-              {briefing.id === "resume" ? <ResumeBriefing /> : null}
-            </article>
+              <span aria-hidden="true" className="briefing-card-content">
+                <span className="briefing-card-heading">
+                  <span>
+                    {String(index + 1).padStart(2, "0")} / {isActive ? "当前优先" : "待处理"}
+                  </span>
+                  <span>示例</span>
+                </span>
+                <span className="briefing-card-glance">
+                  <span>{briefing.label}</span>
+                  <strong>{briefing.state}</strong>
+                </span>
+                <BriefingContent id={briefing.id} />
+              </span>
+            </button>
           );
         })}
       </div>
+
+      {briefings.map((briefing) => (
+        <section
+          aria-hidden={briefing.id !== activeId}
+          aria-labelledby={`briefing-tab-${briefing.id}`}
+          className="sr-only"
+          id={`briefing-panel-${briefing.id}`}
+          key={briefing.id}
+          role="tabpanel"
+        >
+          <BriefingContent id={briefing.id} />
+        </section>
+      ))}
     </div>
   );
+}
+
+function BriefingContent({ id }: { id: BriefingId }) {
+  if (id === "recommendation") {
+    return <RecommendationBriefing />;
+  }
+
+  if (id === "facts") {
+    return <FactsBriefing />;
+  }
+
+  return <ResumeBriefing />;
 }
 
 function RecommendationBriefing() {
   return (
     <>
-      <div className="briefing-card-title">
-        <h2>AI 应用工程师</h2>
-        <p>
+      <span className="briefing-card-title">
+        <span>AI 应用工程师</span>
+        <span>
           匹配 <strong>91</strong>
-        </p>
-      </div>
-      <p className="briefing-meta">极光科技 · 北京 · 25–40K · 发布 2 小时</p>
-      <div className="briefing-evidence">
-        <h3>强证据</h3>
-        <ul>
-          <li>React 架构</li>
-          <li>Agent 工作流</li>
-        </ul>
-      </div>
-      <div className="briefing-gap">
-        <h3>主要缺口</h3>
-        <p>大模型评测经验</p>
-      </div>
-      <p className="briefing-footnote">推荐理由：你的项目经历与岗位要求逐条对照（示例）</p>
+        </span>
+      </span>
+      <span className="briefing-meta">极光科技 · 北京 · 25–40K · 发布 2 小时</span>
+      <span className="briefing-evidence">
+        <strong>强证据</strong>
+        <span>React 架构 · Agent 工作流</span>
+      </span>
+      <span className="briefing-gap">
+        <strong>主要缺口</strong>
+        <span>大模型评测经验</span>
+      </span>
+      <span className="briefing-footnote">推荐理由：你的项目经历与岗位要求逐条对照（示例）</span>
     </>
   );
 }
@@ -95,19 +147,22 @@ function RecommendationBriefing() {
 function FactsBriefing() {
   return (
     <>
-      <h2>确认 2 条候选事实</h2>
-      <p className="briefing-meta">这些事实将在你确认后用于后续材料准备（示例）</p>
-      <ol className="briefing-checklist">
-        <li>
+      <span className="briefing-card-title">确认 2 条候选事实</span>
+      <span className="briefing-meta">这些事实将在你确认后用于后续材料准备（示例）</span>
+      <span className="briefing-checklist">
+        <span>
           <strong>候选事实 1</strong>
           <span>岗位使用 React 18 + RSC</span>
-        </li>
-        <li>
+        </span>
+        <span>
           <strong>候选事实 2</strong>
           <span>项目包含大模型评测相关经验</span>
-        </li>
-      </ol>
-      <p className="briefing-footnote">来源待你核验；确认不等于自动执行（示例）</p>
+        </span>
+      </span>
+      <span className="briefing-candidate-note">
+        待确认，尚未计入当前 91 分或正式画像证据（示例）
+      </span>
+      <span className="briefing-footnote">来源待你核验；确认不等于自动执行（示例）</span>
     </>
   );
 }
@@ -115,14 +170,14 @@ function FactsBriefing() {
 function ResumeBriefing() {
   return (
     <>
-      <h2>审核 1 份定制简历</h2>
-      <p className="briefing-meta">针对该岗位的 Markdown 简历草稿（示例）</p>
-      <div className="briefing-markdown" aria-label="Markdown 简历审阅示例">
-        <p># AI 应用工程师</p>
-        <p>## React 架构与 Agent 工作流</p>
-        <p>- 补充：大模型评测的影响与结果</p>
-      </div>
-      <p className="briefing-footnote">先审核，再决定是否继续（示例）</p>
+      <span className="briefing-card-title">审核 1 份定制简历</span>
+      <span className="briefing-meta">针对该岗位的 Markdown 简历草稿（示例）</span>
+      <span aria-label="Markdown 简历审阅示例" className="briefing-markdown">
+        <span># AI 应用工程师</span>
+        <span>## React 架构与 Agent 工作流</span>
+        <span>- 补充：大模型评测的影响与结果</span>
+      </span>
+      <span className="briefing-footnote">先审核，再决定是否继续（示例）</span>
     </>
   );
 }

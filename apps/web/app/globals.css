@@ -72,6 +72,48 @@ body {
   padding-inline: clamp(1.25rem, 4vw, 4rem);
 }
 
+.marketing-header {
+  border-bottom: 1px solid var(--rule);
+}
+
+.marketing-header-inner,
+.marketing-nav {
+  align-items: center;
+  display: flex;
+}
+
+.marketing-header-inner {
+  gap: 1.5rem;
+  justify-content: space-between;
+  min-height: 4.5rem;
+}
+
+.marketing-brand {
+  color: var(--ink);
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  text-decoration: none;
+}
+
+.marketing-nav {
+  gap: 1.25rem;
+}
+
+.marketing-nav-anchor {
+  color: var(--muted);
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+
+.marketing-nav-anchor:hover {
+  color: var(--emerald-strong);
+}
+
+.marketing-cta {
+  min-height: 2.75rem;
+  padding-inline: 1rem;
+}
+
 :focus-visible {
   outline: 2px solid var(--emerald);
   outline-offset: 2px;
@@ -102,10 +144,15 @@ body {
   margin: 0;
 }
 
+.marketing-section .section-kicker,
+.final-cta .section-kicker {
+  display: none;
+}
+
 .section-intro h2,
 .final-cta h2 {
   font-size: clamp(2rem, 4vw, 3.5rem);
-  letter-spacing: -0.06em;
+  letter-spacing: -0.035em;
   line-height: 1.1;
   margin: 0.7rem 0 1rem;
 }
@@ -308,11 +355,11 @@ body {
 }
 
 .hero-intro h1 {
-  max-width: 11ch;
+  max-width: 12ch;
   margin: 0.7rem 0 1rem;
   font-size: clamp(2.8rem, 3.5vw, 4.2rem);
   font-weight: 750;
-  letter-spacing: -0.07em;
+  letter-spacing: -0.04em;
   line-height: 1.04;
 }
 
@@ -328,71 +375,77 @@ body {
   min-width: 0;
 }
 
-.briefing-switcher {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.4rem;
-  margin-bottom: 1rem;
-}
-
-.briefing-switcher-button {
-  min-height: 2.75rem;
-  border: 1px solid var(--rule);
-  border-radius: 0.4rem;
-  background: var(--surface);
-  color: var(--ink);
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.75rem;
-  line-height: 1.35;
-  padding: 0.45rem;
-  text-align: left;
-}
-
-.briefing-switcher-button[aria-pressed="true"] {
-  border-color: var(--emerald);
-  box-shadow: inset 3px 0 var(--emerald);
-  color: var(--emerald-strong);
-}
-
 .briefing-cards {
-  min-height: 31rem;
+  min-height: 30.5rem;
   position: relative;
 }
 
 .briefing-card {
-  display: flex;
-  flex-direction: column;
-  min-height: 29rem;
-  overflow: hidden;
-  padding: clamp(1.25rem, 3vw, 2.2rem);
-  position: absolute;
-  inset: 0 6% 0 0;
+  appearance: none;
   border: 1px solid var(--rule);
   background: var(--surface);
   box-shadow: var(--shadow-paper);
-  opacity: 0.48;
-  transform: translate(16%, 2.8%) rotate(2deg) scale(0.94);
+  color: var(--ink);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  font: inherit;
+  min-height: 28rem;
+  overflow: hidden;
+  padding: clamp(1.25rem, 3vw, 2.2rem);
+  position: absolute;
+  text-align: left;
+  inset: 0 auto auto 0;
+  opacity: 1;
+  transform: translate(31%, 3.4%) rotate(2deg) scale(0.91);
   transform-origin: center bottom;
   transition: transform 260ms ease, opacity 260ms ease;
+  width: 72%;
 }
 
 .briefing-card[data-position="1"] {
-  opacity: 0.68;
-  transform: translate(10%, 1.2%) rotate(-1.5deg) scale(0.97);
-  z-index: 1;
+  inset: 1.1rem auto auto 64%;
+  min-height: 14.5rem;
+  opacity: 1;
+  padding: 1.25rem;
+  transform: rotate(-1.5deg);
+  width: 36%;
+  z-index: 2;
 }
 
 .briefing-card[data-position="2"] {
-  opacity: 0.8;
-  transform: translate(5%, 0.4%) rotate(1deg) scale(0.98);
-  z-index: 2;
+  inset: 16rem auto auto 68%;
+  min-height: 12rem;
+  opacity: 1;
+  padding: 1.15rem;
+  transform: rotate(1deg);
+  width: 32%;
+  z-index: 1;
 }
 
 .briefing-card[data-active="true"] {
   opacity: 1;
-  transform: translate(-2%) rotate(-1deg);
+  transform: translate(-3%) rotate(-1deg);
   z-index: 3;
+}
+
+.briefing-card:focus-visible {
+  z-index: 4;
+}
+
+.briefing-card-content,
+.briefing-card-glance,
+.briefing-card-title,
+.briefing-evidence,
+.briefing-gap,
+.briefing-checklist,
+.briefing-markdown {
+  display: flex;
+  flex-direction: column;
+}
+
+.briefing-card-content {
+  height: 100%;
 }
 
 .briefing-card-heading,
@@ -408,23 +461,60 @@ body {
   padding-bottom: 0.85rem;
 }
 
+.briefing-card-glance {
+  gap: 0.3rem;
+  margin-top: 1.35rem;
+}
+
+.briefing-card-glance > span {
+  color: var(--ink);
+  font-size: clamp(1.35rem, 2.4vw, 2.15rem);
+  font-weight: 750;
+  letter-spacing: -0.035em;
+  line-height: 1.15;
+}
+
+.briefing-card-glance strong {
+  color: var(--emerald);
+  font-size: 0.82rem;
+}
+
+.briefing-card:not([data-active="true"]) .briefing-card-glance {
+  margin-top: 1rem;
+}
+
+.briefing-card:not([data-active="true"]) .briefing-card-title,
+.briefing-card:not([data-active="true"]) .briefing-meta,
+.briefing-card:not([data-active="true"]) .briefing-evidence,
+.briefing-card:not([data-active="true"]) .briefing-gap,
+.briefing-card:not([data-active="true"]) .briefing-checklist,
+.briefing-card:not([data-active="true"]) .briefing-candidate-note,
+.briefing-card:not([data-active="true"]) .briefing-markdown,
+.briefing-card:not([data-active="true"]) .briefing-footnote {
+  visibility: hidden;
+}
+
 .briefing-card-heading span {
   color: var(--muted);
   font-weight: 500;
 }
 
-.briefing-card h2 {
-  margin: 1.35rem 0 0.7rem;
-  font-size: clamp(1.65rem, 3vw, 2.5rem);
-  letter-spacing: -0.055em;
+.briefing-card-title {
+  margin-top: 1.35rem;
+  font-size: clamp(1.45rem, 2.3vw, 2rem);
+  font-weight: 750;
+  letter-spacing: -0.035em;
   line-height: 1.15;
 }
 
-.briefing-card-title p {
-  margin: 1.2rem 0 0;
-  color: var(--emerald);
+.briefing-card-title > span:last-child {
+  align-items: end;
+  display: flex;
   font-size: 0.8rem;
-  white-space: nowrap;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--emerald);
+  margin-top: 0.65rem;
 }
 
 .briefing-card-title strong {
@@ -447,17 +537,17 @@ body {
   padding-top: 1rem;
 }
 
-.briefing-evidence h3,
-.briefing-gap h3 {
-  margin: 0;
+.briefing-evidence,
+.briefing-gap {
+  gap: 0.5rem;
   font-size: 0.92rem;
 }
 
-.briefing-evidence h3 {
+.briefing-evidence strong,
+.briefing-evidence > span {
   color: var(--emerald);
 }
 
-.briefing-evidence ul,
 .briefing-checklist {
   display: grid;
   gap: 0.65rem;
@@ -466,31 +556,29 @@ body {
   padding: 0;
 }
 
-.briefing-evidence li::before {
-  color: var(--emerald);
-  content: "✓";
-  margin-right: 0.6rem;
-}
-
-.briefing-gap h3,
-.briefing-gap p {
+.briefing-gap strong,
+.briefing-gap > span,
+.briefing-candidate-note {
   color: var(--amber-ink);
 }
 
-.briefing-gap p {
-  margin: 0.55rem 0 0;
-}
-
-.briefing-checklist li {
+.briefing-checklist > span {
   border-top: 1px solid var(--rule);
   display: grid;
   gap: 0.3rem;
   padding-top: 0.75rem;
 }
 
-.briefing-checklist span {
+.briefing-checklist > span > span {
   color: var(--muted);
   font-size: 0.82rem;
+}
+
+.briefing-candidate-note {
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.5;
+  margin-top: 1rem;
 }
 
 .briefing-markdown {
@@ -504,6 +592,10 @@ body {
   font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
   font-size: 0.78rem;
   line-height: 1.55;
+}
+
+.briefing-markdown span {
+  margin: 0.2rem 0;
 }
 
 .briefing-footnote {
@@ -532,6 +624,15 @@ body {
   margin: 0;
 }
 
+.copilot-annotation::before {
+  color: var(--amber);
+  content: "←";
+  display: block;
+  font-size: 1.2rem;
+  line-height: 1;
+  margin-bottom: 0.35rem;
+}
+
 .copilot-status dl {
   display: grid;
   gap: 1rem;
@@ -555,7 +656,7 @@ body {
   color: var(--emerald);
   font-size: 2rem;
   font-weight: 750;
-  letter-spacing: -0.06em;
+  letter-spacing: -0.035em;
   line-height: 1;
   margin: 0;
 }
@@ -568,11 +669,11 @@ body {
   }
 
   .hero-intro {
-    grid-column: span 4;
+    grid-column: span 5;
   }
 
   .briefing-stack {
-    grid-column: span 6;
+    grid-column: span 5;
   }
 
   .copilot-status {
@@ -586,12 +687,16 @@ body {
 }
 
 @media (max-width: 640px) {
-  .hero-intro h1 {
-    max-width: 10ch;
+  .marketing-header-inner {
+    min-height: 4.5rem;
   }
 
-  .briefing-switcher {
-    grid-template-columns: 1fr;
+  .marketing-nav-anchor {
+    display: none;
+  }
+
+  .hero-intro h1 {
+    max-width: 9ch;
   }
 
   .briefing-cards {
@@ -600,8 +705,31 @@ body {
   }
 
   .briefing-card {
+    inset: 0;
+    width: auto;
     right: 0;
     min-height: 31rem;
+    transform: translate(16%, 2.8%) rotate(2deg) scale(0.94);
+  }
+
+  .briefing-card[data-position="1"] {
+    inset: 0;
+    min-height: 31rem;
+    padding: clamp(1.25rem, 3vw, 2.2rem);
+    transform: translate(10%, 1.2%) rotate(-1.5deg) scale(0.97);
+    width: auto;
+  }
+
+  .briefing-card[data-position="2"] {
+    inset: 0;
+    min-height: 31rem;
+    padding: clamp(1.25rem, 3vw, 2.2rem);
+    transform: translate(18%, 2.8%) rotate(1deg) scale(0.94);
+    width: auto;
+  }
+
+  .briefing-card:not([data-active="true"]) .briefing-card-glance {
+    margin-top: 1rem;
   }
 
   .copilot-status {

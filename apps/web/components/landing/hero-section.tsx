@@ -10,7 +10,7 @@ export function HeroSection() {
         <h1 id="hero-title">今天，只处理最值得投的 3 件事</h1>
         <p className="hero-summary">推荐、确认和材料准备，按价值排好顺序。</p>
         <Link
-          className={buttonVariants({ variant: "default", size: "lg" })}
+          className={`${buttonVariants({ variant: "default", size: "lg" })} marketing-cta`}
           href="/login?returnTo=%2F"
         >
           微信登录体验

@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 2,
+  "name": "AI Job Search Copilot",
+  "description": "面向主动求职者的晨间行动内参。",
+  "extensions": {
+    "colorMeta": {
+      "ground": { "role": "neutral", "displayName": "档案底纸", "canonical": "#f3f5f2", "tonalRamp": ["oklch(18% 0.008 150)", "oklch(29% 0.008 150)", "oklch(40% 0.008 150)", "oklch(51% 0.008 150)", "oklch(62% 0.008 150)", "oklch(73% 0.008 150)", "oklch(84% 0.008 150)", "oklch(95% 0.008 150)"] },
+      "emerald": { "role": "primary", "displayName": "证据深绿", "canonical": "#246a49", "tonalRamp": ["oklch(18% 0.07 151)", "oklch(28% 0.09 151)", "oklch(38% 0.11 151)", "oklch(48% 0.12 151)", "oklch(58% 0.12 151)", "oklch(68% 0.10 151)", "oklch(78% 0.08 151)", "oklch(88% 0.05 151)"] },
+      "amber": { "role": "secondary", "displayName": "审批琥珀", "canonical": "#c98532", "tonalRamp": ["oklch(18% 0.06 70)", "oklch(28% 0.08 70)", "oklch(38% 0.10 70)", "oklch(48% 0.12 70)", "oklch(58% 0.13 70)", "oklch(68% 0.12 70)", "oklch(78% 0.10 70)", "oklch(88% 0.06 70)"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "晨间标题", "purpose": "首屏唯一承诺。" },
+      "body": { "displayName": "档案正文", "purpose": "说明、证据和边界。" },
+      "label": { "displayName": "索引标签", "purpose": "示例、编号和状态。" }
+    },
+    "shadows": [
+      { "name": "paper", "value": "0 24px 70px rgb(24 32 28 / 0.12)", "purpose": "仅用于优先行动纸。" }
+    ],
+    "motion": [
+      { "name": "briefing-switch", "value": "transform 260ms ease, opacity 260ms ease", "purpose": "三张纸在离散优先级间切换；减少动态效果时立即完成。" }
+    ],
+    "breakpoints": [
+      { "name": "mobile", "value": "640px" },
+      { "name": "desktop", "value": "1024px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Login CTA",
+      "kind": "button",
+      "refersTo": "login-cta",
+      "description": "进入可替换登录边界的主行动。",
+      "html": "<a class=\"ds-login-cta\" href=\"/login?returnTo=%2F\">微信登录体验</a>",
+      "css": ".ds-login-cta{align-items:center;background:#246a49;border-radius:.625rem;color:#fafbf8;display:inline-flex;font:700 14px PingFang SC,Microsoft YaHei,sans-serif;justify-content:center;min-height:44px;padding:0 16px;text-decoration:none;transition:background .2s ease}.ds-login-cta:hover{background:#18553a}.ds-login-cta:focus-visible{outline:2px solid #246a49;outline-offset:3px}"
+    },
+    {
+      "name": "Marketing Navigation",
+      "kind": "nav",
+      "refersTo": "marketing-header",
+      "description": "单行品牌、页内锚点和主行动。",
+      "html": "<nav class=\"ds-nav\" aria-label=\"主导航\"><a class=\"ds-brand\" href=\"/\">AI Job Search Copilot</a><a class=\"ds-anchor\" href=\"#how-it-works\">工作方式</a><a class=\"ds-cta\" href=\"/login?returnTo=%2F\">微信登录体验</a></nav>",
+      "css": ".ds-nav{align-items:center;border-bottom:1px solid #d5ddd6;display:flex;gap:20px;padding:14px 20px}.ds-brand{color:#18201c;font:750 14px PingFang SC,Microsoft YaHei,sans-serif;margin-right:auto;text-decoration:none}.ds-anchor{color:#657069;font:14px PingFang SC,Microsoft YaHei,sans-serif;text-decoration:none}.ds-anchor:hover{color:#18553a}.ds-cta{align-items:center;background:#246a49;border-radius:.625rem;color:#fafbf8;display:inline-flex;font:700 13px PingFang SC,Microsoft YaHei,sans-serif;min-height:44px;padding:0 16px;text-decoration:none}.ds-cta:focus-visible{outline:2px solid #246a49;outline-offset:3px}"
+    },
+    {
+      "name": "Action Briefing Tab",
+      "kind": "custom",
+      "refersTo": "briefing-paper",
+      "description": "可点击、可聚焦的档案纸 tab。",
+      "html": "<button class=\"ds-briefing\" role=\"tab\" aria-selected=\"true\"><span>01 / 当前优先</span><strong>AI 应用工程师</strong><em>匹配 91</em></button>",
+      "css": ".ds-briefing{background:#fafbf8;border:1px solid #d5ddd6;box-shadow:0 24px 70px rgb(24 32 28 / .12);color:#18201c;display:grid;font:14px PingFang SC,Microsoft YaHei,sans-serif;gap:14px;min-height:250px;padding:24px;text-align:left}.ds-briefing span{color:#246a49;font-size:12px;font-weight:700;letter-spacing:.08em}.ds-briefing strong{font-size:28px;letter-spacing:-.035em}.ds-briefing em{color:#246a49;font-size:14px;font-style:normal;font-weight:700}.ds-briefing:hover{border-color:#246a49}.ds-briefing:focus-visible{outline:2px solid #246a49;outline-offset:3px}"
+    },
+    {
+      "name": "Approval Status Strip",
+      "kind": "custom",
+      "refersTo": "status-strip",
+      "description": "带琥珀审批注记的离散运行状态。",
+      "html": "<aside class=\"ds-status\"><strong>← 由你确认后才继续</strong><span>正在检查 12 家目标公司</span><b>12</b><span>外部行动 0</span><b>0</b></aside>",
+      "css": ".ds-status{border-left:1px solid #d5ddd6;display:grid;gap:10px;padding-left:22px;color:#18201c;font:13px PingFang SC,Microsoft YaHei,sans-serif}.ds-status strong{color:#9f5f14;line-height:1.4}.ds-status span{border-bottom:1px solid #d5ddd6;color:#657069;padding-bottom:8px}.ds-status b{color:#246a49;font-size:28px;letter-spacing:-.035em}"
+    },
+    {
+      "name": "Evidence Chain",
+      "kind": "custom",
+      "refersTo": "evidence-chain",
+      "description": "按来源到推荐解释排序的证据索引。",
+      "html": "<ol class=\"ds-evidence\"><li><b>1</b><span><strong>简历来源</strong><em>项目经历条目（示例）</em></span></li><li><b>2</b><span><strong>已验证画像事实</strong><em>主导 React 应用架构拆分（示例）</em></span></li></ol>",
+      "css": ".ds-evidence{border-left:1px solid #246a49;display:grid;gap:20px;list-style:none;margin:0;padding:0 0 0 20px}.ds-evidence li{display:flex;gap:12px;position:relative}.ds-evidence b{align-items:center;background:#246a49;border-radius:50%;color:#fafbf8;display:flex;font:700 11px PingFang SC,Microsoft YaHei,sans-serif;height:20px;justify-content:center;margin-left:-31px;width:20px}.ds-evidence span{display:grid;gap:5px}.ds-evidence strong{color:#18201c;font:700 14px PingFang SC,Microsoft YaHei,sans-serif}.ds-evidence em{color:#657069;font:13px PingFang SC,Microsoft YaHei,sans-serif;font-style:normal}"
+    }
+  ],
+  "narrative": {
+    "northStar": "晨间求职内参",
+    "overview": "页面像一份被优先级整理过的数字档案，而不是聊天入口或后台仪表盘。冷白底和近黑文字保持安静，深祖母绿只用于证据、可继续的行动和可见焦点；琥珀色只标记需要用户确认的边界。 首屏的主角是可切换的三张错位行动简报：一张完整的当前优先纸，配两张尺度更小、仍可读出类型和状态的待处理纸。页面随后用规则线、证据索引和窄状态条延续同一份内参的阅读节奏。",
+    "keyCharacteristics": ["今日三件行动先于机制说明。", "证据为深绿，审批为琥珀，状态不只依靠颜色。", "档案纸是可操作的 tabs，不是静态装饰。"],
+    "rules": [{ "name": "Evidence Before Accent Rule", "body": "深绿和琥珀必须同时配合文字状态或标签出现；它们不单独传达证据或审批含义。", "section": "colors" }, { "name": "Paper-Only Elevation Rule", "body": "阴影用于优先级纸张，不用于下半页的说明段或普通控件。", "section": "elevation" }],
+    "dos": ["Do 先交代今天的行动，再解释 Copilot 如何工作。", "Do 在候选事实确认前明确其未计入匹配分或正式画像证据。", "Do 用键盘可达的真实控件承载纸张切换，并在移动端保持 44px 触控高度。"],
+    "donts": ["Don't 把首页做成聊天窗口、后台仪表盘或三张等权功能卡。", "Don't 使用远程字体、虚构 Logo、客户背书、成功率或自动投递承诺。", "Don't 用颜色、厚侧边条、连续进度条或无限轮播单独表达状态。"]
+  }
+}
