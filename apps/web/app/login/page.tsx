@@ -21,10 +21,14 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         <h1 className="mt-3 text-[clamp(2.25rem,5vw,4rem)] font-bold tracking-[-0.06em] leading-[1.05]">
           登录尚未开放
         </h1>
-        <p className="mt-5 text-[var(--muted)] leading-7">正式邀请制 Beta 将使用微信登录</p>
-        <p className="mt-2 text-[var(--muted)] leading-7">
-          本实施批次只建立登录边界，尚未创建用户会话
-        </p>
+        {authMode === "dev" ? (
+          <>
+            <p className="mt-5 text-[var(--muted)] leading-7">正式邀请制 Beta 将使用微信登录</p>
+            <p className="mt-2 text-[var(--muted)] leading-7">
+              本实施批次只建立登录边界，尚未创建用户会话
+            </p>
+          </>
+        ) : null}
         <dl className="mt-8 border-t border-[var(--rule)]">
           <div className="grid gap-1 border-b border-[var(--rule)] py-4 sm:grid-cols-[9rem_1fr] sm:gap-4">
             <dt className="text-sm font-bold">身份适配器</dt>

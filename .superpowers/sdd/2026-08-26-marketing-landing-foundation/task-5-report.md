@@ -81,3 +81,52 @@ getPublicAuthMode({ NEXT_PUBLIC_AUTH_MODE: process.env.NEXT_PUBLIC_AUTH_MODE })
 ```
 
 这消除了类型错误，并限制了页面可读取的环境值范围。修复后已重跑上述测试、lint 和生产构建。
+
+## 审查修复 Round 1：WeChat 模式文案隔离
+
+审查发现 WeChat 模式仍会无条件显示两段仅属于 Dev 的说明：“正式邀请制 Beta 将使用微信登录”与“本实施批次只建立登录边界，尚未创建用户会话”。本轮不处理已登记 deferred 的 `aria-labelledby` Minor。
+
+### RED
+
+先在 WeChat 模式测试中加入上述两段文本的否定断言，运行：
+
+```bash
+pnpm --filter web test -- lib/auth-mode.test.ts app/login/page.test.tsx
+```
+
+关键输出：
+
+```text
+FAIL  app/login/page.test.tsx > shows only the pending WeChat adapter and rejects external return paths
+expected document not to contain element, found <p>
+  正式邀请制 Beta 将使用微信登录
+</p> instead
+```
+
+### GREEN
+
+将这两段说明限制到 `authMode === "dev"` 分支。WeChat 分支保留“微信 OAuth Adapter 待服务端接入”、安全回跳路径及原有的无按钮、无链接边界。
+
+运行同一覆盖测试：
+
+```text
+Test Files  5 passed (5)
+Tests  9 passed (9)
+```
+
+随后验证：
+
+```bash
+pnpm lint:web
+pnpm build:web
+git diff --check
+```
+
+关键输出：
+
+```text
+$ eslint
+✓ Compiled successfully
+Finished TypeScript
+└ ƒ /login
+```

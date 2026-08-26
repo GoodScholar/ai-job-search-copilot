@@ -33,6 +33,10 @@ it("shows only the pending WeChat adapter and rejects external return paths", as
   expect(screen.getByText("微信 OAuth Adapter 待服务端接入")).toBeInTheDocument();
   expect(screen.getByText("/")).toBeInTheDocument();
   expect(screen.queryByText("本地开发登录")).not.toBeInTheDocument();
+  expect(screen.queryByText("正式邀请制 Beta 将使用微信登录")).not.toBeInTheDocument();
+  expect(
+    screen.queryByText("本实施批次只建立登录边界，尚未创建用户会话"),
+  ).not.toBeInTheDocument();
   expect(screen.queryByRole("button")).not.toBeInTheDocument();
   expect(screen.queryByRole("link")).not.toBeInTheDocument();
 });
