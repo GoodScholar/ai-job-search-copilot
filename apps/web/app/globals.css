@@ -75,6 +75,325 @@ body {
   box-shadow: 0 0 0 4px var(--ground);
 }
 
+.hero-section {
+  display: grid;
+  gap: 2rem;
+  padding-block: clamp(3rem, 7vw, 7.5rem);
+}
+
+.hero-intro {
+  align-self: start;
+}
+
+.hero-eyebrow,
+.briefing-card-heading p,
+.briefing-card-heading span,
+.copilot-status-title {
+  margin: 0;
+  color: var(--emerald);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.hero-intro h1 {
+  max-width: 11ch;
+  margin: 0.7rem 0 1rem;
+  font-size: clamp(2.8rem, 3.5vw, 4.2rem);
+  font-weight: 750;
+  letter-spacing: -0.07em;
+  line-height: 1.04;
+}
+
+.hero-summary {
+  max-width: 22rem;
+  margin: 0 0 1.75rem;
+  color: var(--muted);
+  font-size: 1.1rem;
+  line-height: 1.65;
+}
+
+.briefing-stack {
+  min-width: 0;
+}
+
+.briefing-switcher {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}
+
+.briefing-switcher-button {
+  min-height: 2.75rem;
+  border: 1px solid var(--rule);
+  border-radius: 0.4rem;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  padding: 0.45rem;
+  text-align: left;
+}
+
+.briefing-switcher-button[aria-pressed="true"] {
+  border-color: var(--emerald);
+  box-shadow: inset 3px 0 var(--emerald);
+  color: var(--emerald-strong);
+}
+
+.briefing-cards {
+  min-height: 31rem;
+  position: relative;
+}
+
+.briefing-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 29rem;
+  overflow: hidden;
+  padding: clamp(1.25rem, 3vw, 2.2rem);
+  position: absolute;
+  inset: 0 6% 0 0;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  box-shadow: var(--shadow-paper);
+  opacity: 0.48;
+  transform: translate(16%, 2.8%) rotate(2deg) scale(0.94);
+  transform-origin: center bottom;
+  transition: transform 260ms ease, opacity 260ms ease;
+}
+
+.briefing-card[data-position="1"] {
+  opacity: 0.68;
+  transform: translate(10%, 1.2%) rotate(-1.5deg) scale(0.97);
+  z-index: 1;
+}
+
+.briefing-card[data-position="2"] {
+  opacity: 0.8;
+  transform: translate(5%, 0.4%) rotate(1deg) scale(0.98);
+  z-index: 2;
+}
+
+.briefing-card[data-active="true"] {
+  opacity: 1;
+  transform: translate(-2%) rotate(-1deg);
+  z-index: 3;
+}
+
+.briefing-card-heading,
+.briefing-card-title {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.briefing-card-heading {
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 0.85rem;
+}
+
+.briefing-card-heading span {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.briefing-card h2 {
+  margin: 1.35rem 0 0.7rem;
+  font-size: clamp(1.65rem, 3vw, 2.5rem);
+  letter-spacing: -0.055em;
+  line-height: 1.15;
+}
+
+.briefing-card-title p {
+  margin: 1.2rem 0 0;
+  color: var(--emerald);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.briefing-card-title strong {
+  display: block;
+  font-size: 2.6rem;
+  line-height: 0.9;
+}
+
+.briefing-meta {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
+.briefing-evidence,
+.briefing-gap {
+  border-top: 1px solid var(--rule);
+  margin-top: 1.15rem;
+  padding-top: 1rem;
+}
+
+.briefing-evidence h3,
+.briefing-gap h3 {
+  margin: 0;
+  font-size: 0.92rem;
+}
+
+.briefing-evidence h3 {
+  color: var(--emerald);
+}
+
+.briefing-evidence ul,
+.briefing-checklist {
+  display: grid;
+  gap: 0.65rem;
+  list-style: none;
+  margin: 0.8rem 0 0;
+  padding: 0;
+}
+
+.briefing-evidence li::before {
+  color: var(--emerald);
+  content: "✓";
+  margin-right: 0.6rem;
+}
+
+.briefing-gap h3,
+.briefing-gap p {
+  color: var(--amber);
+}
+
+.briefing-gap p {
+  margin: 0.55rem 0 0;
+}
+
+.briefing-checklist li {
+  border-top: 1px solid var(--rule);
+  display: grid;
+  gap: 0.3rem;
+  padding-top: 0.75rem;
+}
+
+.briefing-checklist span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.briefing-markdown {
+  border-block: 1px solid var(--rule);
+  margin-top: 1rem;
+  padding: 0.85rem 0;
+}
+
+.briefing-markdown p {
+  margin: 0.35rem 0;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.briefing-footnote {
+  border-top: 1px solid var(--rule);
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  margin: auto 0 0;
+  padding-top: 0.9rem;
+}
+
+.copilot-status {
+  align-self: stretch;
+  border-left: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding-left: 1.4rem;
+}
+
+.copilot-annotation {
+  color: var(--amber);
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.copilot-status dl {
+  display: grid;
+  gap: 1rem;
+  margin: 0;
+}
+
+.copilot-status dl div {
+  border-bottom: 1px solid var(--rule);
+  display: grid;
+  gap: 0.45rem;
+  padding-bottom: 1rem;
+}
+
+.copilot-status dt {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.copilot-status dd {
+  color: var(--emerald);
+  font-size: 2rem;
+  font-weight: 750;
+  letter-spacing: -0.06em;
+  line-height: 1;
+  margin: 0;
+}
+
+@media (min-width: 1024px) {
+  .hero-section {
+    align-items: start;
+    column-gap: clamp(1.5rem, 3vw, 4rem);
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+  }
+
+  .hero-intro {
+    grid-column: span 4;
+  }
+
+  .briefing-stack {
+    grid-column: span 6;
+  }
+
+  .copilot-status {
+    grid-column: span 2;
+  }
+}
+
+@media (max-width: 640px) {
+  .hero-intro h1 {
+    max-width: 10ch;
+  }
+
+  .briefing-switcher {
+    grid-template-columns: 1fr;
+  }
+
+  .briefing-cards {
+    min-height: 33rem;
+  }
+
+  .briefing-card {
+    inset-right: 0;
+    min-height: 31rem;
+  }
+
+  .copilot-status {
+    border-left: 0;
+    border-top: 1px solid var(--rule);
+    padding: 1.25rem 0 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
