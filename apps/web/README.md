@@ -1,21 +1,20 @@
 # AI Job Search Copilot Web
 
-营销首页与可替换登录边界，基于 Next.js App Router。
-
-需要 Node.js `>=22.22.2` 与 pnpm `11.5.2`。在仓库根目录安装并运行：
+Web 是本地产品运行时的一部分，基于 Next.js App Router。请在仓库根目录使用完整运行时启动，而不是单独启动营销页面：
 
 ```bash
-pnpm install
-pnpm dev:web
+pnpm install && pnpm dev
 ```
 
-常用验证命令同样从仓库根目录执行：
+默认访问地址是 <http://127.0.0.1:3020>；API 与运行依赖会同时启动。完整的前置条件、端口、停止方法和验证命令见[根 README](../../README.md)。
+
+`/` 仍是公开营销页面；`/login` 和 `/home` 是产品工作台的认证边界。本地仅使用 Dev Auth，正式 Beta 将使用微信登录；当前尚未实现真实微信 OAuth。工作台只显示 API 返回的真实空状态，尚无职业资料、求职画像、岗位或求职代理（Agent）业务。
+
+Web 专项验证同样从仓库根目录运行：
 
 ```bash
-pnpm test:web
 pnpm lint:web
-pnpm build:web
+pnpm test:web
 pnpm test:e2e
+pnpm build:web
 ```
-
-营销页面位于 `apps/web/app/(marketing)/page.tsx`，公开路径为 `/`。`/login` 是登录边界：本地默认显示 Dev Auth 说明；正式微信 OAuth 仅保留适配边界，尚未创建会话或真实 OAuth 流程。

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createRuntimeConfig, prepareInfrastructure, runRuntime, startApplications } from "./local-runtime.mjs";
 
@@ -14,6 +15,12 @@ function createControlledChild() {
   };
   return child;
 }
+
+test("database package exposes the documented db:migrate command", async () => {
+  const packageJson = JSON.parse(await readFile(new URL("../packages/database/package.json", import.meta.url), "utf8"));
+
+  assert.equal(packageJson.scripts["db:migrate"], "drizzle-kit migrate --config=drizzle.config.ts");
+});
 
 test("starts compose and waits for healthy dependencies before applications", async () => {
   const calls = [];
