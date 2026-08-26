@@ -85,6 +85,39 @@ test("移动端页面没有横向滚动", async ({ page }, testInfo) => {
   expect(widths.scroll).toBe(widths.client);
 });
 
+test("移动端非活动简报仍暴露可读可点击的预览", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "Mobile Safari", "仅在移动端检查待处理简报预览");
+
+  await page.goto("/");
+
+  const facts = page.getByRole("tab", { name: briefingTabs[1] });
+  const resume = page.getByRole("tab", { name: briefingTabs[2] });
+
+  await resume.scrollIntoViewIfNeeded();
+
+  await expect(facts).toContainText("确认 2 条候选事实");
+  await expect(facts).toContainText("待你确认");
+  await expect(resume).toContainText("审核 1 份定制简历");
+  await expect(resume).toContainText("待你审核");
+
+  for (const tab of [facts, resume]) {
+    const exposed = await tab.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+
+      return {
+        height: Math.max(0, Math.min(box.bottom, window.innerHeight) - Math.max(box.top, 0)),
+        width: Math.max(0, Math.min(box.right, window.innerWidth) - Math.max(box.left, 0)),
+      };
+    });
+
+    expect(exposed.width).toBeGreaterThanOrEqual(140);
+    expect(exposed.height).toBeGreaterThanOrEqual(88);
+  }
+
+  await resume.click();
+  await expect(resume).toHaveAttribute("aria-selected", "true");
+});
+
 test("首页通过自动可访问性检查", async ({ page }) => {
   await page.goto("/");
 

@@ -681,32 +681,61 @@ body {
   }
 
   .briefing-cards {
-    min-height: 33rem;
-    overflow: hidden;
+    display: grid;
+    gap: 0.75rem;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    min-height: 0;
   }
 
   .briefing-card {
-    inset: 0;
+    inset: auto;
+    min-height: 8.5rem;
+    min-width: 0;
+    order: 0;
+    padding: 1rem;
+    position: relative;
+    transform: none;
     width: auto;
-    right: 0;
-    min-height: 31rem;
-    transform: translate(16%, 2.8%) rotate(2deg) scale(0.94);
   }
 
   .briefing-card[data-position="1"] {
-    inset: 0;
-    min-height: 31rem;
-    padding: clamp(1.25rem, 3vw, 2.2rem);
-    transform: translate(10%, 1.2%) rotate(-1.5deg) scale(0.97);
+    inset: auto;
+    min-height: 8.5rem;
+    order: 1;
+    padding: 1rem;
+    transform: none;
     width: auto;
+    z-index: auto;
   }
 
   .briefing-card[data-position="2"] {
-    inset: 0;
-    min-height: 31rem;
-    padding: clamp(1.25rem, 3vw, 2.2rem);
-    transform: translate(18%, 2.8%) rotate(1deg) scale(0.94);
+    inset: auto;
+    min-height: 8.5rem;
+    order: 2;
+    padding: 1rem;
+    transform: none;
     width: auto;
+    z-index: auto;
+  }
+
+  .briefing-card[data-active="true"] {
+    grid-column: 1 / -1;
+    min-height: 28rem;
+    transform: none;
+    z-index: auto;
+  }
+
+  .briefing-card-glance {
+    gap: 0.2rem;
+    margin-top: 0.75rem;
+  }
+
+  .briefing-card-glance > span {
+    font-size: 1.15rem;
+  }
+
+  .briefing-card-glance strong {
+    font-size: 0.76rem;
   }
 
   .copilot-status {

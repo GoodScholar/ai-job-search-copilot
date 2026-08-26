@@ -14,7 +14,7 @@ it("falls back to dev for unreviewed public auth modes", () => {
 });
 
 it("only resolves a single-slash internal return path", () => {
-  expect(resolveInternalReturnTo("/profile")).toBe("/profile");
+  expect(resolveInternalReturnTo("/jobs?sort=match#top")).toBe("/jobs?sort=match#top");
   expect(resolveInternalReturnTo("/")).toBe("/");
   expect(resolveInternalReturnTo("//example.com")).toBe("/");
   expect(resolveInternalReturnTo("https://example.com")).toBe("/");
@@ -22,4 +22,13 @@ it("only resolves a single-slash internal return path", () => {
   expect(resolveInternalReturnTo("")).toBe("/");
   expect(resolveInternalReturnTo(undefined)).toBe("/");
   expect(resolveInternalReturnTo(null)).toBe("/");
+});
+
+it("rejects values that a browser could resolve outside the site", () => {
+  expect(resolveInternalReturnTo("/\\evil.example")).toBe("/");
+  expect(resolveInternalReturnTo("/\\\\evil.example")).toBe("/");
+  expect(resolveInternalReturnTo("/jobs\nnext")).toBe("/");
+  expect(resolveInternalReturnTo("/jobs\u0000next")).toBe("/");
+  expect(resolveInternalReturnTo("//evil.example/path")).toBe("/");
+  expect(resolveInternalReturnTo("https://evil.example/path")).toBe("/");
 });
