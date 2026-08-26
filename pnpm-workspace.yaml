@@ -1,3 +1,7 @@
 packages:
   - apps/*
   - packages/*
+allowBuilds:
+  msgpackr-extract: false
+minimumReleaseAgeExclude:
+  - bullmq@6.2.2

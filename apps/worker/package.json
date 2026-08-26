@@ -4,12 +4,17 @@
   "private": true,
   "scripts": {
     "dev": "nest start --watch",
+    "test": "vitest run",
     "build": "nest build",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@job-copilot/contracts": "workspace:*",
+    "@job-copilot/domain": "workspace:*",
     "@nestjs/common": "11.2.3",
     "@nestjs/core": "11.2.3",
+    "bullmq": "6.2.2",
+    "ioredis": "6.0.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2"
   },

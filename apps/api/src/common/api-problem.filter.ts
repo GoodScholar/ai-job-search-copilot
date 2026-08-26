@@ -9,14 +9,25 @@ export class ApiException extends HttpException {
     public readonly code: string,
     status: HttpStatus,
     public readonly publicMessage: string,
+    public readonly details?: { dependencies: Record<string, "ready" | "not_ready"> },
   ) {
     super(code, status);
   }
 }
 
-function getProblem(exception: unknown): { status: HttpStatus; code: string; message: string } {
+function getProblem(exception: unknown): {
+  status: HttpStatus;
+  code: string;
+  message: string;
+  details?: { dependencies: Record<string, "ready" | "not_ready"> };
+} {
   if (exception instanceof ApiException) {
-    return { status: exception.getStatus(), code: exception.code, message: exception.publicMessage };
+    return {
+      status: exception.getStatus(),
+      code: exception.code,
+      message: exception.publicMessage,
+      details: exception.details,
+    };
   }
   if (exception instanceof DomainError) {
     return { status: HttpStatus.NOT_FOUND, code: exception.code, message: "求职账户不存在" };
@@ -44,6 +55,7 @@ export class ApiProblemFilter implements ExceptionFilter {
       code: problem.code,
       message: problem.message,
       requestId: getRequestId(request),
+      ...problem.details,
     });
   }
 }
