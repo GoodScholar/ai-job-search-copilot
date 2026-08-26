@@ -10,6 +10,8 @@ it("shows only persisted empty workbench data", () => {
   expect(screen.getByRole("heading", { name: "从真实职业资料开始" })).toBeInTheDocument();
   expect(screen.getByText("今日推荐").nextSibling).toHaveTextContent("0");
   expect(screen.queryByText("AI 应用工程师（示例）")).not.toBeInTheDocument();
+  expect(screen.queryByText(/0001/)).not.toBeInTheDocument();
+  expect(screen.queryByText("01")).not.toBeInTheDocument();
 });
 
 it("keeps the next step honest until the profile entry is available", () => {

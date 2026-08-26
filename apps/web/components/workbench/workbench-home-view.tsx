@@ -31,11 +31,10 @@ export function WorkbenchHomeView({ home }: WorkbenchHomeViewProps) {
 
       <section aria-labelledby="ledger-title" className="workbench-ledger">
         <div className="workbench-ledger-heading">
-          <p>档案纸 · 0001</p>
+          <p>档案纸 · 当前状态</p>
           <h2 id="ledger-title">职业资料尚未建立</h2>
         </div>
         <div className="workbench-ledger-row">
-          <span aria-hidden="true">01</span>
           <div>
             <h3>下一步</h3>
             <p>职业资料入口将在后续切片开放</p>

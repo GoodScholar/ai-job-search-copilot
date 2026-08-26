@@ -776,6 +776,15 @@ body {
   text-decoration: none;
 }
 
+.workbench-touch-target {
+  align-items: center;
+  display: inline-flex;
+  justify-content: center;
+  min-height: 2.75rem;
+  min-inline-size: 2.75rem;
+  padding-inline: 0.75rem;
+}
+
 .workbench-nav {
   align-items: center;
   display: flex;
@@ -905,15 +914,8 @@ body {
   border-bottom: 1px solid var(--rule);
   display: grid;
   gap: 1rem;
-  grid-template-columns: 2rem minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   padding: 1.25rem 0;
-}
-
-.workbench-ledger-row > span {
-  color: var(--emerald);
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
 }
 
 .workbench-ledger h3 {
@@ -1013,11 +1015,10 @@ body {
   }
 
   .workbench-ledger-row {
-    grid-template-columns: 1.8rem minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .workbench-ledger-status {
-    grid-column: 2;
     margin-top: 0.25rem !important;
   }
 }
