@@ -380,10 +380,11 @@ body {
 
   .briefing-cards {
     min-height: 33rem;
+    overflow: hidden;
   }
 
   .briefing-card {
-    inset-right: 0;
+    right: 0;
     min-height: 31rem;
   }
 
