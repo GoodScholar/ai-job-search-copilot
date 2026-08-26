@@ -18,7 +18,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
     <main className="container py-16 sm:py-24">
       <section aria-labelledby="login-boundary-title" className="max-w-2xl border-y border-[var(--rule)] py-10">
         <p className="section-kicker">登录边界 · 邀请制 Beta</p>
-        <h1 className="mt-3 text-[clamp(2.25rem,5vw,4rem)] font-bold tracking-[-0.06em] leading-[1.05]">
+        <h1 id="login-boundary-title" className="mt-3 text-[clamp(2.25rem,5vw,4rem)] font-bold tracking-[-0.06em] leading-[1.05]">
           登录尚未开放
         </h1>
         {authMode === "dev" ? (

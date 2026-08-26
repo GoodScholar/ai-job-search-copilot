@@ -10,7 +10,7 @@
     "lint": "eslint",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "PLAYWRIGHT_HTML_OPEN=never playwright test"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
