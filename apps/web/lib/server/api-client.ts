@@ -7,6 +7,7 @@ import {
   StartDevSessionResponseSchema,
   type StartDevSessionRequest,
 } from "@job-copilot/contracts/auth";
+import { WorkbenchHomeSchema, type WorkbenchHome } from "@job-copilot/contracts/workbench";
 import { z } from "zod";
 
 type ApiClientConfig = {
@@ -122,6 +123,18 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
         return "already_invalid";
       }
       throw new ApiClientError("api", problem?.message ?? "退出失败", response.status, problem ?? undefined);
+    },
+
+    async getWorkbenchHome(sessionToken: string): Promise<WorkbenchHome> {
+      const response = await request("/v1/workbench/home", {
+        method: "GET",
+        headers: { authorization: `Bearer ${sessionToken}` },
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法读取求职工作台", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, WorkbenchHomeSchema);
     },
   };
 }

@@ -37,6 +37,30 @@ it("starts a dev session with an opaque request id and parses the shared respons
   expect(headers.get("x-dev-auth-secret")).toBe("secret");
 });
 
+it("reads the authenticated empty workbench through the shared DTO", async () => {
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+    new Response(JSON.stringify({
+      account: { userId },
+      summary: { recommendations: 0, pendingFacts: 0, runningAgentRuns: 0, applications: 0 },
+    }), { status: 200 }),
+  );
+  const api = createApiClient({
+    apiInternalUrl: "http://127.0.0.1:3021",
+    devAuthSharedSecret: "secret",
+    fetchImpl,
+  });
+
+  await expect(api.getWorkbenchHome(sessionToken)).resolves.toEqual({
+    account: { userId },
+    summary: { recommendations: 0, pendingFacts: 0, runningAgentRuns: 0, applications: 0 },
+  });
+
+  const [url, init] = fetchImpl.mock.calls[0]!;
+  expect(url).toBe("http://127.0.0.1:3021/v1/workbench/home");
+  expect(init).toMatchObject({ method: "GET" });
+  expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${sessionToken}`);
+});
+
 it("recognizes an already-invalid current session from the shared error response", async () => {
   const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
     new Response(JSON.stringify({
