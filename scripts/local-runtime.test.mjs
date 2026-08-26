@@ -148,6 +148,69 @@ test("signal waits for the controlled application child before isolated cleanup"
   assert.deepEqual(events, ["prepare", "migrate", "start", "ready", "cleanup"]);
 });
 
+test("a startup signal aborts and settles pending readiness before cleanup", async () => {
+  const events = [];
+  const signalSource = new EventEmitter();
+  const child = createControlledChild();
+  let readinessSignal;
+  const runtime = runRuntime({
+    config: createRuntimeConfig({ test: true }),
+    signalSource,
+    prepare: async () => events.push("prepare"),
+    migrate: async () => events.push("migrate"),
+    start: () => {
+      events.push("start");
+      return child;
+    },
+    waitForReady: ({ signal }) => new Promise((resolve, reject) => {
+      readinessSignal = signal;
+      events.push("waiting");
+      signal.addEventListener("abort", () => {
+        events.push("readiness-aborted");
+        reject(signal.reason);
+      }, { once: true });
+    }),
+    cleanup: async () => events.push("cleanup"),
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(readinessSignal.aborted, false);
+
+  signalSource.emit("SIGINT");
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(readinessSignal.aborted, true);
+  assert.equal(child.sentSignal, "SIGINT");
+  assert.deepEqual(events, ["prepare", "migrate", "start", "waiting", "readiness-aborted"]);
+
+  child.emit("exit", 0, null);
+  assert.deepEqual(await runtime, { exitCode: 130 });
+  assert.deepEqual(events, ["prepare", "migrate", "start", "waiting", "readiness-aborted", "cleanup"]);
+});
+
+test("a child exiting cleanly before readiness fails with exit code 1", async () => {
+  const child = createControlledChild();
+  let readinessSignal;
+  const runtime = runRuntime({
+    config: createRuntimeConfig({ test: true }),
+    signalSource: new EventEmitter(),
+    prepare: async () => {},
+    migrate: async () => {},
+    start: () => child,
+    waitForReady: ({ signal }) => new Promise((resolve, reject) => {
+      readinessSignal = signal;
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    }),
+    cleanup: async () => {},
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  child.emit("exit", 0, null);
+
+  await assert.rejects(runtime, (error) => error.exitCode === 1);
+  assert.equal(readinessSignal.aborted, true);
+});
+
 test("a ready application child exiting nonzero fails after isolated cleanup", async () => {
   const events = [];
   const child = createControlledChild();

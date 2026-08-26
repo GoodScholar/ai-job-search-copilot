@@ -10,7 +10,11 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/server/workbench", () => ({ getWorkbenchHome: mocks.getWorkbenchHome }));
 vi.mock("next/navigation", () => ({ unstable_rethrow: mocks.unstableRethrow }));
 
-import WorkbenchHomePage from "./page";
+import WorkbenchHomePage, { metadata } from "./page";
+
+it("declares a stable workbench document title", () => {
+  expect(metadata.title).toBe("工作台 | AI Job Search Copilot");
+});
 
 it("does not turn an authentication redirect into a retryable workbench error", async () => {
   const redirectError = new Error("NEXT_REDIRECT:/login?returnTo=%2Fhome");

@@ -2,6 +2,11 @@ import type { WorkbenchHome } from "@job-copilot/contracts/workbench";
 import { WorkbenchHomeView } from "@/components/workbench/workbench-home-view";
 import { unstable_rethrow } from "next/navigation";
 import { getWorkbenchHome } from "@/lib/server/workbench";
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "工作台 | AI Job Search Copilot",
+};
 
 export default async function WorkbenchHomePage() {
   let home: WorkbenchHome;

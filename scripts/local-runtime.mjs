@@ -145,31 +145,55 @@ export function startApplications({ spawnProcess = spawn, env = process.env, con
   );
 }
 
-function sleep(milliseconds) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+function abortReason(signal) {
+  return signal?.reason instanceof Error ? signal.reason : new Error("本地测试运行时启动已取消");
 }
 
-async function waitForSuccessfulResponse(url, { fetchImpl = fetch, timeoutMs = 90_000 } = {}) {
+function sleep(milliseconds, { signal } = {}) {
+  if (signal?.aborted) {
+    return Promise.reject(abortReason(signal));
+  }
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, milliseconds);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(abortReason(signal));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+async function waitForSuccessfulResponse(url, { fetchImpl = fetch, timeoutMs = 90_000, signal } = {}) {
   const deadline = Date.now() + timeoutMs;
   let lastError;
   while (Date.now() < deadline) {
+    if (signal?.aborted) {
+      throw abortReason(signal);
+    }
     try {
-      const response = await fetchImpl(url);
+      const response = await fetchImpl(url, { signal });
       if (response.ok) {
         return;
       }
       lastError = new Error(`${url} returned ${response.status}`);
     } catch (error) {
+      if (signal?.aborted) {
+        throw abortReason(signal);
+      }
       lastError = error;
     }
-    await sleep(500);
+    await sleep(500, { signal });
   }
   throw new Error(`Timed out waiting for ${url}`, { cause: lastError });
 }
 
-export async function waitForRuntime({ config, fetchImpl = fetch }) {
-  await waitForSuccessfulResponse(`http://127.0.0.1:${config.apiPort}/health/ready`, { fetchImpl });
-  await waitForSuccessfulResponse(`http://127.0.0.1:${config.webPort}/login`, { fetchImpl });
+export async function waitForRuntime({ config, fetchImpl = fetch, signal } = {}) {
+  await waitForSuccessfulResponse(`http://127.0.0.1:${config.apiPort}/health/ready`, { fetchImpl, signal });
+  await waitForSuccessfulResponse(`http://127.0.0.1:${config.webPort}/login`, { fetchImpl, signal });
 }
 
 function stopApplications(child, signal = "SIGTERM") {
@@ -191,7 +215,7 @@ function applicationExitError({ code, signal }) {
   const error = new Error(signal
     ? `应用进程被 ${signal} 终止`
     : `应用进程以退出码 ${code} 结束`);
-  error.exitCode = signal ? signalExitCode(signal) : (code ?? 1);
+  error.exitCode = signal ? signalExitCode(signal) : (code || 1);
   return error;
 }
 
@@ -208,6 +232,8 @@ export async function runRuntime({
   let childExit;
   let childExited = false;
   let requestedSignal;
+  let readiness;
+  const readinessController = new AbortController();
   let resolveSignal;
   const signalReceived = new Promise((resolve) => {
     resolveSignal = resolve;
@@ -228,6 +254,11 @@ export async function runRuntime({
     childExited = true;
     return result;
   };
+  const cancelReadiness = (message) => {
+    if (!readinessController.signal.aborted) {
+      readinessController.abort(new Error(message));
+    }
+  };
 
   try {
     await prepare({ config });
@@ -236,21 +267,33 @@ export async function runRuntime({
     }
     child = start({ config });
     childExit = waitForApplicationExit(child);
+    readiness = waitForReady({ config, signal: readinessController.signal }).then(
+      () => ({ type: "ready" }),
+      (error) => ({ type: "readiness-error", error }),
+    );
 
     const readyOrShutdown = await Promise.race([
-      waitForReady({ config }).then(() => ({ type: "ready" })),
+      readiness,
       signalReceived.then((signal) => ({ type: "signal", signal })),
       awaitChildExit().then((result) => ({ type: "exit", result })),
     ]);
 
     if (readyOrShutdown.type === "exit") {
+      cancelReadiness("应用进程在就绪前退出");
+      await readiness;
       throw applicationExitError(readyOrShutdown.result);
     }
 
     if (readyOrShutdown.type === "signal") {
+      cancelReadiness(`收到 ${readyOrShutdown.signal}`);
+      await readiness;
       stopApplications(child, readyOrShutdown.signal);
       await awaitChildExit();
       return { exitCode: signalExitCode(readyOrShutdown.signal) };
+    }
+
+    if (readyOrShutdown.type === "readiness-error") {
+      throw readyOrShutdown.error;
     }
 
     console.log("本地测试运行时已就绪");
@@ -270,6 +313,7 @@ export async function runRuntime({
     }
     return { exitCode: 0 };
   } finally {
+    cancelReadiness("本地测试运行时正在退出");
     signalSource.removeListener("SIGINT", handleSigint);
     signalSource.removeListener("SIGTERM", handleSigterm);
     if (child && !childExited) {
