@@ -1,10 +1,13 @@
 {
-  "name": "@job-copilot/database",
+  "name": "@job-copilot/domain",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    "./runtime-config": "./src/runtime-config.ts",
+    "./audit-trail": "./src/audit-trail.ts",
+    "./account-sessions": "./src/account-sessions.ts",
+    "./workbench-home": "./src/workbench-home.ts"
   },
   "scripts": {
     "test": "vitest run",
@@ -12,12 +15,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@job-copilot/contracts": "workspace:*",
+    "@job-copilot/database": "workspace:*",
     "drizzle-orm": "0.45.2",
-    "postgres": "3.4.9"
+    "zod": "4.4.3"
   },
   "devDependencies": {
     "@testcontainers/postgresql": "12.1.0",
-    "drizzle-kit": "0.31.10",
     "typescript": "^5.9.3",
     "vitest": "^4.1.11"
   }
