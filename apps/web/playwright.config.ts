@@ -7,7 +7,6 @@ const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
 
 export default defineConfig({
   testDir: "./e2e",
-  globalTeardown: "./e2e/global-teardown.ts",
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
   workers: 1,
@@ -16,7 +15,7 @@ export default defineConfig({
     trace: "on-first-retry",
   },
   webServer: {
-    command: "pnpm dev:test",
+    command: "node scripts/local-runtime.mjs --test",
     cwd: repositoryRoot,
     reuseExistingServer: false,
     gracefulShutdown: { signal: "SIGTERM", timeout: 30_000 },

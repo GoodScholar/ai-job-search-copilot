@@ -22,6 +22,57 @@ test("database package exposes the documented db:migrate command", async () => {
   assert.equal(packageJson.scripts["db:migrate"], "drizzle-kit migrate --config=drizzle.config.ts");
 });
 
+test("local runtime migrates before starting applications", async () => {
+  const events = [];
+  const child = createControlledChild();
+  const runtime = runRuntime({
+    config: createRuntimeConfig({ env: {} }),
+    signalSource: new EventEmitter(),
+    prepare: async () => events.push("prepare"),
+    migrate: async () => events.push("migrate"),
+    start: () => {
+      events.push("start");
+      return child;
+    },
+    waitForReady: async () => events.push("ready"),
+    cleanup: async () => events.push("cleanup"),
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  child.emit("exit", 0, null);
+
+  assert.deepEqual(await runtime, { exitCode: 0 });
+  assert.deepEqual(events, ["prepare", "migrate", "start", "ready", "cleanup"]);
+});
+
+test("a local migration failure prevents application startup", async () => {
+  let started = false;
+  const error = await runRuntime({
+    config: createRuntimeConfig({ env: {} }),
+    signalSource: new EventEmitter(),
+    prepare: async () => {},
+    migrate: async () => { throw new Error("migration failure"); },
+    start: () => {
+      started = true;
+      throw new Error("applications started");
+    },
+    cleanup: async () => {},
+  }).then(
+    () => null,
+    (reason) => reason,
+  );
+
+  assert.match(error?.message ?? "", /migration failure/);
+  assert.equal(started, false);
+});
+
+test("Playwright delegates isolated cleanup to the local runtime", async () => {
+  const config = await readFile(new URL("../apps/web/playwright.config.ts", import.meta.url), "utf8");
+
+  assert.doesNotMatch(config, /globalTeardown:/);
+  assert.match(config, /command: "node scripts\/local-runtime\.mjs --test"/);
+});
+
 test("starts compose and waits for healthy dependencies before applications", async () => {
   const calls = [];
   await prepareInfrastructure({

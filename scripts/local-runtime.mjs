@@ -263,9 +263,7 @@ export async function runRuntime({
 
   try {
     await prepare({ config });
-    if (config.test) {
-      await migrate({ config });
-    }
+    await migrate({ config });
     child = start({ config });
     childExit = waitForApplicationExit(child);
     readiness = waitForReady({ config, signal: readinessController.signal }).then(

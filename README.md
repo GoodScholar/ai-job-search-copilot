@@ -18,7 +18,7 @@
 pnpm install && pnpm dev
 ```
 
-`pnpm dev` 会启动 Web、API、Worker，以及 PostgreSQL、Redis、MinIO 和 Mailpit；如果 Docker Compose 或任何依赖不可用，启动会报告失败而不是继续以不完整状态运行。
+`pnpm dev` 会先对本地数据库运行迁移，再启动 Web、API、Worker，以及 PostgreSQL、Redis、MinIO 和 Mailpit；迁移、Docker Compose 或任何依赖不可用时，应用不会以不完整状态继续启动，因此无需手动执行迁移。
 
 - 产品：<http://127.0.0.1:3020>
 - API OpenAPI：<http://127.0.0.1:3021/openapi.json>
