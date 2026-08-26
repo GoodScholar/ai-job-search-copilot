@@ -14,6 +14,8 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-destructive: var(--destructive);
+  --color-amber: var(--amber);
+  --color-amber-ink: var(--amber-ink);
   --font-sans: var(--font-sans);
   --font-heading: var(--font-sans);
   --radius-sm: calc(var(--radius) * 0.6);
@@ -28,7 +30,8 @@
   --muted: #657069;
   --emerald: #246a49;
   --emerald-strong: #18553a;
-  --amber: #9f5f14;
+  --amber: #c98532;
+  --amber-ink: #9f5f14;
   --rule: #d5ddd6;
   --shadow-paper: 0 24px 70px rgb(24 32 28 / 0.12);
   --font-sans: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
@@ -229,7 +232,7 @@ body {
 .approval-ledger > div:last-child h3,
 .approval-ledger > div:last-child li,
 .approval-note {
-  color: var(--amber);
+  color: var(--amber-ink);
 }
 
 .approval-ledger ul {
@@ -471,7 +474,7 @@ body {
 
 .briefing-gap h3,
 .briefing-gap p {
-  color: var(--amber);
+  color: var(--amber-ink);
 }
 
 .briefing-gap p {
@@ -522,7 +525,7 @@ body {
 }
 
 .copilot-annotation {
-  color: var(--amber);
+  color: var(--amber-ink);
   font-size: 0.95rem;
   font-weight: 700;
   line-height: 1.4;
