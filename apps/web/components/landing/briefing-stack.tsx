@@ -21,7 +21,7 @@ export function BriefingStack({
   const activeIndex = briefings.findIndex(({ id }) => id === activeId);
 
   return (
-    <section className="briefing-stack" aria-label="今日行动简报">
+    <div className="briefing-stack" aria-label="今日行动简报">
       <div className="briefing-switcher" aria-label="切换行动简报">
         {briefings.map((briefing) => (
           <button
@@ -62,7 +62,7 @@ export function BriefingStack({
           );
         })}
       </div>
-    </section>
+    </div>
   );
 }
 

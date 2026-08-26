@@ -28,11 +28,11 @@ export function HeroSection() {
             <dd>12</dd>
           </div>
           <div>
-            <dt>8 家已完成</dt>
+            <dt>8 家已完成（示例）</dt>
             <dd>8</dd>
           </div>
           <div>
-            <dt>外部行动 0</dt>
+            <dt>外部行动 0（示例）</dt>
             <dd>0</dd>
           </div>
         </dl>

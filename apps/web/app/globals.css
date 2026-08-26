@@ -81,6 +81,214 @@ body {
   padding-block: clamp(3rem, 7vw, 7.5rem);
 }
 
+.marketing-section,
+.final-cta {
+  border-top: 1px solid var(--rule);
+  padding-block: clamp(3.5rem, 8vw, 7rem);
+}
+
+.section-intro {
+  max-width: 42rem;
+}
+
+.section-kicker {
+  color: var(--emerald);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin: 0;
+}
+
+.section-intro h2,
+.final-cta h2 {
+  font-size: clamp(2rem, 4vw, 3.5rem);
+  letter-spacing: -0.06em;
+  line-height: 1.1;
+  margin: 0.7rem 0 1rem;
+}
+
+.section-intro > p:last-child,
+.format-note {
+  color: var(--muted);
+  line-height: 1.7;
+  margin: 0;
+}
+
+.editorial-workflow,
+.evidence-chain {
+  list-style: none;
+  margin: clamp(2rem, 4vw, 3.5rem) 0 0;
+  padding: 0;
+}
+
+.editorial-workflow {
+  display: grid;
+}
+
+.editorial-workflow li {
+  border-top: 1px solid var(--rule);
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: 2.4rem minmax(0, 1fr);
+  padding: 1.3rem 0;
+  position: relative;
+}
+
+.editorial-workflow li:not(:last-child)::after {
+  color: var(--emerald);
+  content: "↓";
+  font-size: 1rem;
+  position: absolute;
+  right: 0;
+  top: 1.35rem;
+}
+
+.editorial-workflow li > span,
+.evidence-chain li > span {
+  color: var(--emerald);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.editorial-workflow h3,
+.evidence-chain h3,
+.approval-ledger h3 {
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+.editorial-workflow p,
+.evidence-chain p,
+.approval-ledger p {
+  color: var(--muted);
+  line-height: 1.65;
+  margin: 0.45rem 0 0;
+}
+
+.workflow-outcome {
+  border-bottom: 1px solid var(--rule);
+  color: var(--emerald);
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin: 0;
+  padding: 1.3rem 0;
+}
+
+.evidence-chain {
+  border-left: 1px solid var(--emerald);
+  margin-left: 0.55rem;
+}
+
+.evidence-chain li {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: 2.4rem minmax(0, 1fr);
+  padding: 0 0 1.7rem 1.2rem;
+  position: relative;
+}
+
+.evidence-chain li > span {
+  align-items: center;
+  background: var(--emerald);
+  border-radius: 999px;
+  color: var(--surface);
+  display: inline-flex;
+  font-size: 0.7rem;
+  height: 1.3rem;
+  justify-content: center;
+  margin-left: -1.9rem;
+  width: 1.3rem;
+}
+
+.evidence-notes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.evidence-notes p,
+.resume-formats p {
+  border: 1px solid var(--rule);
+  color: var(--emerald-strong);
+  font-size: 0.82rem;
+  margin: 0;
+  padding: 0.55rem 0.8rem;
+}
+
+.approval-ledger {
+  display: grid;
+  gap: 1rem;
+  margin-top: clamp(2rem, 4vw, 3.5rem);
+}
+
+.approval-ledger > div {
+  border-top: 1px solid var(--rule);
+  padding-top: 1rem;
+}
+
+.approval-ledger > div:last-child h3,
+.approval-ledger > div:last-child li,
+.approval-note {
+  color: var(--amber);
+}
+
+.approval-ledger ul {
+  display: grid;
+  gap: 0.5rem;
+  list-style: none;
+  margin: 0.8rem 0 0;
+  padding: 0;
+}
+
+.approval-ledger li::before {
+  content: "需确认 · ";
+}
+
+.approval-note {
+  font-size: 0.9rem;
+  font-weight: 700;
+  margin: 1.5rem 0 0;
+}
+
+.resume-formats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 2rem 0 1rem;
+}
+
+.final-cta {
+  padding-bottom: clamp(4.5rem, 10vw, 8rem);
+}
+
+.final-cta h2 {
+  max-width: 16ch;
+}
+
+.marketing-footer {
+  border-top: 1px solid var(--rule);
+  padding-block: 1.5rem;
+}
+
+.marketing-footer > div {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  justify-content: space-between;
+}
+
+.marketing-footer p {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin: 0;
+}
+
+.marketing-footer p:first-child {
+  color: var(--ink);
+  font-weight: 700;
+}
+
 .hero-intro {
   align-self: start;
 }
@@ -366,6 +574,11 @@ body {
 
   .copilot-status {
     grid-column: span 2;
+  }
+
+  .approval-ledger {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 3rem;
   }
 }
 
