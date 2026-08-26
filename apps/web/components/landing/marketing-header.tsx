@@ -11,7 +11,7 @@ export function MarketingHeader() {
           <a className="marketing-nav-anchor" href="#evidence-and-control">证据与控制</a>
           <Link
             className={`${buttonVariants({ variant: "default", size: "lg" })} marketing-cta`}
-            href="/login?returnTo=%2F"
+            href="/login?returnTo=%2Fhome"
           >
             微信登录体验
           </Link>

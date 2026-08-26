@@ -27,3 +27,12 @@ export function resolveInternalReturnTo(
     ? `${resolved.pathname}${resolved.search}${resolved.hash}`
     : "/";
 }
+
+export function resolveLoginReturnTo(value: string | string[] | null | undefined): string {
+  if (value === "/") {
+    return "/";
+  }
+
+  const returnTo = resolveInternalReturnTo(value);
+  return returnTo === "/" ? "/home" : returnTo;
+}

@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { getPublicAuthMode, resolveInternalReturnTo } from "./auth-mode";
+import { getPublicAuthMode, resolveInternalReturnTo, resolveLoginReturnTo } from "./auth-mode";
 
 it("defaults to dev auth locally", () => {
   expect(getPublicAuthMode({})).toBe("dev");
@@ -31,4 +31,10 @@ it("rejects values that a browser could resolve outside the site", () => {
   expect(resolveInternalReturnTo("/jobs\u0000next")).toBe("/");
   expect(resolveInternalReturnTo("//evil.example/path")).toBe("/");
   expect(resolveInternalReturnTo("https://evil.example/path")).toBe("/");
+});
+
+it("defaults login to the authenticated home", () => {
+  expect(resolveLoginReturnTo(undefined)).toBe("/home");
+  expect(resolveLoginReturnTo("https://evil.example")).toBe("/home");
+  expect(resolveLoginReturnTo("/profile")).toBe("/profile");
 });

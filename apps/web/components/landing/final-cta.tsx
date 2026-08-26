@@ -8,7 +8,7 @@ export function FinalCta() {
       <h2 id="final-cta-title">把判断留给自己，把准备交给 Copilot</h2>
       <Link
         className={`${buttonVariants({ variant: "default", size: "lg" })} marketing-cta`}
-        href="/login?returnTo=%2F"
+        href="/login?returnTo=%2Fhome"
       >
         微信登录体验
       </Link>

@@ -1,4 +1,5 @@
-import { getPublicAuthMode, resolveInternalReturnTo } from "@/lib/auth-mode";
+import { getPublicAuthMode, resolveLoginReturnTo } from "@/lib/auth-mode";
+import { startDevSessionAction } from "./actions";
 
 type LoginPageProps = {
   searchParams: Promise<{ returnTo?: string | string[] }>;
@@ -9,7 +10,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
   const authMode = getPublicAuthMode({
     NEXT_PUBLIC_AUTH_MODE: process.env.NEXT_PUBLIC_AUTH_MODE,
   });
-  const safeReturnTo = resolveInternalReturnTo(returnTo);
+  const safeReturnTo = resolveLoginReturnTo(returnTo);
   const adapterStatus = authMode === "wechat"
     ? "微信 OAuth Adapter 待服务端接入"
     : "本地开发登录";
@@ -24,9 +25,10 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         {authMode === "dev" ? (
           <>
             <p className="mt-5 text-[var(--muted)] leading-7">正式邀请制 Beta 将使用微信登录</p>
-            <p className="mt-2 text-[var(--muted)] leading-7">
-              本实施批次只建立登录边界，尚未创建用户会话
-            </p>
+            <form action={startDevSessionAction} className="mt-6">
+              <input name="returnTo" type="hidden" value={safeReturnTo} />
+              <button className="button" type="submit">使用本地体验账户登录</button>
+            </form>
           </>
         ) : null}
         <dl className="mt-8 border-t border-[var(--rule)]">

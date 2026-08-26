@@ -200,11 +200,9 @@ test("CTA 进入登录边界并提供本地开发说明", async ({ page }) => {
 
   await page.getByRole("main").getByRole("link", { name: "微信登录体验" }).first().click();
 
-  await expect(page).toHaveURL(/\/login\?returnTo=%2F$/);
+  await expect(page).toHaveURL(/\/login\?returnTo=%2Fhome$/);
   await expect(page.getByText("本地开发登录")).toBeVisible();
-  await expect(
-    page.getByText("本实施批次只建立登录边界，尚未创建用户会话"),
-  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "使用本地体验账户登录" })).toBeVisible();
   await expect(page.getByRole("region", { name: "登录尚未开放" })).toBeVisible();
 });
 

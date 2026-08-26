@@ -11,7 +11,7 @@ export function HeroSection() {
         <p className="hero-summary">推荐、确认和材料准备，按价值排好顺序。</p>
         <Link
           className={`${buttonVariants({ variant: "default", size: "lg" })} marketing-cta`}
-          href="/login?returnTo=%2F"
+          href="/login?returnTo=%2Fhome"
         >
           微信登录体验
         </Link>
