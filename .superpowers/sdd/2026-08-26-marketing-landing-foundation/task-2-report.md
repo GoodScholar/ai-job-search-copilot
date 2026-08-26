@@ -46,3 +46,24 @@ Route (app)
 ```
 
 附加审计：`rg -l -F 'data-impeccable-seed="4e302c13"' apps/web/.next` 命中生产 `index.html`；对 `apps/web/app`、`apps/web/components` 与 `apps/web/.next` 搜索 `next/font/google`、`fonts.googleapis.com`、`fonts.gstatic.com` 未发现结果。
+
+## Fix round 1：移除未使用动画库
+
+- 审查发现 `tw-animate-css` 被添加为依赖并在 `globals.css` 导入；全文检索确认它仅出现在 `apps/web/package.json`、`pnpm-lock.yaml` 与这一个 CSS import，当前 Button、Header 和营销页均未使用其能力。
+- 已移除该 CSS import、`tw-animate-css` 依赖及对应 lockfile 条目；保留原有 `prefers-reduced-motion` 规则，未修改任何 shadcn 或视觉实现。
+
+```text
+$ pnpm test:web
+Test Files  1 passed (1)
+Tests       1 passed (1)
+
+$ pnpm lint:web
+$ eslint
+
+$ pnpm build:web
+✓ Compiled successfully
+✓ Finished TypeScript
+Route (app)
+┌ ○ /
+└ ○ /_not-found
+```
