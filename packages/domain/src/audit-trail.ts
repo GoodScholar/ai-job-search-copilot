@@ -7,6 +7,18 @@ type AuditMetadata = Record<string, unknown>;
 
 const EmptyMetadataSchema = z.object({}).strict();
 const StartedSessionMetadataSchema = z.object({ provider: z.literal("dev") }).strict();
+const QueuedCareerImportMetadataSchema = z.object({ documentId: z.uuid(), importId: z.uuid() }).strict();
+const CompletedCareerImportMetadataSchema = z.object({
+  documentId: z.uuid(), importId: z.uuid(), attemptCount: z.int().min(0), factCount: z.int().min(0),
+}).strict();
+const FailedCareerImportMetadataSchema = z.object({
+  documentId: z.uuid(), importId: z.uuid(), attemptCount: z.int().min(0),
+  failureCode: z.enum([
+    "CAREER_IMPORT_QUEUE_UNAVAILABLE", "CAREER_DOCUMENT_NOT_FOUND", "CAREER_DOCUMENT_READ_FAILED",
+    "CAREER_DOCUMENT_CHECKSUM_MISMATCH", "CAREER_PARSER_OUTPUT_INVALID", "CAREER_PARSER_EVIDENCE_INVALID",
+    "NO_SUPPORTED_FACTS", "CAREER_IMPORT_PERSIST_FAILED",
+  ]),
+}).strict();
 
 const AuditEventInputSchema = z.discriminatedUnion("eventType", [
   z.object({
@@ -58,6 +70,27 @@ const AuditEventInputSchema = z.discriminatedUnion("eventType", [
     resourceType: z.literal("account"),
     resourceId: z.uuid(),
     metadata: EmptyMetadataSchema,
+  }).strict(),
+  z.object({
+    userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("career.document_import_queued"),
+    occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"),
+    reasonCode: z.literal("CAREER_DOCUMENT_IMPORT_QUEUED"), resourceType: z.literal("career_import"), resourceId: z.uuid(),
+    metadata: QueuedCareerImportMetadataSchema,
+  }).strict(),
+  z.object({
+    userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("career.document_import_completed"),
+    occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"),
+    reasonCode: z.literal("CAREER_DOCUMENT_IMPORT_COMPLETED"), resourceType: z.literal("career_import"), resourceId: z.uuid(),
+    metadata: CompletedCareerImportMetadataSchema,
+  }).strict(),
+  z.object({
+    userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("career.document_import_failed"),
+    occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("failure"),
+    reasonCode: z.enum([
+      "CAREER_IMPORT_QUEUE_UNAVAILABLE", "CAREER_DOCUMENT_NOT_FOUND", "CAREER_DOCUMENT_READ_FAILED",
+      "CAREER_DOCUMENT_CHECKSUM_MISMATCH", "CAREER_PARSER_OUTPUT_INVALID", "CAREER_PARSER_EVIDENCE_INVALID",
+      "NO_SUPPORTED_FACTS", "CAREER_IMPORT_PERSIST_FAILED",
+    ]), resourceType: z.literal("career_import"), resourceId: z.uuid(), metadata: FailedCareerImportMetadataSchema,
   }).strict(),
 ]);
 

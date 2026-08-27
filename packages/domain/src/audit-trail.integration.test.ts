@@ -104,4 +104,44 @@ describe("audit trail", () => {
       occurredAt: now,
     })]));
   });
+
+  it("allows only redacted career-import metadata for the approved lifecycle events", async () => {
+    const auditTrail = createAuditTrail({ db: database, clock: () => now });
+    const documentId = "a507ecf4-28e5-4d24-9aad-e6d0d34359c1";
+    const importId = "fa7753f2-2ff3-4bd6-9fbd-6b4ae41d8364";
+
+    await auditTrail.append({
+      userId, actorUserId: userId, eventType: "career.document_import_queued", occurredAt: now,
+      requestId: "8603f799-b8f1-4d42-8e11-c2ae4266ddaa", outcome: "success",
+      reasonCode: "CAREER_DOCUMENT_IMPORT_QUEUED", resourceType: "career_import", resourceId: importId,
+      metadata: { documentId, importId },
+    });
+    await auditTrail.append({
+      userId, actorUserId: userId, eventType: "career.document_import_completed", occurredAt: now,
+      requestId: "4e95017e-8d10-4a76-b1c0-1457608cf730", outcome: "success",
+      reasonCode: "CAREER_DOCUMENT_IMPORT_COMPLETED", resourceType: "career_import", resourceId: importId,
+      metadata: { documentId, importId, attemptCount: 1, factCount: 2 },
+    });
+    await auditTrail.append({
+      userId, actorUserId: userId, eventType: "career.document_import_failed", occurredAt: now,
+      requestId: "426bf7c6-f06d-4d33-966d-3f3083a22b5b", outcome: "failure",
+      reasonCode: "CAREER_DOCUMENT_READ_FAILED", resourceType: "career_import", resourceId: importId,
+      metadata: { documentId, importId, attemptCount: 2, failureCode: "CAREER_DOCUMENT_READ_FAILED" },
+    });
+
+    for (const metadata of [
+      { documentId, importId, filename: "resume.md" },
+      { documentId, importId, objectKey: "accounts/private/source.md" },
+      { documentId, importId, excerpt: "secret@example.test" },
+      { documentId, importId, checksum: "a".repeat(64) },
+      { documentId, importId, markdown: "# private" },
+      { documentId, importId, phone: "13800000000" },
+    ]) {
+      await expect(auditTrail.append({
+        userId, actorUserId: userId, eventType: "career.document_import_queued", requestId: crypto.randomUUID(), outcome: "success",
+        reasonCode: "CAREER_DOCUMENT_IMPORT_QUEUED", resourceType: "career_import", resourceId: importId,
+        metadata: metadata as never,
+      })).rejects.toThrow(/字段白名单/);
+    }
+  });
 });

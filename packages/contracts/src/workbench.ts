@@ -4,7 +4,7 @@ export const WorkbenchHomeSchema = z.object({
   account: z.object({ userId: z.string().uuid() }).strict(),
   summary: z.object({
     recommendations: z.literal(0),
-    pendingFacts: z.literal(0),
+    pendingFacts: z.int().nonnegative(),
     runningAgentRuns: z.literal(0),
     applications: z.literal(0),
   }).strict(),

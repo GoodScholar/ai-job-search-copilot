@@ -18,6 +18,20 @@ describe("shared contracts", () => {
     }).summary.recommendations).toBe(0);
   });
 
+  it("accepts a real nonnegative pending candidate-fact count but rejects invalid counts", () => {
+    expect(WorkbenchHomeSchema.parse({
+      account: { userId: "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3" },
+      summary: { recommendations: 0, pendingFacts: 2, runningAgentRuns: 0, applications: 0 },
+    }).summary.pendingFacts).toBe(2);
+
+    for (const pendingFacts of [-1, 1.5]) {
+      expect(WorkbenchHomeSchema.safeParse({
+        account: { userId: "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3" },
+        summary: { recommendations: 0, pendingFacts, runningAgentRuns: 0, applications: 0 },
+      }).success).toBe(false);
+    }
+  });
+
   it("rejects an empty Dev Auth subject", () => {
     expect(StartDevSessionRequestSchema.safeParse({ subject: "" }).success).toBe(false);
   });

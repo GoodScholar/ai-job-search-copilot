@@ -7,7 +7,8 @@
     "./runtime-config": "./src/runtime-config.ts",
     "./audit-trail": "./src/audit-trail.ts",
     "./account-sessions": "./src/account-sessions.ts",
-    "./workbench-home": "./src/workbench-home.ts"
+    "./workbench-home": "./src/workbench-home.ts",
+    "./career-imports": "./src/career-imports.ts"
   },
   "scripts": {
     "test": "vitest run",

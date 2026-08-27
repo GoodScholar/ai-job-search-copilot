@@ -1,6 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { and, count, eq } from "drizzle-orm";
 import type { WorkbenchHome } from "@job-copilot/contracts/workbench";
-import { jobAccounts, type Database } from "@job-copilot/database";
+import { candidateFacts, jobAccounts, type Database } from "@job-copilot/database";
 
 export class DomainError extends Error {
   constructor(public readonly code: "ACCOUNT_NOT_FOUND") {
@@ -20,9 +20,18 @@ export function createWorkbenchHome(input: { db: Database }): GetWorkbenchHome {
       throw new DomainError("ACCOUNT_NOT_FOUND");
     }
 
+    const [facts] = await input.db.select({ count: count() }).from(candidateFacts).where(and(
+      eq(candidateFacts.userId, userId),
+      eq(candidateFacts.confirmationStatus, "pending"),
+    ));
+    const pendingFacts = Number(facts?.count ?? 0);
+    if (!Number.isSafeInteger(pendingFacts)) {
+      throw new Error("待确认候选事实计数超出安全范围");
+    }
+
     return {
       account,
-      summary: { recommendations: 0, pendingFacts: 0, runningAgentRuns: 0, applications: 0 },
+      summary: { recommendations: 0, pendingFacts, runningAgentRuns: 0, applications: 0 },
     };
   };
 }
