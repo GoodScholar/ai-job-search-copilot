@@ -126,4 +126,136 @@ describe("database migrations", () => {
       )
     `)).rejects.toMatchObject({ cause: { code: "23503" } });
   });
+
+  it("migrates account-owned career imports and evidence", async () => {
+    expect(await listPublicTables(migratedDatabase)).toEqual(expect.arrayContaining([
+      "career_documents", "career_imports", "candidate_facts", "candidate_fact_evidence",
+    ]));
+
+    const constraints = await migratedDatabase.execute(sql`
+      select conname from pg_constraint where conname in (
+        'career_documents_user_checksum_unique', 'career_imports_document_versions_unique',
+        'candidate_facts_import_fact_key_unique', 'candidate_fact_evidence_fact_unique'
+      ) order by conname
+    `);
+    expect(constraints).toHaveLength(4);
+  });
+
+  it("enforces career import ownership and domain bounds", async () => {
+    const accountId = "a4336773-4ece-464c-a4a9-4e884e461c55";
+    const secondAccountId = "0e532866-ef87-4e6e-a155-c87580550450";
+    const documentId = "7d688e0a-5fd1-4620-8f32-7f3c24bf83c3";
+    const secondDocumentId = "cfaf70b9-bc5e-4a73-bf87-5f97d91a0027";
+    const careerImportId = "5bbfc3df-20d2-40d5-9b6b-b9d876a6b26d";
+    const factId = "c45ab1b3-48e5-4fe4-b41f-71c516f20e07";
+    const checksum = "a".repeat(64);
+    const objectKey = `accounts/${accountId}/career-documents/${documentId}/source.md`;
+    const secondObjectKey = `accounts/${secondAccountId}/career-documents/${secondDocumentId}/source.md`;
+
+    await migratedDatabase.execute(sql`insert into job_accounts (id) values (${accountId}), (${secondAccountId})`);
+    await migratedDatabase.execute(sql`
+      insert into career_documents (
+        id, user_id, checksum_sha256, object_key, original_filename, media_type, byte_size
+      ) values (
+        ${documentId}, ${accountId}, ${checksum}, ${objectKey},
+        'resume.md', 'text/markdown', 1
+      ), (
+        ${secondDocumentId}, ${secondAccountId}, ${checksum}, ${secondObjectKey},
+        'resume.md', 'text/markdown', 1
+      )
+    `);
+    await expect(migratedDatabase.execute(sql`
+      insert into career_documents (
+        id, user_id, checksum_sha256, object_key, original_filename, media_type, byte_size
+      ) values (
+        '3cb3f03a-62a6-47d4-b632-85bd72a44fb2', ${accountId}, ${checksum},
+        'accounts/a4336773-4ece-464c-a4a9-4e884e461c55/career-documents/3cb3f03a-62a6-47d4-b632-85bd72a44fb2/source.md',
+        'duplicate.md', 'text/markdown', 1
+      )
+    `)).rejects.toMatchObject({ cause: { code: "23505" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into career_documents (
+        id, user_id, checksum_sha256, object_key, original_filename, media_type, byte_size
+      ) values (
+        'c548803e-8d2f-4fa6-9077-75026ca81dac', ${accountId}, ${"b".repeat(64)},
+        'accounts/a4336773-4ece-464c-a4a9-4e884e461c55/career-documents/c548803e-8d2f-4fa6-9077-75026ca81dac/source.md',
+        'too-large.md', 'text/markdown', 524289
+      )
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into career_documents (
+        id, user_id, checksum_sha256, object_key, original_filename, media_type, byte_size
+      ) values (
+        '3bb4b697-5b76-4f1a-a54c-20dcc9ff232e', ${accountId}, 'not-a-sha256',
+        'accounts/a4336773-4ece-464c-a4a9-4e884e461c55/career-documents/3bb4b697-5b76-4f1a-a54c-20dcc9ff232e/source.md',
+        'invalid-checksum.md', 'text/markdown', 1
+      )
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+
+    await migratedDatabase.execute(sql`
+      insert into career_imports (
+        id, user_id, career_document_id, status, parser_adapter, parser_version, prompt_version,
+        output_schema_version, originating_request_id, queued_at
+      ) values (
+        ${careerImportId}, ${accountId}, ${documentId}, 'queued', 'fake', 'fake-career-parser-v1',
+        'career-import-prompt-v1', 'career-facts-v1', 'f3e607c7-bf67-454c-929a-51c844f1cf35', now()
+      )
+    `);
+    await expect(migratedDatabase.execute(sql`
+      insert into career_imports (
+        id, user_id, career_document_id, status, parser_adapter, parser_version, prompt_version,
+        output_schema_version, originating_request_id, queued_at
+      ) values (
+        '88a8f5b3-5a36-4d3c-8052-fda9bd6c0be3', ${secondAccountId}, ${secondDocumentId}, 'invalid', 'fake',
+        'fake-career-parser-v1', 'career-import-prompt-v1', 'career-facts-v1',
+        '8e434e80-d053-4aa5-83ec-540ba49b174d', now()
+      )
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+
+    await expect(migratedDatabase.execute(sql`
+      insert into candidate_facts (
+        id, user_id, career_import_id, career_document_id, fact_key, fact_type, fact_value,
+        confidence_basis_points, confirmation_status
+      ) values (
+        '60488036-13b3-4857-88de-df89a6011a88', ${accountId}, ${careerImportId}, ${documentId},
+        ${"c".repeat(64)}, 'skill', '{"name":"TypeScript"}'::jsonb, 10001, 'pending'
+      )
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into candidate_facts (
+        id, user_id, career_import_id, career_document_id, fact_key, fact_type, fact_value,
+        confidence_basis_points, confirmation_status
+      ) values (
+        '18f91b3f-a57f-4dbf-a49b-bc570b2d5ae1', ${accountId}, ${careerImportId}, ${documentId},
+        ${"f".repeat(64)}, 'invalid', '{"name":"TypeScript"}'::jsonb, 10000, 'pending'
+      )
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await migratedDatabase.execute(sql`
+      insert into candidate_facts (
+        id, user_id, career_import_id, career_document_id, fact_key, fact_type, fact_value,
+        confidence_basis_points, confirmation_status
+      ) values (
+        ${factId}, ${accountId}, ${careerImportId}, ${documentId}, ${"d".repeat(64)}, 'skill',
+        '{"name":"TypeScript"}'::jsonb, 10000, 'pending'
+      )
+    `);
+    await expect(migratedDatabase.execute(sql`
+      insert into candidate_fact_evidence (
+        id, user_id, candidate_fact_id, career_document_id, locator_type, start_line, end_line,
+        excerpt, excerpt_sha256
+      ) values (
+        '1d7ed7ea-806c-448d-aa0d-bbb9fb225f6a', ${accountId}, ${factId}, ${documentId},
+        'markdown_lines', 2, 1, 'TypeScript', ${"e".repeat(64)}
+      )
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into candidate_fact_evidence (
+        id, user_id, candidate_fact_id, career_document_id, locator_type, start_line, end_line,
+        excerpt, excerpt_sha256
+      ) values (
+        '264b7047-3cfe-452c-9f58-cc0250e53017', ${accountId}, ${factId}, ${documentId},
+        'markdown_lines', 0, 1, 'TypeScript', ${"e".repeat(64)}
+      )
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+  });
 });

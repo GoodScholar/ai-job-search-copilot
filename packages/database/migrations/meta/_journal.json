@@ -15,6 +15,13 @@
       "when": 1788100010000,
       "tag": "0001_allow_unattributed_audit_events",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1787800311408,
+      "tag": "0002_career_imports",
+      "breakpoints": true
     }
   ]
 }
