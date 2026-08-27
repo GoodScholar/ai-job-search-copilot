@@ -526,9 +526,16 @@ export function createCareerImportProcessor(deps: ProcessorDependencies): {
         const [retried] = await deps.db.update(careerImports).set({
           attemptCount: sql`${careerImports.attemptCount} + 1`,
           updatedAt: now,
-        }).where(and(eq(careerImports.id, record.id), eq(careerImports.userId, record.userId)))
+        }).where(and(
+          eq(careerImports.id, record.id),
+          eq(careerImports.userId, record.userId),
+          eq(careerImports.status, "processing"),
+        ))
           .returning({ attemptCount: careerImports.attemptCount });
-        if (!retried) return "noop";
+        if (!retried) {
+          await findImport(deps.db, { userId: record.userId, importId: record.id });
+          return "noop";
+        }
         attemptToken = retried.attemptCount;
       } else {
         return "noop";

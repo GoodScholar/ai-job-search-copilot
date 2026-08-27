@@ -650,6 +650,91 @@ describe("career imports", () => {
     expect(stored).toEqual({ attemptCount: 1, status: "completed" });
   });
 
+  it("does not resume a processing attempt that became completed before its conditional claim", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const created = await createImport({
+      documentStore: store, queue,
+      ids: ids("4bbcf401-0650-4e03-9c01-1e5b41eaf175", "fe061f23-d215-43ca-86ba-0a28ff99447d"),
+      requestId: "b8421168-4482-4a3d-b837-4b9743d425e2",
+    });
+    await database.update(careerImports).set({ status: "processing" }).where(eq(careerImports.id, created.importId));
+    const resumeClaimReached = deferred<void>();
+    const releaseResumeClaim = deferred<void>();
+    const pausedDatabase = new Proxy(database, {
+      get(target, property, receiver) {
+        const value = Reflect.get(target, property, receiver);
+        if (property !== "update" || typeof value !== "function") {
+          return typeof value === "function" ? value.bind(target) : value;
+        }
+        return (...updateArgs: unknown[]) => {
+          const update = value.apply(target, updateArgs);
+          return new Proxy(update, {
+            get(updateBuilder, updateProperty, updateReceiver) {
+              const updateValue = Reflect.get(updateBuilder, updateProperty, updateReceiver);
+              if (updateProperty !== "set" || typeof updateValue !== "function") return updateValue;
+              return (...setArgs: unknown[]) => {
+                const set = updateValue.apply(updateBuilder, setArgs);
+                return new Proxy(set, {
+                  get(setBuilder, setProperty, setReceiver) {
+                    const setValue = Reflect.get(setBuilder, setProperty, setReceiver);
+                    if (setProperty !== "where" || typeof setValue !== "function") return setValue;
+                    return (...whereArgs: unknown[]) => {
+                      const where = setValue.apply(setBuilder, whereArgs);
+                      return new Proxy(where, {
+                        get(whereBuilder, whereProperty, whereReceiver) {
+                          const whereValue = Reflect.get(whereBuilder, whereProperty, whereReceiver);
+                          if (whereProperty !== "returning" || typeof whereValue !== "function") return whereValue;
+                          return (...returningArgs: unknown[]) => {
+                            const result = whereValue.apply(whereBuilder, returningArgs);
+                            resumeClaimReached.resolve();
+                            return releaseResumeClaim.promise.then(() => result);
+                          };
+                        },
+                      });
+                    };
+                  },
+                });
+              };
+            },
+          });
+        };
+      },
+    }) as Database;
+    let staleStoreReads = 0;
+    let staleParserCalls = 0;
+    const staleProcessor = createCareerImportProcessor({
+      db: pausedDatabase,
+      auditTrail: createAuditTrail({ db: database, clock: () => now }),
+      documentStore: {
+        put: store.put.bind(store),
+        get: async (input) => { staleStoreReads += 1; return store.get(input); },
+      },
+      parser: { parse: async () => { staleParserCalls += 1; return validOutput(); } },
+      id: ids("1e1b517d-9bcb-48e8-8129-27d7daf31ff1", "960a3a7c-1bc3-4527-8507-776847a66337"),
+      clock: () => now,
+    });
+    const completingProcessor = createCareerImportProcessor({
+      db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), documentStore: store,
+      parser: parser(validOutput()),
+      id: ids("fb66df44-4df1-49be-aa19-c474a89e45a2", "49bec9f4-fc01-466a-8a2f-32d5842f47d1"),
+      clock: () => now,
+    });
+
+    const stale = staleProcessor.process({ version: 1, importId: created.importId, userId, finalAttempt: false });
+    await resumeClaimReached.promise;
+    await expect(completingProcessor.process({ version: 1, importId: created.importId, userId, finalAttempt: false }))
+      .resolves.toBe("completed");
+    releaseResumeClaim.resolve();
+
+    await expect(stale).resolves.toBe("noop");
+    expect(staleStoreReads).toBe(0);
+    expect(staleParserCalls).toBe(0);
+    const [stored] = await database.select({ status: careerImports.status, attemptCount: careerImports.attemptCount })
+      .from(careerImports).where(eq(careerImports.id, created.importId));
+    expect(stored).toEqual({ status: "completed", attemptCount: 1 });
+  });
+
   it("returns noop when a stale executor tries to complete after a newer processing attempt", async () => {
     const store = new MemoryStore();
     const queue = new MemoryQueue();
