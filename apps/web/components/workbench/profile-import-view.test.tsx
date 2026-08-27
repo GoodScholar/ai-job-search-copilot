@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 
@@ -74,14 +74,56 @@ it("maps failures to a fixed Chinese message without exposing internal values", 
   expect(screen.queryByText("NO_SUPPORTED_FACTS")).not.toBeInTheDocument();
 });
 
-it("stops polling on terminal status and aborts in-flight work on unmount", async () => {
-  const abortSpy = vi.spyOn(AbortController.prototype, "abort");
+it("gives a new upload failure priority over an existing queued import", async () => {
+  mocks.createCareerImportAction.mockResolvedValue({ ok: false, code: "NO_SUPPORTED_FACTS", message: "没有找到可确认的职业资料事实，请检查 Markdown 内容后重试。" });
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ ...queuedImport, facts: [] }));
+  const user = userEvent.setup();
+
+  render(<ProfileImportView initialImport={queuedImport} />);
+  await user.upload(screen.getByLabelText("选择 Markdown 职业资料"), new File(["# empty"], "career.md", { type: "text/markdown" }));
+  await user.click(screen.getByRole("button", { name: "上传并解析" }));
+
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("没有找到可确认的职业资料事实，请检查 Markdown 内容后重试。"));
+  expect(screen.getByRole("status")).not.toHaveTextContent("等待解析");
+});
+
+it("waits one full second between serialized intermediate polling requests", async () => {
+  vi.useFakeTimers();
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ ...queuedImport, facts: [] }));
+
+  render(<ProfileImportView initialImport={queuedImport} />);
+  await act(async () => { await Promise.resolve(); });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  await act(async () => { await vi.advanceTimersByTimeAsync(999); });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+
+it("does not schedule another request after a terminal response", async () => {
+  vi.useFakeTimers();
   const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(completedDetail));
 
-  const rendered = render(<ProfileImportView initialImport={queuedImport} />);
-  await waitFor(() => expect(screen.getByText("解析完成")).toBeInTheDocument());
-  await new Promise((resolve) => setTimeout(resolve, 1100));
+  render(<ProfileImportView initialImport={queuedImport} />);
+  await act(async () => { await Promise.resolve(); });
+  expect(screen.getByText("解析完成")).toBeInTheDocument();
+  await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
   expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+it("aborts a pending request when the view unmounts", async () => {
+  const abortSpy = vi.spyOn(AbortController.prototype, "abort");
+  let resolveFetch: ((response: Response) => void) | undefined;
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise<Response>((resolve) => {
+    resolveFetch = resolve;
+  }));
+
+  const rendered = render(<ProfileImportView initialImport={queuedImport} />);
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+  const signal = (fetchMock.mock.calls[0]![1] as RequestInit).signal;
+  expect(signal?.aborted).toBe(false);
   rendered.unmount();
   expect(abortSpy).toHaveBeenCalled();
+  expect(signal?.aborted).toBe(true);
+  resolveFetch?.(Response.json(completedDetail));
 });

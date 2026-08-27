@@ -10,7 +10,7 @@ vi.mock("@/lib/server/api-client", () => ({ api: { createCareerImport: mocks.cre
 vi.mock("@/lib/server/session-cookie", () => ({ readSessionToken: mocks.readSessionToken }));
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 
-import { createCareerImportAction, initialUploadActionState } from "./actions";
+import { createCareerImportAction, createCareerImportFormAction, initialUploadActionState } from "./actions";
 
 afterEach(() => vi.clearAllMocks());
 
@@ -44,4 +44,12 @@ it("redirects without a session and maps API failures to fixed Chinese messages"
   await expect(createCareerImportAction(initialUploadActionState, new FormData())).resolves.toEqual({
     ok: false, code: "CAREER_IMPORT_QUEUE_UNAVAILABLE", message: "解析任务暂时不可用，请稍后重试。",
   });
+});
+
+it("redirects no-JavaScript form failures through a whitelisted profile query", async () => {
+  mocks.readSessionToken.mockResolvedValue("a".repeat(43));
+  mocks.createCareerImport.mockRejectedValue({ problem: { code: "CAREER_DOCUMENT_EMPTY", message: "internal failure" } });
+
+  await expect(createCareerImportFormAction(new FormData())).rejects.toThrow("redirect:/profile?importError=CAREER_DOCUMENT_EMPTY");
+  expect(mocks.redirect).toHaveBeenCalledWith("/profile?importError=CAREER_DOCUMENT_EMPTY");
 });

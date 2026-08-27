@@ -1130,6 +1130,11 @@ body {
   padding-bottom: 1rem;
 }
 
+.profile-facts-heading > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .profile-pending {
   color: var(--amber-ink);
   font-size: 0.82rem;
@@ -1162,6 +1167,10 @@ body {
   font-size: 0.82rem;
   line-height: 1.55;
   margin: 0;
+}
+
+.profile-fact-value span {
+  overflow-wrap: anywhere;
 }
 
 .profile-fact-value strong {

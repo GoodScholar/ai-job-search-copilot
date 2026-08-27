@@ -29,5 +29,9 @@ it("explains that pending facts cannot yet affect recommendations or materials",
     summary: { recommendations: 0, pendingFacts: 2, runningAgentRuns: 0, applications: 0 },
   }} />);
 
+  expect(screen.getByRole("heading", { name: "职业资料等待确认" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "查看待确认事实" })).toHaveAttribute("href", "/profile");
   expect(screen.getByText("待确认事实尚未进入求职画像，不能用于推荐或材料生成。")).toBeInTheDocument();
+  expect(screen.queryByText("职业资料尚未建立")).not.toBeInTheDocument();
+  expect(screen.queryByText("当前账号还没有可供推荐、核对或投递的职业资料。所有计数均来自你的当前记录。")).not.toBeInTheDocument();
 });

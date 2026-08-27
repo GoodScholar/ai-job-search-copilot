@@ -62,4 +62,6 @@ export async function createCareerImportFormAction(formData: FormData): Promise<
   if (result.ok) {
     redirect("/profile");
   }
+  const failureCode = failureMessages[result.code] ? result.code : "CAREER_IMPORT_UNAVAILABLE";
+  redirect(`/profile?importError=${failureCode}`);
 }

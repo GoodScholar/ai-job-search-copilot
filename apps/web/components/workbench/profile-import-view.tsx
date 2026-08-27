@@ -6,6 +6,7 @@ import { createCareerImportAction, createCareerImportFormAction, initialUploadAc
 
 type ProfileImportViewProps = {
   initialImport: CareerImportSummary | null;
+  initialErrorMessage?: string | null;
 };
 
 type ImportStatus = "uploading" | "queued" | "processing" | "completed" | "failed";
@@ -70,12 +71,13 @@ function hasSameSummary(detail: CareerImportDetail, previous: CareerImportSummar
     && detail.facts.length === previous.candidateFactCount;
 }
 
-export function ProfileImportView({ initialImport }: ProfileImportViewProps) {
+export function ProfileImportView({ initialImport, initialErrorMessage = null }: ProfileImportViewProps) {
   const [actionState, setActionState] = useState<UploadActionState>(initialUploadActionState);
   const [isPending, startTransition] = useTransition();
   const [activeImport, setActiveImport] = useState<CareerImportSummary | null>(initialImport);
   const [detail, setDetail] = useState<CareerImportDetail | null>(null);
   const [pollingError, setPollingError] = useState(false);
+  const activeImportId = activeImport?.importId;
 
   const submitUpload = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -92,16 +94,14 @@ export function ProfileImportView({ initialImport }: ProfileImportViewProps) {
   };
 
   useEffect(() => {
-    if (!activeImport) return;
-    if (detail?.importId === activeImport.importId && (activeImport.status === "completed" || activeImport.status === "failed")) {
-      return;
-    }
-
-    const controller = new AbortController();
+    if (!activeImportId) return;
     let active = true;
+    let timer: number | undefined;
+    let controller: AbortController | undefined;
     const refresh = async () => {
+      controller = new AbortController();
       try {
-        const response = await fetch(`/api/career-imports/${activeImport.importId}`, { signal: controller.signal });
+        const response = await fetch(`/api/career-imports/${activeImportId}`, { signal: controller.signal });
         if (!response.ok) throw new Error("career import status unavailable");
         const nextDetail = await response.json() as CareerImportDetail;
         if (!active) return;
@@ -110,39 +110,36 @@ export function ProfileImportView({ initialImport }: ProfileImportViewProps) {
           ? asSummary(nextDetail)
           : previous);
         setPollingError(false);
+        if (nextDetail.status === "queued" || nextDetail.status === "processing") {
+          timer = window.setTimeout(refresh, 1_000);
+        }
       } catch {
         if (active && !controller.signal.aborted) setPollingError(true);
       }
     };
 
     void refresh();
-    if (activeImport.status !== "queued" && activeImport.status !== "processing") {
-      return () => {
-        active = false;
-        controller.abort();
-      };
-    }
-    const timer = window.setInterval(refresh, 1_000);
     return () => {
       active = false;
-      window.clearInterval(timer);
-      controller.abort();
+      if (timer) window.clearTimeout(timer);
+      controller?.abort();
     };
-  }, [activeImport, detail?.importId]);
+  }, [activeImportId]);
 
   const displayedStatus: ImportStatus | null = isPending
     ? "uploading"
     : activeImport?.status ?? null;
   const failureMessage = detail?.failureCode ? failureMessages[detail.failureCode] ?? "解析失败，请稍后重试。" : null;
-  const liveMessage = pollingError
-    ? "暂时无法读取解析状态，请稍后重试。"
-    : displayedStatus === "failed"
+  const actionFailureMessage = actionState.ok === false && actionState.code ? actionState.message : initialErrorMessage;
+  const liveMessage = actionFailureMessage
+    ? actionFailureMessage
+    : pollingError
+      ? "暂时无法读取解析状态，请稍后重试。"
+      : displayedStatus === "failed"
       ? failureMessage ?? "解析失败，请稍后重试。"
       : displayedStatus
         ? statusText[displayedStatus]
-        : actionState.ok === false && actionState.code
-          ? actionState.message
-          : "请选择一份 Markdown 职业资料后上传。";
+        : "请选择一份 Markdown 职业资料后上传。";
 
   return (
     <main className="container profile-main">

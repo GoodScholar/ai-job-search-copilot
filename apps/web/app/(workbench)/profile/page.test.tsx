@@ -17,7 +17,7 @@ it("declares the profile page and preserves Next control-flow errors", async () 
   const redirectError = new Error("NEXT_REDIRECT:/login?returnTo=%2Fprofile");
   mocks.getCareerImports.mockRejectedValue(redirectError);
 
-  await expect(ProfilePage()).rejects.toThrow("NEXT_REDIRECT:/login?returnTo=%2Fprofile");
+  await expect(ProfilePage({ searchParams: Promise.resolve({}) })).rejects.toThrow("NEXT_REDIRECT:/login?returnTo=%2Fprofile");
   expect(mocks.unstableRethrow).toHaveBeenCalledWith(redirectError);
 });
 
@@ -30,7 +30,15 @@ it("performs the authenticated RSC first read before passing only the latest imp
   };
   mocks.getCareerImports.mockResolvedValue({ imports: [latest] });
 
-  const page = await ProfilePage();
+  const page = await ProfilePage({ searchParams: Promise.resolve({}) });
 
   expect(page.props.initialImport).toEqual(latest);
+});
+
+it("passes only a whitelisted no-JavaScript upload failure message to the view", async () => {
+  mocks.getCareerImports.mockResolvedValue({ imports: [] });
+
+  const page = await ProfilePage({ searchParams: Promise.resolve({ importError: "CAREER_DOCUMENT_EMPTY" }) });
+
+  expect(page.props.initialErrorMessage).toBe("Markdown 文件不能为空。");
 });
