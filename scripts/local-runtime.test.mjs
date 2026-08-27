@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { createNestDevCommand } from "./nest-dev.mjs";
 import { createRuntimeConfig, prepareInfrastructure, runRuntime, startApplications } from "./local-runtime.mjs";
 
 function createControlledChild() {
@@ -100,13 +101,14 @@ test("stops before applications when compose is unavailable", async () => {
   );
 });
 
-test("forces local Dev Auth when spawning applications", () => {
+test("forces local Dev Auth and preserves caller Node options when spawning applications", () => {
   let spawnCall;
   startApplications({
     env: {
       APP_ENV: "production",
       AUTH_MODE: "password",
       DEV_AUTH_SHARED_SECRET: "existing-secret",
+      NODE_OPTIONS: "--trace-warnings",
       WEB_PORT: "4020",
       API_PORT: "4021",
       UNRELATED_VALUE: "preserved",
@@ -125,8 +127,34 @@ test("forces local Dev Auth when spawning applications", () => {
   assert.equal(options.env.DEV_AUTH_SHARED_SECRET, "existing-secret");
   assert.equal(options.env.PORT, "4020");
   assert.equal(options.env.API_PORT, "4021");
+  assert.equal(options.env.NODE_OPTIONS, "--trace-warnings");
   assert.equal(options.detached, false);
   assert.equal(options.env.UNRELATED_VALUE, "preserved");
+});
+
+test("API and Worker dev commands launch the cross-platform Nest loader", async () => {
+  for (const packagePath of ["../apps/api/package.json", "../apps/worker/package.json"]) {
+    const packageJson = JSON.parse(await readFile(new URL(packagePath, import.meta.url), "utf8"));
+
+    assert.equal(packageJson.scripts.dev, "node ../../scripts/nest-dev.mjs");
+    assert.doesNotMatch(packageJson.scripts.dev, /NODE_OPTIONS=/);
+  }
+});
+
+test("Nest dev loader explicitly imports tsx and preserves existing Node options for watch children", () => {
+  const command = createNestDevCommand({
+    cwd: "/workspace/apps/api",
+    nodeExecutable: "node",
+    env: { NODE_OPTIONS: "--trace-warnings" },
+  });
+
+  assert.deepEqual(command.args, [
+    "--import=tsx",
+    "/workspace/apps/api/node_modules/@nestjs/cli/bin/nest.js",
+    "start",
+    "--watch",
+  ]);
+  assert.equal(command.env.NODE_OPTIONS, "--trace-warnings --import=tsx");
 });
 
 test("test runtime removes only its isolated Compose project before starting dependencies", async () => {

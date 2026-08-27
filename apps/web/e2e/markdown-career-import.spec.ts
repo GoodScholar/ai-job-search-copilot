@@ -3,6 +3,7 @@ import { expect, test, type APIRequestContext, type Page } from "@playwright/tes
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const testDevAuthSecret = "issue-2-e2e-dev-auth-shared-secret";
+const testRunSuffix = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 const resume = [
   "# 张三", "邮箱：secret@example.test", "## 工作经历",
   "- AI 应用工程师｜示例科技｜2024-至今", "## 技能", "- TypeScript", "- React",
@@ -17,19 +18,7 @@ type CareerImportDetail = {
   facts: unknown[];
 };
 
-async function signIn(page: Page): Promise<void> {
-  await page.goto("/login?returnTo=%2Fprofile");
-  await page.getByRole("button", { name: "使用本地体验账户登录" }).click();
-  await expect(page).toHaveURL(/\/profile$/);
-}
-
-async function browserBearer(page: Page): Promise<string> {
-  const sessionCookie = (await page.context().cookies()).find((cookie) => cookie.name === "job_copilot_session");
-  expect(sessionCookie?.value).toMatch(/^[A-Za-z0-9_-]{43}$/);
-  return sessionCookie!.value;
-}
-
-async function createSecondarySession(request: APIRequestContext, subject: string): Promise<string> {
+async function createDevSession(request: APIRequestContext, subject: string): Promise<string> {
   const response = await request.post(`${apiBaseUrl}/v1/auth/dev/sessions`, {
     headers: { "x-dev-auth-secret": testDevAuthSecret },
     data: { subject },
@@ -41,8 +30,53 @@ async function createSecondarySession(request: APIRequestContext, subject: strin
   return session.sessionToken;
 }
 
+async function signInWithIsolatedAccount(page: Page, request: APIRequestContext, projectName: string): Promise<void> {
+  await page.goto("/login?returnTo=%2Fprofile");
+  await page.getByRole("button", { name: "使用本地体验账户登录" }).click();
+  await expect(page).toHaveURL(/\/profile$/);
+
+  const sessionToken = await createDevSession(request, `markdown-career-import-primary-${projectName}-${testRunSuffix}`);
+  await page.context().addCookies([{
+    name: "job_copilot_session",
+    value: sessionToken,
+    domain: "127.0.0.1",
+    path: "/",
+    httpOnly: true,
+    sameSite: "Lax",
+  }]);
+  await page.goto("/profile");
+}
+
+async function browserBearer(page: Page): Promise<string> {
+  const sessionCookie = (await page.context().cookies()).find((cookie) => cookie.name === "job_copilot_session");
+  expect(sessionCookie?.value).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  return sessionCookie!.value;
+}
+
+async function observeImportStatus(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const status = document.querySelector("[role=status]");
+    if (!(status instanceof HTMLElement)) throw new Error("career import status is unavailable");
+    const statusHistory = [status.textContent?.trim() ?? ""];
+    new MutationObserver(() => statusHistory.push(status.textContent?.trim() ?? ""))
+      .observe(status, { childList: true, characterData: true, subtree: true });
+    Reflect.set(window, "__careerImportStatusHistory", statusHistory);
+  });
+}
+
+async function importStatusHistory(page: Page): Promise<string[]> {
+  return page.evaluate(() => Reflect.get(window, "__careerImportStatusHistory") as string[]);
+}
+
 test("登录用户可导入、持久化并安全复用 Markdown 职业资料", async ({ page, request }, testInfo) => {
-  await signIn(page);
+  await signInWithIsolatedAccount(page, request, testInfo.project.name);
+
+  const bearer = await browserBearer(page);
+  const emptyImportResponse = await request.get(`${apiBaseUrl}/v1/career-documents/imports`, {
+    headers: { authorization: `Bearer ${bearer}` },
+  });
+  expect(emptyImportResponse.status()).toBe(200);
+  await expect(emptyImportResponse.json()).resolves.toEqual({ imports: [] });
 
   const fileInput = page.getByLabel("选择 Markdown 职业资料");
   const uploadButton = page.getByRole("button", { name: "上传并解析" });
@@ -63,6 +97,7 @@ test("登录用户可导入、持久化并安全复用 Markdown 职业资料", a
   }
 
   await fileInput.setInputFiles(resumeFile);
+  await observeImportStatus(page);
   if (testInfo.project.name === "Mobile Safari") {
     await uploadButton.tap();
   } else {
@@ -73,8 +108,10 @@ test("登录用户可导入、持久化并安全复用 Markdown 职业资料", a
   await expect(page.getByText("TypeScript", { exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText("第 6 行", { exact: true })).toBeVisible();
   await expect(page.getByText("待确认", { exact: true })).toBeVisible();
+  expect(await importStatusHistory(page)).toEqual(expect.arrayContaining([
+    expect.stringMatching(/等待解析|解析中/),
+  ]));
 
-  const bearer = await browserBearer(page);
   const initialImportResponse = await request.get(`${apiBaseUrl}/v1/career-documents/imports`, {
     headers: { authorization: `Bearer ${bearer}` },
   });
@@ -109,7 +146,7 @@ test("登录用户可导入、持久化并安全复用 Markdown 职业资料", a
   expect(duplicateDetail.importId).toBe(importId);
   expect(duplicateDetail.facts).toHaveLength(detail.facts.length);
 
-  const secondaryBearer = await createSecondarySession(request, `markdown-career-import-secondary-${testInfo.project.name}`);
+  const secondaryBearer = await createDevSession(request, `markdown-career-import-secondary-${testInfo.project.name}-${testRunSuffix}`);
   const hiddenResponse = await request.get(`${apiBaseUrl}/v1/career-documents/imports/${importId}`, {
     headers: { authorization: `Bearer ${secondaryBearer}` },
   });
