@@ -182,7 +182,7 @@ test("test runtime passes its isolated service addresses to every application", 
   assert.equal(options.env.MINIO_BUCKET, "career-documents");
   assert.equal(options.env.MAILPIT_ENDPOINT, "http://127.0.0.1:58126");
   assert.equal(options.env.DEV_AUTH_SHARED_SECRET, "issue-2-e2e-dev-auth-shared-secret");
-  assert.match(options.env.NODE_OPTIONS, /--import=tsx/);
+  assert.equal(options.env.NODE_OPTIONS, undefined);
   assert.equal(options.env.UNRELATED_VALUE, "preserved");
   assert.doesNotMatch(JSON.stringify([command, args]), /local_only_job_copilot_secret/);
 });

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "nest start --watch",
+    "dev": "NODE_OPTIONS=--import=tsx nest start --watch",
     "test": "vitest run",
     "build": "nest build",
     "typecheck": "tsc --noEmit"

@@ -1,0 +1,134 @@
+import AxeBuilder from "@axe-core/playwright";
+import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+
+const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
+const testDevAuthSecret = "issue-2-e2e-dev-auth-shared-secret";
+const resume = [
+  "# 张三", "邮箱：secret@example.test", "## 工作经历",
+  "- AI 应用工程师｜示例科技｜2024-至今", "## 技能", "- TypeScript", "- React",
+  "## 教育经历", "- 示例大学｜计算机科学｜2020", "## 项目经历",
+  "- Job Copilot：构建证据驱动的求职工作流", "## 语言", "- 英语：专业工作水平",
+  "## 成果", "- 将解析耗时降低 35%", "## 联系方式", "- 电话：13800000000",
+].join("\n");
+const resumeFile = { name: "career.md", mimeType: "text/markdown", buffer: Buffer.from(resume, "utf8") };
+
+type CareerImportDetail = {
+  importId: string;
+  facts: unknown[];
+};
+
+async function signIn(page: Page): Promise<void> {
+  await page.goto("/login?returnTo=%2Fprofile");
+  await page.getByRole("button", { name: "使用本地体验账户登录" }).click();
+  await expect(page).toHaveURL(/\/profile$/);
+}
+
+async function browserBearer(page: Page): Promise<string> {
+  const sessionCookie = (await page.context().cookies()).find((cookie) => cookie.name === "job_copilot_session");
+  expect(sessionCookie?.value).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  return sessionCookie!.value;
+}
+
+async function createSecondarySession(request: APIRequestContext, subject: string): Promise<string> {
+  const response = await request.post(`${apiBaseUrl}/v1/auth/dev/sessions`, {
+    headers: { "x-dev-auth-secret": testDevAuthSecret },
+    data: { subject },
+  });
+
+  expect(response.status()).toBe(201);
+  const session = await response.json() as { sessionToken: string };
+  expect(session.sessionToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  return session.sessionToken;
+}
+
+test("登录用户可导入、持久化并安全复用 Markdown 职业资料", async ({ page, request }, testInfo) => {
+  await signIn(page);
+
+  const fileInput = page.getByLabel("选择 Markdown 职业资料");
+  const uploadButton = page.getByRole("button", { name: "上传并解析" });
+  if (testInfo.project.name === "Desktop Chrome") {
+    await page.goto("/profile");
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("link", { name: "AI Job Search Copilot" })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("link", { name: "首页" })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("link", { name: "画像" })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("button", { name: "退出" })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(fileInput).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(uploadButton).toBeFocused();
+  }
+
+  await fileInput.setInputFiles(resumeFile);
+  if (testInfo.project.name === "Mobile Safari") {
+    await uploadButton.tap();
+  } else {
+    await uploadButton.click();
+  }
+
+  await expect(page.getByRole("status")).toContainText(/等待解析|解析中|解析完成/);
+  await expect(page.getByText("TypeScript", { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText("第 6 行", { exact: true })).toBeVisible();
+  await expect(page.getByText("待确认", { exact: true })).toBeVisible();
+
+  const bearer = await browserBearer(page);
+  const initialImportResponse = await request.get(`${apiBaseUrl}/v1/career-documents/imports`, {
+    headers: { authorization: `Bearer ${bearer}` },
+  });
+  expect(initialImportResponse.status()).toBe(200);
+  const { imports } = await initialImportResponse.json() as { imports: Array<{ importId: string }> };
+  expect(imports).toHaveLength(1);
+  const importId = imports[0]!.importId;
+  const detailResponse = await request.get(`${apiBaseUrl}/v1/career-documents/imports/${importId}`, {
+    headers: { authorization: `Bearer ${bearer}` },
+  });
+  expect(detailResponse.status()).toBe(200);
+  const detail = await detailResponse.json() as CareerImportDetail;
+  expect(detail.facts).toHaveLength(7);
+
+  await page.reload();
+  await expect(page.getByRole("status")).toHaveText("解析完成");
+  await expect(page.getByText("TypeScript", { exact: true })).toBeVisible();
+  await expect(page.getByText("第 6 行", { exact: true })).toBeVisible();
+
+  const duplicateResponse = await request.post(`${apiBaseUrl}/v1/career-documents/imports`, {
+    headers: { authorization: `Bearer ${bearer}` },
+    multipart: { file: resumeFile },
+  });
+  expect(duplicateResponse.status()).toBe(200);
+  const duplicateImport = await duplicateResponse.json() as { importId: string; reused: boolean; status: string };
+  expect(duplicateImport).toMatchObject({ importId, reused: true, status: "completed" });
+  const duplicateDetailResponse = await request.get(`${apiBaseUrl}/v1/career-documents/imports/${importId}`, {
+    headers: { authorization: `Bearer ${bearer}` },
+  });
+  expect(duplicateDetailResponse.status()).toBe(200);
+  const duplicateDetail = await duplicateDetailResponse.json() as CareerImportDetail;
+  expect(duplicateDetail.importId).toBe(importId);
+  expect(duplicateDetail.facts).toHaveLength(detail.facts.length);
+
+  const secondaryBearer = await createSecondarySession(request, `markdown-career-import-secondary-${testInfo.project.name}`);
+  const hiddenResponse = await request.get(`${apiBaseUrl}/v1/career-documents/imports/${importId}`, {
+    headers: { authorization: `Bearer ${secondaryBearer}` },
+  });
+  expect(hiddenResponse.status()).toBe(404);
+
+  const [fileInputHeight, uploadButtonHeight] = await Promise.all([
+    fileInput.evaluate((element) => element.getBoundingClientRect().height),
+    uploadButton.evaluate((element) => element.getBoundingClientRect().height),
+  ]);
+  expect(fileInputHeight).toBeGreaterThanOrEqual(44);
+  expect(uploadButtonHeight).toBeGreaterThanOrEqual(44);
+  await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+
+  await page.goto("/home");
+  const summary = page.getByLabel("当前求职记录摘要");
+  await expect(summary).toContainText("待确认事实7");
+  const profileEntry = page.getByRole("link", { name: "查看待确认事实" });
+  await expect(profileEntry).toBeVisible();
+  await profileEntry.click();
+  await expect(page).toHaveURL(/\/profile$/);
+});

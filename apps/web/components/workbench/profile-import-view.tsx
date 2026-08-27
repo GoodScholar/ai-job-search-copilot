@@ -2,7 +2,7 @@
 
 import type { CandidateFact, CareerImportDetail, CareerImportSummary } from "@job-copilot/contracts/career-import";
 import { useEffect, useRef, useState, useTransition, type FormEvent } from "react";
-import { createCareerImportAction, createCareerImportFormAction, initialUploadActionState, type UploadActionState } from "@/app/(workbench)/profile/actions";
+import { createCareerImportAction, createCareerImportFormAction, type UploadActionState } from "@/app/(workbench)/profile/actions";
 
 type ProfileImportViewProps = {
   initialImport: CareerImportSummary | null;
@@ -18,6 +18,8 @@ const statusText: Record<ImportStatus, string> = {
   completed: "解析完成",
   failed: "解析失败",
 };
+
+const initialUploadActionState: UploadActionState = { ok: false, code: "", message: "" };
 
 const failureMessages: Record<string, string> = {
   CAREER_IMPORT_QUEUE_UNAVAILABLE: "解析任务暂时不可用，请稍后重试。",
@@ -206,7 +208,7 @@ export function ProfileImportView({ initialImport, initialErrorMessage = null }:
                 <div className="profile-fact-value">
                   <p>{factTypeNames[fact.factType]}</p>
                   <strong>{factValue(fact)}</strong>
-                  <span>来源：{fact.evidence.sourceFilename} · 第 {fact.evidence.startLine} 行</span>
+                  <span>来源：{fact.evidence.sourceFilename} · <span>第 {fact.evidence.startLine} 行</span></span>
                 </div>
                 <blockquote className="profile-fact-evidence">{fact.evidence.excerpt}</blockquote>
               </li>

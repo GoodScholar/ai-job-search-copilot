@@ -118,6 +118,8 @@ test("工作台在目标浏览器保持键盘、触控、减动效与无障碍�
     await page.keyboard.press("Tab");
     await expect(page.getByRole("link", { name: "首页" })).toBeFocused();
     await page.keyboard.press("Tab");
+    await expect(page.getByRole("link", { name: "画像" })).toBeFocused();
+    await page.keyboard.press("Tab");
     await expect(signOut).toBeFocused();
     await page.keyboard.press("Enter");
   } else {

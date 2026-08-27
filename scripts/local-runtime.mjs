@@ -112,7 +112,6 @@ export function runDatabaseMigrations({ runProcess = run, config }) {
 function applicationEnv(config, env) {
   return {
     ...env,
-    NODE_OPTIONS: [env.NODE_OPTIONS, "--import=tsx"].filter(Boolean).join(" "),
     APP_ENV: config.appEnv,
     AUTH_MODE: "dev",
     DEV_AUTH_SHARED_SECRET: config.devAuthSharedSecret,

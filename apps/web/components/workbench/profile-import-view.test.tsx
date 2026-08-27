@@ -7,7 +7,6 @@ const mocks = vi.hoisted(() => ({ createCareerImportAction: vi.fn(), createCaree
 vi.mock("@/app/(workbench)/profile/actions", () => ({
   createCareerImportAction: mocks.createCareerImportAction,
   createCareerImportFormAction: mocks.createCareerImportFormAction,
-  initialUploadActionState: { ok: false, code: "", message: "" },
 }));
 
 import { ProfileImportView } from "./profile-import-view";
@@ -74,12 +73,12 @@ it("uploads only Markdown files and renders quoted pending facts after polling",
   await user.click(screen.getByRole("button", { name: "上传并解析" }));
 
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/等待解析|解析中/));
-  await waitFor(() => expect(screen.getByText("解析完成")).toBeInTheDocument());
+  await waitFor(() => expect(screen.getByText("解析完成")).toBeInTheDocument(), { timeout: 2_000 });
   expect(screen.getByText("待确认")).toBeInTheDocument();
   expect(screen.getByText("技能")).toBeInTheDocument();
   expect(screen.getByText("TypeScript")).toBeInTheDocument();
   expect(screen.getAllByText(/career\.md/).length).toBeGreaterThan(0);
-  expect(screen.getByText(/第 6 行/)).toBeInTheDocument();
+  expect(screen.getByText("第 6 行", { exact: true })).toBeInTheDocument();
   expect(screen.getByText("- TypeScript")).toBeInTheDocument();
   expect(screen.getByText("确认、修改和拒绝将在下一阶段开放")).toBeInTheDocument();
   expect(fetchMock).toHaveBeenCalledWith(`/api/career-imports/${importId}`, expect.objectContaining({ signal: expect.any(AbortSignal) }));

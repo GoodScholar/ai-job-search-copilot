@@ -9,7 +9,7 @@ export type UploadActionState =
   | { ok: false; code: string; message: string }
   | { ok: true; import: CreateCareerImportResponse };
 
-export const initialUploadActionState: UploadActionState = {
+const initialUploadActionState: UploadActionState = {
   ok: false,
   code: "",
   message: "",

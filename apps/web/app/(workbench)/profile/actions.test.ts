@@ -10,7 +10,9 @@ vi.mock("@/lib/server/api-client", () => ({ api: { createCareerImport: mocks.cre
 vi.mock("@/lib/server/session-cookie", () => ({ readSessionToken: mocks.readSessionToken }));
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 
-import { createCareerImportAction, createCareerImportFormAction, initialUploadActionState } from "./actions";
+import { createCareerImportAction, createCareerImportFormAction } from "./actions";
+
+const initialUploadActionState = { ok: false, code: "", message: "" } as const;
 
 afterEach(() => vi.clearAllMocks());
 
