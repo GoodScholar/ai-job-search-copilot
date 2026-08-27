@@ -6,6 +6,7 @@
   "exports": {
     "./api-problem": "./src/api-problem.ts",
     "./auth": "./src/auth.ts",
+    "./career-import": "./src/career-import.ts",
     "./workbench": "./src/workbench.ts",
     "./runtime": "./src/runtime.ts"
   },
