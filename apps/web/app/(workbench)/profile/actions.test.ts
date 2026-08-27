@@ -53,3 +53,15 @@ it("redirects no-JavaScript form failures through a whitelisted profile query", 
   await expect(createCareerImportFormAction(new FormData())).rejects.toThrow("redirect:/profile?importError=CAREER_DOCUMENT_EMPTY");
   expect(mocks.redirect).toHaveBeenCalledWith("/profile?importError=CAREER_DOCUMENT_EMPTY");
 });
+
+it.each(["unknown", "toString", "constructor", "__proto__"])("drops unsafe API failure code %s", async (code) => {
+  mocks.readSessionToken.mockResolvedValue("a".repeat(43));
+  mocks.createCareerImport.mockRejectedValue({ problem: { code, message: "internal failure" } });
+
+  await expect(createCareerImportFormAction(new FormData())).rejects.toThrow("redirect:/profile?importError=CAREER_IMPORT_UNAVAILABLE");
+  await expect(createCareerImportAction(initialUploadActionState, new FormData())).resolves.toEqual({
+    ok: false,
+    code: "CAREER_IMPORT_UNAVAILABLE",
+    message: "职业资料暂时无法处理，请稍后重试。",
+  });
+});

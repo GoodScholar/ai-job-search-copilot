@@ -24,7 +24,14 @@ const failureMessages: Record<string, string> = {
   CAREER_DOCUMENT_EMPTY: "Markdown 文件不能为空。",
   CAREER_DOCUMENT_STORAGE_UNAVAILABLE: "职业资料暂时无法保存，请稍后重试。",
   CAREER_IMPORT_QUEUE_UNAVAILABLE: "解析任务暂时不可用，请稍后重试。",
+  CAREER_IMPORT_UNAVAILABLE: "职业资料暂时无法处理，请稍后重试。",
 };
+
+function safeFailureCode(value: unknown): string {
+  return typeof value === "string" && Object.hasOwn(failureMessages, value)
+    ? value
+    : "CAREER_IMPORT_UNAVAILABLE";
+}
 
 export async function createCareerImportAction(
   _previousState: UploadActionState,
@@ -44,15 +51,16 @@ export async function createCareerImportAction(
   try {
     return { ok: true, import: await api.createCareerImport(sessionToken, upload) };
   } catch (error) {
-    const code = typeof error === "object" && error !== null && "problem" in error
+    const rawCode = typeof error === "object" && error !== null && "problem" in error
       && typeof error.problem === "object" && error.problem !== null && "code" in error.problem
       && typeof error.problem.code === "string"
       ? error.problem.code
-      : "CAREER_IMPORT_UNAVAILABLE";
+      : null;
+    const code = safeFailureCode(rawCode);
     return {
       ok: false,
       code,
-      message: failureMessages[code] ?? "职业资料暂时无法处理，请稍后重试。",
+      message: failureMessages[code],
     };
   }
 }
@@ -62,6 +70,6 @@ export async function createCareerImportFormAction(formData: FormData): Promise<
   if (result.ok) {
     redirect("/profile");
   }
-  const failureCode = failureMessages[result.code] ? result.code : "CAREER_IMPORT_UNAVAILABLE";
+  const failureCode = safeFailureCode(result.code);
   redirect(`/profile?importError=${failureCode}`);
 }

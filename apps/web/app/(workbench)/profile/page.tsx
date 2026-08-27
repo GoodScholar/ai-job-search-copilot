@@ -24,6 +24,12 @@ const formFailureMessages: Record<string, string> = {
   CAREER_IMPORT_UNAVAILABLE: "职业资料暂时无法处理，请稍后重试。",
 };
 
+function safeFormFailureMessage(value: unknown): string | null {
+  return typeof value === "string" && Object.hasOwn(formFailureMessages, value)
+    ? formFailureMessages[value]
+    : null;
+}
+
 export default async function ProfilePage({ searchParams }: ProfilePageProps) {
   const careerImportsPromise = getCareerImports();
   const { importError } = await searchParams;
@@ -45,6 +51,6 @@ export default async function ProfilePage({ searchParams }: ProfilePageProps) {
     );
   }
 
-  const initialErrorMessage = typeof importError === "string" ? formFailureMessages[importError] ?? null : null;
+  const initialErrorMessage = safeFormFailureMessage(importError);
   return <ProfileImportView initialErrorMessage={initialErrorMessage} initialImport={careerImports.imports[0] ?? null} />;
 }

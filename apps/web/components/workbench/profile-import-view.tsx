@@ -1,7 +1,7 @@
 "use client";
 
 import type { CandidateFact, CareerImportDetail, CareerImportSummary } from "@job-copilot/contracts/career-import";
-import { useEffect, useState, useTransition, type FormEvent } from "react";
+import { useEffect, useRef, useState, useTransition, type FormEvent } from "react";
 import { createCareerImportAction, createCareerImportFormAction, initialUploadActionState, type UploadActionState } from "@/app/(workbench)/profile/actions";
 
 type ProfileImportViewProps = {
@@ -77,6 +77,7 @@ export function ProfileImportView({ initialImport, initialErrorMessage = null }:
   const [activeImport, setActiveImport] = useState<CareerImportSummary | null>(initialImport);
   const [detail, setDetail] = useState<CareerImportDetail | null>(null);
   const [pollingError, setPollingError] = useState(false);
+  const activeImportStatus = useRef<ImportStatus | null>(initialImport?.status ?? null);
   const activeImportId = activeImport?.importId;
 
   const submitUpload = (event: FormEvent<HTMLFormElement>) => {
@@ -86,6 +87,7 @@ export function ProfileImportView({ initialImport, initialErrorMessage = null }:
       const nextState = await createCareerImportAction(initialUploadActionState, formData);
       setActionState(nextState);
       if (nextState.ok) {
+        activeImportStatus.current = nextState.import.status;
         setActiveImport({ ...nextState.import, candidateFactCount: 0 });
         setDetail(null);
         setPollingError(false);
@@ -98,6 +100,12 @@ export function ProfileImportView({ initialImport, initialErrorMessage = null }:
     let active = true;
     let timer: number | undefined;
     let controller: AbortController | undefined;
+    const shouldContinuePolling = () => activeImportStatus.current === "queued" || activeImportStatus.current === "processing";
+    const scheduleRefresh = () => {
+      if (active && shouldContinuePolling()) {
+        timer = window.setTimeout(refresh, 1_000);
+      }
+    };
     const refresh = async () => {
       controller = new AbortController();
       try {
@@ -105,16 +113,18 @@ export function ProfileImportView({ initialImport, initialErrorMessage = null }:
         if (!response.ok) throw new Error("career import status unavailable");
         const nextDetail = await response.json() as CareerImportDetail;
         if (!active) return;
+        activeImportStatus.current = nextDetail.status;
         setDetail(nextDetail);
         setActiveImport((previous) => previous && !hasSameSummary(nextDetail, previous)
           ? asSummary(nextDetail)
           : previous);
         setPollingError(false);
-        if (nextDetail.status === "queued" || nextDetail.status === "processing") {
-          timer = window.setTimeout(refresh, 1_000);
-        }
+        scheduleRefresh();
       } catch {
-        if (active && !controller.signal.aborted) setPollingError(true);
+        if (active && !controller?.signal.aborted) {
+          setPollingError(true);
+          scheduleRefresh();
+        }
       }
     };
 
@@ -130,10 +140,16 @@ export function ProfileImportView({ initialImport, initialErrorMessage = null }:
     ? "uploading"
     : activeImport?.status ?? null;
   const failureMessage = detail?.failureCode ? failureMessages[detail.failureCode] ?? "解析失败，请稍后重试。" : null;
-  const actionFailureMessage = actionState.ok === false && actionState.code ? actionState.message : initialErrorMessage;
-  const liveMessage = actionFailureMessage
-    ? actionFailureMessage
-    : pollingError
+  const hasActionResult = actionState.ok || actionState.code !== "";
+  const actionFailureMessage = actionState.ok === false && actionState.code ? actionState.message : null;
+  const initialQueryErrorMessage = hasActionResult ? null : initialErrorMessage;
+  const liveMessage = isPending
+    ? statusText.uploading
+    : actionFailureMessage
+      ? actionFailureMessage
+      : initialQueryErrorMessage
+        ? initialQueryErrorMessage
+        : pollingError
       ? "暂时无法读取解析状态，请稍后重试。"
       : displayedStatus === "failed"
       ? failureMessage ?? "解析失败，请稍后重试。"

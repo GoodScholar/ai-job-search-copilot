@@ -42,3 +42,11 @@ it("passes only a whitelisted no-JavaScript upload failure message to the view",
 
   expect(page.props.initialErrorMessage).toBe("Markdown 文件不能为空。");
 });
+
+it.each(["unknown", "toString", "constructor", "__proto__", ["CAREER_DOCUMENT_EMPTY"]])("drops unsafe profile query value %j", async (importError) => {
+  mocks.getCareerImports.mockResolvedValue({ imports: [] });
+
+  const page = await ProfilePage({ searchParams: Promise.resolve({ importError }) });
+
+  expect(page.props.initialErrorMessage).toBeNull();
+});

@@ -31,6 +31,8 @@ const completedDetail = {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  mocks.createCareerImportAction.mockReset();
+  mocks.createCareerImportFormAction.mockReset();
   vi.useRealTimers();
 });
 
@@ -100,6 +102,33 @@ it("waits one full second between serialized intermediate polling requests", asy
   expect(fetchMock).toHaveBeenCalledTimes(2);
 });
 
+it("retries a polling transport failure after one second and recovers on a completed response", async () => {
+  vi.useFakeTimers();
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockRejectedValueOnce(new TypeError("network failed"))
+    .mockResolvedValueOnce(Response.json(completedDetail));
+
+  render(<ProfileImportView initialImport={queuedImport} />);
+  await act(async () => { await Promise.resolve(); });
+  expect(screen.getByRole("status")).toHaveTextContent("暂时无法读取解析状态，请稍后重试。");
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  await act(async () => { await vi.advanceTimersByTimeAsync(999); });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(screen.getByText("解析完成")).toBeInTheDocument();
+});
+
+it("does not overlap a pending poll when more than one interval elapses", async () => {
+  vi.useFakeTimers();
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise<Response>(() => {}));
+
+  render(<ProfileImportView initialImport={queuedImport} />);
+  await act(async () => { await Promise.resolve(); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
 it("does not schedule another request after a terminal response", async () => {
   vi.useFakeTimers();
   const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(completedDetail));
@@ -126,4 +155,36 @@ it("aborts a pending request when the view unmounts", async () => {
   expect(abortSpy).toHaveBeenCalled();
   expect(signal?.aborted).toBe(true);
   resolveFetch?.(Response.json(completedDetail));
+});
+
+it("replaces an initial query failure after a successful new upload", async () => {
+  mocks.createCareerImportAction
+    .mockResolvedValueOnce({ ok: true, import: { ...queuedImport, reused: false, detailUrl: `/v1/career-documents/imports/${importId}` } });
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(completedDetail));
+  const user = userEvent.setup();
+
+  render(<ProfileImportView initialErrorMessage="Markdown 文件不能为空。" initialImport={null} />);
+  expect(screen.getByRole("status")).toHaveTextContent("Markdown 文件不能为空。");
+  await user.upload(screen.getByLabelText("选择 Markdown 职业资料"), new File(["# retry"], "career.md", { type: "text/markdown" }));
+  await user.click(screen.getByRole("button", { name: "上传并解析" }));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("解析完成"));
+  expect(screen.getByRole("status")).not.toHaveTextContent("Markdown 文件不能为空。");
+});
+
+it("shows uploading while retrying after an action failure", async () => {
+  let resolveRetry: ((value: { ok: true; import: typeof queuedImport & { reused: boolean; detailUrl: string } }) => void) | undefined;
+  mocks.createCareerImportAction
+    .mockResolvedValueOnce({ ok: false, code: "CAREER_DOCUMENT_EMPTY", message: "Markdown 文件不能为空。" })
+    .mockImplementationOnce(() => new Promise((resolve) => { resolveRetry = resolve; }));
+  const user = userEvent.setup();
+
+  render(<ProfileImportView initialImport={null} />);
+  await user.upload(screen.getByLabelText("选择 Markdown 职业资料"), new File(["# retry"], "career.md", { type: "text/markdown" }));
+  await user.click(screen.getByRole("button", { name: "上传并解析" }));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Markdown 文件不能为空。"));
+
+  await user.click(screen.getByRole("button", { name: "上传并解析" }));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("上传中"));
+  resolveRetry?.({ ok: true, import: { ...queuedImport, reused: false, detailUrl: `/v1/career-documents/imports/${importId}` } });
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("等待解析"));
 });
