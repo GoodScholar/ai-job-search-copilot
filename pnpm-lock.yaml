@@ -172,6 +172,9 @@ importers:
       '@job-copilot/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@job-copilot/database':
+        specifier: workspace:*
+        version: link:../../packages/database
       '@job-copilot/domain':
         specifier: workspace:*
         version: link:../../packages/domain
@@ -187,6 +190,9 @@ importers:
       ioredis:
         specifier: 6.0.0
         version: 6.0.0
+      minio:
+        specifier: 8.0.6
+        version: 8.0.6
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
@@ -197,12 +203,18 @@ importers:
       '@nestjs/cli':
         specifier: 11.0.24
         version: 11.0.24(@types/node@26.3.0)(esbuild@0.28.2)
+      '@testcontainers/postgresql':
+        specifier: 12.1.0
+        version: 12.1.0
       '@testcontainers/redis':
         specifier: 12.1.0
         version: 12.1.0
       '@types/node':
         specifier: ^26.3.0
         version: 26.3.0
+      testcontainers:
+        specifier: 12.1.0
+        version: 12.1.0
       typescript:
         specifier: ^5.9.3
         version: 5.9.3

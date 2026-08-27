@@ -169,7 +169,7 @@ test("test runtime passes its isolated service addresses to every application", 
     },
   });
 
-  const [, , options] = spawnCall;
+  const [command, args, options] = spawnCall;
   assert.equal(options.env.APP_ENV, "test");
   assert.equal(options.env.PORT, "3120");
   assert.equal(options.env.API_PORT, "3121");
@@ -177,10 +177,14 @@ test("test runtime passes its isolated service addresses to every application", 
   assert.equal(options.env.DATABASE_URL, "postgresql://job_copilot:local_only_job_copilot@127.0.0.1:55420/job_copilot");
   assert.equal(options.env.REDIS_URL, "redis://127.0.0.1:64790");
   assert.equal(options.env.MINIO_ENDPOINT, "http://127.0.0.1:59100");
+  assert.equal(options.env.MINIO_ACCESS_KEY, "job_copilot");
+  assert.equal(options.env.MINIO_SECRET_KEY, "local_only_job_copilot_secret");
+  assert.equal(options.env.MINIO_BUCKET, "career-documents");
   assert.equal(options.env.MAILPIT_ENDPOINT, "http://127.0.0.1:58126");
   assert.equal(options.env.DEV_AUTH_SHARED_SECRET, "issue-2-e2e-dev-auth-shared-secret");
   assert.match(options.env.NODE_OPTIONS, /--import=tsx/);
   assert.equal(options.env.UNRELATED_VALUE, "preserved");
+  assert.doesNotMatch(JSON.stringify([command, args]), /local_only_job_copilot_secret/);
 });
 
 test("signal waits for the controlled application child before isolated cleanup", async () => {
