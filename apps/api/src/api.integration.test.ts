@@ -84,18 +84,26 @@ describe("authenticated workbench HTTP API", () => {
   });
 
   it("expands Error values before checking captured logger output", () => {
-    const sentinel = "queue unavailable with resume@example.com";
-    const error = new Error(sentinel, { cause: new Error("root-cause-sentinel") });
+    const messageSentinel = "message-sentinel";
+    const stackSentinel = "stack-sentinel";
+    const causeSentinel = "cause-sentinel";
+    const nestedErrorSentinel = "nested-error-sentinel";
+    const error = new Error(messageSentinel, { cause: new Error(causeSentinel) });
+    error.stack = stackSentinel;
     const hiddenByJson = JSON.stringify([error, { err: error }]);
-    expect(hiddenByJson).not.toContain(sentinel);
-    expect(hiddenByJson).not.toContain("root-cause-sentinel");
+    expect(hiddenByJson).not.toContain(messageSentinel);
+    expect(hiddenByJson).not.toContain(stackSentinel);
+    expect(hiddenByJson).not.toContain(causeSentinel);
 
-    const circular: { err: Error; self?: unknown } = { err: error };
+    const normalizedError = normalizedLogText([{ err: error }]);
+    expect(normalizedError).toContain(messageSentinel);
+    expect(normalizedError).toContain(stackSentinel);
+    expect(normalizedError).toContain(causeSentinel);
+
+    const circular: { err: Error; self?: unknown } = { err: new Error(nestedErrorSentinel) };
     circular.self = circular;
-    const normalized = normalizedLogText([error, { err: error }, circular]);
-    expect(normalized).toContain(sentinel);
-    expect(normalized).toContain("root-cause-sentinel");
-    expect(normalized).toContain("[Circular]");
+    expect(normalizedLogText([circular])).toContain(nestedErrorSentinel);
+    expect(normalizedLogText([circular])).toContain("[Circular]");
   });
 
   it("creates and reuses an internal account through dev auth", async () => {
@@ -308,8 +316,8 @@ describe("authenticated workbench HTTP API", () => {
   });
 
   it("maps an enqueue outage to a retryable 503 without leaking the underlying error", async () => {
-    capturedLogs.length = 0;
     const session = await createSession(app, "career-import-queue-failure");
+    capturedLogs.length = 0;
     const source = "## 技能\n- Retryable";
     queue.failNext = true;
     const response = await app.getHttpAdapter().getInstance().inject(multipartRequest(source, {
@@ -319,8 +327,9 @@ describe("authenticated workbench HTTP API", () => {
     expect(response.json()).toMatchObject({ code: "CAREER_IMPORT_QUEUE_UNAVAILABLE" });
     expect(response.body).not.toContain("resume@example.com");
     expect(response.body).not.toContain("queue unavailable");
-    expect(capturedLogs.length).toBeGreaterThan(0);
-    const logs = normalizedLogText(capturedLogs);
+    const requestLogs = [...capturedLogs];
+    expect(requestLogs.length).toBeGreaterThan(0);
+    const logs = normalizedLogText(requestLogs);
     expect(logs).not.toContain("secret-resume.md");
     expect(logs).not.toContain(source);
     expect(logs).not.toContain("queue unavailable with resume@example.com");
