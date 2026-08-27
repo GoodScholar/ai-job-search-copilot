@@ -43,7 +43,7 @@
 4. 新文件在 PostgreSQL 事务内先预留 `career_documents` 记录，再写入 MinIO，并仅在对象写入成功后提交；重复文件复用已有记录，以账户内唯一键保证并发语义。
 5. API 使用 `importId` 作为 BullMQ `jobId`，任务载荷只包含版本化标识、`importId` 和 `userId`，不包含正文、文件名或证据。新建、重新排队，以及命中 `queued` 或 `processing` 记录时都执行幂等入队；这是没有 Outbox 或恢复扫描器时，由用户重复上传触发的恢复语义。
 6. Worker 从 PostgreSQL 获取对象引用并再次校验所有权，从 MinIO 读取原文，通过 Fake Parser v1 得到结构化输出。
-7. Worker 用共享 Zod Schema 验证输出，并拒绝推断、缺少证据、未知字段、无效事实类型和越界行号。
+7. Worker 用共享 Zod Schema 验证输出，并拒绝推断、缺少证据、未知字段、无效事实类型和越界行号；单次最多接受 500 条候选事实。
 8. Worker 在一个数据库事务中写入全部候选事实、证据、完成状态和脱敏审计；失败不会留下部分事实。
 9. Web 每秒读取一次权威导入状态，在终态或页面卸载时停止轮询。
 
@@ -212,6 +212,7 @@ Fake Parser 是真实模型端口的确定性测试 Adapter，不冒充通用 AI
 - 不根据措辞推断资历、熟练度、时间、指标或人格。
 - 不生成姓名、邮箱、电话、地址和社交账号候选事实。
 - 未识别章节被忽略。
+- 单次导入最多 500 条候选事实；第 501 条触发全单稳定失败 `CAREER_IMPORT_FACT_LIMIT_EXCEEDED`，不写入部分事实。这是对不可信内容和单消费者资源的保护边界，不是静默截断。
 - 没有产生任何受支持事实时以 `NO_SUPPORTED_FACTS` 失败。
 - 输出包含固定 adapter、prompt、schema 版本，以及每个事实的类型、结构化值、置信度、grounding 和一个证据定位器。
 
@@ -299,6 +300,7 @@ Worker 稳定失败码：
 - `CAREER_DOCUMENT_NOT_FOUND`
 - `CAREER_DOCUMENT_READ_FAILED`
 - `CAREER_DOCUMENT_CHECKSUM_MISMATCH`
+- `CAREER_IMPORT_FACT_LIMIT_EXCEEDED`
 - `CAREER_PARSER_OUTPUT_INVALID`
 - `CAREER_PARSER_EVIDENCE_INVALID`
 - `NO_SUPPORTED_FACTS`
@@ -313,6 +315,7 @@ Worker 稳定失败码：
 - 上传响应、导入列表、导入详情、任务载荷和 Fake Parser 输出均拒绝未知字段。
 - 逐类验证七种候选事实值和证据行号。
 - 锁定 512 KiB、队列名、任务名和版本常量。
+- 锁定 500 条候选事实硬上限；第 501 条全单以 `CAREER_IMPORT_FACT_LIMIT_EXCEEDED` 失败且没有部分写入，单一非法事实仍为 `CAREER_PARSER_OUTPUT_INVALID`。
 
 ### 数据库与领域集成测试
 
@@ -328,6 +331,7 @@ Worker 稳定失败码：
 - S3 Adapter 通过受控对象存储验证原始字节往返和不存在对象。
 - Fake Parser 使用合成 Markdown 断言具体事实、值、置信度、证据片段和行号。
 - 推断、缺证据、越界和非法 Schema 不进入数据库。
+- 近 512 KiB 的短列表在第 501 条停止收集并以事实数超限稳定失败，避免单消费者为不可信输入保留无界候选事实。
 - Worker 使用真实 PostgreSQL、Redis、MinIO 和 BullMQ，使用 Fake Parser，不访问真实模型。
 - Worker shutdown 先停止接收任务并等待当前任务结束，再关闭队列、Redis、对象存储客户端和应用上下文。
 

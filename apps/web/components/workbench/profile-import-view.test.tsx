@@ -142,6 +142,17 @@ it("maps failures to a fixed Chinese message without exposing internal values", 
   expect(screen.queryByText("NO_SUPPORTED_FACTS")).not.toBeInTheDocument();
 });
 
+it("explains the fact-count limit and tells the candidate how to retry", () => {
+  render(<ProfileImportView initialImports={[{
+    ...queuedImport,
+    status: "failed",
+    failureCode: "CAREER_IMPORT_FACT_LIMIT_EXCEEDED" as never,
+  }]} />);
+
+  expect(screen.getByText("最多提取 500 条候选事实，请精简 Markdown 后重试。"))
+    .toBeInTheDocument();
+});
+
 it("gives a new upload failure priority over an existing queued import", async () => {
   mocks.createCareerImportAction.mockResolvedValue({ ok: false, code: "NO_SUPPORTED_FACTS", message: "没有找到可确认的职业资料事实，请检查 Markdown 内容后重试。" });
   vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ ...queuedImport, facts: [] }));

@@ -20,6 +20,7 @@
 - 状态只允许 `queued | processing | completed | failed`；完成状态不可逆，失败重排回到 `queued`，重复上传命中 `queued` 或 `processing` 均执行确定性 `jobId` 幂等补发。这是在没有 Outbox 或恢复扫描器时的用户触发恢复语义；`processing` 成功补发仍返回当前 `200`，Redis 不可用时维持现有失败响应与数据库状态。
 - Fake Parser 固定为 `fake-career-parser-v1`，提示词版本固定为 `career-import-prompt-v1`，输出 Schema 固定为 `career-facts-v1`。
 - 候选事实类型只允许 `experience | education | skill | project | language | achievement | certification`，本切片确认状态固定为 `pending`。
+- 单次导入最多 500 条候选事实；第 501 条以 `CAREER_IMPORT_FACT_LIMIT_EXCEEDED` 全单稳定失败、零部分写入。这是针对不可信内容和单消费者资源的硬边界，不静默截断。
 - 只保存 `grounding: quoted` 且 Markdown 行号、片段和值均可验证的事实；推断、缺少证据、越界、未知字段和非法值不得进入数据库。
 - 日志与审计不得包含正文、文件名、对象 key、证据片段、联系方式、完整校验和或完整 Parser 输入输出。
 - Web 使用中文产品语言，状态不能只靠颜色表达，交互控件最小高度 `44px`，支持键盘、可见焦点、Desktop Chrome、Mobile Safari 和 WCAG AA 基线。
@@ -114,6 +115,7 @@ export const CareerParserFactSchema = z.discriminatedUnion("factType", [
 
 ```ts
 export const CAREER_DOCUMENT_MAX_BYTES = 524_288;
+export const CAREER_IMPORT_MAX_FACTS = 500;
 export const CAREER_IMPORT_QUEUE = "career-imports";
 export const CAREER_IMPORT_JOB_NAME = "parse-career-document";
 export const CareerImportJobSchema = z.object({
@@ -129,6 +131,7 @@ export const CareerImportJobSchema = z.object({
 [
   "CAREER_IMPORT_QUEUE_UNAVAILABLE", "CAREER_DOCUMENT_NOT_FOUND",
   "CAREER_DOCUMENT_READ_FAILED", "CAREER_DOCUMENT_CHECKSUM_MISMATCH",
+  "CAREER_IMPORT_FACT_LIMIT_EXCEEDED",
   "CAREER_PARSER_OUTPUT_INVALID", "CAREER_PARSER_EVIDENCE_INVALID",
   "NO_SUPPORTED_FACTS", "CAREER_IMPORT_PERSIST_FAILED",
 ]
@@ -385,7 +388,7 @@ export function createCareerImportProcessor(deps: ProcessorDependencies): {
 
 - [ ] **Step 5: 实现证据验证、事务完成和稳定失败**
 
-Processor 以 `importId + userId` 读取权威记录：`completed/failed` 为 `noop`，`queued` 条件更新为 `processing`，`processing` 作为同一 BullMQ job 的恢复执行。原始字节再次校验 SHA-256，使用 fatal UTF-8 解码，再将 CRLF/CR 规范为 LF；Parser 输出通过 `CareerParserOutputSchema.safeParse`。
+Processor 以 `importId + userId` 读取权威记录：`completed/failed` 为 `noop`，`queued` 条件更新为 `processing`，`processing` 作为同一 BullMQ job 的恢复执行。原始字节再次校验 SHA-256，使用 fatal UTF-8 解码，再将 CRLF/CR 规范为 LF；先对不可信 raw output 的 `facts` 数组做窄且无转换的长度检查，第 501 条立即以 `CAREER_IMPORT_FACT_LIMIT_EXCEEDED` 全单稳定失败，再对未超限输出执行 `CareerParserOutputSchema.safeParse`。此检查不接受未知字段也不绕过完整 Schema；其他 Schema 非法仍为 `CAREER_PARSER_OUTPUT_INVALID`。
 
 ```ts
 const lines = markdown.split("\n");
@@ -578,7 +581,7 @@ Expected: Worker 不依赖传递依赖访问数据库、MinIO 或 GenericContain
 
 启动 PostgreSQL `17-alpine`、Redis 与 compose 同 digest 的 MinIO GenericContainer；建 bucket、迁移数据库、写账户与原始对象，再用真实 BullMQ Queue/Worker 处理。断言详情包含具体事实与行号，Redis job payload 不含 Markdown、文件名、邮箱或 evidence。
 
-再覆盖：相同 `jobId` 不重复事实；第一次 store read 暂时失败、第二次从 `processing` 恢复且 `attemptCount=2`；三次暂时错误后为 `failed/CAREER_DOCUMENT_READ_FAILED` 且没有事实。
+再覆盖：相同 `jobId` 不重复事实；第一次 store read 暂时失败、第二次从 `processing` 恢复且 `attemptCount=2`；三次暂时错误后为 `failed/CAREER_DOCUMENT_READ_FAILED` 且没有事实；501 个事实和近 512 KiB 短列表均在第一次尝试以 `CAREER_IMPORT_FACT_LIMIT_EXCEEDED` 失败、没有事实，而 501 字符的单一非法事实仍为 `CAREER_PARSER_OUTPUT_INVALID`。
 
 - [ ] **Step 3: 运行 Worker 集成测试并确认红灯**
 

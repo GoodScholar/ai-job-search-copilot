@@ -26,6 +26,7 @@ const failureMessages: Record<string, string> = {
   CAREER_DOCUMENT_NOT_FOUND: "职业资料暂时无法读取，请重新上传后再试。",
   CAREER_DOCUMENT_READ_FAILED: "职业资料暂时无法读取，请稍后重试。",
   CAREER_DOCUMENT_CHECKSUM_MISMATCH: "职业资料校验未通过，请重新上传。",
+  CAREER_IMPORT_FACT_LIMIT_EXCEEDED: "最多提取 500 条候选事实，请精简 Markdown 后重试。",
   CAREER_PARSER_OUTPUT_INVALID: "职业资料暂时无法解析，请稍后重试。",
   CAREER_PARSER_EVIDENCE_INVALID: "职业资料中的证据无法确认，请重新上传后再试。",
   NO_SUPPORTED_FACTS: "没有找到可确认的职业资料事实，请检查 Markdown 内容后重试。",

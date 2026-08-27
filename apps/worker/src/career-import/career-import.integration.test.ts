@@ -16,7 +16,7 @@ import {
   migrateDatabase,
   type Database,
 } from "@job-copilot/database";
-import { CAREER_IMPORT_JOB_NAME, CAREER_IMPORT_QUEUE } from "@job-copilot/contracts/career-import";
+import { CAREER_DOCUMENT_MAX_BYTES, CAREER_IMPORT_JOB_NAME, CAREER_IMPORT_QUEUE } from "@job-copilot/contracts/career-import";
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
 import { createCareerImportProcessor, type CareerDocumentStore } from "@job-copilot/domain/career-imports";
 import { CareerImportConsumer } from "./career-import-consumer.js";
@@ -238,6 +238,21 @@ describe("CareerImportConsumer", () => {
     const [result] = await database.select({ status: careerImports.status, failureCode: careerImports.failureCode, attemptCount: careerImports.attemptCount })
       .from(careerImports);
     expect(result).toEqual({ status: "failed", failureCode: "CAREER_PARSER_OUTPUT_INVALID", attemptCount: 1 });
+    await expect(database.select({ id: candidateFacts.id }).from(candidateFacts)).resolves.toEqual([]);
+  });
+
+  it("将近 512 KiB 短列表的第 501 条事实稳定标记为事实数超限", async () => {
+    const prefix = "## 技能\n";
+    const source = prefix + "- x\n".repeat(Math.floor((CAREER_DOCUMENT_MAX_BYTES - Buffer.byteLength(prefix)) / 4));
+    expect(Buffer.byteLength(source)).toBeLessThanOrEqual(CAREER_DOCUMENT_MAX_BYTES);
+    const item = await createQueuedImport(source);
+    startConsumer(store);
+    await enqueue(item.importId);
+
+    await waitFor(async () => (await database.select({ status: careerImports.status }).from(careerImports)).at(0)?.status === "failed");
+    const [result] = await database.select({ status: careerImports.status, failureCode: careerImports.failureCode, attemptCount: careerImports.attemptCount })
+      .from(careerImports);
+    expect(result).toEqual({ status: "failed", failureCode: "CAREER_IMPORT_FACT_LIMIT_EXCEEDED", attemptCount: 1 });
     await expect(database.select({ id: candidateFacts.id }).from(candidateFacts)).resolves.toEqual([]);
   });
 });

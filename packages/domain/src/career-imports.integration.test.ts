@@ -644,7 +644,7 @@ describe("career imports", () => {
     await expect(processor.process({ version: 1, importId: created.importId, userId, finalAttempt: false }))
       .resolves.toBe("failed");
     await expect(createCareerImportQueries({ db: database }).get({ userId, importId: created.importId }))
-      .resolves.toMatchObject({ status: "failed", failureCode: "CAREER_PARSER_OUTPUT_INVALID", facts: [] });
+      .resolves.toMatchObject({ status: "failed", failureCode: "CAREER_IMPORT_FACT_LIMIT_EXCEEDED", facts: [] });
     await expect(database.select({ attemptCount: careerImports.attemptCount }).from(careerImports)
       .where(eq(careerImports.id, created.importId))).resolves.toEqual([{ attemptCount: 1 }]);
     await expect(database.select().from(candidateFacts).where(eq(candidateFacts.careerImportId, created.importId)))

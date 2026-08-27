@@ -1,5 +1,6 @@
 import { asc, eq } from "drizzle-orm";
 import { auditEvents, type Database } from "@job-copilot/database";
+import { CareerImportFailureCodeSchema } from "@job-copilot/contracts/career-import";
 import { z } from "zod";
 
 type AuditDatabase = Pick<Database, "insert" | "select">;
@@ -13,11 +14,7 @@ const CompletedCareerImportMetadataSchema = z.object({
 }).strict();
 const FailedCareerImportMetadataSchema = z.object({
   documentId: z.uuid(), importId: z.uuid(), attemptCount: z.int().min(0),
-  failureCode: z.enum([
-    "CAREER_IMPORT_QUEUE_UNAVAILABLE", "CAREER_DOCUMENT_NOT_FOUND", "CAREER_DOCUMENT_READ_FAILED",
-    "CAREER_DOCUMENT_CHECKSUM_MISMATCH", "CAREER_PARSER_OUTPUT_INVALID", "CAREER_PARSER_EVIDENCE_INVALID",
-    "NO_SUPPORTED_FACTS", "CAREER_IMPORT_PERSIST_FAILED",
-  ]),
+  failureCode: CareerImportFailureCodeSchema,
 }).strict();
 
 const AuditEventInputSchema = z.discriminatedUnion("eventType", [
@@ -86,11 +83,7 @@ const AuditEventInputSchema = z.discriminatedUnion("eventType", [
   z.object({
     userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("career.document_import_failed"),
     occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("failure"),
-    reasonCode: z.enum([
-      "CAREER_IMPORT_QUEUE_UNAVAILABLE", "CAREER_DOCUMENT_NOT_FOUND", "CAREER_DOCUMENT_READ_FAILED",
-      "CAREER_DOCUMENT_CHECKSUM_MISMATCH", "CAREER_PARSER_OUTPUT_INVALID", "CAREER_PARSER_EVIDENCE_INVALID",
-      "NO_SUPPORTED_FACTS", "CAREER_IMPORT_PERSIST_FAILED",
-    ]), resourceType: z.literal("career_import"), resourceId: z.uuid(), metadata: FailedCareerImportMetadataSchema,
+    reasonCode: CareerImportFailureCodeSchema, resourceType: z.literal("career_import"), resourceId: z.uuid(), metadata: FailedCareerImportMetadataSchema,
   }).strict(),
 ]);
 

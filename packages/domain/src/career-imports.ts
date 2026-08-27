@@ -9,6 +9,7 @@ import {
 } from "@job-copilot/database";
 import {
   CareerImportJobSchema,
+  CAREER_IMPORT_MAX_FACTS,
   parseQuotedCareerFactValue,
   type CreateCareerImportResponse,
   CareerParserOutputSchema,
@@ -155,6 +156,13 @@ function factKey(input: { parserVersion: string; factType: string; factValue: un
 function isMissingDocument(error: unknown): boolean {
   return typeof error === "object" && error !== null
     && "code" in error && (error as { code?: unknown }).code === "CAREER_DOCUMENT_NOT_FOUND";
+}
+
+function exceedsCareerImportFactLimit(output: unknown): boolean {
+  return typeof output === "object" && output !== null
+    && "facts" in output
+    && Array.isArray(output.facts)
+    && output.facts.length > CAREER_IMPORT_MAX_FACTS;
 }
 
 async function findImport(db: Database, input: { userId: string; importId: string }): Promise<ImportRecord | undefined> {
@@ -597,7 +605,11 @@ export function createCareerImportProcessor(deps: ProcessorDependencies): {
         } catch {
           throw new StableImportFailure("CAREER_PARSER_OUTPUT_INVALID");
         }
-        const outputResult = CareerParserOutputSchema.safeParse(await deps.parser.parse(markdown));
+        const rawOutput = await deps.parser.parse(markdown);
+        if (exceedsCareerImportFactLimit(rawOutput)) {
+          throw new StableImportFailure("CAREER_IMPORT_FACT_LIMIT_EXCEEDED");
+        }
+        const outputResult = CareerParserOutputSchema.safeParse(rawOutput);
         if (!outputResult.success) throw new StableImportFailure("CAREER_PARSER_OUTPUT_INVALID");
         const output = outputResult.data;
         const lines = markdown.split("\n");

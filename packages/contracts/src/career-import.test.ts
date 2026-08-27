@@ -6,6 +6,7 @@ import {
   CAREER_IMPORT_QUEUE,
   CandidateFactSchema,
   CareerImportDetailSchema,
+  CareerImportFailureCodeSchema,
   CareerImportPathSchema,
   CareerImportJobSchema,
   CareerImportListSchema,
@@ -198,6 +199,11 @@ describe("career import contracts", () => {
       createdAt: now,
       updatedAt: now,
     })).toThrow();
+  });
+
+  it("exposes a distinct stable failure code for fact-count overflow", () => {
+    expect(CareerImportFailureCodeSchema.parse("CAREER_IMPORT_FACT_LIMIT_EXCEEDED"))
+      .toBe("CAREER_IMPORT_FACT_LIMIT_EXCEEDED");
   });
 
   it("keeps list fact counts separate from the create-or-reuse response", () => {
