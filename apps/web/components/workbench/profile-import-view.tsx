@@ -77,7 +77,11 @@ export function ProfileImportView({ initialImport, initialErrorMessage = null }:
   const [activeImport, setActiveImport] = useState<CareerImportSummary | null>(initialImport);
   const [detail, setDetail] = useState<CareerImportDetail | null>(null);
   const [pollingError, setPollingError] = useState(false);
-  const activeImportStatus = useRef<ImportStatus | null>(initialImport?.status ?? null);
+  const pollingGeneration = useRef<{ value: number; initialStatus: ImportStatus | null }>({
+    value: 0,
+    initialStatus: initialImport?.status ?? null,
+  });
+  const [pollRevision, setPollRevision] = useState(0);
   const activeImportId = activeImport?.importId;
 
   const submitUpload = (event: FormEvent<HTMLFormElement>) => {
@@ -85,35 +89,45 @@ export function ProfileImportView({ initialImport, initialErrorMessage = null }:
     const formData = new FormData(event.currentTarget);
     startTransition(async () => {
       const nextState = await createCareerImportAction(initialUploadActionState, formData);
-      setActionState(nextState);
       if (nextState.ok) {
-        activeImportStatus.current = nextState.import.status;
+        pollingGeneration.current = {
+          value: pollingGeneration.current.value + 1,
+          initialStatus: nextState.import.status,
+        };
+        setPollRevision((revision) => revision + 1);
+        setActionState(nextState);
         setActiveImport({ ...nextState.import, candidateFactCount: 0 });
         setDetail(null);
         setPollingError(false);
+        return;
       }
+      setActionState(nextState);
     });
   };
 
   useEffect(() => {
     if (!activeImportId) return;
+    const generation = pollingGeneration.current;
     let active = true;
     let timer: number | undefined;
     let controller: AbortController | undefined;
-    const shouldContinuePolling = () => activeImportStatus.current === "queued" || activeImportStatus.current === "processing";
+    let status = generation.initialStatus;
+    const isCurrent = () => active && pollingGeneration.current === generation;
+    const shouldContinuePolling = () => status === "queued" || status === "processing";
     const scheduleRefresh = () => {
-      if (active && shouldContinuePolling()) {
+      if (isCurrent() && shouldContinuePolling()) {
         timer = window.setTimeout(refresh, 1_000);
       }
     };
     const refresh = async () => {
+      if (!isCurrent()) return;
       controller = new AbortController();
       try {
         const response = await fetch(`/api/career-imports/${activeImportId}`, { signal: controller.signal });
         if (!response.ok) throw new Error("career import status unavailable");
         const nextDetail = await response.json() as CareerImportDetail;
-        if (!active) return;
-        activeImportStatus.current = nextDetail.status;
+        if (!isCurrent()) return;
+        status = nextDetail.status;
         setDetail(nextDetail);
         setActiveImport((previous) => previous && !hasSameSummary(nextDetail, previous)
           ? asSummary(nextDetail)
@@ -121,7 +135,7 @@ export function ProfileImportView({ initialImport, initialErrorMessage = null }:
         setPollingError(false);
         scheduleRefresh();
       } catch {
-        if (active && !controller?.signal.aborted) {
+        if (isCurrent() && !controller?.signal.aborted) {
           setPollingError(true);
           scheduleRefresh();
         }
@@ -134,7 +148,7 @@ export function ProfileImportView({ initialImport, initialErrorMessage = null }:
       if (timer) window.clearTimeout(timer);
       controller?.abort();
     };
-  }, [activeImportId]);
+  }, [activeImportId, pollRevision]);
 
   const displayedStatus: ImportStatus | null = isPending
     ? "uploading"

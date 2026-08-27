@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 
@@ -28,6 +28,27 @@ const completedDetail = {
     evidence: { documentId, sourceFilename: "career.md", locatorType: "markdown_lines" as const, startLine: 6, endLine: 6, excerpt: "- TypeScript" },
   }],
 };
+
+const replacementImportId = "3e7c3ba2-70fe-47c4-93d6-1a030e87f1ab";
+const replacementDetail = {
+  ...completedDetail,
+  importId: replacementImportId,
+  documentId: "cf2824ce-04d7-45a6-a462-4b1bf11aa286",
+  sourceFilename: "replacement.md",
+  facts: [{
+    ...completedDetail.facts[0],
+    factId: "6e4fc79c-35b2-4405-b3de-4e5a8a93f6e1",
+    factValue: { name: "React" },
+    evidence: { ...completedDetail.facts[0].evidence, documentId: "cf2824ce-04d7-45a6-a462-4b1bf11aa286", sourceFilename: "replacement.md" },
+  }],
+};
+
+function submitFile() {
+  fireEvent.change(screen.getByLabelText("选择 Markdown 职业资料"), {
+    target: { files: [new File(["# 资料"], "career.md", { type: "text/markdown" })] },
+  });
+  fireEvent.submit(screen.getByRole("button", { name: "上传并解析" }).closest("form")!);
+}
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -187,4 +208,75 @@ it("shows uploading while retrying after an action failure", async () => {
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("上传中"));
   resolveRetry?.({ ok: true, import: { ...queuedImport, reused: false, detailUrl: `/v1/career-documents/imports/${importId}` } });
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("等待解析"));
+});
+
+it("restarts the same import ID from failed through queued polling to completed facts", async () => {
+  vi.useFakeTimers();
+  let resolveOldFetch: ((response: Response) => void) | undefined;
+  mocks.createCareerImportAction.mockResolvedValue({ ok: true, import: { ...queuedImport, reused: true, detailUrl: `/v1/career-documents/imports/${importId}` } });
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveOldFetch = resolve; }))
+    .mockResolvedValueOnce(Response.json({ ...queuedImport, facts: [] }))
+    .mockResolvedValueOnce(Response.json(completedDetail));
+
+  render(<ProfileImportView initialImport={{ ...queuedImport, status: "failed" }} />);
+  await act(async () => { await Promise.resolve(); });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+
+  submitFile();
+  await act(async () => { await Promise.resolve(); });
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  await act(async () => { await vi.advanceTimersByTimeAsync(999); });
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+  expect(screen.getByText("TypeScript")).toBeInTheDocument();
+  resolveOldFetch?.(Response.json(completedDetail));
+});
+
+it("ignores a late old-generation terminal response while the new import retries", async () => {
+  vi.useFakeTimers();
+  let resolveOldFetch: ((response: Response) => void) | undefined;
+  let resolveAction: ((value: { ok: true; import: typeof queuedImport & { reused: boolean; detailUrl: string } }) => void) | undefined;
+  let rejectNewFetch: ((reason?: unknown) => void) | undefined;
+  mocks.createCareerImportAction.mockImplementation(() => new Promise((resolve) => { resolveAction = resolve; }));
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockImplementationOnce(() => new Promise<Response>((resolve) => { resolveOldFetch = resolve; }))
+    .mockImplementationOnce(() => new Promise<Response>((_resolve, reject) => { rejectNewFetch = reject; }))
+    .mockResolvedValueOnce(Response.json(replacementDetail));
+
+  render(<ProfileImportView initialImport={queuedImport} />);
+  await act(async () => { await Promise.resolve(); });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+
+  submitFile();
+  resolveAction?.({
+    ok: true,
+    import: { ...queuedImport, importId: replacementImportId, documentId: replacementDetail.documentId, sourceFilename: "replacement.md", reused: false, detailUrl: `/v1/career-documents/imports/${replacementImportId}` },
+  });
+  resolveOldFetch?.(Response.json(completedDetail));
+  await act(async () => { await Promise.resolve(); });
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(screen.queryByText("TypeScript")).not.toBeInTheDocument();
+  rejectNewFetch?.(new TypeError("transient"));
+  await act(async () => { await Promise.resolve(); });
+  expect(screen.getByRole("status")).toHaveTextContent("暂时无法读取解析状态，请稍后重试。");
+  await act(async () => { await vi.advanceTimersByTimeAsync(999); });
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+  expect(screen.getByText("React")).toBeInTheDocument();
+});
+
+it("refetches completed facts after a repeated completed upload with the same import ID", async () => {
+  mocks.createCareerImportAction.mockResolvedValue({ ok: true, import: { ...queuedImport, status: "completed", reused: true, detailUrl: `/v1/career-documents/imports/${importId}` } });
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => Promise.resolve(Response.json(completedDetail)));
+
+  render(<ProfileImportView initialImport={queuedImport} />);
+  await waitFor(() => expect(screen.getByText("TypeScript")).toBeInTheDocument());
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+
+  submitFile();
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  expect(screen.getByText("TypeScript")).toBeInTheDocument();
 });
