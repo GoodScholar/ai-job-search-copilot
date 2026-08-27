@@ -60,6 +60,7 @@ export function runNestDev({
   spawnProcess = spawn,
   shutdownTimeoutMs = 10_000,
   shutdownCloseTimeoutMs = 250,
+  timers = { clearTimeout, setTimeout },
 } = {}) {
   return new Promise((resolve) => {
     let child;
@@ -77,7 +78,7 @@ export function runNestDev({
     const settle = (exitCode) => {
       if (settled) return;
       settled = true;
-      clearTimeout(shutdownTimer);
+      timers.clearTimeout(shutdownTimer);
       removeHandlers();
       child?.removeListener("error", handleChildError);
       if (handleChildExit) child?.removeListener("exit", handleChildExit);
@@ -98,13 +99,14 @@ export function runNestDev({
     };
     const boundTermination = () => {
       if (shutdownTimer || settled) return;
-      shutdownTimer = setTimeout(() => {
+      shutdownTimer = timers.setTimeout(() => {
         if (settled) return;
         if (!tryKill("SIGKILL")) {
           settle(1);
           return;
         }
-        shutdownTimer = setTimeout(() => settle(1), shutdownCloseTimeoutMs);
+        if (settled) return;
+        shutdownTimer = timers.setTimeout(() => settle(1), shutdownCloseTimeoutMs);
       }, shutdownTimeoutMs);
     };
     const forwardSignal = (signal) => {

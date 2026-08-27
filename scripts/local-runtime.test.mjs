@@ -28,6 +28,52 @@ function createControlledChild({ killResult = true } = {}) {
   return child;
 }
 
+function createFakeTimers() {
+  const pending = new Map();
+  let nextId = 0;
+
+  return {
+    clearTimeout: (id) => pending.delete(id),
+    get pendingCount() {
+      return pending.size;
+    },
+    runNext: () => {
+      const next = pending.entries().next().value;
+      if (!next) throw new Error("no pending timer");
+      const [id, callback] = next;
+      pending.delete(id);
+      callback();
+    },
+    setTimeout: (callback) => {
+      const id = ++nextId;
+      pending.set(id, callback);
+      return id;
+    },
+  };
+}
+
+function createDeadlineChild({ sigkill } = {}) {
+  const child = createControlledChild();
+  child.unrefCalls = 0;
+  child.unref = () => { child.unrefCalls += 1; };
+  child.kill = (signal) => {
+    child.killed = true;
+    child.sentSignal = signal;
+    child.sentSignals.push(signal);
+    return signal === "SIGKILL" ? sigkill() : true;
+  };
+  return child;
+}
+
+function assertShutdownCleanup({ child, signalSource, timers }) {
+  assert.equal(child.listenerCount("error"), 0);
+  assert.equal(child.listenerCount("exit"), 0);
+  assert.equal(child.unrefCalls, 1);
+  assert.equal(signalSource.listenerCount("SIGINT"), 0);
+  assert.equal(signalSource.listenerCount("SIGTERM"), 0);
+  assert.equal(timers.pendingCount, 0);
+}
+
 function waitForExit(child, deadlineMs = 1_000) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -446,6 +492,102 @@ test("Nest dev launcher bounds failed signal delivery without an exit event", as
   assert.equal(await exitCode, 1);
   assert.equal(signalSource.listenerCount("SIGINT"), 0);
   assert.equal(signalSource.listenerCount("SIGTERM"), 0);
+});
+
+test("Nest dev launcher settles immediately when deadline SIGKILL fails", async () => {
+  for (const sigkill of [() => false, () => { throw new Error("SIGKILL failed"); }]) {
+    const signalSource = new EventEmitter();
+    const timers = createFakeTimers();
+    const child = createDeadlineChild({ sigkill });
+    const exitCode = runNestDev({
+      command: createNestDevCommand({ env: {} }),
+      signalSource,
+      spawnProcess: () => child,
+      shutdownTimeoutMs: 1,
+      timers,
+    });
+
+    signalSource.emit("SIGTERM", "SIGTERM");
+    assert.equal(timers.pendingCount, 1);
+    timers.runNext();
+
+    assert.equal(await exitCode, 1);
+    assert.deepEqual(child.sentSignals, ["SIGTERM", "SIGKILL"]);
+    assertShutdownCleanup({ child, signalSource, timers });
+  }
+});
+
+test("Nest dev launcher needs its second deadline when SIGKILL does not close the child", async () => {
+  const signalSource = new EventEmitter();
+  const timers = createFakeTimers();
+  const child = createDeadlineChild({ sigkill: () => true });
+  const exitCode = runNestDev({
+    command: createNestDevCommand({ env: {} }),
+    signalSource,
+    spawnProcess: () => child,
+    shutdownTimeoutMs: 1,
+    shutdownCloseTimeoutMs: 1,
+    timers,
+  });
+  let settled = false;
+  void exitCode.then(() => { settled = true; });
+
+  signalSource.emit("SIGTERM", "SIGTERM");
+  timers.runNext();
+  await Promise.resolve();
+
+  assert.equal(settled, false);
+  assert.equal(timers.pendingCount, 1);
+  timers.runNext();
+
+  assert.equal(await exitCode, 1);
+  assertShutdownCleanup({ child, signalSource, timers });
+});
+
+test("Nest dev launcher preserves the forwarded signal when SIGKILL closes in its close window", async () => {
+  const signalSource = new EventEmitter();
+  const timers = createFakeTimers();
+  const child = createDeadlineChild({ sigkill: () => true });
+  const exitCode = runNestDev({
+    command: createNestDevCommand({ env: {} }),
+    signalSource,
+    spawnProcess: () => child,
+    shutdownTimeoutMs: 1,
+    shutdownCloseTimeoutMs: 1,
+    timers,
+  });
+
+  signalSource.emit("SIGTERM", "SIGTERM");
+  timers.runNext();
+  child.emit("exit", null, "SIGKILL");
+
+  assert.equal(await exitCode, 143);
+  assertShutdownCleanup({ child, signalSource, timers });
+});
+
+test("Nest dev launcher does not schedule a close deadline after synchronous SIGKILL exit", async () => {
+  const signalSource = new EventEmitter();
+  const timers = createFakeTimers();
+  const child = createDeadlineChild({
+    sigkill: () => {
+      child.emit("exit", null, "SIGKILL");
+      return true;
+    },
+  });
+  const exitCode = runNestDev({
+    command: createNestDevCommand({ env: {} }),
+    signalSource,
+    spawnProcess: () => child,
+    shutdownTimeoutMs: 1,
+    shutdownCloseTimeoutMs: 1,
+    timers,
+  });
+
+  signalSource.emit("SIGTERM", "SIGTERM");
+  timers.runNext();
+
+  assert.equal(await exitCode, 143);
+  assertShutdownCleanup({ child, signalSource, timers });
 });
 
 test("direct Nest dev entry force-exits after a bounded kill(false) deadline", { skip: posixOnly }, async () => {
