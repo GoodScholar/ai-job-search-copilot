@@ -334,5 +334,5 @@ it("refetches completed facts after a repeated completed upload with the same im
 
   submitFile();
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-  expect(screen.getByText("TypeScript")).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByText("TypeScript")).toBeInTheDocument());
 });
