@@ -74,6 +74,50 @@ it("reads the authenticated empty workbench through the shared DTO", async () =>
   expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${sessionToken}`);
 });
 
+it("reads only the trusted profile snapshot through the shared DTO", async () => {
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+    profileId: null, version: 0, facts: [],
+  }), { status: 200 }));
+  const api = createApiClient({
+    apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl,
+  });
+
+  await expect(api.getProfile(sessionToken)).resolves.toEqual({ profileId: null, version: 0, facts: [] });
+  expect(fetchImpl).toHaveBeenCalledWith("http://127.0.0.1:3021/v1/profile", expect.objectContaining({
+    method: "GET", headers: expect.any(Object),
+  }));
+  expect(new Headers(fetchImpl.mock.calls[0]![1]?.headers).get("authorization")).toBe(`Bearer ${sessionToken}`);
+});
+
+it("sends a candidate decision with the caller version and returns the trusted snapshot", async () => {
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+    profileId: "d194d0ce-fc7e-45db-9425-e8ff4eaf8c08", version: 1, facts: [],
+  }), { status: 201 }));
+  const api = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+
+  await expect(api.decideCandidateFact(sessionToken, importId, { expectedVersion: 0, decision: "confirmed" }))
+    .resolves.toMatchObject({ version: 1 });
+  expect(fetchImpl).toHaveBeenCalledWith(`http://127.0.0.1:3021/v1/profile/candidate-facts/${importId}/decisions`, expect.objectContaining({
+    method: "POST", body: JSON.stringify({ expectedVersion: 0, decision: "confirmed" }),
+  }));
+});
+
+it("sends manual profile fact maintenance commands with the caller version", async () => {
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+    profileId: "d194d0ce-fc7e-45db-9425-e8ff4eaf8c08", version: 1, facts: [],
+  }), { status: 201 }));
+  const api = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+
+  await expect(api.createProfileFact(sessionToken, {
+    expectedVersion: 0, factType: "work_eligibility", factValue: { summary: "可在中国大陆工作" },
+  })).resolves.toMatchObject({ version: 1 });
+
+  expect(fetchImpl).toHaveBeenCalledWith("http://127.0.0.1:3021/v1/profile/facts", expect.objectContaining({
+    method: "POST",
+    body: JSON.stringify({ expectedVersion: 0, factType: "work_eligibility", factValue: { summary: "可在中国大陆工作" } }),
+  }));
+});
+
 it("recognizes an already-invalid current session from the shared error response", async () => {
   const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
     new Response(JSON.stringify({

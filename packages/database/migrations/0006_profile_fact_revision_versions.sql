@@ -1,0 +1,2 @@
+ALTER TABLE "profile_fact_revisions" ADD COLUMN "profile_version" integer NOT NULL;--> statement-breakpoint
+ALTER TABLE "profile_fact_revisions" ADD CONSTRAINT "profile_fact_revisions_profile_version_positive" CHECK ("profile_fact_revisions"."profile_version" >= 1);

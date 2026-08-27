@@ -8,6 +8,7 @@
     "./auth": "./src/auth.ts",
     "./career-document-privacy": "./src/career-document-privacy.ts",
     "./career-import": "./src/career-import.ts",
+    "./profile-review": "./src/profile-review.ts",
     "./workbench": "./src/workbench.ts",
     "./runtime": "./src/runtime.ts"
   },

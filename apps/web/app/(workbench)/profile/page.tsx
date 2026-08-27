@@ -1,7 +1,7 @@
-import type { CareerImportList } from "@job-copilot/contracts/career-import";
 import { ProfileImportView } from "@/components/workbench/profile-import-view";
 import { unstable_rethrow } from "next/navigation";
 import { getCareerImports } from "@/lib/server/career-imports";
+import { getProfile } from "@/lib/server/profile-review";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -9,11 +9,11 @@ export const metadata: Metadata = {
 };
 
 export default async function ProfilePage() {
-  const careerImportsPromise = getCareerImports();
-  let careerImports: CareerImportList;
+  const [careerImportsResult, profileResult] = await Promise.allSettled([getCareerImports(), getProfile()]);
 
   try {
-    careerImports = await careerImportsPromise;
+    if (careerImportsResult.status === "rejected") throw careerImportsResult.reason;
+    if (profileResult.status === "rejected") throw profileResult.reason;
   } catch (error) {
     unstable_rethrow(error);
     return (
@@ -28,5 +28,5 @@ export default async function ProfilePage() {
     );
   }
 
-  return <ProfileImportView initialImports={careerImports.imports} />;
+  return <ProfileImportView initialImports={careerImportsResult.value.imports} initialProfile={profileResult.value} />;
 }

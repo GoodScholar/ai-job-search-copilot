@@ -10,6 +10,8 @@ import { AppModule } from "./app.module.js";
 import { configureApiApplication } from "./configure-api-application.js";
 import { DATABASE } from "./config/runtime-config.module.js";
 import { CAREER_DOCUMENT_STORE, CAREER_IMPORT_QUEUE } from "./career-import/career-import.tokens.js";
+import { PROFILE_REVIEW_COMMANDS, type ProfileReviewCommands } from "./profile-review/profile-review.tokens.js";
+import { z } from "zod";
 
 const testSecret = "test-dev-auth-shared-secret-must-be-at-least-32-characters";
 const capturedLogs: unknown[][] = [];
@@ -173,6 +175,59 @@ describe("authenticated workbench HTTP API", () => {
       account: { userId: primary.account.userId },
       summary: { recommendations: 0, pendingFacts: 0, runningAgentRuns: 0, applications: 0 },
     });
+  });
+
+  it("creates one manual profile fact and rejects a stale profile version", async () => {
+    const session = await createSession(app, "profile-review-manual");
+    const empty = await app.getHttpAdapter().getInstance().inject({
+      method: "GET", url: "/v1/profile", headers: bearer(session.sessionToken),
+    });
+    expect(empty.statusCode).toBe(200);
+    expect(empty.json()).toEqual({ profileId: null, version: 0, facts: [] });
+
+    const created = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: "/v1/profile/facts", headers: { ...bearer(session.sessionToken), "content-type": "application/json" },
+      payload: { expectedVersion: 0, factType: "work_eligibility", factValue: { summary: "中国大陆，可合法工作" } },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json()).toMatchObject({ version: 1, facts: [{ factType: "work_eligibility", source: "user_confirmed" }] });
+
+    const stale = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: "/v1/profile/facts", headers: { ...bearer(session.sessionToken), "content-type": "application/json" },
+      payload: { expectedVersion: 0, factType: "skill", factValue: { name: "TypeScript" } },
+    });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json()).toMatchObject({ code: "PROFILE_VERSION_CONFLICT", requestId: expect.any(String) });
+    expect(stale.body).not.toContain("TypeScript");
+  });
+
+  it("maps an invalid manual profile fact body to the standard invalid-request problem", async () => {
+    const session = await createSession(app, "profile-review-invalid-body");
+    const response = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: "/v1/profile/facts", headers: { ...bearer(session.sessionToken), "content-type": "application/json" },
+      payload: { expectedVersion: 0, factType: "language", factValue: { name: "" } },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ code: "INVALID_REQUEST", message: "请求无效", requestId: expect.any(String) });
+    expect(response.body).not.toContain("ZodError");
+  });
+
+  it("keeps a command-side Zod error as an internal error rather than blaming the request", async () => {
+    const session = await createSession(app, "profile-review-command-zod-error");
+    const commands = app.get<ProfileReviewCommands>(PROFILE_REVIEW_COMMANDS);
+    const originalCreateFact = commands.createFact;
+    commands.createFact = async () => { throw new z.ZodError([]); };
+    try {
+      const response = await app.getHttpAdapter().getInstance().inject({
+        method: "POST", url: "/v1/profile/facts", headers: { ...bearer(session.sessionToken), "content-type": "application/json" },
+        payload: { expectedVersion: 0, factType: "skill", factValue: { name: "TypeScript" } },
+      });
+      expect(response.statusCode).toBe(500);
+      expect(response.json()).toMatchObject({ code: "INTERNAL_ERROR", message: "服务暂时不可用", requestId: expect.any(String) });
+    } finally {
+      commands.createFact = originalCreateFact;
+    }
   });
 
   it("hides a different account resource", async () => {

@@ -2,11 +2,13 @@ import { expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getCareerImports: vi.fn(),
+  getProfile: vi.fn(),
   profileImportView: vi.fn(() => null),
   unstableRethrow: vi.fn((error: unknown) => { throw error; }),
 }));
 
 vi.mock("@/lib/server/career-imports", () => ({ getCareerImports: mocks.getCareerImports }));
+vi.mock("@/lib/server/profile-review", () => ({ getProfile: mocks.getProfile }));
 vi.mock("next/navigation", () => ({ unstable_rethrow: mocks.unstableRethrow }));
 vi.mock("@/components/workbench/profile-import-view", () => ({ ProfileImportView: mocks.profileImportView }));
 
@@ -30,8 +32,10 @@ it("performs the authenticated RSC first read before passing all recent imports 
   };
   const earlier = { ...latest, importId: "9e812f2a-34fd-43cf-b8fb-fc307f1eb4ce", sourceFilename: "earlier.md" };
   mocks.getCareerImports.mockResolvedValue({ imports: [latest, earlier] });
+  mocks.getProfile.mockResolvedValue({ profileId: null, version: 0, facts: [] });
 
   const page = await ProfilePage();
 
   expect(page.props.initialImports).toEqual([latest, earlier]);
+  expect(page.props.initialProfile).toEqual({ profileId: null, version: 0, facts: [] });
 });

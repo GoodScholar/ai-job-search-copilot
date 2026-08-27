@@ -1,6 +1,7 @@
 "use client";
 
 import type { CandidateFact, CareerImportDetail, CareerImportSummary } from "@job-copilot/contracts/career-import";
+import { ProfileSnapshotSchema, type ProfileFact, type ProfileFactType, type ProfileSnapshot } from "@job-copilot/contracts/profile-review";
 import {
   inspectCareerDocumentPrivacy,
   type CareerPrivacyInspection,
@@ -11,6 +12,7 @@ import { createCareerImportAction, type UploadActionState } from "@/app/(workben
 
 type ProfileImportViewProps = {
   initialImports: CareerImportSummary[];
+  initialProfile?: ProfileSnapshot;
 };
 
 type ImportStatus = "uploading" | "queued" | "processing" | "completed" | "failed";
@@ -68,6 +70,7 @@ const factTypeNames: Record<CandidateFact["factType"], string> = {
   achievement: "成果",
   certification: "证书",
 };
+const profileFactTypeNames = { ...factTypeNames, work_eligibility: "工作资格" } as const;
 
 function factValue(fact: CandidateFact): string {
   if ("name" in fact.factValue) {
@@ -78,6 +81,46 @@ function factValue(fact: CandidateFact): string {
     return fact.factValue.name;
   }
   return fact.factValue.summary;
+}
+
+function profileFactValue(fact: ProfileFact): string {
+  if ("name" in fact.factValue) {
+    const level = "level" in fact.factValue ? fact.factValue.level : undefined;
+    return level ? `${fact.factValue.name} · ${level}` : fact.factValue.name;
+  }
+  return fact.factValue.summary;
+}
+
+function correctedFactValue(fact: CandidateFact, value: string, level = "") {
+  if (fact.factType === "language") {
+    return level.trim() ? { name: value, level: level.trim() } : { name: value };
+  }
+  if ("name" in fact.factValue) {
+    return { name: value };
+  }
+  return { summary: value };
+}
+
+function profileInputValue(factType: ProfileFactType, value: string, level = "") {
+  if (factType === "language") {
+    return level.trim() ? { name: value, level: level.trim() } : { name: value };
+  }
+  if (factType === "skill" || factType === "certification") {
+    return { name: value };
+  }
+  return { summary: value };
+}
+
+function profileFactInputValue(fact: ProfileFact): string {
+  return "name" in fact.factValue ? fact.factValue.name : fact.factValue.summary;
+}
+
+function profileFactLanguageLevel(fact: ProfileFact): string {
+  return fact.factType === "language" && "level" in fact.factValue ? fact.factValue.level ?? "" : "";
+}
+
+function candidateFactLanguageLevel(fact: CandidateFact): string {
+  return fact.factType === "language" && "level" in fact.factValue ? fact.factValue.level ?? "" : "";
 }
 
 function asSummary(detail: CareerImportDetail): CareerImportSummary {
@@ -110,12 +153,28 @@ function readFileText(file: File): Promise<string> {
   });
 }
 
-export function ProfileImportView({ initialImports }: ProfileImportViewProps) {
+export function ProfileImportView({ initialImports, initialProfile = { profileId: null, version: 0, facts: [] } }: ProfileImportViewProps) {
   const [actionState, setActionState] = useState<UploadActionState>(initialUploadActionState);
   const [isPending, startTransition] = useTransition();
   const [recentImports, setRecentImports] = useState<CareerImportSummary[]>(initialImports);
   const [activeImport, setActiveImport] = useState<CareerImportSummary | null>(initialImports[0] ?? null);
   const [detail, setDetail] = useState<CareerImportDetail | null>(null);
+  const [profile, setProfile] = useState<ProfileSnapshot>(initialProfile);
+  const [decidedCandidateFactIds, setDecidedCandidateFactIds] = useState<Set<string>>(() => new Set());
+  const [profileMessage, setProfileMessage] = useState<string | null>(null);
+  const [correctingFactId, setCorrectingFactId] = useState<string | null>(null);
+  const [correctionValue, setCorrectionValue] = useState("");
+  const [correctionReason, setCorrectionReason] = useState("");
+  const [correctionLevel, setCorrectionLevel] = useState("");
+  const [manualFactType, setManualFactType] = useState<ProfileFactType>("skill");
+  const [manualFactValue, setManualFactValue] = useState("");
+  const [manualLanguageLevel, setManualLanguageLevel] = useState("");
+  const [editingFactId, setEditingFactId] = useState<string | null>(null);
+  const [editingValue, setEditingValue] = useState("");
+  const [editingReason, setEditingReason] = useState("");
+  const [editingLanguageLevel, setEditingLanguageLevel] = useState("");
+  const [removingFactId, setRemovingFactId] = useState<string | null>(null);
+  const [removalReason, setRemovalReason] = useState("");
   const [pollingError, setPollingError] = useState(false);
   const [preparedDocument, setPreparedDocument] = useState<PreparedCareerDocument | null>(null);
   const [privacyMode, setPrivacyMode] = useState<CareerPrivacyMode | null>(null);
@@ -134,6 +193,67 @@ export function ProfileImportView({ initialImports }: ProfileImportViewProps) {
   const updateRecentInPlace = useCallback((nextImport: CareerImportSummary) => {
     setRecentImports((previous) => previous.map((item) => item.importId === nextImport.importId ? nextImport : item));
   }, []);
+  const submitCandidateDecision = useCallback(async (
+    fact: CandidateFact,
+    decision: { decision: "confirmed" | "rejected" } | { decision: "corrected"; factValue: unknown; reason: string },
+  ) => {
+    setProfileMessage(null);
+    try {
+      const response = await fetch(`/api/profile/candidate-facts/${fact.factId}/decisions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ expectedVersion: profile.version, ...decision }),
+      });
+      if (!response.ok) {
+        setProfileMessage(response.status === 409 ? "画像已在其他位置更新，请刷新后重试。" : "无法保存审核决定，请稍后重试。");
+        return;
+      }
+      const parsed = ProfileSnapshotSchema.safeParse(await response.json());
+      if (!parsed.success) {
+        setProfileMessage("无法读取最新画像，请刷新后重试。");
+        return;
+      }
+      setProfile(parsed.data);
+      setDecidedCandidateFactIds((previous) => new Set(previous).add(fact.factId));
+      setCorrectingFactId(null);
+      setCorrectionValue("");
+      setCorrectionReason("");
+      setCorrectionLevel("");
+    } catch {
+      setProfileMessage("无法保存审核决定，请稍后重试。");
+    }
+  }, [profile.version]);
+
+  const submitProfileMaintenance = useCallback(async (path: string, body: Record<string, unknown>) => {
+    setProfileMessage(null);
+    try {
+      const response = await fetch(path, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ expectedVersion: profile.version, ...body }),
+      });
+      if (!response.ok) {
+        setProfileMessage(response.status === 409 ? "画像已在其他位置更新，请刷新后重试。" : "无法维护画像事实，请稍后重试。");
+        return;
+      }
+      const parsed = ProfileSnapshotSchema.safeParse(await response.json());
+      if (!parsed.success) {
+        setProfileMessage("无法读取最新画像，请刷新后重试。");
+        return;
+      }
+      setProfile(parsed.data);
+      setManualFactValue("");
+      setManualLanguageLevel("");
+      setEditingFactId(null);
+      setEditingValue("");
+      setEditingReason("");
+      setEditingLanguageLevel("");
+      setRemovingFactId(null);
+      setRemovalReason("");
+    } catch {
+      setProfileMessage("无法维护画像事实，请稍后重试。");
+    }
+  }, [profile.version]);
 
   const selectImport = (nextImport: CareerImportSummary) => {
     pollingGeneration.current = {
@@ -405,7 +525,7 @@ export function ProfileImportView({ initialImports }: ProfileImportViewProps) {
             <p className="profile-pending">待确认</p>
           </div>
           <ol className="profile-fact-list">
-            {detail.facts.map((fact) => (
+            {detail.facts.filter((fact) => !decidedCandidateFactIds.has(fact.factId)).map((fact) => (
               <li key={fact.factId}>
                 <div className="profile-fact-value">
                   <p>{factTypeNames[fact.factType]}</p>
@@ -413,12 +533,161 @@ export function ProfileImportView({ initialImports }: ProfileImportViewProps) {
                   <span>来源：{fact.evidence.sourceFilename} · <span>第 {fact.evidence.startLine} 行</span></span>
                 </div>
                 <blockquote className="profile-fact-evidence">{fact.evidence.excerpt}</blockquote>
+                <div className="profile-fact-actions">
+                  <button aria-label={`确认 ${factValue(fact)}`} className="workbench-touch-target" onClick={() => void submitCandidateDecision(fact, { decision: "confirmed" })} type="button">确认</button>
+                  <button
+                    aria-label={`纠正 ${factValue(fact)}`}
+                    className="workbench-touch-target"
+                    onClick={() => {
+                      setCorrectingFactId(fact.factId);
+                      setCorrectionValue("");
+                      setCorrectionReason("");
+                      setCorrectionLevel(candidateFactLanguageLevel(fact));
+                    }}
+                    type="button"
+                  >纠正</button>
+                  <button aria-label={`拒绝 ${factValue(fact)}`} className="workbench-touch-target" onClick={() => void submitCandidateDecision(fact, { decision: "rejected" })} type="button">拒绝</button>
+                </div>
+                {correctingFactId === fact.factId ? (
+                  <form
+                    className="profile-fact-correction"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      if (!correctionValue.trim() || !correctionReason.trim()) return;
+                      void submitCandidateDecision(fact, {
+                        decision: "corrected",
+                        factValue: correctedFactValue(fact, correctionValue.trim(), correctionLevel),
+                        reason: correctionReason.trim(),
+                      });
+                    }}
+                  >
+                    <label>纠正后的内容
+                      <input onChange={(event) => setCorrectionValue(event.target.value)} value={correctionValue} />
+                    </label>
+                    <label>纠正原因
+                      <input onChange={(event) => setCorrectionReason(event.target.value)} value={correctionReason} />
+                    </label>
+                    {fact.factType === "language" ? <label>纠正后的语言级别
+                      <input onChange={(event) => setCorrectionLevel(event.target.value)} value={correctionLevel} />
+                    </label> : null}
+                    <button disabled={!correctionValue.trim() || !correctionReason.trim()} type="submit">保存纠正</button>
+                  </form>
+                ) : null}
               </li>
             ))}
           </ol>
-          <p className="profile-next-step">确认、修改和拒绝将在下一阶段开放</p>
         </section>
       ) : null}
+
+      <section aria-labelledby="trusted-profile-title" className="profile-facts">
+        <div className="profile-facts-heading">
+          <div>
+            <p className="workbench-kicker">长期记忆 · 已验证</p>
+            <h2 id="trusted-profile-title">当前可信画像</h2>
+          </div>
+          <p className="profile-pending">版本 {profile.version}</p>
+        </div>
+        <form
+          className="profile-fact-correction"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!manualFactValue.trim()) return;
+            void submitProfileMaintenance("/api/profile/facts", {
+              factType: manualFactType,
+              factValue: profileInputValue(manualFactType, manualFactValue.trim(), manualLanguageLevel),
+            });
+          }}
+        >
+          <label>画像事实类型
+            <select onChange={(event) => setManualFactType(event.target.value as ProfileFactType)} value={manualFactType}>
+              {Object.entries(profileFactTypeNames).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+          </label>
+          <label>画像事实内容
+            <input onChange={(event) => setManualFactValue(event.target.value)} value={manualFactValue} />
+          </label>
+          {manualFactType === "language" ? <label>画像事实语言级别
+            <input onChange={(event) => setManualLanguageLevel(event.target.value)} value={manualLanguageLevel} />
+          </label> : null}
+          <button disabled={!manualFactValue.trim()} type="submit">新增画像事实</button>
+        </form>
+        {profile.facts.length ? (
+          <ol className="profile-fact-list">
+            {profile.facts.map((fact) => (
+              <li key={fact.factId}>
+                <div className="profile-fact-value">
+                  <p>{profileFactTypeNames[fact.factType]}</p>
+                  <strong>{profileFactValue(fact)}</strong>
+                  <span>{fact.source === "candidate_fact" ? "已保留原候选事实证据" : "由你确认"}</span>
+                </div>
+                <div className="profile-fact-actions">
+                  <button
+                    aria-label={`修改 ${profileFactTypeNames[fact.factType]}`}
+                    className="workbench-touch-target"
+                    onClick={() => {
+                      setEditingFactId(fact.factId);
+                      setEditingValue(profileFactInputValue(fact));
+                      setEditingReason("");
+                      setEditingLanguageLevel(profileFactLanguageLevel(fact));
+                      setRemovingFactId(null);
+                    }}
+                    type="button"
+                  >修改</button>
+                  <button
+                    aria-label={`移除 ${profileFactTypeNames[fact.factType]}`}
+                    className="workbench-touch-target"
+                    onClick={() => {
+                      setRemovingFactId(fact.factId);
+                      setRemovalReason("");
+                      setEditingFactId(null);
+                    }}
+                    type="button"
+                  >移除</button>
+                </div>
+                {editingFactId === fact.factId ? (
+                  <form
+                    className="profile-fact-correction"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      if (!editingValue.trim() || !editingReason.trim()) return;
+                      void submitProfileMaintenance(`/api/profile/facts/${fact.factId}/revisions`, {
+                        factValue: profileInputValue(fact.factType, editingValue.trim(), editingLanguageLevel), reason: editingReason.trim(),
+                      });
+                    }}
+                  >
+                    <label>修改后的内容
+                      <input onChange={(event) => setEditingValue(event.target.value)} value={editingValue} />
+                    </label>
+                    <label>修改原因
+                      <input onChange={(event) => setEditingReason(event.target.value)} value={editingReason} />
+                    </label>
+                    {fact.factType === "language" ? <label>修改后的语言级别
+                      <input onChange={(event) => setEditingLanguageLevel(event.target.value)} value={editingLanguageLevel} />
+                    </label> : null}
+                    <button disabled={!editingValue.trim() || !editingReason.trim()} type="submit">保存修改</button>
+                  </form>
+                ) : null}
+                {removingFactId === fact.factId ? (
+                  <form
+                    className="profile-fact-correction"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      if (!removalReason.trim()) return;
+                      void submitProfileMaintenance(`/api/profile/facts/${fact.factId}/removals`, { reason: removalReason.trim() });
+                    }}
+                  >
+                    <label>移除原因
+                      <input onChange={(event) => setRemovalReason(event.target.value)} value={removalReason} />
+                    </label>
+                    <button disabled={!removalReason.trim()} type="submit">确认移除</button>
+                  </form>
+                ) : null}
+              </li>
+            ))}
+          </ol>
+        ) : <p className="profile-next-step">尚无已验证画像事实。</p>}
+        {profileMessage ? <p aria-live="polite" className="profile-next-step" role="status">{profileMessage}</p> : null}
+      </section>
     </main>
   );
 }

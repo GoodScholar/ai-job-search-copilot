@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import {
   candidateFactEvidence,
+  candidateFactDecisions,
   candidateFacts,
   careerDocuments,
   careerImports,
@@ -604,7 +605,15 @@ export function createCareerImportQueries(deps: { db: Database }): {
           eq(candidateFactEvidence.userId, candidateFacts.userId),
           eq(candidateFactEvidence.careerDocumentId, candidateFacts.careerDocumentId),
         ))
-          .where(and(eq(candidateFacts.userId, userId), eq(candidateFacts.careerImportId, importId)))
+          .where(and(
+            eq(candidateFacts.userId, userId),
+            eq(candidateFacts.careerImportId, importId),
+            sql`not exists (
+              select 1 from ${candidateFactDecisions}
+              where ${candidateFactDecisions.userId} = ${candidateFacts.userId}
+                and ${candidateFactDecisions.candidateFactId} = ${candidateFacts.id}
+            )`,
+          ))
           .orderBy(asc(candidateFacts.createdAt))
         : [];
 

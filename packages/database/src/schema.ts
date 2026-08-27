@@ -131,6 +131,7 @@ export const candidateFacts = pgTable("candidate_facts", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   unique("candidate_facts_import_fact_key_unique").on(table.careerImportId, table.factKey),
+  unique("candidate_facts_user_id_id_unique").on(table.userId, table.id),
   unique("candidate_facts_user_id_id_document_id_unique").on(table.userId, table.id, table.careerDocumentId),
   foreignKey({
     columns: [table.userId, table.careerImportId, table.careerDocumentId],
@@ -141,6 +142,99 @@ export const candidateFacts = pgTable("candidate_facts", {
   check("candidate_facts_fact_type_check", sql`${table.factType} in ('experience', 'education', 'skill', 'project', 'language', 'achievement', 'certification')`),
   check("candidate_facts_confidence_basis_points_range", sql`${table.confidenceBasisPoints} between 0 and 10000`),
   check("candidate_facts_confirmation_status_check", sql`${table.confirmationStatus} = 'pending'`),
+]);
+
+export const jobProfiles = pgTable("job_profiles", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  version: integer("version").notNull().default(0),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_profiles_user_unique").on(table.userId),
+  unique("job_profiles_user_id_id_unique").on(table.userId, table.id),
+  check("job_profiles_version_nonnegative", sql`${table.version} >= 0`),
+]);
+
+export const profileFacts = pgTable("profile_facts", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  profileId: uuid("profile_id").notNull().references(() => jobProfiles.id),
+  factType: varchar("fact_type", { length: 32 }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("profile_facts_user_id_id_unique").on(table.userId, table.id),
+  foreignKey({
+    columns: [table.userId, table.profileId],
+    foreignColumns: [jobProfiles.userId, jobProfiles.id],
+    name: "profile_facts_owner_profile_fk",
+  }),
+  check("profile_facts_fact_type_check", sql`${table.factType} in ('experience', 'education', 'skill', 'project', 'language', 'achievement', 'certification', 'work_eligibility')`),
+]);
+
+export const profileFactRevisions = pgTable("profile_fact_revisions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  profileFactId: uuid("profile_fact_id").notNull().references(() => profileFacts.id),
+  revisionNumber: integer("revision_number").notNull(),
+  factType: varchar("fact_type", { length: 32 }).notNull(),
+  factValue: jsonb("fact_value").notNull(),
+  state: varchar("state", { length: 16 }).notNull().default("active"),
+  source: varchar("source", { length: 32 }).notNull(),
+  candidateFactId: uuid("candidate_fact_id").references(() => candidateFacts.id),
+  reason: text("reason"),
+  profileVersion: integer("profile_version").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("profile_fact_revisions_fact_revision_unique").on(table.profileFactId, table.revisionNumber),
+  unique("profile_fact_revisions_user_id_id_unique").on(table.userId, table.id),
+  foreignKey({
+    columns: [table.userId, table.profileFactId],
+    foreignColumns: [profileFacts.userId, profileFacts.id],
+    name: "profile_fact_revisions_owner_fact_fk",
+  }),
+  foreignKey({
+    columns: [table.userId, table.candidateFactId],
+    foreignColumns: [candidateFacts.userId, candidateFacts.id],
+    name: "profile_fact_revisions_owner_candidate_fk",
+  }),
+  check("profile_fact_revisions_number_positive", sql`${table.revisionNumber} >= 1`),
+  check("profile_fact_revisions_fact_type_check", sql`${table.factType} in ('experience', 'education', 'skill', 'project', 'language', 'achievement', 'certification', 'work_eligibility')`),
+  check("profile_fact_revisions_state_check", sql`${table.state} in ('active', 'removed')`),
+  check("profile_fact_revisions_source_check", sql`${table.source} in ('candidate_fact', 'user_confirmed')`),
+  check("profile_fact_revisions_profile_version_positive", sql`${table.profileVersion} >= 1`),
+  check("profile_fact_revisions_candidate_source_check", sql`${table.source} != 'candidate_fact' or ${table.candidateFactId} is not null`),
+]);
+
+export const candidateFactDecisions = pgTable("candidate_fact_decisions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  profileId: uuid("profile_id").notNull().references(() => jobProfiles.id),
+  candidateFactId: uuid("candidate_fact_id").notNull().references(() => candidateFacts.id),
+  decision: varchar("decision", { length: 16 }).notNull(),
+  profileFactRevisionId: uuid("profile_fact_revision_id").references(() => profileFactRevisions.id),
+  profileVersion: integer("profile_version").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("candidate_fact_decisions_candidate_fact_unique").on(table.candidateFactId),
+  foreignKey({
+    columns: [table.userId, table.profileId],
+    foreignColumns: [jobProfiles.userId, jobProfiles.id],
+    name: "candidate_fact_decisions_owner_profile_fk",
+  }),
+  foreignKey({
+    columns: [table.userId, table.candidateFactId],
+    foreignColumns: [candidateFacts.userId, candidateFacts.id],
+    name: "candidate_fact_decisions_owner_candidate_fk",
+  }),
+  foreignKey({
+    columns: [table.userId, table.profileFactRevisionId],
+    foreignColumns: [profileFactRevisions.userId, profileFactRevisions.id],
+    name: "candidate_fact_decisions_owner_revision_fk",
+  }),
+  check("candidate_fact_decisions_type_check", sql`${table.decision} in ('confirmed', 'corrected', 'rejected')`),
+  check("candidate_fact_decisions_version_nonnegative", sql`${table.profileVersion} >= 0`),
+  check("candidate_fact_decisions_revision_check", sql`(${table.decision} = 'rejected') = (${table.profileFactRevisionId} is null)`),
 ]);
 
 export const candidateFactEvidence = pgTable("candidate_fact_evidence", {

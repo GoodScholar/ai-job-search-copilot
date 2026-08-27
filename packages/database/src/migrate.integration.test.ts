@@ -141,6 +141,22 @@ describe("database migrations", () => {
     expect(constraints).toHaveLength(4);
   });
 
+  it("migrates one versioned profile per account with immutable fact revisions", async () => {
+    expect(await listPublicTables(migratedDatabase)).toEqual(expect.arrayContaining([
+      "job_profiles", "profile_facts", "profile_fact_revisions", "candidate_fact_decisions",
+    ]));
+    const constraints = await migratedDatabase.execute(sql`
+      select conname from pg_constraint where conname in (
+        'job_profiles_user_unique', 'profile_fact_revisions_fact_revision_unique',
+        'candidate_fact_decisions_candidate_fact_unique'
+      ) order by conname
+    `);
+    expect(constraints).toHaveLength(3);
+    expect(await listColumns(migratedDatabase)).toEqual(expect.arrayContaining([
+      { table_name: "profile_fact_revisions", column_name: "profile_version", data_type: "integer" },
+    ]));
+  });
+
   it("enforces career import ownership and domain bounds", async () => {
     const accountId = "a4336773-4ece-464c-a4a9-4e884e461c55";
     const secondAccountId = "0e532866-ef87-4e6e-a155-c87580550450";

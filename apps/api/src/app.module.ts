@@ -9,9 +9,10 @@ import { RuntimeConfigModule } from "./config/runtime-config.module.js";
 import { HealthModule } from "./health/health.module.js";
 import { CareerImportModule } from "./career-import/career-import.module.js";
 import { WorkbenchModule } from "./workbench/workbench.module.js";
+import { ProfileReviewModule } from "./profile-review/profile-review.module.js";
 
 @Module({
-  imports: [RuntimeConfigModule, AuthModule, HealthModule, WorkbenchModule, CareerImportModule],
+  imports: [RuntimeConfigModule, AuthModule, HealthModule, WorkbenchModule, CareerImportModule, ProfileReviewModule],
   controllers: [AccountsController],
   providers: [
     RequestIdHook,

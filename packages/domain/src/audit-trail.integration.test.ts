@@ -144,4 +144,26 @@ describe("audit trail", () => {
       })).rejects.toThrow(/字段白名单/);
     }
   });
+
+  it("allows only identifiers, fact type, decision and version for profile review audit events", async () => {
+    const auditTrail = createAuditTrail({ db: database, clock: () => now });
+    const profileId = "9aeef61c-7fa4-4716-917c-aa2ae3d2b290";
+    const candidateFactId = "c6294ea2-91c3-4b3f-938b-7cc435e7d130";
+    const profileFactId = "97c3b468-55a0-4f78-8c7d-b456b8853445";
+    const revisionId = "72da86aa-d456-489f-ab50-28b0b502a243";
+
+    await auditTrail.append({
+      userId, actorUserId: userId, eventType: "profile.candidate_fact_decided", occurredAt: now,
+      requestId: crypto.randomUUID(), outcome: "success", reasonCode: "PROFILE_FACT_CONFIRMED",
+      resourceType: "candidate_fact", resourceId: candidateFactId,
+      metadata: { profileId, candidateFactId, profileFactId, revisionId, factType: "skill", decision: "confirmed", profileVersion: 1 },
+    });
+
+    await expect(auditTrail.append({
+      userId, actorUserId: userId, eventType: "profile.candidate_fact_decided", occurredAt: now,
+      requestId: crypto.randomUUID(), outcome: "success", reasonCode: "PROFILE_FACT_CONFIRMED",
+      resourceType: "candidate_fact", resourceId: candidateFactId,
+      metadata: { profileId, candidateFactId, profileFactId, revisionId, factType: "skill", decision: "confirmed", profileVersion: 1, reason: "secret@example.test" } as never,
+    })).rejects.toThrow(/字段白名单/);
+  });
 });

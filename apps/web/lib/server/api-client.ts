@@ -15,6 +15,14 @@ import {
   type CareerImportList,
   type CreateCareerImportResponse,
 } from "@job-copilot/contracts/career-import";
+import {
+  ProfileSnapshotSchema,
+  type CandidateFactDecisionCommand,
+  type CreateProfileFactCommand,
+  type ProfileSnapshot,
+  type RemoveProfileFactCommand,
+  type ReviseProfileFactCommand,
+} from "@job-copilot/contracts/profile-review";
 import { WorkbenchHomeSchema, type WorkbenchHome } from "@job-copilot/contracts/workbench";
 import { z } from "zod";
 
@@ -143,6 +151,70 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
         throw new ApiClientError("api", problem?.message ?? "无法读取求职工作台", response.status, problem ?? undefined);
       }
       return parseSuccess(response, WorkbenchHomeSchema);
+    },
+
+    async getProfile(sessionToken: string): Promise<ProfileSnapshot> {
+      const response = await request("/v1/profile", {
+        method: "GET",
+        headers: { authorization: `Bearer ${sessionToken}` },
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法读取求职画像", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, ProfileSnapshotSchema);
+    },
+
+    async decideCandidateFact(sessionToken: string, factId: string, command: CandidateFactDecisionCommand): Promise<ProfileSnapshot> {
+      const response = await request(`/v1/profile/candidate-facts/${factId}/decisions`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" },
+        body: JSON.stringify(command),
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法保存审核决定", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, ProfileSnapshotSchema);
+    },
+
+    async createProfileFact(sessionToken: string, command: CreateProfileFactCommand): Promise<ProfileSnapshot> {
+      const response = await request("/v1/profile/facts", {
+        method: "POST",
+        headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" },
+        body: JSON.stringify(command),
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法维护画像事实", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, ProfileSnapshotSchema);
+    },
+
+    async reviseProfileFact(sessionToken: string, factId: string, command: ReviseProfileFactCommand): Promise<ProfileSnapshot> {
+      const response = await request(`/v1/profile/facts/${factId}/revisions`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" },
+        body: JSON.stringify(command),
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法维护画像事实", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, ProfileSnapshotSchema);
+    },
+
+    async removeProfileFact(sessionToken: string, factId: string, command: RemoveProfileFactCommand): Promise<ProfileSnapshot> {
+      const response = await request(`/v1/profile/facts/${factId}/removals`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" },
+        body: JSON.stringify(command),
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法维护画像事实", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, ProfileSnapshotSchema);
     },
 
     async listCareerImports(sessionToken: string): Promise<CareerImportList> {

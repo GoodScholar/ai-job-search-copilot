@@ -31,6 +31,12 @@ type CareerImportDetail = {
   facts: unknown[];
 };
 
+function isolatedDevSubject(scope: string): string {
+  const prefix = "mci-";
+  const suffix = `-${testRunSuffix}`;
+  return `${prefix}${scope.slice(0, 80 - prefix.length - suffix.length)}${suffix}`;
+}
+
 async function createDevSession(request: APIRequestContext, subject: string): Promise<string> {
   const response = await request.post(`${apiBaseUrl}/v1/auth/dev/sessions`, {
     headers: { "x-dev-auth-secret": testDevAuthSecret },
@@ -48,7 +54,7 @@ async function signInWithIsolatedAccount(page: Page, request: APIRequestContext,
   await page.getByRole("button", { name: "使用本地体验账户登录" }).click();
   await expect(page).toHaveURL(/\/profile$/);
 
-  const sessionToken = await createDevSession(request, `markdown-career-import-primary-${projectName}-${testRunSuffix}`);
+  const sessionToken = await createDevSession(request, isolatedDevSubject(projectName));
   await page.context().addCookies([{
     name: "job_copilot_session",
     value: sessionToken,
@@ -201,4 +207,50 @@ test("登录用户可导入、持久化并安全复用 Markdown 职业资料", a
   await expect(profileEntry).toBeVisible();
   await profileEntry.click();
   await expect(page).toHaveURL(/\/profile$/);
+});
+
+test("候选事实的确认、纠正、拒绝、并发冲突和刷新都保持可信画像边界", async ({ page, request }, testInfo) => {
+  await signInWithIsolatedAccount(page, request, `profile-review-${testInfo.project.name}`);
+  const bearer = await browserBearer(page);
+  const importResponse = await request.post(`${apiBaseUrl}/v1/career-documents/imports`, {
+    headers: { authorization: `Bearer ${bearer}` },
+    multipart: { privacyMode: "sanitized_only", file: sanitizedResumeFile },
+  });
+  expect(importResponse.status()).toBe(202);
+
+  await page.goto("/profile");
+  await expect(page.getByRole("button", { name: "确认 TypeScript" })).toBeVisible({ timeout: 15_000 });
+
+  await page.getByRole("button", { name: "确认 TypeScript" }).click();
+  await expect(page.getByRole("button", { name: "确认 TypeScript" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "当前可信画像" })).toContainText("当前可信画像");
+  await expect(page.locator(".profile-fact-list").last()).toContainText("TypeScript");
+
+  await page.getByRole("button", { name: "纠正 React" }).click();
+  await page.getByLabel("纠正后的内容").fill("React 19");
+  await page.getByLabel("纠正原因").fill("实际使用的版本");
+  await page.getByRole("button", { name: "保存纠正" }).click();
+  await expect(page.getByRole("button", { name: "纠正 React" })).toHaveCount(0);
+  await expect(page.locator(".profile-fact-list").last()).toContainText("React 19");
+
+  await page.getByRole("button", { name: /^拒绝 英语/ }).click();
+  await expect(page.getByRole("button", { name: /^拒绝 英语/ })).toHaveCount(0);
+
+  const advanceResponse = await request.post(`${apiBaseUrl}/v1/profile/facts`, {
+    headers: { authorization: `Bearer ${bearer}` },
+    data: { expectedVersion: 3, factType: "work_eligibility", factValue: { summary: "可在中国大陆工作" } },
+  });
+  expect(advanceResponse.status()).toBe(201);
+
+  const staleConfirm = page.getByRole("button", { name: /^确认 / }).first();
+  await staleConfirm.click();
+  await expect(page.getByText("画像已在其他位置更新，请刷新后重试。")).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByText("版本 4", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "确认 TypeScript" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "纠正 React" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^拒绝 英语/ })).toHaveCount(0);
+  await staleConfirm.click();
+  await expect(page.getByText("版本 5", { exact: true })).toBeVisible();
 });

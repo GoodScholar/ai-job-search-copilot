@@ -201,13 +201,199 @@ it("uploads only Markdown files and renders quoted pending facts after polling",
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/等待解析|解析中/));
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("解析完成"), { timeout: 2_000 });
   expect(screen.getByText("待确认")).toBeInTheDocument();
-  expect(screen.getByText("技能")).toBeInTheDocument();
+  expect(screen.getAllByText("技能").length).toBeGreaterThan(0);
   expect(screen.getByText("TypeScript")).toBeInTheDocument();
   expect(screen.getAllByText(/career\.md/).length).toBeGreaterThan(0);
   expect(screen.getByText("第 6 行", { exact: true })).toBeInTheDocument();
   expect(screen.getByText("- TypeScript")).toBeInTheDocument();
-  expect(screen.getByText("确认、修改和拒绝将在下一阶段开放")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "确认 TypeScript" })).toBeInTheDocument();
   expect(fetchMock).toHaveBeenCalledWith(`/api/career-imports/${importId}`, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+});
+
+it("keeps pending candidates separate from the current trusted profile", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(completedDetail));
+  render(<ProfileImportView
+    initialImports={[completedImport]}
+    initialProfile={{
+      profileId: "fa7753f2-2ff3-4bd6-9fbd-6b4ae41d8364", version: 1,
+      facts: [{
+        factId: "680d3e96-5402-4d28-86aa-087cc4e088a5",
+        revisionId: "8cc49f65-05f6-4472-b962-53de26c9a584",
+        factType: "skill", factValue: { name: "React" }, source: "user_confirmed", candidateFactId: null,
+        createdAt: "2026-08-27T08:00:03.000Z",
+      }],
+    }}
+  />);
+
+  await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+  expect(await screen.findByRole("heading", { name: "待确认事实" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "确认 TypeScript" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "当前可信画像" })).toBeInTheDocument();
+  expect(screen.getByText("React", { exact: true })).toBeInTheDocument();
+  expect(screen.queryByText("确认、修改和拒绝将在下一阶段开放")).not.toBeInTheDocument();
+});
+
+it("confirms a candidate with the current profile version and moves it into trusted facts", async () => {
+  const updatedProfile = {
+    profileId: "fa7753f2-2ff3-4bd6-9fbd-6b4ae41d8364", version: 1,
+    facts: [{
+      factId: "680d3e96-5402-4d28-86aa-087cc4e088a5",
+      revisionId: "8cc49f65-05f6-4472-b962-53de26c9a584",
+      factType: "skill", factValue: { name: "TypeScript" }, source: "candidate_fact", candidateFactId: completedDetail.facts[0]!.factId,
+      createdAt: "2026-08-27T08:00:03.000Z",
+    }],
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json(completedDetail))
+    .mockResolvedValueOnce(Response.json(updatedProfile));
+  const user = userEvent.setup();
+  render(<ProfileImportView initialImports={[completedImport]} initialProfile={{ profileId: null, version: 0, facts: [] }} />);
+
+  await user.click(await screen.findByRole("button", { name: "确认 TypeScript" }));
+
+  await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith(
+    `/api/profile/candidate-facts/${completedDetail.facts[0]!.factId}/decisions`,
+    expect.objectContaining({ method: "POST", body: JSON.stringify({ expectedVersion: 0, decision: "confirmed" }) }),
+  ));
+  expect(await screen.findByText("TypeScript", { exact: true })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "确认 TypeScript" })).not.toBeInTheDocument();
+});
+
+it("requires a reason when correcting a candidate and records the user-confirmed value", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json(completedDetail))
+    .mockResolvedValueOnce(Response.json({
+      profileId: "fa7753f2-2ff3-4bd6-9fbd-6b4ae41d8364", version: 1,
+      facts: [{
+        factId: "680d3e96-5402-4d28-86aa-087cc4e088a5", revisionId: "8cc49f65-05f6-4472-b962-53de26c9a584",
+        factType: "skill", factValue: { name: "React" }, source: "user_confirmed", candidateFactId: completedDetail.facts[0]!.factId,
+        createdAt: "2026-08-27T08:00:03.000Z",
+      }],
+    }));
+  const user = userEvent.setup();
+  render(<ProfileImportView initialImports={[completedImport]} initialProfile={{ profileId: null, version: 0, facts: [] }} />);
+
+  await user.click(await screen.findByRole("button", { name: "纠正 TypeScript" }));
+  const submit = screen.getByRole("button", { name: "保存纠正" });
+  expect(submit).toBeDisabled();
+  await user.type(screen.getByLabelText("纠正后的内容"), "React");
+  await user.type(screen.getByLabelText("纠正原因"), "实际技术栈是 React");
+  await user.click(submit);
+
+  await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith(
+    `/api/profile/candidate-facts/${completedDetail.facts[0]!.factId}/decisions`,
+    expect.objectContaining({ method: "POST", body: JSON.stringify({
+      expectedVersion: 0, decision: "corrected", factValue: { name: "React" }, reason: "实际技术栈是 React",
+    }) }),
+  ));
+  expect(await screen.findByText("React", { exact: true })).toBeInTheDocument();
+});
+
+it("manually adds, revises, and removes a trusted profile fact with reasons", async () => {
+  const factId = "680d3e96-5402-4d28-86aa-087cc4e088a5";
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json({ profileId: "fa7753f2-2ff3-4bd6-9fbd-6b4ae41d8364", version: 1, facts: [{
+      factId, revisionId: "8cc49f65-05f6-4472-b962-53de26c9a584", factType: "work_eligibility", factValue: { summary: "可在中国大陆工作" },
+      source: "user_confirmed", candidateFactId: null, createdAt: "2026-08-27T08:00:03.000Z",
+    }] }))
+    .mockResolvedValueOnce(Response.json({ profileId: "fa7753f2-2ff3-4bd6-9fbd-6b4ae41d8364", version: 2, facts: [{
+      factId, revisionId: "8cc49f65-05f6-4472-b962-53de26c9a584", factType: "work_eligibility", factValue: { summary: "可在中国大陆和新加坡工作" },
+      source: "user_confirmed", candidateFactId: null, createdAt: "2026-08-27T08:00:03.000Z",
+    }] }))
+    .mockResolvedValueOnce(Response.json({ profileId: "fa7753f2-2ff3-4bd6-9fbd-6b4ae41d8364", version: 3, facts: [] }));
+  const user = userEvent.setup();
+  render(<ProfileImportView initialImports={[]} initialProfile={{ profileId: null, version: 0, facts: [] }} />);
+
+  await user.selectOptions(screen.getByLabelText("画像事实类型"), "work_eligibility");
+  await user.type(screen.getByLabelText("画像事实内容"), "可在中国大陆工作");
+  await user.click(screen.getByRole("button", { name: "新增画像事实" }));
+  await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith("/api/profile/facts", expect.objectContaining({
+    method: "POST", body: JSON.stringify({ expectedVersion: 0, factType: "work_eligibility", factValue: { summary: "可在中国大陆工作" } }),
+  })));
+
+  await user.click(await screen.findByRole("button", { name: "修改 工作资格" }));
+  await user.clear(screen.getByLabelText("修改后的内容"));
+  await user.type(screen.getByLabelText("修改后的内容"), "可在中国大陆和新加坡工作");
+  await user.type(screen.getByLabelText("修改原因"), "签证状态更新");
+  await user.click(screen.getByRole("button", { name: "保存修改" }));
+  await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith(`/api/profile/facts/${factId}/revisions`, expect.objectContaining({
+    method: "POST", body: JSON.stringify({ expectedVersion: 1, factValue: { summary: "可在中国大陆和新加坡工作" }, reason: "签证状态更新" }),
+  })));
+
+  await user.click(await screen.findByRole("button", { name: "移除 工作资格" }));
+  await user.type(screen.getByLabelText("移除原因"), "不再适用");
+  await user.click(screen.getByRole("button", { name: "确认移除" }));
+  await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith(`/api/profile/facts/${factId}/removals`, expect.objectContaining({
+    method: "POST", body: JSON.stringify({ expectedVersion: 2, reason: "不再适用" }),
+  })));
+  expect(screen.getByText("尚无已验证画像事实。")).toBeInTheDocument();
+});
+
+it("creates language facts with a level and preserves or changes that level during revision", async () => {
+  const factId = "b1c249f8-0d42-41f6-8a7a-7b8c0ce063b2";
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json({ profileId: "fa7753f2-2ff3-4bd6-9fbd-6b4ae41d8364", version: 1, facts: [{
+      factId, revisionId: "8cc49f65-05f6-4472-b962-53de26c9a584", factType: "language", factValue: { name: "英语", level: "B2" },
+      source: "user_confirmed", candidateFactId: null, createdAt: "2026-08-27T08:00:03.000Z",
+    }] }))
+    .mockResolvedValueOnce(Response.json({ profileId: "fa7753f2-2ff3-4bd6-9fbd-6b4ae41d8364", version: 2, facts: [{
+      factId, revisionId: "8cc49f65-05f6-4472-b962-53de26c9a584", factType: "language", factValue: { name: "英语", level: "C1" },
+      source: "user_confirmed", candidateFactId: null, createdAt: "2026-08-27T08:00:03.000Z",
+    }] }));
+  const user = userEvent.setup();
+  render(<ProfileImportView initialImports={[]} initialProfile={{ profileId: null, version: 0, facts: [] }} />);
+
+  await user.selectOptions(screen.getByLabelText("画像事实类型"), "language");
+  await user.type(screen.getByLabelText("画像事实内容"), "英语");
+  await user.type(screen.getByLabelText("画像事实语言级别"), "B2");
+  await user.click(screen.getByRole("button", { name: "新增画像事实" }));
+  await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith("/api/profile/facts", expect.objectContaining({
+    body: JSON.stringify({ expectedVersion: 0, factType: "language", factValue: { name: "英语", level: "B2" } }),
+  })));
+
+  await user.click(await screen.findByRole("button", { name: "修改 语言" }));
+  expect(screen.getByLabelText("修改后的语言级别")).toHaveValue("B2");
+  await user.clear(screen.getByLabelText("修改后的语言级别"));
+  await user.type(screen.getByLabelText("修改后的语言级别"), "C1");
+  await user.type(screen.getByLabelText("修改原因"), "考试成绩更新");
+  await user.click(screen.getByRole("button", { name: "保存修改" }));
+  await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith(`/api/profile/facts/${factId}/revisions`, expect.objectContaining({
+    body: JSON.stringify({ expectedVersion: 1, factValue: { name: "英语", level: "C1" }, reason: "考试成绩更新" }),
+  })));
+});
+
+it("corrects a language candidate without dropping its level", async () => {
+  const languageDetail = {
+    ...completedDetail,
+    facts: [{
+      ...completedDetail.facts[0], factId: "a31aa3a3-9cfd-46b0-b63d-d06e6f467230", factType: "language" as const,
+      factValue: { name: "英语", level: "B2" }, evidence: { ...completedDetail.facts[0]!.evidence, excerpt: "- 英语：B2" },
+    }],
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json(languageDetail))
+    .mockResolvedValueOnce(Response.json({
+      profileId: "fa7753f2-2ff3-4bd6-9fbd-6b4ae41d8364", version: 1, facts: [{
+        factId: "680d3e96-5402-4d28-86aa-087cc4e088a5", revisionId: "8cc49f65-05f6-4472-b962-53de26c9a584",
+        factType: "language", factValue: { name: "英语", level: "C1" }, source: "user_confirmed", candidateFactId: languageDetail.facts[0]!.factId,
+        createdAt: "2026-08-27T08:00:03.000Z",
+      }],
+    }));
+  const user = userEvent.setup();
+  render(<ProfileImportView initialImports={[completedImport]} initialProfile={{ profileId: null, version: 0, facts: [] }} />);
+
+  await user.click(await screen.findByRole("button", { name: "纠正 英语 · B2" }));
+  await user.type(screen.getByLabelText("纠正后的内容"), "英语");
+  expect(screen.getByLabelText("纠正后的语言级别")).toHaveValue("B2");
+  await user.clear(screen.getByLabelText("纠正后的语言级别"));
+  await user.type(screen.getByLabelText("纠正后的语言级别"), "C1");
+  await user.type(screen.getByLabelText("纠正原因"), "考试成绩更新");
+  await user.click(screen.getByRole("button", { name: "保存纠正" }));
+
+  await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith(
+    `/api/profile/candidate-facts/${languageDetail.facts[0]!.factId}/decisions`,
+    expect.objectContaining({ body: JSON.stringify({ expectedVersion: 0, decision: "corrected", factValue: { name: "英语", level: "C1" }, reason: "考试成绩更新" }) }),
+  ));
 });
 
 it("maps failures to a fixed Chinese message without exposing internal values", async () => {

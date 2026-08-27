@@ -1,6 +1,7 @@
 import { asc, eq } from "drizzle-orm";
 import { auditEvents, type Database } from "@job-copilot/database";
 import { CareerImportFailureCodeSchema } from "@job-copilot/contracts/career-import";
+import { ProfileFactTypeSchema } from "@job-copilot/contracts/profile-review";
 import { z } from "zod";
 
 type AuditDatabase = Pick<Database, "insert" | "select">;
@@ -15,6 +16,19 @@ const CompletedCareerImportMetadataSchema = z.object({
 const FailedCareerImportMetadataSchema = z.object({
   documentId: z.uuid(), importId: z.uuid(), attemptCount: z.int().min(0),
   failureCode: CareerImportFailureCodeSchema,
+}).strict();
+const ProfileDecisionBaseMetadataSchema = z.object({
+  profileId: z.uuid(), candidateFactId: z.uuid(), factType: ProfileFactTypeSchema.exclude(["work_eligibility"]),
+  profileVersion: z.int().min(1),
+}).strict();
+const ProfileCandidateFactDecisionMetadataSchema = z.discriminatedUnion("decision", [
+  ProfileDecisionBaseMetadataSchema.extend({ decision: z.literal("confirmed"), profileFactId: z.uuid(), revisionId: z.uuid() }).strict(),
+  ProfileDecisionBaseMetadataSchema.extend({ decision: z.literal("corrected"), profileFactId: z.uuid(), revisionId: z.uuid() }).strict(),
+  ProfileDecisionBaseMetadataSchema.extend({ decision: z.literal("rejected") }).strict(),
+]);
+const ProfileFactMaintenanceMetadataSchema = z.object({
+  profileId: z.uuid(), profileFactId: z.uuid(), revisionId: z.uuid(), factType: ProfileFactTypeSchema,
+  action: z.enum(["created", "revised", "removed"]), profileVersion: z.int().min(1),
 }).strict();
 
 const AuditEventInputSchema = z.discriminatedUnion("eventType", [
@@ -84,6 +98,18 @@ const AuditEventInputSchema = z.discriminatedUnion("eventType", [
     userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("career.document_import_failed"),
     occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("failure"),
     reasonCode: CareerImportFailureCodeSchema, resourceType: z.literal("career_import"), resourceId: z.uuid(), metadata: FailedCareerImportMetadataSchema,
+  }).strict(),
+  z.object({
+    userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("profile.candidate_fact_decided"),
+    occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"),
+    reasonCode: z.enum(["PROFILE_FACT_CONFIRMED", "PROFILE_FACT_CORRECTED", "PROFILE_FACT_REJECTED"]),
+    resourceType: z.literal("candidate_fact"), resourceId: z.uuid(), metadata: ProfileCandidateFactDecisionMetadataSchema,
+  }).strict(),
+  z.object({
+    userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("profile.fact_maintained"),
+    occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"),
+    reasonCode: z.enum(["PROFILE_FACT_CREATED", "PROFILE_FACT_REVISED", "PROFILE_FACT_REMOVED"]),
+    resourceType: z.literal("profile_fact"), resourceId: z.uuid(), metadata: ProfileFactMaintenanceMetadataSchema,
   }).strict(),
 ]);
 
