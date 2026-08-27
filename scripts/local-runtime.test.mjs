@@ -11,6 +11,8 @@ import { createRuntimeConfig, prepareInfrastructure, runRuntime, startApplicatio
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const nestDevPath = fileURLToPath(new URL("./nest-dev.mjs", import.meta.url));
 const controlledNestChildPath = fileURLToPath(new URL("./fixtures/nest-dev-controlled-child.mjs", import.meta.url));
+const killFalseProbePath = fileURLToPath(new URL("./fixtures/nest-dev-kill-false-probe.mjs", import.meta.url));
+const posixOnly = process.platform === "win32";
 
 function createControlledChild({ killResult = true } = {}) {
   const child = new EventEmitter();
@@ -96,29 +98,76 @@ async function startControlledNestDev({ mode, exitCode } = {}) {
     readyPath,
     signalPath,
     dispose: async () => {
+      const childPid = Number(await readFile(pidPath, "utf8").catch(() => ""));
       try {
         if (launcher.exitCode === null && launcher.signalCode === null) {
-          launcher.kill("SIGTERM");
           try {
+            launcher.kill("SIGTERM");
             await exit;
           } catch {
-            const forcedExit = waitForExit(launcher, 250);
-            launcher.kill("SIGKILL");
-            await forcedExit;
-          }
-        }
-
-        const childPid = Number(await readFile(pidPath, "utf8").catch(() => ""));
-        if (Number.isInteger(childPid) && childPid > 0) {
-          try {
-            process.kill(childPid, 0);
-            process.kill(childPid, "SIGKILL");
-          } catch (error) {
-            if (error?.code !== "ESRCH") throw error;
+            try {
+              const forcedExit = waitForExit(launcher, 250);
+              launcher.kill("SIGKILL");
+              await forcedExit;
+            } catch {
+              // Child PID cleanup below still runs after any launcher timeout or error.
+            }
           }
         }
       } finally {
-        await rm(cwd, { force: true, recursive: true });
+        try {
+          if (Number.isInteger(childPid) && childPid > 0) {
+            try {
+              process.kill(childPid, 0);
+              process.kill(childPid, "SIGKILL");
+            } catch (error) {
+              if (error?.code !== "ESRCH") throw error;
+            }
+          }
+        } finally {
+          await rm(cwd, { force: true, recursive: true });
+        }
+      }
+    },
+  };
+}
+
+async function startKillFalseProbe() {
+  const cwd = await mkdtemp(join(repositoryRoot, ".nest-dev-test-"));
+  const pidPath = join(cwd, "child.pid");
+  const readyPath = join(cwd, "child.ready");
+  const launcher = spawn(process.execPath, [killFalseProbePath], {
+    cwd,
+    env: {
+      ...process.env,
+      NEST_DEV_TEST_PID_FILE: pidPath,
+      NEST_DEV_TEST_READY_FILE: readyPath,
+      NEST_DEV_TEST_SHUTDOWN_TIMEOUT_MS: "10",
+      NEST_DEV_TEST_SHUTDOWN_CLOSE_TIMEOUT_MS: "10",
+    },
+    stdio: "ignore",
+  });
+  const exit = waitForExit(launcher, 1_000);
+
+  return {
+    cwd,
+    exit,
+    launcher,
+    pidPath,
+    readyPath,
+    dispose: async () => {
+      const childPid = Number(await readFile(pidPath, "utf8").catch(() => ""));
+      try {
+        if (launcher.exitCode === null && launcher.signalCode === null) launcher.kill("SIGKILL");
+        await exit.catch(() => {});
+      } finally {
+        try {
+          if (Number.isInteger(childPid) && childPid > 0) process.kill(childPid, "SIGKILL");
+        } catch (error) {
+          if (error?.code !== "ESRCH") throw error;
+        } finally {
+          await rm(cwd, { force: true, recursive: true });
+        }
       }
     },
   };
@@ -140,6 +189,12 @@ test("Web typecheck generates Next route types before compiling", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../apps/web/package.json", import.meta.url), "utf8"));
 
   assert.equal(packageJson.scripts.typecheck, "next typegen && tsc --noEmit");
+});
+
+test("direct Nest dev entry force-exits after runNestDev settles", async () => {
+  const launcher = await readFile(nestDevPath, "utf8");
+
+  assert.match(launcher, /process\.exit\(await runNestDev\(\)\);/);
 });
 
 test("local runtime migrates before starting applications", async () => {
@@ -283,9 +338,12 @@ test("Nest dev loader appends the root tsx loader only when NODE_OPTIONS lacks t
 
   const invalidQuote = createNestDevCommand({ env: { NODE_OPTIONS: "--import 'tsx" } });
   assert.equal(invalidQuote.env.NODE_OPTIONS, "--import 'tsx --import=tsx");
+
+  const singleQuote = createNestDevCommand({ env: { NODE_OPTIONS: "--import 'tsx'" } });
+  assert.equal(singleQuote.env.NODE_OPTIONS, "--import 'tsx' --import=tsx");
 });
 
-test("Nest dev launcher forwards each real SIGTERM and SIGINT, waits for the child, and leaves no orphan", async () => {
+test("Nest dev launcher forwards each real SIGTERM and SIGINT, waits for the child, and leaves no orphan", { skip: posixOnly }, async () => {
   for (const [signal, exitCode] of [["SIGTERM", 143], ["SIGINT", 130]]) {
     const fixture = await startControlledNestDev();
     try {
@@ -319,7 +377,7 @@ test("Nest dev launcher forwards repeated deterministic signals only once", asyn
   assert.equal(await exitCode, 143);
 });
 
-test("Nest dev launcher preserves normal child exit codes and child signal exit semantics", async () => {
+test("Nest dev launcher preserves normal child exit codes and child signal exit semantics", { skip: posixOnly }, async () => {
   const normal = await startControlledNestDev({ mode: "exit", exitCode: 17 });
   try {
     assert.deepEqual(await normal.exit, { code: 17, signal: null });
@@ -388,6 +446,20 @@ test("Nest dev launcher bounds failed signal delivery without an exit event", as
   assert.equal(await exitCode, 1);
   assert.equal(signalSource.listenerCount("SIGINT"), 0);
   assert.equal(signalSource.listenerCount("SIGTERM"), 0);
+});
+
+test("direct Nest dev entry force-exits after a bounded kill(false) deadline", { skip: posixOnly }, async () => {
+  const fixture = await startKillFalseProbe();
+  try {
+    const childPid = Number(await waitForFile(fixture.pidPath));
+    await waitForFile(fixture.readyPath);
+    fixture.launcher.kill("SIGTERM");
+
+    assert.deepEqual(await fixture.exit, { code: 1, signal: null });
+    assert.doesNotThrow(() => process.kill(childPid, 0));
+  } finally {
+    await fixture.dispose();
+  }
 });
 
 test("Nest dev launcher waits for a child exiting after an error during signal delivery", async () => {

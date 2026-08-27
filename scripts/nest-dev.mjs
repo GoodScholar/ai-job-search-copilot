@@ -14,7 +14,7 @@ function nodeOptionTokens(nodeOptions = "") {
     if (quote) {
       if (character === quote) quote = undefined;
       else token += character;
-    } else if (character === "'" || character === "\"") {
+    } else if (character === "\"") {
       quote = character;
     } else if (/\s/.test(character)) {
       if (token) tokens.push(token);
@@ -59,12 +59,14 @@ export function runNestDev({
   signalSource = process,
   spawnProcess = spawn,
   shutdownTimeoutMs = 10_000,
+  shutdownCloseTimeoutMs = 250,
 } = {}) {
   return new Promise((resolve) => {
     let child;
     let forwardedSignal;
     let runtimeFailure = false;
     let shutdownTimer;
+    let handleChildExit;
     let terminationRequested = false;
     let settled = false;
 
@@ -77,27 +79,32 @@ export function runNestDev({
       settled = true;
       clearTimeout(shutdownTimer);
       removeHandlers();
+      child?.removeListener("error", handleChildError);
+      if (handleChildExit) child?.removeListener("exit", handleChildExit);
+      child?.unref?.();
       resolve(exitCode);
+    };
+    const tryKill = (signal) => {
+      try {
+        return child?.kill(signal) === true;
+      } catch {
+        return false;
+      }
     };
     const stopChild = (signal) => {
       if (terminationRequested || !child) return false;
       terminationRequested = true;
-      try {
-        return child.kill(signal);
-      } catch {
-        return false;
-      }
+      return tryKill(signal);
     };
     const boundTermination = () => {
       if (shutdownTimer || settled) return;
       shutdownTimer = setTimeout(() => {
         if (settled) return;
-        try {
-          child?.kill("SIGKILL");
-        } catch {
-          // The child may already have exited while its exit event is pending.
+        if (!tryKill("SIGKILL")) {
+          settle(1);
+          return;
         }
-        settle(1);
+        shutdownTimer = setTimeout(() => settle(1), shutdownCloseTimeoutMs);
       }, shutdownTimeoutMs);
     };
     const forwardSignal = (signal) => {
@@ -129,8 +136,7 @@ export function runNestDev({
       return;
     }
 
-    child.once("error", handleChildError);
-    child.once("exit", (code, signal) => {
+    handleChildExit = (code, signal) => {
       settle(
         forwardedSignal
           ? signalExitCode(forwardedSignal)
@@ -140,10 +146,12 @@ export function runNestDev({
               ? signalExitCode(signal)
               : code ?? 1,
       );
-    });
+    };
+    child.once("error", handleChildError);
+    child.once("exit", handleChildExit);
   });
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  process.exitCode = await runNestDev();
+  process.exit(await runNestDev());
 }
