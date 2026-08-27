@@ -83,6 +83,21 @@ describe("authenticated workbench HTTP API", () => {
     Object.assign(process.env, originalEnvironment);
   });
 
+  it("expands Error values before checking captured logger output", () => {
+    const sentinel = "queue unavailable with resume@example.com";
+    const error = new Error(sentinel, { cause: new Error("root-cause-sentinel") });
+    const hiddenByJson = JSON.stringify([error, { err: error }]);
+    expect(hiddenByJson).not.toContain(sentinel);
+    expect(hiddenByJson).not.toContain("root-cause-sentinel");
+
+    const circular: { err: Error; self?: unknown } = { err: error };
+    circular.self = circular;
+    const normalized = normalizedLogText([error, { err: error }, circular]);
+    expect(normalized).toContain(sentinel);
+    expect(normalized).toContain("root-cause-sentinel");
+    expect(normalized).toContain("[Circular]");
+  });
+
   it("creates and reuses an internal account through dev auth", async () => {
     const first = await app.getHttpAdapter().getInstance().inject({
       method: "POST",
@@ -224,9 +239,10 @@ describe("authenticated workbench HTTP API", () => {
     expect(JSON.stringify(metadata)).not.toContain("resume@example.com");
     expect(JSON.stringify(metadata)).not.toContain("candidate.md");
     expect(JSON.stringify(metadata)).not.toContain(source);
-    expect(JSON.stringify(capturedLogs)).not.toContain("resume@example.com");
-    expect(JSON.stringify(capturedLogs)).not.toContain("candidate.md");
-    expect(JSON.stringify(capturedLogs)).not.toContain(source);
+    const logs = normalizedLogText(capturedLogs);
+    expect(logs).not.toContain("resume@example.com");
+    expect(logs).not.toContain("candidate.md");
+    expect(logs).not.toContain(source);
   });
 
   it.each([
@@ -303,9 +319,11 @@ describe("authenticated workbench HTTP API", () => {
     expect(response.json()).toMatchObject({ code: "CAREER_IMPORT_QUEUE_UNAVAILABLE" });
     expect(response.body).not.toContain("resume@example.com");
     expect(response.body).not.toContain("queue unavailable");
-    expect(JSON.stringify(capturedLogs)).not.toContain("secret-resume.md");
-    expect(JSON.stringify(capturedLogs)).not.toContain(source);
-    expect(JSON.stringify(capturedLogs)).not.toContain("queue unavailable with resume@example.com");
+    expect(capturedLogs.length).toBeGreaterThan(0);
+    const logs = normalizedLogText(capturedLogs);
+    expect(logs).not.toContain("secret-resume.md");
+    expect(logs).not.toContain(source);
+    expect(logs).not.toContain("queue unavailable with resume@example.com");
     const retry = await app.getHttpAdapter().getInstance().inject(multipartRequest(source, {
       headers: bearer(session.sessionToken), filename: "secret-resume.md",
     }));
@@ -420,4 +438,33 @@ function multipartPart(boundary: string, bytes: Uint8Array, options: { filename?
     Buffer.from(bytes),
     Buffer.from("\r\n"),
   ]);
+}
+
+function normalizedLogText(entries: unknown[]): string {
+  return JSON.stringify(normalizeLogValue(entries, new Set<object>()));
+}
+
+function normalizeLogValue(value: unknown, ancestors: Set<object>): unknown {
+  if (typeof value === "bigint") return value.toString();
+  if (typeof value === "symbol") return value.toString();
+  if (value === null || typeof value !== "object") return value;
+  if (ancestors.has(value)) return "[Circular]";
+
+  const nextAncestors = new Set(ancestors);
+  nextAncestors.add(value);
+  if (value instanceof Error) {
+    return {
+      name: value.name,
+      message: value.message,
+      stack: value.stack,
+      cause: normalizeLogValue(value.cause, nextAncestors),
+    };
+  }
+  if (Array.isArray(value)) return value.map((entry) => normalizeLogValue(entry, nextAncestors));
+
+  const normalized: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    normalized[key] = normalizeLogValue(entry, nextAncestors);
+  }
+  return normalized;
 }
