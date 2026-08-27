@@ -1,42 +1,105 @@
 import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { constants } from "node:os";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const tsxLoader = "--import=tsx";
+
+function nodeOptionTokens(nodeOptions = "") {
+  const tokens = [];
+  let quote;
+  let token = "";
+
+  for (const character of nodeOptions) {
+    if (quote) {
+      if (character === quote) quote = undefined;
+      else token += character;
+    } else if (character === "'" || character === "\"") {
+      quote = character;
+    } else if (/\s/.test(character)) {
+      if (token) tokens.push(token);
+      token = "";
+    } else {
+      token += character;
+    }
+  }
+  if (token) tokens.push(token);
+  return tokens;
+}
+
+function hasTsxLoader(nodeOptions) {
+  const tokens = nodeOptionTokens(nodeOptions);
+  return tokens.some((token, index) => token === tsxLoader || (token === "--import" && tokens[index + 1] === "tsx"));
+}
+
+function signalExitCode(signal) {
+  const signalNumber = constants.signals[signal];
+  return Number.isInteger(signalNumber) ? 128 + signalNumber : 1;
+}
 
 export function createNestDevCommand({
   cwd = process.cwd(),
   nodeExecutable = process.execPath,
   env = process.env,
 } = {}) {
-  const nodeOptions = env.NODE_OPTIONS?.includes(tsxLoader)
+  const nodeOptions = hasTsxLoader(env.NODE_OPTIONS)
     ? env.NODE_OPTIONS
     : [env.NODE_OPTIONS, tsxLoader].filter(Boolean).join(" ");
 
   return {
-    args: [
-      tsxLoader,
-      resolve(cwd, "node_modules/@nestjs/cli/bin/nest.js"),
-      "start",
-      "--watch",
-    ],
+    args: [tsxLoader, resolve(cwd, "node_modules/@nestjs/cli/bin/nest.js"), "start", "--watch"],
     env: { ...env, NODE_OPTIONS: nodeOptions },
     nodeExecutable,
   };
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const command = createNestDevCommand();
-  const child = spawn(command.nodeExecutable, command.args, {
-    cwd: process.cwd(),
-    env: command.env,
-    stdio: "inherit",
-  });
+export function runNestDev({
+  command = createNestDevCommand(),
+  signalSource = process,
+  spawnProcess = spawn,
+} = {}) {
+  return new Promise((resolve) => {
+    let child;
+    let forwardedSignal;
+    let settled = false;
 
-  child.once("error", (error) => {
-    throw error;
+    const removeHandlers = () => {
+      signalSource.removeListener("SIGINT", forwardSignal);
+      signalSource.removeListener("SIGTERM", forwardSignal);
+    };
+    const settle = (exitCode) => {
+      if (settled) return;
+      settled = true;
+      removeHandlers();
+      resolve(exitCode);
+    };
+    const forwardSignal = (signal) => {
+      if (forwardedSignal || !child) return;
+      forwardedSignal = signal;
+      child.kill(signal);
+    };
+
+    signalSource.on("SIGINT", forwardSignal);
+    signalSource.on("SIGTERM", forwardSignal);
+
+    try {
+      child = spawnProcess(command.nodeExecutable, command.args, {
+        cwd: process.cwd(),
+        env: command.env,
+        stdio: "inherit",
+      });
+    } catch {
+      settle(1);
+      return;
+    }
+
+    child.once("error", () => settle(1));
+    child.once("exit", (code, signal) => {
+      settle(forwardedSignal ? signalExitCode(forwardedSignal) : signal ? signalExitCode(signal) : code ?? 1);
+    });
   });
-  child.once("exit", (code) => {
-    process.exitCode = code ?? 1;
-  });
+}
+
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  process.exitCode = await runNestDev();
 }
