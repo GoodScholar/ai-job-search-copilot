@@ -7,6 +7,14 @@ import {
   StartDevSessionResponseSchema,
   type StartDevSessionRequest,
 } from "@job-copilot/contracts/auth";
+import {
+  CareerImportDetailSchema,
+  CareerImportListSchema,
+  CreateCareerImportResponseSchema,
+  type CareerImportDetail,
+  type CareerImportList,
+  type CreateCareerImportResponse,
+} from "@job-copilot/contracts/career-import";
 import { WorkbenchHomeSchema, type WorkbenchHome } from "@job-copilot/contracts/workbench";
 import { z } from "zod";
 
@@ -135,6 +143,43 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
         throw new ApiClientError("api", problem?.message ?? "无法读取求职工作台", response.status, problem ?? undefined);
       }
       return parseSuccess(response, WorkbenchHomeSchema);
+    },
+
+    async listCareerImports(sessionToken: string): Promise<CareerImportList> {
+      const response = await request("/v1/career-documents/imports", {
+        method: "GET",
+        headers: { authorization: `Bearer ${sessionToken}` },
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法读取职业资料", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, CareerImportListSchema);
+    },
+
+    async createCareerImport(sessionToken: string, formData: FormData): Promise<CreateCareerImportResponse> {
+      const response = await request("/v1/career-documents/imports", {
+        method: "POST",
+        headers: { authorization: `Bearer ${sessionToken}` },
+        body: formData,
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法上传职业资料", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, CreateCareerImportResponseSchema);
+    },
+
+    async getCareerImport(sessionToken: string, importId: string): Promise<CareerImportDetail> {
+      const response = await request(`/v1/career-documents/imports/${importId}`, {
+        method: "GET",
+        headers: { authorization: `Bearer ${sessionToken}` },
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法读取职业资料", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, CareerImportDetailSchema);
     },
   };
 }

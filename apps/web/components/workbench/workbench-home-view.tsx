@@ -1,4 +1,5 @@
 import type { WorkbenchHome } from "@job-copilot/contracts/workbench";
+import Link from "next/link";
 
 type WorkbenchHomeViewProps = {
   home: WorkbenchHome;
@@ -37,11 +38,15 @@ export function WorkbenchHomeView({ home }: WorkbenchHomeViewProps) {
         <div className="workbench-ledger-row">
           <div>
             <h3>下一步</h3>
-            <p>职业资料入口将在后续切片开放</p>
+            <p>上传一份 Markdown 职业资料，系统会从原文中提取带证据的候选事实。</p>
           </div>
-          <p className="workbench-ledger-status">暂不可操作</p>
+          <Link className="workbench-ledger-link workbench-touch-target" href="/profile">导入 Markdown 职业资料</Link>
         </div>
-        <p className="workbench-ledger-note">在资料建立前，Copilot 不会生成岗位推荐、启动求职代理或创建投递记录。</p>
+        {home.summary.pendingFacts > 0 ? (
+          <p className="workbench-ledger-note">待确认事实尚未进入求职画像，不能用于推荐或材料生成。</p>
+        ) : (
+          <p className="workbench-ledger-note">在资料建立前，Copilot 不会生成岗位推荐、启动求职代理或创建投递记录。</p>
+        )}
       </section>
     </main>
   );

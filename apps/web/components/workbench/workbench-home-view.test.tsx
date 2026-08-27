@@ -14,12 +14,20 @@ it("shows only persisted empty workbench data", () => {
   expect(screen.queryByText("01")).not.toBeInTheDocument();
 });
 
-it("keeps the next step honest until the profile entry is available", () => {
+it("links the empty state to the real profile entry", () => {
   render(<WorkbenchHomeView home={{
     account: { userId: "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3" },
     summary: { recommendations: 0, pendingFacts: 0, runningAgentRuns: 0, applications: 0 },
   }} />);
 
-  expect(screen.getByText("职业资料入口将在后续切片开放")).toBeInTheDocument();
-  expect(screen.queryByRole("link", { name: /职业资料/ })).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "导入 Markdown 职业资料" })).toHaveAttribute("href", "/profile");
+});
+
+it("explains that pending facts cannot yet affect recommendations or materials", () => {
+  render(<WorkbenchHomeView home={{
+    account: { userId: "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3" },
+    summary: { recommendations: 0, pendingFacts: 2, runningAgentRuns: 0, applications: 0 },
+  }} />);
+
+  expect(screen.getByText("待确认事实尚未进入求职画像，不能用于推荐或材料生成。")).toBeInTheDocument();
 });
