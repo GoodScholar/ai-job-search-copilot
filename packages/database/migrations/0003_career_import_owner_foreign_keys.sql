@@ -1,0 +1,6 @@
+ALTER TABLE "candidate_facts" ADD CONSTRAINT "candidate_facts_user_id_id_document_id_unique" UNIQUE("user_id","id","career_document_id");--> statement-breakpoint
+ALTER TABLE "career_documents" ADD CONSTRAINT "career_documents_user_id_id_unique" UNIQUE("user_id","id");--> statement-breakpoint
+ALTER TABLE "career_imports" ADD CONSTRAINT "career_imports_user_id_id_document_id_unique" UNIQUE("user_id","id","career_document_id");--> statement-breakpoint
+ALTER TABLE "candidate_fact_evidence" ADD CONSTRAINT "candidate_fact_evidence_owner_fact_document_fk" FOREIGN KEY ("user_id","candidate_fact_id","career_document_id") REFERENCES "public"."candidate_facts"("user_id","id","career_document_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "candidate_facts" ADD CONSTRAINT "candidate_facts_owner_import_document_fk" FOREIGN KEY ("user_id","career_import_id","career_document_id") REFERENCES "public"."career_imports"("user_id","id","career_document_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "career_imports" ADD CONSTRAINT "career_imports_owner_document_fk" FOREIGN KEY ("user_id","career_document_id") REFERENCES "public"."career_documents"("user_id","id") ON DELETE no action ON UPDATE no action;

@@ -145,6 +145,7 @@ describe("database migrations", () => {
     const accountId = "a4336773-4ece-464c-a4a9-4e884e461c55";
     const secondAccountId = "0e532866-ef87-4e6e-a155-c87580550450";
     const documentId = "7d688e0a-5fd1-4620-8f32-7f3c24bf83c3";
+    const crossAccountDocumentId = "5a40f44f-3645-4834-9026-543e1af66ea5";
     const secondDocumentId = "cfaf70b9-bc5e-4a73-bf87-5f97d91a0027";
     const careerImportId = "5bbfc3df-20d2-40d5-9b6b-b9d876a6b26d";
     const factId = "c45ab1b3-48e5-4fe4-b41f-71c516f20e07";
@@ -191,6 +192,15 @@ describe("database migrations", () => {
         'invalid-checksum.md', 'text/markdown', 1
       )
     `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await migratedDatabase.execute(sql`
+      insert into career_documents (
+        id, user_id, checksum_sha256, object_key, original_filename, media_type, byte_size
+      ) values (
+        ${crossAccountDocumentId}, ${accountId}, ${"c".repeat(64)},
+        'accounts/a4336773-4ece-464c-a4a9-4e884e461c55/career-documents/5a40f44f-3645-4834-9026-543e1af66ea5/source.md',
+        'cross-account.md', 'text/markdown', 1
+      )
+    `);
 
     await migratedDatabase.execute(sql`
       insert into career_imports (
@@ -201,6 +211,16 @@ describe("database migrations", () => {
         'career-import-prompt-v1', 'career-facts-v1', 'f3e607c7-bf67-454c-929a-51c844f1cf35', now()
       )
     `);
+    await expect(migratedDatabase.execute(sql`
+      insert into career_imports (
+        id, user_id, career_document_id, status, parser_adapter, parser_version, prompt_version,
+        output_schema_version, originating_request_id, queued_at
+      ) values (
+        '61a8ba61-1f66-4df5-8e5d-3346fd2990de', ${secondAccountId}, ${crossAccountDocumentId}, 'queued', 'fake',
+        'fake-career-parser-v1', 'career-import-prompt-v1', 'career-facts-v1',
+        '5c1fc1d0-0a59-4e9f-a720-e1b9dbdab3ae', now()
+      )
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
     await expect(migratedDatabase.execute(sql`
       insert into career_imports (
         id, user_id, career_document_id, status, parser_adapter, parser_version, prompt_version,
@@ -240,6 +260,15 @@ describe("database migrations", () => {
       )
     `);
     await expect(migratedDatabase.execute(sql`
+      insert into candidate_facts (
+        id, user_id, career_import_id, career_document_id, fact_key, fact_type, fact_value,
+        confidence_basis_points, confirmation_status
+      ) values (
+        '5fc5b95e-3a27-4cda-9929-7e7d78976b4a', ${secondAccountId}, ${careerImportId}, ${documentId},
+        ${"9".repeat(64)}, 'skill', '{"name":"Cross-account"}'::jsonb, 10000, 'pending'
+      )
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
+    await expect(migratedDatabase.execute(sql`
       insert into candidate_fact_evidence (
         id, user_id, candidate_fact_id, career_document_id, locator_type, start_line, end_line,
         excerpt, excerpt_sha256
@@ -257,5 +286,35 @@ describe("database migrations", () => {
         'markdown_lines', 0, 1, 'TypeScript', ${"e".repeat(64)}
       )
     `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    const secondImportId = "dcb7a005-e127-4557-94e9-f709ee0e70c5";
+    const secondFactId = "ab7b9ebd-8288-4f6b-9e85-fac2029e22e9";
+    await migratedDatabase.execute(sql`
+      insert into career_imports (
+        id, user_id, career_document_id, status, parser_adapter, parser_version, prompt_version,
+        output_schema_version, originating_request_id, queued_at
+      ) values (
+        ${secondImportId}, ${secondAccountId}, ${secondDocumentId}, 'queued', 'fake',
+        'fake-career-parser-v1', 'career-import-prompt-v1', 'career-facts-v1',
+        'c99825b1-f0d8-4a74-b5b3-e6497e96b685', now()
+      )
+    `);
+    await migratedDatabase.execute(sql`
+      insert into candidate_facts (
+        id, user_id, career_import_id, career_document_id, fact_key, fact_type, fact_value,
+        confidence_basis_points, confirmation_status
+      ) values (
+        ${secondFactId}, ${secondAccountId}, ${secondImportId}, ${secondDocumentId},
+        ${"8".repeat(64)}, 'skill', '{"name":"Second account"}'::jsonb, 10000, 'pending'
+      )
+    `);
+    await expect(migratedDatabase.execute(sql`
+      insert into candidate_fact_evidence (
+        id, user_id, candidate_fact_id, career_document_id, locator_type, start_line, end_line,
+        excerpt, excerpt_sha256
+      ) values (
+        '05a47af4-834f-4dd1-90e0-49a20e22ffb1', ${accountId}, ${secondFactId}, ${documentId},
+        'markdown_lines', 1, 1, '- Cross-account', ${"7".repeat(64)}
+      )
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
   });
 });

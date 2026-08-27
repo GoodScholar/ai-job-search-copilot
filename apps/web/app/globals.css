@@ -1057,6 +1057,7 @@ body {
 }
 
 .profile-upload,
+.profile-recent-imports,
 .profile-facts {
   background: var(--surface);
   border: 1px solid var(--rule);
@@ -1067,6 +1068,7 @@ body {
 }
 
 .profile-upload h2,
+.profile-recent-imports h2,
 .profile-facts h2 {
   font-size: 1.35rem;
   letter-spacing: -0.025em;
@@ -1119,6 +1121,66 @@ body {
   line-height: 1.6;
   margin: 1.25rem 0 0;
   padding-top: 1rem;
+}
+
+.profile-recent-imports-heading {
+  align-items: baseline;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.profile-recent-imports-heading p {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.profile-recent-import-list {
+  list-style: none;
+  margin: 1.25rem 0 0;
+  padding: 0;
+}
+
+.profile-recent-import-list > li {
+  border-top: 1px solid var(--rule);
+}
+
+.profile-recent-import-button {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  cursor: pointer;
+  display: grid;
+  font: inherit;
+  gap: 0.5rem 1rem;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding-block: 0.8rem;
+  text-align: left;
+  width: 100%;
+}
+
+.profile-recent-import-button[aria-pressed="true"] {
+  color: var(--emerald-strong);
+  font-weight: 700;
+}
+
+.profile-recent-import-button span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.profile-recent-import-button span:not(:first-child),
+.profile-recent-import-button time {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.profile-recent-import-button time {
+  grid-column: 2;
 }
 
 .profile-facts-heading {

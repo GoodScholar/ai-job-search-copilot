@@ -17,7 +17,7 @@
 - 接受 `text/markdown`、`text/plain`；空 MIME 与 `application/octet-stream` 只有在扩展名和内容检查同时通过时接受。
 - MinIO bucket 固定为私有 `career-documents`，对象 key 固定为 `accounts/{userId}/career-documents/{documentId}/source.md`，不得包含原始文件名。
 - PostgreSQL 是业务状态唯一权威来源；Redis 只保存 BullMQ 任务，任务载荷不得包含 Markdown、文件名、证据或联系方式。
-- 状态只允许 `queued | processing | completed | failed`；完成状态不可逆，失败重排回到 `queued`，重复 `queued` 上传执行幂等补发。
+- 状态只允许 `queued | processing | completed | failed`；完成状态不可逆，失败重排回到 `queued`，重复上传命中 `queued` 或 `processing` 均执行确定性 `jobId` 幂等补发。这是在没有 Outbox 或恢复扫描器时的用户触发恢复语义；`processing` 成功补发仍返回当前 `200`，Redis 不可用时维持现有失败响应与数据库状态。
 - Fake Parser 固定为 `fake-career-parser-v1`，提示词版本固定为 `career-import-prompt-v1`，输出 Schema 固定为 `career-facts-v1`。
 - 候选事实类型只允许 `experience | education | skill | project | language | achievement | certification`，本切片确认状态固定为 `pending`。
 - 只保存 `grounding: quoted` 且 Markdown 行号、片段和值均可验证的事实；推断、缺少证据、越界、未知字段和非法值不得进入数据库。
@@ -381,7 +381,7 @@ export function createCareerImportProcessor(deps: ProcessorDependencies): {
 }
 ```
 
-创建流程在 PostgreSQL 唯一键下复用记录；对象仅为新职业资料写一次；新建、失败重排和命中 `queued` 都调用 `queue.enqueue`。入队抛错后条件更新为 `failed/CAREER_IMPORT_QUEUE_UNAVAILABLE`，再抛 `CareerImportError` 供 API 返回 503。
+创建流程在 PostgreSQL 唯一键下复用记录；对象仅为新职业资料写一次；新建、失败重排和命中 `queued` 或 `processing` 都调用确定性 `queue.enqueue`。这是没有 Outbox 或恢复扫描器时由重复上传触发的恢复；`processing` 成功补发保持当前 `200` 响应。入队抛错后，只有仍为 `queued` 的记录条件更新为 `failed/CAREER_IMPORT_QUEUE_UNAVAILABLE`；`processing` 保持现状并由 API 返回现有的队列不可用响应。
 
 - [ ] **Step 5: 实现证据验证、事务完成和稳定失败**
 

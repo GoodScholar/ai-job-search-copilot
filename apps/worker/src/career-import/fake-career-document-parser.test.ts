@@ -137,6 +137,20 @@ describe("FakeCareerDocumentParser", () => {
     ]);
   });
 
+  it("preserves the decoded source line as evidence, including indentation and trailing spaces", async () => {
+    const output = CareerParserOutputSchema.parse(
+      await new FakeCareerDocumentParser().parse("## Skills\n  - TypeScript  "),
+    );
+
+    expect(output.facts).toEqual([
+      expect.objectContaining({
+        factType: "skill",
+        factValue: { name: "TypeScript" },
+        evidence: expect.objectContaining({ excerpt: "  - TypeScript  " }),
+      }),
+    ]);
+  });
+
   it("extracts supported list markers and deeper headings as quoted facts", async () => {
     const markdown = [
       "## Skills",

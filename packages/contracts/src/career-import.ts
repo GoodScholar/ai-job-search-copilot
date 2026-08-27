@@ -11,7 +11,7 @@ const parserEvidence = z.object({
   locatorType: z.literal("markdown_lines"),
   startLine: z.int().min(1),
   endLine: z.int().min(1),
-  excerpt: z.string().trim().min(1).max(2_000),
+  excerpt: z.string().min(1).max(2_000).refine((excerpt) => excerpt.trim().length > 0),
 }).strict().refine(({ startLine, endLine }) => startLine <= endLine, {
   path: ["endLine"],
   message: "endLine must be greater than or equal to startLine",
@@ -23,7 +23,7 @@ const candidateEvidence = z.object({
   locatorType: z.literal("markdown_lines"),
   startLine: z.int().min(1),
   endLine: z.int().min(1),
-  excerpt: z.string().trim().min(1).max(2_000),
+  excerpt: z.string().min(1).max(2_000).refine((excerpt) => excerpt.trim().length > 0),
 }).strict().refine(({ startLine, endLine }) => startLine <= endLine, {
   path: ["endLine"],
   message: "endLine must be greater than or equal to startLine",
@@ -145,3 +145,21 @@ export type CareerImportDetail = z.infer<typeof CareerImportDetailSchema>;
 export type CreateCareerImportResponse = z.infer<typeof CreateCareerImportResponseSchema>;
 export type CareerParserOutput = z.infer<typeof CareerParserOutputSchema>;
 export type CareerImportJob = z.infer<typeof CareerImportJobSchema>;
+
+const quotedListItemPattern = /^\s*(?:[-*+]|\d+[.)])\s+(.+?)\s*$/;
+const quotedHeadingPattern = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
+
+export function parseQuotedCareerFactValue(
+  factType: CareerParserFact["factType"],
+  excerpt: string,
+): CareerParserFact["factValue"] | null {
+  const content = (excerpt.match(quotedListItemPattern)?.[1] ?? excerpt.match(quotedHeadingPattern)?.[2])?.trim();
+  if (!content) return null;
+
+  if (factType === "skill" || factType === "certification") return { name: content };
+  if (factType === "language") {
+    const language = content.match(/^(.+?)[：:]\s*(.+)$/);
+    return language ? { name: language[1].trim(), level: language[2].trim() } : { name: content };
+  }
+  return { summary: content };
+}

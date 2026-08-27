@@ -10,6 +10,7 @@ import {
   CareerParserFactSchema,
   CareerParserOutputSchema,
   CreateCareerImportResponseSchema,
+  parseQuotedCareerFactValue,
 } from "./career-import";
 
 const id = () => crypto.randomUUID();
@@ -98,6 +99,34 @@ describe("career import contracts", () => {
       ...candidateFact("skill", { name: "TypeScript" }),
       evidence: { ...evidence(), startLine: 2, endLine: 1 },
     })).toThrow();
+  });
+
+  it("preserves quoted evidence whitespace while rejecting whitespace-only excerpts", () => {
+    const exactExcerpt = "  - TypeScript  ";
+    expect(CareerParserFactSchema.parse({
+      ...parserFact("skill", { name: "TypeScript" }),
+      evidence: { ...parserEvidence(), excerpt: exactExcerpt },
+    }).evidence.excerpt).toBe(exactExcerpt);
+    expect(CandidateFactSchema.parse({
+      ...candidateFact("skill", { name: "TypeScript" }),
+      evidence: { ...evidence(), excerpt: exactExcerpt },
+    }).evidence.excerpt).toBe(exactExcerpt);
+    expect(() => CareerParserFactSchema.parse({
+      ...parserFact("skill", { name: "TypeScript" }),
+      evidence: { ...parserEvidence(), excerpt: " \t " },
+    })).toThrow();
+  });
+
+  it.each([
+    ["skill", "  - TypeScript  ", { name: "TypeScript" }],
+    ["certification", "- AWS Certified Developer", { name: "AWS Certified Developer" }],
+    ["language", "- English: Fluent", { name: "English", level: "Fluent" }],
+    ["experience", "### Built resilient services", { summary: "Built resilient services" }],
+    ["education", "- BSc Computer Science", { summary: "BSc Computer Science" }],
+    ["project", "- Job Copilot", { summary: "Job Copilot" }],
+    ["achievement", "- Reduced latency by 40%", { summary: "Reduced latency by 40%" }],
+  ])("parses the exact supported evidence form for %s", (factType, excerpt, factValue) => {
+    expect(parseQuotedCareerFactValue(factType as Parameters<typeof parseQuotedCareerFactValue>[0], excerpt)).toEqual(factValue);
   });
 
   it.each(["confirmed", "rejected"])("rejects %s confirmation status", (confirmationStatus) => {

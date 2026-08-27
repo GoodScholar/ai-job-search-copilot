@@ -42,6 +42,14 @@ const replacementDetail = {
   }],
 };
 
+const completedImport = {
+  ...queuedImport,
+  importId: "ffdb0ddf-6e75-4c72-9f31-b8514e8fc28d",
+  sourceFilename: "completed.md",
+  status: "completed" as const,
+  candidateFactCount: 1,
+};
+
 function submitFile() {
   fireEvent.change(screen.getByLabelText("选择 Markdown 职业资料"), {
     target: { files: [new File(["# 资料"], "career.md", { type: "text/markdown" })] },
@@ -56,6 +64,44 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+it("shows recent imports and loads the selected import detail", async () => {
+  const selectedDetail = {
+    ...completedDetail,
+    importId: completedImport.importId,
+    sourceFilename: completedImport.sourceFilename,
+    facts: [{ ...completedDetail.facts[0], evidence: { ...completedDetail.facts[0].evidence, sourceFilename: completedImport.sourceFilename } }],
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => Promise.resolve(Response.json(selectedDetail)));
+
+  render(<ProfileImportView initialImports={[queuedImport, completedImport]} />);
+
+  expect(screen.getByRole("heading", { name: "最近导入" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /career\.md/ })).toBeInTheDocument();
+  await userEvent.setup().click(screen.getByRole("button", { name: /completed\.md/ }));
+
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+    `/api/career-imports/${completedImport.importId}`,
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  ));
+  await waitFor(() => expect(screen.getByText("TypeScript")).toBeInTheDocument());
+  expect(screen.getAllByRole("button", { name: /career\.md|completed\.md/ })[0]).toHaveAccessibleName(/career\.md/);
+});
+
+it("deduplicates an uploaded reused import and moves it to the top of recent imports", async () => {
+  mocks.createCareerImportAction.mockResolvedValue({
+    ok: true,
+    import: { ...completedImport, reused: true, detailUrl: `/v1/career-documents/imports/${completedImport.importId}` },
+  });
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ ...completedDetail, importId: completedImport.importId, facts: [] }));
+
+  render(<ProfileImportView initialImports={[queuedImport, completedImport]} />);
+  submitFile();
+
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("解析完成"));
+  expect(screen.getAllByRole("button", { name: /career\.md|completed\.md/ })[0]).toHaveAccessibleName(/completed\.md/);
+  expect(screen.getAllByRole("button", { name: /career\.md|completed\.md/ })).toHaveLength(2);
+});
+
 it("uploads only Markdown files and renders quoted pending facts after polling", async () => {
   const user = userEvent.setup();
   mocks.createCareerImportAction.mockResolvedValue({
@@ -66,14 +112,14 @@ it("uploads only Markdown files and renders quoted pending facts after polling",
     .mockResolvedValueOnce(Response.json({ ...queuedImport, facts: [] }))
     .mockResolvedValueOnce(Response.json(completedDetail));
 
-  render(<ProfileImportView initialImport={null} />);
+  render(<ProfileImportView initialImports={[]} />);
   const input = screen.getByLabelText("选择 Markdown 职业资料");
   expect(input).toHaveAttribute("accept", ".md,text/markdown,text/plain");
   await user.upload(input, new File(["## 技能\\n- TypeScript"], "career.md", { type: "text/markdown" }));
   await user.click(screen.getByRole("button", { name: "上传并解析" }));
 
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/等待解析|解析中/));
-  await waitFor(() => expect(screen.getByText("解析完成")).toBeInTheDocument(), { timeout: 2_000 });
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("解析完成"), { timeout: 2_000 });
   expect(screen.getByText("待确认")).toBeInTheDocument();
   expect(screen.getByText("技能")).toBeInTheDocument();
   expect(screen.getByText("TypeScript")).toBeInTheDocument();
@@ -88,7 +134,7 @@ it("maps failures to a fixed Chinese message without exposing internal values", 
   mocks.createCareerImportAction.mockResolvedValue({ ok: false, code: "NO_SUPPORTED_FACTS", message: "职业资料暂时无法处理，请稍后重试。" });
   const user = userEvent.setup();
 
-  render(<ProfileImportView initialImport={null} />);
+  render(<ProfileImportView initialImports={[]} />);
   await user.upload(screen.getByLabelText("选择 Markdown 职业资料"), new File(["# empty"], "career.md", { type: "text/markdown" }));
   await user.click(screen.getByRole("button", { name: "上传并解析" }));
 
@@ -101,7 +147,7 @@ it("gives a new upload failure priority over an existing queued import", async (
   vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ ...queuedImport, facts: [] }));
   const user = userEvent.setup();
 
-  render(<ProfileImportView initialImport={queuedImport} />);
+  render(<ProfileImportView initialImports={[queuedImport]} />);
   await user.upload(screen.getByLabelText("选择 Markdown 职业资料"), new File(["# empty"], "career.md", { type: "text/markdown" }));
   await user.click(screen.getByRole("button", { name: "上传并解析" }));
 
@@ -113,7 +159,7 @@ it("waits one full second between serialized intermediate polling requests", asy
   vi.useFakeTimers();
   const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ ...queuedImport, facts: [] }));
 
-  render(<ProfileImportView initialImport={queuedImport} />);
+  render(<ProfileImportView initialImports={[queuedImport]} />);
   await act(async () => { await Promise.resolve(); });
   expect(fetchMock).toHaveBeenCalledTimes(1);
   await act(async () => { await vi.advanceTimersByTimeAsync(999); });
@@ -128,7 +174,7 @@ it("retries a polling transport failure after one second and recovers on a compl
     .mockRejectedValueOnce(new TypeError("network failed"))
     .mockResolvedValueOnce(Response.json(completedDetail));
 
-  render(<ProfileImportView initialImport={queuedImport} />);
+  render(<ProfileImportView initialImports={[queuedImport]} />);
   await act(async () => { await Promise.resolve(); });
   expect(screen.getByRole("status")).toHaveTextContent("暂时无法读取解析状态，请稍后重试。");
   expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -136,14 +182,14 @@ it("retries a polling transport failure after one second and recovers on a compl
   expect(fetchMock).toHaveBeenCalledTimes(1);
   await act(async () => { await vi.advanceTimersByTimeAsync(1); });
   expect(fetchMock).toHaveBeenCalledTimes(2);
-  expect(screen.getByText("解析完成")).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("解析完成");
 });
 
 it("does not overlap a pending poll when more than one interval elapses", async () => {
   vi.useFakeTimers();
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => new Promise<Response>(() => {}));
 
-  render(<ProfileImportView initialImport={queuedImport} />);
+  render(<ProfileImportView initialImports={[queuedImport]} />);
   await act(async () => { await Promise.resolve(); });
   await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
   expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -153,9 +199,9 @@ it("does not schedule another request after a terminal response", async () => {
   vi.useFakeTimers();
   const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(completedDetail));
 
-  render(<ProfileImportView initialImport={queuedImport} />);
+  render(<ProfileImportView initialImports={[queuedImport]} />);
   await act(async () => { await Promise.resolve(); });
-  expect(screen.getByText("解析完成")).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("解析完成");
   await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
@@ -167,7 +213,7 @@ it("aborts a pending request when the view unmounts", async () => {
     resolveFetch = resolve;
   }));
 
-  const rendered = render(<ProfileImportView initialImport={queuedImport} />);
+  const rendered = render(<ProfileImportView initialImports={[queuedImport]} />);
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
   const signal = (fetchMock.mock.calls[0]![1] as RequestInit).signal;
   expect(signal?.aborted).toBe(false);
@@ -183,7 +229,7 @@ it("replaces an initial query failure after a successful new upload", async () =
   vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(completedDetail));
   const user = userEvent.setup();
 
-  render(<ProfileImportView initialErrorMessage="Markdown 文件不能为空。" initialImport={null} />);
+  render(<ProfileImportView initialErrorMessage="Markdown 文件不能为空。" initialImports={[]} />);
   expect(screen.getByRole("status")).toHaveTextContent("Markdown 文件不能为空。");
   await user.upload(screen.getByLabelText("选择 Markdown 职业资料"), new File(["# retry"], "career.md", { type: "text/markdown" }));
   await user.click(screen.getByRole("button", { name: "上传并解析" }));
@@ -198,7 +244,7 @@ it("shows uploading while retrying after an action failure", async () => {
     .mockImplementationOnce(() => new Promise((resolve) => { resolveRetry = resolve; }));
   const user = userEvent.setup();
 
-  render(<ProfileImportView initialImport={null} />);
+  render(<ProfileImportView initialImports={[]} />);
   await user.upload(screen.getByLabelText("选择 Markdown 职业资料"), new File(["# retry"], "career.md", { type: "text/markdown" }));
   await user.click(screen.getByRole("button", { name: "上传并解析" }));
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Markdown 文件不能为空。"));
@@ -218,7 +264,7 @@ it("restarts the same import ID from failed through queued polling to completed 
     .mockResolvedValueOnce(Response.json({ ...queuedImport, facts: [] }))
     .mockResolvedValueOnce(Response.json(completedDetail));
 
-  render(<ProfileImportView initialImport={{ ...queuedImport, status: "failed" }} />);
+  render(<ProfileImportView initialImports={[{ ...queuedImport, status: "failed" }]} />);
   await act(async () => { await Promise.resolve(); });
   expect(fetchMock).toHaveBeenCalledTimes(1);
 
@@ -244,7 +290,7 @@ it("ignores a late old-generation terminal response while the new import retries
     .mockImplementationOnce(() => new Promise<Response>((_resolve, reject) => { rejectNewFetch = reject; }))
     .mockResolvedValueOnce(Response.json(replacementDetail));
 
-  render(<ProfileImportView initialImport={queuedImport} />);
+  render(<ProfileImportView initialImports={[queuedImport]} />);
   await act(async () => { await Promise.resolve(); });
   expect(fetchMock).toHaveBeenCalledTimes(1);
 
@@ -271,7 +317,7 @@ it("refetches completed facts after a repeated completed upload with the same im
   mocks.createCareerImportAction.mockResolvedValue({ ok: true, import: { ...queuedImport, status: "completed", reused: true, detailUrl: `/v1/career-documents/imports/${importId}` } });
   const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(() => Promise.resolve(Response.json(completedDetail)));
 
-  render(<ProfileImportView initialImport={queuedImport} />);
+  render(<ProfileImportView initialImports={[queuedImport]} />);
   await waitFor(() => expect(screen.getByText("TypeScript")).toBeInTheDocument());
   expect(fetchMock).toHaveBeenCalledTimes(1);
 

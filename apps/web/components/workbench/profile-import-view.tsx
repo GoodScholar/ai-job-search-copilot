@@ -1,11 +1,11 @@
 "use client";
 
 import type { CandidateFact, CareerImportDetail, CareerImportSummary } from "@job-copilot/contracts/career-import";
-import { useEffect, useRef, useState, useTransition, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition, type FormEvent } from "react";
 import { createCareerImportAction, createCareerImportFormAction, type UploadActionState } from "@/app/(workbench)/profile/actions";
 
 type ProfileImportViewProps = {
-  initialImport: CareerImportSummary | null;
+  initialImports: CareerImportSummary[];
   initialErrorMessage?: string | null;
 };
 
@@ -73,18 +73,36 @@ function hasSameSummary(detail: CareerImportDetail, previous: CareerImportSummar
     && detail.facts.length === previous.candidateFactCount;
 }
 
-export function ProfileImportView({ initialImport, initialErrorMessage = null }: ProfileImportViewProps) {
+export function ProfileImportView({ initialImports, initialErrorMessage = null }: ProfileImportViewProps) {
   const [actionState, setActionState] = useState<UploadActionState>(initialUploadActionState);
   const [isPending, startTransition] = useTransition();
-  const [activeImport, setActiveImport] = useState<CareerImportSummary | null>(initialImport);
+  const [recentImports, setRecentImports] = useState<CareerImportSummary[]>(initialImports);
+  const [activeImport, setActiveImport] = useState<CareerImportSummary | null>(initialImports[0] ?? null);
   const [detail, setDetail] = useState<CareerImportDetail | null>(null);
   const [pollingError, setPollingError] = useState(false);
   const pollingGeneration = useRef<{ value: number; initialStatus: ImportStatus | null }>({
     value: 0,
-    initialStatus: initialImport?.status ?? null,
+    initialStatus: initialImports[0]?.status ?? null,
   });
   const [pollRevision, setPollRevision] = useState(0);
   const activeImportId = activeImport?.importId;
+  const moveToRecentTop = useCallback((nextImport: CareerImportSummary) => {
+    setRecentImports((previous) => [nextImport, ...previous.filter((item) => item.importId !== nextImport.importId)].slice(0, 20));
+  }, []);
+  const updateRecentInPlace = useCallback((nextImport: CareerImportSummary) => {
+    setRecentImports((previous) => previous.map((item) => item.importId === nextImport.importId ? nextImport : item));
+  }, []);
+
+  const selectImport = (nextImport: CareerImportSummary) => {
+    pollingGeneration.current = {
+      value: pollingGeneration.current.value + 1,
+      initialStatus: nextImport.status,
+    };
+    setPollRevision((revision) => revision + 1);
+    setActiveImport(nextImport);
+    setDetail(null);
+    setPollingError(false);
+  };
 
   const submitUpload = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -98,7 +116,9 @@ export function ProfileImportView({ initialImport, initialErrorMessage = null }:
         };
         setPollRevision((revision) => revision + 1);
         setActionState(nextState);
-        setActiveImport({ ...nextState.import, candidateFactCount: 0 });
+        const nextImport = { ...nextState.import, candidateFactCount: 0 };
+        setActiveImport(nextImport);
+        moveToRecentTop(nextImport);
         setDetail(null);
         setPollingError(false);
         return;
@@ -131,6 +151,7 @@ export function ProfileImportView({ initialImport, initialErrorMessage = null }:
         if (!isCurrent()) return;
         status = nextDetail.status;
         setDetail(nextDetail);
+        updateRecentInPlace(asSummary(nextDetail));
         setActiveImport((previous) => previous && !hasSameSummary(nextDetail, previous)
           ? asSummary(nextDetail)
           : previous);
@@ -150,7 +171,7 @@ export function ProfileImportView({ initialImport, initialErrorMessage = null }:
       if (timer) window.clearTimeout(timer);
       controller?.abort();
     };
-  }, [activeImportId, pollRevision]);
+  }, [activeImportId, pollRevision, updateRecentInPlace]);
 
   const displayedStatus: ImportStatus | null = isPending
     ? "uploading"
@@ -192,6 +213,35 @@ export function ProfileImportView({ initialImport, initialErrorMessage = null }:
         </form>
         <p aria-live="polite" className="profile-status" role="status">{liveMessage}</p>
       </section>
+
+      {recentImports.length ? (
+        <section aria-labelledby="profile-recent-imports-title" className="profile-recent-imports">
+          <div className="profile-recent-imports-heading">
+            <h2 id="profile-recent-imports-title">最近导入</h2>
+            <p>最多显示 20 条职业资料导入记录。</p>
+          </div>
+          <ol className="profile-recent-import-list">
+            {recentImports.map((item) => {
+              const itemFailure = item.failureCode ? failureMessages[item.failureCode] ?? "解析失败，请稍后重试。" : null;
+              return (
+                <li key={item.importId}>
+                  <button
+                    aria-pressed={item.importId === activeImportId}
+                    className="profile-recent-import-button workbench-touch-target"
+                    onClick={() => selectImport(item)}
+                    type="button"
+                  >
+                    <span>{item.sourceFilename}</span>
+                    <span>{statusText[item.status]}</span>
+                    <span>{item.status === "failed" ? itemFailure : `候选事实 ${item.candidateFactCount} 条`}</span>
+                    <time dateTime={item.updatedAt}>{item.updatedAt.slice(0, 16).replace("T", " ")}</time>
+                  </button>
+                </li>
+              );
+            })}
+          </ol>
+        </section>
+      ) : null}
 
       {detail?.facts.length ? (
         <section aria-labelledby="profile-facts-title" className="profile-facts">

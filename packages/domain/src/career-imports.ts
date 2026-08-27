@@ -9,6 +9,7 @@ import {
 } from "@job-copilot/database";
 import {
   CareerImportJobSchema,
+  parseQuotedCareerFactValue,
   type CreateCareerImportResponse,
   CareerParserOutputSchema,
   type CareerImportDetail,
@@ -168,7 +169,10 @@ async function findImport(db: Database, input: { userId: string; importId: strin
     attemptCount: careerImports.attemptCount,
     originatingRequestId: careerImports.originatingRequestId,
   }).from(careerImports)
-    .innerJoin(careerDocuments, eq(careerDocuments.id, careerImports.careerDocumentId))
+    .innerJoin(careerDocuments, and(
+      eq(careerDocuments.id, careerImports.careerDocumentId),
+      eq(careerDocuments.userId, careerImports.userId),
+    ))
     .where(and(eq(careerImports.id, input.importId), eq(careerImports.userId, input.userId)));
   return record;
 }
@@ -233,6 +237,7 @@ export function createCareerImportCommands(deps: CommandDependencies): {
         id: careerImports.id,
         status: careerImports.status,
         failureCode: careerImports.failureCode,
+        attemptCount: careerImports.attemptCount,
         createdAt: careerImports.createdAt,
         updatedAt: careerImports.updatedAt,
       }).from(careerImports).where(and(
@@ -265,6 +270,7 @@ export function createCareerImportCommands(deps: CommandDependencies): {
             id: careerImports.id,
             status: careerImports.status,
             failureCode: careerImports.failureCode,
+            attemptCount: careerImports.attemptCount,
             createdAt: careerImports.createdAt,
             updatedAt: careerImports.updatedAt,
           });
@@ -287,6 +293,7 @@ export function createCareerImportCommands(deps: CommandDependencies): {
             id: careerImports.id,
             status: careerImports.status,
             failureCode: careerImports.failureCode,
+            attemptCount: careerImports.attemptCount,
             createdAt: careerImports.createdAt,
             updatedAt: careerImports.updatedAt,
           }).from(careerImports).where(and(
@@ -315,6 +322,7 @@ export function createCareerImportCommands(deps: CommandDependencies): {
             id: careerImports.id,
             status: careerImports.status,
             failureCode: careerImports.failureCode,
+            attemptCount: careerImports.attemptCount,
             createdAt: careerImports.createdAt,
             updatedAt: careerImports.updatedAt,
           });
@@ -342,6 +350,7 @@ export function createCareerImportCommands(deps: CommandDependencies): {
             id: careerImports.id,
             status: careerImports.status,
             failureCode: careerImports.failureCode,
+            attemptCount: careerImports.attemptCount,
             createdAt: careerImports.createdAt,
             updatedAt: careerImports.updatedAt,
           }).from(careerImports).where(and(
@@ -378,7 +387,7 @@ export function createCareerImportCommands(deps: CommandDependencies): {
                 reasonCode: "CAREER_IMPORT_QUEUE_UNAVAILABLE",
                 resourceType: "career_import",
                 resourceId: storedImport.id,
-                metadata: { documentId: document.id, importId: storedImport.id, attemptCount: 0, failureCode: "CAREER_IMPORT_QUEUE_UNAVAILABLE" },
+                metadata: { documentId: document.id, importId: storedImport.id, attemptCount: storedImport.attemptCount, failureCode: "CAREER_IMPORT_QUEUE_UNAVAILABLE" },
               });
             }
           });
@@ -421,7 +430,10 @@ export function createCareerImportQueries(deps: { db: Database }): {
           where ${candidateFacts.careerImportId} = ${careerImports.id}
             and ${candidateFacts.userId} = ${careerImports.userId}
         )`,
-      }).from(careerImports).innerJoin(careerDocuments, eq(careerDocuments.id, careerImports.careerDocumentId))
+      }).from(careerImports).innerJoin(careerDocuments, and(
+        eq(careerDocuments.id, careerImports.careerDocumentId),
+        eq(careerDocuments.userId, careerImports.userId),
+      ))
         .where(eq(careerImports.userId, userId)).orderBy(desc(careerImports.createdAt)).limit(20);
       return records.map(summary);
     },
@@ -435,7 +447,10 @@ export function createCareerImportQueries(deps: { db: Database }): {
         failureCode: careerImports.failureCode,
         createdAt: careerImports.createdAt,
         updatedAt: careerImports.updatedAt,
-      }).from(careerImports).innerJoin(careerDocuments, eq(careerDocuments.id, careerImports.careerDocumentId))
+      }).from(careerImports).innerJoin(careerDocuments, and(
+        eq(careerDocuments.id, careerImports.careerDocumentId),
+        eq(careerDocuments.userId, careerImports.userId),
+      ))
         .where(and(eq(careerImports.userId, userId), eq(careerImports.id, importId)));
       if (!record) return null;
 
@@ -451,7 +466,11 @@ export function createCareerImportQueries(deps: { db: Database }): {
           startLine: candidateFactEvidence.startLine,
           endLine: candidateFactEvidence.endLine,
           excerpt: candidateFactEvidence.excerpt,
-        }).from(candidateFacts).innerJoin(candidateFactEvidence, eq(candidateFactEvidence.candidateFactId, candidateFacts.id))
+        }).from(candidateFacts).innerJoin(candidateFactEvidence, and(
+          eq(candidateFactEvidence.candidateFactId, candidateFacts.id),
+          eq(candidateFactEvidence.userId, candidateFacts.userId),
+          eq(candidateFactEvidence.careerDocumentId, candidateFacts.careerDocumentId),
+        ))
           .where(and(eq(candidateFacts.userId, userId), eq(candidateFacts.careerImportId, importId)))
           .orderBy(asc(candidateFacts.createdAt))
         : [];
@@ -585,7 +604,10 @@ export function createCareerImportProcessor(deps: ProcessorDependencies): {
           if (fact.evidence.startLine < 1 || fact.evidence.startLine > fact.evidence.endLine
             || fact.evidence.endLine > lines.length) return false;
           const quoted = lines.slice(fact.evidence.startLine - 1, fact.evidence.endLine).join("\n");
-          return quoted === fact.evidence.excerpt;
+          const parsedFactValue = parseQuotedCareerFactValue(fact.factType, quoted);
+          return quoted === fact.evidence.excerpt
+            && parsedFactValue !== null
+            && normalizeJson(parsedFactValue) === normalizeJson(fact.factValue);
         });
         if (acceptedFacts.length === 0) {
           throw new StableImportFailure("NO_SUPPORTED_FACTS");

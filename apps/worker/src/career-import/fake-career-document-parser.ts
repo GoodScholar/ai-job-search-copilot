@@ -1,5 +1,6 @@
 import {
   CareerParserOutputSchema,
+  parseQuotedCareerFactValue,
   type CareerParserFact,
 } from "@job-copilot/contracts/career-import";
 
@@ -42,7 +43,7 @@ export class FakeCareerDocumentParser {
         } else if (activeSection && headingLevel <= activeSection.headingLevel) {
           activeSection = undefined;
         } else if (activeSection) {
-          const fact = createFact(activeSection.factType, headingText, line, lineNumber);
+          const fact = createFact(activeSection.factType, line, lineNumber);
           if (fact) facts.push(fact);
         }
         continue;
@@ -53,7 +54,7 @@ export class FakeCareerDocumentParser {
       const listItem = line.match(listItemPattern);
       if (!listItem) continue;
 
-      const fact = createFact(activeSection.factType, listItem[1].trim(), line, lineNumber);
+      const fact = createFact(activeSection.factType, line, lineNumber);
       if (fact) facts.push(fact);
     }
 
@@ -69,11 +70,11 @@ export class FakeCareerDocumentParser {
 
 function createFact(
   factType: FactType,
-  value: string,
   excerpt: string,
   lineNumber: number,
 ): CareerParserFact | undefined {
-  if (!value) return undefined;
+  const factValue = parseQuotedCareerFactValue(factType, excerpt);
+  if (!factValue) return undefined;
 
   const evidence = {
     locatorType: "markdown_lines" as const,
@@ -82,34 +83,11 @@ function createFact(
     excerpt,
   };
 
-  if (factType === "skill" || factType === "certification") {
-    return {
-      factType,
-      factValue: { name: value },
-      confidenceBasisPoints: 10_000,
-      grounding: "quoted",
-      evidence,
-    };
-  }
-
-  if (factType === "language") {
-    const language = value.match(/^(.+?)[：:]\s*(.+)$/);
-    return {
-      factType,
-      factValue: language
-        ? { name: language[1].trim(), level: language[2].trim() }
-        : { name: value },
-      confidenceBasisPoints: 10_000,
-      grounding: "quoted",
-      evidence,
-    };
-  }
-
   return {
     factType,
-    factValue: { summary: value },
+    factValue,
     confidenceBasisPoints: 10_000,
     grounding: "quoted",
     evidence,
-  };
+  } as CareerParserFact;
 }

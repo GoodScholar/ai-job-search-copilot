@@ -52,5 +52,5 @@ export default async function ProfilePage({ searchParams }: ProfilePageProps) {
   }
 
   const initialErrorMessage = safeFormFailureMessage(importError);
-  return <ProfileImportView initialErrorMessage={initialErrorMessage} initialImport={careerImports.imports[0] ?? null} />;
+  return <ProfileImportView initialErrorMessage={initialErrorMessage} initialImports={careerImports.imports} />;
 }

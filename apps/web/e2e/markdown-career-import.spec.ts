@@ -80,6 +80,7 @@ test("登录用户可导入、持久化并安全复用 Markdown 职业资料", a
 
   const fileInput = page.getByLabel("选择 Markdown 职业资料");
   const uploadButton = page.getByRole("button", { name: "上传并解析" });
+  await expect(page.getByRole("navigation", { name: "求职工作台导航" })).toHaveText("首页推荐投递画像");
   if (testInfo.project.name === "Desktop Chrome") {
     await page.goto("/profile");
     await page.keyboard.press("Tab");
@@ -108,6 +109,8 @@ test("登录用户可导入、持久化并安全复用 Markdown 职业资料", a
   await expect(page.getByText("TypeScript", { exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText("第 6 行", { exact: true })).toBeVisible();
   await expect(page.getByText("待确认", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "最近导入" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /career\.md/ })).toBeVisible();
   expect(await importStatusHistory(page)).toEqual(expect.arrayContaining([
     expect.stringMatching(/等待解析|解析中/),
   ]));

@@ -40,14 +40,14 @@
 1. Web 将一个 Markdown 文件作为 multipart 请求发送给 API。
 2. API 在内存上限内读取文件，执行文件名、MIME、字节数、UTF-8、空内容和 NUL 字节检查。
 3. API 计算原始字节 SHA-256，并按当前 `userId + checksum` 查找已有职业资料。
-4. 新文件先写入 MinIO，再在 PostgreSQL 中创建职业资料和导入记录；重复文件复用已有记录。
-5. API 使用 `importId` 作为 BullMQ `jobId`，任务载荷只包含版本化标识、`importId` 和 `userId`，不包含正文、文件名或证据。新建、重新排队，以及命中 `queued` 记录时都执行幂等入队；后者可以修复“数据库已提交但进程在入队前退出”的窗口。
+4. 新文件在 PostgreSQL 事务内先预留 `career_documents` 记录，再写入 MinIO，并仅在对象写入成功后提交；重复文件复用已有记录，以账户内唯一键保证并发语义。
+5. API 使用 `importId` 作为 BullMQ `jobId`，任务载荷只包含版本化标识、`importId` 和 `userId`，不包含正文、文件名或证据。新建、重新排队，以及命中 `queued` 或 `processing` 记录时都执行幂等入队；这是没有 Outbox 或恢复扫描器时，由用户重复上传触发的恢复语义。
 6. Worker 从 PostgreSQL 获取对象引用并再次校验所有权，从 MinIO 读取原文，通过 Fake Parser v1 得到结构化输出。
 7. Worker 用共享 Zod Schema 验证输出，并拒绝推断、缺少证据、未知字段、无效事实类型和越界行号。
 8. Worker 在一个数据库事务中写入全部候选事实、证据、完成状态和脱敏审计；失败不会留下部分事实。
 9. Web 每秒读取一次权威导入状态，在终态或页面卸载时停止轮询。
 
-不采用事务 Outbox。本切片在数据库提交后入队；入队失败时把导入记录标记为 `failed/CAREER_IMPORT_QUEUE_UNAVAILABLE`，用户可以通过重新上传同一文件复用同一导入记录并重新入队。若进程恰好在数据库提交后、入队前退出，记录会暂时保持 `queued`；再次上传相同文件会幂等补发任务。该状态是可见、可修复且不产生重复领域数据的，不需要提前引入 Outbox 分发器、租约和恢复扫描。
+不采用事务 Outbox。本切片在数据库提交后入队；对 `queued` 导入，入队失败时把记录标记为 `failed/CAREER_IMPORT_QUEUE_UNAVAILABLE`，用户可以通过重新上传同一文件复用同一导入记录并重新入队。若进程恰好在数据库提交后、入队前退出，`queued` 或 `processing` 记录再次上传都会幂等补发任务。`processing` 的成功补发仍返回其当前 `200` 状态；若 Redis 不可用，则沿用现有请求错误行为，返回队列不可用且不改写该 `processing` 状态。该用户触发恢复语义可见、可修复且不产生重复领域数据，不需要提前引入 Outbox 分发器、租约和恢复扫描。
 
 ## 模块边界
 
@@ -199,7 +199,7 @@ failed → queued
 - 首次执行通过条件更新将 `queued` 改为 `processing`；同一 BullMQ 作业因异常或 Worker 中断而重投时，允许在 `processing` 上恢复同一个导入。BullMQ 对确定性 `jobId` 的锁负责阻止两个消费者同时执行；领域写入的唯一键和完成事务提供第二层幂等保护。
 - BullMQ 自动尝试最多 3 次并使用指数退避。每次实际执行（包括恢复执行）递增 `attempt_count`。
 - 可重试异常由 BullMQ 继续处理；最后一次失败时领域服务写入稳定 `failure_code`。
-- 重新上传相同文件时：`completed` 返回已有结果；`processing` 返回当前状态；`queued` 返回当前状态并幂等补发同一个 `jobId`；`failed` 原子恢复为 `queued` 并重新添加同一个 `jobId`。
+- 重新上传相同文件时：`completed` 返回已有结果；`queued` 与 `processing` 都返回当前状态并幂等补发同一个 `jobId`，其中 `processing` 成功补发仍返回当前 `200`；`failed` 原子恢复为 `queued` 并重新添加同一个 `jobId`。这是在没有 Outbox 或恢复扫描器时的用户触发恢复语义；`processing` 补发遇到 Redis 不可用时维持现有失败响应和数据库状态。
 - API 入队失败允许 `queued → failed`，失败码为 `CAREER_IMPORT_QUEUE_UNAVAILABLE`；Worker 只有在最后一次执行失败后才写入其他稳定失败码。
 - BullMQ 作业允许在成功或最终失败后移除；恢复能力来自 PostgreSQL 记录和重新上传，而不是保留 Redis 作业正文。
 

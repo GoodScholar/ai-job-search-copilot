@@ -21,18 +21,19 @@ it("declares the profile page and preserves Next control-flow errors", async () 
   expect(mocks.unstableRethrow).toHaveBeenCalledWith(redirectError);
 });
 
-it("performs the authenticated RSC first read before passing only the latest import to the client view", async () => {
+it("performs the authenticated RSC first read before passing all recent imports to the client view", async () => {
   const latest = {
     importId: "d194d0ce-fc7e-45db-9425-e8ff4eaf8c08",
     documentId: "b4d4a7c1-9a17-4a8c-8b36-0f815d042e9a",
     sourceFilename: "career.md", status: "queued", failureCode: null,
     createdAt: "2026-08-27T08:00:00.000Z", updatedAt: "2026-08-27T08:00:00.000Z", candidateFactCount: 0,
   };
-  mocks.getCareerImports.mockResolvedValue({ imports: [latest] });
+  const earlier = { ...latest, importId: "9e812f2a-34fd-43cf-b8fb-fc307f1eb4ce", sourceFilename: "earlier.md" };
+  mocks.getCareerImports.mockResolvedValue({ imports: [latest, earlier] });
 
   const page = await ProfilePage({ searchParams: Promise.resolve({}) });
 
-  expect(page.props.initialImport).toEqual(latest);
+  expect(page.props.initialImports).toEqual([latest, earlier]);
 });
 
 it("passes only a whitelisted no-JavaScript upload failure message to the view", async () => {

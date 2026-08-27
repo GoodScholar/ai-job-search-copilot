@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uuid, varchar } from "drizzle-orm/pg-core";
+import { check, foreignKey, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uuid, varchar } from "drizzle-orm/pg-core";
 
 export const jobAccounts = pgTable("job_accounts", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -51,6 +51,7 @@ export const careerDocuments = pgTable("career_documents", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   unique("career_documents_user_checksum_unique").on(table.userId, table.checksumSha256),
+  unique("career_documents_user_id_id_unique").on(table.userId, table.id),
   check("career_documents_checksum_sha256_format", sql`${table.checksumSha256} ~ '^[0-9a-f]{64}$'`),
   check("career_documents_media_type_check", sql`${table.mediaType} = 'text/markdown'`),
   check("career_documents_byte_size_range", sql`${table.byteSize} between 0 and 524288`),
@@ -78,6 +79,12 @@ export const careerImports = pgTable("career_imports", {
   unique("career_imports_document_versions_unique").on(
     table.careerDocumentId, table.parserVersion, table.promptVersion, table.outputSchemaVersion,
   ),
+  unique("career_imports_user_id_id_document_id_unique").on(table.userId, table.id, table.careerDocumentId),
+  foreignKey({
+    columns: [table.userId, table.careerDocumentId],
+    foreignColumns: [careerDocuments.userId, careerDocuments.id],
+    name: "career_imports_owner_document_fk",
+  }),
   check("career_imports_status_check", sql`${table.status} in ('queued', 'processing', 'completed', 'failed')`),
   check("career_imports_parser_adapter_check", sql`${table.parserAdapter} = 'fake'`),
   check("career_imports_parser_version_check", sql`${table.parserVersion} = 'fake-career-parser-v1'`),
@@ -99,6 +106,12 @@ export const candidateFacts = pgTable("candidate_facts", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   unique("candidate_facts_import_fact_key_unique").on(table.careerImportId, table.factKey),
+  unique("candidate_facts_user_id_id_document_id_unique").on(table.userId, table.id, table.careerDocumentId),
+  foreignKey({
+    columns: [table.userId, table.careerImportId, table.careerDocumentId],
+    foreignColumns: [careerImports.userId, careerImports.id, careerImports.careerDocumentId],
+    name: "candidate_facts_owner_import_document_fk",
+  }),
   check("candidate_facts_fact_key_format", sql`${table.factKey} ~ '^[0-9a-f]{64}$'`),
   check("candidate_facts_fact_type_check", sql`${table.factType} in ('experience', 'education', 'skill', 'project', 'language', 'achievement', 'certification')`),
   check("candidate_facts_confidence_basis_points_range", sql`${table.confidenceBasisPoints} between 0 and 10000`),
@@ -118,6 +131,11 @@ export const candidateFactEvidence = pgTable("candidate_fact_evidence", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   unique("candidate_fact_evidence_fact_unique").on(table.candidateFactId),
+  foreignKey({
+    columns: [table.userId, table.candidateFactId, table.careerDocumentId],
+    foreignColumns: [candidateFacts.userId, candidateFacts.id, candidateFacts.careerDocumentId],
+    name: "candidate_fact_evidence_owner_fact_document_fk",
+  }),
   check("candidate_fact_evidence_locator_type_check", sql`${table.locatorType} = 'markdown_lines'`),
   check("candidate_fact_evidence_start_line_check", sql`${table.startLine} >= 1`),
   check("candidate_fact_evidence_end_line_check", sql`${table.endLine} >= ${table.startLine}`),

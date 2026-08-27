@@ -249,7 +249,7 @@ describe("career imports", () => {
     expect(puts).toHaveLength(1);
   });
 
-  it("does not expose a cross-account version-conflict fallback", async () => {
+  it("lets the database reject a cross-account import relation", async () => {
     const sourceBytes = new TextEncoder().encode("## 技能\n- Cross account fallback");
     const checksumSha256 = createHash("sha256").update(sourceBytes).digest("hex");
     const documentId = "55120b0b-5f42-4136-8710-55ec76c43b71";
@@ -257,18 +257,10 @@ describe("career imports", () => {
       id: documentId, userId, checksumSha256, objectKey: `accounts/${userId}/career-documents/${documentId}/source.md`,
       originalFilename: "resume.md", mediaType: "text/markdown", byteSize: sourceBytes.byteLength,
     });
-    await database.insert(careerImports).values({
+    await expect(database.insert(careerImports).values({
       id: "487751a6-6f9d-4604-9e04-fd178a9e66c2", userId: otherUserId, careerDocumentId: documentId,
       originatingRequestId: "efeb44e8-1c16-46a4-9c92-d7987255f6a5",
-    });
-    const queue = new MemoryQueue();
-    const commands = commandsFor(new MemoryStore(), queue, ids("a6322ee5-a9d9-4d6c-9d14-a76df54f0928"));
-
-    await expect(commands.createOrReuse({
-      userId, requestId: "98b15851-af5c-4ee1-a7d8-3e87d158c01e", bytes: sourceBytes,
-      originalFilename: "resume.md", mediaType: "text/markdown",
-    })).rejects.toThrow(/无法读取职业资料导入/);
-    expect(queue.jobs).toEqual([]);
+    })).rejects.toMatchObject({ cause: { code: "23503" } });
   });
 
   it("marks a queue failure as retryable and atomically returns the same failed import to queued", async () => {
@@ -302,6 +294,36 @@ describe("career imports", () => {
     });
     expect(retried).toMatchObject({ importId: failed?.id, status: "queued", reused: true, shouldReturnAccepted: true });
     expect(queue.jobs).toEqual([expect.objectContaining({ importId: failed?.id, userId })]);
+  });
+
+  it("audits the persisted attempt count when a failed import cannot be re-enqueued", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const created = await createImport({
+      documentStore: store,
+      queue,
+      ids: ids("ceb03b55-104d-402d-b997-a1a40ac18ef1", "c70cff11-6d8e-46e5-b214-bae5fe0c19fb"),
+      requestId: "162bf6b6-a764-4823-987e-8a8d815ad51d",
+      sourceBytes: new TextEncoder().encode("## 技能\n- Audit attempt"),
+    });
+    await database.update(careerImports).set({
+      status: "failed",
+      failureCode: "CAREER_DOCUMENT_READ_FAILED",
+      attemptCount: 2,
+    }).where(eq(careerImports.id, created.importId));
+    queue.failNext = true;
+
+    await expect(commandsFor(store, queue, ids()).createOrReuse({
+      userId,
+      requestId: "73d043bc-8083-451a-9457-207b7b7e899e",
+      bytes: new TextEncoder().encode("## 技能\n- Audit attempt"),
+      originalFilename: "resume.md",
+      mediaType: "text/markdown",
+    })).rejects.toMatchObject({ code: "CAREER_IMPORT_QUEUE_UNAVAILABLE" } satisfies Partial<CareerImportError>);
+
+    const events = await createAuditTrail({ db: database, clock: () => now }).query({ userId });
+    expect(events.filter((event) => event.resourceId === created.importId && event.reasonCode === "CAREER_IMPORT_QUEUE_UNAVAILABLE").at(-1))
+      .toMatchObject({ metadata: { attemptCount: 2, failureCode: "CAREER_IMPORT_QUEUE_UNAVAILABLE" } });
   });
 
   it("re-reads and re-enqueues the authoritative queued state when a failed requeue CAS loses", async () => {
@@ -376,7 +398,7 @@ describe("career imports", () => {
       db: database,
       auditTrail: createAuditTrail({ db: database, clock: () => now }),
       documentStore: store,
-      parser: parser({ ...validOutput(), facts: [{ ...validOutput().facts[0], evidence: { locatorType: "markdown_lines", startLine: 2, endLine: 2, excerpt: "- Completed only" } }] }),
+      parser: parser({ ...validOutput(), facts: [{ ...validOutput().facts[0], factValue: { name: "Completed only" }, evidence: { locatorType: "markdown_lines", startLine: 2, endLine: 2, excerpt: "- Completed only" } }] }),
       id: ids("0e3bcdd3-6750-4bb8-97af-a0e1dc16fb77", "3e516f0c-99e1-4844-bdbe-b6ba19d08846"),
       clock: () => now,
     });
@@ -514,6 +536,63 @@ describe("career imports", () => {
       .resolves.toMatchObject({ status: "completed", facts: [expect.objectContaining({ factValue: { name: "TypeScript" } })] });
     await expect(database.select().from(candidateFacts).where(eq(candidateFacts.careerImportId, created.importId)))
       .resolves.toHaveLength(1);
+  });
+
+  it("rejects a quoted fact when its value is not parsed from its exact evidence line", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const created = await createImport({
+      documentStore: store,
+      queue,
+      ids: ids("b9518fd1-d279-491c-a2d7-e048c519a109", "dc0caeae-2dcd-4e04-9d4b-4347b6db66a4"),
+      requestId: "bbf5710c-01f5-41ea-b913-50106bb80b29",
+      sourceBytes: new TextEncoder().encode("## 技能\n- TypeScript"),
+    });
+    const processor = createCareerImportProcessor({
+      db: database,
+      auditTrail: createAuditTrail({ db: database, clock: () => now }),
+      documentStore: store,
+      parser: parser({ ...validOutput(), facts: [{
+        ...validOutput().facts[0],
+        factValue: { name: "Rust" },
+        evidence: { locatorType: "markdown_lines", startLine: 2, endLine: 2, excerpt: "- TypeScript" },
+      }] }),
+      id: ids("9b983e90-5c30-459f-8749-36a050c770e2", "2c3d9128-43bf-4ddb-9f09-2df90f946bfe"),
+      clock: () => now,
+    });
+
+    await expect(processor.process({ version: 1, importId: created.importId, userId, finalAttempt: false }))
+      .resolves.toBe("failed");
+    await expect(createCareerImportQueries({ db: database }).get({ userId, importId: created.importId }))
+      .resolves.toMatchObject({ status: "failed", failureCode: "NO_SUPPORTED_FACTS", facts: [] });
+  });
+
+  it("persists exact indented and trailing-whitespace evidence from the fake parser form", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const created = await createImport({
+      documentStore: store,
+      queue,
+      ids: ids("2cbf991c-5237-43a3-a6cf-c1e49da05986", "c17d9083-fec5-428c-8eb3-4024cce1dcfb"),
+      requestId: "f1656d30-d2f1-4f1a-8473-53a6deeb29be",
+      sourceBytes: new TextEncoder().encode("## 技能\n  - TypeScript  "),
+    });
+    const processor = createCareerImportProcessor({
+      db: database,
+      auditTrail: createAuditTrail({ db: database, clock: () => now }),
+      documentStore: store,
+      parser: parser({ ...validOutput(), facts: [{
+        ...validOutput().facts[0],
+        evidence: { locatorType: "markdown_lines", startLine: 2, endLine: 2, excerpt: "  - TypeScript  " },
+      }] }),
+      id: ids("0c5c9f44-dc69-49bf-b801-fa3bb19f0a7d", "b8579e64-a038-4073-aec2-0227220c87e2"),
+      clock: () => now,
+    });
+
+    await expect(processor.process({ version: 1, importId: created.importId, userId, finalAttempt: false }))
+      .resolves.toBe("completed");
+    await expect(createCareerImportQueries({ db: database }).get({ userId, importId: created.importId }))
+      .resolves.toMatchObject({ facts: [expect.objectContaining({ evidence: expect.objectContaining({ excerpt: "  - TypeScript  " }) })] });
   });
 
   it.each([
