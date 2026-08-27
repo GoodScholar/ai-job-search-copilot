@@ -11,6 +11,17 @@ import { DATABASE } from "./config/runtime-config.module.js";
 import { CAREER_DOCUMENT_STORE, CAREER_IMPORT_QUEUE } from "./career-import/career-import.tokens.js";
 
 const testSecret = "test-dev-auth-shared-secret-must-be-at-least-32-characters";
+const capturedLogs: unknown[][] = [];
+const recordLog = (...args: unknown[]) => { capturedLogs.push(args); };
+const testLogger = {
+  child: () => testLogger,
+  info: recordLog,
+  error: recordLog,
+  debug: recordLog,
+  fatal: recordLog,
+  warn: recordLog,
+  trace: recordLog,
+};
 
 describe("authenticated workbench HTTP API", () => {
   let app: NestFastifyApplication;
@@ -58,7 +69,7 @@ describe("authenticated workbench HTTP API", () => {
       .overrideProvider(CAREER_DOCUMENT_STORE).useValue(documentStore)
       .overrideProvider(CAREER_IMPORT_QUEUE).useValue(queue)
       .compile();
-    app = module.createNestApplication<NestFastifyApplication>(new FastifyAdapter());
+    app = module.createNestApplication<NestFastifyApplication>(new FastifyAdapter({ loggerInstance: testLogger as never }));
     await configureApiApplication(app);
     await app.init();
     expect(app.get(CAREER_IMPORT_QUEUE)).toBe(queue);
@@ -192,6 +203,7 @@ describe("authenticated workbench HTTP API", () => {
   });
 
   it("accepts one Markdown upload, reuses it, and never exposes source content in audit metadata", async () => {
+    capturedLogs.length = 0;
     const session = await createSession(app, "career-import-primary");
     const source = "## 技能\n- TypeScript\n联系：resume@example.com";
     const upload = await app.getHttpAdapter().getInstance().inject(multipartRequest(source, {
@@ -212,6 +224,9 @@ describe("authenticated workbench HTTP API", () => {
     expect(JSON.stringify(metadata)).not.toContain("resume@example.com");
     expect(JSON.stringify(metadata)).not.toContain("candidate.md");
     expect(JSON.stringify(metadata)).not.toContain(source);
+    expect(JSON.stringify(capturedLogs)).not.toContain("resume@example.com");
+    expect(JSON.stringify(capturedLogs)).not.toContain("candidate.md");
+    expect(JSON.stringify(capturedLogs)).not.toContain(source);
   });
 
   it.each([
@@ -231,6 +246,17 @@ describe("authenticated workbench HTTP API", () => {
     } });
     expect(response.statusCode).toBe(status);
     expect(response.json()).toMatchObject({ code, requestId: expect.any(String) });
+    expect(response.body).not.toContain("resume@example.com");
+  });
+
+  it("maps a multipart text field to a stable upload problem without plugin disclosure", async () => {
+    const session = await createSession(app, "career-import-field-only");
+    const response = await app.getHttpAdapter().getInstance().inject(multipartRequest("resume@example.com", {
+      headers: bearer(session.sessionToken), fieldOnly: true,
+    }));
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({ code: "CAREER_DOCUMENT_REQUIRED", requestId: expect.any(String) });
+    expect(response.body).not.toContain("FST_FIELDS_LIMIT");
     expect(response.body).not.toContain("resume@example.com");
   });
 
@@ -266,6 +292,7 @@ describe("authenticated workbench HTTP API", () => {
   });
 
   it("maps an enqueue outage to a retryable 503 without leaking the underlying error", async () => {
+    capturedLogs.length = 0;
     const session = await createSession(app, "career-import-queue-failure");
     const source = "## 技能\n- Retryable";
     queue.failNext = true;
@@ -276,6 +303,9 @@ describe("authenticated workbench HTTP API", () => {
     expect(response.json()).toMatchObject({ code: "CAREER_IMPORT_QUEUE_UNAVAILABLE" });
     expect(response.body).not.toContain("resume@example.com");
     expect(response.body).not.toContain("queue unavailable");
+    expect(JSON.stringify(capturedLogs)).not.toContain("secret-resume.md");
+    expect(JSON.stringify(capturedLogs)).not.toContain(source);
+    expect(JSON.stringify(capturedLogs)).not.toContain("queue unavailable with resume@example.com");
     const retry = await app.getHttpAdapter().getInstance().inject(multipartRequest(source, {
       headers: bearer(session.sessionToken), filename: "secret-resume.md",
     }));
@@ -322,6 +352,8 @@ describe("authenticated workbench HTTP API", () => {
     }
     expect(document.paths["/v1/career-documents/imports"].post.requestBody.content["multipart/form-data"].schema)
       .toMatchObject({ properties: { file: { format: "binary" } } });
+    const responses = document.paths["/v1/career-documents/imports"].post.responses;
+    expect(responses["200"].content["application/json"].schema).toEqual(responses["202"].content["application/json"].schema);
   });
 
   it("refuses to bootstrap Dev Auth in production", async () => {
@@ -363,10 +395,13 @@ function multipartRequest(source: string | Uint8Array | undefined, options: {
   fieldname?: string;
   mimetype?: string;
   extraFile?: boolean;
+  fieldOnly?: boolean;
 } = {}) {
   const boundary = "career-import-test-boundary";
   const bytes = source === undefined ? new Uint8Array() : typeof source === "string" ? new TextEncoder().encode(source) : source;
-  const body = source === undefined ? Buffer.from(`--${boundary}--\r\n`) : Buffer.concat([
+  const body = source === undefined ? Buffer.from(`--${boundary}--\r\n`) : options.fieldOnly ? Buffer.from(
+    `--${boundary}\r\nContent-Disposition: form-data; name="note"\r\n\r\n${typeof source === "string" ? source : Buffer.from(source).toString("utf8")}\r\n--${boundary}--\r\n`,
+  ) : Buffer.concat([
     multipartPart(boundary, bytes, options),
     ...(options.extraFile ? [multipartPart(boundary, new TextEncoder().encode("## 技能\n- Extra"), options)] : []),
     Buffer.from(`--${boundary}--\r\n`),

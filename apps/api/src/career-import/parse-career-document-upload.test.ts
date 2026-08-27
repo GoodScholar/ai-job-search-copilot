@@ -40,6 +40,18 @@ describe("parseCareerDocumentUpload", () => {
     });
   });
 
+  it("将显示文件名限制为规范化 basename 的 255 个 Unicode code point", async () => {
+    const decomposed = `folder/ren\u0065\u0301sume.md`;
+    const accepted = await parseCareerDocumentUpload(parts(markdownPart({ filename: decomposed })));
+    expect(accepted.originalFilename).toBe("renésume.md");
+    await expect(parseCareerDocumentUpload(parts(markdownPart({ filename: `${"中".repeat(252)}.md` })))).resolves.toMatchObject({
+      originalFilename: `${"中".repeat(252)}.md`,
+    });
+    await expect(parseCareerDocumentUpload(parts(markdownPart({ filename: `${"中".repeat(253)}.md` })))).rejects.toMatchObject({
+      code: "UNSUPPORTED_CAREER_DOCUMENT_TYPE",
+    });
+  });
+
   it.each([
     ["缺少文件", parts(), "CAREER_DOCUMENT_REQUIRED"],
     ["多个文件", parts(markdownPart(), markdownPart()), "TOO_MANY_CAREER_DOCUMENTS"],

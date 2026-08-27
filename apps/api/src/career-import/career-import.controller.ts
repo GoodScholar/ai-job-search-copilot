@@ -43,6 +43,7 @@ export class CareerImportController {
     type: "object", required: ["file"], additionalProperties: false,
     properties: { file: { type: "string", format: "binary", description: "UTF-8 Markdown，最大 512 KiB" } },
   } })
+  @ZodResponse({ type: CreateCareerImportResponseDto, status: HttpStatus.OK })
   @ZodResponse({ type: CreateCareerImportResponseDto, status: HttpStatus.ACCEPTED })
   @ApiBadRequestResponse({ type: ApiProblem })
   @ApiPayloadTooLargeResponse({ type: ApiProblem })

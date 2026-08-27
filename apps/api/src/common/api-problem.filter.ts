@@ -26,6 +26,9 @@ function getProblem(exception: unknown): {
     if (code === "FST_REQ_FILE_TOO_LARGE") {
       return { status: HttpStatus.PAYLOAD_TOO_LARGE, code: "CAREER_DOCUMENT_TOO_LARGE", message: "Markdown 文件不能超过 512 KiB" };
     }
+    if (code === "FST_FIELDS_LIMIT") {
+      return { status: HttpStatus.BAD_REQUEST, code: "CAREER_DOCUMENT_REQUIRED", message: "请选择一个 Markdown 文件" };
+    }
     if (code === "FST_FILES_LIMIT" || code === "FST_PARTS_LIMIT") {
       return { status: HttpStatus.BAD_REQUEST, code: "TOO_MANY_CAREER_DOCUMENTS", message: "一次只能上传一个 Markdown 文件" };
     }

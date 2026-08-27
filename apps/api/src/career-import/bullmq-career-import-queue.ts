@@ -8,7 +8,7 @@ export class BullmqCareerImportQueue implements CareerImportQueue {
   private readonly queue: Queue;
 
   constructor(redisUrl = process.env.REDIS_URL ?? `redis://127.0.0.1:${process.env.REDIS_PORT ?? "63790"}`) {
-    this.redis = new Redis(redisUrl, { maxRetriesPerRequest: null });
+    this.redis = new Redis(redisUrl, { maxRetriesPerRequest: null, lazyConnect: true });
     this.queue = new Queue(CAREER_IMPORT_QUEUE, { connection: this.redis });
   }
 
