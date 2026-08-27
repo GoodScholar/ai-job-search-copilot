@@ -100,18 +100,27 @@ describe("career import contracts", () => {
     })).toThrow();
   });
 
+  it.each(["confirmed", "rejected"])("rejects %s confirmation status", (confirmationStatus) => {
+    expect(() => CandidateFactSchema.parse({
+      ...candidateFact("skill", { name: "TypeScript" }),
+      confirmationStatus,
+    })).toThrow();
+  });
+
   it("rejects unsupported fact types, invalid filenames, and invalid job bodies", () => {
     expect(() => CareerParserFactSchema.parse(parserFact("award", { name: "Top performer" }))).toThrow();
-    expect(() => CareerImportDetailSchema.parse({
-      importId: id(),
-      documentId: id(),
-      sourceFilename: " ",
-      status: "queued",
-      failureCode: null,
-      createdAt: now,
-      updatedAt: now,
-      facts: [],
-    })).toThrow();
+    for (const sourceFilename of [" ", "resume.pdf", "career.docx"]) {
+      expect(() => CareerImportDetailSchema.parse({
+        importId: id(),
+        documentId: id(),
+        sourceFilename,
+        status: "queued",
+        failureCode: null,
+        createdAt: now,
+        updatedAt: now,
+        facts: [],
+      })).toThrow();
+    }
     expect(() => CareerImportJobSchema.parse({ version: 1, importId: id(), userId: id(), attempt: 1 })).toThrow();
   });
 

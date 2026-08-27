@@ -4,7 +4,7 @@ export const CAREER_DOCUMENT_MAX_BYTES = 524_288;
 export const CAREER_IMPORT_QUEUE = "career-imports";
 export const CAREER_IMPORT_JOB_NAME = "parse-career-document";
 
-const filename = z.string().trim().min(1).max(255);
+const filename = z.string().trim().min(1).max(255).regex(/\.md$/i);
 const confidenceBasisPoints = z.int().min(0).max(10_000);
 
 const parserEvidence = z.object({
@@ -49,7 +49,7 @@ const candidateFact = (factType: "skill" | "certification" | "language" | "exper
   factType: z.literal(factType),
   factValue,
   confidenceBasisPoints,
-  confirmationStatus: z.enum(["pending", "confirmed", "rejected"]),
+  confirmationStatus: z.literal("pending"),
   createdAt: z.iso.datetime(),
   evidence: candidateEvidence,
 }).strict();
