@@ -22,6 +22,7 @@ import { CAREER_PRIVACY_SCAN_VERSION } from "@job-copilot/contracts/career-docum
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
 import {
   createCareerImportProcessor,
+  createCareerImportQueries,
   type CareerDocumentParser,
   type CareerDocumentStore,
 } from "@job-copilot/domain/career-imports";
@@ -146,13 +147,14 @@ describe("CareerImportConsumer", () => {
   async function createQueuedImport(
     sourceMarkdown = markdown,
     protectedOriginal?: string,
+    sourceFormat: "markdown" | "docx" = "markdown",
   ): Promise<{ importId: string; documentId: string; objectKey: string }> {
     const importId = randomUUID();
     const documentId = randomUUID();
     const bytes = new TextEncoder().encode(sourceMarkdown);
-    const objectKey = `accounts/${userId}/career-documents/${documentId}/processing.md`;
+    const objectKey = `accounts/${userId}/career-documents/${documentId}/processing.${sourceFormat === "docx" ? "txt" : "md"}`;
     await minio.putObject(minioBucket, objectKey, Buffer.from(bytes), bytes.byteLength, {
-      "content-type": "text/markdown",
+      "content-type": sourceFormat === "docx" ? "text/plain" : "text/markdown",
       "x-amz-meta-document-id": documentId,
       "x-amz-meta-byte-size": String(bytes.byteLength),
     });
@@ -161,8 +163,9 @@ describe("CareerImportConsumer", () => {
       userId,
       checksumSha256: checksum(bytes),
       objectKey,
-      originalFilename: "private-resume.md",
-      mediaType: "text/markdown",
+      originalFilename: sourceFormat === "docx" ? "private-resume.docx" : "private-resume.md",
+      mediaType: sourceFormat === "docx" ? "text/plain" : "text/markdown",
+      sourceFormat,
       byteSize: bytes.byteLength,
       privacyScanVersion: CAREER_PRIVACY_SCAN_VERSION,
     });
@@ -245,6 +248,28 @@ describe("CareerImportConsumer", () => {
     const storedFacts = await database.select({ id: candidateFacts.id }).from(candidateFacts)
       ;
     expect(storedFacts).toHaveLength(3);
+  });
+
+  it("DOCX 导入时 Worker 只读取 text/plain 脱敏处理副本，并给出可复核的段落证据", async () => {
+    const item = await createQueuedImport("## 技能\n- TypeScript", undefined, "docx");
+    const document = (await database.select({ id: careerDocuments.id, mediaType: careerDocuments.mediaType, sourceFormat: careerDocuments.sourceFormat, objectKey: careerDocuments.objectKey })
+      .from(careerDocuments)).find((record) => record.id === item.documentId);
+    expect(document).toMatchObject({ mediaType: "text/plain", sourceFormat: "docx", objectKey: item.objectKey });
+    expect(item.objectKey).toMatch(/processing\.txt$/);
+
+    startConsumer(store);
+    await enqueue(item.importId);
+    await waitFor(async () => (await database.select({ id: careerImports.id, status: careerImports.status }).from(careerImports)).find((record) => record.id === item.importId)?.status === "completed");
+
+    const detail = await createCareerImportQueries({ db: database }).get({ userId, importId: item.importId });
+    expect(detail?.facts).toHaveLength(1);
+    const persistedEvidence = (await database.select({ careerDocumentId: candidateFactEvidence.careerDocumentId, locatorType: candidateFactEvidence.locatorType })
+      .from(candidateFactEvidence)).filter((evidence) => evidence.careerDocumentId === item.documentId);
+    expect(persistedEvidence).toEqual([{ careerDocumentId: item.documentId, locatorType: "docx_paragraphs" }]);
+    expect(detail?.facts[0]?.evidence).toEqual({
+      documentId: item.documentId, sourceFilename: "private-resume.docx", locatorType: "docx_paragraphs",
+      startParagraph: 2, endParagraph: 2, excerpt: "- TypeScript",
+    });
   });
 
   it("在第一次临时读取错误后从 processing 恢复，并把真实尝试次数记为二", async () => {

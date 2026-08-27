@@ -24,13 +24,13 @@ function getProblem(exception: unknown): {
   if (typeof exception === "object" && exception !== null && "code" in exception) {
     const code = (exception as { code?: unknown }).code;
     if (code === "FST_REQ_FILE_TOO_LARGE") {
-      return { status: HttpStatus.PAYLOAD_TOO_LARGE, code: "CAREER_DOCUMENT_TOO_LARGE", message: "Markdown 文件不能超过 512 KiB" };
+      return { status: HttpStatus.PAYLOAD_TOO_LARGE, code: "CAREER_DOCUMENT_TOO_LARGE", message: "职业资料不能超过 512 KiB" };
     }
     if (code === "FST_FIELDS_LIMIT") {
-      return { status: HttpStatus.BAD_REQUEST, code: "CAREER_DOCUMENT_REQUIRED", message: "请选择一个 Markdown 文件" };
+      return { status: HttpStatus.BAD_REQUEST, code: "CAREER_DOCUMENT_REQUIRED", message: "请选择一份 Markdown 或 DOCX 职业资料" };
     }
     if (code === "FST_FILES_LIMIT" || code === "FST_PARTS_LIMIT") {
-      return { status: HttpStatus.BAD_REQUEST, code: "TOO_MANY_CAREER_DOCUMENTS", message: "一次只能上传一个 Markdown 文件" };
+      return { status: HttpStatus.BAD_REQUEST, code: "TOO_MANY_CAREER_DOCUMENTS", message: "一次只能上传一份 Markdown 或 DOCX 职业资料" };
     }
   }
   if (exception instanceof ApiException) {

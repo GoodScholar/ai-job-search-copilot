@@ -11,12 +11,12 @@ export type UploadActionState =
   | { ok: true; import: CreateCareerImportResponse };
 
 const failureMessages: Record<string, string> = {
-  CAREER_DOCUMENT_REQUIRED: "请选择一个 Markdown 文件。",
-  TOO_MANY_CAREER_DOCUMENTS: "一次只能上传一个 Markdown 文件。",
-  UNSUPPORTED_CAREER_DOCUMENT_TYPE: "仅支持 UTF-8 Markdown 文件。",
-  CAREER_DOCUMENT_TOO_LARGE: "Markdown 文件不能超过 512 KiB。",
-  CAREER_DOCUMENT_INVALID_UTF8: "Markdown 文件必须使用 UTF-8 编码。",
-  CAREER_DOCUMENT_EMPTY: "Markdown 文件不能为空。",
+  CAREER_DOCUMENT_REQUIRED: "请选择一份 Markdown 或 DOCX 职业资料。",
+  TOO_MANY_CAREER_DOCUMENTS: "一次只能上传一份 Markdown 或 DOCX 职业资料。",
+  UNSUPPORTED_CAREER_DOCUMENT_TYPE: "仅支持 UTF-8 Markdown 或 DOCX 职业资料。",
+  CAREER_DOCUMENT_TOO_LARGE: "职业资料不能超过 512 KiB。",
+  CAREER_DOCUMENT_INVALID_UTF8: "职业资料处理副本必须使用 UTF-8 编码。",
+  CAREER_DOCUMENT_EMPTY: "职业资料不能为空。",
   CAREER_PRIVACY_DECISION_REQUIRED: "请先完成隐私检查并选择处理方式。",
   PROTECTED_CAREER_DOCUMENT_REQUIRED: "选择保留原件时，必须同时提交受保护原件。",
   CAREER_PROCESSING_COPY_NOT_SANITIZED: "脱敏副本仍包含敏感信息，请检查后重试。",

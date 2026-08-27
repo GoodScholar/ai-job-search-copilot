@@ -44,9 +44,9 @@ export function WorkbenchHomeView({ home }: WorkbenchHomeViewProps) {
             <h3>下一步</h3>
             <p>{hasPendingFacts
               ? "检查候选事实的来源和证据，确认后再让它们进入求职画像。"
-              : "上传一份 Markdown 职业资料，系统会从原文中提取带证据的候选事实。"}</p>
+              : "上传一份 Markdown 或 DOCX 职业资料，系统会从原文中提取带证据的候选事实。"}</p>
           </div>
-          <Link className="workbench-ledger-link workbench-touch-target" href="/profile">{hasPendingFacts ? "查看待确认事实" : "导入 Markdown 职业资料"}</Link>
+          <Link className="workbench-ledger-link workbench-touch-target" href="/profile">{hasPendingFacts ? "查看待确认事实" : "导入职业资料"}</Link>
         </div>
         {hasPendingFacts ? (
           <p className="workbench-ledger-note">待确认事实尚未进入求职画像，不能用于推荐或材料生成。</p>

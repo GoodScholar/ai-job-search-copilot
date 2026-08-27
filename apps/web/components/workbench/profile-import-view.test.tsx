@@ -13,7 +13,7 @@ import { ProfileImportView } from "./profile-import-view";
 const importId = "d194d0ce-fc7e-45db-9425-e8ff4eaf8c08";
 const documentId = "b4d4a7c1-9a17-4a8c-8b36-0f815d042e9a";
 const queuedImport = {
-  importId, documentId, sourceFilename: "career.md", privacyStatus: "sanitized_only" as const,
+  importId, documentId, sourceFilename: "career.md", sourceFormat: "markdown" as const, privacyStatus: "sanitized_only" as const,
   status: "queued" as const, failureCode: null,
   createdAt: "2026-08-27T08:00:00.000Z", updatedAt: "2026-08-27T08:00:00.000Z", candidateFactCount: 0,
 };
@@ -59,8 +59,28 @@ const completedImport = {
   candidateFactCount: 1,
 };
 
+const conflictId = "98ff2891-df0c-4e35-a95d-44f1be3fbdb7";
+const conflictDetail = {
+  ...completedDetail,
+  conflicts: [{
+    conflictId, kind: "date" as const, status: "pending" as const, resolution: null, profileVersion: null, resolvedAt: null,
+    existingFact: {
+      factId: "85ff2891-df0c-4e35-a95d-44f1be3fbdb7", factType: "experience" as const,
+      factValue: { summary: "AI 工程师｜示例科技｜2023" }, confidenceBasisPoints: 9000, confirmationStatus: "pending" as const,
+      createdAt: "2026-08-27T08:00:01.000Z",
+      evidence: { documentId, sourceFilename: "career.md", locatorType: "markdown_lines" as const, startLine: 4, endLine: 4, excerpt: "- AI 工程师｜示例科技｜2023" },
+    },
+    incomingFact: {
+      factId: "65ff2891-df0c-4e35-a95d-44f1be3fbdb7", factType: "experience" as const,
+      factValue: { summary: "AI 工程师｜示例科技｜2024" }, confidenceBasisPoints: 9000, confirmationStatus: "pending" as const,
+      createdAt: "2026-08-27T08:00:02.000Z",
+      evidence: { documentId: "cf2824ce-04d7-45a6-a462-4b1bf11aa286", sourceFilename: "career.docx", locatorType: "docx_paragraphs" as const, startParagraph: 2, endParagraph: 3, excerpt: "AI 工程师｜示例科技｜2024" },
+    },
+  }],
+};
+
 async function prepareFile() {
-  fireEvent.change(screen.getByLabelText("选择 Markdown 职业资料"), {
+  fireEvent.change(screen.getByLabelText("选择 Markdown 或 DOCX 职业资料"), {
     target: { files: [new File(["## 技能\n- TypeScript"], "career.md", { type: "text/markdown" })] },
   });
   fireEvent.click(await screen.findByRole("checkbox", { name: /我已检查该文件/ }));
@@ -97,7 +117,7 @@ it("detects private information before upload and submits only the sanitized pro
 
   render(<ProfileImportView initialImports={[]} />);
   expect(screen.getByText(/姓名、手机号、邮箱、详细住址、证件号码、照片、二维码和社交账号/)).toBeInTheDocument();
-  await user.upload(screen.getByLabelText("选择 Markdown 职业资料"), new File([original], "career.md", { type: "text/markdown" }));
+  await user.upload(screen.getByLabelText("选择 Markdown 或 DOCX 职业资料"), new File([original], "career.md", { type: "text/markdown" }));
 
   expect(await screen.findByText("发现 3 项敏感信息")).toBeInTheDocument();
   expect(screen.getByText("张*")).toBeInTheDocument();
@@ -117,6 +137,16 @@ it("detects private information before upload and submits only the sanitized pro
   );
 });
 
+it("拒绝超限 DOCX，且不会创建上传请求", async () => {
+  const user = userEvent.setup();
+  render(<ProfileImportView initialImports={[]} />);
+  await user.upload(screen.getByLabelText("选择 Markdown 或 DOCX 职业资料"), new File(["x".repeat(524_289)], "too-large.docx", {
+    type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  }));
+  expect(await screen.findByRole("status")).toHaveTextContent("职业资料不能超过 512 KiB");
+  expect(mocks.createCareerImportAction).not.toHaveBeenCalled();
+});
+
 it("can retain a protected original without sending it as the processing copy", async () => {
   let submitted: FormData | undefined;
   mocks.createCareerImportAction.mockImplementation(async (_previous, formData: FormData) => {
@@ -133,7 +163,7 @@ it("can retain a protected original without sending it as the processing copy", 
   const original = "邮箱：secret@example.com\n## 技能\n- TypeScript";
 
   render(<ProfileImportView initialImports={[]} />);
-  await user.upload(screen.getByLabelText("选择 Markdown 职业资料"), new File([original], "career.md", { type: "text/markdown" }));
+  await user.upload(screen.getByLabelText("选择 Markdown 或 DOCX 职业资料"), new File([original], "career.md", { type: "text/markdown" }));
   await user.click(await screen.findByRole("radio", { name: "保留受保护原件（下游仍只使用脱敏副本）" }));
   await user.click(screen.getByRole("button", { name: "上传并解析" }));
 
@@ -192,8 +222,8 @@ it("uploads only Markdown files and renders quoted pending facts after polling",
     .mockResolvedValueOnce(Response.json(completedDetail));
 
   render(<ProfileImportView initialImports={[]} />);
-  const input = screen.getByLabelText("选择 Markdown 职业资料");
-  expect(input).toHaveAttribute("accept", ".md,text/markdown,text/plain");
+  const input = screen.getByLabelText("选择 Markdown 或 DOCX 职业资料");
+  expect(input).toHaveAttribute("accept", ".md,.docx,text/markdown,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document");
   await user.upload(input, new File(["## 技能\\n- TypeScript"], "career.md", { type: "text/markdown" }));
   await confirmSanitizedFile(user);
   await user.click(screen.getByRole("button", { name: "上传并解析" }));
@@ -401,7 +431,7 @@ it("maps failures to a fixed Chinese message without exposing internal values", 
   const user = userEvent.setup();
 
   render(<ProfileImportView initialImports={[]} />);
-  await user.upload(screen.getByLabelText("选择 Markdown 职业资料"), new File(["# empty"], "career.md", { type: "text/markdown" }));
+  await user.upload(screen.getByLabelText("选择 Markdown 或 DOCX 职业资料"), new File(["# empty"], "career.md", { type: "text/markdown" }));
   await confirmSanitizedFile(user);
   await user.click(screen.getByRole("button", { name: "上传并解析" }));
 
@@ -416,21 +446,21 @@ it("explains the fact-count limit and tells the candidate how to retry", () => {
     failureCode: "CAREER_IMPORT_FACT_LIMIT_EXCEEDED" as never,
   }]} />);
 
-  expect(screen.getByText("最多提取 500 条候选事实，请精简 Markdown 后重试。"))
+  expect(screen.getByText("最多提取 500 条候选事实，请精简职业资料后重试。"))
     .toBeInTheDocument();
 });
 
 it("gives a new upload failure priority over an existing queued import", async () => {
-  mocks.createCareerImportAction.mockResolvedValue({ ok: false, code: "NO_SUPPORTED_FACTS", message: "没有找到可确认的职业资料事实，请检查 Markdown 内容后重试。" });
+  mocks.createCareerImportAction.mockResolvedValue({ ok: false, code: "NO_SUPPORTED_FACTS", message: "没有找到可确认的职业资料事实，请检查职业资料内容后重试。" });
   vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ ...queuedImport, facts: [] }));
   const user = userEvent.setup();
 
   render(<ProfileImportView initialImports={[queuedImport]} />);
-  await user.upload(screen.getByLabelText("选择 Markdown 职业资料"), new File(["# empty"], "career.md", { type: "text/markdown" }));
+  await user.upload(screen.getByLabelText("选择 Markdown 或 DOCX 职业资料"), new File(["# empty"], "career.md", { type: "text/markdown" }));
   await confirmSanitizedFile(user);
   await user.click(screen.getByRole("button", { name: "上传并解析" }));
 
-  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("没有找到可确认的职业资料事实，请检查 Markdown 内容后重试。"));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("没有找到可确认的职业资料事实，请检查职业资料内容后重试。"));
   expect(screen.getByRole("status")).not.toHaveTextContent("等待解析");
 });
 
@@ -505,15 +535,15 @@ it("aborts a pending request when the view unmounts", async () => {
 it("shows uploading while retrying after an action failure", async () => {
   let resolveRetry: ((value: { ok: true; import: typeof queuedImport & { reused: boolean; detailUrl: string } }) => void) | undefined;
   mocks.createCareerImportAction
-    .mockResolvedValueOnce({ ok: false, code: "CAREER_DOCUMENT_EMPTY", message: "Markdown 文件不能为空。" })
+    .mockResolvedValueOnce({ ok: false, code: "CAREER_DOCUMENT_EMPTY", message: "职业资料不能为空。" })
     .mockImplementationOnce(() => new Promise((resolve) => { resolveRetry = resolve; }));
   const user = userEvent.setup();
 
   render(<ProfileImportView initialImports={[]} />);
-  await user.upload(screen.getByLabelText("选择 Markdown 职业资料"), new File(["# retry"], "career.md", { type: "text/markdown" }));
+  await user.upload(screen.getByLabelText("选择 Markdown 或 DOCX 职业资料"), new File(["# retry"], "career.md", { type: "text/markdown" }));
   await confirmSanitizedFile(user);
   await user.click(screen.getByRole("button", { name: "上传并解析" }));
-  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Markdown 文件不能为空。"));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("职业资料不能为空。"));
 
   await user.click(screen.getByRole("button", { name: "上传并解析" }));
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("上传中"));
@@ -592,4 +622,89 @@ it("refetches completed facts after a repeated completed upload with the same im
   await submitFile();
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   await waitFor(() => expect(screen.getByText("TypeScript")).toBeInTheDocument());
+});
+
+it.each([
+  ["采用已有", "use_existing"],
+  ["采用新导入", "use_incoming"],
+  ["两者都有效", "keep_both"],
+] as const)("展示双方 DOCX/Markdown 证据，并以当前版本提交%s", async (label, resolution) => {
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json(conflictDetail))
+    .mockResolvedValueOnce(Response.json({
+      profile: { profileId: null, version: 1, facts: [] },
+      conflict: { conflictId, kind: "date", status: "resolved", resolution, profileVersion: 1, resolvedAt: "2026-08-27T08:00:03.000Z" },
+    }));
+  const user = userEvent.setup();
+  render(<ProfileImportView initialImports={[completedImport]} initialProfile={{ profileId: null, version: 0, facts: [] }} />);
+
+  expect(await screen.findByRole("heading", { name: "职业事实冲突" })).toBeInTheDocument();
+  const conflictArticle = screen.getByText("日期不一致 · 待处理").closest("article")!;
+  expect(conflictArticle).toHaveTextContent("第 4-4 行");
+  expect(conflictArticle).toHaveTextContent("第 2-3 段");
+  expect(conflictArticle).toHaveTextContent("- AI 工程师｜示例科技｜2023");
+  expect(conflictArticle).toHaveTextContent("AI 工程师｜示例科技｜2024");
+  await user.click(screen.getByRole("button", { name: label }));
+  await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith(
+    `/api/profile/fact-conflicts/${conflictId}/resolutions`,
+    expect.objectContaining({ method: "POST", body: JSON.stringify({ expectedVersion: 0, resolution }) }),
+  ));
+  expect(await screen.findByText("日期不一致 · 已解决")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: label })).not.toBeInTheDocument();
+  expect(screen.getByText("版本 1")).toBeInTheDocument();
+});
+
+it("冲突解决返回 409 时保持待处理并提示刷新", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json(conflictDetail))
+    .mockResolvedValueOnce(new Response(null, { status: 409 }));
+  const user = userEvent.setup();
+  render(<ProfileImportView initialImports={[completedImport]} initialProfile={{ profileId: null, version: 0, facts: [] }} />);
+  await user.click(await screen.findByRole("button", { name: "采用已有" }));
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+  expect(screen.getByText("画像已在其他位置更新，请刷新后重试。")).toBeInTheDocument();
+  expect(screen.getByText("日期不一致 · 待处理")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "采用已有" })).toBeInTheDocument();
+});
+
+it("待处理职业事实冲突会隐藏双方候选事实的单独审核动作", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({
+    ...conflictDetail,
+    facts: [conflictDetail.conflicts[0].existingFact, conflictDetail.conflicts[0].incomingFact],
+  }));
+  render(<ProfileImportView initialImports={[completedImport]} initialProfile={{ profileId: null, version: 0, facts: [] }} />);
+  await screen.findByRole("heading", { name: "职业事实冲突" });
+  expect(screen.queryByRole("button", { name: /确认 AI 工程师/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /纠正 AI 工程师/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /拒绝 AI 工程师/ })).not.toBeInTheDocument();
+});
+
+it("旧导入详情也能解决关联冲突，且解决后仍不显示单事实审核动作", async () => {
+  const oldImportDetail = {
+    ...conflictDetail,
+    importId: completedImport.importId,
+    documentId,
+    sourceFilename: "career-one.docx",
+    sourceFormat: "docx" as const,
+    facts: [conflictDetail.conflicts[0].existingFact],
+  };
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json(oldImportDetail))
+    .mockResolvedValueOnce(Response.json({
+      profile: { profileId: "bde72a59-a440-4fb0-9dbd-535c8e2df1f2", version: 1, facts: [{ factId: "d4f34e3c-e720-48e2-8c91-7711e12d6266", revisionId: "ab9e32e0-6f5d-4ace-906e-54e6a55cb560", factType: "experience", factValue: { summary: "AI 工程师｜示例科技｜2023" }, source: "candidate_fact", candidateFactId: conflictDetail.conflicts[0].existingFact.factId, createdAt: "2026-08-27T08:00:03.000Z" }] },
+      conflict: { conflictId, kind: "date", status: "resolved", resolution: "use_existing", profileVersion: 1, resolvedAt: "2026-08-27T08:00:03.000Z" },
+    }));
+  const user = userEvent.setup();
+  render(<ProfileImportView initialImports={[completedImport]} initialProfile={{ profileId: null, version: 0, facts: [] }} />);
+
+  await screen.findByRole("heading", { name: "职业事实冲突" });
+  expect(screen.getByText(/已有（career.md）/)).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /确认 AI 工程师/ })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "采用已有" }));
+  await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith(
+    `/api/profile/fact-conflicts/${conflictId}/resolutions`,
+    expect.objectContaining({ body: JSON.stringify({ expectedVersion: 0, resolution: "use_existing" }) }),
+  ));
+  expect(await screen.findByText("日期不一致 · 已解决")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: /确认 AI 工程师/ })).not.toBeInTheDocument();
 });

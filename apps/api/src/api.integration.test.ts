@@ -4,13 +4,14 @@ import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fa
 import { Test } from "@nestjs/testing";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { auditEvents, careerDocuments, createDatabase, migrateDatabase, type Database } from "@job-copilot/database";
+import { auditEvents, candidateFactEvidence, candidateFacts, careerDocuments, careerFactConflicts, careerImports, createDatabase, migrateDatabase, type Database } from "@job-copilot/database";
 import type { CareerDocumentStore, CareerImportQueue } from "@job-copilot/domain/career-imports";
 import { AppModule } from "./app.module.js";
 import { configureApiApplication } from "./configure-api-application.js";
 import { DATABASE } from "./config/runtime-config.module.js";
 import { CAREER_DOCUMENT_STORE, CAREER_IMPORT_QUEUE } from "./career-import/career-import.tokens.js";
-import { PROFILE_REVIEW_COMMANDS, type ProfileReviewCommands } from "./profile-review/profile-review.tokens.js";
+import { createMinimalDocx } from "./career-import/minimal-docx.test-support.js";
+import { CAREER_FACT_CONFLICT_REVIEW_COMMANDS, PROFILE_REVIEW_COMMANDS, type ProfileReviewCommands } from "./profile-review/profile-review.tokens.js";
 import { z } from "zod";
 
 const testSecret = "test-dev-auth-shared-secret-must-be-at-least-32-characters";
@@ -30,6 +31,10 @@ describe("authenticated workbench HTTP API", () => {
   let app: NestFastifyApplication;
   let container: StartedPostgreSqlContainer;
   let database: Database;
+  let conflictResolutionResponse: unknown = undefined;
+  const conflictReviewCommands = {
+    resolve: async () => conflictResolutionResponse,
+  };
   const storedObjects = new Map<string, Uint8Array>();
   const queue: CareerImportQueue & { failNext: boolean; jobs: unknown[] } = {
     failNext: false,
@@ -71,11 +76,13 @@ describe("authenticated workbench HTTP API", () => {
     const module = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(CAREER_DOCUMENT_STORE).useValue(documentStore)
       .overrideProvider(CAREER_IMPORT_QUEUE).useValue(queue)
+      .overrideProvider(CAREER_FACT_CONFLICT_REVIEW_COMMANDS).useValue(conflictReviewCommands)
       .compile();
     app = module.createNestApplication<NestFastifyApplication>(new FastifyAdapter({ loggerInstance: testLogger as never }));
     await configureApiApplication(app);
     await app.init();
     expect(app.get(CAREER_IMPORT_QUEUE)).toBe(queue);
+    expect(app.get(CAREER_DOCUMENT_STORE)).toBe(documentStore);
   }, 60_000);
 
   afterAll(async () => {
@@ -157,6 +164,28 @@ describe("authenticated workbench HTTP API", () => {
     expect(response.json()).toEqual({
       code: "INVALID_REQUEST",
       message: "请求无效",
+      requestId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+    });
+  });
+
+  it("通过真实 HTTP 序列化器拒绝残缺的职业事实冲突解决响应", async () => {
+    const session = await createSession(app, "conflict-response-serializer");
+    conflictResolutionResponse = {
+      profile: { profileId: null, version: 1, facts: [] },
+      // 缺少 API 契约要求的 conflict，必须由 ZodSerializerInterceptor 而非 controller 直接调用拦截。
+    };
+
+    const response = await app.getHttpAdapter().getInstance().inject({
+      method: "POST",
+      url: "/v1/career-documents/fact-conflicts/98ff2891-df0c-4e35-a95d-44f1be3fbdb7/resolutions",
+      headers: bearer(session.sessionToken),
+      payload: { expectedVersion: 0, resolution: "use_existing" },
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(response.json()).toEqual({
+      code: "INTERNAL_ERROR",
+      message: "服务暂时不可用",
       requestId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
     });
   });
@@ -312,6 +341,30 @@ describe("authenticated workbench HTTP API", () => {
     expect(logs).not.toContain(protectedOriginal);
   });
 
+  it("保留含嵌入媒体的 DOCX 原件时仅保存脱敏处理副本", async () => {
+    const session = await createSession(app, "career-import-media-docx");
+    const rawDocx = await createMinimalDocx(["2024 AI 工程师"], { embeddedMedia: true });
+    const processing = "2024 AI 工程师\n[照片或二维码]";
+    const response = await app.getHttpAdapter().getInstance().inject(multipartRequest(processing, {
+      headers: bearer(session.sessionToken),
+      filename: "candidate.docx",
+      mimetype: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      privacyMode: "retain_protected_original",
+      protectedOriginal: rawDocx,
+    }));
+
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toMatchObject({
+      sourceFormat: "docx",
+      privacyStatus: "sanitized_with_protected_original",
+    });
+    const [processingEntry] = [...storedObjects.entries()].filter(([key]) => key.includes(response.json().documentId) && key.endsWith("/processing.txt"));
+    const [protectedEntry] = [...storedObjects.entries()].filter(([key, bytes]) => key.endsWith("/original.docx") && Buffer.from(bytes).equals(Buffer.from(rawDocx)));
+    expect(new TextDecoder().decode(processingEntry![1])).toBe(processing);
+    expect(processingEntry![1]).not.toEqual(rawDocx);
+    expect(protectedEntry![1]).toEqual(rawDocx);
+  });
+
   it("returns 202 for a new import that reuses an owned document without an import", async () => {
     const session = await createSession(app, "career-import-document-only");
     const source = "## 技能\n- Existing document only";
@@ -333,6 +386,45 @@ describe("authenticated workbench HTTP API", () => {
 
     expect(response.statusCode).toBe(202);
     expect(response.json()).toMatchObject({ documentId, status: "queued", reused: false });
+  });
+
+  it("在旧导入详情中返回双方职业事实冲突，供同一账户审核", async () => {
+    const session = await createSession(app, "career-import-old-conflict");
+    const oldDocumentId = randomUUID();
+    const newDocumentId = randomUUID();
+    const oldImportId = randomUUID();
+    const newImportId = randomUUID();
+    const existingFactId = randomUUID();
+    const incomingFactId = randomUUID();
+    const conflictId = randomUUID();
+    const timestamp = new Date("2026-08-28T00:00:00.000Z");
+    const factKey = (value: string) => createHash("sha256").update(value).digest("hex");
+    await database.insert(careerDocuments).values([
+      { id: oldDocumentId, userId: session.account.userId, checksumSha256: factKey(oldDocumentId), objectKey: `accounts/${session.account.userId}/career-documents/${oldDocumentId}/processing.md`, originalFilename: "career-one.md", sourceFormat: "markdown", mediaType: "text/markdown", byteSize: 20, createdAt: timestamp, updatedAt: timestamp },
+      { id: newDocumentId, userId: session.account.userId, checksumSha256: factKey(newDocumentId), objectKey: `accounts/${session.account.userId}/career-documents/${newDocumentId}/processing.txt`, originalFilename: "career-two.docx", sourceFormat: "docx", mediaType: "text/plain", byteSize: 20, createdAt: timestamp, updatedAt: timestamp },
+    ]);
+    await database.insert(careerImports).values([
+      { id: oldImportId, userId: session.account.userId, careerDocumentId: oldDocumentId, status: "completed", originatingRequestId: randomUUID(), queuedAt: timestamp, completedAt: timestamp, createdAt: timestamp, updatedAt: timestamp },
+      { id: newImportId, userId: session.account.userId, careerDocumentId: newDocumentId, status: "completed", originatingRequestId: randomUUID(), queuedAt: timestamp, completedAt: timestamp, createdAt: timestamp, updatedAt: timestamp },
+    ]);
+    await database.insert(candidateFacts).values([
+      { id: existingFactId, userId: session.account.userId, careerImportId: oldImportId, careerDocumentId: oldDocumentId, factKey: factKey(existingFactId), factType: "experience", factValue: { summary: "AI 工程师｜示例科技｜2023" }, confidenceBasisPoints: 9000, createdAt: timestamp },
+      { id: incomingFactId, userId: session.account.userId, careerImportId: newImportId, careerDocumentId: newDocumentId, factKey: factKey(incomingFactId), factType: "experience", factValue: { summary: "AI 工程师｜示例科技｜2024" }, confidenceBasisPoints: 9000, createdAt: timestamp },
+    ]);
+    await database.insert(candidateFactEvidence).values([
+      { id: randomUUID(), userId: session.account.userId, candidateFactId: existingFactId, careerDocumentId: oldDocumentId, locatorType: "markdown_lines", startLine: 2, endLine: 2, excerpt: "- AI 工程师｜示例科技｜2023", excerptSha256: factKey("old evidence"), createdAt: timestamp },
+      { id: randomUUID(), userId: session.account.userId, candidateFactId: incomingFactId, careerDocumentId: newDocumentId, locatorType: "docx_paragraphs", startLine: 2, endLine: 2, excerpt: "AI 工程师｜示例科技｜2024", excerptSha256: factKey("new evidence"), createdAt: timestamp },
+    ]);
+    await database.insert(careerFactConflicts).values({ id: conflictId, userId: session.account.userId, existingCandidateFactId: existingFactId, incomingCandidateFactId: incomingFactId, kind: "date", status: "pending", createdAt: timestamp });
+
+    const detail = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/career-documents/imports/${oldImportId}`, headers: bearer(session.sessionToken) });
+
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json()).toMatchObject({
+      importId: oldImportId,
+      sourceFilename: "career-one.md",
+      conflicts: [{ conflictId, status: "pending", existingFact: { factId: existingFactId, evidence: { sourceFilename: "career-one.md", locatorType: "markdown_lines" } }, incomingFact: { factId: incomingFactId, evidence: { sourceFilename: "career-two.docx", locatorType: "docx_paragraphs" } } }],
+    });
   });
 
   it.each([

@@ -12,7 +12,8 @@ export type CareerImportCommands = {
     requestId: string;
     bytes: Uint8Array;
     originalFilename: string;
-    mediaType: "text/markdown";
+    mediaType: "text/markdown" | "text/plain";
+    sourceFormat: "markdown" | "docx";
   }): Promise<CreateOrReuseResult>;
 };
 

@@ -30,6 +30,11 @@ const ProfileFactMaintenanceMetadataSchema = z.object({
   profileId: z.uuid(), profileFactId: z.uuid(), revisionId: z.uuid(), factType: ProfileFactTypeSchema,
   action: z.enum(["created", "revised", "removed"]), profileVersion: z.int().min(1),
 }).strict();
+const CareerFactConflictResolvedMetadataSchema = z.object({
+  conflictId: z.uuid(), existingCandidateFactId: z.uuid(), incomingCandidateFactId: z.uuid(),
+  kind: z.enum(["date", "role", "organization", "metric"]), resolution: z.enum(["use_existing", "use_incoming", "keep_both"]),
+  profileId: z.uuid(), profileVersion: z.int().min(1),
+}).strict();
 
 const AuditEventInputSchema = z.discriminatedUnion("eventType", [
   z.object({
@@ -110,6 +115,11 @@ const AuditEventInputSchema = z.discriminatedUnion("eventType", [
     occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"),
     reasonCode: z.enum(["PROFILE_FACT_CREATED", "PROFILE_FACT_REVISED", "PROFILE_FACT_REMOVED"]),
     resourceType: z.literal("profile_fact"), resourceId: z.uuid(), metadata: ProfileFactMaintenanceMetadataSchema,
+  }).strict(),
+  z.object({
+    userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("profile.career_fact_conflict_resolved"),
+    occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.literal("CAREER_FACT_CONFLICT_RESOLVED"),
+    resourceType: z.literal("career_fact_conflict"), resourceId: z.uuid(), metadata: CareerFactConflictResolvedMetadataSchema,
   }).strict(),
 ]);
 

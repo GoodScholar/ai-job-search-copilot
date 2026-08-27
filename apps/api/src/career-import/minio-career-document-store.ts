@@ -6,7 +6,7 @@ import type { CareerDocumentStore } from "@job-copilot/domain/career-imports";
 export class MinioCareerDocumentStore implements CareerDocumentStore {
   constructor(private readonly client: MinioClient, private readonly bucket = process.env.MINIO_BUCKET ?? "career-documents") {}
 
-  async put(input: { objectKey: string; bytes: Uint8Array; mediaType: "text/markdown"; documentId: string }): Promise<void> {
+  async put(input: { objectKey: string; bytes: Uint8Array; mediaType: "text/markdown" | "text/plain" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document"; documentId: string }): Promise<void> {
     await this.client.putObject(this.bucket, input.objectKey, Readable.from([input.bytes]), input.bytes.byteLength, {
       "content-type": input.mediaType,
       "x-amz-meta-document-id": input.documentId,

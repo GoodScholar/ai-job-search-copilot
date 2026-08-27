@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ne, or, sql } from "drizzle-orm";
 import {
   candidateFactEvidence,
   candidateFactDecisions,
@@ -7,6 +7,7 @@ import {
   careerDocuments,
   careerImports,
   protectedCareerDocuments,
+  careerFactConflicts,
   type Database,
 } from "@job-copilot/database";
 import {
@@ -21,9 +22,12 @@ import {
   type CareerImportStatus,
   type CareerImportSummary,
   type CareerDocumentPrivacyStatus,
+  type CareerParserFact,
 } from "@job-copilot/contracts/career-import";
 import { CAREER_PRIVACY_SCAN_VERSION } from "@job-copilot/contracts/career-document-privacy";
 import type { AuditTrail } from "./audit-trail";
+import { detectCareerFactConflict } from "./career-fact-conflicts";
+import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 
 const parserAdapter = "fake";
 const parserVersion = "fake-career-parser-v1";
@@ -31,7 +35,7 @@ const promptVersion = "career-import-prompt-v1";
 const outputSchemaVersion = "career-facts-v1";
 
 export interface CareerDocumentStore {
-  put(input: { objectKey: string; bytes: Uint8Array; mediaType: "text/markdown"; documentId: string }): Promise<void>;
+  put(input: { objectKey: string; bytes: Uint8Array; mediaType: "text/markdown" | "text/plain" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document"; documentId: string }): Promise<void>;
   get(input: { objectKey: string }): Promise<Uint8Array>;
 }
 
@@ -54,11 +58,13 @@ export type CreateOrReuseInput = {
   requestId: string;
   bytes: Uint8Array;
   originalFilename: string;
-  mediaType: "text/markdown";
+  mediaType: "text/markdown" | "text/plain";
+  sourceFormat?: "markdown" | "docx";
   privacyScanVersion?: string;
   protectedOriginal?: {
     bytes: Uint8Array;
     originalFilename: string;
+    mediaType?: "text/markdown" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   };
 };
 
@@ -90,6 +96,7 @@ type ImportRecord = {
   documentId: string;
   objectKey: string;
   originalFilename: string;
+  sourceFormat: string;
   checksumSha256: string;
   privacyScanVersion: string | null;
   status: string;
@@ -115,13 +122,15 @@ function sha256(value: Uint8Array | string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function objectKey(userId: string, documentId: string, privacyScanVersion?: string): string {
-  const filename = privacyScanVersion ? "processing.md" : "source.md";
+function objectKey(userId: string, documentId: string, privacyScanVersion?: string, sourceFormat: "markdown" | "docx" = "markdown"): string {
+  const extension = sourceFormat === "docx" ? "txt" : "md";
+  const filename = privacyScanVersion ? `processing.${extension}` : `source.${extension}`;
   return `accounts/${userId}/career-documents/${documentId}/${filename}`;
 }
 
-function protectedObjectKey(userId: string, documentId: string): string {
-  return `accounts/${userId}/protected-career-documents/${documentId}/original.md`;
+function protectedObjectKey(userId: string, documentId: string, mediaType: "text/markdown" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" = "text/markdown"): string {
+  const extension = mediaType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ? "docx" : "md";
+  return `accounts/${userId}/protected-career-documents/${documentId}/original.${extension}`;
 }
 
 function privacyStatus(input: {
@@ -160,6 +169,7 @@ function baseImport(record: {
   importId: string;
   documentId: string;
   sourceFilename: string;
+  sourceFormat: string;
   privacyStatus: CareerDocumentPrivacyStatus;
   status: string;
   failureCode: string | null;
@@ -170,6 +180,7 @@ function baseImport(record: {
     importId: record.importId,
     documentId: record.documentId,
     sourceFilename: record.sourceFilename,
+    sourceFormat: record.sourceFormat as "markdown" | "docx",
     privacyStatus: record.privacyStatus,
     status: record.status as CareerImportStatus,
     failureCode: record.failureCode as CareerImportFailureCode | null,
@@ -223,6 +234,7 @@ async function findImport(db: Database, input: { userId: string; importId: strin
     documentId: careerDocuments.id,
     objectKey: careerDocuments.objectKey,
     originalFilename: careerDocuments.originalFilename,
+    sourceFormat: careerDocuments.sourceFormat,
     checksumSha256: careerDocuments.checksumSha256,
     privacyScanVersion: careerDocuments.privacyScanVersion,
     status: careerImports.status,
@@ -248,16 +260,18 @@ export function createCareerImportCommands(deps: CommandDependencies): {
         id: careerDocuments.id,
         objectKey: careerDocuments.objectKey,
         originalFilename: careerDocuments.originalFilename,
+        sourceFormat: careerDocuments.sourceFormat,
         privacyScanVersion: careerDocuments.privacyScanVersion,
       }).from(careerDocuments).where(and(
         eq(careerDocuments.userId, input.userId),
         eq(careerDocuments.checksumSha256, checksumSha256),
+        eq(careerDocuments.sourceFormat, input.sourceFormat ?? "markdown"),
       ));
       let reused = false;
 
       if (!document) {
         const documentId = deps.id();
-        const key = objectKey(input.userId, documentId, input.privacyScanVersion);
+        const key = objectKey(input.userId, documentId, input.privacyScanVersion, input.sourceFormat ?? "markdown");
         document = await deps.db.transaction(async (transaction) => {
           const [created] = await transaction.insert(careerDocuments).values({
             id: documentId,
@@ -265,6 +279,7 @@ export function createCareerImportCommands(deps: CommandDependencies): {
             checksumSha256,
             objectKey: key,
             originalFilename: input.originalFilename,
+            sourceFormat: input.sourceFormat ?? "markdown",
             mediaType: input.mediaType,
             byteSize: input.bytes.byteLength,
             privacyScanVersion: input.privacyScanVersion,
@@ -274,6 +289,7 @@ export function createCareerImportCommands(deps: CommandDependencies): {
             id: careerDocuments.id,
             objectKey: careerDocuments.objectKey,
             originalFilename: careerDocuments.originalFilename,
+            sourceFormat: careerDocuments.sourceFormat,
             privacyScanVersion: careerDocuments.privacyScanVersion,
           });
           if (created) {
@@ -284,10 +300,12 @@ export function createCareerImportCommands(deps: CommandDependencies): {
             id: careerDocuments.id,
             objectKey: careerDocuments.objectKey,
             originalFilename: careerDocuments.originalFilename,
+            sourceFormat: careerDocuments.sourceFormat,
             privacyScanVersion: careerDocuments.privacyScanVersion,
           }).from(careerDocuments).where(and(
             eq(careerDocuments.userId, input.userId),
             eq(careerDocuments.checksumSha256, checksumSha256),
+            eq(careerDocuments.sourceFormat, input.sourceFormat ?? "markdown"),
           ));
           if (!existing) throw new Error("无法读取职业资料");
           reused = true;
@@ -322,7 +340,7 @@ export function createCareerImportCommands(deps: CommandDependencies): {
           protectedOriginalStored = true;
         } else {
           const protectedDocumentId = deps.id();
-          const key = protectedObjectKey(input.userId, protectedDocumentId);
+          const key = protectedObjectKey(input.userId, protectedDocumentId, input.protectedOriginal.mediaType ?? "text/markdown");
           protectedOriginalStored = await deps.db.transaction(async (transaction) => {
             const [created] = await transaction.insert(protectedCareerDocuments).values({
               id: protectedDocumentId,
@@ -331,7 +349,7 @@ export function createCareerImportCommands(deps: CommandDependencies): {
               checksumSha256: originalChecksum,
               objectKey: key,
               originalFilename: input.protectedOriginal!.originalFilename,
-              mediaType: input.mediaType,
+              mediaType: input.protectedOriginal!.mediaType ?? input.mediaType,
               byteSize: input.protectedOriginal!.bytes.byteLength,
               createdAt: now,
             }).onConflictDoNothing().returning({ id: protectedCareerDocuments.id });
@@ -339,7 +357,7 @@ export function createCareerImportCommands(deps: CommandDependencies): {
             await deps.documentStore.put({
               objectKey: key,
               bytes: input.protectedOriginal!.bytes,
-              mediaType: input.mediaType,
+              mediaType: input.protectedOriginal!.mediaType ?? input.mediaType,
               documentId: protectedDocumentId,
             });
             return true;
@@ -523,6 +541,7 @@ export function createCareerImportCommands(deps: CommandDependencies): {
           importId: storedImport.id,
           documentId: document.id,
           sourceFilename: document.originalFilename,
+          sourceFormat: document.sourceFormat as "markdown" | "docx",
           privacyStatus: privacyStatus({
             privacyScanVersion: document.privacyScanVersion,
             protectedOriginalStored,
@@ -548,6 +567,7 @@ export function createCareerImportQueries(deps: { db: Database }): {
         importId: careerImports.id,
         documentId: careerDocuments.id,
         sourceFilename: careerDocuments.originalFilename,
+        sourceFormat: careerDocuments.sourceFormat,
         privacyScanVersion: careerDocuments.privacyScanVersion,
         status: careerImports.status,
         failureCode: careerImports.failureCode,
@@ -575,6 +595,7 @@ export function createCareerImportQueries(deps: { db: Database }): {
         importId: careerImports.id,
         documentId: careerDocuments.id,
         sourceFilename: careerDocuments.originalFilename,
+        sourceFormat: careerDocuments.sourceFormat,
         privacyScanVersion: careerDocuments.privacyScanVersion,
         status: careerImports.status,
         failureCode: careerImports.failureCode,
@@ -616,27 +637,75 @@ export function createCareerImportQueries(deps: { db: Database }): {
           ))
           .orderBy(asc(candidateFacts.createdAt))
         : [];
+      const conflicts = record.status === "completed" ? await deps.db.select({
+        conflictId: careerFactConflicts.id, kind: careerFactConflicts.kind, status: careerFactConflicts.status,
+        existingFactId: careerFactConflicts.existingCandidateFactId, incomingFactId: careerFactConflicts.incomingCandidateFactId,
+        resolution: careerFactConflicts.resolution, profileVersion: careerFactConflicts.profileVersion, resolvedAt: careerFactConflicts.resolvedAt,
+      }).from(careerFactConflicts).where(and(eq(careerFactConflicts.userId, userId), sql`(
+        ${careerFactConflicts.incomingCandidateFactId} in (select ${candidateFacts.id} from ${candidateFacts} where ${candidateFacts.careerImportId} = ${importId})
+        or ${careerFactConflicts.existingCandidateFactId} in (select ${candidateFacts.id} from ${candidateFacts} where ${candidateFacts.careerImportId} = ${importId})
+      )`)) : [];
 
       return {
         ...baseImport({
           ...record,
           privacyStatus: persistedPrivacyStatus(record),
         }),
-        facts: facts.map((fact) => ({
+        facts: facts.map((fact) => {
+          if ((record.sourceFormat === "docx") !== (fact.locatorType === "docx_paragraphs")) throw new Error("职业资料证据定位格式不一致");
+          return {
           factId: fact.factId,
           factType: fact.factType as CareerImportDetail["facts"][number]["factType"],
           factValue: fact.factValue as CareerImportDetail["facts"][number]["factValue"],
           confidenceBasisPoints: fact.confidenceBasisPoints,
           confirmationStatus: "pending",
           createdAt: toIso(fact.createdAt),
-          evidence: {
+          evidence: fact.locatorType === "docx_paragraphs" ? {
             documentId: record.documentId,
             sourceFilename: record.sourceFilename,
-            locatorType: fact.locatorType as "markdown_lines",
+            locatorType: "docx_paragraphs" as const,
+            startParagraph: fact.startLine,
+            endParagraph: fact.endLine,
+            excerpt: fact.excerpt,
+          } : {
+            documentId: record.documentId,
+            sourceFilename: record.sourceFilename,
+            locatorType: "markdown_lines" as const,
             startLine: fact.startLine,
             endLine: fact.endLine,
             excerpt: fact.excerpt,
           },
+          };
+        }),
+        conflicts: await Promise.all(conflicts.map(async (conflict) => {
+          const loadFact = async (factId: string) => {
+            const [fact] = await deps.db.select({
+              factId: candidateFacts.id, factType: candidateFacts.factType, factValue: candidateFacts.factValue,
+              confidenceBasisPoints: candidateFacts.confidenceBasisPoints, createdAt: candidateFacts.createdAt,
+              documentId: careerDocuments.id, sourceFilename: careerDocuments.originalFilename, sourceFormat: careerDocuments.sourceFormat,
+              locatorType: candidateFactEvidence.locatorType, startLine: candidateFactEvidence.startLine, endLine: candidateFactEvidence.endLine, excerpt: candidateFactEvidence.excerpt,
+            }).from(candidateFacts).innerJoin(candidateFactEvidence, eq(candidateFactEvidence.candidateFactId, candidateFacts.id))
+              .innerJoin(careerDocuments, eq(careerDocuments.id, candidateFacts.careerDocumentId))
+              .where(and(eq(candidateFacts.userId, userId), eq(candidateFacts.id, factId)));
+            if (!fact) throw new Error("职业事实冲突引用不存在");
+            if ((fact.sourceFormat === "docx") !== (fact.locatorType === "docx_paragraphs")) throw new Error("职业资料证据定位格式不一致");
+            return {
+              factId: fact.factId, factType: fact.factType as CareerImportDetail["facts"][number]["factType"], factValue: fact.factValue as CareerImportDetail["facts"][number]["factValue"],
+              confidenceBasisPoints: fact.confidenceBasisPoints, confirmationStatus: "pending" as const, createdAt: toIso(fact.createdAt),
+              evidence: fact.locatorType === "docx_paragraphs" ? { documentId: fact.documentId, sourceFilename: fact.sourceFilename, locatorType: "docx_paragraphs" as const, startParagraph: fact.startLine, endParagraph: fact.endLine, excerpt: fact.excerpt }
+                : { documentId: fact.documentId, sourceFilename: fact.sourceFilename, locatorType: "markdown_lines" as const, startLine: fact.startLine, endLine: fact.endLine, excerpt: fact.excerpt },
+            };
+          };
+          const facts = { existingFact: await loadFact(conflict.existingFactId), incomingFact: await loadFact(conflict.incomingFactId) };
+          if (conflict.status === "pending") {
+            return { conflictId: conflict.conflictId, kind: conflict.kind as "date" | "role" | "organization" | "metric", status: "pending" as const,
+              ...facts, resolution: null, profileVersion: null, resolvedAt: null };
+          }
+          if (conflict.status === "resolved" && conflict.resolution && conflict.profileVersion && conflict.resolvedAt) {
+            return { conflictId: conflict.conflictId, kind: conflict.kind as "date" | "role" | "organization" | "metric", status: "resolved" as const,
+              ...facts, resolution: conflict.resolution as "use_existing" | "use_incoming" | "keep_both", profileVersion: conflict.profileVersion, resolvedAt: toIso(conflict.resolvedAt) };
+          }
+          throw new Error("职业事实冲突状态无效");
         })),
       };
     },
@@ -752,8 +821,14 @@ export function createCareerImportProcessor(deps: ProcessorDependencies): {
         const outputResult = CareerParserOutputSchema.safeParse(rawOutput);
         if (!outputResult.success) throw new StableImportFailure("CAREER_PARSER_OUTPUT_INVALID");
         const output = outputResult.data;
+        const markdownFacts = output.facts.filter((fact) => fact.evidence.locatorType === "markdown_lines") as Array<CareerParserFact & {
+          evidence: { locatorType: "markdown_lines"; startLine: number; endLine: number; excerpt: string };
+        }>;
+        if (markdownFacts.length !== output.facts.length) {
+          throw new StableImportFailure("CAREER_PARSER_EVIDENCE_INVALID");
+        }
         const lines = markdown.split("\n");
-        const acceptedFacts = output.facts.filter((fact) => {
+        const acceptedFacts = markdownFacts.filter((fact) => {
           if (fact.evidence.startLine < 1 || fact.evidence.startLine > fact.evidence.endLine
             || fact.evidence.endLine > lines.length) return false;
           const quoted = lines.slice(fact.evidence.startLine - 1, fact.evidence.endLine).join("\n");
@@ -774,6 +849,7 @@ export function createCareerImportProcessor(deps: ProcessorDependencies): {
             eq(careerImports.attemptCount, attemptToken),
           )).returning({ id: careerImports.id });
           if (!ownedAttempt) throw new StaleImportAttempt();
+          await acquireAccountAdvisoryLock(transaction, record.userId);
           for (const fact of acceptedFacts) {
             const candidateFactId = deps.id();
             await transaction.insert(candidateFacts).values({
@@ -799,13 +875,33 @@ export function createCareerImportProcessor(deps: ProcessorDependencies): {
               userId: record.userId,
               candidateFactId,
               careerDocumentId: record.documentId,
-              locatorType: fact.evidence.locatorType,
+              locatorType: record.sourceFormat === "docx" ? "docx_paragraphs" : fact.evidence.locatorType,
               startLine: fact.evidence.startLine,
               endLine: fact.evidence.endLine,
               excerpt: fact.evidence.excerpt,
               excerptSha256: sha256(fact.evidence.excerpt),
               createdAt: now,
             });
+            const existingFacts = await transaction.select({ id: candidateFacts.id, factType: candidateFacts.factType, factValue: candidateFacts.factValue })
+              .from(candidateFacts).where(and(
+                eq(candidateFacts.userId, record.userId), ne(candidateFacts.careerImportId, record.id), eq(candidateFacts.factType, fact.factType),
+                sql`not exists (
+                  select 1 from ${candidateFactDecisions}
+                  where ${candidateFactDecisions.userId} = ${candidateFacts.userId}
+                    and ${candidateFactDecisions.candidateFactId} = ${candidateFacts.id}
+                    and ${candidateFactDecisions.decision} in ('rejected', 'corrected')
+                )`,
+              ));
+            for (const existing of existingFacts) {
+              const conflict = detectCareerFactConflict(
+                { factType: existing.factType, factValue: existing.factValue as { summary?: string; name?: string } },
+                { factType: fact.factType, factValue: fact.factValue },
+              );
+              if (conflict) await transaction.insert(careerFactConflicts).values({
+                id: deps.id(), userId: record.userId, existingCandidateFactId: existing.id, incomingCandidateFactId: candidateFactId,
+                kind: conflict.kind, status: "pending", createdAt: now,
+              }).onConflictDoNothing();
+            }
           }
           const [completed] = await transaction.update(careerImports).set({
             status: "completed",

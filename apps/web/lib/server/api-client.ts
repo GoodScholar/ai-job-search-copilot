@@ -14,6 +14,8 @@ import {
   type CareerImportDetail,
   type CareerImportList,
   type CreateCareerImportResponse,
+  type ResolveCareerFactConflictCommand,
+  ResolveCareerFactConflictResponseSchema,
 } from "@job-copilot/contracts/career-import";
 import {
   ProfileSnapshotSchema,
@@ -252,6 +254,17 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
         throw new ApiClientError("api", problem?.message ?? "无法读取职业资料", response.status, problem ?? undefined);
       }
       return parseSuccess(response, CareerImportDetailSchema);
+    },
+
+    async resolveCareerFactConflict(sessionToken: string, conflictId: string, command: ResolveCareerFactConflictCommand) {
+      const response = await request(`/v1/career-documents/fact-conflicts/${conflictId}/resolutions`, {
+        method: "POST", headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" }, body: JSON.stringify(command),
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法解决职业事实冲突", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, ResolveCareerFactConflictResponseSchema);
     },
   };
 }

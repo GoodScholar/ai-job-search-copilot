@@ -8,11 +8,13 @@ const sessionToken = "a".repeat(43);
 const userId = "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3";
 const importId = "d194d0ce-fc7e-45db-9425-e8ff4eaf8c08";
 const documentId = "b4d4a7c1-9a17-4a8c-8b36-0f815d042e9a";
+const conflictId = "c4d4a7c1-9a17-4a8c-8b36-0f815d042e9a";
 
 const queuedImport = {
   importId,
   documentId,
   sourceFilename: "career.md",
+  sourceFormat: "markdown",
   privacyStatus: "sanitized_only",
   status: "queued",
   failureCode: null,
@@ -187,4 +189,26 @@ it("rejects malformed career import responses without exposing them as data", as
   });
 
   await expect(api.listCareerImports(sessionToken)).rejects.toMatchObject({ kind: "invalid_response" });
+});
+
+it("严格解析职业事实冲突解决的画像与服务端冲突 DTO", async () => {
+  const response = {
+    profile: { profileId: null, version: 1, facts: [] },
+    conflict: { conflictId, kind: "date", status: "resolved", resolution: "use_existing", profileVersion: 1, resolvedAt: "2026-08-27T08:00:00.000Z" },
+  };
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify(response), { status: 200 }));
+  const api = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+  await expect(api.resolveCareerFactConflict(sessionToken, conflictId, { expectedVersion: 0, resolution: "use_existing" })).resolves.toEqual(response);
+  expect(fetchImpl).toHaveBeenCalledWith(`http://127.0.0.1:3021/v1/career-documents/fact-conflicts/${conflictId}/resolutions`, expect.objectContaining({
+    method: "POST", body: JSON.stringify({ expectedVersion: 0, resolution: "use_existing" }),
+  }));
+});
+
+it("拒绝缺少服务端已持久化冲突 DTO 的严格响应", async () => {
+  const api = createApiClient({
+    apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret",
+    fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ profile: { profileId: null, version: 1, facts: [] } }), { status: 200 })),
+  });
+  await expect(api.resolveCareerFactConflict(sessionToken, conflictId, { expectedVersion: 0, resolution: "use_existing" }))
+    .rejects.toMatchObject({ kind: "invalid_response" });
 });

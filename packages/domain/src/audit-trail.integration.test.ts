@@ -166,4 +166,13 @@ describe("audit trail", () => {
       metadata: { profileId, candidateFactId, profileFactId, revisionId, factType: "skill", decision: "confirmed", profileVersion: 1, reason: "secret@example.test" } as never,
     })).rejects.toThrow(/字段白名单/);
   });
+
+  it("allows only redacted identifiers for conflict resolution audits", async () => {
+    const auditTrail = createAuditTrail({ db: database, clock: () => now });
+    await auditTrail.append({
+      userId, actorUserId: userId, eventType: "profile.career_fact_conflict_resolved", occurredAt: now, requestId: crypto.randomUUID(), outcome: "success",
+      reasonCode: "CAREER_FACT_CONFLICT_RESOLVED", resourceType: "career_fact_conflict", resourceId: crypto.randomUUID(),
+      metadata: { conflictId: crypto.randomUUID(), existingCandidateFactId: crypto.randomUUID(), incomingCandidateFactId: crypto.randomUUID(), kind: "date", resolution: "use_existing", profileId: crypto.randomUUID(), profileVersion: 1 },
+    });
+  });
 });

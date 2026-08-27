@@ -20,12 +20,13 @@ class CareerImportPathDto extends createZodDto(CareerImportPathSchema) {}
 function uploadProblem(error: CareerDocumentUploadError): ApiException {
   const status = error.code === "CAREER_DOCUMENT_TOO_LARGE" ? HttpStatus.PAYLOAD_TOO_LARGE : HttpStatus.BAD_REQUEST;
   const messages: Record<CareerDocumentUploadError["code"], string> = {
-    CAREER_DOCUMENT_REQUIRED: "请选择一个 Markdown 文件",
-    TOO_MANY_CAREER_DOCUMENTS: "一次只能上传一个 Markdown 文件",
-    UNSUPPORTED_CAREER_DOCUMENT_TYPE: "仅支持 UTF-8 Markdown 文件",
-    CAREER_DOCUMENT_TOO_LARGE: "Markdown 文件不能超过 512 KiB",
-    CAREER_DOCUMENT_INVALID_UTF8: "Markdown 文件必须使用 UTF-8 编码",
-    CAREER_DOCUMENT_EMPTY: "Markdown 文件不能为空",
+    CAREER_DOCUMENT_REQUIRED: "请选择一份 Markdown 或 DOCX 职业资料",
+    TOO_MANY_CAREER_DOCUMENTS: "一次只能上传一份 Markdown 或 DOCX 职业资料",
+    UNSUPPORTED_CAREER_DOCUMENT_TYPE: "仅支持 UTF-8 Markdown 或 DOCX 职业资料",
+    CAREER_DOCUMENT_TOO_LARGE: "职业资料不能超过 512 KiB",
+    CAREER_DOCUMENT_INVALID_UTF8: "职业资料处理副本必须使用 UTF-8 编码",
+    CAREER_DOCUMENT_EMPTY: "职业资料不能为空",
+    CAREER_DOCUMENT_INVALID_DOCX: "DOCX 文件无法解析，请重新选择文件",
     CAREER_PRIVACY_DECISION_REQUIRED: "请先确认职业资料的隐私处理方式",
     PROTECTED_CAREER_DOCUMENT_REQUIRED: "保留原件时必须同时提供受保护原件",
     CAREER_PROCESSING_COPY_NOT_SANITIZED: "处理副本仍包含可识别的敏感信息",
@@ -48,7 +49,7 @@ export class CareerImportController {
   @ApiBody({ schema: {
     type: "object", required: ["file", "privacyMode"], additionalProperties: false,
     properties: {
-      file: { type: "string", format: "binary", description: "已脱敏的 UTF-8 Markdown 处理副本，最大 512 KiB" },
+      file: { type: "string", format: "binary", description: "已脱敏的 UTF-8 职业资料处理副本，最大 512 KiB" },
       privacyMode: { type: "string", enum: [...CAREER_PRIVACY_MODES] },
       protectedOriginal: { type: "string", format: "binary", description: "仅在保留受保护原件时上传，最大 512 KiB" },
     },

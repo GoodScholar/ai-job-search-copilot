@@ -2,6 +2,7 @@ import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
 import type { Multipart, MultipartFile, MultipartValue } from "@fastify/multipart";
 import { parseCareerDocumentUpload } from "./parse-career-document-upload.js";
+import { createMinimalDocx } from "./minimal-docx.test-support.js";
 
 function markdownPart(input: {
   filename?: string;
@@ -43,6 +44,12 @@ function sanitizedParts(...items: MultipartFile[]): AsyncIterable<Multipart> {
 }
 
 describe("parseCareerDocumentUpload", () => {
+  it("接受浏览器生成的 DOCX 脱敏段落处理副本", async () => {
+    await expect(parseCareerDocumentUpload(sanitizedParts(markdownPart({
+      filename: "resume.docx", mimetype: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      bytes: new TextEncoder().encode("## 技能\n- TypeScript"),
+    })))).resolves.toMatchObject({ originalFilename: "resume.docx", mediaType: "text/plain", sourceFormat: "docx" });
+  });
   it.each(["text/markdown", "text/plain", "", "application/octet-stream"])("接受允许的 MIME %s", async (mimetype) => {
     await expect(parseCareerDocumentUpload(sanitizedParts(markdownPart({ mimetype })))).resolves.toMatchObject({
       originalFilename: "resume.md",
@@ -114,6 +121,88 @@ describe("parseCareerDocumentUpload", () => {
         fieldname: "protectedOriginal",
         bytes: new TextEncoder().encode("姓名：张三\n邮箱：secret@example.com\n- TypeScript"),
       }),
+    ))).rejects.toMatchObject({ code: "CAREER_PROCESSING_COPY_MISMATCH" });
+  });
+
+  it("复验运行时生成的 DOCX 原件与浏览器脱敏段落处理副本严格一致", async () => {
+    const originalBytes = await createMinimalDocx(["## 工作经历", "- AI 工程师｜示例科技｜2024"]);
+    const processing = markdownPart({
+      filename: "resume.docx",
+      mimetype: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      bytes: new TextEncoder().encode("## 工作经历\n- AI 工程师｜示例科技｜2024"),
+    });
+    const protectedOriginal = markdownPart({
+      fieldname: "protectedOriginal",
+      filename: "resume.docx",
+      mimetype: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      bytes: originalBytes,
+    });
+
+    await expect(parseCareerDocumentUpload(parts(
+      privacyMode("retain_protected_original"), processing, protectedOriginal,
+    ))).resolves.toMatchObject({
+      mediaType: "text/plain",
+      sourceFormat: "docx",
+      protectedOriginal: {
+        mediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        originalFilename: "resume.docx",
+      },
+    });
+  });
+
+  it.each([
+    ["含文本和嵌入媒体", ["## 技能", "- TypeScript"], "## 技能\n- TypeScript\n[照片或二维码]"],
+    ["纯嵌入媒体", [], "[照片或二维码]"],
+  ])("保留原件时接受%s DOCX 的浏览器脱敏处理副本", async (_label, paragraphs, processingText) => {
+    const originalBytes = await createMinimalDocx(paragraphs, { embeddedMedia: true });
+    const parsed = await parseCareerDocumentUpload(parts(
+      privacyMode("retain_protected_original"),
+      markdownPart({ filename: "resume.docx", mimetype: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", bytes: new TextEncoder().encode(processingText) }),
+      markdownPart({ fieldname: "protectedOriginal", filename: "resume.docx", mimetype: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", bytes: originalBytes }),
+    ));
+
+    expect(parsed).toMatchObject({ sourceFormat: "docx", mediaType: "text/plain", protectedOriginal: { mediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" } });
+    expect(new TextDecoder().decode(parsed.bytes)).toBe(processingText);
+    expect(parsed.protectedOriginal?.bytes).toEqual(originalBytes);
+    expect(new TextDecoder().decode(parsed.bytes)).not.toContain("private-photo.png");
+  });
+
+  it.each(["损坏 DOCX", "空 DOCX", "超限 DOCX"])("在写入前拒绝%s原件", async (label) => {
+    const originalBytes = label === "损坏 DOCX"
+      ? new Uint8Array([0x50, 0x4b, 0x03, 0x04])
+      : label === "空 DOCX"
+        ? await createMinimalDocx([])
+        : new Uint8Array(524_289);
+    await expect(parseCareerDocumentUpload(parts(
+      privacyMode("retain_protected_original"),
+      markdownPart({ filename: "resume.docx", mimetype: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", bytes: new TextEncoder().encode("处理副本") }),
+      markdownPart({ fieldname: "protectedOriginal", filename: "resume.docx", mimetype: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", bytes: originalBytes }),
+    ))).rejects.toMatchObject({ code: label === "超限 DOCX" ? "CAREER_DOCUMENT_TOO_LARGE" : "CAREER_DOCUMENT_INVALID_DOCX" });
+  });
+
+  it.each(["oversized_entry", "entry_fanout"] as const)("在 Mammoth 前拒绝超出解压预算的 DOCX %s", async (unsafeArchive) => {
+    const originalBytes = await createMinimalDocx(["## 技能", "- TypeScript"], { unsafeArchive });
+    expect(originalBytes.byteLength).toBeLessThan(524_288);
+    await expect(parseCareerDocumentUpload(parts(
+      privacyMode("retain_protected_original"),
+      markdownPart({ filename: "resume.docx", mimetype: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", bytes: new TextEncoder().encode("## 技能\n- TypeScript") }),
+      markdownPart({ fieldname: "protectedOriginal", filename: "resume.docx", mimetype: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", bytes: originalBytes }),
+    ))).rejects.toMatchObject({ code: "CAREER_DOCUMENT_INVALID_DOCX" });
+  });
+
+  it("拒绝与 DOCX 原件不一致的处理副本", async () => {
+    await expect(parseCareerDocumentUpload(parts(
+      privacyMode("retain_protected_original"),
+      markdownPart({ filename: "resume.docx", mimetype: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", bytes: new TextEncoder().encode("## 工作经历\n- Rust 工程师｜示例科技｜2024") }),
+      markdownPart({ fieldname: "protectedOriginal", filename: "resume.docx", mimetype: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", bytes: await createMinimalDocx(["## 工作经历", "- AI 工程师｜示例科技｜2024"]) }),
+    ))).rejects.toMatchObject({ code: "CAREER_PROCESSING_COPY_MISMATCH" });
+  });
+
+  it("拒绝处理副本与受保护原件的来源格式不一致", async () => {
+    await expect(parseCareerDocumentUpload(parts(
+      privacyMode("retain_protected_original"),
+      markdownPart({ filename: "resume.docx", mimetype: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", bytes: new TextEncoder().encode("## 技能\n- TypeScript") }),
+      markdownPart({ fieldname: "protectedOriginal", filename: "resume.md", mimetype: "text/markdown", bytes: new TextEncoder().encode("## 技能\n- TypeScript") }),
     ))).rejects.toMatchObject({ code: "CAREER_PROCESSING_COPY_MISMATCH" });
   });
 

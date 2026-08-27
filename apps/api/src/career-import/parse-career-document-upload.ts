@@ -3,6 +3,8 @@ import type { Multipart, MultipartFile } from "@fastify/multipart";
 import { CAREER_DOCUMENT_MAX_BYTES } from "@job-copilot/contracts/career-import";
 import {
   CAREER_PRIVACY_SCAN_VERSION,
+  DOCX_EMBEDDED_MEDIA_MARKER,
+  isDocxArchiveWithinBudget,
   inspectCareerDocumentPrivacy,
   isCareerPrivacyMode,
   type CareerPrivacyMode,
@@ -16,6 +18,7 @@ export class CareerDocumentUploadError extends Error {
     | "CAREER_DOCUMENT_TOO_LARGE"
     | "CAREER_DOCUMENT_INVALID_UTF8"
     | "CAREER_DOCUMENT_EMPTY"
+    | "CAREER_DOCUMENT_INVALID_DOCX"
     | "CAREER_PRIVACY_DECISION_REQUIRED"
     | "PROTECTED_CAREER_DOCUMENT_REQUIRED"
     | "CAREER_PROCESSING_COPY_NOT_SANITIZED"
@@ -27,11 +30,13 @@ export class CareerDocumentUploadError extends Error {
 export type ParsedCareerDocumentUpload = {
   bytes: Uint8Array;
   originalFilename: string;
-  mediaType: "text/markdown";
+  mediaType: "text/markdown" | "text/plain";
+  sourceFormat: "markdown" | "docx";
   privacyScanVersion: typeof CAREER_PRIVACY_SCAN_VERSION;
   protectedOriginal?: {
     bytes: Uint8Array;
     originalFilename: string;
+    mediaType: "text/markdown" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   };
 };
 
@@ -40,17 +45,38 @@ type ParsedMarkdownFile = {
   originalFilename: string;
   text: string;
 };
+type ParsedProtectedOriginal = { bytes: Uint8Array; originalFilename: string; mediaType: CareerDocumentMediaType; canonicalText: string };
+
+type CareerDocumentMediaType = "text/markdown" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+type ZipEntryWithBudgetMetadata = { dir: boolean; name: string; _data?: { compressedSize?: number; uncompressedSize?: number } };
+
+function hasSafeDocxArchiveBudget(entries: readonly ZipEntryWithBudgetMetadata[], archiveByteLength: number): boolean {
+  return isDocxArchiveWithinBudget(entries.map((entry) => ({
+    dir: entry.dir,
+    compressedSize: entry._data?.compressedSize ?? -1,
+    uncompressedSize: entry._data?.uncompressedSize ?? -1,
+  })), archiveByteLength);
+}
 
 function normalizedFilename(filename: string | undefined): string {
   const value = basename((filename ?? "").replace(/\\/g, "/")).normalize("NFC");
-  if (!value || Array.from(value).length > 255 || !/\.md$/i.test(value)) {
+  if (!value || Array.from(value).length > 255 || !/\.(?:md|docx)$/i.test(value)) {
     throw new CareerDocumentUploadError("UNSUPPORTED_CAREER_DOCUMENT_TYPE");
   }
   return value;
 }
 
-function supportedMimeType(mimetype: string): boolean {
-  return ["text/markdown", "text/plain", "", "application/octet-stream"].includes(mimetype.toLowerCase());
+function mediaTypeFor(filename: string): CareerDocumentMediaType {
+  return /\.docx$/i.test(filename)
+    ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    : "text/markdown";
+}
+
+function supportedMimeType(mimetype: string, mediaType: CareerDocumentMediaType): boolean {
+  const normalized = mimetype.toLowerCase();
+  return mediaType === "text/markdown"
+    ? ["text/markdown", "text/plain", "", "application/octet-stream"].includes(normalized)
+    : ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "", "application/octet-stream"].includes(normalized);
 }
 
 async function readLimitedFile(file: MultipartFile): Promise<Uint8Array> {
@@ -82,7 +108,8 @@ async function discardFile(file: MultipartFile): Promise<void> {
 async function parseMarkdownFile(file: MultipartFile): Promise<ParsedMarkdownFile> {
   const bytes = await readLimitedFile(file);
   const originalFilename = normalizedFilename(file.filename);
-  if (!supportedMimeType(file.mimetype)) {
+  const mediaType = mediaTypeFor(originalFilename);
+  if (!supportedMimeType(file.mimetype, mediaType)) {
     throw new CareerDocumentUploadError("UNSUPPORTED_CAREER_DOCUMENT_TYPE");
   }
   let text: string;
@@ -97,9 +124,42 @@ async function parseMarkdownFile(file: MultipartFile): Promise<ParsedMarkdownFil
   return { bytes, originalFilename, text };
 }
 
+async function canonicalDocxText(bytes: Uint8Array): Promise<string> {
+  try {
+    const JSZip = (await import("jszip")).default;
+    const archive = await JSZip.loadAsync(bytes);
+    const entries = Object.values(archive.files) as ZipEntryWithBudgetMetadata[];
+    if (!hasSafeDocxArchiveBudget(entries, bytes.byteLength)) throw new Error("unsafe DOCX archive budget");
+    const hasEmbeddedMedia = entries.some((entry) => entry.name.startsWith("word/media/") && !entry.dir);
+    const mammoth = await import("mammoth");
+    const result = await mammoth.extractRawText({ buffer: Buffer.from(bytes) });
+    const paragraphs = result.value.replace(/\r\n?/g, "\n").split("\n")
+      .map((paragraph) => paragraph.trimEnd()).filter((paragraph) => paragraph.trim().length > 0);
+    if (hasEmbeddedMedia) paragraphs.push(DOCX_EMBEDDED_MEDIA_MARKER);
+    const canonical = paragraphs.join("\n").trim();
+    if (!canonical) throw new Error("empty");
+    return canonical;
+  } catch {
+    throw new CareerDocumentUploadError("CAREER_DOCUMENT_INVALID_DOCX");
+  }
+}
+
+async function parseProtectedOriginal(file: MultipartFile): Promise<ParsedProtectedOriginal> {
+  const bytes = await readLimitedFile(file);
+  const originalFilename = normalizedFilename(file.filename);
+  const mediaType = mediaTypeFor(originalFilename);
+  if (!supportedMimeType(file.mimetype, mediaType)) throw new CareerDocumentUploadError("UNSUPPORTED_CAREER_DOCUMENT_TYPE");
+  let canonicalText: string;
+  if (mediaType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") canonicalText = await canonicalDocxText(bytes);
+  else {
+    try { canonicalText = new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { throw new CareerDocumentUploadError("CAREER_DOCUMENT_INVALID_UTF8"); }
+  }
+  return { bytes, originalFilename, mediaType, canonicalText };
+}
+
 export async function parseCareerDocumentUpload(parts: AsyncIterable<Multipart>): Promise<ParsedCareerDocumentUpload> {
   let processingFile: ParsedMarkdownFile | undefined;
-  let protectedOriginalFile: ParsedMarkdownFile | undefined;
+  let protectedOriginalFile: ParsedProtectedOriginal | undefined;
   let mode: CareerPrivacyMode | undefined;
   let failure: CareerDocumentUploadError | undefined;
   for await (const part of parts) {
@@ -126,9 +186,8 @@ export async function parseCareerDocumentUpload(parts: AsyncIterable<Multipart>)
       continue;
     }
     try {
-      const parsed = await parseMarkdownFile(part);
-      if (part.fieldname === "file") processingFile = parsed;
-      else protectedOriginalFile = parsed;
+      if (part.fieldname === "file") processingFile = await parseMarkdownFile(part);
+      else protectedOriginalFile = await parseProtectedOriginal(part);
     } catch (error) {
       failure ??= error instanceof CareerDocumentUploadError
         ? error
@@ -145,8 +204,13 @@ export async function parseCareerDocumentUpload(parts: AsyncIterable<Multipart>)
 
   if (mode === "retain_protected_original") {
     if (!protectedOriginalFile) throw new CareerDocumentUploadError("PROTECTED_CAREER_DOCUMENT_REQUIRED");
-    const originalInspection = inspectCareerDocumentPrivacy(protectedOriginalFile.text);
-    if (originalInspection.sanitizedMarkdown !== processingFile.text) {
+    const processingSourceFormat = /\.docx$/i.test(processingFile.originalFilename) ? "docx" : "markdown";
+    const protectedSourceFormat = protectedOriginalFile.mediaType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ? "docx" : "markdown";
+    if (processingSourceFormat !== protectedSourceFormat) {
+      throw new CareerDocumentUploadError("CAREER_PROCESSING_COPY_MISMATCH");
+    }
+    const originalInspection = inspectCareerDocumentPrivacy(protectedOriginalFile.canonicalText);
+    if (originalInspection.sanitizedMarkdown.trim() !== processingFile.text.trim()) {
       throw new CareerDocumentUploadError("CAREER_PROCESSING_COPY_MISMATCH");
     }
   } else if (protectedOriginalFile) {
@@ -156,10 +220,11 @@ export async function parseCareerDocumentUpload(parts: AsyncIterable<Multipart>)
   return {
     bytes: processingFile.bytes,
     originalFilename: processingFile.originalFilename,
-    mediaType: "text/markdown",
+    mediaType: /\.docx$/i.test(processingFile.originalFilename) ? "text/plain" : "text/markdown",
+    sourceFormat: /\.docx$/i.test(processingFile.originalFilename) ? "docx" : "markdown",
     privacyScanVersion: CAREER_PRIVACY_SCAN_VERSION,
     protectedOriginal: protectedOriginalFile
-      ? { bytes: protectedOriginalFile.bytes, originalFilename: protectedOriginalFile.originalFilename }
+      ? { bytes: protectedOriginalFile.bytes, originalFilename: protectedOriginalFile.originalFilename, mediaType: protectedOriginalFile.mediaType }
       : undefined,
   };
 }

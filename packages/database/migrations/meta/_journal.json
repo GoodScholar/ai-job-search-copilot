@@ -5,14 +5,14 @@
     {
       "idx": 0,
       "version": "7",
-      "when": 1788100000000,
+      "when": 1787800000000,
       "tag": "0000_identity_audit",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "7",
-      "when": 1788100010000,
+      "when": 1787800010000,
       "tag": "0001_allow_unattributed_audit_events",
       "breakpoints": true
     },
@@ -49,6 +49,27 @@
       "version": "7",
       "when": 1787833421577,
       "tag": "0006_profile_fact_revision_versions",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1787848000000,
+      "tag": "0007_docx_career_documents",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787848500000,
+      "tag": "0008_career_fact_conflicts",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1787849004209,
+      "tag": "0009_fat_human_fly",
       "breakpoints": true
     }
   ]

@@ -1,7 +1,8 @@
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, or, sql } from "drizzle-orm";
 import {
   candidateFactDecisions,
   candidateFacts,
+  careerFactConflicts,
   jobProfiles,
   profileFactRevisions,
   profileFacts,
@@ -19,12 +20,14 @@ import {
   type ReviseProfileFactCommand,
 } from "@job-copilot/contracts/profile-review";
 import type { AuditTrail } from "./audit-trail";
+import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 
 export class ProfileReviewError extends Error {
   constructor(public readonly code:
     | "PROFILE_VERSION_CONFLICT"
     | "CANDIDATE_FACT_NOT_FOUND"
     | "CANDIDATE_FACT_ALREADY_DECIDED"
+    | "CANDIDATE_FACT_CONFLICT_PENDING"
     | "PROFILE_FACT_NOT_FOUND"
     | "PROFILE_FACT_VALUE_INVALID"
   ) {
@@ -120,6 +123,19 @@ export function createProfileReviewCommands(deps: Dependencies): {
   return {
     async decideCandidateFact(input): Promise<ProfileSnapshot> {
       await deps.db.transaction(async (transaction) => {
+        await acquireAccountAdvisoryLock(transaction, input.userId);
+        const [pendingConflict] = await transaction.select({ id: careerFactConflicts.id })
+          .from(careerFactConflicts)
+          .where(and(
+            eq(careerFactConflicts.userId, input.userId),
+            eq(careerFactConflicts.status, "pending"),
+            or(
+              eq(careerFactConflicts.existingCandidateFactId, input.candidateFactId),
+              eq(careerFactConflicts.incomingCandidateFactId, input.candidateFactId),
+            ),
+          ))
+          .limit(1);
+        if (pendingConflict) throw new ProfileReviewError("CANDIDATE_FACT_CONFLICT_PENDING");
         const profile = await advanceProfile({
           db: transaction, userId: input.userId, expectedVersion: input.command.expectedVersion,
           id: deps.id, now: deps.clock(),

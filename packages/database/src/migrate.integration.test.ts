@@ -1,5 +1,10 @@
+import { cp, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { sql } from "drizzle-orm";
+import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDatabase, type Database } from "./client";
 import { migrateDatabase } from "./migrate";
@@ -134,7 +139,7 @@ describe("database migrations", () => {
 
     const constraints = await migratedDatabase.execute(sql`
       select conname from pg_constraint where conname in (
-        'career_documents_user_checksum_unique', 'career_imports_document_versions_unique',
+        'career_documents_user_checksum_source_format_unique', 'career_imports_document_versions_unique',
         'candidate_facts_import_fact_key_unique', 'candidate_fact_evidence_fact_unique'
       ) order by conname
     `);
@@ -156,6 +161,83 @@ describe("database migrations", () => {
       { table_name: "profile_fact_revisions", column_name: "profile_version", data_type: "integer" },
     ]));
   });
+
+  it("migrates owner-bound career fact conflicts with resolution consistency", async () => {
+    expect(await listPublicTables(migratedDatabase)).toContain("career_fact_conflicts");
+    const constraints = await migratedDatabase.execute(sql`
+      select conname from pg_constraint where conname in (
+        'career_fact_conflicts_pair_unique', 'career_fact_conflicts_distinct_pair_check',
+        'career_fact_conflicts_resolution_state_check', 'career_fact_conflicts_resolution_check',
+        'career_fact_conflicts_profile_version_positive'
+      ) order by conname
+    `);
+    expect(constraints).toHaveLength(5);
+  });
+
+  it("upgrades a 0006 database through the DOCX and conflict migrations", async () => {
+    const upgradeContainer = await new PostgreSqlContainer("postgres:17-alpine").start();
+    const upgradeDatabase = createDatabase(upgradeContainer.getConnectionUri());
+    const migrationSource = fileURLToPath(new URL("../migrations", import.meta.url));
+    const migrationsFolder = await mkdtemp(join(tmpdir(), "job-copilot-migrations-"));
+    try {
+      await cp(migrationSource, migrationsFolder, { recursive: true });
+      await Promise.all([
+        unlink(join(migrationsFolder, "0007_docx_career_documents.sql")),
+        unlink(join(migrationsFolder, "0008_career_fact_conflicts.sql")),
+        unlink(join(migrationsFolder, "0009_fat_human_fly.sql")),
+      ]);
+      const journalPath = join(migrationsFolder, "meta", "_journal.json");
+      const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ when: number }> };
+      journal.entries = journal.entries.slice(0, 7);
+      journal.entries[0]!.when = 1788100000000;
+      journal.entries[1]!.when = 1788100010000;
+      await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
+      await migrate(upgradeDatabase, { migrationsFolder });
+
+      await migrateDatabase(upgradeDatabase);
+      const appliedMigrations = await upgradeDatabase.execute(sql`select created_at from drizzle.__drizzle_migrations order by created_at`);
+      expect(appliedMigrations).toEqual(expect.arrayContaining([
+        expect.objectContaining({ created_at: "1787848000000" }),
+        expect.objectContaining({ created_at: "1787848500000" }),
+        expect.objectContaining({ created_at: "1787849004209" }),
+      ]));
+      expect(appliedMigrations).toEqual(expect.arrayContaining([
+        expect.objectContaining({ created_at: "1787800000000" }),
+        expect.objectContaining({ created_at: "1787800010000" }),
+      ]));
+      const unrelatedLegacyHash = "f".repeat(64);
+      await upgradeDatabase.execute(sql`
+        insert into drizzle.__drizzle_migrations (hash, created_at)
+        values (${unrelatedLegacyHash}, 1788100000000)
+      `);
+      await migrateDatabase(upgradeDatabase);
+      const [unrelatedLedgerRow] = await upgradeDatabase.execute(sql`
+        select created_at from drizzle.__drizzle_migrations where hash = ${unrelatedLegacyHash}
+      `) as unknown as Array<{ created_at: string }>;
+      expect(unrelatedLedgerRow).toEqual({ created_at: "1788100000000" });
+      expect(await listPublicTables(upgradeDatabase)).toEqual(expect.arrayContaining([
+        "career_fact_conflicts",
+      ]));
+      expect(await listColumns(upgradeDatabase)).toEqual(expect.arrayContaining([
+        { table_name: "career_documents", column_name: "source_format", data_type: "character varying" },
+      ]));
+      const accountId = "ca10c84f-607a-4a7f-ac4c-63e214dcf1e0";
+      const documentId = "77ccf17d-1b03-4a42-a979-22cce5ad9c5e";
+      await upgradeDatabase.execute(sql`insert into job_accounts (id) values (${accountId})`);
+      await upgradeDatabase.execute(sql`
+        insert into career_documents (id, user_id, checksum_sha256, object_key, original_filename, source_format, media_type, byte_size)
+        values (${documentId}, ${accountId}, ${"a".repeat(64)}, 'accounts/test/processing.txt', 'resume.docx', 'docx', 'text/plain', 1)
+      `);
+      await expect(upgradeDatabase.execute(sql`
+        insert into protected_career_documents (id, user_id, processing_document_id, checksum_sha256, object_key, original_filename, media_type, byte_size)
+        values ('64b07f8d-d5c6-44a0-bbde-0f66a4cfbf6b', ${accountId}, ${documentId}, ${"b".repeat(64)}, 'accounts/test/original.docx', 'resume.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 1)
+      `)).resolves.toBeDefined();
+    } finally {
+      await upgradeDatabase.$client.end();
+      await upgradeContainer.stop();
+      await rm(migrationsFolder, { recursive: true, force: true });
+    }
+  }, 60_000);
 
   it("enforces career import ownership and domain bounds", async () => {
     const accountId = "a4336773-4ece-464c-a4a9-4e884e461c55";
@@ -275,6 +357,23 @@ describe("database migrations", () => {
         '{"name":"TypeScript"}'::jsonb, 10000, 'pending'
       )
     `);
+    const conflictPeerId = "f2b19e57-21a8-4959-b3c7-55a0c2281849";
+    await migratedDatabase.execute(sql`
+      insert into candidate_facts (id, user_id, career_import_id, career_document_id, fact_key, fact_type, fact_value, confidence_basis_points, confirmation_status)
+      values (${conflictPeerId}, ${accountId}, ${careerImportId}, ${documentId}, ${"1".repeat(64)}, 'skill', '{"name":"Rust"}'::jsonb, 10000, 'pending')
+    `);
+    for (const [id, status, resolution, profileVersion, resolvedAt] of [
+      ["47b19616-1c62-4b72-a2bf-5894b8b8a1de", "pending", "use_existing", null, null],
+      ["00a1bbf1-cc4c-4cf3-9e2a-b722b4619a2a", "pending", null, 1, null],
+      ["6d518015-72ed-4292-a619-df8d8a5c0868", "resolved", null, null, null],
+      ["08fe381a-6c2a-458a-a3b2-36c73ae4b0a8", "resolved", "use_existing", 0, "now()"],
+      ["89a434b8-5767-4fa1-8ea9-67b25b61c6d1", "resolved", "invalid", 1, "now()"],
+    ] as const) {
+      await expect(migratedDatabase.execute(sql`
+        insert into career_fact_conflicts (id, user_id, existing_candidate_fact_id, incoming_candidate_fact_id, kind, status, resolution, profile_version, resolved_at)
+        values (${id}, ${accountId}, ${factId}, ${conflictPeerId}, 'role', ${status}, ${resolution}, ${profileVersion}, ${resolvedAt === "now()" ? sql`now()` : null})
+      `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    }
     await expect(migratedDatabase.execute(sql`
       insert into candidate_facts (
         id, user_id, career_import_id, career_document_id, fact_key, fact_type, fact_value,
@@ -332,5 +431,9 @@ describe("database migrations", () => {
         'markdown_lines', 1, 1, '- Cross-account', ${"7".repeat(64)}
       )
     `)).rejects.toMatchObject({ cause: { code: "23503" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into career_documents (id, user_id, checksum_sha256, object_key, original_filename, source_format, media_type, byte_size)
+      values ('7bc645bf-c1d9-4e1e-8ef8-a74c1389dbfe', ${accountId}, ${"6".repeat(64)}, 'accounts/x/processing.txt', 'resume.docx', 'docx', 'text/markdown', 1)
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
   });
 });

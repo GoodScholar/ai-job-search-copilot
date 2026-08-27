@@ -45,16 +45,19 @@ export const careerDocuments = pgTable("career_documents", {
   checksumSha256: varchar("checksum_sha256", { length: 64 }).notNull(),
   objectKey: varchar("object_key", { length: 512 }).notNull(),
   originalFilename: varchar("original_filename", { length: 255 }).notNull(),
+  sourceFormat: varchar("source_format", { length: 16 }).notNull().default("markdown"),
   mediaType: varchar("media_type", { length: 32 }).notNull(),
   byteSize: integer("byte_size").notNull(),
   privacyScanVersion: varchar("privacy_scan_version", { length: 64 }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
-  unique("career_documents_user_checksum_unique").on(table.userId, table.checksumSha256),
+  unique("career_documents_user_checksum_source_format_unique").on(table.userId, table.checksumSha256, table.sourceFormat),
   unique("career_documents_user_id_id_unique").on(table.userId, table.id),
   check("career_documents_checksum_sha256_format", sql`${table.checksumSha256} ~ '^[0-9a-f]{64}$'`),
-  check("career_documents_media_type_check", sql`${table.mediaType} = 'text/markdown'`),
+  check("career_documents_media_type_check", sql`${table.mediaType} in ('text/markdown', 'text/plain')`),
+  check("career_documents_source_format_check", sql`${table.sourceFormat} in ('markdown', 'docx')`),
+  check("career_documents_source_format_media_type_check", sql`(${table.sourceFormat} = 'markdown' and ${table.mediaType} = 'text/markdown') or (${table.sourceFormat} = 'docx' and ${table.mediaType} = 'text/plain')`),
   check("career_documents_byte_size_range", sql`${table.byteSize} between 0 and 524288`),
 ]);
 
@@ -65,7 +68,7 @@ export const protectedCareerDocuments = pgTable("protected_career_documents", {
   checksumSha256: varchar("checksum_sha256", { length: 64 }).notNull(),
   objectKey: varchar("object_key", { length: 512 }).notNull(),
   originalFilename: varchar("original_filename", { length: 255 }).notNull(),
-  mediaType: varchar("media_type", { length: 32 }).notNull(),
+  mediaType: varchar("media_type", { length: 128 }).notNull(),
   byteSize: integer("byte_size").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
@@ -78,7 +81,7 @@ export const protectedCareerDocuments = pgTable("protected_career_documents", {
     name: "protected_career_documents_owner_processing_fk",
   }),
   check("protected_career_documents_checksum_format", sql`${table.checksumSha256} ~ '^[0-9a-f]{64}$'`),
-  check("protected_career_documents_media_type_check", sql`${table.mediaType} = 'text/markdown'`),
+  check("protected_career_documents_media_type_check", sql`${table.mediaType} in ('text/markdown', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')`),
   check("protected_career_documents_byte_size_range", sql`${table.byteSize} between 0 and 524288`),
 ]);
 
@@ -255,8 +258,25 @@ export const candidateFactEvidence = pgTable("candidate_fact_evidence", {
     foreignColumns: [candidateFacts.userId, candidateFacts.id, candidateFacts.careerDocumentId],
     name: "candidate_fact_evidence_owner_fact_document_fk",
   }),
-  check("candidate_fact_evidence_locator_type_check", sql`${table.locatorType} = 'markdown_lines'`),
+  check("candidate_fact_evidence_locator_type_check", sql`${table.locatorType} in ('markdown_lines', 'docx_paragraphs')`),
   check("candidate_fact_evidence_start_line_check", sql`${table.startLine} >= 1`),
   check("candidate_fact_evidence_end_line_check", sql`${table.endLine} >= ${table.startLine}`),
   check("candidate_fact_evidence_excerpt_sha256_format", sql`${table.excerptSha256} ~ '^[0-9a-f]{64}$'`),
+]);
+
+export const careerFactConflicts = pgTable("career_fact_conflicts", {
+  id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  existingCandidateFactId: uuid("existing_candidate_fact_id").notNull().references(() => candidateFacts.id), incomingCandidateFactId: uuid("incoming_candidate_fact_id").notNull().references(() => candidateFacts.id),
+  kind: varchar("kind", { length: 32 }).notNull(), status: varchar("status", { length: 16 }).notNull().default("pending"), resolution: varchar("resolution", { length: 32 }), profileVersion: integer("profile_version"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+}, (table) => [
+  unique("career_fact_conflicts_pair_unique").on(table.existingCandidateFactId, table.incomingCandidateFactId),
+  foreignKey({ columns: [table.userId, table.existingCandidateFactId], foreignColumns: [candidateFacts.userId, candidateFacts.id], name: "career_fact_conflicts_existing_owner_fk" }),
+  foreignKey({ columns: [table.userId, table.incomingCandidateFactId], foreignColumns: [candidateFacts.userId, candidateFacts.id], name: "career_fact_conflicts_incoming_owner_fk" }),
+  check("career_fact_conflicts_kind_check", sql`${table.kind} in ('date', 'role', 'organization', 'metric')`),
+  check("career_fact_conflicts_status_check", sql`${table.status} in ('pending', 'resolved')`),
+  check("career_fact_conflicts_resolution_check", sql`${table.resolution} is null or ${table.resolution} in ('use_existing', 'use_incoming', 'keep_both')`),
+  check("career_fact_conflicts_profile_version_positive", sql`${table.profileVersion} is null or ${table.profileVersion} >= 1`),
+  check("career_fact_conflicts_distinct_pair_check", sql`${table.existingCandidateFactId} <> ${table.incomingCandidateFactId}`),
+  check("career_fact_conflicts_resolution_state_check", sql`(${table.status} = 'pending' and ${table.resolution} is null and ${table.resolvedAt} is null and ${table.profileVersion} is null) or (${table.status} = 'resolved' and ${table.resolution} is not null and ${table.resolvedAt} is not null and ${table.profileVersion} is not null)`),
 ]);

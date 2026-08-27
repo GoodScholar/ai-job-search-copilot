@@ -1,6 +1,6 @@
 "use client";
 
-import type { CandidateFact, CareerImportDetail, CareerImportSummary } from "@job-copilot/contracts/career-import";
+import { ResolveCareerFactConflictResponseSchema, type CandidateFact, type CareerImportDetail, type CareerImportSummary } from "@job-copilot/contracts/career-import";
 import { ProfileSnapshotSchema, type ProfileFact, type ProfileFactType, type ProfileSnapshot } from "@job-copilot/contracts/profile-review";
 import {
   inspectCareerDocumentPrivacy,
@@ -9,6 +9,7 @@ import {
 } from "@job-copilot/contracts/career-document-privacy";
 import { useCallback, useEffect, useRef, useState, useTransition, type ChangeEvent, type FormEvent } from "react";
 import { createCareerImportAction, type UploadActionState } from "@/app/(workbench)/profile/actions";
+import { DocxCareerProcessingError, extractCanonicalDocxParagraphText } from "@/lib/docx-career-processing";
 
 type ProfileImportViewProps = {
   initialImports: CareerImportSummary[];
@@ -19,6 +20,7 @@ type ImportStatus = "uploading" | "queued" | "processing" | "completed" | "faile
 
 type PreparedCareerDocument = {
   file: File;
+  processingText: string;
   inspection: CareerPrivacyInspection;
 };
 
@@ -54,10 +56,10 @@ const failureMessages: Record<string, string> = {
   CAREER_DOCUMENT_READ_FAILED: "职业资料暂时无法读取，请稍后重试。",
   CAREER_DOCUMENT_PRIVACY_UNVERIFIED: "该职业资料尚未完成隐私检查，请重新上传脱敏副本。",
   CAREER_DOCUMENT_CHECKSUM_MISMATCH: "职业资料校验未通过，请重新上传。",
-  CAREER_IMPORT_FACT_LIMIT_EXCEEDED: "最多提取 500 条候选事实，请精简 Markdown 后重试。",
+  CAREER_IMPORT_FACT_LIMIT_EXCEEDED: "最多提取 500 条候选事实，请精简职业资料后重试。",
   CAREER_PARSER_OUTPUT_INVALID: "职业资料暂时无法解析，请稍后重试。",
   CAREER_PARSER_EVIDENCE_INVALID: "职业资料中的证据无法确认，请重新上传后再试。",
-  NO_SUPPORTED_FACTS: "没有找到可确认的职业资料事实，请检查 Markdown 内容后重试。",
+  NO_SUPPORTED_FACTS: "没有找到可确认的职业资料事实，请检查职业资料内容后重试。",
   CAREER_IMPORT_PERSIST_FAILED: "解析结果暂时无法保存，请稍后重试。",
 };
 
@@ -81,6 +83,13 @@ function factValue(fact: CandidateFact): string {
     return fact.factValue.name;
   }
   return fact.factValue.summary;
+}
+
+function evidenceLocation(fact: CandidateFact): string {
+  const evidence = fact.evidence;
+  return evidence.locatorType === "docx_paragraphs"
+    ? `第 ${evidence.startParagraph}-${evidence.endParagraph} 段`
+    : `第 ${evidence.startLine}-${evidence.endLine} 行`;
 }
 
 function profileFactValue(fact: ProfileFact): string {
@@ -128,6 +137,7 @@ function asSummary(detail: CareerImportDetail): CareerImportSummary {
     importId: detail.importId,
     documentId: detail.documentId,
     sourceFilename: detail.sourceFilename,
+    sourceFormat: detail.sourceFormat,
     privacyStatus: detail.privacyStatus,
     status: detail.status,
     failureCode: detail.failureCode,
@@ -151,6 +161,11 @@ function readFileText(file: File): Promise<string> {
     reader.addEventListener("error", () => reject(reader.error ?? new Error("无法读取职业资料")));
     reader.readAsText(file, "utf-8");
   });
+}
+
+async function readCareerDocumentText(file: File): Promise<string> {
+  if (!/\.docx$/i.test(file.name)) return readFileText(file);
+  return extractCanonicalDocxParagraphText(file);
 }
 
 export function ProfileImportView({ initialImports, initialProfile = { profileId: null, version: 0, facts: [] } }: ProfileImportViewProps) {
@@ -187,6 +202,9 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
   });
   const [pollRevision, setPollRevision] = useState(0);
   const activeImportId = activeImport?.importId;
+  const pendingConflictFactIds = new Set((detail?.conflicts ?? [])
+    .filter((conflict) => conflict.status === "pending")
+    .flatMap((conflict) => [conflict.existingFact.factId, conflict.incomingFact.factId]));
   const moveToRecentTop = useCallback((nextImport: CareerImportSummary) => {
     setRecentImports((previous) => [nextImport, ...previous.filter((item) => item.importId !== nextImport.importId)].slice(0, 20));
   }, []);
@@ -223,6 +241,22 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
       setProfileMessage("无法保存审核决定，请稍后重试。");
     }
   }, [profile.version]);
+
+  const resolveConflict = useCallback(async (conflictId: string, resolution: "use_existing" | "use_incoming" | "keep_both") => {
+    setProfileMessage(null);
+    try {
+      const response = await fetch(`/api/profile/fact-conflicts/${conflictId}/resolutions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ expectedVersion: profile.version, resolution }) });
+      if (!response.ok) { setProfileMessage(response.status === 409 ? "画像已在其他位置更新，请刷新后重试。" : "无法解决职业事实冲突，请稍后重试。"); return; }
+      const parsed = ResolveCareerFactConflictResponseSchema.safeParse(await response.json());
+      if (!parsed.success) { setProfileMessage("无法读取最新画像，请刷新后重试。"); return; }
+      setProfile(parsed.data.profile);
+      const previousConflict = detail?.conflicts?.find((conflict) => conflict.conflictId === conflictId);
+      if (previousConflict) setDecidedCandidateFactIds((previous) => new Set([
+        ...previous, previousConflict.existingFact.factId, previousConflict.incomingFact.factId,
+      ]));
+      setDetail((current) => current ? { ...current, conflicts: (current.conflicts ?? []).map((conflict) => conflict.conflictId === conflictId ? { ...conflict, ...parsed.data.conflict } : conflict) } : current);
+    } catch { setProfileMessage("无法解决职业事实冲突，请稍后重试。"); }
+  }, [detail, profile.version]);
 
   const submitProfileMaintenance = useCallback(async (path: string, body: Record<string, unknown>) => {
     setProfileMessage(null);
@@ -274,20 +308,22 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
     setPrivacyMode(null);
     setConfirmedSanitized(false);
     if (!file) {
-      setPrivacyMessage("请选择一份 Markdown 职业资料后上传。");
+      setPrivacyMessage("请选择一份 Markdown 或 DOCX 职业资料后上传。");
       return;
     }
     setPrivacyMessage("正在浏览器中检查敏感信息…");
-    void readFileText(file).then((markdown) => {
+    void readCareerDocumentText(file).then((markdown) => {
       if (privacyGeneration.current !== generation) return;
       const inspection = inspectCareerDocumentPrivacy(markdown);
-      setPreparedDocument({ file, inspection });
+      setPreparedDocument({ file, processingText: markdown, inspection });
       setPrivacyMessage(inspection.findings.length > 0
         ? `发现 ${inspection.findings.length} 项敏感信息，请选择隐私处理方式。`
         : "未发现常见敏感信息，请确认你已自行检查后继续。");
-    }).catch(() => {
+    }).catch((error: unknown) => {
       if (privacyGeneration.current !== generation) return;
-      setPrivacyMessage("浏览器无法读取该文件，请重新选择 UTF-8 Markdown 文件。");
+      setPrivacyMessage(error instanceof DocxCareerProcessingError && error.code === "TOO_LARGE"
+        ? error.message
+        : "浏览器无法读取该文件，请重新选择有效的 Markdown 或 DOCX 职业资料。");
     });
   };
 
@@ -311,7 +347,9 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
     formData.set("file", new File(
       [preparedDocument.inspection.sanitizedMarkdown],
       preparedDocument.file.name,
-      { type: "text/markdown", lastModified: preparedDocument.file.lastModified },
+      { type: /\.docx$/i.test(preparedDocument.file.name)
+        ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        : "text/markdown", lastModified: preparedDocument.file.lastModified },
     ));
     if (selectedMode === "retain_protected_original") {
       formData.set("protectedOriginal", preparedDocument.file);
@@ -399,26 +437,26 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
         ? statusText[displayedStatus]
         : privacyMessage
           ? privacyMessage
-        : "请选择一份 Markdown 职业资料后上传。";
+        : "请选择一份 Markdown 或 DOCX 职业资料后上传。";
 
   return (
     <main className="container profile-main">
       <section aria-labelledby="profile-title" className="profile-intro">
         <p className="workbench-kicker">职业资料 · 候选事实</p>
-        <h1 id="profile-title">从 Markdown 职业资料建立求职画像</h1>
+        <h1 id="profile-title">从职业资料建立求职画像</h1>
         <p>系统只会提取带原文证据的候选事实；它们需要你的确认后才会进入求职画像。</p>
       </section>
 
       <section aria-labelledby="profile-upload-title" className="profile-upload">
-        <h2 id="profile-upload-title">导入 Markdown 职业资料</h2>
+        <h2 id="profile-upload-title">导入职业资料</h2>
         <div className="profile-privacy-reminder" role="note">
           <strong>上传前先检查隐私</strong>
           <p>请检查姓名、手机号、邮箱、详细住址、证件号码、照片、二维码和社交账号。自动检查可能遗漏内容，请勿使用随机生成的真实身份替换。</p>
         </div>
         <form className="profile-upload-form" onSubmit={submitUpload}>
-          <label htmlFor="career-document">选择 Markdown 职业资料</label>
+          <label htmlFor="career-document">选择 Markdown 或 DOCX 职业资料</label>
           <input
-            accept=".md,text/markdown,text/plain"
+            accept=".md,.docx,text/markdown,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             className="profile-file-input"
             id="career-document"
             name="careerDocument"
@@ -530,10 +568,10 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
                 <div className="profile-fact-value">
                   <p>{factTypeNames[fact.factType]}</p>
                   <strong>{factValue(fact)}</strong>
-                  <span>来源：{fact.evidence.sourceFilename} · <span>第 {fact.evidence.startLine} 行</span></span>
+                  <span>来源：{fact.evidence.sourceFilename} · <span>第 {fact.evidence.locatorType === "docx_paragraphs" ? fact.evidence.startParagraph : fact.evidence.startLine}{fact.evidence.locatorType === "docx_paragraphs" ? " 段" : " 行"}</span></span>
                 </div>
                 <blockquote className="profile-fact-evidence">{fact.evidence.excerpt}</blockquote>
-                <div className="profile-fact-actions">
+                {!pendingConflictFactIds.has(fact.factId) ? <div className="profile-fact-actions">
                   <button aria-label={`确认 ${factValue(fact)}`} className="workbench-touch-target" onClick={() => void submitCandidateDecision(fact, { decision: "confirmed" })} type="button">确认</button>
                   <button
                     aria-label={`纠正 ${factValue(fact)}`}
@@ -547,8 +585,8 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
                     type="button"
                   >纠正</button>
                   <button aria-label={`拒绝 ${factValue(fact)}`} className="workbench-touch-target" onClick={() => void submitCandidateDecision(fact, { decision: "rejected" })} type="button">拒绝</button>
-                </div>
-                {correctingFactId === fact.factId ? (
+                </div> : null}
+                {!pendingConflictFactIds.has(fact.factId) && correctingFactId === fact.factId ? (
                   <form
                     className="profile-fact-correction"
                     onSubmit={(event) => {
@@ -578,6 +616,20 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
           </ol>
         </section>
       ) : null}
+
+      {(detail?.conflicts?.length ?? 0) > 0 ? <section aria-labelledby="career-conflicts-title" className="profile-facts">
+        <h2 id="career-conflicts-title">职业事实冲突</h2>
+        {detail!.conflicts.map((conflict) => <article key={conflict.conflictId}>
+          <p>{({ date: "日期", role: "职位", organization: "机构", metric: "成果指标" } as const)[conflict.kind]}不一致 · {conflict.status === "pending" ? "待处理" : "已解决"}</p>
+          <p>已有（{conflict.existingFact.evidence.sourceFilename}）：{factValue(conflict.existingFact)}（{evidenceLocation(conflict.existingFact)}：{conflict.existingFact.evidence.excerpt}）</p>
+          <p>新导入（{conflict.incomingFact.evidence.sourceFilename}）：{factValue(conflict.incomingFact)}（{evidenceLocation(conflict.incomingFact)}：{conflict.incomingFact.evidence.excerpt}）</p>
+          {conflict.status === "pending" ? <div className="profile-fact-actions">
+            <button type="button" onClick={() => void resolveConflict(conflict.conflictId, "use_existing")}>采用已有</button>
+            <button type="button" onClick={() => void resolveConflict(conflict.conflictId, "use_incoming")}>采用新导入</button>
+            <button type="button" onClick={() => void resolveConflict(conflict.conflictId, "keep_both")}>两者都有效</button>
+          </div> : null}
+        </article>)}
+      </section> : null}
 
       <section aria-labelledby="trusted-profile-title" className="profile-facts">
         <div className="profile-facts-heading">

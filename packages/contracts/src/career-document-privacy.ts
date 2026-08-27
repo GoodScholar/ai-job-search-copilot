@@ -1,5 +1,37 @@
 export const CAREER_PRIVACY_SCAN_VERSION = "career-privacy-v1";
 export const CAREER_PRIVACY_MODES = ["sanitized_only", "retain_protected_original"] as const;
+/** DOCX 中存在嵌入媒体时，两端写入的可审计、可脱敏的规范文本标记。 */
+export const DOCX_EMBEDDED_MEDIA_MARKER = "[DOCX 嵌入照片或二维码]";
+/**
+ * DOCX 是不可信 ZIP；在交给 Mammoth 前只读取 central directory 的元数据。
+ * 2 MiB 为 512 KiB 上传上限预留四倍 XML/样式开销，32 倍压缩比仍覆盖普通文本，
+ * 同时拒绝异常多文件、过大的单文件/总解压尺寸和压缩比，避免小压缩包耗尽资源。
+ */
+export const DOCX_ARCHIVE_MAX_ENTRIES = 64;
+export const DOCX_ARCHIVE_MAX_ENTRY_UNCOMPRESSED_BYTES = 1 * 1024 * 1024;
+export const DOCX_ARCHIVE_MAX_TOTAL_UNCOMPRESSED_BYTES = 2 * 1024 * 1024;
+export const DOCX_ARCHIVE_MAX_COMPRESSION_RATIO = 32;
+
+export type DocxArchiveEntryMetadata = {
+  dir: boolean;
+  compressedSize: number;
+  uncompressedSize: number;
+};
+
+export function isDocxArchiveWithinBudget(entries: readonly DocxArchiveEntryMetadata[], archiveByteLength: number): boolean {
+  if (!Number.isSafeInteger(archiveByteLength) || archiveByteLength < 1 || entries.length > DOCX_ARCHIVE_MAX_ENTRIES) return false;
+  let totalUncompressed = 0;
+  for (const entry of entries) {
+    if (entry.dir) continue;
+    if (!Number.isSafeInteger(entry.compressedSize) || !Number.isSafeInteger(entry.uncompressedSize)
+      || entry.compressedSize < 0 || entry.uncompressedSize < 0
+      || entry.uncompressedSize > DOCX_ARCHIVE_MAX_ENTRY_UNCOMPRESSED_BYTES) return false;
+    totalUncompressed += entry.uncompressedSize;
+    if (totalUncompressed > DOCX_ARCHIVE_MAX_TOTAL_UNCOMPRESSED_BYTES
+      || entry.uncompressedSize > Math.max(1, entry.compressedSize) * DOCX_ARCHIVE_MAX_COMPRESSION_RATIO) return false;
+  }
+  return totalUncompressed <= archiveByteLength * DOCX_ARCHIVE_MAX_COMPRESSION_RATIO;
+}
 
 export type CareerPrivacyMode = typeof CAREER_PRIVACY_MODES[number];
 
@@ -157,6 +189,11 @@ export function inspectCareerDocumentPrivacy(markdown: string): CareerPrivacyIns
       .map((match) => ((match[2] ?? "").trim() || (match[1] ?? "").trim()).toLocaleLowerCase()),
   );
   const detections = [
+    ...collect(markdown, new RegExp(DOCX_EMBEDDED_MEDIA_MARKER.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gu"), {
+      kind: "image_or_qr",
+      replacement: "[照片或二维码]",
+      preview: () => "[DOCX 嵌入媒体]",
+    }),
     ...(hasPersonalResumeContext && hasResumeStructure && hasSingleH1 ? collect(markdown, /^(#\s+)([\p{Script=Han}][\p{Script=Han}·]{1,5})(\s*)$/gmu, {
       kind: "name",
       replacement: "[姓名]",

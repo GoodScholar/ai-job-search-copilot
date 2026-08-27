@@ -13,6 +13,8 @@ import {
   CareerParserFactSchema,
   CareerParserOutputSchema,
   CreateCareerImportResponseSchema,
+  CareerFactConflictSchema,
+  ResolveCareerFactConflictCommandSchema,
   parseQuotedCareerFactValue,
 } from "./career-import";
 
@@ -54,6 +56,43 @@ const candidateFact = (factType: string, factValue: object) => ({
 });
 
 describe("career import contracts", () => {
+  it("locks conflict detail and three explicit resolution commands", () => {
+    expect(CareerFactConflictSchema.parse({
+      conflictId: id(), kind: "date", status: "pending", existingFact: candidateFact("experience", { summary: "AI 工程师｜示例科技｜2023" }),
+      incomingFact: candidateFact("experience", { summary: "AI 工程师｜示例科技｜2024" }), resolution: null, profileVersion: null, resolvedAt: null,
+    }).status).toBe("pending");
+    expect(() => CareerFactConflictSchema.parse({
+      conflictId: id(), kind: "date", status: "pending", existingFact: candidateFact("experience", { summary: "AI 工程师｜示例科技｜2023" }),
+      incomingFact: candidateFact("experience", { summary: "AI 工程师｜示例科技｜2024" }), resolution: "use_existing", profileVersion: 1, resolvedAt: now,
+    })).toThrow();
+    expect(() => CareerFactConflictSchema.parse({
+      conflictId: id(), kind: "date", status: "resolved", existingFact: candidateFact("experience", { summary: "AI 工程师｜示例科技｜2023" }),
+      incomingFact: candidateFact("experience", { summary: "AI 工程师｜示例科技｜2024" }), resolution: null, profileVersion: null, resolvedAt: null,
+    })).toThrow();
+    for (const resolution of ["use_existing", "use_incoming", "keep_both"]) {
+      expect(ResolveCareerFactConflictCommandSchema.parse({ expectedVersion: 1, resolution })).toMatchObject({ resolution });
+    }
+  });
+  it("accepts DOCX processing copies with one-based paragraph evidence", () => {
+    const documentId = crypto.randomUUID();
+    expect(CareerImportDetailSchema.parse({
+      importId: crypto.randomUUID(), documentId, sourceFilename: "resume.docx",
+      sourceFormat: "docx",
+      privacyStatus: "sanitized_only", status: "completed", failureCode: null,
+      createdAt: "2026-08-27T12:00:00.000Z", updatedAt: "2026-08-27T12:00:00.000Z",
+      facts: [{
+        factId: crypto.randomUUID(), factType: "experience", factValue: { summary: "AI 工程师｜示例科技｜2024" },
+        confidenceBasisPoints: 10_000, confirmationStatus: "pending", createdAt: "2026-08-27T12:00:00.000Z",
+        evidence: { documentId, sourceFilename: "resume.docx", locatorType: "docx_paragraphs", startParagraph: 2, endParagraph: 2, excerpt: "AI 工程师｜示例科技｜2024" },
+      }],
+    })).toMatchObject({ facts: [expect.objectContaining({ evidence: expect.objectContaining({ locatorType: "docx_paragraphs" }) })] });
+  });
+  it("要求公开导入响应明确给出来源格式", () => {
+    expect(() => CareerImportDetailSchema.parse({
+      importId: id(), documentId: id(), sourceFilename: "resume.md", privacyStatus: "sanitized_only", status: "queued", failureCode: null,
+      createdAt: now, updatedAt: now, facts: [],
+    })).toThrow();
+  });
   it("locks size, queue and task protocol", () => {
     expect(CAREER_DOCUMENT_MAX_BYTES).toBe(524_288);
     expect(CAREER_IMPORT_MAX_FACTS).toBe(500);
@@ -76,6 +115,7 @@ describe("career import contracts", () => {
       importId: id(),
       documentId: id(),
       sourceFilename: "resume.md",
+      sourceFormat: "markdown",
       status: "completed",
       failureCode: null,
       createdAt: now,
@@ -211,6 +251,7 @@ describe("career import contracts", () => {
       importId: id(),
       documentId: id(),
       sourceFilename: "resume.md",
+      sourceFormat: "markdown",
       privacyStatus: "sanitized_only",
       status: "queued",
       failureCode: null,

@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   candidateFacts,
+  careerFactConflicts,
   careerDocuments,
   careerImports,
   createDatabase,
@@ -35,7 +36,7 @@ class MemoryStore implements CareerDocumentStore {
   readonly puts: Array<{ objectKey: string; bytes: Uint8Array; documentId: string }> = [];
   private readonly objects = new Map<string, Uint8Array>();
 
-  async put(input: { objectKey: string; bytes: Uint8Array; mediaType: "text/markdown"; documentId: string }): Promise<void> {
+  async put(input: { objectKey: string; bytes: Uint8Array; mediaType: "text/markdown" | "text/plain" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document"; documentId: string }): Promise<void> {
     this.puts.push(input);
     this.objects.set(input.objectKey, input.bytes);
   }
@@ -132,13 +133,15 @@ describe("career imports", () => {
     requestId: string;
     userId?: string;
     sourceBytes?: Uint8Array;
+    sourceFormat?: "markdown" | "docx";
   }) {
     return commandsFor(input.documentStore, input.queue, input.ids).createOrReuse({
       userId: input.userId ?? userId,
       requestId: input.requestId,
       bytes: input.sourceBytes ?? new TextEncoder().encode(`${markdown}\n<!-- ${input.requestId} -->`),
-      originalFilename: "resume.md",
-      mediaType: "text/markdown",
+      originalFilename: input.sourceFormat === "docx" ? "resume.docx" : "resume.md",
+      mediaType: input.sourceFormat === "docx" ? "text/plain" : "text/markdown",
+      sourceFormat: input.sourceFormat,
       privacyScanVersion: CAREER_PRIVACY_SCAN_VERSION,
     });
   }
@@ -179,6 +182,27 @@ describe("career imports", () => {
       expect.objectContaining({ importId: first.importId, userId }),
     ]);
     expect(store.puts).toHaveLength(1);
+  });
+
+  it("将相同处理文本的 Markdown 与 DOCX 作为不同的职业资料身份保存", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const sourceBytes = new TextEncoder().encode("## 技能\n- TypeScript\n<!-- source-format-identity -->");
+    const create = (sourceFormat: "markdown" | "docx", requestId: string) => createImport({
+      documentStore: store, queue, ids: () => crypto.randomUUID(), requestId, sourceBytes, sourceFormat,
+    });
+    const markdownImport = await create("markdown", crypto.randomUUID());
+    const docxImport = await create("docx", crypto.randomUUID());
+    const repeatedDocx = await create("docx", crypto.randomUUID());
+
+    expect(docxImport).toMatchObject({ reused: false, sourceFormat: "docx" });
+    expect(docxImport.documentId).not.toBe(markdownImport.documentId);
+    expect(docxImport.importId).not.toBe(markdownImport.importId);
+    expect(repeatedDocx).toMatchObject({ importId: docxImport.importId, documentId: docxImport.documentId, reused: true });
+    expect(store.puts.map((put) => put.objectKey)).toEqual(expect.arrayContaining([
+      `accounts/${userId}/career-documents/${markdownImport.documentId}/processing.md`,
+      `accounts/${userId}/career-documents/${docxImport.documentId}/processing.txt`,
+    ]));
   });
 
   it("stores a protected original separately while importing only its sanitized processing copy", async () => {
@@ -245,6 +269,36 @@ describe("career imports", () => {
       checksumSha256: createHash("sha256").update(originalBytes).digest("hex"),
     });
     expect(JSON.stringify(queue.jobs)).not.toContain("secret@example.com");
+  });
+
+  it("stores a protected DOCX original alongside its text processing copy", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const commands = commandsFor(store, queue, ids(
+      "dcd83ecb-59ef-4387-81e8-4b7c466f8a6b",
+      "d05d982c-708b-42db-b0ca-b6cc8ec38fd0",
+      "2ea028cc-0b6e-4d24-9d0f-23dd5f5f505b",
+    ));
+    const result = await commands.createOrReuse({
+      userId,
+      requestId: "77e0ac58-7dde-4580-9c03-cf4a15af2f50",
+      bytes: new TextEncoder().encode("[DOCX 嵌入照片或二维码]"),
+      originalFilename: "resume.docx",
+      mediaType: "text/plain",
+      sourceFormat: "docx",
+      privacyScanVersion: CAREER_PRIVACY_SCAN_VERSION,
+      protectedOriginal: {
+        bytes: new Uint8Array([80, 75, 3, 4]),
+        originalFilename: "resume.docx",
+        mediaType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      },
+    });
+
+    expect(result.privacyStatus).toBe("sanitized_with_protected_original");
+    expect(store.puts.map(({ objectKey }) => objectKey)).toEqual([
+      `accounts/${userId}/career-documents/${result.documentId}/processing.txt`,
+      expect.stringMatching(new RegExp(`^accounts/${userId}/protected-career-documents/.+/original\\.docx$`)),
+    ]);
   });
 
   it("refuses to read a legacy document that has no verified privacy scan", async () => {
@@ -1168,5 +1222,76 @@ describe("career imports", () => {
     if (otherImport) {
       await expect(queries.get({ userId, importId: otherImport.importId })).resolves.toBeNull();
     }
+  });
+
+  it("creates one reviewable cross-document conflict with both immutable evidence records", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const firstBytes = new TextEncoder().encode("## 工作经历\n- AI 工程师｜示例科技｜2023-2024");
+    const secondBytes = new TextEncoder().encode("## 工作经历\n- AI 工程师｜示例科技｜2024-至今");
+    const outputFor = (summary: string) => ({
+      adapter: "fake", parserVersion: "fake-career-parser-v1", promptVersion: "career-import-prompt-v1", outputSchemaVersion: "career-facts-v1",
+      facts: [{ factType: "experience", factValue: { summary }, confidenceBasisPoints: 10_000, grounding: "quoted",
+        evidence: { locatorType: "markdown_lines", startLine: 2, endLine: 2, excerpt: `- ${summary}` } }],
+    });
+    const first = await createImport({ documentStore: store, queue, ids: () => crypto.randomUUID(), requestId: crypto.randomUUID(), sourceBytes: firstBytes });
+    await expect(createCareerImportProcessor({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), documentStore: store,
+      parser: parser(outputFor("AI 工程师｜示例科技｜2023-2024")), id: () => crypto.randomUUID(), clock: () => now,
+    }).process({ version: 1, importId: first.importId, userId, finalAttempt: true })).resolves.toBe("completed");
+    const second = await createImport({ documentStore: store, queue, ids: () => crypto.randomUUID(), requestId: crypto.randomUUID(), sourceBytes: secondBytes });
+    await expect(createCareerImportProcessor({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), documentStore: store,
+      parser: parser(outputFor("AI 工程师｜示例科技｜2024-至今")), id: () => crypto.randomUUID(), clock: () => now,
+    }).process({ version: 1, importId: second.importId, userId, finalAttempt: true })).resolves.toBe("completed");
+
+    await expect(createCareerImportQueries({ db: database }).get({ userId, importId: second.importId })).resolves.toMatchObject({
+      conflicts: [{ kind: "date", status: "pending", existingFact: { evidence: { excerpt: "- AI 工程师｜示例科技｜2023-2024" } }, incomingFact: { evidence: { excerpt: "- AI 工程师｜示例科技｜2024-至今" } } }],
+    });
+    await expect(createCareerImportQueries({ db: database }).get({ userId, importId: first.importId })).resolves.toMatchObject({
+      conflicts: [{ kind: "date", status: "pending" }],
+    });
+  });
+
+  it("串行化同一账户的并发完成，并只写入一条跨文档冲突", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const first = await createImport({
+      documentStore: store, queue, ids: () => crypto.randomUUID(), requestId: crypto.randomUUID(),
+      sourceBytes: new TextEncoder().encode("## 工作经历\n- 并发测试架构师｜并发示例科技｜2023-2024"),
+    });
+    const second = await createImport({
+      documentStore: store, queue, ids: () => crypto.randomUUID(), requestId: crypto.randomUUID(),
+      sourceBytes: new TextEncoder().encode("## 工作经历\n- 并发测试架构师｜并发示例科技｜2024-至今"),
+    });
+    const bothParsing = deferred<void>();
+    const releaseParsers = deferred<void>();
+    let parserCalls = 0;
+    const concurrentParser: CareerDocumentParser = {
+      parse: async (text) => {
+        parserCalls += 1;
+        if (parserCalls === 2) bothParsing.resolve();
+        await releaseParsers.promise;
+        const summary = text.includes("2023-2024") ? "并发测试架构师｜并发示例科技｜2023-2024" : "并发测试架构师｜并发示例科技｜2024-至今";
+        return {
+          adapter: "fake", parserVersion: "fake-career-parser-v1", promptVersion: "career-import-prompt-v1", outputSchemaVersion: "career-facts-v1",
+          facts: [{ factType: "experience", factValue: { summary }, confidenceBasisPoints: 10_000, grounding: "quoted",
+            evidence: { locatorType: "markdown_lines", startLine: 2, endLine: 2, excerpt: `- ${summary}` } }],
+        };
+      },
+    };
+    const processor = createCareerImportProcessor({
+      db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), documentStore: store,
+      parser: concurrentParser, id: () => crypto.randomUUID(), clock: () => now,
+    });
+    const completing = [
+      processor.process({ version: 1, importId: first.importId, userId, finalAttempt: true }),
+      processor.process({ version: 1, importId: second.importId, userId, finalAttempt: true }),
+    ];
+    await bothParsing.promise;
+    releaseParsers.resolve();
+    await expect(Promise.all(completing)).resolves.toEqual(["completed", "completed"]);
+    const candidates = await database.select({ id: candidateFacts.id }).from(candidateFacts)
+      .where(inArray(candidateFacts.careerImportId, [first.importId, second.importId]));
+    await expect(database.select({ id: careerFactConflicts.id }).from(careerFactConflicts)
+      .where(inArray(careerFactConflicts.incomingCandidateFactId, candidates.map((candidate) => candidate.id)))).resolves.toHaveLength(1);
   });
 });

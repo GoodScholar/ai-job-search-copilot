@@ -1,0 +1,2 @@
+ALTER TABLE "protected_career_documents" ALTER COLUMN "media_type" SET DATA TYPE varchar(128);--> statement-breakpoint
+ALTER TABLE "career_documents" ADD CONSTRAINT "career_documents_source_format_media_type_check" CHECK (("career_documents"."source_format" = 'markdown' and "career_documents"."media_type" = 'text/markdown') or ("career_documents"."source_format" = 'docx' and "career_documents"."media_type" = 'text/plain'));

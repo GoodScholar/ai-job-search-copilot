@@ -20,7 +20,8 @@ it("links the empty state to the real profile entry", () => {
     summary: { recommendations: 0, pendingFacts: 0, runningAgentRuns: 0, applications: 0 },
   }} />);
 
-  expect(screen.getByRole("link", { name: "导入 Markdown 职业资料" })).toHaveAttribute("href", "/profile");
+  expect(screen.getByText("上传一份 Markdown 或 DOCX 职业资料，系统会从原文中提取带证据的候选事实。")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "导入职业资料" })).toHaveAttribute("href", "/profile");
 });
 
 it("explains that pending facts cannot yet affect recommendations or materials", () => {

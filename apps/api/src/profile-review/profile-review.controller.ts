@@ -25,7 +25,7 @@ class ProfileFactPathDto extends createZodDto(z.object({ factId: z.uuid() }).str
 
 function profileProblem(error: unknown): never {
   if (!(error instanceof ProfileReviewError)) throw error;
-  if (error.code === "PROFILE_VERSION_CONFLICT" || error.code === "CANDIDATE_FACT_ALREADY_DECIDED") {
+  if (error.code === "PROFILE_VERSION_CONFLICT" || error.code === "CANDIDATE_FACT_ALREADY_DECIDED" || error.code === "CANDIDATE_FACT_CONFLICT_PENDING") {
     throw new ApiException(error.code, HttpStatus.CONFLICT, "画像已在其他位置更新，请刷新后重试");
   }
   if (error.code === "CANDIDATE_FACT_NOT_FOUND" || error.code === "PROFILE_FACT_NOT_FOUND") {
