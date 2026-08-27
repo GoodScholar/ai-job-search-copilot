@@ -13,6 +13,7 @@ const queuedImport = {
   importId,
   documentId,
   sourceFilename: "career.md",
+  privacyStatus: "sanitized_only",
   status: "queued",
   failureCode: null,
   createdAt: "2026-08-27T08:00:00.000Z",

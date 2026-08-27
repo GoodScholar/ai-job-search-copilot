@@ -47,6 +47,7 @@ export const careerDocuments = pgTable("career_documents", {
   originalFilename: varchar("original_filename", { length: 255 }).notNull(),
   mediaType: varchar("media_type", { length: 32 }).notNull(),
   byteSize: integer("byte_size").notNull(),
+  privacyScanVersion: varchar("privacy_scan_version", { length: 64 }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
@@ -55,6 +56,30 @@ export const careerDocuments = pgTable("career_documents", {
   check("career_documents_checksum_sha256_format", sql`${table.checksumSha256} ~ '^[0-9a-f]{64}$'`),
   check("career_documents_media_type_check", sql`${table.mediaType} = 'text/markdown'`),
   check("career_documents_byte_size_range", sql`${table.byteSize} between 0 and 524288`),
+]);
+
+export const protectedCareerDocuments = pgTable("protected_career_documents", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  processingDocumentId: uuid("processing_document_id").notNull().references(() => careerDocuments.id),
+  checksumSha256: varchar("checksum_sha256", { length: 64 }).notNull(),
+  objectKey: varchar("object_key", { length: 512 }).notNull(),
+  originalFilename: varchar("original_filename", { length: 255 }).notNull(),
+  mediaType: varchar("media_type", { length: 32 }).notNull(),
+  byteSize: integer("byte_size").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("protected_career_documents_derivation_unique").on(
+    table.userId, table.processingDocumentId, table.checksumSha256,
+  ),
+  foreignKey({
+    columns: [table.userId, table.processingDocumentId],
+    foreignColumns: [careerDocuments.userId, careerDocuments.id],
+    name: "protected_career_documents_owner_processing_fk",
+  }),
+  check("protected_career_documents_checksum_format", sql`${table.checksumSha256} ~ '^[0-9a-f]{64}$'`),
+  check("protected_career_documents_media_type_check", sql`${table.mediaType} = 'text/markdown'`),
+  check("protected_career_documents_byte_size_range", sql`${table.byteSize} between 0 and 524288`),
 ]);
 
 export const careerImports = pgTable("career_imports", {

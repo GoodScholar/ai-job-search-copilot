@@ -9,8 +9,10 @@ import {
   createDatabase,
   jobAccounts,
   migrateDatabase,
+  protectedCareerDocuments,
   type Database,
 } from "@job-copilot/database";
+import { CAREER_PRIVACY_SCAN_VERSION } from "@job-copilot/contracts/career-document-privacy";
 import type { CareerImportJob } from "@job-copilot/contracts/career-import";
 import { createAuditTrail, type AuditTrail } from "./audit-trail";
 import {
@@ -137,6 +139,7 @@ describe("career imports", () => {
       bytes: input.sourceBytes ?? new TextEncoder().encode(`${markdown}\n<!-- ${input.requestId} -->`),
       originalFilename: "resume.md",
       mediaType: "text/markdown",
+      privacyScanVersion: CAREER_PRIVACY_SCAN_VERSION,
     });
   }
 
@@ -176,6 +179,124 @@ describe("career imports", () => {
       expect.objectContaining({ importId: first.importId, userId }),
     ]);
     expect(store.puts).toHaveLength(1);
+  });
+
+  it("stores a protected original separately while importing only its sanitized processing copy", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const commands = commandsFor(store, queue, ids(
+      "21f01a37-af79-4432-b496-6266a5ad0804",
+      "39bf6db9-b30e-4879-912c-062aa4ea0a47",
+      "5f3fd44a-a0c6-4bc0-8351-65db4df0f373",
+    ));
+    const originalBytes = new TextEncoder().encode("# 张三\n邮箱：secret@example.com\n## 技能\n- TypeScript");
+    const processingBytes = new TextEncoder().encode("# [姓名]\n邮箱：[邮箱]\n## 技能\n- TypeScript");
+    const input = {
+      userId,
+      bytes: processingBytes,
+      originalFilename: "resume.md",
+      mediaType: "text/markdown" as const,
+      privacyScanVersion: CAREER_PRIVACY_SCAN_VERSION,
+      protectedOriginal: { bytes: originalBytes, originalFilename: "resume.md" },
+    };
+
+    const first = await commands.createOrReuse({
+      ...input,
+      requestId: "77a62e5c-091a-4d62-9f03-95de056ed716",
+    });
+    const duplicate = await commands.createOrReuse({
+      ...input,
+      requestId: "411696a7-fe33-4c11-91c1-adbc9ee553af",
+    });
+    const sanitizedOnlyRetry = await commands.createOrReuse({
+      ...input,
+      protectedOriginal: undefined,
+      requestId: "03a11f7d-e747-4125-a51d-8ff5647f4825",
+    });
+
+    expect(first).toMatchObject({
+      privacyStatus: "sanitized_with_protected_original",
+      reused: false,
+      shouldReturnAccepted: true,
+    });
+    expect(duplicate).toMatchObject({
+      importId: first.importId,
+      documentId: first.documentId,
+      privacyStatus: "sanitized_with_protected_original",
+      reused: true,
+    });
+    expect(sanitizedOnlyRetry).toMatchObject({
+      importId: first.importId,
+      privacyStatus: "sanitized_with_protected_original",
+      reused: true,
+    });
+    expect(store.puts.map(({ objectKey }) => objectKey)).toEqual([
+      `accounts/${userId}/career-documents/${first.documentId}/processing.md`,
+      expect.stringMatching(new RegExp(`^accounts/${userId}/protected-career-documents/.+/original\\.md$`)),
+    ]);
+    const [protectedOriginal] = await database.select({
+      userId: protectedCareerDocuments.userId,
+      processingDocumentId: protectedCareerDocuments.processingDocumentId,
+      checksumSha256: protectedCareerDocuments.checksumSha256,
+    }).from(protectedCareerDocuments).where(eq(protectedCareerDocuments.processingDocumentId, first.documentId));
+    expect(protectedOriginal).toEqual({
+      userId,
+      processingDocumentId: first.documentId,
+      checksumSha256: createHash("sha256").update(originalBytes).digest("hex"),
+    });
+    expect(JSON.stringify(queue.jobs)).not.toContain("secret@example.com");
+  });
+
+  it("refuses to read a legacy document that has no verified privacy scan", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const created = await commandsFor(store, queue, ids(
+      "285eaa73-8cbb-4429-af4a-27651fdfb0e5",
+      "0499d7f2-21a8-497d-85b4-7287ed01969f",
+    )).createOrReuse({
+      userId,
+      requestId: "528a1f02-46bb-4cd0-9769-966f40c82e0c",
+      bytes: new TextEncoder().encode(`${markdown}\n<!-- legacy privacy test -->`),
+      originalFilename: "legacy.md",
+      mediaType: "text/markdown",
+    });
+    let parserCalls = 0;
+    const processor = createCareerImportProcessor({
+      db: database,
+      auditTrail: createAuditTrail({ db: database, clock: () => now }),
+      documentStore: store,
+      parser: { parse: async () => { parserCalls += 1; return validOutput(); } },
+      id: ids("b8915a7c-5502-4d7b-a9a2-5fdbb88ac2e6"),
+      clock: () => now,
+    });
+
+    await expect(processor.process({ version: 1, importId: created.importId, userId, finalAttempt: false }))
+      .resolves.toBe("failed");
+    expect(parserCalls).toBe(0);
+    await expect(createCareerImportQueries({ db: database }).get({ userId, importId: created.importId }))
+      .resolves.toMatchObject({ failureCode: "CAREER_DOCUMENT_PRIVACY_UNVERIFIED" });
+  });
+
+  it("rethrows parser failures with an opaque retry message", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const created = await createImport({
+      documentStore: store,
+      queue,
+      ids: ids("b98237e9-ddf7-4dd9-8d49-4b2a48ba5391", "0888ac29-5018-432f-acfb-54069aa653a5"),
+      requestId: "019ac53b-7084-47d0-84dd-44568f9a9e4d",
+    });
+    const processor = createCareerImportProcessor({
+      db: database,
+      auditTrail: createAuditTrail({ db: database, clock: () => now }),
+      documentStore: store,
+      parser: { parse: async (source) => { throw new Error(`parser rejected: ${source}`); } },
+      id: ids("8b7265b3-3752-4d38-a75f-c777675099ed"),
+      clock: () => now,
+    });
+
+    await expect(processor.process({ version: 1, importId: created.importId, userId, finalAttempt: false }))
+      .rejects.toThrow("career import temporarily unavailable");
   });
 
   it("creates and accepts a new import when an owned document exists without one", async () => {
@@ -526,7 +647,7 @@ describe("career imports", () => {
     });
 
     await expect(processor.process({ version: 1, importId: created.importId, userId, finalAttempt: false }))
-      .rejects.toThrow(/completion audit unavailable/);
+      .rejects.toThrow("career import temporarily unavailable");
     await expect(database.select().from(candidateFacts).where(eq(candidateFacts.careerImportId, created.importId)))
       .resolves.toEqual([]);
     await expect(createCareerImportQueries({ db: database }).get({ userId, importId: created.importId }))

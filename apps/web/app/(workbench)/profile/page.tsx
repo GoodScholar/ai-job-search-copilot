@@ -8,31 +8,8 @@ export const metadata: Metadata = {
   title: "画像 | AI Job Search Copilot",
 };
 
-type ProfilePageProps = {
-  searchParams: Promise<{ importError?: string | string[] }>;
-};
-
-const formFailureMessages: Record<string, string> = {
-  CAREER_DOCUMENT_REQUIRED: "请选择一个 Markdown 文件。",
-  TOO_MANY_CAREER_DOCUMENTS: "一次只能上传一个 Markdown 文件。",
-  UNSUPPORTED_CAREER_DOCUMENT_TYPE: "仅支持 UTF-8 Markdown 文件。",
-  CAREER_DOCUMENT_TOO_LARGE: "Markdown 文件不能超过 512 KiB。",
-  CAREER_DOCUMENT_INVALID_UTF8: "Markdown 文件必须使用 UTF-8 编码。",
-  CAREER_DOCUMENT_EMPTY: "Markdown 文件不能为空。",
-  CAREER_DOCUMENT_STORAGE_UNAVAILABLE: "职业资料暂时无法保存，请稍后重试。",
-  CAREER_IMPORT_QUEUE_UNAVAILABLE: "解析任务暂时不可用，请稍后重试。",
-  CAREER_IMPORT_UNAVAILABLE: "职业资料暂时无法处理，请稍后重试。",
-};
-
-function safeFormFailureMessage(value: unknown): string | null {
-  return typeof value === "string" && Object.hasOwn(formFailureMessages, value)
-    ? formFailureMessages[value]
-    : null;
-}
-
-export default async function ProfilePage({ searchParams }: ProfilePageProps) {
+export default async function ProfilePage() {
   const careerImportsPromise = getCareerImports();
-  const { importError } = await searchParams;
   let careerImports: CareerImportList;
 
   try {
@@ -51,6 +28,5 @@ export default async function ProfilePage({ searchParams }: ProfilePageProps) {
     );
   }
 
-  const initialErrorMessage = safeFormFailureMessage(importError);
-  return <ProfileImportView initialErrorMessage={initialErrorMessage} initialImports={careerImports.imports} />;
+  return <ProfileImportView initialImports={careerImports.imports} />;
 }

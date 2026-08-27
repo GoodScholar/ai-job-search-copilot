@@ -7,7 +7,7 @@ export async function configureApiApplication(app: NestFastifyApplication): Prom
   // Nest currently resolves Fastify 5.11 while the application pins Fastify 5.12;
   // the plugin runtime contract is compatible, but their duplicate type identities are not.
   await app.register(multipart as never, {
-    limits: { files: 1, fields: 0, parts: 1, fileSize: CAREER_DOCUMENT_MAX_BYTES },
+    limits: { files: 2, fields: 1, parts: 3, fileSize: CAREER_DOCUMENT_MAX_BYTES },
     throwFileSizeLimit: true,
   });
   configureOpenApi(app);

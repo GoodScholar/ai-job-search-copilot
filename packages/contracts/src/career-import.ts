@@ -76,6 +76,11 @@ export const CandidateFactSchema = z.discriminatedUnion("factType", [
 ]);
 
 export const CareerImportStatusSchema = z.enum(["queued", "processing", "completed", "failed"]);
+export const CareerDocumentPrivacyStatusSchema = z.enum([
+  "legacy_unreviewed",
+  "sanitized_only",
+  "sanitized_with_protected_original",
+]);
 
 export const CareerImportPathSchema = z.object({
   importId: z.uuid(),
@@ -85,6 +90,7 @@ export const CareerImportFailureCodeSchema = z.enum([
   "CAREER_IMPORT_QUEUE_UNAVAILABLE",
   "CAREER_DOCUMENT_NOT_FOUND",
   "CAREER_DOCUMENT_READ_FAILED",
+  "CAREER_DOCUMENT_PRIVACY_UNVERIFIED",
   "CAREER_DOCUMENT_CHECKSUM_MISMATCH",
   "CAREER_IMPORT_FACT_LIMIT_EXCEEDED",
   "CAREER_PARSER_OUTPUT_INVALID",
@@ -97,6 +103,7 @@ const CareerImportBaseSchema = z.object({
   importId: z.uuid(),
   documentId: z.uuid(),
   sourceFilename: filename,
+  privacyStatus: CareerDocumentPrivacyStatusSchema,
   status: CareerImportStatusSchema,
   failureCode: CareerImportFailureCodeSchema.nullable(),
   createdAt: z.iso.datetime(),
@@ -115,6 +122,7 @@ export const CareerImportDetailSchema = z.object({
   importId: z.uuid(),
   documentId: z.uuid(),
   sourceFilename: filename,
+  privacyStatus: CareerDocumentPrivacyStatusSchema,
   status: CareerImportStatusSchema,
   failureCode: CareerImportFailureCodeSchema.nullable(),
   createdAt: z.iso.datetime(),
@@ -144,6 +152,7 @@ export const CareerImportJobSchema = z.object({
 export type CareerParserFact = z.infer<typeof CareerParserFactSchema>;
 export type CandidateFact = z.infer<typeof CandidateFactSchema>;
 export type CareerImportStatus = z.infer<typeof CareerImportStatusSchema>;
+export type CareerDocumentPrivacyStatus = z.infer<typeof CareerDocumentPrivacyStatusSchema>;
 export type CareerImportFailureCode = z.infer<typeof CareerImportFailureCodeSchema>;
 export type CareerImportSummary = z.infer<typeof CareerImportSummarySchema>;
 export type CareerImportList = z.infer<typeof CareerImportListSchema>;

@@ -1075,6 +1075,21 @@ body {
   margin: 0;
 }
 
+.profile-privacy-reminder {
+  background: color-mix(in srgb, var(--amber) 10%, var(--surface));
+  border-left: 3px solid var(--amber);
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 1.25rem;
+  padding: 1rem;
+}
+
+.profile-privacy-reminder p {
+  color: var(--muted);
+  line-height: 1.6;
+  margin: 0;
+}
+
 .profile-upload-form {
   display: grid;
   gap: 0.75rem;
@@ -1095,6 +1110,93 @@ body {
   padding: 0.45rem;
 }
 
+.profile-privacy-review {
+  border: 1px solid var(--rule);
+  display: grid;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.profile-privacy-review-heading {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  justify-content: space-between;
+}
+
+.profile-privacy-review-heading span {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.profile-privacy-finding-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.profile-privacy-finding-list li {
+  border-top: 1px solid var(--rule);
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: 5rem 4rem minmax(0, 1fr);
+  padding-block: 0.65rem;
+}
+
+.profile-privacy-finding-list li > span:nth-child(2) {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.profile-privacy-finding-list code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.profile-privacy-preview summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.profile-privacy-preview pre {
+  background: var(--ground);
+  border: 1px solid var(--rule);
+  line-height: 1.6;
+  margin: 0.75rem 0 0;
+  max-height: 20rem;
+  overflow: auto;
+  padding: 1rem;
+  white-space: pre-wrap;
+}
+
+.profile-privacy-options {
+  border: 0;
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+}
+
+.profile-privacy-options legend {
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+}
+
+.profile-privacy-options label,
+.profile-privacy-confirmation {
+  align-items: flex-start;
+  display: flex;
+  gap: 0.65rem;
+  line-height: 1.5;
+}
+
+.profile-privacy-options input,
+.profile-privacy-confirmation input {
+  flex: 0 0 auto;
+  margin-top: 0.2rem;
+}
+
 .profile-upload-button {
   appearance: none;
   background: var(--emerald);
@@ -1111,7 +1213,7 @@ body {
 }
 
 .profile-upload-button:disabled {
-  cursor: wait;
+  cursor: not-allowed;
   opacity: 0.62;
 }
 
@@ -1265,6 +1367,11 @@ body {
 }
 
 @media (max-width: 640px) {
+  .profile-privacy-finding-list li {
+    gap: 0.25rem;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .profile-fact-list > li {
     grid-template-columns: minmax(0, 1fr);
   }

@@ -229,17 +229,20 @@ describe("authenticated workbench HTTP API", () => {
   it("accepts one Markdown upload, reuses it, and never exposes source content in audit metadata", async () => {
     capturedLogs.length = 0;
     const session = await createSession(app, "career-import-primary");
-    const source = "## 技能\n- TypeScript\n联系：resume@example.com";
+    const protectedOriginal = "姓名：张三\n邮箱：resume@example.com\n## 技能\n- TypeScript";
+    const source = "姓名：[姓名]\n邮箱：[邮箱]\n## 技能\n- TypeScript";
     const upload = await app.getHttpAdapter().getInstance().inject(multipartRequest(source, {
       headers: bearer(session.sessionToken), filename: "candidate.md",
+      privacyMode: "retain_protected_original", protectedOriginal,
     }));
     const repeated = await app.getHttpAdapter().getInstance().inject(multipartRequest(source, {
       headers: bearer(session.sessionToken), filename: "renamed.md",
+      privacyMode: "retain_protected_original", protectedOriginal,
     }));
 
     expect(upload.statusCode).toBe(202);
     expect(upload.json()).toMatchObject({
-      status: "queued", reused: false,
+      status: "queued", reused: false, privacyStatus: "sanitized_with_protected_original",
       detailUrl: expect.stringMatching(/^\/v1\/career-documents\/imports\//),
     });
     expect(repeated.statusCode).toBe(200);
@@ -247,11 +250,11 @@ describe("authenticated workbench HTTP API", () => {
     const metadata = await database.select({ metadata: auditEvents.metadata }).from(auditEvents);
     expect(JSON.stringify(metadata)).not.toContain("resume@example.com");
     expect(JSON.stringify(metadata)).not.toContain("candidate.md");
-    expect(JSON.stringify(metadata)).not.toContain(source);
+    expect(JSON.stringify(metadata)).not.toContain(protectedOriginal);
     const logs = normalizedLogText(capturedLogs);
     expect(logs).not.toContain("resume@example.com");
     expect(logs).not.toContain("candidate.md");
-    expect(logs).not.toContain(source);
+    expect(logs).not.toContain(protectedOriginal);
   });
 
   it("returns 202 for a new import that reuses an owned document without an import", async () => {
@@ -303,7 +306,7 @@ describe("authenticated workbench HTTP API", () => {
       headers: bearer(session.sessionToken), fieldOnly: true,
     }));
     expect(response.statusCode).toBe(400);
-    expect(response.json()).toMatchObject({ code: "CAREER_DOCUMENT_REQUIRED", requestId: expect.any(String) });
+    expect(response.json()).toMatchObject({ code: "CAREER_PRIVACY_DECISION_REQUIRED", requestId: expect.any(String) });
     expect(response.body).not.toContain("FST_FIELDS_LIMIT");
     expect(response.body).not.toContain("resume@example.com");
   });
@@ -333,7 +336,7 @@ describe("authenticated workbench HTTP API", () => {
     expect(list.json().imports.map((item: { createdAt: string }) => item.createdAt)).toEqual([
       ...list.json().imports.map((item: { createdAt: string }) => item.createdAt),
     ].sort().reverse());
-    expect(detail.statusCode).toBe(200);
+    expect(detail.statusCode, detail.body).toBe(200);
     expect(detail.json()).toMatchObject({ importId, facts: [] });
     expect(malformed.statusCode).toBe(400);
     expect(malformed.json()).toMatchObject({ code: "INVALID_REQUEST", requestId: expect.any(String) });
@@ -405,7 +408,14 @@ describe("authenticated workbench HTTP API", () => {
       expect(document.paths[path][method].security).toEqual([{ bearerAuth: [] }]);
     }
     expect(document.paths["/v1/career-documents/imports"].post.requestBody.content["multipart/form-data"].schema)
-      .toMatchObject({ properties: { file: { format: "binary" } } });
+      .toMatchObject({
+        required: ["file", "privacyMode"],
+        properties: {
+          file: { format: "binary" },
+          privacyMode: { enum: ["sanitized_only", "retain_protected_original"] },
+          protectedOriginal: { format: "binary" },
+        },
+      });
     const responses = document.paths["/v1/career-documents/imports"].post.responses;
     expect(responses["200"].content["application/json"].schema).toEqual(responses["202"].content["application/json"].schema);
     expect(document.paths["/v1/career-documents/imports/{importId}"].get.responses["400"])
@@ -452,13 +462,24 @@ function multipartRequest(source: string | Uint8Array | undefined, options: {
   mimetype?: string;
   extraFile?: boolean;
   fieldOnly?: boolean;
+  privacyMode?: "sanitized_only" | "retain_protected_original";
+  protectedOriginal?: string | Uint8Array;
 } = {}) {
   const boundary = "career-import-test-boundary";
   const bytes = source === undefined ? new Uint8Array() : typeof source === "string" ? new TextEncoder().encode(source) : source;
-  const body = source === undefined ? Buffer.from(`--${boundary}--\r\n`) : options.fieldOnly ? Buffer.from(
+  const body = source === undefined ? Buffer.concat([
+    multipartField(boundary, "privacyMode", options.privacyMode ?? "sanitized_only"),
+    Buffer.from(`--${boundary}--\r\n`),
+  ]) : options.fieldOnly ? Buffer.from(
     `--${boundary}\r\nContent-Disposition: form-data; name="note"\r\n\r\n${typeof source === "string" ? source : Buffer.from(source).toString("utf8")}\r\n--${boundary}--\r\n`,
   ) : Buffer.concat([
+    multipartField(boundary, "privacyMode", options.privacyMode ?? "sanitized_only"),
     multipartPart(boundary, bytes, options),
+    ...(options.protectedOriginal ? [multipartPart(
+      boundary,
+      typeof options.protectedOriginal === "string" ? new TextEncoder().encode(options.protectedOriginal) : options.protectedOriginal,
+      { filename: options.filename, fieldname: "protectedOriginal", mimetype: options.mimetype },
+    )] : []),
     ...(options.extraFile ? [multipartPart(boundary, new TextEncoder().encode("## 技能\n- Extra"), options)] : []),
     Buffer.from(`--${boundary}--\r\n`),
   ]);
@@ -468,6 +489,10 @@ function multipartRequest(source: string | Uint8Array | undefined, options: {
     headers: { "content-type": `multipart/form-data; boundary=${boundary}`, ...options.headers },
     payload: body,
   };
+}
+
+function multipartField(boundary: string, name: string, value: string) {
+  return Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`);
 }
 
 function multipartPart(boundary: string, bytes: Uint8Array, options: { filename?: string; fieldname?: string; mimetype?: string }) {

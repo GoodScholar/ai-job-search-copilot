@@ -1,15 +1,24 @@
 "use client";
 
 import type { CandidateFact, CareerImportDetail, CareerImportSummary } from "@job-copilot/contracts/career-import";
-import { useCallback, useEffect, useRef, useState, useTransition, type FormEvent } from "react";
-import { createCareerImportAction, createCareerImportFormAction, type UploadActionState } from "@/app/(workbench)/profile/actions";
+import {
+  inspectCareerDocumentPrivacy,
+  type CareerPrivacyInspection,
+  type CareerPrivacyMode,
+} from "@job-copilot/contracts/career-document-privacy";
+import { useCallback, useEffect, useRef, useState, useTransition, type ChangeEvent, type FormEvent } from "react";
+import { createCareerImportAction, type UploadActionState } from "@/app/(workbench)/profile/actions";
 
 type ProfileImportViewProps = {
   initialImports: CareerImportSummary[];
-  initialErrorMessage?: string | null;
 };
 
 type ImportStatus = "uploading" | "queued" | "processing" | "completed" | "failed";
+
+type PreparedCareerDocument = {
+  file: File;
+  inspection: CareerPrivacyInspection;
+};
 
 const statusText: Record<ImportStatus, string> = {
   uploading: "上传中",
@@ -21,10 +30,27 @@ const statusText: Record<ImportStatus, string> = {
 
 const initialUploadActionState: UploadActionState = { ok: false, code: "", message: "" };
 
+const privacyFindingNames: Record<CareerPrivacyInspection["findings"][number]["kind"], string> = {
+  name: "姓名",
+  phone: "手机号",
+  email: "邮箱",
+  address: "详细住址",
+  identity_number: "证件号码",
+  image_or_qr: "照片或二维码",
+  social_account: "社交账号",
+};
+
+const privacyStatusText: Record<CareerImportSummary["privacyStatus"], string> = {
+  legacy_unreviewed: "旧版未检查",
+  sanitized_only: "仅保存脱敏副本",
+  sanitized_with_protected_original: "原件受保护，下游使用脱敏副本",
+};
+
 const failureMessages: Record<string, string> = {
   CAREER_IMPORT_QUEUE_UNAVAILABLE: "解析任务暂时不可用，请稍后重试。",
   CAREER_DOCUMENT_NOT_FOUND: "职业资料暂时无法读取，请重新上传后再试。",
   CAREER_DOCUMENT_READ_FAILED: "职业资料暂时无法读取，请稍后重试。",
+  CAREER_DOCUMENT_PRIVACY_UNVERIFIED: "该职业资料尚未完成隐私检查，请重新上传脱敏副本。",
   CAREER_DOCUMENT_CHECKSUM_MISMATCH: "职业资料校验未通过，请重新上传。",
   CAREER_IMPORT_FACT_LIMIT_EXCEEDED: "最多提取 500 条候选事实，请精简 Markdown 后重试。",
   CAREER_PARSER_OUTPUT_INVALID: "职业资料暂时无法解析，请稍后重试。",
@@ -59,6 +85,7 @@ function asSummary(detail: CareerImportDetail): CareerImportSummary {
     importId: detail.importId,
     documentId: detail.documentId,
     sourceFilename: detail.sourceFilename,
+    privacyStatus: detail.privacyStatus,
     status: detail.status,
     failureCode: detail.failureCode,
     createdAt: detail.createdAt,
@@ -74,13 +101,27 @@ function hasSameSummary(detail: CareerImportDetail, previous: CareerImportSummar
     && detail.facts.length === previous.candidateFactCount;
 }
 
-export function ProfileImportView({ initialImports, initialErrorMessage = null }: ProfileImportViewProps) {
+function readFileText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result)));
+    reader.addEventListener("error", () => reject(reader.error ?? new Error("无法读取职业资料")));
+    reader.readAsText(file, "utf-8");
+  });
+}
+
+export function ProfileImportView({ initialImports }: ProfileImportViewProps) {
   const [actionState, setActionState] = useState<UploadActionState>(initialUploadActionState);
   const [isPending, startTransition] = useTransition();
   const [recentImports, setRecentImports] = useState<CareerImportSummary[]>(initialImports);
   const [activeImport, setActiveImport] = useState<CareerImportSummary | null>(initialImports[0] ?? null);
   const [detail, setDetail] = useState<CareerImportDetail | null>(null);
   const [pollingError, setPollingError] = useState(false);
+  const [preparedDocument, setPreparedDocument] = useState<PreparedCareerDocument | null>(null);
+  const [privacyMode, setPrivacyMode] = useState<CareerPrivacyMode | null>(null);
+  const [confirmedSanitized, setConfirmedSanitized] = useState(false);
+  const [privacyMessage, setPrivacyMessage] = useState<string | null>(null);
+  const privacyGeneration = useRef(0);
   const pollingGeneration = useRef<{ value: number; initialStatus: ImportStatus | null }>({
     value: 0,
     initialStatus: initialImports[0]?.status ?? null,
@@ -105,9 +146,56 @@ export function ProfileImportView({ initialImports, initialErrorMessage = null }
     setPollingError(false);
   };
 
+  const inspectSelectedFile = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    const generation = privacyGeneration.current + 1;
+    privacyGeneration.current = generation;
+    setPreparedDocument(null);
+    setPrivacyMode(null);
+    setConfirmedSanitized(false);
+    if (!file) {
+      setPrivacyMessage("请选择一份 Markdown 职业资料后上传。");
+      return;
+    }
+    setPrivacyMessage("正在浏览器中检查敏感信息…");
+    void readFileText(file).then((markdown) => {
+      if (privacyGeneration.current !== generation) return;
+      const inspection = inspectCareerDocumentPrivacy(markdown);
+      setPreparedDocument({ file, inspection });
+      setPrivacyMessage(inspection.findings.length > 0
+        ? `发现 ${inspection.findings.length} 项敏感信息，请选择隐私处理方式。`
+        : "未发现常见敏感信息，请确认你已自行检查后继续。");
+    }).catch(() => {
+      if (privacyGeneration.current !== generation) return;
+      setPrivacyMessage("浏览器无法读取该文件，请重新选择 UTF-8 Markdown 文件。");
+    });
+  };
+
+  const canSubmit = Boolean(preparedDocument && (
+    preparedDocument.inspection.findings.length > 0
+      ? privacyMode
+      : confirmedSanitized
+  ));
+
   const submitUpload = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const formData = new FormData(event.currentTarget);
+    if (!preparedDocument || !canSubmit) {
+      setPrivacyMessage("请先完成敏感信息检查并确认隐私处理方式。");
+      return;
+    }
+    const selectedMode: CareerPrivacyMode = preparedDocument.inspection.findings.length > 0
+      ? privacyMode!
+      : "sanitized_only";
+    const formData = new FormData();
+    formData.set("privacyMode", selectedMode);
+    formData.set("file", new File(
+      [preparedDocument.inspection.sanitizedMarkdown],
+      preparedDocument.file.name,
+      { type: "text/markdown", lastModified: preparedDocument.file.lastModified },
+    ));
+    if (selectedMode === "retain_protected_original") {
+      formData.set("protectedOriginal", preparedDocument.file);
+    }
     startTransition(async () => {
       const nextState = await createCareerImportAction(initialUploadActionState, formData);
       if (nextState.ok) {
@@ -178,21 +266,19 @@ export function ProfileImportView({ initialImports, initialErrorMessage = null }
     ? "uploading"
     : activeImport?.status ?? null;
   const failureMessage = detail?.failureCode ? failureMessages[detail.failureCode] ?? "解析失败，请稍后重试。" : null;
-  const hasActionResult = actionState.ok || actionState.code !== "";
   const actionFailureMessage = actionState.ok === false && actionState.code ? actionState.message : null;
-  const initialQueryErrorMessage = hasActionResult ? null : initialErrorMessage;
   const liveMessage = isPending
     ? statusText.uploading
     : actionFailureMessage
       ? actionFailureMessage
-      : initialQueryErrorMessage
-        ? initialQueryErrorMessage
-        : pollingError
+      : pollingError
       ? "暂时无法读取解析状态，请稍后重试。"
       : displayedStatus === "failed"
       ? failureMessage ?? "解析失败，请稍后重试。"
-      : displayedStatus
+        : displayedStatus
         ? statusText[displayedStatus]
+        : privacyMessage
+          ? privacyMessage
         : "请选择一份 Markdown 职业资料后上传。";
 
   return (
@@ -205,10 +291,74 @@ export function ProfileImportView({ initialImports, initialErrorMessage = null }
 
       <section aria-labelledby="profile-upload-title" className="profile-upload">
         <h2 id="profile-upload-title">导入 Markdown 职业资料</h2>
-        <form action={createCareerImportFormAction} className="profile-upload-form" onSubmit={submitUpload}>
+        <div className="profile-privacy-reminder" role="note">
+          <strong>上传前先检查隐私</strong>
+          <p>请检查姓名、手机号、邮箱、详细住址、证件号码、照片、二维码和社交账号。自动检查可能遗漏内容，请勿使用随机生成的真实身份替换。</p>
+        </div>
+        <form className="profile-upload-form" onSubmit={submitUpload}>
           <label htmlFor="career-document">选择 Markdown 职业资料</label>
-          <input accept=".md,text/markdown,text/plain" className="profile-file-input" id="career-document" name="file" type="file" />
-          <button className="profile-upload-button workbench-touch-target" disabled={isPending} type="submit">
+          <input
+            accept=".md,text/markdown,text/plain"
+            className="profile-file-input"
+            id="career-document"
+            name="careerDocument"
+            onChange={inspectSelectedFile}
+            type="file"
+          />
+
+          {preparedDocument?.inspection.findings.length ? (
+            <div className="profile-privacy-review">
+              <div className="profile-privacy-review-heading">
+                <strong>发现 {preparedDocument.inspection.findings.length} 项敏感信息</strong>
+                <span>原文仅在当前浏览器中用于生成预览</span>
+              </div>
+              <ol className="profile-privacy-finding-list">
+                {preparedDocument.inspection.findings.map((finding, index) => (
+                  <li key={`${finding.kind}-${finding.line}-${index}`}>
+                    <span>{privacyFindingNames[finding.kind]}</span>
+                    <span>第 {finding.line} 行</span>
+                    <code>{finding.maskedPreview}</code>
+                  </li>
+                ))}
+              </ol>
+              <details className="profile-privacy-preview">
+                <summary>查看脱敏处理副本</summary>
+                <pre>{preparedDocument.inspection.sanitizedMarkdown}</pre>
+              </details>
+              <fieldset className="profile-privacy-options">
+                <legend>隐私处理方式</legend>
+                <label>
+                  <input
+                    checked={privacyMode === "sanitized_only"}
+                    name="privacyChoice"
+                    onChange={() => setPrivacyMode("sanitized_only")}
+                    type="radio"
+                  />
+                  仅上传脱敏副本（原件不离开浏览器）
+                </label>
+                <label>
+                  <input
+                    checked={privacyMode === "retain_protected_original"}
+                    name="privacyChoice"
+                    onChange={() => setPrivacyMode("retain_protected_original")}
+                    type="radio"
+                  />
+                  保留受保护原件（下游仍只使用脱敏副本）
+                </label>
+              </fieldset>
+            </div>
+          ) : preparedDocument ? (
+            <label className="profile-privacy-confirmation">
+              <input
+                checked={confirmedSanitized}
+                onChange={(event) => setConfirmedSanitized(event.currentTarget.checked)}
+                type="checkbox"
+              />
+              我已检查该文件，并确认它不含其他需要处理的敏感信息
+            </label>
+          ) : null}
+
+          <button className="profile-upload-button workbench-touch-target" disabled={isPending || !canSubmit} type="submit">
             上传并解析
           </button>
         </form>
@@ -234,6 +384,7 @@ export function ProfileImportView({ initialImports, initialErrorMessage = null }
                   >
                     <span>{item.sourceFilename}</span>
                     <span>{statusText[item.status]}</span>
+                    <span>{privacyStatusText[item.privacyStatus]}</span>
                     <span>{item.status === "failed" ? itemFailure : `候选事实 ${item.candidateFactCount} 条`}</span>
                     <time dateTime={item.updatedAt}>{item.updatedAt.slice(0, 16).replace("T", " ")}</time>
                   </button>

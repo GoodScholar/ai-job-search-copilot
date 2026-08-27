@@ -5,16 +5,29 @@ const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const testDevAuthSecret = "issue-2-e2e-dev-auth-shared-secret";
 const testRunSuffix = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 const resume = [
-  "# 张三", "邮箱：secret@example.test", "## 工作经历",
+  "# 姓名：张三", "邮箱：secret@example.test", "## 工作经历",
   "- AI 应用工程师｜示例科技｜2024-至今", "## 技能", "- TypeScript", "- React",
   "## 教育经历", "- 示例大学｜计算机科学｜2020", "## 项目经历",
   "- Job Copilot：构建证据驱动的求职工作流", "## 语言", "- 英语：专业工作水平",
   "## 成果", "- 将解析耗时降低 35%", "## 联系方式", "- 电话：13800000000",
 ].join("\n");
 const resumeFile = { name: "career.md", mimeType: "text/markdown", buffer: Buffer.from(resume, "utf8") };
+const sanitizedResume = [
+  "# 姓名：[姓名]", "邮箱：[邮箱]", "## 工作经历",
+  "- AI 应用工程师｜示例科技｜2024-至今", "## 技能", "- TypeScript", "- React",
+  "## 教育经历", "- 示例大学｜计算机科学｜2020", "## 项目经历",
+  "- Job Copilot：构建证据驱动的求职工作流", "## 语言", "- 英语：专业工作水平",
+  "## 成果", "- 将解析耗时降低 35%", "## 联系方式", "- 电话：[手机号]",
+].join("\n");
+const sanitizedResumeFile = {
+  name: "career.md",
+  mimeType: "text/markdown",
+  buffer: Buffer.from(sanitizedResume, "utf8"),
+};
 
 type CareerImportDetail = {
   importId: string;
+  privacyStatus: "sanitized_only" | "sanitized_with_protected_original";
   facts: unknown[];
 };
 
@@ -93,11 +106,22 @@ test("登录用户可导入、持久化并安全复用 Markdown 职业资料", a
     await expect(page.getByRole("button", { name: "退出" })).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(fileInput).toBeFocused();
-    await page.keyboard.press("Tab");
-    await expect(uploadButton).toBeFocused();
   }
 
   await fileInput.setInputFiles(resumeFile);
+  await expect(page.getByText("发现 3 项敏感信息", { exact: true })).toBeVisible();
+  await page.getByText("查看脱敏处理副本", { exact: true }).click();
+  const privacyPreview = page.locator(".profile-privacy-preview pre");
+  await expect(privacyPreview).toContainText("# 姓名：[姓名]");
+  await expect(privacyPreview).toContainText("邮箱：[邮箱]");
+  await expect(privacyPreview).toContainText("电话：[手机号]");
+  const retainOriginal = page.getByLabel("保留受保护原件（下游仍只使用脱敏副本）");
+  if (testInfo.project.name === "Mobile Safari") {
+    await retainOriginal.tap();
+  } else {
+    await retainOriginal.click();
+  }
+  await expect(uploadButton).toBeEnabled();
   await observeImportStatus(page);
   if (testInfo.project.name === "Mobile Safari") {
     await uploadButton.tap();
@@ -127,16 +151,22 @@ test("登录用户可导入、持久化并安全复用 Markdown 职业资料", a
   });
   expect(detailResponse.status()).toBe(200);
   const detail = await detailResponse.json() as CareerImportDetail;
+  expect(detail.privacyStatus).toBe("sanitized_with_protected_original");
   expect(detail.facts).toHaveLength(7);
 
   await page.reload();
   await expect(page.getByRole("status")).toHaveText("解析完成");
   await expect(page.getByText("TypeScript", { exact: true })).toBeVisible();
   await expect(page.getByText("第 6 行", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /原件受保护，下游使用脱敏副本/ })).toBeVisible();
 
   const duplicateResponse = await request.post(`${apiBaseUrl}/v1/career-documents/imports`, {
     headers: { authorization: `Bearer ${bearer}` },
-    multipart: { file: resumeFile },
+    multipart: {
+      privacyMode: "retain_protected_original",
+      file: sanitizedResumeFile,
+      protectedOriginal: resumeFile,
+    },
   });
   expect(duplicateResponse.status()).toBe(200);
   const duplicateImport = await duplicateResponse.json() as { importId: string; reused: boolean; status: string };

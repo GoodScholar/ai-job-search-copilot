@@ -5,6 +5,7 @@ import {
   candidateFacts,
   careerDocuments,
   careerImports,
+  protectedCareerDocuments,
   type Database,
 } from "@job-copilot/database";
 import {
@@ -18,7 +19,9 @@ import {
   type CareerImportJob,
   type CareerImportStatus,
   type CareerImportSummary,
+  type CareerDocumentPrivacyStatus,
 } from "@job-copilot/contracts/career-import";
+import { CAREER_PRIVACY_SCAN_VERSION } from "@job-copilot/contracts/career-document-privacy";
 import type { AuditTrail } from "./audit-trail";
 
 const parserAdapter = "fake";
@@ -51,6 +54,11 @@ export type CreateOrReuseInput = {
   bytes: Uint8Array;
   originalFilename: string;
   mediaType: "text/markdown";
+  privacyScanVersion?: string;
+  protectedOriginal?: {
+    bytes: Uint8Array;
+    originalFilename: string;
+  };
 };
 
 export type CreateOrReuseResult = CreateCareerImportResponse & {
@@ -82,6 +90,7 @@ type ImportRecord = {
   objectKey: string;
   originalFilename: string;
   checksumSha256: string;
+  privacyScanVersion: string | null;
   status: string;
   attemptCount: number;
   originatingRequestId: string;
@@ -95,12 +104,51 @@ class StableImportFailure extends Error {
 
 class StaleImportAttempt extends Error {}
 
+class RetryableImportFailure extends Error {
+  constructor() {
+    super("career import temporarily unavailable");
+  }
+}
+
 function sha256(value: Uint8Array | string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function objectKey(userId: string, documentId: string): string {
-  return `accounts/${userId}/career-documents/${documentId}/source.md`;
+function objectKey(userId: string, documentId: string, privacyScanVersion?: string): string {
+  const filename = privacyScanVersion ? "processing.md" : "source.md";
+  return `accounts/${userId}/career-documents/${documentId}/${filename}`;
+}
+
+function protectedObjectKey(userId: string, documentId: string): string {
+  return `accounts/${userId}/protected-career-documents/${documentId}/original.md`;
+}
+
+function privacyStatus(input: {
+  privacyScanVersion: string | null | undefined;
+  protectedOriginalStored: boolean;
+}): CareerDocumentPrivacyStatus {
+  if (input.privacyScanVersion !== CAREER_PRIVACY_SCAN_VERSION) return "legacy_unreviewed";
+  return input.protectedOriginalStored
+    ? "sanitized_with_protected_original"
+    : "sanitized_only";
+}
+
+function protectedOriginalCount() {
+  return sql<number>`(
+    select count(*)::int from ${protectedCareerDocuments}
+    where ${protectedCareerDocuments.processingDocumentId} = ${careerDocuments.id}
+      and ${protectedCareerDocuments.userId} = ${careerDocuments.userId}
+  )`;
+}
+
+function persistedPrivacyStatus(record: {
+  privacyScanVersion: string | null;
+  protectedOriginalCount: number;
+}): CareerDocumentPrivacyStatus {
+  return privacyStatus({
+    privacyScanVersion: record.privacyScanVersion,
+    protectedOriginalStored: record.protectedOriginalCount > 0,
+  });
 }
 
 function toIso(value: Date): string {
@@ -111,6 +159,7 @@ function baseImport(record: {
   importId: string;
   documentId: string;
   sourceFilename: string;
+  privacyStatus: CareerDocumentPrivacyStatus;
   status: string;
   failureCode: string | null;
   createdAt: Date;
@@ -120,6 +169,7 @@ function baseImport(record: {
     importId: record.importId,
     documentId: record.documentId,
     sourceFilename: record.sourceFilename,
+    privacyStatus: record.privacyStatus,
     status: record.status as CareerImportStatus,
     failureCode: record.failureCode as CareerImportFailureCode | null,
     createdAt: toIso(record.createdAt),
@@ -173,6 +223,7 @@ async function findImport(db: Database, input: { userId: string; importId: strin
     objectKey: careerDocuments.objectKey,
     originalFilename: careerDocuments.originalFilename,
     checksumSha256: careerDocuments.checksumSha256,
+    privacyScanVersion: careerDocuments.privacyScanVersion,
     status: careerImports.status,
     attemptCount: careerImports.attemptCount,
     originatingRequestId: careerImports.originatingRequestId,
@@ -196,6 +247,7 @@ export function createCareerImportCommands(deps: CommandDependencies): {
         id: careerDocuments.id,
         objectKey: careerDocuments.objectKey,
         originalFilename: careerDocuments.originalFilename,
+        privacyScanVersion: careerDocuments.privacyScanVersion,
       }).from(careerDocuments).where(and(
         eq(careerDocuments.userId, input.userId),
         eq(careerDocuments.checksumSha256, checksumSha256),
@@ -204,7 +256,7 @@ export function createCareerImportCommands(deps: CommandDependencies): {
 
       if (!document) {
         const documentId = deps.id();
-        const key = objectKey(input.userId, documentId);
+        const key = objectKey(input.userId, documentId, input.privacyScanVersion);
         document = await deps.db.transaction(async (transaction) => {
           const [created] = await transaction.insert(careerDocuments).values({
             id: documentId,
@@ -214,12 +266,14 @@ export function createCareerImportCommands(deps: CommandDependencies): {
             originalFilename: input.originalFilename,
             mediaType: input.mediaType,
             byteSize: input.bytes.byteLength,
+            privacyScanVersion: input.privacyScanVersion,
             createdAt: now,
             updatedAt: now,
           }).onConflictDoNothing().returning({
             id: careerDocuments.id,
             objectKey: careerDocuments.objectKey,
             originalFilename: careerDocuments.originalFilename,
+            privacyScanVersion: careerDocuments.privacyScanVersion,
           });
           if (created) {
             await deps.documentStore.put({ objectKey: key, bytes: input.bytes, mediaType: input.mediaType, documentId });
@@ -229,6 +283,7 @@ export function createCareerImportCommands(deps: CommandDependencies): {
             id: careerDocuments.id,
             objectKey: careerDocuments.objectKey,
             originalFilename: careerDocuments.originalFilename,
+            privacyScanVersion: careerDocuments.privacyScanVersion,
           }).from(careerDocuments).where(and(
             eq(careerDocuments.userId, input.userId),
             eq(careerDocuments.checksumSha256, checksumSha256),
@@ -240,6 +295,64 @@ export function createCareerImportCommands(deps: CommandDependencies): {
       }
 
       if (!document) throw new Error("无法创建职业资料");
+
+      if (input.privacyScanVersion && !document.privacyScanVersion) {
+        const [upgraded] = await deps.db.update(careerDocuments).set({
+          privacyScanVersion: input.privacyScanVersion,
+          updatedAt: now,
+        }).where(and(
+          eq(careerDocuments.id, document.id),
+          eq(careerDocuments.userId, input.userId),
+          sql`${careerDocuments.privacyScanVersion} is null`,
+        )).returning({ privacyScanVersion: careerDocuments.privacyScanVersion });
+        document.privacyScanVersion = upgraded?.privacyScanVersion ?? input.privacyScanVersion;
+      }
+
+      let protectedOriginalStored = false;
+      if (input.protectedOriginal) {
+        const originalChecksum = sha256(input.protectedOriginal.bytes);
+        const [existingOriginal] = await deps.db.select({ id: protectedCareerDocuments.id })
+          .from(protectedCareerDocuments).where(and(
+            eq(protectedCareerDocuments.userId, input.userId),
+            eq(protectedCareerDocuments.processingDocumentId, document.id),
+            eq(protectedCareerDocuments.checksumSha256, originalChecksum),
+          ));
+        if (existingOriginal) {
+          protectedOriginalStored = true;
+        } else {
+          const protectedDocumentId = deps.id();
+          const key = protectedObjectKey(input.userId, protectedDocumentId);
+          protectedOriginalStored = await deps.db.transaction(async (transaction) => {
+            const [created] = await transaction.insert(protectedCareerDocuments).values({
+              id: protectedDocumentId,
+              userId: input.userId,
+              processingDocumentId: document.id,
+              checksumSha256: originalChecksum,
+              objectKey: key,
+              originalFilename: input.protectedOriginal!.originalFilename,
+              mediaType: input.mediaType,
+              byteSize: input.protectedOriginal!.bytes.byteLength,
+              createdAt: now,
+            }).onConflictDoNothing().returning({ id: protectedCareerDocuments.id });
+            if (!created) return true;
+            await deps.documentStore.put({
+              objectKey: key,
+              bytes: input.protectedOriginal!.bytes,
+              mediaType: input.mediaType,
+              documentId: protectedDocumentId,
+            });
+            return true;
+          });
+        }
+      }
+      if (!protectedOriginalStored) {
+        const [persistedOriginal] = await deps.db.select({ id: protectedCareerDocuments.id })
+          .from(protectedCareerDocuments).where(and(
+            eq(protectedCareerDocuments.userId, input.userId),
+            eq(protectedCareerDocuments.processingDocumentId, document.id),
+          )).limit(1);
+        protectedOriginalStored = Boolean(persistedOriginal);
+      }
 
       let [storedImport] = await deps.db.select({
         id: careerImports.id,
@@ -409,6 +522,10 @@ export function createCareerImportCommands(deps: CommandDependencies): {
           importId: storedImport.id,
           documentId: document.id,
           sourceFilename: document.originalFilename,
+          privacyStatus: privacyStatus({
+            privacyScanVersion: document.privacyScanVersion,
+            protectedOriginalStored,
+          }),
           status: storedImport.status,
           failureCode: storedImport.failureCode,
           createdAt: storedImport.createdAt,
@@ -430,6 +547,7 @@ export function createCareerImportQueries(deps: { db: Database }): {
         importId: careerImports.id,
         documentId: careerDocuments.id,
         sourceFilename: careerDocuments.originalFilename,
+        privacyScanVersion: careerDocuments.privacyScanVersion,
         status: careerImports.status,
         failureCode: careerImports.failureCode,
         createdAt: careerImports.createdAt,
@@ -439,12 +557,16 @@ export function createCareerImportQueries(deps: { db: Database }): {
           where ${candidateFacts.careerImportId} = ${careerImports.id}
             and ${candidateFacts.userId} = ${careerImports.userId}
         )`,
+        protectedOriginalCount: protectedOriginalCount(),
       }).from(careerImports).innerJoin(careerDocuments, and(
         eq(careerDocuments.id, careerImports.careerDocumentId),
         eq(careerDocuments.userId, careerImports.userId),
       ))
         .where(eq(careerImports.userId, userId)).orderBy(desc(careerImports.createdAt)).limit(20);
-      return records.map(summary);
+      return records.map((record) => summary({
+        ...record,
+        privacyStatus: persistedPrivacyStatus(record),
+      }));
     },
 
     async get({ userId, importId }): Promise<CareerImportDetail | null> {
@@ -452,10 +574,12 @@ export function createCareerImportQueries(deps: { db: Database }): {
         importId: careerImports.id,
         documentId: careerDocuments.id,
         sourceFilename: careerDocuments.originalFilename,
+        privacyScanVersion: careerDocuments.privacyScanVersion,
         status: careerImports.status,
         failureCode: careerImports.failureCode,
         createdAt: careerImports.createdAt,
         updatedAt: careerImports.updatedAt,
+        protectedOriginalCount: protectedOriginalCount(),
       }).from(careerImports).innerJoin(careerDocuments, and(
         eq(careerDocuments.id, careerImports.careerDocumentId),
         eq(careerDocuments.userId, careerImports.userId),
@@ -485,7 +609,10 @@ export function createCareerImportQueries(deps: { db: Database }): {
         : [];
 
       return {
-        ...baseImport(record),
+        ...baseImport({
+          ...record,
+          privacyStatus: persistedPrivacyStatus(record),
+        }),
         facts: facts.map((fact) => ({
           factId: fact.factId,
           factType: fact.factType as CareerImportDetail["facts"][number]["factType"],
@@ -586,13 +713,17 @@ export function createCareerImportProcessor(deps: ProcessorDependencies): {
       }
       record.attemptCount = attemptToken;
 
+      if (record.privacyScanVersion !== CAREER_PRIVACY_SCAN_VERSION) {
+        return fail(record, attemptToken, "CAREER_DOCUMENT_PRIVACY_UNVERIFIED");
+      }
+
       let rawBytes: Uint8Array;
       try {
         rawBytes = await deps.documentStore.get({ objectKey: record.objectKey });
       } catch (error) {
         if (isMissingDocument(error)) return fail(record, attemptToken, "CAREER_DOCUMENT_NOT_FOUND");
         if (input.finalAttempt) return fail(record, attemptToken, "CAREER_DOCUMENT_READ_FAILED");
-        throw error;
+        throw new RetryableImportFailure();
       }
 
       try {
@@ -697,7 +828,7 @@ export function createCareerImportProcessor(deps: ProcessorDependencies): {
         if (error instanceof StaleImportAttempt) return "noop";
         if (error instanceof StableImportFailure) return fail(record, attemptToken, error.code);
         if (input.finalAttempt) return fail(record, attemptToken, "CAREER_IMPORT_PERSIST_FAILED");
-        throw error;
+        throw new RetryableImportFailure();
       }
     },
   };

@@ -17,7 +17,7 @@ it("declares the profile page and preserves Next control-flow errors", async () 
   const redirectError = new Error("NEXT_REDIRECT:/login?returnTo=%2Fprofile");
   mocks.getCareerImports.mockRejectedValue(redirectError);
 
-  await expect(ProfilePage({ searchParams: Promise.resolve({}) })).rejects.toThrow("NEXT_REDIRECT:/login?returnTo=%2Fprofile");
+  await expect(ProfilePage()).rejects.toThrow("NEXT_REDIRECT:/login?returnTo=%2Fprofile");
   expect(mocks.unstableRethrow).toHaveBeenCalledWith(redirectError);
 });
 
@@ -25,29 +25,13 @@ it("performs the authenticated RSC first read before passing all recent imports 
   const latest = {
     importId: "d194d0ce-fc7e-45db-9425-e8ff4eaf8c08",
     documentId: "b4d4a7c1-9a17-4a8c-8b36-0f815d042e9a",
-    sourceFilename: "career.md", status: "queued", failureCode: null,
+    sourceFilename: "career.md", privacyStatus: "sanitized_only", status: "queued", failureCode: null,
     createdAt: "2026-08-27T08:00:00.000Z", updatedAt: "2026-08-27T08:00:00.000Z", candidateFactCount: 0,
   };
   const earlier = { ...latest, importId: "9e812f2a-34fd-43cf-b8fb-fc307f1eb4ce", sourceFilename: "earlier.md" };
   mocks.getCareerImports.mockResolvedValue({ imports: [latest, earlier] });
 
-  const page = await ProfilePage({ searchParams: Promise.resolve({}) });
+  const page = await ProfilePage();
 
   expect(page.props.initialImports).toEqual([latest, earlier]);
-});
-
-it("passes only a whitelisted no-JavaScript upload failure message to the view", async () => {
-  mocks.getCareerImports.mockResolvedValue({ imports: [] });
-
-  const page = await ProfilePage({ searchParams: Promise.resolve({ importError: "CAREER_DOCUMENT_EMPTY" }) });
-
-  expect(page.props.initialErrorMessage).toBe("Markdown 文件不能为空。");
-});
-
-it.each(["unknown", "toString", "constructor", "__proto__", ["CAREER_DOCUMENT_EMPTY"]])("drops unsafe profile query value %j", async (importError) => {
-  mocks.getCareerImports.mockResolvedValue({ imports: [] });
-
-  const page = await ProfilePage({ searchParams: Promise.resolve({ importError }) });
-
-  expect(page.props.initialErrorMessage).toBeNull();
 });

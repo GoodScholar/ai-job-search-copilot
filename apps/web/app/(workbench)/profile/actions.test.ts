@@ -10,13 +10,13 @@ vi.mock("@/lib/server/api-client", () => ({ api: { createCareerImport: mocks.cre
 vi.mock("@/lib/server/session-cookie", () => ({ readSessionToken: mocks.readSessionToken }));
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 
-import { createCareerImportAction, createCareerImportFormAction } from "./actions";
+import { createCareerImportAction } from "./actions";
 
 const initialUploadActionState = { ok: false, code: "", message: "" } as const;
 
 afterEach(() => vi.clearAllMocks());
 
-it("reauthenticates every upload and forwards only the selected file", async () => {
+it("reauthenticates every upload and forwards only the privacy upload fields", async () => {
   mocks.readSessionToken.mockResolvedValue("a".repeat(43));
   mocks.createCareerImport.mockResolvedValue({
     importId: "d194d0ce-fc7e-45db-9425-e8ff4eaf8c08",
@@ -27,13 +27,18 @@ it("reauthenticates every upload and forwards only the selected file", async () 
   });
   const formData = new FormData();
   const file = new File(["# 资料"], "career.md", { type: "text/markdown" });
+  const protectedOriginal = new File(["# 张三"], "career.md", { type: "text/markdown" });
   formData.set("file", file);
+  formData.set("privacyMode", "retain_protected_original");
+  formData.set("protectedOriginal", protectedOriginal);
   formData.set("ignored", "untrusted");
 
   await expect(createCareerImportAction(initialUploadActionState, formData)).resolves.toMatchObject({ ok: true, import: { status: "queued" } });
   expect(mocks.createCareerImport).toHaveBeenCalledWith("a".repeat(43), expect.any(FormData));
   const forwarded = mocks.createCareerImport.mock.calls[0]![1] as FormData;
   expect(forwarded.get("file")).toBe(file);
+  expect(forwarded.get("privacyMode")).toBe("retain_protected_original");
+  expect(forwarded.get("protectedOriginal")).toBe(protectedOriginal);
   expect(forwarded.get("ignored")).toBeNull();
 });
 
@@ -48,19 +53,21 @@ it("redirects without a session and maps API failures to fixed Chinese messages"
   });
 });
 
-it("redirects no-JavaScript form failures through a whitelisted profile query", async () => {
+it("maps privacy validation failures to fixed Chinese messages", async () => {
   mocks.readSessionToken.mockResolvedValue("a".repeat(43));
-  mocks.createCareerImport.mockRejectedValue({ problem: { code: "CAREER_DOCUMENT_EMPTY", message: "internal failure" } });
+  mocks.createCareerImport.mockRejectedValue({ problem: { code: "CAREER_PROCESSING_COPY_MISMATCH" } });
 
-  await expect(createCareerImportFormAction(new FormData())).rejects.toThrow("redirect:/profile?importError=CAREER_DOCUMENT_EMPTY");
-  expect(mocks.redirect).toHaveBeenCalledWith("/profile?importError=CAREER_DOCUMENT_EMPTY");
+  await expect(createCareerImportAction(initialUploadActionState, new FormData())).resolves.toEqual({
+    ok: false,
+    code: "CAREER_PROCESSING_COPY_MISMATCH",
+    message: "脱敏副本与原件不一致，请重新选择文件后再试。",
+  });
 });
 
 it.each(["unknown", "toString", "constructor", "__proto__"])("drops unsafe API failure code %s", async (code) => {
   mocks.readSessionToken.mockResolvedValue("a".repeat(43));
   mocks.createCareerImport.mockRejectedValue({ problem: { code, message: "internal failure" } });
 
-  await expect(createCareerImportFormAction(new FormData())).rejects.toThrow("redirect:/profile?importError=CAREER_IMPORT_UNAVAILABLE");
   await expect(createCareerImportAction(initialUploadActionState, new FormData())).resolves.toEqual({
     ok: false,
     code: "CAREER_IMPORT_UNAVAILABLE",

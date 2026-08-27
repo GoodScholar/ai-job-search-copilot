@@ -14,11 +14,17 @@ import {
   createDatabase,
   jobAccounts,
   migrateDatabase,
+  protectedCareerDocuments,
   type Database,
 } from "@job-copilot/database";
 import { CAREER_DOCUMENT_MAX_BYTES, CAREER_IMPORT_JOB_NAME, CAREER_IMPORT_QUEUE } from "@job-copilot/contracts/career-import";
+import { CAREER_PRIVACY_SCAN_VERSION } from "@job-copilot/contracts/career-document-privacy";
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
-import { createCareerImportProcessor, type CareerDocumentStore } from "@job-copilot/domain/career-imports";
+import {
+  createCareerImportProcessor,
+  type CareerDocumentParser,
+  type CareerDocumentStore,
+} from "@job-copilot/domain/career-imports";
 import { CareerImportConsumer } from "./career-import-consumer.js";
 import { FakeCareerDocumentParser } from "./fake-career-document-parser.js";
 import { MinioCareerDocumentStore } from "./minio-career-document-store.js";
@@ -108,6 +114,7 @@ describe("CareerImportConsumer", () => {
     await database.delete(candidateFactEvidence);
     await database.delete(candidateFacts);
     await database.delete(careerImports);
+    await database.delete(protectedCareerDocuments);
     await database.delete(careerDocuments);
     store = new MinioCareerDocumentStore(minio, minioBucket);
   });
@@ -121,23 +128,29 @@ describe("CareerImportConsumer", () => {
     await postgres?.stop();
   });
 
-  function startConsumer(documentStore: CareerDocumentStore): void {
+  function startConsumer(
+    documentStore: CareerDocumentStore,
+    parser: CareerDocumentParser = new FakeCareerDocumentParser(),
+  ): void {
     const processor = createCareerImportProcessor({
       db: database,
       auditTrail: createAuditTrail({ db: database, clock: () => new Date() }),
       documentStore,
-      parser: new FakeCareerDocumentParser(),
+      parser,
       id: randomUUID,
       clock: () => new Date(),
     });
     consumer = new CareerImportConsumer({ redisUrl, processor });
   }
 
-  async function createQueuedImport(sourceMarkdown = markdown): Promise<{ importId: string; documentId: string; objectKey: string }> {
+  async function createQueuedImport(
+    sourceMarkdown = markdown,
+    protectedOriginal?: string,
+  ): Promise<{ importId: string; documentId: string; objectKey: string }> {
     const importId = randomUUID();
     const documentId = randomUUID();
     const bytes = new TextEncoder().encode(sourceMarkdown);
-    const objectKey = `accounts/${userId}/career-documents/${documentId}/source.md`;
+    const objectKey = `accounts/${userId}/career-documents/${documentId}/processing.md`;
     await minio.putObject(minioBucket, objectKey, Buffer.from(bytes), bytes.byteLength, {
       "content-type": "text/markdown",
       "x-amz-meta-document-id": documentId,
@@ -151,7 +164,28 @@ describe("CareerImportConsumer", () => {
       originalFilename: "private-resume.md",
       mediaType: "text/markdown",
       byteSize: bytes.byteLength,
+      privacyScanVersion: CAREER_PRIVACY_SCAN_VERSION,
     });
+    if (protectedOriginal !== undefined) {
+      const protectedId = randomUUID();
+      const protectedBytes = new TextEncoder().encode(protectedOriginal);
+      const protectedObjectKey = `accounts/${userId}/protected-career-documents/${protectedId}/original.md`;
+      await minio.putObject(minioBucket, protectedObjectKey, Buffer.from(protectedBytes), protectedBytes.byteLength, {
+        "content-type": "text/markdown",
+        "x-amz-meta-document-id": protectedId,
+        "x-amz-meta-byte-size": String(protectedBytes.byteLength),
+      });
+      await database.insert(protectedCareerDocuments).values({
+        id: protectedId,
+        userId,
+        processingDocumentId: documentId,
+        checksumSha256: checksum(protectedBytes),
+        objectKey: protectedObjectKey,
+        originalFilename: "private-resume.md",
+        mediaType: "text/markdown",
+        byteSize: protectedBytes.byteLength,
+      });
+    }
     await database.insert(careerImports).values({
       id: importId,
       userId,
@@ -162,18 +196,20 @@ describe("CareerImportConsumer", () => {
     return { importId, documentId, objectKey };
   }
 
-  async function enqueue(importId: string): Promise<void> {
+  async function enqueue(importId: string, backoffDelay = 1): Promise<void> {
     await queue.add(CAREER_IMPORT_JOB_NAME, { version: 1, importId, userId }, {
       jobId: importId,
       attempts: 3,
-      backoff: { type: "fixed", delay: 1 },
+      backoff: { type: "fixed", delay: backoffDelay },
       removeOnComplete: true,
       removeOnFail: true,
     });
   }
 
   it("用真实队列、对象存储和数据库写入带精确行号的候选事实，且 Redis 载荷不含职业资料", async () => {
-    const item = await createQueuedImport();
+    const protectedOriginal = `# 张三\n邮箱：secret@example.com\n${markdown}`;
+    const processingCopy = `# [姓名]\n邮箱：[邮箱]\n${markdown}`;
+    const item = await createQueuedImport(processingCopy, protectedOriginal);
     await enqueue(item.importId);
     const queuedJob = await queue.getJob(item.importId);
     const payload = JSON.stringify(queuedJob?.data);
@@ -181,6 +217,11 @@ describe("CareerImportConsumer", () => {
     expect(payload).not.toContain("private-resume.md");
     expect(payload).not.toContain("evidence");
     expect(payload).not.toContain("@example.com");
+
+    const [protectedRecord] = await database.select({ objectKey: protectedCareerDocuments.objectKey })
+      .from(protectedCareerDocuments);
+    expect(protectedRecord?.objectKey).toContain("/protected-career-documents/");
+    expect(item.objectKey).toContain("/career-documents/");
 
     startConsumer(store);
     await waitFor(async () => (await database.select({ status: careerImports.status }).from(careerImports)).at(0)?.status === "completed");
@@ -192,10 +233,12 @@ describe("CareerImportConsumer", () => {
       { factType: "skill", factValue: { name: "PostgreSQL" } },
       { factType: "experience", factValue: { summary: "在 Job Copilot 负责后台服务" } },
     ]));
+    expect(JSON.stringify(facts)).not.toContain("张三");
+    expect(JSON.stringify(facts)).not.toContain("secret@example.com");
     const [detail] = await database.execute<{ start_line: number; end_line: number; excerpt: string }>(
       `select start_line, end_line, excerpt from candidate_fact_evidence order by start_line limit 1`,
     );
-    expect(detail).toEqual({ start_line: 3, end_line: 3, excerpt: "- TypeScript" });
+    expect(detail).toEqual({ start_line: 5, end_line: 5, excerpt: "- TypeScript" });
 
     await enqueue(item.importId);
     await waitFor(async () => (await queue.getJob(item.importId)) === undefined);
@@ -213,6 +256,27 @@ describe("CareerImportConsumer", () => {
     const [result] = await database.select({ status: careerImports.status, attemptCount: careerImports.attemptCount })
       .from(careerImports);
     expect(result).toEqual({ status: "completed", attemptCount: 2 });
+  });
+
+  it("Parser 异常进入 Redis 前会移除职业资料正文", async () => {
+    const processingCopy = "# [姓名]\n邮箱：[邮箱]\n## 技能\n- TypeScript";
+    const protectedOriginal = "# 张三\n邮箱：secret@example.com\n## 技能\n- TypeScript";
+    const item = await createQueuedImport(processingCopy, protectedOriginal);
+    startConsumer(store, {
+      parse: async (source) => { throw new Error(`parser rejected: ${source}`); },
+    });
+    await enqueue(item.importId, 10_000);
+
+    await waitFor(async () => (await queue.getJob(item.importId))?.attemptsMade === 1);
+    const retryingJob = await queue.getJob(item.importId);
+    const serializedFailure = JSON.stringify({
+      failedReason: retryingJob?.failedReason,
+      stacktrace: retryingJob?.stacktrace,
+    });
+    expect(retryingJob?.failedReason).toBe("career import temporarily unavailable");
+    expect(serializedFailure).not.toContain(processingCopy);
+    expect(serializedFailure).not.toContain("TypeScript");
+    expect(serializedFailure).not.toContain("secret@example.com");
   });
 
   it("三次临时读取错误后以稳定失败码结束且不写入候选事实", async () => {

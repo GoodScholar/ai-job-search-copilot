@@ -2,11 +2,10 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ createCareerImportAction: vi.fn(), createCareerImportFormAction: vi.fn() }));
+const mocks = vi.hoisted(() => ({ createCareerImportAction: vi.fn() }));
 
 vi.mock("@/app/(workbench)/profile/actions", () => ({
   createCareerImportAction: mocks.createCareerImportAction,
-  createCareerImportFormAction: mocks.createCareerImportFormAction,
 }));
 
 import { ProfileImportView } from "./profile-import-view";
@@ -14,9 +13,19 @@ import { ProfileImportView } from "./profile-import-view";
 const importId = "d194d0ce-fc7e-45db-9425-e8ff4eaf8c08";
 const documentId = "b4d4a7c1-9a17-4a8c-8b36-0f815d042e9a";
 const queuedImport = {
-  importId, documentId, sourceFilename: "career.md", status: "queued" as const, failureCode: null,
+  importId, documentId, sourceFilename: "career.md", privacyStatus: "sanitized_only" as const,
+  status: "queued" as const, failureCode: null,
   createdAt: "2026-08-27T08:00:00.000Z", updatedAt: "2026-08-27T08:00:00.000Z", candidateFactCount: 0,
 };
+
+function readFile(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result)));
+    reader.addEventListener("error", () => reject(reader.error));
+    reader.readAsText(file);
+  });
+}
 const completedDetail = {
   ...queuedImport,
   status: "completed" as const,
@@ -50,18 +59,88 @@ const completedImport = {
   candidateFactCount: 1,
 };
 
-function submitFile() {
+async function prepareFile() {
   fireEvent.change(screen.getByLabelText("选择 Markdown 职业资料"), {
-    target: { files: [new File(["# 资料"], "career.md", { type: "text/markdown" })] },
+    target: { files: [new File(["## 技能\n- TypeScript"], "career.md", { type: "text/markdown" })] },
   });
+  fireEvent.click(await screen.findByRole("checkbox", { name: /我已检查该文件/ }));
+}
+
+function submitPreparedFile() {
   fireEvent.submit(screen.getByRole("button", { name: "上传并解析" }).closest("form")!);
+}
+
+async function submitFile() {
+  await prepareFile();
+  submitPreparedFile();
+}
+
+async function confirmSanitizedFile(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole("checkbox", { name: /我已检查该文件/ }));
 }
 
 afterEach(() => {
   vi.restoreAllMocks();
   mocks.createCareerImportAction.mockReset();
-  mocks.createCareerImportFormAction.mockReset();
   vi.useRealTimers();
+});
+
+it("detects private information before upload and submits only the sanitized processing copy", async () => {
+  let submitted: FormData | undefined;
+  mocks.createCareerImportAction.mockImplementation(async (_previous, formData: FormData) => {
+    submitted = formData;
+    return { ok: true, import: { ...queuedImport, reused: false, detailUrl: `/v1/career-documents/imports/${importId}` } };
+  });
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ ...queuedImport, facts: [] }));
+  const user = userEvent.setup();
+  const original = "姓名：张三\n邮箱：secret@example.com\n电话：13800000000\n## 技能\n- TypeScript";
+
+  render(<ProfileImportView initialImports={[]} />);
+  expect(screen.getByText(/姓名、手机号、邮箱、详细住址、证件号码、照片、二维码和社交账号/)).toBeInTheDocument();
+  await user.upload(screen.getByLabelText("选择 Markdown 职业资料"), new File([original], "career.md", { type: "text/markdown" }));
+
+  expect(await screen.findByText("发现 3 项敏感信息")).toBeInTheDocument();
+  expect(screen.getByText("张*")).toBeInTheDocument();
+  expect(screen.getByText("s***@example.com")).toBeInTheDocument();
+  expect(screen.getByText("138****0000")).toBeInTheDocument();
+  expect(screen.getByText(/姓名：\[姓名\]/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "上传并解析" })).toBeDisabled();
+
+  await user.click(screen.getByRole("radio", { name: "仅上传脱敏副本（原件不离开浏览器）" }));
+  await user.click(screen.getByRole("button", { name: "上传并解析" }));
+
+  await waitFor(() => expect(mocks.createCareerImportAction).toHaveBeenCalledTimes(1));
+  expect(submitted?.get("privacyMode")).toBe("sanitized_only");
+  expect(submitted?.get("protectedOriginal")).toBeNull();
+  expect(await readFile(submitted?.get("file") as File)).toBe(
+    "姓名：[姓名]\n邮箱：[邮箱]\n电话：[手机号]\n## 技能\n- TypeScript",
+  );
+});
+
+it("can retain a protected original without sending it as the processing copy", async () => {
+  let submitted: FormData | undefined;
+  mocks.createCareerImportAction.mockImplementation(async (_previous, formData: FormData) => {
+    submitted = formData;
+    return { ok: true, import: {
+      ...queuedImport,
+      privacyStatus: "sanitized_with_protected_original" as const,
+      reused: false,
+      detailUrl: `/v1/career-documents/imports/${importId}`,
+    } };
+  });
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ ...completedDetail, facts: [] }));
+  const user = userEvent.setup();
+  const original = "邮箱：secret@example.com\n## 技能\n- TypeScript";
+
+  render(<ProfileImportView initialImports={[]} />);
+  await user.upload(screen.getByLabelText("选择 Markdown 职业资料"), new File([original], "career.md", { type: "text/markdown" }));
+  await user.click(await screen.findByRole("radio", { name: "保留受保护原件（下游仍只使用脱敏副本）" }));
+  await user.click(screen.getByRole("button", { name: "上传并解析" }));
+
+  await waitFor(() => expect(mocks.createCareerImportAction).toHaveBeenCalledTimes(1));
+  expect(submitted?.get("privacyMode")).toBe("retain_protected_original");
+  expect(await readFile(submitted?.get("protectedOriginal") as File)).toBe(original);
+  expect(await readFile(submitted?.get("file") as File)).toContain("邮箱：[邮箱]");
 });
 
 it("shows recent imports and loads the selected import detail", async () => {
@@ -95,7 +174,7 @@ it("deduplicates an uploaded reused import and moves it to the top of recent imp
   vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ ...completedDetail, importId: completedImport.importId, facts: [] }));
 
   render(<ProfileImportView initialImports={[queuedImport, completedImport]} />);
-  submitFile();
+  await submitFile();
 
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("解析完成"));
   expect(screen.getAllByRole("button", { name: /career\.md|completed\.md/ })[0]).toHaveAccessibleName(/completed\.md/);
@@ -116,6 +195,7 @@ it("uploads only Markdown files and renders quoted pending facts after polling",
   const input = screen.getByLabelText("选择 Markdown 职业资料");
   expect(input).toHaveAttribute("accept", ".md,text/markdown,text/plain");
   await user.upload(input, new File(["## 技能\\n- TypeScript"], "career.md", { type: "text/markdown" }));
+  await confirmSanitizedFile(user);
   await user.click(screen.getByRole("button", { name: "上传并解析" }));
 
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent(/等待解析|解析中/));
@@ -136,6 +216,7 @@ it("maps failures to a fixed Chinese message without exposing internal values", 
 
   render(<ProfileImportView initialImports={[]} />);
   await user.upload(screen.getByLabelText("选择 Markdown 职业资料"), new File(["# empty"], "career.md", { type: "text/markdown" }));
+  await confirmSanitizedFile(user);
   await user.click(screen.getByRole("button", { name: "上传并解析" }));
 
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("职业资料暂时无法处理，请稍后重试。"));
@@ -160,6 +241,7 @@ it("gives a new upload failure priority over an existing queued import", async (
 
   render(<ProfileImportView initialImports={[queuedImport]} />);
   await user.upload(screen.getByLabelText("选择 Markdown 职业资料"), new File(["# empty"], "career.md", { type: "text/markdown" }));
+  await confirmSanitizedFile(user);
   await user.click(screen.getByRole("button", { name: "上传并解析" }));
 
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("没有找到可确认的职业资料事实，请检查 Markdown 内容后重试。"));
@@ -234,20 +316,6 @@ it("aborts a pending request when the view unmounts", async () => {
   resolveFetch?.(Response.json(completedDetail));
 });
 
-it("replaces an initial query failure after a successful new upload", async () => {
-  mocks.createCareerImportAction
-    .mockResolvedValueOnce({ ok: true, import: { ...queuedImport, reused: false, detailUrl: `/v1/career-documents/imports/${importId}` } });
-  vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(completedDetail));
-  const user = userEvent.setup();
-
-  render(<ProfileImportView initialErrorMessage="Markdown 文件不能为空。" initialImports={[]} />);
-  expect(screen.getByRole("status")).toHaveTextContent("Markdown 文件不能为空。");
-  await user.upload(screen.getByLabelText("选择 Markdown 职业资料"), new File(["# retry"], "career.md", { type: "text/markdown" }));
-  await user.click(screen.getByRole("button", { name: "上传并解析" }));
-  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("解析完成"));
-  expect(screen.getByRole("status")).not.toHaveTextContent("Markdown 文件不能为空。");
-});
-
 it("shows uploading while retrying after an action failure", async () => {
   let resolveRetry: ((value: { ok: true; import: typeof queuedImport & { reused: boolean; detailUrl: string } }) => void) | undefined;
   mocks.createCareerImportAction
@@ -257,6 +325,7 @@ it("shows uploading while retrying after an action failure", async () => {
 
   render(<ProfileImportView initialImports={[]} />);
   await user.upload(screen.getByLabelText("选择 Markdown 职业资料"), new File(["# retry"], "career.md", { type: "text/markdown" }));
+  await confirmSanitizedFile(user);
   await user.click(screen.getByRole("button", { name: "上传并解析" }));
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Markdown 文件不能为空。"));
 
@@ -267,7 +336,6 @@ it("shows uploading while retrying after an action failure", async () => {
 });
 
 it("restarts the same import ID from failed through queued polling to completed facts", async () => {
-  vi.useFakeTimers();
   let resolveOldFetch: ((response: Response) => void) | undefined;
   mocks.createCareerImportAction.mockResolvedValue({ ok: true, import: { ...queuedImport, reused: true, detailUrl: `/v1/career-documents/imports/${importId}` } });
   const fetchMock = vi.spyOn(globalThis, "fetch")
@@ -279,7 +347,9 @@ it("restarts the same import ID from failed through queued polling to completed 
   await act(async () => { await Promise.resolve(); });
   expect(fetchMock).toHaveBeenCalledTimes(1);
 
-  submitFile();
+  await prepareFile();
+  vi.useFakeTimers();
+  submitPreparedFile();
   await act(async () => { await Promise.resolve(); });
   expect(fetchMock).toHaveBeenCalledTimes(2);
   await act(async () => { await vi.advanceTimersByTimeAsync(999); });
@@ -291,7 +361,6 @@ it("restarts the same import ID from failed through queued polling to completed 
 });
 
 it("ignores a late old-generation terminal response while the new import retries", async () => {
-  vi.useFakeTimers();
   let resolveOldFetch: ((response: Response) => void) | undefined;
   let resolveAction: ((value: { ok: true; import: typeof queuedImport & { reused: boolean; detailUrl: string } }) => void) | undefined;
   let rejectNewFetch: ((reason?: unknown) => void) | undefined;
@@ -305,7 +374,9 @@ it("ignores a late old-generation terminal response while the new import retries
   await act(async () => { await Promise.resolve(); });
   expect(fetchMock).toHaveBeenCalledTimes(1);
 
-  submitFile();
+  await prepareFile();
+  vi.useFakeTimers();
+  submitPreparedFile();
   resolveAction?.({
     ok: true,
     import: { ...queuedImport, importId: replacementImportId, documentId: replacementDetail.documentId, sourceFilename: "replacement.md", reused: false, detailUrl: `/v1/career-documents/imports/${replacementImportId}` },
@@ -332,7 +403,7 @@ it("refetches completed facts after a repeated completed upload with the same im
   await waitFor(() => expect(screen.getByText("TypeScript")).toBeInTheDocument());
   expect(fetchMock).toHaveBeenCalledTimes(1);
 
-  submitFile();
+  await submitFile();
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   await waitFor(() => expect(screen.getByText("TypeScript")).toBeInTheDocument());
 });

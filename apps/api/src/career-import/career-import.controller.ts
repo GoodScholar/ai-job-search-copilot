@@ -2,6 +2,7 @@ import { Controller, Get, HttpStatus, Inject, Param, Post, Req, Res, UseGuards }
 import { ApiBadRequestResponse, ApiBearerAuth, ApiBody, ApiConsumes, ApiNotFoundResponse, ApiPayloadTooLargeResponse, ApiServiceUnavailableResponse, ApiUnauthorizedResponse } from "@nestjs/swagger";
 import { CareerImportError } from "@job-copilot/domain/career-imports";
 import { CareerImportDetailSchema, CareerImportListSchema, CareerImportPathSchema, CreateCareerImportResponseSchema } from "@job-copilot/contracts/career-import";
+import { CAREER_PRIVACY_MODES } from "@job-copilot/contracts/career-document-privacy";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { createZodDto, ZodResponse } from "nestjs-zod";
 import { ApiProblem } from "../auth/auth.controller.js";
@@ -25,6 +26,10 @@ function uploadProblem(error: CareerDocumentUploadError): ApiException {
     CAREER_DOCUMENT_TOO_LARGE: "Markdown 文件不能超过 512 KiB",
     CAREER_DOCUMENT_INVALID_UTF8: "Markdown 文件必须使用 UTF-8 编码",
     CAREER_DOCUMENT_EMPTY: "Markdown 文件不能为空",
+    CAREER_PRIVACY_DECISION_REQUIRED: "请先确认职业资料的隐私处理方式",
+    PROTECTED_CAREER_DOCUMENT_REQUIRED: "保留原件时必须同时提供受保护原件",
+    CAREER_PROCESSING_COPY_NOT_SANITIZED: "处理副本仍包含可识别的敏感信息",
+    CAREER_PROCESSING_COPY_MISMATCH: "脱敏处理副本与受保护原件不匹配",
   };
   return new ApiException(error.code, status, messages[error.code]);
 }
@@ -41,8 +46,12 @@ export class CareerImportController {
   @Post()
   @ApiConsumes("multipart/form-data")
   @ApiBody({ schema: {
-    type: "object", required: ["file"], additionalProperties: false,
-    properties: { file: { type: "string", format: "binary", description: "UTF-8 Markdown，最大 512 KiB" } },
+    type: "object", required: ["file", "privacyMode"], additionalProperties: false,
+    properties: {
+      file: { type: "string", format: "binary", description: "已脱敏的 UTF-8 Markdown 处理副本，最大 512 KiB" },
+      privacyMode: { type: "string", enum: [...CAREER_PRIVACY_MODES] },
+      protectedOriginal: { type: "string", format: "binary", description: "仅在保留受保护原件时上传，最大 512 KiB" },
+    },
   } })
   @ZodResponse({ type: CreateCareerImportResponseDto, status: HttpStatus.OK })
   @ZodResponse({ type: CreateCareerImportResponseDto, status: HttpStatus.ACCEPTED })

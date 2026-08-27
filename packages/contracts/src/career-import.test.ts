@@ -211,6 +211,7 @@ describe("career import contracts", () => {
       importId: id(),
       documentId: id(),
       sourceFilename: "resume.md",
+      privacyStatus: "sanitized_only",
       status: "queued",
       failureCode: null,
       createdAt: now,
