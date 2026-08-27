@@ -1,4 +1,4 @@
-import { CareerParserOutputSchema } from "@job-copilot/contracts/career-import";
+import { CAREER_DOCUMENT_MAX_BYTES, CAREER_IMPORT_MAX_FACTS, CareerParserOutputSchema } from "@job-copilot/contracts/career-import";
 import { describe, expect, it } from "vitest";
 
 import { FakeCareerDocumentParser } from "./fake-career-document-parser.js";
@@ -173,6 +173,27 @@ describe("FakeCareerDocumentParser", () => {
       { factType: "skill", factValue: { name: "PostgreSQL" } },
       { factType: "project", factValue: { summary: "Job Copilot" } },
     ]);
+  });
+
+  it("keeps C# in deeper headings while stripping whitespace-delimited closing hashes", async () => {
+    const output = CareerParserOutputSchema.parse(
+      await new FakeCareerDocumentParser().parse("## Projects\n### C#\n### C# ###"),
+    );
+
+    expect(output.facts.map((fact) => fact.factValue)).toEqual([
+      { summary: "C#" },
+      { summary: "C#" },
+    ]);
+  });
+
+  it("stops collecting at the max-plus-one overflow sentinel for a near-limit document", async () => {
+    const prefix = "## Skills\n";
+    const markdown = prefix + "- x\n".repeat(Math.floor((CAREER_DOCUMENT_MAX_BYTES - prefix.length) / 4));
+    expect(Buffer.byteLength(markdown)).toBeLessThanOrEqual(CAREER_DOCUMENT_MAX_BYTES);
+
+    const rawOutput = await new FakeCareerDocumentParser().parse(markdown) as { facts: unknown[] };
+
+    expect(rawOutput.facts).toHaveLength(CAREER_IMPORT_MAX_FACTS + 1);
   });
 
   it("returns a schema-valid empty fact list when no supported facts exist", async () => {

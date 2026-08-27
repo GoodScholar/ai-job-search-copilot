@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const CAREER_DOCUMENT_MAX_BYTES = 524_288;
+export const CAREER_IMPORT_MAX_FACTS = 500;
 export const CAREER_IMPORT_QUEUE = "career-imports";
 export const CAREER_IMPORT_JOB_NAME = "parse-career-document";
 
@@ -76,6 +77,10 @@ export const CandidateFactSchema = z.discriminatedUnion("factType", [
 
 export const CareerImportStatusSchema = z.enum(["queued", "processing", "completed", "failed"]);
 
+export const CareerImportPathSchema = z.object({
+  importId: z.uuid(),
+}).strict();
+
 export const CareerImportFailureCodeSchema = z.enum([
   "CAREER_IMPORT_QUEUE_UNAVAILABLE",
   "CAREER_DOCUMENT_NOT_FOUND",
@@ -113,7 +118,7 @@ export const CareerImportDetailSchema = z.object({
   failureCode: CareerImportFailureCodeSchema.nullable(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
-  facts: z.array(CandidateFactSchema),
+  facts: z.array(CandidateFactSchema).max(CAREER_IMPORT_MAX_FACTS),
 }).strict();
 
 export const CreateCareerImportResponseSchema = CareerImportBaseSchema.extend({
@@ -126,7 +131,7 @@ export const CareerParserOutputSchema = z.object({
   parserVersion: z.literal("fake-career-parser-v1"),
   promptVersion: z.literal("career-import-prompt-v1"),
   outputSchemaVersion: z.literal("career-facts-v1"),
-  facts: z.array(CareerParserFactSchema),
+  facts: z.array(CareerParserFactSchema).max(CAREER_IMPORT_MAX_FACTS),
 }).strict();
 
 export const CareerImportJobSchema = z.object({
@@ -147,13 +152,19 @@ export type CareerParserOutput = z.infer<typeof CareerParserOutputSchema>;
 export type CareerImportJob = z.infer<typeof CareerImportJobSchema>;
 
 const quotedListItemPattern = /^\s*(?:[-*+]|\d+[.)])\s+(.+?)\s*$/;
-const quotedHeadingPattern = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
+const markdownHeadingPattern = /^(#{1,6})\s+(.+?)(?:\s+#+)?\s*$/;
+
+export function parseMarkdownHeading(line: string): { level: number; text: string } | null {
+  const heading = line.match(markdownHeadingPattern);
+  if (!heading) return null;
+  return { level: heading[1].length, text: heading[2].trim() };
+}
 
 export function parseQuotedCareerFactValue(
   factType: CareerParserFact["factType"],
   excerpt: string,
 ): CareerParserFact["factValue"] | null {
-  const content = (excerpt.match(quotedListItemPattern)?.[1] ?? excerpt.match(quotedHeadingPattern)?.[2])?.trim();
+  const content = (excerpt.match(quotedListItemPattern)?.[1] ?? parseMarkdownHeading(excerpt)?.text)?.trim();
   if (!content) return null;
 
   if (factType === "skill" || factType === "certification") return { name: content };

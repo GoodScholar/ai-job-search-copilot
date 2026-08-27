@@ -178,6 +178,33 @@ describe("career imports", () => {
     expect(store.puts).toHaveLength(1);
   });
 
+  it("creates and accepts a new import when an owned document exists without one", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const sourceBytes = new TextEncoder().encode("## 技能\n- Existing document");
+    const documentId = "fe5ea64c-d7b7-423c-8f2e-07d97e7e4385";
+    await database.insert(careerDocuments).values({
+      id: documentId,
+      userId,
+      checksumSha256: createHash("sha256").update(sourceBytes).digest("hex"),
+      objectKey: `accounts/${userId}/career-documents/${documentId}/source.md`,
+      originalFilename: "existing.md",
+      mediaType: "text/markdown",
+      byteSize: sourceBytes.byteLength,
+    });
+
+    const result = await commandsFor(store, queue, ids("ec2dbf66-9eb3-463a-9d26-b0fef10e19aa")).createOrReuse({
+      userId,
+      requestId: "ff7f5dd4-c572-4f26-84fa-e6c09fec363b",
+      bytes: sourceBytes,
+      originalFilename: "renamed.md",
+      mediaType: "text/markdown",
+    });
+
+    expect(result).toMatchObject({ documentId, status: "queued", reused: false, shouldReturnAccepted: true });
+    expect(queue.jobs).toEqual([expect.objectContaining({ importId: result.importId, userId })]);
+  });
+
   it("does not reuse a checksum across job accounts", async () => {
     const store = new MemoryStore();
     const queue = new MemoryQueue();
@@ -593,6 +620,63 @@ describe("career imports", () => {
       .resolves.toBe("completed");
     await expect(createCareerImportQueries({ db: database }).get({ userId, importId: created.importId }))
       .resolves.toMatchObject({ facts: [expect.objectContaining({ evidence: expect.objectContaining({ excerpt: "  - TypeScript  " }) })] });
+  });
+
+  it("fails an over-limit raw parser output once without persisting facts", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const created = await createImport({
+      documentStore: store,
+      queue,
+      ids: ids("4b21c803-087a-44c7-8fc9-73196da43a7c", "55fd4433-c959-4eef-b1a8-7ff26a86f6ce"),
+      requestId: "0a7ec9b3-0f2f-48ca-b52a-aae5d368a941",
+      sourceBytes: new TextEncoder().encode("## 技能\n- Invalid parser overflow source"),
+    });
+    const processor = createCareerImportProcessor({
+      db: database,
+      auditTrail: createAuditTrail({ db: database, clock: () => now }),
+      documentStore: store,
+      parser: parser({ ...validOutput(), facts: Array.from({ length: 501 }, () => validOutput().facts[0]) }),
+      id: ids("63590df1-e94f-4111-bfc9-580400ecc253"),
+      clock: () => now,
+    });
+
+    await expect(processor.process({ version: 1, importId: created.importId, userId, finalAttempt: false }))
+      .resolves.toBe("failed");
+    await expect(createCareerImportQueries({ db: database }).get({ userId, importId: created.importId }))
+      .resolves.toMatchObject({ status: "failed", failureCode: "CAREER_PARSER_OUTPUT_INVALID", facts: [] });
+    await expect(database.select({ attemptCount: careerImports.attemptCount }).from(careerImports)
+      .where(eq(careerImports.id, created.importId))).resolves.toEqual([{ attemptCount: 1 }]);
+    await expect(database.select().from(candidateFacts).where(eq(candidateFacts.careerImportId, created.importId)))
+      .resolves.toEqual([]);
+  });
+
+  it("accepts a C# project heading as exact quoted evidence", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const created = await createImport({
+      documentStore: store,
+      queue,
+      ids: ids("d6b0ee7c-4013-44ce-a459-5bfdf29cbe7b", "89af2577-058e-4a4d-b98f-8decd85ef293"),
+      requestId: "9cae85bd-398a-4a15-8e25-d5461206ef2d",
+      sourceBytes: new TextEncoder().encode("## 项目经历\n### C# ###"),
+    });
+    const processor = createCareerImportProcessor({
+      db: database,
+      auditTrail: createAuditTrail({ db: database, clock: () => now }),
+      documentStore: store,
+      parser: parser({ ...validOutput(), facts: [{
+        ...validOutput().facts[0],
+        factType: "project",
+        factValue: { summary: "C#" },
+        evidence: { locatorType: "markdown_lines", startLine: 2, endLine: 2, excerpt: "### C# ###" },
+      }] }),
+      id: ids("6d7b4ac8-4c41-4319-a195-685fb5e0ca21", "c26a6095-af41-4a55-9324-321d6e0e9e41"),
+      clock: () => now,
+    });
+
+    await expect(processor.process({ version: 1, importId: created.importId, userId, finalAttempt: false }))
+      .resolves.toBe("completed");
   });
 
   it.each([

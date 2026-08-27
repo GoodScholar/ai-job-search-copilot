@@ -1,5 +1,6 @@
 import {
-  CareerParserOutputSchema,
+  CAREER_IMPORT_MAX_FACTS,
+  parseMarkdownHeading,
   parseQuotedCareerFactValue,
   type CareerParserFact,
 } from "@job-copilot/contracts/career-import";
@@ -21,21 +22,22 @@ type ActiveSection = {
   headingLevel: number;
 };
 
-const headingPattern = /^(#{1,6})\s+(.+?)\s*#*\s*$/;
 const listItemPattern = /^\s*(?:[-*+]|\d+[.)])\s+(.+?)\s*$/;
 
 export class FakeCareerDocumentParser {
   async parse(markdown: string): Promise<unknown> {
     const facts: CareerParserFact[] = [];
     let activeSection: ActiveSection | undefined;
+    let lineNumber = 0;
 
-    for (const [index, line] of markdown.replace(/\r\n?/g, "\n").split("\n").entries()) {
-      const lineNumber = index + 1;
-      const heading = line.match(headingPattern);
+    for (const line of normalizedLines(markdown)) {
+      if (facts.length >= CAREER_IMPORT_MAX_FACTS + 1) break;
+      lineNumber += 1;
+      const heading = parseMarkdownHeading(line);
 
       if (heading) {
-        const headingLevel = heading[1].length;
-        const headingText = heading[2].trim();
+        const headingLevel = heading.level;
+        const headingText = heading.text;
         const factType = sectionAliases.get(headingText.toLowerCase());
 
         if (factType) {
@@ -58,14 +60,26 @@ export class FakeCareerDocumentParser {
       if (fact) facts.push(fact);
     }
 
-    return CareerParserOutputSchema.parse({
+    return {
       adapter: "fake",
       parserVersion: "fake-career-parser-v1",
       promptVersion: "career-import-prompt-v1",
       outputSchemaVersion: "career-facts-v1",
       facts,
-    });
+    };
   }
+}
+
+function* normalizedLines(markdown: string): Generator<string> {
+  let start = 0;
+  for (let index = 0; index < markdown.length; index += 1) {
+    const character = markdown[index];
+    if (character !== "\n" && character !== "\r") continue;
+    yield markdown.slice(start, index);
+    if (character === "\r" && markdown[index + 1] === "\n") index += 1;
+    start = index + 1;
+  }
+  yield markdown.slice(start);
 }
 
 function createFact(

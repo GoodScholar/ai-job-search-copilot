@@ -133,10 +133,10 @@ describe("CareerImportConsumer", () => {
     consumer = new CareerImportConsumer({ redisUrl, processor });
   }
 
-  async function createQueuedImport(): Promise<{ importId: string; documentId: string; objectKey: string }> {
+  async function createQueuedImport(sourceMarkdown = markdown): Promise<{ importId: string; documentId: string; objectKey: string }> {
     const importId = randomUUID();
     const documentId = randomUUID();
-    const bytes = new TextEncoder().encode(markdown);
+    const bytes = new TextEncoder().encode(sourceMarkdown);
     const objectKey = `accounts/${userId}/career-documents/${documentId}/source.md`;
     await minio.putObject(minioBucket, objectKey, Buffer.from(bytes), bytes.byteLength, {
       "content-type": "text/markdown",
@@ -227,5 +227,17 @@ describe("CareerImportConsumer", () => {
     const facts = await database.select({ id: candidateFacts.id }).from(candidateFacts)
       ;
     expect(facts).toHaveLength(0);
+  });
+
+  it("将 Fake Parser 的过长事实在首次任务中稳定标记为无效且不重试", async () => {
+    const item = await createQueuedImport(`## 技能\n- ${"x".repeat(501)}`);
+    startConsumer(store);
+    await enqueue(item.importId);
+
+    await waitFor(async () => (await database.select({ status: careerImports.status }).from(careerImports)).at(0)?.status === "failed");
+    const [result] = await database.select({ status: careerImports.status, failureCode: careerImports.failureCode, attemptCount: careerImports.attemptCount })
+      .from(careerImports);
+    expect(result).toEqual({ status: "failed", failureCode: "CAREER_PARSER_OUTPUT_INVALID", attemptCount: 1 });
+    await expect(database.select({ id: candidateFacts.id }).from(candidateFacts)).resolves.toEqual([]);
   });
 });

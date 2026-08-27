@@ -192,7 +192,7 @@ export function createCareerImportCommands(deps: CommandDependencies): {
         eq(careerDocuments.userId, input.userId),
         eq(careerDocuments.checksumSha256, checksumSha256),
       ));
-      let reused = Boolean(document);
+      let reused = false;
 
       if (!document) {
         const documentId = deps.id();
@@ -247,6 +247,7 @@ export function createCareerImportCommands(deps: CommandDependencies): {
         eq(careerImports.promptVersion, promptVersion),
         eq(careerImports.outputSchemaVersion, outputSchemaVersion),
       ));
+      reused = Boolean(storedImport);
       let shouldEnqueue = false;
       let shouldReturnAccepted = false;
 

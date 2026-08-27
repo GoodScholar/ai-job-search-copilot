@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   CAREER_DOCUMENT_MAX_BYTES,
+  CAREER_IMPORT_MAX_FACTS,
   CAREER_IMPORT_JOB_NAME,
   CAREER_IMPORT_QUEUE,
   CandidateFactSchema,
   CareerImportDetailSchema,
+  CareerImportPathSchema,
   CareerImportJobSchema,
   CareerImportListSchema,
   CareerParserFactSchema,
@@ -53,10 +55,32 @@ const candidateFact = (factType: string, factValue: object) => ({
 describe("career import contracts", () => {
   it("locks size, queue and task protocol", () => {
     expect(CAREER_DOCUMENT_MAX_BYTES).toBe(524_288);
+    expect(CAREER_IMPORT_MAX_FACTS).toBe(500);
     expect(CAREER_IMPORT_QUEUE).toBe("career-imports");
     expect(CAREER_IMPORT_JOB_NAME).toBe("parse-career-document");
     expect(CareerImportJobSchema.parse({ version: 1, importId: id(), userId: id() }))
       .toMatchObject({ version: 1 });
+  });
+
+  it("rejects parser and detail outputs above the bounded fact count", () => {
+    const facts = Array.from({ length: 501 }, () => parserFact("skill", { name: "TypeScript" }));
+    expect(() => CareerParserOutputSchema.parse({
+      adapter: "fake",
+      parserVersion: "fake-career-parser-v1",
+      promptVersion: "career-import-prompt-v1",
+      outputSchemaVersion: "career-facts-v1",
+      facts,
+    })).toThrow();
+    expect(() => CareerImportDetailSchema.parse({
+      importId: id(),
+      documentId: id(),
+      sourceFilename: "resume.md",
+      status: "completed",
+      failureCode: null,
+      createdAt: now,
+      updatedAt: now,
+      facts: Array.from({ length: 501 }, () => candidateFact("skill", { name: "TypeScript" })),
+    })).toThrow();
   });
 
   it.each([
@@ -84,6 +108,11 @@ describe("career import contracts", () => {
       rawMarkdown: "secret",
     })).toThrow();
     expect(() => CandidateFactSchema.parse(candidateFact("skill", { name: "TypeScript", level: "inferred" }))).toThrow();
+  });
+
+  it("accepts only UUID career import path parameters", () => {
+    expect(CareerImportPathSchema.parse({ importId: id() })).toEqual({ importId: expect.any(String) });
+    expect(() => CareerImportPathSchema.parse({ importId: "not-a-uuid" })).toThrow();
   });
 
   it("rejects ungrounded facts and invalid evidence ranges", () => {
@@ -127,6 +156,11 @@ describe("career import contracts", () => {
     ["achievement", "- Reduced latency by 40%", { summary: "Reduced latency by 40%" }],
   ])("parses the exact supported evidence form for %s", (factType, excerpt, factValue) => {
     expect(parseQuotedCareerFactValue(factType as Parameters<typeof parseQuotedCareerFactValue>[0], excerpt)).toEqual(factValue);
+  });
+
+  it("preserves C# while stripping only whitespace-delimited closing heading hashes", () => {
+    expect(parseQuotedCareerFactValue("project", "### C#")).toEqual({ summary: "C#" });
+    expect(parseQuotedCareerFactValue("project", "### C# ###")).toEqual({ summary: "C#" });
   });
 
   it.each(["confirmed", "rejected"])("rejects %s confirmation status", (confirmationStatus) => {

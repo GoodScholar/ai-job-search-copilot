@@ -1,7 +1,7 @@
 import { Controller, Get, HttpStatus, Inject, Param, Post, Req, Res, UseGuards } from "@nestjs/common";
 import { ApiBadRequestResponse, ApiBearerAuth, ApiBody, ApiConsumes, ApiNotFoundResponse, ApiPayloadTooLargeResponse, ApiServiceUnavailableResponse, ApiUnauthorizedResponse } from "@nestjs/swagger";
 import { CareerImportError } from "@job-copilot/domain/career-imports";
-import { CareerImportDetailSchema, CareerImportListSchema, CreateCareerImportResponseSchema } from "@job-copilot/contracts/career-import";
+import { CareerImportDetailSchema, CareerImportListSchema, CareerImportPathSchema, CreateCareerImportResponseSchema } from "@job-copilot/contracts/career-import";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { createZodDto, ZodResponse } from "nestjs-zod";
 import { ApiProblem } from "../auth/auth.controller.js";
@@ -14,6 +14,7 @@ import { CareerDocumentUploadError, parseCareerDocumentUpload } from "./parse-ca
 class CreateCareerImportResponseDto extends createZodDto(CreateCareerImportResponseSchema) {}
 class CareerImportListDto extends createZodDto(CareerImportListSchema) {}
 class CareerImportDetailDto extends createZodDto(CareerImportDetailSchema) {}
+class CareerImportPathDto extends createZodDto(CareerImportPathSchema) {}
 
 function uploadProblem(error: CareerDocumentUploadError): ApiException {
   const status = error.code === "CAREER_DOCUMENT_TOO_LARGE" ? HttpStatus.PAYLOAD_TOO_LARGE : HttpStatus.BAD_REQUEST;
@@ -86,10 +87,11 @@ export class CareerImportController {
 
   @Get(":importId")
   @ZodResponse({ type: CareerImportDetailDto })
+  @ApiBadRequestResponse({ type: ApiProblem })
   @ApiUnauthorizedResponse({ type: ApiProblem })
   @ApiNotFoundResponse({ type: ApiProblem })
-  async get(@Req() request: FastifyRequest, @Param("importId") importId: string) {
-    const result = await this.queries.get({ userId: request.authenticatedAccount!.userId, importId });
+  async get(@Req() request: FastifyRequest, @Param() params: CareerImportPathDto) {
+    const result = await this.queries.get({ userId: request.authenticatedAccount!.userId, importId: params.importId });
     if (!result) throw new ApiException("CAREER_IMPORT_NOT_FOUND", HttpStatus.NOT_FOUND, "职业资料导入不存在");
     return result;
   }

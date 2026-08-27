@@ -1,9 +1,10 @@
+import { createHash, randomUUID } from "node:crypto";
 import "reflect-metadata";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
 import { Test } from "@nestjs/testing";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { auditEvents, createDatabase, migrateDatabase, type Database } from "@job-copilot/database";
+import { auditEvents, careerDocuments, createDatabase, migrateDatabase, type Database } from "@job-copilot/database";
 import type { CareerDocumentStore, CareerImportQueue } from "@job-copilot/domain/career-imports";
 import { AppModule } from "./app.module.js";
 import { configureApiApplication } from "./configure-api-application.js";
@@ -253,6 +254,29 @@ describe("authenticated workbench HTTP API", () => {
     expect(logs).not.toContain(source);
   });
 
+  it("returns 202 for a new import that reuses an owned document without an import", async () => {
+    const session = await createSession(app, "career-import-document-only");
+    const source = "## 技能\n- Existing document only";
+    const sourceBytes = new TextEncoder().encode(source);
+    const documentId = randomUUID();
+    await database.insert(careerDocuments).values({
+      id: documentId,
+      userId: session.account.userId,
+      checksumSha256: createHash("sha256").update(sourceBytes).digest("hex"),
+      objectKey: `accounts/${session.account.userId}/career-documents/${documentId}/source.md`,
+      originalFilename: "existing.md",
+      mediaType: "text/markdown",
+      byteSize: sourceBytes.byteLength,
+    });
+
+    const response = await app.getHttpAdapter().getInstance().inject(multipartRequest(source, {
+      headers: bearer(session.sessionToken), filename: "renamed.md",
+    }));
+
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toMatchObject({ documentId, status: "queued", reused: false });
+  });
+
   it.each([
     ["missing file", multipartRequest(undefined), "CAREER_DOCUMENT_REQUIRED", 400],
     ["multiple files", multipartRequest("## 技能\n- TypeScript", { extraFile: true }), "TOO_MANY_CAREER_DOCUMENTS", 400],
@@ -299,6 +323,7 @@ describe("authenticated workbench HTTP API", () => {
     }
     const list = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/career-documents/imports", headers: bearer(owner.sessionToken) });
     const detail = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/career-documents/imports/${importId}`, headers: bearer(owner.sessionToken) });
+    const malformed = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/career-documents/imports/not-a-uuid", headers: bearer(owner.sessionToken) });
     const hidden = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/career-documents/imports/${importId}`, headers: bearer(other.sessionToken) });
     const anonymous = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/career-documents/imports" });
 
@@ -310,6 +335,8 @@ describe("authenticated workbench HTTP API", () => {
     ].sort().reverse());
     expect(detail.statusCode).toBe(200);
     expect(detail.json()).toMatchObject({ importId, facts: [] });
+    expect(malformed.statusCode).toBe(400);
+    expect(malformed.json()).toMatchObject({ code: "INVALID_REQUEST", requestId: expect.any(String) });
     expect(hidden.statusCode).toBe(404);
     expect(hidden.json().code).toBe("CAREER_IMPORT_NOT_FOUND");
     expect(anonymous.statusCode).toBe(401);
@@ -381,6 +408,8 @@ describe("authenticated workbench HTTP API", () => {
       .toMatchObject({ properties: { file: { format: "binary" } } });
     const responses = document.paths["/v1/career-documents/imports"].post.responses;
     expect(responses["200"].content["application/json"].schema).toEqual(responses["202"].content["application/json"].schema);
+    expect(document.paths["/v1/career-documents/imports/{importId}"].get.responses["400"])
+      .toEqual(expect.objectContaining({ description: expect.any(String) }));
   });
 
   it("refuses to bootstrap Dev Auth in production", async () => {
