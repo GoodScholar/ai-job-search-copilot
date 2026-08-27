@@ -23,6 +23,7 @@ function nodeOptionTokens(nodeOptions = "") {
       token += character;
     }
   }
+  if (quote) return [];
   if (token) tokens.push(token);
   return tokens;
 }
@@ -57,10 +58,14 @@ export function runNestDev({
   command = createNestDevCommand(),
   signalSource = process,
   spawnProcess = spawn,
+  shutdownTimeoutMs = 10_000,
 } = {}) {
   return new Promise((resolve) => {
     let child;
     let forwardedSignal;
+    let runtimeFailure = false;
+    let shutdownTimer;
+    let terminationRequested = false;
     let settled = false;
 
     const removeHandlers = () => {
@@ -70,13 +75,44 @@ export function runNestDev({
     const settle = (exitCode) => {
       if (settled) return;
       settled = true;
+      clearTimeout(shutdownTimer);
       removeHandlers();
       resolve(exitCode);
     };
+    const stopChild = (signal) => {
+      if (terminationRequested || !child) return false;
+      terminationRequested = true;
+      try {
+        return child.kill(signal);
+      } catch {
+        return false;
+      }
+    };
+    const boundTermination = () => {
+      if (shutdownTimer || settled) return;
+      shutdownTimer = setTimeout(() => {
+        if (settled) return;
+        try {
+          child?.kill("SIGKILL");
+        } catch {
+          // The child may already have exited while its exit event is pending.
+        }
+        settle(1);
+      }, shutdownTimeoutMs);
+    };
     const forwardSignal = (signal) => {
-      if (forwardedSignal || !child) return;
-      forwardedSignal = signal;
-      child.kill(signal);
+      if (terminationRequested || !child) return;
+      if (stopChild(signal)) forwardedSignal = signal;
+      boundTermination();
+    };
+    const handleChildError = () => {
+      if (!child?.pid) {
+        settle(1);
+        return;
+      }
+      runtimeFailure = true;
+      stopChild("SIGTERM");
+      boundTermination();
     };
 
     signalSource.on("SIGINT", forwardSignal);
@@ -93,9 +129,17 @@ export function runNestDev({
       return;
     }
 
-    child.once("error", () => settle(1));
+    child.once("error", handleChildError);
     child.once("exit", (code, signal) => {
-      settle(forwardedSignal ? signalExitCode(forwardedSignal) : signal ? signalExitCode(signal) : code ?? 1);
+      settle(
+        forwardedSignal
+          ? signalExitCode(forwardedSignal)
+          : runtimeFailure
+            ? 1
+            : signal
+              ? signalExitCode(signal)
+              : code ?? 1,
+      );
     });
   });
 }

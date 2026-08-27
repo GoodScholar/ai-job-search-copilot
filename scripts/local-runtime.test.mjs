@@ -12,27 +12,48 @@ const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const nestDevPath = fileURLToPath(new URL("./nest-dev.mjs", import.meta.url));
 const controlledNestChildPath = fileURLToPath(new URL("./fixtures/nest-dev-controlled-child.mjs", import.meta.url));
 
-function createControlledChild() {
+function createControlledChild({ killResult = true } = {}) {
   const child = new EventEmitter();
   child.pid = 12345;
   child.killed = false;
+  child.sentSignals = [];
   child.kill = (signal) => {
     child.killed = true;
     child.sentSignal = signal;
-    return true;
+    child.sentSignals.push(signal);
+    return killResult;
   };
   return child;
 }
 
-function waitForExit(child) {
+function waitForExit(child, deadlineMs = 1_000) {
   return new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("exit", (code, signal) => resolve({ code, signal }));
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("timed out waiting for child exit"));
+    }, deadlineMs);
+    const cleanup = () => {
+      clearTimeout(timeout);
+      child.removeListener("error", onError);
+      child.removeListener("exit", onExit);
+    };
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    const onExit = (code, signal) => {
+      cleanup();
+      resolve({ code, signal });
+    };
+
+    child.once("error", onError);
+    child.once("exit", onExit);
   });
 }
 
-async function waitForFile(path) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+async function waitForFile(path, deadlineMs = 1_000) {
+  const deadline = Date.now() + deadlineMs;
+  while (Date.now() < deadline) {
     try {
       return await readFile(path, "utf8");
     } catch (error) {
@@ -74,7 +95,32 @@ async function startControlledNestDev({ mode, exitCode } = {}) {
     pidPath,
     readyPath,
     signalPath,
-    dispose: () => rm(cwd, { force: true, recursive: true }),
+    dispose: async () => {
+      try {
+        if (launcher.exitCode === null && launcher.signalCode === null) {
+          launcher.kill("SIGTERM");
+          try {
+            await exit;
+          } catch {
+            const forcedExit = waitForExit(launcher, 250);
+            launcher.kill("SIGKILL");
+            await forcedExit;
+          }
+        }
+
+        const childPid = Number(await readFile(pidPath, "utf8").catch(() => ""));
+        if (Number.isInteger(childPid) && childPid > 0) {
+          try {
+            process.kill(childPid, 0);
+            process.kill(childPid, "SIGKILL");
+          } catch (error) {
+            if (error?.code !== "ESRCH") throw error;
+          }
+        }
+      } finally {
+        await rm(cwd, { force: true, recursive: true });
+      }
+    },
   };
 }
 
@@ -88,6 +134,12 @@ test("runtime tests run without Node's subprocess wrapper to avoid IPC serializa
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
   assert.equal(packageJson.scripts["test:runtime"], "node scripts/local-runtime.test.mjs");
+});
+
+test("Web typecheck generates Next route types before compiling", async () => {
+  const packageJson = JSON.parse(await readFile(new URL("../apps/web/package.json", import.meta.url), "utf8"));
+
+  assert.equal(packageJson.scripts.typecheck, "next typegen && tsc --noEmit");
 });
 
 test("local runtime migrates before starting applications", async () => {
@@ -224,19 +276,21 @@ test("Nest dev loader appends the root tsx loader only when NODE_OPTIONS lacks t
   });
   assert.equal(nestedLoader.env.NODE_OPTIONS, "--trace-warnings --import=tsx/cjs --import=tsx");
 
-  for (const nodeOptions of ["--trace-warnings --import=tsx", "--trace-warnings --import tsx", "--import 'tsx'"]) {
+  for (const nodeOptions of ["--trace-warnings --import=tsx", "--trace-warnings --import tsx", "--import \"tsx\""]) {
     const command = createNestDevCommand({ env: { NODE_OPTIONS: nodeOptions } });
     assert.equal(command.env.NODE_OPTIONS, nodeOptions);
   }
+
+  const invalidQuote = createNestDevCommand({ env: { NODE_OPTIONS: "--import 'tsx" } });
+  assert.equal(invalidQuote.env.NODE_OPTIONS, "--import 'tsx --import=tsx");
 });
 
-test("Nest dev launcher forwards SIGTERM and SIGINT once, waits for the child, and leaves no orphan", async () => {
+test("Nest dev launcher forwards each real SIGTERM and SIGINT, waits for the child, and leaves no orphan", async () => {
   for (const [signal, exitCode] of [["SIGTERM", 143], ["SIGINT", 130]]) {
     const fixture = await startControlledNestDev();
     try {
       const childPid = Number(await waitForFile(fixture.pidPath));
       await waitForFile(fixture.readyPath);
-      fixture.launcher.kill(signal);
       fixture.launcher.kill(signal);
 
       assert.deepEqual(await fixture.exit, { code: exitCode, signal: null });
@@ -246,6 +300,23 @@ test("Nest dev launcher forwards SIGTERM and SIGINT once, waits for the child, a
       await fixture.dispose();
     }
   }
+});
+
+test("Nest dev launcher forwards repeated deterministic signals only once", async () => {
+  const signalSource = new EventEmitter();
+  const child = createControlledChild();
+  const exitCode = runNestDev({
+    command: createNestDevCommand({ env: {} }),
+    signalSource,
+    spawnProcess: () => child,
+  });
+
+  signalSource.emit("SIGTERM", "SIGTERM");
+  signalSource.emit("SIGINT", "SIGINT");
+  assert.deepEqual(child.sentSignals, ["SIGTERM"]);
+
+  child.emit("exit", 0, null);
+  assert.equal(await exitCode, 143);
 });
 
 test("Nest dev launcher preserves normal child exit codes and child signal exit semantics", async () => {
@@ -278,6 +349,92 @@ test("Nest dev launcher converts every child signal to its conventional exit cod
   child.emit("exit", null, "SIGHUP");
 
   assert.equal(await exitCode, 129);
+  assert.equal(signalSource.listenerCount("SIGINT"), 0);
+  assert.equal(signalSource.listenerCount("SIGTERM"), 0);
+});
+
+test("Nest dev launcher preserves child exits after a failed signal delivery", async () => {
+  for (const [code, signal, expected] of [[0, null, 0], [null, "SIGHUP", 129]]) {
+    const signalSource = new EventEmitter();
+    const child = createControlledChild({ killResult: false });
+    const exitCode = runNestDev({
+      command: createNestDevCommand({ env: {} }),
+      signalSource,
+      spawnProcess: () => child,
+      shutdownTimeoutMs: 10,
+    });
+
+    signalSource.emit("SIGTERM", "SIGTERM");
+    child.emit("exit", code, signal);
+
+    assert.equal(await exitCode, expected);
+    assert.equal(signalSource.listenerCount("SIGINT"), 0);
+    assert.equal(signalSource.listenerCount("SIGTERM"), 0);
+  }
+});
+
+test("Nest dev launcher bounds failed signal delivery without an exit event", async () => {
+  const signalSource = new EventEmitter();
+  const child = createControlledChild({ killResult: false });
+  const exitCode = runNestDev({
+    command: createNestDevCommand({ env: {} }),
+    signalSource,
+    spawnProcess: () => child,
+    shutdownTimeoutMs: 10,
+  });
+
+  signalSource.emit("SIGTERM", "SIGTERM");
+
+  assert.equal(await exitCode, 1);
+  assert.equal(signalSource.listenerCount("SIGINT"), 0);
+  assert.equal(signalSource.listenerCount("SIGTERM"), 0);
+});
+
+test("Nest dev launcher waits for a child exiting after an error during signal delivery", async () => {
+  const signalSource = new EventEmitter();
+  const child = createControlledChild();
+  child.kill = (signal) => {
+    child.sentSignals.push(signal);
+    queueMicrotask(() => child.emit("error", new Error("kill error")));
+    return true;
+  };
+  const exitCode = runNestDev({
+    command: createNestDevCommand({ env: {} }),
+    signalSource,
+    spawnProcess: () => child,
+    shutdownTimeoutMs: 50,
+  });
+
+  signalSource.emit("SIGTERM", "SIGTERM");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(child.sentSignals, ["SIGTERM"]);
+  assert.equal(signalSource.listenerCount("SIGINT"), 1);
+  assert.equal(signalSource.listenerCount("SIGTERM"), 1);
+
+  child.emit("exit", 0, null);
+  assert.equal(await exitCode, 143);
+  assert.equal(signalSource.listenerCount("SIGINT"), 0);
+  assert.equal(signalSource.listenerCount("SIGTERM"), 0);
+});
+
+test("Nest dev launcher stops a running child after a runtime error before settling", async () => {
+  const signalSource = new EventEmitter();
+  const child = createControlledChild();
+  const exitCode = runNestDev({
+    command: createNestDevCommand({ env: {} }),
+    signalSource,
+    spawnProcess: () => child,
+    shutdownTimeoutMs: 50,
+  });
+
+  child.emit("error", new Error("runtime error"));
+
+  assert.deepEqual(child.sentSignals, ["SIGTERM"]);
+  assert.equal(signalSource.listenerCount("SIGINT"), 1);
+  assert.equal(signalSource.listenerCount("SIGTERM"), 1);
+
+  child.emit("exit", 0, null);
+  assert.equal(await exitCode, 1);
   assert.equal(signalSource.listenerCount("SIGINT"), 0);
   assert.equal(signalSource.listenerCount("SIGTERM"), 0);
 });
