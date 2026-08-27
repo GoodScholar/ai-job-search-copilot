@@ -21,6 +21,15 @@ function getProblem(exception: unknown): {
   message: string;
   details?: { dependencies: Record<string, "ready" | "not_ready"> };
 } {
+  if (typeof exception === "object" && exception !== null && "code" in exception) {
+    const code = (exception as { code?: unknown }).code;
+    if (code === "FST_REQ_FILE_TOO_LARGE") {
+      return { status: HttpStatus.PAYLOAD_TOO_LARGE, code: "CAREER_DOCUMENT_TOO_LARGE", message: "Markdown 文件不能超过 512 KiB" };
+    }
+    if (code === "FST_FILES_LIMIT" || code === "FST_PARTS_LIMIT") {
+      return { status: HttpStatus.BAD_REQUEST, code: "TOO_MANY_CAREER_DOCUMENTS", message: "一次只能上传一个 Markdown 文件" };
+    }
+  }
   if (exception instanceof ApiException) {
     return {
       status: exception.getStatus(),

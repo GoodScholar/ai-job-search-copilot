@@ -136,4 +136,22 @@ describe("career import contracts", () => {
       updatedAt: now,
     })).toThrow();
   });
+
+  it("keeps list fact counts separate from the create-or-reuse response", () => {
+    const base = {
+      importId: id(),
+      documentId: id(),
+      sourceFilename: "resume.md",
+      status: "queued",
+      failureCode: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    expect(CareerImportListSchema.parse({ imports: [{ ...base, candidateFactCount: 0 }] }))
+      .toMatchObject({ imports: [expect.objectContaining({ candidateFactCount: 0 })] });
+    expect(CreateCareerImportResponseSchema.parse({ ...base, reused: false, detailUrl: `/v1/career-documents/imports/${base.importId}` }))
+      .toMatchObject({ reused: false, detailUrl: expect.stringContaining(base.importId) });
+    expect(() => CareerImportListSchema.parse({ imports: [{ ...base, candidateFactCount: -1 }] })).toThrow();
+    expect(() => CreateCareerImportResponseSchema.parse({ ...base, reused: false })).toThrow();
+  });
 });

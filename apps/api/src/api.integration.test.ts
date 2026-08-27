@@ -4,9 +4,11 @@ import { Test } from "@nestjs/testing";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { auditEvents, createDatabase, migrateDatabase, type Database } from "@job-copilot/database";
+import type { CareerDocumentStore, CareerImportQueue } from "@job-copilot/domain/career-imports";
 import { AppModule } from "./app.module.js";
-import { configureOpenApi } from "./api-documentation.js";
+import { configureApiApplication } from "./configure-api-application.js";
 import { DATABASE } from "./config/runtime-config.module.js";
+import { CAREER_DOCUMENT_STORE, CAREER_IMPORT_QUEUE } from "./career-import/career-import.tokens.js";
 
 const testSecret = "test-dev-auth-shared-secret-must-be-at-least-32-characters";
 
@@ -14,6 +16,26 @@ describe("authenticated workbench HTTP API", () => {
   let app: NestFastifyApplication;
   let container: StartedPostgreSqlContainer;
   let database: Database;
+  const storedObjects = new Map<string, Uint8Array>();
+  const queue: CareerImportQueue & { failNext: boolean; jobs: unknown[] } = {
+    failNext: false,
+    jobs: [],
+    async enqueue(job) {
+      if (this.failNext) {
+        this.failNext = false;
+        throw new Error("queue unavailable with resume@example.com");
+      }
+      this.jobs.push(job);
+    },
+  };
+  const documentStore: CareerDocumentStore = {
+    async put({ objectKey, bytes }) { storedObjects.set(objectKey, bytes); },
+    async get({ objectKey }) {
+      const bytes = storedObjects.get(objectKey);
+      if (!bytes) throw Object.assign(new Error("not found"), { code: "CAREER_DOCUMENT_NOT_FOUND" });
+      return bytes;
+    },
+  };
   const originalEnvironment = {
     APP_ENV: process.env.APP_ENV,
     AUTH_MODE: process.env.AUTH_MODE,
@@ -32,10 +54,14 @@ describe("authenticated workbench HTTP API", () => {
       DATABASE_URL: container.getConnectionUri(),
     });
 
-    const module = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    const module = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(CAREER_DOCUMENT_STORE).useValue(documentStore)
+      .overrideProvider(CAREER_IMPORT_QUEUE).useValue(queue)
+      .compile();
     app = module.createNestApplication<NestFastifyApplication>(new FastifyAdapter());
-    configureOpenApi(app);
+    await configureApiApplication(app);
     await app.init();
+    expect(app.get(CAREER_IMPORT_QUEUE)).toBe(queue);
   }, 60_000);
 
   afterAll(async () => {
@@ -165,6 +191,98 @@ describe("authenticated workbench HTTP API", () => {
     expect(repeatedLogout.statusCode).toBe(401);
   });
 
+  it("accepts one Markdown upload, reuses it, and never exposes source content in audit metadata", async () => {
+    const session = await createSession(app, "career-import-primary");
+    const source = "## 技能\n- TypeScript\n联系：resume@example.com";
+    const upload = await app.getHttpAdapter().getInstance().inject(multipartRequest(source, {
+      headers: bearer(session.sessionToken), filename: "candidate.md",
+    }));
+    const repeated = await app.getHttpAdapter().getInstance().inject(multipartRequest(source, {
+      headers: bearer(session.sessionToken), filename: "renamed.md",
+    }));
+
+    expect(upload.statusCode).toBe(202);
+    expect(upload.json()).toMatchObject({
+      status: "queued", reused: false,
+      detailUrl: expect.stringMatching(/^\/v1\/career-documents\/imports\//),
+    });
+    expect(repeated.statusCode).toBe(200);
+    expect(repeated.json()).toMatchObject({ importId: upload.json().importId, reused: true });
+    const metadata = await database.select({ metadata: auditEvents.metadata }).from(auditEvents);
+    expect(JSON.stringify(metadata)).not.toContain("resume@example.com");
+    expect(JSON.stringify(metadata)).not.toContain("candidate.md");
+    expect(JSON.stringify(metadata)).not.toContain(source);
+  });
+
+  it.each([
+    ["missing file", multipartRequest(undefined), "CAREER_DOCUMENT_REQUIRED", 400],
+    ["multiple files", multipartRequest("## 技能\n- TypeScript", { extraFile: true }), "TOO_MANY_CAREER_DOCUMENTS", 400],
+    ["wrong field", multipartRequest("## 技能\n- TypeScript", { fieldname: "document" }), "CAREER_DOCUMENT_REQUIRED", 400],
+    ["extension", multipartRequest("## 技能\n- TypeScript", { filename: "resume.txt" }), "UNSUPPORTED_CAREER_DOCUMENT_TYPE", 400],
+    ["mime", multipartRequest("## 技能\n- TypeScript", { mimetype: "application/pdf" }), "UNSUPPORTED_CAREER_DOCUMENT_TYPE", 400],
+    ["too large", multipartRequest("x".repeat(524_289)), "CAREER_DOCUMENT_TOO_LARGE", 413],
+    ["invalid utf8", multipartRequest(new Uint8Array([0xc3, 0x28])), "CAREER_DOCUMENT_INVALID_UTF8", 400],
+    ["empty", multipartRequest(" \n\t"), "CAREER_DOCUMENT_EMPTY", 400],
+    ["nul", multipartRequest(new Uint8Array([0x61, 0x00])), "CAREER_DOCUMENT_EMPTY", 400],
+  ])("rejects career upload %s without source disclosure", async (_label, request, code, status) => {
+    const session = await createSession(app, `career-import-invalid-${_label}`);
+    const response = await app.getHttpAdapter().getInstance().inject({ ...request, headers: {
+      ...request.headers, ...bearer(session.sessionToken),
+    } });
+    expect(response.statusCode).toBe(status);
+    expect(response.json()).toMatchObject({ code, requestId: expect.any(String) });
+    expect(response.body).not.toContain("resume@example.com");
+  });
+
+  it("protects import queries, limits list results, and hides cross-account details", async () => {
+    const owner = await createSession(app, "career-import-owner");
+    const other = await createSession(app, "career-import-other");
+    const created = await app.getHttpAdapter().getInstance().inject(multipartRequest("## 技能\n- Owner", {
+      headers: bearer(owner.sessionToken), filename: "owner.md",
+    }));
+    const importId = created.json().importId;
+    for (let index = 0; index < 20; index += 1) {
+      const upload = await app.getHttpAdapter().getInstance().inject(multipartRequest(`## 技能\n- Owner ${index}`, {
+        headers: bearer(owner.sessionToken), filename: `owner-${index}.md`,
+      }));
+      expect(upload.statusCode).toBe(202);
+    }
+    const list = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/career-documents/imports", headers: bearer(owner.sessionToken) });
+    const detail = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/career-documents/imports/${importId}`, headers: bearer(owner.sessionToken) });
+    const hidden = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/career-documents/imports/${importId}`, headers: bearer(other.sessionToken) });
+    const anonymous = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/career-documents/imports" });
+
+    expect(list.statusCode).toBe(200);
+    expect(list.json().imports).toHaveLength(20);
+    expect(list.json().imports).toEqual(expect.arrayContaining([expect.objectContaining({ candidateFactCount: 0 })]));
+    expect(list.json().imports.map((item: { createdAt: string }) => item.createdAt)).toEqual([
+      ...list.json().imports.map((item: { createdAt: string }) => item.createdAt),
+    ].sort().reverse());
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json()).toMatchObject({ importId, facts: [] });
+    expect(hidden.statusCode).toBe(404);
+    expect(hidden.json().code).toBe("CAREER_IMPORT_NOT_FOUND");
+    expect(anonymous.statusCode).toBe(401);
+  });
+
+  it("maps an enqueue outage to a retryable 503 without leaking the underlying error", async () => {
+    const session = await createSession(app, "career-import-queue-failure");
+    const source = "## 技能\n- Retryable";
+    queue.failNext = true;
+    const response = await app.getHttpAdapter().getInstance().inject(multipartRequest(source, {
+      headers: bearer(session.sessionToken), filename: "secret-resume.md",
+    }));
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({ code: "CAREER_IMPORT_QUEUE_UNAVAILABLE" });
+    expect(response.body).not.toContain("resume@example.com");
+    expect(response.body).not.toContain("queue unavailable");
+    const retry = await app.getHttpAdapter().getInstance().inject(multipartRequest(source, {
+      headers: bearer(session.sessionToken), filename: "secret-resume.md",
+    }));
+    expect(retry.statusCode).toBe(202);
+    expect(retry.json()).toMatchObject({ status: "queued", reused: true });
+  });
+
   it("publishes the protected contract and standard problem schema", async () => {
     const response = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/openapi.json" });
     const document = response.json();
@@ -175,6 +293,8 @@ describe("authenticated workbench HTTP API", () => {
       "/v1/auth/sessions/current": expect.anything(),
       "/v1/accounts/{userId}": expect.anything(),
       "/v1/workbench/home": expect.anything(),
+      "/v1/career-documents/imports": expect.anything(),
+      "/v1/career-documents/imports/{importId}": expect.anything(),
       "/health/live": expect.anything(),
     }));
     expect(document.components.schemas.ApiProblem).toBeDefined();
@@ -194,9 +314,14 @@ describe("authenticated workbench HTTP API", () => {
       ["/v1/auth/sessions/current", "delete"],
       ["/v1/accounts/{userId}", "get"],
       ["/v1/workbench/home", "get"],
+      ["/v1/career-documents/imports", "get"],
+      ["/v1/career-documents/imports", "post"],
+      ["/v1/career-documents/imports/{importId}", "get"],
     ] as const) {
       expect(document.paths[path][method].security).toEqual([{ bearerAuth: [] }]);
     }
+    expect(document.paths["/v1/career-documents/imports"].post.requestBody.content["multipart/form-data"].schema)
+      .toMatchObject({ properties: { file: { format: "binary" } } });
   });
 
   it("refuses to bootstrap Dev Auth in production", async () => {
@@ -230,4 +355,34 @@ async function createSession(api: NestFastifyApplication, subject: string): Prom
   });
   expect(response.statusCode).toBe(201);
   return response.json();
+}
+
+function multipartRequest(source: string | Uint8Array | undefined, options: {
+  headers?: Record<string, string>;
+  filename?: string;
+  fieldname?: string;
+  mimetype?: string;
+  extraFile?: boolean;
+} = {}) {
+  const boundary = "career-import-test-boundary";
+  const bytes = source === undefined ? new Uint8Array() : typeof source === "string" ? new TextEncoder().encode(source) : source;
+  const body = source === undefined ? Buffer.from(`--${boundary}--\r\n`) : Buffer.concat([
+    multipartPart(boundary, bytes, options),
+    ...(options.extraFile ? [multipartPart(boundary, new TextEncoder().encode("## 技能\n- Extra"), options)] : []),
+    Buffer.from(`--${boundary}--\r\n`),
+  ]);
+  return {
+    method: "POST" as const,
+    url: "/v1/career-documents/imports",
+    headers: { "content-type": `multipart/form-data; boundary=${boundary}`, ...options.headers },
+    payload: body,
+  };
+}
+
+function multipartPart(boundary: string, bytes: Uint8Array, options: { filename?: string; fieldname?: string; mimetype?: string }) {
+  return Buffer.concat([
+    Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${options.fieldname ?? "file"}"; filename="${options.filename ?? "resume.md"}"\r\nContent-Type: ${options.mimetype ?? "text/markdown"}\r\n\r\n`),
+    Buffer.from(bytes),
+    Buffer.from("\r\n"),
+  ]);
 }

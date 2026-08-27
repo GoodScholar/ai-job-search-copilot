@@ -87,7 +87,7 @@ export const CareerImportFailureCodeSchema = z.enum([
   "CAREER_IMPORT_PERSIST_FAILED",
 ]);
 
-export const CareerImportSummarySchema = z.object({
+const CareerImportBaseSchema = z.object({
   importId: z.uuid(),
   documentId: z.uuid(),
   sourceFilename: filename,
@@ -95,6 +95,10 @@ export const CareerImportSummarySchema = z.object({
   failureCode: CareerImportFailureCodeSchema.nullable(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
+}).strict();
+
+export const CareerImportSummarySchema = CareerImportBaseSchema.extend({
+  candidateFactCount: z.int().min(0),
 }).strict();
 
 export const CareerImportListSchema = z.object({
@@ -112,7 +116,10 @@ export const CareerImportDetailSchema = z.object({
   facts: z.array(CandidateFactSchema),
 }).strict();
 
-export const CreateCareerImportResponseSchema = CareerImportSummarySchema;
+export const CreateCareerImportResponseSchema = CareerImportBaseSchema.extend({
+  reused: z.boolean(),
+  detailUrl: z.string().startsWith("/v1/career-documents/imports/"),
+}).strict();
 
 export const CareerParserOutputSchema = z.object({
   adapter: z.literal("fake"),

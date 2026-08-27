@@ -9,6 +9,7 @@ import {
 } from "@job-copilot/database";
 import {
   CareerImportJobSchema,
+  type CreateCareerImportResponse,
   CareerParserOutputSchema,
   type CareerImportDetail,
   type CareerImportFailureCode,
@@ -50,8 +51,7 @@ export type CreateOrReuseInput = {
   mediaType: "text/markdown";
 };
 
-export type CreateOrReuseResult = CareerImportSummary & {
-  reused: boolean;
+export type CreateOrReuseResult = CreateCareerImportResponse & {
   shouldReturnAccepted: boolean;
 };
 
@@ -105,7 +105,7 @@ function toIso(value: Date): string {
   return value.toISOString();
 }
 
-function summary(record: {
+function baseImport(record: {
   importId: string;
   documentId: string;
   sourceFilename: string;
@@ -113,7 +113,7 @@ function summary(record: {
   failureCode: string | null;
   createdAt: Date;
   updatedAt: Date;
-}): CareerImportSummary {
+}): Omit<CareerImportSummary, "candidateFactCount"> {
   return {
     importId: record.importId,
     documentId: record.documentId,
@@ -122,6 +122,18 @@ function summary(record: {
     failureCode: record.failureCode as CareerImportFailureCode | null,
     createdAt: toIso(record.createdAt),
     updatedAt: toIso(record.updatedAt),
+  };
+}
+
+function summary(record: Parameters<typeof baseImport>[0] & { candidateFactCount: number }): CareerImportSummary {
+  return { ...baseImport(record), candidateFactCount: record.candidateFactCount };
+}
+
+function createResponse(record: Parameters<typeof baseImport>[0], reused: boolean): CreateCareerImportResponse {
+  return {
+    ...baseImport(record),
+    reused,
+    detailUrl: `/v1/career-documents/imports/${record.importId}`,
   };
 }
 
@@ -375,7 +387,7 @@ export function createCareerImportCommands(deps: CommandDependencies): {
       }
 
       return {
-        ...summary({
+        ...createResponse({
           importId: storedImport.id,
           documentId: document.id,
           sourceFilename: document.originalFilename,
@@ -383,8 +395,7 @@ export function createCareerImportCommands(deps: CommandDependencies): {
           failureCode: storedImport.failureCode,
           createdAt: storedImport.createdAt,
           updatedAt: storedImport.updatedAt,
-        }),
-        reused,
+        }, reused),
         shouldReturnAccepted,
       };
     },
@@ -405,6 +416,11 @@ export function createCareerImportQueries(deps: { db: Database }): {
         failureCode: careerImports.failureCode,
         createdAt: careerImports.createdAt,
         updatedAt: careerImports.updatedAt,
+        candidateFactCount: sql<number>`(
+          select count(*)::int from ${candidateFacts}
+          where ${candidateFacts.careerImportId} = ${careerImports.id}
+            and ${candidateFacts.userId} = ${careerImports.userId}
+        )`,
       }).from(careerImports).innerJoin(careerDocuments, eq(careerDocuments.id, careerImports.careerDocumentId))
         .where(eq(careerImports.userId, userId)).orderBy(desc(careerImports.createdAt)).limit(20);
       return records.map(summary);
@@ -441,7 +457,7 @@ export function createCareerImportQueries(deps: { db: Database }): {
         : [];
 
       return {
-        ...summary(record),
+        ...baseImport(record),
         facts: facts.map((fact) => ({
           factId: fact.factId,
           factType: fact.factType as CareerImportDetail["facts"][number]["factType"],

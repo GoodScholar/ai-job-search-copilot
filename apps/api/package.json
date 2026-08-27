@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@fastify/multipart": "10.1.1",
     "@job-copilot/contracts": "workspace:*",
     "@job-copilot/database": "workspace:*",
     "@job-copilot/domain": "workspace:*",
@@ -16,6 +17,7 @@
     "@nestjs/core": "11.2.3",
     "@nestjs/platform-fastify": "11.2.3",
     "@nestjs/swagger": "11.4.7",
+    "bullmq": "6.2.2",
     "fastify": "5.12.1",
     "ioredis": "6.0.0",
     "minio": "8.0.6",

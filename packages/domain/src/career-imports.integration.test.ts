@@ -435,6 +435,9 @@ describe("career imports", () => {
 
     await expect(processor.process({ version: 1, importId: created.importId, userId, finalAttempt: false }))
       .resolves.toBe("completed");
+    await expect(queries.list({ userId })).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ importId: created.importId, candidateFactCount: 1 }),
+    ]));
     await expect(queries.get({ userId, importId: created.importId })).resolves.toMatchObject({
       status: "completed",
       facts: [expect.objectContaining({

@@ -7,10 +7,11 @@ import { ApiProblemFilter } from "./common/api-problem.filter.js";
 import { RequestIdHook } from "./common/request-id.hook.js";
 import { RuntimeConfigModule } from "./config/runtime-config.module.js";
 import { HealthModule } from "./health/health.module.js";
+import { CareerImportModule } from "./career-import/career-import.module.js";
 import { WorkbenchModule } from "./workbench/workbench.module.js";
 
 @Module({
-  imports: [RuntimeConfigModule, AuthModule, HealthModule, WorkbenchModule],
+  imports: [RuntimeConfigModule, AuthModule, HealthModule, WorkbenchModule, CareerImportModule],
   controllers: [AccountsController],
   providers: [
     RequestIdHook,
