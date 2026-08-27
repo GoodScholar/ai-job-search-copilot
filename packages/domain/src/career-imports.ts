@@ -91,6 +91,8 @@ class StableImportFailure extends Error {
   }
 }
 
+class StaleImportAttempt extends Error {}
+
 function sha256(value: Uint8Array | string): string {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -179,25 +181,27 @@ export function createCareerImportCommands(deps: CommandDependencies): {
       if (!document) {
         const documentId = deps.id();
         const key = objectKey(input.userId, documentId);
-        await deps.documentStore.put({ objectKey: key, bytes: input.bytes, mediaType: input.mediaType, documentId });
-        const [created] = await deps.db.insert(careerDocuments).values({
-          id: documentId,
-          userId: input.userId,
-          checksumSha256,
-          objectKey: key,
-          originalFilename: input.originalFilename,
-          mediaType: input.mediaType,
-          byteSize: input.bytes.byteLength,
-          createdAt: now,
-          updatedAt: now,
-        }).onConflictDoNothing().returning({
-          id: careerDocuments.id,
-          objectKey: careerDocuments.objectKey,
-          originalFilename: careerDocuments.originalFilename,
-        });
-        document = created;
-        if (!document) {
-          [document] = await deps.db.select({
+        document = await deps.db.transaction(async (transaction) => {
+          const [created] = await transaction.insert(careerDocuments).values({
+            id: documentId,
+            userId: input.userId,
+            checksumSha256,
+            objectKey: key,
+            originalFilename: input.originalFilename,
+            mediaType: input.mediaType,
+            byteSize: input.bytes.byteLength,
+            createdAt: now,
+            updatedAt: now,
+          }).onConflictDoNothing().returning({
+            id: careerDocuments.id,
+            objectKey: careerDocuments.objectKey,
+            originalFilename: careerDocuments.originalFilename,
+          });
+          if (created) {
+            await deps.documentStore.put({ objectKey: key, bytes: input.bytes, mediaType: input.mediaType, documentId });
+            return created;
+          }
+          const [existing] = await transaction.select({
             id: careerDocuments.id,
             objectKey: careerDocuments.objectKey,
             originalFilename: careerDocuments.originalFilename,
@@ -205,8 +209,10 @@ export function createCareerImportCommands(deps: CommandDependencies): {
             eq(careerDocuments.userId, input.userId),
             eq(careerDocuments.checksumSha256, checksumSha256),
           ));
+          if (!existing) throw new Error("无法读取职业资料");
           reused = true;
-        }
+          return existing;
+        });
       }
 
       if (!document) throw new Error("无法创建职业资料");
@@ -272,6 +278,7 @@ export function createCareerImportCommands(deps: CommandDependencies): {
             createdAt: careerImports.createdAt,
             updatedAt: careerImports.updatedAt,
           }).from(careerImports).where(and(
+            eq(careerImports.userId, input.userId),
             eq(careerImports.careerDocumentId, document.id),
             eq(careerImports.parserVersion, parserVersion),
             eq(careerImports.promptVersion, promptVersion),
@@ -318,8 +325,22 @@ export function createCareerImportCommands(deps: CommandDependencies): {
           storedImport = requeued;
           shouldEnqueue = true;
           shouldReturnAccepted = true;
+        } else {
+          const [current] = await deps.db.select({
+            id: careerImports.id,
+            status: careerImports.status,
+            failureCode: careerImports.failureCode,
+            createdAt: careerImports.createdAt,
+            updatedAt: careerImports.updatedAt,
+          }).from(careerImports).where(and(
+            eq(careerImports.id, storedImport.id),
+            eq(careerImports.userId, input.userId),
+          ));
+          if (!current) throw new Error("无法读取职业资料导入");
+          storedImport = current;
+          shouldEnqueue = current.status === "queued" || current.status === "processing";
         }
-      } else if (storedImport.status === "queued") {
+      } else if (storedImport.status === "queued" || storedImport.status === "processing") {
         shouldEnqueue = true;
       }
 
@@ -445,15 +466,25 @@ export function createCareerImportQueries(deps: { db: Database }): {
 export function createCareerImportProcessor(deps: ProcessorDependencies): {
   process(input: CareerImportJob & { finalAttempt: boolean }): Promise<"completed" | "failed" | "noop">;
 } {
-  async function fail(record: ImportRecord, code: CareerImportFailureCode): Promise<"failed"> {
+  async function fail(
+    record: ImportRecord,
+    attemptToken: number,
+    code: CareerImportFailureCode,
+  ): Promise<"failed" | "noop"> {
     const now = deps.clock();
-    await deps.db.transaction(async (transaction) => {
-      await transaction.update(careerImports).set({
+    const failed = await deps.db.transaction(async (transaction) => {
+      const [updated] = await transaction.update(careerImports).set({
         status: "failed",
         failureCode: code,
         failedAt: now,
         updatedAt: now,
-      }).where(and(eq(careerImports.id, record.id), eq(careerImports.userId, record.userId)));
+      }).where(and(
+        eq(careerImports.id, record.id),
+        eq(careerImports.userId, record.userId),
+        eq(careerImports.status, "processing"),
+        eq(careerImports.attemptCount, attemptToken),
+      )).returning({ id: careerImports.id });
+      if (!updated) return false;
       await deps.auditTrail.bind(transaction).append({
         userId: record.userId,
         actorUserId: record.userId,
@@ -466,8 +497,9 @@ export function createCareerImportProcessor(deps: ProcessorDependencies): {
         resourceId: record.id,
         metadata: { documentId: record.documentId, importId: record.id, attemptCount: record.attemptCount, failureCode: code },
       });
+      return true;
     });
-    return "failed";
+    return failed ? "failed" : "noop";
   }
 
   return {
@@ -475,6 +507,7 @@ export function createCareerImportProcessor(deps: ProcessorDependencies): {
       const record = await findImport(deps.db, input);
       if (!record || record.status === "completed" || record.status === "failed") return "noop";
       const now = deps.clock();
+      let attemptToken: number;
 
       if (record.status === "queued") {
         const [claimed] = await deps.db.update(careerImports).set({
@@ -488,7 +521,7 @@ export function createCareerImportProcessor(deps: ProcessorDependencies): {
           eq(careerImports.status, "queued"),
         )).returning({ attemptCount: careerImports.attemptCount });
         if (!claimed) return "noop";
-        record.attemptCount = claimed.attemptCount;
+        attemptToken = claimed.attemptCount;
       } else if (record.status === "processing") {
         const [retried] = await deps.db.update(careerImports).set({
           attemptCount: sql`${careerImports.attemptCount} + 1`,
@@ -496,17 +529,18 @@ export function createCareerImportProcessor(deps: ProcessorDependencies): {
         }).where(and(eq(careerImports.id, record.id), eq(careerImports.userId, record.userId)))
           .returning({ attemptCount: careerImports.attemptCount });
         if (!retried) return "noop";
-        record.attemptCount = retried.attemptCount;
+        attemptToken = retried.attemptCount;
       } else {
         return "noop";
       }
+      record.attemptCount = attemptToken;
 
       let rawBytes: Uint8Array;
       try {
         rawBytes = await deps.documentStore.get({ objectKey: record.objectKey });
       } catch (error) {
-        if (isMissingDocument(error)) return fail(record, "CAREER_DOCUMENT_NOT_FOUND");
-        if (input.finalAttempt) return fail(record, "CAREER_DOCUMENT_READ_FAILED");
+        if (isMissingDocument(error)) return fail(record, attemptToken, "CAREER_DOCUMENT_NOT_FOUND");
+        if (input.finalAttempt) return fail(record, attemptToken, "CAREER_DOCUMENT_READ_FAILED");
         throw error;
       }
 
@@ -525,14 +559,23 @@ export function createCareerImportProcessor(deps: ProcessorDependencies): {
         const output = outputResult.data;
         const lines = markdown.split("\n");
         const acceptedFacts = output.facts.filter((fact) => {
+          if (fact.evidence.startLine < 1 || fact.evidence.startLine > fact.evidence.endLine
+            || fact.evidence.endLine > lines.length) return false;
           const quoted = lines.slice(fact.evidence.startLine - 1, fact.evidence.endLine).join("\n");
           return quoted === fact.evidence.excerpt;
         });
         if (acceptedFacts.length === 0) {
-          throw new StableImportFailure(output.facts.length === 0 ? "NO_SUPPORTED_FACTS" : "CAREER_PARSER_EVIDENCE_INVALID");
+          throw new StableImportFailure("NO_SUPPORTED_FACTS");
         }
 
         await deps.db.transaction(async (transaction) => {
+          const [ownedAttempt] = await transaction.update(careerImports).set({ updatedAt: now }).where(and(
+            eq(careerImports.id, record.id),
+            eq(careerImports.userId, record.userId),
+            eq(careerImports.status, "processing"),
+            eq(careerImports.attemptCount, attemptToken),
+          )).returning({ id: careerImports.id });
+          if (!ownedAttempt) throw new StaleImportAttempt();
           for (const fact of acceptedFacts) {
             const candidateFactId = deps.id();
             await transaction.insert(candidateFacts).values({
@@ -566,12 +609,18 @@ export function createCareerImportProcessor(deps: ProcessorDependencies): {
               createdAt: now,
             });
           }
-          await transaction.update(careerImports).set({
+          const [completed] = await transaction.update(careerImports).set({
             status: "completed",
             failureCode: null,
             completedAt: now,
             updatedAt: now,
-          }).where(and(eq(careerImports.id, record.id), eq(careerImports.userId, record.userId)));
+          }).where(and(
+            eq(careerImports.id, record.id),
+            eq(careerImports.userId, record.userId),
+            eq(careerImports.status, "processing"),
+            eq(careerImports.attemptCount, attemptToken),
+          )).returning({ id: careerImports.id });
+          if (!completed) throw new StaleImportAttempt();
           await deps.auditTrail.bind(transaction).append({
             userId: record.userId,
             actorUserId: record.userId,
@@ -587,8 +636,9 @@ export function createCareerImportProcessor(deps: ProcessorDependencies): {
         });
         return "completed";
       } catch (error) {
-        if (error instanceof StableImportFailure) return fail(record, error.code);
-        if (input.finalAttempt) return fail(record, "CAREER_IMPORT_PERSIST_FAILED");
+        if (error instanceof StaleImportAttempt) return "noop";
+        if (error instanceof StableImportFailure) return fail(record, attemptToken, error.code);
+        if (input.finalAttempt) return fail(record, attemptToken, "CAREER_IMPORT_PERSIST_FAILED");
         throw error;
       }
     },

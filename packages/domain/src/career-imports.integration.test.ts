@@ -1,8 +1,10 @@
+import { createHash } from "node:crypto";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   candidateFacts,
+  careerDocuments,
   careerImports,
   createDatabase,
   jobAccounts,
@@ -70,6 +72,12 @@ function ids(...values: string[]): () => string {
 
 function parser(output: unknown): CareerDocumentParser {
   return { parse: async () => output };
+}
+
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  return { promise: new Promise<T>((accept, decline) => { resolve = accept; reject = decline; }), resolve, reject };
 }
 
 function validOutput() {
@@ -192,6 +200,77 @@ describe("career imports", () => {
     expect(store.puts).toHaveLength(2);
   });
 
+  it("writes an object only once when concurrent requests reserve the same checksum", async () => {
+    const firstPutStarted = deferred<void>();
+    const releaseFirstPut = deferred<void>();
+    const secondPutStarted = deferred<void>();
+    const objects = new Map<string, Uint8Array>();
+    const puts: string[] = [];
+    const store: CareerDocumentStore = {
+      put: async ({ objectKey, bytes: sourceBytes }) => {
+        puts.push(objectKey);
+        if (puts.length === 1) {
+          firstPutStarted.resolve();
+          await releaseFirstPut.promise;
+        } else {
+          secondPutStarted.resolve();
+        }
+        objects.set(objectKey, sourceBytes);
+      },
+      get: async ({ objectKey }) => objects.get(objectKey)!,
+    };
+    const queue = new MemoryQueue();
+    const commands = createCareerImportCommands({
+      db: database,
+      auditTrail: createAuditTrail({ db: database, clock: () => now }),
+      documentStore: store,
+      queue,
+      id: ids("5f813441-9b95-4bf0-b6c9-25e0f7f0d995", "57c83fce-87d9-42f9-b4f4-a750fac1cbb9", "5f415f5d-5d62-4663-a949-d5f375c4d56a", "1fba8e3e-9731-4d4f-a8aa-d2a9e448db77"),
+      clock: () => now,
+    });
+    const input = {
+      userId,
+      bytes: new TextEncoder().encode("## 技能\n- Concurrent object"),
+      originalFilename: "resume.md" as const,
+      mediaType: "text/markdown" as const,
+    };
+
+    const first = commands.createOrReuse({ ...input, requestId: "431d5b82-6956-4dfa-9b1b-ece9414a3b0b" });
+    await firstPutStarted.promise;
+    const second = commands.createOrReuse({ ...input, requestId: "e29f8a75-7676-44f7-8fa7-7e4de1f4a558" });
+    expect(await Promise.race([
+      secondPutStarted.promise.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 75)),
+    ])).toBe(false);
+    releaseFirstPut.resolve();
+
+    const [firstResult, secondResult] = await Promise.all([first, second]);
+    expect(firstResult.documentId).toBe(secondResult.documentId);
+    expect(puts).toHaveLength(1);
+  });
+
+  it("does not expose a cross-account version-conflict fallback", async () => {
+    const sourceBytes = new TextEncoder().encode("## 技能\n- Cross account fallback");
+    const checksumSha256 = createHash("sha256").update(sourceBytes).digest("hex");
+    const documentId = "55120b0b-5f42-4136-8710-55ec76c43b71";
+    await database.insert(careerDocuments).values({
+      id: documentId, userId, checksumSha256, objectKey: `accounts/${userId}/career-documents/${documentId}/source.md`,
+      originalFilename: "resume.md", mediaType: "text/markdown", byteSize: sourceBytes.byteLength,
+    });
+    await database.insert(careerImports).values({
+      id: "487751a6-6f9d-4604-9e04-fd178a9e66c2", userId: otherUserId, careerDocumentId: documentId,
+      originatingRequestId: "efeb44e8-1c16-46a4-9c92-d7987255f6a5",
+    });
+    const queue = new MemoryQueue();
+    const commands = commandsFor(new MemoryStore(), queue, ids("a6322ee5-a9d9-4d6c-9d14-a76df54f0928"));
+
+    await expect(commands.createOrReuse({
+      userId, requestId: "98b15851-af5c-4ee1-a7d8-3e87d158c01e", bytes: sourceBytes,
+      originalFilename: "resume.md", mediaType: "text/markdown",
+    })).rejects.toThrow(/无法读取职业资料导入/);
+    expect(queue.jobs).toEqual([]);
+  });
+
   it("marks a queue failure as retryable and atomically returns the same failed import to queued", async () => {
     const store = new MemoryStore();
     const queue = new MemoryQueue();
@@ -223,6 +302,63 @@ describe("career imports", () => {
     });
     expect(retried).toMatchObject({ importId: failed?.id, status: "queued", reused: true, shouldReturnAccepted: true });
     expect(queue.jobs).toEqual([expect.objectContaining({ importId: failed?.id, userId })]);
+  });
+
+  it("re-reads and re-enqueues the authoritative queued state when a failed requeue CAS loses", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const created = await createImport({
+      documentStore: store,
+      queue,
+      ids: ids("f87b9b12-d7fe-4458-9f73-f50530926816", "fcef1493-46b0-4a54-947c-ddd4d3743616"),
+      requestId: "5fc0d12c-cc27-40e4-9db9-51eb52a0c6cf",
+      sourceBytes: new TextEncoder().encode("## 技能\n- Requeue race"),
+    });
+    await database.update(careerImports).set({ status: "failed", failureCode: "CAREER_DOCUMENT_READ_FAILED" })
+      .where(eq(careerImports.id, created.importId));
+    const enteredFirstAudit = deferred<void>();
+    const releaseFirstAudit = deferred<void>();
+    let blocked = false;
+    const baseAuditTrail = createAuditTrail({ db: database, clock: () => now });
+    const auditTrail: AuditTrail = {
+      append: (event) => baseAuditTrail.append(event),
+      query: (input) => baseAuditTrail.query(input),
+      bind(transaction) {
+        const bound = baseAuditTrail.bind(transaction);
+        return {
+          ...bound,
+          bind: auditTrail.bind,
+          append: async (event) => {
+            if (event.eventType === "career.document_import_queued" && !blocked) {
+              blocked = true;
+              enteredFirstAudit.resolve();
+              await releaseFirstAudit.promise;
+            }
+            await bound.append(event);
+          },
+        };
+      },
+    };
+    const commands = createCareerImportCommands({
+      db: database, auditTrail, documentStore: store, queue,
+      id: ids("8d2dd82c-f174-4769-9c2a-5d4b3a7f5c97", "4871faf6-a6bc-4fea-b26f-88b20a13d821"), clock: () => now,
+    });
+    const input = {
+      userId, bytes: new TextEncoder().encode("## 技能\n- Requeue race"), originalFilename: "resume.md" as const,
+      mediaType: "text/markdown" as const,
+    };
+
+    const first = commands.createOrReuse({ ...input, requestId: "c8530edc-965d-456d-8c44-b9d0a3477879" });
+    await enteredFirstAudit.promise;
+    const second = commands.createOrReuse({ ...input, requestId: "7657b7e6-9f0f-4783-9a7f-79a8c3f64a7d" });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    releaseFirstAudit.resolve();
+
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ importId: created.importId, status: "queued", shouldReturnAccepted: true }),
+      expect.objectContaining({ importId: created.importId, status: "queued", shouldReturnAccepted: false }),
+    ]);
+    expect(queue.jobs.filter((job) => job.importId === created.importId)).toHaveLength(3);
   });
 
   it("never enqueues a completed import when it is uploaded again", async () => {
@@ -257,6 +393,25 @@ describe("career imports", () => {
     expect(duplicate).toMatchObject({ importId: created.importId, status: "completed", reused: true, shouldReturnAccepted: false });
     expect(queue.jobs).toHaveLength(1);
     await expect(queries.get({ userId, importId: created.importId })).resolves.toMatchObject({ status: "completed" });
+  });
+
+  it("re-enqueues a processing import on a repeated upload without changing its HTTP semantics", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const sourceBytes = new TextEncoder().encode("## 技能\n- Repair processing");
+    const created = await createImport({
+      documentStore: store, queue,
+      ids: ids("8fe7c5dc-1a65-4e82-970b-8e807d24e58b", "ae9a0e29-b5d5-4cb8-b224-a5fd7d0328cb"),
+      requestId: "b3c93594-8c7d-483b-a380-47db6765f37f", sourceBytes,
+    });
+    await database.update(careerImports).set({ status: "processing" }).where(eq(careerImports.id, created.importId));
+
+    const repeated = await createImport({
+      documentStore: store, queue, ids: ids("9bf7169a-fd22-48af-91a3-aac0ac4ce463"),
+      requestId: "fd746cca-df9e-425e-a3aa-6e23a4639f1b", sourceBytes,
+    });
+    expect(repeated).toMatchObject({ importId: created.importId, status: "processing", reused: true, shouldReturnAccepted: false });
+    expect(queue.jobs.filter((job) => job.importId === created.importId)).toHaveLength(2);
   });
 
   it("commits quoted facts, evidence, completion, and redacted completion audit together", async () => {
@@ -362,7 +517,7 @@ describe("career imports", () => {
     ["inferred grounding", { ...validOutput(), facts: [{ ...validOutput().facts[0], grounding: "inferred" }] }, "CAREER_PARSER_OUTPUT_INVALID"],
     ["missing evidence", { ...validOutput(), facts: [{ ...validOutput().facts[0], evidence: undefined }] }, "CAREER_PARSER_OUTPUT_INVALID"],
     ["unknown parser field", { ...validOutput(), privateEmail: "secret@example.test" }, "CAREER_PARSER_OUTPUT_INVALID"],
-    ["out of range evidence", { ...validOutput(), facts: [{ ...validOutput().facts[0], evidence: { locatorType: "markdown_lines", startLine: 7, endLine: 7, excerpt: "- TypeScript" } }] }, "CAREER_PARSER_EVIDENCE_INVALID"],
+    ["out of range evidence", { ...validOutput(), facts: [{ ...validOutput().facts[0], evidence: { locatorType: "markdown_lines", startLine: 7, endLine: 7, excerpt: "- TypeScript" } }] }, "NO_SUPPORTED_FACTS"],
     ["empty valid fact list", { ...validOutput(), facts: [] }, "NO_SUPPORTED_FACTS"],
   ])("persists no facts for %s", async (_name, output, failureCode) => {
     const store = new MemoryStore();
@@ -386,6 +541,32 @@ describe("career imports", () => {
       .resolves.toBe("failed");
     await expect(createCareerImportQueries({ db: database }).get({ userId, importId: created.importId }))
       .resolves.toMatchObject({ status: "failed", failureCode, facts: [] });
+  });
+
+  it("rejects an evidence end line beyond the document even when slicing would match its excerpt", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const created = await createImport({
+      documentStore: store, queue,
+      ids: ids("4d6fc1ed-49b5-4d4b-9eb9-4622d27e5fed", "f1e986e2-2535-4a1d-ae81-b896712cc4c6"),
+      requestId: "9ca309ac-f7d7-4dfc-8a8b-4478847829dd",
+      sourceBytes: new TextEncoder().encode("# Another\n\n## Skills\n\n\n- TypeScript"),
+    });
+    const processor = createCareerImportProcessor({
+      db: database,
+      auditTrail: createAuditTrail({ db: database, clock: () => now }),
+      documentStore: store,
+      parser: parser({ ...validOutput(), facts: [{
+        ...validOutput().facts[0],
+        evidence: { locatorType: "markdown_lines", startLine: 6, endLine: 99, excerpt: "- TypeScript" },
+      }] }),
+      id: ids("5c3c7dcb-e5b4-419f-94a7-832796bce17a"), clock: () => now,
+    });
+
+    await expect(processor.process({ version: 1, importId: created.importId, userId, finalAttempt: false }))
+      .resolves.toBe("failed");
+    await expect(createCareerImportQueries({ db: database }).get({ userId, importId: created.importId }))
+      .resolves.toMatchObject({ status: "failed", failureCode: "NO_SUPPORTED_FACTS", facts: [] });
   });
 
   it("fails checksum mismatches without parsing facts", async () => {
@@ -467,6 +648,86 @@ describe("career imports", () => {
     const [stored] = await database.select({ attemptCount: careerImports.attemptCount, status: careerImports.status })
       .from(careerImports).where(eq(careerImports.id, created.importId));
     expect(stored).toEqual({ attemptCount: 1, status: "completed" });
+  });
+
+  it("returns noop when a stale executor tries to complete after a newer processing attempt", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const created = await createImport({
+      documentStore: store, queue,
+      ids: ids("5fc9b441-15c2-45f8-a334-b8b2bb53cd14", "b486cb54-4488-4ad7-9c2e-483b1ed6f2f6"),
+      requestId: "15ccb9e0-926f-4102-afdf-a58f97b82bf8",
+    });
+    const firstParserEntered = deferred<void>();
+    const releaseFirstParser = deferred<void>();
+    let parserCalls = 0;
+    const processor = createCareerImportProcessor({
+      db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), documentStore: store,
+      parser: {
+        parse: async () => {
+          parserCalls += 1;
+          if (parserCalls === 1) {
+            firstParserEntered.resolve();
+            await releaseFirstParser.promise;
+          }
+          return validOutput();
+        },
+      },
+      id: ids(
+        "3407116c-9a71-4dca-ae87-5d1c47f04f9a", "49f73f2c-097e-47d3-b13c-ce40d5c7fd4d",
+        "3e7f166f-a401-4547-bb93-b9a8c36db18d", "c87bba3c-b776-4fcc-9afc-ca4f7f9011b9",
+      ), clock: () => now,
+    });
+
+    const stale = processor.process({ version: 1, importId: created.importId, userId, finalAttempt: false });
+    await firstParserEntered.promise;
+    await expect(processor.process({ version: 1, importId: created.importId, userId, finalAttempt: false }))
+      .resolves.toBe("completed");
+    releaseFirstParser.resolve();
+
+    await expect(stale).resolves.toBe("noop");
+    await expect(createCareerImportQueries({ db: database }).get({ userId, importId: created.importId }))
+      .resolves.toMatchObject({ status: "completed", facts: [expect.objectContaining({ factValue: { name: "TypeScript" } })] });
+  });
+
+  it("returns noop when a stale executor tries to fail after a newer attempt completes", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const created = await createImport({
+      documentStore: store, queue,
+      ids: ids("b4b4d6c0-3f2d-4c77-96e7-67ee35dea08f", "5ee0c9c2-a2c3-4efa-b44e-49023d178a7f"),
+      requestId: "0b63de4e-dc3f-47e8-a2a9-e8d75db566c9",
+    });
+    const firstParserEntered = deferred<void>();
+    const releaseFirstParser = deferred<void>();
+    let parserCalls = 0;
+    const processor = createCareerImportProcessor({
+      db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), documentStore: store,
+      parser: {
+        parse: async () => {
+          parserCalls += 1;
+          if (parserCalls === 1) {
+            firstParserEntered.resolve();
+            await releaseFirstParser.promise;
+            return {};
+          }
+          return validOutput();
+        },
+      },
+      id: ids(
+        "c4f34d1a-73ca-422b-b511-b550492d2a90", "59a0c6bf-f5be-4c2d-85b0-2f109868454b",
+      ), clock: () => now,
+    });
+
+    const stale = processor.process({ version: 1, importId: created.importId, userId, finalAttempt: false });
+    await firstParserEntered.promise;
+    await expect(processor.process({ version: 1, importId: created.importId, userId, finalAttempt: false }))
+      .resolves.toBe("completed");
+    releaseFirstParser.resolve();
+
+    await expect(stale).resolves.toBe("noop");
+    await expect(createCareerImportQueries({ db: database }).get({ userId, importId: created.importId }))
+      .resolves.toMatchObject({ status: "completed", failureCode: null, facts: [expect.anything()] });
   });
 
   it("keeps a transient document read failure retryable until the final attempt", async () => {
