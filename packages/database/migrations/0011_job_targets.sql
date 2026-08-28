@@ -27,7 +27,7 @@ CREATE TABLE "job_targets" (
 	CONSTRAINT "job_targets_version_positive" CHECK ("job_targets"."version" >= 1),
 	CONSTRAINT "job_targets_priority_check" CHECK ("job_targets"."priority" in ('primary', 'secondary')),
 	CONSTRAINT "job_targets_state_check" CHECK ("job_targets"."state" in ('active', 'inactive')),
-	CONSTRAINT "job_targets_active_secondary_slot_check" CHECK (("job_targets"."priority" = 'secondary' and "job_targets"."state" = 'active' and "job_targets"."active_slot" in (1, 2)) or (("job_targets"."priority" <> 'secondary' or "job_targets"."state" <> 'active') and "job_targets"."active_slot" is null))
+	CONSTRAINT "job_targets_active_secondary_slot_check" CHECK (("job_targets"."priority" = 'secondary' and "job_targets"."state" = 'active' and "job_targets"."active_slot" is not null and "job_targets"."active_slot" in (1, 2)) or (("job_targets"."priority" <> 'secondary' or "job_targets"."state" <> 'active') and "job_targets"."active_slot" is null))
 );
 --> statement-breakpoint
 ALTER TABLE "job_target_revisions" ADD CONSTRAINT "job_target_revisions_user_id_job_accounts_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."job_accounts"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint

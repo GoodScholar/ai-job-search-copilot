@@ -486,6 +486,10 @@ describe("database migrations", () => {
       values ('4bb2e0ba-1b88-4d8e-923a-6382ea5f47fa', ${firstAccountId}, 1, 'secondary', 'active', 1)
     `)).rejects.toMatchObject({ cause: { code: "23505" } });
     await expect(migratedDatabase.execute(sql`
+      insert into job_targets (id, user_id, version, priority, state)
+      values ('6fc74b2c-455b-469d-9c19-5dce5e4775c5', ${firstAccountId}, 1, 'secondary', 'active')
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
       insert into job_targets (id, user_id, version, priority, state, active_slot)
       values ('fc2dadf5-f1be-416b-99c6-98bb6f9e7ca3', ${firstAccountId}, 1, 'secondary', 'active', 3)
     `)).rejects.toMatchObject({ cause: { code: "23514" } });

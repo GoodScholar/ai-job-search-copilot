@@ -297,7 +297,7 @@ export const jobTargets = pgTable("job_targets", {
   check("job_targets_version_positive", sql`${table.version} >= 1`),
   check("job_targets_priority_check", sql`${table.priority} in ('primary', 'secondary')`),
   check("job_targets_state_check", sql`${table.state} in ('active', 'inactive')`),
-  check("job_targets_active_secondary_slot_check", sql`(${table.priority} = 'secondary' and ${table.state} = 'active' and ${table.activeSlot} in (1, 2)) or ((${table.priority} <> 'secondary' or ${table.state} <> 'active') and ${table.activeSlot} is null)`),
+  check("job_targets_active_secondary_slot_check", sql`(${table.priority} = 'secondary' and ${table.state} = 'active' and ${table.activeSlot} is not null and ${table.activeSlot} in (1, 2)) or ((${table.priority} <> 'secondary' or ${table.state} <> 'active') and ${table.activeSlot} is null)`),
 ]);
 
 export const jobTargetRevisions = pgTable("job_target_revisions", {

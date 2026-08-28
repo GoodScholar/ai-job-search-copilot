@@ -1615,7 +1615,7 @@
         },
         "job_targets_active_secondary_slot_check": {
           "name": "job_targets_active_secondary_slot_check",
-          "value": "(\"job_targets\".\"priority\" = 'secondary' and \"job_targets\".\"state\" = 'active' and \"job_targets\".\"active_slot\" in (1, 2)) or ((\"job_targets\".\"priority\" <> 'secondary' or \"job_targets\".\"state\" <> 'active') and \"job_targets\".\"active_slot\" is null)"
+          "value": "(\"job_targets\".\"priority\" = 'secondary' and \"job_targets\".\"state\" = 'active' and \"job_targets\".\"active_slot\" is not null and \"job_targets\".\"active_slot\" in (1, 2)) or ((\"job_targets\".\"priority\" <> 'secondary' or \"job_targets\".\"state\" <> 'active') and \"job_targets\".\"active_slot\" is null)"
         }
       },
       "isRLSEnabled": false
