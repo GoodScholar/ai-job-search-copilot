@@ -78,6 +78,13 @@
       "when": 1787884033959,
       "tag": "0010_pdf_career_documents",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1787891358249,
+      "tag": "0011_job_targets",
+      "breakpoints": true
     }
   ]
 }

@@ -436,4 +436,62 @@ describe("database migrations", () => {
       values ('7bc645bf-c1d9-4e1e-8ef8-a74c1389dbfe', ${accountId}, ${"6".repeat(64)}, 'accounts/x/processing.txt', 'resume.docx', 'docx', 'text/markdown', 1)
     `)).rejects.toMatchObject({ cause: { code: "23514" } });
   });
+
+  it("migrates versioned account-owned 求职目标 with one active primary", async () => {
+    const firstAccountId = "f7e06d1e-fd43-4053-8f75-9f9c20e7be8a";
+    const secondAccountId = "0fdbdf60-ebc6-4d04-b0df-3d39ec41e3c8";
+    const primaryTargetId = "e9ec8a65-aea8-454c-87c7-55a986d6eeb0";
+    const inactiveTargetId = "779f905f-949a-4f26-baa5-4cf27e69c567";
+    const secondaryTargetId = "4ad5b722-ac74-46bd-aeb3-7b6d3d5a8137";
+    const constraintValue = '{"roleFamily":"AI 应用工程师","seniority":null,"locations":[],"workModes":[],"relocation":"unknown","salary":null,"industries":[],"dealBreakers":{"excludedCompanies":[],"excludedIndustries":[],"excludeOutsourcing":false,"excludeDispatch":false,"excludeHeadhunter":false,"other":[]}}';
+
+    expect(await listPublicTables(migratedDatabase)).toEqual(expect.arrayContaining([
+      "job_targets", "job_target_revisions",
+    ]));
+    expect(await listColumns(migratedDatabase)).toEqual(expect.arrayContaining([
+      { table_name: "job_targets", column_name: "version", data_type: "integer" },
+      { table_name: "job_target_revisions", column_name: "version", data_type: "integer" },
+      { table_name: "job_target_revisions", column_name: "constraints", data_type: "jsonb" },
+    ]));
+
+    const foreignKeys = await migratedDatabase.execute(sql`
+      select conname from pg_constraint where conname in (
+        'job_targets_user_id_id_unique', 'job_target_revisions_target_version_unique',
+        'job_target_revisions_owner_target_fk'
+      ) order by conname
+    `);
+    expect(foreignKeys).toHaveLength(3);
+
+    await migratedDatabase.execute(sql`insert into job_accounts (id) values (${firstAccountId}), (${secondAccountId})`);
+    await migratedDatabase.execute(sql`
+      insert into job_targets (id, user_id, version, priority, state)
+      values (${primaryTargetId}, ${firstAccountId}, 1, 'primary', 'active')
+    `);
+    await expect(migratedDatabase.execute(sql`
+      insert into job_targets (id, user_id, version, priority, state)
+      values ('0f9826b8-a9dc-43a3-b361-5df7b0e4f7e0', ${firstAccountId}, 1, 'primary', 'active')
+    `)).rejects.toMatchObject({ cause: { code: "23505" } });
+    await migratedDatabase.execute(sql`
+      insert into job_targets (id, user_id, version, priority, state)
+      values (${inactiveTargetId}, ${firstAccountId}, 1, 'primary', 'inactive'),
+             (${secondaryTargetId}, ${firstAccountId}, 1, 'secondary', 'active')
+    `);
+
+    await migratedDatabase.execute(sql`
+      insert into job_target_revisions (id, user_id, target_id, version, priority, state, constraints)
+      values ('db2d5db1-f1a3-4252-ae4c-1ed6c48c8c13', ${firstAccountId}, ${primaryTargetId}, 1, 'primary', 'active', ${constraintValue}::jsonb)
+    `);
+    await expect(migratedDatabase.execute(sql`
+      insert into job_target_revisions (id, user_id, target_id, version, priority, state, constraints)
+      values ('764a9375-67fe-4313-9917-498a09dc693f', ${firstAccountId}, ${primaryTargetId}, 1, 'primary', 'active', ${constraintValue}::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23505" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into job_target_revisions (id, user_id, target_id, version, priority, state, constraints)
+      values ('886edc65-5034-4d81-8af5-c90fb73141e1', ${firstAccountId}, ${primaryTargetId}, 0, 'primary', 'active', ${constraintValue}::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into job_target_revisions (id, user_id, target_id, version, priority, state, constraints)
+      values ('1d8f3f2e-b1e1-4748-8f59-73153449e1aa', ${secondAccountId}, ${primaryTargetId}, 2, 'primary', 'active', ${constraintValue}::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
+  });
 });

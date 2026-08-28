@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, foreignKey, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uuid, varchar } from "drizzle-orm/pg-core";
+import { check, foreignKey, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
 
 export const jobAccounts = pgTable("job_accounts", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -279,4 +279,42 @@ export const careerFactConflicts = pgTable("career_fact_conflicts", {
   check("career_fact_conflicts_profile_version_positive", sql`${table.profileVersion} is null or ${table.profileVersion} >= 1`),
   check("career_fact_conflicts_distinct_pair_check", sql`${table.existingCandidateFactId} <> ${table.incomingCandidateFactId}`),
   check("career_fact_conflicts_resolution_state_check", sql`(${table.status} = 'pending' and ${table.resolution} is null and ${table.resolvedAt} is null and ${table.profileVersion} is null) or (${table.status} = 'resolved' and ${table.resolution} is not null and ${table.resolvedAt} is not null and ${table.profileVersion} is not null)`),
+]);
+
+export const jobTargets = pgTable("job_targets", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  version: integer("version").notNull(),
+  priority: varchar("priority", { length: 16 }).notNull(),
+  state: varchar("state", { length: 16 }).notNull().default("active"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_targets_user_id_id_unique").on(table.userId, table.id),
+  uniqueIndex("job_targets_active_primary_per_user_unique").on(table.userId).where(sql`${table.priority} = 'primary' and ${table.state} = 'active'`),
+  check("job_targets_version_positive", sql`${table.version} >= 1`),
+  check("job_targets_priority_check", sql`${table.priority} in ('primary', 'secondary')`),
+  check("job_targets_state_check", sql`${table.state} in ('active', 'inactive')`),
+]);
+
+export const jobTargetRevisions = pgTable("job_target_revisions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  targetId: uuid("target_id").notNull().references(() => jobTargets.id),
+  version: integer("version").notNull(),
+  priority: varchar("priority", { length: 16 }).notNull(),
+  state: varchar("state", { length: 16 }).notNull(),
+  constraints: jsonb("constraints").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_target_revisions_target_version_unique").on(table.targetId, table.version),
+  foreignKey({
+    columns: [table.userId, table.targetId],
+    foreignColumns: [jobTargets.userId, jobTargets.id],
+    name: "job_target_revisions_owner_target_fk",
+  }),
+  check("job_target_revisions_version_positive", sql`${table.version} >= 1`),
+  check("job_target_revisions_priority_check", sql`${table.priority} in ('primary', 'secondary')`),
+  check("job_target_revisions_state_check", sql`${table.state} in ('active', 'inactive')`),
+  check("job_target_revisions_constraints_object", sql`jsonb_typeof(${table.constraints}) = 'object'`),
 ]);
