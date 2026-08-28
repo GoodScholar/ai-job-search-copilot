@@ -37,15 +37,18 @@ describe("job targets", () => {
     await container?.stop();
   });
 
-  async function userWithTrustedFacts() {
+  async function userWithTrustedFacts(input: {
+    factType: "skill" | "language";
+    factValue: { name: string; level?: string };
+  } = { factType: "skill", factValue: { name: "React TypeScript" } }) {
     const userId = crypto.randomUUID();
     const profileId = crypto.randomUUID();
     const profileFactId = crypto.randomUUID();
     await database.insert(jobAccounts).values({ id: userId });
     await database.insert(jobProfiles).values({ id: profileId, userId, version: 1, createdAt: now, updatedAt: now });
-    await database.insert(profileFacts).values({ id: profileFactId, userId, profileId, factType: "skill", createdAt: now });
+    await database.insert(profileFacts).values({ id: profileFactId, userId, profileId, factType: input.factType, createdAt: now });
     await database.insert(profileFactRevisions).values({
-      id: crypto.randomUUID(), userId, profileFactId, revisionNumber: 1, factType: "skill", factValue: { name: "React TypeScript" },
+      id: crypto.randomUUID(), userId, profileFactId, revisionNumber: 1, factType: input.factType, factValue: input.factValue,
       state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1, createdAt: now,
     });
     return userId;
@@ -54,6 +57,19 @@ describe("job targets", () => {
   function commands() {
     return createJobTargetCommands({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
   }
+
+  it("保留 language 画像事实的等级作为建议证据标签", async () => {
+    const userId = await userWithTrustedFacts({ factType: "language", factValue: { name: "TypeScript", level: "熟练" } });
+
+    const overview = await createJobTargetQueries({ db: database }).getOverview({ userId });
+
+    expect(overview.suggestions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        roleFamily: "前端工程师",
+        evidence: expect.arrayContaining([expect.objectContaining({ label: expect.stringContaining("熟练") })]),
+      }),
+    ]));
+  });
 
   it("在创建前不持久化建议，并限制一个主目标和两个次目标", async () => {
     const userId = await userWithTrustedFacts();

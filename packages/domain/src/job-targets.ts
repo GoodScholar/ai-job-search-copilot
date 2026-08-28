@@ -41,9 +41,16 @@ const catalog = [
   { id: "40b765d0-a6cc-48cb-8807-6b4cd0d7b717", roleFamily: "Agent 工程师", keywords: ["agent", "workflow", "工作流", "工具调用", "智能体"] },
 ] as const;
 
+function factLabel(fact: ProfileFact): string {
+  if ("summary" in fact.factValue) return fact.factValue.summary;
+  if (fact.factType === "language" && "level" in fact.factValue && fact.factValue.level) {
+    return `${fact.factValue.name}（${fact.factValue.level}）`;
+  }
+  return fact.factValue.name;
+}
+
 function factText(fact: ProfileFact): string {
-  const value = fact.factValue;
-  return ("name" in value ? value.name : value.summary).toLocaleLowerCase("zh-CN");
+  return factLabel(fact).toLocaleLowerCase("zh-CN");
 }
 
 /** 基于当前可信画像事实生成只读的、可追溯的方向建议。 */
@@ -61,7 +68,7 @@ export function suggestJobTargetDirections(facts: ProfileFact[]): JobTargetSugge
       evidence: evidence.map((fact) => ({
         factId: fact.factId,
         revisionId: fact.revisionId,
-        label: "name" in fact.factValue ? fact.factValue.name : fact.factValue.summary,
+        label: factLabel(fact),
       })),
     }));
 }
