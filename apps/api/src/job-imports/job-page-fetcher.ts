@@ -220,6 +220,9 @@ function extractJobPage(rawHtml: string, finalUrl: URL): { visibleText: string; 
   if ((h1Texts.length === 0 && headingCount >= 2) || (/(?:engineering\s+jobs|open\s+positions|职位列表|招聘岗位)/iu.test(title ?? "") && h2Count >= 2)) {
     throw new JobPageFetchError("JOB_PAGE_LISTING");
   }
+  if (isNonJobPageTitle(title)) {
+    throw new JobPageFetchError("JOB_PAGE_UNRECOGNIZED");
+  }
   const jobContextSignals = [
     /(公司|company)/iu,
     /(地点|location)/iu,
@@ -239,6 +242,10 @@ function extractJobPage(rawHtml: string, finalUrl: URL): { visibleText: string; 
     } catch { /* 无效 canonical 不能影响页面抓取。 */ }
   }
   return { visibleText, canonicalUrl };
+}
+
+function isNonJobPageTitle(title: string | undefined): boolean {
+  return /^(?:about(?:\s+us)?|company\s+profile)(?:\s|[:：|—-]|$)|^(?:关于我们|公司介绍)(?:\s|[:：|—-]|$)/iu.test(title ?? "");
 }
 
 function visit(node: HtmlNode, hidden: boolean, text: string[], h1Texts: string[][], onElement: (tagName: string, attributes: Array<{ name: string; value: string }>, visible: boolean) => void, h1Index?: number): void {

@@ -70,7 +70,7 @@ describe("SecureJobPageFetcher", () => {
           return;
         case "/company-about":
           response.writeHead(200, { "content-type": "text/html" });
-          response.end("<main><h1>About Example Corp</h1><h2>Our mission</h2><p>Example Corp builds collaboration tools for global teams.</p><p>Our platform helps teams work together.</p></main>");
+          response.end("<main><h1>About Example Corp</h1><h2>Company</h2><p>Example Corp builds collaboration tools for global teams.</p><p>Our team has decades of experience.</p></main>");
           return;
         case "/two-step-redirect":
           response.writeHead(302, { location: `http://${request.headers.host}/job` }).end();
