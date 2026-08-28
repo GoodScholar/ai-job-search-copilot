@@ -8,8 +8,10 @@ vi.mock("@/app/(workbench)/jobs/import/actions", () => ({ createJobImportAction:
 import { JobImportView } from "./job-import-view";
 
 const importId = "b0d2bfbf-7e40-49fc-86c8-3a15d7ad4f98";
+const failedImportId = "c0d2bfbf-7e40-49fc-86c8-3a15d7ad4f98";
 const imported = { importId, inputType: "pasted_text" as const, originalFilename: null, status: "imported" as const, failureCode: null, createdAt: "2026-08-28T08:00:00.000Z", updatedAt: "2026-08-28T08:00:00.000Z" };
 const completed = { ...imported, status: "completed" as const, opportunity: { opportunityId: "b4d4a7c1-9a17-4a8c-8b36-0f815d042e9a", company: "好学科技", title: "前端工程师", location: null, postedAt: null, deadline: null, description: "负责 Web 体验", evidence: { sourcePostingId: "f4d4a7c1-9a17-4a8c-8b36-0f815d042e9a", sourcePostingVersionId: "e4d4a7c1-9a17-4a8c-8b36-0f815d042e9a", version: 1, sourceType: "user_import" as const, retrievedAt: "2026-08-28T08:00:00.000Z", originalFilename: null } } };
+const failed = { ...imported, importId: failedImportId, originalFilename: "failed.md", status: "failed" as const, failureCode: "JOB_IMPORT_PERSIST_FAILED" as const, opportunity: null };
 
 afterEach(() => { vi.clearAllMocks(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
@@ -20,7 +22,7 @@ it("提供粘贴和 Markdown 上传入口、未知字段与可访问状态", asy
   await user.click(screen.getByRole("tab", { name: "上传 Markdown" }));
   expect(screen.getByLabelText("上传 Markdown 岗位文件")).toHaveAttribute("accept", ".md,text/markdown");
   expect(screen.getAllByText("未知", { selector: "dd" })[0]).toBeVisible();
-  expect(screen.getByRole("status")).toHaveTextContent(/已导入|规范化中|导入完成|导入失败/);
+  expect(screen.getByRole("status")).toHaveTextContent("尚未导入岗位。");
 });
 
 it("将复用通知告知用户，并以 literal pre 展示不可信 Markdown", async () => {
@@ -33,7 +35,8 @@ it("将复用通知告知用户，并以 literal pre 展示不可信 Markdown", 
 
   await user.type(screen.getByRole("textbox", { name: "岗位描述" }), "岗位正文");
   await user.click(screen.getByRole("button", { name: "导入岗位" }));
-  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("已复用已有岗位导入记录。"));
+  await waitFor(() => expect(screen.getByText("已复用已有岗位导入记录。")).toBeInTheDocument());
+  expect(screen.getByRole("status")).toHaveTextContent("导入完成");
   const evidence = await screen.findByText((_, element) => element?.tagName === "PRE" && element.textContent?.includes("<img src=x onerror=alert(1)>") === true);
   expect(evidence).toBeInTheDocument();
   expect(evidence.closest("pre")).not.toBeNull();
@@ -66,4 +69,80 @@ it("用简短中文提示轮询和提交失败", async () => {
   await user.click(screen.getByRole("button", { name: "导入岗位" }));
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("岗位导入暂时不可用，请稍后重试。"));
   expect(screen.getByText("暂时无法读取导入状态，请稍后重试。")).toBeInTheDocument();
+});
+
+it("再次点击当前终态记录时显式重新读取详情和原始证据", async () => {
+  const user = userEvent.setup();
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json(completed))
+    .mockResolvedValueOnce(new Response("第一次原文", { headers: { "content-type": "text/plain" } }))
+    .mockResolvedValueOnce(Response.json(completed))
+    .mockResolvedValueOnce(new Response("第二次原文", { headers: { "content-type": "text/plain" } }));
+  render(<JobImportView initialImports={[completed]} />);
+
+  await screen.findByText("第一次原文");
+  await user.click(screen.getByRole("button", { name: /粘贴的岗位描述/ }));
+  await screen.findByText("第二次原文");
+  expect(fetchMock.mock.calls.filter(([url]) => url === `/api/job-imports/${importId}`)).toHaveLength(2);
+});
+
+it("复用当前记录后仍显示真实的终态，且提示不会遮蔽切换后的状态", async () => {
+  const user = userEvent.setup();
+  mocks.createJobImportAction.mockResolvedValue({ ok: true, import: { ...imported, reused: true } });
+  vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json(completed))
+    .mockResolvedValueOnce(new Response("原文", { headers: { "content-type": "text/plain" } }))
+    .mockResolvedValueOnce(Response.json(completed))
+    .mockResolvedValueOnce(new Response("复用后原文", { headers: { "content-type": "text/plain" } }))
+    .mockResolvedValueOnce(Response.json(failed))
+    .mockResolvedValueOnce(new Response("失败原文", { headers: { "content-type": "text/plain" } }));
+  render(<JobImportView initialImports={[completed, failed]} />);
+  await screen.findByText("原文");
+
+  await user.type(screen.getByRole("textbox", { name: "岗位描述" }), "重复岗位正文");
+  await user.click(screen.getByRole("button", { name: "导入岗位" }));
+  expect(await screen.findByText("已复用已有岗位导入记录。")).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("导入完成");
+  await screen.findByText("复用后原文");
+
+  await user.click(screen.getByRole("button", { name: /failed\.md/ }));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("导入失败"));
+  expect(screen.queryByText("已复用已有岗位导入记录。")).not.toBeInTheDocument();
+});
+
+it("在非终态等待原始证据，并可重试失败的原始证据读取", async () => {
+  const user = userEvent.setup();
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json({ ...imported, status: "normalizing", opportunity: null }));
+  const { unmount } = render(<JobImportView initialImports={[imported]} />);
+  expect(await screen.findByText("岗位完成后可以查看原始证据。")).toBeInTheDocument();
+  expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/raw"))).toBe(false);
+  unmount();
+
+  fetchMock.mockReset()
+    .mockResolvedValueOnce(Response.json(completed))
+    .mockResolvedValueOnce(new Response(null, { status: 503 }))
+    .mockResolvedValueOnce(new Response("重试成功原文", { headers: { "content-type": "text/plain" } }));
+  render(<JobImportView initialImports={[completed]} />);
+  expect(await screen.findByText("原始证据暂时无法读取，请稍后重试。")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "重试读取原始证据" }));
+  expect(await screen.findByText("重试成功原文")).toBeInTheDocument();
+  expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/raw"))).toHaveLength(2);
+});
+
+it("按 WAI-ARIA roving tabIndex 用键盘切换导入方式", async () => {
+  const user = userEvent.setup();
+  render(<JobImportView initialImports={[]} />);
+  const pasteTab = screen.getByRole("tab", { name: "粘贴岗位描述" });
+  const uploadTab = screen.getByRole("tab", { name: "上传 Markdown" });
+
+  expect(pasteTab).toHaveAttribute("tabindex", "0");
+  expect(uploadTab).toHaveAttribute("tabindex", "-1");
+  pasteTab.focus();
+  await user.keyboard("{ArrowRight}");
+  expect(uploadTab).toHaveFocus();
+  expect(uploadTab).toHaveAttribute("aria-selected", "true");
+  await user.keyboard("{Home}");
+  expect(pasteTab).toHaveFocus();
+  expect(pasteTab).toHaveAttribute("aria-selected", "true");
 });

@@ -335,6 +335,16 @@ it("通过 bearer 提交、读取并严格解析岗位导入 DTO", async () => {
   }
 });
 
+it.each([[200, true], [202, false]] as const)("将岗位导入 HTTP %i 明确映射为 reused=%s", async (status, reused) => {
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+    importId: jobImportId, inputType: "pasted_text", originalFilename: null, status: "imported", failureCode: null,
+    createdAt: "2026-08-28T08:00:00.000Z", updatedAt: "2026-08-28T08:00:00.000Z", detailUrl: `/v1/job-imports/${jobImportId}`,
+  }), { status }));
+  const api = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+
+  await expect(api.createJobImport(sessionToken, { inputType: "pasted_text", content: "职位说明" })).resolves.toMatchObject({ reused });
+});
+
 it("拒绝不符合岗位导入契约的成功响应", async () => {
   const api = createApiClient({
     apiInternalUrl: "http://127.0.0.1:3021",

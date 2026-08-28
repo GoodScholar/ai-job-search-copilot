@@ -1,15 +1,21 @@
 "use client";
 
 import { JobImportDetailSchema, type JobImportDetail, type JobImportList, type JobImportStatus } from "@job-copilot/contracts/job-imports";
-import { useCallback, useEffect, useState, useTransition, type FormEvent } from "react";
+import { useCallback, useEffect, useState, useTransition, type FormEvent, type KeyboardEvent } from "react";
 import { createJobImportAction, type JobImportActionState } from "@/app/(workbench)/jobs/import/actions";
 
 type JobImportSummary = JobImportList["imports"][number];
 type JobImportViewProps = { initialImports: JobImportSummary[] };
 type InputMode = "paste" | "upload";
+type RawEvidenceState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "ready"; content: string }
+  | { status: "error" };
 
 const initialActionState: JobImportActionState = { ok: false, code: "", message: "" };
 const terminalStatuses = new Set<JobImportStatus>(["completed", "failed"]);
+const inputModes: InputMode[] = ["paste", "upload"];
 const statusText: Record<JobImportStatus, string> = { imported: "已导入", normalizing: "规范化中", completed: "导入完成", failed: "导入失败" };
 const failureText: Record<string, string> = {
   JOB_IMPORT_CONTENT_INVALID: "岗位描述不能为空且不能超过 512 KiB。",
@@ -38,16 +44,30 @@ export function JobImportView({ initialImports }: JobImportViewProps) {
   const [recentImports, setRecentImports] = useState(initialImports);
   const [activeImport, setActiveImport] = useState<JobImportSummary | null>(initialImports[0] ?? null);
   const [detail, setDetail] = useState<JobImportDetail | null>(null);
-  const [rawEvidence, setRawEvidence] = useState<string | null>(null);
+  const [rawEvidence, setRawEvidence] = useState<RawEvidenceState>({ status: "idle" });
   const [actionState, setActionState] = useState<JobImportActionState>(initialActionState);
   const [pollingMessage, setPollingMessage] = useState<string | null>(null);
+  const [announcement, setAnnouncement] = useState<string | null>(null);
+  const [reloadRevision, setReloadRevision] = useState(0);
+  const [rawReloadRevision, setRawReloadRevision] = useState(0);
   const [isPending, startTransition] = useTransition();
   const activeImportId = activeImport?.importId;
   const detailImportId = detail?.importId;
   const detailStatus = detail?.status;
   const selectImport = useCallback((next: JobImportSummary) => {
-    setActiveImport(next); setDetail(null); setRawEvidence(null); setPollingMessage(null);
-  }, []);
+    setActionState(initialActionState);
+    setAnnouncement(null);
+    setPollingMessage(null);
+    if (next.importId === activeImportId) {
+      if (detailStatus && terminalStatuses.has(detailStatus)) setRawEvidence({ status: "loading" });
+      setReloadRevision((previous) => previous + 1);
+      setRawReloadRevision((previous) => previous + 1);
+      return;
+    }
+    setActiveImport(next);
+    setDetail(null);
+    setRawEvidence({ status: "idle" });
+  }, [activeImportId, detailStatus]);
 
   useEffect(() => {
     if (!activeImportId) return;
@@ -63,6 +83,7 @@ export function JobImportView({ initialImports }: JobImportViewProps) {
         setDetail(parsed.data);
         setRecentImports((previous) => insertRecent(previous, asSummary(parsed.data)));
         setActiveImport(asSummary(parsed.data));
+        setRawEvidence(terminalStatuses.has(parsed.data.status) ? { status: "loading" } : { status: "idle" });
         setPollingMessage(null);
         if (!terminalStatuses.has(parsed.data.status)) timer = setTimeout(poll, 1_000);
       } catch {
@@ -73,17 +94,41 @@ export function JobImportView({ initialImports }: JobImportViewProps) {
     };
     void poll();
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
-  }, [activeImportId]);
+  }, [activeImportId, reloadRevision]);
 
   useEffect(() => {
-    if (!detailImportId || !detailStatus || !terminalStatuses.has(detailStatus)) return;
+    if (!detailImportId || !detailStatus) return;
+    if (!terminalStatuses.has(detailStatus)) return;
     let cancelled = false;
     void fetch(`/api/job-imports/${detailImportId}/raw`, { signal: AbortSignal.timeout(10_000) })
       .then((response) => response.ok && response.headers.get("content-type")?.startsWith("text/plain") ? response.text() : Promise.reject(new Error("raw unavailable")))
-      .then((raw) => { if (!cancelled) setRawEvidence(raw); })
-      .catch(() => { if (!cancelled) setRawEvidence(null); });
+      .then((raw) => { if (!cancelled) setRawEvidence({ status: "ready", content: raw }); })
+      .catch(() => { if (!cancelled) setRawEvidence({ status: "error" }); });
     return () => { cancelled = true; };
-  }, [detailImportId, detailStatus]);
+  }, [detailImportId, detailStatus, rawReloadRevision]);
+
+  useEffect(() => {
+    if (!announcement) return;
+    const timer = setTimeout(() => setAnnouncement(null), 5_000);
+    return () => clearTimeout(timer);
+  }, [announcement]);
+
+  function selectMode(next: InputMode) {
+    setMode(next);
+    document.getElementById(`${next}-tab`)?.focus();
+  }
+
+  function onTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, current: InputMode) {
+    const index = inputModes.indexOf(current);
+    const nextIndex = event.key === "ArrowRight" ? (index + 1) % inputModes.length
+      : event.key === "ArrowLeft" ? (index - 1 + inputModes.length) % inputModes.length
+      : event.key === "Home" ? 0
+      : event.key === "End" ? inputModes.length - 1
+      : null;
+    if (nextIndex === null) return;
+    event.preventDefault();
+    selectMode(inputModes[nextIndex]!);
+  }
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -96,15 +141,16 @@ export function JobImportView({ initialImports }: JobImportViewProps) {
       const summary: JobImportSummary = { importId: result.import.importId, inputType: result.import.inputType, originalFilename: result.import.originalFilename, status: result.import.status, failureCode: result.import.failureCode, createdAt: result.import.createdAt, updatedAt: result.import.updatedAt };
       setRecentImports((previous) => insertRecent(previous, summary));
       selectImport(summary);
+      if (result.import.reused) setAnnouncement("已复用已有岗位导入记录。");
       setContent(""); setFile(null);
     });
   }
 
   const opportunity = detail?.opportunity;
   const status = detail?.status ?? activeImport?.status;
-  const message = actionState.ok && actionState.import.reused ? "已复用已有岗位导入记录。"
-    : !actionState.ok && actionState.message ? actionState.message
-    : pollingMessage ?? (status ? statusText[status] : "已导入岗位后会显示处理状态。");
+  const message = !actionState.ok && actionState.message
+    ? actionState.message
+    : pollingMessage ?? (status ? statusText[status] : "尚未导入岗位。");
 
   return (
     <main className="container workbench-main job-import-workbench">
@@ -115,8 +161,8 @@ export function JobImportView({ initialImports }: JobImportViewProps) {
       <section aria-labelledby="job-import-form-title" className="job-import-panel">
         <h2 id="job-import-form-title">添加岗位内容</h2>
         <div aria-label="导入方式" className="job-import-tabs" role="tablist">
-          <button aria-controls="paste-panel" aria-selected={mode === "paste"} className="workbench-touch-target" id="paste-tab" onClick={() => setMode("paste")} role="tab" type="button">粘贴岗位描述</button>
-          <button aria-controls="upload-panel" aria-selected={mode === "upload"} className="workbench-touch-target" id="upload-tab" onClick={() => setMode("upload")} role="tab" type="button">上传 Markdown</button>
+          <button aria-controls="paste-panel" aria-selected={mode === "paste"} className="workbench-touch-target" id="paste-tab" onClick={() => selectMode("paste")} onKeyDown={(event) => onTabKeyDown(event, "paste")} role="tab" tabIndex={mode === "paste" ? 0 : -1} type="button">粘贴岗位描述</button>
+          <button aria-controls="upload-panel" aria-selected={mode === "upload"} className="workbench-touch-target" id="upload-tab" onClick={() => selectMode("upload")} onKeyDown={(event) => onTabKeyDown(event, "upload")} role="tab" tabIndex={mode === "upload" ? 0 : -1} type="button">上传 Markdown</button>
         </div>
         <form onSubmit={submit}>
           {mode === "paste" ? <div aria-labelledby="paste-tab" id="paste-panel" role="tabpanel"><label htmlFor="job-description">岗位描述</label><textarea id="job-description" onChange={(event) => setContent(event.target.value)} placeholder="粘贴你已查看的岗位描述" required value={content} /></div>
@@ -124,6 +170,7 @@ export function JobImportView({ initialImports }: JobImportViewProps) {
           <button className="workbench-touch-target job-import-submit" disabled={isPending || (mode === "upload" && !file)} type="submit">{isPending ? "正在导入" : "导入岗位"}</button>
         </form>
         <p aria-live="polite" className="job-import-live" role="status">{message}</p>
+        {announcement && <p aria-live="polite">{announcement}</p>}
         {pollingMessage && actionState.ok === false && actionState.message && <p>{pollingMessage}</p>}
       </section>
       <div className="job-import-columns">
@@ -136,7 +183,13 @@ export function JobImportView({ initialImports }: JobImportViewProps) {
           {opportunity?.description && <p className="job-import-description">{opportunity.description}</p>}
         </section>
       </div>
-      {detail && <section aria-labelledby="raw-evidence-title" className="job-import-panel"><h2 id="raw-evidence-title">原始证据</h2><p>原文仅供核对，不会被执行或转换为网页内容。</p>{rawEvidence === null ? <p>原始证据暂时无法读取，请稍后重试。</p> : <pre>{rawEvidence}</pre>}</section>}
+      {detail && <section aria-labelledby="raw-evidence-title" className="job-import-panel"><h2 id="raw-evidence-title">原始证据</h2><p>原文仅供核对，不会被执行或转换为网页内容。</p>
+        {!terminalStatuses.has(detail.status) ? <p>岗位完成后可以查看原始证据。</p>
+          : rawEvidence.status === "idle" ? <p>原始证据等待读取。</p>
+          : rawEvidence.status === "loading" ? <p>正在读取原始证据。</p>
+          : rawEvidence.status === "ready" ? <pre>{rawEvidence.content}</pre>
+          : <><p>原始证据暂时无法读取，请稍后重试。</p><button className="workbench-touch-target" onClick={() => { setRawEvidence({ status: "loading" }); setRawReloadRevision((previous) => previous + 1); }} type="button">重试读取原始证据</button></>}
+      </section>}
     </main>
   );
 }
