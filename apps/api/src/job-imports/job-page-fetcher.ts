@@ -43,9 +43,10 @@ export interface JobPageFetcher {
 
 type ResolvedTarget = { address: string; family: 4 | 6 };
 type HtmlNode = DefaultTreeAdapterMap["node"];
+type DnsLookup = (hostname: string) => Promise<Array<{ address: string; family: number }>>;
 
 export class SecureJobPageFetcher implements JobPageFetcher {
-  constructor(private readonly config: { appEnv: string; testOrigin?: string; connectTimeoutMs?: number; totalTimeoutMs?: number } = { appEnv: process.env.APP_ENV ?? "development" }) {}
+  constructor(private readonly config: { appEnv: string; testOrigin?: string; connectTimeoutMs?: number; totalTimeoutMs?: number; lookup?: DnsLookup } = { appEnv: process.env.APP_ENV ?? "development" }) {}
 
   async fetch({ url }: { url: string }): Promise<FetchedJobPage> {
     const requested = this.parseUrl(url, "JOB_PAGE_URL_INVALID");
@@ -53,10 +54,12 @@ export class SecureJobPageFetcher implements JobPageFetcher {
     let current = requested;
 
     for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
-      const target = await this.resolveTarget(current);
-      const remaining = (this.config.totalTimeoutMs ?? TOTAL_TIMEOUT_MS) - (Date.now() - startedAt);
+      const remaining = this.remainingTimeout(startedAt);
       if (remaining <= 0) throw new JobPageFetchError("JOB_PAGE_TIMEOUT");
-      const response = await this.request(current, target, remaining);
+      const target = await this.resolveTarget(current, remaining);
+      const requestTimeout = this.remainingTimeout(startedAt);
+      if (requestTimeout <= 0) throw new JobPageFetchError("JOB_PAGE_TIMEOUT");
+      const response = await this.request(current, target, requestTimeout);
       if (response.statusCode >= 300 && response.statusCode < 400) {
         const location = response.headers.location;
         if (!location || Array.isArray(location)) throw new JobPageFetchError("JOB_PAGE_REDIRECT_INVALID");
@@ -90,18 +93,25 @@ export class SecureJobPageFetcher implements JobPageFetcher {
     return parsed;
   }
 
-  private async resolveTarget(url: URL): Promise<ResolvedTarget> {
+  private remainingTimeout(startedAt: number): number {
+    return (this.config.totalTimeoutMs ?? TOTAL_TIMEOUT_MS) - (Date.now() - startedAt);
+  }
+
+  private async resolveTarget(url: URL, timeoutMs: number): Promise<ResolvedTarget> {
     const testOrigin = this.config.appEnv === "test" ? this.config.testOrigin : undefined;
     if (testOrigin && url.origin === testOrigin) {
       const family = isIP(url.hostname);
       if (family === 4 || family === 6) return { address: url.hostname, family };
-      const addresses = await lookup(url.hostname, { all: true, verbatim: true });
+      const addresses = await this.lookupAddresses(url.hostname, timeoutMs);
       if (addresses.length !== 1 || (addresses[0]!.family !== 4 && addresses[0]!.family !== 6)) throw new JobPageFetchError("JOB_PAGE_TARGET_REJECTED");
       return { address: addresses[0]!.address, family: addresses[0]!.family };
     }
     if (isIP(url.hostname)) throw new JobPageFetchError("JOB_PAGE_TARGET_REJECTED");
     let addresses: Array<{ address: string; family: number }>;
-    try { addresses = await lookup(url.hostname, { all: true, verbatim: true }); } catch { throw new JobPageFetchError("JOB_PAGE_UNREACHABLE"); }
+    try { addresses = await this.lookupAddresses(url.hostname, timeoutMs); } catch (error) {
+      if (error instanceof JobPageFetchError) throw error;
+      throw new JobPageFetchError("JOB_PAGE_UNREACHABLE");
+    }
     if (addresses.length === 0 || addresses.some((address) => !isPublicAddress(address.address, address.family))) {
       throw new JobPageFetchError("JOB_PAGE_TARGET_REJECTED");
     }
@@ -109,12 +119,43 @@ export class SecureJobPageFetcher implements JobPageFetcher {
     return { address: selected.address, family: selected.family as 4 | 6 };
   }
 
+  private async lookupAddresses(hostname: string, timeoutMs: number): Promise<Array<{ address: string; family: number }>> {
+    if (timeoutMs <= 0) throw new JobPageFetchError("JOB_PAGE_TIMEOUT");
+    const resolve = this.config.lookup ?? ((value: string) => lookup(value, { all: true, verbatim: true }));
+    return new Promise((resolvePromise, rejectPromise) => {
+      let settled = false;
+      const resolveAddresses = (addresses: Array<{ address: string; family: number }>) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolvePromise(addresses);
+      };
+      const rejectLookup = (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        rejectPromise(error);
+      };
+      const timer = setTimeout(() => rejectLookup(new JobPageFetchError("JOB_PAGE_TIMEOUT")), timeoutMs);
+      Promise.resolve().then(() => resolve(hostname)).then(
+        resolveAddresses,
+        rejectLookup,
+      );
+    });
+  }
+
   private async request(url: URL, target: ResolvedTarget, totalTimeoutMs: number): Promise<{ statusCode: number; headers: Record<string, string | string[] | undefined>; body: Buffer }> {
     return new Promise((resolve, reject) => {
       const send = url.protocol === "https:" ? httpsRequest : httpRequest;
       const request = send(url, {
         headers: { accept: "text/html,application/xhtml+xml" },
-        lookup: (_hostname, _options, callback) => callback(null, target.address, target.family),
+        lookup: (_hostname, options, callback) => {
+          if (options.all) {
+            (callback as (error: NodeJS.ErrnoException | null, addresses: ResolvedTarget[]) => void)(null, [target]);
+            return;
+          }
+          (callback as (error: NodeJS.ErrnoException | null, address: string, family: 4 | 6) => void)(null, target.address, target.family);
+        },
       }, (response) => {
         const chunks: Buffer[] = [];
         let size = 0;
@@ -155,19 +196,30 @@ function extractJobPage(rawHtml: string, finalUrl: URL): { visibleText: string; 
   const text: string[] = [];
   const h1Texts: string[][] = [];
   let headingCount = 0;
+  let h2Count = 0;
   let visibleFormCount = 0;
   let canonical: string | undefined;
   visit(document, false, text, h1Texts, (tagName, attributes, visible) => {
     if (visible && (tagName === "h1" || tagName === "h2")) headingCount += 1;
+    if (visible && tagName === "h2") h2Count += 1;
     if (visible && tagName === "form") visibleFormCount += 1;
     if (tagName === "link" && attribute(attributes, "rel")?.toLowerCase().split(/\s+/u).includes("canonical")) canonical = attribute(attributes, "href");
   });
   const plainText = text.join("\n").replace(/[ \t]+\n/gu, "\n").replace(/\n{3,}/gu, "\n\n").trim();
   const title = h1Texts.map((parts) => parts.join(" ").replace(/\s+/gu, " ").trim()).find(Boolean);
   const visibleText = title ? `# ${title}\n${plainText}` : plainText;
-  if (visibleFormCount > 0 && /(登录|登陆|sign\s*in|log\s*in|login|验证身份)/iu.test(visibleText)) throw new JobPageFetchError("JOB_PAGE_LOGIN_REQUIRED");
-  if (/(职位|岗位).{0,12}(已下架|已关闭|过期)|(?:已下架|已关闭|过期).{0,12}(职位|岗位)/iu.test(visibleText)) throw new JobPageFetchError("JOB_PAGE_EXPIRED");
-  if (h1Texts.length === 0 && headingCount >= 2) throw new JobPageFetchError("JOB_PAGE_LISTING");
+  const hasLoginText = /(登录|登陆|sign\s*in|log\s*in|login|验证身份)/iu.test(visibleText);
+  const hasJobDetails = /(职责|responsibilit|任职要求|qualif|公司|company|地点|location|薪资|salary|经验|experience)/iu.test(visibleText);
+  if (/^(?:登录后查看职位|请登录后查看职位|sign\s*in\s*to\s*(?:view|see).{0,40}job)/iu.test(title ?? "")
+    || (visibleFormCount > 0 && hasLoginText && !hasJobDetails && visibleText.length < 800)) {
+    throw new JobPageFetchError("JOB_PAGE_LOGIN_REQUIRED");
+  }
+  if (/(职位|岗位).{0,12}(已下架|已关闭|过期)|(?:已下架|已关闭|过期).{0,12}(职位|岗位)|this\s+(?:job|position)\s+is\s+no\s+longer\s+available|(?:job|position)\s+closed/iu.test(visibleText)) {
+    throw new JobPageFetchError("JOB_PAGE_EXPIRED");
+  }
+  if ((h1Texts.length === 0 && headingCount >= 2) || (/(?:engineering\s+jobs|open\s+positions|职位列表|招聘岗位)/iu.test(title ?? "") && h2Count >= 2)) {
+    throw new JobPageFetchError("JOB_PAGE_LISTING");
+  }
   const hasJobSignal = /(职位|岗位|招聘|工程师|engineer|developer|manager|designer)/iu.test(visibleText);
   const hasJobContext = /(公司|company|地点|location|职责|responsibilit|薪资|salary|经验|experience)/iu.test(visibleText);
   if (!title || !hasJobSignal || !hasJobContext) {
