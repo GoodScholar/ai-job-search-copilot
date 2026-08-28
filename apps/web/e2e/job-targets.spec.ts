@@ -86,6 +86,8 @@ test("求职目标可由可信画像建议确认、持久化、并发提示并�
 
   const targetButtons = page.locator(".job-targets-main button");
   expect(await targetButtons.evaluateAll((buttons) => buttons.every((button) => button.getBoundingClientRect().height >= 44))).toBe(true);
+  const interactiveLabels = page.locator('.job-target-form fieldset > label:has(input[type="radio"]), .job-target-form fieldset > label:has(input[type="checkbox"]), .job-target-form > label:has(select[multiple])');
+  expect(await interactiveLabels.evaluateAll((labels) => labels.every((label) => label.getBoundingClientRect().height >= 44))).toBe(true);
   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });

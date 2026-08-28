@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { JobTargetOverview } from "@job-copilot/contracts/job-targets";
@@ -44,6 +44,10 @@ function activeTarget(version = 1) {
     },
     createdAt: "2026-08-28T08:00:00.000Z", updatedAt: "2026-08-28T08:00:00.000Z",
   };
+}
+
+function activeSecondary(targetId: string) {
+  return { ...activeTarget(1), targetId, priority: "secondary" as const, constraints: { ...activeTarget(1).constraints, roleFamily: `次目标 ${targetId.slice(0, 4)}` } };
 }
 
 afterEach(() => vi.unstubAllGlobals());
@@ -137,4 +141,30 @@ it("keeps target actions labelled and touch-sized through keyboard-native contro
   expect(screen.getByRole("button", { name: "使用 AI 应用工程 建议" })).toHaveClass("workbench-touch-target");
   expect(screen.getByRole("button", { name: "修改 AI 应用工程" })).toHaveClass("workbench-touch-target");
   expect(screen.getByRole("button", { name: "停用 AI 应用工程" })).toHaveClass("workbench-touch-target");
+});
+
+it("defaults a new target to the remaining secondary slot when a primary target already exists", () => {
+  render(<JobTargetsView initialOverview={overview([activeTarget(1)])} />);
+
+  expect(screen.getByLabelText("主目标")).toBeDisabled();
+  expect(screen.getByLabelText("主目标")).not.toBeChecked();
+  expect(screen.getByLabelText("次目标")).toBeEnabled();
+  expect(screen.getByLabelText("次目标")).toBeChecked();
+  expect(screen.getByRole("button", { name: "保存次目标" })).toBeEnabled();
+});
+
+it("disables new-target submission without a request when all one-plus-two slots are occupied", () => {
+  const fetchMock = vi.fn<typeof fetch>();
+  vi.stubGlobal("fetch", fetchMock);
+  render(<JobTargetsView initialOverview={overview([
+    activeTarget(1), activeSecondary("b4d4a7c1-9a17-4a8c-8b36-0f815d042e9a"), activeSecondary("9e812f2a-34fd-43cf-b8fb-fc307f1eb4ce"),
+  ])} />);
+
+  expect(screen.getByText("主目标和两个次目标均已设置。如需新增，请先停用或修改已有目标。")).toBeVisible();
+  expect(screen.getByLabelText("主目标")).toBeDisabled();
+  expect(screen.getByLabelText("次目标")).toBeDisabled();
+  const submit = screen.getByRole("button", { name: "保存求职目标" });
+  expect(submit).toBeDisabled();
+  fireEvent.submit(submit.closest("form")!);
+  expect(fetchMock).not.toHaveBeenCalled();
 });

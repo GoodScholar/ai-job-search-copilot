@@ -1496,6 +1496,12 @@ body {
   color: var(--ink);
   display: flex;
   gap: 0.55rem;
+  min-height: 2.75rem;
+  padding-inline: 0.25rem;
+}
+
+.job-target-form > label:has(select[multiple]) {
+  min-height: 2.75rem;
 }
 
 .job-target-form input:not([type="checkbox"]):not([type="radio"]),
