@@ -1397,6 +1397,148 @@ body {
   margin: 1.25rem 0 0;
 }
 
+.profile-target-link {
+  color: var(--emerald-strong);
+  font-size: 0.9rem;
+  font-weight: 700;
+  margin-top: 1rem;
+  text-decoration: none;
+}
+
+.job-targets-section {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  box-shadow: var(--shadow-paper);
+  margin-top: clamp(2rem, 5vw, 4rem);
+  max-width: 52rem;
+  padding: clamp(1.25rem, 4vw, 2rem);
+}
+
+.job-targets-section h2,
+.job-targets-section h3 {
+  letter-spacing: -0.025em;
+  margin: 0;
+}
+
+.job-targets-section > p {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.job-target-suggestion-list,
+.job-target-history-list {
+  list-style: none;
+  margin: 1.25rem 0 0;
+  padding: 0;
+}
+
+.job-target-suggestion-list > li,
+.job-target-history-list > li {
+  border-top: 1px solid var(--rule);
+  padding-block: 1rem;
+}
+
+.job-target-suggestion-list article,
+.job-target-history-list article {
+  display: grid;
+  gap: 0.7rem;
+  min-width: 0;
+}
+
+.job-target-suggestion-list p,
+.job-target-history-list p {
+  color: var(--muted);
+  line-height: 1.55;
+  margin: 0;
+}
+
+.job-target-suggestion-list ul {
+  color: var(--emerald-strong);
+  margin: 0;
+  padding-left: 1.25rem;
+}
+
+.job-target-suggestion-list button,
+.job-target-form > button {
+  justify-self: start;
+}
+
+.job-target-form,
+.job-target-form fieldset {
+  border: 0;
+  display: grid;
+  gap: 0.8rem;
+  margin: 1.25rem 0 0;
+  min-width: 0;
+  padding: 0;
+}
+
+.job-target-form fieldset {
+  border-block: 1px solid var(--rule);
+  padding-block: 1rem;
+}
+
+.job-target-form legend {
+  font-weight: 700;
+  margin-bottom: 0.65rem;
+}
+
+.job-target-form label {
+  color: var(--muted);
+  display: grid;
+  font-size: 0.85rem;
+  gap: 0.35rem;
+}
+
+.job-target-form fieldset > label:has(input[type="checkbox"]),
+.job-target-form fieldset > label:has(input[type="radio"]) {
+  align-items: center;
+  color: var(--ink);
+  display: flex;
+  gap: 0.55rem;
+}
+
+.job-target-form input:not([type="checkbox"]):not([type="radio"]),
+.job-target-form select {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 0.4rem;
+  color: var(--ink);
+  font: inherit;
+  min-height: 2.75rem;
+  min-width: 0;
+  padding: 0.5rem 0.65rem;
+}
+
+.job-target-form select[multiple] {
+  min-height: 6.8rem;
+}
+
+.job-target-salary-fields {
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.job-target-history-list article > div:first-child {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  justify-content: space-between;
+}
+
+.job-target-history-list strong {
+  font-size: 1.05rem;
+  overflow-wrap: anywhere;
+}
+
+.job-target-history-list article > div:first-child span {
+  color: var(--amber-ink);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
 @media (max-width: 640px) {
   .profile-privacy-finding-list li {
     gap: 0.25rem;
@@ -1408,6 +1550,15 @@ body {
   }
 
   .profile-upload-button {
+    width: 100%;
+  }
+
+  .job-target-salary-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .job-target-suggestion-list button,
+  .job-target-form > button {
     width: 100%;
   }
 }

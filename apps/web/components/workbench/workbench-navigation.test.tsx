@@ -18,3 +18,10 @@ it("renders the fixed 首页、推荐、投递、画像 order and only links rea
   expect(screen.getByText("推荐")).toHaveAttribute("aria-disabled", "true");
   expect(screen.getByText("投递")).toHaveAttribute("aria-disabled", "true");
 });
+
+it("keeps 画像 active for its nested 求职目标 destination", () => {
+  mocks.pathname = "/profile/targets";
+  render(<WorkbenchNavigation />);
+
+  expect(screen.getByRole("link", { name: "画像" })).toHaveAttribute("aria-current", "page");
+});

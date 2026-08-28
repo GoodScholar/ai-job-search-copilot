@@ -139,6 +139,19 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+it("links from trusted profile facts to confirmation of job targets", () => {
+  render(<ProfileImportView initialImports={[]} initialProfile={{
+    profileId: "fa7753f2-2ff3-4bd6-9fbd-6b4ae41d8364", version: 1,
+    facts: [{
+      factId: "75ff2891-df0c-4e35-a95d-44f1be3fbdb7", revisionId: "b4d4a7c1-9a17-4a8c-8b36-0f815d042e9a",
+      factType: "skill", factValue: { name: "TypeScript" }, source: "user_confirmed", candidateFactId: null,
+      createdAt: "2026-08-28T08:00:00.000Z",
+    }],
+  }} />);
+
+  expect(screen.getByRole("link", { name: "确认求职目标" })).toHaveAttribute("href", "/profile/targets");
+});
+
 it("detects private information before upload and submits only the sanitized processing copy", async () => {
   let submitted: FormData | undefined;
   mocks.createCareerImportAction.mockImplementation(async (_previous, formData: FormData) => {

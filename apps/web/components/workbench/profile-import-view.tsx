@@ -8,6 +8,7 @@ import {
   type CareerPrivacyMode,
 } from "@job-copilot/contracts/career-document-privacy";
 import { useCallback, useEffect, useRef, useState, useTransition, type ChangeEvent, type FormEvent } from "react";
+import Link from "next/link";
 import { createCareerImportAction, type UploadActionState } from "@/app/(workbench)/profile/actions";
 import { DocxCareerProcessingError, extractCanonicalDocxParagraphText } from "@/lib/docx-career-processing";
 import { PdfCareerProcessingError, extractCanonicalPdfPageText } from "@/lib/pdf-career-processing";
@@ -658,6 +659,7 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
           </div>
           <p className="profile-pending">版本 {profile.version}</p>
         </div>
+        {profile.facts.length ? <Link className="profile-target-link workbench-touch-target" href="/profile/targets">确认求职目标</Link> : null}
         <form
           className="profile-fact-correction"
           onSubmit={(event) => {
