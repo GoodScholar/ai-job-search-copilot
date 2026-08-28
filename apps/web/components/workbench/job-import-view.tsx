@@ -6,7 +6,7 @@ import { createJobImportAction, type JobImportActionState } from "@/app/(workben
 
 type JobImportSummary = JobImportList["imports"][number];
 type JobImportViewProps = { initialImports: JobImportSummary[] };
-type InputMode = "paste" | "upload";
+type InputMode = "paste" | "upload" | "url";
 type RawEvidenceState =
   | { status: "idle" }
   | { status: "loading"; revision: number }
@@ -15,7 +15,7 @@ type RawEvidenceState =
 
 const initialActionState: JobImportActionState = { ok: false, code: "", message: "" };
 const terminalStatuses = new Set<JobImportStatus>(["completed", "failed"]);
-const inputModes: InputMode[] = ["paste", "upload"];
+const inputModes: InputMode[] = ["paste", "upload", "url"];
 const statusText: Record<JobImportStatus, string> = { imported: "已导入", normalizing: "规范化中", completed: "导入完成", failed: "导入失败" };
 const failureText: Record<string, string> = {
   JOB_IMPORT_CONTENT_INVALID: "岗位描述不能为空且不能超过 512 KiB。",
@@ -41,6 +41,7 @@ export function JobImportView({ initialImports }: JobImportViewProps) {
   const [mode, setMode] = useState<InputMode>("paste");
   const [content, setContent] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [url, setUrl] = useState("");
   const [recentImports, setRecentImports] = useState(initialImports);
   const [activeImport, setActiveImport] = useState<JobImportSummary | null>(initialImports[0] ?? null);
   const [detail, setDetail] = useState<JobImportDetail | null>(null);
@@ -149,7 +150,7 @@ export function JobImportView({ initialImports }: JobImportViewProps) {
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const formData = new FormData();
-    if (mode === "upload" && file) formData.set("file", file); else formData.set("content", content);
+    if (mode === "upload" && file) formData.set("file", file); else if (mode === "url") formData.set("url", url); else formData.set("content", content);
     startTransition(async () => {
       const result = await createJobImportAction(initialActionState, formData);
       setActionState(result);
@@ -158,7 +159,7 @@ export function JobImportView({ initialImports }: JobImportViewProps) {
       setRecentImports((previous) => insertRecent(previous, summary));
       selectImport(summary);
       if (result.import.reused) setAnnouncement("已复用已有岗位导入记录。");
-      setContent(""); setFile(null);
+      setContent(""); setFile(null); setUrl("");
     });
   }
 
@@ -179,9 +180,11 @@ export function JobImportView({ initialImports }: JobImportViewProps) {
         <div aria-label="导入方式" className="job-import-tabs" role="tablist">
           <button aria-controls="paste-panel" aria-selected={mode === "paste"} className="workbench-touch-target" id="paste-tab" onClick={() => selectMode("paste")} onKeyDown={(event) => onTabKeyDown(event, "paste")} role="tab" tabIndex={mode === "paste" ? 0 : -1} type="button">粘贴岗位描述</button>
           <button aria-controls="upload-panel" aria-selected={mode === "upload"} className="workbench-touch-target" id="upload-tab" onClick={() => selectMode("upload")} onKeyDown={(event) => onTabKeyDown(event, "upload")} role="tab" tabIndex={mode === "upload" ? 0 : -1} type="button">上传 Markdown</button>
+          <button aria-controls="url-panel" aria-selected={mode === "url"} className="workbench-touch-target" id="url-tab" onClick={() => selectMode("url")} onKeyDown={(event) => onTabKeyDown(event, "url")} role="tab" tabIndex={mode === "url" ? 0 : -1} type="button">导入岗位链接</button>
         </div>
         <form onSubmit={submit}>
           {mode === "paste" ? <div aria-labelledby="paste-tab" id="paste-panel" role="tabpanel"><label htmlFor="job-description">岗位描述</label><textarea id="job-description" onChange={(event) => setContent(event.target.value)} placeholder="粘贴你已查看的岗位描述" required value={content} /></div>
+            : mode === "url" ? <div aria-labelledby="url-tab" id="url-panel" role="tabpanel"><label htmlFor="job-url">岗位链接</label><input id="job-url" onChange={(event) => setUrl(event.target.value)} placeholder="https://..." required type="url" value={url} /><p>仅导入公开、可访问的具体岗位页面。</p></div>
             : <div aria-labelledby="upload-tab" id="upload-panel" role="tabpanel"><label htmlFor="job-markdown">上传 Markdown 岗位文件</label><input accept=".md,text/markdown" id="job-markdown" onChange={(event) => setFile(event.currentTarget.files?.[0] ?? null)} type="file" /><p>仅支持 UTF-8 Markdown，文件最大 512 KiB。</p></div>}
           <button className="workbench-touch-target job-import-submit" disabled={isPending || (mode === "upload" && !file)} type="submit">{isPending ? "正在导入" : "导入岗位"}</button>
         </form>

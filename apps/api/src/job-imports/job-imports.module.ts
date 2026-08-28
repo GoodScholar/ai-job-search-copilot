@@ -7,8 +7,9 @@ import { AuthModule, AUDIT_TRAIL } from "../auth/auth.module.js";
 import { DATABASE, RuntimeConfigModule } from "../config/runtime-config.module.js";
 import { BullmqJobImportQueue } from "./bullmq-job-import-queue.js";
 import { JobImportsController } from "./job-imports.controller.js";
-import { JOB_CONTENT_STORE, JOB_IMPORT_COMMANDS, JOB_IMPORT_QUEUE, JOB_IMPORT_QUERIES } from "./job-imports.tokens.js";
+import { JOB_CONTENT_STORE, JOB_IMPORT_COMMANDS, JOB_IMPORT_QUEUE, JOB_IMPORT_QUERIES, JOB_PAGE_FETCHER } from "./job-imports.tokens.js";
 import { MinioJobContentStore } from "./minio-job-content-store.js";
+import { SecureJobPageFetcher, type JobPageFetcher } from "./job-page-fetcher.js";
 
 function createMinioClient(): MinioClient {
   const endpoint = new URL(process.env.MINIO_ENDPOINT ?? `http://127.0.0.1:${process.env.MINIO_API_PORT ?? "59000"}`);
@@ -27,6 +28,7 @@ function createMinioClient(): MinioClient {
   providers: [
     { provide: JOB_CONTENT_STORE, useFactory: (): JobContentStore => new MinioJobContentStore(createMinioClient()) },
     { provide: JOB_IMPORT_QUEUE, useFactory: (): JobImportQueue => new BullmqJobImportQueue() },
+    { provide: JOB_PAGE_FETCHER, useFactory: (): JobPageFetcher => new SecureJobPageFetcher({ appEnv: process.env.APP_ENV ?? "development", testOrigin: process.env.JOB_PAGE_FETCHER_TEST_ORIGIN }) },
     {
       provide: JOB_IMPORT_COMMANDS,
       inject: [DATABASE, AUDIT_TRAIL, JOB_CONTENT_STORE, JOB_IMPORT_QUEUE],

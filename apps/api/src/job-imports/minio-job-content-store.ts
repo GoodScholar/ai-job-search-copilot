@@ -6,7 +6,7 @@ import type { JobContentStore } from "@job-copilot/domain/job-imports";
 export class MinioJobContentStore implements JobContentStore {
   constructor(private readonly client: MinioClient, private readonly bucket = process.env.MINIO_BUCKET ?? "career-documents") {}
 
-  async put(input: { objectKey: string; bytes: Uint8Array; mediaType: "text/markdown"; importId: string }): Promise<void> {
+  async put(input: { objectKey: string; bytes: Uint8Array; mediaType: "text/markdown" | "text/html" | "text/plain"; importId: string }): Promise<void> {
     await this.client.putObject(this.bucket, input.objectKey, Readable.from([input.bytes]), input.bytes.byteLength, {
       "content-type": input.mediaType,
       "x-amz-meta-job-import-id": input.importId,
@@ -21,7 +21,7 @@ export class MinioJobContentStore implements JobContentStore {
     for await (const chunk of stream) {
       const bytes = new Uint8Array(chunk);
       size += bytes.byteLength;
-      if (size > JOB_IMPORT_MAX_BYTES) throw new Error("job import content exceeds configured size");
+      if (size > 2 * 1024 * 1024) throw new Error("job import content exceeds configured size");
       chunks.push(bytes);
     }
     const value = new Uint8Array(size);

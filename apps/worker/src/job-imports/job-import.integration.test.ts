@@ -152,7 +152,7 @@ describe("JobImportConsumer", () => {
     const objectKey = `accounts/${userId}/job-imports/${importId}/source.md`;
     await store.put({ objectKey, bytes: new TextEncoder().encode(content), mediaType: "text/markdown", importId });
     await database.insert(jobImports).values({
-      id: importId, userId, inputType: "pasted_text", contentSha256: checksum(content), status: "imported",
+      id: importId, userId, inputType: "pasted_text", contentSha256: checksum(content), sourceIdentifier: checksum(content), status: "imported",
     });
     const sourcePostingId = randomUUID();
     await database.insert(jobSourcePostings).values({

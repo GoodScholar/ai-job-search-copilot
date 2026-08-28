@@ -15,12 +15,13 @@ import {
   type JobImportJob,
   type JobImportList,
   type JobImportFailureCode,
+  type JobImportInputType,
 } from "@job-copilot/contracts/job-imports";
 import type { AuditTrail } from "./audit-trail";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 
 export interface JobContentStore {
-  put(input: { objectKey: string; bytes: Uint8Array; mediaType: "text/markdown"; importId: string }): Promise<void>;
+  put(input: { objectKey: string; bytes: Uint8Array; mediaType: "text/markdown" | "text/html" | "text/plain"; importId: string }): Promise<void>;
   get(input: { objectKey: string }): Promise<Uint8Array>;
   delete(input: { objectKey: string }): Promise<void>;
 }
@@ -32,6 +33,16 @@ export interface JobImportQueue {
 export interface JobPostingNormalizer {
   normalize(content: string): Promise<unknown>;
 }
+
+export type FetchedUrlJobPage = {
+  requestedUrl: string;
+  finalUrl: string;
+  canonicalUrl: string;
+  rawHtml: string;
+  visibleText: string;
+  pageClassification: "job";
+  sourceKind: "official" | "aggregator";
+};
 
 export class JobImportError extends Error {
   constructor(public readonly code: "JOB_IMPORT_QUEUE_UNAVAILABLE" | "JOB_IMPORT_OBJECT_STORAGE_FAILED") {
@@ -85,12 +96,20 @@ function sourceObjectKey(userId: string, importId: string): string {
   return `accounts/${userId}/job-imports/${importId}/source.md`;
 }
 
+function rawHtmlObjectKey(userId: string, importId: string): string {
+  return `accounts/${userId}/job-imports/${importId}/raw.html`;
+}
+
+function visibleTextObjectKey(userId: string, importId: string): string {
+  return `accounts/${userId}/job-imports/${importId}/visible.txt`;
+}
+
 function response(record: {
   id: string; inputType: string; originalFilename: string | null; status: string; failureCode: string | null; createdAt: Date; updatedAt: Date;
 }, reused: boolean): CreateJobImportResult {
   return {
     importId: record.id,
-    inputType: record.inputType as "pasted_text" | "markdown_upload",
+    inputType: record.inputType as JobImportInputType,
     originalFilename: record.originalFilename,
     status: record.status as "imported" | "normalizing" | "completed" | "failed",
     failureCode: record.failureCode as CreateJobImportResponse["failureCode"],
@@ -123,7 +142,7 @@ function importBase(record: {
   };
 }
 
-async function failImport(deps: Pick<ProcessorDependencies, "db" | "auditTrail" | "clock">, input: { userId: string; importId: string; inputType: "pasted_text" | "markdown_upload"; claimToken: string; failureCode: JobImportFailureCode; attemptCount: number }): Promise<boolean> {
+async function failImport(deps: Pick<ProcessorDependencies, "db" | "auditTrail" | "clock">, input: { userId: string; importId: string; inputType: JobImportInputType; claimToken: string; failureCode: JobImportFailureCode; attemptCount: number }): Promise<boolean> {
   const now = deps.clock();
   return deps.db.transaction(async (transaction) => {
     await acquireAccountAdvisoryLock(transaction, input.userId);
@@ -155,10 +174,12 @@ async function releaseImportForRetry(deps: Pick<ProcessorDependencies, "db" | "c
 
 export function createJobImportCommands(deps: CommandDependencies): {
   submit(input: { userId: string; requestId: string; command: CreateJobImportCommand }): Promise<CreateJobImportResult>;
+  submitFetchedUrl(input: { userId: string; requestId: string; command: Extract<CreateJobImportCommand, { inputType: "url" }>; page: FetchedUrlJobPage }): Promise<CreateJobImportResult>;
 } {
   return {
     async submit(input): Promise<CreateJobImportResult> {
       const command = CreateJobImportCommandSchema.parse(input.command);
+      if (command.inputType === "url") throw new Error("JOB_IMPORT_CONTENT_INVALID");
       const rawContent = command.content;
       const content = canonicalContent(rawContent);
       const bytes = new TextEncoder().encode(rawContent);
@@ -198,7 +219,7 @@ export function createJobImportCommands(deps: CommandDependencies): {
 
         const importId = deps.id();
         const [created] = await transaction.insert(jobImports).values({
-          id: importId, userId: input.userId, inputType: command.inputType, contentSha256: checksum,
+          id: importId, userId: input.userId, inputType: command.inputType, contentSha256: checksum, sourceIdentifier: checksum,
           originalFilename: command.inputType === "markdown_upload" ? command.originalFilename : null,
           status: "imported", createdAt: now, updatedAt: now,
         }).returning({
@@ -215,7 +236,7 @@ export function createJobImportCommands(deps: CommandDependencies): {
         }
         const [posting] = await transaction.insert(jobSourcePostings).values({
           id: deps.id(), userId: input.userId, sourceType: "user_import", sourceIdentifier: checksum,
-          sourceIdentity: { contentFingerprint: checksum }, createdAt: now, updatedAt: now,
+          sourceIdentity: { contentFingerprint: checksum }, isOfficial: false, createdAt: now, updatedAt: now,
         }).returning({ id: jobSourcePostings.id });
         if (!posting) throw new Error("JOB_IMPORT_PERSIST_FAILED");
         const [sourceVersion] = await transaction.insert(jobSourcePostingVersions).values({
@@ -249,6 +270,102 @@ export function createJobImportCommands(deps: CommandDependencies): {
       }
       return response(record, reused);
     },
+
+    async submitFetchedUrl(input): Promise<CreateJobImportResult> {
+      const command = CreateJobImportCommandSchema.parse(input.command);
+      if (command.inputType !== "url") throw new Error("JOB_IMPORT_CONTENT_INVALID");
+      const page = input.page;
+      const visibleText = canonicalContent(page.visibleText);
+      const visibleBytes = new TextEncoder().encode(page.visibleText);
+      const rawBytes = new TextEncoder().encode(page.rawHtml);
+      if (!visibleText || visibleBytes.byteLength > 2 * 1024 * 1024 || rawBytes.byteLength > 2 * 1024 * 1024) throw new Error("JOB_IMPORT_CONTENT_INVALID");
+      const checksum = contentHash(visibleText);
+      const rawChecksum = rawContentHash(rawBytes);
+      const sourceIdentifier = sha256(page.canonicalUrl);
+      const now = deps.clock();
+      let reused = false;
+      const storedObjectKeys: string[] = [];
+      let record!: { id: string; inputType: string; originalFilename: string | null; status: string; failureCode: string | null; createdAt: Date; updatedAt: Date };
+      try {
+        record = await deps.db.transaction(async (transaction) => {
+          await acquireAccountAdvisoryLock(transaction, input.userId);
+          const [existing] = await transaction.select({
+            id: jobImports.id, inputType: jobImports.inputType, originalFilename: jobImports.originalFilename,
+            status: jobImports.status, failureCode: jobImports.failureCode, createdAt: jobImports.createdAt, updatedAt: jobImports.updatedAt,
+          }).from(jobImports).where(and(
+            eq(jobImports.userId, input.userId), eq(jobImports.inputType, "url"),
+            eq(jobImports.canonicalUrl, page.canonicalUrl), eq(jobImports.contentSha256, checksum),
+          ));
+          if (existing) {
+            reused = true;
+            if (existing.status === "failed" || existing.status === "imported") {
+              const [retried] = await transaction.update(jobImports).set({
+                status: "imported", failureCode: null, claimToken: null, claimExpiresAt: null, updatedAt: now,
+              }).where(and(eq(jobImports.userId, input.userId), eq(jobImports.id, existing.id), inArray(jobImports.status, ["failed", "imported"])))
+                .returning({ id: jobImports.id, inputType: jobImports.inputType, originalFilename: jobImports.originalFilename, status: jobImports.status, failureCode: jobImports.failureCode, createdAt: jobImports.createdAt, updatedAt: jobImports.updatedAt });
+              return retried ?? existing;
+            }
+            return existing;
+          }
+
+          const importId = deps.id();
+          const [created] = await transaction.insert(jobImports).values({
+            id: importId, userId: input.userId, inputType: "url", contentSha256: checksum, sourceIdentifier,
+            requestedUrl: page.requestedUrl, finalUrl: page.finalUrl, canonicalUrl: page.canonicalUrl,
+            pageClassification: page.pageClassification, sourceKind: page.sourceKind, status: "imported", createdAt: now, updatedAt: now,
+          }).returning({ id: jobImports.id, inputType: jobImports.inputType, originalFilename: jobImports.originalFilename, status: jobImports.status, failureCode: jobImports.failureCode, createdAt: jobImports.createdAt, updatedAt: jobImports.updatedAt });
+          if (!created) throw new Error("JOB_IMPORT_PERSIST_FAILED");
+          const rawObjectKey = rawHtmlObjectKey(input.userId, importId);
+          const visibleObjectKey = visibleTextObjectKey(input.userId, importId);
+          try {
+            await deps.contentStore.put({ objectKey: rawObjectKey, bytes: rawBytes, mediaType: "text/html", importId });
+            storedObjectKeys.push(rawObjectKey);
+            await deps.contentStore.put({ objectKey: visibleObjectKey, bytes: visibleBytes, mediaType: "text/plain", importId });
+            storedObjectKeys.push(visibleObjectKey);
+          } catch { throw new JobImportError("JOB_IMPORT_OBJECT_STORAGE_FAILED"); }
+
+          let [posting] = await transaction.select({ id: jobSourcePostings.id, isOfficial: jobSourcePostings.isOfficial })
+            .from(jobSourcePostings).where(and(eq(jobSourcePostings.userId, input.userId), eq(jobSourcePostings.sourceType, "url_import"), eq(jobSourcePostings.sourceIdentifier, sourceIdentifier)));
+          if (!posting) {
+            const [createdPosting] = await transaction.insert(jobSourcePostings).values({
+              id: deps.id(), userId: input.userId, sourceType: "url_import", sourceIdentifier,
+              sourceIdentity: { canonicalUrl: page.canonicalUrl }, isOfficial: page.sourceKind === "official", createdAt: now, updatedAt: now,
+            }).returning({ id: jobSourcePostings.id, isOfficial: jobSourcePostings.isOfficial });
+            if (!createdPosting) throw new Error("JOB_IMPORT_PERSIST_FAILED");
+            posting = createdPosting;
+          } else if (page.sourceKind === "official" && !posting.isOfficial) {
+            await transaction.update(jobSourcePostings).set({ isOfficial: true, updatedAt: now }).where(eq(jobSourcePostings.id, posting.id));
+            posting = { ...posting, isOfficial: true };
+          }
+          const [sameVersion] = await transaction.select({ id: jobSourcePostingVersions.id }).from(jobSourcePostingVersions).where(and(
+            eq(jobSourcePostingVersions.userId, input.userId), eq(jobSourcePostingVersions.sourcePostingId, posting.id), eq(jobSourcePostingVersions.contentSha256, checksum),
+          ));
+          if (!sameVersion) {
+            const [latestVersion] = await transaction.select({ version: jobSourcePostingVersions.version }).from(jobSourcePostingVersions)
+              .where(and(eq(jobSourcePostingVersions.userId, input.userId), eq(jobSourcePostingVersions.sourcePostingId, posting.id))).orderBy(desc(jobSourcePostingVersions.version)).limit(1);
+            const [sourceVersion] = await transaction.insert(jobSourcePostingVersions).values({
+              id: deps.id(), userId: input.userId, sourcePostingId: posting.id, version: (latestVersion?.version ?? 0) + 1,
+              contentSha256: checksum, rawContentSha256: rawChecksum, rawObjectReference: { rawObjectKey, visibleObjectKey }, retrievedAt: now, createdAt: now,
+            }).returning({ id: jobSourcePostingVersions.id });
+            if (!sourceVersion) throw new Error("JOB_IMPORT_PERSIST_FAILED");
+          }
+          await deps.auditTrail.bind(transaction).append({
+            userId: input.userId, actorUserId: input.userId, eventType: "job.import_submitted", occurredAt: now,
+            requestId: input.requestId, outcome: "success", reasonCode: "JOB_IMPORT_SUBMITTED", resourceType: "job_import", resourceId: importId,
+            metadata: { importId, inputType: "url" },
+          });
+          return created;
+        });
+      } catch (error) {
+        for (const objectKey of storedObjectKeys) {
+          try { await deps.contentStore.delete({ objectKey }); } catch { /* 保留原始失败。 */ }
+        }
+        throw error;
+      }
+      try { await deps.queue.enqueue({ version: 1, importId: record.id, userId: input.userId }); }
+      catch { throw new JobImportError("JOB_IMPORT_QUEUE_UNAVAILABLE"); }
+      return response(record, reused);
+    },
   };
 }
 
@@ -270,7 +387,7 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
           and(eq(jobImports.status, "normalizing"), lte(jobImports.claimExpiresAt, now)),
         ),
       )).returning({
-        id: jobImports.id, inputType: jobImports.inputType, contentSha256: jobImports.contentSha256,
+        id: jobImports.id, inputType: jobImports.inputType, contentSha256: jobImports.contentSha256, sourceIdentifier: jobImports.sourceIdentifier,
       });
       if (!record) {
         const [current] = await deps.db.select({ status: jobImports.status, claimExpiresAt: jobImports.claimExpiresAt }).from(jobImports)
@@ -278,20 +395,20 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
         if (current?.status === "normalizing" && current.claimExpiresAt && current.claimExpiresAt > now) throw new JobImportRetryableError();
         return "stale";
       }
-      const inputType = record.inputType as "pasted_text" | "markdown_upload";
+      const inputType = record.inputType as JobImportInputType;
       const [sourceVersion] = await deps.db.select({
         sourcePostingId: jobSourcePostings.id, id: jobSourcePostingVersions.id, version: jobSourcePostingVersions.version,
-        rawContentSha256: jobSourcePostingVersions.rawContentSha256,
+        rawContentSha256: jobSourcePostingVersions.rawContentSha256, isOfficial: jobSourcePostings.isOfficial,
       }).from(jobSourcePostings).innerJoin(jobSourcePostingVersions, and(
         eq(jobSourcePostingVersions.userId, jobSourcePostings.userId), eq(jobSourcePostingVersions.sourcePostingId, jobSourcePostings.id),
       )).where(and(
-        eq(jobSourcePostings.userId, parsedJob.userId), eq(jobSourcePostings.sourceType, "user_import"),
-        eq(jobSourcePostings.sourceIdentifier, record.contentSha256), eq(jobSourcePostingVersions.contentSha256, record.contentSha256),
+        eq(jobSourcePostings.userId, parsedJob.userId), eq(jobSourcePostings.sourceIdentifier, record.sourceIdentifier),
+        eq(jobSourcePostingVersions.contentSha256, record.contentSha256),
       ));
       let bytes: Uint8Array;
       try {
         if (!sourceVersion) throw new Error("source version missing");
-        bytes = await deps.contentStore.get({ objectKey: sourceObjectKey(parsedJob.userId, parsedJob.importId) });
+        bytes = await deps.contentStore.get({ objectKey: inputType === "url" ? visibleTextObjectKey(parsedJob.userId, parsedJob.importId) : sourceObjectKey(parsedJob.userId, parsedJob.importId) });
       } catch {
         if (!job.finalAttempt) {
           await releaseImportForRetry(deps, { ...parsedJob, claimToken });
@@ -299,7 +416,7 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
         }
         return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode: "JOB_IMPORT_CONTENT_READ_FAILED", attemptCount }) ? "failed" : "stale";
       }
-      if (rawContentHash(bytes) !== sourceVersion.rawContentSha256) {
+      if (inputType !== "url" && rawContentHash(bytes) !== sourceVersion.rawContentSha256) {
         if (!job.finalAttempt) {
           await releaseImportForRetry(deps, { ...parsedJob, claimToken });
           throw new JobImportRetryableError();
@@ -350,6 +467,9 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
             }).returning({ id: jobOpportunities.id });
             if (!created) throw new Error("JOB_IMPORT_PERSIST_FAILED");
             opportunity = created;
+          } else if (sourceVersion.isOfficial) {
+            await transaction.update(jobOpportunities).set({ sourcePostingVersionId: sourceVersion.id, updatedAt: now })
+              .where(and(eq(jobOpportunities.userId, parsedJob.userId), eq(jobOpportunities.id, opportunity.id)));
           }
           await transaction.insert(jobOpportunitySources).values({
             userId: parsedJob.userId, opportunityId: opportunity.id, sourcePostingVersionId: sourceVersion.id, createdAt: now,
@@ -386,14 +506,15 @@ export function createJobImportQueries(deps: { db: Database; contentStore: JobCo
       const [row] = await deps.db.select({
         id: jobImports.id, inputType: jobImports.inputType, originalFilename: jobImports.originalFilename, status: jobImports.status,
         failureCode: jobImports.failureCode, createdAt: jobImports.createdAt, updatedAt: jobImports.updatedAt,
+        requestedUrl: jobImports.requestedUrl, finalUrl: jobImports.finalUrl, canonicalUrl: jobImports.canonicalUrl,
+        pageClassification: jobImports.pageClassification, sourceKind: jobImports.sourceKind, sourceIdentifier: jobImports.sourceIdentifier,
         opportunityId: jobOpportunities.id, company: jobOpportunities.company, title: jobOpportunities.title, location: jobOpportunities.location,
         postedAt: jobOpportunities.postedAt, deadline: jobOpportunities.deadline, description: jobOpportunities.description,
         sourcePostingId: jobSourcePostings.id, sourcePostingVersionId: jobSourcePostingVersions.id, sourceVersion: jobSourcePostingVersions.version,
         retrievedAt: jobSourcePostingVersions.retrievedAt,
       }).from(jobImports)
         .leftJoin(jobSourcePostings, and(
-          eq(jobSourcePostings.userId, jobImports.userId), eq(jobSourcePostings.sourceType, "user_import"),
-          eq(jobSourcePostings.sourceIdentifier, jobImports.contentSha256),
+          eq(jobSourcePostings.userId, jobImports.userId), eq(jobSourcePostings.sourceIdentifier, jobImports.sourceIdentifier),
         ))
         .leftJoin(jobSourcePostingVersions, and(
           eq(jobSourcePostingVersions.userId, jobImports.userId), eq(jobSourcePostingVersions.sourcePostingId, jobSourcePostings.id),
@@ -413,26 +534,37 @@ export function createJobImportQueries(deps: { db: Database; contentStore: JobCo
           opportunityId: row.opportunityId, company: row.company, title: row.title, location: row.location,
           postedAt: row.postedAt?.toISOString() ?? null, deadline: row.deadline?.toISOString() ?? null, description: row.description,
           evidence: { sourcePostingId: row.sourcePostingId, sourcePostingVersionId: row.sourcePostingVersionId, version: row.sourceVersion,
-            sourceType: "user_import", retrievedAt: row.retrievedAt?.toISOString(), originalFilename: row.originalFilename },
+            sourceType: row.inputType === "url" ? "url_import" : "user_import", retrievedAt: row.retrievedAt?.toISOString(), originalFilename: row.originalFilename,
+            requestedUrl: row.requestedUrl, finalUrl: row.finalUrl, canonicalUrl: row.canonicalUrl,
+            pageClassification: row.pageClassification, sourceKind: row.sourceKind },
         } : null,
       });
     },
     async getRawContent({ userId, importId }) {
-      const [row] = await deps.db.select({ originalFilename: jobImports.originalFilename, rawContentSha256: jobSourcePostingVersions.rawContentSha256 })
+      const [row] = await deps.db.select({
+        originalFilename: jobImports.originalFilename, inputType: jobImports.inputType, contentSha256: jobImports.contentSha256,
+        rawContentSha256: jobSourcePostingVersions.rawContentSha256, rawObjectReference: jobSourcePostingVersions.rawObjectReference,
+      })
         .from(jobImports)
         .leftJoin(jobSourcePostings, and(
-          eq(jobSourcePostings.userId, jobImports.userId), eq(jobSourcePostings.sourceType, "user_import"),
-          eq(jobSourcePostings.sourceIdentifier, jobImports.contentSha256),
+          eq(jobSourcePostings.userId, jobImports.userId), eq(jobSourcePostings.sourceIdentifier, jobImports.sourceIdentifier),
         ))
         .leftJoin(jobSourcePostingVersions, and(
           eq(jobSourcePostingVersions.userId, jobImports.userId), eq(jobSourcePostingVersions.sourcePostingId, jobSourcePostings.id),
           eq(jobSourcePostingVersions.contentSha256, jobImports.contentSha256),
-        ))
+      ))
         .where(and(eq(jobImports.userId, userId), eq(jobImports.id, importId)));
       if (!row) return null;
-      const bytes = await deps.contentStore.get({ objectKey: sourceObjectKey(userId, importId) });
-      if (!row.rawContentSha256 || rawContentHash(bytes) !== row.rawContentSha256) throw new Error("JOB_IMPORT_CHECKSUM_MISMATCH");
-      return { content: new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes), filename: row.originalFilename };
+      const objectKey = row.inputType === "url"
+        ? (typeof row.rawObjectReference === "object" && row.rawObjectReference !== null && "visibleObjectKey" in row.rawObjectReference && typeof row.rawObjectReference.visibleObjectKey === "string" ? row.rawObjectReference.visibleObjectKey : null)
+        : sourceObjectKey(userId, importId);
+      if (!objectKey) throw new Error("JOB_IMPORT_CHECKSUM_MISMATCH");
+      const bytes = await deps.contentStore.get({ objectKey });
+      const content = new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
+      if (row.inputType === "url") {
+        if (contentHash(canonicalContent(content)) !== row.contentSha256) throw new Error("JOB_IMPORT_CHECKSUM_MISMATCH");
+      } else if (!row.rawContentSha256 || rawContentHash(bytes) !== row.rawContentSha256) throw new Error("JOB_IMPORT_CHECKSUM_MISMATCH");
+      return { content, filename: row.originalFilename };
     },
   };
 }

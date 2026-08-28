@@ -11,7 +11,8 @@ import { AppModule } from "./app.module.js";
 import { configureApiApplication } from "./configure-api-application.js";
 import { DATABASE } from "./config/runtime-config.module.js";
 import { CAREER_DOCUMENT_STORE, CAREER_IMPORT_QUEUE } from "./career-import/career-import.tokens.js";
-import { JOB_CONTENT_STORE, JOB_IMPORT_QUEUE } from "./job-imports/job-imports.tokens.js";
+import { JOB_CONTENT_STORE, JOB_IMPORT_QUEUE, JOB_PAGE_FETCHER } from "./job-imports/job-imports.tokens.js";
+import { JobPageFetchError, type JobPageFetcher } from "./job-imports/job-page-fetcher.js";
 import { createMinimalDocx } from "./career-import/minimal-docx.test-support.js";
 import { CAREER_FACT_CONFLICT_REVIEW_COMMANDS, PROFILE_REVIEW_COMMANDS, type ProfileReviewCommands } from "./profile-review/profile-review.tokens.js";
 import { z } from "zod";
@@ -85,6 +86,20 @@ describe("authenticated workbench HTTP API", () => {
     },
     async delete({ objectKey }) { jobStoredObjects.delete(objectKey); },
   };
+  const jobPageFetcher: JobPageFetcher & { nextError: JobPageFetchError | null } = {
+    nextError: null,
+    async fetch({ url }) {
+      if (this.nextError) {
+        const error = this.nextError;
+        this.nextError = null;
+        throw error;
+      }
+      return {
+        requestedUrl: url, finalUrl: url, canonicalUrl: url, rawHtml: "<h1>URL 岗位</h1><script>never-run()</script>",
+        visibleText: "URL 岗位\n公司：示例科技\n地点：上海", pageClassification: "job", sourceKind: "official",
+      };
+    },
+  };
   const originalEnvironment = {
     APP_ENV: process.env.APP_ENV,
     AUTH_MODE: process.env.AUTH_MODE,
@@ -108,6 +123,7 @@ describe("authenticated workbench HTTP API", () => {
       .overrideProvider(CAREER_IMPORT_QUEUE).useValue(queue)
       .overrideProvider(JOB_CONTENT_STORE).useValue(jobContentStore)
       .overrideProvider(JOB_IMPORT_QUEUE).useValue(jobQueue)
+      .overrideProvider(JOB_PAGE_FETCHER).useValue(jobPageFetcher)
       .overrideProvider(CAREER_FACT_CONFLICT_REVIEW_COMMANDS).useValue(conflictReviewCommands)
       .compile();
     app = module.createNestApplication<NestFastifyApplication>(new FastifyAdapter({ loggerInstance: testLogger as never }));
@@ -752,6 +768,28 @@ describe("authenticated workbench HTTP API", () => {
     expect(raw.statusCode).toBe(503);
     expect(raw.json()).toMatchObject({ code: "JOB_IMPORT_OBJECT_STORAGE_FAILED", requestId: expect.any(String) });
     expect(raw.body).not.toContain(altered);
+  });
+
+  it("认证用户可以通过 URL 导入受验证岗位页，并获得稳定的页面拒绝错误", async () => {
+    const session = await createSession(app, "url-job-import-owner");
+    const url = `https://jobs.example.com/roles/${randomUUID()}`;
+    const created = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: "/v1/job-imports", headers: { ...bearer(session.sessionToken), "content-type": "application/json" },
+      payload: { inputType: "url", url },
+    });
+    const importId = created.json().importId as string;
+    jobPageFetcher.nextError = new JobPageFetchError("JOB_PAGE_LISTING");
+    const listing = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: "/v1/job-imports", headers: { ...bearer(session.sessionToken), "content-type": "application/json" },
+      payload: { inputType: "url", url: `https://jobs.example.com/list/${randomUUID()}` },
+    });
+
+    expect(created.statusCode).toBe(202);
+    expect(created.json()).toMatchObject({ inputType: "url", status: "imported" });
+    expect(jobStoredObjects.has(`accounts/${session.account.userId}/job-imports/${importId}/raw.html`)).toBe(true);
+    expect(jobStoredObjects.has(`accounts/${session.account.userId}/job-imports/${importId}/visible.txt`)).toBe(true);
+    expect(listing.statusCode).toBe(422);
+    expect(listing.json()).toMatchObject({ code: "JOB_PAGE_LISTING", requestId: expect.any(String) });
   });
 
   it("按 UTF-8 字节限制岗位正文，并将存储与队列故障映射为不泄漏正文的 503", async () => {

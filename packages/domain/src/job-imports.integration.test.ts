@@ -24,7 +24,7 @@ class MemoryStore implements JobContentStore {
   failNextPut = false;
   failNextGet = false;
 
-  async put(input: { objectKey: string; bytes: Uint8Array; mediaType: "text/markdown"; importId: string }): Promise<void> {
+  async put(input: { objectKey: string; bytes: Uint8Array; mediaType: "text/markdown" | "text/html" | "text/plain"; importId: string }): Promise<void> {
     if (this.failNextPut) {
       this.failNextPut = false;
       throw new Error("stored body must not escape");
@@ -131,6 +131,56 @@ describe("job imports", () => {
     await expect(createAuditTrail({ db: database, clock: () => now }).query({ userId })).resolves.toEqual(expect.arrayContaining([
       expect.objectContaining({ eventType: "job.import_submitted", resourceId: first.importId, metadata: { importId: first.importId, inputType: "pasted_text" } }),
     ]));
+  });
+
+  it("持久化 URL 页面原始 HTML、可见文本和来源 provenance，并将官方来源提升为首选证据", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const commands = createJobImportCommands({
+      db: database, contentStore: store, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+    const nonce = crypto.randomUUID();
+    const aggregator = await commands.submitFetchedUrl({
+      userId, requestId: crypto.randomUUID(), command: { inputType: "url", url: `https://www.linkedin.com/jobs/${nonce}` },
+      page: {
+        requestedUrl: `https://www.linkedin.com/jobs/${nonce}`, finalUrl: `https://www.linkedin.com/jobs/${nonce}`,
+        canonicalUrl: `https://www.linkedin.com/jobs/${nonce}`, rawHtml: "<h1>高级前端工程师</h1><script>ignored()</script>",
+        visibleText: "高级前端工程师\n公司：示例科技\n地点：上海", pageClassification: "job", sourceKind: "aggregator",
+      },
+    });
+    const official = await commands.submitFetchedUrl({
+      userId, requestId: crypto.randomUUID(), command: { inputType: "url", url: `https://jobs.example.com/roles/${nonce}` },
+      page: {
+        requestedUrl: `https://jobs.example.com/roles/${nonce}`, finalUrl: `https://jobs.example.com/roles/${nonce}`,
+        canonicalUrl: `https://jobs.example.com/roles/${nonce}`, rawHtml: "<h1>高级前端工程师</h1>",
+        visibleText: "高级前端工程师\n公司：示例科技\n地点：上海", pageClassification: "job", sourceKind: "official",
+      },
+    });
+    const processor = createJobImportProcessor({
+      db: database, contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => now }),
+      normalizer: { normalize: async () => ({ normalizerVersion: "v1", company: "示例科技", title: "高级前端工程师", location: "上海", postedAt: null, deadline: null, description: "负责求职工作台" }) },
+      id: () => crypto.randomUUID(), clock: () => now,
+    });
+
+    await expect(processor.process({ version: 1, importId: aggregator.importId, userId, finalAttempt: true })).resolves.toBe("completed");
+    await expect(processor.process({ version: 1, importId: official.importId, userId, finalAttempt: true })).resolves.toBe("completed");
+    const officialDetail = await createJobImportQueries({ db: database, contentStore: store }).get({ userId, importId: official.importId });
+    expect(officialDetail).toMatchObject({
+      opportunity: { evidence: { sourceType: "url_import", requestedUrl: `https://jobs.example.com/roles/${nonce}`, sourceKind: "official" } },
+    });
+    await expect(createJobImportQueries({ db: database, contentStore: store }).getRawContent({ userId, importId: official.importId }))
+      .resolves.toEqual({ content: "高级前端工程师\n公司：示例科技\n地点：上海", filename: null });
+    expect(store.puts.map((item) => item.objectKey)).toEqual(expect.arrayContaining([
+      `accounts/${userId}/job-imports/${official.importId}/raw.html`,
+      `accounts/${userId}/job-imports/${official.importId}/visible.txt`,
+    ]));
+    await expect(database.execute<{ is_official: boolean; source_posting_version_id: string }>(sql`
+      select source.is_official, opportunity.source_posting_version_id
+      from job_opportunities opportunity
+      join job_source_posting_versions version on version.id = opportunity.source_posting_version_id
+      join job_source_postings source on source.id = version.source_posting_id
+      where opportunity.user_id = ${userId} and opportunity.source_posting_version_id = ${officialDetail?.opportunity?.evidence.sourcePostingVersionId}
+    `)).resolves.toEqual([{ is_official: true, source_posting_version_id: expect.any(String) }]);
   });
 
   it("在队列不可用时保留已锁定的可重试导入", async () => {

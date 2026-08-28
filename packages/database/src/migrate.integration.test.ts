@@ -527,7 +527,6 @@ describe("database migrations", () => {
       "job_imports", "job_opportunities", "job_opportunity_sources", "job_source_postings", "job_source_posting_versions",
     ]));
     expect(await listConstraintNames(migratedDatabase)).toEqual(expect.arrayContaining([
-      "job_imports_user_content_unique",
       "job_source_postings_user_identity_unique",
       "job_source_posting_versions_posting_version_unique",
       "job_opportunities_user_dedup_unique",
@@ -538,6 +537,10 @@ describe("database migrations", () => {
     expect(await listColumns(migratedDatabase)).toEqual(expect.arrayContaining([
       { table_name: "job_imports", column_name: "claim_token", data_type: "uuid" },
       { table_name: "job_imports", column_name: "claim_expires_at", data_type: "timestamp with time zone" },
+      { table_name: "job_imports", column_name: "requested_url", data_type: "character varying" },
+      { table_name: "job_imports", column_name: "canonical_url", data_type: "character varying" },
+      { table_name: "job_imports", column_name: "source_kind", data_type: "character varying" },
+      { table_name: "job_source_postings", column_name: "is_official", data_type: "boolean" },
       { table_name: "job_source_posting_versions", column_name: "raw_content_sha256", data_type: "character varying" },
     ]));
   });

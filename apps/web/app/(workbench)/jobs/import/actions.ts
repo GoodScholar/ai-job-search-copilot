@@ -17,6 +17,12 @@ const failureMessages: Record<string, string> = {
   JOB_IMPORT_OBJECT_STORAGE_FAILED: "岗位正文暂时无法保存，请稍后重试。",
   JOB_IMPORT_QUEUE_UNAVAILABLE: "岗位导入任务暂时不可用，请稍后重试。",
   JOB_IMPORT_UNAVAILABLE: "岗位导入暂时不可用，请稍后重试。",
+  JOB_PAGE_URL_INVALID: "岗位链接格式无效。", JOB_PAGE_TARGET_REJECTED: "该岗位链接不允许访问。",
+  JOB_PAGE_REDIRECT_INVALID: "岗位链接跳转异常。", JOB_PAGE_TIMEOUT: "岗位页面读取超时，请稍后重试。",
+  JOB_PAGE_UNREACHABLE: "岗位页面暂时无法访问。", JOB_PAGE_RESPONSE_TOO_LARGE: "岗位页面内容过大。",
+  JOB_PAGE_CONTENT_TYPE_INVALID: "该链接不是可导入的岗位页面。", JOB_PAGE_LISTING: "该链接是岗位列表，请提交具体岗位页面。",
+  JOB_PAGE_LOGIN_REQUIRED: "该岗位页面需要登录后访问。", JOB_PAGE_EXPIRED: "该岗位已过期或下架。",
+  JOB_PAGE_RATE_LIMITED: "岗位网站暂时限制访问，请稍后重试。", JOB_PAGE_UNRECOGNIZED: "无法识别为有效岗位页面。",
 };
 
 async function decodeMarkdownUpload(file: File): Promise<string> {
@@ -41,7 +47,9 @@ export async function createJobImportAction(
   try {
     command = file instanceof File
       ? { inputType: "markdown_upload" as const, originalFilename: file.name, content: await decodeMarkdownUpload(file) }
-    : { inputType: "pasted_text" as const, content: typeof formData.get("content") === "string" ? formData.get("content") : "" };
+      : typeof formData.get("url") === "string" && formData.get("url")
+        ? { inputType: "url" as const, url: formData.get("url") }
+      : { inputType: "pasted_text" as const, content: typeof formData.get("content") === "string" ? formData.get("content") : "" };
   } catch {
     return { ok: false, code: "JOB_IMPORT_CONTENT_INVALID", message: failureMessages.JOB_IMPORT_CONTENT_INVALID };
   }

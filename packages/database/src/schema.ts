@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, foreignKey, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
+import { boolean, check, foreignKey, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
 
 export const jobAccounts = pgTable("job_accounts", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -327,7 +327,13 @@ export const jobImports = pgTable("job_imports", {
   userId: uuid("user_id").notNull().references(() => jobAccounts.id),
   inputType: varchar("input_type", { length: 32 }).notNull(),
   contentSha256: varchar("content_sha256", { length: 64 }).notNull(),
+  sourceIdentifier: varchar("source_identifier", { length: 64 }).notNull(),
   originalFilename: varchar("original_filename", { length: 255 }),
+  requestedUrl: varchar("requested_url", { length: 2048 }),
+  finalUrl: varchar("final_url", { length: 2048 }),
+  canonicalUrl: varchar("canonical_url", { length: 2048 }),
+  pageClassification: varchar("page_classification", { length: 32 }),
+  sourceKind: varchar("source_kind", { length: 32 }),
   status: varchar("status", { length: 16 }).notNull().default("imported"),
   failureCode: varchar("failure_code", { length: 64 }),
   claimToken: uuid("claim_token"),
@@ -335,12 +341,15 @@ export const jobImports = pgTable("job_imports", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
-  unique("job_imports_user_content_unique").on(table.userId, table.contentSha256),
+  uniqueIndex("job_imports_user_non_url_content_unique").on(table.userId, table.contentSha256).where(sql`${table.inputType} <> 'url'`),
+  uniqueIndex("job_imports_user_url_content_unique").on(table.userId, table.canonicalUrl, table.contentSha256).where(sql`${table.inputType} = 'url'`),
   unique("job_imports_user_id_id_unique").on(table.userId, table.id),
-  check("job_imports_input_type_check", sql`${table.inputType} in ('pasted_text', 'markdown_upload')`),
+  check("job_imports_input_type_check", sql`${table.inputType} in ('pasted_text', 'markdown_upload', 'url')`),
   check("job_imports_status_check", sql`${table.status} in ('imported', 'normalizing', 'completed', 'failed')`),
   check("job_imports_content_sha256_format", sql`${table.contentSha256} ~ '^[0-9a-f]{64}$'`),
+  check("job_imports_source_identifier_format", sql`${table.sourceIdentifier} ~ '^[0-9a-f]{64}$'`),
   check("job_imports_filename_input_type_check", sql`(${table.inputType} = 'markdown_upload') = (${table.originalFilename} is not null)`),
+  check("job_imports_url_provenance_check", sql`(${table.inputType} = 'url') = (${table.requestedUrl} is not null and ${table.finalUrl} is not null and ${table.canonicalUrl} is not null and ${table.pageClassification} = 'job' and ${table.sourceKind} in ('official', 'aggregator'))`),
 ]);
 
 export const jobSourcePostings = pgTable("job_source_postings", {
@@ -349,6 +358,7 @@ export const jobSourcePostings = pgTable("job_source_postings", {
   sourceType: varchar("source_type", { length: 32 }).notNull(),
   sourceIdentifier: varchar("source_identifier", { length: 512 }).notNull(),
   sourceIdentity: jsonb("source_identity").notNull(),
+  isOfficial: boolean("is_official").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [

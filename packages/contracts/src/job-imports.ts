@@ -7,9 +7,15 @@ export const JOB_IMPORT_CLAIM_LEASE_MS = 30_000;
 
 const filename = z.string().trim().min(1).max(255).regex(/\.md$/i);
 const nullableJobField = z.string().trim().min(1).max(20_000).nullable();
+const jobPageUrl = z.string().trim().min(1).max(2_048).refine((value) => {
+  try {
+    const url = new URL(value);
+    return /^https?:$/u.test(url.protocol) && !url.username && !url.password;
+  } catch { return false; }
+}, "must be an HTTP(S) URL without credentials");
 
 export const JobImportStatusSchema = z.enum(["imported", "normalizing", "completed", "failed"]);
-export const JobImportInputTypeSchema = z.enum(["pasted_text", "markdown_upload"]);
+export const JobImportInputTypeSchema = z.enum(["pasted_text", "markdown_upload", "url"]);
 export const JobImportFailureCodeSchema = z.enum([
   "JOB_IMPORT_CONTENT_INVALID",
   "JOB_IMPORT_OBJECT_STORAGE_FAILED",
@@ -19,20 +25,38 @@ export const JobImportFailureCodeSchema = z.enum([
   "JOB_IMPORT_CHECKSUM_MISMATCH",
   "JOB_NORMALIZER_OUTPUT_INVALID",
   "JOB_IMPORT_PERSIST_FAILED",
+  "JOB_PAGE_URL_INVALID",
+  "JOB_PAGE_TARGET_REJECTED",
+  "JOB_PAGE_REDIRECT_INVALID",
+  "JOB_PAGE_TIMEOUT",
+  "JOB_PAGE_UNREACHABLE",
+  "JOB_PAGE_RESPONSE_TOO_LARGE",
+  "JOB_PAGE_CONTENT_TYPE_INVALID",
+  "JOB_PAGE_LISTING",
+  "JOB_PAGE_LOGIN_REQUIRED",
+  "JOB_PAGE_EXPIRED",
+  "JOB_PAGE_RATE_LIMITED",
+  "JOB_PAGE_UNRECOGNIZED",
 ]);
 
 export const CreateJobImportCommandSchema = z.discriminatedUnion("inputType", [
   z.object({ inputType: z.literal("pasted_text"), content: z.string().min(1).max(JOB_IMPORT_MAX_BYTES) }).strict(),
   z.object({ inputType: z.literal("markdown_upload"), originalFilename: filename, content: z.string().min(1).max(JOB_IMPORT_MAX_BYTES) }).strict(),
+  z.object({ inputType: z.literal("url"), url: jobPageUrl }).strict(),
 ]);
 
 export const JobImportEvidenceSchema = z.object({
   sourcePostingId: z.uuid(),
   sourcePostingVersionId: z.uuid(),
   version: z.int().min(1),
-  sourceType: z.literal("user_import"),
+  sourceType: z.enum(["user_import", "url_import"]),
   retrievedAt: z.iso.datetime(),
   originalFilename: filename.nullable(),
+  requestedUrl: jobPageUrl.nullable().optional().default(null),
+  finalUrl: jobPageUrl.nullable().optional().default(null),
+  canonicalUrl: jobPageUrl.nullable().optional().default(null),
+  pageClassification: z.literal("job").nullable().optional().default(null),
+  sourceKind: z.enum(["official", "aggregator"]).nullable().optional().default(null),
 }).strict();
 
 export const JobImportOpportunitySchema = z.object({

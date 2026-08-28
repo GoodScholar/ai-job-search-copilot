@@ -18,6 +18,12 @@ describe("job import contracts", () => {
     })).toEqual({ inputType: "pasted_text", content: "# 高级前端工程师\n公司：示例科技" });
   });
 
+  it("accepts a public job page URL without accepting a credential-bearing URL", () => {
+    expect(CreateJobImportCommandSchema.parse({ inputType: "url", url: "https://jobs.example.com/roles/123" }))
+      .toEqual({ inputType: "url", url: "https://jobs.example.com/roles/123" });
+    expect(() => CreateJobImportCommandSchema.parse({ inputType: "url", url: "https://user:password@jobs.example.com/roles/123" })).toThrow();
+  });
+
   it("accepts a completed import without exposing stored source content", () => {
     expect(JobImportDetailSchema.parse({
       importId, inputType: "pasted_text", originalFilename: null,
@@ -28,7 +34,8 @@ describe("job import contracts", () => {
         location: null, postedAt: null, deadline: null,
         description: null,
         evidence: { sourcePostingId, sourcePostingVersionId, version: 1,
-          sourceType: "user_import", retrievedAt: now, originalFilename: null },
+          sourceType: "user_import", retrievedAt: now, originalFilename: null,
+          requestedUrl: null, finalUrl: null, canonicalUrl: null, pageClassification: null, sourceKind: null },
       },
     })).toBeDefined();
   });
