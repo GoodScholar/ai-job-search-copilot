@@ -94,11 +94,12 @@ export function JobImportView({ initialImports }: JobImportViewProps) {
         setDetail(parsed.data);
         setRecentImports((previous) => insertRecent(previous, asSummary(parsed.data)));
         setActiveImport(asSummary(parsed.data));
-        setRawEvidence((previous) => terminalStatuses.has(parsed.data.status)
-          && previous.status === "ready"
-          && previous.revision === requestRevision
-          ? previous
-          : terminalStatuses.has(parsed.data.status) ? { status: "loading", revision: requestRevision } : { status: "idle" });
+        setRawEvidence((previous) => {
+          if (requestRevision !== evidenceRevisionRef.current) return previous;
+          if (!terminalStatuses.has(parsed.data.status)) return { status: "idle" };
+          if ((previous.status === "ready" || previous.status === "error") && previous.revision === requestRevision) return previous;
+          return { status: "loading", revision: requestRevision };
+        });
         setPollingMessage(null);
         if (!terminalStatuses.has(parsed.data.status)) timer = setTimeout(poll, 1_000);
       } catch {

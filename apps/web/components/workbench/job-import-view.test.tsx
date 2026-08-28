@@ -110,6 +110,48 @@ it("同一记录重读时保留先完成的原始证据，直到延迟详情返�
   await waitFor(() => expect(screen.getByText("先完成的新原文")).toBeInTheDocument());
 });
 
+it("同一记录重读时保留先完成的原始证据读取失败", async () => {
+  const user = userEvent.setup();
+  const refreshedDetail = deferred<Response>();
+  const refreshedRaw = deferred<Response>();
+  vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json(completed))
+    .mockResolvedValueOnce(new Response("初始原文", { headers: { "content-type": "text/plain" } }))
+    .mockImplementationOnce(() => refreshedDetail.promise)
+    .mockImplementationOnce(() => refreshedRaw.promise);
+  render(<JobImportView initialImports={[completed]} />);
+
+  await screen.findByText("初始原文");
+  await user.click(screen.getByRole("button", { name: /粘贴的岗位描述/ }));
+  await act(async () => { refreshedRaw.resolve(new Response(null, { status: 503 })); });
+  expect(await screen.findByText("原始证据暂时无法读取，请稍后重试。")).toBeInTheDocument();
+  await act(async () => { refreshedDetail.resolve(Response.json(completed)); });
+  await waitFor(() => expect(screen.getByText("原始证据暂时无法读取，请稍后重试。")).toBeInTheDocument());
+});
+
+it("raw 重试成功后忽略较旧详情的 loading 回写", async () => {
+  const user = userEvent.setup();
+  const oldDetail = deferred<Response>();
+  const oldRaw = deferred<Response>();
+  const retriedRaw = deferred<Response>();
+  vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json(completed))
+    .mockResolvedValueOnce(new Response("初始原文", { headers: { "content-type": "text/plain" } }))
+    .mockImplementationOnce(() => oldDetail.promise)
+    .mockImplementationOnce(() => oldRaw.promise)
+    .mockImplementationOnce(() => retriedRaw.promise);
+  render(<JobImportView initialImports={[completed]} />);
+
+  await screen.findByText("初始原文");
+  await user.click(screen.getByRole("button", { name: /粘贴的岗位描述/ }));
+  await act(async () => { oldRaw.resolve(new Response(null, { status: 503 })); });
+  await user.click(await screen.findByRole("button", { name: "重试读取原始证据" }));
+  await act(async () => { retriedRaw.resolve(new Response("重试后的原文", { headers: { "content-type": "text/plain" } })); });
+  expect(await screen.findByText("重试后的原文")).toBeInTheDocument();
+  await act(async () => { oldDetail.resolve(Response.json(completed)); });
+  await waitFor(() => expect(screen.getByText("重试后的原文")).toBeInTheDocument());
+});
+
 it("复用当前记录后仍显示真实的终态，且提示不会遮蔽切换后的状态", async () => {
   const user = userEvent.setup();
   mocks.createJobImportAction.mockResolvedValue({ ok: true, import: { ...imported, reused: true } });
