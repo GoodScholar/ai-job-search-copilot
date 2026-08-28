@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
 import type { JobTargetOverview } from "@job-copilot/contracts/job-targets";
+import type { JobImportDetail } from "@job-copilot/contracts/job-imports";
 
 vi.mock("server-only", () => ({}));
 
@@ -11,6 +12,7 @@ const importId = "d194d0ce-fc7e-45db-9425-e8ff4eaf8c08";
 const documentId = "b4d4a7c1-9a17-4a8c-8b36-0f815d042e9a";
 const conflictId = "c4d4a7c1-9a17-4a8c-8b36-0f815d042e9a";
 const targetId = "4f8c6eb3-2b92-4d91-aad4-959b7d4cd7a3";
+const jobImportId = "b0d2bfbf-7e40-49fc-86c8-3a15d7ad4f98";
 
 const queuedImport = {
   importId,
@@ -52,6 +54,21 @@ const jobTargetOverview: JobTargetOverview = {
     updatedAt: "2026-08-28T08:00:00.000Z",
   }],
 };
+
+const jobImportDetail: JobImportDetail = {
+  importId: jobImportId,
+  inputType: "pasted_text",
+  originalFilename: null,
+  status: "imported",
+  failureCode: null,
+  createdAt: "2026-08-28T08:00:00.000Z",
+  updatedAt: "2026-08-28T08:00:00.000Z",
+  opportunity: null,
+};
+const jobImportSummary = {
+  importId: jobImportId, inputType: "pasted_text", originalFilename: null, status: "imported", failureCode: null,
+  createdAt: "2026-08-28T08:00:00.000Z", updatedAt: "2026-08-28T08:00:00.000Z",
+} as const;
 
 it("starts a dev session with an opaque request id and parses the shared response", async () => {
   const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
@@ -288,4 +305,42 @@ it("拒绝缺少服务端已持久化冲突 DTO 的严格响应", async () => {
   });
   await expect(api.resolveCareerFactConflict(sessionToken, conflictId, { expectedVersion: 0, resolution: "use_existing" }))
     .rejects.toMatchObject({ kind: "invalid_response" });
+});
+
+it("通过 bearer 提交、读取并严格解析岗位导入 DTO", async () => {
+  const fetchImpl = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response(JSON.stringify({
+      importId: jobImportId, inputType: "pasted_text", originalFilename: null, status: "imported", failureCode: null,
+      createdAt: "2026-08-28T08:00:00.000Z", updatedAt: "2026-08-28T08:00:00.000Z", detailUrl: `/v1/job-imports/${jobImportId}`,
+    }), { status: 202 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ imports: [jobImportSummary] }), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(jobImportDetail), { status: 200 }))
+    .mockResolvedValueOnce(new Response("# 职位说明", { status: 200, headers: { "content-type": "text/plain; charset=utf-8" } }));
+  const api = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+
+  await expect(api.createJobImport(sessionToken, { inputType: "pasted_text", content: "职位说明" })).resolves.toMatchObject({ importId: jobImportId });
+  await expect(api.listJobImports(sessionToken)).resolves.toEqual({ imports: [jobImportSummary] });
+  await expect(api.getJobImport(sessionToken, jobImportId)).resolves.toEqual(jobImportDetail);
+  await expect(api.getJobImportRaw(sessionToken, jobImportId)).resolves.toBe("# 职位说明");
+
+  expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+    "http://127.0.0.1:3021/v1/job-imports",
+    "http://127.0.0.1:3021/v1/job-imports",
+    `http://127.0.0.1:3021/v1/job-imports/${jobImportId}`,
+    `http://127.0.0.1:3021/v1/job-imports/${jobImportId}/raw`,
+  ]);
+  expect(fetchImpl.mock.calls[0]![1]).toMatchObject({ method: "POST", body: JSON.stringify({ inputType: "pasted_text", content: "职位说明" }) });
+  for (const [, init] of fetchImpl.mock.calls) {
+    expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${sessionToken}`);
+  }
+});
+
+it("拒绝不符合岗位导入契约的成功响应", async () => {
+  const api = createApiClient({
+    apiInternalUrl: "http://127.0.0.1:3021",
+    devAuthSharedSecret: "secret",
+    fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ imports: [{ unknown: true }] }), { status: 200 })),
+  });
+
+  await expect(api.listJobImports(sessionToken)).rejects.toMatchObject({ kind: "invalid_response" });
 });

@@ -54,6 +54,20 @@ export function WorkbenchHomeView({ home }: WorkbenchHomeViewProps) {
           <p className="workbench-ledger-note">在资料建立前，Copilot 不会生成岗位推荐、启动求职代理或创建投递记录。</p>
         )}
       </section>
+
+      <section aria-labelledby="job-import-entry-title" className="workbench-ledger workbench-job-import-entry">
+        <div className="workbench-ledger-heading">
+          <p>岗位机会 · 主动导入</p>
+          <h2 id="job-import-entry-title">已有岗位描述？</h2>
+        </div>
+        <div className="workbench-ledger-row">
+          <div>
+            <h3>导入一条岗位机会</h3>
+            <p>粘贴岗位描述或上传 Markdown 文件，系统会保留原始证据并规范化可查看的岗位信息。</p>
+          </div>
+          <Link className="workbench-ledger-link workbench-touch-target" href="/jobs/import">导入岗位</Link>
+        </div>
+      </section>
     </main>
   );
 }

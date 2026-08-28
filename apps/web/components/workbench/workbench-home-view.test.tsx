@@ -36,3 +36,13 @@ it("explains that pending facts cannot yet affect recommendations or materials",
   expect(screen.queryByText("职业资料尚未建立")).not.toBeInTheDocument();
   expect(screen.queryByText("当前账号还没有可供推荐、核对或投递的职业资料。所有计数均来自你的当前记录。")).not.toBeInTheDocument();
 });
+
+it("adds a visible job-import entry without enabling the recommendation surface", () => {
+  render(<WorkbenchHomeView home={{
+    account: { userId: "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3" },
+    summary: { recommendations: 0, pendingFacts: 0, runningAgentRuns: 0, applications: 0 },
+  }} />);
+
+  expect(screen.getByRole("link", { name: "导入岗位" })).toHaveAttribute("href", "/jobs/import");
+  expect(screen.queryByRole("link", { name: "查看推荐" })).not.toBeInTheDocument();
+});

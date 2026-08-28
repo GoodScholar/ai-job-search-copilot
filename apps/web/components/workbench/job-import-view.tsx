@@ -1,0 +1,142 @@
+"use client";
+
+import { JobImportDetailSchema, type JobImportDetail, type JobImportList, type JobImportStatus } from "@job-copilot/contracts/job-imports";
+import { useCallback, useEffect, useState, useTransition, type FormEvent } from "react";
+import { createJobImportAction, type JobImportActionState } from "@/app/(workbench)/jobs/import/actions";
+
+type JobImportSummary = JobImportList["imports"][number];
+type JobImportViewProps = { initialImports: JobImportSummary[] };
+type InputMode = "paste" | "upload";
+
+const initialActionState: JobImportActionState = { ok: false, code: "", message: "" };
+const terminalStatuses = new Set<JobImportStatus>(["completed", "failed"]);
+const statusText: Record<JobImportStatus, string> = { imported: "已导入", normalizing: "规范化中", completed: "导入完成", failed: "导入失败" };
+const failureText: Record<string, string> = {
+  JOB_IMPORT_CONTENT_INVALID: "岗位描述不能为空且不能超过 512 KiB。",
+  JOB_IMPORT_OBJECT_STORAGE_FAILED: "岗位正文暂时无法读取，请稍后重试。",
+  JOB_IMPORT_QUEUE_UNAVAILABLE: "岗位导入任务暂时不可用，请稍后重试。",
+  JOB_IMPORT_CONTENT_READ_FAILED: "岗位正文暂时无法读取，请稍后重试。",
+  JOB_IMPORT_CHECKSUM_MISMATCH: "岗位正文校验未通过，请重新导入。",
+  JOB_NORMALIZER_OUTPUT_INVALID: "岗位信息暂时无法规范化，请稍后重试。",
+  JOB_IMPORT_PERSIST_FAILED: "岗位信息暂时无法保存，请稍后重试。",
+};
+
+function asSummary(detail: JobImportDetail): JobImportSummary {
+  return { importId: detail.importId, inputType: detail.inputType, originalFilename: detail.originalFilename, status: detail.status, failureCode: detail.failureCode, createdAt: detail.createdAt, updatedAt: detail.updatedAt };
+}
+function insertRecent(previous: JobImportSummary[], next: JobImportSummary): JobImportSummary[] {
+  return [next, ...previous.filter((item) => item.importId !== next.importId)].slice(0, 20);
+}
+function failureMessage(code: string | null | undefined): string | null {
+  return code ? failureText[code] ?? "岗位导入暂时不可用，请稍后重试。" : null;
+}
+
+export function JobImportView({ initialImports }: JobImportViewProps) {
+  const [mode, setMode] = useState<InputMode>("paste");
+  const [content, setContent] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [recentImports, setRecentImports] = useState(initialImports);
+  const [activeImport, setActiveImport] = useState<JobImportSummary | null>(initialImports[0] ?? null);
+  const [detail, setDetail] = useState<JobImportDetail | null>(null);
+  const [rawEvidence, setRawEvidence] = useState<string | null>(null);
+  const [actionState, setActionState] = useState<JobImportActionState>(initialActionState);
+  const [pollingMessage, setPollingMessage] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
+  const activeImportId = activeImport?.importId;
+  const detailImportId = detail?.importId;
+  const detailStatus = detail?.status;
+  const selectImport = useCallback((next: JobImportSummary) => {
+    setActiveImport(next); setDetail(null); setRawEvidence(null); setPollingMessage(null);
+  }, []);
+
+  useEffect(() => {
+    if (!activeImportId) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const response = await fetch(`/api/job-imports/${activeImportId}`, { signal: AbortSignal.timeout(10_000) });
+        if (!response.ok) throw new Error("无法读取岗位导入");
+        const parsed = JobImportDetailSchema.safeParse(await response.json());
+        if (!parsed.success) throw new Error("无效岗位导入响应");
+        if (cancelled) return;
+        setDetail(parsed.data);
+        setRecentImports((previous) => insertRecent(previous, asSummary(parsed.data)));
+        setActiveImport(asSummary(parsed.data));
+        setPollingMessage(null);
+        if (!terminalStatuses.has(parsed.data.status)) timer = setTimeout(poll, 1_000);
+      } catch {
+        if (cancelled) return;
+        setPollingMessage("暂时无法读取导入状态，请稍后重试。");
+        timer = setTimeout(poll, 1_000);
+      }
+    };
+    void poll();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [activeImportId]);
+
+  useEffect(() => {
+    if (!detailImportId || !detailStatus || !terminalStatuses.has(detailStatus)) return;
+    let cancelled = false;
+    void fetch(`/api/job-imports/${detailImportId}/raw`, { signal: AbortSignal.timeout(10_000) })
+      .then((response) => response.ok && response.headers.get("content-type")?.startsWith("text/plain") ? response.text() : Promise.reject(new Error("raw unavailable")))
+      .then((raw) => { if (!cancelled) setRawEvidence(raw); })
+      .catch(() => { if (!cancelled) setRawEvidence(null); });
+    return () => { cancelled = true; };
+  }, [detailImportId, detailStatus]);
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formData = new FormData();
+    if (mode === "upload" && file) formData.set("file", file); else formData.set("content", content);
+    startTransition(async () => {
+      const result = await createJobImportAction(initialActionState, formData);
+      setActionState(result);
+      if (!result.ok) return;
+      const summary: JobImportSummary = { importId: result.import.importId, inputType: result.import.inputType, originalFilename: result.import.originalFilename, status: result.import.status, failureCode: result.import.failureCode, createdAt: result.import.createdAt, updatedAt: result.import.updatedAt };
+      setRecentImports((previous) => insertRecent(previous, summary));
+      selectImport(summary);
+      setContent(""); setFile(null);
+    });
+  }
+
+  const opportunity = detail?.opportunity;
+  const status = detail?.status ?? activeImport?.status;
+  const message = actionState.ok && actionState.import.reused ? "已复用已有岗位导入记录。"
+    : !actionState.ok && actionState.message ? actionState.message
+    : pollingMessage ?? (status ? statusText[status] : "已导入岗位后会显示处理状态。");
+
+  return (
+    <main className="container workbench-main job-import-workbench">
+      <section aria-labelledby="job-import-title" className="workbench-intro">
+        <p className="workbench-kicker">岗位机会 · 主动导入</p><h1 id="job-import-title">导入岗位</h1>
+        <p>提交岗位描述或 Markdown 文件后，系统会保留原始证据，并将可确认的信息规范化为岗位机会。</p>
+      </section>
+      <section aria-labelledby="job-import-form-title" className="job-import-panel">
+        <h2 id="job-import-form-title">添加岗位内容</h2>
+        <div aria-label="导入方式" className="job-import-tabs" role="tablist">
+          <button aria-controls="paste-panel" aria-selected={mode === "paste"} className="workbench-touch-target" id="paste-tab" onClick={() => setMode("paste")} role="tab" type="button">粘贴岗位描述</button>
+          <button aria-controls="upload-panel" aria-selected={mode === "upload"} className="workbench-touch-target" id="upload-tab" onClick={() => setMode("upload")} role="tab" type="button">上传 Markdown</button>
+        </div>
+        <form onSubmit={submit}>
+          {mode === "paste" ? <div aria-labelledby="paste-tab" id="paste-panel" role="tabpanel"><label htmlFor="job-description">岗位描述</label><textarea id="job-description" onChange={(event) => setContent(event.target.value)} placeholder="粘贴你已查看的岗位描述" required value={content} /></div>
+            : <div aria-labelledby="upload-tab" id="upload-panel" role="tabpanel"><label htmlFor="job-markdown">上传 Markdown 岗位文件</label><input accept=".md,text/markdown" id="job-markdown" onChange={(event) => setFile(event.currentTarget.files?.[0] ?? null)} type="file" /><p>仅支持 UTF-8 Markdown，文件最大 512 KiB。</p></div>}
+          <button className="workbench-touch-target job-import-submit" disabled={isPending || (mode === "upload" && !file)} type="submit">{isPending ? "正在导入" : "导入岗位"}</button>
+        </form>
+        <p aria-live="polite" className="job-import-live" role="status">{message}</p>
+        {pollingMessage && actionState.ok === false && actionState.message && <p>{pollingMessage}</p>}
+      </section>
+      <div className="job-import-columns">
+        <section aria-labelledby="recent-job-imports-title" className="job-import-panel"><h2 id="recent-job-imports-title">最近导入</h2>
+          {recentImports.length === 0 ? <p>尚无岗位导入记录。</p> : <ol className="job-import-recent-list">{recentImports.map((item) => <li key={item.importId}><button aria-pressed={activeImport?.importId === item.importId} className="workbench-touch-target" onClick={() => selectImport(item)} type="button"><span>{item.originalFilename ?? "粘贴的岗位描述"}</span><span>{statusText[item.status]}</span></button></li>)}</ol>}
+        </section>
+        <section aria-labelledby="opportunity-title" className="job-import-panel"><h2 id="opportunity-title">规范化岗位机会</h2>
+          <dl className="job-import-opportunity"><div><dt>公司</dt><dd>{opportunity?.company ?? "未知"}</dd></div><div><dt>职位</dt><dd>{opportunity?.title ?? "未知"}</dd></div><div><dt>地点</dt><dd>{opportunity?.location ?? "未知"}</dd></div><div><dt>截止日期</dt><dd>{opportunity?.deadline ? new Date(opportunity.deadline).toLocaleDateString("zh-CN") : "未知"}</dd></div></dl>
+          {status === "failed" && <p className="job-import-failure">{failureMessage(detail?.failureCode ?? activeImport?.failureCode)}</p>}
+          {opportunity?.description && <p className="job-import-description">{opportunity.description}</p>}
+        </section>
+      </div>
+      {detail && <section aria-labelledby="raw-evidence-title" className="job-import-panel"><h2 id="raw-evidence-title">原始证据</h2><p>原文仅供核对，不会被执行或转换为网页内容。</p>{rawEvidence === null ? <p>原始证据暂时无法读取，请稍后重试。</p> : <pre>{rawEvidence}</pre>}</section>}
+    </main>
+  );
+}

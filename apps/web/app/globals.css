@@ -946,6 +946,35 @@ body {
   text-decoration: underline;
 }
 
+.workbench-job-import-entry { margin-top: 1.5rem; }
+.job-import-workbench { display: grid; gap: 1.5rem; }
+.job-import-panel { background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--shadow-paper); padding: clamp(1.25rem, 4vw, 2rem); }
+.job-import-panel h2 { font-size: 1.35rem; letter-spacing: -0.025em; margin: 0 0 1rem; }
+.job-import-panel label, .job-import-panel p { color: var(--muted); line-height: 1.6; }
+.job-import-panel label { display: block; font-size: 0.9rem; font-weight: 700; margin-bottom: 0.5rem; }
+.job-import-tabs { border-bottom: 1px solid var(--rule); display: flex; gap: 0.5rem; margin-bottom: 1rem; }
+.job-import-tabs button, .job-import-recent-list button { appearance: none; background: transparent; border: 0; color: var(--muted); cursor: pointer; font: inherit; text-align: left; }
+.job-import-tabs button[aria-selected="true"], .job-import-recent-list button[aria-pressed="true"] { color: var(--emerald-strong); font-weight: 700; }
+.job-import-panel textarea, .job-import-panel input[type="file"] { background: var(--surface); border: 1px solid var(--rule); color: var(--ink); font: inherit; max-width: 100%; width: 100%; }
+.job-import-panel textarea { min-height: 12rem; padding: 0.75rem; resize: vertical; }
+.job-import-panel input[type="file"] { min-height: 2.75rem; padding: 0.4rem; }
+.job-import-submit { background: var(--emerald); border: 1px solid var(--emerald); color: var(--surface); cursor: pointer; font: inherit; font-weight: 700; margin-top: 1rem; padding-inline: 1rem; }
+.job-import-submit:disabled { cursor: not-allowed; opacity: 0.6; }
+.job-import-live { border-top: 1px solid var(--rule); font-weight: 700; margin: 1rem 0 0; padding-top: 1rem; }
+.job-import-columns { display: grid; gap: 1.5rem; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr); }
+.job-import-recent-list { list-style: none; margin: 0; padding: 0; }
+.job-import-recent-list li { border-top: 1px solid var(--rule); }
+.job-import-recent-list button { align-items: center; display: flex; justify-content: space-between; width: 100%; }
+.job-import-recent-list span:first-child { overflow-wrap: anywhere; }
+.job-import-recent-list span:last-child { font-size: 0.82rem; }
+.job-import-opportunity { display: grid; gap: 0; margin: 0; }
+.job-import-opportunity > div { border-top: 1px solid var(--rule); display: grid; gap: 1rem; grid-template-columns: 6rem minmax(0, 1fr); padding: 0.8rem 0; }
+.job-import-opportunity dt { color: var(--muted); }
+.job-import-opportunity dd { margin: 0; overflow-wrap: anywhere; }
+.job-import-description, .job-import-failure { border-top: 1px solid var(--rule); margin: 0; padding-top: 1rem; white-space: pre-wrap; }
+.job-import-failure { color: var(--amber-ink) !important; font-weight: 700; }
+.job-import-panel pre { background: var(--ground); border: 1px solid var(--rule); color: var(--ink); margin: 1rem 0 0; max-height: 32rem; overflow: auto; padding: 1rem; white-space: pre-wrap; word-break: break-word; }
+
 .workbench-error {
   border-block: 1px solid var(--rule);
   max-width: 42rem;
@@ -1031,6 +1060,10 @@ body {
 
   .workbench-ledger-status {
     margin-top: 0.25rem !important;
+  }
+
+  .job-import-columns {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

@@ -32,6 +32,16 @@ import {
   type JobTargetOverview,
   type ReviseJobTargetCommand,
 } from "@job-copilot/contracts/job-targets";
+import {
+  CreateJobImportCommandSchema,
+  CreateJobImportResponseSchema,
+  JobImportDetailSchema,
+  JobImportListSchema,
+  type CreateJobImportCommand,
+  type CreateJobImportResponse,
+  type JobImportDetail,
+  type JobImportList,
+} from "@job-copilot/contracts/job-imports";
 import { WorkbenchHomeSchema, type WorkbenchHome } from "@job-copilot/contracts/workbench";
 import { z } from "zod";
 
@@ -323,6 +333,59 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
         throw new ApiClientError("api", problem?.message ?? "无法解决职业事实冲突", response.status, problem ?? undefined);
       }
       return parseSuccess(response, ResolveCareerFactConflictResponseSchema);
+    },
+
+    async createJobImport(sessionToken: string, command: CreateJobImportCommand): Promise<CreateJobImportResponse & { reused: boolean }> {
+      const requestBody = CreateJobImportCommandSchema.parse(command);
+      const response = await request("/v1/job-imports", {
+        method: "POST",
+        headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" },
+        body: JSON.stringify(requestBody),
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法导入岗位", response.status, problem ?? undefined);
+      }
+      return { ...await parseSuccess(response, CreateJobImportResponseSchema), reused: response.status === 200 };
+    },
+
+    async listJobImports(sessionToken: string): Promise<JobImportList> {
+      const response = await request("/v1/job-imports", {
+        method: "GET",
+        headers: { authorization: `Bearer ${sessionToken}` },
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法读取岗位导入", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, JobImportListSchema);
+    },
+
+    async getJobImport(sessionToken: string, importId: string): Promise<JobImportDetail> {
+      const response = await request(`/v1/job-imports/${importId}`, {
+        method: "GET",
+        headers: { authorization: `Bearer ${sessionToken}` },
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法读取岗位导入", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, JobImportDetailSchema);
+    },
+
+    async getJobImportRaw(sessionToken: string, importId: string): Promise<string> {
+      const response = await request(`/v1/job-imports/${importId}/raw`, {
+        method: "GET",
+        headers: { authorization: `Bearer ${sessionToken}` },
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法读取岗位原文", response.status, problem ?? undefined);
+      }
+      if (!response.headers.get("content-type")?.startsWith("text/plain")) {
+        throw new ApiClientError("invalid_response", "API 返回了无效岗位原文", response.status);
+      }
+      return response.text();
     },
   };
 }
