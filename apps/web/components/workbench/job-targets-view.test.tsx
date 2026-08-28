@@ -59,14 +59,15 @@ it("prepopulates but never saves evidence-labelled candidate directions until th
 
   render(<JobTargetsView initialOverview={overview()} />);
 
+  expect(screen.getByRole("heading", { name: "候选岗位方向" })).toBeVisible();
   expect(screen.getAllByText("建议依据")).toHaveLength(3);
   expect(screen.getByText("AI 应用工程 证据")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "使用 AI 应用工程 建议" }));
-  expect(screen.getByLabelText("角色族")).toHaveValue("AI 应用工程");
+  expect(screen.getByLabelText("目标岗位方向")).toHaveValue("AI 应用工程");
   expect(fetchMock).not.toHaveBeenCalled();
 
-  await user.clear(screen.getByLabelText("角色族"));
-  await user.type(screen.getByLabelText("角色族"), "Agent 工程");
+  await user.clear(screen.getByLabelText("目标岗位方向"));
+  await user.type(screen.getByLabelText("目标岗位方向"), "Agent 工程");
   await user.type(screen.getByLabelText("资历级别"), "高级");
   await user.type(screen.getByLabelText("意向地点（用逗号分隔）"), "上海, 杭州");
   await user.selectOptions(screen.getByLabelText("工作方式"), ["hybrid", "remote"]);
@@ -107,8 +108,8 @@ it("revises and deactivates an existing target using the server-returned version
 
   render(<JobTargetsView initialOverview={overview([activeTarget(1)])} />);
   await user.click(screen.getByRole("button", { name: "修改 AI 应用工程" }));
-  await user.clear(screen.getByLabelText("角色族"));
-  await user.type(screen.getByLabelText("角色族"), "Agent 工程");
+  await user.clear(screen.getByLabelText("目标岗位方向"));
+  await user.type(screen.getByLabelText("目标岗位方向"), "Agent 工程");
   await user.click(screen.getByRole("button", { name: "保存修改" }));
   await waitFor(() => expect(fetchMock).toHaveBeenNthCalledWith(1, `/api/job-targets/${targetId}/revisions`, expect.objectContaining({ method: "POST" })));
   expect(JSON.parse(String(fetchMock.mock.calls[0]![1]?.body))).toMatchObject({ expectedVersion: 1, priority: "primary", constraints: { roleFamily: "Agent 工程" } });

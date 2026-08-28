@@ -41,4 +41,27 @@ describe("job target suggestions", () => {
   it("在没有当前可信画像事实时不编造建议", () => {
     expect(suggestJobTargetDirections([])).toEqual([]);
   });
+
+  it("为只有 React 和 TypeScript 可信证据的画像补足相邻候选岗位方向", () => {
+    const currentFacts = [
+      fact({ factType: "skill", factValue: { name: "React" } }),
+      fact({ factType: "skill", factValue: { name: "TypeScript" } }),
+    ];
+
+    const suggestions = suggestJobTargetDirections(currentFacts);
+
+    expect(suggestions.map(({ roleFamily }) => roleFamily)).toEqual([
+      "前端工程师", "全栈工程师", "AI 应用工程师",
+    ]);
+    expect(suggestions).toHaveLength(3);
+    expect(suggestions.slice(0, 2).every((suggestion) => !suggestion.rationale.includes("相邻方向"))).toBe(true);
+    expect(suggestions[2]?.rationale).toContain("相邻方向");
+    expect(suggestions[2]?.rationale).toContain("请你确认");
+    for (const suggestion of suggestions) {
+      expect(suggestion.evidence).not.toHaveLength(0);
+      expect(suggestion.evidence).toEqual(expect.arrayContaining([
+        expect.objectContaining({ factId, revisionId }),
+      ]));
+    }
+  });
 });

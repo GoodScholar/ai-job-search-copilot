@@ -55,13 +55,20 @@ function factText(fact: ProfileFact): string {
 
 /** 基于当前可信画像事实生成只读的、可追溯的方向建议。 */
 export function suggestJobTargetDirections(facts: ProfileFact[]): JobTargetSuggestion[] {
-  return catalog.map((entry, index) => {
+  if (!facts.length) return [];
+
+  const scored = catalog.map((entry, index) => {
     const evidence = facts.filter((fact) => entry.keywords.some((keyword) => factText(fact).includes(keyword)));
     const score = evidence.reduce((total, fact) => total + entry.keywords.filter((keyword) => factText(fact).includes(keyword)).length, 0);
     return { entry, index, score, evidence };
-  }).filter(({ evidence }) => evidence.length > 0)
-    .sort((left, right) => right.score - left.score || left.index - right.index)
-    .map(({ entry, evidence }) => ({
+  });
+  const directMatches = scored.filter(({ evidence }) => evidence.length > 0)
+    .sort((left, right) => right.score - left.score || left.index - right.index);
+  const adjacentDirections = scored.filter(({ evidence }) => !evidence.length)
+    .slice(0, Math.max(0, 3 - directMatches.length));
+
+  return [
+    ...directMatches.map(({ entry, evidence }) => ({
       suggestionId: entry.id,
       roleFamily: entry.roleFamily,
       rationale: `当前可信画像事实显示你具备与${entry.roleFamily}相关的经验和技能。`,
@@ -70,7 +77,18 @@ export function suggestJobTargetDirections(facts: ProfileFact[]): JobTargetSugge
         revisionId: fact.revisionId,
         label: factLabel(fact),
       })),
-    }));
+    })),
+    ...adjacentDirections.map(({ entry }) => ({
+      suggestionId: entry.id,
+      roleFamily: entry.roleFamily,
+      rationale: `当前可信画像事实尚未直接证明你符合${entry.roleFamily}；这是基于现有技术背景给出的相邻方向，请你确认。`,
+      evidence: facts.map((fact) => ({
+        factId: fact.factId,
+        revisionId: fact.revisionId,
+        label: factLabel(fact),
+      })),
+    })),
+  ];
 }
 
 type TargetDatabase = Pick<Database, "insert" | "select" | "update">;

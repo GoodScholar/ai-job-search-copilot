@@ -46,11 +46,12 @@ async function completeConstraints(page: Page): Promise<void> {
 test("求职目标可由可信画像建议确认、持久化、并发提示并停用", async ({ page, request }, testInfo) => {
   const token = await signInSeededAccount(page, request, testInfo.project.name);
   await expect(page.getByRole("heading", { name: "确认你的求职目标" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "候选岗位方向" })).toBeVisible();
   await expect(page.getByRole("link", { name: "画像" })).toHaveAttribute("aria-current", "page");
   await expect(page.locator(".job-target-suggestion-list strong")).toHaveCount(4);
 
   await page.getByRole("button", { name: "使用 AI 应用工程师 建议" }).click();
-  await expect(page.getByLabel("角色族")).toHaveValue("AI 应用工程师");
+  await expect(page.getByLabel("目标岗位方向")).toHaveValue("AI 应用工程师");
   await completeConstraints(page);
   await page.getByRole("button", { name: "保存主目标" }).click();
   await expect(page.getByRole("status")).toHaveText("求职目标已保存。");
