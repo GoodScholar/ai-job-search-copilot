@@ -64,9 +64,13 @@ describe("SecureJobPageFetcher", () => {
           response.writeHead(200, { "content-type": "text/html" });
           response.end("<main><h1>Account Executive</h1><p>Company: Example Corp</p><h2>Responsibilities</h2><p>Own the customer relationship and deliver revenue targets.</p><h2>Qualifications</h2><p>5 years of sales experience.</p></main>");
           return;
+        case "/minimal-job":
+          response.writeHead(200, { "content-type": "text/html" });
+          response.end("<main><h1>URL 高级前端工程师</h1><p>公司：URL 示例科技</p><p>地点：上海</p></main>");
+          return;
         case "/company-about":
           response.writeHead(200, { "content-type": "text/html" });
-          response.end("<main><h1>About Example Corp</h1><p>Company: Example Corp</p><h2>Our mission</h2><p>We build products for global teams.</p><p>Our team brings years of experience.</p></main>");
+          response.end("<main><h1>About Example Corp</h1><h2>Our mission</h2><p>Example Corp builds collaboration tools for global teams.</p><p>Our platform helps teams work together.</p></main>");
           return;
         case "/two-step-redirect":
           response.writeHead(302, { location: `http://${request.headers.host}/job` }).end();
@@ -180,7 +184,12 @@ describe("SecureJobPageFetcher", () => {
       .resolves.toMatchObject({ pageClassification: "job" });
   });
 
-  it("拒绝缺少岗位职责语义的公司介绍页", async () => {
+  it("接受含公司和地点上下文的最简可见岗位页", async () => {
+    await expect(new SecureJobPageFetcher({ appEnv: "test", testOrigin: origin }).fetch({ url: `${origin}/minimal-job` }))
+      .resolves.toMatchObject({ pageClassification: "job" });
+  });
+
+  it("拒绝缺少岗位级上下文的公司介绍页", async () => {
     await expect(new SecureJobPageFetcher({ appEnv: "test", testOrigin: origin }).fetch({ url: `${origin}/company-about` }))
       .rejects.toMatchObject({ code: "JOB_PAGE_UNRECOGNIZED" } satisfies Pick<JobPageFetchError, "code">);
   });

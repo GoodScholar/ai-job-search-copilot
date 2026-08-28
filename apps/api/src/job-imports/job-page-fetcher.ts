@@ -227,9 +227,8 @@ function extractJobPage(rawHtml: string, finalUrl: URL): { visibleText: string; 
     /(经验|experience)/iu,
     /(职责|responsibilit|任职要求|qualif|负责)/iu,
   ];
-  const hasRoleDetails = /(职责|responsibilit|任职要求|qualif|负责)/iu.test(visibleText);
   const jobContextCount = jobContextSignals.filter((signal) => signal.test(visibleText)).length;
-  if (!title || !hasRoleDetails || jobContextCount < 2) {
+  if (!title || jobContextCount < 2) {
     throw new JobPageFetchError("JOB_PAGE_UNRECOGNIZED");
   }
   let canonicalUrl = finalUrl.toString();
