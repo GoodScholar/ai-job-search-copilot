@@ -220,9 +220,16 @@ function extractJobPage(rawHtml: string, finalUrl: URL): { visibleText: string; 
   if ((h1Texts.length === 0 && headingCount >= 2) || (/(?:engineering\s+jobs|open\s+positions|职位列表|招聘岗位)/iu.test(title ?? "") && h2Count >= 2)) {
     throw new JobPageFetchError("JOB_PAGE_LISTING");
   }
-  const hasJobSignal = /(职位|岗位|招聘|工程师|engineer|developer|manager|designer)/iu.test(visibleText);
-  const hasJobContext = /(公司|company|地点|location|职责|responsibilit|薪资|salary|经验|experience)/iu.test(visibleText);
-  if (!title || !hasJobSignal || !hasJobContext) {
+  const jobContextSignals = [
+    /(公司|company)/iu,
+    /(地点|location)/iu,
+    /(薪资|salary)/iu,
+    /(经验|experience)/iu,
+    /(职责|responsibilit|任职要求|qualif|负责)/iu,
+  ];
+  const hasRoleDetails = /(职责|responsibilit|任职要求|qualif|负责)/iu.test(visibleText);
+  const jobContextCount = jobContextSignals.filter((signal) => signal.test(visibleText)).length;
+  if (!title || !hasRoleDetails || jobContextCount < 2) {
     throw new JobPageFetchError("JOB_PAGE_UNRECOGNIZED");
   }
   let canonicalUrl = finalUrl.toString();

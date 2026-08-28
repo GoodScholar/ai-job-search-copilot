@@ -60,6 +60,14 @@ describe("SecureJobPageFetcher", () => {
           response.writeHead(200, { "content-type": "text/html" });
           response.end("<main><h1>Senior Product Engineer</h1><h2>Responsibilities</h2><p>Build products with our team.</p><h2>Qualifications</h2><p>5 years experience.</p><p>Company: Example Corp</p><p>Sign in to apply.</p></main>");
           return;
+        case "/account-executive":
+          response.writeHead(200, { "content-type": "text/html" });
+          response.end("<main><h1>Account Executive</h1><p>Company: Example Corp</p><h2>Responsibilities</h2><p>Own the customer relationship and deliver revenue targets.</p><h2>Qualifications</h2><p>5 years of sales experience.</p></main>");
+          return;
+        case "/company-about":
+          response.writeHead(200, { "content-type": "text/html" });
+          response.end("<main><h1>About Example Corp</h1><p>Company: Example Corp</p><h2>Our mission</h2><p>We build products for global teams.</p><p>Our team brings years of experience.</p></main>");
+          return;
         case "/two-step-redirect":
           response.writeHead(302, { location: `http://${request.headers.host}/job` }).end();
           return;
@@ -69,7 +77,7 @@ describe("SecureJobPageFetcher", () => {
           return;
         case "/foreign-canonical":
           response.writeHead(200, { "content-type": "text/html" });
-          response.end("<html><head><link rel=\"canonical\" href=\"https://attacker.example/job\"></head><body><h1>高级前端工程师</h1><p>公司：示例科技</p></body></html>");
+          response.end("<html><head><link rel=\"canonical\" href=\"https://attacker.example/job\"></head><body><h1>高级前端工程师</h1><p>公司：示例科技</p><p>负责求职工作台。</p></body></html>");
           return;
         case "/bad-redirect": response.writeHead(302, { location: "file:///etc/passwd" }).end(); return;
         case "/private-redirect": response.writeHead(302, { location: "http://localhost:39333/job" }).end(); return;
@@ -165,6 +173,16 @@ describe("SecureJobPageFetcher", () => {
   it("正常岗位中的 Sign in to apply 与职责标题不会被误判", async () => {
     await expect(new SecureJobPageFetcher({ appEnv: "test", testOrigin: origin }).fetch({ url: `${origin}/job-sign-in-to-apply` }))
       .resolves.toMatchObject({ pageClassification: "job" });
+  });
+
+  it("接受含有职位上下文的通用职位标题", async () => {
+    await expect(new SecureJobPageFetcher({ appEnv: "test", testOrigin: origin }).fetch({ url: `${origin}/account-executive` }))
+      .resolves.toMatchObject({ pageClassification: "job" });
+  });
+
+  it("拒绝缺少岗位职责语义的公司介绍页", async () => {
+    await expect(new SecureJobPageFetcher({ appEnv: "test", testOrigin: origin }).fetch({ url: `${origin}/company-about` }))
+      .rejects.toMatchObject({ code: "JOB_PAGE_UNRECOGNIZED" } satisfies Pick<JobPageFetchError, "code">);
   });
 
   it("只在 APP_ENV=test 且精确配置 origin 时允许本地夹具目标", async () => {
