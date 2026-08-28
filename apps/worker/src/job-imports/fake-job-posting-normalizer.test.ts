@@ -49,18 +49,24 @@ describe("FakeJobPostingNormalizer", () => {
     });
   });
 
-  it("原样复制显式描述章节的内容", async () => {
-    const output = await new FakeJobPostingNormalizer().normalize(
-      "## 职位描述\n  保留缩进和尾随空格  \n\n最后一行  \n## 任职要求\n未知内容",
+  it("将无法解析或无法 round-trip 的显式日期保留为 nullable", async () => {
+    const output = JobNormalizerOutputSchema.parse(
+      await new FakeJobPostingNormalizer().normalize("发布时间：2026-99-99T09:00:00.000Z\n截止日期：2026-08-01T09:00:00Z"),
     );
 
-    expect(output).toMatchObject({
-      description: "  保留缩进和尾随空格  \n\n最后一行  ",
-    });
+    expect(output).toMatchObject({ postedAt: null, deadline: null });
   });
 
-  it("仅将明确的 Fake 无效夹具返回为无效输出", async () => {
-    await expect(new FakeJobPostingNormalizer().normalize(
+  it("默认把 failure fixture 当作普通未知正文", async () => {
+    const output = JobNormalizerOutputSchema.parse(await new FakeJobPostingNormalizer().normalize(
+      "<!-- job-copilot:fake-normalizer-invalid -->",
+    ));
+
+    expect(output).toMatchObject({ title: null, company: null, description: null });
+  });
+
+  it("仅在显式启用时将 failure fixture 返回为无效输出", async () => {
+    await expect(new FakeJobPostingNormalizer({ enableFailureFixture: true }).normalize(
       "<!-- job-copilot:fake-normalizer-invalid -->",
     )).resolves.toEqual({ invalid: "fake-fixture" });
   });

@@ -58,12 +58,26 @@ describe("authenticated workbench HTTP API", () => {
     },
   };
   const jobStoredObjects = new Map<string, Uint8Array>();
-  const jobQueue: JobImportQueue & { jobs: unknown[] } = {
+  const jobQueue: JobImportQueue & { jobs: unknown[]; failNext: boolean } = {
     jobs: [],
-    async enqueue(job) { this.jobs.push(job); },
+    failNext: false,
+    async enqueue(job) {
+      if (this.failNext) {
+        this.failNext = false;
+        throw new Error("job queue unavailable with private-job@example.test");
+      }
+      this.jobs.push(job);
+    },
   };
-  const jobContentStore: JobContentStore = {
-    async put({ objectKey, bytes }) { jobStoredObjects.set(objectKey, bytes); },
+  const jobContentStore: JobContentStore & { failNextPut: boolean } = {
+    failNextPut: false,
+    async put({ objectKey, bytes }) {
+      if (this.failNextPut) {
+        this.failNextPut = false;
+        throw new Error("job storage unavailable with private-job@example.test");
+      }
+      jobStoredObjects.set(objectKey, bytes);
+    },
     async get({ objectKey }) {
       const bytes = jobStoredObjects.get(objectKey);
       if (!bytes) throw new Error("job source not found");
@@ -712,6 +726,47 @@ describe("authenticated workbench HTTP API", () => {
     expect(invalid.json()).toMatchObject({ code: "INVALID_REQUEST", requestId: expect.any(String) });
     expect(anonymous.statusCode).toBe(401);
     expect(JSON.stringify(jobQueue.jobs)).not.toContain(source);
+    expect(JSON.stringify(await database.select({ metadata: auditEvents.metadata }).from(auditEvents))).not.toContain(source);
+    expect(normalizedLogText(capturedLogs)).not.toContain(source);
+  });
+
+  it("按 UTF-8 字节限制岗位正文，并将存储与队列故障映射为不泄漏正文的 503", async () => {
+    const session = await createSession(app, "job-import-runtime-failures");
+    const source = "# 私密岗位\nprivate-job@example.test";
+    const request = () => app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: "/v1/job-imports", headers: { ...bearer(session.sessionToken), "content-type": "application/json" },
+      payload: { inputType: "pasted_text", content: source },
+    });
+
+    capturedLogs.length = 0;
+    jobContentStore.failNextPut = true;
+    const storageFailure = await request();
+    jobQueue.failNext = true;
+    const queueFailure = await request();
+    const oversized = "😀".repeat(131_073);
+    const oversizedFailure = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: "/v1/job-imports", headers: { ...bearer(session.sessionToken), "content-type": "application/json" },
+      payload: { inputType: "pasted_text", content: oversized },
+    });
+
+    expect(storageFailure.statusCode).toBe(503);
+    expect(storageFailure.json()).toMatchObject({ code: "JOB_IMPORT_OBJECT_STORAGE_FAILED", requestId: expect.any(String) });
+    expect(queueFailure.statusCode).toBe(503);
+    expect(queueFailure.json()).toMatchObject({ code: "JOB_IMPORT_QUEUE_UNAVAILABLE", requestId: expect.any(String) });
+    expect(oversizedFailure.statusCode).toBe(400);
+    expect(oversizedFailure.json()).toMatchObject({ code: "JOB_IMPORT_CONTENT_INVALID", requestId: expect.any(String) });
+    const publicOutput = `${storageFailure.body}${queueFailure.body}${oversizedFailure.body}`;
+    expect(publicOutput).not.toContain(source);
+    expect(publicOutput).not.toContain("private-job@example.test");
+    expect(publicOutput).not.toContain(oversized);
+    const audit = JSON.stringify(await database.select({ metadata: auditEvents.metadata }).from(auditEvents));
+    const logs = normalizedLogText(capturedLogs);
+    expect(audit).not.toContain(source);
+    expect(audit).not.toContain(oversized);
+    expect(logs).not.toContain(source);
+    expect(logs).not.toContain(oversized);
+    expect(logs).not.toContain("job queue unavailable");
+    expect(logs).not.toContain("job storage unavailable");
   });
 
   it("publishes the protected contract and standard problem schema", async () => {
@@ -892,6 +947,14 @@ function normalizeLogValue(value: unknown, ancestors: Set<object>): unknown {
 
   const nextAncestors = new Set(ancestors);
   nextAncestors.add(value);
+  if ("raw" in value && "requestId" in value) {
+    const request = value as { id?: unknown; method?: unknown; url?: unknown; requestId?: unknown };
+    return { id: request.id, method: request.method, url: request.url, requestId: request.requestId };
+  }
+  if ("raw" in value) {
+    const reply = value as { statusCode?: unknown };
+    return { statusCode: reply.statusCode };
+  }
   if (value instanceof Error) {
     return {
       name: value.name,

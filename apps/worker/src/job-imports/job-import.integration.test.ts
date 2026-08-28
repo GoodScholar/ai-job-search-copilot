@@ -18,7 +18,9 @@ import {
 } from "@job-copilot/database";
 import { JOB_IMPORT_JOB_NAME, JOB_IMPORT_QUEUE } from "@job-copilot/contracts/job-imports";
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
-import { createJobImportProcessor, type JobContentStore } from "@job-copilot/domain/job-imports";
+import { createJobImportProcessor, createJobImportQueries, type JobContentStore } from "@job-copilot/domain/job-imports";
+import { BullmqJobImportQueue } from "../../../api/src/job-imports/bullmq-job-import-queue.js";
+import { MinioJobContentStore } from "../../../api/src/job-imports/minio-job-content-store.js";
 import { FakeJobPostingNormalizer } from "./fake-job-posting-normalizer.js";
 import { JobImportConsumer } from "./job-import-consumer.js";
 
@@ -156,7 +158,7 @@ describe("JobImportConsumer", () => {
   }
 
   it("处理只含 ID 的队列任务，将 normalizing 岗位导入完成并保持至少一次投递幂等", async () => {
-    const content = "# 高级前端工程师\n公司：示例科技\n地点：上海\n未知字段：保持 nullable";
+    const content = "# 高级前端工程师\r\n公司：示例科技\r\n地点：上海\r\n## 职位描述\r\n  第一段\r\n\r\n第二段  \r\n## 任职要求\r\n未知字段：保持 nullable";
     const item = await createNormalizingImport(content);
     await enqueue(item.importId);
     const queuedJob = await queue.getJob(item.importId);
@@ -167,7 +169,9 @@ describe("JobImportConsumer", () => {
     await waitFor(async () => (await database.select({ status: jobImports.status }).from(jobImports)).at(0)?.status === "completed");
     const [opportunity] = await database.select({ title: jobOpportunities.title, company: jobOpportunities.company, location: jobOpportunities.location, description: jobOpportunities.description })
       .from(jobOpportunities);
-    expect(opportunity).toEqual({ title: "高级前端工程师", company: "示例科技", location: "上海", description: null });
+    expect(opportunity).toEqual({ title: "高级前端工程师", company: "示例科技", location: "上海", description: "第一段\n\n第二段" });
+    await expect(createJobImportQueries({ db: database, contentStore: store }).getRawContent({ userId, importId: item.importId }))
+      .resolves.toEqual({ content, filename: null });
 
     await enqueue(item.importId);
     await waitFor(async () => (await queue.getJob(item.importId)) === undefined);
@@ -186,4 +190,38 @@ describe("JobImportConsumer", () => {
     expect(result).toEqual({ status: "failed", failureCode: "JOB_IMPORT_CONTENT_READ_FAILED" });
     expect(failingStore.reads).toBe(3);
   });
+
+  it("真实 BullMQ adapter 固定 jobId、重试次数且只序列化 ID", async () => {
+    const adapter = new BullmqJobImportQueue(redisUrl);
+    const importId = randomUUID();
+    await adapter.enqueue({ version: 1, importId, userId });
+    const job = await queue.getJob(importId);
+
+    expect(job?.id).toBe(importId);
+    expect(job?.opts.attempts).toBe(3);
+    expect(job?.data).toEqual({ version: 1, importId, userId });
+    await adapter.onModuleDestroy();
+  });
+
+  it("真实 MinIO adapter 读写删除岗位正文", async () => {
+    const adapter = new MinioJobContentStore(minio, minioBucket);
+    const objectKey = `accounts/${userId}/job-imports/${randomUUID()}/source.md`;
+    const bytes = new TextEncoder().encode("# 真实 MinIO adapter");
+    await adapter.put({ objectKey, bytes, mediaType: "text/markdown", importId: randomUUID() });
+    await expect(adapter.get({ objectKey })).resolves.toEqual(bytes);
+    await adapter.delete({ objectKey });
+    await expect(adapter.get({ objectKey })).rejects.toThrow();
+  });
+
+  it("生命周期 hook 可重复关闭 consumer，关闭后不会再处理队列任务", async () => {
+    const item = await createNormalizingImport("# 生命周期测试");
+    startConsumer(store);
+    await consumer!.onModuleDestroy();
+    await consumer!.onModuleDestroy();
+    await enqueue(item.importId);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    await expect(database.select({ status: jobImports.status }).from(jobImports)).resolves.toEqual([{ status: "normalizing" }]);
+  });
+
 });

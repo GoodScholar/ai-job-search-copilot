@@ -27,8 +27,10 @@ const labelPattern = /^\s*([^：:]+?)\s*[：:]\s*(.+?)\s*$/;
 export const FAKE_JOB_NORMALIZER_INVALID_FIXTURE = INVALID_FIXTURE;
 
 export class FakeJobPostingNormalizer {
+  constructor(private readonly options: { enableFailureFixture?: boolean } = {}) {}
+
   async normalize(content: string): Promise<unknown> {
-    if (content.trim() === INVALID_FIXTURE) return { invalid: "fake-fixture" };
+    if (this.options.enableFailureFixture && content.trim() === INVALID_FIXTURE) return { invalid: "fake-fixture" };
 
     const output = {
       normalizerVersion: "fake-job-normalizer-v1",
@@ -78,5 +80,7 @@ export class FakeJobPostingNormalizer {
 }
 
 function validIsoDateTime(value: string): string | null {
-  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u.test(value) ? value : null;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value)) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) || date.toISOString() !== value ? null : value;
 }
