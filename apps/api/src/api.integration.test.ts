@@ -780,7 +780,18 @@ describe("authenticated workbench HTTP API", () => {
     });
 
     expect(response.statusCode).toBe(202);
-    expect(response.json()).toMatchObject({ importId: expect.any(String), status: "normalizing", failureCode: null });
+    const body = response.json();
+    expect(body).toEqual({
+      importId: expect.any(String),
+      inputType: "pasted_text",
+      originalFilename: null,
+      status: "normalizing",
+      failureCode: null,
+      createdAt: expect.any(String),
+      updatedAt: expect.any(String),
+      detailUrl: expect.stringMatching(/^\/v1\/job-imports\//),
+    });
+    expect(JSON.stringify(body)).not.toContain(content);
   });
 
   it("publishes the protected contract and standard problem schema", async () => {

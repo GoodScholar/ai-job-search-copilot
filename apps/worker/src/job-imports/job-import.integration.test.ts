@@ -227,25 +227,33 @@ describe("JobImportConsumer", () => {
   });
 
   it("Nest ApplicationContext 接线并在 close 时自动关闭 JobImportConsumer", async () => {
-    const item = await createNormalizingImport("# Nest 生命周期测试");
     const originalEnvironment = {
       APP_ENV: process.env.APP_ENV, DATABASE_URL: process.env.DATABASE_URL, REDIS_URL: process.env.REDIS_URL,
       MINIO_ENDPOINT: process.env.MINIO_ENDPOINT, MINIO_ACCESS_KEY: process.env.MINIO_ACCESS_KEY,
       MINIO_SECRET_KEY: process.env.MINIO_SECRET_KEY, MINIO_BUCKET: process.env.MINIO_BUCKET,
     };
-    Object.assign(process.env, {
-      APP_ENV: "test", DATABASE_URL: postgres.getConnectionUri(), REDIS_URL: redisUrl,
-      MINIO_ENDPOINT: `http://${minioContainer.getHost()}:${minioContainer.getMappedPort(9000)}`,
-      MINIO_ACCESS_KEY: minioAccessKey, MINIO_SECRET_KEY: minioSecretKey, MINIO_BUCKET: minioBucket,
-    });
-    const context = await NestFactory.createApplicationContext(JobImportModule, { logger: false });
+    let context: Awaited<ReturnType<typeof NestFactory.createApplicationContext>> | undefined;
+    let closePromise: Promise<void> | undefined;
+    const closeContext = () => {
+      if (!context) return Promise.resolve();
+      closePromise ??= context.close();
+      return closePromise;
+    };
     try {
+      Object.assign(process.env, {
+        APP_ENV: "test", DATABASE_URL: postgres.getConnectionUri(), REDIS_URL: redisUrl,
+        MINIO_ENDPOINT: `http://${minioContainer.getHost()}:${minioContainer.getMappedPort(9000)}`,
+        MINIO_ACCESS_KEY: minioAccessKey, MINIO_SECRET_KEY: minioSecretKey, MINIO_BUCKET: minioBucket,
+      });
+      const item = await createNormalizingImport("# Nest 生命周期测试");
+      context = await NestFactory.createApplicationContext(JobImportModule, { logger: false });
       expect(context.get<JobImportConsumer>(JOB_IMPORT_CONSUMER)).toBeInstanceOf(JobImportConsumer);
-      await context.close();
+      await closeContext();
       await enqueue(item.importId);
       await new Promise((resolve) => setTimeout(resolve, 100));
       await expect(database.select({ status: jobImports.status }).from(jobImports)).resolves.toEqual([{ status: "normalizing" }]);
     } finally {
+      await closeContext();
       for (const [key, value] of Object.entries(originalEnvironment)) {
         if (value === undefined) delete process.env[key];
         else process.env[key] = value;
