@@ -37,6 +37,16 @@ async function listColumns(database: Database): Promise<Column[]> {
   return result as unknown as Column[];
 }
 
+async function listConstraintNames(database: Database): Promise<string[]> {
+  const result = await database.execute(sql`
+    select conname
+    from pg_constraint
+    order by conname
+  `);
+
+  return (result as unknown as Array<{ conname: string }>).map((row) => row.conname);
+}
+
 describe("database migrations", () => {
   let container: StartedPostgreSqlContainer;
   let migratedDatabase: Database;
@@ -510,5 +520,17 @@ describe("database migrations", () => {
       insert into job_target_revisions (id, user_id, target_id, version, priority, state, constraints)
       values ('1d8f3f2e-b1e1-4748-8f59-73153449e1aa', ${secondAccountId}, ${primaryTargetId}, 2, 'primary', 'active', ${constraintValue}::jsonb)
     `)).rejects.toMatchObject({ cause: { code: "23503" } });
+  });
+
+  it("migrates versioned account-owned job imports", async () => {
+    expect(await listPublicTables(migratedDatabase)).toEqual(expect.arrayContaining([
+      "job_imports", "job_opportunities", "job_source_postings", "job_source_posting_versions",
+    ]));
+    expect(await listConstraintNames(migratedDatabase)).toEqual(expect.arrayContaining([
+      "job_imports_user_content_unique",
+      "job_source_postings_user_identity_unique",
+      "job_source_posting_versions_posting_version_unique",
+      "job_opportunities_user_dedup_unique",
+    ]));
   });
 });

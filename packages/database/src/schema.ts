@@ -321,3 +321,90 @@ export const jobTargetRevisions = pgTable("job_target_revisions", {
   check("job_target_revisions_state_check", sql`${table.state} in ('active', 'inactive')`),
   check("job_target_revisions_constraints_object", sql`jsonb_typeof(${table.constraints}) = 'object'`),
 ]);
+
+export const jobImports = pgTable("job_imports", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  inputType: varchar("input_type", { length: 32 }).notNull(),
+  contentSha256: varchar("content_sha256", { length: 64 }).notNull(),
+  originalFilename: varchar("original_filename", { length: 255 }),
+  status: varchar("status", { length: 16 }).notNull().default("imported"),
+  failureCode: varchar("failure_code", { length: 64 }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_imports_user_content_unique").on(table.userId, table.contentSha256),
+  unique("job_imports_user_id_id_unique").on(table.userId, table.id),
+  check("job_imports_input_type_check", sql`${table.inputType} in ('pasted_text', 'markdown_upload')`),
+  check("job_imports_status_check", sql`${table.status} in ('imported', 'normalizing', 'completed', 'failed')`),
+  check("job_imports_content_sha256_format", sql`${table.contentSha256} ~ '^[0-9a-f]{64}$'`),
+  check("job_imports_filename_input_type_check", sql`(${table.inputType} = 'markdown_upload') = (${table.originalFilename} is not null)`),
+]);
+
+export const jobSourcePostings = pgTable("job_source_postings", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  sourceType: varchar("source_type", { length: 32 }).notNull(),
+  sourceIdentifier: varchar("source_identifier", { length: 512 }).notNull(),
+  sourceIdentity: jsonb("source_identity").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_source_postings_user_identity_unique").on(table.userId, table.sourceType, table.sourceIdentifier),
+  unique("job_source_postings_user_id_id_unique").on(table.userId, table.id),
+  check("job_source_postings_source_identity_object", sql`jsonb_typeof(${table.sourceIdentity}) = 'object'`),
+]);
+
+export const jobSourcePostingVersions = pgTable("job_source_posting_versions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  sourcePostingId: uuid("source_posting_id").notNull().references(() => jobSourcePostings.id),
+  version: integer("version").notNull(),
+  contentSha256: varchar("content_sha256", { length: 64 }).notNull(),
+  rawObjectReference: jsonb("raw_object_reference").notNull(),
+  retrievedAt: timestamp("retrieved_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_source_posting_versions_posting_version_unique").on(table.sourcePostingId, table.version),
+  unique("job_source_posting_versions_user_id_id_unique").on(table.userId, table.id),
+  foreignKey({
+    columns: [table.userId, table.sourcePostingId],
+    foreignColumns: [jobSourcePostings.userId, jobSourcePostings.id],
+    name: "job_source_posting_versions_owner_posting_fk",
+  }),
+  check("job_source_posting_versions_version_positive", sql`${table.version} >= 1`),
+  check("job_source_posting_versions_content_sha256_format", sql`${table.contentSha256} ~ '^[0-9a-f]{64}$'`),
+  check("job_source_posting_versions_raw_object_reference_object", sql`jsonb_typeof(${table.rawObjectReference}) = 'object'`),
+]);
+
+export const jobOpportunities = pgTable("job_opportunities", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  importId: uuid("import_id").notNull().references(() => jobImports.id),
+  sourcePostingVersionId: uuid("source_posting_version_id").notNull().references(() => jobSourcePostingVersions.id),
+  dedupKey: varchar("dedup_key", { length: 64 }).notNull(),
+  company: text("company"),
+  title: text("title"),
+  location: text("location"),
+  postedAt: timestamp("posted_at", { withTimezone: true }),
+  deadline: timestamp("deadline", { withTimezone: true }),
+  description: text("description"),
+  normalizedData: jsonb("normalized_data").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_opportunities_user_dedup_unique").on(table.userId, table.dedupKey),
+  unique("job_opportunities_user_id_id_unique").on(table.userId, table.id),
+  foreignKey({
+    columns: [table.userId, table.importId],
+    foreignColumns: [jobImports.userId, jobImports.id],
+    name: "job_opportunities_owner_import_fk",
+  }),
+  foreignKey({
+    columns: [table.userId, table.sourcePostingVersionId],
+    foreignColumns: [jobSourcePostingVersions.userId, jobSourcePostingVersions.id],
+    name: "job_opportunities_owner_posting_version_fk",
+  }),
+  check("job_opportunities_dedup_key_format", sql`${table.dedupKey} ~ '^[0-9a-f]{64}$'`),
+  check("job_opportunities_normalized_data_object", sql`jsonb_typeof(${table.normalizedData}) = 'object'`),
+]);
