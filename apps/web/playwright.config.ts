@@ -17,6 +17,7 @@ export default defineConfig({
   webServer: {
     command: "node scripts/local-runtime.mjs --test",
     cwd: repositoryRoot,
+    env: { E2E_JOB_NORMALIZER_DELAY_MS: "750" },
     reuseExistingServer: false,
     gracefulShutdown: { signal: "SIGTERM", timeout: 30_000 },
     stdout: "pipe",

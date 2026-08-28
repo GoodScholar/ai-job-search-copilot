@@ -86,7 +86,10 @@ class WorkerDatabase implements OnModuleDestroy {
           db,
           auditTrail: createAuditTrail({ db, clock: () => new Date() }),
           contentStore,
-          normalizer: new FakeJobPostingNormalizer({ enableFailureFixture: process.env.APP_ENV === "test" }),
+          normalizer: new FakeJobPostingNormalizer({
+            enableFailureFixture: process.env.APP_ENV === "test",
+            testDelayMs: process.env.APP_ENV === "test" ? Number(process.env.E2E_JOB_NORMALIZER_DELAY_MS ?? "0") : 0,
+          }),
           id: randomUUID,
           clock: () => new Date(),
         });

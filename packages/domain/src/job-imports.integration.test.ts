@@ -141,7 +141,7 @@ describe("job imports", () => {
     })).rejects.toMatchObject({ code: "JOB_IMPORT_QUEUE_UNAVAILABLE" });
     const queued = await createJobImportQueries({ db: database, contentStore: store }).list({ userId });
     const retryable = queued.imports.find((entry) => !before.imports.some((previous) => previous.importId === entry.importId));
-    expect(retryable).toMatchObject({ status: "normalizing", failureCode: null });
+    expect(retryable).toMatchObject({ status: "imported", failureCode: null });
     expect(JSON.stringify(await createAuditTrail({ db: database, clock: () => now }).query({ userId }))).not.toContain("队列异常的正文");
   });
 
@@ -175,7 +175,7 @@ describe("job imports", () => {
     queue.releaseFirst.resolve();
     await expect(first).rejects.toMatchObject({ code: "JOB_IMPORT_QUEUE_UNAVAILABLE" });
     await expect(createJobImportQueries({ db: database, contentStore: store }).get({ userId, importId: second.importId }))
-      .resolves.toMatchObject({ status: "normalizing", failureCode: null });
+      .resolves.toMatchObject({ status: "imported", failureCode: null });
   });
 
   it("不会在 enqueue 内 worker 已终态失败后回写 normalizing", async () => {

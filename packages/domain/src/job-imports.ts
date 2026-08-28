@@ -163,7 +163,7 @@ export function createJobImportCommands(deps: CommandDependencies): {
         if (existing) {
           reused = true;
           if (existing.status === "failed" || existing.status === "imported") {
-            const [retried] = await transaction.update(jobImports).set({ status: "normalizing", failureCode: null, updatedAt: now }).where(and(
+            const [retried] = await transaction.update(jobImports).set({ status: "imported", failureCode: null, updatedAt: now }).where(and(
               eq(jobImports.userId, input.userId), eq(jobImports.id, existing.id), inArray(jobImports.status, ["failed", "imported"]),
             )).returning({
               id: jobImports.id, inputType: jobImports.inputType, originalFilename: jobImports.originalFilename,
@@ -178,7 +178,7 @@ export function createJobImportCommands(deps: CommandDependencies): {
         const [created] = await transaction.insert(jobImports).values({
           id: importId, userId: input.userId, inputType: command.inputType, contentSha256: checksum,
           originalFilename: command.inputType === "markdown_upload" ? command.originalFilename : null,
-          status: "normalizing", createdAt: now, updatedAt: now,
+          status: "imported", createdAt: now, updatedAt: now,
         }).returning({
           id: jobImports.id, inputType: jobImports.inputType, originalFilename: jobImports.originalFilename,
           status: jobImports.status, failureCode: jobImports.failureCode, createdAt: jobImports.createdAt, updatedAt: jobImports.updatedAt,
@@ -230,6 +230,12 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
       }).from(jobImports).where(and(eq(jobImports.userId, parsedJob.userId), eq(jobImports.id, parsedJob.importId)));
       if (!record || record.status === "completed" || record.status === "failed") return "stale";
       const inputType = record.inputType as "pasted_text" | "markdown_upload";
+      if (record.status === "imported") {
+        const [claimed] = await deps.db.update(jobImports).set({ status: "normalizing", failureCode: null, updatedAt: deps.clock() }).where(and(
+          eq(jobImports.userId, parsedJob.userId), eq(jobImports.id, parsedJob.importId), eq(jobImports.status, "imported"),
+        )).returning({ id: jobImports.id });
+        if (!claimed) return "stale";
+      }
       let content: string;
       try {
         const bytes = await deps.contentStore.get({ objectKey: sourceObjectKey(parsedJob.userId, parsedJob.importId) });

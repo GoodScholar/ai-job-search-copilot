@@ -708,11 +708,11 @@ describe("authenticated workbench HTTP API", () => {
     });
 
     expect(created.statusCode).toBe(202);
-    expect(created.json()).toMatchObject({ importId: expect.any(String), status: "normalizing", failureCode: null });
+    expect(created.json()).toMatchObject({ importId: expect.any(String), status: "imported", failureCode: null });
     expect(repeated.statusCode).toBe(200);
-    expect(repeated.json()).toMatchObject({ importId, status: "normalizing" });
+    expect(repeated.json()).toMatchObject({ importId, status: "imported" });
     expect(listed.statusCode).toBe(200);
-    expect(listed.json()).toMatchObject({ imports: [expect.objectContaining({ importId, status: "normalizing", failureCode: null })] });
+    expect(listed.json()).toMatchObject({ imports: [expect.objectContaining({ importId, status: "imported", failureCode: null })] });
     expect(detail.statusCode).toBe(200);
     expect(detail.json()).toMatchObject({ importId, opportunity: null });
     expect(raw.statusCode).toBe(200);
@@ -785,7 +785,7 @@ describe("authenticated workbench HTTP API", () => {
       importId: expect.any(String),
       inputType: "pasted_text",
       originalFilename: null,
-      status: "normalizing",
+      status: "imported",
       failureCode: null,
       createdAt: expect.any(String),
       updatedAt: expect.any(String),

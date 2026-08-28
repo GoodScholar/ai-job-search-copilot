@@ -27,10 +27,11 @@ const labelPattern = /^\s*([^：:]+?)\s*[：:]\s*(.+?)\s*$/;
 export const FAKE_JOB_NORMALIZER_INVALID_FIXTURE = INVALID_FIXTURE;
 
 export class FakeJobPostingNormalizer {
-  constructor(private readonly options: { enableFailureFixture?: boolean } = {}) {}
+  constructor(private readonly options: { enableFailureFixture?: boolean; testDelayMs?: number } = {}) {}
 
   async normalize(content: string): Promise<unknown> {
     if (this.options.enableFailureFixture && content.trim() === INVALID_FIXTURE) return { invalid: "fake-fixture" };
+    if (this.options.testDelayMs) await new Promise((resolve) => setTimeout(resolve, this.options.testDelayMs));
 
     const output = {
       normalizerVersion: "fake-job-normalizer-v1",
