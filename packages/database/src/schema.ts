@@ -330,6 +330,8 @@ export const jobImports = pgTable("job_imports", {
   originalFilename: varchar("original_filename", { length: 255 }),
   status: varchar("status", { length: 16 }).notNull().default("imported"),
   failureCode: varchar("failure_code", { length: 64 }),
+  claimToken: uuid("claim_token"),
+  claimExpiresAt: timestamp("claim_expires_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [

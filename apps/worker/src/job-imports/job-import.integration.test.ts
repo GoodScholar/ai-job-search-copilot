@@ -153,9 +153,9 @@ describe("JobImportConsumer", () => {
     return { importId, objectKey };
   }
 
-  async function enqueue(importId: string, attempts = 3): Promise<void> {
+  async function enqueue(importId: string, attempts = 3, backoffDelay = 1): Promise<void> {
     await queue.add(JOB_IMPORT_JOB_NAME, { version: 1, importId, userId }, {
-      jobId: importId, attempts, backoff: { type: "fixed", delay: 1 }, removeOnComplete: true, removeOnFail: true,
+      jobId: importId, attempts, backoff: { type: "fixed", delay: backoffDelay }, removeOnComplete: true, removeOnFail: true,
     });
   }
 
@@ -193,6 +193,25 @@ describe("JobImportConsumer", () => {
     expect(failingStore.reads).toBe(3);
   });
 
+  it("active claim lease 使 BullMQ 重试而非成功移除任务", async () => {
+    const item = await createImportedImport("# 仍在处理的岗位");
+    await database.execute(`
+      update job_imports
+      set status = 'normalizing', claim_token = '10000000-0000-4000-8000-000000000001', claim_expires_at = now() + interval '1 minute'
+      where id = '${item.importId}'
+    `);
+    startConsumer(store);
+    await enqueue(item.importId, 3, 1_000);
+
+    await waitFor(async () => (await queue.getJob(item.importId))?.attemptsMade === 1);
+    const retryingJob = await queue.getJob(item.importId);
+    expect(retryingJob).toBeDefined();
+    expect(retryingJob?.failedReason).toBe("job import temporarily unavailable");
+    await expect(database.execute<{ status: string; claim_token: string | null }>(`
+      select status, claim_token from job_imports where id = '${item.importId}'
+    `)).resolves.toEqual([{ status: "normalizing", claim_token: "10000000-0000-4000-8000-000000000001" }]);
+  });
+
   it("真实 BullMQ adapter 固定 jobId、重试次数且只序列化 ID", async () => {
     const adapter = new BullmqJobImportQueue(redisUrl);
     const importId = randomUUID();
@@ -200,7 +219,7 @@ describe("JobImportConsumer", () => {
     const job = await queue.getJob(importId);
 
     expect(job?.id).toBe(importId);
-    expect(job?.opts.attempts).toBe(3);
+    expect(job?.opts.attempts).toBe(6);
     expect(job?.data).toEqual({ version: 1, importId, userId });
     await adapter.onModuleDestroy();
   });

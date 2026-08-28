@@ -1,7 +1,7 @@
 import { Worker } from "bullmq";
 import type { OnModuleDestroy } from "@nestjs/common";
 import Redis from "ioredis";
-import { JOB_IMPORT_QUEUE, JobImportJobSchema } from "@job-copilot/contracts/job-imports";
+import { JOB_IMPORT_CLAIM_LEASE_MS, JOB_IMPORT_QUEUE, JobImportJobSchema } from "@job-copilot/contracts/job-imports";
 import { JobImportRetryableError, type createJobImportProcessor } from "@job-copilot/domain/job-imports";
 
 type JobImportProcessor = ReturnType<typeof createJobImportProcessor>;
@@ -22,7 +22,12 @@ export class JobImportConsumer implements OnModuleDestroy {
         if (error instanceof JobImportRetryableError) throw new Error("job import temporarily unavailable");
         throw error;
       }
-    }, { connection: this.redis, concurrency: 1 });
+    }, {
+      connection: this.redis,
+      concurrency: 1,
+      lockDuration: JOB_IMPORT_CLAIM_LEASE_MS,
+      stalledInterval: JOB_IMPORT_CLAIM_LEASE_MS,
+    });
   }
 
   async close(): Promise<void> {

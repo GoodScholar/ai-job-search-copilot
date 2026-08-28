@@ -16,7 +16,7 @@ export class BullmqJobImportQueue implements JobImportQueue {
     const value = JobImportJobSchema.parse(job);
     await this.queue.add(JOB_IMPORT_JOB_NAME, value, {
       jobId: value.importId,
-      attempts: 3,
+      attempts: 6,
       backoff: { type: "exponential", delay: 1_000 },
       removeOnComplete: true,
       removeOnFail: true,

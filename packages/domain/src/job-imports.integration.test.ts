@@ -1,7 +1,7 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDatabase, jobAccounts, jobOpportunities, migrateDatabase, type Database } from "@job-copilot/database";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { createAuditTrail, type AuditTrail } from "./audit-trail";
 import {
   createJobImportCommands,
@@ -327,7 +327,13 @@ describe("job imports", () => {
       .rejects.toBeInstanceOf(JobImportRetryableError);
     await expect(createJobImportQueries({ db: database, contentStore: store }).get({ userId, importId: imported.importId }))
       .resolves.toMatchObject({ status: "imported", failureCode: null });
+    await expect(database.execute<{ claim_token: string | null; claim_expires_at: Date | null }>(sql`
+      select claim_token, claim_expires_at from job_imports where id = ${imported.importId}
+    `)).resolves.toEqual([{ claim_token: null, claim_expires_at: null }]);
     await expect(processor.process({ version: 1, importId: imported.importId, userId, finalAttempt: true })).resolves.toBe("completed");
+    await expect(database.execute<{ claim_token: string | null; claim_expires_at: Date | null }>(sql`
+      select claim_token, claim_expires_at from job_imports where id = ${imported.importId}
+    `)).resolves.toEqual([{ claim_token: null, claim_expires_at: null }]);
   });
 
   it("normalizer 异常在非最终尝试可重试，最终尝试不冒充输出无效", async () => {
@@ -348,6 +354,9 @@ describe("job imports", () => {
     await expect(processor.process({ version: 1, importId: imported.importId, userId, finalAttempt: true })).resolves.toBe("failed");
     await expect(createJobImportQueries({ db: database, contentStore: store }).get({ userId, importId: imported.importId }))
       .resolves.toMatchObject({ status: "failed", failureCode: "JOB_IMPORT_PERSIST_FAILED" });
+    await expect(database.execute<{ claim_token: string | null; claim_expires_at: Date | null }>(sql`
+      select claim_token, claim_expires_at from job_imports where id = ${imported.importId}
+    `)).resolves.toEqual([{ claim_token: null, claim_expires_at: null }]);
   });
 
   it("同一导入仅允许一个 delivery 规范化，重试释放后可重新领取", async () => {
@@ -378,7 +387,8 @@ describe("job imports", () => {
 
     const firstDelivery = processor.process({ version: 1, importId: imported.importId, userId, finalAttempt: false });
     await firstNormalizerStarted.promise;
-    await expect(processor.process({ version: 1, importId: imported.importId, userId, finalAttempt: false })).resolves.toBe("stale");
+    await expect(processor.process({ version: 1, importId: imported.importId, userId, finalAttempt: false }))
+      .rejects.toBeInstanceOf(JobImportRetryableError);
     expect(normalizerCalls).toBe(1);
 
     releaseFirstNormalizer.resolve();
@@ -387,5 +397,66 @@ describe("job imports", () => {
       .resolves.toMatchObject({ status: "imported", failureCode: null });
     await expect(processor.process({ version: 1, importId: imported.importId, userId, finalAttempt: true })).resolves.toBe("completed");
     expect(normalizerCalls).toBe(2);
+  });
+
+  it("租约过期后允许新 claim 接管，旧 claim 不能释放新处理", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const current = new Date("2026-08-28T12:00:00.000Z");
+    const clock = () => current;
+    const commands = createJobImportCommands({
+      db: database, contentStore: store, queue, auditTrail: createAuditTrail({ db: database, clock }), id: () => crypto.randomUUID(), clock,
+    });
+    const imported = await commands.submit({ userId, requestId: crypto.randomUUID(), command: { inputType: "pasted_text", content: "停滞领取恢复岗位正文" } });
+    const firstClaim = "10000000-0000-4000-8000-000000000001";
+    const activeClaim = "10000000-0000-4000-8000-000000000002";
+    const takeoverClaim = "10000000-0000-4000-8000-000000000003";
+    const firstNormalizerStarted = deferred<void>();
+    const releaseFirstNormalizer = deferred<void>();
+    const takeoverNormalizerStarted = deferred<void>();
+    const releaseTakeoverNormalizer = deferred<void>();
+    const firstProcessor = createJobImportProcessor({
+      db: database, contentStore: store, auditTrail: createAuditTrail({ db: database, clock }),
+      normalizer: { normalize: async () => { firstNormalizerStarted.resolve(); await releaseFirstNormalizer.promise; throw new Error("first claim lost"); } },
+      id: () => firstClaim, clock,
+    });
+    const firstDelivery = firstProcessor.process({ version: 1, importId: imported.importId, userId, finalAttempt: false });
+    await firstNormalizerStarted.promise;
+
+    const activeLeaseDelivery = createJobImportProcessor({
+      db: database, contentStore: store, auditTrail: createAuditTrail({ db: database, clock }),
+      normalizer: { normalize: async () => { throw new Error("active lease must not normalize"); } }, id: () => activeClaim, clock,
+    }).process({ version: 1, importId: imported.importId, userId, finalAttempt: false });
+    await expect(activeLeaseDelivery).rejects.toBeInstanceOf(JobImportRetryableError);
+
+    current.setMinutes(current.getMinutes() + 1);
+    const takeoverProcessor = createJobImportProcessor({
+      db: database, contentStore: store, auditTrail: createAuditTrail({ db: database, clock }),
+      normalizer: {
+        normalize: async () => {
+          takeoverNormalizerStarted.resolve();
+          await releaseTakeoverNormalizer.promise;
+          return { normalizerVersion: "v1", company: null, title: "恢复工程师", location: null, postedAt: null, deadline: null, description: null };
+        },
+      },
+      id: () => takeoverClaim, clock,
+    });
+    const takeoverDelivery = takeoverProcessor.process({ version: 1, importId: imported.importId, userId, finalAttempt: true });
+    await takeoverNormalizerStarted.promise;
+    await expect(database.execute<{ status: string; claim_token: string | null }>(sql`
+      select status, claim_token from job_imports where id = ${imported.importId}
+    `)).resolves.toEqual([{ status: "normalizing", claim_token: takeoverClaim }]);
+
+    releaseFirstNormalizer.resolve();
+    await expect(firstDelivery).rejects.toBeInstanceOf(JobImportRetryableError);
+    await expect(database.execute<{ status: string; claim_token: string | null }>(sql`
+      select status, claim_token from job_imports where id = ${imported.importId}
+    `)).resolves.toEqual([{ status: "normalizing", claim_token: takeoverClaim }]);
+
+    releaseTakeoverNormalizer.resolve();
+    await expect(takeoverDelivery).resolves.toBe("completed");
+    await expect(database.execute<{ status: string; claim_token: string | null; claim_expires_at: Date | null }>(sql`
+      select status, claim_token, claim_expires_at from job_imports where id = ${imported.importId}
+    `)).resolves.toEqual([{ status: "completed", claim_token: null, claim_expires_at: null }]);
   });
 });

@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, lte, or } from "drizzle-orm";
 import { jobImports, jobOpportunities, jobOpportunitySources, jobSourcePostings, jobSourcePostingVersions, type Database } from "@job-copilot/database";
 import {
   CreateJobImportCommandSchema,
+  JOB_IMPORT_CLAIM_LEASE_MS,
   JOB_IMPORT_MAX_BYTES,
   JobImportDetailSchema,
   JobImportJobSchema,
@@ -118,27 +119,34 @@ function importBase(record: {
   };
 }
 
-async function failImport(deps: Pick<ProcessorDependencies, "db" | "auditTrail" | "clock">, input: { userId: string; importId: string; inputType: "pasted_text" | "markdown_upload"; failureCode: JobImportFailureCode }) {
+async function failImport(deps: Pick<ProcessorDependencies, "db" | "auditTrail" | "clock">, input: { userId: string; importId: string; inputType: "pasted_text" | "markdown_upload"; claimToken: string; failureCode: JobImportFailureCode }): Promise<boolean> {
   const now = deps.clock();
-  await deps.db.transaction(async (transaction) => {
+  return deps.db.transaction(async (transaction) => {
     await acquireAccountAdvisoryLock(transaction, input.userId);
-    const [failed] = await transaction.update(jobImports).set({ status: "failed", failureCode: input.failureCode, updatedAt: now }).where(and(
+    const [failed] = await transaction.update(jobImports).set({
+      status: "failed", failureCode: input.failureCode, claimToken: null, claimExpiresAt: null, updatedAt: now,
+    }).where(and(
       eq(jobImports.userId, input.userId), eq(jobImports.id, input.importId),
-      eq(jobImports.status, "normalizing"),
+      eq(jobImports.status, "normalizing"), eq(jobImports.claimToken, input.claimToken),
     )).returning({ id: jobImports.id });
-    if (!failed) return;
+    if (!failed) return false;
     await deps.auditTrail.bind(transaction).append({
       userId: input.userId, actorUserId: input.userId, eventType: "job.import_failed", occurredAt: now,
       requestId: input.importId, outcome: "failure", reasonCode: input.failureCode, resourceType: "job_import", resourceId: input.importId,
       metadata: { importId: input.importId, inputType: input.inputType, attemptCount: 1, failureCode: input.failureCode },
     });
+    return true;
   });
 }
 
-async function releaseImportForRetry(deps: Pick<ProcessorDependencies, "db" | "clock">, input: { userId: string; importId: string }) {
-  await deps.db.update(jobImports).set({ status: "imported", failureCode: null, updatedAt: deps.clock() }).where(and(
-    eq(jobImports.userId, input.userId), eq(jobImports.id, input.importId), eq(jobImports.status, "normalizing"),
-  ));
+async function releaseImportForRetry(deps: Pick<ProcessorDependencies, "db" | "clock">, input: { userId: string; importId: string; claimToken: string }): Promise<boolean> {
+  const [released] = await deps.db.update(jobImports).set({
+    status: "imported", failureCode: null, claimToken: null, claimExpiresAt: null, updatedAt: deps.clock(),
+  }).where(and(
+    eq(jobImports.userId, input.userId), eq(jobImports.id, input.importId),
+    eq(jobImports.status, "normalizing"), eq(jobImports.claimToken, input.claimToken),
+  )).returning({ id: jobImports.id });
+  return Boolean(released);
 }
 
 export function createJobImportCommands(deps: CommandDependencies): {
@@ -169,7 +177,9 @@ export function createJobImportCommands(deps: CommandDependencies): {
         if (existing) {
           reused = true;
           if (existing.status === "failed" || existing.status === "imported") {
-            const [retried] = await transaction.update(jobImports).set({ status: "imported", failureCode: null, updatedAt: now }).where(and(
+            const [retried] = await transaction.update(jobImports).set({
+              status: "imported", failureCode: null, claimToken: null, claimExpiresAt: null, updatedAt: now,
+            }).where(and(
               eq(jobImports.userId, input.userId), eq(jobImports.id, existing.id), inArray(jobImports.status, ["failed", "imported"]),
             )).returning({
               id: jobImports.id, inputType: jobImports.inputType, originalFilename: jobImports.originalFilename,
@@ -231,12 +241,25 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
   return {
     async process(job): Promise<"completed" | "failed" | "stale"> {
       const parsedJob = JobImportJobSchema.parse({ version: job.version, importId: job.importId, userId: job.userId });
-      const [record] = await deps.db.update(jobImports).set({ status: "normalizing", failureCode: null, updatedAt: deps.clock() }).where(and(
-        eq(jobImports.userId, parsedJob.userId), eq(jobImports.id, parsedJob.importId), eq(jobImports.status, "imported"),
+      const now = deps.clock();
+      const claimToken = deps.id();
+      const claimExpiresAt = new Date(now.getTime() + JOB_IMPORT_CLAIM_LEASE_MS);
+      const [record] = await deps.db.update(jobImports).set({
+        status: "normalizing", failureCode: null, claimToken, claimExpiresAt, updatedAt: now,
+      }).where(and(
+        eq(jobImports.userId, parsedJob.userId), eq(jobImports.id, parsedJob.importId), or(
+          eq(jobImports.status, "imported"),
+          and(eq(jobImports.status, "normalizing"), lte(jobImports.claimExpiresAt, now)),
+        ),
       )).returning({
         id: jobImports.id, inputType: jobImports.inputType, contentSha256: jobImports.contentSha256,
       });
-      if (!record) return "stale";
+      if (!record) {
+        const [current] = await deps.db.select({ status: jobImports.status, claimExpiresAt: jobImports.claimExpiresAt }).from(jobImports)
+          .where(and(eq(jobImports.userId, parsedJob.userId), eq(jobImports.id, parsedJob.importId)));
+        if (current?.status === "normalizing" && current.claimExpiresAt && current.claimExpiresAt > now) throw new JobImportRetryableError();
+        return "stale";
+      }
       const inputType = record.inputType as "pasted_text" | "markdown_upload";
       let content: string;
       try {
@@ -244,39 +267,37 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
         content = new TextDecoder().decode(bytes);
       } catch {
         if (!job.finalAttempt) {
-          await releaseImportForRetry(deps, parsedJob);
+          await releaseImportForRetry(deps, { ...parsedJob, claimToken });
           throw new JobImportRetryableError();
         }
-        await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, failureCode: "JOB_IMPORT_CONTENT_READ_FAILED" });
-        return "failed";
+        return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode: "JOB_IMPORT_CONTENT_READ_FAILED" }) ? "failed" : "stale";
       }
       if (sha256(content) !== record.contentSha256) {
-        await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, failureCode: "JOB_IMPORT_CHECKSUM_MISMATCH" });
-        return "failed";
+        return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode: "JOB_IMPORT_CHECKSUM_MISMATCH" }) ? "failed" : "stale";
       }
       let normalized: unknown;
       try {
         normalized = await deps.normalizer.normalize(content);
       } catch {
         if (!job.finalAttempt) {
-          await releaseImportForRetry(deps, parsedJob);
+          await releaseImportForRetry(deps, { ...parsedJob, claimToken });
           throw new JobImportRetryableError();
         }
-        await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, failureCode: "JOB_IMPORT_PERSIST_FAILED" });
-        return "failed";
+        return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode: "JOB_IMPORT_PERSIST_FAILED" }) ? "failed" : "stale";
       }
       const result = JobNormalizerOutputSchema.safeParse(normalized);
       if (!result.success) {
-        await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, failureCode: "JOB_NORMALIZER_OUTPUT_INVALID" });
-        return "failed";
+        return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode: "JOB_NORMALIZER_OUTPUT_INVALID" }) ? "failed" : "stale";
       }
       const output = result.data;
-      const now = deps.clock();
       try {
         const completed = await deps.db.transaction(async (transaction) => {
           await acquireAccountAdvisoryLock(transaction, parsedJob.userId);
-          const [completionClaimed] = await transaction.update(jobImports).set({ status: "completed", failureCode: null, updatedAt: now }).where(and(
-            eq(jobImports.userId, parsedJob.userId), eq(jobImports.id, parsedJob.importId), eq(jobImports.status, "normalizing"),
+          const [completionClaimed] = await transaction.update(jobImports).set({
+            status: "completed", failureCode: null, claimToken: null, claimExpiresAt: null, updatedAt: now,
+          }).where(and(
+            eq(jobImports.userId, parsedJob.userId), eq(jobImports.id, parsedJob.importId),
+            eq(jobImports.status, "normalizing"), eq(jobImports.claimToken, claimToken),
           )).returning({ id: jobImports.id });
           if (!completionClaimed) return false;
 
@@ -333,8 +354,7 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
         });
         return completed ? "completed" : "stale";
       } catch {
-        await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, failureCode: "JOB_IMPORT_PERSIST_FAILED" });
-        return "failed";
+        return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode: "JOB_IMPORT_PERSIST_FAILED" }) ? "failed" : "stale";
       }
     },
   };

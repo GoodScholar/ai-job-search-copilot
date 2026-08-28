@@ -3,6 +3,7 @@ import { z } from "zod";
 export const JOB_IMPORT_MAX_BYTES = 524_288;
 export const JOB_IMPORT_QUEUE = "job-imports";
 export const JOB_IMPORT_JOB_NAME = "normalize-job-import";
+export const JOB_IMPORT_CLAIM_LEASE_MS = 30_000;
 
 const filename = z.string().trim().min(1).max(255).regex(/\.md$/i);
 const nullableJobField = z.string().trim().min(1).max(20_000).nullable();

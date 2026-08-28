@@ -6,6 +6,8 @@ CREATE TABLE "job_imports" (
 	"original_filename" varchar(255),
 	"status" varchar(16) DEFAULT 'imported' NOT NULL,
 	"failure_code" varchar(64),
+	"claim_token" uuid,
+	"claim_expires_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "job_imports_user_content_unique" UNIQUE("user_id","content_sha256"),
