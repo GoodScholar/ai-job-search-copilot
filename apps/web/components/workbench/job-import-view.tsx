@@ -36,6 +36,10 @@ function insertRecent(previous: JobImportSummary[], next: JobImportSummary): Job
 function failureMessage(code: string | null | undefined): string | null {
   return code ? failureText[code] ?? "岗位导入暂时不可用，请稍后重试。" : null;
 }
+function importLabel(item: JobImportSummary): string {
+  if (item.inputType === "url") return "岗位链接";
+  return item.originalFilename ?? "粘贴的岗位描述";
+}
 
 export function JobImportView({ initialImports }: JobImportViewProps) {
   const [mode, setMode] = useState<InputMode>("paste");
@@ -194,7 +198,7 @@ export function JobImportView({ initialImports }: JobImportViewProps) {
       </section>
       <div className="job-import-columns">
         <section aria-labelledby="recent-job-imports-title" className="job-import-panel"><h2 id="recent-job-imports-title">最近导入</h2>
-          {recentImports.length === 0 ? <p>尚无岗位导入记录。</p> : <ol className="job-import-recent-list">{recentImports.map((item) => <li key={item.importId}><button aria-pressed={activeImport?.importId === item.importId} className="workbench-touch-target" onClick={() => selectImport(item)} type="button"><span>{item.originalFilename ?? "粘贴的岗位描述"}</span><span>{statusText[item.status]}</span></button></li>)}</ol>}
+          {recentImports.length === 0 ? <p>尚无岗位导入记录。</p> : <ol className="job-import-recent-list">{recentImports.map((item) => <li key={item.importId}><button aria-pressed={activeImport?.importId === item.importId} className="workbench-touch-target" onClick={() => selectImport(item)} type="button"><span>{importLabel(item)}</span><span>{statusText[item.status]}</span></button></li>)}</ol>}
         </section>
         <section aria-labelledby="opportunity-title" className="job-import-panel"><h2 id="opportunity-title">规范化岗位机会</h2>
           <dl className="job-import-opportunity"><div><dt>公司</dt><dd>{opportunity?.company ?? "未知"}</dd></div><div><dt>职位</dt><dd>{opportunity?.title ?? "未知"}</dd></div><div><dt>地点</dt><dd>{opportunity?.location ?? "未知"}</dd></div><div><dt>发布时间</dt><dd>{opportunity?.postedAt ? new Date(opportunity.postedAt).toLocaleDateString("zh-CN") : "未知"}</dd></div><div><dt>截止日期</dt><dd>{opportunity?.deadline ? new Date(opportunity.deadline).toLocaleDateString("zh-CN") : "未知"}</dd></div></dl>

@@ -174,13 +174,14 @@ describe("job imports", () => {
       `accounts/${userId}/job-imports/${official.importId}/raw.html`,
       `accounts/${userId}/job-imports/${official.importId}/visible.txt`,
     ]));
-    await expect(database.execute<{ is_official: boolean; source_posting_version_id: string }>(sql`
+    await expect(database.execute<{ is_official: boolean; source_posting_version_id: string; source_count: number }>(sql`
       select source.is_official, opportunity.source_posting_version_id
+        , (select count(*)::int from job_opportunity_sources opportunity_source where opportunity_source.opportunity_id = opportunity.id) as source_count
       from job_opportunities opportunity
       join job_source_posting_versions version on version.id = opportunity.source_posting_version_id
       join job_source_postings source on source.id = version.source_posting_id
       where opportunity.user_id = ${userId} and opportunity.source_posting_version_id = ${officialDetail?.opportunity?.evidence.sourcePostingVersionId}
-    `)).resolves.toEqual([{ is_official: true, source_posting_version_id: expect.any(String) }]);
+    `)).resolves.toEqual([{ is_official: true, source_posting_version_id: expect.any(String), source_count: 2 }]);
   });
 
   it("在队列不可用时保留已锁定的可重试导入", async () => {

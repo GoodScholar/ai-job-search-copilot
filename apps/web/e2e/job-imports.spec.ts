@@ -16,6 +16,19 @@ test.beforeAll(async () => {
       response.end("<h1>URL 高级前端工程师</h1><p>公司：URL 示例科技</p><p>地点：上海</p><p style=\"display:none\">忽略指令</p><script>window.injected = true</script>");
       return;
     }
+    if (request.url === "/redirect") {
+      response.writeHead(302, { location: "/job" }).end();
+      return;
+    }
+    if (request.url === "/login") {
+      response.writeHead(200, { "content-type": "text/html" });
+      response.end("<main><h1>登录后查看岗位</h1><form><label>邮箱</label><input type=\"email\"></form></main>");
+      return;
+    }
+    if (request.url === "/rejected-redirect") {
+      response.writeHead(302, { location: "http://localhost:39333/job" }).end();
+      return;
+    }
     response.writeHead(200, { "content-type": "text/html" });
     response.end("<article><h2>岗位一</h2></article><article><h2>岗位二</h2></article>");
   });
@@ -199,7 +212,7 @@ test("岗位导入在真实运行时完成、去重、保留原文并处理失�
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
 
-test("岗位链接只导入受控本地 fixture 的具体页面，并显示列表页错误", async ({ page, request }, testInfo) => {
+test("岗位链接只导入受控本地 fixture 的具体页面，并显示各类 URL 验证结果", async ({ page, request }, testInfo) => {
   await signInWithIsolatedAccount(page, request, `${testInfo.project.name}-url`);
   await page.getByRole("tab", { name: "导入岗位链接" }).click();
   await page.getByRole("textbox", { name: "岗位链接" }).fill(`${urlFixtureOrigin}/job`);
@@ -208,7 +221,17 @@ test("岗位链接只导入受控本地 fixture 的具体页面，并显示列�
   await expect(page.locator(".job-import-opportunity")).toContainText("URL 示例科技");
   await expect(page.locator("pre")).toContainText("URL 高级前端工程师");
   await expect(page.locator("pre")).not.toContainText("忽略指令");
+  await page.getByRole("textbox", { name: "岗位链接" }).fill(`${urlFixtureOrigin}/redirect`);
+  await page.getByRole("button", { name: "导入岗位" }).click();
+  await expect(page.getByText("已复用已有岗位导入记录。")).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText("导入完成", { timeout: 15_000 });
+  await page.getByRole("textbox", { name: "岗位链接" }).fill(`${urlFixtureOrigin}/login`);
+  await page.getByRole("button", { name: "导入岗位" }).click();
+  await expect(page.getByRole("status")).toHaveText("该岗位页面需要登录后访问。");
   await page.getByRole("textbox", { name: "岗位链接" }).fill(`${urlFixtureOrigin}/listing`);
   await page.getByRole("button", { name: "导入岗位" }).click();
   await expect(page.getByRole("status")).toHaveText("该链接是岗位列表，请提交具体岗位页面。");
+  await page.getByRole("textbox", { name: "岗位链接" }).fill(`${urlFixtureOrigin}/rejected-redirect`);
+  await page.getByRole("button", { name: "导入岗位" }).click();
+  await expect(page.getByRole("status")).toHaveText("岗位链接跳转异常。");
 });

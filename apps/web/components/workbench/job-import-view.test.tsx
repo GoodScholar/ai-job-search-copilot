@@ -30,6 +30,17 @@ it("提供粘贴和 Markdown 上传入口、未知字段与可访问状态", asy
   expect(screen.getByRole("status")).toHaveTextContent("尚未导入岗位。");
 });
 
+it("按导入类型显示来源标签", async () => {
+  const urlImport = { ...imported, importId: "a0d2bfbf-7e40-49fc-86c8-3a15d7ad4f98", inputType: "url" as const };
+  const uploadImport = { ...imported, importId: "c0d2bfbf-7e40-49fc-86c8-3a15d7ad4f98", inputType: "markdown_upload" as const, originalFilename: "frontend.md" };
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ ...completed, inputType: "url" }));
+  render(<JobImportView initialImports={[urlImport, uploadImport, imported]} />);
+
+  expect(screen.getByRole("button", { name: /岗位链接/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /frontend\.md/ })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /粘贴的岗位描述/ })).toBeInTheDocument();
+});
+
 it("将复用通知告知用户，并以 literal pre 展示不可信 Markdown", async () => {
   const user = userEvent.setup();
   mocks.createJobImportAction.mockResolvedValue({ ok: true, import: { ...imported, reused: true } });

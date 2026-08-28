@@ -45,7 +45,7 @@ type ResolvedTarget = { address: string; family: 4 | 6 };
 type HtmlNode = DefaultTreeAdapterMap["node"];
 
 export class SecureJobPageFetcher implements JobPageFetcher {
-  constructor(private readonly config: { appEnv: string; testOrigin?: string } = { appEnv: process.env.APP_ENV ?? "development" }) {}
+  constructor(private readonly config: { appEnv: string; testOrigin?: string; connectTimeoutMs?: number; totalTimeoutMs?: number } = { appEnv: process.env.APP_ENV ?? "development" }) {}
 
   async fetch({ url }: { url: string }): Promise<FetchedJobPage> {
     const requested = this.parseUrl(url, "JOB_PAGE_URL_INVALID");
@@ -54,14 +54,16 @@ export class SecureJobPageFetcher implements JobPageFetcher {
 
     for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
       const target = await this.resolveTarget(current);
-      const remaining = TOTAL_TIMEOUT_MS - (Date.now() - startedAt);
+      const remaining = (this.config.totalTimeoutMs ?? TOTAL_TIMEOUT_MS) - (Date.now() - startedAt);
       if (remaining <= 0) throw new JobPageFetchError("JOB_PAGE_TIMEOUT");
       const response = await this.request(current, target, remaining);
       if (response.statusCode >= 300 && response.statusCode < 400) {
         const location = response.headers.location;
         if (!location || Array.isArray(location)) throw new JobPageFetchError("JOB_PAGE_REDIRECT_INVALID");
         if (redirects === MAX_REDIRECTS) throw new JobPageFetchError("JOB_PAGE_REDIRECT_INVALID");
-        current = this.parseUrl(location, "JOB_PAGE_REDIRECT_INVALID", current);
+        const redirected = this.parseUrl(location, "JOB_PAGE_REDIRECT_INVALID", current);
+        if (!hasRelatedHost(current, redirected)) throw new JobPageFetchError("JOB_PAGE_REDIRECT_INVALID");
+        current = redirected;
         continue;
       }
       this.assertStatus(response.statusCode);
@@ -73,7 +75,7 @@ export class SecureJobPageFetcher implements JobPageFetcher {
       const extracted = extractJobPage(rawHtml, current);
       return {
         requestedUrl: requested.toString(), finalUrl: current.toString(), canonicalUrl: extracted.canonicalUrl,
-        rawHtml, visibleText: extracted.visibleText, pageClassification: "job", sourceKind: sourceKind(current.hostname),
+        rawHtml, visibleText: extracted.visibleText, pageClassification: "job", sourceKind: sourceKind(current, this.config),
       };
     }
     throw new JobPageFetchError("JOB_PAGE_REDIRECT_INVALID");
@@ -123,13 +125,19 @@ export class SecureJobPageFetcher implements JobPageFetcher {
         });
         response.on("end", () => resolve({ statusCode: response.statusCode ?? 0, headers: response.headers, body: Buffer.concat(chunks) }));
       });
-      const timeout = setTimeout(() => request.destroy(new JobPageFetchError("JOB_PAGE_TIMEOUT")), Math.min(CONNECT_TIMEOUT_MS, totalTimeoutMs));
+      const connectTimeout = setTimeout(() => request.destroy(new JobPageFetchError("JOB_PAGE_TIMEOUT")), Math.min(this.config.connectTimeoutMs ?? CONNECT_TIMEOUT_MS, totalTimeoutMs));
       const totalTimeout = setTimeout(() => request.destroy(new JobPageFetchError("JOB_PAGE_TIMEOUT")), totalTimeoutMs);
+      const clearTimers = () => { clearTimeout(connectTimeout); clearTimeout(totalTimeout); };
       request.once("error", (error) => {
-        clearTimeout(timeout); clearTimeout(totalTimeout);
+        clearTimers();
         reject(error instanceof JobPageFetchError ? error : new JobPageFetchError("JOB_PAGE_UNREACHABLE"));
       });
-      request.once("response", () => { clearTimeout(timeout); clearTimeout(totalTimeout); });
+      request.once("socket", (socket) => {
+        if (!socket.connecting) clearTimeout(connectTimeout);
+        else socket.once(url.protocol === "https:" ? "secureConnect" : "connect", () => clearTimeout(connectTimeout));
+      });
+      request.once("response", () => clearTimeout(connectTimeout));
+      request.once("response", (response) => response.once("end", clearTimers));
       request.end();
     });
   }
@@ -145,35 +153,43 @@ export class SecureJobPageFetcher implements JobPageFetcher {
 function extractJobPage(rawHtml: string, finalUrl: URL): { visibleText: string; canonicalUrl: string } {
   const document = parse(rawHtml);
   const text: string[] = [];
-  let titleCount = 0;
+  const h1Texts: string[][] = [];
   let headingCount = 0;
+  let visibleFormCount = 0;
   let canonical: string | undefined;
-  visit(document, false, text, (tagName, attributes) => {
-    if (tagName === "h1") titleCount += 1;
-    if (tagName === "h1" || tagName === "h2") headingCount += 1;
+  visit(document, false, text, h1Texts, (tagName, attributes, visible) => {
+    if (visible && (tagName === "h1" || tagName === "h2")) headingCount += 1;
+    if (visible && tagName === "form") visibleFormCount += 1;
     if (tagName === "link" && attribute(attributes, "rel")?.toLowerCase().split(/\s+/u).includes("canonical")) canonical = attribute(attributes, "href");
   });
   const plainText = text.join("\n").replace(/[ \t]+\n/gu, "\n").replace(/\n{3,}/gu, "\n\n").trim();
-  const title = rawHtml.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/iu)?.[1]?.replace(/<[^>]+>/gu, "").replace(/\s+/gu, " ").trim();
+  const title = h1Texts.map((parts) => parts.join(" ").replace(/\s+/gu, " ").trim()).find(Boolean);
   const visibleText = title ? `# ${title}\n${plainText}` : plainText;
-  if (titleCount === 0 && headingCount >= 2) throw new JobPageFetchError("JOB_PAGE_LISTING");
-  if (!visibleText || (titleCount === 0 && !/(职位|岗位|招聘|engineer|developer|manager|designer)/iu.test(visibleText))) {
+  if (visibleFormCount > 0 && /(登录|登陆|sign\s*in|log\s*in|login|验证身份)/iu.test(visibleText)) throw new JobPageFetchError("JOB_PAGE_LOGIN_REQUIRED");
+  if (/(职位|岗位).{0,12}(已下架|已关闭|过期)|(?:已下架|已关闭|过期).{0,12}(职位|岗位)/iu.test(visibleText)) throw new JobPageFetchError("JOB_PAGE_EXPIRED");
+  if (h1Texts.length === 0 && headingCount >= 2) throw new JobPageFetchError("JOB_PAGE_LISTING");
+  const hasJobSignal = /(职位|岗位|招聘|工程师|engineer|developer|manager|designer)/iu.test(visibleText);
+  const hasJobContext = /(公司|company|地点|location|职责|responsibilit|薪资|salary|经验|experience)/iu.test(visibleText);
+  if (!title || !hasJobSignal || !hasJobContext) {
     throw new JobPageFetchError("JOB_PAGE_UNRECOGNIZED");
   }
   let canonicalUrl = finalUrl.toString();
   if (canonical) {
     try {
       const parsed = new URL(canonical, finalUrl);
-      if (/^https?:$/u.test(parsed.protocol)) canonicalUrl = parsed.toString();
+      if (/^https?:$/u.test(parsed.protocol) && hasRelatedHost(finalUrl, parsed)) canonicalUrl = parsed.toString();
     } catch { /* 无效 canonical 不能影响页面抓取。 */ }
   }
   return { visibleText, canonicalUrl };
 }
 
-function visit(node: HtmlNode, hidden: boolean, text: string[], onElement: (tagName: string, attributes: Array<{ name: string; value: string }>) => void): void {
-  if ("nodeName" in node && node.nodeName === "#text" && !hidden && "value" in node && typeof node.value === "string") text.push(node.value);
+function visit(node: HtmlNode, hidden: boolean, text: string[], h1Texts: string[][], onElement: (tagName: string, attributes: Array<{ name: string; value: string }>, visible: boolean) => void, h1Index?: number): void {
+  if ("nodeName" in node && node.nodeName === "#text" && !hidden && "value" in node && typeof node.value === "string") {
+    text.push(node.value);
+    if (h1Index !== undefined) h1Texts[h1Index]?.push(node.value);
+  }
   if (!("tagName" in node) || typeof node.tagName !== "string") {
-    for (const child of "childNodes" in node && Array.isArray(node.childNodes) ? node.childNodes : []) visit(child, hidden, text, onElement);
+    for (const child of "childNodes" in node && Array.isArray(node.childNodes) ? node.childNodes : []) visit(child, hidden, text, h1Texts, onElement, h1Index);
     return;
   }
   const attributes = "attrs" in node && Array.isArray(node.attrs) ? node.attrs : [];
@@ -181,16 +197,28 @@ function visit(node: HtmlNode, hidden: boolean, text: string[], onElement: (tagN
   const nextHidden = hidden || ["script", "style", "template", "noscript", "head"].includes(node.tagName)
     || attribute(attributes, "hidden") !== undefined || attribute(attributes, "aria-hidden") === "true"
     || /(?:display\s*:\s*none|visibility\s*:\s*hidden|opacity\s*:\s*0(?:\D|$))/u.test(style);
-  onElement(node.tagName, attributes);
-  for (const child of "childNodes" in node && Array.isArray(node.childNodes) ? node.childNodes : []) visit(child, nextHidden, text, onElement);
+  onElement(node.tagName, attributes, !nextHidden);
+  const nextH1Index = !nextHidden && node.tagName === "h1" ? h1Texts.push([]) - 1 : h1Index;
+  for (const child of "childNodes" in node && Array.isArray(node.childNodes) ? node.childNodes : []) visit(child, nextHidden, text, h1Texts, onElement, nextH1Index);
 }
 
 function attribute(attributes: Array<{ name: string; value: string }>, name: string): string | undefined {
   return attributes.find((attribute) => attribute.name.toLowerCase() === name)?.value;
 }
 
-function sourceKind(hostname: string): "official" | "aggregator" {
-  return /(linkedin|indeed|zhipin|liepin|51job|lagou)/iu.test(hostname) ? "aggregator" : "official";
+function hasRelatedHost(left: URL, right: URL): boolean {
+  return normalizedHostname(left.hostname) === normalizedHostname(right.hostname);
+}
+
+function normalizedHostname(hostname: string): string {
+  return hostname.toLowerCase().replace(/^www\./u, "");
+}
+
+function sourceKind(url: URL, config: { appEnv: string; testOrigin?: string }): "official" | "aggregator" {
+  if (config.appEnv === "test" && config.testOrigin && url.origin === config.testOrigin) return "official";
+  return ["boards.greenhouse.io", "job-boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com", "apply.workable.com", "jobs.smartrecruiters.com"].includes(normalizedHostname(url.hostname))
+    ? "official"
+    : "aggregator";
 }
 
 function isPublicAddress(address: string, family: number): boolean {
