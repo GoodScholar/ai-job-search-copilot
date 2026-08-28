@@ -276,7 +276,7 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
       let content: string;
       try {
         const bytes = await deps.contentStore.get({ objectKey: sourceObjectKey(parsedJob.userId, parsedJob.importId) });
-        content = new TextDecoder().decode(bytes);
+        content = new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
       } catch {
         if (!job.finalAttempt) {
           await releaseImportForRetry(deps, { ...parsedJob, claimToken });
@@ -409,7 +409,7 @@ export function createJobImportQueries(deps: { db: Database; contentStore: JobCo
         .where(and(eq(jobImports.userId, userId), eq(jobImports.id, importId)));
       if (!row) return null;
       const bytes = await deps.contentStore.get({ objectKey: sourceObjectKey(userId, importId) });
-      return { content: new TextDecoder().decode(bytes), filename: row.originalFilename };
+      return { content: new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes), filename: row.originalFilename };
     },
   };
 }

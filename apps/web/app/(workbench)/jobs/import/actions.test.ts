@@ -42,6 +42,17 @@ it("解码 Markdown 上传并重定向未登录用户", async () => {
   });
 });
 
+it("拒绝非法 UTF-8 Markdown，且不会调用 API", async () => {
+  mocks.readSessionToken.mockResolvedValue("a".repeat(43));
+  const upload = new FormData();
+  upload.set("file", new File([new Uint8Array([0xc3, 0x28])], "broken.md", { type: "text/markdown" }));
+
+  await expect(createJobImportAction(initialState, upload)).resolves.toEqual({
+    ok: false, code: "JOB_IMPORT_CONTENT_INVALID", message: "岗位描述不能为空且不能超过 512 KiB。",
+  });
+  expect(mocks.createJobImport).not.toHaveBeenCalled();
+});
+
 it("将未受信任的 API 错误码映射为固定中文提示", async () => {
   mocks.readSessionToken.mockResolvedValue("a".repeat(43));
   mocks.createJobImport.mockRejectedValue({ problem: { code: "constructor", message: "internal host secret" } });

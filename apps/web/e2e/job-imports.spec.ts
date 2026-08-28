@@ -9,7 +9,7 @@ const validJob = [
   "# 高级前端工程师",
   "公司：示例科技",
   "地点：上海",
-  "截止日期：2026-08-31",
+  "发布时间：2026-08-01",
   "## 职位描述",
   "负责求职工作台。",
   "<script>window.jobImportEvidenceMustStayLiteral = true</script>",
@@ -136,7 +136,8 @@ test("岗位导入在真实运行时完成、去重、保留原文并处理失�
   await expect(page.locator(".job-import-opportunity")).toContainText("示例科技");
   await expect(page.locator(".job-import-opportunity")).toContainText("高级前端工程师");
   await expect(page.locator(".job-import-opportunity")).toContainText("上海");
-  await expect(page.locator(".job-import-opportunity")).toContainText("未知");
+  await expect(page.locator(".job-import-opportunity")).toContainText("2026");
+  await expect(page.locator(".job-import-opportunity").locator("div").filter({ hasText: "截止日期" })).toContainText("未知");
   await expect(page.locator(".job-import-panel pre")).toContainText("<script>window.jobImportEvidenceMustStayLiteral = true</script>");
   await expect(page.evaluate(() => Reflect.get(window, "jobImportEvidenceMustStayLiteral"))).resolves.toBeUndefined();
 

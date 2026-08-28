@@ -64,6 +64,37 @@ it("对非终态导入轮询，并在终态后停止", async () => {
   expect(screen.getByRole("status")).toHaveTextContent("导入完成");
 });
 
+it("初始选择 API 返回的最新导入，并在刷新当前记录时重新读取详情", async () => {
+  const user = userEvent.setup();
+  const newest = { ...completed, importId: "d0d2bfbf-7e40-49fc-86c8-3a15d7ad4f98", originalFilename: "newest.md", createdAt: "2026-08-29T08:00:00.000Z" };
+  const older = { ...completed, importId: "e0d2bfbf-7e40-49fc-86c8-3a15d7ad4f98", originalFilename: "older.md", createdAt: "2026-08-28T08:00:00.000Z" };
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json(newest))
+    .mockResolvedValueOnce(new Response("最新原文", { headers: { "content-type": "text/plain" } }))
+    .mockResolvedValueOnce(Response.json(newest))
+    .mockResolvedValueOnce(new Response("刷新后的最新原文", { headers: { "content-type": "text/plain" } }));
+  render(<JobImportView initialImports={[newest, older]} />);
+
+  expect(screen.getAllByRole("button", { name: /\.md/ })[0]).toHaveAccessibleName(/newest\.md/);
+  await screen.findByText("最新原文");
+  await user.click(screen.getByRole("button", { name: /newest\.md/ }));
+  await screen.findByText("刷新后的最新原文");
+  expect(fetchMock.mock.calls.filter(([url]) => url === `/api/job-imports/${newest.importId}`)).toHaveLength(2);
+});
+
+it("展示已知发布时间，并单独标记未知截止日期", async () => {
+  const dated = { ...completed, opportunity: { ...completed.opportunity, postedAt: "2026-08-01T00:00:00.000Z", deadline: null } };
+  vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json(dated))
+    .mockResolvedValueOnce(new Response("原文", { headers: { "content-type": "text/plain" } }));
+  render(<JobImportView initialImports={[dated]} />);
+
+  const posted = await screen.findByText("发布时间");
+  expect(posted.parentElement).toHaveTextContent("2026");
+  const deadline = screen.getByText("截止日期");
+  expect(deadline.parentElement).toHaveTextContent("未知");
+});
+
 it("用简短中文提示轮询和提交失败", async () => {
   mocks.createJobImportAction.mockResolvedValue({ ok: false, code: "JOB_IMPORT_UNAVAILABLE", message: "岗位导入暂时不可用，请稍后重试。" });
   vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("network failure"));

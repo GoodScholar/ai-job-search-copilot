@@ -204,6 +204,11 @@ describe("JobImportConsumer", () => {
     const [result] = await database.select({ status: jobImports.status, failureCode: jobImports.failureCode }).from(jobImports);
     expect(result).toEqual({ status: "failed", failureCode: "JOB_IMPORT_CONTENT_READ_FAILED" });
     expect(failingStore.reads).toBe(3);
+    const events = await createAuditTrail({ db: database, clock: () => new Date() }).query({ userId });
+    expect(events.find((event) => event.eventType === "job.import_failed")).toMatchObject({
+      metadata: { importId: item.importId, attemptCount: 3, failureCode: "JOB_IMPORT_CONTENT_READ_FAILED" },
+    });
+    expect(JSON.stringify(events)).not.toContain("# 任意岗位");
   });
 
   it("active claim lease 使 BullMQ 重试而非成功移除任务", async () => {

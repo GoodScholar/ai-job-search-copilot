@@ -316,13 +316,32 @@ describe("job imports", () => {
   it("原始正文逐字保留，规范化指纹仍忽略 CRLF、兼容字符和尾随空白", async () => {
     const store = new MemoryStore();
     const queue = new MemoryQueue();
-    const raw = "＃ 工程师  \r\n公司：示例科技\r\n\r\n";
+    const raw = "\uFEFF  ＃ 工程师  \r\n公司：示例科技  \r\n\r\n";
     const commands = createJobImportCommands({
       db: database, contentStore: store, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
     });
     const imported = await commands.submit({ userId, requestId: crypto.randomUUID(), command: { inputType: "pasted_text", content: raw } });
     await expect(createJobImportQueries({ db: database, contentStore: store }).getRawContent({ userId, importId: imported.importId }))
       .resolves.toEqual({ content: raw, filename: null });
+  });
+
+  it("按创建时间倒序返回最近 20 个导入", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    let current = new Date(now);
+    const commands = createJobImportCommands({
+      db: database, contentStore: store, queue, auditTrail: createAuditTrail({ db: database, clock: () => current }), id: () => crypto.randomUUID(), clock: () => current,
+    });
+    const importIds: string[] = [];
+    for (let index = 0; index < 21; index += 1) {
+      const item = await commands.submit({ userId, requestId: crypto.randomUUID(), command: { inputType: "pasted_text", content: `最近岗位 ${index}` } });
+      importIds.push(item.importId);
+      current = new Date(current.getTime() + 1_000);
+    }
+
+    const list = await createJobImportQueries({ db: database, contentStore: store }).list({ userId });
+    expect(list.imports).toHaveLength(20);
+    expect(list.imports.map((item) => item.importId)).toEqual(importIds.slice(1).reverse());
   });
 
   it("仅在最终尝试终态化读取故障，并允许后续 worker 重试", async () => {

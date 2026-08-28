@@ -671,7 +671,7 @@ describe("authenticated workbench HTTP API", () => {
     capturedLogs.length = 0;
     const owner = await createSession(app, "job-import-owner");
     const other = await createSession(app, "job-import-other");
-    const source = "# 高级前端工程师\n公司：示例科技\n地点：上海\n秘密正文";
+    const source = "\uFEFF  ＃ 高级前端工程师  \r\n公司：示例科技  \r\n地点：上海\r\n秘密正文  \r\n";
     const create = () => app.getHttpAdapter().getInstance().inject({
       method: "POST",
       url: "/v1/job-imports",
@@ -682,6 +682,7 @@ describe("authenticated workbench HTTP API", () => {
     const created = await create();
     const repeated = await create();
     const importId = created.json().importId as string;
+    await database.execute(`update job_imports set status = 'failed', failure_code = 'JOB_NORMALIZER_OUTPUT_INVALID' where id = '${importId}'`);
     const listed = await app.getHttpAdapter().getInstance().inject({
       method: "GET", url: "/v1/job-imports", headers: bearer(owner.sessionToken),
     });
@@ -712,12 +713,15 @@ describe("authenticated workbench HTTP API", () => {
     expect(repeated.statusCode).toBe(200);
     expect(repeated.json()).toMatchObject({ importId, status: "imported" });
     expect(listed.statusCode).toBe(200);
-    expect(listed.json()).toMatchObject({ imports: [expect.objectContaining({ importId, status: "imported", failureCode: null })] });
+    expect(listed.json()).toMatchObject({ imports: [expect.objectContaining({ importId, status: "failed", failureCode: "JOB_NORMALIZER_OUTPUT_INVALID" })] });
     expect(detail.statusCode).toBe(200);
     expect(detail.json()).toMatchObject({ importId, opportunity: null });
     expect(raw.statusCode).toBe(200);
     expect(raw.headers["content-type"]).toBe("text/plain; charset=utf-8");
-    expect(raw.body).toBe(source.normalize("NFKC"));
+    expect(raw.body).toBe(source);
+    await expect(database.execute<{ user_id: string; raw_object_reference: { objectKey: string } }>(
+      `select user_id, raw_object_reference from job_source_posting_versions where user_id = '${owner.account.userId}'`,
+    )).resolves.toEqual(expect.arrayContaining([{ user_id: owner.account.userId, raw_object_reference: { objectKey: `accounts/${owner.account.userId}/job-imports/${importId}/source.md` } }]));
     expect(hidden.statusCode).toBe(404);
     expect(hidden.json()).toMatchObject({ code: "JOB_IMPORT_NOT_FOUND", requestId: expect.any(String) });
     expect(hiddenRaw.statusCode).toBe(404);

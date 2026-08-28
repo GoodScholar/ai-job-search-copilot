@@ -6,6 +6,11 @@ import { JobImportRetryableError, type createJobImportProcessor } from "@job-cop
 
 type JobImportProcessor = ReturnType<typeof createJobImportProcessor>;
 
+export function jobImportAttemptContext(attemptsMade: number, attempts: number | undefined): { finalAttempt: boolean; attemptCount: number } {
+  const attemptCount = attemptsMade + 1;
+  return { finalAttempt: attemptCount >= (attempts ?? 1), attemptCount };
+}
+
 export class JobImportConsumer implements OnModuleDestroy {
   private readonly redis: Redis;
   private readonly worker: Worker;
@@ -15,9 +20,9 @@ export class JobImportConsumer implements OnModuleDestroy {
     this.redis = new Redis(input.redisUrl, { maxRetriesPerRequest: null });
     this.worker = new Worker(JOB_IMPORT_QUEUE, async (job) => {
       const payload = JobImportJobSchema.parse(job.data);
-      const attempts = job.opts.attempts ?? 1;
+      const attempt = jobImportAttemptContext(job.attemptsMade, job.opts.attempts);
       try {
-        return await input.processor.process({ ...payload, finalAttempt: job.attemptsMade + 1 >= attempts, attemptCount: job.attemptsMade + 1 });
+        return await input.processor.process({ ...payload, ...attempt });
       } catch (error) {
         if (error instanceof JobImportRetryableError) throw new Error("job import temporarily unavailable");
         throw error;
