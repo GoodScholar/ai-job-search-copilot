@@ -769,6 +769,20 @@ describe("authenticated workbench HTTP API", () => {
     expect(logs).not.toContain("job storage unavailable");
   });
 
+  it("接受恰好 524288 UTF-8 bytes 的岗位正文", async () => {
+    const session = await createSession(app, "job-import-byte-boundary");
+    const content = "😀".repeat(131_072);
+    expect(Buffer.byteLength(content, "utf8")).toBe(524_288);
+
+    const response = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: "/v1/job-imports", headers: { ...bearer(session.sessionToken), "content-type": "application/json" },
+      payload: { inputType: "pasted_text", content },
+    });
+
+    expect(response.statusCode).toBe(202);
+    expect(response.json()).toMatchObject({ importId: expect.any(String), status: "normalizing", failureCode: null });
+  });
+
   it("publishes the protected contract and standard problem schema", async () => {
     const response = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/openapi.json" });
     const document = response.json();

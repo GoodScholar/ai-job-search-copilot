@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { Queue } from "bullmq";
 import Redis from "ioredis";
 import { Client as MinioClient } from "minio";
+import { NestFactory } from "@nestjs/core";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { RedisContainer, type StartedRedisContainer } from "@testcontainers/redis";
 import { GenericContainer, type StartedTestContainer, Wait } from "testcontainers";
@@ -23,6 +24,7 @@ import { BullmqJobImportQueue } from "../../../api/src/job-imports/bullmq-job-im
 import { MinioJobContentStore } from "../../../api/src/job-imports/minio-job-content-store.js";
 import { FakeJobPostingNormalizer } from "./fake-job-posting-normalizer.js";
 import { JobImportConsumer } from "./job-import-consumer.js";
+import { JOB_IMPORT_CONSUMER, JobImportModule } from "./job-import.module.js";
 
 const minioImage = "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e";
 const minioAccessKey = "worker-test-access-key";
@@ -222,6 +224,33 @@ describe("JobImportConsumer", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     await expect(database.select({ status: jobImports.status }).from(jobImports)).resolves.toEqual([{ status: "normalizing" }]);
+  });
+
+  it("Nest ApplicationContext 接线并在 close 时自动关闭 JobImportConsumer", async () => {
+    const item = await createNormalizingImport("# Nest 生命周期测试");
+    const originalEnvironment = {
+      APP_ENV: process.env.APP_ENV, DATABASE_URL: process.env.DATABASE_URL, REDIS_URL: process.env.REDIS_URL,
+      MINIO_ENDPOINT: process.env.MINIO_ENDPOINT, MINIO_ACCESS_KEY: process.env.MINIO_ACCESS_KEY,
+      MINIO_SECRET_KEY: process.env.MINIO_SECRET_KEY, MINIO_BUCKET: process.env.MINIO_BUCKET,
+    };
+    Object.assign(process.env, {
+      APP_ENV: "test", DATABASE_URL: postgres.getConnectionUri(), REDIS_URL: redisUrl,
+      MINIO_ENDPOINT: `http://${minioContainer.getHost()}:${minioContainer.getMappedPort(9000)}`,
+      MINIO_ACCESS_KEY: minioAccessKey, MINIO_SECRET_KEY: minioSecretKey, MINIO_BUCKET: minioBucket,
+    });
+    const context = await NestFactory.createApplicationContext(JobImportModule, { logger: false });
+    try {
+      expect(context.get<JobImportConsumer>(JOB_IMPORT_CONSUMER)).toBeInstanceOf(JobImportConsumer);
+      await context.close();
+      await enqueue(item.importId);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await expect(database.select({ status: jobImports.status }).from(jobImports)).resolves.toEqual([{ status: "normalizing" }]);
+    } finally {
+      for (const [key, value] of Object.entries(originalEnvironment)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 
 });
