@@ -39,7 +39,7 @@ async function uploadDocx(page: Page, file: { name: string; mimeType: string; bu
     await new Promise((resolve) => setTimeout(resolve, 300));
     await route.continue();
   });
-  const input = page.getByLabel("选择 Markdown 或 DOCX 职业资料");
+  const input = page.getByLabel("选择 Markdown、DOCX 或 PDF 职业资料");
   try {
     await input.setInputFiles(file);
     const confirmation = page.getByLabel(/我已检查该文件/);
@@ -100,7 +100,7 @@ test("含嵌入媒体的 DOCX 在浏览器先进入隐私确认，处理副本�
     buffer: await createDocx(["## 工作经历", "- AI 工程师｜示例科技｜2024"], { embeddedMedia: true }),
   };
 
-  await page.getByLabel("选择 Markdown 或 DOCX 职业资料").setInputFiles(mediaOnly);
+  await page.getByLabel("选择 Markdown、DOCX 或 PDF 职业资料").setInputFiles(mediaOnly);
   await expect(page.getByText("发现 1 项敏感信息", { exact: true })).toBeVisible();
   await expect(page.getByRole("radio", { name: "仅上传脱敏副本（原件不离开浏览器）" })).toBeVisible();
   await expect(page.getByRole("radio", { name: "保留受保护原件（下游仍只使用脱敏副本）" })).toBeVisible();

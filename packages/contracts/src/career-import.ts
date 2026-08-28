@@ -6,7 +6,7 @@ export const CAREER_IMPORT_MAX_FACTS = 500;
 export const CAREER_IMPORT_QUEUE = "career-imports";
 export const CAREER_IMPORT_JOB_NAME = "parse-career-document";
 
-const filename = z.string().trim().min(1).max(255).regex(/\.(?:md|docx)$/i);
+const filename = z.string().trim().min(1).max(255).regex(/\.(?:md|docx|pdf)$/i);
 const confidenceBasisPoints = z.int().min(0).max(10_000);
 
 const markdownParserEvidence = z.object({
@@ -50,7 +50,15 @@ const docxCandidateEvidence = z.object({
   path: ["endParagraph"], message: "endParagraph must be greater than or equal to startParagraph",
 });
 
-const candidateEvidence = z.discriminatedUnion("locatorType", [markdownCandidateEvidence, docxCandidateEvidence]);
+const pdfCandidateEvidence = z.object({
+  documentId: z.uuid(), sourceFilename: filename, locatorType: z.literal("pdf_pages"),
+  startPage: z.int().min(1), endPage: z.int().min(1),
+  excerpt: z.string().min(1).max(2_000).refine((excerpt) => excerpt.trim().length > 0),
+}).strict().refine(({ startPage, endPage }) => startPage <= endPage, {
+  path: ["endPage"], message: "endPage must be greater than or equal to startPage",
+});
+
+const candidateEvidence = z.discriminatedUnion("locatorType", [markdownCandidateEvidence, docxCandidateEvidence, pdfCandidateEvidence]);
 
 const namedValue = z.object({ name: z.string().trim().min(1).max(500) }).strict();
 const summaryValue = z.object({ summary: z.string().trim().min(1).max(2_000) }).strict();
@@ -98,7 +106,7 @@ export const CandidateFactSchema = z.discriminatedUnion("factType", [
 ]);
 
 export const CareerImportStatusSchema = z.enum(["queued", "processing", "completed", "failed"]);
-export const CareerDocumentSourceFormatSchema = z.enum(["markdown", "docx"]);
+export const CareerDocumentSourceFormatSchema = z.enum(["markdown", "docx", "pdf"]);
 export const CareerDocumentPrivacyStatusSchema = z.enum([
   "legacy_unreviewed",
   "sanitized_only",

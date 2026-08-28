@@ -11,6 +11,7 @@ import { ApiException } from "../common/api-problem.filter.js";
 import { getRequestId } from "../common/request-id.hook.js";
 import { CAREER_IMPORT_COMMANDS, CAREER_IMPORT_QUERIES, type CareerImportCommands, type CareerImportQueries } from "./career-import.tokens.js";
 import { CareerDocumentUploadError, parseCareerDocumentUpload } from "./parse-career-document-upload.js";
+import { PdfCareerProcessorUnavailableError } from "./pdf-career-processing.js";
 
 class CreateCareerImportResponseDto extends createZodDto(CreateCareerImportResponseSchema) {}
 class CareerImportListDto extends createZodDto(CareerImportListSchema) {}
@@ -20,13 +21,17 @@ class CareerImportPathDto extends createZodDto(CareerImportPathSchema) {}
 function uploadProblem(error: CareerDocumentUploadError): ApiException {
   const status = error.code === "CAREER_DOCUMENT_TOO_LARGE" ? HttpStatus.PAYLOAD_TOO_LARGE : HttpStatus.BAD_REQUEST;
   const messages: Record<CareerDocumentUploadError["code"], string> = {
-    CAREER_DOCUMENT_REQUIRED: "请选择一份 Markdown 或 DOCX 职业资料",
-    TOO_MANY_CAREER_DOCUMENTS: "一次只能上传一份 Markdown 或 DOCX 职业资料",
-    UNSUPPORTED_CAREER_DOCUMENT_TYPE: "仅支持 UTF-8 Markdown 或 DOCX 职业资料",
+    CAREER_DOCUMENT_REQUIRED: "请选择一份 Markdown、DOCX 或 PDF 职业资料",
+    TOO_MANY_CAREER_DOCUMENTS: "一次只能上传一份 Markdown、DOCX 或 PDF 职业资料",
+    UNSUPPORTED_CAREER_DOCUMENT_TYPE: "仅支持 UTF-8 Markdown、DOCX 或文本型 PDF 职业资料",
     CAREER_DOCUMENT_TOO_LARGE: "职业资料不能超过 512 KiB",
     CAREER_DOCUMENT_INVALID_UTF8: "职业资料处理副本必须使用 UTF-8 编码",
     CAREER_DOCUMENT_EMPTY: "职业资料不能为空",
     CAREER_DOCUMENT_INVALID_DOCX: "DOCX 文件无法解析，请重新选择文件",
+    CAREER_DOCUMENT_INVALID_PDF: "PDF 文件无法解析，请重新选择文件",
+    CAREER_DOCUMENT_ENCRYPTED_PDF: "PDF 已加密，无法读取，请解除加密后重试",
+    CAREER_DOCUMENT_PDF_NO_TEXT: "PDF 没有可读取的文本层，请上传文本型 PDF",
+    CAREER_DOCUMENT_PDF_TOO_COMPLEX: "该 PDF 结构过于复杂，无法安全读取，请拆分或精简后重试",
     CAREER_PRIVACY_DECISION_REQUIRED: "请先确认职业资料的隐私处理方式",
     PROTECTED_CAREER_DOCUMENT_REQUIRED: "保留原件时必须同时提供受保护原件",
     CAREER_PROCESSING_COPY_NOT_SANITIZED: "处理副本仍包含可识别的敏感信息",
@@ -68,6 +73,9 @@ export class CareerImportController {
     try {
       upload = await parseCareerDocumentUpload(request.parts());
     } catch (error) {
+      if (error instanceof PdfCareerProcessorUnavailableError) {
+        throw new ApiException("CAREER_IMPORT_UNAVAILABLE", HttpStatus.SERVICE_UNAVAILABLE, "职业资料暂时无法处理，请稍后重试");
+      }
       if (error instanceof CareerDocumentUploadError) throw uploadProblem(error);
       throw error;
     }

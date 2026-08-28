@@ -21,10 +21,12 @@ import {
   type CareerImportJob,
   type CareerImportStatus,
   type CareerImportSummary,
+  type CareerDocumentSourceFormat,
   type CareerDocumentPrivacyStatus,
   type CareerParserFact,
 } from "@job-copilot/contracts/career-import";
 import { CAREER_PRIVACY_SCAN_VERSION } from "@job-copilot/contracts/career-document-privacy";
+import { mapPdfTextLineRangeToPages } from "@job-copilot/contracts/pdf-career-processing";
 import type { AuditTrail } from "./audit-trail";
 import { detectCareerFactConflict } from "./career-fact-conflicts";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
@@ -35,7 +37,7 @@ const promptVersion = "career-import-prompt-v1";
 const outputSchemaVersion = "career-facts-v1";
 
 export interface CareerDocumentStore {
-  put(input: { objectKey: string; bytes: Uint8Array; mediaType: "text/markdown" | "text/plain" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document"; documentId: string }): Promise<void>;
+  put(input: { objectKey: string; bytes: Uint8Array; mediaType: "text/markdown" | "text/plain" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "application/pdf"; documentId: string }): Promise<void>;
   get(input: { objectKey: string }): Promise<Uint8Array>;
 }
 
@@ -59,12 +61,12 @@ export type CreateOrReuseInput = {
   bytes: Uint8Array;
   originalFilename: string;
   mediaType: "text/markdown" | "text/plain";
-  sourceFormat?: "markdown" | "docx";
+  sourceFormat?: "markdown" | "docx" | "pdf";
   privacyScanVersion?: string;
   protectedOriginal?: {
     bytes: Uint8Array;
     originalFilename: string;
-    mediaType?: "text/markdown" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    mediaType?: "text/markdown" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "application/pdf";
   };
 };
 
@@ -122,14 +124,14 @@ function sha256(value: Uint8Array | string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function objectKey(userId: string, documentId: string, privacyScanVersion?: string, sourceFormat: "markdown" | "docx" = "markdown"): string {
-  const extension = sourceFormat === "docx" ? "txt" : "md";
+function objectKey(userId: string, documentId: string, privacyScanVersion?: string, sourceFormat: "markdown" | "docx" | "pdf" = "markdown"): string {
+  const extension = sourceFormat === "markdown" ? "md" : "txt";
   const filename = privacyScanVersion ? `processing.${extension}` : `source.${extension}`;
   return `accounts/${userId}/career-documents/${documentId}/${filename}`;
 }
 
-function protectedObjectKey(userId: string, documentId: string, mediaType: "text/markdown" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" = "text/markdown"): string {
-  const extension = mediaType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ? "docx" : "md";
+function protectedObjectKey(userId: string, documentId: string, mediaType: "text/markdown" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "application/pdf" = "text/markdown"): string {
+  const extension = mediaType === "application/pdf" ? "pdf" : mediaType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ? "docx" : "md";
   return `accounts/${userId}/protected-career-documents/${documentId}/original.${extension}`;
 }
 
@@ -180,7 +182,7 @@ function baseImport(record: {
     importId: record.importId,
     documentId: record.documentId,
     sourceFilename: record.sourceFilename,
-    sourceFormat: record.sourceFormat as "markdown" | "docx",
+    sourceFormat: record.sourceFormat as "markdown" | "docx" | "pdf",
     privacyStatus: record.privacyStatus,
     status: record.status as CareerImportStatus,
     failureCode: record.failureCode as CareerImportFailureCode | null,
@@ -541,7 +543,7 @@ export function createCareerImportCommands(deps: CommandDependencies): {
           importId: storedImport.id,
           documentId: document.id,
           sourceFilename: document.originalFilename,
-          sourceFormat: document.sourceFormat as "markdown" | "docx",
+          sourceFormat: document.sourceFormat as CareerDocumentSourceFormat,
           privacyStatus: privacyStatus({
             privacyScanVersion: document.privacyScanVersion,
             protectedOriginalStored,
@@ -652,7 +654,8 @@ export function createCareerImportQueries(deps: { db: Database }): {
           privacyStatus: persistedPrivacyStatus(record),
         }),
         facts: facts.map((fact) => {
-          if ((record.sourceFormat === "docx") !== (fact.locatorType === "docx_paragraphs")) throw new Error("职业资料证据定位格式不一致");
+          if ((record.sourceFormat === "docx") !== (fact.locatorType === "docx_paragraphs")
+            || (record.sourceFormat === "pdf") !== (fact.locatorType === "pdf_pages")) throw new Error("职业资料证据定位格式不一致");
           return {
           factId: fact.factId,
           factType: fact.factType as CareerImportDetail["facts"][number]["factType"],
@@ -660,7 +663,10 @@ export function createCareerImportQueries(deps: { db: Database }): {
           confidenceBasisPoints: fact.confidenceBasisPoints,
           confirmationStatus: "pending",
           createdAt: toIso(fact.createdAt),
-          evidence: fact.locatorType === "docx_paragraphs" ? {
+          evidence: fact.locatorType === "pdf_pages" ? {
+            documentId: record.documentId, sourceFilename: record.sourceFilename,
+            locatorType: "pdf_pages" as const, startPage: fact.startLine, endPage: fact.endLine, excerpt: fact.excerpt,
+          } : fact.locatorType === "docx_paragraphs" ? {
             documentId: record.documentId,
             sourceFilename: record.sourceFilename,
             locatorType: "docx_paragraphs" as const,
@@ -688,11 +694,13 @@ export function createCareerImportQueries(deps: { db: Database }): {
               .innerJoin(careerDocuments, eq(careerDocuments.id, candidateFacts.careerDocumentId))
               .where(and(eq(candidateFacts.userId, userId), eq(candidateFacts.id, factId)));
             if (!fact) throw new Error("职业事实冲突引用不存在");
-            if ((fact.sourceFormat === "docx") !== (fact.locatorType === "docx_paragraphs")) throw new Error("职业资料证据定位格式不一致");
+            if ((fact.sourceFormat === "docx") !== (fact.locatorType === "docx_paragraphs")
+              || (fact.sourceFormat === "pdf") !== (fact.locatorType === "pdf_pages")) throw new Error("职业资料证据定位格式不一致");
             return {
               factId: fact.factId, factType: fact.factType as CareerImportDetail["facts"][number]["factType"], factValue: fact.factValue as CareerImportDetail["facts"][number]["factValue"],
               confidenceBasisPoints: fact.confidenceBasisPoints, confirmationStatus: "pending" as const, createdAt: toIso(fact.createdAt),
-              evidence: fact.locatorType === "docx_paragraphs" ? { documentId: fact.documentId, sourceFilename: fact.sourceFilename, locatorType: "docx_paragraphs" as const, startParagraph: fact.startLine, endParagraph: fact.endLine, excerpt: fact.excerpt }
+              evidence: fact.locatorType === "pdf_pages" ? { documentId: fact.documentId, sourceFilename: fact.sourceFilename, locatorType: "pdf_pages" as const, startPage: fact.startLine, endPage: fact.endLine, excerpt: fact.excerpt }
+                : fact.locatorType === "docx_paragraphs" ? { documentId: fact.documentId, sourceFilename: fact.sourceFilename, locatorType: "docx_paragraphs" as const, startParagraph: fact.startLine, endParagraph: fact.endLine, excerpt: fact.excerpt }
                 : { documentId: fact.documentId, sourceFilename: fact.sourceFilename, locatorType: "markdown_lines" as const, startLine: fact.startLine, endLine: fact.endLine, excerpt: fact.excerpt },
             };
           };
@@ -851,6 +859,10 @@ export function createCareerImportProcessor(deps: ProcessorDependencies): {
           if (!ownedAttempt) throw new StaleImportAttempt();
           await acquireAccountAdvisoryLock(transaction, record.userId);
           for (const fact of acceptedFacts) {
+            const pdfPages = record.sourceFormat === "pdf"
+              ? mapPdfTextLineRangeToPages(markdown, fact.evidence.startLine, fact.evidence.endLine)
+              : null;
+            if (record.sourceFormat === "pdf" && !pdfPages) throw new StableImportFailure("CAREER_PARSER_EVIDENCE_INVALID");
             const candidateFactId = deps.id();
             await transaction.insert(candidateFacts).values({
               id: candidateFactId,
@@ -875,9 +887,9 @@ export function createCareerImportProcessor(deps: ProcessorDependencies): {
               userId: record.userId,
               candidateFactId,
               careerDocumentId: record.documentId,
-              locatorType: record.sourceFormat === "docx" ? "docx_paragraphs" : fact.evidence.locatorType,
-              startLine: fact.evidence.startLine,
-              endLine: fact.evidence.endLine,
+              locatorType: record.sourceFormat === "pdf" ? "pdf_pages" : record.sourceFormat === "docx" ? "docx_paragraphs" : fact.evidence.locatorType,
+              startLine: pdfPages?.startPage ?? fact.evidence.startLine,
+              endLine: pdfPages?.endPage ?? fact.evidence.endLine,
               excerpt: fact.evidence.excerpt,
               excerptSha256: sha256(fact.evidence.excerpt),
               createdAt: now,

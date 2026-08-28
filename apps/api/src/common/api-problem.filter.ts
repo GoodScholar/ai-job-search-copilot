@@ -27,10 +27,10 @@ function getProblem(exception: unknown): {
       return { status: HttpStatus.PAYLOAD_TOO_LARGE, code: "CAREER_DOCUMENT_TOO_LARGE", message: "职业资料不能超过 512 KiB" };
     }
     if (code === "FST_FIELDS_LIMIT") {
-      return { status: HttpStatus.BAD_REQUEST, code: "CAREER_DOCUMENT_REQUIRED", message: "请选择一份 Markdown 或 DOCX 职业资料" };
+      return { status: HttpStatus.BAD_REQUEST, code: "CAREER_DOCUMENT_REQUIRED", message: "请选择一份 Markdown、DOCX 或 PDF 职业资料" };
     }
     if (code === "FST_FILES_LIMIT" || code === "FST_PARTS_LIMIT") {
-      return { status: HttpStatus.BAD_REQUEST, code: "TOO_MANY_CAREER_DOCUMENTS", message: "一次只能上传一份 Markdown 或 DOCX 职业资料" };
+      return { status: HttpStatus.BAD_REQUEST, code: "TOO_MANY_CAREER_DOCUMENTS", message: "一次只能上传一份 Markdown、DOCX 或 PDF 职业资料" };
     }
   }
   if (exception instanceof ApiException) {

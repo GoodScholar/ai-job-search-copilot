@@ -9,6 +9,11 @@ import {
   isCareerPrivacyMode,
   type CareerPrivacyMode,
 } from "@job-copilot/contracts/career-document-privacy";
+import {
+  extractCanonicalPdfPageText,
+  PdfCareerDocumentError,
+  PdfCareerProcessorUnavailableError,
+} from "./pdf-career-processing.js";
 
 export class CareerDocumentUploadError extends Error {
   constructor(public readonly code:
@@ -19,6 +24,10 @@ export class CareerDocumentUploadError extends Error {
     | "CAREER_DOCUMENT_INVALID_UTF8"
     | "CAREER_DOCUMENT_EMPTY"
     | "CAREER_DOCUMENT_INVALID_DOCX"
+    | "CAREER_DOCUMENT_INVALID_PDF"
+    | "CAREER_DOCUMENT_ENCRYPTED_PDF"
+    | "CAREER_DOCUMENT_PDF_NO_TEXT"
+    | "CAREER_DOCUMENT_PDF_TOO_COMPLEX"
     | "CAREER_PRIVACY_DECISION_REQUIRED"
     | "PROTECTED_CAREER_DOCUMENT_REQUIRED"
     | "CAREER_PROCESSING_COPY_NOT_SANITIZED"
@@ -31,12 +40,12 @@ export type ParsedCareerDocumentUpload = {
   bytes: Uint8Array;
   originalFilename: string;
   mediaType: "text/markdown" | "text/plain";
-  sourceFormat: "markdown" | "docx";
+  sourceFormat: "markdown" | "docx" | "pdf";
   privacyScanVersion: typeof CAREER_PRIVACY_SCAN_VERSION;
   protectedOriginal?: {
     bytes: Uint8Array;
     originalFilename: string;
-    mediaType: "text/markdown" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    mediaType: "text/markdown" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "application/pdf";
   };
 };
 
@@ -47,7 +56,12 @@ type ParsedMarkdownFile = {
 };
 type ParsedProtectedOriginal = { bytes: Uint8Array; originalFilename: string; mediaType: CareerDocumentMediaType; canonicalText: string };
 
-type CareerDocumentMediaType = "text/markdown" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+type CareerDocumentMediaType = "text/markdown" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "application/pdf";
+type PdfTextExtractor = (bytes: Uint8Array) => Promise<string>;
+
+export type ParseCareerDocumentUploadOptions = {
+  extractPdfPageText?: PdfTextExtractor;
+};
 type ZipEntryWithBudgetMetadata = { dir: boolean; name: string; _data?: { compressedSize?: number; uncompressedSize?: number } };
 
 function hasSafeDocxArchiveBudget(entries: readonly ZipEntryWithBudgetMetadata[], archiveByteLength: number): boolean {
@@ -60,14 +74,14 @@ function hasSafeDocxArchiveBudget(entries: readonly ZipEntryWithBudgetMetadata[]
 
 function normalizedFilename(filename: string | undefined): string {
   const value = basename((filename ?? "").replace(/\\/g, "/")).normalize("NFC");
-  if (!value || Array.from(value).length > 255 || !/\.(?:md|docx)$/i.test(value)) {
+  if (!value || Array.from(value).length > 255 || !/\.(?:md|docx|pdf)$/i.test(value)) {
     throw new CareerDocumentUploadError("UNSUPPORTED_CAREER_DOCUMENT_TYPE");
   }
   return value;
 }
 
 function mediaTypeFor(filename: string): CareerDocumentMediaType {
-  return /\.docx$/i.test(filename)
+  return /\.pdf$/i.test(filename) ? "application/pdf" : /\.docx$/i.test(filename)
     ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     : "text/markdown";
 }
@@ -76,7 +90,9 @@ function supportedMimeType(mimetype: string, mediaType: CareerDocumentMediaType)
   const normalized = mimetype.toLowerCase();
   return mediaType === "text/markdown"
     ? ["text/markdown", "text/plain", "", "application/octet-stream"].includes(normalized)
-    : ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "", "application/octet-stream"].includes(normalized);
+    : mediaType === "application/pdf"
+      ? ["application/pdf", "", "application/octet-stream"].includes(normalized)
+      : ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "", "application/octet-stream"].includes(normalized);
 }
 
 async function readLimitedFile(file: MultipartFile): Promise<Uint8Array> {
@@ -144,20 +160,31 @@ async function canonicalDocxText(bytes: Uint8Array): Promise<string> {
   }
 }
 
-async function parseProtectedOriginal(file: MultipartFile): Promise<ParsedProtectedOriginal> {
+async function parseProtectedOriginal(file: MultipartFile, extractPdfPageText: PdfTextExtractor): Promise<ParsedProtectedOriginal> {
   const bytes = await readLimitedFile(file);
   const originalFilename = normalizedFilename(file.filename);
   const mediaType = mediaTypeFor(originalFilename);
   if (!supportedMimeType(file.mimetype, mediaType)) throw new CareerDocumentUploadError("UNSUPPORTED_CAREER_DOCUMENT_TYPE");
   let canonicalText: string;
   if (mediaType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") canonicalText = await canonicalDocxText(bytes);
+  else if (mediaType === "application/pdf") {
+    try { canonicalText = await extractPdfPageText(bytes); } catch (error) {
+      if (error instanceof PdfCareerProcessorUnavailableError) throw error;
+      if (error instanceof PdfCareerDocumentError) throw new CareerDocumentUploadError(error.code);
+      throw new CareerDocumentUploadError("CAREER_DOCUMENT_INVALID_PDF");
+    }
+  }
   else {
     try { canonicalText = new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { throw new CareerDocumentUploadError("CAREER_DOCUMENT_INVALID_UTF8"); }
   }
   return { bytes, originalFilename, mediaType, canonicalText };
 }
 
-export async function parseCareerDocumentUpload(parts: AsyncIterable<Multipart>): Promise<ParsedCareerDocumentUpload> {
+export async function parseCareerDocumentUpload(
+  parts: AsyncIterable<Multipart>,
+  options: ParseCareerDocumentUploadOptions = {},
+): Promise<ParsedCareerDocumentUpload> {
+  const extractPdfPageText = options.extractPdfPageText ?? extractCanonicalPdfPageText;
   let processingFile: ParsedMarkdownFile | undefined;
   let protectedOriginalFile: ParsedProtectedOriginal | undefined;
   let mode: CareerPrivacyMode | undefined;
@@ -187,8 +214,9 @@ export async function parseCareerDocumentUpload(parts: AsyncIterable<Multipart>)
     }
     try {
       if (part.fieldname === "file") processingFile = await parseMarkdownFile(part);
-      else protectedOriginalFile = await parseProtectedOriginal(part);
+      else protectedOriginalFile = await parseProtectedOriginal(part, extractPdfPageText);
     } catch (error) {
+      if (error instanceof PdfCareerProcessorUnavailableError) throw error;
       failure ??= error instanceof CareerDocumentUploadError
         ? error
         : new CareerDocumentUploadError("CAREER_DOCUMENT_REQUIRED");
@@ -204,8 +232,8 @@ export async function parseCareerDocumentUpload(parts: AsyncIterable<Multipart>)
 
   if (mode === "retain_protected_original") {
     if (!protectedOriginalFile) throw new CareerDocumentUploadError("PROTECTED_CAREER_DOCUMENT_REQUIRED");
-    const processingSourceFormat = /\.docx$/i.test(processingFile.originalFilename) ? "docx" : "markdown";
-    const protectedSourceFormat = protectedOriginalFile.mediaType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ? "docx" : "markdown";
+    const processingSourceFormat = /\.pdf$/i.test(processingFile.originalFilename) ? "pdf" : /\.docx$/i.test(processingFile.originalFilename) ? "docx" : "markdown";
+    const protectedSourceFormat = protectedOriginalFile.mediaType === "application/pdf" ? "pdf" : protectedOriginalFile.mediaType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ? "docx" : "markdown";
     if (processingSourceFormat !== protectedSourceFormat) {
       throw new CareerDocumentUploadError("CAREER_PROCESSING_COPY_MISMATCH");
     }
@@ -220,8 +248,8 @@ export async function parseCareerDocumentUpload(parts: AsyncIterable<Multipart>)
   return {
     bytes: processingFile.bytes,
     originalFilename: processingFile.originalFilename,
-    mediaType: /\.docx$/i.test(processingFile.originalFilename) ? "text/plain" : "text/markdown",
-    sourceFormat: /\.docx$/i.test(processingFile.originalFilename) ? "docx" : "markdown",
+    mediaType: /\.(?:docx|pdf)$/i.test(processingFile.originalFilename) ? "text/plain" : "text/markdown",
+    sourceFormat: /\.pdf$/i.test(processingFile.originalFilename) ? "pdf" : /\.docx$/i.test(processingFile.originalFilename) ? "docx" : "markdown",
     privacyScanVersion: CAREER_PRIVACY_SCAN_VERSION,
     protectedOriginal: protectedOriginalFile
       ? { bytes: protectedOriginalFile.bytes, originalFilename: protectedOriginalFile.originalFilename, mediaType: protectedOriginalFile.mediaType }

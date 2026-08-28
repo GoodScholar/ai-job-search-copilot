@@ -23,6 +23,7 @@
     "jszip": "3.10.1",
     "minio": "8.0.6",
     "mammoth": "1.12.1",
+    "pdfjs-dist": "6.2.108",
     "nestjs-zod": "5.5.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",

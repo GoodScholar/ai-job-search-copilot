@@ -87,6 +87,19 @@ describe("career import contracts", () => {
       }],
     })).toMatchObject({ facts: [expect.objectContaining({ evidence: expect.objectContaining({ locatorType: "docx_paragraphs" }) })] });
   });
+  it("接受 PDF 来源与按页定位的候选事实证据", () => {
+    const documentId = crypto.randomUUID();
+    expect(CareerImportDetailSchema.parse({
+      importId: crypto.randomUUID(), documentId, sourceFilename: "resume.pdf",
+      sourceFormat: "pdf", privacyStatus: "sanitized_only", status: "completed", failureCode: null,
+      createdAt: "2026-08-28T12:00:00.000Z", updatedAt: "2026-08-28T12:00:00.000Z",
+      facts: [{
+        factId: crypto.randomUUID(), factType: "skill", factValue: { name: "TypeScript" },
+        confidenceBasisPoints: 10_000, confirmationStatus: "pending", createdAt: "2026-08-28T12:00:00.000Z",
+        evidence: { documentId, sourceFilename: "resume.pdf", locatorType: "pdf_pages", startPage: 2, endPage: 2, excerpt: "- TypeScript" },
+      }],
+    }).facts[0]?.evidence).toMatchObject({ locatorType: "pdf_pages", startPage: 2 });
+  });
   it("要求公开导入响应明确给出来源格式", () => {
     expect(() => CareerImportDetailSchema.parse({
       importId: id(), documentId: id(), sourceFilename: "resume.md", privacyStatus: "sanitized_only", status: "queued", failureCode: null,

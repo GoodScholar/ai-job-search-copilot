@@ -10,6 +10,7 @@ import {
 import { useCallback, useEffect, useRef, useState, useTransition, type ChangeEvent, type FormEvent } from "react";
 import { createCareerImportAction, type UploadActionState } from "@/app/(workbench)/profile/actions";
 import { DocxCareerProcessingError, extractCanonicalDocxParagraphText } from "@/lib/docx-career-processing";
+import { PdfCareerProcessingError, extractCanonicalPdfPageText } from "@/lib/pdf-career-processing";
 
 type ProfileImportViewProps = {
   initialImports: CareerImportSummary[];
@@ -61,6 +62,9 @@ const failureMessages: Record<string, string> = {
   CAREER_PARSER_EVIDENCE_INVALID: "职业资料中的证据无法确认，请重新上传后再试。",
   NO_SUPPORTED_FACTS: "没有找到可确认的职业资料事实，请检查职业资料内容后重试。",
   CAREER_IMPORT_PERSIST_FAILED: "解析结果暂时无法保存，请稍后重试。",
+  CAREER_DOCUMENT_INVALID_PDF: "PDF 文件无法解析，请重新选择文件。",
+  CAREER_DOCUMENT_ENCRYPTED_PDF: "PDF 已加密，无法读取，请解除加密后重试。",
+  CAREER_DOCUMENT_PDF_NO_TEXT: "PDF 没有可读取的文本层，请上传文本型 PDF。",
 };
 
 const factTypeNames: Record<CandidateFact["factType"], string> = {
@@ -87,7 +91,9 @@ function factValue(fact: CandidateFact): string {
 
 function evidenceLocation(fact: CandidateFact): string {
   const evidence = fact.evidence;
-  return evidence.locatorType === "docx_paragraphs"
+  return evidence.locatorType === "pdf_pages"
+    ? `第 ${evidence.startPage}-${evidence.endPage} 页`
+    : evidence.locatorType === "docx_paragraphs"
     ? `第 ${evidence.startParagraph}-${evidence.endParagraph} 段`
     : `第 ${evidence.startLine}-${evidence.endLine} 行`;
 }
@@ -164,8 +170,9 @@ function readFileText(file: File): Promise<string> {
 }
 
 async function readCareerDocumentText(file: File): Promise<string> {
-  if (!/\.docx$/i.test(file.name)) return readFileText(file);
-  return extractCanonicalDocxParagraphText(file);
+  if (/\.docx$/i.test(file.name)) return extractCanonicalDocxParagraphText(file);
+  if (/\.pdf$/i.test(file.name)) return extractCanonicalPdfPageText(file);
+  return readFileText(file);
 }
 
 export function ProfileImportView({ initialImports, initialProfile = { profileId: null, version: 0, facts: [] } }: ProfileImportViewProps) {
@@ -195,6 +202,7 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
   const [privacyMode, setPrivacyMode] = useState<CareerPrivacyMode | null>(null);
   const [confirmedSanitized, setConfirmedSanitized] = useState(false);
   const [privacyMessage, setPrivacyMessage] = useState<string | null>(null);
+  const [hasPendingFileSelection, setHasPendingFileSelection] = useState(false);
   const privacyGeneration = useRef(0);
   const pollingGeneration = useRef<{ value: number; initialStatus: ImportStatus | null }>({
     value: 0,
@@ -308,9 +316,11 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
     setPrivacyMode(null);
     setConfirmedSanitized(false);
     if (!file) {
-      setPrivacyMessage("请选择一份 Markdown 或 DOCX 职业资料后上传。");
+      setHasPendingFileSelection(false);
+      setPrivacyMessage("请选择一份 Markdown、DOCX 或 PDF 职业资料后上传。");
       return;
     }
+    setHasPendingFileSelection(true);
     setPrivacyMessage("正在浏览器中检查敏感信息…");
     void readCareerDocumentText(file).then((markdown) => {
       if (privacyGeneration.current !== generation) return;
@@ -321,9 +331,15 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
         : "未发现常见敏感信息，请确认你已自行检查后继续。");
     }).catch((error: unknown) => {
       if (privacyGeneration.current !== generation) return;
-      setPrivacyMessage(error instanceof DocxCareerProcessingError && error.code === "TOO_LARGE"
+      setPrivacyMessage((error instanceof DocxCareerProcessingError || error instanceof PdfCareerProcessingError) && error.code === "TOO_LARGE"
         ? error.message
-        : "浏览器无法读取该文件，请重新选择有效的 Markdown 或 DOCX 职业资料。");
+        : error instanceof PdfCareerProcessingError && error.code === "NO_TEXT"
+          ? "该 PDF 没有可读取的文本层，请上传文本型 PDF。"
+          : error instanceof PdfCareerProcessingError && error.code === "ENCRYPTED_PDF"
+            ? "该 PDF 已加密，无法读取，请解除加密后重试。"
+            : error instanceof PdfCareerProcessingError && error.code === "TOO_COMPLEX"
+              ? "该 PDF 结构过于复杂，无法安全读取，请拆分或精简后重试。"
+            : "浏览器无法读取该文件，请重新选择有效的 Markdown、DOCX 或 PDF 职业资料。");
     });
   };
 
@@ -349,7 +365,7 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
       preparedDocument.file.name,
       { type: /\.docx$/i.test(preparedDocument.file.name)
         ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        : "text/markdown", lastModified: preparedDocument.file.lastModified },
+        : /\.pdf$/i.test(preparedDocument.file.name) ? "application/pdf" : "text/markdown", lastModified: preparedDocument.file.lastModified },
     ));
     if (selectedMode === "retain_protected_original") {
       formData.set("protectedOriginal", preparedDocument.file);
@@ -368,6 +384,7 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
         moveToRecentTop(nextImport);
         setDetail(null);
         setPollingError(false);
+        setHasPendingFileSelection(false);
         return;
       }
       setActionState(nextState);
@@ -429,6 +446,8 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
     ? statusText.uploading
     : actionFailureMessage
       ? actionFailureMessage
+      : hasPendingFileSelection && privacyMessage
+        ? privacyMessage
       : pollingError
       ? "暂时无法读取解析状态，请稍后重试。"
       : displayedStatus === "failed"
@@ -437,7 +456,7 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
         ? statusText[displayedStatus]
         : privacyMessage
           ? privacyMessage
-        : "请选择一份 Markdown 或 DOCX 职业资料后上传。";
+        : "请选择一份 Markdown、DOCX 或 PDF 职业资料后上传。";
 
   return (
     <main className="container profile-main">
@@ -454,9 +473,9 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
           <p>请检查姓名、手机号、邮箱、详细住址、证件号码、照片、二维码和社交账号。自动检查可能遗漏内容，请勿使用随机生成的真实身份替换。</p>
         </div>
         <form className="profile-upload-form" onSubmit={submitUpload}>
-          <label htmlFor="career-document">选择 Markdown 或 DOCX 职业资料</label>
+          <label htmlFor="career-document">选择 Markdown、DOCX 或 PDF 职业资料</label>
           <input
-            accept=".md,.docx,text/markdown,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            accept=".md,.docx,.pdf,text/markdown,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf"
             className="profile-file-input"
             id="career-document"
             name="careerDocument"
@@ -568,7 +587,7 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
                 <div className="profile-fact-value">
                   <p>{factTypeNames[fact.factType]}</p>
                   <strong>{factValue(fact)}</strong>
-                  <span>来源：{fact.evidence.sourceFilename} · <span>第 {fact.evidence.locatorType === "docx_paragraphs" ? fact.evidence.startParagraph : fact.evidence.startLine}{fact.evidence.locatorType === "docx_paragraphs" ? " 段" : " 行"}</span></span>
+                  <span>来源：{fact.evidence.sourceFilename} · <span>{fact.evidence.locatorType === "pdf_pages" ? `第 ${fact.evidence.startPage} 页` : fact.evidence.locatorType === "docx_paragraphs" ? `第 ${fact.evidence.startParagraph} 段` : `第 ${fact.evidence.startLine} 行`}</span></span>
                 </div>
                 <blockquote className="profile-fact-evidence">{fact.evidence.excerpt}</blockquote>
                 {!pendingConflictFactIds.has(fact.factId) ? <div className="profile-fact-actions">

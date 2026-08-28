@@ -13,7 +13,7 @@ export type CareerImportCommands = {
     bytes: Uint8Array;
     originalFilename: string;
     mediaType: "text/markdown" | "text/plain";
-    sourceFormat: "markdown" | "docx";
+    sourceFormat: "markdown" | "docx" | "pdf";
   }): Promise<CreateOrReuseResult>;
 };
 

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Multipart, MultipartFile, MultipartValue } from "@fastify/multipart";
 import { parseCareerDocumentUpload } from "./parse-career-document-upload.js";
 import { createMinimalDocx } from "./minimal-docx.test-support.js";
+import { PdfCareerProcessorUnavailableError } from "./pdf-career-processing.js";
 
 function markdownPart(input: {
   filename?: string;
@@ -41,6 +42,30 @@ async function* parts(...items: Multipart[]): AsyncIterable<Multipart> {
 
 function sanitizedParts(...items: MultipartFile[]): AsyncIterable<Multipart> {
   return parts(privacyMode("sanitized_only"), ...items);
+}
+
+function createPdf(pages: readonly string[]): Uint8Array {
+  const objects = ["<< /Type /Catalog /Pages 2 0 R >>", ""];
+  const pageObjectNumbers: number[] = [];
+  for (const text of pages) {
+    const pageNumber = objects.length + 1;
+    const contentNumber = pageNumber + 1;
+    pageObjectNumbers.push(pageNumber);
+    objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${contentNumber + 1} 0 R >> >> /Contents ${contentNumber} 0 R >>`);
+    const stream = `BT /F1 12 Tf 72 720 Td (${text.replace(/[\\()]/g, "\\$&")}) Tj ET`;
+    objects.push(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
+    objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+  }
+  objects[1] = `<< /Type /Pages /Kids [${pageObjectNumbers.map((number) => `${number} 0 R`).join(" ")}] /Count ${pages.length} >>`;
+  let output = "%PDF-1.4\n";
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(output.length);
+    output += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xref = output.length;
+  output += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.slice(1).map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("")}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  return new TextEncoder().encode(output);
 }
 
 describe("parseCareerDocumentUpload", () => {
@@ -148,6 +173,46 @@ describe("parseCareerDocumentUpload", () => {
         originalFilename: "resume.docx",
       },
     });
+  });
+
+  it("复验运行时生成的 PDF 原件与浏览器脱敏处理副本严格一致", async () => {
+    const originalBytes = createPdf(["## Skills", "- TypeScript"]);
+    await expect(parseCareerDocumentUpload(parts(
+      privacyMode("retain_protected_original"),
+      markdownPart({ filename: "resume.pdf", mimetype: "application/pdf", bytes: new TextEncoder().encode("[PDF 第 1 页]\n## Skills\n[PDF 第 2 页]\n- TypeScript") }),
+      markdownPart({ fieldname: "protectedOriginal", filename: "resume.pdf", mimetype: "application/pdf", bytes: originalBytes }),
+    ))).resolves.toMatchObject({
+      mediaType: "text/plain", sourceFormat: "pdf",
+      protectedOriginal: { mediaType: "application/pdf", originalFilename: "resume.pdf" },
+    });
+  });
+
+  it("在写入前拒绝损坏的受保护 PDF 原件", async () => {
+    await expect(parseCareerDocumentUpload(parts(
+      privacyMode("retain_protected_original"),
+      markdownPart({ filename: "resume.pdf", mimetype: "application/pdf", bytes: new TextEncoder().encode("[PDF 第 1 页]\n## Skills") }),
+      markdownPart({ fieldname: "protectedOriginal", filename: "resume.pdf", mimetype: "application/pdf", bytes: new TextEncoder().encode("not a PDF") }),
+    ))).rejects.toMatchObject({ code: "CAREER_DOCUMENT_INVALID_PDF" });
+  });
+
+  it("在写入前拒绝页数超过预算的受保护 PDF 原件", async () => {
+    const originalBytes = createPdf(Array.from({ length: 51 }, (_, index) => `第 ${index + 1} 页`));
+    expect(originalBytes.byteLength).toBeLessThan(524_288);
+
+    await expect(parseCareerDocumentUpload(parts(
+      privacyMode("retain_protected_original"),
+      markdownPart({ filename: "resume.pdf", mimetype: "application/pdf", bytes: new TextEncoder().encode("[PDF 第 1 页]\n第 1 页") }),
+      markdownPart({ fieldname: "protectedOriginal", filename: "resume.pdf", mimetype: "application/pdf", bytes: originalBytes }),
+    ))).rejects.toMatchObject({ code: "CAREER_DOCUMENT_PDF_TOO_COMPLEX" });
+  });
+
+  it("保留受保护 PDF 原件时保留处理器不可用错误，不将其降级为 400", async () => {
+    const unavailable = new PdfCareerProcessorUnavailableError("SPAWN_FAILED");
+    await expect(parseCareerDocumentUpload(parts(
+      privacyMode("retain_protected_original"),
+      markdownPart({ filename: "resume.pdf", mimetype: "application/pdf", bytes: new TextEncoder().encode("[PDF 第 1 页]\n## Skills") }),
+      markdownPart({ fieldname: "protectedOriginal", filename: "resume.pdf", mimetype: "application/pdf", bytes: new TextEncoder().encode("%PDF-unread") }),
+    ), { extractPdfPageText: async () => { throw unavailable; } })).rejects.toBe(unavailable);
   });
 
   it.each([

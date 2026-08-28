@@ -56,8 +56,8 @@ export const careerDocuments = pgTable("career_documents", {
   unique("career_documents_user_id_id_unique").on(table.userId, table.id),
   check("career_documents_checksum_sha256_format", sql`${table.checksumSha256} ~ '^[0-9a-f]{64}$'`),
   check("career_documents_media_type_check", sql`${table.mediaType} in ('text/markdown', 'text/plain')`),
-  check("career_documents_source_format_check", sql`${table.sourceFormat} in ('markdown', 'docx')`),
-  check("career_documents_source_format_media_type_check", sql`(${table.sourceFormat} = 'markdown' and ${table.mediaType} = 'text/markdown') or (${table.sourceFormat} = 'docx' and ${table.mediaType} = 'text/plain')`),
+  check("career_documents_source_format_check", sql`${table.sourceFormat} in ('markdown', 'docx', 'pdf')`),
+  check("career_documents_source_format_media_type_check", sql`(${table.sourceFormat} = 'markdown' and ${table.mediaType} = 'text/markdown') or (${table.sourceFormat} in ('docx', 'pdf') and ${table.mediaType} = 'text/plain')`),
   check("career_documents_byte_size_range", sql`${table.byteSize} between 0 and 524288`),
 ]);
 
@@ -81,7 +81,7 @@ export const protectedCareerDocuments = pgTable("protected_career_documents", {
     name: "protected_career_documents_owner_processing_fk",
   }),
   check("protected_career_documents_checksum_format", sql`${table.checksumSha256} ~ '^[0-9a-f]{64}$'`),
-  check("protected_career_documents_media_type_check", sql`${table.mediaType} in ('text/markdown', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')`),
+  check("protected_career_documents_media_type_check", sql`${table.mediaType} in ('text/markdown', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/pdf')`),
   check("protected_career_documents_byte_size_range", sql`${table.byteSize} between 0 and 524288`),
 ]);
 
@@ -258,7 +258,7 @@ export const candidateFactEvidence = pgTable("candidate_fact_evidence", {
     foreignColumns: [candidateFacts.userId, candidateFacts.id, candidateFacts.careerDocumentId],
     name: "candidate_fact_evidence_owner_fact_document_fk",
   }),
-  check("candidate_fact_evidence_locator_type_check", sql`${table.locatorType} in ('markdown_lines', 'docx_paragraphs')`),
+  check("candidate_fact_evidence_locator_type_check", sql`${table.locatorType} in ('markdown_lines', 'docx_paragraphs', 'pdf_pages')`),
   check("candidate_fact_evidence_start_line_check", sql`${table.startLine} >= 1`),
   check("candidate_fact_evidence_end_line_check", sql`${table.endLine} >= ${table.startLine}`),
   check("candidate_fact_evidence_excerpt_sha256_format", sql`${table.excerptSha256} ~ '^[0-9a-f]{64}$'`),

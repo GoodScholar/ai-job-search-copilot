@@ -1,0 +1,8 @@
+ALTER TABLE "candidate_fact_evidence" DROP CONSTRAINT "candidate_fact_evidence_locator_type_check";--> statement-breakpoint
+ALTER TABLE "career_documents" DROP CONSTRAINT "career_documents_source_format_check";--> statement-breakpoint
+ALTER TABLE "career_documents" DROP CONSTRAINT "career_documents_source_format_media_type_check";--> statement-breakpoint
+ALTER TABLE "protected_career_documents" DROP CONSTRAINT "protected_career_documents_media_type_check";--> statement-breakpoint
+ALTER TABLE "candidate_fact_evidence" ADD CONSTRAINT "candidate_fact_evidence_locator_type_check" CHECK ("candidate_fact_evidence"."locator_type" in ('markdown_lines', 'docx_paragraphs', 'pdf_pages'));--> statement-breakpoint
+ALTER TABLE "career_documents" ADD CONSTRAINT "career_documents_source_format_check" CHECK ("career_documents"."source_format" in ('markdown', 'docx', 'pdf'));--> statement-breakpoint
+ALTER TABLE "career_documents" ADD CONSTRAINT "career_documents_source_format_media_type_check" CHECK (("career_documents"."source_format" = 'markdown' and "career_documents"."media_type" = 'text/markdown') or ("career_documents"."source_format" in ('docx', 'pdf') and "career_documents"."media_type" = 'text/plain'));--> statement-breakpoint
+ALTER TABLE "protected_career_documents" ADD CONSTRAINT "protected_career_documents_media_type_check" CHECK ("protected_career_documents"."media_type" in ('text/markdown', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/pdf'));

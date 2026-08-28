@@ -16,6 +16,7 @@ import {
 import { CAREER_PRIVACY_SCAN_VERSION } from "@job-copilot/contracts/career-document-privacy";
 import type { CareerImportJob } from "@job-copilot/contracts/career-import";
 import { createAuditTrail, type AuditTrail } from "./audit-trail";
+import { createProfileReviewCommands, createTrustedProfileQueries } from "./profile-review";
 import {
   CareerImportError,
   createCareerImportCommands,
@@ -36,7 +37,7 @@ class MemoryStore implements CareerDocumentStore {
   readonly puts: Array<{ objectKey: string; bytes: Uint8Array; documentId: string }> = [];
   private readonly objects = new Map<string, Uint8Array>();
 
-  async put(input: { objectKey: string; bytes: Uint8Array; mediaType: "text/markdown" | "text/plain" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document"; documentId: string }): Promise<void> {
+  async put(input: { objectKey: string; bytes: Uint8Array; mediaType: "text/markdown" | "text/plain" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "application/pdf"; documentId: string }): Promise<void> {
     this.puts.push(input);
     this.objects.set(input.objectKey, input.bytes);
   }
@@ -133,14 +134,14 @@ describe("career imports", () => {
     requestId: string;
     userId?: string;
     sourceBytes?: Uint8Array;
-    sourceFormat?: "markdown" | "docx";
+    sourceFormat?: "markdown" | "docx" | "pdf";
   }) {
     return commandsFor(input.documentStore, input.queue, input.ids).createOrReuse({
       userId: input.userId ?? userId,
       requestId: input.requestId,
       bytes: input.sourceBytes ?? new TextEncoder().encode(`${markdown}\n<!-- ${input.requestId} -->`),
-      originalFilename: input.sourceFormat === "docx" ? "resume.docx" : "resume.md",
-      mediaType: input.sourceFormat === "docx" ? "text/plain" : "text/markdown",
+      originalFilename: input.sourceFormat === "pdf" ? "resume.pdf" : input.sourceFormat === "docx" ? "resume.docx" : "resume.md",
+      mediaType: input.sourceFormat === "markdown" || !input.sourceFormat ? "text/markdown" : "text/plain",
       sourceFormat: input.sourceFormat,
       privacyScanVersion: CAREER_PRIVACY_SCAN_VERSION,
     });
@@ -182,6 +183,24 @@ describe("career imports", () => {
       expect.objectContaining({ importId: first.importId, userId }),
     ]);
     expect(store.puts).toHaveLength(1);
+  });
+
+  it("将 PDF 处理副本中的解析行映射为可审核的原始页码", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const imported = await createImport({
+      documentStore: store, queue,
+      ids: ids("d7f0b06d-3a3e-4f77-95ee-2e8009b609e0", "b99f3c24-c45b-4fd9-9994-a8c2f7f6f723"),
+      requestId: "70cf2fc5-6f6f-4cbe-981c-4a928565bbd7", sourceFormat: "pdf",
+      sourceBytes: new TextEncoder().encode("[PDF 第 1 页]\n## Skills\n- TypeScript"),
+    });
+    await expect(createCareerImportProcessor({
+      db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), documentStore: store,
+      parser: parser({ ...validOutput(), facts: [{ ...validOutput().facts[0], evidence: { locatorType: "markdown_lines", startLine: 3, endLine: 3, excerpt: "- TypeScript" } }] }),
+      id: ids("3fca4636-84a8-4dcc-b4a4-7c89dcba77ee", "ec2ae0ce-50a9-49f1-b7e1-2d9e83cae5db"), clock: () => now,
+    }).process({ version: 1, importId: imported.importId, userId, finalAttempt: true })).resolves.toBe("completed");
+    await expect(createCareerImportQueries({ db: database }).get({ userId, importId: imported.importId }))
+      .resolves.toMatchObject({ facts: [{ evidence: { locatorType: "pdf_pages", startPage: 1, endPage: 1 } }] });
   });
 
   it("将相同处理文本的 Markdown 与 DOCX 作为不同的职业资料身份保存", async () => {
@@ -1249,6 +1268,23 @@ describe("career imports", () => {
     await expect(createCareerImportQueries({ db: database }).get({ userId, importId: first.importId })).resolves.toMatchObject({
       conflicts: [{ kind: "date", status: "pending" }],
     });
+  });
+
+  it("保留已确认 Markdown 画像事实，并让不同年份 PDF 形成带页码证据的待处理冲突", async () => {
+    const store = new MemoryStore(); const queue = new MemoryQueue();
+    const company = `示例科技${crypto.randomUUID().slice(0, 8)}`;
+    const role = `PDF交叉${crypto.randomUUID().slice(0, 8)}工程师`;
+    const existingSummary = `${role}｜${company}｜2023-2024`;
+    const incomingSummary = `${role}｜${company}｜2024-至今`;
+    const output = (summary: string, line: number) => ({ adapter: "fake", parserVersion: "fake-career-parser-v1", promptVersion: "career-import-prompt-v1", outputSchemaVersion: "career-facts-v1", facts: [{ factType: "experience", factValue: { summary }, confidenceBasisPoints: 10_000, grounding: "quoted", evidence: { locatorType: "markdown_lines", startLine: line, endLine: line, excerpt: `- ${summary}` } }] });
+    const markdownImport = await createImport({ documentStore: store, queue, ids: () => crypto.randomUUID(), requestId: crypto.randomUUID(), sourceBytes: new TextEncoder().encode(`## 工作经历\n- ${existingSummary}`) });
+    await createCareerImportProcessor({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), documentStore: store, parser: parser(output(existingSummary, 2)), id: () => crypto.randomUUID(), clock: () => now }).process({ version: 1, importId: markdownImport.importId, userId, finalAttempt: true });
+    const markdownDetail = await createCareerImportQueries({ db: database }).get({ userId, importId: markdownImport.importId });
+    const profile = await createProfileReviewCommands({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).decideCandidateFact({ userId, requestId: crypto.randomUUID(), candidateFactId: markdownDetail!.facts[0]!.factId, command: { expectedVersion: 0, decision: "confirmed" } });
+    const pdfImport = await createImport({ documentStore: store, queue, ids: () => crypto.randomUUID(), requestId: crypto.randomUUID(), sourceFormat: "pdf", sourceBytes: new TextEncoder().encode(`[PDF 第 1 页]\n## 工作经历\n- ${incomingSummary}`) });
+    await createCareerImportProcessor({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), documentStore: store, parser: parser(output(incomingSummary, 3)), id: () => crypto.randomUUID(), clock: () => now }).process({ version: 1, importId: pdfImport.importId, userId, finalAttempt: true });
+    await expect(createCareerImportQueries({ db: database }).get({ userId, importId: pdfImport.importId })).resolves.toMatchObject({ facts: [{ evidence: { locatorType: "pdf_pages", startPage: 1 } }], conflicts: [{ kind: "date", status: "pending", existingFact: { evidence: { locatorType: "markdown_lines" } }, incomingFact: { evidence: { locatorType: "pdf_pages", startPage: 1 } } }] });
+    await expect(createTrustedProfileQueries({ db: database }).getCurrent({ userId })).resolves.toMatchObject({ version: profile.version, facts: [{ candidateFactId: markdownDetail!.facts[0]!.factId }] });
   });
 
   it("串行化同一账户的并发完成，并只写入一条跨文档冲突", async () => {

@@ -64,6 +64,28 @@ it("maps privacy validation failures to fixed Chinese messages", async () => {
   });
 });
 
+it("maps PDF complexity failures to an honest fixed Chinese message", async () => {
+  mocks.readSessionToken.mockResolvedValue("a".repeat(43));
+  mocks.createCareerImport.mockRejectedValue({ problem: { code: "CAREER_DOCUMENT_PDF_TOO_COMPLEX" } });
+
+  await expect(createCareerImportAction(initialUploadActionState, new FormData())).resolves.toEqual({
+    ok: false,
+    code: "CAREER_DOCUMENT_PDF_TOO_COMPLEX",
+    message: "该 PDF 结构过于复杂，无法安全读取，请拆分或精简后重试。",
+  });
+});
+
+it("maps PDF processor unavailability to the generic retry message", async () => {
+  mocks.readSessionToken.mockResolvedValue("a".repeat(43));
+  mocks.createCareerImport.mockRejectedValue({ problem: { code: "CAREER_IMPORT_UNAVAILABLE" } });
+
+  await expect(createCareerImportAction(initialUploadActionState, new FormData())).resolves.toEqual({
+    ok: false,
+    code: "CAREER_IMPORT_UNAVAILABLE",
+    message: "职业资料暂时无法处理，请稍后重试。",
+  });
+});
+
 it.each(["unknown", "toString", "constructor", "__proto__"])("drops unsafe API failure code %s", async (code) => {
   mocks.readSessionToken.mockResolvedValue("a".repeat(43));
   mocks.createCareerImport.mockRejectedValue({ problem: { code, message: "internal failure" } });

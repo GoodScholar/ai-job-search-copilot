@@ -458,6 +458,20 @@ describe("authenticated workbench HTTP API", () => {
     expect(response.body).not.toContain("resume@example.com");
   });
 
+  it("maps the multipart plugin field limit to a complete Chinese PDF upload message", async () => {
+    const session = await createSession(app, "career-import-plugin-field-limit");
+    const response = await app.getHttpAdapter().getInstance().inject(multipartRequest("## 技能\n- TypeScript", {
+      headers: bearer(session.sessionToken), extraField: true,
+    }));
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toMatchObject({
+      code: "CAREER_DOCUMENT_REQUIRED",
+      message: "请选择一份 Markdown、DOCX 或 PDF 职业资料",
+      requestId: expect.any(String),
+    });
+  });
+
   it("protects import queries, limits list results, and hides cross-account details", async () => {
     const owner = await createSession(app, "career-import-owner");
     const other = await createSession(app, "career-import-other");
@@ -608,6 +622,7 @@ function multipartRequest(source: string | Uint8Array | undefined, options: {
   fieldname?: string;
   mimetype?: string;
   extraFile?: boolean;
+  extraField?: boolean;
   fieldOnly?: boolean;
   privacyMode?: "sanitized_only" | "retain_protected_original";
   protectedOriginal?: string | Uint8Array;
@@ -621,6 +636,7 @@ function multipartRequest(source: string | Uint8Array | undefined, options: {
     `--${boundary}\r\nContent-Disposition: form-data; name="note"\r\n\r\n${typeof source === "string" ? source : Buffer.from(source).toString("utf8")}\r\n--${boundary}--\r\n`,
   ) : Buffer.concat([
     multipartField(boundary, "privacyMode", options.privacyMode ?? "sanitized_only"),
+    ...(options.extraField ? [multipartField(boundary, "note", "extra")] : []),
     multipartPart(boundary, bytes, options),
     ...(options.protectedOriginal ? [multipartPart(
       boundary,

@@ -2,10 +2,27 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ createCareerImportAction: vi.fn() }));
+const mocks = vi.hoisted(() => {
+  class PdfCareerProcessingError extends Error {
+    constructor(readonly code: "TOO_LARGE" | "INVALID_PDF" | "ENCRYPTED_PDF" | "NO_TEXT" | "TOO_COMPLEX") {
+      super(code);
+    }
+  }
+
+  return {
+    createCareerImportAction: vi.fn(),
+    extractCanonicalPdfPageText: vi.fn(),
+    PdfCareerProcessingError,
+  };
+});
 
 vi.mock("@/app/(workbench)/profile/actions", () => ({
   createCareerImportAction: mocks.createCareerImportAction,
+}));
+
+vi.mock("@/lib/pdf-career-processing", () => ({
+  extractCanonicalPdfPageText: mocks.extractCanonicalPdfPageText,
+  PdfCareerProcessingError: mocks.PdfCareerProcessingError,
 }));
 
 import { ProfileImportView } from "./profile-import-view";
@@ -59,6 +76,22 @@ const completedImport = {
   candidateFactCount: 1,
 };
 
+const pdfCompletedImport = {
+  ...completedImport,
+  importId: "6fdb0ddf-6e75-4c72-9f31-b8514e8fc28d",
+  documentId: "b1b4a7c1-9a17-4a8c-8b36-0f815d042e9a",
+  sourceFilename: "completed.pdf",
+  sourceFormat: "pdf" as const,
+};
+const pdfCompletedDetail = {
+  ...completedDetail,
+  ...pdfCompletedImport,
+  facts: [{
+    ...completedDetail.facts[0],
+    evidence: { documentId: pdfCompletedImport.documentId, sourceFilename: "completed.pdf", locatorType: "pdf_pages" as const, startPage: 2, endPage: 2, excerpt: "- TypeScript" },
+  }],
+};
+
 const conflictId = "98ff2891-df0c-4e35-a95d-44f1be3fbdb7";
 const conflictDetail = {
   ...completedDetail,
@@ -80,7 +113,7 @@ const conflictDetail = {
 };
 
 async function prepareFile() {
-  fireEvent.change(screen.getByLabelText("选择 Markdown 或 DOCX 职业资料"), {
+  fireEvent.change(screen.getByLabelText("选择 Markdown、DOCX 或 PDF 职业资料"), {
     target: { files: [new File(["## 技能\n- TypeScript"], "career.md", { type: "text/markdown" })] },
   });
   fireEvent.click(await screen.findByRole("checkbox", { name: /我已检查该文件/ }));
@@ -102,6 +135,7 @@ async function confirmSanitizedFile(user: ReturnType<typeof userEvent.setup>) {
 afterEach(() => {
   vi.restoreAllMocks();
   mocks.createCareerImportAction.mockReset();
+  mocks.extractCanonicalPdfPageText.mockReset();
   vi.useRealTimers();
 });
 
@@ -117,7 +151,7 @@ it("detects private information before upload and submits only the sanitized pro
 
   render(<ProfileImportView initialImports={[]} />);
   expect(screen.getByText(/姓名、手机号、邮箱、详细住址、证件号码、照片、二维码和社交账号/)).toBeInTheDocument();
-  await user.upload(screen.getByLabelText("选择 Markdown 或 DOCX 职业资料"), new File([original], "career.md", { type: "text/markdown" }));
+  await user.upload(screen.getByLabelText("选择 Markdown、DOCX 或 PDF 职业资料"), new File([original], "career.md", { type: "text/markdown" }));
 
   expect(await screen.findByText("发现 3 项敏感信息")).toBeInTheDocument();
   expect(screen.getByText("张*")).toBeInTheDocument();
@@ -140,7 +174,7 @@ it("detects private information before upload and submits only the sanitized pro
 it("拒绝超限 DOCX，且不会创建上传请求", async () => {
   const user = userEvent.setup();
   render(<ProfileImportView initialImports={[]} />);
-  await user.upload(screen.getByLabelText("选择 Markdown 或 DOCX 职业资料"), new File(["x".repeat(524_289)], "too-large.docx", {
+  await user.upload(screen.getByLabelText("选择 Markdown、DOCX 或 PDF 职业资料"), new File(["x".repeat(524_289)], "too-large.docx", {
     type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   }));
   expect(await screen.findByRole("status")).toHaveTextContent("职业资料不能超过 512 KiB");
@@ -163,7 +197,7 @@ it("can retain a protected original without sending it as the processing copy", 
   const original = "邮箱：secret@example.com\n## 技能\n- TypeScript";
 
   render(<ProfileImportView initialImports={[]} />);
-  await user.upload(screen.getByLabelText("选择 Markdown 或 DOCX 职业资料"), new File([original], "career.md", { type: "text/markdown" }));
+  await user.upload(screen.getByLabelText("选择 Markdown、DOCX 或 PDF 职业资料"), new File([original], "career.md", { type: "text/markdown" }));
   await user.click(await screen.findByRole("radio", { name: "保留受保护原件（下游仍只使用脱敏副本）" }));
   await user.click(screen.getByRole("button", { name: "上传并解析" }));
 
@@ -196,6 +230,29 @@ it("shows recent imports and loads the selected import detail", async () => {
   expect(screen.getAllByRole("button", { name: /career\.md|completed\.md/ })[0]).toHaveAccessibleName(/career\.md/);
 });
 
+it("以页码显示 PDF 候选事实证据", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(pdfCompletedDetail));
+  render(<ProfileImportView initialImports={[pdfCompletedImport]} />);
+
+  expect(await screen.findByText("第 2 页", { exact: true })).toBeInTheDocument();
+});
+
+it("选择无文本层 PDF 时优先显示本次解析错误，且不会提交上传", async () => {
+  mocks.extractCanonicalPdfPageText.mockRejectedValue(new mocks.PdfCareerProcessingError("NO_TEXT"));
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(completedDetail));
+  const user = userEvent.setup();
+
+  render(<ProfileImportView initialImports={[completedImport]} />);
+  await user.upload(
+    screen.getByLabelText("选择 Markdown、DOCX 或 PDF 职业资料"),
+    new File(["%PDF-empty"], "scanned.pdf", { type: "application/pdf" }),
+  );
+
+  expect(await screen.findByRole("status")).toHaveTextContent("该 PDF 没有可读取的文本层，请上传文本型 PDF。");
+  expect(screen.getByRole("button", { name: "上传并解析" })).toBeDisabled();
+  expect(mocks.createCareerImportAction).not.toHaveBeenCalled();
+});
+
 it("deduplicates an uploaded reused import and moves it to the top of recent imports", async () => {
   mocks.createCareerImportAction.mockResolvedValue({
     ok: true,
@@ -222,8 +279,8 @@ it("uploads only Markdown files and renders quoted pending facts after polling",
     .mockResolvedValueOnce(Response.json(completedDetail));
 
   render(<ProfileImportView initialImports={[]} />);
-  const input = screen.getByLabelText("选择 Markdown 或 DOCX 职业资料");
-  expect(input).toHaveAttribute("accept", ".md,.docx,text/markdown,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+  const input = screen.getByLabelText("选择 Markdown、DOCX 或 PDF 职业资料");
+  expect(input).toHaveAttribute("accept", ".md,.docx,.pdf,text/markdown,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf");
   await user.upload(input, new File(["## 技能\\n- TypeScript"], "career.md", { type: "text/markdown" }));
   await confirmSanitizedFile(user);
   await user.click(screen.getByRole("button", { name: "上传并解析" }));
@@ -431,7 +488,7 @@ it("maps failures to a fixed Chinese message without exposing internal values", 
   const user = userEvent.setup();
 
   render(<ProfileImportView initialImports={[]} />);
-  await user.upload(screen.getByLabelText("选择 Markdown 或 DOCX 职业资料"), new File(["# empty"], "career.md", { type: "text/markdown" }));
+  await user.upload(screen.getByLabelText("选择 Markdown、DOCX 或 PDF 职业资料"), new File(["# empty"], "career.md", { type: "text/markdown" }));
   await confirmSanitizedFile(user);
   await user.click(screen.getByRole("button", { name: "上传并解析" }));
 
@@ -456,7 +513,7 @@ it("gives a new upload failure priority over an existing queued import", async (
   const user = userEvent.setup();
 
   render(<ProfileImportView initialImports={[queuedImport]} />);
-  await user.upload(screen.getByLabelText("选择 Markdown 或 DOCX 职业资料"), new File(["# empty"], "career.md", { type: "text/markdown" }));
+  await user.upload(screen.getByLabelText("选择 Markdown、DOCX 或 PDF 职业资料"), new File(["# empty"], "career.md", { type: "text/markdown" }));
   await confirmSanitizedFile(user);
   await user.click(screen.getByRole("button", { name: "上传并解析" }));
 
@@ -540,7 +597,7 @@ it("shows uploading while retrying after an action failure", async () => {
   const user = userEvent.setup();
 
   render(<ProfileImportView initialImports={[]} />);
-  await user.upload(screen.getByLabelText("选择 Markdown 或 DOCX 职业资料"), new File(["# retry"], "career.md", { type: "text/markdown" }));
+  await user.upload(screen.getByLabelText("选择 Markdown、DOCX 或 PDF 职业资料"), new File(["# retry"], "career.md", { type: "text/markdown" }));
   await confirmSanitizedFile(user);
   await user.click(screen.getByRole("button", { name: "上传并解析" }));
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("职业资料不能为空。"));
