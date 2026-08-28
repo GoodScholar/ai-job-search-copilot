@@ -55,7 +55,8 @@ export async function createJobImportAction(
   }
   const parsed = CreateJobImportCommandSchema.safeParse(command);
   if (!parsed.success) {
-    return { ok: false, code: "JOB_IMPORT_CONTENT_INVALID", message: failureMessages.JOB_IMPORT_CONTENT_INVALID };
+    const code = command.inputType === "url" ? "JOB_PAGE_URL_INVALID" : "JOB_IMPORT_CONTENT_INVALID";
+    return { ok: false, code, message: failureMessages[code] };
   }
 
   try {

@@ -53,6 +53,17 @@ it("拒绝非法 UTF-8 Markdown，且不会调用 API", async () => {
   expect(mocks.createJobImport).not.toHaveBeenCalled();
 });
 
+it("拒绝非法岗位链接，且显示链接专属提示", async () => {
+  mocks.readSessionToken.mockResolvedValue("a".repeat(43));
+  const formData = new FormData();
+  formData.set("url", "not-a-url");
+
+  await expect(createJobImportAction(initialState, formData)).resolves.toEqual({
+    ok: false, code: "JOB_PAGE_URL_INVALID", message: "岗位链接格式无效。",
+  });
+  expect(mocks.createJobImport).not.toHaveBeenCalled();
+});
+
 it("将未受信任的 API 错误码映射为固定中文提示", async () => {
   mocks.readSessionToken.mockResolvedValue("a".repeat(43));
   mocks.createJobImport.mockRejectedValue({ problem: { code: "constructor", message: "internal host secret" } });
