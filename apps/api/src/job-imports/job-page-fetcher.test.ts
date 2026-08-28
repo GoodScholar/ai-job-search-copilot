@@ -21,6 +21,7 @@ describe("SecureJobPageFetcher", () => {
         case "/limited": response.writeHead(429).end(); return;
         case "/expired": response.writeHead(404).end(); return;
         case "/bad-redirect": response.writeHead(302, { location: "file:///etc/passwd" }).end(); return;
+        case "/private-redirect": response.writeHead(302, { location: "http://localhost:39333/job" }).end(); return;
         default: response.writeHead(404).end();
       }
     });
@@ -52,6 +53,7 @@ describe("SecureJobPageFetcher", () => {
     ["/limited", "JOB_PAGE_RATE_LIMITED"],
     ["/expired", "JOB_PAGE_EXPIRED"],
     ["/bad-redirect", "JOB_PAGE_REDIRECT_INVALID"],
+    ["/private-redirect", "JOB_PAGE_TARGET_REJECTED"],
   ] as const)("为 %s 返回稳定错误码 %s", async (path, code) => {
     await expect(new SecureJobPageFetcher({ appEnv: "test", testOrigin: origin }).fetch({ url: `${origin}${path}` }))
       .rejects.toMatchObject({ code } satisfies Pick<JobPageFetchError, "code">);
