@@ -242,6 +242,109 @@ describe("authenticated workbench HTTP API", () => {
     expect(response.body).not.toContain("ZodError");
   });
 
+  it("维护认证账户的求职目标，并隐藏约束与跨账户资源", async () => {
+    const primary = await createSession(app, "job-targets-primary");
+    const other = await createSession(app, "job-targets-other");
+    const profileFact = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: "/v1/profile/facts", headers: { ...bearer(primary.sessionToken), "content-type": "application/json" },
+      payload: { expectedVersion: 0, factType: "skill", factValue: { name: "React TypeScript" } },
+    });
+    expect(profileFact.statusCode).toBe(201);
+
+    const suggested = await app.getHttpAdapter().getInstance().inject({
+      method: "GET", url: "/v1/job-targets", headers: bearer(primary.sessionToken),
+    });
+    expect(suggested.statusCode).toBe(200);
+    expect(suggested.json()).toMatchObject({ suggestions: expect.arrayContaining([
+      expect.objectContaining({ roleFamily: "前端工程师" }),
+    ]), targets: [] });
+
+    const primaryTarget = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: "/v1/job-targets", headers: { ...bearer(primary.sessionToken), "content-type": "application/json" },
+      payload: { priority: "primary", constraints: jobTargetConstraints("前端工程师") },
+    });
+    expect(primaryTarget.statusCode).toBe(201);
+    const targetId = primaryTarget.json().targets[0].targetId as string;
+
+    const secondaryOne = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: "/v1/job-targets", headers: { ...bearer(primary.sessionToken), "content-type": "application/json" },
+      payload: { priority: "secondary", constraints: jobTargetConstraints("全栈工程师") },
+    });
+    const secondaryTwo = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: "/v1/job-targets", headers: { ...bearer(primary.sessionToken), "content-type": "application/json" },
+      payload: { priority: "secondary", constraints: jobTargetConstraints("AI 应用工程师") },
+    });
+    expect(secondaryOne.statusCode).toBe(201);
+    expect(secondaryTwo.statusCode).toBe(201);
+
+    const primaryLimit = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: "/v1/job-targets", headers: { ...bearer(primary.sessionToken), "content-type": "application/json" },
+      payload: { priority: "primary", constraints: jobTargetConstraints("秘密主目标", "secret-primary-limit-company") },
+    });
+    const secondaryLimit = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: "/v1/job-targets", headers: { ...bearer(primary.sessionToken), "content-type": "application/json" },
+      payload: { priority: "secondary", constraints: jobTargetConstraints("秘密次目标", "secret-secondary-limit-company") },
+    });
+    expect(primaryLimit.statusCode).toBe(409);
+    expect(primaryLimit.json()).toMatchObject({ code: "JOB_TARGET_PRIMARY_LIMIT", requestId: expect.any(String) });
+    expect(primaryLimit.body).not.toContain("secret-primary-limit-company");
+    expect(secondaryLimit.statusCode).toBe(409);
+    expect(secondaryLimit.json()).toMatchObject({ code: "JOB_TARGET_SECONDARY_LIMIT", requestId: expect.any(String) });
+    expect(secondaryLimit.body).not.toContain("secret-secondary-limit-company");
+
+    const revised = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/revisions`, headers: { ...bearer(primary.sessionToken), "content-type": "application/json" },
+      payload: { expectedVersion: 1, priority: "primary", constraints: jobTargetConstraints("高级前端工程师") },
+    });
+    expect(revised.statusCode).toBe(201);
+    expect(revised.json().targets).toEqual(expect.arrayContaining([
+      expect.objectContaining({ targetId, version: 2, priority: "primary", state: "active", constraints: expect.objectContaining({ roleFamily: "高级前端工程师" }) }),
+    ]));
+
+    const versionConflict = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/revisions`, headers: { ...bearer(primary.sessionToken), "content-type": "application/json" },
+      payload: { expectedVersion: 1, priority: "primary", constraints: jobTargetConstraints("secret-stale-role", "secret-stale-company") },
+    });
+    expect(versionConflict.statusCode).toBe(409);
+    expect(versionConflict.json()).toMatchObject({ code: "JOB_TARGET_VERSION_CONFLICT", requestId: expect.any(String) });
+    expect(versionConflict.body).not.toContain("secret-stale-company");
+
+    const reloaded = await app.getHttpAdapter().getInstance().inject({
+      method: "GET", url: "/v1/job-targets", headers: bearer(primary.sessionToken),
+    });
+    expect(reloaded.statusCode).toBe(200);
+    expect(reloaded.json().targets).toHaveLength(3);
+
+    const deactivated = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/deactivations`, headers: { ...bearer(primary.sessionToken), "content-type": "application/json" },
+      payload: { expectedVersion: 2 },
+    });
+    expect(deactivated.statusCode).toBe(201);
+    expect(deactivated.json().targets).toEqual(expect.arrayContaining([
+      expect.objectContaining({ targetId, version: 3, state: "inactive" }),
+    ]));
+
+    const hidden = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/revisions`, headers: { ...bearer(other.sessionToken), "content-type": "application/json" },
+      payload: { expectedVersion: 3, priority: "primary", constraints: jobTargetConstraints("其他账户目标") },
+    });
+    const invalidPath = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: "/v1/job-targets/not-a-uuid/revisions", headers: { ...bearer(primary.sessionToken), "content-type": "application/json" },
+      payload: { expectedVersion: 3, priority: "primary", constraints: jobTargetConstraints("无效路径") },
+    });
+    const invalidBody = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: "/v1/job-targets", headers: { ...bearer(primary.sessionToken), "content-type": "application/json" },
+      payload: { priority: "primary", constraints: { roleFamily: "" } },
+    });
+    expect(hidden.statusCode).toBe(404);
+    expect(hidden.json()).toMatchObject({ code: "JOB_TARGET_NOT_FOUND", requestId: expect.any(String) });
+    expect(invalidPath.statusCode).toBe(400);
+    expect(invalidPath.json()).toMatchObject({ code: "INVALID_REQUEST", message: "请求无效", requestId: expect.any(String) });
+    expect(invalidBody.statusCode).toBe(400);
+    expect(invalidBody.json()).toMatchObject({ code: "INVALID_REQUEST", message: "请求无效", requestId: expect.any(String) });
+    expect(invalidBody.body).not.toContain("ZodError");
+  });
+
   it("keeps a command-side Zod error as an internal error rather than blaming the request", async () => {
     const session = await createSession(app, "profile-review-command-zod-error");
     const commands = app.get<ProfileReviewCommands>(PROFILE_REVIEW_COMMANDS);
@@ -541,6 +644,9 @@ describe("authenticated workbench HTTP API", () => {
       "/v1/auth/sessions/current": expect.anything(),
       "/v1/accounts/{userId}": expect.anything(),
       "/v1/workbench/home": expect.anything(),
+      "/v1/job-targets": expect.anything(),
+      "/v1/job-targets/{targetId}/revisions": expect.anything(),
+      "/v1/job-targets/{targetId}/deactivations": expect.anything(),
       "/v1/career-documents/imports": expect.anything(),
       "/v1/career-documents/imports/{importId}": expect.anything(),
       "/health/live": expect.anything(),
@@ -562,6 +668,10 @@ describe("authenticated workbench HTTP API", () => {
       ["/v1/auth/sessions/current", "delete"],
       ["/v1/accounts/{userId}", "get"],
       ["/v1/workbench/home", "get"],
+      ["/v1/job-targets", "get"],
+      ["/v1/job-targets", "post"],
+      ["/v1/job-targets/{targetId}/revisions", "post"],
+      ["/v1/job-targets/{targetId}/deactivations", "post"],
       ["/v1/career-documents/imports", "get"],
       ["/v1/career-documents/imports", "post"],
       ["/v1/career-documents/imports/{importId}", "get"],
@@ -579,6 +689,10 @@ describe("authenticated workbench HTTP API", () => {
       });
     const responses = document.paths["/v1/career-documents/imports"].post.responses;
     expect(responses["200"].content["application/json"].schema).toEqual(responses["202"].content["application/json"].schema);
+    const jobTargetResponseSchema = document.paths["/v1/job-targets"].get.responses["200"].content["application/json"].schema;
+    expect(document.paths["/v1/job-targets"].post.responses["201"].content["application/json"].schema).toEqual(jobTargetResponseSchema);
+    expect(document.paths["/v1/job-targets/{targetId}/revisions"].post.responses["201"].content["application/json"].schema).toEqual(jobTargetResponseSchema);
+    expect(document.paths["/v1/job-targets/{targetId}/deactivations"].post.responses["201"].content["application/json"].schema).toEqual(jobTargetResponseSchema);
     expect(document.paths["/v1/career-documents/imports/{importId}"].get.responses["400"])
       .toEqual(expect.objectContaining({ description: expect.any(String) }));
   });
@@ -614,6 +728,26 @@ async function createSession(api: NestFastifyApplication, subject: string): Prom
   });
   expect(response.statusCode).toBe(201);
   return response.json();
+}
+
+function jobTargetConstraints(roleFamily: string, excludedCompany = "") {
+  return {
+    roleFamily,
+    seniority: null,
+    locations: [],
+    workModes: [],
+    relocation: "unknown",
+    salary: null,
+    industries: [],
+    dealBreakers: {
+      excludedCompanies: excludedCompany ? [excludedCompany] : [],
+      excludedIndustries: [],
+      excludeOutsourcing: false,
+      excludeDispatch: false,
+      excludeHeadhunter: false,
+      other: [],
+    },
+  };
 }
 
 function multipartRequest(source: string | Uint8Array | undefined, options: {

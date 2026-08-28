@@ -25,6 +25,13 @@ import {
   type RemoveProfileFactCommand,
   type ReviseProfileFactCommand,
 } from "@job-copilot/contracts/profile-review";
+import {
+  JobTargetOverviewSchema,
+  type CreateJobTargetCommand,
+  type DeactivateJobTargetCommand,
+  type JobTargetOverview,
+  type ReviseJobTargetCommand,
+} from "@job-copilot/contracts/job-targets";
 import { WorkbenchHomeSchema, type WorkbenchHome } from "@job-copilot/contracts/workbench";
 import { z } from "zod";
 
@@ -217,6 +224,57 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
         throw new ApiClientError("api", problem?.message ?? "无法维护画像事实", response.status, problem ?? undefined);
       }
       return parseSuccess(response, ProfileSnapshotSchema);
+    },
+
+    async getJobTargetOverview(sessionToken: string): Promise<JobTargetOverview> {
+      const response = await request("/v1/job-targets", {
+        method: "GET",
+        headers: { authorization: `Bearer ${sessionToken}` },
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法读取求职目标", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, JobTargetOverviewSchema);
+    },
+
+    async createJobTarget(sessionToken: string, command: CreateJobTargetCommand): Promise<JobTargetOverview> {
+      const response = await request("/v1/job-targets", {
+        method: "POST",
+        headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" },
+        body: JSON.stringify(command),
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法维护求职目标", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, JobTargetOverviewSchema);
+    },
+
+    async reviseJobTarget(sessionToken: string, targetId: string, command: ReviseJobTargetCommand): Promise<JobTargetOverview> {
+      const response = await request(`/v1/job-targets/${targetId}/revisions`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" },
+        body: JSON.stringify(command),
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法维护求职目标", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, JobTargetOverviewSchema);
+    },
+
+    async deactivateJobTarget(sessionToken: string, targetId: string, command: DeactivateJobTargetCommand): Promise<JobTargetOverview> {
+      const response = await request(`/v1/job-targets/${targetId}/deactivations`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" },
+        body: JSON.stringify(command),
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法维护求职目标", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, JobTargetOverviewSchema);
     },
 
     async listCareerImports(sessionToken: string): Promise<CareerImportList> {

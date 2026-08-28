@@ -1,4 +1,5 @@
 import { expect, it, vi } from "vitest";
+import type { JobTargetOverview } from "@job-copilot/contracts/job-targets";
 
 vi.mock("server-only", () => ({}));
 
@@ -9,6 +10,7 @@ const userId = "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3";
 const importId = "d194d0ce-fc7e-45db-9425-e8ff4eaf8c08";
 const documentId = "b4d4a7c1-9a17-4a8c-8b36-0f815d042e9a";
 const conflictId = "c4d4a7c1-9a17-4a8c-8b36-0f815d042e9a";
+const targetId = "4f8c6eb3-2b92-4d91-aad4-959b7d4cd7a3";
 
 const queuedImport = {
   importId,
@@ -20,6 +22,35 @@ const queuedImport = {
   failureCode: null,
   createdAt: "2026-08-27T08:00:00.000Z",
   updatedAt: "2026-08-27T08:00:00.000Z",
+};
+
+const jobTargetOverview: JobTargetOverview = {
+  suggestions: [],
+  targets: [{
+    targetId,
+    version: 1,
+    priority: "primary",
+    state: "active",
+    constraints: {
+      roleFamily: "前端工程师",
+      seniority: null,
+      locations: [],
+      workModes: [],
+      relocation: "unknown",
+      salary: null,
+      industries: [],
+      dealBreakers: {
+        excludedCompanies: [],
+        excludedIndustries: [],
+        excludeOutsourcing: false,
+        excludeDispatch: false,
+        excludeHeadhunter: false,
+        other: [],
+      },
+    },
+    createdAt: "2026-08-28T08:00:00.000Z",
+    updatedAt: "2026-08-28T08:00:00.000Z",
+  }],
 };
 
 it("starts a dev session with an opaque request id and parses the shared response", async () => {
@@ -118,6 +149,52 @@ it("sends manual profile fact maintenance commands with the caller version", asy
     method: "POST",
     body: JSON.stringify({ expectedVersion: 0, factType: "work_eligibility", factValue: { summary: "可在中国大陆工作" } }),
   }));
+});
+
+it("通过 bearer 调用认证求职目标 API，并返回共享概览 DTO", async () => {
+  const fetchImpl = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response(JSON.stringify(jobTargetOverview), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(jobTargetOverview), { status: 201 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(jobTargetOverview), { status: 201 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(jobTargetOverview), { status: 201 }));
+  const api = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+  const constraints = jobTargetOverview.targets[0].constraints;
+
+  await expect(api.getJobTargetOverview(sessionToken)).resolves.toEqual(jobTargetOverview);
+  await expect(api.createJobTarget(sessionToken, { priority: "primary", constraints })).resolves.toEqual(jobTargetOverview);
+  await expect(api.reviseJobTarget(sessionToken, targetId, { expectedVersion: 1, priority: "primary", constraints })).resolves.toEqual(jobTargetOverview);
+  await expect(api.deactivateJobTarget(sessionToken, targetId, { expectedVersion: 1 })).resolves.toEqual(jobTargetOverview);
+
+  expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+    "http://127.0.0.1:3021/v1/job-targets",
+    "http://127.0.0.1:3021/v1/job-targets",
+    `http://127.0.0.1:3021/v1/job-targets/${targetId}/revisions`,
+    `http://127.0.0.1:3021/v1/job-targets/${targetId}/deactivations`,
+  ]);
+  expect(fetchImpl.mock.calls.map(([, init]) => ({ method: init?.method, body: init?.body }))).toEqual([
+    { method: "GET", body: undefined },
+    { method: "POST", body: JSON.stringify({ priority: "primary", constraints }) },
+    { method: "POST", body: JSON.stringify({ expectedVersion: 1, priority: "primary", constraints }) },
+    { method: "POST", body: JSON.stringify({ expectedVersion: 1 }) },
+  ]);
+  for (const [, init] of fetchImpl.mock.calls) {
+    expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${sessionToken}`);
+  }
+});
+
+it("拒绝四个求职目标 API 的无效成功响应", async () => {
+  const fetchImpl = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response(JSON.stringify({ targets: [] }), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ suggestions: [] }), { status: 201 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ suggestions: [], targets: [{ unknown: true }] }), { status: 201 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ suggestions: [], targets: [], unknown: true }), { status: 201 }));
+  const api = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+  const constraints = jobTargetOverview.targets[0].constraints;
+
+  await expect(api.getJobTargetOverview(sessionToken)).rejects.toMatchObject({ kind: "invalid_response" });
+  await expect(api.createJobTarget(sessionToken, { priority: "primary", constraints })).rejects.toMatchObject({ kind: "invalid_response" });
+  await expect(api.reviseJobTarget(sessionToken, targetId, { expectedVersion: 1, priority: "primary", constraints })).rejects.toMatchObject({ kind: "invalid_response" });
+  await expect(api.deactivateJobTarget(sessionToken, targetId, { expectedVersion: 1 })).rejects.toMatchObject({ kind: "invalid_response" });
 });
 
 it("recognizes an already-invalid current session from the shared error response", async () => {
