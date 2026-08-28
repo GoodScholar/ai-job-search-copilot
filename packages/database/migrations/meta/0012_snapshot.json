@@ -1578,6 +1578,54 @@
       },
       "isRLSEnabled": false
     },
+    "public.job_opportunity_sources": {
+      "name": "job_opportunity_sources",
+      "schema": "",
+      "columns": {
+        "id": { "name": "id", "type": "uuid", "primaryKey": true, "notNull": true, "default": "gen_random_uuid()" },
+        "user_id": { "name": "user_id", "type": "uuid", "primaryKey": false, "notNull": true },
+        "opportunity_id": { "name": "opportunity_id", "type": "uuid", "primaryKey": false, "notNull": true },
+        "source_posting_version_id": { "name": "source_posting_version_id", "type": "uuid", "primaryKey": false, "notNull": true },
+        "created_at": { "name": "created_at", "type": "timestamp with time zone", "primaryKey": false, "notNull": true, "default": "now()" }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "job_opportunity_sources_user_id_job_accounts_id_fk": {
+          "name": "job_opportunity_sources_user_id_job_accounts_id_fk", "tableFrom": "job_opportunity_sources", "tableTo": "job_accounts",
+          "columnsFrom": ["user_id"], "columnsTo": ["id"], "onDelete": "no action", "onUpdate": "no action"
+        },
+        "job_opportunity_sources_opportunity_id_job_opportunities_id_fk": {
+          "name": "job_opportunity_sources_opportunity_id_job_opportunities_id_fk", "tableFrom": "job_opportunity_sources", "tableTo": "job_opportunities",
+          "columnsFrom": ["opportunity_id"], "columnsTo": ["id"], "onDelete": "no action", "onUpdate": "no action"
+        },
+        "job_opportunity_sources_source_posting_version_id_job_source_posting_versions_id_fk": {
+          "name": "job_opportunity_sources_source_posting_version_id_job_source_posting_versions_id_fk", "tableFrom": "job_opportunity_sources", "tableTo": "job_source_posting_versions",
+          "columnsFrom": ["source_posting_version_id"], "columnsTo": ["id"], "onDelete": "no action", "onUpdate": "no action"
+        },
+        "job_opportunity_sources_owner_opportunity_fk": {
+          "name": "job_opportunity_sources_owner_opportunity_fk", "tableFrom": "job_opportunity_sources", "tableTo": "job_opportunities",
+          "columnsFrom": ["user_id", "opportunity_id"], "columnsTo": ["user_id", "id"], "onDelete": "no action", "onUpdate": "no action"
+        },
+        "job_opportunity_sources_owner_posting_version_fk": {
+          "name": "job_opportunity_sources_owner_posting_version_fk", "tableFrom": "job_opportunity_sources", "tableTo": "job_source_posting_versions",
+          "columnsFrom": ["user_id", "source_posting_version_id"], "columnsTo": ["user_id", "id"], "onDelete": "no action", "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "job_opportunity_sources_opportunity_version_unique": {
+          "name": "job_opportunity_sources_opportunity_version_unique", "nullsNotDistinct": false,
+          "columns": ["opportunity_id", "source_posting_version_id"]
+        },
+        "job_opportunity_sources_user_id_id_unique": {
+          "name": "job_opportunity_sources_user_id_id_unique", "nullsNotDistinct": false,
+          "columns": ["user_id", "id"]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
     "public.job_profiles": {
       "name": "job_profiles",
       "schema": "",

@@ -37,6 +37,16 @@ CREATE TABLE "job_opportunities" (
 	CONSTRAINT "job_opportunities_normalized_data_object" CHECK (jsonb_typeof("job_opportunities"."normalized_data") = 'object')
 );
 --> statement-breakpoint
+CREATE TABLE "job_opportunity_sources" (
+	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+	"user_id" uuid NOT NULL,
+	"opportunity_id" uuid NOT NULL,
+	"source_posting_version_id" uuid NOT NULL,
+	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "job_opportunity_sources_opportunity_version_unique" UNIQUE("opportunity_id","source_posting_version_id"),
+	CONSTRAINT "job_opportunity_sources_user_id_id_unique" UNIQUE("user_id","id")
+);
+--> statement-breakpoint
 CREATE TABLE "job_source_posting_versions" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"user_id" uuid NOT NULL,
@@ -72,6 +82,11 @@ ALTER TABLE "job_opportunities" ADD CONSTRAINT "job_opportunities_import_id_job_
 ALTER TABLE "job_opportunities" ADD CONSTRAINT "job_opportunities_source_posting_version_id_job_source_posting_versions_id_fk" FOREIGN KEY ("source_posting_version_id") REFERENCES "public"."job_source_posting_versions"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "job_opportunities" ADD CONSTRAINT "job_opportunities_owner_import_fk" FOREIGN KEY ("user_id","import_id") REFERENCES "public"."job_imports"("user_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "job_opportunities" ADD CONSTRAINT "job_opportunities_owner_posting_version_fk" FOREIGN KEY ("user_id","source_posting_version_id") REFERENCES "public"."job_source_posting_versions"("user_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "job_opportunity_sources" ADD CONSTRAINT "job_opportunity_sources_user_id_job_accounts_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."job_accounts"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "job_opportunity_sources" ADD CONSTRAINT "job_opportunity_sources_opportunity_id_job_opportunities_id_fk" FOREIGN KEY ("opportunity_id") REFERENCES "public"."job_opportunities"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "job_opportunity_sources" ADD CONSTRAINT "job_opportunity_sources_source_posting_version_id_job_source_posting_versions_id_fk" FOREIGN KEY ("source_posting_version_id") REFERENCES "public"."job_source_posting_versions"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "job_opportunity_sources" ADD CONSTRAINT "job_opportunity_sources_owner_opportunity_fk" FOREIGN KEY ("user_id","opportunity_id") REFERENCES "public"."job_opportunities"("user_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "job_opportunity_sources" ADD CONSTRAINT "job_opportunity_sources_owner_posting_version_fk" FOREIGN KEY ("user_id","source_posting_version_id") REFERENCES "public"."job_source_posting_versions"("user_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "job_source_posting_versions" ADD CONSTRAINT "job_source_posting_versions_user_id_job_accounts_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."job_accounts"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "job_source_posting_versions" ADD CONSTRAINT "job_source_posting_versions_source_posting_id_job_source_postings_id_fk" FOREIGN KEY ("source_posting_id") REFERENCES "public"."job_source_postings"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "job_source_posting_versions" ADD CONSTRAINT "job_source_posting_versions_owner_posting_fk" FOREIGN KEY ("user_id","source_posting_id") REFERENCES "public"."job_source_postings"("user_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint

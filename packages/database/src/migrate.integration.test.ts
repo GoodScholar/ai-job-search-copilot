@@ -524,13 +524,16 @@ describe("database migrations", () => {
 
   it("migrates versioned account-owned job imports", async () => {
     expect(await listPublicTables(migratedDatabase)).toEqual(expect.arrayContaining([
-      "job_imports", "job_opportunities", "job_source_postings", "job_source_posting_versions",
+      "job_imports", "job_opportunities", "job_opportunity_sources", "job_source_postings", "job_source_posting_versions",
     ]));
     expect(await listConstraintNames(migratedDatabase)).toEqual(expect.arrayContaining([
       "job_imports_user_content_unique",
       "job_source_postings_user_identity_unique",
       "job_source_posting_versions_posting_version_unique",
       "job_opportunities_user_dedup_unique",
+      "job_opportunity_sources_opportunity_version_unique",
+      "job_opportunity_sources_owner_opportunity_fk",
+      "job_opportunity_sources_owner_posting_version_fk",
     ]));
   });
 });

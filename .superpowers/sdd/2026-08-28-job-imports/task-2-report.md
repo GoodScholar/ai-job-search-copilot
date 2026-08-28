@@ -71,3 +71,32 @@
 ### 提交
 
 本轮修复提交：`fix: make job import retries and evidence consistent (#7)`；提交 SHA 见本轮最终回复。
+
+---
+
+## Fix round 2/5
+
+### 修复与覆盖
+
+1. 在 `0012` schema、SQL、snapshot 与迁移断言中新增账户所有的 `job_opportunity_sources`；其唯一约束为 `(opportunity_id, source_posting_version_id)`，并含机会和来源版本的复合 owner FKs。
+   - `migrate.integration.test.ts`：`migrates versioned account-owned job imports`。
+2. 每次处理完成都插入或复用机会—来源版本关联；查询由当前 import 的内容指纹定位来源身份/版本后经关联取得机会。因此两个已完成导入都保留各自证据，同时共享机会 ID，不再移动 `job_opportunities` 的首来源字段。
+   - `job-imports.integration.test.ts`：`用标准化字段的确定性键复用岗位机会`。
+3. 非最终对象读取及 normalizer 运行时异常抛出可导出的 `JobImportRetryableError`；最终尝试才记录失败，且 normalizer 异常仍使用运行时失败码而不是输出无效码。
+   - `job-imports.integration.test.ts`：`仅在最终尝试终态化读取故障，并允许后续 worker 重试`、`normalizer 异常在非最终尝试可重试，最终尝试不冒充输出无效`。
+4. 将账户锁中的幂等决定和状态转换前置到 enqueue 之前；enqueue 之后不再写状态。队列异常只返回可重试错误，不能覆盖其他 worker 的终态。
+   - `job-imports.integration.test.ts`：`在队列不可用时保留已锁定的可重试导入`、`不会让并发重复提交中的队列失败覆盖另一次成功入队`、`不会在 enqueue 内 worker 已终态失败后回写 normalizing`。
+
+### 命令与结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `pnpm --filter @job-copilot/database exec vitest run src/migrate.integration.test.ts` | 通过：1 个文件、11 个测试。 |
+| `pnpm --filter @job-copilot/domain exec vitest run src/job-imports.test.ts src/job-imports.integration.test.ts src/audit-trail.integration.test.ts` | 通过：3 个文件、21 个测试。 |
+| `pnpm --filter @job-copilot/database typecheck` | 通过：`tsc --noEmit` 退出码 0。 |
+| `pnpm --filter @job-copilot/domain typecheck` | 通过：`tsc --noEmit` 退出码 0。 |
+| `git diff --check` | 通过：无空白错误。 |
+
+### 提交
+
+本轮修复提交：`fix: preserve job import source evidence (#7)`；提交 SHA 见本轮最终回复。

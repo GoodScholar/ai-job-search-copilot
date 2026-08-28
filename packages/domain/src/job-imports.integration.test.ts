@@ -7,6 +7,7 @@ import {
   createJobImportCommands,
   createJobImportProcessor,
   createJobImportQueries,
+  JobImportRetryableError,
   type JobContentStore,
   type JobImportQueue,
 } from "./job-imports";
@@ -127,19 +128,20 @@ describe("job imports", () => {
     ]));
   });
 
-  it("在队列不可用时以稳定失败码收敛已存储的导入", async () => {
+  it("在队列不可用时保留已锁定的可重试导入", async () => {
     const store = new MemoryStore();
     const queue = new MemoryQueue();
     queue.failNext = true;
     const commands = createJobImportCommands({
       db: database, contentStore: store, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
     });
+    const before = await createJobImportQueries({ db: database, contentStore: store }).list({ userId });
     await expect(commands.submit({
       userId, requestId: crypto.randomUUID(), command: { inputType: "pasted_text", content: "队列异常的正文" },
     })).rejects.toMatchObject({ code: "JOB_IMPORT_QUEUE_UNAVAILABLE" });
     const queued = await createJobImportQueries({ db: database, contentStore: store }).list({ userId });
-    const failed = queued.imports.find((entry) => entry.status === "failed" && entry.failureCode === "JOB_IMPORT_QUEUE_UNAVAILABLE");
-    expect(failed).toBeDefined();
+    const retryable = queued.imports.find((entry) => !before.imports.some((previous) => previous.importId === entry.importId));
+    expect(retryable).toMatchObject({ status: "normalizing", failureCode: null });
     expect(JSON.stringify(await createAuditTrail({ db: database, clock: () => now }).query({ userId }))).not.toContain("队列异常的正文");
   });
 
@@ -174,6 +176,26 @@ describe("job imports", () => {
     await expect(first).rejects.toMatchObject({ code: "JOB_IMPORT_QUEUE_UNAVAILABLE" });
     await expect(createJobImportQueries({ db: database, contentStore: store }).get({ userId, importId: second.importId }))
       .resolves.toMatchObject({ status: "normalizing", failureCode: null });
+  });
+
+  it("不会在 enqueue 内 worker 已终态失败后回写 normalizing", async () => {
+    const store = new MemoryStore();
+    let processor!: ReturnType<typeof createJobImportProcessor>;
+    const queue: JobImportQueue = {
+      enqueue: async (job) => { await processor.process({ ...job, finalAttempt: true }); },
+    };
+    const commands = createJobImportCommands({
+      db: database, contentStore: store, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+    processor = createJobImportProcessor({
+      db: database, contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => now }),
+      normalizer: { normalize: async () => ({ company: "无效输出" }) }, id: () => crypto.randomUUID(), clock: () => now,
+    });
+    const submitted = await commands.submit({
+      userId, requestId: crypto.randomUUID(), command: { inputType: "pasted_text", content: "worker 在 enqueue 中处理" },
+    });
+    await expect(createJobImportQueries({ db: database, contentStore: store }).get({ userId, importId: submitted.importId }))
+      .resolves.toMatchObject({ status: "failed", failureCode: "JOB_NORMALIZER_OUTPUT_INVALID" });
   });
 
   it("在对象存储失败时回滚数据库记录，并且不传播存储错误正文", async () => {
@@ -260,8 +282,11 @@ describe("job imports", () => {
     const queries = createJobImportQueries({ db: database, contentStore: store });
     const firstDetail = await queries.get({ userId, importId: first.importId });
     await expect(processor.process({ version: 1, importId: second.importId, userId, finalAttempt: true })).resolves.toBe("completed");
+    const firstDetailAfterSecond = await queries.get({ userId, importId: first.importId });
     const secondDetail = await queries.get({ userId, importId: second.importId });
+    expect(firstDetailAfterSecond).toMatchObject({ opportunity: { opportunityId: firstDetail?.opportunity?.opportunityId, title: "后端工程师" } });
     expect(secondDetail).toMatchObject({ opportunity: { opportunityId: firstDetail?.opportunity?.opportunityId, title: "后端工程师" } });
+    expect(firstDetailAfterSecond?.opportunity?.evidence.sourcePostingVersionId).toBe(firstDetail?.opportunity?.evidence.sourcePostingVersionId);
     expect(secondDetail?.opportunity?.evidence.sourcePostingVersionId).not.toBe(firstDetail?.opportunity?.evidence.sourcePostingVersionId);
     const opportunities = await database.select({ id: jobOpportunities.id, title: jobOpportunities.title })
       .from(jobOpportunities).where(eq(jobOpportunities.userId, userId));
@@ -298,7 +323,8 @@ describe("job imports", () => {
       id: () => crypto.randomUUID(), clock: () => now,
     });
     store.failNextGet = true;
-    await expect(processor.process({ version: 1, importId: imported.importId, userId, finalAttempt: false })).resolves.toBe("stale");
+    await expect(processor.process({ version: 1, importId: imported.importId, userId, finalAttempt: false }))
+      .rejects.toBeInstanceOf(JobImportRetryableError);
     await expect(createJobImportQueries({ db: database, contentStore: store }).get({ userId, importId: imported.importId }))
       .resolves.toMatchObject({ status: "normalizing", failureCode: null });
     await expect(processor.process({ version: 1, importId: imported.importId, userId, finalAttempt: true })).resolves.toBe("completed");
@@ -315,7 +341,8 @@ describe("job imports", () => {
       db: database, contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => now }),
       normalizer: { normalize: async () => { throw new Error("normalizer unavailable"); } }, id: () => crypto.randomUUID(), clock: () => now,
     });
-    await expect(processor.process({ version: 1, importId: imported.importId, userId, finalAttempt: false })).resolves.toBe("stale");
+    await expect(processor.process({ version: 1, importId: imported.importId, userId, finalAttempt: false }))
+      .rejects.toBeInstanceOf(JobImportRetryableError);
     await expect(createJobImportQueries({ db: database, contentStore: store }).get({ userId, importId: imported.importId }))
       .resolves.toMatchObject({ status: "normalizing", failureCode: null });
     await expect(processor.process({ version: 1, importId: imported.importId, userId, finalAttempt: true })).resolves.toBe("failed");

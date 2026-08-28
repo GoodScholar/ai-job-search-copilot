@@ -408,3 +408,24 @@ export const jobOpportunities = pgTable("job_opportunities", {
   check("job_opportunities_dedup_key_format", sql`${table.dedupKey} ~ '^[0-9a-f]{64}$'`),
   check("job_opportunities_normalized_data_object", sql`jsonb_typeof(${table.normalizedData}) = 'object'`),
 ]);
+
+export const jobOpportunitySources = pgTable("job_opportunity_sources", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  opportunityId: uuid("opportunity_id").notNull().references(() => jobOpportunities.id),
+  sourcePostingVersionId: uuid("source_posting_version_id").notNull().references(() => jobSourcePostingVersions.id),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_opportunity_sources_opportunity_version_unique").on(table.opportunityId, table.sourcePostingVersionId),
+  unique("job_opportunity_sources_user_id_id_unique").on(table.userId, table.id),
+  foreignKey({
+    columns: [table.userId, table.opportunityId],
+    foreignColumns: [jobOpportunities.userId, jobOpportunities.id],
+    name: "job_opportunity_sources_owner_opportunity_fk",
+  }),
+  foreignKey({
+    columns: [table.userId, table.sourcePostingVersionId],
+    foreignColumns: [jobSourcePostingVersions.userId, jobSourcePostingVersions.id],
+    name: "job_opportunity_sources_owner_posting_version_fk",
+  }),
+]);
