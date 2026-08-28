@@ -72,3 +72,52 @@ pnpm --filter web test:e2e -- job-targets.spec.ts
 ## Concerns
 
 - 无功能性顾虑。端到端运行出现既有环境警告（`NO_COLOR` 与 PostgreSQL 标识符截断 NOTICE），但 Playwright 结果为通过；本次未修改这些无关基础设施项。
+
+---
+
+## Additional scoped re-review fix
+
+Base reviewed: `8ff6b1dcec3a44ddef611945fb4e0bd4743b3ef5`.
+
+### RED
+
+在生产代码改动前，扩展真实公开查询 seam `createJobTargetQueries({ db }).getOverview` 的集成测试：为一个求职账户写入 21 条当前、可信、但不匹配目录关键词的 skill 事实，再读取 overview。
+
+```bash
+DOCKER_API_VERSION=1.51 pnpm --filter @job-copilot/domain test -- job-targets
+```
+
+实际输出：新用例失败于 `overview` 的 `JobTargetOverviewSchema.parse`。三个回退建议均报告 `Too big: expected array to have <=20 items`，路径分别为 `suggestions[0..2].evidence`；汇总为 `1 failed | 86 passed` 测试。该失败证明 21 条未匹配可信事实会阻断 overview 返回，而不是仅在私有帮助函数中产生不规范数据。
+
+### GREEN
+
+最小修复仅将回退建议的 evidence 从全部当前事实限制为第一条真实当前事实。直接匹配的 evidence、按分数排序和 3–4 项候选数量逻辑均未改变；契约上限没有放宽。
+
+```bash
+DOCKER_API_VERSION=1.51 pnpm --filter @job-copilot/domain test -- job-targets
+```
+
+实际输出：`10 passed` 测试文件，`87 passed` 测试。
+
+```bash
+pnpm --filter @job-copilot/domain typecheck
+```
+
+实际输出：`tsc --noEmit`，退出码 `0`。
+
+### Changed files
+
+- `packages/domain/src/job-targets.ts`：将回退建议的真实 evidence 限制为一条。
+- `packages/domain/src/job-targets.integration.test.ts`：通过公开 overview 查询覆盖 21 条以上未匹配可信事实。
+- `.superpowers/sdd/2026-08-28-job-targets/final-review-fix-report.md`：追加本轮证据与自审。
+
+### Self-review
+
+- 新测试通过数据库与 `getOverview` 公共路径验证，不依赖实现细节或 mock。
+- 回退 evidence 始终为真实当前事实，且最多一条，满足 `max(20)` 与非空证据要求。
+- 无事实时仍不生成建议；直接匹配的 evidence 和排序路径未修改；回退仍保持既有目录顺序和最少三项语义。
+- 未修改 contracts、API、Web 或 deferred Minor；`git diff --check` 通过。
+
+### Concerns
+
+- 无功能性顾虑。PostgreSQL 测试容器仍输出既有外键标识符截断 NOTICE；测试结果为通过，未扩展修复范围。

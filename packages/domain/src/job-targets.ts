@@ -82,7 +82,7 @@ export function suggestJobTargetDirections(facts: ProfileFact[]): JobTargetSugge
       suggestionId: entry.id,
       roleFamily: entry.roleFamily,
       rationale: `当前可信画像事实尚未直接证明你符合${entry.roleFamily}；这是基于现有技术背景给出的相邻方向，请你确认。`,
-      evidence: facts.map((fact) => ({
+      evidence: facts.slice(0, 1).map((fact) => ({
         factId: fact.factId,
         revisionId: fact.revisionId,
         label: factLabel(fact),

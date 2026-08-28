@@ -37,20 +37,22 @@ describe("job targets", () => {
     await container?.stop();
   });
 
-  async function userWithTrustedFacts(input: {
+  async function userWithTrustedFacts(inputs: Array<{
     factType: "skill" | "language";
     factValue: { name: string; level?: string };
-  } = { factType: "skill", factValue: { name: "React TypeScript" } }) {
+  }> = [{ factType: "skill", factValue: { name: "React TypeScript" } }]) {
     const userId = crypto.randomUUID();
     const profileId = crypto.randomUUID();
-    const profileFactId = crypto.randomUUID();
     await database.insert(jobAccounts).values({ id: userId });
     await database.insert(jobProfiles).values({ id: profileId, userId, version: 1, createdAt: now, updatedAt: now });
-    await database.insert(profileFacts).values({ id: profileFactId, userId, profileId, factType: input.factType, createdAt: now });
-    await database.insert(profileFactRevisions).values({
-      id: crypto.randomUUID(), userId, profileFactId, revisionNumber: 1, factType: input.factType, factValue: input.factValue,
-      state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1, createdAt: now,
-    });
+    for (const input of inputs) {
+      const profileFactId = crypto.randomUUID();
+      await database.insert(profileFacts).values({ id: profileFactId, userId, profileId, factType: input.factType, createdAt: now });
+      await database.insert(profileFactRevisions).values({
+        id: crypto.randomUUID(), userId, profileFactId, revisionNumber: 1, factType: input.factType, factValue: input.factValue,
+        state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1, createdAt: now,
+      });
+    }
     return userId;
   }
 
@@ -59,7 +61,7 @@ describe("job targets", () => {
   }
 
   it("保留 language 画像事实的等级作为建议证据标签", async () => {
-    const userId = await userWithTrustedFacts({ factType: "language", factValue: { name: "TypeScript", level: "熟练" } });
+    const userId = await userWithTrustedFacts([{ factType: "language", factValue: { name: "TypeScript", level: "熟练" } }]);
 
     const overview = await createJobTargetQueries({ db: database }).getOverview({ userId });
 
@@ -69,6 +71,18 @@ describe("job targets", () => {
         evidence: expect.arrayContaining([expect.objectContaining({ label: expect.stringContaining("熟练") })]),
       }),
     ]));
+  });
+
+  it("不会因 21 条未匹配可信事实超过回退建议的证据契约上限", async () => {
+    const userId = await userWithTrustedFacts(Array.from({ length: 21 }, (_, index) => ({
+      factType: "skill" as const,
+      factValue: { name: `无关技能 ${index}` },
+    })));
+
+    const overview = await createJobTargetQueries({ db: database }).getOverview({ userId });
+
+    expect(overview.suggestions).toHaveLength(3);
+    expect(overview.suggestions.every((suggestion) => suggestion.evidence.length <= 20)).toBe(true);
   });
 
   it("在创建前不持久化建议，并限制一个主目标和两个次目标", async () => {
