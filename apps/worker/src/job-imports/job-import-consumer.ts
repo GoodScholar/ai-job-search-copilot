@@ -17,7 +17,7 @@ export class JobImportConsumer implements OnModuleDestroy {
       const payload = JobImportJobSchema.parse(job.data);
       const attempts = job.opts.attempts ?? 1;
       try {
-        return await input.processor.process({ ...payload, finalAttempt: job.attemptsMade + 1 >= attempts });
+        return await input.processor.process({ ...payload, finalAttempt: job.attemptsMade + 1 >= attempts, attemptCount: job.attemptsMade + 1 });
       } catch (error) {
         if (error instanceof JobImportRetryableError) throw new Error("job import temporarily unavailable");
         throw error;

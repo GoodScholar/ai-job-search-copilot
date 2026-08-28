@@ -13,6 +13,7 @@ import {
   jobImports,
   jobOpportunities,
   jobOpportunitySources,
+  jobSourcePostings,
   jobSourcePostingVersions,
   migrateDatabase,
   type Database,
@@ -33,7 +34,10 @@ const minioBucket = "career-documents";
 const userId = "20f93bda-36c0-4f61-968b-7f1b03d445d9";
 
 function checksum(content: string): string {
-  return createHash("sha256").update(content, "utf8").digest("hex");
+  const canonical = content.normalize("NFKC").replace(/\r\n?/g, "\n")
+    .split("\n").map((line) => line.replace(/\s+$/u, "")).join("\n")
+    .replace(/^\n+|\n+$/g, "");
+  return createHash("sha256").update(canonical, "utf8").digest("hex");
 }
 
 async function waitFor(check: () => Promise<boolean>, timeoutMs = 15_000): Promise<void> {
@@ -149,6 +153,15 @@ describe("JobImportConsumer", () => {
     await store.put({ objectKey, bytes: new TextEncoder().encode(content), mediaType: "text/markdown", importId });
     await database.insert(jobImports).values({
       id: importId, userId, inputType: "pasted_text", contentSha256: checksum(content), status: "imported",
+    });
+    const sourcePostingId = randomUUID();
+    await database.insert(jobSourcePostings).values({
+      id: sourcePostingId, userId, sourceType: "user_import", sourceIdentifier: checksum(content),
+      sourceIdentity: { contentFingerprint: checksum(content) },
+    });
+    await database.insert(jobSourcePostingVersions).values({
+      id: randomUUID(), userId, sourcePostingId, version: 1, contentSha256: checksum(content),
+      rawObjectReference: { objectKey }, retrievedAt: new Date(),
     });
     return { importId, objectKey };
   }

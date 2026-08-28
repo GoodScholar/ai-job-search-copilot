@@ -21,6 +21,14 @@ export function resolveE2eJobNormalizerDelayMs(environment: NodeJS.ProcessEnv = 
   return configured;
 }
 
+export function createConfiguredJobPostingNormalizer(environment: NodeJS.ProcessEnv = process.env): FakeJobPostingNormalizer {
+  if (environment.APP_ENV === "production") throw new Error("生产 JobPostingNormalizer adapter 尚未配置");
+  return new FakeJobPostingNormalizer({
+    enableFailureFixture: environment.APP_ENV === "test",
+    testDelayMs: resolveE2eJobNormalizerDelayMs(environment),
+  });
+}
+
 function required(name: "DATABASE_URL" | "REDIS_URL" | "MINIO_ENDPOINT" | "MINIO_ACCESS_KEY" | "MINIO_SECRET_KEY" | "MINIO_BUCKET", fallback: string): string {
   const value = process.env[name];
   if (value) return value;
@@ -95,10 +103,7 @@ class WorkerDatabase implements OnModuleDestroy {
           db,
           auditTrail: createAuditTrail({ db, clock: () => new Date() }),
           contentStore,
-          normalizer: new FakeJobPostingNormalizer({
-            enableFailureFixture: process.env.APP_ENV === "test",
-            testDelayMs: resolveE2eJobNormalizerDelayMs(),
-          }),
+          normalizer: createConfiguredJobPostingNormalizer(),
           id: randomUUID,
           clock: () => new Date(),
         });

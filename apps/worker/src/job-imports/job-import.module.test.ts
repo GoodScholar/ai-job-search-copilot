@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveE2eJobNormalizerDelayMs } from "./job-import.module.js";
+import { createConfiguredJobPostingNormalizer, resolveE2eJobNormalizerDelayMs } from "./job-import.module.js";
 
 describe("resolveE2eJobNormalizerDelayMs", () => {
   it("仅在测试环境接受有限、非负且受上限约束的毫秒数", () => {
@@ -16,5 +16,12 @@ describe("resolveE2eJobNormalizerDelayMs", () => {
   it("在非测试环境或未配置时禁用延迟", () => {
     expect(resolveE2eJobNormalizerDelayMs({ APP_ENV: "development", E2E_JOB_NORMALIZER_DELAY_MS: "750" })).toBe(0);
     expect(resolveE2eJobNormalizerDelayMs({ APP_ENV: "test" })).toBe(0);
+  });
+});
+
+describe("createConfiguredJobPostingNormalizer", () => {
+  it("测试环境允许 Fake，生产环境明确拒绝未配置 adapter", () => {
+    expect(createConfiguredJobPostingNormalizer({ APP_ENV: "test" })).toBeDefined();
+    expect(() => createConfiguredJobPostingNormalizer({ APP_ENV: "production" })).toThrow("生产 JobPostingNormalizer adapter 尚未配置");
   });
 });

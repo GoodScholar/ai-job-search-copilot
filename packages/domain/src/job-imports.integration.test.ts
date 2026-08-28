@@ -1,6 +1,6 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createDatabase, jobAccounts, jobOpportunities, migrateDatabase, type Database } from "@job-copilot/database";
+import { createDatabase, jobAccounts, jobOpportunities, jobSourcePostingVersions, migrateDatabase, type Database } from "@job-copilot/database";
 import { eq, sql } from "drizzle-orm";
 import { createAuditTrail, type AuditTrail } from "./audit-trail";
 import {
@@ -307,7 +307,22 @@ describe("job imports", () => {
     }).process({ version: 1, importId: imported.importId, userId, finalAttempt: true })).resolves.toBe("failed");
     await expect(createJobImportQueries({ db: database, contentStore: store }).get({ userId, importId: imported.importId }))
       .resolves.toMatchObject({ status: "failed", failureCode: "JOB_NORMALIZER_OUTPUT_INVALID" });
+    await expect(database.select({ id: jobSourcePostingVersions.id, rawObjectReference: jobSourcePostingVersions.rawObjectReference })
+      .from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, userId)))
+      .resolves.toEqual(expect.arrayContaining([{ id: expect.any(String), rawObjectReference: { objectKey: `accounts/${userId}/job-imports/${imported.importId}/source.md` } }]));
     expect(JSON.stringify(await createAuditTrail({ db: database, clock: () => now }).query({ userId }))).not.toContain(content);
+  });
+
+  it("原始正文逐字保留，规范化指纹仍忽略 CRLF、兼容字符和尾随空白", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const raw = "＃ 工程师  \r\n公司：示例科技\r\n\r\n";
+    const commands = createJobImportCommands({
+      db: database, contentStore: store, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+    const imported = await commands.submit({ userId, requestId: crypto.randomUUID(), command: { inputType: "pasted_text", content: raw } });
+    await expect(createJobImportQueries({ db: database, contentStore: store }).getRawContent({ userId, importId: imported.importId }))
+      .resolves.toEqual({ content: raw, filename: null });
   });
 
   it("仅在最终尝试终态化读取故障，并允许后续 worker 重试", async () => {

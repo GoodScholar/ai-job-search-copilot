@@ -19,6 +19,10 @@ const failureMessages: Record<string, string> = {
   JOB_IMPORT_UNAVAILABLE: "岗位导入暂时不可用，请稍后重试。",
 };
 
+async function decodeMarkdownUpload(file: File): Promise<string> {
+  return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(await file.arrayBuffer());
+}
+
 function safeFailureCode(value: unknown): keyof typeof failureMessages {
   return typeof value === "string" && Object.hasOwn(failureMessages, value)
     ? value as keyof typeof failureMessages
@@ -33,9 +37,14 @@ export async function createJobImportAction(
   if (!sessionToken) redirect("/login?returnTo=%2Fjobs%2Fimport");
 
   const file = formData.get("file");
-  const command = file instanceof File
-    ? { inputType: "markdown_upload" as const, originalFilename: file.name, content: await file.text() }
+  let command;
+  try {
+    command = file instanceof File
+      ? { inputType: "markdown_upload" as const, originalFilename: file.name, content: await decodeMarkdownUpload(file) }
     : { inputType: "pasted_text" as const, content: typeof formData.get("content") === "string" ? formData.get("content") : "" };
+  } catch {
+    return { ok: false, code: "JOB_IMPORT_CONTENT_INVALID", message: failureMessages.JOB_IMPORT_CONTENT_INVALID };
+  }
   const parsed = CreateJobImportCommandSchema.safeParse(command);
   if (!parsed.success) {
     return { ok: false, code: "JOB_IMPORT_CONTENT_INVALID", message: failureMessages.JOB_IMPORT_CONTENT_INVALID };

@@ -119,7 +119,7 @@ function importBase(record: {
   };
 }
 
-async function failImport(deps: Pick<ProcessorDependencies, "db" | "auditTrail" | "clock">, input: { userId: string; importId: string; inputType: "pasted_text" | "markdown_upload"; claimToken: string; failureCode: JobImportFailureCode }): Promise<boolean> {
+async function failImport(deps: Pick<ProcessorDependencies, "db" | "auditTrail" | "clock">, input: { userId: string; importId: string; inputType: "pasted_text" | "markdown_upload"; claimToken: string; failureCode: JobImportFailureCode; attemptCount: number }): Promise<boolean> {
   const now = deps.clock();
   return deps.db.transaction(async (transaction) => {
     await acquireAccountAdvisoryLock(transaction, input.userId);
@@ -133,7 +133,7 @@ async function failImport(deps: Pick<ProcessorDependencies, "db" | "auditTrail" 
     await deps.auditTrail.bind(transaction).append({
       userId: input.userId, actorUserId: input.userId, eventType: "job.import_failed", occurredAt: now,
       requestId: input.importId, outcome: "failure", reasonCode: input.failureCode, resourceType: "job_import", resourceId: input.importId,
-      metadata: { importId: input.importId, inputType: input.inputType, attemptCount: 1, failureCode: input.failureCode },
+      metadata: { importId: input.importId, inputType: input.inputType, attemptCount: input.attemptCount, failureCode: input.failureCode },
     });
     return true;
   });
@@ -155,8 +155,9 @@ export function createJobImportCommands(deps: CommandDependencies): {
   return {
     async submit(input): Promise<CreateJobImportResult> {
       const command = CreateJobImportCommandSchema.parse(input.command);
-      const content = canonicalContent(command.content);
-      const bytes = new TextEncoder().encode(content);
+      const rawContent = command.content;
+      const content = canonicalContent(rawContent);
+      const bytes = new TextEncoder().encode(rawContent);
       if (!content || bytes.byteLength > JOB_IMPORT_MAX_BYTES) throw new Error("JOB_IMPORT_CONTENT_INVALID");
 
       const checksum = contentHash(content);
@@ -207,6 +208,16 @@ export function createJobImportCommands(deps: CommandDependencies): {
         } catch {
           throw new JobImportError("JOB_IMPORT_OBJECT_STORAGE_FAILED");
         }
+        const [posting] = await transaction.insert(jobSourcePostings).values({
+          id: deps.id(), userId: input.userId, sourceType: "user_import", sourceIdentifier: checksum,
+          sourceIdentity: { contentFingerprint: checksum }, createdAt: now, updatedAt: now,
+        }).returning({ id: jobSourcePostings.id });
+        if (!posting) throw new Error("JOB_IMPORT_PERSIST_FAILED");
+        const [sourceVersion] = await transaction.insert(jobSourcePostingVersions).values({
+          id: deps.id(), userId: input.userId, sourcePostingId: posting.id, version: 1, contentSha256: checksum,
+          rawObjectReference: { objectKey }, retrievedAt: now, createdAt: now,
+        }).returning({ id: jobSourcePostingVersions.id });
+        if (!sourceVersion) throw new Error("JOB_IMPORT_PERSIST_FAILED");
         await deps.auditTrail.bind(transaction).append({
           userId: input.userId, actorUserId: input.userId, eventType: "job.import_submitted", occurredAt: now,
           requestId: input.requestId, outcome: "success", reasonCode: "JOB_IMPORT_SUBMITTED",
@@ -236,11 +247,12 @@ export function createJobImportCommands(deps: CommandDependencies): {
 }
 
 export function createJobImportProcessor(deps: ProcessorDependencies): {
-  process(job: JobImportJob & { finalAttempt: boolean }): Promise<"completed" | "failed" | "stale">;
+  process(job: JobImportJob & { finalAttempt: boolean; attemptCount?: number }): Promise<"completed" | "failed" | "stale">;
 } {
   return {
     async process(job): Promise<"completed" | "failed" | "stale"> {
       const parsedJob = JobImportJobSchema.parse({ version: job.version, importId: job.importId, userId: job.userId });
+      const attemptCount = job.attemptCount ?? 1;
       const now = deps.clock();
       const claimToken = deps.id();
       const claimExpiresAt = new Date(now.getTime() + JOB_IMPORT_CLAIM_LEASE_MS);
@@ -270,24 +282,25 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
           await releaseImportForRetry(deps, { ...parsedJob, claimToken });
           throw new JobImportRetryableError();
         }
-        return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode: "JOB_IMPORT_CONTENT_READ_FAILED" }) ? "failed" : "stale";
+        return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode: "JOB_IMPORT_CONTENT_READ_FAILED", attemptCount }) ? "failed" : "stale";
       }
-      if (sha256(content) !== record.contentSha256) {
-        return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode: "JOB_IMPORT_CHECKSUM_MISMATCH" }) ? "failed" : "stale";
+      const canonical = canonicalContent(content);
+      if (sha256(canonical) !== record.contentSha256) {
+        return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode: "JOB_IMPORT_CHECKSUM_MISMATCH", attemptCount }) ? "failed" : "stale";
       }
       let normalized: unknown;
       try {
-        normalized = await deps.normalizer.normalize(content);
+        normalized = await deps.normalizer.normalize(canonical);
       } catch {
         if (!job.finalAttempt) {
           await releaseImportForRetry(deps, { ...parsedJob, claimToken });
           throw new JobImportRetryableError();
         }
-        return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode: "JOB_IMPORT_PERSIST_FAILED" }) ? "failed" : "stale";
+        return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode: "JOB_IMPORT_PERSIST_FAILED", attemptCount }) ? "failed" : "stale";
       }
       const result = JobNormalizerOutputSchema.safeParse(normalized);
       if (!result.success) {
-        return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode: "JOB_NORMALIZER_OUTPUT_INVALID" }) ? "failed" : "stale";
+        return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode: "JOB_NORMALIZER_OUTPUT_INVALID", attemptCount }) ? "failed" : "stale";
       }
       const output = result.data;
       try {
@@ -305,29 +318,12 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
           let [posting] = await transaction.select({ id: jobSourcePostings.id }).from(jobSourcePostings).where(and(
             eq(jobSourcePostings.userId, parsedJob.userId), eq(jobSourcePostings.sourceType, "user_import"), eq(jobSourcePostings.sourceIdentifier, sourceIdentifier),
           ));
-          if (!posting) {
-            const [created] = await transaction.insert(jobSourcePostings).values({
-              id: deps.id(), userId: parsedJob.userId, sourceType: "user_import", sourceIdentifier,
-              sourceIdentity: { contentFingerprint: sourceIdentifier }, createdAt: now, updatedAt: now,
-            }).returning({ id: jobSourcePostings.id });
-            if (!created) throw new Error("JOB_IMPORT_PERSIST_FAILED");
-            posting = created;
-          }
+          if (!posting) throw new Error("JOB_IMPORT_PERSIST_FAILED");
           let [sourceVersion] = await transaction.select({ id: jobSourcePostingVersions.id, version: jobSourcePostingVersions.version })
             .from(jobSourcePostingVersions).where(and(
               eq(jobSourcePostingVersions.userId, parsedJob.userId), eq(jobSourcePostingVersions.sourcePostingId, posting.id), eq(jobSourcePostingVersions.contentSha256, record.contentSha256),
             ));
-          if (!sourceVersion) {
-            const [latest] = await transaction.select({ version: jobSourcePostingVersions.version }).from(jobSourcePostingVersions)
-              .where(and(eq(jobSourcePostingVersions.userId, parsedJob.userId), eq(jobSourcePostingVersions.sourcePostingId, posting.id)))
-              .orderBy(desc(jobSourcePostingVersions.version)).limit(1);
-            const [created] = await transaction.insert(jobSourcePostingVersions).values({
-              id: deps.id(), userId: parsedJob.userId, sourcePostingId: posting.id, version: (latest?.version ?? 0) + 1,
-              contentSha256: record.contentSha256, rawObjectReference: { objectKey: sourceObjectKey(parsedJob.userId, parsedJob.importId) }, retrievedAt: now, createdAt: now,
-            }).returning({ id: jobSourcePostingVersions.id, version: jobSourcePostingVersions.version });
-            if (!created) throw new Error("JOB_IMPORT_PERSIST_FAILED");
-            sourceVersion = created;
-          }
+          if (!sourceVersion) throw new Error("JOB_IMPORT_PERSIST_FAILED");
           const dedupKey = opportunityDedupKey(output);
           let [opportunity] = await transaction.select({ id: jobOpportunities.id }).from(jobOpportunities).where(and(
             eq(jobOpportunities.userId, parsedJob.userId), eq(jobOpportunities.dedupKey, dedupKey),
@@ -348,13 +344,13 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
           await deps.auditTrail.bind(transaction).append({
             userId: parsedJob.userId, actorUserId: parsedJob.userId, eventType: "job.import_completed", occurredAt: now,
             requestId: parsedJob.importId, outcome: "success", reasonCode: "JOB_IMPORT_COMPLETED", resourceType: "job_import", resourceId: parsedJob.importId,
-            metadata: { importId: parsedJob.importId, sourcePostingId: posting.id, sourcePostingVersionId: sourceVersion.id, opportunityId: opportunity.id, version: sourceVersion.version, inputType, attemptCount: 1 },
+            metadata: { importId: parsedJob.importId, sourcePostingId: posting.id, sourcePostingVersionId: sourceVersion.id, opportunityId: opportunity.id, version: sourceVersion.version, inputType, attemptCount },
           });
           return true;
         });
         return completed ? "completed" : "stale";
       } catch {
-        return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode: "JOB_IMPORT_PERSIST_FAILED" }) ? "failed" : "stale";
+        return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode: "JOB_IMPORT_PERSIST_FAILED", attemptCount }) ? "failed" : "stale";
       }
     },
   };
@@ -370,7 +366,7 @@ export function createJobImportQueries(deps: { db: Database; contentStore: JobCo
       const rows = await deps.db.select({
         id: jobImports.id, inputType: jobImports.inputType, originalFilename: jobImports.originalFilename, status: jobImports.status,
         failureCode: jobImports.failureCode, createdAt: jobImports.createdAt, updatedAt: jobImports.updatedAt,
-      }).from(jobImports).where(eq(jobImports.userId, userId)).orderBy(asc(jobImports.createdAt));
+      }).from(jobImports).where(eq(jobImports.userId, userId)).orderBy(desc(jobImports.createdAt), desc(jobImports.id)).limit(20);
       return JobImportListSchema.parse({ imports: rows.map(importBase) });
     },
     async get({ userId, importId }) {

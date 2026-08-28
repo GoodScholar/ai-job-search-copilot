@@ -194,7 +194,7 @@ export function JobImportView({ initialImports }: JobImportViewProps) {
           {recentImports.length === 0 ? <p>尚无岗位导入记录。</p> : <ol className="job-import-recent-list">{recentImports.map((item) => <li key={item.importId}><button aria-pressed={activeImport?.importId === item.importId} className="workbench-touch-target" onClick={() => selectImport(item)} type="button"><span>{item.originalFilename ?? "粘贴的岗位描述"}</span><span>{statusText[item.status]}</span></button></li>)}</ol>}
         </section>
         <section aria-labelledby="opportunity-title" className="job-import-panel"><h2 id="opportunity-title">规范化岗位机会</h2>
-          <dl className="job-import-opportunity"><div><dt>公司</dt><dd>{opportunity?.company ?? "未知"}</dd></div><div><dt>职位</dt><dd>{opportunity?.title ?? "未知"}</dd></div><div><dt>地点</dt><dd>{opportunity?.location ?? "未知"}</dd></div><div><dt>截止日期</dt><dd>{opportunity?.deadline ? new Date(opportunity.deadline).toLocaleDateString("zh-CN") : "未知"}</dd></div></dl>
+          <dl className="job-import-opportunity"><div><dt>公司</dt><dd>{opportunity?.company ?? "未知"}</dd></div><div><dt>职位</dt><dd>{opportunity?.title ?? "未知"}</dd></div><div><dt>地点</dt><dd>{opportunity?.location ?? "未知"}</dd></div><div><dt>发布时间</dt><dd>{opportunity?.postedAt ? new Date(opportunity.postedAt).toLocaleDateString("zh-CN") : "未知"}</dd></div><div><dt>截止日期</dt><dd>{opportunity?.deadline ? new Date(opportunity.deadline).toLocaleDateString("zh-CN") : "未知"}</dd></div></dl>
           {status === "failed" && <p className="job-import-failure">{failureMessage(detail?.failureCode ?? activeImport?.failureCode)}</p>}
           {opportunity?.description && <p className="job-import-description">{opportunity.description}</p>}
         </section>
