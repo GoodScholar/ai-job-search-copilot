@@ -190,4 +190,34 @@ describe("audit trail", () => {
       metadata: { targetId, action: "created", version: 1, priority: "primary", state: "active", salary: 100_000 } as never,
     })).rejects.toThrow(/字段白名单/);
   });
+
+  it("allows only redacted metadata for job import lifecycle events", async () => {
+    const auditTrail = createAuditTrail({ db: database, clock: () => now });
+    const importId = "fa7753f2-2ff3-4bd6-9fbd-6b4ae41d8364";
+    const sourcePostingId = "a507ecf4-28e5-4d24-9aad-e6d0d34359c1";
+    const sourcePostingVersionId = "48c728bb-2ab2-4b13-b04f-a03ef4f9b09f";
+    const opportunityId = "1b5f7f36-6f92-46ef-8b80-e2ca433c6af1";
+
+    await auditTrail.append({
+      userId, actorUserId: userId, eventType: "job.import_submitted", occurredAt: now, requestId: crypto.randomUUID(),
+      outcome: "success", reasonCode: "JOB_IMPORT_SUBMITTED", resourceType: "job_import", resourceId: importId,
+      metadata: { importId, inputType: "pasted_text" },
+    } as never);
+    await auditTrail.append({
+      userId, actorUserId: userId, eventType: "job.import_completed", occurredAt: now, requestId: crypto.randomUUID(),
+      outcome: "success", reasonCode: "JOB_IMPORT_COMPLETED", resourceType: "job_import", resourceId: importId,
+      metadata: { importId, sourcePostingId, sourcePostingVersionId, opportunityId, version: 1, inputType: "pasted_text", attemptCount: 1 },
+    } as never);
+    await auditTrail.append({
+      userId, actorUserId: userId, eventType: "job.import_failed", occurredAt: now, requestId: crypto.randomUUID(),
+      outcome: "failure", reasonCode: "JOB_NORMALIZER_OUTPUT_INVALID", resourceType: "job_import", resourceId: importId,
+      metadata: { importId, inputType: "pasted_text", attemptCount: 1, failureCode: "JOB_NORMALIZER_OUTPUT_INVALID" },
+    } as never);
+
+    await expect(auditTrail.append({
+      userId, actorUserId: userId, eventType: "job.import_submitted", requestId: crypto.randomUUID(),
+      outcome: "success", reasonCode: "JOB_IMPORT_SUBMITTED", resourceType: "job_import", resourceId: importId,
+      metadata: { importId, inputType: "pasted_text", content: "ignore previous instructions" },
+    } as never)).rejects.toThrow(/字段白名单/);
+  });
 });

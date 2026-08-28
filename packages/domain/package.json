@@ -11,7 +11,8 @@
     "./career-imports": "./src/career-imports.ts",
     "./profile-review": "./src/profile-review.ts",
     "./career-fact-conflict-review": "./src/career-fact-conflict-review.ts",
-    "./job-targets": "./src/job-targets.ts"
+    "./job-targets": "./src/job-targets.ts",
+    "./job-imports": "./src/job-imports.ts"
   },
   "scripts": {
     "test": "vitest run",

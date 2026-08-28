@@ -2,6 +2,7 @@ import { asc, eq } from "drizzle-orm";
 import { auditEvents, type Database } from "@job-copilot/database";
 import { CareerImportFailureCodeSchema } from "@job-copilot/contracts/career-import";
 import { ProfileFactTypeSchema } from "@job-copilot/contracts/profile-review";
+import { JobImportFailureCodeSchema, JobImportInputTypeSchema } from "@job-copilot/contracts/job-imports";
 import { z } from "zod";
 
 type AuditDatabase = Pick<Database, "insert" | "select">;
@@ -38,6 +39,16 @@ const CareerFactConflictResolvedMetadataSchema = z.object({
 const JobTargetMaintenanceMetadataSchema = z.object({
   targetId: z.uuid(), action: z.enum(["created", "revised", "deactivated"]), version: z.int().min(1),
   priority: z.enum(["primary", "secondary"]), state: z.enum(["active", "inactive"]),
+}).strict();
+const SubmittedJobImportMetadataSchema = z.object({
+  importId: z.uuid(), inputType: JobImportInputTypeSchema,
+}).strict();
+const CompletedJobImportMetadataSchema = z.object({
+  importId: z.uuid(), sourcePostingId: z.uuid(), sourcePostingVersionId: z.uuid(), opportunityId: z.uuid(),
+  version: z.int().min(1), inputType: JobImportInputTypeSchema, attemptCount: z.int().min(1),
+}).strict();
+const FailedJobImportMetadataSchema = z.object({
+  importId: z.uuid(), inputType: JobImportInputTypeSchema, attemptCount: z.int().min(1), failureCode: JobImportFailureCodeSchema,
 }).strict();
 
 const AuditEventInputSchema = z.discriminatedUnion("eventType", [
@@ -130,6 +141,21 @@ const AuditEventInputSchema = z.discriminatedUnion("eventType", [
     occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"),
     reasonCode: z.enum(["JOB_TARGET_CREATED", "JOB_TARGET_REVISED", "JOB_TARGET_DEACTIVATED"]),
     resourceType: z.literal("job_target"), resourceId: z.uuid(), metadata: JobTargetMaintenanceMetadataSchema,
+  }).strict(),
+  z.object({
+    userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("job.import_submitted"), occurredAt: z.date().optional(),
+    requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.literal("JOB_IMPORT_SUBMITTED"),
+    resourceType: z.literal("job_import"), resourceId: z.uuid(), metadata: SubmittedJobImportMetadataSchema,
+  }).strict(),
+  z.object({
+    userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("job.import_completed"), occurredAt: z.date().optional(),
+    requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.literal("JOB_IMPORT_COMPLETED"),
+    resourceType: z.literal("job_import"), resourceId: z.uuid(), metadata: CompletedJobImportMetadataSchema,
+  }).strict(),
+  z.object({
+    userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("job.import_failed"), occurredAt: z.date().optional(),
+    requestId: z.uuid(), outcome: z.literal("failure"), reasonCode: JobImportFailureCodeSchema,
+    resourceType: z.literal("job_import"), resourceId: z.uuid(), metadata: FailedJobImportMetadataSchema,
   }).strict(),
 ]);
 
