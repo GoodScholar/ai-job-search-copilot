@@ -245,6 +245,7 @@ function extractJobPage(rawHtml: string, finalUrl: URL): { visibleText: string; 
 }
 
 function isNonJobPageTitle(title: string | undefined): boolean {
+  if (/(?:\b(?:role|job|position)\b|职位|岗位)/iu.test(title ?? "")) return false;
   return /^(?:about(?:\s+us)?|company\s+profile)(?:\s|[:：|—-]|$)|^(?:关于我们|公司介绍)(?:\s|[:：|—-]|$)/iu.test(title ?? "");
 }
 

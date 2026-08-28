@@ -68,6 +68,14 @@ describe("SecureJobPageFetcher", () => {
           response.writeHead(200, { "content-type": "text/html" });
           response.end("<main><h1>URL 高级前端工程师</h1><p>公司：URL 示例科技</p><p>地点：上海</p></main>");
           return;
+        case "/about-role":
+          response.writeHead(200, { "content-type": "text/html" });
+          response.end("<main><h1>About the role: Senior Engineer</h1><p>Company: Example Corp</p><p>Location: Shanghai</p><h2>Responsibilities</h2><p>Build reliable services for customers.</p></main>");
+          return;
+        case "/about-job-chinese":
+          response.writeHead(200, { "content-type": "text/html" });
+          response.end("<main><h1>关于该职位：高级工程师</h1><p>公司：示例科技</p><p>地点：上海</p><h2>职责</h2><p>负责构建可靠服务。</p></main>");
+          return;
         case "/company-about":
           response.writeHead(200, { "content-type": "text/html" });
           response.end("<main><h1>About Example Corp</h1><h2>Company</h2><p>Example Corp builds collaboration tools for global teams.</p><p>Our team has decades of experience.</p></main>");
@@ -186,6 +194,11 @@ describe("SecureJobPageFetcher", () => {
 
   it("接受含公司和地点上下文的最简可见岗位页", async () => {
     await expect(new SecureJobPageFetcher({ appEnv: "test", testOrigin: origin }).fetch({ url: `${origin}/minimal-job` }))
+      .resolves.toMatchObject({ pageClassification: "job" });
+  });
+
+  it.each(["/about-role", "/about-job-chinese"])("接受带有岗位语义的 About 标题 %s", async (path) => {
+    await expect(new SecureJobPageFetcher({ appEnv: "test", testOrigin: origin }).fetch({ url: `${origin}${path}` }))
       .resolves.toMatchObject({ pageClassification: "job" });
   });
 
