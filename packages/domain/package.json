@@ -10,7 +10,8 @@
     "./workbench-home": "./src/workbench-home.ts",
     "./career-imports": "./src/career-imports.ts",
     "./profile-review": "./src/profile-review.ts",
-    "./career-fact-conflict-review": "./src/career-fact-conflict-review.ts"
+    "./career-fact-conflict-review": "./src/career-fact-conflict-review.ts",
+    "./job-targets": "./src/job-targets.ts"
   },
   "scripts": {
     "test": "vitest run",

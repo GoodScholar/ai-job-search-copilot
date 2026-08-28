@@ -175,4 +175,19 @@ describe("audit trail", () => {
       metadata: { conflictId: crypto.randomUUID(), existingCandidateFactId: crypto.randomUUID(), incomingCandidateFactId: crypto.randomUUID(), kind: "date", resolution: "use_existing", profileId: crypto.randomUUID(), profileVersion: 1 },
     });
   });
+
+  it("allows only redacted target state for job target audits", async () => {
+    const auditTrail = createAuditTrail({ db: database, clock: () => now });
+    const targetId = crypto.randomUUID();
+    await auditTrail.append({
+      userId, actorUserId: userId, eventType: "profile.job_target_maintained", occurredAt: now, requestId: crypto.randomUUID(), outcome: "success",
+      reasonCode: "JOB_TARGET_CREATED", resourceType: "job_target", resourceId: targetId,
+      metadata: { targetId, action: "created", version: 1, priority: "primary", state: "active" },
+    });
+    await expect(auditTrail.append({
+      userId, actorUserId: userId, eventType: "profile.job_target_maintained", occurredAt: now, requestId: crypto.randomUUID(), outcome: "success",
+      reasonCode: "JOB_TARGET_CREATED", resourceType: "job_target", resourceId: targetId,
+      metadata: { targetId, action: "created", version: 1, priority: "primary", state: "active", salary: 100_000 } as never,
+    })).rejects.toThrow(/字段白名单/);
+  });
 });
