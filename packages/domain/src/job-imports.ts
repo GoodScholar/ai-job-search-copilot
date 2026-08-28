@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { jobImports, jobOpportunities, jobSourcePostings, jobSourcePostingVersions, type Database } from "@job-copilot/database";
 import {
   CreateJobImportCommandSchema,
@@ -21,6 +21,7 @@ import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 export interface JobContentStore {
   put(input: { objectKey: string; bytes: Uint8Array; mediaType: "text/markdown"; importId: string }): Promise<void>;
   get(input: { objectKey: string }): Promise<Uint8Array>;
+  delete(input: { objectKey: string }): Promise<void>;
 }
 
 export interface JobImportQueue {
@@ -109,12 +110,13 @@ function importBase(record: {
   };
 }
 
-async function failImport(deps: Pick<ProcessorDependencies, "db" | "auditTrail" | "clock">, input: { userId: string; importId: string; inputType: "pasted_text" | "markdown_upload"; failureCode: JobImportFailureCode }) {
+async function failImport(deps: Pick<ProcessorDependencies, "db" | "auditTrail" | "clock">, input: { userId: string; importId: string; inputType: "pasted_text" | "markdown_upload"; failureCode: JobImportFailureCode; onlyIfImported?: boolean }) {
   const now = deps.clock();
   await deps.db.transaction(async (transaction) => {
     await acquireAccountAdvisoryLock(transaction, input.userId);
     const [failed] = await transaction.update(jobImports).set({ status: "failed", failureCode: input.failureCode, updatedAt: now }).where(and(
-      eq(jobImports.userId, input.userId), eq(jobImports.id, input.importId), eq(jobImports.status, "imported"),
+      eq(jobImports.userId, input.userId), eq(jobImports.id, input.importId),
+      inArray(jobImports.status, input.onlyIfImported ? ["imported"] : ["imported", "normalizing"]),
     )).returning({ id: jobImports.id });
     if (!failed) return;
     await deps.auditTrail.bind(transaction).append({
@@ -122,6 +124,16 @@ async function failImport(deps: Pick<ProcessorDependencies, "db" | "auditTrail" 
       requestId: input.importId, outcome: "failure", reasonCode: input.failureCode, resourceType: "job_import", resourceId: input.importId,
       metadata: { importId: input.importId, inputType: input.inputType, attemptCount: 1, failureCode: input.failureCode },
     });
+  });
+}
+
+async function markImportQueued(deps: Pick<CommandDependencies, "db">, input: { userId: string; importId: string }): Promise<void> {
+  await deps.db.transaction(async (transaction) => {
+    await acquireAccountAdvisoryLock(transaction, input.userId);
+    await transaction.update(jobImports).set({ status: "normalizing", failureCode: null }).where(and(
+      eq(jobImports.userId, input.userId), eq(jobImports.id, input.importId),
+      inArray(jobImports.status, ["imported", "normalizing", "failed"]),
+    ));
   });
 }
 
@@ -138,7 +150,13 @@ export function createJobImportCommands(deps: CommandDependencies): {
       const checksum = contentHash(content);
       const now = deps.clock();
       let reused = false;
-      const record = await deps.db.transaction(async (transaction) => {
+      let storedObjectKey: string | null = null;
+      let record!: {
+        id: string; inputType: string; originalFilename: string | null; status: string;
+        failureCode: string | null; createdAt: Date; updatedAt: Date;
+      };
+      try {
+        record = await deps.db.transaction(async (transaction) => {
         await acquireAccountAdvisoryLock(transaction, input.userId);
         const [existing] = await transaction.select({
           id: jobImports.id, inputType: jobImports.inputType, originalFilename: jobImports.originalFilename,
@@ -146,6 +164,15 @@ export function createJobImportCommands(deps: CommandDependencies): {
         }).from(jobImports).where(and(eq(jobImports.userId, input.userId), eq(jobImports.contentSha256, checksum)));
         if (existing) {
           reused = true;
+          if (existing.status === "failed") {
+            const [retried] = await transaction.update(jobImports).set({ status: "imported", failureCode: null, updatedAt: now }).where(and(
+              eq(jobImports.userId, input.userId), eq(jobImports.id, existing.id), eq(jobImports.status, "failed"),
+            )).returning({
+              id: jobImports.id, inputType: jobImports.inputType, originalFilename: jobImports.originalFilename,
+              status: jobImports.status, failureCode: jobImports.failureCode, createdAt: jobImports.createdAt, updatedAt: jobImports.updatedAt,
+            });
+            return retried ?? existing;
+          }
           return existing;
         }
 
@@ -159,8 +186,10 @@ export function createJobImportCommands(deps: CommandDependencies): {
           status: jobImports.status, failureCode: jobImports.failureCode, createdAt: jobImports.createdAt, updatedAt: jobImports.updatedAt,
         });
         if (!created) throw new Error("JOB_IMPORT_PERSIST_FAILED");
+        const objectKey = sourceObjectKey(input.userId, importId);
         try {
-          await deps.contentStore.put({ objectKey: sourceObjectKey(input.userId, importId), bytes, mediaType: "text/markdown", importId });
+          await deps.contentStore.put({ objectKey, bytes, mediaType: "text/markdown", importId });
+          storedObjectKey = objectKey;
         } catch {
           throw new JobImportError("JOB_IMPORT_OBJECT_STORAGE_FAILED");
         }
@@ -170,17 +199,28 @@ export function createJobImportCommands(deps: CommandDependencies): {
           resourceType: "job_import", resourceId: importId, metadata: { importId, inputType: command.inputType },
         });
         return created;
-      });
+        });
+      } catch (error) {
+        if (storedObjectKey) {
+          try {
+            await deps.contentStore.delete({ objectKey: storedObjectKey });
+          } catch {
+            // 保留原始事务失败，避免补偿错误覆盖它。
+          }
+        }
+        throw error;
+      }
 
       try {
         await deps.queue.enqueue({ version: 1, importId: record.id, userId: input.userId });
+        await markImportQueued(deps, { userId: input.userId, importId: record.id });
       } catch {
         await failImport(deps, {
-          userId: input.userId, importId: record.id, inputType: command.inputType, failureCode: "JOB_IMPORT_QUEUE_UNAVAILABLE",
+          userId: input.userId, importId: record.id, inputType: command.inputType, failureCode: "JOB_IMPORT_QUEUE_UNAVAILABLE", onlyIfImported: true,
         });
         throw new JobImportError("JOB_IMPORT_QUEUE_UNAVAILABLE");
       }
-      return response(record, reused);
+      return response({ ...record, status: "normalizing", failureCode: null, updatedAt: now }, reused);
     },
   };
 }
@@ -201,6 +241,7 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
         const bytes = await deps.contentStore.get({ objectKey: sourceObjectKey(parsedJob.userId, parsedJob.importId) });
         content = new TextDecoder().decode(bytes);
       } catch {
+        if (!job.finalAttempt) return "stale";
         await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, failureCode: "JOB_IMPORT_CONTENT_READ_FAILED" });
         return "failed";
       }
@@ -212,7 +253,8 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
       try {
         normalized = await deps.normalizer.normalize(content);
       } catch {
-        await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, failureCode: "JOB_NORMALIZER_OUTPUT_INVALID" });
+        if (!job.finalAttempt) return "stale";
+        await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, failureCode: "JOB_IMPORT_PERSIST_FAILED" });
         return "failed";
       }
       const result = JobNormalizerOutputSchema.safeParse(normalized);
@@ -269,6 +311,10 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
             }).returning({ id: jobOpportunities.id });
             if (!created) throw new Error("JOB_IMPORT_PERSIST_FAILED");
             opportunity = created;
+          } else {
+            await transaction.update(jobOpportunities).set({
+              importId: parsedJob.importId, sourcePostingVersionId: sourceVersion.id, updatedAt: now,
+            }).where(and(eq(jobOpportunities.userId, parsedJob.userId), eq(jobOpportunities.id, opportunity.id)));
           }
           await transaction.update(jobImports).set({ status: "completed", failureCode: null, updatedAt: now }).where(and(
             eq(jobImports.userId, parsedJob.userId), eq(jobImports.id, parsedJob.importId),

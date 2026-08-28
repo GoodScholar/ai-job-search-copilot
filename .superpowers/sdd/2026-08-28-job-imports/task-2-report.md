@@ -43,3 +43,31 @@
 ## 顾虑
 
 无已知功能阻塞。手动输入的来源身份按已裁定使用 `user_import + canonical content fingerprint`；因此不同正文天然形成不同来源身份，来源版本表仍保持“仅追加、绝不更新”的实现约束。
+
+---
+
+## Fix round 1/5
+
+### 修复与覆盖
+
+1. 队列瞬时失败后的相同正文会原子恢复为可入队状态；成功入队持久化为 `normalizing`，因此并发失败不再覆盖另一请求的成功入队。
+   - `job-imports.integration.test.ts`：`允许瞬时队列失败的相同正文重试并由 worker 完成`、`不会让并发重复提交中的队列失败覆盖另一次成功入队`。
+2. 复用既有机会时保留机会 ID，同时把机会关联切换到当前导入及当前来源版本，`queries.get(second)` 因而返回复用机会和第二份证据。
+   - `job-imports.integration.test.ts`：`用标准化字段的确定性键复用岗位机会`。
+3. `finalAttempt` 现在区分可重试与终态：对象读取及 normalizer 运行时异常在非最终尝试维持 `normalizing`；最终 normalizer 异常使用 `JOB_IMPORT_PERSIST_FAILED`，不会冒充 `JOB_NORMALIZER_OUTPUT_INVALID`。
+   - `job-imports.integration.test.ts`：`仅在最终尝试终态化读取故障，并允许后续 worker 重试`、`normalizer 异常在非最终尝试可重试，最终尝试不冒充输出无效`。
+4. `JobContentStore` 增加最小 `delete` 补偿接口；对象已成功写入但审计/事务失败时删除对象，保留原始事务错误。
+   - `job-imports.integration.test.ts`：`在审计导致事务失败时删除已经写入的岗位正文`。
+
+### 命令与结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `pnpm --filter @job-copilot/domain exec vitest run src/job-imports.test.ts src/job-imports.integration.test.ts src/audit-trail.integration.test.ts` | 通过：3 个文件、20 个测试。 |
+| `pnpm --filter @job-copilot/domain typecheck` | 通过：`tsc --noEmit` 退出码 0。 |
+| `git diff --check` | 通过：无空白错误。 |
+| `pnpm --filter @job-copilot/domain test -- src/job-imports.test.ts src/job-imports.integration.test.ts src/audit-trail.integration.test.ts` | 受环境影响未通过：Vitest 将参数扩展为全套文件，两个无关 Testcontainers 套件端口等待超时；本任务 3 个文件的直接过滤命令如上通过。 |
+
+### 提交
+
+本轮修复提交：`fix: make job import retries and evidence consistent (#7)`；提交 SHA 见本轮最终回复。
