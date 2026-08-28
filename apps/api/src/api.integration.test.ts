@@ -6,10 +6,12 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { auditEvents, candidateFactEvidence, candidateFacts, careerDocuments, careerFactConflicts, careerImports, createDatabase, migrateDatabase, type Database } from "@job-copilot/database";
 import type { CareerDocumentStore, CareerImportQueue } from "@job-copilot/domain/career-imports";
+import type { JobContentStore, JobImportQueue } from "@job-copilot/domain/job-imports";
 import { AppModule } from "./app.module.js";
 import { configureApiApplication } from "./configure-api-application.js";
 import { DATABASE } from "./config/runtime-config.module.js";
 import { CAREER_DOCUMENT_STORE, CAREER_IMPORT_QUEUE } from "./career-import/career-import.tokens.js";
+import { JOB_CONTENT_STORE, JOB_IMPORT_QUEUE } from "./job-imports/job-imports.tokens.js";
 import { createMinimalDocx } from "./career-import/minimal-docx.test-support.js";
 import { CAREER_FACT_CONFLICT_REVIEW_COMMANDS, PROFILE_REVIEW_COMMANDS, type ProfileReviewCommands } from "./profile-review/profile-review.tokens.js";
 import { z } from "zod";
@@ -55,6 +57,20 @@ describe("authenticated workbench HTTP API", () => {
       return bytes;
     },
   };
+  const jobStoredObjects = new Map<string, Uint8Array>();
+  const jobQueue: JobImportQueue & { jobs: unknown[] } = {
+    jobs: [],
+    async enqueue(job) { this.jobs.push(job); },
+  };
+  const jobContentStore: JobContentStore = {
+    async put({ objectKey, bytes }) { jobStoredObjects.set(objectKey, bytes); },
+    async get({ objectKey }) {
+      const bytes = jobStoredObjects.get(objectKey);
+      if (!bytes) throw new Error("job source not found");
+      return bytes;
+    },
+    async delete({ objectKey }) { jobStoredObjects.delete(objectKey); },
+  };
   const originalEnvironment = {
     APP_ENV: process.env.APP_ENV,
     AUTH_MODE: process.env.AUTH_MODE,
@@ -76,6 +92,8 @@ describe("authenticated workbench HTTP API", () => {
     const module = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(CAREER_DOCUMENT_STORE).useValue(documentStore)
       .overrideProvider(CAREER_IMPORT_QUEUE).useValue(queue)
+      .overrideProvider(JOB_CONTENT_STORE).useValue(jobContentStore)
+      .overrideProvider(JOB_IMPORT_QUEUE).useValue(jobQueue)
       .overrideProvider(CAREER_FACT_CONFLICT_REVIEW_COMMANDS).useValue(conflictReviewCommands)
       .compile();
     app = module.createNestApplication<NestFastifyApplication>(new FastifyAdapter({ loggerInstance: testLogger as never }));
@@ -83,6 +101,8 @@ describe("authenticated workbench HTTP API", () => {
     await app.init();
     expect(app.get(CAREER_IMPORT_QUEUE)).toBe(queue);
     expect(app.get(CAREER_DOCUMENT_STORE)).toBe(documentStore);
+    expect(app.get(JOB_IMPORT_QUEUE)).toBe(jobQueue);
+    expect(app.get(JOB_CONTENT_STORE)).toBe(jobContentStore);
   }, 60_000);
 
   afterAll(async () => {
@@ -414,7 +434,6 @@ describe("authenticated workbench HTTP API", () => {
   });
 
   it("accepts one Markdown upload, reuses it, and never exposes source content in audit metadata", async () => {
-    capturedLogs.length = 0;
     const session = await createSession(app, "career-import-primary");
     const protectedOriginal = "姓名：张三\n邮箱：resume@example.com\n## 技能\n- TypeScript";
     const source = "姓名：[姓名]\n邮箱：[邮箱]\n## 技能\n- TypeScript";
@@ -632,6 +651,67 @@ describe("authenticated workbench HTTP API", () => {
     }));
     expect(retry.statusCode).toBe(202);
     expect(retry.json()).toMatchObject({ status: "queued", reused: true });
+  });
+
+  it("为 owner 创建、复用并读取岗位导入，且不向其他账户暴露原文", async () => {
+    capturedLogs.length = 0;
+    const owner = await createSession(app, "job-import-owner");
+    const other = await createSession(app, "job-import-other");
+    const source = "# 高级前端工程师\n公司：示例科技\n地点：上海\n秘密正文";
+    const create = () => app.getHttpAdapter().getInstance().inject({
+      method: "POST",
+      url: "/v1/job-imports",
+      headers: { ...bearer(owner.sessionToken), "content-type": "application/json" },
+      payload: { inputType: "pasted_text", content: source },
+    });
+
+    const created = await create();
+    const repeated = await create();
+    const importId = created.json().importId as string;
+    const listed = await app.getHttpAdapter().getInstance().inject({
+      method: "GET", url: "/v1/job-imports", headers: bearer(owner.sessionToken),
+    });
+    const detail = await app.getHttpAdapter().getInstance().inject({
+      method: "GET", url: `/v1/job-imports/${importId}`, headers: bearer(owner.sessionToken),
+    });
+    const raw = await app.getHttpAdapter().getInstance().inject({
+      method: "GET", url: `/v1/job-imports/${importId}/raw`, headers: bearer(owner.sessionToken),
+    });
+    const hidden = await app.getHttpAdapter().getInstance().inject({
+      method: "GET", url: `/v1/job-imports/${importId}`, headers: bearer(other.sessionToken),
+    });
+    const hiddenRaw = await app.getHttpAdapter().getInstance().inject({
+      method: "GET", url: `/v1/job-imports/${importId}/raw`, headers: bearer(other.sessionToken),
+    });
+    const invalid = await app.getHttpAdapter().getInstance().inject({
+      method: "POST",
+      url: "/v1/job-imports",
+      headers: { ...bearer(owner.sessionToken), "content-type": "application/json" },
+      payload: { inputType: "pasted_text", content: source, unexpected: "must be rejected" },
+    });
+    const anonymous = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: "/v1/job-imports", payload: { inputType: "pasted_text", content: source },
+    });
+
+    expect(created.statusCode).toBe(202);
+    expect(created.json()).toMatchObject({ importId: expect.any(String), status: "normalizing", failureCode: null });
+    expect(repeated.statusCode).toBe(200);
+    expect(repeated.json()).toMatchObject({ importId, status: "normalizing" });
+    expect(listed.statusCode).toBe(200);
+    expect(listed.json()).toMatchObject({ imports: [expect.objectContaining({ importId, status: "normalizing", failureCode: null })] });
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json()).toMatchObject({ importId, opportunity: null });
+    expect(raw.statusCode).toBe(200);
+    expect(raw.headers["content-type"]).toBe("text/plain; charset=utf-8");
+    expect(raw.body).toBe(source.normalize("NFKC"));
+    expect(hidden.statusCode).toBe(404);
+    expect(hidden.json()).toMatchObject({ code: "JOB_IMPORT_NOT_FOUND", requestId: expect.any(String) });
+    expect(hiddenRaw.statusCode).toBe(404);
+    expect(hiddenRaw.body).not.toContain("秘密正文");
+    expect(invalid.statusCode).toBe(400);
+    expect(invalid.json()).toMatchObject({ code: "INVALID_REQUEST", requestId: expect.any(String) });
+    expect(anonymous.statusCode).toBe(401);
+    expect(JSON.stringify(jobQueue.jobs)).not.toContain(source);
   });
 
   it("publishes the protected contract and standard problem schema", async () => {

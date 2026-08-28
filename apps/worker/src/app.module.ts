@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import Redis from "ioredis";
 import { CareerImportModule } from "./career-import/career-import.module.js";
+import { JobImportModule } from "./job-imports/job-import.module.js";
 import { RedisHeartbeatAdapter } from "./heartbeat/redis-heartbeat.adapter.js";
 
 export const WORKER_HEARTBEAT = Symbol("WORKER_HEARTBEAT");
@@ -10,7 +11,7 @@ function getRedisUrl(): string {
 }
 
 @Module({
-  imports: [CareerImportModule],
+  imports: [CareerImportModule, JobImportModule],
   providers: [
     {
       provide: WORKER_HEARTBEAT,
