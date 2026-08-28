@@ -538,6 +538,7 @@ describe("database migrations", () => {
     expect(await listColumns(migratedDatabase)).toEqual(expect.arrayContaining([
       { table_name: "job_imports", column_name: "claim_token", data_type: "uuid" },
       { table_name: "job_imports", column_name: "claim_expires_at", data_type: "timestamp with time zone" },
+      { table_name: "job_source_posting_versions", column_name: "raw_content_sha256", data_type: "character varying" },
     ]));
   });
 });

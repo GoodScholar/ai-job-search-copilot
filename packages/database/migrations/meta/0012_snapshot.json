@@ -1755,6 +1755,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "raw_content_sha256": {
+          "name": "raw_content_sha256",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true
+        },
         "raw_object_reference": {
           "name": "raw_object_reference",
           "type": "jsonb",
@@ -1847,6 +1853,10 @@
         "job_source_posting_versions_content_sha256_format": {
           "name": "job_source_posting_versions_content_sha256_format",
           "value": "\"job_source_posting_versions\".\"content_sha256\" ~ '^[0-9a-f]{64}$'"
+        },
+        "job_source_posting_versions_raw_content_sha256_format": {
+          "name": "job_source_posting_versions_raw_content_sha256_format",
+          "value": "\"job_source_posting_versions\".\"raw_content_sha256\" ~ '^[0-9a-f]{64}$'"
         },
         "job_source_posting_versions_raw_object_reference_object": {
           "name": "job_source_posting_versions_raw_object_reference_object",

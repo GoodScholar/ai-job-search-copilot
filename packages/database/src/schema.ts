@@ -363,6 +363,7 @@ export const jobSourcePostingVersions = pgTable("job_source_posting_versions", {
   sourcePostingId: uuid("source_posting_id").notNull().references(() => jobSourcePostings.id),
   version: integer("version").notNull(),
   contentSha256: varchar("content_sha256", { length: 64 }).notNull(),
+  rawContentSha256: varchar("raw_content_sha256", { length: 64 }).notNull(),
   rawObjectReference: jsonb("raw_object_reference").notNull(),
   retrievedAt: timestamp("retrieved_at", { withTimezone: true }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -376,6 +377,7 @@ export const jobSourcePostingVersions = pgTable("job_source_posting_versions", {
   }),
   check("job_source_posting_versions_version_positive", sql`${table.version} >= 1`),
   check("job_source_posting_versions_content_sha256_format", sql`${table.contentSha256} ~ '^[0-9a-f]{64}$'`),
+  check("job_source_posting_versions_raw_content_sha256_format", sql`${table.rawContentSha256} ~ '^[0-9a-f]{64}$'`),
   check("job_source_posting_versions_raw_object_reference_object", sql`jsonb_typeof(${table.rawObjectReference}) = 'object'`),
 ]);
 

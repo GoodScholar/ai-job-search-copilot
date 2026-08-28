@@ -55,6 +55,7 @@ CREATE TABLE "job_source_posting_versions" (
 	"source_posting_id" uuid NOT NULL,
 	"version" integer NOT NULL,
 	"content_sha256" varchar(64) NOT NULL,
+	"raw_content_sha256" varchar(64) NOT NULL,
 	"raw_object_reference" jsonb NOT NULL,
 	"retrieved_at" timestamp with time zone NOT NULL,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -62,6 +63,7 @@ CREATE TABLE "job_source_posting_versions" (
 	CONSTRAINT "job_source_posting_versions_user_id_id_unique" UNIQUE("user_id","id"),
 	CONSTRAINT "job_source_posting_versions_version_positive" CHECK ("job_source_posting_versions"."version" >= 1),
 	CONSTRAINT "job_source_posting_versions_content_sha256_format" CHECK ("job_source_posting_versions"."content_sha256" ~ '^[0-9a-f]{64}$'),
+	CONSTRAINT "job_source_posting_versions_raw_content_sha256_format" CHECK ("job_source_posting_versions"."raw_content_sha256" ~ '^[0-9a-f]{64}$'),
 	CONSTRAINT "job_source_posting_versions_raw_object_reference_object" CHECK (jsonb_typeof("job_source_posting_versions"."raw_object_reference") = 'object')
 );
 --> statement-breakpoint

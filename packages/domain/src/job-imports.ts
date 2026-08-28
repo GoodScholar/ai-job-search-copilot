@@ -77,6 +77,10 @@ function contentHash(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex");
 }
 
+function rawContentHash(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
 function sourceObjectKey(userId: string, importId: string): string {
   return `accounts/${userId}/job-imports/${importId}/source.md`;
 }
@@ -161,6 +165,7 @@ export function createJobImportCommands(deps: CommandDependencies): {
       if (!content || bytes.byteLength > JOB_IMPORT_MAX_BYTES) throw new Error("JOB_IMPORT_CONTENT_INVALID");
 
       const checksum = contentHash(content);
+      const rawChecksum = rawContentHash(bytes);
       const now = deps.clock();
       let reused = false;
       let storedObjectKey: string | null = null;
@@ -215,6 +220,7 @@ export function createJobImportCommands(deps: CommandDependencies): {
         if (!posting) throw new Error("JOB_IMPORT_PERSIST_FAILED");
         const [sourceVersion] = await transaction.insert(jobSourcePostingVersions).values({
           id: deps.id(), userId: input.userId, sourcePostingId: posting.id, version: 1, contentSha256: checksum,
+          rawContentSha256: rawChecksum,
           rawObjectReference: { objectKey }, retrievedAt: now, createdAt: now,
         }).returning({ id: jobSourcePostingVersions.id });
         if (!sourceVersion) throw new Error("JOB_IMPORT_PERSIST_FAILED");
@@ -273,10 +279,19 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
         return "stale";
       }
       const inputType = record.inputType as "pasted_text" | "markdown_upload";
-      let content: string;
+      const [sourceVersion] = await deps.db.select({
+        sourcePostingId: jobSourcePostings.id, id: jobSourcePostingVersions.id, version: jobSourcePostingVersions.version,
+        rawContentSha256: jobSourcePostingVersions.rawContentSha256,
+      }).from(jobSourcePostings).innerJoin(jobSourcePostingVersions, and(
+        eq(jobSourcePostingVersions.userId, jobSourcePostings.userId), eq(jobSourcePostingVersions.sourcePostingId, jobSourcePostings.id),
+      )).where(and(
+        eq(jobSourcePostings.userId, parsedJob.userId), eq(jobSourcePostings.sourceType, "user_import"),
+        eq(jobSourcePostings.sourceIdentifier, record.contentSha256), eq(jobSourcePostingVersions.contentSha256, record.contentSha256),
+      ));
+      let bytes: Uint8Array;
       try {
-        const bytes = await deps.contentStore.get({ objectKey: sourceObjectKey(parsedJob.userId, parsedJob.importId) });
-        content = new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
+        if (!sourceVersion) throw new Error("source version missing");
+        bytes = await deps.contentStore.get({ objectKey: sourceObjectKey(parsedJob.userId, parsedJob.importId) });
       } catch {
         if (!job.finalAttempt) {
           await releaseImportForRetry(deps, { ...parsedJob, claimToken });
@@ -284,6 +299,14 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
         }
         return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode: "JOB_IMPORT_CONTENT_READ_FAILED", attemptCount }) ? "failed" : "stale";
       }
+      if (rawContentHash(bytes) !== sourceVersion.rawContentSha256) {
+        if (!job.finalAttempt) {
+          await releaseImportForRetry(deps, { ...parsedJob, claimToken });
+          throw new JobImportRetryableError();
+        }
+        return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode: "JOB_IMPORT_CHECKSUM_MISMATCH", attemptCount }) ? "failed" : "stale";
+      }
+      const content = new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
       const canonical = canonicalContent(content);
       if (sha256(canonical) !== record.contentSha256) {
         return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode: "JOB_IMPORT_CHECKSUM_MISMATCH", attemptCount }) ? "failed" : "stale";
@@ -314,16 +337,6 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
           )).returning({ id: jobImports.id });
           if (!completionClaimed) return false;
 
-          const sourceIdentifier = record.contentSha256;
-          let [posting] = await transaction.select({ id: jobSourcePostings.id }).from(jobSourcePostings).where(and(
-            eq(jobSourcePostings.userId, parsedJob.userId), eq(jobSourcePostings.sourceType, "user_import"), eq(jobSourcePostings.sourceIdentifier, sourceIdentifier),
-          ));
-          if (!posting) throw new Error("JOB_IMPORT_PERSIST_FAILED");
-          let [sourceVersion] = await transaction.select({ id: jobSourcePostingVersions.id, version: jobSourcePostingVersions.version })
-            .from(jobSourcePostingVersions).where(and(
-              eq(jobSourcePostingVersions.userId, parsedJob.userId), eq(jobSourcePostingVersions.sourcePostingId, posting.id), eq(jobSourcePostingVersions.contentSha256, record.contentSha256),
-            ));
-          if (!sourceVersion) throw new Error("JOB_IMPORT_PERSIST_FAILED");
           const dedupKey = opportunityDedupKey(output);
           let [opportunity] = await transaction.select({ id: jobOpportunities.id }).from(jobOpportunities).where(and(
             eq(jobOpportunities.userId, parsedJob.userId), eq(jobOpportunities.dedupKey, dedupKey),
@@ -344,7 +357,7 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
           await deps.auditTrail.bind(transaction).append({
             userId: parsedJob.userId, actorUserId: parsedJob.userId, eventType: "job.import_completed", occurredAt: now,
             requestId: parsedJob.importId, outcome: "success", reasonCode: "JOB_IMPORT_COMPLETED", resourceType: "job_import", resourceId: parsedJob.importId,
-            metadata: { importId: parsedJob.importId, sourcePostingId: posting.id, sourcePostingVersionId: sourceVersion.id, opportunityId: opportunity.id, version: sourceVersion.version, inputType, attemptCount },
+            metadata: { importId: parsedJob.importId, sourcePostingId: sourceVersion.sourcePostingId, sourcePostingVersionId: sourceVersion.id, opportunityId: opportunity.id, version: sourceVersion.version, inputType, attemptCount },
           });
           return true;
         });
@@ -405,10 +418,20 @@ export function createJobImportQueries(deps: { db: Database; contentStore: JobCo
       });
     },
     async getRawContent({ userId, importId }) {
-      const [row] = await deps.db.select({ originalFilename: jobImports.originalFilename }).from(jobImports)
+      const [row] = await deps.db.select({ originalFilename: jobImports.originalFilename, rawContentSha256: jobSourcePostingVersions.rawContentSha256 })
+        .from(jobImports)
+        .leftJoin(jobSourcePostings, and(
+          eq(jobSourcePostings.userId, jobImports.userId), eq(jobSourcePostings.sourceType, "user_import"),
+          eq(jobSourcePostings.sourceIdentifier, jobImports.contentSha256),
+        ))
+        .leftJoin(jobSourcePostingVersions, and(
+          eq(jobSourcePostingVersions.userId, jobImports.userId), eq(jobSourcePostingVersions.sourcePostingId, jobSourcePostings.id),
+          eq(jobSourcePostingVersions.contentSha256, jobImports.contentSha256),
+        ))
         .where(and(eq(jobImports.userId, userId), eq(jobImports.id, importId)));
       if (!row) return null;
       const bytes = await deps.contentStore.get({ objectKey: sourceObjectKey(userId, importId) });
+      if (!row.rawContentSha256 || rawContentHash(bytes) !== row.rawContentSha256) throw new Error("JOB_IMPORT_CHECKSUM_MISMATCH");
       return { content: new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes), filename: row.originalFilename };
     },
   };

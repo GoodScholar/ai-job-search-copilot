@@ -161,6 +161,7 @@ describe("JobImportConsumer", () => {
     });
     await database.insert(jobSourcePostingVersions).values({
       id: randomUUID(), userId, sourcePostingId, version: 1, contentSha256: checksum(content),
+      rawContentSha256: createHash("sha256").update(content, "utf8").digest("hex"),
       rawObjectReference: { objectKey }, retrievedAt: new Date(),
     });
     return { importId, objectKey };

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDatabase, jobAccounts, jobOpportunities, jobSourcePostingVersions, migrateDatabase, type Database } from "@job-copilot/database";
@@ -45,6 +46,10 @@ class MemoryStore implements JobContentStore {
   async delete({ objectKey }: { objectKey: string }): Promise<void> {
     this.deletes.push(objectKey);
     this.values.delete(objectKey);
+  }
+
+  replace(objectKey: string, content: string): void {
+    this.values.set(objectKey, new TextEncoder().encode(content));
   }
 }
 
@@ -307,9 +312,12 @@ describe("job imports", () => {
     }).process({ version: 1, importId: imported.importId, userId, finalAttempt: true })).resolves.toBe("failed");
     await expect(createJobImportQueries({ db: database, contentStore: store }).get({ userId, importId: imported.importId }))
       .resolves.toMatchObject({ status: "failed", failureCode: "JOB_NORMALIZER_OUTPUT_INVALID" });
-    await expect(database.select({ id: jobSourcePostingVersions.id, rawObjectReference: jobSourcePostingVersions.rawObjectReference })
+    await expect(database.select({ id: jobSourcePostingVersions.id, rawContentSha256: jobSourcePostingVersions.rawContentSha256, rawObjectReference: jobSourcePostingVersions.rawObjectReference })
       .from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, userId)))
-      .resolves.toEqual(expect.arrayContaining([{ id: expect.any(String), rawObjectReference: { objectKey: `accounts/${userId}/job-imports/${imported.importId}/source.md` } }]));
+      .resolves.toEqual(expect.arrayContaining([{
+        id: expect.any(String), rawContentSha256: createHash("sha256").update(content, "utf8").digest("hex"),
+        rawObjectReference: { objectKey: `accounts/${userId}/job-imports/${imported.importId}/source.md` },
+      }]));
     expect(JSON.stringify(await createAuditTrail({ db: database, clock: () => now }).query({ userId }))).not.toContain(content);
   });
 
@@ -323,6 +331,34 @@ describe("job imports", () => {
     const imported = await commands.submit({ userId, requestId: crypto.randomUUID(), command: { inputType: "pasted_text", content: raw } });
     await expect(createJobImportQueries({ db: database, contentStore: store }).getRawContent({ userId, importId: imported.importId }))
       .resolves.toEqual({ content: raw, filename: null });
+  });
+
+  it("拒绝 canonical 等价但原始字节被替换的岗位正文", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const raw = "\uFEFF  ＃ 工程师  \r\n公司：示例科技  \r\n";
+    const altered = "\uFEFF  # 工程师\n公司:示例科技\n";
+    const commands = createJobImportCommands({
+      db: database, contentStore: store, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+    const imported = await commands.submit({ userId, requestId: crypto.randomUUID(), command: { inputType: "pasted_text", content: raw } });
+    store.replace(`accounts/${userId}/job-imports/${imported.importId}/source.md`, altered);
+    let normalizerCalls = 0;
+    const processor = createJobImportProcessor({
+      db: database, contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => now }),
+      normalizer: { normalize: async () => { normalizerCalls += 1; return { normalizerVersion: "v1", company: null, title: "工程师", location: null, postedAt: null, deadline: null, description: null }; } },
+      id: () => crypto.randomUUID(), clock: () => now,
+    });
+
+    await expect(processor.process({ version: 1, importId: imported.importId, userId, finalAttempt: false })).rejects.toBeInstanceOf(JobImportRetryableError);
+    expect(normalizerCalls).toBe(0);
+    await expect(createJobImportQueries({ db: database, contentStore: store }).get({ userId, importId: imported.importId }))
+      .resolves.toMatchObject({ status: "imported", failureCode: null });
+    await expect(processor.process({ version: 1, importId: imported.importId, userId, finalAttempt: true, attemptCount: 2 })).resolves.toBe("failed");
+    await expect(createJobImportQueries({ db: database, contentStore: store }).get({ userId, importId: imported.importId }))
+      .resolves.toMatchObject({ status: "failed", failureCode: "JOB_IMPORT_CHECKSUM_MISMATCH" });
+    await expect(createJobImportQueries({ db: database, contentStore: store }).getRawContent({ userId, importId: imported.importId }))
+      .rejects.toThrow("JOB_IMPORT_CHECKSUM_MISMATCH");
   });
 
   it("按创建时间倒序返回最近 20 个导入", async () => {

@@ -734,6 +734,26 @@ describe("authenticated workbench HTTP API", () => {
     expect(normalizedLogText(capturedLogs)).not.toContain(source);
   });
 
+  it("不向 owner 返回 canonical 等价但已被替换的岗位原文", async () => {
+    const owner = await createSession(app, "job-import-raw-integrity");
+    const source = "\uFEFF  ＃ 工程师  \r\n公司：示例科技  \r\n";
+    const altered = "\uFEFF  # 工程师\n公司:示例科技\n";
+    const created = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: "/v1/job-imports", headers: { ...bearer(owner.sessionToken), "content-type": "application/json" },
+      payload: { inputType: "pasted_text", content: source },
+    });
+    const importId = created.json().importId as string;
+    jobStoredObjects.set(`accounts/${owner.account.userId}/job-imports/${importId}/source.md`, new TextEncoder().encode(altered));
+
+    const raw = await app.getHttpAdapter().getInstance().inject({
+      method: "GET", url: `/v1/job-imports/${importId}/raw`, headers: bearer(owner.sessionToken),
+    });
+
+    expect(raw.statusCode).toBe(503);
+    expect(raw.json()).toMatchObject({ code: "JOB_IMPORT_OBJECT_STORAGE_FAILED", requestId: expect.any(String) });
+    expect(raw.body).not.toContain(altered);
+  });
+
   it("按 UTF-8 字节限制岗位正文，并将存储与队列故障映射为不泄漏正文的 503", async () => {
     const session = await createSession(app, "job-import-runtime-failures");
     const source = "# 私密岗位\nprivate-job@example.test";
