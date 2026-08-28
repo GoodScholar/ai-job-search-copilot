@@ -2,7 +2,7 @@
 
 状态：完成。
 
-提交：`d2370d8`（`feat: expose asynchronous job imports (#7)`）。
+实现提交：`20ed123`（`feat: expose asynchronous job imports (#7)`）。
 
 ## 改动
 
