@@ -13,6 +13,11 @@ const imported = { importId, inputType: "pasted_text" as const, originalFilename
 const completed = { ...imported, status: "completed" as const, opportunity: { opportunityId: "b4d4a7c1-9a17-4a8c-8b36-0f815d042e9a", company: "好学科技", title: "前端工程师", location: null, postedAt: null, deadline: null, description: "负责 Web 体验", evidence: { sourcePostingId: "f4d4a7c1-9a17-4a8c-8b36-0f815d042e9a", sourcePostingVersionId: "e4d4a7c1-9a17-4a8c-8b36-0f815d042e9a", version: 1, sourceType: "user_import" as const, retrievedAt: "2026-08-28T08:00:00.000Z", originalFilename: null } } };
 const failed = { ...imported, importId: failedImportId, originalFilename: "failed.md", status: "failed" as const, failureCode: "JOB_IMPORT_PERSIST_FAILED" as const, opportunity: null };
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  return { promise: new Promise<T>((next) => { resolve = next; }), resolve };
+}
+
 afterEach(() => { vi.clearAllMocks(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 it("提供粘贴和 Markdown 上传入口、未知字段与可访问状态", async () => {
@@ -84,6 +89,25 @@ it("再次点击当前终态记录时显式重新读取详情和原始证据", a
   await user.click(screen.getByRole("button", { name: /粘贴的岗位描述/ }));
   await screen.findByText("第二次原文");
   expect(fetchMock.mock.calls.filter(([url]) => url === `/api/job-imports/${importId}`)).toHaveLength(2);
+});
+
+it("同一记录重读时保留先完成的原始证据，直到延迟详情返回", async () => {
+  const user = userEvent.setup();
+  const refreshedDetail = deferred<Response>();
+  const refreshedRaw = deferred<Response>();
+  vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json(completed))
+    .mockResolvedValueOnce(new Response("初始原文", { headers: { "content-type": "text/plain" } }))
+    .mockImplementationOnce(() => refreshedDetail.promise)
+    .mockImplementationOnce(() => refreshedRaw.promise);
+  render(<JobImportView initialImports={[completed]} />);
+
+  await screen.findByText("初始原文");
+  await user.click(screen.getByRole("button", { name: /粘贴的岗位描述/ }));
+  await act(async () => { refreshedRaw.resolve(new Response("先完成的新原文", { headers: { "content-type": "text/plain" } })); });
+  expect(await screen.findByText("先完成的新原文")).toBeInTheDocument();
+  await act(async () => { refreshedDetail.resolve(Response.json(completed)); });
+  await waitFor(() => expect(screen.getByText("先完成的新原文")).toBeInTheDocument());
 });
 
 it("复用当前记录后仍显示真实的终态，且提示不会遮蔽切换后的状态", async () => {

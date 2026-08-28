@@ -1,7 +1,7 @@
 "use client";
 
 import { JobImportDetailSchema, type JobImportDetail, type JobImportList, type JobImportStatus } from "@job-copilot/contracts/job-imports";
-import { useCallback, useEffect, useState, useTransition, type FormEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition, type FormEvent, type KeyboardEvent } from "react";
 import { createJobImportAction, type JobImportActionState } from "@/app/(workbench)/jobs/import/actions";
 
 type JobImportSummary = JobImportList["imports"][number];
@@ -9,9 +9,9 @@ type JobImportViewProps = { initialImports: JobImportSummary[] };
 type InputMode = "paste" | "upload";
 type RawEvidenceState =
   | { status: "idle" }
-  | { status: "loading" }
-  | { status: "ready"; content: string }
-  | { status: "error" };
+  | { status: "loading"; revision: number }
+  | { status: "ready"; revision: number; content: string }
+  | { status: "error"; revision: number };
 
 const initialActionState: JobImportActionState = { ok: false, code: "", message: "" };
 const terminalStatuses = new Set<JobImportStatus>(["completed", "failed"]);
@@ -48,29 +48,40 @@ export function JobImportView({ initialImports }: JobImportViewProps) {
   const [actionState, setActionState] = useState<JobImportActionState>(initialActionState);
   const [pollingMessage, setPollingMessage] = useState<string | null>(null);
   const [announcement, setAnnouncement] = useState<string | null>(null);
-  const [reloadRevision, setReloadRevision] = useState(0);
-  const [rawReloadRevision, setRawReloadRevision] = useState(0);
+  const [detailReloadRevision, setDetailReloadRevision] = useState(0);
+  const evidenceRevisionRef = useRef(0);
+  const [evidenceRevision, setEvidenceRevision] = useState(0);
   const [isPending, startTransition] = useTransition();
   const activeImportId = activeImport?.importId;
   const detailImportId = detail?.importId;
   const detailStatus = detail?.status;
+
+  const nextEvidenceRevision = useCallback(() => {
+    const next = evidenceRevisionRef.current + 1;
+    evidenceRevisionRef.current = next;
+    setEvidenceRevision(next);
+    return next;
+  }, []);
+
   const selectImport = useCallback((next: JobImportSummary) => {
     setActionState(initialActionState);
     setAnnouncement(null);
     setPollingMessage(null);
     if (next.importId === activeImportId) {
-      if (detailStatus && terminalStatuses.has(detailStatus)) setRawEvidence({ status: "loading" });
-      setReloadRevision((previous) => previous + 1);
-      setRawReloadRevision((previous) => previous + 1);
+      const revision = nextEvidenceRevision();
+      if (detailStatus && terminalStatuses.has(detailStatus)) setRawEvidence({ status: "loading", revision });
+      setDetailReloadRevision((previous) => previous + 1);
       return;
     }
+    nextEvidenceRevision();
     setActiveImport(next);
     setDetail(null);
     setRawEvidence({ status: "idle" });
-  }, [activeImportId, detailStatus]);
+  }, [activeImportId, detailStatus, nextEvidenceRevision]);
 
   useEffect(() => {
     if (!activeImportId) return;
+    const requestRevision = evidenceRevisionRef.current;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const poll = async () => {
@@ -83,7 +94,11 @@ export function JobImportView({ initialImports }: JobImportViewProps) {
         setDetail(parsed.data);
         setRecentImports((previous) => insertRecent(previous, asSummary(parsed.data)));
         setActiveImport(asSummary(parsed.data));
-        setRawEvidence(terminalStatuses.has(parsed.data.status) ? { status: "loading" } : { status: "idle" });
+        setRawEvidence((previous) => terminalStatuses.has(parsed.data.status)
+          && previous.status === "ready"
+          && previous.revision === requestRevision
+          ? previous
+          : terminalStatuses.has(parsed.data.status) ? { status: "loading", revision: requestRevision } : { status: "idle" });
         setPollingMessage(null);
         if (!terminalStatuses.has(parsed.data.status)) timer = setTimeout(poll, 1_000);
       } catch {
@@ -94,7 +109,7 @@ export function JobImportView({ initialImports }: JobImportViewProps) {
     };
     void poll();
     return () => { cancelled = true; if (timer) clearTimeout(timer); };
-  }, [activeImportId, reloadRevision]);
+  }, [activeImportId, detailReloadRevision]);
 
   useEffect(() => {
     if (!detailImportId || !detailStatus) return;
@@ -102,10 +117,10 @@ export function JobImportView({ initialImports }: JobImportViewProps) {
     let cancelled = false;
     void fetch(`/api/job-imports/${detailImportId}/raw`, { signal: AbortSignal.timeout(10_000) })
       .then((response) => response.ok && response.headers.get("content-type")?.startsWith("text/plain") ? response.text() : Promise.reject(new Error("raw unavailable")))
-      .then((raw) => { if (!cancelled) setRawEvidence({ status: "ready", content: raw }); })
-      .catch(() => { if (!cancelled) setRawEvidence({ status: "error" }); });
+      .then((raw) => { if (!cancelled) setRawEvidence({ status: "ready", revision: evidenceRevision, content: raw }); })
+      .catch(() => { if (!cancelled) setRawEvidence({ status: "error", revision: evidenceRevision }); });
     return () => { cancelled = true; };
-  }, [detailImportId, detailStatus, rawReloadRevision]);
+  }, [detailImportId, detailStatus, evidenceRevision]);
 
   useEffect(() => {
     if (!announcement) return;
@@ -188,7 +203,7 @@ export function JobImportView({ initialImports }: JobImportViewProps) {
           : rawEvidence.status === "idle" ? <p>原始证据等待读取。</p>
           : rawEvidence.status === "loading" ? <p>正在读取原始证据。</p>
           : rawEvidence.status === "ready" ? <pre>{rawEvidence.content}</pre>
-          : <><p>原始证据暂时无法读取，请稍后重试。</p><button className="workbench-touch-target" onClick={() => { setRawEvidence({ status: "loading" }); setRawReloadRevision((previous) => previous + 1); }} type="button">重试读取原始证据</button></>}
+          : <><p>原始证据暂时无法读取，请稍后重试。</p><button className="workbench-touch-target" onClick={() => { const revision = nextEvidenceRevision(); setRawEvidence({ status: "loading", revision }); }} type="button">重试读取原始证据</button></>}
       </section>}
     </main>
   );
