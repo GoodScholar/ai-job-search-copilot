@@ -52,6 +52,26 @@ describe("求职目标 contracts", () => {
     }).success).toBe(false);
   });
 
+  it("按稳定身份拒绝重复的证据、建议和目标", () => {
+    const suggestionId = id();
+    const targetId = id();
+    const evidence = { factId: id(), revisionId: id(), label: "Agent workflow" };
+    const suggestion = { suggestionId, roleFamily: "AI 应用工程师", rationale: "已有 AI 应用项目经验", evidence: [evidence] };
+    const target = {
+      targetId, version: 1, priority: "primary", state: "active", constraints: constraints(), createdAt: now, updatedAt: now,
+    };
+
+    expect(JobTargetOverviewSchema.safeParse({
+      suggestions: [{ ...suggestion, evidence: [evidence, evidence] }], targets: [],
+    }).success).toBe(false);
+    expect(JobTargetOverviewSchema.safeParse({
+      suggestions: [suggestion, suggestion], targets: [],
+    }).success).toBe(false);
+    expect(JobTargetOverviewSchema.safeParse({
+      suggestions: [], targets: [target, target],
+    }).success).toBe(false);
+  });
+
   it("创建命令只接受优先级和约束", () => {
     expect(CreateJobTargetCommandSchema.parse({ priority: "secondary", constraints: constraints() })).toMatchObject({
       priority: "secondary", constraints: { roleFamily: "AI 应用工程师" },

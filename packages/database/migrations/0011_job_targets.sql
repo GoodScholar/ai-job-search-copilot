@@ -20,12 +20,14 @@ CREATE TABLE "job_targets" (
 	"version" integer NOT NULL,
 	"priority" varchar(16) NOT NULL,
 	"state" varchar(16) DEFAULT 'active' NOT NULL,
+	"active_slot" integer,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "job_targets_user_id_id_unique" UNIQUE("user_id","id"),
 	CONSTRAINT "job_targets_version_positive" CHECK ("job_targets"."version" >= 1),
 	CONSTRAINT "job_targets_priority_check" CHECK ("job_targets"."priority" in ('primary', 'secondary')),
-	CONSTRAINT "job_targets_state_check" CHECK ("job_targets"."state" in ('active', 'inactive'))
+	CONSTRAINT "job_targets_state_check" CHECK ("job_targets"."state" in ('active', 'inactive')),
+	CONSTRAINT "job_targets_active_secondary_slot_check" CHECK (("job_targets"."priority" = 'secondary' and "job_targets"."state" = 'active' and "job_targets"."active_slot" in (1, 2)) or (("job_targets"."priority" <> 'secondary' or "job_targets"."state" <> 'active') and "job_targets"."active_slot" is null))
 );
 --> statement-breakpoint
 ALTER TABLE "job_target_revisions" ADD CONSTRAINT "job_target_revisions_user_id_job_accounts_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."job_accounts"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
@@ -33,3 +35,5 @@ ALTER TABLE "job_target_revisions" ADD CONSTRAINT "job_target_revisions_target_i
 ALTER TABLE "job_target_revisions" ADD CONSTRAINT "job_target_revisions_owner_target_fk" FOREIGN KEY ("user_id","target_id") REFERENCES "public"."job_targets"("user_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "job_targets" ADD CONSTRAINT "job_targets_user_id_job_accounts_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."job_accounts"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 CREATE UNIQUE INDEX "job_targets_active_primary_per_user_unique" ON "job_targets" USING btree ("user_id") WHERE "job_targets"."priority" = 'primary' and "job_targets"."state" = 'active';
+--> statement-breakpoint
+CREATE UNIQUE INDEX "job_targets_active_secondary_slot_per_user_unique" ON "job_targets" USING btree ("user_id","active_slot") WHERE "job_targets"."priority" = 'secondary' and "job_targets"."state" = 'active';

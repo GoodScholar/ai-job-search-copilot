@@ -287,14 +287,17 @@ export const jobTargets = pgTable("job_targets", {
   version: integer("version").notNull(),
   priority: varchar("priority", { length: 16 }).notNull(),
   state: varchar("state", { length: 16 }).notNull().default("active"),
+  activeSlot: integer("active_slot"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   unique("job_targets_user_id_id_unique").on(table.userId, table.id),
   uniqueIndex("job_targets_active_primary_per_user_unique").on(table.userId).where(sql`${table.priority} = 'primary' and ${table.state} = 'active'`),
+  uniqueIndex("job_targets_active_secondary_slot_per_user_unique").on(table.userId, table.activeSlot).where(sql`${table.priority} = 'secondary' and ${table.state} = 'active'`),
   check("job_targets_version_positive", sql`${table.version} >= 1`),
   check("job_targets_priority_check", sql`${table.priority} in ('primary', 'secondary')`),
   check("job_targets_state_check", sql`${table.state} in ('active', 'inactive')`),
+  check("job_targets_active_secondary_slot_check", sql`(${table.priority} = 'secondary' and ${table.state} = 'active' and ${table.activeSlot} in (1, 2)) or ((${table.priority} <> 'secondary' or ${table.state} <> 'active') and ${table.activeSlot} is null)`),
 ]);
 
 export const jobTargetRevisions = pgTable("job_target_revisions", {

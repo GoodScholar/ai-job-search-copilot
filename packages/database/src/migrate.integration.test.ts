@@ -450,6 +450,7 @@ describe("database migrations", () => {
     ]));
     expect(await listColumns(migratedDatabase)).toEqual(expect.arrayContaining([
       { table_name: "job_targets", column_name: "version", data_type: "integer" },
+      { table_name: "job_targets", column_name: "active_slot", data_type: "integer" },
       { table_name: "job_target_revisions", column_name: "version", data_type: "integer" },
       { table_name: "job_target_revisions", column_name: "constraints", data_type: "jsonb" },
     ]));
@@ -472,10 +473,22 @@ describe("database migrations", () => {
       values ('0f9826b8-a9dc-43a3-b361-5df7b0e4f7e0', ${firstAccountId}, 1, 'primary', 'active')
     `)).rejects.toMatchObject({ cause: { code: "23505" } });
     await migratedDatabase.execute(sql`
-      insert into job_targets (id, user_id, version, priority, state)
-      values (${inactiveTargetId}, ${firstAccountId}, 1, 'primary', 'inactive'),
-             (${secondaryTargetId}, ${firstAccountId}, 1, 'secondary', 'active')
+      insert into job_targets (id, user_id, version, priority, state, active_slot)
+      values (${inactiveTargetId}, ${firstAccountId}, 1, 'primary', 'inactive', null),
+             (${secondaryTargetId}, ${firstAccountId}, 1, 'secondary', 'active', 1)
     `);
+    await migratedDatabase.execute(sql`
+      insert into job_targets (id, user_id, version, priority, state, active_slot)
+      values ('9d741730-c501-44af-bdca-7b42ed19df5b', ${firstAccountId}, 1, 'secondary', 'active', 2)
+    `);
+    await expect(migratedDatabase.execute(sql`
+      insert into job_targets (id, user_id, version, priority, state, active_slot)
+      values ('4bb2e0ba-1b88-4d8e-923a-6382ea5f47fa', ${firstAccountId}, 1, 'secondary', 'active', 1)
+    `)).rejects.toMatchObject({ cause: { code: "23505" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into job_targets (id, user_id, version, priority, state, active_slot)
+      values ('fc2dadf5-f1be-416b-99c6-98bb6f9e7ca3', ${firstAccountId}, 1, 'secondary', 'active', 3)
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
 
     await migratedDatabase.execute(sql`
       insert into job_target_revisions (id, user_id, target_id, version, priority, state, constraints)

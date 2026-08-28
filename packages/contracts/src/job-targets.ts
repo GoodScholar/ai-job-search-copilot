@@ -43,7 +43,10 @@ export const JobTargetSuggestionSchema = z.object({
   rationale: userString,
   evidence: z.array(z.object({
     factId: z.uuid(), revisionId: z.uuid(), label: userString,
-  }).strict()).max(20),
+  }).strict()).max(20).refine(
+    (evidence) => new Set(evidence.map(({ factId, revisionId }) => `${factId}:${revisionId}`)).size === evidence.length,
+    { message: "证据身份必须唯一" },
+  ),
 }).strict();
 
 export const JobTargetSchema = z.object({
@@ -57,8 +60,14 @@ export const JobTargetSchema = z.object({
 }).strict();
 
 export const JobTargetOverviewSchema = z.object({
-  suggestions: z.array(JobTargetSuggestionSchema).max(20),
-  targets: z.array(JobTargetSchema).max(20),
+  suggestions: z.array(JobTargetSuggestionSchema).max(20).refine(
+    (suggestions) => new Set(suggestions.map(({ suggestionId }) => suggestionId)).size === suggestions.length,
+    { message: "建议身份必须唯一" },
+  ),
+  targets: z.array(JobTargetSchema).max(20).refine(
+    (targets) => new Set(targets.map(({ targetId }) => targetId)).size === targets.length,
+    { message: "求职目标身份必须唯一" },
+  ),
 }).strict();
 
 export const CreateJobTargetCommandSchema = z.object({

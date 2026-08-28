@@ -1512,6 +1512,12 @@
           "notNull": true,
           "default": "'active'"
         },
+        "active_slot": {
+          "name": "active_slot",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -1540,6 +1546,28 @@
           ],
           "isUnique": true,
           "where": "\"job_targets\".\"priority\" = 'primary' and \"job_targets\".\"state\" = 'active'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "job_targets_active_secondary_slot_per_user_unique": {
+          "name": "job_targets_active_secondary_slot_per_user_unique",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "active_slot",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"job_targets\".\"priority\" = 'secondary' and \"job_targets\".\"state\" = 'active'",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -1584,6 +1612,10 @@
         "job_targets_state_check": {
           "name": "job_targets_state_check",
           "value": "\"job_targets\".\"state\" in ('active', 'inactive')"
+        },
+        "job_targets_active_secondary_slot_check": {
+          "name": "job_targets_active_secondary_slot_check",
+          "value": "(\"job_targets\".\"priority\" = 'secondary' and \"job_targets\".\"state\" = 'active' and \"job_targets\".\"active_slot\" in (1, 2)) or ((\"job_targets\".\"priority\" <> 'secondary' or \"job_targets\".\"state\" <> 'active') and \"job_targets\".\"active_slot\" is null)"
         }
       },
       "isRLSEnabled": false
