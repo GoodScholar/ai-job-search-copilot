@@ -124,7 +124,7 @@ async function failImport(deps: Pick<ProcessorDependencies, "db" | "auditTrail" 
     await acquireAccountAdvisoryLock(transaction, input.userId);
     const [failed] = await transaction.update(jobImports).set({ status: "failed", failureCode: input.failureCode, updatedAt: now }).where(and(
       eq(jobImports.userId, input.userId), eq(jobImports.id, input.importId),
-      inArray(jobImports.status, ["imported", "normalizing"]),
+      eq(jobImports.status, "normalizing"),
     )).returning({ id: jobImports.id });
     if (!failed) return;
     await deps.auditTrail.bind(transaction).append({
@@ -133,6 +133,12 @@ async function failImport(deps: Pick<ProcessorDependencies, "db" | "auditTrail" 
       metadata: { importId: input.importId, inputType: input.inputType, attemptCount: 1, failureCode: input.failureCode },
     });
   });
+}
+
+async function releaseImportForRetry(deps: Pick<ProcessorDependencies, "db" | "clock">, input: { userId: string; importId: string }) {
+  await deps.db.update(jobImports).set({ status: "imported", failureCode: null, updatedAt: deps.clock() }).where(and(
+    eq(jobImports.userId, input.userId), eq(jobImports.id, input.importId), eq(jobImports.status, "normalizing"),
+  ));
 }
 
 export function createJobImportCommands(deps: CommandDependencies): {
@@ -225,23 +231,22 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
   return {
     async process(job): Promise<"completed" | "failed" | "stale"> {
       const parsedJob = JobImportJobSchema.parse({ version: job.version, importId: job.importId, userId: job.userId });
-      const [record] = await deps.db.select({
-        id: jobImports.id, inputType: jobImports.inputType, contentSha256: jobImports.contentSha256, status: jobImports.status,
-      }).from(jobImports).where(and(eq(jobImports.userId, parsedJob.userId), eq(jobImports.id, parsedJob.importId)));
-      if (!record || record.status === "completed" || record.status === "failed") return "stale";
+      const [record] = await deps.db.update(jobImports).set({ status: "normalizing", failureCode: null, updatedAt: deps.clock() }).where(and(
+        eq(jobImports.userId, parsedJob.userId), eq(jobImports.id, parsedJob.importId), eq(jobImports.status, "imported"),
+      )).returning({
+        id: jobImports.id, inputType: jobImports.inputType, contentSha256: jobImports.contentSha256,
+      });
+      if (!record) return "stale";
       const inputType = record.inputType as "pasted_text" | "markdown_upload";
-      if (record.status === "imported") {
-        const [claimed] = await deps.db.update(jobImports).set({ status: "normalizing", failureCode: null, updatedAt: deps.clock() }).where(and(
-          eq(jobImports.userId, parsedJob.userId), eq(jobImports.id, parsedJob.importId), eq(jobImports.status, "imported"),
-        )).returning({ id: jobImports.id });
-        if (!claimed) return "stale";
-      }
       let content: string;
       try {
         const bytes = await deps.contentStore.get({ objectKey: sourceObjectKey(parsedJob.userId, parsedJob.importId) });
         content = new TextDecoder().decode(bytes);
       } catch {
-        if (!job.finalAttempt) throw new JobImportRetryableError();
+        if (!job.finalAttempt) {
+          await releaseImportForRetry(deps, parsedJob);
+          throw new JobImportRetryableError();
+        }
         await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, failureCode: "JOB_IMPORT_CONTENT_READ_FAILED" });
         return "failed";
       }
@@ -253,7 +258,10 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
       try {
         normalized = await deps.normalizer.normalize(content);
       } catch {
-        if (!job.finalAttempt) throw new JobImportRetryableError();
+        if (!job.finalAttempt) {
+          await releaseImportForRetry(deps, parsedJob);
+          throw new JobImportRetryableError();
+        }
         await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, failureCode: "JOB_IMPORT_PERSIST_FAILED" });
         return "failed";
       }
@@ -267,9 +275,10 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
       try {
         const completed = await deps.db.transaction(async (transaction) => {
           await acquireAccountAdvisoryLock(transaction, parsedJob.userId);
-          const [current] = await transaction.select({ status: jobImports.status, originalFilename: jobImports.originalFilename })
-            .from(jobImports).where(and(eq(jobImports.userId, parsedJob.userId), eq(jobImports.id, parsedJob.importId)));
-          if (!current || current.status === "completed" || current.status === "failed") return false;
+          const [completionClaimed] = await transaction.update(jobImports).set({ status: "completed", failureCode: null, updatedAt: now }).where(and(
+            eq(jobImports.userId, parsedJob.userId), eq(jobImports.id, parsedJob.importId), eq(jobImports.status, "normalizing"),
+          )).returning({ id: jobImports.id });
+          if (!completionClaimed) return false;
 
           const sourceIdentifier = record.contentSha256;
           let [posting] = await transaction.select({ id: jobSourcePostings.id }).from(jobSourcePostings).where(and(
@@ -315,9 +324,6 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
           await transaction.insert(jobOpportunitySources).values({
             userId: parsedJob.userId, opportunityId: opportunity.id, sourcePostingVersionId: sourceVersion.id, createdAt: now,
           }).onConflictDoNothing();
-          await transaction.update(jobImports).set({ status: "completed", failureCode: null, updatedAt: now }).where(and(
-            eq(jobImports.userId, parsedJob.userId), eq(jobImports.id, parsedJob.importId),
-          ));
           await deps.auditTrail.bind(transaction).append({
             userId: parsedJob.userId, actorUserId: parsedJob.userId, eventType: "job.import_completed", occurredAt: now,
             requestId: parsedJob.importId, outcome: "success", reasonCode: "JOB_IMPORT_COMPLETED", resourceType: "job_import", resourceId: parsedJob.importId,

@@ -326,7 +326,7 @@ describe("job imports", () => {
     await expect(processor.process({ version: 1, importId: imported.importId, userId, finalAttempt: false }))
       .rejects.toBeInstanceOf(JobImportRetryableError);
     await expect(createJobImportQueries({ db: database, contentStore: store }).get({ userId, importId: imported.importId }))
-      .resolves.toMatchObject({ status: "normalizing", failureCode: null });
+      .resolves.toMatchObject({ status: "imported", failureCode: null });
     await expect(processor.process({ version: 1, importId: imported.importId, userId, finalAttempt: true })).resolves.toBe("completed");
   });
 
@@ -344,9 +344,48 @@ describe("job imports", () => {
     await expect(processor.process({ version: 1, importId: imported.importId, userId, finalAttempt: false }))
       .rejects.toBeInstanceOf(JobImportRetryableError);
     await expect(createJobImportQueries({ db: database, contentStore: store }).get({ userId, importId: imported.importId }))
-      .resolves.toMatchObject({ status: "normalizing", failureCode: null });
+      .resolves.toMatchObject({ status: "imported", failureCode: null });
     await expect(processor.process({ version: 1, importId: imported.importId, userId, finalAttempt: true })).resolves.toBe("failed");
     await expect(createJobImportQueries({ db: database, contentStore: store }).get({ userId, importId: imported.importId }))
       .resolves.toMatchObject({ status: "failed", failureCode: "JOB_IMPORT_PERSIST_FAILED" });
+  });
+
+  it("同一导入仅允许一个 delivery 规范化，重试释放后可重新领取", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const commands = createJobImportCommands({
+      db: database, contentStore: store, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+    const imported = await commands.submit({ userId, requestId: crypto.randomUUID(), command: { inputType: "pasted_text", content: "受控并发岗位正文" } });
+    const firstNormalizerStarted = deferred<void>();
+    const releaseFirstNormalizer = deferred<void>();
+    let normalizerCalls = 0;
+    const processor = createJobImportProcessor({
+      db: database, contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => now }),
+      normalizer: {
+        normalize: async () => {
+          normalizerCalls += 1;
+          if (normalizerCalls === 1) {
+            firstNormalizerStarted.resolve();
+            await releaseFirstNormalizer.promise;
+            throw new Error("temporary normalizer failure");
+          }
+          return { normalizerVersion: "v1", company: null, title: "工程师", location: null, postedAt: null, deadline: null, description: null };
+        },
+      },
+      id: () => crypto.randomUUID(), clock: () => now,
+    });
+
+    const firstDelivery = processor.process({ version: 1, importId: imported.importId, userId, finalAttempt: false });
+    await firstNormalizerStarted.promise;
+    await expect(processor.process({ version: 1, importId: imported.importId, userId, finalAttempt: false })).resolves.toBe("stale");
+    expect(normalizerCalls).toBe(1);
+
+    releaseFirstNormalizer.resolve();
+    await expect(firstDelivery).rejects.toBeInstanceOf(JobImportRetryableError);
+    await expect(createJobImportQueries({ db: database, contentStore: store }).get({ userId, importId: imported.importId }))
+      .resolves.toMatchObject({ status: "imported", failureCode: null });
+    await expect(processor.process({ version: 1, importId: imported.importId, userId, finalAttempt: true })).resolves.toBe("completed");
+    expect(normalizerCalls).toBe(2);
   });
 });

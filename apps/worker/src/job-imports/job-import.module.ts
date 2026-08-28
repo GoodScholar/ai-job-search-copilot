@@ -12,6 +12,15 @@ import { JobImportConsumer } from "./job-import-consumer.js";
 export const JOB_IMPORT_CONSUMER = Symbol("JOB_IMPORT_CONSUMER");
 export const WORKER_DATABASE = Symbol("WORKER_DATABASE");
 
+const E2E_JOB_NORMALIZER_DELAY_MAX_MS = 5_000;
+
+export function resolveE2eJobNormalizerDelayMs(environment: NodeJS.ProcessEnv = process.env): number {
+  if (environment.APP_ENV !== "test") return 0;
+  const configured = Number(environment.E2E_JOB_NORMALIZER_DELAY_MS ?? "0");
+  if (!Number.isFinite(configured) || !Number.isInteger(configured) || configured < 0 || configured > E2E_JOB_NORMALIZER_DELAY_MAX_MS) return 0;
+  return configured;
+}
+
 function required(name: "DATABASE_URL" | "REDIS_URL" | "MINIO_ENDPOINT" | "MINIO_ACCESS_KEY" | "MINIO_SECRET_KEY" | "MINIO_BUCKET", fallback: string): string {
   const value = process.env[name];
   if (value) return value;
@@ -88,7 +97,7 @@ class WorkerDatabase implements OnModuleDestroy {
           contentStore,
           normalizer: new FakeJobPostingNormalizer({
             enableFailureFixture: process.env.APP_ENV === "test",
-            testDelayMs: process.env.APP_ENV === "test" ? Number(process.env.E2E_JOB_NORMALIZER_DELAY_MS ?? "0") : 0,
+            testDelayMs: resolveE2eJobNormalizerDelayMs(),
           }),
           id: randomUUID,
           clock: () => new Date(),

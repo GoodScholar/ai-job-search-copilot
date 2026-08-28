@@ -143,12 +143,12 @@ describe("JobImportConsumer", () => {
     });
   }
 
-  async function createNormalizingImport(content: string): Promise<{ importId: string; objectKey: string }> {
+  async function createImportedImport(content: string): Promise<{ importId: string; objectKey: string }> {
     const importId = randomUUID();
     const objectKey = `accounts/${userId}/job-imports/${importId}/source.md`;
     await store.put({ objectKey, bytes: new TextEncoder().encode(content), mediaType: "text/markdown", importId });
     await database.insert(jobImports).values({
-      id: importId, userId, inputType: "pasted_text", contentSha256: checksum(content), status: "normalizing",
+      id: importId, userId, inputType: "pasted_text", contentSha256: checksum(content), status: "imported",
     });
     return { importId, objectKey };
   }
@@ -159,9 +159,9 @@ describe("JobImportConsumer", () => {
     });
   }
 
-  it("处理只含 ID 的队列任务，将 normalizing 岗位导入完成并保持至少一次投递幂等", async () => {
+  it("处理只含 ID 的队列任务，将 imported 岗位导入完成并保持至少一次投递幂等", async () => {
     const content = "# 高级前端工程师\r\n公司：示例科技\r\n地点：上海\r\n## 职位描述\r\n  第一段\r\n\r\n第二段  \r\n## 任职要求\r\n未知字段：保持 nullable";
-    const item = await createNormalizingImport(content);
+    const item = await createImportedImport(content);
     await enqueue(item.importId);
     const queuedJob = await queue.getJob(item.importId);
     expect(JSON.stringify(queuedJob?.data)).toEqual(JSON.stringify({ version: 1, importId: item.importId, userId }));
@@ -182,7 +182,7 @@ describe("JobImportConsumer", () => {
   });
 
   it("在第三次对象存储读取失败后以最终稳定失败码结束", async () => {
-    const item = await createNormalizingImport("# 任意岗位");
+    const item = await createImportedImport("# 任意岗位");
     const failingStore = new AlwaysFailingReadStore(store);
     startConsumer(failingStore);
     await enqueue(item.importId);
@@ -216,14 +216,14 @@ describe("JobImportConsumer", () => {
   });
 
   it("生命周期 hook 可重复关闭 consumer，关闭后不会再处理队列任务", async () => {
-    const item = await createNormalizingImport("# 生命周期测试");
+    const item = await createImportedImport("# 生命周期测试");
     startConsumer(store);
     await consumer!.onModuleDestroy();
     await consumer!.onModuleDestroy();
     await enqueue(item.importId);
     await new Promise((resolve) => setTimeout(resolve, 100));
 
-    await expect(database.select({ status: jobImports.status }).from(jobImports)).resolves.toEqual([{ status: "normalizing" }]);
+    await expect(database.select({ status: jobImports.status }).from(jobImports)).resolves.toEqual([{ status: "imported" }]);
   });
 
   it("Nest ApplicationContext 接线并在 close 时自动关闭 JobImportConsumer", async () => {
@@ -245,13 +245,13 @@ describe("JobImportConsumer", () => {
         MINIO_ENDPOINT: `http://${minioContainer.getHost()}:${minioContainer.getMappedPort(9000)}`,
         MINIO_ACCESS_KEY: minioAccessKey, MINIO_SECRET_KEY: minioSecretKey, MINIO_BUCKET: minioBucket,
       });
-      const item = await createNormalizingImport("# Nest 生命周期测试");
+      const item = await createImportedImport("# Nest 生命周期测试");
       context = await NestFactory.createApplicationContext(JobImportModule, { logger: false });
       expect(context.get<JobImportConsumer>(JOB_IMPORT_CONSUMER)).toBeInstanceOf(JobImportConsumer);
       await closeContext();
       await enqueue(item.importId);
       await new Promise((resolve) => setTimeout(resolve, 100));
-      await expect(database.select({ status: jobImports.status }).from(jobImports)).resolves.toEqual([{ status: "normalizing" }]);
+      await expect(database.select({ status: jobImports.status }).from(jobImports)).resolves.toEqual([{ status: "imported" }]);
     } finally {
       await closeContext();
       for (const [key, value] of Object.entries(originalEnvironment)) {

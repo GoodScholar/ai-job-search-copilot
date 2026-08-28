@@ -126,11 +126,13 @@ test("岗位导入在真实运行时完成、去重、保留原文并处理失�
 
   await expect(page.getByRole("status")).toContainText(/已导入|规范化中|导入完成/);
   await expect(page.getByRole("status")).toHaveText("导入完成", { timeout: 15_000 });
-  expect(await visibleStatusHistory(page)).toEqual(expect.arrayContaining([
-    expect.stringMatching(/已导入/),
-    expect.stringMatching(/规范化中/),
-    "导入完成",
-  ]));
+  const statusHistory = await visibleStatusHistory(page);
+  const importedIndex = statusHistory.findIndex((entry) => /已导入/.test(entry));
+  const normalizingIndex = statusHistory.findIndex((entry, index) => index > importedIndex && /规范化中/.test(entry));
+  const completedIndex = statusHistory.findIndex((entry, index) => index > normalizingIndex && entry === "导入完成");
+  expect(importedIndex).toBeGreaterThanOrEqual(0);
+  expect(normalizingIndex).toBeGreaterThan(importedIndex);
+  expect(completedIndex).toBeGreaterThan(normalizingIndex);
   await expect(page.locator(".job-import-opportunity")).toContainText("示例科技");
   await expect(page.locator(".job-import-opportunity")).toContainText("高级前端工程师");
   await expect(page.locator(".job-import-opportunity")).toContainText("上海");
