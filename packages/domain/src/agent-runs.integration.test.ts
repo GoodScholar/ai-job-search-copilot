@@ -22,8 +22,9 @@ class MemoryQueue implements AgentRunQueue {
 
 class MemoryStore implements DiscoveryContentStore {
   readonly puts: string[] = [];
+  readonly deletes: string[] = [];
   async put({ objectKey }: { objectKey: string; bytes: Uint8Array; mediaType: "application/json"; runId: string }) { this.puts.push(objectKey); }
-  async delete() {}
+  async delete({ objectKey }: { objectKey: string }) { this.deletes.push(objectKey); }
 }
 
 function adapter(result: { retryable?: boolean } = {}): JobDiscoveryAdapter {
@@ -33,6 +34,12 @@ function adapter(result: { retryable?: boolean } = {}): JobDiscoveryAdapter {
     searchBatch: async () => result.retryable ? { ok: false, error: { code: "UPSTREAM", retryable: true } } : { ok: true, data: [summary] },
     getDetail: async () => ({ ok: true, data: { ...summary, sourceType: "company_careers", isOfficial: true, rawPayload: { b: 2, a: 1 } } }),
   };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((accept) => { resolve = accept; });
+  return { promise, resolve };
 }
 
 describe("agent runs", () => {
@@ -113,7 +120,8 @@ describe("agent runs", () => {
   it("以租约互斥处理、原子保存发现结果，并跨 run 复用机会证据", async () => {
     const { userId, targetId } = await activeTarget();
     const first = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
-    const processor = createAgentRunProcessor({ db: database, adapter: adapter(), contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    const store = new MemoryStore();
+    const processor = createAgentRunProcessor({ db: database, adapter: adapter(), contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
     await expect(processor.process({ version: 1, runId: first.runId, userId, finalAttempt: true })).resolves.toBe("completed");
     await expect(processor.process({ version: 1, runId: first.runId, userId, finalAttempt: true })).resolves.toBe("stale");
     await expect(createAgentRunQueries({ db: database }).get({ userId, runId: first.runId })).resolves.toMatchObject({ status: "completed", currentStep: "completed", attemptCount: 1, results: [expect.objectContaining({ ordinal: 1, company: "示例科技" })], events: expect.arrayContaining([expect.objectContaining({ eventType: "run.completed" })]) });
@@ -124,6 +132,64 @@ describe("agent runs", () => {
     await expect(processor.process({ version: 1, runId: second.runId, userId, finalAttempt: true })).resolves.toBe("completed");
     await expect(database.select().from(jobOpportunities).where(eq(jobOpportunities.userId, userId))).resolves.toHaveLength(1);
     await expect(database.select().from(agentRunJobResults).where(eq(agentRunJobResults.userId, userId))).resolves.toHaveLength(2);
+    expect(store.puts[0]).toMatch(new RegExp(`^accounts/${userId}/agent-runs/${first.runId}/sources/[0-9a-f]{64}/[0-9a-f]{64}\\.json$`));
+    expect(store.deletes).toHaveLength(1);
+  });
+
+  it("在持久化前去重同一来源身份，并以实际 result 链接数完成", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const duplicate = adapter();
+    duplicate.searchBatch = async () => ({ ok: true, data: [
+      { sourceId: "fake:aurora-careers", detailId: "opening-1", company: "示例科技", title: "AI 工程师", location: "上海", postedAt: null, deadline: null },
+      { sourceId: "fake:aurora-careers", detailId: "opening-1", company: "示例科技", title: "AI 工程师", location: "上海", postedAt: null, deadline: null },
+    ] });
+    await expect(createAgentRunProcessor({ db: database, adapter: duplicate, contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).process({ version: 1, runId: run.runId, userId, finalAttempt: true })).resolves.toBe("completed");
+    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({ results: [expect.objectContaining({ ordinal: 1 })], events: expect.arrayContaining([expect.objectContaining({ eventType: "run.completed", data: expect.objectContaining({ resultCount: 1 }) })]) });
+  });
+
+  it("达到已持久化的第三次尝试时不创建第四个 claim，而是直接失败", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    await database.update(agentRuns).set({ attemptCount: 3 }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)));
+    await expect(createAgentRunProcessor({ db: database, adapter: adapter(), contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("failed");
+    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({ attemptCount: 3, status: "failed", failureCode: "AGENT_RUN_BUDGET_EXCEEDED", events: expect.arrayContaining([expect.objectContaining({ eventType: "run.failed", data: expect.objectContaining({ attemptCount: 3 }) })]) });
+  });
+
+  it("在活动租约期间拒绝第二个 processor，并在过期接管后拒绝旧 token 提交", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    let searches = 0;
+    const takeoverAdapter = adapter();
+    takeoverAdapter.searchBatch = async () => {
+      searches += 1;
+      if (searches === 1) { entered.resolve(); await release.promise; }
+      return { ok: true, data: [{ sourceId: "fake:aurora-careers", detailId: "opening-1", company: "示例科技", title: "AI 工程师", location: "上海", postedAt: null, deadline: null }] };
+    };
+    const processor = createAgentRunProcessor({ db: database, adapter: takeoverAdapter, contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    const oldDelivery = processor.process({ version: 1, runId: run.runId, userId, finalAttempt: true });
+    await entered.promise;
+    await expect(processor.process({ version: 1, runId: run.runId, userId, finalAttempt: true })).resolves.toBe("retry");
+    await database.update(agentRuns).set({ claimExpiresAt: new Date(now.getTime() - 1) }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)));
+    await expect(processor.process({ version: 1, runId: run.runId, userId, finalAttempt: true })).resolves.toBe("completed");
+    release.resolve();
+    await expect(oldDelivery).resolves.toBe("stale");
+    await expect(database.select().from(agentRunJobResults).where(and(eq(agentRunJobResults.userId, userId), eq(agentRunJobResults.runId, run.runId)))).resolves.toHaveLength(1);
+  });
+
+  it("在端口调用前后按可推进时钟执行 maxDuration 预算", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    let instant = now;
+    const slow = adapter();
+    slow.searchBatch = async () => {
+      instant = new Date(now.getTime() + 60_000);
+      return { ok: true, data: [] };
+    };
+    await expect(createAgentRunProcessor({ db: database, adapter: slow, contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => instant }), id: () => crypto.randomUUID(), clock: () => instant }).process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("failed");
+    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({ status: "failed", failureCode: "AGENT_RUN_BUDGET_EXCEEDED" });
   });
 
   it("在可重试失败时重新排队，在最终尝试时终止且不暴露原始错误", async () => {

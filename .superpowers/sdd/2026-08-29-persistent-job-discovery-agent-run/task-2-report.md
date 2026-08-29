@@ -19,3 +19,19 @@
 
 - 已执行 `git diff --check`，无空白错误；PostgreSQL 集成测试覆盖所有权、幂等、恢复、重试、终态、来源/机会/result 复用和工作台计数。
 - 顾虑：现有新增测试没有单独以可推进时钟验证 `maxDurationMs` 超限路径，也没有直接断言未生成新 source version 时对象存储的补偿删除；建议主控审查时重点覆盖这两项绑定语义。
+
+## Fix round 1（审查修复）
+
+### RED / GREEN 证据
+
+- RED：`pnpm --filter @job-copilot/domain test -- src/agent-runs.test.ts src/agent-runs.integration.test.ts`，退出码 1；观测到 `discoverySourceIdentifier is not a function`、旧 `raw/...` 对象路径、重复 identity 的 `resultCount: 2` 和 persisted attempt=3 仍 `completed`。
+- GREEN：同一测试命令在修复后退出码 0，15 个文件、121 个测试通过。
+- GREEN（追加 lease/duration 集成）：`pnpm --filter @job-copilot/domain test -- src/agent-runs.integration.test.ts`，退出码 0，15 个文件、123 个测试通过。
+- 最终验证：`pnpm --filter @job-copilot/domain test -- src/agent-runs.integration.test.ts src/agent-runs.test.ts src/job-opportunity-persistence.test.ts src/job-imports.integration.test.ts src/audit-trail.integration.test.ts src/workbench-home.integration.test.ts`，退出码 0，15 个文件、123 个测试通过；`pnpm --filter @job-copilot/domain typecheck` 与 `pnpm --filter @job-copilot/contracts typecheck` 均退出码 0；`git diff --check` 无输出、退出码 0。
+
+### 修复范围与自审
+
+- source identifier 改为 canonical `{ sourceId, detailId }` SHA-256；原始对象键包含账户、run、source hash 和 raw hash。相同内容版本复用、失败和 stale 路径均 best-effort 删除未提交对象。
+- 每个 Adapter 调用显式累计 tool call，所有 Adapter/对象存储边界使用 attempt deadline 的受控 timeout，并在调用后以可推进时钟复核；超限终态为 `AGENT_RUN_BUDGET_EXCEEDED`。
+- claim 前先处理耗尽 attempts 的 run，原子写入 `run.failed` 和脱敏审计，避免第四次 claim；详情请求以前按 source identity 去重，ordinal/resultCount 使用实际持久化的唯一结果。
+- PostgreSQL 集成测试覆盖活动 claim、过期接管及旧 token stale、attempt budget、重复 identity、来源版本复用和对象键/删除。未修改审查 ledger 已记录的 Minor。

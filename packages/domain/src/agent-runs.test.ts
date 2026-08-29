@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonicalJsonBytes, canonicalJsonSha256 } from "./agent-runs";
+import { canonicalJsonBytes, canonicalJsonSha256, discoverySourceIdentifier } from "./agent-runs";
 
 describe("agent run canonical content", () => {
   it("递归排序原始 JSON 对象键后再编码和哈希", () => {
@@ -8,5 +8,10 @@ describe("agent run canonical content", () => {
 
     expect(new TextDecoder().decode(canonicalJsonBytes(first))).toBe('{"a":{"c":null,"d":true},"z":[{"a":1,"b":2}]}');
     expect(canonicalJsonSha256(first)).toBe(canonicalJsonSha256(second));
+  });
+
+  it("以 canonical identity hash 区分原先会拼接冲突的来源标识", () => {
+    expect(discoverySourceIdentifier("a:b", "c")).not.toBe(discoverySourceIdentifier("a", "b:c"));
+    expect(discoverySourceIdentifier("a:b", "c")).toMatch(/^[0-9a-f]{64}$/);
   });
 });

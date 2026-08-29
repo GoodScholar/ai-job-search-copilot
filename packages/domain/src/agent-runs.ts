@@ -57,6 +57,7 @@ function jsonValue(value: unknown): unknown {
 /** 用稳定字节串保存外部原始对象，避免 JSON 键顺序造成伪版本。 */
 export function canonicalJsonBytes(value: unknown): Uint8Array { return new TextEncoder().encode(JSON.stringify(jsonValue(value))); }
 export function canonicalJsonSha256(value: unknown): string { return createHash("sha256").update(canonicalJsonBytes(value)).digest("hex"); }
+export function discoverySourceIdentifier(sourceId: string, detailId: string): string { return canonicalJsonSha256({ sourceId, detailId }); }
 
 export function createAgentRunCommands(deps: CommandDependencies): {
   start(input: { userId: string; requestId: string; command: StartAgentRunCommand }): Promise<StartAgentRunResponse>;
@@ -137,6 +138,22 @@ export function createAgentRunRecoveryQueries(deps: { db: Database; clock: () =>
 
 type ProcessorDependencies = { db: Database; adapter: JobDiscoveryAdapter; contentStore: DiscoveryContentStore; auditTrail: AuditTrail; id: () => string; clock: () => Date };
 type FailureCode = "AGENT_RUN_ADAPTER_RETRYABLE" | "AGENT_RUN_ADAPTER_FAILED" | "AGENT_RUN_CONTENT_STORAGE_FAILED" | "AGENT_RUN_PERSIST_FAILED" | "AGENT_RUN_BUDGET_EXCEEDED";
+class AgentRunBudgetError extends Error {}
+
+async function bounded<T>(clock: () => Date, deadline: Date, operation: () => Promise<T>): Promise<T> {
+  const remaining = deadline.getTime() - clock().getTime();
+  if (remaining <= 0) throw new AgentRunBudgetError();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const result = await Promise.race([operation(), new Promise<T>((_, reject) => { timer = setTimeout(() => reject(new AgentRunBudgetError()), remaining); })]);
+    if (clock().getTime() >= deadline.getTime()) throw new AgentRunBudgetError();
+    return result;
+  } finally { if (timer) clearTimeout(timer); }
+}
+
+async function removeBestEffort(store: DiscoveryContentStore, objectKeys: string[]) {
+  await Promise.all(objectKeys.map(async (objectKey) => { try { await store.delete({ objectKey }); } catch { /* 补偿不得覆盖主结果。 */ } }));
+}
 
 async function appendEvent(db: any, input: { id: () => string; userId: string; runId: string; version: number; eventType: string; data: Record<string, unknown>; now: Date }) {
   const [latest] = await db.select({ sequence: agentRunEvents.sequence }).from(agentRunEvents).where(and(eq(agentRunEvents.userId, input.userId), eq(agentRunEvents.runId, input.runId))).orderBy(desc(agentRunEvents.sequence)).limit(1);
@@ -144,7 +161,7 @@ async function appendEvent(db: any, input: { id: () => string; userId: string; r
 }
 
 async function persistDiscoverySource(db: any, input: { id: () => string; userId: string; detail: { sourceId: string; detailId: string; sourceType: string; isOfficial: boolean }; contentSha256: string; rawContentSha256: string; objectKey: string; now: Date }) {
-  const sourceIdentifier = `${input.detail.sourceId}:${input.detail.detailId}`;
+  const sourceIdentifier = discoverySourceIdentifier(input.detail.sourceId, input.detail.detailId);
   let [posting] = await db.select({ id: jobSourcePostings.id, isOfficial: jobSourcePostings.isOfficial }).from(jobSourcePostings).where(and(eq(jobSourcePostings.userId, input.userId), eq(jobSourcePostings.sourceType, input.detail.sourceType), eq(jobSourcePostings.sourceIdentifier, sourceIdentifier)));
   if (!posting) {
     const [created] = await db.insert(jobSourcePostings).values({ id: input.id(), userId: input.userId, sourceType: input.detail.sourceType, sourceIdentifier, sourceIdentity: { sourceId: input.detail.sourceId, detailId: input.detail.detailId }, isOfficial: input.detail.isOfficial, createdAt: input.now, updatedAt: input.now }).returning({ id: jobSourcePostings.id, isOfficial: jobSourcePostings.isOfficial });
@@ -211,6 +228,13 @@ export function createAgentRunProcessor(deps: ProcessorDependencies): { process(
         const [current] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId)));
         if (!current || current.status === "completed" || current.status === "failed") return { kind: "stale" as const };
         if (current.status === "running" && current.claimExpiresAt && current.claimExpiresAt > now) return { kind: "retry" as const };
+        if (current.attemptCount >= AGENT_RUN_BUDGET.maxAttempts) {
+          const version = current.version + 1;
+          await transaction.update(agentRuns).set({ status: "failed", currentStep: "failed", claimToken: null, claimExpiresAt: null, startedAt: current.startedAt ?? now, failedAt: now, failureCode: "AGENT_RUN_BUDGET_EXCEEDED", version, updatedAt: now }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId)));
+          await appendEvent(transaction, { id: deps.id, userId: job.userId, runId: job.runId, version, eventType: "run.failed", data: { eventType: "run.failed", status: "failed", currentStep: "failed", attemptCount: current.attemptCount, failureCode: "AGENT_RUN_BUDGET_EXCEEDED" }, now });
+          await deps.auditTrail.bind(transaction).append({ userId: job.userId, actorUserId: job.userId, eventType: "agent.run_failed", occurredAt: now, requestId: job.runId, outcome: "failure", reasonCode: "AGENT_RUN_BUDGET_EXCEEDED", resourceType: "agent_run", resourceId: job.runId, metadata: { runId: job.runId, targetId: current.targetId, attemptCount: current.attemptCount, failureCode: "AGENT_RUN_BUDGET_EXCEEDED" } });
+          return { kind: "failed" as const };
+        }
         const claimToken = deps.id();
         const attemptCount = current.attemptCount + 1;
         const version = current.version + 1;
@@ -220,34 +244,50 @@ export function createAgentRunProcessor(deps: ProcessorDependencies): { process(
         return { kind: "claimed" as const, run, claimToken, attemptCount };
       });
       if (claimed.kind !== "claimed") return claimed.kind;
+      const deadline = new Date(now.getTime() + AGENT_RUN_BUDGET.maxDurationMs);
+      let toolCalls = 0;
+      const adapterCall = async <T>(operation: () => Promise<T>): Promise<T> => {
+        toolCalls += 1;
+        if (toolCalls > AGENT_RUN_BUDGET.maxToolCalls) throw new AgentRunBudgetError();
+        return bounded(deps.clock, deadline, operation);
+      };
       const snapshot = claimed.run.targetSnapshot as import("@job-copilot/contracts/agent-runs").AgentRunDetail["targetSnapshot"];
       if (!await stepTransition(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, stepKey: "batch_search", complete: false, attemptCount: claimed.attemptCount })) return "stale";
       let batch: import("@job-copilot/contracts/agent-runs").DiscoveryBatchSearchResult;
-      try { batch = await deps.adapter.searchBatch({ targetSnapshot: snapshot, sourceScope: claimed.run.sourceScope as import("@job-copilot/contracts/agent-runs").AgentRunDetail["sourceScope"] }); } catch { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failureCode: "AGENT_RUN_ADAPTER_RETRYABLE" }); }
+      try { batch = await adapterCall(() => deps.adapter.searchBatch({ targetSnapshot: snapshot, sourceScope: claimed.run.sourceScope as import("@job-copilot/contracts/agent-runs").AgentRunDetail["sourceScope"] })); } catch (error) { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failureCode: error instanceof AgentRunBudgetError ? "AGENT_RUN_BUDGET_EXCEEDED" : "AGENT_RUN_ADAPTER_RETRYABLE" }); }
       if (!batch.ok) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failureCode: batch.error.retryable ? "AGENT_RUN_ADAPTER_RETRYABLE" : "AGENT_RUN_ADAPTER_FAILED" });
       if (batch.data.length > AGENT_RUN_BUDGET.maxResults) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failureCode: "AGENT_RUN_BUDGET_EXCEEDED" });
       if (!await stepTransition(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, stepKey: "batch_search", complete: true, attemptCount: claimed.attemptCount })) return "stale";
       if (!await stepTransition(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, stepKey: "fetch_details", complete: false, attemptCount: claimed.attemptCount })) return "stale";
       const details: Array<{ sourceId: string; detailId: string; company: string | null; title: string | null; location: string | null; postedAt: string | null; deadline: string | null; sourceType: string; isOfficial: boolean; rawPayload: Record<string, unknown> }> = [];
-      for (const result of batch.data) {
+      const uniqueSummaries = [...new Map(batch.data.map((result) => [discoverySourceIdentifier(result.sourceId, result.detailId), result])).values()];
+      for (const result of uniqueSummaries) {
         let detail: import("@job-copilot/contracts/agent-runs").DiscoveryDetailResult;
-        try { detail = await deps.adapter.getDetail({ sourceId: result.sourceId, detailId: result.detailId }); } catch { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failureCode: "AGENT_RUN_ADAPTER_RETRYABLE" }); }
+        try { detail = await adapterCall(() => deps.adapter.getDetail({ sourceId: result.sourceId, detailId: result.detailId })); } catch (error) { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failureCode: error instanceof AgentRunBudgetError ? "AGENT_RUN_BUDGET_EXCEEDED" : "AGENT_RUN_ADAPTER_RETRYABLE" }); }
         if (!detail.ok) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failureCode: detail.error.retryable ? "AGENT_RUN_ADAPTER_RETRYABLE" : "AGENT_RUN_ADAPTER_FAILED" });
         details.push(detail.data);
       }
       if (!await stepTransition(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, stepKey: "fetch_details", complete: true, attemptCount: claimed.attemptCount })) return "stale";
       if (!await stepTransition(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, stepKey: "persist_results", complete: false, attemptCount: claimed.attemptCount })) return "stale";
-      const stored = details.map((detail) => ({ detail, bytes: canonicalJsonBytes(detail.rawPayload), objectKey: `accounts/${job.userId}/agent-runs/${job.runId}/raw/${encodeURIComponent(`${detail.sourceId}:${detail.detailId}`)}.json` }));
-      try { for (const item of stored) await deps.contentStore.put({ objectKey: item.objectKey, bytes: item.bytes, mediaType: "application/json", runId: job.runId }); } catch { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failureCode: "AGENT_RUN_CONTENT_STORAGE_FAILED" }); }
+      const stored = details.map((detail) => {
+        const bytes = canonicalJsonBytes(detail.rawPayload);
+        const sourceIdentifier = discoverySourceIdentifier(detail.sourceId, detail.detailId);
+        const rawContentSha256 = createHash("sha256").update(bytes).digest("hex");
+        return { detail, bytes, sourceIdentifier, rawContentSha256, objectKey: `accounts/${job.userId}/agent-runs/${job.runId}/sources/${sourceIdentifier}/${rawContentSha256}.json` };
+      });
+      const putObjectKeys: string[] = [];
+      try { for (const item of stored) { await bounded(deps.clock, deadline, () => deps.contentStore.put({ objectKey: item.objectKey, bytes: item.bytes, mediaType: "application/json", runId: job.runId })); putObjectKeys.push(item.objectKey); } } catch (error) { await removeBestEffort(deps.contentStore, putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failureCode: error instanceof AgentRunBudgetError ? "AGENT_RUN_BUDGET_EXCEEDED" : "AGENT_RUN_CONTENT_STORAGE_FAILED" }); }
       try {
         const completed = await deps.db.transaction(async (transaction) => {
           await acquireAccountAdvisoryLock(transaction, job.userId);
           const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, claimed.claimToken)));
-          if (!run) return false;
+          if (!run) return { completed: false, cleanup: putObjectKeys };
+          const cleanup: string[] = [];
           for (const [index, item] of stored.entries()) {
-            const source = await persistDiscoverySource(transaction, { id: deps.id, userId: job.userId, detail: item.detail, contentSha256: canonicalJsonSha256({ sourceId: item.detail.sourceId, detailId: item.detail.detailId, company: item.detail.company, title: item.detail.title, location: item.detail.location, postedAt: item.detail.postedAt, deadline: item.detail.deadline, sourceType: item.detail.sourceType, isOfficial: item.detail.isOfficial }), rawContentSha256: createHash("sha256").update(item.bytes).digest("hex"), objectKey: item.objectKey, now });
+            const source = await persistDiscoverySource(transaction, { id: deps.id, userId: job.userId, detail: item.detail, contentSha256: canonicalJsonSha256({ sourceId: item.detail.sourceId, detailId: item.detail.detailId, company: item.detail.company, title: item.detail.title, location: item.detail.location, postedAt: item.detail.postedAt, deadline: item.detail.deadline, sourceType: item.detail.sourceType, isOfficial: item.detail.isOfficial }), rawContentSha256: item.rawContentSha256, objectKey: item.objectKey, now });
+            if (!source.sourceVersionCreated) cleanup.push(item.objectKey);
             const evidence = await persistJobOpportunity(transaction, { id: deps.id, userId: job.userId, importId: null, sourcePostingVersionId: source.sourcePostingVersionId, isOfficial: source.isOfficial, company: item.detail.company, title: item.detail.title, location: item.detail.location, postedAt: item.detail.postedAt, deadline: item.detail.deadline, description: null, normalizedData: discoveryNormalizedData(item.detail), now });
-            await transaction.insert(agentRunJobResults).values({ id: deps.id(), userId: job.userId, runId: job.runId, opportunityId: evidence.opportunityId, sourcePostingVersionId: source.sourcePostingVersionId, ordinal: index + 1, createdAt: now }).onConflictDoNothing();
+            await transaction.insert(agentRunJobResults).values({ id: deps.id(), userId: job.userId, runId: job.runId, opportunityId: evidence.opportunityId, sourcePostingVersionId: source.sourcePostingVersionId, ordinal: index + 1, createdAt: now });
           }
           const stepVersion = run.version + 1;
           await transaction.update(agentRunSteps).set({ status: "completed", completedAt: now }).where(and(eq(agentRunSteps.userId, job.userId), eq(agentRunSteps.runId, job.runId), eq(agentRunSteps.stepKey, "persist_results")));
@@ -257,10 +297,11 @@ export function createAgentRunProcessor(deps: ProcessorDependencies): { process(
           await transaction.update(agentRuns).set({ status: "completed", currentStep: "completed", claimToken: null, claimExpiresAt: null, completedAt: now, failureCode: null, version: terminalVersion, updatedAt: now }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId)));
           await appendEvent(transaction, { id: deps.id, userId: job.userId, runId: job.runId, version: terminalVersion, eventType: "run.completed", data: { eventType: "run.completed", status: "completed", currentStep: "completed", attemptCount: claimed.attemptCount, resultCount: stored.length }, now });
           await deps.auditTrail.bind(transaction).append({ userId: job.userId, actorUserId: job.userId, eventType: "agent.run_completed", occurredAt: now, requestId: job.runId, outcome: "success", reasonCode: "AGENT_RUN_COMPLETED", resourceType: "agent_run", resourceId: job.runId, metadata: { runId: job.runId, targetId: run.targetId, attemptCount: claimed.attemptCount, resultCount: stored.length } });
-          return true;
+          return { completed: true, cleanup };
         });
-        return completed ? "completed" : "stale";
-      } catch { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failureCode: "AGENT_RUN_PERSIST_FAILED" }); }
+        await removeBestEffort(deps.contentStore, completed.cleanup);
+        return completed.completed ? "completed" : "stale";
+      } catch { await removeBestEffort(deps.contentStore, putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failureCode: "AGENT_RUN_PERSIST_FAILED" }); }
     },
   };
 }
