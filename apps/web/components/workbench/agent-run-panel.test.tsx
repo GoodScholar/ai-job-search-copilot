@@ -96,9 +96,12 @@ class FakeEventSource {
   }
   removeEventListener(type: string, listener: EventListener) { this.listeners.get(type)?.delete(listener); }
   close() { this.closed = true; }
+  dispatch(type: string, event: Event) {
+    this.listeners.get(type)?.forEach((listener) => listener(event));
+  }
   emit(type: string, id: string, data: unknown) {
     const event = new MessageEvent(type, { data: JSON.stringify(data), lastEventId: id });
-    this.listeners.get(type)?.forEach((listener) => listener(event));
+    this.dispatch(type, event);
   }
 }
 
@@ -163,6 +166,32 @@ it("rotates the idempotency UUID when changing the target starts a new submissio
   ]);
 });
 
+it("recovers the created run detail without posting a second run or rotating its UUID", async () => {
+  const user = userEvent.setup();
+  const completed = detail("completed");
+  const summary = { ...completed };
+  delete (summary as Partial<AgentRunDetail>).steps;
+  delete (summary as Partial<AgentRunDetail>).events;
+  delete (summary as Partial<AgentRunDetail>).results;
+  const fetchMock = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(Response.json({ ...summary, reused: false }, { status: 201 }))
+    .mockResolvedValueOnce(new Response(null, { status: 502 }))
+    .mockResolvedValueOnce(Response.json(completed));
+  vi.stubGlobal("fetch", fetchMock);
+  render(<AgentRunPanel initialRun={null} targets={[target()]} />);
+
+  await user.click(screen.getByRole("button", { name: "发现岗位" }));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("运行已创建，正在恢复状态。请稍后重试。"));
+  await user.click(screen.getByRole("button", { name: "发现岗位" }));
+
+  expect(await screen.findByRole("heading", { name: "高级 AI 应用工程师" })).toBeVisible();
+  expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+    "/api/agent-runs", `/api/agent-runs/${runId}`, `/api/agent-runs/${runId}`,
+  ]);
+  expect(JSON.parse(String(fetchMock.mock.calls[0]![1]?.body))).toEqual({ targetId, idempotencyKey });
+  expect(crypto.randomUUID).toHaveBeenCalledTimes(1);
+});
+
 it("keeps replayed progress accessible and ignores duplicate or out-of-order SSE events", () => {
   render(<AgentRunPanel initialRun={detail()} targets={[target()]} />);
   const source = FakeEventSource.instances[0]!;
@@ -200,4 +229,32 @@ it("resumes from the run cursor and replaces projections with authoritative term
   expect(screen.getByText("极光智联")).toBeVisible();
   expect(screen.getByText("上海")).toBeVisible();
   expect(screen.getByText("公司招聘官网")).toBeVisible();
+});
+
+it("shows a stable reconnecting message and clears it after the next valid event", () => {
+  render(<AgentRunPanel initialRun={detail()} targets={[target()]} />);
+  const source = FakeEventSource.instances[0]!;
+
+  act(() => source.dispatch("error", new Event("error")));
+  expect(screen.getByRole("status")).toHaveTextContent("进度连接中断，正在恢复。");
+  act(() => source.emit("step.started", "3", {
+    eventType: "step.started", status: "running", currentStep: "fetch_details", stepKey: "fetch_details", attemptCount: 1,
+  }));
+  expect(screen.getByRole("status")).toHaveTextContent("岗位发现进行中");
+  expect(screen.getByRole("status")).not.toHaveTextContent("连接中断");
+});
+
+it("closes an unmounted stream and ignores an already queued late event", () => {
+  const view = render(<AgentRunPanel initialRun={detail()} targets={[target()]} />);
+  const source = FakeEventSource.instances[0]!;
+  const lateListener = [...source.listeners.get("step.started")!][0]!;
+
+  view.unmount();
+  act(() => lateListener(new MessageEvent("step.started", {
+    data: JSON.stringify({ eventType: "step.started", status: "running", currentStep: "fetch_details", stepKey: "fetch_details", attemptCount: 1 }),
+    lastEventId: "3",
+  })));
+
+  expect(source.closed).toBe(true);
+  expect(window.sessionStorage.getItem(`job-copilot:agent-run:${runId}:cursor`)).toBe("2");
 });

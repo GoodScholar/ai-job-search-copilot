@@ -81,6 +81,7 @@ export function AgentRunPanel({ targets, initialRun }: { targets: JobTarget[]; i
   const [message, setMessage] = useState("");
   const [isStarting, setIsStarting] = useState(false);
   const idempotencyKey = useRef<string | null>(null);
+  const pendingRunId = useRef<string | null>(null);
   const runIsActive = run?.status === "queued" || run?.status === "running";
 
   useEffect(() => {
@@ -93,6 +94,7 @@ export function AgentRunPanel({ targets, initialRun }: { targets: JobTarget[]; i
     let current = true;
 
     const applyEvent = (type: typeof streamEventTypes[number]) => (event: Event) => {
+      if (!current) return;
       const messageEvent = event as MessageEvent<string>;
       let data: unknown;
       try { data = JSON.parse(messageEvent.data); } catch { return; }
@@ -102,6 +104,7 @@ export function AgentRunPanel({ targets, initialRun }: { targets: JobTarget[]; i
       if (sequence <= cursor) return;
       cursor = sequence;
       window.sessionStorage.setItem(cursorKey(run.runId), String(sequence));
+      setMessage("");
       setTimeline((events) => [...events, { sequence, eventType: parsed.data.event, data: parsed.data.data }]);
       if (type === "run.completed" || type === "run.failed") {
         stream.close();
@@ -117,9 +120,12 @@ export function AgentRunPanel({ targets, initialRun }: { targets: JobTarget[]; i
     };
     const listeners = streamEventTypes.map((type) => [type, applyEvent(type)] as const);
     listeners.forEach(([type, listener]) => stream.addEventListener(type, listener));
+    const handleError = () => { if (current) setMessage("进度连接中断，正在恢复。"); };
+    stream.addEventListener("error", handleError);
     return () => {
       current = false;
       listeners.forEach(([type, listener]) => stream.removeEventListener(type, listener));
+      stream.removeEventListener("error", handleError);
       stream.close();
     };
   }, [run]);
@@ -129,27 +135,35 @@ export function AgentRunPanel({ targets, initialRun }: { targets: JobTarget[]; i
     idempotencyKey.current ??= crypto.randomUUID();
     setIsStarting(true);
     setMessage("");
+    let createdRunId = pendingRunId.current;
     try {
-      const response = await fetch("/api/agent-runs", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ targetId: selectedTargetId, idempotencyKey: idempotencyKey.current }),
-      });
-      if (!response.ok) {
-        setMessage("岗位发现暂时无法启动，请稍后重试。");
-        return;
+      if (!createdRunId) {
+        const response = await fetch("/api/agent-runs", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ targetId: selectedTargetId, idempotencyKey: idempotencyKey.current }),
+        });
+        if (!response.ok) {
+          setMessage("岗位发现暂时无法启动，请稍后重试。");
+          return;
+        }
+        const started = StartAgentRunResponseSchema.safeParse(await response.json().catch(() => null));
+        if (!started.success) {
+          setMessage("岗位发现暂时无法启动，请稍后重试。");
+          return;
+        }
+        createdRunId = started.data.runId;
+        pendingRunId.current = createdRunId;
       }
-      const started = StartAgentRunResponseSchema.safeParse(await response.json().catch(() => null));
-      if (!started.success) {
-        setMessage("岗位发现暂时无法启动，请稍后重试。");
-        return;
-      }
-      idempotencyKey.current = null;
-      const detail = await fetchRunDetail(started.data.runId);
+      const detail = await fetchRunDetail(createdRunId);
       setRun(detail);
       setTimeline(detailTimeline(detail));
+      pendingRunId.current = null;
+      idempotencyKey.current = null;
     } catch {
-      setMessage("岗位发现暂时无法启动，请稍后重试。");
+      setMessage(createdRunId
+        ? "运行已创建，正在恢复状态。请稍后重试。"
+        : "岗位发现暂时无法启动，请稍后重试。");
     } finally {
       setIsStarting(false);
     }
@@ -182,6 +196,7 @@ export function AgentRunPanel({ targets, initialRun }: { targets: JobTarget[]; i
           <select disabled={isStarting || runIsActive} id="agent-run-target" onChange={(event) => {
             setSelectedTargetId(event.target.value);
             idempotencyKey.current = null;
+            pendingRunId.current = null;
           }} value={selectedTargetId}>
             {activeTargets.map((target) => <option key={target.targetId} value={target.targetId}>{target.constraints.roleFamily} · {target.priority === "primary" ? "主目标" : "次目标"}</option>)}
           </select>
