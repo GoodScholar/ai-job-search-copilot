@@ -59,3 +59,4 @@ export const AgentInboxActionResponseSchema = z.object({
 
 export type AgentInboxItem = z.infer<typeof AgentInboxItemSchema>;
 export type AgentInboxActionCommand = z.infer<typeof AgentInboxActionCommandSchema>;
+export type AgentInboxActionResponse = z.infer<typeof AgentInboxActionResponseSchema>;

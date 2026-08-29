@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, asc, desc, eq, lte, or, sql } from "drizzle-orm";
 import {
-  agentRunEvents, agentRunJobResults, agentRunSteps, agentRuns, jobOpportunities, jobSourcePostings, jobSourcePostingVersions,
+  agentInboxItems, agentRunEvents, agentRunJobResults, agentRunSteps, agentRuns, jobOpportunities, jobSourcePostings, jobSourcePostingVersions,
   type Database,
 } from "@job-copilot/database";
 import {
@@ -14,6 +14,7 @@ import { discoveryNormalizedData, persistJobOpportunity } from "./job-opportunit
 export { AgentRunControlError, AgentRunError, createAgentRunCommands, type AgentRunQueue } from "./agent-run-control";
 export { createAgentRunCheckpoint, type AgentRunCheckpointDecision } from "./agent-run-checkpoint";
 export { createAgentRunQueries } from "./agent-run-queries";
+export { AgentInboxError, createAgentInbox } from "./agent-inbox";
 
 export interface DiscoveryContentStore {
   put(input: { objectKey: string; bytes: Uint8Array; mediaType: "application/json"; runId: string }): Promise<void>;
@@ -64,6 +65,7 @@ export function createAgentRunRecoveryQueries(deps: { db: Database; clock: () =>
 
 type ProcessorDependencies = { db: Database; adapter: JobDiscoveryAdapter; contentStore: DiscoveryContentStore; auditTrail: AuditTrail; id: () => string; clock: () => Date; cleanupTimeoutMs?: number; heartbeatIntervalMs?: number; heartbeatStopTimeoutMs?: number; heartbeatRenew?: (input: { userId: string; runId: string; claimToken: string; deadline: Date }) => Promise<boolean> };
 type FailureCode = "AGENT_RUN_ADAPTER_RETRYABLE" | "AGENT_RUN_ADAPTER_FAILED" | "AGENT_RUN_CONTENT_STORAGE_FAILED" | "AGENT_RUN_PERSIST_FAILED" | "AGENT_RUN_BUDGET_EXCEEDED";
+type NonBudgetFailureCode = Exclude<FailureCode, "AGENT_RUN_BUDGET_EXCEEDED">;
 const CLEANUP_TIMEOUT_MS = 1_000;
 class AgentRunBudgetError extends Error {}
 
@@ -145,7 +147,9 @@ function cleanupDeadline(deps: ProcessorDependencies): Date {
 
 async function appendEvent(db: any, input: { id: () => string; userId: string; runId: string; version: number; eventType: string; data: Record<string, unknown>; now: Date }) {
   const [latest] = await db.select({ sequence: agentRunEvents.sequence }).from(agentRunEvents).where(and(eq(agentRunEvents.userId, input.userId), eq(agentRunEvents.runId, input.runId))).orderBy(desc(agentRunEvents.sequence)).limit(1);
-  await db.insert(agentRunEvents).values({ id: input.id(), userId: input.userId, runId: input.runId, sequence: (latest?.sequence ?? 0) + 1, runVersion: input.version, eventType: input.eventType, data: input.data, createdAt: input.now });
+  const sequence = (latest?.sequence ?? 0) + 1;
+  await db.insert(agentRunEvents).values({ id: input.id(), userId: input.userId, runId: input.runId, sequence, runVersion: input.version, eventType: input.eventType, data: input.data, createdAt: input.now });
+  return sequence;
 }
 
 async function persistDiscoverySource(db: any, input: { id: () => string; userId: string; detail: { sourceId: string; detailId: string; sourceType: string; isOfficial: boolean }; contentSha256: string; rawContentSha256: string; objectKey: string; now: Date }) {
@@ -206,6 +210,7 @@ async function failOrRetry(deps: ProcessorDependencies, input: { userId: string;
       await transaction.update(agentRunSteps).set({ status: "pending", startedAt: null, completedAt: null, failedAt: null, failureCode: null }).where(and(eq(agentRunSteps.userId, input.userId), eq(agentRunSteps.runId, input.runId)));
       await transaction.update(agentRuns).set({ status: "queued", claimToken: null, claimExpiresAt: null, startedAt: null, completedAt: null, failedAt: null, failureCode: null, version, updatedAt: now }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.claimToken, input.claimToken)));
       await appendEvent(transaction, { id: deps.id, userId: input.userId, runId: input.runId, version, eventType: "run.retry_scheduled", data: { eventType: "run.retry_scheduled", status: "queued", currentStep: run.currentStep, attemptCount: input.attemptCount, failureCode: input.failure.failureCode }, now });
+      await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.run_retry_scheduled", occurredAt: now, requestId: input.runId, outcome: "success", reasonCode: input.failure.failureCode, resourceType: "agent_run", resourceId: input.runId, metadata: { runId: input.runId, attemptCount: input.attemptCount, failureCode: input.failure.failureCode } });
       return "retry";
     }
     await transaction.update(agentRunSteps).set({ status: "failed", completedAt: null, failedAt: now, failureCode: input.failure.failureCode }).where(and(eq(agentRunSteps.userId, input.userId), eq(agentRunSteps.runId, input.runId), eq(agentRunSteps.stepKey, run.currentStep), eq(agentRunSteps.status, "running")));
@@ -214,8 +219,13 @@ async function failOrRetry(deps: ProcessorDependencies, input: { userId: string;
     const failureCode = exhausted ? "AGENT_RUN_BUDGET_EXCEEDED" : input.failure.failureCode;
     const terminationBudgetDimension = exhausted ? (input.failure.failureCode === "AGENT_RUN_BUDGET_EXCEEDED" ? "active_duration" : "attempts") : null;
     await transaction.update(agentRuns).set({ status: "failed", currentStep: "failed", claimToken: null, claimExpiresAt: null, failureCode, terminationKind, terminationBudgetDimension, failedAt: now, version, updatedAt: now }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.claimToken, input.claimToken)));
-    await appendEvent(transaction, { id: deps.id, userId: input.userId, runId: input.runId, version, eventType: "run.failed", data: { eventType: "run.failed", status: "failed", currentStep: "failed", attemptCount: input.attemptCount, failureCode }, now });
+    const sequence = await appendEvent(transaction, { id: deps.id, userId: input.userId, runId: input.runId, version, eventType: "run.failed", data: { eventType: "run.failed", status: "failed", currentStep: "failed", attemptCount: input.attemptCount, failureCode }, now });
     await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.run_failed", occurredAt: now, requestId: input.runId, outcome: "failure", reasonCode: failureCode, resourceType: "agent_run", resourceId: input.runId, metadata: { runId: input.runId, targetId: run.targetId, attemptCount: input.attemptCount, failureCode } });
+    if (!exhausted) {
+      const nonBudgetFailureCode = failureCode as NonBudgetFailureCode;
+      const [item] = await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: input.userId, runId: input.runId, triggerEventSequence: sequence, kind: "run_failed", status: "open", reasonCode: nonBudgetFailureCode, budgetDimension: null, createdAt: now }).onConflictDoNothing().returning({ id: agentInboxItems.id });
+      if (item) await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.inbox_opened", occurredAt: now, requestId: input.runId, outcome: "success", reasonCode: nonBudgetFailureCode, resourceType: "agent_inbox_item", resourceId: item.id, metadata: { runId: input.runId, kind: "run_failed", reasonCode: nonBudgetFailureCode, budgetDimension: null } });
+    }
     return "failed";
   });
 }

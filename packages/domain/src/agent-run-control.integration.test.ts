@@ -96,6 +96,24 @@ describe("agent run controls", () => {
     await expect(database.select({ eventType: auditEvents.eventType }).from(auditEvents).where(and(eq(auditEvents.userId, userId), eq(auditEvents.resourceId, queued.runId), eq(auditEvents.eventType, "agent.run_resumed")))).resolves.toHaveLength(1);
   });
 
+  it("直接恢复或取消暂停运行时也解决对应 decision Inbox 项", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    await commands(new MemoryQueue()).control({ userId, requestId: crypto.randomUUID(), runId: run.runId, command: { commandId: crypto.randomUUID(), action: "pause" } });
+    const itemId = crypto.randomUUID();
+    await database.insert(agentInboxItems).values({ id: itemId, userId, runId: run.runId, triggerEventSequence: 2, kind: "decision_required", status: "open", reasonCode: "AGENT_RUN_PAUSED", budgetDimension: null, createdAt: now });
+    await commands(new MemoryQueue()).control({ userId, requestId: crypto.randomUUID(), runId: run.runId, command: { commandId: crypto.randomUUID(), action: "resume" } });
+    await expect(database.select({ status: agentInboxItems.status, resolvedAt: agentInboxItems.resolvedAt }).from(agentInboxItems).where(and(eq(agentInboxItems.userId, userId), eq(agentInboxItems.id, itemId)))).resolves.toEqual([{ status: "resolved", resolvedAt: now }]);
+    await expect(database.select().from(auditEvents).where(and(eq(auditEvents.userId, userId), eq(auditEvents.resourceId, itemId), eq(auditEvents.eventType, "agent.inbox_resolved")))).resolves.toHaveLength(1);
+
+    const cancelled = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    await commands(new MemoryQueue()).control({ userId, requestId: crypto.randomUUID(), runId: cancelled.runId, command: { commandId: crypto.randomUUID(), action: "pause" } });
+    const cancelItemId = crypto.randomUUID();
+    await database.insert(agentInboxItems).values({ id: cancelItemId, userId, runId: cancelled.runId, triggerEventSequence: 2, kind: "decision_required", status: "open", reasonCode: "AGENT_RUN_PAUSED", budgetDimension: null, createdAt: now });
+    await commands(new MemoryQueue()).control({ userId, requestId: crypto.randomUUID(), runId: cancelled.runId, command: { commandId: crypto.randomUUID(), action: "cancel" } });
+    await expect(database.select({ status: agentInboxItems.status }).from(agentInboxItems).where(and(eq(agentInboxItems.userId, userId), eq(agentInboxItems.id, cancelItemId)))).resolves.toEqual([{ status: "resolved" }]);
+  });
+
   it("以稳定 checkpoint key 原子预占来源预算，并在耗尽时仅写一次终态、Inbox 与审计", async () => {
     const { userId, targetId } = await activeTarget();
     const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });

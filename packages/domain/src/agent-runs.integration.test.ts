@@ -1,7 +1,7 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { agentRunEvents, agentRunJobResults, agentRunSteps, agentRuns, createDatabase, jobAccounts, jobOpportunities, jobOpportunitySources, jobSourcePostingVersions, jobSourcePostings, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
+import { agentInboxItems, agentRunEvents, agentRunJobResults, agentRunSteps, agentRuns, auditEvents, createDatabase, jobAccounts, jobOpportunities, jobOpportunitySources, jobSourcePostingVersions, jobSourcePostings, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { createAgentRunCommands, createAgentRunProcessor, createAgentRunQueries, createAgentRunRecoveryQueries, type AgentRunQueue, type DiscoveryContentStore, type JobDiscoveryAdapter } from "./agent-runs";
@@ -326,6 +326,10 @@ describe("agent runs", () => {
       status: "failed", failureCode: "AGENT_RUN_ADAPTER_FAILED",
       steps: expect.arrayContaining([expect.objectContaining({ stepKey: "batch_search", status: "failed", failureCode: "AGENT_RUN_ADAPTER_FAILED", failedAt: expect.any(String) })]),
     });
+    await expect(database.select().from(agentInboxItems).where(and(eq(agentInboxItems.userId, userId), eq(agentInboxItems.runId, run.runId), eq(agentInboxItems.kind, "run_failed")))).resolves.toEqual([
+      expect.objectContaining({ status: "open", reasonCode: "AGENT_RUN_ADAPTER_FAILED", budgetDimension: null }),
+    ]);
+    await expect(database.select().from(auditEvents).where(and(eq(auditEvents.userId, userId), eq(auditEvents.eventType, "agent.inbox_opened")))).resolves.toHaveLength(1);
     expect(store.puts).toEqual([]);
   });
 
@@ -544,6 +548,7 @@ describe("agent runs", () => {
     const retrying = createAgentRunProcessor({ db: database, adapter: adapter({ retryable: true }), contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
     await expect(retrying.process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("retry");
     await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({ status: "queued", startedAt: null, failureCode: null, events: expect.arrayContaining([expect.objectContaining({ eventType: "run.retry_scheduled", data: expect.not.objectContaining({ message: expect.anything() }) })]) });
+    await expect(database.select().from(auditEvents).where(and(eq(auditEvents.userId, userId), eq(auditEvents.resourceId, run.runId), eq(auditEvents.eventType, "agent.run_retry_scheduled")))).resolves.toHaveLength(1);
     await expect(retrying.process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("retry");
     await expect(retrying.process({ version: 1, runId: run.runId, userId, finalAttempt: true })).resolves.toBe("failed");
     await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({

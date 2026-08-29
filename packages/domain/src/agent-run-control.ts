@@ -1,6 +1,6 @@
 import { and, desc, eq } from "drizzle-orm";
 import {
-  agentRunControlCommands, agentRunEvents, agentRunSteps, agentRuns, jobTargetRevisions, jobTargets, type Database,
+  agentInboxItems, agentRunControlCommands, agentRunEvents, agentRunSteps, agentRuns, jobTargetRevisions, jobTargets, type Database,
 } from "@job-copilot/database";
 import {
   AGENT_RUN_BUDGET, AGENT_RUN_JOB_VERSION, AGENT_RUN_RULE_VERSION, AGENT_RUN_TOOL_ALLOWLIST, FAKE_JOB_DISCOVERY_ADAPTER,
@@ -56,6 +56,16 @@ async function appendControlAudit(auditTrail: AuditTrail, input: { userId: strin
     case "run.resumed": return auditTrail.append({ ...base, eventType: "agent.run_resumed", reasonCode: "AGENT_RUN_RESUMED" });
     case "run.cancel_requested": return auditTrail.append({ ...base, eventType: "agent.run_cancel_requested", reasonCode: "AGENT_RUN_CANCEL_REQUESTED" });
     case "run.cancelled": return auditTrail.append({ ...base, eventType: "agent.run_cancelled", reasonCode: "AGENT_RUN_CANCELLED" });
+  }
+}
+
+async function resolveDecisionItems(transaction: any, auditTrail: AuditTrail, input: { userId: string; requestId: string; runId: string; action: "resume_run" | "cancel_run"; now: Date }) {
+  const items = await transaction.select({ id: agentInboxItems.id, reasonCode: agentInboxItems.reasonCode }).from(agentInboxItems).where(and(
+    eq(agentInboxItems.userId, input.userId), eq(agentInboxItems.runId, input.runId), eq(agentInboxItems.kind, "decision_required"), eq(agentInboxItems.status, "open"),
+  ));
+  for (const item of items) {
+    await transaction.update(agentInboxItems).set({ status: "resolved", resolvedAt: input.now }).where(and(eq(agentInboxItems.userId, input.userId), eq(agentInboxItems.id, item.id), eq(agentInboxItems.status, "open")));
+    await auditTrail.append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.inbox_resolved", occurredAt: input.now, requestId: input.requestId, outcome: "success", reasonCode: item.reasonCode as "AGENT_RUN_PAUSED", resourceType: "agent_inbox_item", resourceId: item.id, metadata: { itemId: item.id, runId: input.runId, action: input.action, reasonCode: item.reasonCode } });
   }
 }
 
@@ -119,6 +129,7 @@ export function createAgentRunCommands(deps: CommandDependencies): {
           snapshot = { runId: run.id, status: transition.status, currentStep: immediateCancel ? "cancelled" : transition.eventType === "run.resumed" ? "queued" : run.currentStep as ControlSnapshot["currentStep"], controlState: transition.controlState, version };
           await transaction.update(agentRuns).set({ status: snapshot.status, currentStep: snapshot.currentStep, controlState: snapshot.controlState, version, claimToken: immediateCancel || transition.eventType === "run.paused" ? null : run.claimToken, claimExpiresAt: immediateCancel || transition.eventType === "run.paused" ? null : run.claimExpiresAt, activeSliceStartedAt: immediateCancel || transition.eventType === "run.paused" ? null : run.activeSliceStartedAt, cancelledAt: immediateCancel ? now : run.cancelledAt, terminationKind: immediateCancel ? "cancelled_by_user" : run.terminationKind, terminationBudgetDimension: immediateCancel ? null : run.terminationBudgetDimension, usageComplete: immediateCancel ? true : run.usageComplete, updatedAt: now }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId)));
           await appendEvent(transaction, { id: deps.id, userId: input.userId, runId: input.runId, version, eventType: transition.eventType, data: { eventType: transition.eventType, status: snapshot.status, currentStep: snapshot.currentStep, attemptCount: run.attemptCount }, now });
+          if (transition.eventType === "run.resumed" || transition.eventType === "run.cancelled") await resolveDecisionItems(transaction, deps.auditTrail.bind(transaction), { userId: input.userId, requestId: input.requestId, runId: input.runId, action: transition.eventType === "run.resumed" ? "resume_run" : "cancel_run", now });
         }
         await transaction.insert(agentRunControlCommands).values({ id: deps.id(), userId: input.userId, runId: input.runId, commandId: command.commandId, action: command.action, applied: transition.kind === "transition", resultRunVersion: snapshot.version, resultSnapshot: snapshot, createdAt: now });
         if (transition.kind === "transition") await appendControlAudit(deps.auditTrail.bind(transaction), { userId: input.userId, requestId: input.requestId, runId: input.runId, eventType: transition.eventType, version: snapshot.version, action: command.action, attemptCount: run.attemptCount, now });
