@@ -8,6 +8,7 @@
     "./auth": "./src/auth.ts",
     "./career-document-privacy": "./src/career-document-privacy.ts",
     "./career-import": "./src/career-import.ts",
+    "./company-watchlists": "./src/company-watchlists.ts",
     "./job-imports": "./src/job-imports.ts",
     "./agent-runs": "./src/agent-runs.ts",
     "./agent-inbox": "./src/agent-inbox.ts",

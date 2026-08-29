@@ -859,4 +859,74 @@ describe("database migrations", () => {
       await rm(migrationsFolder, { recursive: true, force: true });
     }
   }, 60_000);
+
+  it("migrates one versioned company Watchlist per owned job target", async () => {
+    expect(await listPublicTables(migratedDatabase)).toEqual(expect.arrayContaining([
+      "company_watchlists", "company_watchlist_revisions",
+    ]));
+    expect(await listColumns(migratedDatabase)).toEqual(expect.arrayContaining([
+      { table_name: "company_watchlists", column_name: "id", data_type: "uuid" },
+      { table_name: "company_watchlists", column_name: "user_id", data_type: "uuid" },
+      { table_name: "company_watchlists", column_name: "target_id", data_type: "uuid" },
+      { table_name: "company_watchlists", column_name: "version", data_type: "integer" },
+      { table_name: "company_watchlists", column_name: "created_at", data_type: "timestamp with time zone" },
+      { table_name: "company_watchlists", column_name: "updated_at", data_type: "timestamp with time zone" },
+      { table_name: "company_watchlist_revisions", column_name: "id", data_type: "uuid" },
+      { table_name: "company_watchlist_revisions", column_name: "user_id", data_type: "uuid" },
+      { table_name: "company_watchlist_revisions", column_name: "watchlist_id", data_type: "uuid" },
+      { table_name: "company_watchlist_revisions", column_name: "target_id", data_type: "uuid" },
+      { table_name: "company_watchlist_revisions", column_name: "version", data_type: "integer" },
+      { table_name: "company_watchlist_revisions", column_name: "items", data_type: "jsonb" },
+      { table_name: "company_watchlist_revisions", column_name: "created_at", data_type: "timestamp with time zone" },
+    ]));
+    expect(await listConstraintNames(migratedDatabase)).toEqual(expect.arrayContaining([
+      "company_watchlists_user_target_unique",
+      "company_watchlists_user_id_id_unique",
+      "company_watchlists_owner_target_fk",
+      "company_watchlists_version_positive",
+      "company_watchlist_revisions_watchlist_version_unique",
+      "company_watchlist_revisions_owner_watchlist_fk",
+      "company_watchlist_revisions_owner_target_fk",
+      "company_watchlist_revisions_version_positive",
+      "company_watchlist_revisions_items_array",
+    ]));
+
+    const firstUserId = "b4a8c44c-56f5-4420-8f58-bd3e7552e7f1";
+    const secondUserId = "56ee9fe7-fd11-40a8-99ad-49d43c53f1d2";
+    const targetId = "1e71e774-1e28-4f02-86d9-9d28b7626ac8";
+    const watchlistId = "eb2a0489-c159-46a3-9465-5eb4e6c6b0a9";
+    await migratedDatabase.execute(sql`insert into job_accounts (id) values (${firstUserId}), (${secondUserId})`);
+    await migratedDatabase.execute(sql`
+      insert into job_targets (id, user_id, version, priority, state)
+      values (${targetId}, ${firstUserId}, 1, 'primary', 'active')
+    `);
+    await migratedDatabase.execute(sql`
+      insert into company_watchlists (id, user_id, target_id, version)
+      values (${watchlistId}, ${firstUserId}, ${targetId}, 1)
+    `);
+    await expect(migratedDatabase.execute(sql`
+      insert into company_watchlists (id, user_id, target_id, version)
+      values ('61ab659a-01a0-4d76-bc2e-2fe35deaf004', ${firstUserId}, ${targetId}, 1)
+    `)).rejects.toMatchObject({ cause: { code: "23505" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into company_watchlists (id, user_id, target_id, version)
+      values ('a9c819a8-43cf-45ce-b68d-f4a490cd61d9', ${secondUserId}, ${targetId}, 1)
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into company_watchlists (id, user_id, target_id, version)
+      values ('fc18b30c-c9f4-4be9-8b2a-049765b910ce', ${firstUserId}, ${targetId}, 0)
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await migratedDatabase.execute(sql`
+      insert into company_watchlist_revisions (user_id, watchlist_id, target_id, version, items)
+      values (${firstUserId}, ${watchlistId}, ${targetId}, 1, '[]'::jsonb)
+    `);
+    await expect(migratedDatabase.execute(sql`
+      insert into company_watchlist_revisions (user_id, watchlist_id, target_id, version, items)
+      values (${firstUserId}, ${watchlistId}, ${targetId}, 2, '{}'::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into company_watchlist_revisions (user_id, watchlist_id, target_id, version, items)
+      values (${secondUserId}, ${watchlistId}, ${targetId}, 2, '[]'::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
+  });
 });

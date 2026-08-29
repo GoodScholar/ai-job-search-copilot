@@ -322,6 +322,48 @@ export const jobTargetRevisions = pgTable("job_target_revisions", {
   check("job_target_revisions_constraints_object", sql`jsonb_typeof(${table.constraints}) = 'object'`),
 ]);
 
+export const companyWatchlists = pgTable("company_watchlists", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  targetId: uuid("target_id").notNull().references(() => jobTargets.id),
+  version: integer("version").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("company_watchlists_user_target_unique").on(table.userId, table.targetId),
+  unique("company_watchlists_user_id_id_unique").on(table.userId, table.id),
+  foreignKey({
+    columns: [table.userId, table.targetId],
+    foreignColumns: [jobTargets.userId, jobTargets.id],
+    name: "company_watchlists_owner_target_fk",
+  }),
+  check("company_watchlists_version_positive", sql`${table.version} >= 1`),
+]);
+
+export const companyWatchlistRevisions = pgTable("company_watchlist_revisions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  watchlistId: uuid("watchlist_id").notNull().references(() => companyWatchlists.id),
+  targetId: uuid("target_id").notNull().references(() => jobTargets.id),
+  version: integer("version").notNull(),
+  items: jsonb("items").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("company_watchlist_revisions_watchlist_version_unique").on(table.watchlistId, table.version),
+  foreignKey({
+    columns: [table.userId, table.watchlistId],
+    foreignColumns: [companyWatchlists.userId, companyWatchlists.id],
+    name: "company_watchlist_revisions_owner_watchlist_fk",
+  }),
+  foreignKey({
+    columns: [table.userId, table.targetId],
+    foreignColumns: [jobTargets.userId, jobTargets.id],
+    name: "company_watchlist_revisions_owner_target_fk",
+  }),
+  check("company_watchlist_revisions_version_positive", sql`${table.version} >= 1`),
+  check("company_watchlist_revisions_items_array", sql`jsonb_typeof(${table.items}) = 'array'`),
+]);
+
 export const jobImports = pgTable("job_imports", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").notNull().references(() => jobAccounts.id),
