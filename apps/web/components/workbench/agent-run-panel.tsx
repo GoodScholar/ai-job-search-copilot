@@ -114,6 +114,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh }: { targets
   const runIsUnfinished = run != null && ["queued", "running", "paused"].includes(run.status);
   const commandIds = useRef<Record<"pause" | "resume" | "cancel", string | null>>({ pause: null, resume: null, cancel: null });
   const runRef = useRef(run);
+  const mountedRef = useRef(false);
   const [pendingControls, setPendingControls] = useState<Record<"pause" | "resume" | "cancel", boolean>>({ pause: false, resume: false, cancel: false });
 
   function replaceRun(next: AgentRunDetail | null) {
@@ -137,6 +138,11 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh }: { targets
       return false;
     }
   }
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   useEffect(() => {
     if (!run || ["paused", "completed", "failed", "cancelled"].includes(run.status)) return;
@@ -176,8 +182,9 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh }: { targets
           replaceRun(detail);
           setTimeline(detailTimeline(detail));
           setMessage("");
+          const refreshedRunId = run.runId;
           void refreshInboxSafely().then((refreshed) => {
-            if (streamActive && !refreshed) setMessage("待处理事项暂未刷新，请刷新页面查看。");
+            if (mountedRef.current && runRef.current?.runId === refreshedRunId && !refreshed) setMessage("待处理事项暂未刷新，请刷新页面查看。");
           });
         }).catch(() => {
           if (streamActive) setMessage("岗位发现已结束，但结果暂时无法读取。请刷新页面重试。");
@@ -263,6 +270,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh }: { targets
           replaceRun(detail);
           setTimeline(detailTimeline(detail));
           const inboxRefreshed = await refreshInboxSafely();
+          if (!mountedRef.current || runRef.current?.runId !== run.runId) return;
           if (!inboxRefreshed) {
             setMessage("待处理事项暂未刷新，请刷新页面查看。");
             return;
@@ -274,9 +282,9 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh }: { targets
       }
       setMessage(parsed.data.run.status === "paused" ? "岗位发现已暂停" : parsed.data.run.status === "cancelled" ? "岗位发现已取消" : action === "pause" ? "等待安全暂停" : action === "cancel" ? "等待安全取消" : "正在继续岗位发现");
     } catch {
-      setMessage(`${action === "pause" ? "暂停" : action === "resume" ? "继续" : "取消"}请求暂时无法提交，请稍后重试。`);
+      if (mountedRef.current) setMessage(`${action === "pause" ? "暂停" : action === "resume" ? "继续" : "取消"}请求暂时无法提交，请稍后重试。`);
     } finally {
-      setPendingControls((current) => ({ ...current, [action]: false }));
+      if (mountedRef.current) setPendingControls((current) => ({ ...current, [action]: false }));
     }
   }
 

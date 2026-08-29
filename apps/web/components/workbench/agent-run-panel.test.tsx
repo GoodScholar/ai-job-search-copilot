@@ -283,6 +283,21 @@ it("SSE 权威详情成功后 Inbox 刷新失败不会回退运行状态", async
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("待处理事项暂未刷新，请刷新页面查看。"));
 });
 
+it("暂停详情落地后延迟的 Inbox 刷新失败仍会显示警告", async () => {
+  const paused = { ...detail(), status: "paused" as const, currentStep: "batch_search" as const, controlState: "none" as const };
+  let resolveInbox!: (value: boolean) => void;
+  const refreshInbox = vi.fn().mockReturnValue(new Promise<boolean>((resolve) => { resolveInbox = resolve; }));
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(Response.json(paused)));
+  render(<AgentRunPanel initialRun={detail()} onInboxRefresh={refreshInbox} targets={[target()]} />);
+  const source = FakeEventSource.instances[0]!;
+
+  act(() => source.emit("run.paused", "3", { eventType: "run.paused", status: "paused", currentStep: "batch_search", attemptCount: 1 }));
+  expect(await screen.findByRole("button", { name: "继续本次岗位发现" })).toBeVisible();
+  resolveInbox(false);
+
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("待处理事项暂未刷新，请刷新页面查看。"));
+});
+
 it("直接控制的权威详情成功后 Inbox 刷新失败不会误报详情失败", async () => {
   const paused = { ...detail(), status: "paused" as const, currentStep: "batch_search" as const, controlState: "none" as const, version: 3 };
   const response = { applied: true, run: { runId, status: "paused", currentStep: "batch_search", controlState: "none", version: 3 } };

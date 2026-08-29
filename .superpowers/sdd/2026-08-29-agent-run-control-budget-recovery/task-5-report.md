@@ -53,3 +53,9 @@
 - **RED：** Inbox 网络/解析辅助读取能够 reject，导致 SSE fire-and-forget 未处理拒绝，直接控制把辅助刷新失败误归类为详情读取失败。
 - **GREEN：** 同源 Inbox 读取统一返回 `AgentInboxItem[] | false`，并捕获网络、HTTP 与解析失败。SSE 显式处理辅助刷新结果；直接控制先完成权威详情读取，再单独处理刷新。两条路径均保留已应用的运行状态，并仅显示“待处理事项暂未刷新，请刷新页面查看”。
 - **验证：** focused Web suite 42 files / 217 tests passed；Web typecheck、Contracts typecheck、diff check 全部通过。
+
+## Review-fix round 3
+
+- **RED：** SSE 将暂停详情写入 state 后触发 effect cleanup，局部 `streamActive` 变为 false，使随后延迟完成的 Inbox 刷新失败提示被吞掉。
+- **GREEN：** Inbox 刷新回调使用组件挂载 ref 与同一 `runId` guard，而不是 EventSource effect 的局部生命周期。暂停详情落地后，延迟 `false` 仍显示稳定警告；卸载或运行切换后不更新状态。
+- **验证：** focused Web suite 42 files / 218 tests passed；Web typecheck、Contracts typecheck、diff check 全部通过。
