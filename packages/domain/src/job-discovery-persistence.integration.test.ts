@@ -278,6 +278,27 @@ describe("job discovery persistence lifecycle", () => {
     await expect(database.select().from(agentRunJobResults).where(eq(agentRunJobResults.userId, userId))).resolves.toHaveLength(1);
   });
 
+  it("非官方新来源不接管官方 current evidence，所有来源关闭前机会保持 open", async () => {
+    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID();
+    await database.insert(jobAccounts).values({ id: userId });
+    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: firstSeen, updatedAt: firstSeen });
+    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: firstSeen });
+    const persistence = createJobDiscoveryPersistence({ db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => later }) });
+    const fields = { company: "Fictional", title: "AI Engineer", location: null, postedAt: null, deadline: null, sourceType: "company_careers" };
+    const official = { sourceId: "greenhouse:official", detailId: "o", ...fields, isOfficial: true, rawPayload: {} };
+    const nonofficial = { sourceId: "greenhouse:nonofficial", detailId: "n", ...fields, isOfficial: false, rawPayload: { newer: true } };
+    const persist = async (detail: typeof official | typeof nonofficial, raw: string) => persistence.persistSuccessfulDiscovery({ run: await claimRun(userId, targetId, later), details: [detail], scans: [{ sourceId: detail.sourceId, observedDetailIds: [detail.detailId], complete: true }], storedObjects: [{ sourceId: detail.sourceId, detailId: detail.detailId, objectKey: `${raw}.json`, rawContentSha256: raw.repeat(64) }], now: later });
+    await persist(official, "a"); await persist(nonofficial, "b");
+    const [opportunity] = await database.select().from(jobOpportunities).where(eq(jobOpportunities.userId, userId));
+    const officialVersion = (await database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, userId))).find((version) => version.rawContentSha256 === "a".repeat(64));
+    expect(opportunity?.sourcePostingVersionId).toBe(officialVersion?.id);
+    await persistence.persistSuccessfulDiscovery({ run: await claimRun(userId, targetId, later), details: [], scans: [{ sourceId: official.sourceId, observedDetailIds: [], complete: true }], storedObjects: [], now: later });
+    await expect(database.select({ availability: jobOpportunities.availability }).from(jobOpportunities).where(eq(jobOpportunities.userId, userId))).resolves.toEqual([{ availability: "open" }]);
+    await persistence.persistSuccessfulDiscovery({ run: await claimRun(userId, targetId, later), details: [], scans: [{ sourceId: nonofficial.sourceId, observedDetailIds: [], complete: true }], storedObjects: [], now: later });
+    await expect(database.select({ availability: jobOpportunities.availability }).from(jobOpportunities).where(eq(jobOpportunities.userId, userId))).resolves.toEqual([{ availability: "closed" }]);
+    await expect(database.select().from(jobOpportunitySources).where(eq(jobOpportunitySources.userId, userId))).resolves.toHaveLength(2);
+  });
+
   it("late audit failure 回滚已执行的 scan close、版本和 run completion", async () => {
     const userId = crypto.randomUUID(); const targetId = crypto.randomUUID();
     await database.insert(jobAccounts).values({ id: userId });
