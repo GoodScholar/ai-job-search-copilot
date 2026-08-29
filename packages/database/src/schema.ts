@@ -655,7 +655,7 @@ export const agentRunEvents = pgTable("agent_run_events", {
   foreignKey({ columns: [table.userId, table.runId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "agent_run_events_owner_run_fk" }),
   check("agent_run_events_sequence_positive", sql`${table.sequence} >= 1`),
   check("agent_run_events_run_version_positive", sql`${table.runVersion} >= 1`),
-  check("agent_run_events_event_type_check", sql`${table.eventType} in ('run.queued', 'run.started', 'step.started', 'step.completed', 'run.retry_scheduled', 'run.completed', 'run.failed')`),
+  check("agent_run_events_event_type_check", sql`${table.eventType} in ('run.queued', 'run.started', 'step.started', 'step.completed', 'run.retry_scheduled', 'run.completed', 'run.failed', 'run.pause_requested', 'run.paused', 'run.resume_requested', 'run.resumed', 'run.cancel_requested', 'run.cancelled', 'run.budget_updated')`),
   check("agent_run_events_data_object", sql`jsonb_typeof(${table.data}) = 'object'`),
 ]);
 

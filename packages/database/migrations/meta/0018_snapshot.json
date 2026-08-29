@@ -1,5 +1,5 @@
 {
-  "id": "318adcc7-9454-40d8-82b6-00a8f0fe732d",
+  "id": "b9103bbf-d0e3-4ffe-922c-6f9e52db17b5",
   "prevId": "44577082-f69b-45b6-9b00-06b96c926c8c",
   "version": "7",
   "dialect": "postgresql",
@@ -606,7 +606,7 @@
         },
         "agent_run_events_event_type_check": {
           "name": "agent_run_events_event_type_check",
-          "value": "\"agent_run_events\".\"event_type\" in ('run.queued', 'run.started', 'step.started', 'step.completed', 'run.retry_scheduled', 'run.completed', 'run.failed')"
+          "value": "\"agent_run_events\".\"event_type\" in ('run.queued', 'run.started', 'step.started', 'step.completed', 'run.retry_scheduled', 'run.completed', 'run.failed', 'run.pause_requested', 'run.paused', 'run.resume_requested', 'run.resumed', 'run.cancel_requested', 'run.cancelled', 'run.budget_updated')"
         },
         "agent_run_events_data_object": {
           "name": "agent_run_events_data_object",

@@ -86,6 +86,7 @@ ALTER TABLE "agent_runs" DROP CONSTRAINT "agent_runs_status_check";--> statement
 ALTER TABLE "agent_runs" DROP CONSTRAINT "agent_runs_current_step_check";--> statement-breakpoint
 ALTER TABLE "agent_runs" DROP CONSTRAINT "agent_runs_failure_code_check";--> statement-breakpoint
 ALTER TABLE "agent_runs" DROP CONSTRAINT "agent_runs_timestamp_state_check";--> statement-breakpoint
+ALTER TABLE "agent_run_events" DROP CONSTRAINT "agent_run_events_event_type_check";--> statement-breakpoint
 ALTER TABLE "agent_runs" ADD COLUMN "rule_version" varchar(64);--> statement-breakpoint
 ALTER TABLE "agent_runs" ADD COLUMN "tool_allowlist" jsonb;--> statement-breakpoint
 ALTER TABLE "agent_runs" ADD COLUMN "model_snapshot" jsonb;--> statement-breakpoint
@@ -154,6 +155,7 @@ ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_termination_mapping_check" C
 ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_status_check" CHECK ("agent_runs"."status" in ('queued', 'running', 'paused', 'completed', 'failed', 'cancelled'));--> statement-breakpoint
 ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_current_step_check" CHECK ("agent_runs"."current_step" in ('queued', 'batch_search', 'fetch_details', 'persist_results', 'completed', 'failed', 'cancelled'));--> statement-breakpoint
 ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_failure_code_check" CHECK ("agent_runs"."failure_code" is null or "agent_runs"."failure_code" in ('AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_CONTENT_STORAGE_FAILED', 'AGENT_RUN_PERSIST_FAILED', 'AGENT_RUN_BUDGET_EXCEEDED', 'AGENT_RUN_MODEL_RETRYABLE', 'AGENT_RUN_MODEL_AUTH_FAILED', 'AGENT_RUN_MODEL_POLICY_REJECTED', 'AGENT_RUN_MODEL_INVALID_RESPONSE'));--> statement-breakpoint
+ALTER TABLE "agent_run_events" ADD CONSTRAINT "agent_run_events_event_type_check" CHECK ("agent_run_events"."event_type" in ('run.queued', 'run.started', 'step.started', 'step.completed', 'run.retry_scheduled', 'run.completed', 'run.failed', 'run.pause_requested', 'run.paused', 'run.resume_requested', 'run.resumed', 'run.cancel_requested', 'run.cancelled', 'run.budget_updated'));--> statement-breakpoint
 ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_timestamp_state_check" CHECK (
     ("agent_runs"."status" in ('queued', 'paused') and "agent_runs"."completed_at" is null and "agent_runs"."failed_at" is null and "agent_runs"."cancelled_at" is null)
     or ("agent_runs"."status" = 'running' and "agent_runs"."started_at" is not null and "agent_runs"."completed_at" is null and "agent_runs"."failed_at" is null and "agent_runs"."cancelled_at" is null)

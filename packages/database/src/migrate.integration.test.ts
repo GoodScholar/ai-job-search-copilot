@@ -692,6 +692,27 @@ describe("database migrations", () => {
         'fake-job-discovery-v1', 'job-discovery-result-v1', '["job_discovery.search_batch","job_discovery.get_detail"]'::jsonb, 'queued', 'queued'
       )
     `);
+    for (const [index, eventType] of [
+      "run.pause_requested",
+      "run.paused",
+      "run.resume_requested",
+      "run.resumed",
+      "run.cancel_requested",
+      "run.cancelled",
+      "run.budget_updated",
+    ].entries()) {
+      await expect(migratedDatabase.execute(sql`
+        insert into agent_run_events (id, user_id, run_id, sequence, run_version, event_type, data)
+        values (
+          ${`933bfe5a-8154-4c67-9f51-00000000000${index + 1}`}, ${userId}, ${runId}, ${index + 1}, 1,
+          ${eventType}, '{}'::jsonb
+        )
+      `)).resolves.toBeDefined();
+    }
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_run_events (id, user_id, run_id, sequence, run_version, event_type, data)
+      values ('933bfe5a-8154-4c67-9f51-000000000008', ${userId}, ${runId}, 8, 1, 'run.unknown', '{}'::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
     await expect(migratedDatabase.execute(sql`
       insert into agent_run_control_commands (user_id, run_id, command_id, action, applied, result_run_version, result_snapshot)
       values (${otherUserId}, ${runId}, '61fbc726-9ab7-4ea4-bfb8-701d4a31eb04', 'pause', true, 1,
