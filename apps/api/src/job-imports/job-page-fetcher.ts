@@ -77,6 +77,7 @@ export class SecureJobPageFetcher implements JobPageFetcher {
     if (!(error instanceof PublicSourceAccessError)) return new JobPageFetchError("JOB_PAGE_UNREACHABLE");
     const codes: Record<PublicSourceAccessError["code"], JobPageFetchFailureCode> = {
       PUBLIC_SOURCE_NETWORK_DISABLED: "JOB_PAGE_TARGET_REJECTED",
+      PUBLIC_SOURCE_TESTING_DISABLED: "JOB_PAGE_TARGET_REJECTED",
       PUBLIC_SOURCE_TARGET_REJECTED: "JOB_PAGE_TARGET_REJECTED",
       PUBLIC_SOURCE_REDIRECT_INVALID: "JOB_PAGE_REDIRECT_INVALID",
       PUBLIC_SOURCE_TIMEOUT: "JOB_PAGE_TIMEOUT",

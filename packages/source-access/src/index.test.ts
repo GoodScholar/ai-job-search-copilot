@@ -92,12 +92,9 @@ describe("PublicSourceClient", () => {
     let transports = 0;
     process.env.APP_ENV = "production";
     try {
-      const access = createPublicSourceClientForTest({
-        exactHosts: ["127.0.0.1"], testOrigin: "https://127.0.0.1:443",
-        transport: async () => { transports += 1; throw new Error("must not run"); },
-      });
-      await expect(access.get({ url: new URL("https://127.0.0.1/jobs"), allowedDomains: ["127.0.0.1"], accept: "text/html", maxRedirects: 0, retry: "none" }))
-        .rejects.toMatchObject({ code: "PUBLIC_SOURCE_TARGET_REJECTED" });
+      let error: unknown;
+      try { createPublicSourceClientForTest({ exactHosts: ["127.0.0.1"], testOrigin: "https://127.0.0.1:443", lookup: async () => { throw new Error("lookup must not run"); }, transport: async () => { transports += 1; throw new Error("must not run"); } }); } catch (caught) { error = caught; }
+      expect(error).toMatchObject({ code: "PUBLIC_SOURCE_TESTING_DISABLED" });
       expect(transports).toBe(0);
     } finally {
       process.env.APP_ENV = appEnv;
@@ -113,6 +110,11 @@ describe("PublicSourceClient", () => {
       .rejects.toMatchObject({ code: "PUBLIC_SOURCE_CONTENT_TYPE_INVALID" });
     await expect(access.get({ url: new URL(`${origin}/large`), allowedDomains: ["127.0.0.1"], accept: "text/html", maxRedirects: 0, retry: "none" }))
       .rejects.toMatchObject({ code: "PUBLIC_SOURCE_RESPONSE_TOO_LARGE" });
+  });
+
+  it("accepts application/json only with its declared content type", async () => {
+    await expect(client().get({ url: new URL(`${origin}/json`), allowedDomains: ["127.0.0.1"], accept: "application/json", maxRedirects: 0, retry: "none" }))
+      .resolves.toMatchObject({ status: 200, body: expect.any(Uint8Array), attemptCount: 1 });
   });
 
   it("allows only exact-host redirects within its per-call authorization", async () => {
@@ -154,6 +156,14 @@ describe("PublicSourceClient", () => {
       transport: async () => { transports += 1; throw new Error("must not run"); },
     });
     await expect(mixed.get({ url: new URL("https://source.test/jobs"), allowedDomains: ["source.test"], accept: "text/html", maxRedirects: 0, retry: "none" }))
+      .rejects.toMatchObject({ code: "PUBLIC_SOURCE_TARGET_REJECTED" });
+    expect(transports).toBe(0);
+
+    const privateOnly = createPublicSourceClientForTest({
+      exactHosts: ["private.test"], lookup: async () => [{ address: "127.0.0.1", family: 4 }],
+      transport: async () => { transports += 1; throw new Error("must not run"); },
+    });
+    await expect(privateOnly.get({ url: new URL("https://private.test/jobs"), allowedDomains: ["private.test"], accept: "text/html", maxRedirects: 0, retry: "none" }))
       .rejects.toMatchObject({ code: "PUBLIC_SOURCE_TARGET_REJECTED" });
     expect(transports).toBe(0);
 

@@ -73,3 +73,15 @@ The broad API command starts Testcontainers and failed during reaper port bindin
 - #8 fetcher uses the test-only factory only under real test mode and keeps consuming `JOB_PAGE_FETCHER_TEST_ORIGIN` through its module provider. Production uses the root factory.
 - The fetcher’s legacy `appEnv` constructor field remains accepted for source compatibility but is intentionally not authoritative; actual environment controls test capability.
 - Restored timeout/DNS redirect-budget behavior uses the testing seam only under real test mode; stable `JobPageFetchError` mappings remain covered.
+
+## Fix Round 3
+
+### RED / GREEN
+
+- RED: the testing factory had a partial production mode, so a production caller could still construct it with injected dependencies.
+- GREEN: `pnpm --filter @job-copilot/source-access test` — 16 passing tests. New rows cover construction-time `PUBLIC_SOURCE_TESTING_DISABLED` with injected lookup/transport at zero calls, JSON success content type, and pure-private DNS rejection in addition to the existing mixed-DNS/pinning, retry, size, type, UA, and abort rows.
+- GREEN: `pnpm --filter api exec vitest run src/job-imports/job-page-fetcher.test.ts` — 26 passing tests; both package typechecks and diff check pass.
+
+### Change
+
+`@job-copilot/source-access/testing` now immediately throws `PUBLIC_SOURCE_TESTING_DISABLED` unless the real process environment is test. It never constructs the internal client in production, so test origin, timeout, sleep, lookup, and transport cannot run there.
