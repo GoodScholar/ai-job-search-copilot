@@ -14,6 +14,7 @@
     "./job-targets": "./src/job-targets.ts",
     "./company-watchlists": "./src/company-watchlists.ts",
     "./job-imports": "./src/job-imports.ts",
+    "./job-discovery-schedules": "./src/job-discovery-schedules.ts",
     "./agent-runs": "./src/agent-runs.ts"
   },
   "scripts": {

@@ -1,5 +1,6 @@
 import {
   AgentRunSourceScopeSchema,
+  PublicAgentRunSourceScopeSchema,
   FAKE_JOB_DISCOVERY_ADAPTER,
   FAKE_JOB_DISCOVERY_ADAPTER_VERSION,
   FAKE_JOB_DISCOVERY_SOURCE_IDS,
@@ -25,5 +26,6 @@ function isLegacySourceScope(value: unknown): value is {
 /** 仅为 #10 固定 fake 来源的已持久化运行补齐 Watchlist 版本。 */
 export function normalizeAgentRunSourceScope(value: unknown) {
   if (isLegacySourceScope(value)) return AgentRunSourceScopeSchema.parse({ ...value, watchlistVersion: 0 });
-  return AgentRunSourceScopeSchema.parse(value);
+  const fake = AgentRunSourceScopeSchema.safeParse(value);
+  return fake.success ? fake.data : PublicAgentRunSourceScopeSchema.parse(value);
 }

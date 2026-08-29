@@ -14,7 +14,7 @@ export {
   type JobDiscoveryAdapter,
   type JobDiscoveryAdapterResolver,
 } from "./agent-run-processor";
-export { AgentRunControlError, AgentRunError, createAgentRunCommands, type AgentRunQueue } from "./agent-run-control";
+export { AgentRunControlError, AgentRunError, createAgentRunCommands, type AgentRunQueue, type AgentRunStarter } from "./agent-run-control";
 export { createAgentRunCheckpoint, type AgentRunCheckpoint, type AgentRunCheckpointDecision } from "./agent-run-checkpoint";
 export { createAgentRunQueries } from "./agent-run-queries";
 export { AgentInboxActionError, AgentInboxError, createAgentInbox } from "./agent-inbox";

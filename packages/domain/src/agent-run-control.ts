@@ -5,10 +5,13 @@ import {
 import {
   AGENT_RUN_BUDGET, AGENT_RUN_JOB_VERSION, AGENT_RUN_RULE_VERSION, AGENT_RUN_TOOL_ALLOWLIST, FAKE_JOB_DISCOVERY_ADAPTER,
   FAKE_JOB_DISCOVERY_ADAPTER_VERSION, FAKE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, FAKE_JOB_DISCOVERY_SOURCE_IDS,
-  FAKE_JOB_DISCOVERY_WORKFLOW_VERSION, ControlAgentRunCommandSchema, StartAgentRunCommandSchema,
+  FAKE_JOB_DISCOVERY_WORKFLOW_VERSION, GREENHOUSE_JOB_DISCOVERY_ADAPTER, GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
+  GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, GREENHOUSE_JOB_DISCOVERY_RULE_VERSION,
+  GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION, PUBLIC_JOB_DISCOVERY_BUDGET, ControlAgentRunCommandSchema, StartAgentRunCommandSchema,
   type AgentRunJob, type AgentRunStartErrorCode, type ControlAgentRunResponse, type StartAgentRunCommand, type StartAgentRunResponse,
 } from "@job-copilot/contracts/agent-runs";
 import { CompanyWatchlistItemSchema } from "@job-copilot/contracts/company-watchlists";
+import { classifyGreenhousePublicSource } from "@job-copilot/contracts/job-discovery-schedules";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import type { AuditTrail } from "./audit-trail";
 import { reduceControl } from "./agent-run-state";
@@ -25,6 +28,14 @@ export class AgentRunControlError extends Error {
 }
 
 type CommandDependencies = { db: Database; queue: AgentRunQueue; auditTrail: AuditTrail; id: () => string; clock: () => Date };
+export type AgentRunStarter = {
+  start(input: {
+    userId: string;
+    requestId: string;
+    command: { targetId: string; idempotencyKey: string };
+    trigger?: { kind: "manual" } | { kind: "schedule"; occurrenceId: string; scheduledFor: Date };
+  }): Promise<StartAgentRunResponse>;
+};
 type RunRow = typeof agentRuns.$inferSelect;
 type ControlSnapshot = ControlAgentRunResponse["run"];
 const stepKeys = ["batch_search", "fetch_details", "persist_results"] as const;
@@ -42,11 +53,26 @@ function sourceScope(watchlist: { version: number; items: unknown } | undefined)
   };
 }
 
+function publicSourceScope(watchlist: { version: number; items: unknown } | undefined) {
+  const items = watchlist ? CompanyWatchlistItemSchema.array().parse(watchlist.items) : [];
+  const sources = items.filter((item) => item.state === "enabled").map((item) => classifyGreenhousePublicSource({
+    itemId: item.itemId, canonicalCompanyName: item.canonicalCompanyName, careersUrl: item.careersUrl, allowedDomains: item.allowedDomains,
+  })).filter((result): result is Extract<typeof result, { kind: "supported" }> => result.kind === "supported").map((result) => result.source);
+  if (sources.length === 0) throw new AgentRunError("AGENT_RUN_UNAVAILABLE");
+  return {
+    kind: "company_watchlist" as const,
+    adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER,
+    adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
+    watchlistVersion: watchlist?.version ?? 0,
+    sources,
+  };
+}
+
 function summary(row: RunRow, reused: boolean): StartAgentRunResponse {
   const sourceScope = normalizeAgentRunSourceScope(row.sourceScope);
   return {
     runId: row.id, targetId: row.targetId, targetVersion: row.targetVersion,
-    targetSnapshot: row.targetSnapshot as StartAgentRunResponse["targetSnapshot"], sourceScope,
+    targetSnapshot: row.targetSnapshot as StartAgentRunResponse["targetSnapshot"], sourceScope: sourceScope as StartAgentRunResponse["sourceScope"],
     workflowVersion: row.workflowVersion as StartAgentRunResponse["workflowVersion"], adapter: row.adapter as StartAgentRunResponse["adapter"],
     adapterVersion: row.adapterVersion as StartAgentRunResponse["adapterVersion"], outputSchemaVersion: row.outputSchemaVersion as StartAgentRunResponse["outputSchemaVersion"],
     budget: row.budgetSnapshot as StartAgentRunResponse["budget"], status: row.status as StartAgentRunResponse["status"], currentStep: row.currentStep as StartAgentRunResponse["currentStep"],
@@ -91,10 +117,7 @@ async function openDecisionItem(transaction: any, auditTrail: AuditTrail, input:
   if (item) await auditTrail.append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.inbox_opened", occurredAt: input.now, requestId: input.requestId, outcome: "success", reasonCode: "AGENT_RUN_PAUSED", resourceType: "agent_inbox_item", resourceId: item.id, metadata: { runId: input.runId, kind: "decision_required", reasonCode: "AGENT_RUN_PAUSED", budgetDimension: null } });
 }
 
-export function createAgentRunCommands(deps: CommandDependencies): {
-  start(input: { userId: string; requestId: string; command: StartAgentRunCommand }): Promise<StartAgentRunResponse>;
-  control(input: { userId: string; requestId: string; runId: string; command: { commandId: string; action: "pause" | "resume" | "cancel" } }): Promise<ControlAgentRunResponse>;
-} {
+function createAgentRunStarter(deps: CommandDependencies): AgentRunStarter {
   return {
     async start(input) {
       const command = StartAgentRunCommandSchema.parse(input.command);
@@ -119,12 +142,28 @@ export function createAgentRunCommands(deps: CommandDependencies): {
           eq(companyWatchlistRevisions.watchlistId, companyWatchlists.id),
           eq(companyWatchlistRevisions.version, companyWatchlists.version),
         )).where(and(eq(companyWatchlists.userId, input.userId), eq(companyWatchlists.targetId, target.id)));
-        const runSourceScope = sourceScope(watchlist);
+        const isScheduled = input.trigger?.kind === "schedule";
+        const runSourceScope = isScheduled ? publicSourceScope(watchlist) : sourceScope(watchlist);
+        const execution = isScheduled ? {
+          budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+          workflowVersion: GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION,
+          ruleVersion: GREENHOUSE_JOB_DISCOVERY_RULE_VERSION,
+          adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER,
+          adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
+          outputSchemaVersion: GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+        } : {
+          budget: AGENT_RUN_BUDGET,
+          workflowVersion: FAKE_JOB_DISCOVERY_WORKFLOW_VERSION,
+          ruleVersion: AGENT_RUN_RULE_VERSION,
+          adapter: FAKE_JOB_DISCOVERY_ADAPTER,
+          adapterVersion: FAKE_JOB_DISCOVERY_ADAPTER_VERSION,
+          outputSchemaVersion: FAKE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+        };
         const [created] = await transaction.insert(agentRuns).values({
           id: runId, userId: input.userId, targetId: target.id, idempotencyKey: command.idempotencyKey, targetVersion: target.version,
-          targetSnapshot, sourceScope: runSourceScope, budgetSnapshot: AGENT_RUN_BUDGET, workflowVersion: FAKE_JOB_DISCOVERY_WORKFLOW_VERSION,
-          ruleVersion: AGENT_RUN_RULE_VERSION, toolAllowlist: AGENT_RUN_TOOL_ALLOWLIST, modelSnapshot: null,
-          adapter: FAKE_JOB_DISCOVERY_ADAPTER, adapterVersion: FAKE_JOB_DISCOVERY_ADAPTER_VERSION, outputSchemaVersion: FAKE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+          targetSnapshot, sourceScope: runSourceScope, budgetSnapshot: execution.budget, workflowVersion: execution.workflowVersion,
+          ruleVersion: execution.ruleVersion, toolAllowlist: AGENT_RUN_TOOL_ALLOWLIST, modelSnapshot: null,
+          adapter: execution.adapter, adapterVersion: execution.adapterVersion, outputSchemaVersion: execution.outputSchemaVersion,
           status: "queued", currentStep: "queued", controlState: "none", version: 1, attemptCount: 0,
           activeDurationMs: 0, toolCallCount: 0, sourceRequestCount: 0, modelCallCount: 0, inputTokenCount: 0, outputTokenCount: 0, totalTokenCount: 0, resultCount: 0, usageComplete: true,
           queuedAt: now, createdAt: now, updatedAt: now,
@@ -132,13 +171,23 @@ export function createAgentRunCommands(deps: CommandDependencies): {
         if (!created) throw new Error("AGENT_RUN_PERSIST_FAILED");
         await transaction.insert(agentRunSteps).values(stepKeys.map((stepKey, index) => ({ id: deps.id(), userId: input.userId, runId, stepKey, ordinal: index + 1, status: "pending", attemptCount: 0 })));
         await transaction.insert(agentRunEvents).values({ id: deps.id(), userId: input.userId, runId, sequence: 1, runVersion: 1, eventType: "run.queued", data: { eventType: "run.queued", status: "queued", currentStep: "queued", attemptCount: 0 }, createdAt: now });
-        await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.run_queued", occurredAt: now, requestId: input.requestId, outcome: "success", reasonCode: "AGENT_RUN_QUEUED", resourceType: "agent_run", resourceId: runId, metadata: { runId, targetId: target.id, targetVersion: target.version, workflowVersion: FAKE_JOB_DISCOVERY_WORKFLOW_VERSION, adapterVersion: FAKE_JOB_DISCOVERY_ADAPTER_VERSION } });
+        await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.run_queued", occurredAt: now, requestId: input.requestId, outcome: "success", reasonCode: "AGENT_RUN_QUEUED", resourceType: "agent_run", resourceId: runId, metadata: { runId, targetId: target.id, targetVersion: target.version, workflowVersion: execution.workflowVersion, adapterVersion: execution.adapterVersion } });
         return created;
       });
       const response = summary(run, reused);
       try { await deps.queue.enqueue({ version: AGENT_RUN_JOB_VERSION, runId: response.runId, userId: input.userId }); } catch { /* 提交后的唤醒可由恢复扫描补偿。 */ }
       return response;
     },
+  };
+}
+
+export function createAgentRunCommands(deps: CommandDependencies): {
+  start: AgentRunStarter["start"];
+  control(input: { userId: string; requestId: string; runId: string; command: { commandId: string; action: "pause" | "resume" | "cancel" } }): Promise<ControlAgentRunResponse>;
+} {
+  const starter = createAgentRunStarter(deps);
+  return {
+    start: starter.start,
     async control(input) {
       const command = ControlAgentRunCommandSchema.parse(input.command);
       const result = await deps.db.transaction(async (transaction) => {

@@ -85,6 +85,10 @@ const AgentInboxActionAppliedMetadataSchema = z.object({
 const AgentInboxResolvedMetadataSchema = z.object({
   itemId: z.uuid(), runId: z.uuid(), action: z.enum(["restart_run", "resume_run", "cancel_run", "dismiss"]), reasonCode: z.union([z.literal("AGENT_RUN_PAUSED"), AgentRunFailureCodeSchema]),
 }).strict();
+const JobDiscoveryScheduleMetadataSchema = z.object({
+  scheduleId: z.uuid(), targetId: z.uuid(), occurrenceId: z.uuid().nullable(), runId: z.uuid().nullable(),
+  version: z.int().min(1).nullable(), scheduledFor: z.iso.datetime().nullable(), state: z.enum(["enabled", "disabled", "pending", "dispatched", "skipped"]).nullable(),
+}).strict();
 
 const AuditEventInputSchema = z.discriminatedUnion("eventType", [
   z.object({
@@ -219,6 +223,10 @@ const AuditEventInputSchema = z.discriminatedUnion("eventType", [
   z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("agent.inbox_opened"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.union([z.literal("AGENT_RUN_PAUSED"), AgentRunFailureCodeSchema]), resourceType: z.literal("agent_inbox_item"), resourceId: z.uuid(), metadata: AgentInboxOpenedMetadataSchema }).strict(),
   z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("agent.inbox_action_applied"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.enum(["success", "failure"]), reasonCode: z.union([z.literal("AGENT_RUN_PAUSED"), z.literal("AGENT_INBOX_ACTION_FAILED"), AgentRunFailureCodeSchema]), resourceType: z.literal("agent_inbox_item"), resourceId: z.uuid(), metadata: AgentInboxActionAppliedMetadataSchema }).strict(),
   z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("agent.inbox_resolved"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.union([z.literal("AGENT_RUN_PAUSED"), AgentRunFailureCodeSchema]), resourceType: z.literal("agent_inbox_item"), resourceId: z.uuid(), metadata: AgentInboxResolvedMetadataSchema }).strict(),
+  z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("job_discovery.schedule_set"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.literal("JOB_DISCOVERY_SCHEDULE_SET"), resourceType: z.literal("job_discovery_schedule"), resourceId: z.uuid(), metadata: JobDiscoveryScheduleMetadataSchema }).strict(),
+  z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("job_discovery.occurrence_materialized"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.literal("JOB_DISCOVERY_OCCURRENCE_MATERIALIZED"), resourceType: z.literal("job_discovery_occurrence"), resourceId: z.uuid(), metadata: JobDiscoveryScheduleMetadataSchema }).strict(),
+  z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("job_discovery.occurrence_dispatched"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.literal("JOB_DISCOVERY_OCCURRENCE_DISPATCHED"), resourceType: z.literal("job_discovery_occurrence"), resourceId: z.uuid(), metadata: JobDiscoveryScheduleMetadataSchema }).strict(),
+  z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("job_discovery.occurrence_skipped"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.literal("JOB_DISCOVERY_OCCURRENCE_SKIPPED"), resourceType: z.literal("job_discovery_occurrence"), resourceId: z.uuid(), metadata: JobDiscoveryScheduleMetadataSchema }).strict(),
 ]);
 
 type AuditEventInput = z.input<typeof AuditEventInputSchema>;
