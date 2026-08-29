@@ -69,7 +69,7 @@ export class AgentRunScheduler implements OnModuleInit, OnModuleDestroy {
   private async scanOnce(): Promise<void> {
     let materialization: Promise<unknown> | undefined;
     try {
-      materialization = this.input.schedules.materializeDue({ limit: 100 });
+      materialization = this.input.schedules.materializeDue({ limit: 100, deadline: new Date(Date.now() + Math.max(1, this.timeoutMs() - 1)) });
       await withinDeadline(materialization, this.timeoutMs());
     } catch {
       if (!this.destroyed) await this.report({ failureCode: "JOB_DISCOVERY_SCHEDULE_MATERIALIZE_FAILED" });
@@ -80,7 +80,7 @@ export class AgentRunScheduler implements OnModuleInit, OnModuleDestroy {
     if (this.destroyed) return;
     let dispatch: Promise<unknown> | undefined;
     try {
-      dispatch = this.input.schedules.dispatchPending({ limit: 100 });
+      dispatch = this.input.schedules.dispatchPending({ limit: 100, deadline: new Date(Date.now() + Math.max(1, this.timeoutMs() - 1)) });
       await withinDeadline(dispatch, this.timeoutMs());
     } catch {
       if (!this.destroyed) await this.report({ failureCode: "JOB_DISCOVERY_SCHEDULE_DISPATCH_FAILED" });

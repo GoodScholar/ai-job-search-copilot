@@ -31,6 +31,16 @@ export class JobDiscoveryScheduleError extends Error {
 type Dependencies = { db: Database; runs: AgentRunStarter; auditTrail: AuditTrail; id: () => string; clock: () => Date };
 type ScheduleRow = typeof jobDiscoverySchedules.$inferSelect;
 type OccurrenceRow = typeof jobDiscoveryScheduleOccurrences.$inferSelect;
+type ScanInput = { limit: number; deadline?: Date };
+
+const DEFAULT_SCHEDULE_SCAN_TIMEOUT_MS = 5_000;
+
+async function applyScanDeadline(transaction: { execute: (query: ReturnType<typeof sql.raw>) => Promise<unknown> }, input: ScanInput, clock: () => Date): Promise<void> {
+  const deadline = input.deadline ?? new Date(clock().getTime() + DEFAULT_SCHEDULE_SCAN_TIMEOUT_MS);
+  const timeout = Math.max(1, Math.floor(deadline.getTime() - clock().getTime()));
+  await transaction.execute(sql.raw(`set local statement_timeout = ${timeout}`));
+  await transaction.execute(sql.raw(`set local lock_timeout = ${timeout}`));
+}
 
 function scheduleView(row: ScheduleRow): JobDiscoverySchedule {
   return JobDiscoveryScheduleSchema.parse({
@@ -104,8 +114,8 @@ async function appendScheduleAudit(auditTrail: AuditTrail, input: {
 export function createJobDiscoverySchedules(deps: Dependencies): {
   get(input: { userId: string; targetId: string }): Promise<JobDiscoveryScheduleResponse | null>;
   set(input: { userId: string; targetId: string; requestId: string; command: SetJobDiscoveryScheduleCommand }): Promise<JobDiscoverySchedule>;
-  materializeDue(input: { limit: number }): Promise<JobDiscoveryScheduleOccurrence[]>;
-  dispatchPending(input: { limit: number }): Promise<void>;
+  materializeDue(input: ScanInput): Promise<JobDiscoveryScheduleOccurrence[]>;
+  dispatchPending(input: ScanInput): Promise<void>;
 } {
   return {
     async get(input) {
@@ -144,6 +154,7 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
     async materializeDue(input) {
       const now = deps.clock();
       return deps.db.transaction(async (transaction) => {
+        await applyScanDeadline(transaction, input, deps.clock);
         const due = await transaction.execute(sql`
           select id, user_id, target_id, daily_time, next_run_at
           from job_discovery_schedules
@@ -171,6 +182,7 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
     },
     async dispatchPending(input) {
       await deps.db.transaction(async (transaction) => {
+        await applyScanDeadline(transaction, input, deps.clock);
         const pending = await transaction.execute(sql`
           select id, user_id, schedule_id, target_id, scheduled_for, status, run_id, skip_reason, created_at
           from job_discovery_schedule_occurrences

@@ -707,6 +707,7 @@ test("test runtime passes its isolated service addresses to every application", 
 
   const [command, args, options] = spawnCall;
   assert.equal(options.env.APP_ENV, "test");
+  assert.equal(options.env.PUBLIC_SOURCE_NETWORK_MODE, "disabled");
   assert.equal(options.env.PORT, "3120");
   assert.equal(options.env.API_PORT, "3121");
   assert.equal(options.env.API_INTERNAL_URL, "http://127.0.0.1:3121");

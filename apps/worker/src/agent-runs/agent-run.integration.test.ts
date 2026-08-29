@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Queue } from "bullmq";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import Redis from "ioredis";
 import { Client as MinioClient } from "minio";
 import { NestFactory } from "@nestjs/core";
@@ -33,6 +33,7 @@ import { AppModule } from "../app.module.js";
 import { AGENT_RUN_CONSUMER } from "./agent-run.module.js";
 import type { AgentRunConsumer } from "./agent-run-consumer.js";
 import { agentRunQueueJobOptions } from "./agent-run-reconciler.js";
+import { AgentRunScheduler, type AgentRunScheduleFailure } from "./agent-run-scheduler.js";
 import { MinioDiscoveryContentStore } from "./minio-discovery-content-store.js";
 
 const minioImage = "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e";
@@ -54,6 +55,12 @@ const constraints = {
     excludeDispatch: false, excludeHeadhunter: false, other: [],
   },
 };
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((accept) => { resolve = accept; });
+  return { promise, resolve };
+}
 
 async function waitFor(check: () => Promise<boolean>, message: string, timeoutMs = 20_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -372,6 +379,89 @@ describe("岗位发现 Agent Run Worker", () => {
     }))).toEqual(["TARGET_INACTIVE", "NO_SUPPORTED_SOURCE", "SOURCE_POLICY_REQUIRED"]);
     await expect(Promise.all([inactive, unsupported, policy].map(({ userId }) => database.select().from(agentRuns).where(eq(agentRuns.userId, userId))))).resolves.toEqual([[], [], []]);
   }, 45_000);
+
+  it("计划扫描的真实 PostgreSQL 锁超时会清理查询，并在下一个 tick 恢复", async () => {
+    await stopWorker();
+    const locked = deferred<void>();
+    const releaseLock = deferred<void>();
+    const lock = database.$client.begin(async (connection) => {
+      await connection`lock table job_discovery_schedules in access exclusive mode`;
+      locked.resolve();
+      await releaseLock.promise;
+    });
+    await locked.promise;
+
+    const failures: AgentRunScheduleFailure[] = [];
+    const scheduler = new AgentRunScheduler({
+      schedules: createJobDiscoverySchedules({ db: database, runs: commands(), auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: randomUUID, clock: () => new Date() }),
+      reporter: { report: async (failure) => { failures.push(failure); } },
+      scanTimeoutMs: 100,
+    });
+    try {
+      const initializing = scheduler.onModuleInit();
+      await waitFor(async () => failures.length === 1, "scheduler did not report materialize failure", 2_000);
+      expect(failures).toEqual([{ failureCode: "JOB_DISCOVERY_SCHEDULE_MATERIALIZE_FAILED" }]);
+      await initializing;
+
+      await expect(database.execute(sql<{ active: boolean }>`
+        select exists(
+          select 1 from pg_stat_activity
+          where pid <> pg_backend_pid()
+            and state = 'active'
+            and query like '%from job_discovery_schedules%'
+        ) as active
+      `)).resolves.toEqual([{ active: false }]);
+
+      releaseLock.resolve();
+      await lock;
+      const scheduleId = randomUUID();
+      await database.insert(jobDiscoverySchedules).values({
+        id: scheduleId, userId, targetId, version: 1, state: "enabled", dailyTime: "09:30", timeZone: "Asia/Shanghai",
+        nextRunAt: new Date(Date.now() - 1_000), createdAt: new Date(), updatedAt: new Date(),
+      });
+      await waitFor(async () => (await database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.scheduleId, scheduleId))).length === 1, "scheduler did not recover on the next tick", 3_000);
+    } finally {
+      releaseLock.resolve();
+      await lock.catch(() => undefined);
+      await scheduler.onModuleDestroy();
+    }
+  }, 10_000);
+
+  it("计划派发的真实 PostgreSQL 锁超时报告稳定码且不遗留活动查询", async () => {
+    await stopWorker();
+    const locked = deferred<void>();
+    const releaseLock = deferred<void>();
+    const lock = database.$client.begin(async (connection) => {
+      await connection`lock table job_discovery_schedule_occurrences in access exclusive mode`;
+      locked.resolve();
+      await releaseLock.promise;
+    });
+    await locked.promise;
+    const failures: AgentRunScheduleFailure[] = [];
+    const scheduler = new AgentRunScheduler({
+      schedules: createJobDiscoverySchedules({ db: database, runs: commands(), auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: randomUUID, clock: () => new Date() }),
+      reporter: { report: async (failure) => { failures.push(failure); } },
+      scanTimeoutMs: 100,
+    });
+    try {
+      const initializing = scheduler.onModuleInit();
+      await waitFor(async () => failures.length === 1, "scheduler did not report dispatch failure", 2_000);
+      expect(failures).toEqual([{ failureCode: "JOB_DISCOVERY_SCHEDULE_DISPATCH_FAILED" }]);
+      await initializing;
+      await expect(database.execute(sql<{ active: boolean }>`
+        select exists(
+          select 1 from pg_stat_activity
+          where pid <> pg_backend_pid()
+            and state = 'active'
+            and query like '%from job_discovery_schedule_occurrences%'
+        ) as active
+      `)).resolves.toEqual([{ active: false }]);
+    } finally {
+      releaseLock.resolve();
+      await lock.catch(() => undefined);
+      await scheduler.onModuleDestroy();
+    }
+  }, 10_000);
 
   it("暂停 run 不被恢复扫描，恢复后完成，取消的 run 不产生结果", async () => {
     await stopWorker();

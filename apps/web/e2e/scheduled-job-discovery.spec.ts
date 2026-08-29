@@ -79,6 +79,10 @@ test("每日检查通过 Fake Worker 交付一组岗位，并抵抗重复 Worker
   await expect(page.getByRole("heading", { name: "每天检查新岗位" })).toBeVisible();
   await expect(page.getByText("可每日检查 1 个岗位来源")).toBeVisible();
   const time = page.getByLabel("每日检查时间（北京时间 / Asia/Shanghai）");
+  expect(await time.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
+  for (const name of ["启用", "停用", "保存每日检查"]) {
+    expect(await page.getByRole("button", { name }).evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
+  }
   await time.fill("09:30");
   const enable = page.getByRole("button", { name: "启用" });
   if (testInfo.project.name === "Desktop Chrome") {
@@ -96,31 +100,38 @@ test("每日检查通过 Fake Worker 交付一组岗位，并抵抗重复 Worker
   expect(scheduleResponse.status()).toBe(200);
   const schedule = await scheduleResponse.json() as { schedule: { scheduleId: string; state: string } | null };
   expect(schedule.schedule).toMatchObject({ state: "enabled", scheduleId: expect.any(String) });
-  await fastForwardSchedule(schedule.schedule!.scheduleId);
-
-  let completed!: NonNullable<LatestResponse["run"]>;
-  await expect.poll(async () => {
-    const current = await latest(page);
-    if (current.run?.status === "completed") completed = current.run;
-    return current.run?.status;
-  }, { timeout: 25_000 }).toBe("completed");
-  expect(completed).toMatchObject({ adapter: "fake" });
-
-  // latest route is authoritative for a schedule-created run; reloading hydrates the same result set for the workbench.
-  await page.reload();
-  await expect(page.locator(".agent-run-panel [role=status]")).toContainText("岗位发现完成", { timeout: 10_000 });
-  await expect(page.getByRole("heading", { name: "本次发现的岗位" })).toBeVisible();
-  await expect(page.locator(".agent-run-results li")).toHaveCount(2);
-  await expect(page.locator(".agent-run-results")).toContainText("AI 应用工程师");
-
   const queue = new Queue("agent-runs", { connection: { host: "127.0.0.1", port: redisPort } });
   try {
-    const duplicate = await queue.add("discover-jobs", { version: 1, runId: completed.runId, userId: session.userId }, {
-      jobId: completed.runId, attempts: 3, removeOnComplete: false, removeOnFail: true,
+    await queue.pause();
+    await fastForwardSchedule(schedule.schedule!.scheduleId);
+
+    let queued!: NonNullable<LatestResponse["run"]>;
+    await expect.poll(async () => {
+      const current = await latest(page);
+      if (current.run?.status === "queued") queued = current.run;
+      return current.run?.status;
+    }, { timeout: 25_000 }).toBe("queued");
+    expect(queued).toMatchObject({ adapter: "fake" });
+
+    const sseRequest = page.waitForRequest((request) => request.url().includes(`/api/agent-runs/${queued.runId}/events?afterEventId=`));
+    await page.reload();
+    expect((await sseRequest).url()).toContain(`/api/agent-runs/${queued.runId}/events?afterEventId=`);
+    await expect(page.locator(".agent-run-panel [role=status]")).toContainText("岗位发现已排队");
+    await queue.resume();
+
+    // 恢复队列后由同一 SSE 页面推进完成；此处不 reload。
+    await expect(page.locator(".agent-run-panel [role=status]")).toContainText("岗位发现完成", { timeout: 25_000 });
+    await expect(page.getByRole("heading", { name: "本次发现的岗位" })).toBeVisible();
+    await expect(page.locator(".agent-run-results li")).toHaveCount(2);
+    await expect(page.locator(".agent-run-results")).toContainText("AI 应用工程师");
+
+    const duplicate = await queue.add("discover-jobs", { version: 1, runId: queued.runId, userId: session.userId }, {
+      jobId: queued.runId, attempts: 3, removeOnComplete: false, removeOnFail: true,
     });
     await expect.poll(async () => (await queue.getJob(duplicate.id!))?.returnvalue, { timeout: 15_000 }).toBe("stale");
     await duplicate.remove();
   } finally {
+    await queue.resume().catch(() => undefined);
     await queue.close();
   }
   await page.reload();
