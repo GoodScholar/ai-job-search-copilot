@@ -23,6 +23,7 @@ import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { AgentRunError, type AgentRunStarter } from "./agent-run-control";
 import type { AuditTrail } from "./audit-trail";
 import { analyzePublicJobDiscoverySources } from "./public-job-discovery-sources";
+import { applyTransactionDeadline } from "./transaction-deadline";
 
 export class JobDiscoveryScheduleError extends Error {
   constructor(public readonly code: "JOB_DISCOVERY_SCHEDULE_TARGET_NOT_FOUND" | "JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE" | "JOB_DISCOVERY_SCHEDULE_VERSION_CONFLICT" | "SOURCE_POLICY_REQUIRED" | "NO_SUPPORTED_SOURCE") { super(code); }
@@ -35,11 +36,8 @@ type ScanInput = { limit: number; deadline?: Date };
 
 const DEFAULT_SCHEDULE_SCAN_TIMEOUT_MS = 5_000;
 
-async function applyScanDeadline(transaction: { execute: (query: ReturnType<typeof sql.raw>) => Promise<unknown> }, input: ScanInput, clock: () => Date): Promise<void> {
-  const deadline = input.deadline ?? new Date(clock().getTime() + DEFAULT_SCHEDULE_SCAN_TIMEOUT_MS);
-  const timeout = Math.max(1, Math.floor(deadline.getTime() - clock().getTime()));
-  await transaction.execute(sql.raw(`set local statement_timeout = ${timeout}`));
-  await transaction.execute(sql.raw(`set local lock_timeout = ${timeout}`));
+function scanDeadline(input: ScanInput, clock: () => Date): Date {
+  return input.deadline ?? new Date(clock().getTime() + DEFAULT_SCHEDULE_SCAN_TIMEOUT_MS);
 }
 
 function scheduleView(row: ScheduleRow): JobDiscoverySchedule {
@@ -153,8 +151,9 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
     },
     async materializeDue(input) {
       const now = deps.clock();
+      const deadline = scanDeadline(input, deps.clock);
       return deps.db.transaction(async (transaction) => {
-        await applyScanDeadline(transaction, input, deps.clock);
+        await applyTransactionDeadline(transaction, { deadline, clock: deps.clock });
         const due = await transaction.execute(sql`
           select id, user_id, target_id, daily_time, next_run_at
           from job_discovery_schedules
@@ -181,8 +180,9 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
       });
     },
     async dispatchPending(input) {
+      const deadline = scanDeadline(input, deps.clock);
       await deps.db.transaction(async (transaction) => {
-        await applyScanDeadline(transaction, input, deps.clock);
+        await applyTransactionDeadline(transaction, { deadline, clock: deps.clock });
         const pending = await transaction.execute(sql`
           select id, user_id, schedule_id, target_id, scheduled_for, status, run_id, skip_reason, created_at
           from job_discovery_schedule_occurrences
@@ -217,7 +217,7 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
           const [existingRun] = await transaction.select({ id: agentRuns.id }).from(agentRuns)
             .where(and(eq(agentRuns.userId, occurrence.userId), eq(agentRuns.idempotencyKey, occurrence.id)));
           if (existingRun) {
-            const run = await deps.runs.start({ userId: occurrence.userId, requestId: deps.id(), command: { targetId: occurrence.targetId, idempotencyKey: occurrence.id }, trigger: { kind: "schedule", occurrenceId: occurrence.id, scheduledFor: occurrence.scheduledFor } });
+            const run = await deps.runs.start({ userId: occurrence.userId, requestId: deps.id(), command: { targetId: occurrence.targetId, idempotencyKey: occurrence.id }, trigger: { kind: "schedule", occurrenceId: occurrence.id, scheduledFor: occurrence.scheduledFor }, deadline });
             await dispatch(run.runId);
             continue;
           }
@@ -232,7 +232,7 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
             continue;
           }
           try {
-            const run = await deps.runs.start({ userId: occurrence.userId, requestId: deps.id(), command: { targetId: occurrence.targetId, idempotencyKey: occurrence.id }, trigger: { kind: "schedule", occurrenceId: occurrence.id, scheduledFor: occurrence.scheduledFor } });
+            const run = await deps.runs.start({ userId: occurrence.userId, requestId: deps.id(), command: { targetId: occurrence.targetId, idempotencyKey: occurrence.id }, trigger: { kind: "schedule", occurrenceId: occurrence.id, scheduledFor: occurrence.scheduledFor }, deadline });
             await dispatch(run.runId);
           } catch (error) {
             if (!(error instanceof AgentRunError) || error.code !== "AGENT_RUN_TARGET_INACTIVE") throw error;

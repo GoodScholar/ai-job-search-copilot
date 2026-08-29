@@ -16,6 +16,7 @@ import type { AuditTrail } from "./audit-trail";
 import { reduceControl } from "./agent-run-state";
 import { normalizeAgentRunSourceScope } from "./agent-run-source-scope";
 import { analyzePublicJobDiscoverySources } from "./public-job-discovery-sources";
+import { applyTransactionDeadline } from "./transaction-deadline";
 
 export interface AgentRunQueue { enqueue(job: AgentRunJob): Promise<void>; }
 
@@ -42,6 +43,7 @@ export type AgentRunStarter = {
     requestId: string;
     command: { targetId: string; idempotencyKey: string };
     trigger?: { kind: "manual" } | { kind: "schedule"; occurrenceId: string; scheduledFor: Date };
+    deadline?: Date;
   }): Promise<StartAgentRunResponse>;
 };
 type RunRow = typeof agentRuns.$inferSelect;
@@ -129,6 +131,7 @@ function createAgentRunStarter(deps: CommandDependencies): AgentRunStarter {
       const now = deps.clock();
       let reused = false;
       const run = await deps.db.transaction(async (transaction) => {
+        if (input.deadline) await applyTransactionDeadline(transaction, { deadline: input.deadline, clock: deps.clock });
         await acquireAccountAdvisoryLock(transaction, input.userId);
         const [existing] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.idempotencyKey, command.idempotencyKey)));
         if (existing) { reused = true; return existing; }

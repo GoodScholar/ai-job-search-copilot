@@ -1,6 +1,7 @@
+import { spawn } from "node:child_process";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { and, eq, lt } from "drizzle-orm";
+import { and, eq, lt, sql } from "drizzle-orm";
 import {
   agentRuns,
   auditEvents,
@@ -31,6 +32,29 @@ class Queue implements AgentRunQueue {
     if (this.fail) throw new Error("queue unavailable");
     this.jobs.push(job);
   }
+}
+
+async function materializeInDeadlineProcess(databaseUrl: string): Promise<number | null> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", `
+      import { createDatabase } from "@job-copilot/database";
+      import { createAuditTrail } from "./src/audit-trail.ts";
+      import { createJobDiscoverySchedules } from "./src/job-discovery-schedules.ts";
+      const db = createDatabase(process.env.DEADLINE_DATABASE_URL);
+      const clock = () => new Date();
+      const service = createJobDiscoverySchedules({
+        db,
+        runs: { start: async () => { throw new Error("materialize must not start a run"); } },
+        auditTrail: createAuditTrail({ db, clock }),
+        id: () => crypto.randomUUID(),
+        clock,
+      });
+      await service.materializeDue({ limit: 2, deadline: new Date(Date.now() + 120) });
+      await db.$client.end();
+    `], { cwd: process.cwd(), env: { ...process.env, DEADLINE_DATABASE_URL: databaseUrl }, stdio: "ignore" });
+    child.once("error", reject);
+    child.once("close", resolve);
+  });
 }
 
 describe("job discovery schedules", () => {
@@ -119,6 +143,34 @@ describe("job discovery schedules", () => {
     expect(materialized.flat()).toHaveLength(1);
     await expect(database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.scheduleId, created.scheduleId))).resolves.toHaveLength(1);
   });
+
+  it("物化事务以一个绝对 deadline 覆盖多条慢写入", async () => {
+    const owner = await target();
+    const at = new Date();
+    const { service } = schedules(new Queue(), at);
+    await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/deadline-first", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
+    const first = await service.set({ userId: owner.userId, targetId: owner.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
+    const secondTargetId = crypto.randomUUID();
+    await database.insert(jobTargets).values({ id: secondTargetId, userId: owner.userId, version: 1, priority: "secondary", state: "active", activeSlot: 1, createdAt: at, updatedAt: at });
+    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId: owner.userId, targetId: secondTargetId, version: 1, priority: "secondary", state: "active", constraints, createdAt: at });
+    await addWatchlistSource({ userId: owner.userId, targetId: secondTargetId, careersUrl: "https://boards.greenhouse.io/deadline-second", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
+    const second = await service.set({ userId: owner.userId, targetId: secondTargetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
+    await database.update(jobDiscoverySchedules).set({ nextRunAt: new Date(at.getTime() - 1_000) }).where(sql`${jobDiscoverySchedules.id} in (${first.scheduleId}, ${second.scheduleId})`);
+
+    await database.execute(sql.raw(`
+      create function test_schedule_occurrence_delay() returns trigger language plpgsql as $$
+      begin perform pg_sleep(0.08); return new; end;
+      $$;
+      create trigger test_schedule_occurrence_delay before insert on job_discovery_schedule_occurrences
+      for each row execute function test_schedule_occurrence_delay();
+    `));
+    try {
+      expect(await materializeInDeadlineProcess(container.getConnectionUri())).not.toBe(0);
+      await expect(database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.userId, owner.userId))).resolves.toEqual([]);
+    } finally {
+      await database.execute(sql.raw("drop trigger if exists test_schedule_occurrence_delay on job_discovery_schedule_occurrences; drop function if exists test_schedule_occurrence_delay();"));
+    }
+  }, 10_000);
 
   it("将同一 occurrence 两次派发到同一 public run，队列唤醒失败也保留可恢复运行", async () => {
     const owner = await target();

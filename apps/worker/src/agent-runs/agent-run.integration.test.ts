@@ -463,6 +463,77 @@ describe("岗位发现 Agent Run Worker", () => {
     }
   }, 10_000);
 
+  it("计划派发把同一绝对 deadline 传给被账户锁阻塞的 start 事务，并在下一 tick 恢复", async () => {
+    await stopWorker();
+    const scheduledUserId = randomUUID();
+    const scheduledTargetId = randomUUID();
+    const auditTrail = createAuditTrail({ db: database, clock: () => new Date() });
+    await database.insert(jobAccounts).values({ id: scheduledUserId });
+    await database.insert(jobTargets).values({ id: scheduledTargetId, userId: scheduledUserId, version: 1, priority: "primary", state: "active", activeSlot: null });
+    await database.insert(jobTargetRevisions).values({ id: randomUUID(), userId: scheduledUserId, targetId: scheduledTargetId, version: 1, priority: "primary", state: "active", constraints });
+    await createCompanyWatchlistCommands({ db: database, auditTrail, id: randomUUID, clock: () => new Date() }).addItem({
+      userId: scheduledUserId, targetId: scheduledTargetId, requestId: randomUUID(),
+      command: { expectedVersion: 0, canonicalCompanyName: "Deadline Fixture", careersUrl: "https://boards.greenhouse.io/deadline-fixture", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null },
+    });
+    const schedules = createJobDiscoverySchedules({ db: database, runs: commands(), auditTrail, id: randomUUID, clock: () => new Date() });
+    const schedule = await schedules.set({ userId: scheduledUserId, targetId: scheduledTargetId, requestId: randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
+    await database.update(jobDiscoverySchedules).set({ nextRunAt: new Date(Date.now() - 1_000) }).where(eq(jobDiscoverySchedules.id, schedule.scheduleId));
+    const [occurrence] = await schedules.materializeDue({ limit: 1 });
+    if (!occurrence) throw new Error("expected a pending occurrence");
+
+    const locked = deferred<void>();
+    const releaseLock = deferred<void>();
+    const holder = database.$client.begin(async (connection) => {
+      await connection`select pg_advisory_xact_lock(hashtextextended(${scheduledUserId}, 0))`;
+      locked.resolve();
+      await releaseLock.promise;
+    });
+    await locked.promise;
+    const failures: AgentRunScheduleFailure[] = [];
+    const scheduler = new AgentRunScheduler({
+      schedules,
+      reporter: { report: async (failure) => { failures.push(failure); } },
+      scanTimeoutMs: 100,
+    });
+    try {
+      const initializing = scheduler.onModuleInit();
+      await waitFor(async () => Boolean((await database.execute(sql<{ waiting: boolean }>`
+        select exists(
+          select 1 from pg_stat_activity
+          where pid <> pg_backend_pid()
+            and state = 'active'
+            and wait_event = 'advisory'
+            and query like '%pg_advisory_xact_lock%'
+        ) as waiting
+      `))[0]?.waiting), "start did not wait for the account advisory lock", 2_000);
+      await waitFor(async () => failures.length >= 1, "scheduler did not report dispatch failure", 2_000);
+      expect(failures[0]).toEqual({ failureCode: "JOB_DISCOVERY_SCHEDULE_DISPATCH_FAILED" });
+      await initializing;
+      await waitFor(async () => failures.length >= 2, "scheduler single-flight did not clear for the next tick", 3_000);
+      await waitFor(async () => !Boolean((await database.execute(sql<{ waiting: boolean }>`
+        select exists(
+          select 1 from pg_stat_activity
+          where pid <> pg_backend_pid()
+            and state = 'active'
+            and wait_event = 'advisory'
+            and query like '%pg_advisory_xact_lock%'
+        ) as waiting
+      `))[0]?.waiting), "advisory-lock query remained active after deadline", 2_000);
+
+      releaseLock.resolve();
+      await holder;
+      await waitFor(async () => {
+        const [persisted] = await database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, occurrence.occurrenceId));
+        return persisted?.status === "dispatched" && Boolean(persisted.runId);
+      }, "scheduler did not recover on the next tick", 3_000);
+      await expect(database.select().from(agentRuns).where(and(eq(agentRuns.userId, scheduledUserId), eq(agentRuns.idempotencyKey, occurrence.occurrenceId)))).resolves.toHaveLength(1);
+    } finally {
+      releaseLock.resolve();
+      await holder.catch(() => undefined);
+      await scheduler.onModuleDestroy();
+    }
+  }, 12_000);
+
   it("暂停 run 不被恢复扫描，恢复后完成，取消的 run 不产生结果", async () => {
     await stopWorker();
     delete process.env.E2E_AGENT_RUN_SCENARIOS;

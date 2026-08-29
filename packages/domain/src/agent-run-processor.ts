@@ -15,6 +15,7 @@ import { decideRetry } from "./agent-run-state";
 import { agentRunUsageSnapshot, appendBudgetFacts, settleActiveSlice, terminateBudgetRun, type BudgetDimension } from "./agent-run-lifecycle";
 import type { AgentRunCheckpoint } from "./agent-run-checkpoint";
 import { normalizeAgentRunSourceScope } from "./agent-run-source-scope";
+import { applyTransactionDeadline } from "./transaction-deadline";
 
 export interface DiscoveryContentStore {
   put(input: { objectKey: string; bytes: Uint8Array; mediaType: "application/json"; runId: string }): Promise<void>;
@@ -63,8 +64,7 @@ export function createAgentRunRecoveryQueries(deps: { db: Database; clock: () =>
       const rows = await bounded(deps.clock, deadline, () => deps.db.transaction(async (transaction) => {
         const remaining = remainingBudget(deps.clock, deadline);
         if (remaining <= 0) throw new AgentRunBudgetError("active_duration");
-        await transaction.execute(sql.raw(`set local transaction_timeout = ${Math.max(1, Math.floor(remaining))}`));
-        await transaction.execute(sql.raw(`set local statement_timeout = ${Math.max(1, Math.floor(remaining))}`));
+        await applyTransactionDeadline(transaction, { deadline, clock: deps.clock });
         const now = deps.clock();
         if (remainingBudget(deps.clock, deadline) <= 0) throw new AgentRunBudgetError("active_duration");
         return transaction.select({ runId: agentRuns.id, userId: agentRuns.userId }).from(agentRuns)
@@ -110,11 +110,8 @@ async function runTransaction<T>(deps: AgentRunProcessorDependencies, deadline: 
     // 连接池等待结束后重新读取时间，迟到事务不执行任何业务 SQL。
     const remaining = remainingBudget(deps.clock, deadline);
     if (remaining <= 0) throw new AgentRunBudgetError("active_duration");
-    const timeout = Math.max(1, Math.floor(remaining));
     // PostgreSQL 17 的 transaction_timeout 覆盖整个事务，statement/lock timeout 覆盖单次慢语句和锁等待。
-    await connection.execute(sql.raw(`set local transaction_timeout = ${timeout}`));
-    await connection.execute(sql.raw(`set local statement_timeout = ${timeout}`));
-    await connection.execute(sql.raw(`set local lock_timeout = ${timeout}`));
+    await applyTransactionDeadline(connection, { deadline, clock: deps.clock });
     if (remainingBudget(deps.clock, deadline) <= 0) throw new AgentRunBudgetError("active_duration");
     return operation(connection);
   }) as Promise<T>;
