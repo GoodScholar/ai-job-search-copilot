@@ -12,6 +12,8 @@ import {
 import type { AgentRunQueue } from "@job-copilot/domain/agent-runs";
 
 const DEFAULT_ENQUEUE_DEADLINE_MS = 1_500;
+const DEFAULT_CLEANUP_DEADLINE_MS = 250;
+const DEFAULT_COOLDOWN_MS = 1_000;
 
 interface AgentRunQueueClient {
   add(name: string, data: AgentRunJob, options: JobsOptions): Promise<unknown>;
@@ -21,11 +23,25 @@ interface AgentRunQueueClient {
 
 type BullmqAgentRunQueueOptions = {
   enqueueDeadlineMs?: number;
+  cleanupDeadlineMs?: number;
+  cooldownMs?: number;
   queueFactory?: () => AgentRunQueueClient;
+};
+
+type QueueGeneration = {
+  queue: AgentRunQueueClient;
+  redis?: Redis;
+  inFlight: number;
+  retired: boolean;
+  cleanupStarted: boolean;
 };
 
 class AgentRunQueueTimeoutError extends Error {
   readonly code = "AGENT_RUN_QUEUE_TIMEOUT";
+}
+
+class AgentRunQueueCooldownError extends Error {
+  readonly code = "AGENT_RUN_QUEUE_COOLDOWN";
 }
 
 async function enqueueWithDeadline<T>(operation: () => Promise<T>, deadlineMs: number): Promise<T> {
@@ -43,8 +59,9 @@ async function enqueueWithDeadline<T>(operation: () => Promise<T>, deadlineMs: n
 }
 
 export class BullmqAgentRunQueue implements AgentRunQueue {
-  private redis: Redis | undefined;
-  private queue: AgentRunQueueClient | undefined;
+  private active: QueueGeneration | undefined;
+  private cooldownUntil = 0;
+  private readonly cleanups = new Set<Promise<void>>();
 
   constructor(
     private readonly redisUrl = process.env.REDIS_URL ?? `redis://127.0.0.1:${process.env.REDIS_PORT ?? "63790"}`,
@@ -53,9 +70,10 @@ export class BullmqAgentRunQueue implements AgentRunQueue {
 
   async enqueue(job: AgentRunJob): Promise<void> {
     const payload = AgentRunJobSchema.parse(job);
-    const queue = this.getQueue();
+    const generation = this.getGeneration();
+    generation.inFlight += 1;
     try {
-      await enqueueWithDeadline(() => queue.add(AGENT_RUN_JOB_NAME, payload, {
+      await enqueueWithDeadline(() => generation.queue.add(AGENT_RUN_JOB_NAME, payload, {
         jobId: payload.runId,
         attempts: AGENT_RUN_BUDGET.maxAttempts,
         backoff: { type: "fixed", delay: AGENT_RUN_CLAIM_LEASE_MS + AGENT_RUN_SCAN_INTERVAL_MS },
@@ -63,38 +81,64 @@ export class BullmqAgentRunQueue implements AgentRunQueue {
         removeOnFail: true,
       }), this.options.enqueueDeadlineMs ?? DEFAULT_ENQUEUE_DEADLINE_MS);
     } catch (error) {
-      await this.disconnectFailedQueue(queue);
+      this.retire(generation);
       throw error;
+    } finally {
+      generation.inFlight -= 1;
+      this.startCleanupWhenIdle(generation);
     }
   }
 
   async onModuleDestroy(): Promise<void> {
-    await this.queue?.close();
-    if (this.redis && this.redis.status !== "end") await this.redis.quit();
+    if (this.active) this.retire(this.active);
+    await Promise.allSettled(this.cleanups);
   }
 
-  private getQueue(): AgentRunQueueClient {
-    if (this.queue) return this.queue;
+  private getGeneration(): QueueGeneration {
+    if (this.active) return this.active;
+    if (Date.now() < this.cooldownUntil) throw new AgentRunQueueCooldownError();
+
     if (this.options.queueFactory) {
-      this.queue = this.options.queueFactory();
-      return this.queue;
+      this.active = this.createGeneration(this.options.queueFactory());
+      return this.active;
     }
-    this.redis = new Redis(this.redisUrl, {
+    const redis = new Redis(this.redisUrl, {
       maxRetriesPerRequest: 1,
       connectTimeout: 1_000,
       retryStrategy: (attempt) => attempt <= 1 ? 50 : null,
       lazyConnect: true,
     });
-    this.queue = new Queue(AGENT_RUN_QUEUE, { connection: this.redis });
-    return this.queue;
+    this.active = this.createGeneration(new Queue(AGENT_RUN_QUEUE, { connection: redis }), redis);
+    return this.active;
   }
 
-  private async disconnectFailedQueue(queue: AgentRunQueueClient): Promise<void> {
-    if (this.queue !== queue) return;
-    this.queue = undefined;
-    const redis = this.redis;
-    this.redis = undefined;
-    try { await queue.disconnect(); } catch { /* 原始 enqueue 错误保持为主错误。 */ }
-    if (redis && redis.status !== "end") redis.disconnect();
+  private createGeneration(queue: AgentRunQueueClient, redis?: Redis): QueueGeneration {
+    return { queue, redis, inFlight: 0, retired: false, cleanupStarted: false };
+  }
+
+  private retire(generation: QueueGeneration): void {
+    if (generation.retired) return;
+    generation.retired = true;
+    if (this.active === generation) this.active = undefined;
+    this.cooldownUntil = Math.max(
+      this.cooldownUntil,
+      Date.now() + (this.options.cooldownMs ?? DEFAULT_COOLDOWN_MS),
+    );
+    this.startCleanupWhenIdle(generation);
+  }
+
+  private startCleanupWhenIdle(generation: QueueGeneration): void {
+    if (!generation.retired || generation.inFlight > 0 || generation.cleanupStarted) return;
+    generation.cleanupStarted = true;
+    const cleanup = enqueueWithDeadline(
+      () => generation.queue.disconnect(),
+      this.options.cleanupDeadlineMs ?? DEFAULT_CLEANUP_DEADLINE_MS,
+    )
+      .catch(() => undefined)
+      .finally(() => {
+        if (generation.redis && generation.redis.status !== "end") generation.redis.disconnect();
+        this.cleanups.delete(cleanup);
+      });
+    this.cleanups.add(cleanup);
   }
 }

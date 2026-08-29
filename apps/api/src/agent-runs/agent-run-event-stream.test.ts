@@ -78,7 +78,7 @@ describe("Agent Run SSE", () => {
     expect(eventsAfter).not.toHaveBeenCalled();
   });
 
-  it("慢消费者只排队一条业务事件，恢复 pull 后从数据库游标继续有序回放", async () => {
+  it("历史三条事件只查询一次，按消费者 pull 连续有序回放且不等待轮询间隔", async () => {
     vi.useFakeTimers();
     const allEvents = [queuedEvent, startedEvent, completedEvent];
     const eventsAfter = vi.fn(async ({ afterSequence }: { afterSequence: number }) => (
@@ -90,16 +90,39 @@ describe("Agent Run SSE", () => {
 
     const first = await reader.read();
     expect(new TextDecoder().decode(first.value)).toContain("id: 1");
-    await vi.advanceTimersByTimeAsync(250);
-    expect(eventsAfter).toHaveBeenCalledTimes(2);
-
-    const second = await reader.read();
-    expect(new TextDecoder().decode(second.value)).toContain("id: 2");
-    await vi.advanceTimersByTimeAsync(250);
-    expect(eventsAfter).toHaveBeenCalledTimes(3);
-    const third = await reader.read();
-    expect(new TextDecoder().decode(third.value)).toContain("id: 3");
+    let second: ReadableStreamReadResult<Uint8Array> | undefined;
+    void reader.read().then((chunk) => { second = chunk; });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(second).toBeDefined();
+    expect(new TextDecoder().decode(second?.value)).toContain("id: 2");
+    let third: ReadableStreamReadResult<Uint8Array> | undefined;
+    void reader.read().then((chunk) => { third = chunk; });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(third).toBeDefined();
+    expect(new TextDecoder().decode(third?.value)).toContain("id: 3");
+    expect(eventsAfter).toHaveBeenCalledTimes(1);
     await expect(reader.read()).resolves.toEqual({ done: true, value: undefined });
+  });
+
+  it("查询在途跨过心跳周期时不占用事件容量，迟到事件仍从原游标交付", async () => {
+    vi.useFakeTimers();
+    const deferred = promiseWithResolvers<AgentRunDetail["events"]>();
+    const eventsAfter = vi.fn().mockReturnValue(deferred.promise);
+    const reader = createAgentRunEventStream({ queries: { eventsAfter }, userId, runId, afterSequence: 0 }).getReader();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(eventsAfter).toHaveBeenCalledWith({ userId, runId, afterSequence: 0 });
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    let first: ReadableStreamReadResult<Uint8Array> | undefined;
+    void reader.read().then((chunk) => { first = chunk; });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(first).toBeUndefined();
+
+    deferred.resolve([queuedEvent]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(new TextDecoder().decode(first?.value)).toContain("id: 1");
+    expect(eventsAfter).toHaveBeenCalledTimes(1);
+    await reader.cancel();
   });
 
   it("心跳填满下游容量后暂停 heartbeat 与数据库轮询，消费后恢复", async () => {
