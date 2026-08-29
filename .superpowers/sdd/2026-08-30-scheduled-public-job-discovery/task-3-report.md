@@ -85,3 +85,33 @@ The broad API command starts Testcontainers and failed during reaper port bindin
 ### Change
 
 `@job-copilot/source-access/testing` now immediately throws `PUBLIC_SOURCE_TESTING_DISABLED` unless the real process environment is test. It never constructs the internal client in production, so test origin, timeout, sleep, lookup, and transport cannot run there.
+
+## Fix Round 4
+
+### TDD RED / GREEN evidence
+
+- RED — `pnpm --filter @job-copilot/source-access test` 在补齐矩阵后失败 2 项：缺失调用级 allowlist 抛出了内部 `TypeError`（而非稳定的 `PUBLIC_SOURCE_TARGET_REJECTED`）；`/slow-headers` 在 20ms connect/header 预算内仍错误成功。失败位置分别为 `index.test.ts:301` 与 `:403`。
+- GREEN — 最小生产修复后同一命令通过：`1` test file、`31` tests。`isAuthorizedUrl` 对空/缺失/畸形 allowlist 失败关闭；node transport 的 connect timer 现在持续到收到 response headers，因此 TCP 建连但不返回 headers 也会超时。
+- 本轮新测试中，DNS pinning、排队/在途 abort 与错误脱敏在当前实现上首次即为 GREEN；没有为制造 RED 而回退已存在的正确安全行为。它们仍是独立的可回归行为证据。
+
+### 安全矩阵与结果
+
+- A（预网络 exact policy）：`rejects $name before DNS or transport`（`packages/source-access/src/index.test.ts:243-304`）六个 `it.each` rows：HTTP、带 credential HTTPS、immutable capability mismatch、empty allowlist、missing allowlist、仅 `greenhouse.io` 父域。每行均断言 `lookup === 0`、`transport === 0`；GREEN。
+- B（DNS）：`rejects %s answers before transport`（`:306-328`）分别覆盖 pure-private 与 mixed public/private，均断言 lookup 为 1、transport 为 0；`pins the first approved DNS answer without a rebinding lookup`（`:330-351`）断言第二次若返回私网也不会被查询，transport 只获得首个已批准的 `93.184.216.34`；GREEN。
+- C（redirect/retry）：`allows exactly three redirects and rejects a fourth redirect`（`:353-377`）断言 `maxRedirects=3` 的 3 跳成功、第 4 跳拒绝且 `attemptCount=4`；`uses a per-hop retry budget and reports a cumulative typed attempt count`（`:379-400`）断言首 hop retry→redirect、次 hop retry→success 的累计 count 为 4；既有 `allows only exact-host redirects within its per-call authorization`（`:126-132`）保留同 host 成功/跨 host 拒绝；GREEN。
+- D（timeout/abort/concurrency）：`separates first-response timeout from slow-body total timeout`（`:402-407`）分别用慢 headers 与先 body 后结束证明两个计时器；`removes three consecutively aborted queued requests so another host reaches global concurrency two`（`:409-440`）覆盖连续三次 global queue abort 并在另一个 host 仍被占用时使第三 host 达到 global=2；`forwards an in-flight abort to transport and releases host and global permits`（`:442-475`）断言 transport 收到 signal、不同 host 能启动、相同 host 能复用 permit；既有 pre-queue abort（`:148-155`）和单 queued abort（`:220-241`）仍 GREEN。
+- E（content/redaction）：既有 `accepts application/json only with its declared content type`（`:121-124`）及 HTML wrong type/2MiB+1（`:110-119`）保持；`redacts URL, body, allowlist, and transport secrets from a stable public error`（`:477-507`）以 credential/query URL、secret response body、extra allowlist 与恶意 lookup/transport message 逐个实际触发错误，断言 enumerable fields、message、cause、stack 无敏感值，只得到稳定的 code/retryable/attemptCount；GREEN。
+- F（既有回归）：2MiB+1、HTML wrong content-type、429/5xx bounded retry、Retry-After 30s cap、固定 UA（`:110-146`）；same/cross-host redirect（`:126-132`）；total timeout 与 abort（`:148-155`）；global=2/per-host=1（`:186-205`）均在本轮 31 tests 中 GREEN。
+
+### Final verification
+
+- `pnpm --filter @job-copilot/source-access test` — 31/31 passed.
+- `pnpm --filter @job-copilot/source-access typecheck` — exit 0.
+- `pnpm --filter api exec vitest run src/job-imports/job-page-fetcher.test.ts` — 26/26 passed.
+- `pnpm --filter api typecheck` — exit 0.
+- `git diff --check` — clean.
+
+### Scope / concern
+
+- 仅修改 `packages/source-access` 的策略代码和测试；没有修改 Greenhouse adapter、API fetcher、Worker 或 UI。
+- 测试只使用受控 loopback fixture 或 injected lookup/transport，未访问真实招聘网站。

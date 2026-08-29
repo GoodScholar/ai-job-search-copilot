@@ -24,6 +24,12 @@ describe("PublicSourceClient", () => {
         case "/rate-limited": response.writeHead(429, { "content-type": "text/html", "retry-after": "60" }).end(); return;
         case "/server-error": response.writeHead(500, { "content-type": "text/html" }).end(); return;
         case "/slow": setTimeout(() => response.writeHead(200, { "content-type": "text/html" }).end("slow"), 80); return;
+        case "/slow-headers": setTimeout(() => response.writeHead(200, { "content-type": "text/html" }).end("slow headers"), 80); return;
+        case "/slow-body":
+          response.writeHead(200, { "content-type": "text/html" });
+          response.write("first byte");
+          setTimeout(() => response.end("last byte"), 80);
+          return;
         default: response.writeHead(404).end();
       }
     });
@@ -217,7 +223,7 @@ describe("PublicSourceClient", () => {
     const access = createPublicSourceClientForTest({
       exactHosts: ["hold-one.test", "hold-two.test", "queued.test", "later.test"],
       lookup: async () => [{ address: "93.184.216.34", family: 4 }],
-      transport: async ({ url }) => {
+      transport: async ({ url }): Promise<{ status: number; headers: Readonly<Record<string, string>>; body: Uint8Array }> => {
         if (url.hostname === "hold-one.test" || url.hostname === "hold-two.test") await held;
         return { status: 200, headers: { "content-type": "text/html" }, body: new Uint8Array() };
       },
@@ -232,5 +238,271 @@ describe("PublicSourceClient", () => {
     release?.();
     await Promise.all([first, second]);
     await expect(access.get({ url: new URL("https://later.test/jobs"), allowedDomains: ["later.test"], accept: "text/html", maxRedirects: 0, retry: "none" })).resolves.toMatchObject({ status: 200 });
+  });
+
+  it.each([
+    {
+      name: "HTTP protocol",
+      exactHosts: ["policy.test"],
+      url: "http://policy.test/jobs",
+      allowedDomains: ["policy.test"],
+    },
+    {
+      name: "credential-bearing HTTPS URL",
+      exactHosts: ["policy.test"],
+      url: "https://user:secret@policy.test/jobs",
+      allowedDomains: ["policy.test"],
+    },
+    {
+      name: "immutable capability mismatch despite a matching call allowlist",
+      exactHosts: ["capability.test"],
+      url: "https://request.test/jobs",
+      allowedDomains: ["request.test"],
+    },
+    {
+      name: "an empty call allowlist",
+      exactHosts: ["policy.test"],
+      url: "https://policy.test/jobs",
+      allowedDomains: [],
+    },
+    {
+      name: "a missing call allowlist",
+      exactHosts: ["policy.test"],
+      url: "https://policy.test/jobs",
+      allowedDomains: undefined,
+    },
+    {
+      name: "a parent-only greenhouse.io allowlist",
+      exactHosts: ["boards-api.greenhouse.io"],
+      url: "https://boards-api.greenhouse.io/v1/boards/acme/jobs",
+      allowedDomains: ["greenhouse.io"],
+    },
+  ])("rejects $name before DNS or transport", async ({ exactHosts, url, allowedDomains }) => {
+    let lookups = 0;
+    let transports = 0;
+    const access = createPublicSourceClientForTest({
+      exactHosts,
+      lookup: async () => {
+        lookups += 1;
+        return [{ address: "93.184.216.34", family: 4 }];
+      },
+      transport: async () => {
+        transports += 1;
+        throw new Error("transport must not run");
+      },
+    });
+
+    await expect(access.get({
+      url: new URL(url),
+      allowedDomains: allowedDomains as readonly string[],
+      accept: "text/html",
+      maxRedirects: 0,
+      retry: "none",
+    })).rejects.toMatchObject({ code: "PUBLIC_SOURCE_TARGET_REJECTED" });
+    expect(lookups).toBe(0);
+    expect(transports).toBe(0);
+  });
+
+  it.each([
+    ["pure private DNS", [{ address: "127.0.0.1", family: 4 }]],
+    ["mixed public and private DNS", [{ address: "93.184.216.34", family: 4 }, { address: "127.0.0.1", family: 4 }]],
+  ])("rejects %s answers before transport", async (_name, answers) => {
+    let lookups = 0;
+    let transports = 0;
+    const access = createPublicSourceClientForTest({
+      exactHosts: ["dns-policy.test"],
+      lookup: async () => {
+        lookups += 1;
+        return answers;
+      },
+      transport: async () => {
+        transports += 1;
+        throw new Error("transport must not run");
+      },
+    });
+
+    await expect(access.get({ url: new URL("https://dns-policy.test/jobs"), allowedDomains: ["dns-policy.test"], accept: "text/html", maxRedirects: 0, retry: "none" }))
+      .rejects.toMatchObject({ code: "PUBLIC_SOURCE_TARGET_REJECTED" });
+    expect(lookups).toBe(1);
+    expect(transports).toBe(0);
+  });
+
+  it("pins the first approved DNS answer without a rebinding lookup", async () => {
+    let lookups = 0;
+    const seenTargets: string[] = [];
+    const access = createPublicSourceClientForTest({
+      exactHosts: ["pinning.test"],
+      lookup: async () => {
+        lookups += 1;
+        return lookups === 1
+          ? [{ address: "93.184.216.34", family: 4 }]
+          : [{ address: "127.0.0.1", family: 4 }];
+      },
+      transport: async ({ target }) => {
+        seenTargets.push(target.address);
+        return { status: 200, headers: { "content-type": "text/html" }, body: new Uint8Array() };
+      },
+    });
+
+    await expect(access.get({ url: new URL("https://pinning.test/jobs"), allowedDomains: ["pinning.test"], accept: "text/html", maxRedirects: 0, retry: "none" }))
+      .resolves.toMatchObject({ status: 200 });
+    expect(lookups).toBe(1);
+    expect(seenTargets).toEqual(["93.184.216.34"]);
+  });
+
+  it("allows exactly three redirects and rejects a fourth redirect", async () => {
+    const redirects = createPublicSourceClientForTest({
+      exactHosts: ["redirect-limit.test"],
+      lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+      transport: async ({ url }): Promise<{ status: number; headers: Readonly<Record<string, string>>; body: Uint8Array }> => {
+        const hop = Number(url.pathname.slice(1));
+        return hop < 3
+          ? { status: 302, headers: { location: `/${hop + 1}` }, body: new Uint8Array() }
+          : { status: 200, headers: { "content-type": "text/html" }, body: new Uint8Array() };
+      },
+    });
+    await expect(redirects.get({ url: new URL("https://redirect-limit.test/0"), allowedDomains: ["redirect-limit.test"], accept: "text/html", maxRedirects: 3, retry: "none" }))
+      .resolves.toMatchObject({ status: 200, attemptCount: 4 });
+
+    const tooManyRedirects = createPublicSourceClientForTest({
+      exactHosts: ["redirect-limit.test"],
+      lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+      transport: async ({ url }): Promise<{ status: number; headers: Readonly<Record<string, string>>; body: Uint8Array }> => {
+        const hop = Number(url.pathname.slice(1));
+        return { status: 302, headers: { location: `/${hop + 1}` }, body: new Uint8Array() };
+      },
+    });
+    await expect(tooManyRedirects.get({ url: new URL("https://redirect-limit.test/0"), allowedDomains: ["redirect-limit.test"], accept: "text/html", maxRedirects: 3, retry: "none" }))
+      .rejects.toMatchObject({ code: "PUBLIC_SOURCE_REDIRECT_INVALID", attemptCount: 4 });
+  });
+
+  it("uses a per-hop retry budget and reports a cumulative typed attempt count", async () => {
+    const attemptsByPath = new Map<string, number>();
+    const access = createPublicSourceClientForTest({
+      exactHosts: ["attempts.test"],
+      lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+      sleep: async () => undefined,
+      transport: async ({ url }): Promise<{ status: number; headers: Readonly<Record<string, string>>; body: Uint8Array }> => {
+        const count = (attemptsByPath.get(url.pathname) ?? 0) + 1;
+        attemptsByPath.set(url.pathname, count);
+        if (url.pathname === "/first") return count === 1
+          ? { status: 500, headers: {}, body: new Uint8Array() }
+          : { status: 302, headers: { location: "/second" }, body: new Uint8Array() };
+        return count === 1
+          ? { status: 500, headers: {}, body: new Uint8Array() }
+          : { status: 200, headers: { "content-type": "text/html" }, body: new Uint8Array() };
+      },
+    });
+
+    await expect(access.get({ url: new URL("https://attempts.test/first"), allowedDomains: ["attempts.test"], accept: "text/html", maxRedirects: 3, retry: "bounded" }))
+      .resolves.toMatchObject({ status: 200, attemptCount: 4 });
+    expect(attemptsByPath).toEqual(new Map([["/first", 2], ["/second", 2]]));
+  });
+
+  it("separates first-response timeout from slow-body total timeout", async () => {
+    await expect(client({ connectTimeoutMs: 20, totalTimeoutMs: 200 }).get({ url: new URL(`${origin}/slow-headers`), allowedDomains: ["127.0.0.1"], accept: "text/html", maxRedirects: 0, retry: "none" }))
+      .rejects.toMatchObject({ code: "PUBLIC_SOURCE_TIMEOUT" });
+    await expect(client({ connectTimeoutMs: 200, totalTimeoutMs: 20 }).get({ url: new URL(`${origin}/slow-body`), allowedDomains: ["127.0.0.1"], accept: "text/html", maxRedirects: 0, retry: "none" }))
+      .rejects.toMatchObject({ code: "PUBLIC_SOURCE_TIMEOUT" });
+  });
+
+  it("removes three consecutively aborted queued requests so another host reaches global concurrency two", async () => {
+    let releaseA: (() => void) | undefined;
+    let releaseB: (() => void) | undefined;
+    const heldA = new Promise<void>((resolve) => { releaseA = resolve; });
+    const heldB = new Promise<void>((resolve) => { releaseB = resolve; });
+    let active = 0;
+    let maximum = 0;
+    const access = createPublicSourceClientForTest({
+      exactHosts: ["hold-a.test", "hold-b.test", "queued-a.test", "queued-b.test", "queued-c.test", "third.test"],
+      lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+      transport: async ({ url }) => {
+        active += 1;
+        maximum = Math.max(maximum, active);
+        if (url.hostname === "hold-a.test") await heldA;
+        if (url.hostname === "hold-b.test") await heldB;
+        active -= 1;
+        return { status: 200, headers: { "content-type": "text/html" }, body: new Uint8Array() };
+      },
+    });
+    const heldRequests = ["hold-a.test", "hold-b.test"].map((host) => access.get({ url: new URL(`https://${host}/jobs`), allowedDomains: [host], accept: "text/html", maxRedirects: 0, retry: "none" }));
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const controllers = [new AbortController(), new AbortController(), new AbortController()];
+    const queued = controllers.map((controller, index) => access.get({ url: new URL(`https://queued-${String.fromCharCode(97 + index)}.test/jobs`), allowedDomains: [`queued-${String.fromCharCode(97 + index)}.test`], accept: "text/html", maxRedirects: 0, retry: "none", signal: controller.signal }));
+    controllers.forEach((controller) => controller.abort());
+    await Promise.all(queued.map((request) => expect(request).rejects.toMatchObject({ code: "PUBLIC_SOURCE_ABORTED" })));
+    releaseA?.();
+    await heldRequests[0];
+    await expect(access.get({ url: new URL("https://third.test/jobs"), allowedDomains: ["third.test"], accept: "text/html", maxRedirects: 0, retry: "none" })).resolves.toMatchObject({ status: 200 });
+    expect(maximum).toBe(2);
+    releaseB?.();
+    await heldRequests[1];
+  });
+
+  it("forwards an in-flight abort to transport and releases host and global permits", async () => {
+    let transportSawAbort = false;
+    let abortARequests = 0;
+    let releaseSecond: (() => void) | undefined;
+    const secondHeld = new Promise<void>((resolve) => { releaseSecond = resolve; });
+    let thirdStarted = false;
+    const access = createPublicSourceClientForTest({
+      exactHosts: ["abort-a.test", "abort-b.test", "abort-c.test"],
+      lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+      transport: async ({ url, signal }) => {
+        if (url.hostname === "abort-a.test" && ++abortARequests === 1) return new Promise((_resolve, reject) => {
+          signal?.addEventListener("abort", () => {
+            transportSawAbort = true;
+            reject(new PublicSourceAccessError("PUBLIC_SOURCE_ABORTED"));
+          }, { once: true });
+        });
+        if (url.hostname === "abort-b.test") await secondHeld;
+        if (url.hostname === "abort-c.test") thirdStarted = true;
+        return { status: 200, headers: { "content-type": "text/html" }, body: new Uint8Array() };
+      },
+    });
+    const controller = new AbortController();
+    const aborted = access.get({ url: new URL("https://abort-a.test/jobs"), allowedDomains: ["abort-a.test"], accept: "text/html", maxRedirects: 0, retry: "none", signal: controller.signal });
+    const held = access.get({ url: new URL("https://abort-b.test/jobs"), allowedDomains: ["abort-b.test"], accept: "text/html", maxRedirects: 0, retry: "none" });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    controller.abort();
+    await expect(aborted).rejects.toMatchObject({ code: "PUBLIC_SOURCE_ABORTED" });
+    await expect(access.get({ url: new URL("https://abort-c.test/jobs"), allowedDomains: ["abort-c.test"], accept: "text/html", maxRedirects: 0, retry: "none" })).resolves.toMatchObject({ status: 200 });
+    expect(transportSawAbort).toBe(true);
+    expect(thirdStarted).toBe(true);
+    await expect(access.get({ url: new URL("https://abort-a.test/reused"), allowedDomains: ["abort-a.test"], accept: "text/html", maxRedirects: 0, retry: "none" })).resolves.toMatchObject({ status: 200 });
+    releaseSecond?.();
+    await held;
+  });
+
+  it("redacts URL, body, allowlist, and transport secrets from a stable public error", async () => {
+    const sensitiveUrl = "https://user:super-secret@redaction.test/jobs?token=query-secret";
+    const sensitiveBody = "body-secret";
+    const sensitiveAllowlist = "allowlist-secret.test";
+    const sensitiveTransport = "transport-secret";
+    const errors = await Promise.all([
+      createPublicSourceClientForTest({ exactHosts: ["redaction.test"] }).get({ url: new URL(sensitiveUrl), allowedDomains: ["redaction.test", sensitiveAllowlist], accept: "text/html", maxRedirects: 0, retry: "none" }).catch((caught: unknown) => caught),
+      createPublicSourceClientForTest({ exactHosts: ["redaction.test"], lookup: async () => { throw new Error(`lookup ${sensitiveTransport} ${sensitiveBody}`); }, transport: async () => { throw new Error("transport must not run"); } }).get({ url: new URL("https://redaction.test/jobs?token=query-secret"), allowedDomains: ["redaction.test", sensitiveAllowlist], accept: "text/html", maxRedirects: 0, retry: "none" }).catch((caught: unknown) => caught),
+      createPublicSourceClientForTest({ exactHosts: ["redaction.test"], lookup: async () => [{ address: "93.184.216.34", family: 4 }], transport: async () => { throw new Error(`transport ${sensitiveTransport} ${sensitiveBody}`); } }).get({ url: new URL("https://redaction.test/jobs?token=query-secret"), allowedDomains: ["redaction.test", sensitiveAllowlist], accept: "text/html", maxRedirects: 0, retry: "none" }).catch((caught: unknown) => caught),
+      createPublicSourceClientForTest({ exactHosts: ["redaction.test"], lookup: async () => [{ address: "93.184.216.34", family: 4 }], transport: async () => ({ status: 200, headers: { "content-type": "image/png" }, body: Buffer.from(sensitiveBody) }) }).get({ url: new URL("https://redaction.test/jobs?token=query-secret"), allowedDomains: ["redaction.test", sensitiveAllowlist], accept: "text/html", maxRedirects: 0, retry: "none" }).catch((caught: unknown) => caught),
+    ]);
+    for (const error of errors) {
+      const rendered = JSON.stringify({
+        enumerable: Object.fromEntries(Object.entries(error as object)),
+        message: error instanceof Error ? error.message : undefined,
+        cause: error instanceof Error ? error.cause : undefined,
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+      for (const value of ["super-secret", "query-secret", sensitiveBody, sensitiveAllowlist, sensitiveTransport]) expect(rendered).not.toContain(value);
+    }
+    expect(errors.map((error) => ({
+      code: (error as PublicSourceAccessError).code,
+      retryable: (error as PublicSourceAccessError).retryable,
+      attemptCount: (error as PublicSourceAccessError).attemptCount,
+    }))).toEqual([
+      { code: "PUBLIC_SOURCE_TARGET_REJECTED", retryable: false, attemptCount: 0 },
+      { code: "PUBLIC_SOURCE_UNREACHABLE", retryable: true, attemptCount: 0 },
+      { code: "PUBLIC_SOURCE_UNREACHABLE", retryable: true, attemptCount: 1 },
+      { code: "PUBLIC_SOURCE_CONTENT_TYPE_INVALID", retryable: false, attemptCount: 1 },
+    ]);
   });
 });

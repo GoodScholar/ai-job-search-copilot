@@ -182,7 +182,8 @@ function isAuthorizedUrl(url: URL, allowedDomains: readonly string[], exactHosts
   const host = normalizeHost(url.hostname);
   const isControlledTestUrl = process.env.APP_ENV === "test" && testOrigin?.origin === url.origin;
   if ((!isControlledTestUrl && url.protocol !== "https:") || url.username || url.password || !host) return false;
-  return exactHosts.has(host) && allowedDomains.map(normalizeHost).includes(host);
+  if (!Array.isArray(allowedDomains) || allowedDomains.length === 0) return false;
+  return exactHosts.has(host) && allowedDomains.some((domain) => typeof domain === "string" && normalizeHost(domain) === host);
 }
 
 async function resolveTarget(url: URL, lookup: (hostname: string) => Promise<readonly Address[]>, timeoutMs: number, testOrigin: URL | undefined, signal?: AbortSignal): Promise<{ address: string; family: 4 | 6 }> {
@@ -228,10 +229,8 @@ function nodeTransport(connectTimeoutMs: number): Transport {
     const abort = () => request.destroy(new PublicSourceAccessError("PUBLIC_SOURCE_ABORTED"));
     signal?.addEventListener("abort", abort, { once: true });
     request.once("error", (error) => { clearTimers(); reject(error); });
-    request.once("socket", (socket) => {
-      if (!socket.connecting) clearTimeout(connectTimer);
-      else socket.once(url.protocol === "https:" ? "secureConnect" : "connect", () => clearTimeout(connectTimer));
-    });
+    // Keep this timer through connection establishment: an upstream that accepts
+    // TCP but never returns headers is still an unavailable source attempt.
     request.once("response", () => clearTimeout(connectTimer));
     request.once("response", (response) => response.once("end", clearTimers));
     request.end();
