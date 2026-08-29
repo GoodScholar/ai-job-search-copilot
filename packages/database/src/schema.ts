@@ -513,7 +513,18 @@ export const agentRuns = pgTable("agent_runs", {
   check("agent_runs_termination_kind_check", sql`${table.terminationKind} is null or ${table.terminationKind} in ('completed', 'cancelled_by_user', 'source_failed', 'content_storage_failed', 'persistence_failed', 'budget_exhausted')`),
   check("agent_runs_termination_budget_dimension_check", sql`(${table.terminationKind} = 'budget_exhausted' and ${table.terminationBudgetDimension} in ('active_duration', 'attempts', 'tool_calls', 'model_calls', 'tokens')) or (${table.terminationKind} is distinct from 'budget_exhausted' and ${table.terminationBudgetDimension} is null)`),
   check("agent_runs_cancelled_step_check", sql`(${table.status} = 'cancelled') = (${table.currentStep} = 'cancelled')`),
-  check("agent_runs_complete_termination_check", sql`not ${table.usageComplete} or ${table.status} not in ('completed', 'failed', 'cancelled') or ${table.terminationKind} is not null`),
+  check("agent_runs_termination_mapping_check", sql`
+    (${table.status} in ('queued', 'running', 'paused') and ${table.terminationKind} is null and ${table.terminationBudgetDimension} is null)
+    or (${table.status} = 'completed' and ((not ${table.usageComplete} and ${table.terminationKind} is null) or (${table.terminationKind} = 'completed' and ${table.failureCode} is null and ${table.terminationBudgetDimension} is null)))
+    or (${table.status} = 'cancelled' and ((not ${table.usageComplete} and ${table.terminationKind} is null) or (${table.terminationKind} = 'cancelled_by_user' and ${table.failureCode} is null and ${table.terminationBudgetDimension} is null)))
+    or (${table.status} = 'failed' and (
+      (not ${table.usageComplete} and ${table.terminationKind} is null)
+      or (${table.terminationKind} = 'source_failed' and ${table.failureCode} in ('AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_MODEL_RETRYABLE', 'AGENT_RUN_MODEL_AUTH_FAILED', 'AGENT_RUN_MODEL_POLICY_REJECTED', 'AGENT_RUN_MODEL_INVALID_RESPONSE') and ${table.terminationBudgetDimension} is null)
+      or (${table.terminationKind} = 'content_storage_failed' and ${table.failureCode} = 'AGENT_RUN_CONTENT_STORAGE_FAILED' and ${table.terminationBudgetDimension} is null)
+      or (${table.terminationKind} = 'persistence_failed' and ${table.failureCode} = 'AGENT_RUN_PERSIST_FAILED' and ${table.terminationBudgetDimension} is null)
+      or (${table.terminationKind} = 'budget_exhausted' and ${table.failureCode} = 'AGENT_RUN_BUDGET_EXCEEDED' and ${table.terminationBudgetDimension} is not null)
+    ))
+  `),
   check("agent_runs_timestamp_state_check", sql`
     (${table.status} in ('queued', 'paused') and ${table.completedAt} is null and ${table.failedAt} is null and ${table.cancelledAt} is null)
     or (${table.status} = 'running' and ${table.startedAt} is not null and ${table.completedAt} is null and ${table.failedAt} is null and ${table.cancelledAt} is null)
@@ -535,6 +546,21 @@ export const agentRunControlCommands = pgTable("agent_run_control_commands", {
   check("agent_run_control_commands_action_check", sql`${table.action} in ('pause', 'resume', 'cancel')`),
   check("agent_run_control_commands_result_version_positive", sql`${table.resultRunVersion} >= 1`),
   check("agent_run_control_commands_result_snapshot_object", sql`jsonb_typeof(${table.resultSnapshot}) = 'object'`),
+  check("agent_run_control_commands_result_snapshot_check", sql`
+    ${table.resultSnapshot} ?& array['runId', 'status', 'currentStep', 'controlState', 'version']
+    and (${table.resultSnapshot} - array['runId', 'status', 'currentStep', 'controlState', 'version']) = '{}'::jsonb
+    and jsonb_typeof(${table.resultSnapshot} -> 'runId') = 'string'
+    and ${table.resultSnapshot} -> 'runId' = to_jsonb(${table.runId}::text)
+    and jsonb_typeof(${table.resultSnapshot} -> 'status') = 'string'
+    and ${table.resultSnapshot} ->> 'status' in ('queued', 'running', 'paused', 'completed', 'failed', 'cancelled')
+    and jsonb_typeof(${table.resultSnapshot} -> 'currentStep') = 'string'
+    and ${table.resultSnapshot} ->> 'currentStep' in ('queued', 'batch_search', 'fetch_details', 'persist_results', 'completed', 'failed', 'cancelled')
+    and ((${table.resultSnapshot} ->> 'status' = 'cancelled') = (${table.resultSnapshot} ->> 'currentStep' = 'cancelled'))
+    and jsonb_typeof(${table.resultSnapshot} -> 'controlState') = 'string'
+    and ${table.resultSnapshot} ->> 'controlState' in ('none', 'pause_requested', 'cancel_requested')
+    and jsonb_typeof(${table.resultSnapshot} -> 'version') = 'number'
+    and ${table.resultSnapshot} -> 'version' = to_jsonb(${table.resultRunVersion})
+  `),
 ]);
 
 export const agentRunUsageEntries = pgTable("agent_run_usage_entries", {

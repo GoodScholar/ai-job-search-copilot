@@ -246,4 +246,16 @@ describe("agent run contracts", () => {
       ...queuedSummary, status: "cancelled", currentStep: "queued", cancelledAt: now,
     }).success).toBe(false);
   });
+
+  it("requires complete terminal details to match their termination", () => {
+    expect(AgentRunDetailSchema.safeParse({
+      ...detail,
+      status: "completed",
+      currentStep: "completed",
+      startedAt: now,
+      completedAt: now,
+      usage: { ...usage, complete: true },
+      termination: { kind: "cancelled_by_user", failureCode: null, budgetDimension: null },
+    }).success).toBe(false);
+  });
 });

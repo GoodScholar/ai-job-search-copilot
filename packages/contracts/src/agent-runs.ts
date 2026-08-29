@@ -199,6 +199,13 @@ export const AgentRunDetailSchema = AgentRunSummarySchema.extend({
   const terminal = detail.status === "completed" || detail.status === "failed" || detail.status === "cancelled";
   if (!terminal && detail.termination !== null) context.addIssue({ code: "custom", path: ["termination"], message: "nonterminal runs have no termination" });
   if (terminal && detail.usage.complete && detail.termination === null) context.addIssue({ code: "custom", path: ["termination"], message: "complete terminal runs require termination" });
+  if (detail.termination !== null) {
+    const statusMatches = (detail.status === "completed" && detail.termination.kind === "completed")
+      || (detail.status === "cancelled" && detail.termination.kind === "cancelled_by_user")
+      || (detail.status === "failed" && ["source_failed", "content_storage_failed", "persistence_failed", "budget_exhausted"].includes(detail.termination.kind));
+    if (!statusMatches) context.addIssue({ code: "custom", path: ["termination", "kind"], message: "termination kind must match status" });
+    if (detail.failureCode !== detail.termination.failureCode) context.addIssue({ code: "custom", path: ["failureCode"], message: "failure code must match termination" });
+  }
   if ((detail.status === "cancelled") !== (detail.currentStep === "cancelled")) context.addIssue({ code: "custom", path: ["currentStep"], message: "cancelled status and step must pair" });
 });
 

@@ -47,7 +47,22 @@ CREATE TABLE "agent_run_control_commands" (
 	CONSTRAINT "agent_run_control_commands_user_run_command_unique" UNIQUE("user_id","run_id","command_id"),
 	CONSTRAINT "agent_run_control_commands_action_check" CHECK ("agent_run_control_commands"."action" in ('pause', 'resume', 'cancel')),
 	CONSTRAINT "agent_run_control_commands_result_version_positive" CHECK ("agent_run_control_commands"."result_run_version" >= 1),
-	CONSTRAINT "agent_run_control_commands_result_snapshot_object" CHECK (jsonb_typeof("agent_run_control_commands"."result_snapshot") = 'object')
+	CONSTRAINT "agent_run_control_commands_result_snapshot_object" CHECK (jsonb_typeof("agent_run_control_commands"."result_snapshot") = 'object'),
+	CONSTRAINT "agent_run_control_commands_result_snapshot_check" CHECK (
+    "agent_run_control_commands"."result_snapshot" ?& array['runId', 'status', 'currentStep', 'controlState', 'version']
+    and ("agent_run_control_commands"."result_snapshot" - array['runId', 'status', 'currentStep', 'controlState', 'version']) = '{}'::jsonb
+    and jsonb_typeof("agent_run_control_commands"."result_snapshot" -> 'runId') = 'string'
+    and "agent_run_control_commands"."result_snapshot" -> 'runId' = to_jsonb("agent_run_control_commands"."run_id"::text)
+    and jsonb_typeof("agent_run_control_commands"."result_snapshot" -> 'status') = 'string'
+    and "agent_run_control_commands"."result_snapshot" ->> 'status' in ('queued', 'running', 'paused', 'completed', 'failed', 'cancelled')
+    and jsonb_typeof("agent_run_control_commands"."result_snapshot" -> 'currentStep') = 'string'
+    and "agent_run_control_commands"."result_snapshot" ->> 'currentStep' in ('queued', 'batch_search', 'fetch_details', 'persist_results', 'completed', 'failed', 'cancelled')
+    and (("agent_run_control_commands"."result_snapshot" ->> 'status' = 'cancelled') = ("agent_run_control_commands"."result_snapshot" ->> 'currentStep' = 'cancelled'))
+    and jsonb_typeof("agent_run_control_commands"."result_snapshot" -> 'controlState') = 'string'
+    and "agent_run_control_commands"."result_snapshot" ->> 'controlState' in ('none', 'pause_requested', 'cancel_requested')
+    and jsonb_typeof("agent_run_control_commands"."result_snapshot" -> 'version') = 'number'
+    and "agent_run_control_commands"."result_snapshot" -> 'version' = to_jsonb("agent_run_control_commands"."result_run_version")
+  )
 );
 --> statement-breakpoint
 CREATE TABLE "agent_run_usage_entries" (
@@ -124,7 +139,18 @@ ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_fake_model_usage_check" CHEC
 ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_termination_kind_check" CHECK ("agent_runs"."termination_kind" is null or "agent_runs"."termination_kind" in ('completed', 'cancelled_by_user', 'source_failed', 'content_storage_failed', 'persistence_failed', 'budget_exhausted'));--> statement-breakpoint
 ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_termination_budget_dimension_check" CHECK (("agent_runs"."termination_kind" = 'budget_exhausted' and "agent_runs"."termination_budget_dimension" in ('active_duration', 'attempts', 'tool_calls', 'model_calls', 'tokens')) or ("agent_runs"."termination_kind" is distinct from 'budget_exhausted' and "agent_runs"."termination_budget_dimension" is null));--> statement-breakpoint
 ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_cancelled_step_check" CHECK (("agent_runs"."status" = 'cancelled') = ("agent_runs"."current_step" = 'cancelled'));--> statement-breakpoint
-ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_complete_termination_check" CHECK (not "agent_runs"."usage_complete" or "agent_runs"."status" not in ('completed', 'failed', 'cancelled') or "agent_runs"."termination_kind" is not null);--> statement-breakpoint
+ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_termination_mapping_check" CHECK (
+    ("agent_runs"."status" in ('queued', 'running', 'paused') and "agent_runs"."termination_kind" is null and "agent_runs"."termination_budget_dimension" is null)
+    or ("agent_runs"."status" = 'completed' and ((not "agent_runs"."usage_complete" and "agent_runs"."termination_kind" is null) or ("agent_runs"."termination_kind" = 'completed' and "agent_runs"."failure_code" is null and "agent_runs"."termination_budget_dimension" is null)))
+    or ("agent_runs"."status" = 'cancelled' and ((not "agent_runs"."usage_complete" and "agent_runs"."termination_kind" is null) or ("agent_runs"."termination_kind" = 'cancelled_by_user' and "agent_runs"."failure_code" is null and "agent_runs"."termination_budget_dimension" is null)))
+    or ("agent_runs"."status" = 'failed' and (
+      (not "agent_runs"."usage_complete" and "agent_runs"."termination_kind" is null)
+      or ("agent_runs"."termination_kind" = 'source_failed' and "agent_runs"."failure_code" in ('AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_MODEL_RETRYABLE', 'AGENT_RUN_MODEL_AUTH_FAILED', 'AGENT_RUN_MODEL_POLICY_REJECTED', 'AGENT_RUN_MODEL_INVALID_RESPONSE') and "agent_runs"."termination_budget_dimension" is null)
+      or ("agent_runs"."termination_kind" = 'content_storage_failed' and "agent_runs"."failure_code" = 'AGENT_RUN_CONTENT_STORAGE_FAILED' and "agent_runs"."termination_budget_dimension" is null)
+      or ("agent_runs"."termination_kind" = 'persistence_failed' and "agent_runs"."failure_code" = 'AGENT_RUN_PERSIST_FAILED' and "agent_runs"."termination_budget_dimension" is null)
+      or ("agent_runs"."termination_kind" = 'budget_exhausted' and "agent_runs"."failure_code" = 'AGENT_RUN_BUDGET_EXCEEDED' and "agent_runs"."termination_budget_dimension" is not null)
+    ))
+  );--> statement-breakpoint
 ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_status_check" CHECK ("agent_runs"."status" in ('queued', 'running', 'paused', 'completed', 'failed', 'cancelled'));--> statement-breakpoint
 ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_current_step_check" CHECK ("agent_runs"."current_step" in ('queued', 'batch_search', 'fetch_details', 'persist_results', 'completed', 'failed', 'cancelled'));--> statement-breakpoint
 ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_failure_code_check" CHECK ("agent_runs"."failure_code" is null or "agent_runs"."failure_code" in ('AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_CONTENT_STORAGE_FAILED', 'AGENT_RUN_PERSIST_FAILED', 'AGENT_RUN_BUDGET_EXCEEDED', 'AGENT_RUN_MODEL_RETRYABLE', 'AGENT_RUN_MODEL_AUTH_FAILED', 'AGENT_RUN_MODEL_POLICY_REJECTED', 'AGENT_RUN_MODEL_INVALID_RESPONSE'));--> statement-breakpoint

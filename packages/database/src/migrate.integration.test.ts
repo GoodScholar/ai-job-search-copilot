@@ -694,8 +694,34 @@ describe("database migrations", () => {
     `);
     await expect(migratedDatabase.execute(sql`
       insert into agent_run_control_commands (user_id, run_id, command_id, action, applied, result_run_version, result_snapshot)
-      values (${otherUserId}, ${runId}, '61fbc726-9ab7-4ea4-bfb8-701d4a31eb04', 'pause', true, 1, '{}'::jsonb)
+      values (${otherUserId}, ${runId}, '61fbc726-9ab7-4ea4-bfb8-701d4a31eb04', 'pause', true, 1,
+        '{"runId":"b1a4c066-d64c-4e27-9f4f-b102701adf30","status":"queued","currentStep":"queued","controlState":"none","version":1}'::jsonb)
     `)).rejects.toMatchObject({ cause: { code: "23503" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_run_control_commands (user_id, run_id, command_id, action, applied, result_run_version, result_snapshot)
+      values (${userId}, ${runId}, '77c1a312-af11-4450-99a2-6712be94ea1f', 'pause', true, 1, '{}'::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_run_control_commands (user_id, run_id, command_id, action, applied, result_run_version, result_snapshot)
+      values (${userId}, ${runId}, 'f2c1b5b8-e8f0-4e9e-b99d-e92ebef62e88', 'pause', true, 1,
+        '{"runId":"b1a4c066-d64c-4e27-9f4f-b102701adf30","status":"queued","currentStep":"queued","controlState":"none","version":1,"extra":true}'::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_run_control_commands (user_id, run_id, command_id, action, applied, result_run_version, result_snapshot)
+      values (${userId}, ${runId}, '7af22430-308f-4db1-b7cf-2d5b3e8daa15', 'pause', true, 2,
+        '{"runId":"49a910ab-1d1f-4669-b4b4-9021b52ed88f","status":"queued","currentStep":"queued","controlState":"none","version":1}'::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
+      update agent_runs
+      set status = 'completed', current_step = 'completed', started_at = now(), completed_at = now(),
+          usage_complete = true, termination_kind = 'cancelled_by_user'
+      where id = ${runId}
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
+      update agent_runs
+      set termination_kind = 'source_failed', failure_code = 'AGENT_RUN_ADAPTER_FAILED'
+      where id = ${runId}
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
     await expect(migratedDatabase.execute(sql`
       insert into agent_run_usage_entries (user_id, run_id, usage_key, category, amount, attempt_count)
       values (${userId}, ${runId}, 'claim:1', 'tool_call', -1, 0)

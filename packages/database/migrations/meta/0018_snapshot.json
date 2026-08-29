@@ -1,5 +1,5 @@
 {
-  "id": "df152a97-cbb9-43a5-bdec-f5de929ecc1a",
+  "id": "657fda9b-a8b3-44f0-85df-724a72483d17",
   "prevId": "44577082-f69b-45b6-9b00-06b96c926c8c",
   "version": "7",
   "dialect": "postgresql",
@@ -468,6 +468,10 @@
         "agent_run_control_commands_result_snapshot_object": {
           "name": "agent_run_control_commands_result_snapshot_object",
           "value": "jsonb_typeof(\"agent_run_control_commands\".\"result_snapshot\") = 'object'"
+        },
+        "agent_run_control_commands_result_snapshot_check": {
+          "name": "agent_run_control_commands_result_snapshot_check",
+          "value": "\n    \"agent_run_control_commands\".\"result_snapshot\" ?& array['runId', 'status', 'currentStep', 'controlState', 'version']\n    and (\"agent_run_control_commands\".\"result_snapshot\" - array['runId', 'status', 'currentStep', 'controlState', 'version']) = '{}'::jsonb\n    and jsonb_typeof(\"agent_run_control_commands\".\"result_snapshot\" -> 'runId') = 'string'\n    and \"agent_run_control_commands\".\"result_snapshot\" -> 'runId' = to_jsonb(\"agent_run_control_commands\".\"run_id\"::text)\n    and jsonb_typeof(\"agent_run_control_commands\".\"result_snapshot\" -> 'status') = 'string'\n    and \"agent_run_control_commands\".\"result_snapshot\" ->> 'status' in ('queued', 'running', 'paused', 'completed', 'failed', 'cancelled')\n    and jsonb_typeof(\"agent_run_control_commands\".\"result_snapshot\" -> 'currentStep') = 'string'\n    and \"agent_run_control_commands\".\"result_snapshot\" ->> 'currentStep' in ('queued', 'batch_search', 'fetch_details', 'persist_results', 'completed', 'failed', 'cancelled')\n    and ((\"agent_run_control_commands\".\"result_snapshot\" ->> 'status' = 'cancelled') = (\"agent_run_control_commands\".\"result_snapshot\" ->> 'currentStep' = 'cancelled'))\n    and jsonb_typeof(\"agent_run_control_commands\".\"result_snapshot\" -> 'controlState') = 'string'\n    and \"agent_run_control_commands\".\"result_snapshot\" ->> 'controlState' in ('none', 'pause_requested', 'cancel_requested')\n    and jsonb_typeof(\"agent_run_control_commands\".\"result_snapshot\" -> 'version') = 'number'\n    and \"agent_run_control_commands\".\"result_snapshot\" -> 'version' = to_jsonb(\"agent_run_control_commands\".\"result_run_version\")\n  "
         }
       },
       "isRLSEnabled": false
@@ -1593,9 +1597,9 @@
           "name": "agent_runs_cancelled_step_check",
           "value": "(\"agent_runs\".\"status\" = 'cancelled') = (\"agent_runs\".\"current_step\" = 'cancelled')"
         },
-        "agent_runs_complete_termination_check": {
-          "name": "agent_runs_complete_termination_check",
-          "value": "not \"agent_runs\".\"usage_complete\" or \"agent_runs\".\"status\" not in ('completed', 'failed', 'cancelled') or \"agent_runs\".\"termination_kind\" is not null"
+        "agent_runs_termination_mapping_check": {
+          "name": "agent_runs_termination_mapping_check",
+          "value": "\n    (\"agent_runs\".\"status\" in ('queued', 'running', 'paused') and \"agent_runs\".\"termination_kind\" is null and \"agent_runs\".\"termination_budget_dimension\" is null)\n    or (\"agent_runs\".\"status\" = 'completed' and ((not \"agent_runs\".\"usage_complete\" and \"agent_runs\".\"termination_kind\" is null) or (\"agent_runs\".\"termination_kind\" = 'completed' and \"agent_runs\".\"failure_code\" is null and \"agent_runs\".\"termination_budget_dimension\" is null)))\n    or (\"agent_runs\".\"status\" = 'cancelled' and ((not \"agent_runs\".\"usage_complete\" and \"agent_runs\".\"termination_kind\" is null) or (\"agent_runs\".\"termination_kind\" = 'cancelled_by_user' and \"agent_runs\".\"failure_code\" is null and \"agent_runs\".\"termination_budget_dimension\" is null)))\n    or (\"agent_runs\".\"status\" = 'failed' and (\n      (not \"agent_runs\".\"usage_complete\" and \"agent_runs\".\"termination_kind\" is null)\n      or (\"agent_runs\".\"termination_kind\" = 'source_failed' and \"agent_runs\".\"failure_code\" in ('AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_MODEL_RETRYABLE', 'AGENT_RUN_MODEL_AUTH_FAILED', 'AGENT_RUN_MODEL_POLICY_REJECTED', 'AGENT_RUN_MODEL_INVALID_RESPONSE') and \"agent_runs\".\"termination_budget_dimension\" is null)\n      or (\"agent_runs\".\"termination_kind\" = 'content_storage_failed' and \"agent_runs\".\"failure_code\" = 'AGENT_RUN_CONTENT_STORAGE_FAILED' and \"agent_runs\".\"termination_budget_dimension\" is null)\n      or (\"agent_runs\".\"termination_kind\" = 'persistence_failed' and \"agent_runs\".\"failure_code\" = 'AGENT_RUN_PERSIST_FAILED' and \"agent_runs\".\"termination_budget_dimension\" is null)\n      or (\"agent_runs\".\"termination_kind\" = 'budget_exhausted' and \"agent_runs\".\"failure_code\" = 'AGENT_RUN_BUDGET_EXCEEDED' and \"agent_runs\".\"termination_budget_dimension\" is not null)\n    ))\n  "
         },
         "agent_runs_timestamp_state_check": {
           "name": "agent_runs_timestamp_state_check",
