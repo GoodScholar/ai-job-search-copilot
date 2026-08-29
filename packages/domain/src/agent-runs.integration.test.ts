@@ -1,7 +1,7 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { agentRunEvents, agentRunJobResults, agentRunSteps, agentRuns, createDatabase, jobAccounts, jobOpportunities, jobSourcePostingVersions, jobSourcePostings, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
+import { agentRunEvents, agentRunJobResults, agentRunSteps, agentRuns, createDatabase, jobAccounts, jobOpportunities, jobOpportunitySources, jobSourcePostingVersions, jobSourcePostings, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
 import { createAgentRunCommands, createAgentRunProcessor, createAgentRunQueries, createAgentRunRecoveryQueries, type AgentRunQueue, type DiscoveryContentStore, type JobDiscoveryAdapter } from "./agent-runs";
 
@@ -117,23 +117,61 @@ describe("agent runs", () => {
     ]));
   });
 
-  it("以租约互斥处理、原子保存发现结果，并跨 run 复用机会证据", async () => {
+  it("完成 run 以连续事件序列和版本持久化每个工作流转换", async () => {
     const { userId, targetId } = await activeTarget();
     const first = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
     const store = new MemoryStore();
     const processor = createAgentRunProcessor({ db: database, adapter: adapter(), contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
     await expect(processor.process({ version: 1, runId: first.runId, userId, finalAttempt: true })).resolves.toBe("completed");
     await expect(processor.process({ version: 1, runId: first.runId, userId, finalAttempt: true })).resolves.toBe("stale");
-    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: first.runId })).resolves.toMatchObject({ status: "completed", currentStep: "completed", attemptCount: 1, results: [expect.objectContaining({ ordinal: 1, company: "示例科技" })], events: expect.arrayContaining([expect.objectContaining({ eventType: "run.completed" })]) });
-    await expect(database.select().from(jobSourcePostings).where(eq(jobSourcePostings.userId, userId))).resolves.toHaveLength(1);
-    await expect(database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, userId))).resolves.toHaveLength(1);
-    await expect(database.select().from(jobOpportunities).where(eq(jobOpportunities.userId, userId))).resolves.toEqual([expect.objectContaining({ importId: null, description: null })]);
+    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: first.runId })).resolves.toMatchObject({ status: "completed", currentStep: "completed", attemptCount: 1, results: [expect.objectContaining({ ordinal: 1, company: "示例科技" })] });
+    const events = await database.select({ sequence: agentRunEvents.sequence, runVersion: agentRunEvents.runVersion, eventType: agentRunEvents.eventType })
+      .from(agentRunEvents).where(and(eq(agentRunEvents.userId, userId), eq(agentRunEvents.runId, first.runId))).orderBy(agentRunEvents.sequence);
+    expect(events).toEqual([
+      { sequence: 1, runVersion: 1, eventType: "run.queued" },
+      { sequence: 2, runVersion: 2, eventType: "run.started" },
+      { sequence: 3, runVersion: 3, eventType: "step.started" },
+      { sequence: 4, runVersion: 4, eventType: "step.completed" },
+      { sequence: 5, runVersion: 5, eventType: "step.started" },
+      { sequence: 6, runVersion: 6, eventType: "step.completed" },
+      { sequence: 7, runVersion: 7, eventType: "step.started" },
+      { sequence: 8, runVersion: 8, eventType: "step.completed" },
+      { sequence: 9, runVersion: 9, eventType: "run.completed" },
+    ]);
+  });
+
+  it("第二个 run 复用同一来源版本和机会，并只删除自己的冗余对象", async () => {
+    const { userId, targetId } = await activeTarget();
+    const first = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const store = new MemoryStore();
+    const processor = createAgentRunProcessor({ db: database, adapter: adapter(), contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    await expect(processor.process({ version: 1, runId: first.runId, userId, finalAttempt: true })).resolves.toBe("completed");
     const second = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
     await expect(processor.process({ version: 1, runId: second.runId, userId, finalAttempt: true })).resolves.toBe("completed");
-    await expect(database.select().from(jobOpportunities).where(eq(jobOpportunities.userId, userId))).resolves.toHaveLength(1);
-    await expect(database.select().from(agentRunJobResults).where(eq(agentRunJobResults.userId, userId))).resolves.toHaveLength(2);
+    const [postings, versions, opportunities, evidence, results] = await Promise.all([
+      database.select().from(jobSourcePostings).where(eq(jobSourcePostings.userId, userId)),
+      database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, userId)),
+      database.select().from(jobOpportunities).where(eq(jobOpportunities.userId, userId)),
+      database.select().from(jobOpportunitySources).where(eq(jobOpportunitySources.userId, userId)),
+      database.select().from(agentRunJobResults).where(eq(agentRunJobResults.userId, userId)),
+    ]);
+    expect(postings).toHaveLength(1);
+    expect(postings[0]).toMatchObject({ sourceIdentity: { sourceId: "fake:aurora-careers", detailId: "opening-1" } });
+    expect(versions).toHaveLength(1);
+    expect(opportunities).toEqual([expect.objectContaining({ importId: null, description: null })]);
+    expect(evidence).toHaveLength(1);
+    expect(results).toHaveLength(2);
+    const firstResult = results.find((result) => result.runId === first.runId);
+    const secondResult = results.find((result) => result.runId === second.runId);
+    expect(firstResult).toBeDefined();
+    expect(secondResult).toBeDefined();
+    expect(firstResult).toMatchObject({ opportunityId: opportunities[0]!.id, sourcePostingVersionId: versions[0]!.id });
+    expect(secondResult).toMatchObject({ opportunityId: opportunities[0]!.id, sourcePostingVersionId: versions[0]!.id });
+    const winnerKey = (versions[0]!.rawObjectReference as { objectKey: string }).objectKey;
+    expect(winnerKey).toBe(store.puts[0]);
     expect(store.puts[0]).toMatch(new RegExp(`^accounts/${userId}/agent-runs/${first.runId}/sources/[0-9a-f]{64}/[0-9a-f-]{36}/[0-9a-f]{64}\\.json$`));
-    expect(store.deletes).toHaveLength(1);
+    expect(store.deletes).toEqual([store.puts[1]]);
+    expect(store.deletes).not.toContain(winnerKey);
   });
 
   it("在持久化前去重同一来源身份，并以实际 result 链接数完成", async () => {
@@ -156,27 +194,56 @@ describe("agent runs", () => {
     await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({ attemptCount: 3, status: "failed", failureCode: "AGENT_RUN_BUDGET_EXCEEDED", events: expect.arrayContaining([expect.objectContaining({ eventType: "run.failed", data: expect.objectContaining({ attemptCount: 3 }) })]) });
   });
 
-  it("在活动租约期间拒绝第二个 processor，并在过期接管后拒绝旧 token 提交", async () => {
+  it("来源写入部分成功后发生存储失败时，删除登记的 claim 对象并写入失败终态", async () => {
     const { userId, targetId } = await activeTarget();
     const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
-    const entered = deferred<void>();
-    const release = deferred<void>();
-    let searches = 0;
-    const takeoverAdapter = adapter();
-    takeoverAdapter.searchBatch = async () => {
-      searches += 1;
-      if (searches === 1) { entered.resolve(); await release.promise; }
-      return { ok: true, data: [{ sourceId: "fake:aurora-careers", detailId: "opening-1", company: "示例科技", title: "AI 工程师", location: "上海", postedAt: null, deadline: null }] };
+    const twoDetails = adapter();
+    twoDetails.searchBatch = async () => ({ ok: true, data: [
+      { sourceId: "fake:aurora-careers", detailId: "opening-1", company: "示例科技", title: "AI 工程师", location: "上海", postedAt: null, deadline: null },
+      { sourceId: "fake:orbit-careers", detailId: "opening-2", company: "轨道科技", title: "平台工程师", location: "北京", postedAt: null, deadline: null },
+    ] });
+    twoDetails.getDetail = async ({ sourceId, detailId }) => ({ ok: true, data: { sourceId, detailId, company: sourceId === "fake:aurora-careers" ? "示例科技" : "轨道科技", title: sourceId === "fake:aurora-careers" ? "AI 工程师" : "平台工程师", location: sourceId === "fake:aurora-careers" ? "上海" : "北京", postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true, rawPayload: { sourceId, detailId } } });
+    const store = new MemoryStore();
+    store.put = async ({ objectKey }) => {
+      store.puts.push(objectKey);
+      if (store.puts.length === 2) throw new Error("object store unavailable");
     };
-    const processor = createAgentRunProcessor({ db: database, adapter: takeoverAdapter, contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    const processor = createAgentRunProcessor({ db: database, adapter: twoDetails, contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    await expect(processor.process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("failed");
+    expect(store.puts.every((objectKey) => store.deletes.includes(objectKey))).toBe(true);
+    await expect(database.select({ status: agentRuns.status, failureCode: agentRuns.failureCode }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId))))
+      .resolves.toEqual([{ status: "failed", failureCode: "AGENT_RUN_CONTENT_STORAGE_FAILED" }]);
+  });
+
+  it("过期接管后旧 claimant 只删除自己的对象，保留 winner 的数据库引用和对象", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const oldPutStarted = deferred<void>();
+    const releaseOldPut = deferred<void>();
+    const store = new MemoryStore();
+    let puts = 0;
+    store.put = async ({ objectKey }) => {
+      puts += 1;
+      store.puts.push(objectKey);
+      if (puts === 1) {
+        oldPutStarted.resolve();
+        await releaseOldPut.promise;
+      }
+    };
+    const processor = createAgentRunProcessor({ db: database, adapter: adapter(), contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
     const oldDelivery = processor.process({ version: 1, runId: run.runId, userId, finalAttempt: true });
-    await entered.promise;
+    await oldPutStarted.promise;
     await expect(processor.process({ version: 1, runId: run.runId, userId, finalAttempt: true })).resolves.toBe("retry");
     await database.update(agentRuns).set({ claimExpiresAt: new Date(now.getTime() - 1) }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)));
     await expect(processor.process({ version: 1, runId: run.runId, userId, finalAttempt: true })).resolves.toBe("completed");
-    release.resolve();
+    const winnerKey = store.puts[1]!;
+    releaseOldPut.resolve();
     await expect(oldDelivery).resolves.toBe("stale");
     await expect(database.select().from(agentRunJobResults).where(and(eq(agentRunJobResults.userId, userId), eq(agentRunJobResults.runId, run.runId)))).resolves.toHaveLength(1);
+    await expect(database.select({ rawObjectReference: jobSourcePostingVersions.rawObjectReference }).from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, userId)))
+      .resolves.toEqual([{ rawObjectReference: { objectKey: winnerKey } }]);
+    expect(store.deletes).toContain(store.puts[0]);
+    expect(store.deletes).not.toContain(winnerKey);
   });
 
   it("在端口调用前后按可推进时钟执行 maxDuration 预算", async () => {
@@ -192,15 +259,69 @@ describe("agent runs", () => {
     await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({ status: "failed", failureCode: "AGENT_RUN_BUDGET_EXCEEDED" });
   });
 
-  it("put 在写入后跨过 attempt deadline 时，仍以独立 cleanup deadline 删除本 claim 的对象", async () => {
+  it("put 超过真实 attempt 定时器后才 settle 时，主流程返回并由 continuation 删除 claim 对象", async () => {
     const { userId, targetId } = await activeTarget();
     const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
     let instant = now;
+    const shortDeadlineAdapter = adapter();
+    shortDeadlineAdapter.getDetail = async ({ sourceId, detailId }) => {
+      instant = new Date(now.getTime() + 59_980);
+      return { ok: true, data: { sourceId, detailId, company: "示例科技", title: "AI 工程师", location: "上海", postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true, rawPayload: { b: 2, a: 1 } } };
+    };
+    const putStarted = deferred<void>();
+    const settlePut = deferred<void>();
+    const lateDelete = deferred<void>();
     const store = new MemoryStore();
-    store.put = async ({ objectKey }) => { store.puts.push(objectKey); instant = new Date(now.getTime() + 60_000); };
-    await expect(createAgentRunProcessor({ db: database, adapter: adapter(), contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => instant }), id: () => crypto.randomUUID(), clock: () => instant, cleanupTimeoutMs: 1 }).process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("failed");
-    expect(store.deletes).toEqual(expect.arrayContaining(store.puts));
-  });
+    store.put = ({ objectKey }) => {
+      store.puts.push(objectKey);
+      putStarted.resolve();
+      return settlePut.promise;
+    };
+    store.delete = async ({ objectKey }) => {
+      store.deletes.push(objectKey);
+      if (store.deletes.length === 2) lateDelete.resolve();
+    };
+    const processor = createAgentRunProcessor({
+      db: database, adapter: shortDeadlineAdapter, contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => instant }), id: () => crypto.randomUUID(), clock: () => instant, cleanupTimeoutMs: 20,
+    });
+    const processing = processor.process({ version: 1, runId: run.runId, userId, finalAttempt: true });
+    await putStarted.promise;
+    await expect(processing).resolves.toBe("failed");
+    expect(store.deletes).toEqual([store.puts[0]]);
+    settlePut.resolve();
+    await lateDelete.promise;
+    expect(store.deletes).toEqual([store.puts[0], store.puts[0]]);
+  }, 1_000);
+
+  it("cleanup delete 挂起时只等待注入的 cleanup 窗口，且不覆盖主失败状态", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const twoDetails = adapter();
+    twoDetails.searchBatch = async () => ({ ok: true, data: [
+      { sourceId: "fake:aurora-careers", detailId: "opening-1", company: "示例科技", title: "AI 工程师", location: "上海", postedAt: null, deadline: null },
+      { sourceId: "fake:orbit-careers", detailId: "opening-2", company: "轨道科技", title: "平台工程师", location: "北京", postedAt: null, deadline: null },
+    ] });
+    twoDetails.getDetail = async ({ sourceId, detailId }) => ({ ok: true, data: { sourceId, detailId, company: sourceId === "fake:aurora-careers" ? "示例科技" : "轨道科技", title: sourceId === "fake:aurora-careers" ? "AI 工程师" : "平台工程师", location: sourceId === "fake:aurora-careers" ? "上海" : "北京", postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true, rawPayload: { sourceId, detailId } } });
+    const store = new MemoryStore();
+    store.put = async ({ objectKey }) => {
+      store.puts.push(objectKey);
+      if (store.puts.length === 2) throw new Error("object store unavailable");
+    };
+    store.delete = async ({ objectKey }) => {
+      store.deletes.push(objectKey);
+      await new Promise<void>(() => undefined);
+    };
+    const processor = createAgentRunProcessor({ db: database, adapter: twoDetails, contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, cleanupTimeoutMs: 20 });
+    const processing = processor.process({ version: 1, runId: run.runId, userId, finalAttempt: true });
+    const result = await Promise.race([
+      processing,
+      new Promise<"timed out">((resolve) => setTimeout(() => resolve("timed out"), 250)),
+    ]);
+    expect(result).toBe("failed");
+    expect(store.puts.every((objectKey) => store.deletes.includes(objectKey))).toBe(true);
+    await expect(database.select({ status: agentRuns.status, failureCode: agentRuns.failureCode }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId))))
+      .resolves.toEqual([{ status: "failed", failureCode: "AGENT_RUN_CONTENT_STORAGE_FAILED" }]);
+  }, 1_000);
 
   it("在可重试失败时重新排队，在最终尝试时终止且不暴露原始错误", async () => {
     const { userId, targetId } = await activeTarget();
