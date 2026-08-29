@@ -425,11 +425,15 @@ it("拒绝不符合 Agent Run 契约的成功 JSON", async () => {
 });
 
 it("原样打开 SSE 响应体并转发游标与下游取消信号", async () => {
-  const body = new ReadableStream<Uint8Array>();
-  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(body, {
-    status: 200,
-    headers: { "content-type": "text/event-stream; charset=utf-8" },
-  }));
+  const cancel = vi.fn();
+  const body = new ReadableStream<Uint8Array>({ cancel });
+  const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async (_url, init) => {
+    init?.signal?.addEventListener("abort", () => { void body.cancel("downstream aborted"); }, { once: true });
+    return new Response(body, {
+      status: 200,
+      headers: { "content-type": "text/event-stream; charset=utf-8" },
+    });
+  });
   const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
   const abort = new AbortController();
 
@@ -444,6 +448,8 @@ it("原样打开 SSE 响应体并转发游标与下游取消信号", async () =>
   expect(new Headers(init?.headers)).toMatchObject(expect.any(Headers));
   expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${sessionToken}`);
   expect(new Headers(init?.headers).get("last-event-id")).toBe("3");
+  abort.abort();
+  await vi.waitFor(() => expect(cancel).toHaveBeenCalledWith("downstream aborted"));
 });
 
 it("拒绝伪装成成功响应的非 SSE 上游流", async () => {
@@ -454,4 +460,18 @@ it("拒绝伪装成成功响应的非 SSE 上游流", async () => {
   });
 
   await expect(client.openAgentRunEventStream(sessionToken, agentRunId, {})).rejects.toMatchObject({ kind: "invalid_response" });
+});
+
+it("上游非 2xx 且没有响应体时返回稳定 API 错误", async () => {
+  const client = createApiClient({
+    apiInternalUrl: "http://127.0.0.1:3021",
+    devAuthSharedSecret: "secret",
+    fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 503 })),
+  });
+
+  await expect(client.openAgentRunEventStream(sessionToken, agentRunId, {})).rejects.toMatchObject({
+    kind: "api",
+    status: 503,
+    problem: undefined,
+  });
 });

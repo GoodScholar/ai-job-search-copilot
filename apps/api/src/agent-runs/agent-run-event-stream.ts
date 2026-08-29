@@ -37,9 +37,12 @@ export function createAgentRunEventStream(input: {
   let pollTimer: ReturnType<typeof setTimeout> | undefined;
   let heartbeatTimer: ReturnType<typeof setTimeout> | undefined;
   let stop: (() => void) | undefined;
+  let requestMore: (() => void) | undefined;
 
   return new ReadableStream<Uint8Array>({
     start(controller) {
+      let hasPolled = false;
+      const hasCapacity = () => (controller.desiredSize ?? 0) > 0;
       const clearTimers = () => {
         if (pollTimer) clearTimeout(pollTimer);
         if (heartbeatTimer) clearTimeout(heartbeatTimer);
@@ -65,19 +68,24 @@ export function createAgentRunEventStream(input: {
         controller.error(error);
       };
       const scheduleHeartbeat = () => {
-        if (heartbeatTimer) clearTimeout(heartbeatTimer);
+        if (stopped || heartbeatTimer || !hasCapacity()) return;
         heartbeatTimer = setTimeout(() => {
-          if (stopped) return;
+          heartbeatTimer = undefined;
+          if (stopped || !hasCapacity()) return;
           controller.enqueue(encoder.encode(": heartbeat\n\n"));
           scheduleHeartbeat();
         }, HEARTBEAT_INTERVAL_MS);
       };
       const schedulePoll = () => {
-        if (stopped) return;
-        pollTimer = setTimeout(() => { void poll(); }, POLL_INTERVAL_MS);
+        if (stopped || polling || pollTimer || !hasCapacity()) return;
+        pollTimer = setTimeout(() => {
+          pollTimer = undefined;
+          if (stopped || !hasCapacity()) return;
+          void poll();
+        }, POLL_INTERVAL_MS);
       };
       const poll = async () => {
-        if (stopped || polling) return;
+        if (stopped || polling || !hasCapacity()) return;
         polling = true;
         try {
           const events = await input.queries.eventsAfter({
@@ -90,16 +98,17 @@ export function createAgentRunEventStream(input: {
             finish();
             return;
           }
-          for (const event of events) {
-            if (stopped || event.sequence <= cursor) continue;
+          const event = events.find((candidate) => candidate.sequence > cursor);
+          if (event) {
             const sse = AgentRunSseEventSchema.parse({
               id: String(event.sequence),
               event: event.eventType,
               data: event.data,
             });
+            if (heartbeatTimer) clearTimeout(heartbeatTimer);
+            heartbeatTimer = undefined;
             controller.enqueue(encoder.encode(`id: ${sse.id}\nevent: ${sse.event}\ndata: ${JSON.stringify(sse.data)}\n\n`));
             cursor = event.sequence;
-            scheduleHeartbeat();
             if (terminalEvents.has(event.eventType)) {
               finish();
               return;
@@ -111,7 +120,10 @@ export function createAgentRunEventStream(input: {
         } finally {
           polling = false;
         }
-        schedulePoll();
+        if (hasCapacity()) {
+          scheduleHeartbeat();
+          schedulePoll();
+        }
       };
 
       stop = cleanup;
@@ -125,7 +137,19 @@ export function createAgentRunEventStream(input: {
       }
       input.signal?.addEventListener("abort", finish, { once: true });
       scheduleHeartbeat();
-      void poll();
+      requestMore = () => {
+        if (stopped || !hasCapacity()) return;
+        scheduleHeartbeat();
+        if (!hasPolled) {
+          hasPolled = true;
+          void poll();
+          return;
+        }
+        schedulePoll();
+      };
+    },
+    pull() {
+      requestMore?.();
     },
     cancel() {
       stop?.();

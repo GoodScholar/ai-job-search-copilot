@@ -78,6 +78,47 @@ describe("Agent Run SSE", () => {
     expect(eventsAfter).not.toHaveBeenCalled();
   });
 
+  it("慢消费者只排队一条业务事件，恢复 pull 后从数据库游标继续有序回放", async () => {
+    vi.useFakeTimers();
+    const allEvents = [queuedEvent, startedEvent, completedEvent];
+    const eventsAfter = vi.fn(async ({ afterSequence }: { afterSequence: number }) => (
+      allEvents.filter((event) => event.sequence > afterSequence)
+    ));
+    const reader = createAgentRunEventStream({ queries: { eventsAfter }, userId, runId, afterSequence: 0 }).getReader();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(eventsAfter).toHaveBeenCalledTimes(1);
+
+    const first = await reader.read();
+    expect(new TextDecoder().decode(first.value)).toContain("id: 1");
+    await vi.advanceTimersByTimeAsync(250);
+    expect(eventsAfter).toHaveBeenCalledTimes(2);
+
+    const second = await reader.read();
+    expect(new TextDecoder().decode(second.value)).toContain("id: 2");
+    await vi.advanceTimersByTimeAsync(250);
+    expect(eventsAfter).toHaveBeenCalledTimes(3);
+    const third = await reader.read();
+    expect(new TextDecoder().decode(third.value)).toContain("id: 3");
+    await expect(reader.read()).resolves.toEqual({ done: true, value: undefined });
+  });
+
+  it("心跳填满下游容量后暂停 heartbeat 与数据库轮询，消费后恢复", async () => {
+    vi.useFakeTimers();
+    const eventsAfter = vi.fn().mockResolvedValue([]);
+    const reader = createAgentRunEventStream({ queries: { eventsAfter }, userId, runId, afterSequence: 0 }).getReader();
+
+    await vi.advanceTimersByTimeAsync(15_000);
+    const callsAtBackpressure = eventsAfter.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(eventsAfter).toHaveBeenCalledTimes(callsAtBackpressure);
+
+    const heartbeat = await reader.read();
+    expect(new TextDecoder().decode(heartbeat.value)).toBe(": heartbeat\n\n");
+    await vi.advanceTimersByTimeAsync(250);
+    expect(eventsAfter.mock.calls.length).toBeGreaterThan(callsAtBackpressure);
+    await reader.cancel();
+  });
+
   it("空闲十五秒发送注释心跳并继续轮询数据库", async () => {
     vi.useFakeTimers();
     const eventsAfter = vi.fn().mockResolvedValue([]);
@@ -107,6 +148,27 @@ describe("Agent Run SSE", () => {
     await expect(reader.read()).resolves.toEqual({ done: true, value: undefined });
     expect(eventsAfter).toHaveBeenCalledTimes(callsBeforeAbort);
   });
+
+  it.each(["resolve", "reject"] as const)("pending 查询期间 abort，迟到 %s 不写流且不产生未处理拒绝", async (settlement) => {
+    const deferred = promiseWithResolvers<AgentRunDetail["events"]>();
+    const eventsAfter = vi.fn().mockReturnValue(deferred.promise);
+    const abort = new AbortController();
+    const reader = createAgentRunEventStream({
+      queries: { eventsAfter }, userId, runId, afterSequence: 0, signal: abort.signal,
+    }).getReader();
+    await Promise.resolve();
+    expect(eventsAfter).toHaveBeenCalledTimes(1);
+
+    abort.abort();
+    await expect(reader.read()).resolves.toEqual({ done: true, value: undefined });
+    if (settlement === "resolve") deferred.resolve([queuedEvent]);
+    else deferred.reject(new Error("late database failure"));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await expect(reader.read()).resolves.toEqual({ done: true, value: undefined });
+    expect(eventsAfter).toHaveBeenCalledTimes(1);
+  });
 });
 
 async function readAll(stream: ReadableStream<Uint8Array>): Promise<string> {
@@ -118,4 +180,14 @@ async function readAll(stream: ReadableStream<Uint8Array>): Promise<string> {
     if (chunk.done) return text;
     text += decoder.decode(chunk.value, { stream: true });
   }
+}
+
+function promiseWithResolvers<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }

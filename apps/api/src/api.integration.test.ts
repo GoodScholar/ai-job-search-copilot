@@ -492,6 +492,31 @@ describe("authenticated workbench HTTP API", () => {
       expect(response.headers["content-type"]).not.toContain("text/event-stream");
     }
 
+    const completedAt = new Date("2026-08-29T09:00:00.000Z");
+    await database.$client`
+      update agent_runs
+      set status = 'completed', current_step = 'completed', version = 2, attempt_count = 1,
+          started_at = ${completedAt.toISOString()}, completed_at = ${completedAt.toISOString()}, updated_at = ${completedAt.toISOString()}
+      where id = ${runId} and user_id = ${primary.account.userId}
+    `;
+    await database.$client`
+      insert into agent_run_events (id, user_id, run_id, sequence, run_version, event_type, data, created_at)
+      values (
+        ${randomUUID()}, ${primary.account.userId}, ${runId}, 2, 2, 'run.completed',
+        ${JSON.stringify({ eventType: "run.completed", status: "completed", currentStep: "completed", attemptCount: 1, resultCount: 0 })}::jsonb,
+        ${completedAt.toISOString()}
+      )
+    `;
+    const successfulEvents = await app.getHttpAdapter().getInstance().inject({
+      method: "GET",
+      url: `/v1/agent-runs/${runId}/events`,
+      headers: { ...bearer(primary.sessionToken), "last-event-id": "1" },
+    });
+    expect(successfulEvents.statusCode).toBe(200);
+    expect(successfulEvents.headers["content-type"]).toBe("text/event-stream; charset=utf-8");
+    expect(successfulEvents.headers["cache-control"]).toBe("no-cache, no-transform");
+    expect(successfulEvents.body).toBe('id: 2\nevent: run.completed\ndata: {"eventType":"run.completed","status":"completed","currentStep":"completed","attemptCount":1,"resultCount":0}\n\n');
+
     agentRunQueue.failNext = true;
     const durable = await app.getHttpAdapter().getInstance().inject({
       method: "POST", url: "/v1/agent-runs", headers: bearer(primary.sessionToken),
