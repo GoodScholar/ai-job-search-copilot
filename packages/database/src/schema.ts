@@ -402,12 +402,16 @@ export const jobSourcePostings = pgTable("job_source_postings", {
   sourceIdentifier: varchar("source_identifier", { length: 512 }).notNull(),
   sourceIdentity: jsonb("source_identity").notNull(),
   isOfficial: boolean("is_official").notNull().default(false),
+  availability: varchar("availability", { length: 16 }).notNull().default("open"),
+  availabilityUpdatedAt: timestamp("availability_updated_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   unique("job_source_postings_user_identity_unique").on(table.userId, table.sourceType, table.sourceIdentifier),
   unique("job_source_postings_user_id_id_unique").on(table.userId, table.id),
+  index("job_source_postings_availability_idx").on(table.userId, table.availability, table.availabilityUpdatedAt),
   check("job_source_postings_source_identity_object", sql`jsonb_typeof(${table.sourceIdentity}) = 'object'`),
+  check("job_source_postings_availability_check", sql`${table.availability} in ('open', 'closed', 'expired')`),
 ]);
 
 export const jobSourcePostingVersions = pgTable("job_source_posting_versions", {
@@ -419,6 +423,7 @@ export const jobSourcePostingVersions = pgTable("job_source_posting_versions", {
   rawContentSha256: varchar("raw_content_sha256", { length: 64 }).notNull(),
   rawObjectReference: jsonb("raw_object_reference").notNull(),
   retrievedAt: timestamp("retrieved_at", { withTimezone: true }).notNull(),
+  availability: varchar("availability", { length: 16 }).notNull().default("open"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   unique("job_source_posting_versions_posting_version_unique").on(table.sourcePostingId, table.version),
@@ -432,6 +437,7 @@ export const jobSourcePostingVersions = pgTable("job_source_posting_versions", {
   check("job_source_posting_versions_content_sha256_format", sql`${table.contentSha256} ~ '^[0-9a-f]{64}$'`),
   check("job_source_posting_versions_raw_content_sha256_format", sql`${table.rawContentSha256} ~ '^[0-9a-f]{64}$'`),
   check("job_source_posting_versions_raw_object_reference_object", sql`jsonb_typeof(${table.rawObjectReference}) = 'object'`),
+  check("job_source_posting_versions_availability_check", sql`${table.availability} in ('open', 'closed', 'expired')`),
 ]);
 
 export const jobOpportunities = pgTable("job_opportunities", {
@@ -447,11 +453,14 @@ export const jobOpportunities = pgTable("job_opportunities", {
   deadline: timestamp("deadline", { withTimezone: true }),
   description: text("description"),
   normalizedData: jsonb("normalized_data").notNull(),
+  availability: varchar("availability", { length: 16 }).notNull().default("open"),
+  availabilityUpdatedAt: timestamp("availability_updated_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   unique("job_opportunities_user_dedup_unique").on(table.userId, table.dedupKey),
   unique("job_opportunities_user_id_id_unique").on(table.userId, table.id),
+  index("job_opportunities_availability_idx").on(table.userId, table.availability, table.availabilityUpdatedAt),
   foreignKey({
     columns: [table.userId, table.importId],
     foreignColumns: [jobImports.userId, jobImports.id],
@@ -464,6 +473,7 @@ export const jobOpportunities = pgTable("job_opportunities", {
   }),
   check("job_opportunities_dedup_key_format", sql`${table.dedupKey} ~ '^[0-9a-f]{64}$'`),
   check("job_opportunities_normalized_data_object", sql`jsonb_typeof(${table.normalizedData}) = 'object'`),
+  check("job_opportunities_availability_check", sql`${table.availability} in ('open', 'closed', 'expired')`),
 ]);
 
 export const jobOpportunitySources = pgTable("job_opportunity_sources", {
@@ -574,6 +584,66 @@ export const agentRuns = pgTable("agent_runs", {
     or (${table.status} = 'completed' and ${table.startedAt} is not null and ${table.completedAt} is not null and ${table.failedAt} is null and ${table.cancelledAt} is null)
     or (${table.status} = 'failed' and ${table.startedAt} is not null and ${table.completedAt} is null and ${table.failedAt} is not null and ${table.cancelledAt} is null)
     or (${table.status} = 'cancelled' and ${table.completedAt} is null and ${table.failedAt} is null and ${table.cancelledAt} is not null)
+  `),
+]);
+
+export const jobDiscoverySchedules = pgTable("job_discovery_schedules", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  targetId: uuid("target_id").notNull().references(() => jobTargets.id),
+  version: integer("version").notNull(),
+  state: varchar("state", { length: 16 }).notNull().default("disabled"),
+  dailyTime: varchar("daily_time", { length: 5 }).notNull(),
+  timeZone: varchar("time_zone", { length: 32 }).notNull().default("Asia/Shanghai"),
+  nextRunAt: timestamp("next_run_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_discovery_schedules_user_target_unique").on(table.userId, table.targetId),
+  unique("job_discovery_schedules_user_id_id_unique").on(table.userId, table.id),
+  unique("job_discovery_schedules_user_schedule_target_unique").on(table.userId, table.id, table.targetId),
+  index("job_discovery_schedules_due_idx").on(table.state, table.nextRunAt, table.id),
+  foreignKey({
+    columns: [table.userId, table.targetId],
+    foreignColumns: [jobTargets.userId, jobTargets.id],
+    name: "job_discovery_schedules_owner_target_fk",
+  }),
+  check("job_discovery_schedules_version_positive", sql`${table.version} >= 1`),
+  check("job_discovery_schedules_state_check", sql`${table.state} in ('enabled', 'disabled')`),
+  check("job_discovery_schedules_daily_time_check", sql`${table.dailyTime} ~ '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$'`),
+  check("job_discovery_schedules_time_zone_check", sql`${table.timeZone} = 'Asia/Shanghai'`),
+]);
+
+export const jobDiscoveryScheduleOccurrences = pgTable("job_discovery_schedule_occurrences", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  scheduleId: uuid("schedule_id").notNull(),
+  targetId: uuid("target_id").notNull(),
+  scheduledFor: timestamp("scheduled_for", { withTimezone: true }).notNull(),
+  status: varchar("status", { length: 16 }).notNull().default("pending"),
+  runId: uuid("run_id"),
+  skipReason: varchar("skip_reason", { length: 32 }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_discovery_schedule_occurrences_schedule_time_unique").on(table.scheduleId, table.scheduledFor),
+  unique("job_discovery_schedule_occurrences_user_id_id_unique").on(table.userId, table.id),
+  index("job_discovery_schedule_occurrences_pending_idx").on(table.status, table.scheduledFor, table.id),
+  foreignKey({
+    columns: [table.userId, table.scheduleId, table.targetId],
+    foreignColumns: [jobDiscoverySchedules.userId, jobDiscoverySchedules.id, jobDiscoverySchedules.targetId],
+    name: "job_discovery_schedule_occurrences_owner_schedule_fk",
+  }),
+  foreignKey({
+    columns: [table.userId, table.runId],
+    foreignColumns: [agentRuns.userId, agentRuns.id],
+    name: "job_discovery_schedule_occurrences_owner_run_fk",
+  }),
+  check("job_discovery_schedule_occurrences_status_check", sql`${table.status} in ('pending', 'dispatched', 'skipped')`),
+  check("job_discovery_schedule_occurrences_skip_reason_check", sql`${table.skipReason} is null or ${table.skipReason} in ('TARGET_INACTIVE', 'NO_SUPPORTED_SOURCE', 'SOURCE_POLICY_REQUIRED')`),
+  check("job_discovery_schedule_occurrences_outcome_check", sql`
+    (${table.status} = 'pending' and ${table.runId} is null and ${table.skipReason} is null)
+    or (${table.status} = 'dispatched' and ${table.runId} is not null and ${table.skipReason} is null)
+    or (${table.status} = 'skipped' and ${table.runId} is null and ${table.skipReason} is not null)
   `),
 ]);
 

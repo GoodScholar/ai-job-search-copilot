@@ -10,6 +10,7 @@
     "./career-import": "./src/career-import.ts",
     "./company-watchlists": "./src/company-watchlists.ts",
     "./job-imports": "./src/job-imports.ts",
+    "./job-discovery-schedules": "./src/job-discovery-schedules.ts",
     "./agent-runs": "./src/agent-runs.ts",
     "./agent-inbox": "./src/agent-inbox.ts",
     "./job-targets": "./src/job-targets.ts",

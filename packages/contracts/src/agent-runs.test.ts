@@ -27,6 +27,13 @@ import {
   AgentRunTerminationSchema,
   AgentRunTargetSnapshotSchema,
   AgentRunUsageSchema,
+  GREENHOUSE_JOB_DISCOVERY_ADAPTER,
+  GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
+  GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+  GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION,
+  GREENHOUSE_JOB_DISCOVERY_RULE_VERSION,
+  PUBLIC_JOB_DISCOVERY_BUDGET,
+  PublicDiscoveryBatchSearchResultSchema,
   DiscoveryBatchSearchInputSchema,
   DiscoveryBatchSearchResultSchema,
   DiscoveryDetailInputSchema,
@@ -193,6 +200,54 @@ describe("agent run contracts", () => {
     expect(AgentRunSourceScopeSchema.safeParse({ ...watchlistSourceScope, sources: Array.from({ length: 53 }, (_, index) => `source-${index}`) }).success).toBe(false);
     expect(AgentRunSourceScopeSchema.parse({ ...watchlistSourceScope, sources: [] }).sources).toEqual([]);
     expect(AgentRunExecutionSpecSchema.parse(completeExecutionSpec)).toEqual(completeExecutionSpec);
+  });
+
+  it("keeps the complete Fake v1 execution specimen valid while accepting a discriminated public v2 scope", () => {
+    const publicExecutionSpec = {
+      targetSnapshot: runTargetSnapshot,
+      sourceScope: {
+        kind: "company_watchlist",
+        adapter: "greenhouse",
+        adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
+        watchlistVersion: 1,
+        sources: [{
+          sourceId: "greenhouse:aurora",
+          watchlistItemId: "e384ef6d-7dc3-4e4e-8692-7d3199575716",
+          canonicalCompanyName: "Aurora Labs",
+          careersUrl: "https://boards.greenhouse.io/aurora",
+          allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"],
+          boardToken: "aurora",
+        }],
+      },
+      workflowVersion: GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION,
+      ruleVersion: GREENHOUSE_JOB_DISCOVERY_RULE_VERSION,
+      adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER,
+      adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
+      outputSchemaVersion: GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+      toolAllowlist: ["job_discovery.search_batch", "job_discovery.get_detail"],
+      model: null,
+      budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+    };
+    expect(AgentRunExecutionSpecSchema.parse(executionSpec)).toEqual(executionSpec);
+    expect(AgentRunExecutionSpecSchema.parse(publicExecutionSpec)).toEqual(publicExecutionSpec);
+    expect(AgentRunExecutionSpecSchema.safeParse({
+      ...publicExecutionSpec,
+      sourceScope: { ...publicExecutionSpec.sourceScope, sources: [{ ...publicExecutionSpec.sourceScope.sources[0], boardToken: "other" }] },
+    }).success).toBe(false);
+  });
+
+  it("fixes public v2 batch success to complete scan facts without changing the v1 array shape", () => {
+    expect(DiscoveryBatchSearchResultSchema.parse({ ok: true, data: [searchSummary] })).toEqual({ ok: true, data: [searchSummary] });
+    expect(PublicDiscoveryBatchSearchResultSchema.parse({
+      ok: true,
+      data: { items: [searchSummary], scans: [{ sourceId: "greenhouse:aurora", observedDetailIds: ["42", "84"], complete: true }] },
+    })).toEqual({
+      ok: true,
+      data: { items: [searchSummary], scans: [{ sourceId: "greenhouse:aurora", observedDetailIds: ["42", "84"], complete: true }] },
+    });
+    expect(PublicDiscoveryBatchSearchResultSchema.safeParse({
+      ok: true, data: { items: [searchSummary], scans: [{ sourceId: "greenhouse:aurora", observedDetailIds: ["42", "42"], complete: true }] },
+    }).success).toBe(false);
   });
 
   it("parses the strict start command and queued run detail", () => {

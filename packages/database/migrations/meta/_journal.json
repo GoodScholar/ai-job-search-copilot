@@ -148,6 +148,13 @@
       "when": 1788022752945,
       "tag": "0020_company_watchlists",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1788031112341,
+      "tag": "0021_scheduled_public_job_discovery",
+      "breakpoints": true
     }
   ]
 }

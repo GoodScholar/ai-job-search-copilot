@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { GreenhousePublicSourceSchema } from "./job-discovery-schedules";
 import { JobTargetConstraintsSchema } from "./job-targets";
 
 export const AGENT_RUN_QUEUE = "agent-runs";
@@ -11,12 +12,25 @@ export const FAKE_JOB_DISCOVERY_ADAPTER = "fake";
 export const FAKE_JOB_DISCOVERY_ADAPTER_VERSION = "fake-job-discovery-v1";
 export const FAKE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION = "job-discovery-result-v1";
 export const FAKE_JOB_DISCOVERY_SOURCE_IDS = ["fake:aurora-careers", "fake:orbit-careers"] as const;
+export const GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION = "job-discovery-workflow-v2";
+export const GREENHOUSE_JOB_DISCOVERY_ADAPTER = "greenhouse";
+export const GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION = "greenhouse-job-board-v1";
+export const GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION = "job-discovery-result-v2";
+export const GREENHOUSE_JOB_DISCOVERY_RULE_VERSION = "greenhouse-job-discovery-rules-v1";
 export const AGENT_RUN_RULE_VERSION = "fake-job-discovery-rules-v1";
 export const AGENT_RUN_TOOL_ALLOWLIST = ["job_discovery.search_batch", "job_discovery.get_detail"] as const;
 export const AGENT_RUN_BUDGET = {
   maxActiveDurationMs: 60_000,
   maxAttempts: 3,
   maxToolCalls: 10,
+  maxResults: 5,
+  maxModelCalls: 0,
+  maxTokens: 0,
+} as const;
+export const PUBLIC_JOB_DISCOVERY_BUDGET = {
+  maxActiveDurationMs: 180_000,
+  maxAttempts: 3,
+  maxToolCalls: 60,
   maxResults: 5,
   maxModelCalls: 0,
   maxTokens: 0,
@@ -78,7 +92,18 @@ export const AgentRunSourceScopeSchema = z.object({
   ),
 }).strict();
 
-export const AgentRunExecutionSpecSchema = z.object({
+export const PublicAgentRunSourceScopeSchema = z.object({
+  kind: z.literal("company_watchlist"),
+  adapter: z.literal(GREENHOUSE_JOB_DISCOVERY_ADAPTER),
+  adapterVersion: z.literal(GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION),
+  watchlistVersion: positiveInteger,
+  sources: z.array(GreenhousePublicSourceSchema).min(1).max(50).refine(
+    (sources) => new Set(sources.map((source) => source.sourceId)).size === sources.length,
+    { message: "source IDs must be unique" },
+  ),
+}).strict();
+
+const FakeAgentRunExecutionSpecSchema = z.object({
   targetSnapshot: AgentRunTargetSnapshotSchema,
   sourceScope: AgentRunSourceScopeSchema,
   workflowVersion: z.literal(FAKE_JOB_DISCOVERY_WORKFLOW_VERSION),
@@ -90,6 +115,29 @@ export const AgentRunExecutionSpecSchema = z.object({
   model: z.null(),
   budget: AgentRunBudgetSchema,
 }).strict();
+
+const PublicAgentRunBudgetSchema = z.object({
+  maxActiveDurationMs: z.literal(180_000), maxAttempts: z.literal(3), maxToolCalls: z.literal(60),
+  maxResults: z.literal(5), maxModelCalls: z.literal(0), maxTokens: z.literal(0),
+}).strict();
+
+const PublicAgentRunExecutionSpecSchema = z.object({
+  targetSnapshot: AgentRunTargetSnapshotSchema,
+  sourceScope: PublicAgentRunSourceScopeSchema,
+  workflowVersion: z.literal(GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION),
+  ruleVersion: z.literal(GREENHOUSE_JOB_DISCOVERY_RULE_VERSION),
+  adapter: z.literal(GREENHOUSE_JOB_DISCOVERY_ADAPTER),
+  adapterVersion: z.literal(GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION),
+  outputSchemaVersion: z.literal(GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION),
+  toolAllowlist: z.tuple([z.literal(AGENT_RUN_TOOL_ALLOWLIST[0]), z.literal(AGENT_RUN_TOOL_ALLOWLIST[1])]),
+  model: z.null(),
+  budget: PublicAgentRunBudgetSchema,
+}).strict();
+
+export const AgentRunExecutionSpecSchema = z.discriminatedUnion("adapter", [
+  FakeAgentRunExecutionSpecSchema,
+  PublicAgentRunExecutionSpecSchema,
+]);
 
 export const AgentRunUsageSchema = z.object({
   activeDurationMs: nonnegativeInteger,
@@ -248,6 +296,21 @@ export const DiscoveryDetailSchema = DiscoverySearchSummarySchema.extend({
 }).strict();
 export const DiscoverySearchResultSchema = adapterResult(DiscoverySearchSummarySchema);
 export const DiscoveryBatchSearchResultSchema = adapterResult(z.array(DiscoverySearchSummarySchema).max(AGENT_RUN_BUDGET.maxResults));
+export const PublicDiscoveryScanSchema = z.object({
+  sourceId: z.string().trim().regex(/^greenhouse:[A-Za-z0-9_-]+$/u),
+  observedDetailIds: z.array(z.string().trim().min(1).max(256)).refine(
+    (detailIds) => new Set(detailIds).size === detailIds.length,
+    { message: "observed detail IDs must be unique" },
+  ),
+  complete: z.boolean(),
+}).strict();
+export const PublicDiscoveryBatchSearchResultSchema = adapterResult(z.object({
+  items: z.array(DiscoverySearchSummarySchema).max(PUBLIC_JOB_DISCOVERY_BUDGET.maxResults),
+  scans: z.array(PublicDiscoveryScanSchema).min(1).max(50).refine(
+    (scans) => new Set(scans.map((scan) => scan.sourceId)).size === scans.length,
+    { message: "scan source IDs must be unique" },
+  ),
+}).strict());
 export const DiscoveryDetailResultSchema = adapterResult(DiscoveryDetailSchema);
 
 export type StartAgentRunCommand = z.infer<typeof StartAgentRunCommandSchema>;
@@ -264,4 +327,5 @@ export type DiscoveryBatchSearchInput = z.infer<typeof DiscoveryBatchSearchInput
 export type DiscoveryDetailInput = z.infer<typeof DiscoveryDetailInputSchema>;
 export type DiscoverySearchResult = z.infer<typeof DiscoverySearchResultSchema>;
 export type DiscoveryBatchSearchResult = z.infer<typeof DiscoveryBatchSearchResultSchema>;
+export type PublicDiscoveryBatchSearchResult = z.infer<typeof PublicDiscoveryBatchSearchResultSchema>;
 export type DiscoveryDetailResult = z.infer<typeof DiscoveryDetailResultSchema>;
