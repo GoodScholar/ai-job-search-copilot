@@ -1571,7 +1571,7 @@
         },
         "agent_runs_execution_claim_check": {
           "name": "agent_runs_execution_claim_check",
-          "value": "(\"agent_runs\".\"claim_token\" is null and \"agent_runs\".\"active_slice_started_at\" is null) or \"agent_runs\".\"status\" = 'running'"
+          "value": "(\"agent_runs\".\"claim_token\" is null and \"agent_runs\".\"claim_expires_at\" is null and \"agent_runs\".\"active_slice_started_at\" is null) or (\"agent_runs\".\"claim_token\" is not null and \"agent_runs\".\"claim_expires_at\" is not null and \"agent_runs\".\"active_slice_started_at\" is not null and \"agent_runs\".\"status\" = 'running')"
         },
         "agent_runs_aggregate_nonnegative": {
           "name": "agent_runs_aggregate_nonnegative",

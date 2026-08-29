@@ -42,7 +42,7 @@ function fakeForScenario(scenario: FakeScenario[string] | undefined, attemptCoun
 /** 仅根据持久化 run metadata 选择 Worker 的岗位发现 adapter。 */
 export function createJobDiscoveryAdapterResolver(environment: NodeJS.ProcessEnv = process.env): JobDiscoveryAdapterResolver {
   const scenarios = scenariosFrom(environment);
-  if (environment.APP_ENV !== "local" && environment.APP_ENV !== "test") {
+  if (environment.APP_ENV !== "local" && environment.APP_ENV !== "test" && environment.APP_ENV !== "production") {
     throw new Error("JobDiscoveryAdapter 环境未获允许");
   }
   return {

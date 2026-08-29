@@ -506,7 +506,7 @@ export const agentRuns = pgTable("agent_runs", {
   check("agent_runs_attempt_count_nonnegative", sql`${table.attemptCount} >= 0`),
   check("agent_runs_failure_code_check", sql`${table.failureCode} is null or ${table.failureCode} in ('AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_CONTENT_STORAGE_FAILED', 'AGENT_RUN_PERSIST_FAILED', 'AGENT_RUN_BUDGET_EXCEEDED', 'AGENT_RUN_MODEL_RETRYABLE', 'AGENT_RUN_MODEL_AUTH_FAILED', 'AGENT_RUN_MODEL_POLICY_REJECTED', 'AGENT_RUN_MODEL_INVALID_RESPONSE')`),
   check("agent_runs_claim_consistency_check", sql`(${table.claimToken} is null) = (${table.claimExpiresAt} is null)`),
-  check("agent_runs_execution_claim_check", sql`(${table.claimToken} is null and ${table.activeSliceStartedAt} is null) or ${table.status} = 'running'`),
+  check("agent_runs_execution_claim_check", sql`(${table.claimToken} is null and ${table.claimExpiresAt} is null and ${table.activeSliceStartedAt} is null) or (${table.claimToken} is not null and ${table.claimExpiresAt} is not null and ${table.activeSliceStartedAt} is not null and ${table.status} = 'running')`),
   check("agent_runs_aggregate_nonnegative", sql`${table.activeDurationMs} >= 0 and ${table.toolCallCount} >= 0 and ${table.sourceRequestCount} >= 0 and ${table.modelCallCount} >= 0 and ${table.inputTokenCount} >= 0 and ${table.outputTokenCount} >= 0 and ${table.totalTokenCount} >= 0 and ${table.resultCount} >= 0`),
   check("agent_runs_total_tokens_check", sql`${table.totalTokenCount} = ${table.inputTokenCount} + ${table.outputTokenCount}`),
   check("agent_runs_fake_model_usage_check", sql`${table.modelSnapshot} is null and ${table.modelCallCount} = 0 and ${table.inputTokenCount} = 0 and ${table.outputTokenCount} = 0 and ${table.totalTokenCount} = 0`),

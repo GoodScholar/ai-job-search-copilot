@@ -787,6 +787,36 @@ describe("database migrations", () => {
       insert into agent_run_usage_entries (user_id, run_id, usage_key, category, amount, attempt_count)
       values (${userId}, ${runId}, 'claim:1', 'tool_call', 1, 0)
     `)).rejects.toMatchObject({ cause: { code: "23505" } });
+
+    const claimRunId = "7be68e63-a4a2-476a-ac4b-6472d58498d2";
+    const claimToken = "3fd44a07-cd0d-4d0e-9db2-af6989826d22";
+    await migratedDatabase.execute(sql`
+      insert into agent_runs (
+        id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot,
+        workflow_version, rule_version, adapter, adapter_version, output_schema_version, tool_allowlist, status, current_step
+      ) values (
+        ${claimRunId}, ${userId}, ${targetId}, 'dd3eb80c-98a9-4783-81e7-53e7d8d78b0e', 1, '{}'::jsonb, '{}'::jsonb,
+        '{"maxActiveDurationMs":60000}'::jsonb, 'job-discovery-workflow-v1', 'fake-job-discovery-rules-v1', 'fake',
+        'fake-job-discovery-v1', 'job-discovery-result-v1', '["job_discovery.search_batch","job_discovery.get_detail"]'::jsonb, 'queued', 'queued'
+      )
+    `);
+    const partialClaims = [
+      sql`update agent_runs set claim_token = ${claimToken} where id = ${claimRunId}`,
+      sql`update agent_runs set claim_expires_at = now() + interval '30 seconds' where id = ${claimRunId}`,
+      sql`update agent_runs set active_slice_started_at = now() where id = ${claimRunId}`,
+      sql`update agent_runs set status = 'running', current_step = 'batch_search', started_at = now(), claim_token = ${claimToken}, claim_expires_at = now() + interval '30 seconds' where id = ${claimRunId}`,
+      sql`update agent_runs set claim_token = ${claimToken}, active_slice_started_at = now() where id = ${claimRunId}`,
+      sql`update agent_runs set claim_expires_at = now() + interval '30 seconds', active_slice_started_at = now() where id = ${claimRunId}`,
+    ];
+    for (const partialClaim of partialClaims) {
+      await expect(migratedDatabase.execute(partialClaim)).rejects.toMatchObject({ cause: { code: "23514" } });
+    }
+    await expect(migratedDatabase.execute(sql`
+      update agent_runs
+      set status = 'running', current_step = 'batch_search', started_at = now(), claim_token = ${claimToken},
+          claim_expires_at = now() + interval '30 seconds', active_slice_started_at = now()
+      where id = ${claimRunId}
+    `)).resolves.toBeDefined();
   });
 
   it("upgrades a #9-shaped agent run budget without inventing usage", async () => {

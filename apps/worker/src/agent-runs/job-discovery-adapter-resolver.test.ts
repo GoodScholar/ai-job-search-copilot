@@ -37,11 +37,15 @@ describe("JobDiscoveryAdapterResolver", () => {
       .toThrow("E2E_AGENT_RUN_SCENARIOS 格式无效");
   });
 
-  it("local/test 未配置场景时返回正常 Fake，并只接受持久化 adapter 元数据", async () => {
-    const resolver = createJobDiscoveryAdapterResolver({ APP_ENV: "local" });
+  it.each(["local", "production"])("%s 未配置场景时返回正常 Fake，并只接受持久化 adapter 元数据", async (APP_ENV) => {
+    const resolver = createJobDiscoveryAdapterResolver({ APP_ENV });
     await expect(resolver.resolve({ ...metadata, attemptCount: 1 }).searchBatch(batchInput)).resolves.toMatchObject({ ok: true });
     expect(() => resolver.resolve({ ...metadata, adapter: "other", attemptCount: 1 })).toThrow("AGENT_RUN_ADAPTER_UNSUPPORTED");
     expect(() => resolver.resolve({ ...metadata, adapterVersion: "other-v1", attemptCount: 1 })).toThrow("AGENT_RUN_ADAPTER_UNSUPPORTED");
+  });
+
+  it("未知 APP_ENV 时拒绝启动", () => {
+    expect(() => createJobDiscoveryAdapterResolver({ APP_ENV: "staging" })).toThrow("JobDiscoveryAdapter 环境未获允许");
   });
 
   it("retry_once 仅使第一次持久化 attempt 返回可重试来源错误", async () => {
