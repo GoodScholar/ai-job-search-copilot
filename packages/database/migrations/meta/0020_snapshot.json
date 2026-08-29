@@ -2830,43 +2830,19 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "company_watchlist_revisions_watchlist_id_company_watchlists_id_fk": {
-          "name": "company_watchlist_revisions_watchlist_id_company_watchlists_id_fk",
+        "company_watchlist_revisions_watchlist_target_fk": {
+          "name": "company_watchlist_revisions_watchlist_target_fk",
           "tableFrom": "company_watchlist_revisions",
           "tableTo": "company_watchlists",
           "columnsFrom": [
-            "watchlist_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "company_watchlist_revisions_target_id_job_targets_id_fk": {
-          "name": "company_watchlist_revisions_target_id_job_targets_id_fk",
-          "tableFrom": "company_watchlist_revisions",
-          "tableTo": "job_targets",
-          "columnsFrom": [
+            "user_id",
+            "watchlist_id",
             "target_id"
           ],
           "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "company_watchlist_revisions_owner_watchlist_fk": {
-          "name": "company_watchlist_revisions_owner_watchlist_fk",
-          "tableFrom": "company_watchlist_revisions",
-          "tableTo": "company_watchlists",
-          "columnsFrom": [
             "user_id",
-            "watchlist_id"
-          ],
-          "columnsTo": [
-            "user_id",
-            "id"
+            "id",
+            "target_id"
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
@@ -3015,6 +2991,15 @@
           "columns": [
             "user_id",
             "id"
+          ]
+        },
+        "company_watchlists_user_watchlist_target_unique": {
+          "name": "company_watchlists_user_watchlist_target_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "user_id",
+            "id",
+            "target_id"
           ]
         }
       },

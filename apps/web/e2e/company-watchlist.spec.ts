@@ -13,13 +13,13 @@ async function createSession(request: APIRequestContext, subject: string): Promi
   return (await response.json() as { sessionToken: string }).sessionToken;
 }
 
-async function createTarget(request: APIRequestContext, token: string): Promise<string> {
+async function createTarget(request: APIRequestContext, token: string, roleFamily = "AI 应用工程师"): Promise<string> {
   const response = await request.post(`${apiBaseUrl}/v1/job-targets`, {
     headers: { authorization: `Bearer ${token}` },
     data: {
       priority: "primary",
       constraints: {
-        roleFamily: "AI 应用工程师", seniority: "高级", locations: ["上海"], workModes: ["hybrid"], relocation: "conditional",
+        roleFamily, seniority: "高级", locations: ["上海"], workModes: ["hybrid"], relocation: "conditional",
         salary: { minimum: 30000, maximum: 45000, period: "month", currency: "CNY" }, industries: ["AI"],
         dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] },
       },
@@ -30,13 +30,21 @@ async function createTarget(request: APIRequestContext, token: string): Promise<
   return overview.targets.find((target) => target.priority === "primary")!.targetId;
 }
 
-async function signInAtWatchlist(page: Page, request: APIRequestContext, project: string): Promise<{ token: string; targetId: string }> {
-  const token = await createSession(request, `company-watchlist-${project}-${runSuffix}`);
-  const targetId = await createTarget(request, token);
+async function signInAtWatchlist(page: Page, request: APIRequestContext, project: string, roleFamily?: string): Promise<{ token: string; targetId: string }> {
+  const token = await createSession(request, `company-watchlist-${project}-${roleFamily ? "custom-role" : "default"}-${runSuffix}`);
+  const targetId = await createTarget(request, token, roleFamily);
   await page.context().addCookies([{ name: "job_copilot_session", value: token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
   await page.goto(`/profile/targets/${targetId}/watchlist`);
   return { token, targetId };
 }
+
+test("超长无空格角色名称不会造成 Watchlist 页面横向溢出", async ({ page, request }, testInfo) => {
+  const roleFamily = "a".repeat(200);
+  await signInAtWatchlist(page, request, testInfo.project.name, roleFamily);
+
+  await expect(page.getByRole("heading", { name: `${roleFamily}的目标公司 Watchlist` })).toBeVisible();
+  await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
+});
 
 async function addCompany(page: Page, company: string, careersUrl: string, domain: string, note = ""): Promise<void> {
   await page.getByLabel("公司规范名称").fill(company);

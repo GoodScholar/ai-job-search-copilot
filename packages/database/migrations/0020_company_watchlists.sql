@@ -20,13 +20,12 @@ CREATE TABLE "company_watchlists" (
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "company_watchlists_user_target_unique" UNIQUE("user_id","target_id"),
 	CONSTRAINT "company_watchlists_user_id_id_unique" UNIQUE("user_id","id"),
+	CONSTRAINT "company_watchlists_user_watchlist_target_unique" UNIQUE("user_id","id","target_id"),
 	CONSTRAINT "company_watchlists_version_positive" CHECK ("company_watchlists"."version" >= 1)
 );
 --> statement-breakpoint
 ALTER TABLE "company_watchlist_revisions" ADD CONSTRAINT "company_watchlist_revisions_user_id_job_accounts_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."job_accounts"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "company_watchlist_revisions" ADD CONSTRAINT "company_watchlist_revisions_watchlist_id_company_watchlists_id_fk" FOREIGN KEY ("watchlist_id") REFERENCES "public"."company_watchlists"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "company_watchlist_revisions" ADD CONSTRAINT "company_watchlist_revisions_target_id_job_targets_id_fk" FOREIGN KEY ("target_id") REFERENCES "public"."job_targets"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "company_watchlist_revisions" ADD CONSTRAINT "company_watchlist_revisions_owner_watchlist_fk" FOREIGN KEY ("user_id","watchlist_id") REFERENCES "public"."company_watchlists"("user_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "company_watchlist_revisions" ADD CONSTRAINT "company_watchlist_revisions_watchlist_target_fk" FOREIGN KEY ("user_id","watchlist_id","target_id") REFERENCES "public"."company_watchlists"("user_id","id","target_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "company_watchlist_revisions" ADD CONSTRAINT "company_watchlist_revisions_owner_target_fk" FOREIGN KEY ("user_id","target_id") REFERENCES "public"."job_targets"("user_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "company_watchlists" ADD CONSTRAINT "company_watchlists_user_id_job_accounts_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."job_accounts"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "company_watchlists" ADD CONSTRAINT "company_watchlists_target_id_job_targets_id_fk" FOREIGN KEY ("target_id") REFERENCES "public"."job_targets"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint

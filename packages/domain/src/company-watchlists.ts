@@ -82,7 +82,9 @@ function overview(target: Target, version: number, items: CompanyWatchlistItem[]
 }
 
 function normalizedSource(url: string): string {
-  return new URL(url).href;
+  const normalized = new URL(url);
+  normalized.hash = "";
+  return normalized.href;
 }
 
 function assertDistinct(items: CompanyWatchlistItem[]): void {

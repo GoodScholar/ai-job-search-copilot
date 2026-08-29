@@ -102,7 +102,7 @@ export const AddCompanyWatchlistItemCommandSchema = commandItemFields.extend({ e
 export const ReviseCompanyWatchlistItemCommandSchema = AddCompanyWatchlistItemCommandSchema;
 export const ReorderCompanyWatchlistCommandSchema = z.object({
   expectedVersion: version,
-  orderedItemIds: z.array(z.uuid()).max(50).refine(
+  orderedItemIds: z.array(z.uuid()).min(1).max(50).refine(
     (values) => new Set(values).size === values.length,
     { message: "item IDs must be unique" },
   ),

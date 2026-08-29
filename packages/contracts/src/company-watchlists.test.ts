@@ -84,6 +84,10 @@ describe("company watchlist contracts", () => {
       expectedVersion: 1,
       orderedItemIds: Array.from({ length: 51 }, (_, index) => `a${index}84ef6d-7dc3-4e4e-8692-7d3199575716`),
     }).success).toBe(false);
+    expect(ReorderCompanyWatchlistCommandSchema.safeParse({
+      expectedVersion: 0,
+      orderedItemIds: [],
+    }).success).toBe(false);
     expect(AddCompanyWatchlistItemCommandSchema.safeParse({ ...addCommand, expectedVersion: -1 }).success).toBe(false);
     expect(ReorderCompanyWatchlistCommandSchema.safeParse({
       expectedVersion: 1, orderedItemIds: [firstItemId], extra: true,

@@ -15,3 +15,14 @@ it("仅接受完整 UUID 排列命令并通过会话转发排序", async () => {
   const response = await POST(new Request("http://localhost", { method: "POST", body: JSON.stringify(command) }), context);
   expect(response.status).toBe(201); expect(mocks.reorderCompanyWatchlist).toHaveBeenCalledWith("a".repeat(43), targetId, command);
 });
+
+it("在 API 边界将空排序稳定拒绝为 400，且不转发领域命令", async () => {
+  mocks.readSessionToken.mockResolvedValue("a".repeat(43));
+
+  const response = await POST(new Request("http://localhost", {
+    method: "POST", body: JSON.stringify({ expectedVersion: 0, orderedItemIds: [] }),
+  }), context);
+
+  expect(response.status).toBe(400);
+  expect(mocks.reorderCompanyWatchlist).not.toHaveBeenCalled();
+});

@@ -162,6 +162,9 @@ describe("company watchlists", () => {
     await expect(commands().addItem({ userId, targetId, requestId: crypto.randomUUID(), command: {
       expectedVersion: 2, canonicalCompanyName: "Different Company", careersUrl: "https://JOBS.EXAMPLE1.TEST/openings/1", allowedDomains: first!.allowedDomains, sourceNote: null,
     } })).rejects.toMatchObject({ code: "COMPANY_WATCHLIST_DUPLICATE_SOURCE" });
+    await expect(commands().addItem({ userId, targetId, requestId: crypto.randomUUID(), command: {
+      expectedVersion: 2, canonicalCompanyName: "Fragment Duplicate", careersUrl: "https://jobs.example1.test/openings/1#alternate", allowedDomains: first!.allowedDomains, sourceNote: null,
+    } })).rejects.toMatchObject({ code: "COMPANY_WATCHLIST_DUPLICATE_SOURCE" });
     await expect(commands().reviseItem({ userId, targetId, requestId: crypto.randomUUID(), itemId: crypto.randomUUID(), command: {
       expectedVersion: 2, canonicalCompanyName: "Missing", careersUrl: "https://missing.test", allowedDomains: ["missing.test"], sourceNote: null,
     } })).rejects.toMatchObject({ code: "COMPANY_WATCHLIST_ITEM_NOT_FOUND" });

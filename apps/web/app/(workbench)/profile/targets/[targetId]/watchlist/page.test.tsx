@@ -3,6 +3,7 @@ import { expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getCompanyWatchlist: vi.fn(),
   view: vi.fn(() => null),
+  notFound: vi.fn(() => { throw new Error("NEXT_NOT_FOUND"); }),
   unstableRethrow: vi.fn((error: unknown) => {
     if (error instanceof Error && error.message.startsWith("NEXT_")) throw error;
   }),
@@ -10,7 +11,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/server/company-watchlists", () => ({ getCompanyWatchlist: mocks.getCompanyWatchlist }));
 vi.mock("@/components/workbench/company-watchlist-view", () => ({ CompanyWatchlistView: mocks.view }));
-vi.mock("next/navigation", () => ({ unstable_rethrow: mocks.unstableRethrow }));
+vi.mock("next/navigation", () => ({ notFound: mocks.notFound, unstable_rethrow: mocks.unstableRethrow }));
 
 import WatchlistPage, { metadata } from "./page";
 
@@ -42,4 +43,13 @@ it("为可恢复读取失败展示固定重试提示且不泄漏内部详情", a
 
   expect(JSON.stringify(page)).toContain("暂时无法读取目标公司 Watchlist。请稍后重新尝试。");
   expect(JSON.stringify(page)).not.toContain("internal-api");
+});
+
+it("在服务端本地拒绝非法 targetId，且不读取会话或内部 API", async () => {
+  mocks.getCompanyWatchlist.mockResolvedValue({ target: { targetId, targetVersion: 1, targetState: "active", roleFamily: "AI 应用工程" }, version: 0, items: [] });
+
+  await expect(WatchlistPage({ params: Promise.resolve({ targetId: "not-a-uuid" }) })).rejects.toThrow("NEXT_NOT_FOUND");
+
+  expect(mocks.notFound).toHaveBeenCalledTimes(1);
+  expect(mocks.getCompanyWatchlist).not.toHaveBeenCalledWith("not-a-uuid");
 });

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { unstable_rethrow } from "next/navigation";
+import { notFound, unstable_rethrow } from "next/navigation";
+import { z } from "zod";
 import { CompanyWatchlistView } from "@/components/workbench/company-watchlist-view";
 import { getCompanyWatchlist } from "@/lib/server/company-watchlists";
 
@@ -7,8 +8,11 @@ export const metadata: Metadata = {
   title: "目标公司 Watchlist | AI Job Search Copilot",
 };
 
+const TargetIdSchema = z.uuid();
+
 export default async function WatchlistPage({ params }: { params: Promise<{ targetId: string }> }) {
   const { targetId } = await params;
+  if (!TargetIdSchema.safeParse(targetId).success) notFound();
   let overview;
   try {
     overview = await getCompanyWatchlist(targetId);

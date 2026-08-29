@@ -332,6 +332,7 @@ export const companyWatchlists = pgTable("company_watchlists", {
 }, (table) => [
   unique("company_watchlists_user_target_unique").on(table.userId, table.targetId),
   unique("company_watchlists_user_id_id_unique").on(table.userId, table.id),
+  unique("company_watchlists_user_watchlist_target_unique").on(table.userId, table.id, table.targetId),
   foreignKey({
     columns: [table.userId, table.targetId],
     foreignColumns: [jobTargets.userId, jobTargets.id],
@@ -343,17 +344,17 @@ export const companyWatchlists = pgTable("company_watchlists", {
 export const companyWatchlistRevisions = pgTable("company_watchlist_revisions", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").notNull().references(() => jobAccounts.id),
-  watchlistId: uuid("watchlist_id").notNull().references(() => companyWatchlists.id),
-  targetId: uuid("target_id").notNull().references(() => jobTargets.id),
+  watchlistId: uuid("watchlist_id").notNull(),
+  targetId: uuid("target_id").notNull(),
   version: integer("version").notNull(),
   items: jsonb("items").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   unique("company_watchlist_revisions_watchlist_version_unique").on(table.watchlistId, table.version),
   foreignKey({
-    columns: [table.userId, table.watchlistId],
-    foreignColumns: [companyWatchlists.userId, companyWatchlists.id],
-    name: "company_watchlist_revisions_owner_watchlist_fk",
+    columns: [table.userId, table.watchlistId, table.targetId],
+    foreignColumns: [companyWatchlists.userId, companyWatchlists.id, companyWatchlists.targetId],
+    name: "company_watchlist_revisions_watchlist_target_fk",
   }),
   foreignKey({
     columns: [table.userId, table.targetId],

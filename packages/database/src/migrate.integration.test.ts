@@ -882,10 +882,11 @@ describe("database migrations", () => {
     expect(await listConstraintNames(migratedDatabase)).toEqual(expect.arrayContaining([
       "company_watchlists_user_target_unique",
       "company_watchlists_user_id_id_unique",
+      "company_watchlists_user_watchlist_target_unique",
       "company_watchlists_owner_target_fk",
       "company_watchlists_version_positive",
       "company_watchlist_revisions_watchlist_version_unique",
-      "company_watchlist_revisions_owner_watchlist_fk",
+      "company_watchlist_revisions_watchlist_target_fk",
       "company_watchlist_revisions_owner_target_fk",
       "company_watchlist_revisions_version_positive",
       "company_watchlist_revisions_items_array",
@@ -894,11 +895,16 @@ describe("database migrations", () => {
     const firstUserId = "b4a8c44c-56f5-4420-8f58-bd3e7552e7f1";
     const secondUserId = "56ee9fe7-fd11-40a8-99ad-49d43c53f1d2";
     const targetId = "1e71e774-1e28-4f02-86d9-9d28b7626ac8";
+    const unrelatedTargetId = "97d7d6a4-cec0-4476-9b1a-f70da8fdeae4";
     const watchlistId = "eb2a0489-c159-46a3-9465-5eb4e6c6b0a9";
     await migratedDatabase.execute(sql`insert into job_accounts (id) values (${firstUserId}), (${secondUserId})`);
     await migratedDatabase.execute(sql`
       insert into job_targets (id, user_id, version, priority, state)
       values (${targetId}, ${firstUserId}, 1, 'primary', 'active')
+    `);
+    await migratedDatabase.execute(sql`
+      insert into job_targets (id, user_id, version, priority, state, active_slot)
+      values (${unrelatedTargetId}, ${firstUserId}, 1, 'secondary', 'active', 1)
     `);
     await migratedDatabase.execute(sql`
       insert into company_watchlists (id, user_id, target_id, version)
@@ -920,6 +926,10 @@ describe("database migrations", () => {
       insert into company_watchlist_revisions (user_id, watchlist_id, target_id, version, items)
       values (${firstUserId}, ${watchlistId}, ${targetId}, 1, '[]'::jsonb)
     `);
+    await expect(migratedDatabase.execute(sql`
+      insert into company_watchlist_revisions (user_id, watchlist_id, target_id, version, items)
+      values (${firstUserId}, ${watchlistId}, ${unrelatedTargetId}, 2, '[]'::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
     await expect(migratedDatabase.execute(sql`
       insert into company_watchlist_revisions (user_id, watchlist_id, target_id, version, items)
       values (${firstUserId}, ${watchlistId}, ${targetId}, 2, '{}'::jsonb)
