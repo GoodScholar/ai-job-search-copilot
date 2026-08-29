@@ -57,3 +57,9 @@ pnpm lint
 
 - 固定安全退避让两条 retry 场景耗时约 34s/62s；这是锁定 lease 安全语义的真实验收，不是 sleep、skip 或放宽状态断言。
 - lint 的剩余失败位于既有 targets 页面，不在本任务的 E2E/验收修复范围内；未为使门禁显示为绿而改动无关产品代码。
+
+## 最终双轴审查
+
+- **Standards：PASS。** 用户界面改为结果导向中文标签；数据库强制三个 claim 字段同空/同非空；SSE 携带 `runVersion` 并经单调投影更新；终态事件判定只有一个 contracts 来源。设计稿明确将真实 Adapter 留给 #11，因此 #10 的普通生产 Fake 是已批准的阶段边界，不是未授权的网络接入。
+- **Spec：PASS。** 重试决策覆盖 attempts、active duration、tool/model calls 和 tokens；旧运行的 `usage.complete=false` 在终止时保留；checkpoint、result、claim 与 heartbeat 的消费都在原子事务中生成不可变分录、`run.budget_updated` 和脱敏审计。
+- 原实现上下文已通过范围化复审关闭全部 Critical/Important findings；最终复审确认 Issue #10 七项验收标准均有实现证据。
