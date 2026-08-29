@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import {
   agentRunEvents,
   agentRunJobResults,
@@ -154,73 +154,119 @@ async function closeMissingSourcePostings(db: any, input: { id: () => string; us
   }
   if (candidates.length === 0) return [] as string[];
   const postingIds = candidates.map((candidate) => candidate.posting.id);
-  const versions = await db.select().from(jobSourcePostingVersions).where(and(eq(jobSourcePostingVersions.userId, input.userId), inArray(jobSourcePostingVersions.sourcePostingId, postingIds))).orderBy(desc(jobSourcePostingVersions.version));
-  const latestByPosting = new Map<string, typeof jobSourcePostingVersions.$inferSelect>();
-  for (const version of versions) if (!latestByPosting.has(version.sourcePostingId)) latestByPosting.set(version.sourcePostingId, version);
+  const versions = await db.execute(sql`
+    select distinct on (source_posting_id)
+      id, source_posting_id as "sourcePostingId", version,
+      content_sha256 as "contentSha256", raw_content_sha256 as "rawContentSha256",
+      raw_object_reference as "rawObjectReference"
+    from job_source_posting_versions
+    where user_id = ${input.userId}::uuid and source_posting_id in (
+      select value::uuid from jsonb_array_elements_text(${JSON.stringify(postingIds)}::jsonb)
+    )
+    order by source_posting_id, version desc
+  `) as Array<{ id: string; sourcePostingId: string; version: number; contentSha256: string; rawContentSha256: string; rawObjectReference: Record<string, unknown> }>;
+  const latestByPosting = new Map(versions.map((version) => [version.sourcePostingId, version]));
   const inserts = candidates.flatMap(({ posting, availability }) => {
     const latest = latestByPosting.get(posting.id);
     return latest ? [{ id: input.id(), userId: input.userId, sourcePostingId: posting.id, version: latest.version + 1, contentSha256: latest.contentSha256, rawContentSha256: latest.rawContentSha256, rawObjectReference: latest.rawObjectReference, retrievedAt: input.now, availability, createdAt: input.now }] : [];
   });
   if (inserts.length !== candidates.length) throw new Error("AGENT_RUN_PERSIST_FAILED");
-  const createdVersions = await db.insert(jobSourcePostingVersions).values(inserts).returning({
-    id: jobSourcePostingVersions.id,
-    sourcePostingId: jobSourcePostingVersions.sourcePostingId,
-  });
-  for (const availability of ["closed", "expired"] as const) {
-    const ids = candidates.filter((candidate) => candidate.availability === availability).map((candidate) => candidate.posting.id);
-    if (ids.length > 0) await db.update(jobSourcePostings).set({ availability, availabilityUpdatedAt: input.now, updatedAt: input.now })
-      .where(and(eq(jobSourcePostings.userId, input.userId), inArray(jobSourcePostings.id, ids)));
-  }
-  const rows = await db.select({ opportunityId: jobOpportunitySources.opportunityId, sourcePostingId: jobSourcePostingVersions.sourcePostingId }).from(jobOpportunitySources)
-    .innerJoin(jobSourcePostingVersions, and(eq(jobSourcePostingVersions.userId, jobOpportunitySources.userId), eq(jobSourcePostingVersions.id, jobOpportunitySources.sourcePostingVersionId)))
-    .where(and(eq(jobOpportunitySources.userId, input.userId), inArray(jobSourcePostingVersions.sourcePostingId, postingIds)));
-  const lifecycleVersionByPosting = new Map(createdVersions.map((version: { id: string; sourcePostingId: string }) => [version.sourcePostingId, version.id]));
-  const lifecycleEvidence = (rows as Array<{ opportunityId: string; sourcePostingId: string }>).flatMap((row) => {
+  const createdVersions = await db.execute(sql`
+    insert into job_source_posting_versions (
+      id, user_id, source_posting_id, version, content_sha256, raw_content_sha256,
+      raw_object_reference, retrieved_at, availability, created_at
+    )
+    select r.id::uuid, ${input.userId}::uuid, r.source_posting_id::uuid, r.version,
+      r.content_sha256, r.raw_content_sha256, r.raw_object_reference,
+      r.retrieved_at::timestamptz, r.availability::varchar, r.created_at::timestamptz
+    from jsonb_to_recordset(${JSON.stringify(inserts.map((item) => ({
+      id: item.id, source_posting_id: item.sourcePostingId, version: item.version,
+      content_sha256: item.contentSha256, raw_content_sha256: item.rawContentSha256,
+      raw_object_reference: item.rawObjectReference, retrieved_at: item.retrievedAt.toISOString(),
+      availability: item.availability, created_at: item.createdAt.toISOString(),
+    }))) }::jsonb) as r(
+      id text, source_posting_id text, version integer, content_sha256 text,
+      raw_content_sha256 text, raw_object_reference jsonb, retrieved_at text,
+      availability text, created_at text
+    )
+    returning id, source_posting_id as "sourcePostingId"
+  `) as Array<{ id: string; sourcePostingId: string }>;
+  await db.execute(sql`
+    update job_source_postings as posting
+    set availability = updates.availability::varchar,
+      availability_updated_at = ${input.now.toISOString()}::timestamptz,
+      updated_at = ${input.now.toISOString()}::timestamptz
+    from jsonb_to_recordset(${JSON.stringify(candidates.map(({ posting, availability }) => ({ id: posting.id, availability })))}::jsonb)
+      as updates(id text, availability text)
+    where posting.user_id = ${input.userId}::uuid and posting.id = updates.id::uuid
+  `);
+  const rows = await db.execute(sql`
+    select evidence.opportunity_id as "opportunityId", version.source_posting_id as "sourcePostingId"
+    from job_opportunity_sources as evidence
+    join job_source_posting_versions as version
+      on version.user_id = evidence.user_id and version.id = evidence.source_posting_version_id
+    where evidence.user_id = ${input.userId}::uuid
+      and version.source_posting_id in (
+        select value::uuid from jsonb_array_elements_text(${JSON.stringify(postingIds)}::jsonb)
+      )
+  `) as Array<{ opportunityId: string; sourcePostingId: string }>;
+  const lifecycleVersionByPosting = new Map(createdVersions.map((version) => [version.sourcePostingId, version.id]));
+  const lifecycleEvidence = rows.flatMap((row) => {
     const sourcePostingVersionId = lifecycleVersionByPosting.get(row.sourcePostingId);
     return sourcePostingVersionId ? [{ id: input.id(), userId: input.userId, opportunityId: row.opportunityId, sourcePostingVersionId, createdAt: input.now }] : [];
   });
-  if (lifecycleEvidence.length > 0) await db.insert(jobOpportunitySources).values(lifecycleEvidence).onConflictDoNothing();
-  const impacted = new Set<string>((rows as Array<{ opportunityId: string }>).map((row) => row.opportunityId));
+  if (lifecycleEvidence.length > 0) await db.execute(sql`
+    insert into job_opportunity_sources (id, user_id, opportunity_id, source_posting_version_id, created_at)
+    select r.id::uuid, ${input.userId}::uuid, r.opportunity_id::uuid,
+      r.source_posting_version_id::uuid, r.created_at::timestamptz
+    from jsonb_to_recordset(${JSON.stringify(lifecycleEvidence.map((item) => ({
+      id: item.id, opportunity_id: item.opportunityId,
+      source_posting_version_id: item.sourcePostingVersionId, created_at: item.createdAt.toISOString(),
+    }))) }::jsonb) as r(id text, opportunity_id text, source_posting_version_id text, created_at text)
+    on conflict do nothing
+  `);
+  const impacted = new Set(rows.map((row) => row.opportunityId));
   return [...impacted];
 }
 
 async function recomputeOpportunityAvailability(db: any, input: { userId: string; opportunityIds: Iterable<string>; now: Date }) {
   const opportunityIds = [...new Set(input.opportunityIds)];
   if (opportunityIds.length === 0) return new Set<string>();
-  const sources = await db.select({ opportunityId: jobOpportunitySources.opportunityId, sourcePostingId: jobSourcePostingVersions.sourcePostingId, isOfficial: jobSourcePostings.isOfficial })
-    .from(jobOpportunitySources).innerJoin(jobSourcePostingVersions, and(eq(jobSourcePostingVersions.userId, jobOpportunitySources.userId), eq(jobSourcePostingVersions.id, jobOpportunitySources.sourcePostingVersionId)))
-    .innerJoin(jobSourcePostings, and(eq(jobSourcePostings.userId, jobSourcePostingVersions.userId), eq(jobSourcePostings.id, jobSourcePostingVersions.sourcePostingId)))
-    .where(and(eq(jobOpportunitySources.userId, input.userId), inArray(jobOpportunitySources.opportunityId, opportunityIds)));
-  const postingIds: string[] = [...new Set((sources as Array<{ sourcePostingId: string }>).map((source) => source.sourcePostingId))];
-  const versions = postingIds.length === 0 ? [] : await db.select().from(jobSourcePostingVersions).where(and(eq(jobSourcePostingVersions.userId, input.userId), inArray(jobSourcePostingVersions.sourcePostingId, postingIds)))
-    .orderBy(desc(jobSourcePostingVersions.version));
-  const latestByPosting = new Map<string, typeof jobSourcePostingVersions.$inferSelect>();
-  for (const version of versions) if (!latestByPosting.has(version.sourcePostingId)) latestByPosting.set(version.sourcePostingId, version);
-  const opportunities = await db.select().from(jobOpportunities).where(and(eq(jobOpportunities.userId, input.userId), inArray(jobOpportunities.id, opportunityIds)));
-  const sourceByOpportunity = new Map<string, Array<{ sourcePostingId: string; isOfficial: boolean }>>();
-  const openOpportunityIds = new Set<string>();
-  const updates: Array<{ id: string; availability: Availability; sourcePostingVersionId: string | null }> = [];
-  for (const source of sources) sourceByOpportunity.set(source.opportunityId, [...(sourceByOpportunity.get(source.opportunityId) ?? []), source]);
-  for (const opportunity of opportunities) {
-    const current = [...new Map((sourceByOpportunity.get(opportunity.id) ?? []).map((source) => [source.sourcePostingId, source])).values()]
-      .map((source) => ({ source, version: latestByPosting.get(source.sourcePostingId) })).filter((item): item is { source: { sourcePostingId: string; isOfficial: boolean }; version: typeof jobSourcePostingVersions.$inferSelect } => Boolean(item.version));
-    const availability: Availability = current.some((item) => item.version.availability === "open") ? "open"
-      : current.some((item) => item.version.availability === "expired") ? "expired" : "closed";
-    if (availability === "open") openOpportunityIds.add(opportunity.id);
-    const evidence = current.filter((item) => item.source.isOfficial && item.version.availability === "open").sort((left, right) => right.version.createdAt.getTime() - left.version.createdAt.getTime())[0]?.version;
-    updates.push({ id: opportunity.id, availability, sourcePostingVersionId: evidence?.id ?? null });
-  }
-  const availabilityCase = sql`case ${jobOpportunities.id} ${sql.join(updates.map((update) => sql`when ${update.id} then ${update.availability}`), sql.raw(" "))} end`;
-  const evidenceCase = sql`case ${jobOpportunities.id} ${sql.join(updates.map((update) => update.sourcePostingVersionId
-    ? sql`when ${update.id} then ${update.sourcePostingVersionId}::uuid`
-    : sql`when ${update.id} then ${jobOpportunities.sourcePostingVersionId}`), sql.raw(" "))} end`;
-  await db.update(jobOpportunities).set({
-    availability: availabilityCase,
-    availabilityUpdatedAt: sql`case when ${jobOpportunities.availability} is distinct from ${availabilityCase} then ${input.now.toISOString()}::timestamptz else ${jobOpportunities.availabilityUpdatedAt} end`,
-    sourcePostingVersionId: evidenceCase,
-    updatedAt: input.now,
-  }).where(and(eq(jobOpportunities.userId, input.userId), inArray(jobOpportunities.id, opportunityIds)));
-  return openOpportunityIds;
+  const updated = await db.execute(sql`
+    with target as (
+      select value::uuid as id
+      from jsonb_array_elements_text(${JSON.stringify(opportunityIds)}::jsonb)
+    ), linked_sources as (
+      select distinct evidence.opportunity_id, posting.id as source_posting_id, posting.is_official
+      from target
+      join job_opportunity_sources as evidence on evidence.opportunity_id = target.id and evidence.user_id = ${input.userId}::uuid
+      join job_source_posting_versions as evidence_version on evidence_version.id = evidence.source_posting_version_id and evidence_version.user_id = evidence.user_id
+      join job_source_postings as posting on posting.id = evidence_version.source_posting_id and posting.user_id = evidence.user_id
+    ), latest as (
+      select distinct on (version.source_posting_id) version.source_posting_id, version.id, version.availability, version.created_at
+      from job_source_posting_versions as version
+      join (select distinct source_posting_id from linked_sources) as source on source.source_posting_id = version.source_posting_id
+      where version.user_id = ${input.userId}::uuid
+      order by version.source_posting_id, version.version desc
+    ), updates as (
+      select linked_sources.opportunity_id as id,
+        case when bool_or(latest.availability = 'open') then 'open'
+          when bool_or(latest.availability = 'expired') then 'expired' else 'closed' end as availability,
+        (array_agg(latest.id order by latest.created_at desc) filter (where linked_sources.is_official and latest.availability = 'open'))[1] as current_evidence_id
+      from linked_sources join latest on latest.source_posting_id = linked_sources.source_posting_id
+      group by linked_sources.opportunity_id
+    )
+    update job_opportunities as opportunity
+    set availability = updates.availability::varchar,
+      availability_updated_at = case when opportunity.availability is distinct from updates.availability
+        then ${input.now.toISOString()}::timestamptz else opportunity.availability_updated_at end,
+      source_posting_version_id = coalesce(updates.current_evidence_id, opportunity.source_posting_version_id),
+      updated_at = ${input.now.toISOString()}::timestamptz
+    from updates
+    where opportunity.user_id = ${input.userId}::uuid and opportunity.id = updates.id
+    returning opportunity.id, opportunity.availability
+  `) as Array<{ id: string; availability: Availability }>;
+  return new Set(updated.filter((opportunity) => opportunity.availability === "open").map((opportunity) => opportunity.id));
 }
 
 export function createJobDiscoveryPersistence(deps: { db: Database; id: () => string; auditTrail: AuditTrail }) {

@@ -1,6 +1,6 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import {
   agentRunEvents,
   agentRunJobResults,
@@ -36,10 +36,11 @@ describe("job discovery persistence lifecycle", () => {
   let container: StartedPostgreSqlContainer;
   let database: Database;
   let statementCount = 0;
+  let observedStatements: Array<{ query: string; params: unknown[] }> = [];
 
   beforeAll(async () => {
     container = await new PostgreSqlContainer("postgres:17-alpine").start();
-    database = createDatabase(container.getConnectionUri(), { observer: { onQuery: () => { statementCount += 1; } } });
+    database = createDatabase(container.getConnectionUri(), { observer: { onQuery: (query, params) => { statementCount += 1; observedStatements.push({ query, params }); } } });
     await migrateDatabase(database);
   }, 60_000);
   afterAll(async () => { await database?.$client.end(); await container?.stop(); });
@@ -403,11 +404,56 @@ describe("job discovery persistence lifecycle", () => {
       const details = Array.from({ length: count }, (_, index) => ({ sourceId, detailId: String(index), company: "Fictional", title: `AI Engineer ${index}`, location: null, postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true, rawPayload: {} }));
       await persistence.persistSuccessfulDiscovery({ run: await claimRun(userId, targetId, firstSeen), details, scans: [{ sourceId, observedDetailIds: details.map((detail) => detail.detailId), complete: true }], storedObjects: details.map((detail, index) => ({ sourceId, detailId: detail.detailId, objectKey: `${count}-${index}.json`, rawContentSha256: `${index.toString(16)}`.padStart(64, "a").slice(-64) })), now: firstSeen });
       statementCount = 0;
+      observedStatements = [];
       await persistence.persistSuccessfulDiscovery({ run: await claimRun(userId, targetId, later), details: [], scans: [{ sourceId, observedDetailIds: [], complete: true }], storedObjects: [], now: later });
-      return statementCount;
+      return { count: statementCount, queries: observedStatements.map((statement) => statement.query), maxParams: Math.max(...observedStatements.map((statement) => statement.params.length)) };
     };
     const one = await reconcile(1);
     const many = await reconcile(12);
-    expect(many).toBeLessThanOrEqual(one + 2);
+    expect(one.count).toBeLessThanOrEqual(31);
+    expect(many.count).toBe(one.count);
+    expect(many.queries).toEqual(one.queries);
+    expect(many.maxParams).toBe(one.maxParams);
+  });
+
+  it("数百条完整扫描以常数 SQL 形状关闭并保留 lifecycle evidence", async () => {
+    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const sourceId = "greenhouse:large-statement"; const count = 512;
+    await database.insert(jobAccounts).values({ id: userId });
+    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: firstSeen, updatedAt: firstSeen });
+    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: firstSeen });
+    await database.execute(sql`
+      with generated as (
+        select generate_series(1, ${count}) as ordinal, gen_random_uuid() as posting_id,
+          gen_random_uuid() as version_id, gen_random_uuid() as opportunity_id, gen_random_uuid() as evidence_id
+      ), postings as (
+        insert into job_source_postings (id, user_id, source_type, source_identifier, source_id, source_identity, application_deadline, is_official, availability, availability_updated_at, created_at, updated_at)
+        select posting_id, ${userId}::uuid, 'company_careers', md5('posting:' || ordinal::text) || md5('posting-extra:' || ordinal::text), ${sourceId},
+          jsonb_build_object('sourceId', ${sourceId}::text, 'detailId', ordinal::text), null, true, 'open', ${firstSeen.toISOString()}::timestamptz, ${firstSeen.toISOString()}::timestamptz, ${firstSeen.toISOString()}::timestamptz
+        from generated returning id
+      ), versions as (
+        insert into job_source_posting_versions (id, user_id, source_posting_id, version, content_sha256, raw_content_sha256, raw_object_reference, retrieved_at, availability, created_at)
+        select generated.version_id, ${userId}::uuid, generated.posting_id, 1, md5('content:' || generated.ordinal::text) || md5('content-extra:' || generated.ordinal::text), md5('raw:' || generated.ordinal::text) || md5('raw-extra:' || generated.ordinal::text),
+          jsonb_build_object('objectKey', 'large-' || generated.ordinal || '.json'), ${firstSeen.toISOString()}::timestamptz, 'open', ${firstSeen.toISOString()}::timestamptz
+        from generated join postings on postings.id = generated.posting_id returning id
+      ), opportunities as (
+        insert into job_opportunities (id, user_id, import_id, source_posting_version_id, dedup_key, company, title, location, posted_at, deadline, description, normalized_data, availability, availability_updated_at, created_at, updated_at)
+        select generated.opportunity_id, ${userId}::uuid, null, generated.version_id, md5('opportunity:' || generated.ordinal::text) || md5('opportunity-extra:' || generated.ordinal::text), 'Fictional', 'Large ' || generated.ordinal, null, null, null, null,
+          jsonb_build_object('sourceId', ${sourceId}::text, 'detailId', generated.ordinal::text), 'open', ${firstSeen.toISOString()}::timestamptz, ${firstSeen.toISOString()}::timestamptz, ${firstSeen.toISOString()}::timestamptz
+        from generated join versions on versions.id = generated.version_id returning id
+      )
+      insert into job_opportunity_sources (id, user_id, opportunity_id, source_posting_version_id, created_at)
+      select generated.evidence_id, ${userId}::uuid, generated.opportunity_id, generated.version_id, ${firstSeen.toISOString()}::timestamptz
+      from generated join opportunities on opportunities.id = generated.opportunity_id
+    `);
+    const persistence = createJobDiscoveryPersistence({ db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => later }) });
+    statementCount = 0; observedStatements = [];
+    await persistence.persistSuccessfulDiscovery({ run: await claimRun(userId, targetId, later), details: [], scans: [{ sourceId, observedDetailIds: [], complete: true }], storedObjects: [], now: later });
+    await expect(database.execute(sql`select count(*)::int as count from job_source_postings where user_id = ${userId}::uuid and availability = 'closed'`)).resolves.toEqual([{ count }]);
+    await expect(database.execute(sql`select count(*)::int as count from job_source_posting_versions where user_id = ${userId}::uuid`)).resolves.toEqual([{ count: count * 2 }]);
+    await expect(database.execute(sql`select count(*)::int as count from job_opportunity_sources where user_id = ${userId}::uuid`)).resolves.toEqual([{ count: count * 2 }]);
+    expect(statementCount).toBeLessThanOrEqual(35);
+    expect(Math.max(...observedStatements.map((statement) => statement.params.length))).toBeLessThanOrEqual(32);
+    expect(observedStatements.some((statement) => statement.query.includes("jsonb_to_recordset"))).toBe(true);
+    expect(observedStatements.some((statement) => /\bin\s*\(\s*\$\d+\s*,\s*\$\d+/.test(statement.query))).toBe(false);
   });
 });
