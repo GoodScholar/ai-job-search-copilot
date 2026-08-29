@@ -16,7 +16,7 @@
     "./agent-runs": "./src/agent-runs.ts"
   },
   "scripts": {
-    "test": "vitest run",
+    "test": "vitest run --no-file-parallelism",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
