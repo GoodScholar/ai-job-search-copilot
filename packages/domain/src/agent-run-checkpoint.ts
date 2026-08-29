@@ -68,7 +68,7 @@ export function createAgentRunCheckpoint(deps: Dependencies): {
         if (!run || run.status !== "running" || !run.claimExpiresAt || run.claimExpiresAt <= now) return { kind: "stale" };
         const prior = await transaction.select({ category: agentRunUsageEntries.category, amount: agentRunUsageEntries.amount }).from(agentRunUsageEntries)
           .where(and(eq(agentRunUsageEntries.runId, input.runId), eq(agentRunUsageEntries.usageKey, input.checkpointKey)));
-        if (prior.length > 0 && !sameReserve(prior, reserve)) throw new AgentRunCheckpointError("AGENT_RUN_CHECKPOINT_CONFLICT");
+        if (run.controlState === "none" && prior.length > 0 && !sameReserve(prior, reserve)) throw new AgentRunCheckpointError("AGENT_RUN_CHECKPOINT_CONFLICT");
         const elapsed = run.controlState !== "none" || prior.length === 0 ? await settleActiveSlice(transaction, { id: deps.id, userId: input.userId, run, now }) : 0;
         const activeDurationMs = run.activeDurationMs + elapsed;
         const dimension = exhausted({ ...run, activeDurationMs }, reserve, 0);

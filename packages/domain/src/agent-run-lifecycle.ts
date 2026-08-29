@@ -13,16 +13,17 @@ async function appendEvent(transaction: any, input: { id: () => string; userId: 
 }
 
 /** 同一 claim slice 只可结算一次；稳定 key 使事务重试不会重复增加聚合。 */
-export async function settleActiveSlice(transaction: any, input: { id: () => string; userId: string; run: typeof agentRuns.$inferSelect; now: Date }) {
+export async function settleActiveSlice(transaction: any, input: { id: () => string; userId: string; run: typeof agentRuns.$inferSelect; now: Date; until?: Date }) {
   const startedAt = input.run.activeSliceStartedAt;
   const claimToken = input.run.claimToken;
   if (!startedAt || !claimToken) return 0;
-  const amount = Math.max(0, input.now.getTime() - startedAt.getTime());
+  const settledAt = input.until && input.until < input.now ? input.until : input.now;
+  const amount = Math.max(0, settledAt.getTime() - startedAt.getTime());
   if (amount === 0) return 0;
   const usageKey = `${claimToken}:active:${startedAt.toISOString()}`;
   const [inserted] = await transaction.insert(agentRunUsageEntries).values({
     id: input.id(), userId: input.userId, runId: input.run.id, usageKey, category: "active_duration", amount,
-    attemptCount: input.run.attemptCount, createdAt: input.now,
+    attemptCount: input.run.attemptCount, createdAt: settledAt,
   }).onConflictDoNothing().returning({ id: agentRunUsageEntries.id });
   return inserted ? amount : 0;
 }

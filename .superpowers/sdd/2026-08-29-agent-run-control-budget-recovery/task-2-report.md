@@ -190,3 +190,29 @@ Fresh `pnpm --filter @job-copilot/domain typecheck` passed. The focused integrat
 - `pending` 仅是 durable Inbox action ownership，不是用户自由文本或公共 DTO；restart 在 start 成功而 resolution 回滚后仍可用相同 actionId 重放完成。
 - active-time ledger 与 aggregate 在同一事务中更新，使用稳定 slice key 的冲突结果决定是否累计，避免事务重试双计。
 - Processor 仍不在每次 Adapter 调用前调用 checkpoint：这是 Task 3 的外部调用接线边界，本轮只修复既有 Processor lifecycle 和 retry/terminal 语义。
+
+## Task 2 review fix round 2
+
+### Status
+
+关闭 scoped re-review 留下的三项未完全修复与一项新 breakage；未扩展 Task 3、API 或 UI。
+
+### RED/GREEN evidence
+
+| Slice | RED | GREEN |
+| --- | --- | --- |
+| Expired reclaim | `pnpm --filter @job-copilot/domain exec vitest run src/agent-runs.integration.test.ts src/agent-run-control.integration.test.ts src/agent-inbox.integration.test.ts`：过期 running claim 被新 claim 覆盖，旧有效 lease 的 30 秒未入账；累计到 active budget 仍创建新 claim。 | 同命令 3 files、44 tests passed：用旧 token/start key 结算到 `min(claimExpiresAt, claimNow)`，仅累计有效 30 秒；到 active budget 时直接 `budget_exhausted(active_duration)`，没有 `run.started`。 |
+| Typed budget dimension | 同一 RED：将 run snapshot 的工具预算设为 0 后，Processor 仍完成，证明 `adapterCall` 使用了常量且 budget error 没有维度。 | `AgentRunBudgetError` 携带 dimension；deadline/bounded 为 `active_duration`，adapter tool boundary 为 `tool_calls`。GREEN 断言 tool terminal、唯一 Inbox、`run.failed`、budget 与 Inbox audit 各一次，并保留 active deadline 断言。 |
+| Control priority | 已有 checkpoint 加不同 reserve + cancel 先抛 `AGENT_RUN_CHECKPOINT_CONFLICT`。 | GREEN 后 cancel 优先落地，不追加 reserve usage；正常 `controlState=none` 的 mismatch 仍稳定拒绝。 |
+| Failed ownership retryability | restart 在 inactive target 后留下 failed action；修复 target 后新 actionId 被旧 row 永久冲突。 | GREEN 后同 actionId 精确重放 `AGENT_INBOX_ACTION_FAILED`，open item 的所有历史 failed row 不阻止新 actionId restart；pending/applied/no-change 仍阻止不同 action。 |
+
+### Verification
+
+- `pnpm --filter @job-copilot/domain exec vitest run src/agent-runs.integration.test.ts src/agent-run-control.integration.test.ts src/agent-inbox.integration.test.ts` → 3 files, 44 tests passed。
+- Task 2 七文件聚焦套件 → 7 files, 66 tests passed。
+- domain/contracts/database typecheck → passed；database migration integration → 15 tests passed；`git diff --check` → passed。
+
+### Self-review / concerns
+
+- expired reclaim 只把过期 lease 之前的可证明执行时间入账，不把崩溃后的 downtime 计入；settlement key 仍是旧 claim token 与旧 slice start，重试幂等。
+- `pending` ownership 仍是内部 durable 状态；同一 item 只有所有历史 action 均为 `failed` 且事项保持 open 时，才允许新的 actionId 获得 retry ownership。

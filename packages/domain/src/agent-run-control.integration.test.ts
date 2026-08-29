@@ -184,4 +184,17 @@ describe("agent run controls", () => {
     await expect(checkpoints(new Date(now.getTime() + 200)).check({ userId, runId: run.runId, claimToken, checkpointKey: key, reserve: { toolCalls: 1, sourceRequests: 1 } })).resolves.toEqual({ kind: "paused" });
     await expect(database.select().from(agentRunUsageEntries).where(and(eq(agentRunUsageEntries.userId, userId), eq(agentRunUsageEntries.runId, run.runId), eq(agentRunUsageEntries.usageKey, key)))).resolves.toHaveLength(2);
   });
+
+  it("已有 checkpoint 的 reserve 不一致时仍优先执行 cancel control", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const claimToken = crypto.randomUUID();
+    await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", attemptCount: 1, startedAt: now, claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), activeSliceStartedAt: now }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)));
+    const key = `${claimToken}:source:search:1`;
+    await checkpoints(new Date(now.getTime() + 100)).check({ userId, runId: run.runId, claimToken, checkpointKey: key, reserve: { toolCalls: 1, sourceRequests: 1 } });
+    await commands(new MemoryQueue()).control({ userId, requestId: crypto.randomUUID(), runId: run.runId, command: { commandId: crypto.randomUUID(), action: "cancel" } });
+    await expect(checkpoints(new Date(now.getTime() + 200)).check({ userId, runId: run.runId, claimToken, checkpointKey: key, reserve: { toolCalls: 1 } })).resolves.toEqual({ kind: "cancelled" });
+    await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)))).resolves.toEqual([{ status: "cancelled" }]);
+    await expect(database.select().from(agentRunUsageEntries).where(and(eq(agentRunUsageEntries.runId, run.runId), eq(agentRunUsageEntries.usageKey, key)))).resolves.toHaveLength(2);
+  });
 });

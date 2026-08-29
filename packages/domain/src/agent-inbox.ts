@@ -128,8 +128,8 @@ export function createAgentInbox(deps: { db: Database; commands: Commands; audit
         if (prior.outcome !== "pending") return { item, replay: true, relatedRunId: prior.relatedRunId, applied: prior.outcome === "applied" };
         return { item, replay: false, relatedRunId: null, applied: false };
       }
-      const [other] = await transaction.select({ id: agentInboxItemActions.id }).from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, input.userId), eq(agentInboxItemActions.itemId, item.id))).limit(1);
-      if (other) throw new AgentInboxError("AGENT_INBOX_ACTION_CONFLICT");
+      const others = await transaction.select({ outcome: agentInboxItemActions.outcome }).from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, input.userId), eq(agentInboxItemActions.itemId, item.id)));
+      if ((item.status !== "open" && others.length > 0) || others.some((other) => other.outcome !== "failed")) throw new AgentInboxError("AGENT_INBOX_ACTION_CONFLICT");
       if (!accepts(item, input.action)) throw new AgentInboxError("AGENT_INBOX_ACTION_CONFLICT");
       await transaction.insert(agentInboxItemActions).values({ id: deps.id(), userId: input.userId, itemId: item.id, actionId: input.actionId, action: input.action, outcome: "pending", relatedRunId: null, reasonCode: null, createdAt: now });
       return { item, replay: false, relatedRunId: null, applied: false };

@@ -476,7 +476,7 @@ describe("agent runs", () => {
       return { ok: true, data: [] };
     };
     await expect(createAgentRunProcessor({ db: database, adapter: slow, contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => instant }), id: () => crypto.randomUUID(), clock: () => instant }).process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("failed");
-    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({ status: "failed", failureCode: "AGENT_RUN_BUDGET_EXCEEDED" });
+    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({ status: "failed", failureCode: "AGENT_RUN_BUDGET_EXCEEDED", termination: { kind: "budget_exhausted", failureCode: "AGENT_RUN_BUDGET_EXCEEDED", budgetDimension: "active_duration" } });
   });
 
   it("put 超过真实 attempt 定时器后才 settle 时，主流程返回并由 continuation 删除 claim 对象", async () => {
@@ -589,5 +589,40 @@ describe("agent runs", () => {
     broken.searchBatch = async () => { throw new Error("untyped upstream error"); };
     await expect(createAgentRunProcessor({ db: database, adapter: broken, contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("failed");
     await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({ status: "failed", failureCode: "AGENT_RUN_ADAPTER_FAILED" });
+  });
+
+  it("接管过期 running claim 时只结算旧 lease 的有效 active slice", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const oldToken = crypto.randomUUID();
+    await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", attemptCount: 1, startedAt: now, claimToken: oldToken, claimExpiresAt: new Date(now.getTime() + 30_000), activeSliceStartedAt: now }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)));
+    const instant = new Date(now.getTime() + 60_000);
+    await expect(createAgentRunProcessor({ db: database, adapter: adapter({ retryable: true }), contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => instant }), id: () => crypto.randomUUID(), clock: () => instant }).process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("retry");
+    await expect(database.select({ activeDurationMs: agentRuns.activeDurationMs, status: agentRuns.status }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)))).resolves.toEqual([{ activeDurationMs: 30_000, status: "queued" }]);
+    await expect(database.select({ amount: agentRunUsageEntries.amount }).from(agentRunUsageEntries).where(and(eq(agentRunUsageEntries.runId, run.runId), eq(agentRunUsageEntries.usageKey, `${oldToken}:active:${now.toISOString()}`)))).resolves.toEqual([{ amount: 30_000 }]);
+  });
+
+  it("接管结算到 active budget 时直接终止，不建立新 claim", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const oldToken = crypto.randomUUID();
+    await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", attemptCount: 1, activeDurationMs: 30_000, startedAt: now, claimToken: oldToken, claimExpiresAt: new Date(now.getTime() + 30_000), activeSliceStartedAt: now }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)));
+    const instant = new Date(now.getTime() + 60_000);
+    await expect(createAgentRunProcessor({ db: database, adapter: adapter(), contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => instant }), id: () => crypto.randomUUID(), clock: () => instant }).process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("failed");
+    await expect(database.select({ status: agentRuns.status, attemptCount: agentRuns.attemptCount, activeDurationMs: agentRuns.activeDurationMs, terminationBudgetDimension: agentRuns.terminationBudgetDimension }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)))).resolves.toEqual([{ status: "failed", attemptCount: 1, activeDurationMs: 60_000, terminationBudgetDimension: "active_duration" }]);
+    await expect(database.select().from(agentRunEvents).where(and(eq(agentRunEvents.runId, run.runId), eq(agentRunEvents.eventType, "run.started")))).resolves.toHaveLength(0);
+  });
+
+  it("Processor 的 tool-call 预算终止保留 tool_calls 维度和唯一副作用", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    await database.update(agentRuns).set({ budgetSnapshot: { maxActiveDurationMs: 60_000, maxAttempts: 3, maxToolCalls: 0, maxResults: 5, maxModelCalls: 0, maxTokens: 0 } }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)));
+    await expect(createAgentRunProcessor({ db: database, adapter: adapter(), contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("failed");
+    await expect(database.select({ terminationBudgetDimension: agentRuns.terminationBudgetDimension }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)))).resolves.toEqual([{ terminationBudgetDimension: "tool_calls" }]);
+    await expect(database.select().from(agentInboxItems).where(and(eq(agentInboxItems.runId, run.runId), eq(agentInboxItems.kind, "budget_exhausted")))).resolves.toHaveLength(1);
+    for (const eventType of ["run.failed", "agent.run_budget_exhausted", "agent.inbox_opened"] as const) {
+      const rows = eventType === "run.failed" ? await database.select().from(agentRunEvents).where(and(eq(agentRunEvents.runId, run.runId), eq(agentRunEvents.eventType, eventType))) : await database.select().from(auditEvents).where(and(eq(auditEvents.userId, userId), eq(auditEvents.eventType, eventType)));
+      expect(rows).toHaveLength(1);
+    }
   });
 });

@@ -12,7 +12,7 @@ import type { AuditTrail } from "./audit-trail";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { discoveryNormalizedData, persistJobOpportunity } from "./job-opportunity-persistence";
 import { decideRetry } from "./agent-run-state";
-import { settleActiveSlice, terminateBudgetRun } from "./agent-run-lifecycle";
+import { settleActiveSlice, terminateBudgetRun, type BudgetDimension } from "./agent-run-lifecycle";
 export { AgentRunControlError, AgentRunError, createAgentRunCommands, type AgentRunQueue } from "./agent-run-control";
 export { createAgentRunCheckpoint, type AgentRunCheckpointDecision } from "./agent-run-checkpoint";
 export { createAgentRunQueries } from "./agent-run-queries";
@@ -51,11 +51,11 @@ export function createAgentRunRecoveryQueries(deps: { db: Database; clock: () =>
       const deadline = new Date(deps.clock().getTime() + timeoutMs);
       const rows = await bounded(deps.clock, deadline, () => deps.db.transaction(async (transaction) => {
         const remaining = remainingBudget(deps.clock, deadline);
-        if (remaining <= 0) throw new AgentRunBudgetError();
+        if (remaining <= 0) throw new AgentRunBudgetError("active_duration");
         await transaction.execute(sql.raw(`set local transaction_timeout = ${Math.max(1, Math.floor(remaining))}`));
         await transaction.execute(sql.raw(`set local statement_timeout = ${Math.max(1, Math.floor(remaining))}`));
         const now = deps.clock();
-        if (remainingBudget(deps.clock, deadline) <= 0) throw new AgentRunBudgetError();
+        if (remainingBudget(deps.clock, deadline) <= 0) throw new AgentRunBudgetError("active_duration");
         return transaction.select({ runId: agentRuns.id, userId: agentRuns.userId }).from(agentRuns)
           .where(or(eq(agentRuns.status, "queued"), and(eq(agentRuns.status, "running"), lte(agentRuns.claimExpiresAt, now))))
           .orderBy(asc(agentRuns.queuedAt), asc(agentRuns.id)).limit(deps.batchSize ?? 100);
@@ -69,9 +69,11 @@ type ProcessorDependencies = { db: Database; adapter: JobDiscoveryAdapter; conte
 type FailureCode = "AGENT_RUN_ADAPTER_RETRYABLE" | "AGENT_RUN_ADAPTER_FAILED" | "AGENT_RUN_CONTENT_STORAGE_FAILED" | "AGENT_RUN_PERSIST_FAILED" | "AGENT_RUN_BUDGET_EXCEEDED";
 type NonBudgetFailureCode = Exclude<FailureCode, "AGENT_RUN_BUDGET_EXCEEDED">;
 const CLEANUP_TIMEOUT_MS = 1_000;
-class AgentRunBudgetError extends Error {}
+class AgentRunBudgetError extends Error {
+  constructor(public readonly budgetDimension: BudgetDimension) { super("AGENT_RUN_BUDGET_EXCEEDED"); }
+}
 
-type Failure = { failureCode: FailureCode; retryable: boolean; category: "source" | "model" | "model_auth" | "model_policy" | "model_invalid" };
+type Failure = { failureCode: FailureCode; retryable: boolean; category: "source" | "model" | "model_auth" | "model_policy" | "model_invalid"; budgetDimension?: BudgetDimension };
 
 function remainingBudget(clock: () => Date, deadline: Date): number {
   return deadline.getTime() - clock().getTime();
@@ -81,13 +83,13 @@ async function runTransaction<T>(deps: ProcessorDependencies, deadline: Date, op
   const transaction = deps.db.transaction(async (connection) => {
     // 连接池等待结束后重新读取时间，迟到事务不执行任何业务 SQL。
     const remaining = remainingBudget(deps.clock, deadline);
-    if (remaining <= 0) throw new AgentRunBudgetError();
+    if (remaining <= 0) throw new AgentRunBudgetError("active_duration");
     const timeout = Math.max(1, Math.floor(remaining));
     // PostgreSQL 17 的 transaction_timeout 覆盖整个事务，statement/lock timeout 覆盖单次慢语句和锁等待。
     await connection.execute(sql.raw(`set local transaction_timeout = ${timeout}`));
     await connection.execute(sql.raw(`set local statement_timeout = ${timeout}`));
     await connection.execute(sql.raw(`set local lock_timeout = ${timeout}`));
-    if (remainingBudget(deps.clock, deadline) <= 0) throw new AgentRunBudgetError();
+    if (remainingBudget(deps.clock, deadline) <= 0) throw new AgentRunBudgetError("active_duration");
     return operation(connection);
   }) as Promise<T>;
   // 池等待本身不可由 postgres-js 取消；晚到 callback 会先通过上面的 fresh deadline 检查自弃。
@@ -95,7 +97,7 @@ async function runTransaction<T>(deps: ProcessorDependencies, deadline: Date, op
 }
 
 function adapterFailure(error: unknown): Failure {
-  if (error instanceof AgentRunBudgetError) return { failureCode: "AGENT_RUN_BUDGET_EXCEEDED", retryable: false, category: "source" };
+  if (error instanceof AgentRunBudgetError) return { failureCode: "AGENT_RUN_BUDGET_EXCEEDED", retryable: false, category: "source", budgetDimension: error.budgetDimension };
   if (error instanceof Error && error.name === "ZodError") return { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "source" };
   return { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "source" };
 }
@@ -103,7 +105,7 @@ function adapterFailure(error: unknown): Failure {
 async function renewClaim(deps: ProcessorDependencies, input: { userId: string; runId: string; claimToken: string; deadline: Date }): Promise<boolean> {
   const [renewed] = await runTransaction<Array<{ id: string }>>(deps, input.deadline, async (transaction) => {
     const now = deps.clock();
-    if (remainingBudget(deps.clock, input.deadline) <= 0) throw new AgentRunBudgetError();
+    if (remainingBudget(deps.clock, input.deadline) <= 0) throw new AgentRunBudgetError("active_duration");
     const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.claimToken)));
     if (!run) return [];
     const elapsed = await settleActiveSlice(transaction, { id: deps.id, userId: input.userId, run, now });
@@ -132,11 +134,11 @@ function startClaimHeartbeat(deps: ProcessorDependencies, input: { userId: strin
 
 async function bounded<T>(clock: () => Date, deadline: Date, operation: () => Promise<T>): Promise<T> {
   const remaining = deadline.getTime() - clock().getTime();
-  if (remaining <= 0) throw new AgentRunBudgetError();
+  if (remaining <= 0) throw new AgentRunBudgetError("active_duration");
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const result = await Promise.race([operation(), new Promise<T>((_, reject) => { timer = setTimeout(() => reject(new AgentRunBudgetError()), remaining); })]);
-    if (clock().getTime() >= deadline.getTime()) throw new AgentRunBudgetError();
+    const result = await Promise.race([operation(), new Promise<T>((_, reject) => { timer = setTimeout(() => reject(new AgentRunBudgetError("active_duration")), remaining); })]);
+    if (clock().getTime() >= deadline.getTime()) throw new AgentRunBudgetError("active_duration");
     return result;
   } finally { if (timer) clearTimeout(timer); }
 }
@@ -211,7 +213,7 @@ async function failOrRetry(deps: ProcessorDependencies, input: { userId: string;
     const elapsed = await settleActiveSlice(transaction, { id: deps.id, userId: input.userId, run, now });
     const activeDurationMs = run.activeDurationMs + elapsed;
     const decision = input.failure.failureCode === "AGENT_RUN_BUDGET_EXCEEDED"
-      ? { kind: "budget_exhausted" as const, budgetDimension: "active_duration" as const }
+      ? { kind: "budget_exhausted" as const, budgetDimension: input.failure.budgetDimension ?? "active_duration" }
       : decideRetry({ failure: { category: input.failure.category, retryable: input.failure.retryable }, usage: { attempts: run.attemptCount, activeDurationMs }, budget: run.budgetSnapshot as { maxAttempts: number; maxActiveDurationMs: number; maxToolCalls: number; maxModelCalls: number } });
     const version = run.version + 1;
     if (decision.kind === "retry" && !input.finalAttempt) {
@@ -247,10 +249,23 @@ export function createAgentRunProcessor(deps: ProcessorDependencies): { process(
       const claimed = await runTransaction(deps, deadline, async (transaction) => {
         await acquireAccountAdvisoryLock(transaction, job.userId);
         const claimNow = deps.clock();
-        if (remainingBudget(deps.clock, deadline) <= 0) throw new AgentRunBudgetError();
-        const [current] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId)));
+        if (remainingBudget(deps.clock, deadline) <= 0) throw new AgentRunBudgetError("active_duration");
+        let [current] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId)));
         if (!current || current.status === "completed" || current.status === "failed") return { kind: "stale" as const };
         if (current.status === "running" && current.claimExpiresAt && current.claimExpiresAt > claimNow) return { kind: "retry" as const };
+        if (current.status === "running" && current.claimExpiresAt && current.claimExpiresAt <= claimNow) {
+          const elapsed = await settleActiveSlice(transaction, { id: deps.id, userId: job.userId, run: current, now: claimNow, until: current.claimExpiresAt });
+          const activeDurationMs = current.activeDurationMs + elapsed;
+          const budget = current.budgetSnapshot as { maxActiveDurationMs: number };
+          if (activeDurationMs >= budget.maxActiveDurationMs) {
+            await transaction.update(agentRunSteps).set({ status: "failed", completedAt: null, failedAt: claimNow, failureCode: "AGENT_RUN_BUDGET_EXCEEDED" }).where(and(
+              eq(agentRunSteps.userId, job.userId), eq(agentRunSteps.runId, job.runId), eq(agentRunSteps.stepKey, current.currentStep), eq(agentRunSteps.status, "running"),
+            ));
+            await terminateBudgetRun(transaction, { id: deps.id, auditTrail: deps.auditTrail, userId: job.userId, requestId: job.runId, run: current, now: claimNow, budgetDimension: "active_duration", activeDurationMs });
+            return { kind: "failed" as const };
+          }
+          current = { ...current, activeDurationMs };
+        }
         if (current.attemptCount >= AGENT_RUN_BUDGET.maxAttempts) {
           await transaction.update(agentRunSteps).set({ status: "failed", completedAt: null, failedAt: claimNow, failureCode: "AGENT_RUN_BUDGET_EXCEEDED" }).where(and(
             eq(agentRunSteps.userId, job.userId), eq(agentRunSteps.runId, job.runId), eq(agentRunSteps.stepKey, current.currentStep), eq(agentRunSteps.status, "running"),
@@ -261,7 +276,7 @@ export function createAgentRunProcessor(deps: ProcessorDependencies): { process(
         const claimToken = deps.id();
         const attemptCount = current.attemptCount + 1;
         const version = current.version + 1;
-        const [run] = await transaction.update(agentRuns).set({ status: "running", currentStep: "batch_search", claimToken, claimExpiresAt: new Date(claimNow.getTime() + 30_000), activeSliceStartedAt: claimNow, attemptCount, startedAt: claimNow, completedAt: null, failedAt: null, failureCode: null, version, updatedAt: claimNow }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), or(eq(agentRuns.status, "queued"), and(eq(agentRuns.status, "running"), lte(agentRuns.claimExpiresAt, claimNow))))).returning();
+        const [run] = await transaction.update(agentRuns).set({ status: "running", currentStep: "batch_search", claimToken, claimExpiresAt: new Date(claimNow.getTime() + 30_000), activeSliceStartedAt: claimNow, activeDurationMs: current.activeDurationMs, attemptCount, startedAt: claimNow, completedAt: null, failedAt: null, failureCode: null, version, updatedAt: claimNow }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), or(eq(agentRuns.status, "queued"), and(eq(agentRuns.status, "running"), lte(agentRuns.claimExpiresAt, claimNow))))).returning();
         if (!run) return { kind: "stale" as const };
         await appendEvent(transaction, { id: deps.id, userId: job.userId, runId: job.runId, version, eventType: "run.started", data: { eventType: "run.started", status: "running", currentStep: "batch_search", attemptCount }, now: claimNow });
         return { kind: "claimed" as const, run, claimToken, attemptCount };
@@ -272,7 +287,7 @@ export function createAgentRunProcessor(deps: ProcessorDependencies): { process(
       let toolCalls = 0;
       const adapterCall = async <T>(operation: () => Promise<T>): Promise<T> => {
         toolCalls += 1;
-        if (toolCalls > AGENT_RUN_BUDGET.maxToolCalls) throw new AgentRunBudgetError();
+        if (toolCalls > (claimed.run.budgetSnapshot as { maxToolCalls: number }).maxToolCalls) throw new AgentRunBudgetError("tool_calls");
         return bounded(deps.clock, deadline, operation);
       };
       const snapshot = claimed.run.targetSnapshot as import("@job-copilot/contracts/agent-runs").AgentRunDetail["targetSnapshot"];
@@ -313,7 +328,7 @@ export function createAgentRunProcessor(deps: ProcessorDependencies): { process(
             throw error;
           }
         }
-      } catch (error) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failure: { failureCode: error instanceof AgentRunBudgetError ? "AGENT_RUN_BUDGET_EXCEEDED" : "AGENT_RUN_CONTENT_STORAGE_FAILED", retryable: !(error instanceof AgentRunBudgetError), category: "source" }, deadline }); }
+      } catch (error) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failure: { failureCode: error instanceof AgentRunBudgetError ? "AGENT_RUN_BUDGET_EXCEEDED" : "AGENT_RUN_CONTENT_STORAGE_FAILED", retryable: !(error instanceof AgentRunBudgetError), category: "source", budgetDimension: error instanceof AgentRunBudgetError ? error.budgetDimension : undefined }, deadline }); }
       try {
         const completed = await runTransaction(deps, deadline, async (transaction) => {
           const completedAt = deps.clock();

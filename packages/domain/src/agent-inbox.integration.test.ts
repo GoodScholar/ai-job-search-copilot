@@ -112,6 +112,8 @@ describe("agent inbox", () => {
     await expect(inbox().act({ ...action, requestId: crypto.randomUUID() })).rejects.toMatchObject({ code: "AGENT_INBOX_ACTION_FAILED" });
     await expect(database.select({ outcome: agentInboxItemActions.outcome, reasonCode: agentInboxItemActions.reasonCode }).from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, owner.userId), eq(agentInboxItemActions.itemId, failed.itemId), eq(agentInboxItemActions.actionId, actionId)))).resolves.toEqual([{ outcome: "failed", reasonCode: "AGENT_INBOX_ACTION_FAILED" }]);
     await expect(inbox().list({ userId: owner.userId, status: "open" })).resolves.toMatchObject({ items: [expect.objectContaining({ itemId: failed.itemId, status: "open" })] });
+    await database.update(jobTargets).set({ state: "active" }).where(and(eq(jobTargets.userId, owner.userId), eq(jobTargets.id, owner.targetId)));
+    await expect(inbox().act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: failed.itemId, command: { actionId: crypto.randomUUID(), action: "restart_run" } })).resolves.toMatchObject({ applied: true, item: { status: "resolved" }, run: { status: "queued" } });
   });
 
   it("新运行已创建但解决事项失败时重放复用该运行并完成解决", async () => {
