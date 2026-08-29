@@ -74,10 +74,6 @@ export function createAgentRunEventStream(input: {
         heartbeatTimer = setTimeout(() => {
           heartbeatTimer = undefined;
           if (stopped || !hasCapacity()) return;
-          if (polling) {
-            scheduleHeartbeat();
-            return;
-          }
           controller.enqueue(encoder.encode(": heartbeat\n\n"));
           scheduleHeartbeat();
         }, HEARTBEAT_INTERVAL_MS);

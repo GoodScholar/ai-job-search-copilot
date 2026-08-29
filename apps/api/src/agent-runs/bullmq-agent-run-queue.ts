@@ -14,6 +14,7 @@ import type { AgentRunQueue } from "@job-copilot/domain/agent-runs";
 const DEFAULT_ENQUEUE_DEADLINE_MS = 1_500;
 const DEFAULT_CLEANUP_DEADLINE_MS = 250;
 const DEFAULT_COOLDOWN_MS = 1_000;
+const DEFAULT_SHUTDOWN_DEADLINE_MS = 2_000;
 
 interface AgentRunQueueClient {
   add(name: string, data: AgentRunJob, options: JobsOptions): Promise<unknown>;
@@ -25,6 +26,7 @@ type BullmqAgentRunQueueOptions = {
   enqueueDeadlineMs?: number;
   cleanupDeadlineMs?: number;
   cooldownMs?: number;
+  shutdownDeadlineMs?: number;
   queueFactory?: () => AgentRunQueueClient;
 };
 
@@ -44,23 +46,47 @@ class AgentRunQueueCooldownError extends Error {
   readonly code = "AGENT_RUN_QUEUE_COOLDOWN";
 }
 
-async function enqueueWithDeadline<T>(operation: () => Promise<T>, deadlineMs: number): Promise<T> {
+class AgentRunQueueDestroyedError extends Error {
+  readonly code = "AGENT_RUN_QUEUE_DESTROYED";
+}
+
+async function enqueueWithDeadline<T>(
+  operation: () => Promise<T>,
+  deadlineMs: number,
+  signal?: AbortSignal,
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let abort: (() => void) | undefined;
   try {
-    return await Promise.race([
+    const operations: Promise<T>[] = [
       operation(),
       new Promise<T>((_resolve, reject) => {
         timer = setTimeout(() => reject(new AgentRunQueueTimeoutError()), deadlineMs);
       }),
-    ]);
+    ];
+    if (signal) {
+      operations.push(new Promise<T>((_resolve, reject) => {
+        abort = () => reject(new AgentRunQueueDestroyedError());
+        if (signal.aborted) abort();
+        else signal.addEventListener("abort", abort, { once: true });
+      }));
+    }
+    return await Promise.race(operations);
   } finally {
     if (timer) clearTimeout(timer);
+    if (abort) signal?.removeEventListener("abort", abort);
   }
 }
 
 export class BullmqAgentRunQueue implements AgentRunQueue {
   private active: QueueGeneration | undefined;
   private cooldownUntil = 0;
+  private destroyed = false;
+  private destroyPromise: Promise<void> | undefined;
+  private readonly enqueueAbort = new AbortController();
+  private readonly cleanupAbort = new AbortController();
+  private readonly generations = new Set<QueueGeneration>();
+  private readonly enqueues = new Set<Promise<void>>();
   private readonly cleanups = new Set<Promise<void>>();
 
   constructor(
@@ -69,9 +95,27 @@ export class BullmqAgentRunQueue implements AgentRunQueue {
   ) {}
 
   async enqueue(job: AgentRunJob): Promise<void> {
+    if (this.destroyed) throw new AgentRunQueueDestroyedError();
     const payload = AgentRunJobSchema.parse(job);
     const generation = this.getGeneration();
     generation.inFlight += 1;
+    const enqueue = this.enqueueGeneration(generation, payload);
+    this.enqueues.add(enqueue);
+    try {
+      await enqueue;
+    } finally {
+      this.enqueues.delete(enqueue);
+    }
+  }
+
+  onModuleDestroy(): Promise<void> {
+    if (this.destroyPromise) return this.destroyPromise;
+    this.destroyed = true;
+    this.destroyPromise = this.destroy();
+    return this.destroyPromise;
+  }
+
+  private async enqueueGeneration(generation: QueueGeneration, payload: AgentRunJob): Promise<void> {
     try {
       await enqueueWithDeadline(() => generation.queue.add(AGENT_RUN_JOB_NAME, payload, {
         jobId: payload.runId,
@@ -79,7 +123,7 @@ export class BullmqAgentRunQueue implements AgentRunQueue {
         backoff: { type: "fixed", delay: AGENT_RUN_CLAIM_LEASE_MS + AGENT_RUN_SCAN_INTERVAL_MS },
         removeOnComplete: true,
         removeOnFail: true,
-      }), this.options.enqueueDeadlineMs ?? DEFAULT_ENQUEUE_DEADLINE_MS);
+      }), this.options.enqueueDeadlineMs ?? DEFAULT_ENQUEUE_DEADLINE_MS, this.enqueueAbort.signal);
     } catch (error) {
       this.retire(generation);
       throw error;
@@ -89,12 +133,30 @@ export class BullmqAgentRunQueue implements AgentRunQueue {
     }
   }
 
-  async onModuleDestroy(): Promise<void> {
-    if (this.active) this.retire(this.active);
-    await Promise.allSettled(this.cleanups);
+  private async destroy(): Promise<void> {
+    const timer = setTimeout(
+      () => this.cleanupAbort.abort(),
+      this.options.shutdownDeadlineMs ?? DEFAULT_SHUTDOWN_DEADLINE_MS,
+    );
+    this.enqueueAbort.abort();
+    for (const generation of this.generations) {
+      if (generation.redis && generation.redis.status !== "end") generation.redis.disconnect();
+      this.retire(generation);
+    }
+    try {
+      await Promise.allSettled([...this.enqueues]);
+      await Promise.allSettled([...this.cleanups]);
+    } finally {
+      clearTimeout(timer);
+      this.cleanupAbort.abort();
+      this.active = undefined;
+      this.generations.clear();
+      this.cleanups.clear();
+    }
   }
 
   private getGeneration(): QueueGeneration {
+    if (this.destroyed) throw new AgentRunQueueDestroyedError();
     if (this.active) return this.active;
     if (Date.now() < this.cooldownUntil) throw new AgentRunQueueCooldownError();
 
@@ -113,7 +175,9 @@ export class BullmqAgentRunQueue implements AgentRunQueue {
   }
 
   private createGeneration(queue: AgentRunQueueClient, redis?: Redis): QueueGeneration {
-    return { queue, redis, inFlight: 0, retired: false, cleanupStarted: false };
+    const generation = { queue, redis, inFlight: 0, retired: false, cleanupStarted: false };
+    this.generations.add(generation);
+    return generation;
   }
 
   private retire(generation: QueueGeneration): void {
@@ -133,10 +197,12 @@ export class BullmqAgentRunQueue implements AgentRunQueue {
     const cleanup = enqueueWithDeadline(
       () => generation.queue.disconnect(),
       this.options.cleanupDeadlineMs ?? DEFAULT_CLEANUP_DEADLINE_MS,
+      this.cleanupAbort.signal,
     )
       .catch(() => undefined)
       .finally(() => {
         if (generation.redis && generation.redis.status !== "end") generation.redis.disconnect();
+        this.generations.delete(generation);
         this.cleanups.delete(cleanup);
       });
     this.cleanups.add(cleanup);

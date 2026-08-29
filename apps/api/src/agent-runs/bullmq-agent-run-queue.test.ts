@@ -102,6 +102,103 @@ it("旧 generation 一成一败不会断开 cooldown 后新建的健康 client",
   expect(vi.getTimerCount()).toBe(0);
 });
 
+it("pending add 的 shutdown 等待 cleanup 并在总 deadline 后完整收敛", async () => {
+  vi.useFakeTimers();
+  const add = promiseWithResolvers<unknown>();
+  const disconnect = promiseWithResolvers<void>();
+  const client = {
+    add: vi.fn().mockReturnValue(add.promise),
+    close: vi.fn().mockResolvedValue(undefined),
+    disconnect: vi.fn().mockReturnValue(disconnect.promise),
+  };
+  const queue = new BullmqAgentRunQueue("redis://controlled-unavailable", {
+    enqueueDeadlineMs: 500,
+    cleanupDeadlineMs: 500,
+    shutdownDeadlineMs: 100,
+    queueFactory: () => client,
+  });
+  const enqueue = queue.enqueue(job);
+  let enqueueError: unknown;
+  void enqueue.catch((error: unknown) => { enqueueError = error; });
+  let destroyed = false;
+  void queue.onModuleDestroy().then(() => { destroyed = true; });
+
+  await vi.advanceTimersByTimeAsync(0);
+  expect(enqueueError).toMatchObject({ code: "AGENT_RUN_QUEUE_DESTROYED" });
+  expect(client.disconnect).toHaveBeenCalledTimes(1);
+  expect(destroyed).toBe(false);
+
+  await vi.advanceTimersByTimeAsync(99);
+  expect(destroyed).toBe(false);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(destroyed).toBe(true);
+  expect(vi.getTimerCount()).toBe(0);
+
+  add.resolve(undefined);
+  disconnect.resolve(undefined);
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(client.disconnect).toHaveBeenCalledTimes(1);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("并发 pending add 的 shutdown 等待唯一 cleanup 完成且不留下晚到 lifecycle", async () => {
+  vi.useFakeTimers();
+  const firstAdd = promiseWithResolvers<unknown>();
+  const secondAdd = promiseWithResolvers<unknown>();
+  const disconnect = promiseWithResolvers<void>();
+  const client = {
+    add: vi.fn().mockReturnValueOnce(firstAdd.promise).mockReturnValueOnce(secondAdd.promise),
+    close: vi.fn().mockResolvedValue(undefined),
+    disconnect: vi.fn().mockReturnValue(disconnect.promise),
+  };
+  const queue = new BullmqAgentRunQueue("redis://controlled-unavailable", {
+    enqueueDeadlineMs: 500,
+    cleanupDeadlineMs: 500,
+    shutdownDeadlineMs: 100,
+    queueFactory: () => client,
+  });
+  const first = queue.enqueue(job);
+  const second = queue.enqueue({ ...job, runId: "80e774b4-aa27-44c4-a370-8b51587b29c2" });
+  const firstRejection = expect(first).rejects.toMatchObject({ code: "AGENT_RUN_QUEUE_DESTROYED" });
+  const secondRejection = expect(second).rejects.toMatchObject({ code: "AGENT_RUN_QUEUE_DESTROYED" });
+  let destroyed = false;
+  const destroy = queue.onModuleDestroy().then(() => { destroyed = true; });
+
+  await Promise.all([firstRejection, secondRejection]);
+  expect(client.disconnect).toHaveBeenCalledTimes(1);
+  expect(destroyed).toBe(false);
+
+  disconnect.resolve(undefined);
+  await destroy;
+  expect(destroyed).toBe(true);
+  expect(vi.getTimerCount()).toBe(0);
+
+  firstAdd.resolve(undefined);
+  secondAdd.resolve(undefined);
+  await vi.advanceTimersByTimeAsync(1_000);
+  expect(client.disconnect).toHaveBeenCalledTimes(1);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("shutdown 开始后 enqueue 稳定快速拒绝且不再创建 generation", async () => {
+  vi.useFakeTimers();
+  const factory = vi.fn(() => ({
+    add: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn().mockResolvedValue(undefined),
+    disconnect: vi.fn().mockResolvedValue(undefined),
+  }));
+  const queue = new BullmqAgentRunQueue("redis://controlled-unavailable", {
+    shutdownDeadlineMs: 100,
+    queueFactory: factory,
+  });
+
+  await queue.onModuleDestroy();
+
+  await expect(queue.enqueue(job)).rejects.toMatchObject({ code: "AGENT_RUN_QUEUE_DESTROYED" });
+  expect(factory).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
 function promiseWithResolvers<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;

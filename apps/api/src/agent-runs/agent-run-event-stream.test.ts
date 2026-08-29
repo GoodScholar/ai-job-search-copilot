@@ -104,7 +104,7 @@ describe("Agent Run SSE", () => {
     await expect(reader.read()).resolves.toEqual({ done: true, value: undefined });
   });
 
-  it("查询在途跨过心跳周期时不占用事件容量，迟到事件仍从原游标交付", async () => {
+  it("查询在途仍按十五秒发送心跳，迟到事件等待容量后再推进游标", async () => {
     vi.useFakeTimers();
     const deferred = promiseWithResolvers<AgentRunDetail["events"]>();
     const eventsAfter = vi.fn().mockReturnValue(deferred.promise);
@@ -113,15 +113,17 @@ describe("Agent Run SSE", () => {
     expect(eventsAfter).toHaveBeenCalledWith({ userId, runId, afterSequence: 0 });
 
     await vi.advanceTimersByTimeAsync(15_000);
-    let first: ReadableStreamReadResult<Uint8Array> | undefined;
-    void reader.read().then((chunk) => { first = chunk; });
-    await vi.advanceTimersByTimeAsync(0);
-    expect(first).toBeUndefined();
-
     deferred.resolve([queuedEvent]);
     await vi.advanceTimersByTimeAsync(0);
-    expect(new TextDecoder().decode(first?.value)).toContain("id: 1");
+
+    const heartbeat = await reader.read();
+    expect(new TextDecoder().decode(heartbeat.value)).toBe(": heartbeat\n\n");
+    const event = await reader.read();
+    expect(new TextDecoder().decode(event.value)).toContain("id: 1");
     expect(eventsAfter).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(250);
+    expect(eventsAfter).toHaveBeenLastCalledWith({ userId, runId, afterSequence: 1 });
     await reader.cancel();
   });
 
