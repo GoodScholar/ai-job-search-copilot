@@ -1,8 +1,10 @@
 import { render, screen } from "@testing-library/react";
 import { WorkbenchHomeView } from "./workbench-home-view";
 
+const emptyTargets = { suggestions: [], targets: [] };
+
 it("shows only persisted empty workbench data", () => {
-  render(<WorkbenchHomeView home={{
+  render(<WorkbenchHomeView initialRun={null} targets={emptyTargets} home={{
     account: { userId: "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3" },
     summary: { recommendations: 0, pendingFacts: 0, runningAgentRuns: 0, applications: 0 },
   }} />);
@@ -15,7 +17,7 @@ it("shows only persisted empty workbench data", () => {
 });
 
 it("links the empty state to the real profile entry", () => {
-  render(<WorkbenchHomeView home={{
+  render(<WorkbenchHomeView initialRun={null} targets={emptyTargets} home={{
     account: { userId: "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3" },
     summary: { recommendations: 0, pendingFacts: 0, runningAgentRuns: 0, applications: 0 },
   }} />);
@@ -25,7 +27,7 @@ it("links the empty state to the real profile entry", () => {
 });
 
 it("explains that pending facts cannot yet affect recommendations or materials", () => {
-  render(<WorkbenchHomeView home={{
+  render(<WorkbenchHomeView initialRun={null} targets={emptyTargets} home={{
     account: { userId: "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3" },
     summary: { recommendations: 0, pendingFacts: 2, runningAgentRuns: 0, applications: 0 },
   }} />);
@@ -38,11 +40,23 @@ it("explains that pending facts cannot yet affect recommendations or materials",
 });
 
 it("adds a visible job-import entry without enabling the recommendation surface", () => {
-  render(<WorkbenchHomeView home={{
+  render(<WorkbenchHomeView initialRun={null} targets={emptyTargets} home={{
     account: { userId: "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3" },
     summary: { recommendations: 0, pendingFacts: 0, runningAgentRuns: 0, applications: 0 },
   }} />);
 
   expect(screen.getByRole("link", { name: "导入岗位" })).toHaveAttribute("href", "/jobs/import");
   expect(screen.queryByRole("link", { name: "查看推荐" })).not.toBeInTheDocument();
+});
+
+it("directs users without an active target to confirm one while preserving profile and job import entries", () => {
+  render(<WorkbenchHomeView initialRun={null} targets={emptyTargets} home={{
+    account: { userId: "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3" },
+    summary: { recommendations: 0, pendingFacts: 0, runningAgentRuns: 0, applications: 0 },
+  }} />);
+
+  expect(screen.getByRole("heading", { name: "先确认求职目标" })).toBeVisible();
+  expect(screen.getByRole("link", { name: "确认求职目标" })).toHaveAttribute("href", "/profile/targets");
+  expect(screen.getByRole("link", { name: "导入职业资料" })).toHaveAttribute("href", "/profile");
+  expect(screen.getByRole("link", { name: "导入岗位" })).toHaveAttribute("href", "/jobs/import");
 });

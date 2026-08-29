@@ -2,6 +2,8 @@ import type { WorkbenchHome } from "@job-copilot/contracts/workbench";
 import { WorkbenchHomeView } from "@/components/workbench/workbench-home-view";
 import { unstable_rethrow } from "next/navigation";
 import { getWorkbenchHome } from "@/lib/server/workbench";
+import { getJobTargets } from "@/lib/server/job-targets";
+import { getLatestAgentRun } from "@/lib/server/agent-runs";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -10,9 +12,13 @@ export const metadata: Metadata = {
 
 export default async function WorkbenchHomePage() {
   let home: WorkbenchHome;
+  let targets;
+  let latestRun;
 
   try {
-    home = await getWorkbenchHome();
+    [home, targets, latestRun] = await Promise.all([
+      getWorkbenchHome(), getJobTargets(), getLatestAgentRun(),
+    ]);
   } catch (error) {
     unstable_rethrow(error);
     return (
@@ -27,5 +33,5 @@ export default async function WorkbenchHomePage() {
     );
   }
 
-  return <WorkbenchHomeView home={home} />;
+  return <WorkbenchHomeView home={home} initialRun={latestRun.run} targets={targets} />;
 }
