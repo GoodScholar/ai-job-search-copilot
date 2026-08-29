@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import {
   agentRunEvents,
   agentRunJobResults,
@@ -162,15 +162,24 @@ async function closeMissingSourcePostings(db: any, input: { id: () => string; us
     return latest ? [{ id: input.id(), userId: input.userId, sourcePostingId: posting.id, version: latest.version + 1, contentSha256: latest.contentSha256, rawContentSha256: latest.rawContentSha256, rawObjectReference: latest.rawObjectReference, retrievedAt: input.now, availability, createdAt: input.now }] : [];
   });
   if (inserts.length !== candidates.length) throw new Error("AGENT_RUN_PERSIST_FAILED");
-  await db.insert(jobSourcePostingVersions).values(inserts).returning({ id: jobSourcePostingVersions.id });
+  const createdVersions = await db.insert(jobSourcePostingVersions).values(inserts).returning({
+    id: jobSourcePostingVersions.id,
+    sourcePostingId: jobSourcePostingVersions.sourcePostingId,
+  });
   for (const availability of ["closed", "expired"] as const) {
     const ids = candidates.filter((candidate) => candidate.availability === availability).map((candidate) => candidate.posting.id);
     if (ids.length > 0) await db.update(jobSourcePostings).set({ availability, availabilityUpdatedAt: input.now, updatedAt: input.now })
       .where(and(eq(jobSourcePostings.userId, input.userId), inArray(jobSourcePostings.id, ids)));
   }
-  const rows = await db.select({ opportunityId: jobOpportunitySources.opportunityId }).from(jobOpportunitySources)
+  const rows = await db.select({ opportunityId: jobOpportunitySources.opportunityId, sourcePostingId: jobSourcePostingVersions.sourcePostingId }).from(jobOpportunitySources)
     .innerJoin(jobSourcePostingVersions, and(eq(jobSourcePostingVersions.userId, jobOpportunitySources.userId), eq(jobSourcePostingVersions.id, jobOpportunitySources.sourcePostingVersionId)))
     .where(and(eq(jobOpportunitySources.userId, input.userId), inArray(jobSourcePostingVersions.sourcePostingId, postingIds)));
+  const lifecycleVersionByPosting = new Map(createdVersions.map((version: { id: string; sourcePostingId: string }) => [version.sourcePostingId, version.id]));
+  const lifecycleEvidence = (rows as Array<{ opportunityId: string; sourcePostingId: string }>).flatMap((row) => {
+    const sourcePostingVersionId = lifecycleVersionByPosting.get(row.sourcePostingId);
+    return sourcePostingVersionId ? [{ id: input.id(), userId: input.userId, opportunityId: row.opportunityId, sourcePostingVersionId, createdAt: input.now }] : [];
+  });
+  if (lifecycleEvidence.length > 0) await db.insert(jobOpportunitySources).values(lifecycleEvidence).onConflictDoNothing();
   const impacted = new Set<string>((rows as Array<{ opportunityId: string }>).map((row) => row.opportunityId));
   return [...impacted];
 }
@@ -190,6 +199,7 @@ async function recomputeOpportunityAvailability(db: any, input: { userId: string
   const opportunities = await db.select().from(jobOpportunities).where(and(eq(jobOpportunities.userId, input.userId), inArray(jobOpportunities.id, opportunityIds)));
   const sourceByOpportunity = new Map<string, Array<{ sourcePostingId: string; isOfficial: boolean }>>();
   const openOpportunityIds = new Set<string>();
+  const updates: Array<{ id: string; availability: Availability; sourcePostingVersionId: string | null }> = [];
   for (const source of sources) sourceByOpportunity.set(source.opportunityId, [...(sourceByOpportunity.get(source.opportunityId) ?? []), source]);
   for (const opportunity of opportunities) {
     const current = [...new Map((sourceByOpportunity.get(opportunity.id) ?? []).map((source) => [source.sourcePostingId, source])).values()]
@@ -198,13 +208,18 @@ async function recomputeOpportunityAvailability(db: any, input: { userId: string
       : current.some((item) => item.version.availability === "expired") ? "expired" : "closed";
     if (availability === "open") openOpportunityIds.add(opportunity.id);
     const evidence = current.filter((item) => item.source.isOfficial && item.version.availability === "open").sort((left, right) => right.version.createdAt.getTime() - left.version.createdAt.getTime())[0]?.version;
-    await db.update(jobOpportunities).set({
-      availability,
-      availabilityUpdatedAt: opportunity.availability === availability ? opportunity.availabilityUpdatedAt : input.now,
-      sourcePostingVersionId: evidence?.id ?? opportunity.sourcePostingVersionId,
-      updatedAt: input.now,
-    }).where(and(eq(jobOpportunities.userId, input.userId), eq(jobOpportunities.id, opportunity.id)));
+    updates.push({ id: opportunity.id, availability, sourcePostingVersionId: evidence?.id ?? null });
   }
+  const availabilityCase = sql`case ${jobOpportunities.id} ${sql.join(updates.map((update) => sql`when ${update.id} then ${update.availability}`), sql.raw(" "))} end`;
+  const evidenceCase = sql`case ${jobOpportunities.id} ${sql.join(updates.map((update) => update.sourcePostingVersionId
+    ? sql`when ${update.id} then ${update.sourcePostingVersionId}::uuid`
+    : sql`when ${update.id} then ${jobOpportunities.sourcePostingVersionId}`), sql.raw(" "))} end`;
+  await db.update(jobOpportunities).set({
+    availability: availabilityCase,
+    availabilityUpdatedAt: sql`case when ${jobOpportunities.availability} is distinct from ${availabilityCase} then ${input.now.toISOString()}::timestamptz else ${jobOpportunities.availabilityUpdatedAt} end`,
+    sourcePostingVersionId: evidenceCase,
+    updatedAt: input.now,
+  }).where(and(eq(jobOpportunities.userId, input.userId), inArray(jobOpportunities.id, opportunityIds)));
   return openOpportunityIds;
 }
 
@@ -264,13 +279,18 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
         if (sourceType) for (const scan of input.scans) (await closeMissingSourcePostings(transaction, { id: deps.id, userId: run.userId, sourceType, scan, now: input.now })).forEach((opportunityId) => opportunityIds.add(opportunityId));
         const openOpportunityIds = await recomputeOpportunityAvailability(transaction, { userId: run.userId, opportunityIds, now: input.now });
         let resultCount = 0;
+        const [lastResult] = await transaction.select({ ordinal: agentRunJobResults.ordinal }).from(agentRunJobResults)
+          .where(and(eq(agentRunJobResults.userId, run.userId), eq(agentRunJobResults.runId, run.id)))
+          .orderBy(desc(agentRunJobResults.ordinal)).limit(1);
+        let nextOrdinal = (lastResult?.ordinal ?? 0) + 1;
         for (const result of resultRows) {
           // reconciliation can close an item selected earlier in this batch; only
           // the final, transaction-visible availability may produce a result.
           if (!openOpportunityIds.has(result.opportunityId)) continue;
-          const inserted = await transaction.insert(agentRunJobResults).values({ id: deps.id(), userId: run.userId, runId: run.id, opportunityId: result.opportunityId, sourcePostingVersionId: result.sourcePostingVersionId, ordinal: resultCount + 1, createdAt: input.now }).onConflictDoNothing().returning({ id: agentRunJobResults.id });
+          const inserted = await transaction.insert(agentRunJobResults).values({ id: deps.id(), userId: run.userId, runId: run.id, opportunityId: result.opportunityId, sourcePostingVersionId: result.sourcePostingVersionId, ordinal: nextOrdinal, createdAt: input.now }).onConflictDoNothing().returning({ id: agentRunJobResults.id });
           if (!inserted[0]) continue;
           resultCount += 1;
+          nextOrdinal += 1;
           await transaction.insert(agentRunUsageEntries).values({ id: deps.id(), userId: run.userId, runId: run.id, usageKey: `${run.claimToken}:result:${result.sourcePostingVersionId}`, category: "result", amount: 1, stepKey: "persist_results", attemptCount: run.attemptCount, createdAt: input.now }).onConflictDoNothing();
         }
         const elapsed = await settleActiveSlice(transaction, { id: deps.id, userId: run.userId, run, now: input.now });
