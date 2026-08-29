@@ -1633,6 +1633,203 @@ body {
   font-weight: 700;
 }
 
+.job-target-watchlist-link {
+  color: var(--emerald-strong);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.job-target-watchlist-link:hover {
+  text-decoration: underline;
+}
+
+.company-watchlist-main {
+  max-width: 62rem;
+}
+
+.company-watchlist-intro {
+  max-width: 46rem;
+}
+
+.company-watchlist-intro h1 {
+  font-size: clamp(2.1rem, 5vw, 4rem);
+  letter-spacing: -0.05em;
+  line-height: 1.05;
+  margin: 0.75rem 0 1rem;
+}
+
+.company-watchlist-intro > p:not(.workbench-kicker):not(.company-watchlist-version):not(.profile-status) {
+  color: var(--muted);
+  line-height: 1.7;
+  margin: 0;
+}
+
+.company-watchlist-version {
+  color: var(--emerald-strong);
+  font-size: 0.88rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  margin: 1rem 0 0;
+}
+
+.company-watchlist-section {
+  border-top: 1px solid var(--rule);
+  margin-top: clamp(2rem, 5vw, 3.5rem);
+  padding-top: 1.25rem;
+}
+
+.company-watchlist-section h2,
+.company-watchlist-section h3 {
+  margin: 0;
+}
+
+.company-watchlist-notice {
+  color: var(--amber-ink);
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.55;
+  margin: 0.75rem 0 0;
+}
+
+.company-watchlist-form {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1.25rem;
+  max-width: 42rem;
+}
+
+.company-watchlist-form label {
+  color: var(--muted);
+  display: grid;
+  font-size: 0.85rem;
+  font-weight: 700;
+  gap: 0.45rem;
+}
+
+.company-watchlist-form input,
+.company-watchlist-form textarea {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 0.4rem;
+  color: var(--ink);
+  font: inherit;
+  min-height: 2.75rem;
+  padding: 0.55rem 0.65rem;
+  width: 100%;
+}
+
+.company-watchlist-form textarea {
+  min-height: 6rem;
+  resize: vertical;
+}
+
+.company-watchlist-form-actions,
+.company-watchlist-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.company-watchlist-form-actions button,
+.company-watchlist-actions button {
+  background: var(--surface);
+  border: 1px solid var(--emerald);
+  border-radius: 0.4rem;
+  color: var(--emerald-strong);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+.company-watchlist-form-actions button:first-child {
+  background: var(--emerald);
+  color: var(--surface);
+}
+
+.company-watchlist-form-actions button:disabled,
+.company-watchlist-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.company-watchlist-list {
+  display: grid;
+  gap: 0;
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+}
+
+.company-watchlist-list > li {
+  border-bottom: 1px solid var(--rule);
+  min-width: 0;
+  padding: 1.25rem 0 1.25rem 3.75rem;
+  position: relative;
+}
+
+.company-watchlist-priority {
+  color: var(--emerald);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 750;
+  left: 0;
+  letter-spacing: 0.06em;
+  margin: 0;
+  position: absolute;
+  top: 1.35rem;
+}
+
+.company-watchlist-row-heading {
+  align-items: start;
+  display: flex;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.company-watchlist-row-heading h3 {
+  font-size: 1.1rem;
+}
+
+.company-watchlist-row-heading p,
+.company-watchlist-list article > p:not(.company-watchlist-priority) {
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.6;
+  margin: 0.45rem 0 0;
+  overflow-wrap: anywhere;
+}
+
+.company-watchlist-row-heading > p {
+  color: var(--emerald-strong) !important;
+  font-size: 0.76rem !important;
+  font-weight: 700;
+  margin: 0 !important;
+  white-space: nowrap;
+}
+
+.company-watchlist-url {
+  color: var(--ink) !important;
+}
+
+.company-watchlist-actions {
+  margin-top: 1rem;
+}
+
+@media (max-width: 640px) {
+  .company-watchlist-list > li {
+    padding-left: 0;
+    padding-top: 2.8rem;
+  }
+
+  .company-watchlist-priority {
+    top: 1.25rem;
+  }
+
+  .company-watchlist-row-heading {
+    display: grid;
+  }
+}
+
 @media (max-width: 640px) {
   .profile-privacy-finding-list li {
     gap: 0.25rem;
