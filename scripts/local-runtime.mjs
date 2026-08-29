@@ -131,6 +131,7 @@ function applicationEnv(config, env) {
     MAILPIT_SMTP_PORT: config.mailpitSmtpPort,
     MAILPIT_ENDPOINT: `http://127.0.0.1:${config.mailpitHttpPort}`,
     NEXT_PUBLIC_AUTH_MODE: "dev",
+    PUBLIC_SOURCE_NETWORK_MODE: config.test ? "disabled" : env.PUBLIC_SOURCE_NETWORK_MODE,
   };
 }
 

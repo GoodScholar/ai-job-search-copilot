@@ -27,7 +27,15 @@ export class AgentRunControlError extends Error {
   constructor(public readonly code: "AGENT_RUN_COMMAND_ID_CONFLICT" | "AGENT_RUN_CONTROL_CONFLICT" | "AGENT_RUN_NOT_FOUND") { super(code); }
 }
 
-type CommandDependencies = { db: Database; queue: AgentRunQueue; auditTrail: AuditTrail; id: () => string; clock: () => Date };
+type CommandDependencies = {
+  db: Database;
+  queue: AgentRunQueue;
+  auditTrail: AuditTrail;
+  id: () => string;
+  clock: () => Date;
+  /** 测试 Worker 的计划运行只能使用确定性 Fake；省略时保持生产 Greenhouse 语义。 */
+  scheduledAdapter?: "fake";
+};
 export type AgentRunStarter = {
   start(input: {
     userId: string;
@@ -140,8 +148,9 @@ function createAgentRunStarter(deps: CommandDependencies): AgentRunStarter {
           eq(companyWatchlistRevisions.version, companyWatchlists.version),
         )).where(and(eq(companyWatchlists.userId, input.userId), eq(companyWatchlists.targetId, target.id)));
         const isScheduled = input.trigger?.kind === "schedule";
-        const runSourceScope = isScheduled ? publicSourceScope(watchlist) : sourceScope(watchlist);
-        const execution = isScheduled ? {
+        const useFakeScheduledAdapter = isScheduled && deps.scheduledAdapter === "fake";
+        const runSourceScope = isScheduled && !useFakeScheduledAdapter ? publicSourceScope(watchlist) : sourceScope(watchlist);
+        const execution = isScheduled && !useFakeScheduledAdapter ? {
           budget: PUBLIC_JOB_DISCOVERY_BUDGET,
           workflowVersion: GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION,
           ruleVersion: GREENHOUSE_JOB_DISCOVERY_RULE_VERSION,

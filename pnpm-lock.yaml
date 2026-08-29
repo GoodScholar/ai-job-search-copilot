@@ -43,7 +43,7 @@ importers:
         version: 11.4.7(@nestjs/common@11.2.3(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@8.0.0))(@nestjs/core@11.2.3(@nestjs/common@11.2.3(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@8.0.0))(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)
       bullmq:
         specifier: 6.2.2
-        version: 6.2.2(ioredis@6.0.0(supports-color@8.0.0))
+        version: 6.2.2(ioredis@6.0.0(supports-color@8.0.0))(pg@8.16.3)
       fastify:
         specifier: 5.12.1
         version: 5.12.1
@@ -163,6 +163,9 @@ importers:
       '@types/node':
         specifier: ^20
         version: 20.19.43
+      '@types/pg':
+        specifier: ^8.15.5
+        version: 8.23.1
       '@types/react':
         specifier: ^19
         version: 19.2.18
@@ -174,7 +177,7 @@ importers:
         version: 6.1.0(vite@8.2.2(@types/node@20.19.43)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.50.0)(tsx@4.23.12)(yaml@2.9.0))
       bullmq:
         specifier: 6.2.2
-        version: 6.2.2(ioredis@6.0.0(supports-color@8.0.0))
+        version: 6.2.2(ioredis@6.0.0(supports-color@8.0.0))(pg@8.16.3)
       eslint:
         specifier: ^9
         version: 9.39.5(jiti@2.7.0)(supports-color@8.0.0)
@@ -184,6 +187,9 @@ importers:
       jsdom:
         specifier: ^30.0.1
         version: 30.0.1
+      pg:
+        specifier: 8.16.3
+        version: 8.16.3
       tailwindcss:
         specifier: ^4
         version: 4.3.3
@@ -216,7 +222,7 @@ importers:
         version: 11.2.3(@nestjs/common@11.2.3(reflect-metadata@0.2.2)(rxjs@7.8.2)(supports-color@8.0.0))(reflect-metadata@0.2.2)(rxjs@7.8.2)
       bullmq:
         specifier: 6.2.2
-        version: 6.2.2(ioredis@6.0.0(supports-color@8.0.0))
+        version: 6.2.2(ioredis@6.0.0(supports-color@8.0.0))(pg@8.16.3)
       ioredis:
         specifier: 6.0.0
         version: 6.0.0(supports-color@8.0.0)
@@ -245,6 +251,9 @@ importers:
       '@types/node':
         specifier: ^26.3.0
         version: 26.3.0
+      drizzle-orm:
+        specifier: 0.45.2
+        version: 0.45.2(@types/pg@8.23.1)(pg@8.16.3)(postgres@3.4.9)
       testcontainers:
         specifier: 12.1.0
         version: 12.1.0(supports-color@8.0.0)
@@ -272,7 +281,7 @@ importers:
     dependencies:
       drizzle-orm:
         specifier: 0.45.2
-        version: 0.45.2(postgres@3.4.9)
+        version: 0.45.2(@types/pg@8.23.1)(pg@8.16.3)(postgres@3.4.9)
       postgres:
         specifier: 3.4.9
         version: 3.4.9
@@ -300,7 +309,7 @@ importers:
         version: link:../database
       drizzle-orm:
         specifier: 0.45.2
-        version: 0.45.2(postgres@3.4.9)
+        version: 0.45.2(@types/pg@8.23.1)(pg@8.16.3)(postgres@3.4.9)
       zod:
         specifier: 4.4.3
         version: 4.4.3
@@ -2312,6 +2321,9 @@ packages:
 
   '@types/node@26.3.0':
     resolution: {integrity: sha512-L3fgrnchriRC2ExBflb8j4uZZURHZfQsmQeyVzhjcHW4kkwVyo8/0h1B2MVzMTrYUJYu6G7EWs14hW/L9putqw==}
+
+  '@types/pg@8.23.1':
+    resolution: {integrity: sha512-fKVHpikPdg4GKks3JuLEhvwSyvwzF23hnabPy6DD8ljVbC7+6J5dQzdv4arV6jqq57djnMgs1HKBxX4P8aBI3A==}
 
   '@types/react-dom@19.2.5':
     resolution: {integrity: sha512-fMPwH9v7r/pp43yUd2/Mbiex5KouJwwR3dzHkhLREUC6764VyDsqxhAxv6OFEYR1RhjOyD1naqba8ECDBe7ZQg==}
@@ -4949,6 +4961,40 @@ packages:
     resolution: {integrity: sha512-YxFb+SQcodN2rnX9Tn3dHYlqfb7NjlzzfONPpJd+AKoKtUjEdevTfbC07d5TcczzOK6261auRkP/M8OBHs9vFQ==}
     engines: {node: '>=22.13.0 || >=24'}
 
+  pg-cloudflare@1.4.0:
+    resolution: {integrity: sha512-Vo7z/6rrQYxpNRylp4Tlob2elzbh+N/MOQbxFVWCxS7oEx6jF53GTJFxK2WWpKuBRkmiin4Mt+xofFDjx09R0A==}
+
+  pg-connection-string@2.14.0:
+    resolution: {integrity: sha512-XwWDGcLRGCXAR8F/AM5bG7Q+A3Wm2s6QeEjlOKZLlH3UYcguiqCWKyWXVag5TLTIjR7oOJUY8kcADaZgWPyLeg==}
+
+  pg-int8@1.0.1:
+    resolution: {integrity: sha512-WCtabS6t3c8SkpDBUlb1kjOs7l66xsGdKpIPZsg4wR+B3+u9UAum2odSsF9tnvxg80h4ZxLWMy4pRjOsFIqQpw==}
+    engines: {node: '>=4.0.0'}
+
+  pg-pool@3.14.0:
+    resolution: {integrity: sha512-gKtPkFdQPU3DksooVLi9LsjZxrsBUZIpa+7aVx+LV5pNh0KzP4Zleud2po+ConrxbuXGBJ6Hfer6hdgpIBpBaw==}
+    peerDependencies:
+      pg: '>=8.0'
+
+  pg-protocol@1.16.0:
+    resolution: {integrity: sha512-sILXutLVjCLjcDuOmvhX5e2Z4cS5qG/6Bu3VkpFwdf/633ElGLpEh9bgmuI5I4sqKqkifQiGyiCcx1HdtrK7tg==}
+
+  pg-types@2.2.0:
+    resolution: {integrity: sha512-qTAAlrEsl8s4OiEQY69wDvcMIdQN6wdz5ojQiOy6YRMuynxenON0O5oCpJI6lshc6scgAY8qvJ2On/p+CXY0GA==}
+    engines: {node: '>=4'}
+
+  pg@8.16.3:
+    resolution: {integrity: sha512-enxc1h0jA/aq5oSDMvqyW3q89ra6XIIDZgCX9vkMrnz5DFTw/Ny3Li2lFQ+pt3L6MCgm/5o2o8HW9hiJji+xvw==}
+    engines: {node: '>= 16.0.0'}
+    peerDependencies:
+      pg-native: '>=3.0.1'
+    peerDependenciesMeta:
+      pg-native:
+        optional: true
+
+  pgpass@1.0.5:
+    resolution: {integrity: sha512-FdW9r/jQZhSeohs1Z3sI1yxFQNFvMcnmfuj4WBMUTxOrAyLMaTcE1aAMBiTlbMNaXvBCQuVi0R7hd8udDSP7ug==}
+
   picocolors@1.1.1:
     resolution: {integrity: sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==}
 
@@ -5011,6 +5057,22 @@ packages:
   postcss@8.5.26:
     resolution: {integrity: sha512-u82N74LFzG8ca+dD8puPnplTXoGH4fTPpVGuIbt36G3qvNlkvfD0lEAZSxaly3KX8TS/L1A1gsCEmvKmBcVbkQ==}
     engines: {node: ^10 || ^12 || >=14}
+
+  postgres-array@2.0.0:
+    resolution: {integrity: sha512-VpZrUqU5A69eQyW2c5CA1jtLecCsN2U/bD6VilrFDWq5+5UIEVO7nazS3TEcHf1zuPYO/sqGvUvW62g86RXZuA==}
+    engines: {node: '>=4'}
+
+  postgres-bytea@1.0.1:
+    resolution: {integrity: sha512-5+5HqXnsZPE65IJZSMkZtURARZelel2oXUEO8rH83VS/hxH5vv1uHquPg5wZs8yMAfdv971IU+kcPUczi7NVBQ==}
+    engines: {node: '>=0.10.0'}
+
+  postgres-date@1.0.7:
+    resolution: {integrity: sha512-suDmjLVQg78nMK2UZ454hAG+OAW+HQPZ6n++TNDUX+L0+uUlLywnoxJKDou51Zm+zTCjrCl0Nq6J9C5hP9vK/Q==}
+    engines: {node: '>=0.10.0'}
+
+  postgres-interval@1.1.0:
+    resolution: {integrity: sha512-txJzyrdoPw5F06xk3BEtzl46JCr6qU2DM8gfulxBFgqGKmfREbrcFyVqllttHuqWtafoBmowgJtGjm6kPGA/bg==}
+    engines: {node: '>=0.10.0'}
 
   postgres@3.4.9:
     resolution: {integrity: sha512-GD3qdB0x1z9xgFI6cdRD6xu2Sp2WCOEoe3mtnyB5Ee0XrrL5Pe+e4CCnJrRMnL1zYtRDZmQQVbvOttLnKDLnaw==}
@@ -6093,6 +6155,10 @@ packages:
 
   xmlchars@2.2.0:
     resolution: {integrity: sha512-JZnDKK8B0RCDw84FNdDAIpZK+JuJw+s7Lz8nksI7SIuU3UXJJslUthsi+uWBUYOwPFwW7W7PRLRfUKpxjtjFCw==}
+
+  xtend@4.0.2:
+    resolution: {integrity: sha512-LKYU1iAXJXUgAXn9URjiu+MWhyUXHsvfp7mcuYm9dSUKK0/CjtrUwFAxD82/mCWbtLsGjFIad0wIsod4zrTAEQ==}
+    engines: {node: '>=0.4'}
 
   y18n@5.0.8:
     resolution: {integrity: sha512-0pfFzegeDWJHJIAmTLRP2DwHjdF5s7jo9tuztdQxAhINCdvS+3nGINqPd00AphqJR/0LhANUS6/+7SCb98YOfA==}
@@ -8119,6 +8185,12 @@ snapshots:
     dependencies:
       undici-types: 8.3.0
 
+  '@types/pg@8.23.1':
+    dependencies:
+      '@types/node': 20.19.43
+      pg-protocol: 1.16.0
+      pg-types: 2.2.0
+
   '@types/react-dom@19.2.5(@types/react@19.2.18)':
     dependencies:
       '@types/react': 19.2.18
@@ -8725,7 +8797,7 @@ snapshots:
   buildcheck@0.0.7:
     optional: true
 
-  bullmq@6.2.2(ioredis@6.0.0(supports-color@8.0.0)):
+  bullmq@6.2.2(ioredis@6.0.0(supports-color@8.0.0))(pg@8.16.3):
     dependencies:
       cron-parser: 5.10.0
       msgpackr: 2.0.5
@@ -8734,6 +8806,7 @@ snapshots:
       tslib: 2.8.1
     optionalDependencies:
       ioredis: 6.0.0(supports-color@8.0.0)
+      pg: 8.16.3
 
   bundle-name@4.1.0:
     dependencies:
@@ -9087,8 +9160,10 @@ snapshots:
       esbuild: 0.25.4
       tsx: 4.23.12
 
-  drizzle-orm@0.45.2(postgres@3.4.9):
+  drizzle-orm@0.45.2(@types/pg@8.23.1)(pg@8.16.3)(postgres@3.4.9):
     optionalDependencies:
+      '@types/pg': 8.23.1
+      pg: 8.16.3
       postgres: 3.4.9
 
   duck@0.1.12:
@@ -10974,6 +11049,41 @@ snapshots:
     optionalDependencies:
       '@napi-rs/canvas': 1.0.8
 
+  pg-cloudflare@1.4.0:
+    optional: true
+
+  pg-connection-string@2.14.0: {}
+
+  pg-int8@1.0.1: {}
+
+  pg-pool@3.14.0(pg@8.16.3):
+    dependencies:
+      pg: 8.16.3
+
+  pg-protocol@1.16.0: {}
+
+  pg-types@2.2.0:
+    dependencies:
+      pg-int8: 1.0.1
+      postgres-array: 2.0.0
+      postgres-bytea: 1.0.1
+      postgres-date: 1.0.7
+      postgres-interval: 1.1.0
+
+  pg@8.16.3:
+    dependencies:
+      pg-connection-string: 2.14.0
+      pg-pool: 3.14.0(pg@8.16.3)
+      pg-protocol: 1.16.0
+      pg-types: 2.2.0
+      pgpass: 1.0.5
+    optionalDependencies:
+      pg-cloudflare: 1.4.0
+
+  pgpass@1.0.5:
+    dependencies:
+      split2: 4.2.0
+
   picocolors@1.1.1: {}
 
   picomatch@2.3.2: {}
@@ -11036,6 +11146,16 @@ snapshots:
       nanoid: 3.3.18
       picocolors: 1.1.1
       source-map-js: 1.2.1
+
+  postgres-array@2.0.0: {}
+
+  postgres-bytea@1.0.1: {}
+
+  postgres-date@1.0.7: {}
+
+  postgres-interval@1.1.0:
+    dependencies:
+      xtend: 4.0.2
 
   postgres@3.4.9: {}
 
@@ -12346,6 +12466,8 @@ snapshots:
   xmlbuilder@11.0.1: {}
 
   xmlchars@2.2.0: {}
+
+  xtend@4.0.2: {}
 
   y18n@5.0.8: {}
 

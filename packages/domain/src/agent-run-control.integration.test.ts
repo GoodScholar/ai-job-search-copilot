@@ -4,6 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { agentInboxItems, agentRunControlCommands, agentRunEvents, agentRunUsageEntries, agentRuns, auditEvents, createDatabase, jobAccounts, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
 import { AgentRunControlError, createAgentRunCheckpoint, createAgentRunCommands, type AgentRunQueue } from "./agent-runs";
+import { createCompanyWatchlistCommands } from "./company-watchlists";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
 const constraints = {
@@ -43,6 +44,13 @@ describe("agent run controls", () => {
     return createAgentRunCommands({ db: database, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
   }
 
+  async function addGreenhouseWatchlistSource(userId: string, targetId: string): Promise<void> {
+    await createCompanyWatchlistCommands({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).addItem({
+      userId, targetId, requestId: crypto.randomUUID(),
+      command: { expectedVersion: 0, canonicalCompanyName: "Example AI", careersUrl: "https://boards.greenhouse.io/example", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null },
+    });
+  }
+
   function checkpoints(at = now) {
     return createAgentRunCheckpoint({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => at }), id: () => crypto.randomUUID(), clock: () => at });
   }
@@ -59,6 +67,20 @@ describe("agent run controls", () => {
     await expect(database.select().from(agentRunControlCommands).where(and(eq(agentRunControlCommands.userId, userId), eq(agentRunControlCommands.runId, run.runId)))).resolves.toHaveLength(1);
     await expect(database.select().from(agentRunEvents).where(and(eq(agentRunEvents.userId, userId), eq(agentRunEvents.runId, run.runId), eq(agentRunEvents.eventType, "run.paused")))).resolves.toHaveLength(1);
     await expect(database.select().from(auditEvents).where(and(eq(auditEvents.userId, userId), eq(auditEvents.resourceId, run.runId), eq(auditEvents.eventType, "agent.run_paused")))).resolves.toHaveLength(1);
+  });
+
+  it("测试 Worker 可把经过公开来源校验的计划 occurrence 固定为 Fake v1，而手动路径不变", async () => {
+    const { userId, targetId } = await activeTarget();
+    await addGreenhouseWatchlistSource(userId, targetId);
+    const run = await createAgentRunCommands({
+      db: database, queue: new MemoryQueue(), auditTrail: createAuditTrail({ db: database, clock: () => now }),
+      id: () => crypto.randomUUID(), clock: () => now, scheduledAdapter: "fake",
+    }).start({
+      userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() },
+      trigger: { kind: "schedule", occurrenceId: crypto.randomUUID(), scheduledFor: now },
+    });
+
+    expect(run).toMatchObject({ adapter: "fake", adapterVersion: "fake-job-discovery-v1", workflowVersion: "job-discovery-workflow-v1" });
   });
 
   it("将跨账户运行隐藏为 404，并将 commandId 改变动作标为幂等键冲突", async () => {

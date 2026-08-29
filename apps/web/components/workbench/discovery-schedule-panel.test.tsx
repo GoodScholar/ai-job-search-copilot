@@ -20,6 +20,13 @@ it("只读取当前目标的计划，并以北京时间保存首次 version 0", 
   await waitFor(() => expect(fetchMock).toHaveBeenLastCalledWith(`/api/job-targets/${targetId}/discovery-schedule`, expect.objectContaining({ method: "PUT", body: JSON.stringify({ expectedVersion: 0, state: "enabled", dailyTime: "10:30" }) })));
 });
 
+it("没有计划提示时不占用工作台的状态区域", async () => {
+  load();
+  render(<DiscoverySchedulePanel targetId={targetId} targetState="active" />);
+  await screen.findByText("可每日检查 2 个岗位来源");
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});
+
 it("保存中禁用动作，并在策略冲突后显示待接入且禁止继续保存", async () => {
   let resolvePut!: (value: Response) => void;
   const fetchMock = load();

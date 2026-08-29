@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Queue } from "bullmq";
+import { and, eq } from "drizzle-orm";
 import Redis from "ioredis";
 import { Client as MinioClient } from "minio";
 import { NestFactory } from "@nestjs/core";
@@ -11,6 +12,8 @@ import {
   agentRunJobResults,
   agentRuns,
   createDatabase,
+  jobDiscoveryScheduleOccurrences,
+  jobDiscoverySchedules,
   jobAccounts,
   jobOpportunities,
   jobSourcePostingVersions,
@@ -23,6 +26,8 @@ import {
 import { AGENT_RUN_JOB_NAME, AGENT_RUN_QUEUE } from "@job-copilot/contracts/agent-runs";
 import { createAgentRunCommands, createAgentRunQueries, createAgentRunRecoveryQueries } from "@job-copilot/domain/agent-runs";
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
+import { createCompanyWatchlistCommands } from "@job-copilot/domain/company-watchlists";
+import { createJobDiscoverySchedules } from "@job-copilot/domain/job-discovery-schedules";
 
 import { AppModule } from "../app.module.js";
 import { AGENT_RUN_CONSUMER } from "./agent-run.module.js";
@@ -289,6 +294,84 @@ describe("岗位发现 Agent Run Worker", () => {
     await expect(database.select().from(jobOpportunities)).resolves.toHaveLength(5);
     await expect(database.select().from(agentRunJobResults)).resolves.toHaveLength(10);
   }, 60_000);
+
+  it("计划扫描由 Worker 物化 Fake occurrence，重复扫描和重复交付不重复持久化", async () => {
+    await stopWorker();
+    const scheduledUserId = randomUUID();
+    const scheduledTargetId = randomUUID();
+    await database.insert(jobAccounts).values({ id: scheduledUserId });
+    await database.insert(jobTargets).values({ id: scheduledTargetId, userId: scheduledUserId, version: 1, priority: "primary", state: "active", activeSlot: null });
+    await database.insert(jobTargetRevisions).values({ id: randomUUID(), userId: scheduledUserId, targetId: scheduledTargetId, version: 1, priority: "primary", state: "active", constraints });
+    const auditTrail = createAuditTrail({ db: database, clock: () => new Date() });
+    await createCompanyWatchlistCommands({ db: database, auditTrail, id: randomUUID, clock: () => new Date() }).addItem({
+      userId: scheduledUserId, targetId: scheduledTargetId, requestId: randomUUID(),
+      command: { expectedVersion: 0, canonicalCompanyName: "Schedule Fixture", careersUrl: "https://boards.greenhouse.io/schedule-fixture", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null },
+    });
+    const schedules = createJobDiscoverySchedules({ db: database, runs: commands(), auditTrail, id: randomUUID, clock: () => new Date() });
+    const schedule = await schedules.set({ userId: scheduledUserId, targetId: scheduledTargetId, requestId: randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
+    await database.update(jobDiscoverySchedules).set({ nextRunAt: new Date(Date.now() - 1_000) }).where(eq(jobDiscoverySchedules.id, schedule.scheduleId));
+
+    const skippedSchedule = async (input: { targetState: "active" | "inactive"; careersUrl: string; allowedDomains: string[] }) => {
+      const userId = randomUUID();
+      const targetId = randomUUID();
+      const scheduleId = randomUUID();
+      await database.insert(jobAccounts).values({ id: userId });
+      await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: input.targetState, activeSlot: null });
+      await database.insert(jobTargetRevisions).values({ id: randomUUID(), userId, targetId, version: 1, priority: "primary", state: input.targetState, constraints });
+      if (input.targetState === "active") {
+        await createCompanyWatchlistCommands({ db: database, auditTrail, id: randomUUID, clock: () => new Date() }).addItem({
+          userId, targetId, requestId: randomUUID(),
+          command: { expectedVersion: 0, canonicalCompanyName: `Skip ${scheduleId}`, careersUrl: input.careersUrl, allowedDomains: input.allowedDomains, sourceNote: null },
+        });
+      }
+      await database.insert(jobDiscoverySchedules).values({
+        id: scheduleId, userId, targetId, version: 1, state: "enabled", dailyTime: "09:30", timeZone: "Asia/Shanghai",
+        nextRunAt: new Date(Date.now() - 1_000), createdAt: new Date(), updatedAt: new Date(),
+      });
+      return { userId, scheduleId };
+    };
+    const [inactive, unsupported, policy] = await Promise.all([
+      skippedSchedule({ targetState: "inactive", careersUrl: "https://boards.greenhouse.io/inactive-fixture", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] }),
+      skippedSchedule({ targetState: "active", careersUrl: "https://careers.example.test/unsupported", allowedDomains: ["careers.example.test"] }),
+      skippedSchedule({ targetState: "active", careersUrl: "https://boards.greenhouse.io/policy-fixture", allowedDomains: ["boards.greenhouse.io"] }),
+    ]);
+
+    await startWorker();
+    let occurrenceId = "";
+    let scheduledRunId = "";
+    await waitFor(async () => {
+      const [occurrence] = await database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.scheduleId, schedule.scheduleId));
+      occurrenceId = occurrence?.id ?? "";
+      scheduledRunId = occurrence?.runId ?? "";
+      return occurrence?.status === "dispatched" && Boolean(scheduledRunId)
+        && (await createAgentRunQueries({ db: database }).get({ userId: scheduledUserId, runId: scheduledRunId }))?.status === "completed";
+    }, "timed out waiting for scheduled Fake discovery");
+
+    const detail = await createAgentRunQueries({ db: database }).get({ userId: scheduledUserId, runId: scheduledRunId });
+    expect(detail).toMatchObject({ adapter: "fake", adapterVersion: "fake-job-discovery-v1", status: "completed" });
+    expect(detail?.results).toHaveLength(5);
+    await expect(database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, occurrenceId))).resolves.toEqual([expect.objectContaining({ status: "dispatched", runId: scheduledRunId })]);
+    await expect(database.select().from(agentRuns).where(and(eq(agentRuns.userId, scheduledUserId), eq(agentRuns.idempotencyKey, occurrenceId)))).resolves.toHaveLength(1);
+
+    await waitFor(async () => (await queue.getJob(scheduledRunId)) === undefined, "scheduled agent run job was not removed");
+    const duplicate = await queue.add(AGENT_RUN_JOB_NAME, { version: 1, runId: scheduledRunId, userId: scheduledUserId }, { ...agentRunQueueJobOptions(scheduledRunId), removeOnComplete: false });
+    await waitFor(async () => (await queue.getJob(duplicate.id!))?.returnvalue === "stale", "duplicate scheduled delivery was not consumed");
+    await (await queue.getJob(duplicate.id!))?.remove();
+    await schedules.materializeDue({ limit: 10 });
+    await schedules.dispatchPending({ limit: 10 });
+
+    await expect(database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.scheduleId, schedule.scheduleId))).resolves.toHaveLength(1);
+    await expect(database.select().from(agentRuns).where(and(eq(agentRuns.userId, scheduledUserId), eq(agentRuns.idempotencyKey, occurrenceId)))).resolves.toHaveLength(1);
+    await expect(database.select().from(jobSourcePostings).where(eq(jobSourcePostings.userId, scheduledUserId))).resolves.toHaveLength(5);
+    await expect(database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, scheduledUserId))).resolves.toHaveLength(5);
+    await expect(database.select().from(jobOpportunities).where(eq(jobOpportunities.userId, scheduledUserId))).resolves.toHaveLength(5);
+    await expect(database.select().from(agentRunJobResults).where(eq(agentRunJobResults.userId, scheduledUserId))).resolves.toHaveLength(5);
+    await expect.poll(async () => Promise.all([inactive, unsupported, policy].map(async ({ scheduleId }) => {
+      const [occurrence] = await database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.scheduleId, scheduleId));
+      return occurrence?.skipReason;
+    }))).toEqual(["TARGET_INACTIVE", "NO_SUPPORTED_SOURCE", "SOURCE_POLICY_REQUIRED"]);
+    await expect(Promise.all([inactive, unsupported, policy].map(({ userId }) => database.select().from(agentRuns).where(eq(agentRuns.userId, userId))))).resolves.toEqual([[], [], []]);
+  }, 45_000);
 
   it("暂停 run 不被恢复扫描，恢复后完成，取消的 run 不产生结果", async () => {
     await stopWorker();

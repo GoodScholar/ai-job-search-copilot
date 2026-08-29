@@ -3,7 +3,8 @@ import { Injectable, Module, type OnModuleDestroy } from "@nestjs/common";
 import { Client as MinioClient } from "minio";
 import { createDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
-import { createAgentRunProcessor, createAgentRunRecoveryQueries } from "@job-copilot/domain/agent-runs";
+import { createAgentRunCommands, createAgentRunProcessor, createAgentRunRecoveryQueries } from "@job-copilot/domain/agent-runs";
+import { createJobDiscoverySchedules } from "@job-copilot/domain/job-discovery-schedules";
 
 import { AgentRunConsumer } from "./agent-run-consumer.js";
 import {
@@ -12,6 +13,11 @@ import {
   type AgentRunRecoveryFailure,
   type AgentRunRecoveryReporter,
 } from "./agent-run-reconciler.js";
+import {
+  AgentRunScheduler,
+  type AgentRunScheduleFailure,
+  type AgentRunScheduleReporter,
+} from "./agent-run-scheduler.js";
 import { createJobDiscoveryAdapterResolver } from "./job-discovery-adapter-resolver.js";
 import { MinioDiscoveryContentStore } from "./minio-discovery-content-store.js";
 
@@ -20,6 +26,8 @@ export const AGENT_RUN_RECONCILER = Symbol("AGENT_RUN_RECONCILER");
 export const AGENT_RUN_QUEUE = Symbol("AGENT_RUN_QUEUE");
 export const AGENT_RUN_DATABASE = Symbol("AGENT_RUN_DATABASE");
 export const AGENT_RUN_RECOVERY_REPORTER = Symbol("AGENT_RUN_RECOVERY_REPORTER");
+export const AGENT_RUN_SCHEDULER = Symbol("AGENT_RUN_SCHEDULER");
+export const AGENT_RUN_SCHEDULE_REPORTER = Symbol("AGENT_RUN_SCHEDULE_REPORTER");
 
 function required(
   name: "DATABASE_URL" | "REDIS_URL" | "MINIO_ENDPOINT" | "MINIO_ACCESS_KEY" | "MINIO_SECRET_KEY" | "MINIO_BUCKET",
@@ -44,6 +52,10 @@ function createMinioClient(): MinioClient {
     accessKey: required("MINIO_ACCESS_KEY", "job_copilot"),
     secretKey: required("MINIO_SECRET_KEY", "local_only_job_copilot_secret"),
   });
+}
+
+function usesFakeScheduledAdapter(environment: NodeJS.ProcessEnv = process.env): boolean {
+  return environment.APP_ENV === "test" || (environment.APP_ENV === "local" && environment.PUBLIC_JOB_DISCOVERY_ADAPTER !== "greenhouse");
 }
 
 export function createConfiguredJobDiscoveryAdapterResolver(environment: NodeJS.ProcessEnv = process.env) {
@@ -76,6 +88,12 @@ class AgentRunDatabase implements OnModuleDestroy {
       } satisfies AgentRunRecoveryReporter,
     },
     {
+      provide: AGENT_RUN_SCHEDULE_REPORTER,
+      useValue: {
+        report: (failure: AgentRunScheduleFailure) => console.error("Job discovery schedule failure", failure),
+      } satisfies AgentRunScheduleReporter,
+    },
+    {
       provide: AGENT_RUN_CONSUMER,
       inject: [AGENT_RUN_DATABASE],
       useFactory: (database: AgentRunDatabase) => {
@@ -106,7 +124,31 @@ class AgentRunDatabase implements OnModuleDestroy {
         reporter,
       }),
     },
+    {
+      provide: AGENT_RUN_SCHEDULER,
+      inject: [AGENT_RUN_DATABASE, AGENT_RUN_QUEUE, AGENT_RUN_SCHEDULE_REPORTER],
+      useFactory: (
+        database: AgentRunDatabase,
+        queue: BullmqAgentRunQueue,
+        reporter: AgentRunScheduleReporter,
+      ) => {
+        const db = database.db;
+        const auditTrail = createAuditTrail({ db, clock: () => new Date() });
+        const runs = createAgentRunCommands({
+          db,
+          queue,
+          auditTrail,
+          id: randomUUID,
+          clock: () => new Date(),
+          ...(usesFakeScheduledAdapter() ? { scheduledAdapter: "fake" as const } : {}),
+        });
+        return new AgentRunScheduler({
+          schedules: createJobDiscoverySchedules({ db, runs, auditTrail, id: randomUUID, clock: () => new Date() }),
+          reporter,
+        });
+      },
+    },
   ],
-  exports: [AGENT_RUN_CONSUMER],
+  exports: [AGENT_RUN_CONSUMER, AGENT_RUN_SCHEDULER],
 })
 export class AgentRunModule {}
