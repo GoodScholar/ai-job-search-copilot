@@ -1,4 +1,4 @@
-import { and, asc, eq, lte, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
   companyWatchlistRevisions,
   companyWatchlists,
@@ -153,36 +153,64 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
       });
     },
     async dispatchPending(input) {
-      const pending = await deps.db.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.status, "pending")).orderBy(asc(jobDiscoveryScheduleOccurrences.scheduledFor), asc(jobDiscoveryScheduleOccurrences.id)).limit(Math.max(1, input.limit));
-      for (const occurrence of pending) {
-        const now = deps.clock();
-        const [existingRun] = await deps.db.select({ id: agentRuns.id }).from(agentRuns).where(and(eq(agentRuns.userId, occurrence.userId), eq(agentRuns.idempotencyKey, occurrence.id)));
-        if (existingRun) {
-          const run = await deps.runs.start({ userId: occurrence.userId, requestId: deps.id(), command: { targetId: occurrence.targetId, idempotencyKey: occurrence.id }, trigger: { kind: "schedule", occurrenceId: occurrence.id, scheduledFor: occurrence.scheduledFor } });
-          const [dispatched] = await deps.db.update(jobDiscoveryScheduleOccurrences).set({ status: "dispatched", runId: run.runId, skipReason: null }).where(and(eq(jobDiscoveryScheduleOccurrences.id, occurrence.id), eq(jobDiscoveryScheduleOccurrences.status, "pending"))).returning();
-          if (dispatched) await appendScheduleAudit(deps.auditTrail, { userId: dispatched.userId, requestId: deps.id(), eventType: "occurrence_dispatched", scheduleId: dispatched.scheduleId, targetId: dispatched.targetId, occurrenceId: dispatched.id, runId: run.runId, scheduledFor: dispatched.scheduledFor, state: "dispatched", now });
-          continue;
+      await deps.db.transaction(async (transaction) => {
+        const pending = await transaction.execute(sql`
+          select id, user_id, schedule_id, target_id, scheduled_for, status, run_id, skip_reason, created_at
+          from job_discovery_schedule_occurrences
+          where status = 'pending'
+          order by scheduled_for asc, id asc
+          for update skip locked
+          limit ${Math.max(1, input.limit)}
+        `) as unknown as Array<{
+          id: string; user_id: string; schedule_id: string; target_id: string; scheduled_for: Date;
+          status: OccurrenceRow["status"]; run_id: string | null; skip_reason: OccurrenceRow["skipReason"]; created_at: Date;
+        }>;
+
+        for (const row of pending) {
+          const occurrence: OccurrenceRow = {
+            id: row.id, userId: row.user_id, scheduleId: row.schedule_id, targetId: row.target_id,
+            scheduledFor: new Date(row.scheduled_for), status: row.status, runId: row.run_id,
+            skipReason: row.skip_reason, createdAt: new Date(row.created_at),
+          };
+          const now = deps.clock();
+          const auditTrail = deps.auditTrail;
+          const dispatch = async (runId: string) => {
+            const [dispatched] = await transaction.update(jobDiscoveryScheduleOccurrences).set({ status: "dispatched", runId, skipReason: null })
+              .where(and(eq(jobDiscoveryScheduleOccurrences.id, occurrence.id), eq(jobDiscoveryScheduleOccurrences.status, "pending"))).returning();
+            if (dispatched) await appendScheduleAudit(auditTrail, { userId: dispatched.userId, requestId: deps.id(), eventType: "occurrence_dispatched", scheduleId: dispatched.scheduleId, targetId: dispatched.targetId, occurrenceId: dispatched.id, runId, scheduledFor: dispatched.scheduledFor, state: "dispatched", now });
+          };
+          const skip = async (reason: "TARGET_INACTIVE" | "NO_SUPPORTED_SOURCE" | "SOURCE_POLICY_REQUIRED") => {
+            const [skipped] = await transaction.update(jobDiscoveryScheduleOccurrences).set({ status: "skipped", runId: null, skipReason: reason })
+              .where(and(eq(jobDiscoveryScheduleOccurrences.id, occurrence.id), eq(jobDiscoveryScheduleOccurrences.status, "pending"))).returning();
+            if (skipped) await appendScheduleAudit(auditTrail, { userId: skipped.userId, requestId: deps.id(), eventType: "occurrence_skipped", scheduleId: skipped.scheduleId, targetId: skipped.targetId, occurrenceId: skipped.id, scheduledFor: skipped.scheduledFor, state: "skipped", now });
+          };
+
+          const [existingRun] = await transaction.select({ id: agentRuns.id }).from(agentRuns)
+            .where(and(eq(agentRuns.userId, occurrence.userId), eq(agentRuns.idempotencyKey, occurrence.id)));
+          if (existingRun) {
+            const run = await deps.runs.start({ userId: occurrence.userId, requestId: deps.id(), command: { targetId: occurrence.targetId, idempotencyKey: occurrence.id }, trigger: { kind: "schedule", occurrenceId: occurrence.id, scheduledFor: occurrence.scheduledFor } });
+            await dispatch(run.runId);
+            continue;
+          }
+
+          let reason: Awaited<ReturnType<typeof dispatchReason>>;
+          try { reason = await dispatchReason(transaction, occurrence.userId, occurrence.targetId); } catch (error) {
+            if (!(error instanceof JobDiscoveryScheduleError)) throw error;
+            reason = "TARGET_INACTIVE";
+          }
+          if (reason) {
+            await skip(reason);
+            continue;
+          }
+          try {
+            const run = await deps.runs.start({ userId: occurrence.userId, requestId: deps.id(), command: { targetId: occurrence.targetId, idempotencyKey: occurrence.id }, trigger: { kind: "schedule", occurrenceId: occurrence.id, scheduledFor: occurrence.scheduledFor } });
+            await dispatch(run.runId);
+          } catch (error) {
+            if (!(error instanceof AgentRunError) || error.code !== "AGENT_RUN_TARGET_INACTIVE") throw error;
+            await skip("TARGET_INACTIVE");
+          }
         }
-        let reason: Awaited<ReturnType<typeof dispatchReason>>;
-        try { reason = await dispatchReason(deps.db, occurrence.userId, occurrence.targetId); } catch (error) {
-          if (!(error instanceof JobDiscoveryScheduleError)) throw error;
-          reason = "TARGET_INACTIVE";
-        }
-        if (reason) {
-          const [skipped] = await deps.db.update(jobDiscoveryScheduleOccurrences).set({ status: "skipped", runId: null, skipReason: reason }).where(and(eq(jobDiscoveryScheduleOccurrences.id, occurrence.id), eq(jobDiscoveryScheduleOccurrences.status, "pending"))).returning();
-          if (skipped) await appendScheduleAudit(deps.auditTrail, { userId: skipped.userId, requestId: deps.id(), eventType: "occurrence_skipped", scheduleId: skipped.scheduleId, targetId: skipped.targetId, occurrenceId: skipped.id, scheduledFor: skipped.scheduledFor, state: "skipped", now });
-          continue;
-        }
-        try {
-          const run = await deps.runs.start({ userId: occurrence.userId, requestId: deps.id(), command: { targetId: occurrence.targetId, idempotencyKey: occurrence.id }, trigger: { kind: "schedule", occurrenceId: occurrence.id, scheduledFor: occurrence.scheduledFor } });
-          const [dispatched] = await deps.db.update(jobDiscoveryScheduleOccurrences).set({ status: "dispatched", runId: run.runId, skipReason: null }).where(and(eq(jobDiscoveryScheduleOccurrences.id, occurrence.id), eq(jobDiscoveryScheduleOccurrences.status, "pending"))).returning();
-          if (dispatched) await appendScheduleAudit(deps.auditTrail, { userId: dispatched.userId, requestId: deps.id(), eventType: "occurrence_dispatched", scheduleId: dispatched.scheduleId, targetId: dispatched.targetId, occurrenceId: dispatched.id, runId: run.runId, scheduledFor: dispatched.scheduledFor, state: "dispatched", now });
-        } catch (error) {
-          if (!(error instanceof AgentRunError) || error.code !== "AGENT_RUN_TARGET_INACTIVE") throw error;
-          const [skipped] = await deps.db.update(jobDiscoveryScheduleOccurrences).set({ status: "skipped", runId: null, skipReason: "TARGET_INACTIVE" }).where(and(eq(jobDiscoveryScheduleOccurrences.id, occurrence.id), eq(jobDiscoveryScheduleOccurrences.status, "pending"))).returning();
-          if (skipped) await appendScheduleAudit(deps.auditTrail, { userId: skipped.userId, requestId: deps.id(), eventType: "occurrence_skipped", scheduleId: skipped.scheduleId, targetId: skipped.targetId, occurrenceId: skipped.id, scheduledFor: skipped.scheduledFor, state: "skipped", now });
-        }
-      }
+      });
     },
   };
 }

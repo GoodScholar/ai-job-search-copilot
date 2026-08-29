@@ -25,8 +25,10 @@ import { AGENT_RUN_COMMANDS, AGENT_RUN_QUERIES, type AgentRunCommands, type Agen
 class StartAgentRunCommandDto extends createZodDto(StartAgentRunCommandSchema) {}
 class ControlAgentRunCommandDto extends createZodDto(ControlAgentRunCommandSchema) {}
 class ControlAgentRunResponseDto extends createZodDto(ControlAgentRunResponseSchema) {}
-class StartAgentRunResponseDto extends createZodDto(z.object({}).passthrough()) {}
-class AgentRunDetailDto extends createZodDto(z.object({}).passthrough()) {}
+const StartAgentRunResponseDto = createZodDto(StartAgentRunResponseSchema);
+Object.defineProperty(StartAgentRunResponseDto, "name", { value: "StartAgentRunResponseDto" });
+const AgentRunDetailDto = createZodDto(AgentRunDetailSchema);
+Object.defineProperty(AgentRunDetailDto, "name", { value: "AgentRunDetailDto" });
 class LatestAgentRunResponseDto extends createZodDto(LatestAgentRunResponseSchema) {}
 class AgentRunPathDto extends createZodDto(z.object({ runId: z.uuid() }).strict()) {}
 class AgentRunEventsQueryDto extends createZodDto(z.object({ afterEventId: z.string().optional() }).strict()) {}

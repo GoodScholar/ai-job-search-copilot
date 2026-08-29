@@ -143,6 +143,11 @@ describe("agent run contracts", () => {
     expect(AgentRunDetailSchema.safeParse(publicDetail).success).toBe(true);
     expect(LatestAgentRunResponseSchema.safeParse({ run: publicDetail }).success).toBe(true);
     expect(StartAgentRunResponseSchema.safeParse({ ...publicSummary, adapter: "fake", reused: false }).success).toBe(false);
+    expect(StartAgentRunResponseSchema.safeParse({
+      ...publicSummary,
+      sourceScope: { ...publicSourceScope, untrusted: true },
+      reused: false,
+    }).success).toBe(false);
   });
   it("defines strict control state, control command, and public budget", () => {
     const commandId = "17fcd7b1-1a1d-4f25-9d10-45522417e919";

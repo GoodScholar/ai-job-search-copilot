@@ -1341,6 +1341,16 @@ describe("authenticated workbench HTTP API", () => {
       "/health/live": expect.anything(),
     }));
     expect(document.components.schemas.ApiProblem).toBeDefined();
+    const agentRunResponses = document.paths["/v1/agent-runs"].post.responses;
+    const startRunSchema = document.components.schemas.StartAgentRunResponseDto_Output;
+    expect(JSON.stringify(agentRunResponses)).toContain("StartAgentRunResponseDto_Output");
+    expect(startRunSchema).toMatchObject({
+      oneOf: expect.arrayContaining([
+        expect.objectContaining({ additionalProperties: false, properties: expect.objectContaining({ adapter: expect.objectContaining({ enum: ["fake"] }) }) }),
+        expect.objectContaining({ additionalProperties: false, properties: expect.objectContaining({ adapter: expect.objectContaining({ enum: ["greenhouse"] }) }) }),
+      ]),
+    });
+    expect(JSON.stringify(startRunSchema)).not.toContain('"additionalProperties":{}');
     expect(document.components.securitySchemes.bearerAuth).toEqual({
       type: "http",
       scheme: "bearer",

@@ -185,6 +185,44 @@ describe("job discovery schedules", () => {
     await expect(database.select().from(agentRuns).where(and(eq(agentRuns.userId, owner.userId), eq(agentRuns.idempotencyKey, occurrence.occurrenceId)))).resolves.toHaveLength(1);
   });
 
+  it("并发 dispatcher 在 occurrence 行锁期间不会基于旧快照跳过已提交的 run", async () => {
+    const owner = await target();
+    await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/example", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
+    const occurrence = await dueOccurrence(owner);
+    const queue = new Queue();
+    const auditTrail = createAuditTrail({ db: database, clock: () => now });
+    const real = createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now });
+    let startCalls = 0;
+    let firstStartCommitted!: () => void;
+    let releaseFirstBind!: () => void;
+    const firstStartCommittedPromise = new Promise<void>((resolve) => { firstStartCommitted = resolve; });
+    const releaseFirstBindPromise = new Promise<void>((resolve) => { releaseFirstBind = resolve; });
+    const runs: AgentRunStarter = { start: async (input) => {
+      startCalls += 1;
+      const started = await real.start(input);
+      if (startCalls === 1) {
+        firstStartCommitted();
+        await releaseFirstBindPromise;
+      }
+      return started;
+    } };
+    const first = createJobDiscoverySchedules({ db: database, runs, auditTrail, id: () => crypto.randomUUID(), clock: () => now });
+    const second = createJobDiscoverySchedules({ db: database, runs, auditTrail, id: () => crypto.randomUUID(), clock: () => now });
+
+    const firstDispatch = first.dispatchPending({ limit: 1 });
+    await firstStartCommittedPromise;
+    const secondDispatch = second.dispatchPending({ limit: 1 });
+    await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, expectedVersion: 1, companyName: "Changed source", careersUrl: "https://boards.greenhouse.io/changed", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
+    await database.update(jobTargets).set({ state: "inactive" }).where(eq(jobTargets.id, owner.targetId));
+    releaseFirstBind();
+    await Promise.all([firstDispatch, secondDispatch]);
+
+    const [persisted] = await database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, occurrence.occurrenceId));
+    expect(startCalls).toBe(1);
+    expect(persisted).toMatchObject({ status: "dispatched", runId: expect.any(String), skipReason: null });
+    await expect(database.select().from(agentRuns).where(and(eq(agentRuns.userId, owner.userId), eq(agentRuns.idempotencyKey, occurrence.occurrenceId)))).resolves.toHaveLength(1);
+  });
+
   it("混合 Watchlist 中任一未授权 Greenhouse source 阻止启用和新 occurrence 派发", async () => {
     const owner = await target();
     await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/allowed", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
