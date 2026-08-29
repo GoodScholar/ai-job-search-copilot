@@ -23,7 +23,7 @@ export interface DiscoveryContentStore {
 
 export interface JobDiscoveryAdapter {
   search(input: import("@job-copilot/contracts/agent-runs").DiscoverySearchInput): Promise<import("@job-copilot/contracts/agent-runs").DiscoverySearchResult>;
-  searchBatch(input: import("@job-copilot/contracts/agent-runs").DiscoveryBatchSearchInput): Promise<import("@job-copilot/contracts/agent-runs").DiscoveryBatchSearchResult>;
+  searchBatch(input: import("@job-copilot/contracts/agent-runs").DiscoveryBatchSearchInput | { targetSnapshot: import("@job-copilot/contracts/agent-runs").DiscoverySearchInput["targetSnapshot"]; sourceScope: import("@job-copilot/contracts/agent-runs").PublicAgentRunSourceScope }): Promise<import("@job-copilot/contracts/agent-runs").DiscoveryBatchSearchResult | import("@job-copilot/contracts/agent-runs").PublicDiscoveryBatchSearchResult>;
   getDetail(input: import("@job-copilot/contracts/agent-runs").DiscoveryDetailInput): Promise<import("@job-copilot/contracts/agent-runs").DiscoveryDetailResult>;
 }
 

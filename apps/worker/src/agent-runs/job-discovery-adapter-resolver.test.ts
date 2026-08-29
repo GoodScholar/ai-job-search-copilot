@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createJobDiscoveryAdapterResolver } from "./job-discovery-adapter-resolver.js";
+import { GreenhouseJobDiscoveryAdapter } from "./greenhouse-job-discovery-adapter.js";
 
 const runId = "10000000-0000-4000-8000-000000000001";
 const idempotencyKey = "20000000-0000-4000-8000-000000000002";
@@ -37,11 +38,20 @@ describe("JobDiscoveryAdapterResolver", () => {
       .toThrow("E2E_AGENT_RUN_SCENARIOS 格式无效");
   });
 
-  it.each(["local", "production"])("%s 未配置场景时返回正常 Fake，并只接受持久化 adapter 元数据", async (APP_ENV) => {
-    const resolver = createJobDiscoveryAdapterResolver({ APP_ENV });
+  it("local 未配置场景时返回正常 Fake，并只接受持久化 adapter 元数据", async () => {
+    const resolver = createJobDiscoveryAdapterResolver({ APP_ENV: "local" });
     await expect(resolver.resolve({ ...metadata, attemptCount: 1 }).searchBatch(batchInput)).resolves.toMatchObject({ ok: true });
     expect(() => resolver.resolve({ ...metadata, adapter: "other", attemptCount: 1 })).toThrow("AGENT_RUN_ADAPTER_UNSUPPORTED");
     expect(() => resolver.resolve({ ...metadata, adapterVersion: "other-v1", attemptCount: 1 })).toThrow("AGENT_RUN_ADAPTER_UNSUPPORTED");
+  });
+
+  it("production 拒绝 Fake，local 只有显式 opt-in 才解析 Greenhouse，test 始终 fail-closed", () => {
+    const greenhouse = { ...metadata, adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v1", attemptCount: 1 };
+    expect(() => createJobDiscoveryAdapterResolver({ APP_ENV: "production" }).resolve({ ...metadata, attemptCount: 1 })).toThrow("AGENT_RUN_ADAPTER_UNSUPPORTED");
+    expect(() => createJobDiscoveryAdapterResolver({ APP_ENV: "local" }).resolve(greenhouse)).toThrow("AGENT_RUN_ADAPTER_UNSUPPORTED");
+    expect(createJobDiscoveryAdapterResolver({ APP_ENV: "local", PUBLIC_JOB_DISCOVERY_ADAPTER: "greenhouse" }).resolve(greenhouse)).toBeInstanceOf(GreenhouseJobDiscoveryAdapter);
+    expect(createJobDiscoveryAdapterResolver({ APP_ENV: "production" }).resolve(greenhouse)).toBeInstanceOf(GreenhouseJobDiscoveryAdapter);
+    expect(() => createJobDiscoveryAdapterResolver({ APP_ENV: "test", PUBLIC_JOB_DISCOVERY_ADAPTER: "greenhouse" }).resolve(greenhouse)).toThrow("AGENT_RUN_ADAPTER_UNSUPPORTED");
   });
 
   it("未知 APP_ENV 时拒绝启动", () => {

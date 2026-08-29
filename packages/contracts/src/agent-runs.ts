@@ -346,6 +346,7 @@ export type AgentRunJob = z.infer<typeof AgentRunJobSchema>;
 export type AgentRunSseEvent = z.infer<typeof AgentRunSseEventSchema>;
 export type DiscoverySearchInput = z.infer<typeof DiscoverySearchInputSchema>;
 export type DiscoveryBatchSearchInput = z.infer<typeof DiscoveryBatchSearchInputSchema>;
+export type PublicAgentRunSourceScope = z.infer<typeof PublicAgentRunSourceScopeSchema>;
 export type DiscoveryDetailInput = z.infer<typeof DiscoveryDetailInputSchema>;
 export type DiscoverySearchResult = z.infer<typeof DiscoverySearchResultSchema>;
 export type DiscoveryBatchSearchResult = z.infer<typeof DiscoveryBatchSearchResultSchema>;

@@ -1,7 +1,12 @@
 import { z } from "zod";
 import type { JobDiscoveryAdapter, JobDiscoveryAdapterResolver } from "@job-copilot/domain/agent-runs";
+import {
+  GREENHOUSE_JOB_DISCOVERY_ADAPTER,
+  GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
+} from "@job-copilot/contracts/agent-runs";
 
 import { FakeJobDiscoveryAdapter } from "./fake-job-discovery-adapter.js";
+import { GreenhouseJobDiscoveryAdapter } from "./greenhouse-job-discovery-adapter.js";
 
 const FAKE_ADAPTER = "fake";
 const FAKE_ADAPTER_VERSION = "fake-job-discovery-v1";
@@ -47,10 +52,17 @@ export function createJobDiscoveryAdapterResolver(environment: NodeJS.ProcessEnv
   }
   return {
     resolve(input) {
-      if (input.adapter !== FAKE_ADAPTER || input.adapterVersion !== FAKE_ADAPTER_VERSION) {
-        throw new Error("AGENT_RUN_ADAPTER_UNSUPPORTED");
+      if (input.adapter === FAKE_ADAPTER && input.adapterVersion === FAKE_ADAPTER_VERSION) {
+        if (environment.APP_ENV === "production") throw new Error("AGENT_RUN_ADAPTER_UNSUPPORTED");
+        return fakeForScenario(scenarios[input.idempotencyKey], input.attemptCount);
       }
-      return fakeForScenario(scenarios[input.idempotencyKey], input.attemptCount);
+      if (input.adapter === GREENHOUSE_JOB_DISCOVERY_ADAPTER && input.adapterVersion === GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION) {
+        if (environment.APP_ENV === "test" || environment.APP_ENV === undefined || environment.APP_ENV === "local" && environment.PUBLIC_JOB_DISCOVERY_ADAPTER !== "greenhouse") {
+          throw new Error("AGENT_RUN_ADAPTER_UNSUPPORTED");
+        }
+        return new GreenhouseJobDiscoveryAdapter();
+      }
+      throw new Error("AGENT_RUN_ADAPTER_UNSUPPORTED");
     },
   };
 }
