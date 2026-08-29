@@ -12,6 +12,7 @@ import {
   AgentRunEventSchema,
   AgentRunJobSchema,
   AgentRunResultSchema,
+  AgentRunStartErrorCodeSchema,
   AgentRunSourceScopeSchema,
   AgentRunSseEventSchema,
   AgentRunStepSchema,
@@ -105,6 +106,9 @@ describe("agent run contracts", () => {
       sources: ["fake:aurora-careers", "fake:orbit-careers"],
     });
     expect(AgentRunJobSchema.parse({ version: 1, runId, userId })).toEqual({ version: 1, runId, userId });
+    expect(AgentRunStartErrorCodeSchema.options).toEqual([
+      "AGENT_RUN_TARGET_NOT_FOUND", "AGENT_RUN_TARGET_INACTIVE", "AGENT_RUN_UNAVAILABLE",
+    ]);
   });
 
   it("serializes nonnegative safe cursors as decimal SSE ids", () => {

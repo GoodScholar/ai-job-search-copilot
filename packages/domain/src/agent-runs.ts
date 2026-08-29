@@ -7,7 +7,7 @@ import {
 import {
   AGENT_RUN_BUDGET, AGENT_RUN_JOB_VERSION, FAKE_JOB_DISCOVERY_ADAPTER, FAKE_JOB_DISCOVERY_ADAPTER_VERSION,
   FAKE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, FAKE_JOB_DISCOVERY_SOURCE_IDS, FAKE_JOB_DISCOVERY_WORKFLOW_VERSION,
-  StartAgentRunCommandSchema, type AgentRunDetail, type AgentRunJob, type StartAgentRunCommand, type StartAgentRunResponse,
+  StartAgentRunCommandSchema, type AgentRunDetail, type AgentRunJob, type AgentRunStartErrorCode, type StartAgentRunCommand, type StartAgentRunResponse,
 } from "@job-copilot/contracts/agent-runs";
 import type { AuditTrail } from "./audit-trail";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
@@ -26,7 +26,7 @@ export interface JobDiscoveryAdapter {
 }
 
 export class AgentRunError extends Error {
-  constructor(public readonly code: "AGENT_RUN_TARGET_NOT_FOUND") { super(code); }
+  constructor(public readonly code: AgentRunStartErrorCode) { super(code); }
 }
 
 type CommandDependencies = { db: Database; queue: AgentRunQueue; auditTrail: AuditTrail; id: () => string; clock: () => Date };
@@ -73,8 +73,9 @@ export function createAgentRunCommands(deps: CommandDependencies): {
         if (existing) { reused = true; return existing; }
         const [target] = await transaction.select({ id: jobTargets.id, version: jobTargets.version, priority: jobTargets.priority, state: jobTargets.state, constraints: jobTargetRevisions.constraints })
           .from(jobTargets).innerJoin(jobTargetRevisions, and(eq(jobTargetRevisions.userId, jobTargets.userId), eq(jobTargetRevisions.targetId, jobTargets.id), eq(jobTargetRevisions.version, jobTargets.version)))
-          .where(and(eq(jobTargets.userId, input.userId), eq(jobTargets.id, command.targetId), eq(jobTargets.state, "active")));
+          .where(and(eq(jobTargets.userId, input.userId), eq(jobTargets.id, command.targetId)));
         if (!target) throw new AgentRunError("AGENT_RUN_TARGET_NOT_FOUND");
+        if (target.state !== "active") throw new AgentRunError("AGENT_RUN_TARGET_INACTIVE");
         const runId = deps.id();
         const targetSnapshot = { targetId: target.id, version: target.version, priority: target.priority, state: target.state, constraints: target.constraints };
         const [created] = await transaction.insert(agentRuns).values({

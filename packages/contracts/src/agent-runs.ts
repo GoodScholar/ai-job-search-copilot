@@ -61,6 +61,11 @@ export const AgentRunSourceScopeSchema = z.object({
 export const StartAgentRunCommandSchema = z.object({
   targetId: z.uuid(), idempotencyKey: z.uuid(),
 }).strict();
+export const AgentRunStartErrorCodeSchema = z.enum([
+  "AGENT_RUN_TARGET_NOT_FOUND",
+  "AGENT_RUN_TARGET_INACTIVE",
+  "AGENT_RUN_UNAVAILABLE",
+]);
 
 export const AgentRunStepSchema = z.object({
   stepKey: AgentRunStepKeySchema, ordinal: z.int().min(1).max(3), status: AgentRunStepStatusSchema,
@@ -145,6 +150,7 @@ export const DiscoveryBatchSearchResultSchema = adapterResult(z.array(DiscoveryS
 export const DiscoveryDetailResultSchema = adapterResult(DiscoveryDetailSchema);
 
 export type StartAgentRunCommand = z.infer<typeof StartAgentRunCommandSchema>;
+export type AgentRunStartErrorCode = z.infer<typeof AgentRunStartErrorCodeSchema>;
 export type AgentRunDetail = z.infer<typeof AgentRunDetailSchema>;
 export type StartAgentRunResponse = z.infer<typeof StartAgentRunResponseSchema>;
 export type AgentRunJob = z.infer<typeof AgentRunJobSchema>;
