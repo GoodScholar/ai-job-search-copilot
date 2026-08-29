@@ -21,9 +21,17 @@ export interface DiscoveryContentStore {
   delete(input: { objectKey: string }): Promise<void>;
 }
 
+/** 在真实列表请求前执行；用于把每个 board 的逻辑预算与该 GET 绑定。 */
+export type PublicDiscoveryListHook = (sourceId: string) => Promise<void>;
+export type PublicDiscoveryBatchSearchInput = {
+  targetSnapshot: import("@job-copilot/contracts/agent-runs").DiscoverySearchInput["targetSnapshot"];
+  sourceScope: import("@job-copilot/contracts/agent-runs").PublicAgentRunSourceScope;
+  beforeList?: PublicDiscoveryListHook;
+};
+
 export interface JobDiscoveryAdapter {
   search(input: import("@job-copilot/contracts/agent-runs").DiscoverySearchInput): Promise<import("@job-copilot/contracts/agent-runs").DiscoverySearchResult>;
-  searchBatch(input: import("@job-copilot/contracts/agent-runs").DiscoveryBatchSearchInput | { targetSnapshot: import("@job-copilot/contracts/agent-runs").DiscoverySearchInput["targetSnapshot"]; sourceScope: import("@job-copilot/contracts/agent-runs").PublicAgentRunSourceScope }): Promise<import("@job-copilot/contracts/agent-runs").DiscoveryBatchSearchResult | import("@job-copilot/contracts/agent-runs").PublicDiscoveryBatchSearchResult>;
+  searchBatch(input: import("@job-copilot/contracts/agent-runs").DiscoveryBatchSearchInput | PublicDiscoveryBatchSearchInput): Promise<import("@job-copilot/contracts/agent-runs").DiscoveryBatchSearchResult | import("@job-copilot/contracts/agent-runs").PublicDiscoveryBatchSearchResult>;
   getDetail(input: import("@job-copilot/contracts/agent-runs").DiscoveryDetailInput): Promise<import("@job-copilot/contracts/agent-runs").DiscoveryDetailResult>;
 }
 
@@ -86,6 +94,9 @@ type NonBudgetFailureCode = Exclude<FailureCode, "AGENT_RUN_BUDGET_EXCEEDED">;
 const CLEANUP_TIMEOUT_MS = 1_000;
 class AgentRunBudgetError extends Error {
   constructor(public readonly budgetDimension: BudgetDimension) { super("AGENT_RUN_BUDGET_EXCEEDED"); }
+}
+class PublicListCheckpointStop extends Error {
+  constructor(readonly outcome: ProcessorOutcome) { super("PUBLIC_LIST_CHECKPOINT_STOP"); }
 }
 
 type Failure = { failureCode: FailureCode; retryable: boolean; category: "source" | "model" | "model_auth" | "model_policy" | "model_invalid"; budgetDimension?: BudgetDimension };
@@ -355,20 +366,23 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           if (batch.data.length > AGENT_RUN_BUDGET.maxResults || batch.data.some((item) => !sourceScope.sources.includes(item.sourceId))) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "source" }, deadline });
           summaries = batch.data;
         } else {
-          for (const [index] of sourceScope.sources.entries()) {
-            const before = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "source_search_batch", ordinal: index + 1, reserve: { toolCalls: 1, sourceRequests: 1 } });
-            if (before) return before;
-          }
-          const batch = PublicDiscoveryBatchSearchResultSchema.parse(await bounded(deps.clock, deadline, () => adapter.searchBatch({ targetSnapshot: snapshot, sourceScope })));
-          const after = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "source_search_batch_after", ordinal: sourceScope.sources.length });
-          if (after) return after;
+          const ordinals = new Map(sourceScope.sources.map((source, index) => [source.sourceId, index + 1]));
+          const batch = PublicDiscoveryBatchSearchResultSchema.parse(await bounded(deps.clock, deadline, () => adapter.searchBatch({ targetSnapshot: snapshot, sourceScope, beforeList: async (sourceId: string) => {
+            const ordinal = ordinals.get(sourceId);
+            if (!ordinal) throw new Error("AGENT_RUN_ADAPTER_FAILED");
+            const outcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "source_search_batch", ordinal, reserve: { toolCalls: 1, sourceRequests: 1 } });
+            if (outcome) throw new PublicListCheckpointStop(outcome);
+          } })));
           if (!batch.ok) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: batch.error.retryable ? "AGENT_RUN_ADAPTER_RETRYABLE" : "AGENT_RUN_ADAPTER_FAILED", retryable: batch.error.retryable, category: "source" }, deadline });
           const sourceIds = new Set(sourceScope.sources.map((source) => source.sourceId));
           if (batch.data.items.some((item) => !sourceIds.has(item.sourceId)) || batch.data.scans.some((scan) => !sourceIds.has(scan.sourceId))) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "source" }, deadline });
           summaries = batch.data.items;
           scans = batch.data.scans;
         }
-      } catch (error) { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline }); }
+      } catch (error) {
+        if (error instanceof PublicListCheckpointStop) return error.outcome;
+        return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
+      }
       const batchComplete = await transition("batch_search", true); if (batchComplete) return batchComplete;
       const detailsStart = await transition("fetch_details", false); if (detailsStart) return detailsStart;
       const details: Array<{ sourceId: string; detailId: string; company: string | null; title: string | null; location: string | null; postedAt: string | null; deadline: string | null; sourceType: string; isOfficial: boolean; rawPayload: Record<string, unknown> }> = [];

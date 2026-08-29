@@ -44,6 +44,11 @@ ALTER TABLE "job_opportunities" ADD COLUMN "availability_updated_at" timestamp w
 ALTER TABLE "job_source_posting_versions" ADD COLUMN "availability" varchar(16) DEFAULT 'open' NOT NULL;--> statement-breakpoint
 ALTER TABLE "job_source_postings" ADD COLUMN "availability" varchar(16) DEFAULT 'open' NOT NULL;--> statement-breakpoint
 ALTER TABLE "job_source_postings" ADD COLUMN "availability_updated_at" timestamp with time zone DEFAULT now() NOT NULL;--> statement-breakpoint
+ALTER TABLE "job_source_postings" ADD COLUMN "source_id" varchar(2048);--> statement-breakpoint
+ALTER TABLE "job_source_postings" ADD COLUMN "application_deadline" timestamp with time zone;--> statement-breakpoint
+UPDATE "job_source_postings"
+SET "source_id" = "source_identity" ->> 'sourceId'
+WHERE "source_identity" ? 'sourceId';--> statement-breakpoint
 ALTER TABLE "job_discovery_schedule_occurrences" ADD CONSTRAINT "job_discovery_schedule_occurrences_user_id_job_accounts_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."job_accounts"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "job_discovery_schedule_occurrences" ADD CONSTRAINT "job_discovery_schedule_occurrences_owner_schedule_fk" FOREIGN KEY ("user_id","schedule_id","target_id") REFERENCES "public"."job_discovery_schedules"("user_id","id","target_id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "job_discovery_schedule_occurrences" ADD CONSTRAINT "job_discovery_schedule_occurrences_owner_run_fk" FOREIGN KEY ("user_id","run_id") REFERENCES "public"."agent_runs"("user_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
@@ -54,6 +59,7 @@ CREATE INDEX "job_discovery_schedule_occurrences_pending_idx" ON "job_discovery_
 CREATE INDEX "job_discovery_schedules_due_idx" ON "job_discovery_schedules" USING btree ("state","next_run_at","id");--> statement-breakpoint
 CREATE INDEX "job_opportunities_availability_idx" ON "job_opportunities" USING btree ("user_id","availability","availability_updated_at");--> statement-breakpoint
 CREATE INDEX "job_source_postings_availability_idx" ON "job_source_postings" USING btree ("user_id","availability","availability_updated_at");--> statement-breakpoint
+CREATE INDEX "job_source_postings_source_scan_idx" ON "job_source_postings" USING btree ("user_id","source_type","source_id","application_deadline");--> statement-breakpoint
 CREATE INDEX "job_source_posting_versions_availability_idx" ON "job_source_posting_versions" USING btree ("user_id","availability","created_at","source_posting_id");--> statement-breakpoint
 ALTER TABLE "job_opportunities" ADD CONSTRAINT "job_opportunities_availability_check" CHECK ("job_opportunities"."availability" in ('open', 'closed', 'expired'));--> statement-breakpoint
 ALTER TABLE "job_source_posting_versions" ADD CONSTRAINT "job_source_posting_versions_availability_check" CHECK ("job_source_posting_versions"."availability" in ('open', 'closed', 'expired'));--> statement-breakpoint

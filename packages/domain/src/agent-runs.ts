@@ -13,6 +13,7 @@ export {
   type DiscoveryContentStore,
   type JobDiscoveryAdapter,
   type JobDiscoveryAdapterResolver,
+  type PublicDiscoveryBatchSearchInput,
 } from "./agent-run-processor";
 export { AgentRunControlError, AgentRunError, createAgentRunCommands, type AgentRunQueue, type AgentRunStarter } from "./agent-run-control";
 export { createAgentRunCheckpoint, type AgentRunCheckpoint, type AgentRunCheckpointDecision } from "./agent-run-checkpoint";

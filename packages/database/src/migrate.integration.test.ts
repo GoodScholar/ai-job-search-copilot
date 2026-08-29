@@ -978,6 +978,8 @@ describe("database migrations", () => {
       { table_name: "job_discovery_schedule_occurrences", column_name: "skip_reason", data_type: "character varying" },
       { table_name: "job_source_postings", column_name: "availability", data_type: "character varying" },
       { table_name: "job_source_postings", column_name: "availability_updated_at", data_type: "timestamp with time zone" },
+      { table_name: "job_source_postings", column_name: "source_id", data_type: "character varying" },
+      { table_name: "job_source_postings", column_name: "application_deadline", data_type: "timestamp with time zone" },
       { table_name: "job_source_posting_versions", column_name: "availability", data_type: "character varying" },
       { table_name: "job_opportunities", column_name: "availability", data_type: "character varying" },
       { table_name: "job_opportunities", column_name: "availability_updated_at", data_type: "timestamp with time zone" },
@@ -1041,10 +1043,10 @@ describe("database migrations", () => {
       where schemaname = 'public' and indexname in (
         'job_discovery_schedules_due_idx', 'job_discovery_schedule_occurrences_pending_idx',
         'job_source_postings_availability_idx', 'job_source_posting_versions_availability_idx',
-        'job_opportunities_availability_idx'
+        'job_opportunities_availability_idx', 'job_source_postings_source_scan_idx'
       ) order by indexname
     `);
-    expect(indexes).toHaveLength(5);
+    expect(indexes).toHaveLength(6);
   });
 
   it("upgrades a 0020 snapshot with open lifecycle defaults without changing stored run JSON", async () => {

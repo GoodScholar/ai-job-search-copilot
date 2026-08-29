@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import {
   agentRunEvents,
   agentRunJobResults,
@@ -100,14 +100,21 @@ async function persistDiscoverySource(db: any, input: { id: () => string; userId
   if (!posting) {
     const [created] = await db.insert(jobSourcePostings).values({
       id: input.id(), userId: input.userId, sourceType: input.detail.sourceType, sourceIdentifier,
-      sourceIdentity: { sourceId: input.detail.sourceId, detailId: input.detail.detailId }, isOfficial: input.detail.isOfficial,
+      sourceId: input.detail.sourceId, sourceIdentity: { sourceId: input.detail.sourceId, detailId: input.detail.detailId },
+      applicationDeadline: input.detail.deadline ? new Date(input.detail.deadline) : null, isOfficial: input.detail.isOfficial,
       availability, availabilityUpdatedAt: input.now, createdAt: input.now, updatedAt: input.now,
     }).returning();
     if (!created) throw new Error("AGENT_RUN_PERSIST_FAILED");
     posting = created;
-  } else if (posting.availability !== availability || (input.detail.isOfficial && !posting.isOfficial)) {
+  } else if (
+    posting.availability !== availability
+    || (input.detail.isOfficial && !posting.isOfficial)
+    || posting.sourceId !== input.detail.sourceId
+    || posting.applicationDeadline?.getTime() !== (input.detail.deadline ? new Date(input.detail.deadline).getTime() : undefined)
+  ) {
     const [updated] = await db.update(jobSourcePostings).set({
       availability, availabilityUpdatedAt: posting.availability === availability ? posting.availabilityUpdatedAt : input.now,
+      sourceId: input.detail.sourceId, applicationDeadline: input.detail.deadline ? new Date(input.detail.deadline) : null,
       isOfficial: posting.isOfficial || input.detail.isOfficial, updatedAt: input.now,
     }).where(and(eq(jobSourcePostings.userId, input.userId), eq(jobSourcePostings.id, posting.id))).returning();
     if (!updated) throw new Error("AGENT_RUN_PERSIST_FAILED");
@@ -130,26 +137,29 @@ async function persistDiscoverySource(db: any, input: { id: () => string; userId
   return { sourcePostingId: posting.id, sourcePostingVersionId: created.id, isOfficial: posting.isOfficial, sourceVersionCreated: true };
 }
 
-async function closeMissingSourcePostings(db: any, input: { id: () => string; userId: string; scan: { sourceId: string; observedDetailIds: string[]; complete: boolean }; now: Date }) {
+async function closeMissingSourcePostings(db: any, input: { id: () => string; userId: string; sourceType: string; scan: { sourceId: string; observedDetailIds: string[]; complete: boolean }; now: Date }) {
   if (!input.scan.complete) return [] as string[];
   const postings = await db.select().from(jobSourcePostings).where(and(
-    eq(jobSourcePostings.userId, input.userId),
-    sql`${jobSourcePostings.sourceIdentity} ->> 'sourceId' = ${input.scan.sourceId}`,
+    eq(jobSourcePostings.userId, input.userId), eq(jobSourcePostings.sourceType, input.sourceType), eq(jobSourcePostings.sourceId, input.scan.sourceId),
   ));
   const observed = new Set(input.scan.observedDetailIds);
   const impacted = new Set<string>();
   for (const posting of postings) {
     const identity = posting.sourceIdentity as { detailId?: string };
-    if (!identity.detailId || observed.has(identity.detailId) || posting.availability === "closed") continue;
+    if (!identity.detailId || posting.availability === "closed") continue;
+    const availability: Availability | null = observed.has(identity.detailId)
+      ? (posting.availability === "open" && posting.applicationDeadline && posting.applicationDeadline.getTime() <= input.now.getTime() ? "expired" : null)
+      : "closed";
+    if (!availability) continue;
     const latest = await latestSourceVersion(db, input.userId, posting.id);
     if (!latest) continue;
     const [closed] = await db.insert(jobSourcePostingVersions).values({
       id: input.id(), userId: input.userId, sourcePostingId: posting.id, version: latest.version + 1,
       contentSha256: latest.contentSha256, rawContentSha256: latest.rawContentSha256,
-      rawObjectReference: latest.rawObjectReference, retrievedAt: input.now, availability: "closed", createdAt: input.now,
+      rawObjectReference: latest.rawObjectReference, retrievedAt: input.now, availability, createdAt: input.now,
     }).returning();
     if (!closed) throw new Error("AGENT_RUN_PERSIST_FAILED");
-    await db.update(jobSourcePostings).set({ availability: "closed", availabilityUpdatedAt: input.now, updatedAt: input.now })
+    await db.update(jobSourcePostings).set({ availability, availabilityUpdatedAt: input.now, updatedAt: input.now })
       .where(and(eq(jobSourcePostings.userId, input.userId), eq(jobSourcePostings.id, posting.id)));
     const rows = await db.select({ opportunityId: jobOpportunitySources.opportunityId }).from(jobOpportunitySources)
       .innerJoin(jobSourcePostingVersions, and(eq(jobSourcePostingVersions.userId, jobOpportunitySources.userId), eq(jobSourcePostingVersions.id, jobOpportunitySources.sourcePostingVersionId)))
@@ -204,6 +214,10 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
           eq(agentRuns.claimToken, input.run.claimToken), eq(agentRuns.controlState, "none"),
         ));
         if (!run || !run.claimToken) return { resultCount: 0, cleanupObjectKeys: input.storedObjects.map((item) => item.objectKey), completed: false };
+        if (input.scans.length > 0) {
+          const observed = new Map(input.scans.map((scan) => [scan.sourceId, new Set(scan.observedDetailIds)]));
+          if (input.details.some((detail) => !observed.get(detail.sourceId)?.has(detail.detailId))) throw new Error("AGENT_RUN_PERSIST_FAILED");
+        }
         const cleanupObjectKeys: string[] = [];
         const opportunityIds = new Set<string>();
         const resultRows: Array<{ opportunityId: string; sourcePostingVersionId: string }> = [];
@@ -222,13 +236,23 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
           opportunityIds.add(evidence.opportunityId);
           if (detailAvailability(detail, input.now) === "open") resultRows.push({ opportunityId: evidence.opportunityId, sourcePostingVersionId: source.sourcePostingVersionId });
         }
-        for (const scan of input.scans) (await closeMissingSourcePostings(transaction, { id: deps.id, userId: run.userId, scan, now: input.now })).forEach((opportunityId) => opportunityIds.add(opportunityId));
+        // Scan records carry no source type. The immutable, claimed execution
+        // spec is the only authority for translating a public adapter to it.
+        const sourceType = run.adapter === "greenhouse" ? "company_careers" : undefined;
+        if (sourceType) for (const scan of input.scans) (await closeMissingSourcePostings(transaction, { id: deps.id, userId: run.userId, sourceType, scan, now: input.now })).forEach((opportunityId) => opportunityIds.add(opportunityId));
         await recomputeOpportunityAvailability(transaction, { userId: run.userId, opportunityIds, now: input.now });
-        for (const [index, result] of resultRows.entries()) {
-          const inserted = await transaction.insert(agentRunJobResults).values({ id: deps.id(), userId: run.userId, runId: run.id, opportunityId: result.opportunityId, sourcePostingVersionId: result.sourcePostingVersionId, ordinal: index + 1, createdAt: input.now }).onConflictDoNothing().returning({ id: agentRunJobResults.id });
-          if (inserted[0]) await transaction.insert(agentRunUsageEntries).values({ id: deps.id(), userId: run.userId, runId: run.id, usageKey: `${run.claimToken}:result:${index + 1}`, category: "result", amount: 1, stepKey: "persist_results", attemptCount: run.attemptCount, createdAt: input.now }).onConflictDoNothing();
+        let resultCount = 0;
+        for (const result of resultRows) {
+          // reconciliation can close an item selected earlier in this batch; only
+          // the final, transaction-visible opportunity state may produce a result.
+          const [opportunity] = await transaction.select({ availability: jobOpportunities.availability }).from(jobOpportunities)
+            .where(and(eq(jobOpportunities.userId, run.userId), eq(jobOpportunities.id, result.opportunityId)));
+          if (opportunity?.availability !== "open") continue;
+          const inserted = await transaction.insert(agentRunJobResults).values({ id: deps.id(), userId: run.userId, runId: run.id, opportunityId: result.opportunityId, sourcePostingVersionId: result.sourcePostingVersionId, ordinal: resultCount + 1, createdAt: input.now }).onConflictDoNothing().returning({ id: agentRunJobResults.id });
+          if (!inserted[0]) continue;
+          resultCount += 1;
+          await transaction.insert(agentRunUsageEntries).values({ id: deps.id(), userId: run.userId, runId: run.id, usageKey: `${run.claimToken}:result:${result.sourcePostingVersionId}`, category: "result", amount: 1, stepKey: "persist_results", attemptCount: run.attemptCount, createdAt: input.now }).onConflictDoNothing();
         }
-        const resultCount = resultRows.length;
         const elapsed = await settleActiveSlice(transaction, { id: deps.id, userId: run.userId, run, now: input.now });
         const activeDurationMs = run.activeDurationMs + elapsed;
         const budgetChanged = elapsed > 0 || resultCount > 0;

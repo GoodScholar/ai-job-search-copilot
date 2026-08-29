@@ -11,7 +11,7 @@ import {
 } from "@job-copilot/contracts/agent-runs";
 import { classifyGreenhousePublicSource } from "@job-copilot/contracts/job-discovery-schedules";
 import { PublicSourceAccessError, createPublicSourceClient, type PublicSourceClient } from "@job-copilot/source-access";
-import type { JobDiscoveryAdapter } from "@job-copilot/domain/agent-runs";
+import type { JobDiscoveryAdapter, PublicDiscoveryBatchSearchInput } from "@job-copilot/domain/agent-runs";
 
 const GREENHOUSE_API_HOST = "boards-api.greenhouse.io";
 const RuntimeGreenhouseSourceSchema = z.object({
@@ -25,6 +25,7 @@ const GreenhouseBatchSearchInputSchema = z.object({
     watchlistVersion: z.number().int().positive(), sources: z.array(RuntimeGreenhouseSourceSchema).min(1).max(50),
   }).strict(),
 }).strict();
+const GreenhouseBatchExecutionInputSchema = GreenhouseBatchSearchInputSchema.extend({ beforeList: z.unknown().optional() }).strict();
 const ListJobSchema = z.object({
   id: z.union([z.number().int(), z.string().trim().min(1)]),
   title: z.string().trim().min(1),
@@ -135,13 +136,13 @@ export class GreenhouseJobDiscoveryAdapter implements JobDiscoveryAdapter {
     return { ok: false, error: { code: "GREENHOUSE_SEARCH_UNSUPPORTED", retryable: false } };
   }
 
-  async searchBatch(input: { targetSnapshot: DiscoverySearchInput["targetSnapshot"]; sourceScope: PublicAgentRunSourceScope }): Promise<PublicDiscoveryBatchSearchResult> {
+  async searchBatch(input: PublicDiscoveryBatchSearchInput): Promise<PublicDiscoveryBatchSearchResult> {
     // A batch owns one discovery generation. No prior generation may serve a
     // detail while this one is empty, malformed, or only partially fetched.
     this.sources.clear();
     this.candidates.clear();
     this.detailCache.clear();
-    const parsedInput = GreenhouseBatchSearchInputSchema.safeParse(input);
+    const parsedInput = GreenhouseBatchExecutionInputSchema.safeParse(input);
     if (!parsedInput.success) return { ok: false, error: { code: "GREENHOUSE_SOURCE_UNSUPPORTED", retryable: false } };
     const rawSources = parsedInput.data.sourceScope.sources;
     const authorizedSources: AuthorizedSource[] = [];
@@ -162,6 +163,7 @@ export class GreenhouseJobDiscoveryAdapter implements JobDiscoveryAdapter {
     for (const authorized of authorizedSources) {
       const rawSource = authorized.source;
       nextSources.set(rawSource.sourceId, authorized);
+      await input.beforeList?.(rawSource.sourceId);
       let response;
       try {
         response = await this.client.get({ url: apiUrl(authorized.boardToken), allowedDomains: [GREENHOUSE_API_HOST], accept: "application/json", maxRedirects: 0, retry: "bounded" });

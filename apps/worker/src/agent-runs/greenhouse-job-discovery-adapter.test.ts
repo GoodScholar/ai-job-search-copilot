@@ -48,6 +48,27 @@ describe("GreenhouseJobDiscoveryAdapter", () => {
     ]);
   });
 
+  it("在每个 board 的实际列表 GET 前调用受控 checkpoint hook，第二个 hook 中止时不发第二个 GET", async () => {
+    const list = await fixture("empty-list-jobs.json");
+    const second = { ...source, sourceId: "greenhouse:second-board", careersUrl: "https://boards.greenhouse.io/second-board", boardToken: "second-board" };
+    const requests: URL[] = [];
+    const hooks: string[] = [];
+    const client = createPublicSourceClientForTest({
+      exactHosts: ["boards-api.greenhouse.io"], testOrigin: "https://boards-api.greenhouse.io", lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+      transport: async ({ url }) => {
+        requests.push(url);
+        return { status: 200, headers: { "content-type": "application/json" }, body: new TextEncoder().encode(JSON.stringify(list)) };
+      },
+    });
+
+    await expect(new GreenhouseJobDiscoveryAdapter({ client }).searchBatch({ targetSnapshot, sourceScope: { ...scope, sources: [source, second] }, beforeList: async (sourceId) => {
+      hooks.push(sourceId);
+      if (sourceId === second.sourceId) throw new Error("pause at second board");
+    } })).rejects.toThrow("pause at second board");
+    expect(hooks).toEqual([source.sourceId, second.sourceId]);
+    expect(requests).toEqual([new URL("https://boards-api.greenhouse.io/v1/boards/fictional-labs/jobs?content=true")]);
+  });
+
   it("keeps list fixtures structurally unable to impersonate detail fixtures, including empty and incomplete scans", async () => {
     expect(GreenhouseDetailResponseSchema.safeParse(await fixture("list-jobs.json")).success).toBe(false);
     const empty = await fixture("empty-list-jobs.json");

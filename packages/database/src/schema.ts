@@ -400,7 +400,9 @@ export const jobSourcePostings = pgTable("job_source_postings", {
   userId: uuid("user_id").notNull().references(() => jobAccounts.id),
   sourceType: varchar("source_type", { length: 32 }).notNull(),
   sourceIdentifier: varchar("source_identifier", { length: 512 }).notNull(),
+  sourceId: varchar("source_id", { length: 2_048 }),
   sourceIdentity: jsonb("source_identity").notNull(),
+  applicationDeadline: timestamp("application_deadline", { withTimezone: true }),
   isOfficial: boolean("is_official").notNull().default(false),
   availability: varchar("availability", { length: 16 }).notNull().default("open"),
   availabilityUpdatedAt: timestamp("availability_updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -410,6 +412,7 @@ export const jobSourcePostings = pgTable("job_source_postings", {
   unique("job_source_postings_user_identity_unique").on(table.userId, table.sourceType, table.sourceIdentifier),
   unique("job_source_postings_user_id_id_unique").on(table.userId, table.id),
   index("job_source_postings_availability_idx").on(table.userId, table.availability, table.availabilityUpdatedAt),
+  index("job_source_postings_source_scan_idx").on(table.userId, table.sourceType, table.sourceId, table.applicationDeadline),
   check("job_source_postings_source_identity_object", sql`jsonb_typeof(${table.sourceIdentity}) = 'object'`),
   check("job_source_postings_availability_check", sql`${table.availability} in ('open', 'closed', 'expired')`),
 ]);

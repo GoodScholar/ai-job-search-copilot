@@ -168,13 +168,55 @@ describe("AgentRunProcessor checkpoints", () => {
     }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId)));
     const adapter: JobDiscoveryAdapter = {
       search: async () => ({ ok: false, error: { code: "UNUSED", retryable: false } }),
-      searchBatch: async () => ({ ok: true, data: { items: [{ sourceId: sources[0]!.sourceId, detailId: "701", company: null, title: "AI Engineer", location: "Shanghai" }], scans: [{ sourceId: sources[0]!.sourceId, observedDetailIds: ["701"], complete: true }, { sourceId: sources[1]!.sourceId, observedDetailIds: [], complete: true }] } }),
+      searchBatch: async (input: any) => { await input.beforeList?.(sources[0]!.sourceId); await input.beforeList?.(sources[1]!.sourceId); return { ok: true, data: { items: [{ sourceId: sources[0]!.sourceId, detailId: "701", company: null, title: "AI Engineer", location: "Shanghai" }], scans: [{ sourceId: sources[0]!.sourceId, observedDetailIds: ["701"], complete: true }, { sourceId: sources[1]!.sourceId, observedDetailIds: [], complete: true }] } }; },
       getDetail: async () => ({ ok: true, data: { sourceId: sources[0]!.sourceId, detailId: "701", company: "Fictional Labs", title: "AI Engineer", location: "Shanghai", postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true, rawPayload: { job: 701 } } }),
     };
 
     await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(adapter), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
       .process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("completed");
     await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({ adapter: "greenhouse", usage: { toolCalls: 3, sourceRequests: 3, results: 1 } });
+  });
+
+  it.each([
+    ["首板失败", "failure", "failed", 1, 1],
+    ["首板后暂停", "pause", "paused", 1, 1],
+    ["预算只够首板", "budget", "budget_exhausted", 1, 1],
+  ] as const)("Public v2 %s 时，预算只在实际列表 GET 前扣除", async (_label, mode, expectedOutcome, expectedGets, expectedRequests) => {
+    const job = await run();
+    const sources = [
+      { sourceId: "greenhouse:budget-first", watchlistItemId: crypto.randomUUID(), canonicalCompanyName: "First", careersUrl: "https://boards.greenhouse.io/budget-first", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], boardToken: "budget-first" },
+      { sourceId: "greenhouse:budget-second", watchlistItemId: crypto.randomUUID(), canonicalCompanyName: "Second", careersUrl: "https://boards.greenhouse.io/budget-second", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], boardToken: "budget-second" },
+    ];
+    await database.update(agentRuns).set({
+      adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER, adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
+      workflowVersion: GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION, ruleVersion: GREENHOUSE_JOB_DISCOVERY_RULE_VERSION,
+      outputSchemaVersion: GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+      budgetSnapshot: PUBLIC_JOB_DISCOVERY_BUDGET,
+      sourceScope: { kind: "company_watchlist", adapter: "greenhouse", adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION, watchlistVersion: 1, sources },
+    }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId)));
+    let gets = 0;
+    const adapter: JobDiscoveryAdapter = {
+      search: async () => ({ ok: false, error: { code: "UNUSED", retryable: false } }),
+      searchBatch: async (input: any) => {
+        await input.beforeList(sources[0].sourceId);
+        gets += 1;
+        if (mode === "failure") return { ok: false, error: { code: "FIRST_LIST_FAILED", retryable: false } };
+        if (mode === "pause") await database.update(agentRuns).set({ controlState: "pause_requested" }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId)));
+        await input.beforeList(sources[1].sourceId);
+        gets += 1;
+        return { ok: true, data: { items: [], scans: sources.map((source) => ({ sourceId: source.sourceId, observedDetailIds: [], complete: true })) } };
+      },
+      getDetail: async () => ({ ok: false, error: { code: "UNUSED", retryable: false } }),
+    };
+    const durable = checkpoint();
+    const controlled: AgentRunCheckpoint = mode === "budget" ? { check: async (input) => input.checkpointKey.endsWith(":source_search_batch:2")
+      ? { kind: "budget_exhausted", budgetDimension: "tool_calls" }
+      : durable.check(input) } : durable;
+
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(adapter), checkpoint: controlled, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .process({ version: 1, ...job, finalAttempt: true })).resolves.toBe(expectedOutcome);
+    expect(gets).toBe(expectedGets);
+    await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({ usage: { sourceRequests: expectedRequests, toolCalls: expectedRequests } });
   });
 
   it("冻结 execution spec 的 model 为 null 时不产生模型调用计费", async () => {

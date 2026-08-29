@@ -30,8 +30,16 @@ export async function persistJobOpportunity(db: PersistenceDb, input: {
     if (!created) throw new Error("AGENT_RUN_PERSIST_FAILED");
     opportunity = created;
   } else if (input.isOfficial) {
+    // An earlier official source may already have advanced this normalized
+    // identity. Attach the new source version to that canonical opportunity
+    // instead of attempting a conflicting dedup-key update.
+    const [canonical] = await db.select({ id: jobOpportunities.id }).from(jobOpportunities).where(and(
+      eq(jobOpportunities.userId, input.userId), eq(jobOpportunities.dedupKey, dedupKey),
+    ));
+    if (canonical && canonical.id !== opportunity.id) opportunity = canonical;
     await db.update(jobOpportunities).set({
       sourcePostingVersionId: input.sourcePostingVersionId,
+      dedupKey,
       company: input.company,
       title: input.title,
       location: input.location,
