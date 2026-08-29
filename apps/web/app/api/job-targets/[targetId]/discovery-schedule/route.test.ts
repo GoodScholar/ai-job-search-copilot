@@ -39,8 +39,8 @@ it("以 Bearer session 代理严格的无缓存计划响应与 CAS 状态", asyn
   expect(await get.json()).toEqual(schedule);
   expect(mocks.getJobDiscoverySchedule).toHaveBeenCalledWith("a".repeat(43), targetId);
 
-  mocks.setJobDiscoverySchedule.mockRejectedValue({ status: 409, message: "private source" });
+  mocks.setJobDiscoverySchedule.mockRejectedValue({ status: 409, message: "private source", problem: { code: "SOURCE_POLICY_REQUIRED", message: "private source https://secret.test" } });
   const put = await PUT(new Request("http://localhost", { method: "PUT", body: JSON.stringify({ expectedVersion: 0, state: "enabled", dailyTime: "09:30" }) }), context());
   expect(put.status).toBe(409);
-  expect(await put.text()).toBe("");
+  expect(await put.json()).toEqual({ code: "SOURCE_POLICY_REQUIRED" });
 });

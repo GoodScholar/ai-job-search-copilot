@@ -22,6 +22,7 @@ function scheduleProblem(error: unknown): never {
     case "JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE": throw new ApiException(error.code, HttpStatus.CONFLICT, "已停用的求职目标不能启用每日检查");
     case "JOB_DISCOVERY_SCHEDULE_VERSION_CONFLICT": throw new ApiException(error.code, HttpStatus.CONFLICT, "每日检查已在其他位置更新，请刷新后重试");
     case "SOURCE_POLICY_REQUIRED": throw new ApiException(error.code, HttpStatus.CONFLICT, "需允许 boards-api.greenhouse.io");
+    case "NO_SUPPORTED_SOURCE": throw new ApiException(error.code, HttpStatus.CONFLICT, "待接入");
   }
 }
 

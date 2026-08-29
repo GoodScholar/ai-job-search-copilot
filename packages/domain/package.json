@@ -15,6 +15,7 @@
     "./company-watchlists": "./src/company-watchlists.ts",
     "./job-imports": "./src/job-imports.ts",
     "./job-discovery-schedules": "./src/job-discovery-schedules.ts",
+    "./public-job-discovery-sources": "./src/public-job-discovery-sources.ts",
     "./agent-runs": "./src/agent-runs.ts"
   },
   "scripts": {

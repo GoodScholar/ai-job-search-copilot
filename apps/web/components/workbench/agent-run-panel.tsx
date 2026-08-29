@@ -11,7 +11,6 @@ import {
   type AgentRunSseEvent,
 } from "@job-copilot/contracts/agent-runs";
 import type { JobTarget } from "@job-copilot/contracts/job-targets";
-import type { JobDiscoveryScheduleResponse } from "@job-copilot/contracts/job-discovery-schedules";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -103,12 +102,12 @@ async function fetchRunDetail(runId: string): Promise<AgentRunDetail> {
   return parsed.data;
 }
 
-export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVersion = 0, schedules = {} }: {
+export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVersion = 0, showDiscoverySchedule = false }: {
   targets: JobTarget[];
   initialRun: AgentRunDetail | null;
   onInboxRefresh?: () => Promise<boolean>;
   refreshVersion?: number;
-  schedules?: Record<string, JobDiscoveryScheduleResponse>;
+  showDiscoverySchedule?: boolean;
 }) {
   const activeTargets = targets.filter((target) => target.state === "active");
   const initialTargetId = activeTargets.some((target) => target.targetId === initialRun?.targetId)
@@ -367,7 +366,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
           </Button>
         </div>
       </div>
-      {selectedTarget && schedules[selectedTarget.targetId] ? <DiscoverySchedulePanel initialSchedule={schedules[selectedTarget.targetId]} key={selectedTarget.targetId} targetId={selectedTarget.targetId} targetState={selectedTarget.state} /> : null}
+      {showDiscoverySchedule && selectedTarget ? <DiscoverySchedulePanel key={selectedTarget.targetId} targetId={selectedTarget.targetId} targetState={selectedTarget.state} /> : null}
       {run ? <>
         <div className="agent-run-command-row">
           {run.status === "queued" || (run.status === "running" && run.controlState === "none") ? <button className="agent-run-action workbench-touch-target" disabled={pendingControls.pause} onClick={() => void controlRun("pause")} type="button">暂停岗位发现</button> : null}

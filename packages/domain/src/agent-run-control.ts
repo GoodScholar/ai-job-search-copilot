@@ -11,11 +11,11 @@ import {
   PublicAgentRunSourceScopeSchema, StartAgentRunResponseSchema, type AgentRunJob, type AgentRunStartErrorCode, type ControlAgentRunResponse, type StartAgentRunCommand, type StartAgentRunResponse,
 } from "@job-copilot/contracts/agent-runs";
 import { CompanyWatchlistItemSchema } from "@job-copilot/contracts/company-watchlists";
-import { classifyGreenhousePublicSource } from "@job-copilot/contracts/job-discovery-schedules";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import type { AuditTrail } from "./audit-trail";
 import { reduceControl } from "./agent-run-state";
 import { normalizeAgentRunSourceScope } from "./agent-run-source-scope";
+import { analyzePublicJobDiscoverySources } from "./public-job-discovery-sources";
 
 export interface AgentRunQueue { enqueue(job: AgentRunJob): Promise<void>; }
 
@@ -54,21 +54,14 @@ function sourceScope(watchlist: { version: number; items: unknown } | undefined)
 }
 
 function publicSourceScope(watchlist: { version: number; items: unknown } | undefined) {
-  const items = watchlist ? CompanyWatchlistItemSchema.array().parse(watchlist.items) : [];
-  const classifications = items.filter((item) => item.state === "enabled").map((item) => classifyGreenhousePublicSource({
-    itemId: item.itemId, canonicalCompanyName: item.canonicalCompanyName, careersUrl: item.careersUrl, allowedDomains: item.allowedDomains,
-  }));
-  if (classifications.some((result) => result.kind === "policy_required")) throw new AgentRunError("AGENT_RUN_UNAVAILABLE");
-  const sourceById = new Map<string, Extract<typeof classifications[number], { kind: "supported" }>["source"]>();
-  for (const result of classifications) if (result.kind === "supported" && !sourceById.has(result.source.sourceId)) sourceById.set(result.source.sourceId, result.source);
-  const sources = [...sourceById.values()];
-  if (sources.length === 0) throw new AgentRunError("AGENT_RUN_UNAVAILABLE");
+  const analysis = analyzePublicJobDiscoverySources(watchlist);
+  if (analysis.status !== "executable") throw new AgentRunError("AGENT_RUN_UNAVAILABLE");
   return PublicAgentRunSourceScopeSchema.parse({
     kind: "company_watchlist" as const,
     adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER,
     adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
     watchlistVersion: watchlist?.version ?? 0,
-    sources,
+    sources: analysis.sources,
   });
 }
 

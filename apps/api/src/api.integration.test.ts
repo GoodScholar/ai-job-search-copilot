@@ -723,6 +723,10 @@ describe("authenticated workbench HTTP API", () => {
     const initial = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: path, headers: bearer(primary.sessionToken) });
     expect(initial.statusCode).toBe(200);
     expect(initial.json()).toEqual({ schedule: null, sourceSupport: { status: "unsupported" } });
+    const unsupportedEnable = await app.getHttpAdapter().getInstance().inject({ method: "PUT", url: path, headers: bearer(primary.sessionToken), payload: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
+    expect(unsupportedEnable.statusCode).toBe(409);
+    expect(unsupportedEnable.json()).toMatchObject({ code: "NO_SUPPORTED_SOURCE", message: "待接入" });
+    expect((await app.getHttpAdapter().getInstance().inject({ method: "GET", url: path, headers: bearer(primary.sessionToken) })).json()).toEqual({ schedule: null, sourceSupport: { status: "unsupported" } });
     const created = await app.getHttpAdapter().getInstance().inject({ method: "PUT", url: path, headers: bearer(primary.sessionToken), payload: { expectedVersion: 0, state: "disabled", dailyTime: "09:30" } });
     expect(created.statusCode).toBe(200);
     expect(created.json()).toMatchObject({ schedule: { version: 1, state: "disabled", dailyTime: "09:30", timeZone: "Asia/Shanghai" }, sourceSupport: { status: "unsupported" } });

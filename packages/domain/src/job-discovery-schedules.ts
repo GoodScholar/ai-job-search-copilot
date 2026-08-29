@@ -9,13 +9,9 @@ import {
   type Database,
 } from "@job-copilot/database";
 import {
-  CompanyWatchlistItemSchema,
-} from "@job-copilot/contracts/company-watchlists";
-import {
   JobDiscoveryScheduleOccurrenceSchema,
   JobDiscoveryScheduleSchema,
   SetJobDiscoveryScheduleCommandSchema,
-  classifyGreenhousePublicSource,
   JobDiscoveryScheduleResponseSchema,
   type JobDiscoverySchedule,
   type JobDiscoveryScheduleResponse,
@@ -26,9 +22,10 @@ import {
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { AgentRunError, type AgentRunStarter } from "./agent-run-control";
 import type { AuditTrail } from "./audit-trail";
+import { analyzePublicJobDiscoverySources } from "./public-job-discovery-sources";
 
 export class JobDiscoveryScheduleError extends Error {
-  constructor(public readonly code: "JOB_DISCOVERY_SCHEDULE_TARGET_NOT_FOUND" | "JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE" | "JOB_DISCOVERY_SCHEDULE_VERSION_CONFLICT" | "SOURCE_POLICY_REQUIRED") { super(code); }
+  constructor(public readonly code: "JOB_DISCOVERY_SCHEDULE_TARGET_NOT_FOUND" | "JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE" | "JOB_DISCOVERY_SCHEDULE_VERSION_CONFLICT" | "SOURCE_POLICY_REQUIRED" | "NO_SUPPORTED_SOURCE") { super(code); }
 }
 
 type Dependencies = { db: Database; runs: AgentRunStarter; auditTrail: AuditTrail; id: () => string; clock: () => Date };
@@ -75,11 +72,8 @@ async function dispatchReason(db: Pick<Database, "select">, userId: string, targ
     eq(companyWatchlistRevisions.watchlistId, companyWatchlists.id),
     eq(companyWatchlistRevisions.version, companyWatchlists.version),
   )).where(and(eq(companyWatchlists.userId, userId), eq(companyWatchlists.targetId, targetId)));
-  const classifications = (watchlist ? CompanyWatchlistItemSchema.array().parse(watchlist.items) : []).filter((item) => item.state === "enabled").map((item) => classifyGreenhousePublicSource({
-    itemId: item.itemId, canonicalCompanyName: item.canonicalCompanyName, careersUrl: item.careersUrl, allowedDomains: item.allowedDomains,
-  }));
-  if (classifications.some((result) => result.kind === "policy_required")) return "SOURCE_POLICY_REQUIRED";
-  return classifications.some((result) => result.kind === "supported") ? null : "NO_SUPPORTED_SOURCE";
+  const analysis = analyzePublicJobDiscoverySources(watchlist);
+  return analysis.status === "policy_required" ? "SOURCE_POLICY_REQUIRED" : analysis.status === "unsupported" ? "NO_SUPPORTED_SOURCE" : null;
 }
 
 async function sourceSupport(db: Pick<Database, "select">, userId: string, targetId: string): Promise<JobDiscoverySourceSupport> {
@@ -88,14 +82,9 @@ async function sourceSupport(db: Pick<Database, "select">, userId: string, targe
     eq(companyWatchlistRevisions.watchlistId, companyWatchlists.id),
     eq(companyWatchlistRevisions.version, companyWatchlists.version),
   )).where(and(eq(companyWatchlists.userId, userId), eq(companyWatchlists.targetId, targetId)));
-  const classifications = (watchlist ? CompanyWatchlistItemSchema.array().parse(watchlist.items) : [])
-    .filter((item) => item.state === "enabled")
-    .map((item) => classifyGreenhousePublicSource({ itemId: item.itemId, canonicalCompanyName: item.canonicalCompanyName, careersUrl: item.careersUrl, allowedDomains: item.allowedDomains }));
-  if (classifications.some((result) => result.kind === "policy_required")) {
-    return { status: "policy_required", message: "需允许 boards-api.greenhouse.io" };
-  }
-  const supportedSourceCount = classifications.filter((result) => result.kind === "supported").length;
-  return supportedSourceCount > 0 ? { status: "executable", supportedSourceCount } : { status: "unsupported" };
+  const analysis = analyzePublicJobDiscoverySources(watchlist);
+  if (analysis.status === "policy_required") return { status: "policy_required", message: "需允许 boards-api.greenhouse.io" };
+  return analysis.status === "unsupported" ? { status: "unsupported" } : { status: "executable", supportedSourceCount: analysis.sources.length };
 }
 
 async function appendScheduleAudit(auditTrail: AuditTrail, input: {
@@ -135,7 +124,11 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
         await acquireAccountAdvisoryLock(transaction, input.userId);
         const target = await scheduleTarget(transaction, input.userId, input.targetId);
         if (command.state === "enabled" && target.state !== "active") throw new JobDiscoveryScheduleError("JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE");
-        if (command.state === "enabled" && await dispatchReason(transaction, input.userId, input.targetId) === "SOURCE_POLICY_REQUIRED") throw new JobDiscoveryScheduleError("SOURCE_POLICY_REQUIRED");
+        if (command.state === "enabled") {
+          const reason = await dispatchReason(transaction, input.userId, input.targetId);
+          if (reason === "SOURCE_POLICY_REQUIRED") throw new JobDiscoveryScheduleError("SOURCE_POLICY_REQUIRED");
+          if (reason === "NO_SUPPORTED_SOURCE") throw new JobDiscoveryScheduleError("NO_SUPPORTED_SOURCE");
+        }
         const [current] = await transaction.select().from(jobDiscoverySchedules).where(and(eq(jobDiscoverySchedules.userId, input.userId), eq(jobDiscoverySchedules.targetId, input.targetId)));
         const currentVersion = current?.version ?? 0;
         if (currentVersion !== command.expectedVersion) throw new JobDiscoveryScheduleError("JOB_DISCOVERY_SCHEDULE_VERSION_CONFLICT");

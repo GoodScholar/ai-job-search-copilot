@@ -85,6 +85,7 @@ describe("job discovery schedules", () => {
   it("以 CAS 创建、更新和禁用计划，隐藏跨账户计划并在 Asia/Shanghai 计算下一时点", async () => {
     const owner = await target();
     const other = await target();
+    await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/owner", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
     const { service } = schedules();
 
     const created = await service.set({ userId: owner.userId, targetId: owner.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
@@ -107,6 +108,7 @@ describe("job discovery schedules", () => {
 
   it("两个 scanner 并发物化同一到期计划时只写一个 occurrence", async () => {
     const owner = await target();
+    await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/concurrent", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
     const { service: first } = schedules();
     const { service: second } = schedules();
     const created = await first.set({ userId: owner.userId, targetId: owner.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
@@ -240,6 +242,7 @@ describe("job discovery schedules", () => {
     const owner = await target();
     await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/shared", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
     await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, expectedVersion: 1, companyName: "Second Company", careersUrl: "https://job-boards.greenhouse.io/shared", allowedDomains: ["job-boards.greenhouse.io", "boards-api.greenhouse.io"] });
+    await expect(schedules().service.get(owner)).resolves.toMatchObject({ sourceSupport: { status: "executable", supportedSourceCount: 1 } });
     const occurrence = await dueOccurrence(owner);
     await schedules().service.dispatchPending({ limit: 10 });
     const [run] = await database.select().from(agentRuns).where(and(eq(agentRuns.userId, owner.userId), eq(agentRuns.idempotencyKey, occurrence.occurrenceId)));

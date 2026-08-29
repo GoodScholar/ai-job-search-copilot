@@ -4,7 +4,6 @@ import type { WorkbenchHome } from "@job-copilot/contracts/workbench";
 import type { AgentRunDetail } from "@job-copilot/contracts/agent-runs";
 import { AgentInboxListSchema, type AgentInboxItem } from "@job-copilot/contracts/agent-inbox";
 import type { JobTargetOverview } from "@job-copilot/contracts/job-targets";
-import type { JobDiscoveryScheduleResponse } from "@job-copilot/contracts/job-discovery-schedules";
 import Link from "next/link";
 import { useCallback, useState } from "react";
 import { AgentRunPanel } from "./agent-run-panel";
@@ -15,7 +14,6 @@ type WorkbenchHomeViewProps = {
   targets: JobTargetOverview;
   initialRun: AgentRunDetail | null;
   inbox: { items: AgentInboxItem[] };
-  schedules?: Record<string, JobDiscoveryScheduleResponse>;
 };
 
 const summaryItems = [
@@ -36,7 +34,7 @@ export async function loadOpenAgentInbox(): Promise<AgentInboxItem[] | false> {
   }
 }
 
-export function WorkbenchHomeView({ home, targets, initialRun, inbox, schedules = {} }: WorkbenchHomeViewProps) {
+export function WorkbenchHomeView({ home, targets, initialRun, inbox }: WorkbenchHomeViewProps) {
   const hasPendingFacts = home.summary.pendingFacts > 0;
   const [inboxItems, setInboxItems] = useState(inbox.items);
   const [runRefreshVersion, setRunRefreshVersion] = useState(0);
@@ -67,7 +65,7 @@ export function WorkbenchHomeView({ home, targets, initialRun, inbox, schedules 
         ))}
       </dl>
 
-      <AgentRunPanel initialRun={initialRun} onInboxRefresh={refreshInbox} refreshVersion={runRefreshVersion} schedules={schedules} targets={targets.targets} />
+      <AgentRunPanel initialRun={initialRun} onInboxRefresh={refreshInbox} refreshVersion={runRefreshVersion} showDiscoverySchedule targets={targets.targets} />
       <AgentInboxPanel
         items={inboxItems}
         onResolved={(itemId) => setInboxItems((items) => items.filter((item) => item.itemId !== itemId))}
