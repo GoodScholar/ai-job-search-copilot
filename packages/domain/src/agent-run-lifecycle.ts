@@ -38,7 +38,7 @@ export async function terminateBudgetRun(transaction: any, input: {
     status: "failed", currentStep: "failed", controlState: "none", claimToken: null, claimExpiresAt: null,
     activeSliceStartedAt: null, activeDurationMs: input.activeDurationMs ?? input.run.activeDurationMs,
     startedAt: input.run.startedAt ?? input.now, failedAt: input.now, terminationKind: "budget_exhausted", terminationBudgetDimension: input.budgetDimension,
-    failureCode: "AGENT_RUN_BUDGET_EXCEEDED", usageComplete: true, version, updatedAt: input.now,
+    failureCode: "AGENT_RUN_BUDGET_EXCEEDED", usageComplete: input.run.usageComplete, version, updatedAt: input.now,
   }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.run.id)));
   const sequence = await appendEvent(transaction, { id: input.id, userId: input.userId, runId: input.run.id, version, attemptCount: input.run.attemptCount, now: input.now, eventType: "run.failed" });
   const [item] = await transaction.insert(agentInboxItems).values({ id: input.id(), userId: input.userId, runId: input.run.id, triggerEventSequence: sequence, kind: "budget_exhausted", status: "open", reasonCode: "AGENT_RUN_BUDGET_EXCEEDED", budgetDimension: input.budgetDimension, createdAt: input.now }).onConflictDoNothing().returning({ id: agentInboxItems.id });

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, asc, desc, eq, lte, or, sql } from "drizzle-orm";
 import {
-  agentInboxItems, agentRunEvents, agentRunJobResults, agentRunSteps, agentRuns, jobOpportunities, jobSourcePostings, jobSourcePostingVersions,
+  agentInboxItems, agentRunEvents, agentRunJobResults, agentRunSteps, agentRunUsageEntries, agentRuns, jobOpportunities, jobSourcePostings, jobSourcePostingVersions,
   type Database,
 } from "@job-copilot/database";
 import {
@@ -226,9 +226,12 @@ async function failOrRetry(deps: AgentRunProcessorDependencies, input: { userId:
     if (!run) return "stale";
     const elapsed = await settleActiveSlice(transaction, { id: deps.id, userId: input.userId, run, now });
     const activeDurationMs = run.activeDurationMs + elapsed;
+    const reserve = input.failure.category === "source" ? { toolCalls: 1, sourceRequests: 1 }
+      : input.failure.category === "model" ? { modelCalls: 1, tokens: 1 }
+      : undefined;
     const decision = input.failure.failureCode === "AGENT_RUN_BUDGET_EXCEEDED"
       ? { kind: "budget_exhausted" as const, budgetDimension: input.failure.budgetDimension ?? "active_duration" }
-      : decideRetry({ failure: { category: input.failure.category, retryable: input.failure.retryable }, usage: { attempts: run.attemptCount, activeDurationMs }, budget: run.budgetSnapshot as { maxAttempts: number; maxActiveDurationMs: number; maxToolCalls: number; maxModelCalls: number } });
+      : decideRetry({ failure: { category: input.failure.category, retryable: input.failure.retryable }, usage: { attempts: run.attemptCount, activeDurationMs, toolCalls: run.toolCallCount, modelCalls: run.modelCallCount, totalTokens: run.totalTokenCount }, budget: run.budgetSnapshot as { maxAttempts: number; maxActiveDurationMs: number; maxToolCalls: number; maxModelCalls: number; maxTokens: number }, reserve });
     const version = run.version + 1;
     if (decision.kind === "retry") {
       await transaction.update(agentRunSteps).set({ status: "pending", startedAt: null, completedAt: null, failedAt: null, failureCode: null }).where(and(eq(agentRunSteps.userId, input.userId), eq(agentRunSteps.runId, input.runId)));
@@ -418,15 +421,26 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
             if (!source.sourceVersionCreated) cleanup.push(item.objectKey);
             const evidence = await persistJobOpportunity(transaction, { id: deps.id, userId: job.userId, importId: null, sourcePostingVersionId: source.sourcePostingVersionId, isOfficial: source.isOfficial, company: item.detail.company, title: item.detail.title, location: item.detail.location, postedAt: item.detail.postedAt, deadline: item.detail.deadline, description: null, normalizedData: discoveryNormalizedData(item.detail), now: completedAt });
             await transaction.insert(agentRunJobResults).values({ id: deps.id(), userId: job.userId, runId: job.runId, opportunityId: evidence.opportunityId, sourcePostingVersionId: source.sourcePostingVersionId, ordinal: index + 1, createdAt: completedAt });
+            await transaction.insert(agentRunUsageEntries).values({ id: deps.id(), userId: job.userId, runId: job.runId, usageKey: `${claimed.claimToken}:result:${index + 1}`, category: "result", amount: 1, stepKey: "persist_results", attemptCount: claimed.attemptCount, createdAt: completedAt }).onConflictDoNothing();
           }
-          const stepVersion = run.version + 1;
+          const resultCount = run.resultCount + stored.length;
+          const activeDurationMs = run.activeDurationMs + elapsed;
+          const budgetChanged = elapsed > 0 || stored.length > 0;
+          const budgetVersion = budgetChanged ? run.version + 1 : run.version;
+          if (budgetChanged) {
+            const usage = { activeDurationMs, attempts: run.attemptCount, toolCalls: run.toolCallCount, sourceRequests: run.sourceRequestCount, modelCalls: run.modelCallCount, inputTokens: run.inputTokenCount, outputTokens: run.outputTokenCount, totalTokens: run.totalTokenCount, results: resultCount, complete: run.usageComplete };
+            await transaction.update(agentRuns).set({ activeDurationMs, resultCount, version: budgetVersion, updatedAt: completedAt }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.claimToken, claimed.claimToken), eq(agentRuns.controlState, "none")));
+            await appendEvent(transaction, { id: deps.id, userId: job.userId, runId: job.runId, version: budgetVersion, eventType: "run.budget_updated", data: { eventType: "run.budget_updated", status: "running", currentStep: "persist_results", attemptCount: claimed.attemptCount, usage }, now: completedAt });
+            await deps.auditTrail.bind(transaction).append({ userId: job.userId, actorUserId: job.userId, eventType: "agent.run_budget_consumed", occurredAt: completedAt, requestId: job.runId, outcome: "success", reasonCode: "AGENT_RUN_BUDGET_CONSUMED", resourceType: "agent_run", resourceId: job.runId, metadata: { runId: job.runId, activeDurationMs: elapsed, toolCalls: 0, sourceRequests: 0, modelCalls: 0, attempts: run.attemptCount, results: stored.length, tokens: run.totalTokenCount } });
+          }
+          const stepVersion = budgetVersion + 1;
           await transaction.update(agentRunSteps).set({ status: "completed", completedAt }).where(and(eq(agentRunSteps.userId, job.userId), eq(agentRunSteps.runId, job.runId), eq(agentRunSteps.stepKey, "persist_results")));
           await transaction.update(agentRuns).set({ currentStep: "persist_results", version: stepVersion, updatedAt: completedAt }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.claimToken, claimed.claimToken), eq(agentRuns.controlState, "none")));
           await appendEvent(transaction, { id: deps.id, userId: job.userId, runId: job.runId, version: stepVersion, eventType: "step.completed", data: { eventType: "step.completed", status: "running", currentStep: "persist_results", stepKey: "persist_results", attemptCount: claimed.attemptCount }, now: completedAt });
           const terminalVersion = stepVersion + 1;
-          await transaction.update(agentRuns).set({ status: "completed", currentStep: "completed", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, activeDurationMs: run.activeDurationMs + elapsed, completedAt, failureCode: null, terminationKind: "completed", terminationBudgetDimension: null, resultCount: stored.length, version: terminalVersion, updatedAt: completedAt }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.claimToken, claimed.claimToken), eq(agentRuns.controlState, "none")));
-          await appendEvent(transaction, { id: deps.id, userId: job.userId, runId: job.runId, version: terminalVersion, eventType: "run.completed", data: { eventType: "run.completed", status: "completed", currentStep: "completed", attemptCount: claimed.attemptCount, resultCount: stored.length }, now: completedAt });
-          await deps.auditTrail.bind(transaction).append({ userId: job.userId, actorUserId: job.userId, eventType: "agent.run_completed", occurredAt: completedAt, requestId: job.runId, outcome: "success", reasonCode: "AGENT_RUN_COMPLETED", resourceType: "agent_run", resourceId: job.runId, metadata: { runId: job.runId, targetId: run.targetId, attemptCount: claimed.attemptCount, resultCount: stored.length } });
+          await transaction.update(agentRuns).set({ status: "completed", currentStep: "completed", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, activeDurationMs, completedAt, failureCode: null, terminationKind: "completed", terminationBudgetDimension: null, resultCount, version: terminalVersion, updatedAt: completedAt }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.claimToken, claimed.claimToken), eq(agentRuns.controlState, "none")));
+          await appendEvent(transaction, { id: deps.id, userId: job.userId, runId: job.runId, version: terminalVersion, eventType: "run.completed", data: { eventType: "run.completed", status: "completed", currentStep: "completed", attemptCount: claimed.attemptCount, resultCount }, now: completedAt });
+          await deps.auditTrail.bind(transaction).append({ userId: job.userId, actorUserId: job.userId, eventType: "agent.run_completed", occurredAt: completedAt, requestId: job.runId, outcome: "success", reasonCode: "AGENT_RUN_COMPLETED", resourceType: "agent_run", resourceId: job.runId, metadata: { runId: job.runId, targetId: run.targetId, attemptCount: claimed.attemptCount, resultCount } });
           return { completed: true, cleanup };
         });
         await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), completed.cleanup);

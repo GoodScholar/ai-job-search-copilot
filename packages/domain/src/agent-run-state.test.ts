@@ -73,4 +73,35 @@ describe("agent run retry policy", () => {
       failure: { category: "model", retryable: true }, usage, budget, reserve: { modelCalls: 1 },
     })).toEqual({ kind: "budget_exhausted", budgetDimension: "model_calls" });
   });
+
+  it("在安排下一次重试前检查累计 token，并只为最后一次合法来源或模型调用预留预算", () => {
+    const sourceUsage = { attempts: 1, activeDurationMs: 1_000, toolCalls: 9, modelCalls: 0, totalTokens: 9 };
+    const sourceBudget = { ...budget, maxTokens: 10 };
+    expect(decideRetry({
+      failure: { category: "source", retryable: true }, usage: sourceUsage, budget: sourceBudget,
+      reserve: { toolCalls: 1, sourceRequests: 1 },
+    })).toEqual({ kind: "retry" });
+    expect(decideRetry({
+      failure: { category: "source", retryable: true }, usage: { ...sourceUsage, toolCalls: 10 }, budget: sourceBudget,
+      reserve: { toolCalls: 1, sourceRequests: 1 },
+    })).toEqual({ kind: "budget_exhausted", budgetDimension: "tool_calls" });
+    expect(decideRetry({
+      failure: { category: "source", retryable: true }, usage: { ...sourceUsage, totalTokens: 10 }, budget: sourceBudget,
+      reserve: { toolCalls: 1, sourceRequests: 1 },
+    })).toEqual({ kind: "retry" });
+
+    const modelBudget = { ...budget, maxModelCalls: 2, maxTokens: 10 };
+    expect(decideRetry({
+      failure: { category: "model", retryable: true }, usage: { ...sourceUsage, modelCalls: 1 }, budget: modelBudget,
+      reserve: { modelCalls: 1, tokens: 1 },
+    })).toEqual({ kind: "retry" });
+    expect(decideRetry({
+      failure: { category: "model", retryable: true }, usage: { ...sourceUsage, modelCalls: 2 }, budget: modelBudget,
+      reserve: { modelCalls: 1, tokens: 1 },
+    })).toEqual({ kind: "budget_exhausted", budgetDimension: "model_calls" });
+    expect(decideRetry({
+      failure: { category: "model", retryable: true }, usage: { ...sourceUsage, modelCalls: 1, totalTokens: 10 }, budget: modelBudget,
+      reserve: { modelCalls: 1, tokens: 1 },
+    })).toEqual({ kind: "budget_exhausted", budgetDimension: "tokens" });
+  });
 });

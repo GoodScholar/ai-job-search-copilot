@@ -12,9 +12,9 @@ export function reduceControl(state: { status: Status; controlState: ControlStat
 
 export function decideRetry(input: {
   failure: { category: "source" | "model" | "model_auth" | "model_policy" | "model_invalid"; retryable: boolean };
-  usage: { attempts: number; activeDurationMs: number; toolCalls?: number; modelCalls?: number };
-  budget: { maxAttempts: number; maxActiveDurationMs: number; maxToolCalls?: number; maxModelCalls?: number };
-  reserve?: { toolCalls?: number; modelCalls?: number };
+  usage: { attempts: number; activeDurationMs: number; toolCalls?: number; modelCalls?: number; totalTokens?: number };
+  budget: { maxAttempts: number; maxActiveDurationMs: number; maxToolCalls?: number; maxModelCalls?: number; maxTokens?: number };
+  reserve?: { toolCalls?: number; sourceRequests?: number; modelCalls?: number; tokens?: number };
 }) {
   if (input.failure.category === "model_auth") return { kind: "fail" as const, failureCode: "AGENT_RUN_MODEL_AUTH_FAILED" as const };
   if (input.failure.category === "model_policy") return { kind: "fail" as const, failureCode: "AGENT_RUN_MODEL_POLICY_REJECTED" as const };
@@ -22,7 +22,11 @@ export function decideRetry(input: {
   if (!input.failure.retryable) return { kind: "fail" as const, failureCode: "AGENT_RUN_ADAPTER_FAILED" as const };
   if (input.usage.attempts >= input.budget.maxAttempts) return { kind: "budget_exhausted" as const, budgetDimension: "attempts" as const };
   if (input.usage.activeDurationMs >= input.budget.maxActiveDurationMs) return { kind: "budget_exhausted" as const, budgetDimension: "active_duration" as const };
-  if ((input.usage.toolCalls ?? 0) + (input.reserve?.toolCalls ?? 0) > (input.budget.maxToolCalls ?? Infinity)) return { kind: "budget_exhausted" as const, budgetDimension: "tool_calls" as const };
-  if ((input.usage.modelCalls ?? 0) + (input.reserve?.modelCalls ?? 0) > (input.budget.maxModelCalls ?? Infinity)) return { kind: "budget_exhausted" as const, budgetDimension: "model_calls" as const };
+  const toolCalls = input.usage.toolCalls ?? 0;
+  const modelCalls = input.usage.modelCalls ?? 0;
+  const totalTokens = input.usage.totalTokens ?? 0;
+  if (toolCalls + (input.reserve?.toolCalls ?? 0) > (input.budget.maxToolCalls ?? Infinity)) return { kind: "budget_exhausted" as const, budgetDimension: "tool_calls" as const };
+  if (modelCalls + (input.reserve?.modelCalls ?? 0) > (input.budget.maxModelCalls ?? Infinity)) return { kind: "budget_exhausted" as const, budgetDimension: "model_calls" as const };
+  if (totalTokens + (input.reserve?.tokens ?? 0) > (input.budget.maxTokens ?? Infinity)) return { kind: "budget_exhausted" as const, budgetDimension: "tokens" as const };
   return { kind: "retry" as const };
 }

@@ -1,7 +1,7 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { agentRunJobResults, agentRunUsageEntries, agentRuns, createDatabase, jobAccounts, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
+import { agentRunEvents, agentRunJobResults, agentRunUsageEntries, agentRuns, createDatabase, jobAccounts, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
 import { createAgentRunCheckpoint, createAgentRunCommands, createAgentRunProcessor, createAgentRunQueries, type AgentRunCheckpoint, type AgentRunQueue, type DiscoveryContentStore, type JobDiscoveryAdapter, type JobDiscoveryAdapterResolver } from "./agent-runs";
 
@@ -145,8 +145,12 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(processor.process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("completed");
     await expect(processor.process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("stale");
     await expect(database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, job.runId))).resolves.toHaveLength(1);
-    await expect(database.select().from(agentRunUsageEntries).where(eq(agentRunUsageEntries.runId, job.runId))).resolves.toHaveLength(4);
-    await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({ usage: { toolCalls: 2, sourceRequests: 2, modelCalls: 0 } });
+    await expect(database.select().from(agentRunUsageEntries).where(eq(agentRunUsageEntries.runId, job.runId))).resolves.toHaveLength(5);
+    await expect(database.select({ usageKey: agentRunUsageEntries.usageKey, category: agentRunUsageEntries.category, amount: agentRunUsageEntries.amount, stepKey: agentRunUsageEntries.stepKey, attemptCount: agentRunUsageEntries.attemptCount }).from(agentRunUsageEntries)
+      .where(and(eq(agentRunUsageEntries.runId, job.runId), eq(agentRunUsageEntries.category, "result"))))
+      .resolves.toEqual([expect.objectContaining({ amount: 1, stepKey: "persist_results", attemptCount: 1 })]);
+    await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({ usage: { toolCalls: 2, sourceRequests: 2, modelCalls: 0, results: 1 } });
+    await expect(database.select().from(agentRunEvents).where(and(eq(agentRunEvents.runId, job.runId), eq(agentRunEvents.eventType, "run.budget_updated")))).resolves.toHaveLength(3);
   });
 
   it("冻结 execution spec 的 model 为 null 时不产生模型调用计费", async () => {

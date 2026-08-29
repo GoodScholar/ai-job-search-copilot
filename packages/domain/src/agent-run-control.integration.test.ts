@@ -126,6 +126,13 @@ describe("agent run controls", () => {
     expect(first).toMatchObject({ kind: "continue" });
     expect(replay).toEqual(first);
     await expect(database.select().from(agentRunUsageEntries).where(and(eq(agentRunUsageEntries.userId, userId), eq(agentRunUsageEntries.runId, run.runId)))).resolves.toHaveLength(3);
+    const [checkpointRun] = await database.select({ version: agentRuns.version }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)));
+    await expect(database.select({ sequence: agentRunEvents.sequence, runVersion: agentRunEvents.runVersion, data: agentRunEvents.data }).from(agentRunEvents)
+      .where(and(eq(agentRunEvents.userId, userId), eq(agentRunEvents.runId, run.runId), eq(agentRunEvents.eventType, "run.budget_updated"))))
+      .resolves.toEqual([expect.objectContaining({ runVersion: checkpointRun!.version, data: {
+        eventType: "run.budget_updated", status: "running", currentStep: "batch_search", attemptCount: 1,
+        usage: { activeDurationMs: 100, attempts: 1, toolCalls: 1, sourceRequests: 1, modelCalls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, results: 0, complete: true },
+      } })]);
 
     for (let ordinal = 2; ordinal <= 10; ordinal += 1) {
       await expect(checkpoints(checkpointAt).check({ userId, runId: run.runId, claimToken, checkpointKey: `${claimToken}:source:search:${ordinal}`, reserve: { toolCalls: 1, sourceRequests: 1 } })).resolves.toMatchObject({ kind: "continue" });
@@ -196,5 +203,28 @@ describe("agent run controls", () => {
     await expect(checkpoints(new Date(now.getTime() + 200)).check({ userId, runId: run.runId, claimToken, checkpointKey: key, reserve: { toolCalls: 1 } })).resolves.toEqual({ kind: "cancelled" });
     await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)))).resolves.toEqual([{ status: "cancelled" }]);
     await expect(database.select().from(agentRunUsageEntries).where(and(eq(agentRunUsageEntries.runId, run.runId), eq(agentRunUsageEntries.usageKey, key)))).resolves.toHaveLength(2);
+  });
+
+  it("旧运行在立即取消、checkpoint 取消和预算终止时保留 usageComplete=false", async () => {
+    const { userId, targetId } = await activeTarget();
+    const commandsForUser = commands(new MemoryQueue());
+
+    const immediate = await commandsForUser.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    await database.update(agentRuns).set({ usageComplete: false }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, immediate.runId)));
+    await commandsForUser.control({ userId, requestId: crypto.randomUUID(), runId: immediate.runId, command: { commandId: crypto.randomUUID(), action: "cancel" } });
+
+    const checkpointCancel = await commandsForUser.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const cancelToken = crypto.randomUUID();
+    await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", attemptCount: 1, startedAt: now, claimToken: cancelToken, claimExpiresAt: new Date(now.getTime() + 30_000), activeSliceStartedAt: now, controlState: "cancel_requested", usageComplete: false }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, checkpointCancel.runId)));
+    await expect(checkpoints().check({ userId, runId: checkpointCancel.runId, claimToken: cancelToken, checkpointKey: `${cancelToken}:cancel` })).resolves.toEqual({ kind: "cancelled" });
+
+    const exhausted = await commandsForUser.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const budgetToken = crypto.randomUUID();
+    await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", attemptCount: 1, startedAt: now, claimToken: budgetToken, claimExpiresAt: new Date(now.getTime() + 30_000), activeSliceStartedAt: now, usageComplete: false, budgetSnapshot: { maxActiveDurationMs: 60_000, maxAttempts: 3, maxToolCalls: 0, maxResults: 5, maxModelCalls: 0, maxTokens: 0 } }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, exhausted.runId)));
+    await expect(checkpoints().check({ userId, runId: exhausted.runId, claimToken: budgetToken, checkpointKey: `${budgetToken}:budget`, reserve: { toolCalls: 1 } })).resolves.toEqual({ kind: "budget_exhausted", budgetDimension: "tool_calls" });
+
+    await expect(database.select({ id: agentRuns.id, usageComplete: agentRuns.usageComplete }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, immediate.runId)))).resolves.toEqual([{ id: immediate.runId, usageComplete: false }]);
+    await expect(database.select({ id: agentRuns.id, usageComplete: agentRuns.usageComplete }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, checkpointCancel.runId)))).resolves.toEqual([{ id: checkpointCancel.runId, usageComplete: false }]);
+    await expect(database.select({ id: agentRuns.id, usageComplete: agentRuns.usageComplete }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, exhausted.runId)))).resolves.toEqual([{ id: exhausted.runId, usageComplete: false }]);
   });
 });

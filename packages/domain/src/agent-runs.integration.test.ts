@@ -187,7 +187,7 @@ describe("agent runs", () => {
     const queue = new MemoryQueue();
     const queued = await commands(queue).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
     const expired = await commands(queue).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
-    await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", claimToken: crypto.randomUUID(), claimExpiresAt: new Date(now.getTime() - 1), startedAt: now }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, expired.runId)));
+    await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", claimToken: crypto.randomUUID(), claimExpiresAt: new Date(now.getTime() - 1), activeSliceStartedAt: now, startedAt: now }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, expired.runId)));
     await expect(createAgentRunRecoveryQueries({ db: database, clock: () => now }).listRecoverable()).resolves.toEqual(expect.arrayContaining([
       { version: 1, runId: queued.runId, userId }, { version: 1, runId: expired.runId, userId },
     ]));
@@ -212,12 +212,15 @@ describe("agent runs", () => {
       { sequence: 1, runVersion: 1, eventType: "run.queued" },
       { sequence: 2, runVersion: 2, eventType: "run.started" },
       { sequence: 3, runVersion: 3, eventType: "step.started" },
-      { sequence: 4, runVersion: 4, eventType: "step.completed" },
-      { sequence: 5, runVersion: 5, eventType: "step.started" },
-      { sequence: 6, runVersion: 6, eventType: "step.completed" },
-      { sequence: 7, runVersion: 7, eventType: "step.started" },
+      { sequence: 4, runVersion: 4, eventType: "run.budget_updated" },
+      { sequence: 5, runVersion: 5, eventType: "step.completed" },
+      { sequence: 6, runVersion: 6, eventType: "step.started" },
+      { sequence: 7, runVersion: 7, eventType: "run.budget_updated" },
       { sequence: 8, runVersion: 8, eventType: "step.completed" },
-      { sequence: 9, runVersion: 9, eventType: "run.completed" },
+      { sequence: 9, runVersion: 9, eventType: "step.started" },
+      { sequence: 10, runVersion: 10, eventType: "run.budget_updated" },
+      { sequence: 11, runVersion: 11, eventType: "step.completed" },
+      { sequence: 12, runVersion: 12, eventType: "run.completed" },
     ]);
   });
 

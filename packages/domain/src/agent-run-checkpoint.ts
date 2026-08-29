@@ -31,6 +31,13 @@ async function appendEvent(db: any, input: { id: () => string; userId: string; r
 }
 
 function amount(value: number | undefined) { return value ?? 0; }
+function usageSnapshot(run: typeof agentRuns.$inferSelect, input: { activeDurationMs: number; toolCallCount: number; sourceRequestCount: number; modelCallCount: number }) {
+  return {
+    activeDurationMs: input.activeDurationMs, attempts: run.attemptCount, toolCalls: input.toolCallCount,
+    sourceRequests: input.sourceRequestCount, modelCalls: input.modelCallCount, inputTokens: run.inputTokenCount,
+    outputTokens: run.outputTokenCount, totalTokens: run.totalTokenCount, results: run.resultCount, complete: run.usageComplete,
+  };
+}
 function exhausted(run: typeof agentRuns.$inferSelect, reserve: Reserve, activeDurationMs: number): BudgetDimension | null {
   const budget = run.budgetSnapshot as { maxActiveDurationMs: number; maxAttempts: number; maxToolCalls: number; maxModelCalls: number; maxTokens: number };
   // attempt 是领取时预增的；第 3 次已合法领取，预算只阻止第 4 次领取。
@@ -76,18 +83,25 @@ export function createAgentRunCheckpoint(deps: Dependencies): AgentRunCheckpoint
         const activeDurationMs = run.activeDurationMs + elapsed;
         const dimension = exhausted({ ...run, activeDurationMs }, reserve, 0);
         const chargedReserve = run.controlState === "none" && dimension === null && prior.length === 0 ? reserve : {};
-        const usage = prior.length === 0 ? await writeUsage(transaction, { id: deps.id, userId: input.userId, runId: input.runId, checkpointKey: input.checkpointKey, attemptCount: run.attemptCount, reserve: chargedReserve, now }) : [];
+        const usageEntries = prior.length === 0 ? await writeUsage(transaction, { id: deps.id, userId: input.userId, runId: input.runId, checkpointKey: input.checkpointKey, attemptCount: run.attemptCount, reserve: chargedReserve, now }) : [];
         const usageUpdate = { activeDurationMs, toolCallCount: run.toolCallCount + amount(chargedReserve.toolCalls), sourceRequestCount: run.sourceRequestCount + amount(chargedReserve.sourceRequests), modelCallCount: run.modelCallCount + amount(chargedReserve.modelCalls), activeSliceStartedAt: now, updatedAt: now };
-        if (elapsed > 0 || usage.length > 0) await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.run_budget_consumed", occurredAt: now, requestId: input.runId, outcome: "success", reasonCode: "AGENT_RUN_BUDGET_CONSUMED", resourceType: "agent_run", resourceId: input.runId, metadata: { runId: input.runId, activeDurationMs: elapsed, toolCalls: amount(chargedReserve.toolCalls), sourceRequests: amount(chargedReserve.sourceRequests), modelCalls: amount(chargedReserve.modelCalls) } });
+        const usageChanged = elapsed > 0 || usageEntries.length > 0;
+        const usageVersion = usageChanged ? run.version + 1 : run.version;
+        const usage = usageSnapshot(run, usageUpdate);
+        if (usageChanged) {
+          await transaction.update(agentRuns).set({ ...usageUpdate, version: usageVersion }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId)));
+          await appendEvent(transaction, { id: deps.id, userId: input.userId, runId: input.runId, version: usageVersion, eventType: "run.budget_updated", data: { eventType: "run.budget_updated", status: "running", currentStep: run.currentStep, attemptCount: run.attemptCount, usage }, now });
+          await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.run_budget_consumed", occurredAt: now, requestId: input.runId, outcome: "success", reasonCode: "AGENT_RUN_BUDGET_CONSUMED", resourceType: "agent_run", resourceId: input.runId, metadata: { runId: input.runId, activeDurationMs: elapsed, toolCalls: amount(chargedReserve.toolCalls), sourceRequests: amount(chargedReserve.sourceRequests), modelCalls: amount(chargedReserve.modelCalls), attempts: run.attemptCount, results: run.resultCount, tokens: run.totalTokenCount } });
+        }
         if (run.controlState === "cancel_requested") {
-          const version = run.version + 1;
-          await transaction.update(agentRuns).set({ ...usageUpdate, status: "cancelled", currentStep: "cancelled", controlState: "none", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, cancelledAt: now, terminationKind: "cancelled_by_user", terminationBudgetDimension: null, failureCode: null, usageComplete: true, version }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId)));
+          const version = usageVersion + 1;
+          await transaction.update(agentRuns).set({ ...usageUpdate, status: "cancelled", currentStep: "cancelled", controlState: "none", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, cancelledAt: now, terminationKind: "cancelled_by_user", terminationBudgetDimension: null, failureCode: null, usageComplete: run.usageComplete, version }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId)));
           await appendEvent(transaction, { id: deps.id, userId: input.userId, runId: input.runId, version, eventType: "run.cancelled", data: { eventType: "run.cancelled", status: "cancelled", currentStep: "cancelled", attemptCount: run.attemptCount }, now });
           await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.run_cancelled", occurredAt: now, requestId: input.runId, outcome: "success", reasonCode: "AGENT_RUN_CANCELLED", resourceType: "agent_run", resourceId: input.runId, metadata: { runId: input.runId, version, action: "cancel", attemptCount: run.attemptCount } });
           return { kind: "cancelled" };
         }
         if (run.controlState === "pause_requested") {
-          const version = run.version + 1;
+          const version = usageVersion + 1;
           await transaction.update(agentRuns).set({ ...usageUpdate, status: "paused", controlState: "none", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, version }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId)));
           const sequence = await appendEvent(transaction, { id: deps.id, userId: input.userId, runId: input.runId, version, eventType: "run.paused", data: { eventType: "run.paused", status: "paused", currentStep: run.currentStep, attemptCount: run.attemptCount }, now });
           await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.run_paused", occurredAt: now, requestId: input.runId, outcome: "success", reasonCode: "AGENT_RUN_PAUSED", resourceType: "agent_run", resourceId: input.runId, metadata: { runId: input.runId, version, action: "pause", attemptCount: run.attemptCount } });
@@ -96,11 +110,11 @@ export function createAgentRunCheckpoint(deps: Dependencies): AgentRunCheckpoint
           return { kind: "paused" };
         }
         if (dimension) {
-          await terminateBudgetRun(transaction, { id: deps.id, auditTrail: deps.auditTrail, userId: input.userId, requestId: input.runId, run, now, budgetDimension: dimension, activeDurationMs });
+          await terminateBudgetRun(transaction, { id: deps.id, auditTrail: deps.auditTrail, userId: input.userId, requestId: input.runId, run: { ...run, ...usageUpdate, version: usageVersion }, now, budgetDimension: dimension, activeDurationMs });
           return { kind: "budget_exhausted", budgetDimension: dimension };
         }
         if (prior.length > 0) return { kind: "continue" };
-        await transaction.update(agentRuns).set(usageUpdate).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId)));
+        if (!usageChanged) await transaction.update(agentRuns).set(usageUpdate).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId)));
         return { kind: "continue" };
       });
     },

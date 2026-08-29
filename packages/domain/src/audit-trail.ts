@@ -59,6 +59,7 @@ const ControlAgentRunMetadataSchema = z.object({
 }).strict();
 const AgentRunBudgetConsumedMetadataSchema = z.object({
   runId: z.uuid(), activeDurationMs: z.int().nonnegative(), toolCalls: z.int().nonnegative(), sourceRequests: z.int().nonnegative(), modelCalls: z.int().nonnegative(),
+  attempts: z.int().nonnegative(), results: z.int().nonnegative(), tokens: z.int().nonnegative(),
 }).strict();
 const AgentRunBudgetExhaustedMetadataSchema = z.object({
   runId: z.uuid(), budgetDimension: z.enum(["active_duration", "attempts", "tool_calls", "model_calls", "tokens"]), attemptCount: z.int().min(0),

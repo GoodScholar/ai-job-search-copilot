@@ -234,10 +234,10 @@ describe("audit trail", () => {
     const auditTrail = createAuditTrail({ db: database, clock: () => now });
     const runId = crypto.randomUUID();
     const itemId = crypto.randomUUID();
-    await auditTrail.append({ userId, actorUserId: userId, eventType: "agent.run_budget_consumed", occurredAt: now, requestId: crypto.randomUUID(), outcome: "success", reasonCode: "AGENT_RUN_BUDGET_CONSUMED", resourceType: "agent_run", resourceId: runId, metadata: { runId, activeDurationMs: 100, toolCalls: 1, sourceRequests: 1, modelCalls: 0 } });
+    await auditTrail.append({ userId, actorUserId: userId, eventType: "agent.run_budget_consumed", occurredAt: now, requestId: crypto.randomUUID(), outcome: "success", reasonCode: "AGENT_RUN_BUDGET_CONSUMED", resourceType: "agent_run", resourceId: runId, metadata: { runId, activeDurationMs: 100, toolCalls: 1, sourceRequests: 1, modelCalls: 0, attempts: 1, results: 0, tokens: 0 } });
     await auditTrail.append({ userId, actorUserId: userId, eventType: "agent.run_budget_exhausted", occurredAt: now, requestId: crypto.randomUUID(), outcome: "failure", reasonCode: "AGENT_RUN_BUDGET_EXCEEDED", resourceType: "agent_run", resourceId: runId, metadata: { runId, budgetDimension: "tool_calls", attemptCount: 1 } });
     await auditTrail.append({ userId, actorUserId: userId, eventType: "agent.inbox_opened", occurredAt: now, requestId: crypto.randomUUID(), outcome: "success", reasonCode: "AGENT_RUN_BUDGET_EXCEEDED", resourceType: "agent_inbox_item", resourceId: itemId, metadata: { runId, kind: "budget_exhausted", reasonCode: "AGENT_RUN_BUDGET_EXCEEDED", budgetDimension: "tool_calls" } });
-    await expect(auditTrail.append({ userId, actorUserId: userId, eventType: "agent.run_budget_consumed", requestId: crypto.randomUUID(), outcome: "success", reasonCode: "AGENT_RUN_BUDGET_CONSUMED", resourceType: "agent_run", resourceId: runId, metadata: { runId, activeDurationMs: 0, toolCalls: 0, sourceRequests: 0, modelCalls: 0, rawPayload: "private" } as never })).rejects.toThrow(/字段白名单/);
+    await expect(auditTrail.append({ userId, actorUserId: userId, eventType: "agent.run_budget_consumed", requestId: crypto.randomUUID(), outcome: "success", reasonCode: "AGENT_RUN_BUDGET_CONSUMED", resourceType: "agent_run", resourceId: runId, metadata: { runId, activeDurationMs: 0, toolCalls: 0, sourceRequests: 0, modelCalls: 0, attempts: 1, results: 0, tokens: 0, rawPayload: "private" } as never })).rejects.toThrow(/字段白名单/);
   });
 
   it("仅允许重试和 Inbox action 的内部标识、动作、结果与稳定原因", async () => {
