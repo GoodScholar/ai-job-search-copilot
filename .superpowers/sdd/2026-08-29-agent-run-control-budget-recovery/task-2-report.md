@@ -143,3 +143,21 @@ Fresh `pnpm --filter @job-copilot/domain typecheck` passed. The focused integrat
 - action metadata 只允许 Inbox/run 内部 ID、固定动作、固定 outcome 与稳定 reason；不含 target 内容、岗位正文、object key 或异常文本。
 - restart 先用 actionId 启动；若解决事务回滚，action record 不会写入，下一次相同 actionId 通过已有 start idempotency row 复用新 run 后重试解决，避免第二次运行。
 - `pnpm --filter @job-copilot/domain test -- …` 的 package script 会以 `--no-file-parallelism` 运行全套并在该工具的 30 秒输出边界被截断；使用同一列出的 Vitest 文件直调完成最终聚焦验证。未观察到测试或环境失败。
+
+## Task 2 review fix round 1 (partial lifecycle repair)
+
+### Evidence
+
+- Root cause: processor claim omitted `activeSliceStartedAt`; retry/failure/completion did not consistently clear it; checkpoint treated the already-claimed third attempt as exhausted; queued pause did not create the required decision item.
+- GREEN: `pnpm --filter @job-copilot/domain exec vitest run src/agent-run-control.integration.test.ts` → 1 file, 7 tests passed; `pnpm --filter @job-copilot/domain typecheck` and `git diff --check` passed.
+
+### Changes
+
+- Claim now atomically starts an active slice; retry, failure and completion clear it.
+- Checkpoint accepts the legally claimed third attempt (`attemptCount > maxAttempts` only).
+- Checkpoint final pause/cancel emit their matching control audit records.
+- Immediate queued pause now opens the unique decision Inbox item and audit; direct resume/cancel tests consume that authoritative item.
+
+### Remaining review items
+
+- Shared active-slice settlement/budget-terminal helper, duplicate-key reserve matching/control priority, retry classification, Inbox failed-action replay and concurrent different-action ownership still require subsequent review fix rounds.

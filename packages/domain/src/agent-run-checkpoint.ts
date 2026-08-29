@@ -28,7 +28,8 @@ function activeDuration(run: typeof agentRuns.$inferSelect, now: Date) {
 }
 function exhausted(run: typeof agentRuns.$inferSelect, reserve: Reserve, activeDurationMs: number): BudgetDimension | null {
   const budget = run.budgetSnapshot as { maxActiveDurationMs: number; maxAttempts: number; maxToolCalls: number; maxModelCalls: number; maxTokens: number };
-  if (run.attemptCount >= budget.maxAttempts) return "attempts";
+  // attempt 是领取时预增的；第 3 次已合法领取，预算只阻止第 4 次领取。
+  if (run.attemptCount > budget.maxAttempts) return "attempts";
   if (run.activeDurationMs + activeDurationMs >= budget.maxActiveDurationMs) return "active_duration";
   if (run.toolCallCount + amount(reserve.toolCalls) > budget.maxToolCalls) return "tool_calls";
   if (run.modelCallCount + amount(reserve.modelCalls) > budget.maxModelCalls) return "model_calls";
@@ -70,12 +71,14 @@ export function createAgentRunCheckpoint(deps: Dependencies): {
           const version = run.version + 1;
           await transaction.update(agentRuns).set({ ...usageUpdate, status: "cancelled", currentStep: "cancelled", controlState: "none", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, cancelledAt: now, terminationKind: "cancelled_by_user", terminationBudgetDimension: null, failureCode: null, usageComplete: true, version }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId)));
           await appendEvent(transaction, { id: deps.id, userId: input.userId, runId: input.runId, version, eventType: "run.cancelled", data: { eventType: "run.cancelled", status: "cancelled", currentStep: "cancelled", attemptCount: run.attemptCount }, now });
+          await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.run_cancelled", occurredAt: now, requestId: input.runId, outcome: "success", reasonCode: "AGENT_RUN_CANCELLED", resourceType: "agent_run", resourceId: input.runId, metadata: { runId: input.runId, version, action: "cancel", attemptCount: run.attemptCount } });
           return { kind: "cancelled" };
         }
         if (run.controlState === "pause_requested") {
           const version = run.version + 1;
           await transaction.update(agentRuns).set({ ...usageUpdate, status: "paused", controlState: "none", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, version }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId)));
           const sequence = await appendEvent(transaction, { id: deps.id, userId: input.userId, runId: input.runId, version, eventType: "run.paused", data: { eventType: "run.paused", status: "paused", currentStep: run.currentStep, attemptCount: run.attemptCount }, now });
+          await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.run_paused", occurredAt: now, requestId: input.runId, outcome: "success", reasonCode: "AGENT_RUN_PAUSED", resourceType: "agent_run", resourceId: input.runId, metadata: { runId: input.runId, version, action: "pause", attemptCount: run.attemptCount } });
           const [item] = await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: input.userId, runId: input.runId, triggerEventSequence: sequence, kind: "decision_required", status: "open", reasonCode: "AGENT_RUN_PAUSED", budgetDimension: null, createdAt: now }).onConflictDoNothing().returning({ id: agentInboxItems.id });
           if (item) await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.inbox_opened", occurredAt: now, requestId: input.runId, outcome: "success", reasonCode: "AGENT_RUN_PAUSED", resourceType: "agent_inbox_item", resourceId: item.id, metadata: { runId: input.runId, kind: "decision_required", reasonCode: "AGENT_RUN_PAUSED", budgetDimension: null } });
           return { kind: "paused" };
