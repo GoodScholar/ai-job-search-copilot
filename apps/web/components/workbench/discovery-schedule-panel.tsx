@@ -44,8 +44,9 @@ function DiscoveryScheduleForm({ targetId, targetState, initialSchedule }: Props
   const [dailyTime, setDailyTime] = useState(initialSchedule.schedule?.dailyTime ?? "09:30");
   const [desiredState, setDesiredState] = useState<"enabled" | "disabled">(initialSchedule.schedule?.state ?? "disabled");
   const [message, setMessage] = useState("");
+  const [targetBlocked, setTargetBlocked] = useState(false);
   const [pending, startTransition] = useTransition();
-  const status = scheduleStatus(saved, targetState);
+  const status = targetBlocked ? { text: "该求职目标已停用，不能启用每日检查。", canEnable: false } : scheduleStatus(saved, targetState);
   const intendedState = status.canEnable ? desiredState : "disabled";
   function save() {
     if (pending) return;
@@ -56,6 +57,9 @@ function DiscoveryScheduleForm({ targetId, targetState, initialSchedule }: Props
         const payload = await response.json().catch(() => null);
         const code = typeof payload === "object" && payload !== null && "code" in payload && typeof payload.code === "string" ? payload.code : null;
         if (!response.ok) {
+          if (code === "SOURCE_POLICY_REQUIRED") setSaved((current) => ({ ...current, sourceSupport: { status: "policy_required", message: "需允许 boards-api.greenhouse.io" } }));
+          if (code === "NO_SUPPORTED_SOURCE") setSaved((current) => ({ ...current, sourceSupport: { status: "unsupported" } }));
+          if (code === "JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE") setTargetBlocked(true);
           setMessage(code === "JOB_DISCOVERY_SCHEDULE_VERSION_CONFLICT" ? "每日检查已在其他位置更新，请刷新后重试。" : code === "SOURCE_POLICY_REQUIRED" ? "待接入：需允许 boards-api.greenhouse.io" : code === "JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE" ? "该求职目标已停用，不能启用每日检查。" : code === "NO_SUPPORTED_SOURCE" ? "待接入" : "每日检查暂时无法保存，请稍后重试。");
           return;
         }
@@ -68,7 +72,7 @@ function DiscoveryScheduleForm({ targetId, targetState, initialSchedule }: Props
   return <>
     <p aria-live="polite" className="discovery-schedule-support" data-state={status.canEnable ? "ready" : "pending"}>{status.text}</p>
     <ol aria-label="每日检查时间轨" className="discovery-schedule-rail"><li><span>状态</span><strong>{saved.schedule?.state === "enabled" ? "已启用" : "已停用"}</strong></li><li><span>北京时间</span><strong>{dailyTime}（Asia/Shanghai）</strong></li><li><span>下一次检查</span><strong>{saved.schedule?.nextRunAt ? new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Shanghai" }).format(new Date(saved.schedule.nextRunAt)) : "启用后安排"}</strong></li></ol>
-    <div className="discovery-schedule-controls"><div><label htmlFor={`daily-time-${targetId}`}>每日检查时间（北京时间 / Asia/Shanghai）</label><input aria-describedby={`daily-time-help-${targetId}`} aria-invalid={Boolean(message)} disabled={pending || !status.canEnable} id={`daily-time-${targetId}`} onChange={(event) => setDailyTime(event.target.value)} type="time" value={dailyTime} /><p id={`daily-time-help-${targetId}`}>每天在这个时间检查已接入的公开岗位来源。</p></div><div className="discovery-schedule-actions" role="group" aria-label="每日检查状态"><Button className="workbench-touch-target" disabled={pending || !status.canEnable} onClick={() => setDesiredState("enabled")} size="lg" type="button" variant={intendedState === "enabled" ? "default" : "outline"}>启用</Button><Button className="workbench-touch-target" disabled={pending} onClick={() => setDesiredState("disabled")} size="lg" type="button" variant={intendedState === "disabled" ? "secondary" : "outline"}>停用</Button><Button className="workbench-touch-target" disabled={pending} onClick={save} size="lg" type="button">{pending ? "正在保存…" : "保存每日检查"}</Button></div></div>
+    <div className="discovery-schedule-controls"><div><label htmlFor={`daily-time-${targetId}`}>每日检查时间（北京时间 / Asia/Shanghai）</label><input aria-describedby={`daily-time-help-${targetId}`} aria-invalid={Boolean(message)} disabled={pending || !status.canEnable} id={`daily-time-${targetId}`} onChange={(event) => setDailyTime(event.target.value)} type="time" value={dailyTime} /><p id={`daily-time-help-${targetId}`}>每天在这个时间检查已接入的公开岗位来源。</p></div><div className="discovery-schedule-actions" role="group" aria-label="每日检查状态"><Button className="workbench-touch-target" disabled={pending || !status.canEnable} onClick={() => setDesiredState("enabled")} size="lg" type="button" variant={intendedState === "enabled" ? "default" : "outline"}>启用</Button><Button className="workbench-touch-target" disabled={pending || !status.canEnable} onClick={() => setDesiredState("disabled")} size="lg" type="button" variant={intendedState === "disabled" ? "secondary" : "outline"}>停用</Button><Button className="workbench-touch-target" disabled={pending || !status.canEnable} onClick={save} size="lg" type="button">{pending ? "正在保存…" : "保存每日检查"}</Button></div></div>
     <p aria-live="polite" className="discovery-schedule-live" role="status">{message}</p>
   </>;
 }

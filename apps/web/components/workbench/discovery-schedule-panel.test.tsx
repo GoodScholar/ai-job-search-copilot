@@ -28,10 +28,9 @@ it("显示加载态，精确处理策略、停用与待接入错误，且保存�
   fireEvent.click(screen.getByRole("button", { name: "保存每日检查" }));
   expect(screen.getByRole("button", { name: "正在保存…" })).toBeDisabled();
   resolvePut(response({ code: "SOURCE_POLICY_REQUIRED" }, 409));
-  expect(await screen.findByText("待接入：需允许 boards-api.greenhouse.io")).toBeInTheDocument();
-  fetchMock.mockResolvedValueOnce(response({ code: "NO_SUPPORTED_SOURCE" }, 409));
-  fireEvent.click(screen.getByRole("button", { name: "保存每日检查" }));
-  expect(await screen.findByText("待接入")).toBeInTheDocument();
+  expect((await screen.findAllByText("待接入：需允许 boards-api.greenhouse.io")).length).toBeGreaterThan(0);
+  expect(screen.getByRole("button", { name: "启用" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "保存每日检查" })).toBeDisabled();
 });
 
 it("目标切换时取消旧请求，迟到的 A 不覆盖 B", async () => {
