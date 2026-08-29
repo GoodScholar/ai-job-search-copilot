@@ -954,6 +954,21 @@ body {
 .agent-run-controls select { background: var(--surface); border: 1px solid var(--rule); border-radius: 0.4rem; color: var(--ink); font: inherit; height: 2.75rem; min-width: 0; padding: 0.5rem 0.65rem; width: 100%; }
 .agent-run-start { background: var(--emerald); border: 1px solid var(--emerald); border-radius: 0.4rem; color: var(--surface); cursor: pointer; font: inherit; font-weight: 700; padding-inline: 1.25rem; }
 .agent-run-start:disabled { cursor: not-allowed; opacity: 0.62; }
+.discovery-schedule-panel { border-bottom: 1px solid var(--rule); padding-block: 1.25rem; }
+.discovery-schedule-heading { align-items: start; display: flex; gap: 1rem; justify-content: space-between; }
+.discovery-schedule-heading > div > p { color: var(--emerald); font-size: 0.75rem; font-weight: 700; letter-spacing: 0.08em; margin: 0; }
+.discovery-schedule-heading h3 { font-size: 1.05rem; margin: 0.35rem 0 0; }
+.discovery-schedule-support { color: var(--muted) !important; font-size: 0.82rem; font-weight: 700; margin: 0 !important; text-align: right; }
+.discovery-schedule-rail { border-left: 1px solid var(--emerald); display: grid; gap: 0.75rem; list-style: none; margin: 1rem 0; padding: 0 0 0 1rem; }
+.discovery-schedule-rail li { align-items: baseline; display: grid; gap: 1rem; grid-template-columns: 6rem minmax(0, 1fr); }
+.discovery-schedule-rail span, .discovery-schedule-controls label, .discovery-schedule-controls p { color: var(--muted); font-size: 0.82rem; }
+.discovery-schedule-rail strong { font-size: 0.9rem; font-variant-numeric: tabular-nums; }
+.discovery-schedule-controls { align-items: end; display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr) auto; }
+.discovery-schedule-controls label { display: block; font-weight: 700; margin-bottom: 0.5rem; }
+.discovery-schedule-controls input { background: var(--surface); border: 1px solid var(--rule); border-radius: 0.4rem; color: var(--ink); font: inherit; min-height: 2.75rem; padding-inline: 0.65rem; }
+.discovery-schedule-controls p { line-height: 1.5; margin: 0.4rem 0 0 !important; }
+.discovery-schedule-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.discovery-schedule-live { color: var(--amber-ink) !important; font-size: 0.88rem; font-weight: 700; margin: 0.85rem 0 0 !important; min-height: 1.35rem; }
 .agent-run-command-row { border-bottom: 1px solid var(--rule); display: flex; flex-wrap: wrap; gap: 0.75rem; padding-block: 1rem; }
 .agent-run-action { background: var(--surface); border: 1px solid var(--emerald); border-radius: 0.4rem; color: var(--emerald-strong); cursor: pointer; font: inherit; font-weight: 700; padding-inline: 1rem; text-decoration: none; }
 .agent-run-action:disabled { cursor: wait; opacity: 0.62; }
@@ -1103,6 +1118,7 @@ body {
   }
 
   .agent-run-controls > div,
+  .discovery-schedule-controls,
   .agent-run-results dl,
   .agent-run-detail dl,
   .agent-run-budget dl {
@@ -1112,6 +1128,13 @@ body {
   .agent-run-start {
     width: 100%;
   }
+
+  .discovery-schedule-heading {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .discovery-schedule-support { text-align: left; }
 
   .workbench-ledger-status {
     margin-top: 0.25rem !important;

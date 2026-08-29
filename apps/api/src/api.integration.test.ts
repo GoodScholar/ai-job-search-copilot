@@ -706,6 +706,49 @@ describe("authenticated workbench HTTP API", () => {
     expect(detail.json()).toMatchObject({ adapter: "greenhouse", executionSpec: { adapter: "greenhouse" } });
   });
 
+  it("以认证账户暴露严格的每日检查计划，并脱敏来源策略问题", async () => {
+    const primary = await createSession(app, "daily-schedule-primary");
+    const other = await createSession(app, "daily-schedule-other");
+    const targetId = await createActiveTarget(app, primary.sessionToken, "每日检查工程师");
+    const path = `/v1/job-targets/${targetId}/discovery-schedule`;
+    const [missingAuth, hidden, invalid] = await Promise.all([
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: path }),
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: path, headers: bearer(other.sessionToken) }),
+      app.getHttpAdapter().getInstance().inject({ method: "PUT", url: path, headers: bearer(primary.sessionToken), payload: { expectedVersion: 0, state: "enabled", dailyTime: "09:30", userId: other.account.userId } }),
+    ]);
+    expect(missingAuth.statusCode).toBe(401);
+    expect(hidden.statusCode).toBe(404);
+    expect(invalid.statusCode).toBe(400);
+
+    const initial = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: path, headers: bearer(primary.sessionToken) });
+    expect(initial.statusCode).toBe(200);
+    expect(initial.json()).toEqual({ schedule: null, sourceSupport: { status: "unsupported" } });
+    const created = await app.getHttpAdapter().getInstance().inject({ method: "PUT", url: path, headers: bearer(primary.sessionToken), payload: { expectedVersion: 0, state: "disabled", dailyTime: "09:30" } });
+    expect(created.statusCode).toBe(200);
+    expect(created.json()).toMatchObject({ schedule: { version: 1, state: "disabled", dailyTime: "09:30", timeZone: "Asia/Shanghai" }, sourceSupport: { status: "unsupported" } });
+    const conflict = await app.getHttpAdapter().getInstance().inject({ method: "PUT", url: path, headers: bearer(primary.sessionToken), payload: { expectedVersion: 0, state: "disabled", dailyTime: "10:00" } });
+    expect(conflict.statusCode).toBe(409);
+
+    await createCompanyWatchlistCommands({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: randomUUID, clock: () => new Date() }).addItem({
+      userId: primary.account.userId, targetId, requestId: randomUUID(),
+      command: { expectedVersion: 0, canonicalCompanyName: "Private Company", careersUrl: "https://boards.greenhouse.io/private-company", allowedDomains: ["boards.greenhouse.io"], sourceNote: null },
+    });
+    const policy = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: path, headers: bearer(primary.sessionToken) });
+    expect(policy.statusCode).toBe(200);
+    expect(policy.json()).toMatchObject({ schedule: { version: 1, state: "disabled" }, sourceSupport: { status: "policy_required", message: "需允许 boards-api.greenhouse.io" } });
+    expect(policy.body).not.toContain("private-company");
+    expect(policy.body).not.toContain("allowedDomains");
+    const policyEnable = await app.getHttpAdapter().getInstance().inject({ method: "PUT", url: path, headers: bearer(primary.sessionToken), payload: { expectedVersion: 1, state: "enabled", dailyTime: "09:30" } });
+    expect(policyEnable.statusCode).toBe(409);
+    expect(policyEnable.json()).toMatchObject({ code: "SOURCE_POLICY_REQUIRED", message: "需允许 boards-api.greenhouse.io", requestId: expect.any(String) });
+    expect(policyEnable.body).not.toContain("private-company");
+    const deactivated = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/job-targets/${targetId}/deactivations`, headers: bearer(primary.sessionToken), payload: { expectedVersion: 1 } });
+    expect(deactivated.statusCode).toBe(201);
+    const inactiveEnable = await app.getHttpAdapter().getInstance().inject({ method: "PUT", url: path, headers: bearer(primary.sessionToken), payload: { expectedVersion: 1, state: "enabled", dailyTime: "09:30" } });
+    expect(inactiveEnable.statusCode).toBe(409);
+    expect(inactiveEnable.json()).toMatchObject({ code: "JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE", requestId: expect.any(String) });
+  });
+
   it("以认证账户暴露幂等运行控制和可处理 Inbox", async () => {
     const primary = await createSession(app, "agent-run-controls-primary");
     const other = await createSession(app, "agent-run-controls-other");
@@ -1336,6 +1379,7 @@ describe("authenticated workbench HTTP API", () => {
       "/v1/job-targets/{targetId}/company-watchlist/items/{itemId}/revisions": expect.anything(),
       "/v1/job-targets/{targetId}/company-watchlist/items/{itemId}/state-changes": expect.anything(),
       "/v1/job-targets/{targetId}/company-watchlist/reorders": expect.anything(),
+      "/v1/job-targets/{targetId}/discovery-schedule": expect.anything(),
       "/v1/career-documents/imports": expect.anything(),
       "/v1/career-documents/imports/{importId}": expect.anything(),
       "/health/live": expect.anything(),
@@ -1376,12 +1420,18 @@ describe("authenticated workbench HTTP API", () => {
       ["/v1/job-targets/{targetId}/company-watchlist/items/{itemId}/revisions", "post"],
       ["/v1/job-targets/{targetId}/company-watchlist/items/{itemId}/state-changes", "post"],
       ["/v1/job-targets/{targetId}/company-watchlist/reorders", "post"],
+      ["/v1/job-targets/{targetId}/discovery-schedule", "get"],
+      ["/v1/job-targets/{targetId}/discovery-schedule", "put"],
       ["/v1/career-documents/imports", "get"],
       ["/v1/career-documents/imports", "post"],
       ["/v1/career-documents/imports/{importId}", "get"],
     ] as const) {
       expect(document.paths[path][method].security).toEqual([{ bearerAuth: [] }]);
     }
+    const scheduleResponses = document.paths["/v1/job-targets/{targetId}/discovery-schedule"];
+    expect(scheduleResponses.get.responses["200"].content["application/json"].schema)
+      .toEqual(scheduleResponses.put.responses["200"].content["application/json"].schema);
+    expect(JSON.stringify(scheduleResponses.get.responses["200"])).toContain("JobDiscoveryScheduleResponseDto_Output");
     expect(document.paths["/v1/career-documents/imports"].post.requestBody.content["multipart/form-data"].schema)
       .toMatchObject({
         required: ["file", "privacyMode"],

@@ -30,6 +30,18 @@ export const SetJobDiscoveryScheduleCommandSchema = z.object({
   dailyTime,
 }).strict();
 
+/** 计划页面只需要来源是否可以执行，绝不返回来源 URL 或授权域名。 */
+export const JobDiscoverySourceSupportSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("executable"), supportedSourceCount: positiveInteger }).strict(),
+  z.object({ status: z.literal("unsupported") }).strict(),
+  z.object({ status: z.literal("policy_required"), message: z.literal("需允许 boards-api.greenhouse.io") }).strict(),
+]);
+
+export const JobDiscoveryScheduleResponseSchema = z.object({
+  schedule: JobDiscoveryScheduleSchema.nullable(),
+  sourceSupport: JobDiscoverySourceSupportSchema,
+}).strict();
+
 export const JobDiscoveryScheduleOccurrenceSchema = z.object({
   occurrenceId: z.uuid(),
   scheduleId: z.uuid(),
@@ -103,4 +115,6 @@ export function classifyGreenhousePublicSource(candidate: GreenhouseSourceCandid
 
 export type JobDiscoverySchedule = z.infer<typeof JobDiscoveryScheduleSchema>;
 export type SetJobDiscoveryScheduleCommand = z.infer<typeof SetJobDiscoveryScheduleCommandSchema>;
+export type JobDiscoverySourceSupport = z.infer<typeof JobDiscoverySourceSupportSchema>;
+export type JobDiscoveryScheduleResponse = z.infer<typeof JobDiscoveryScheduleResponseSchema>;
 export type JobDiscoveryScheduleOccurrence = z.infer<typeof JobDiscoveryScheduleOccurrenceSchema>;

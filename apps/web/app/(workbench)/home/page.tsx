@@ -5,6 +5,7 @@ import { getWorkbenchHome } from "@/lib/server/workbench";
 import { getJobTargets } from "@/lib/server/job-targets";
 import { getLatestAgentRun } from "@/lib/server/agent-runs";
 import { getOpenAgentInbox } from "@/lib/server/agent-inbox";
+import { getJobDiscoverySchedule } from "@/lib/server/job-discovery-schedules";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -16,11 +17,13 @@ export default async function WorkbenchHomePage() {
   let targets;
   let latestRun;
   let inbox;
+  let schedules;
 
   try {
     [home, targets, latestRun, inbox] = await Promise.all([
       getWorkbenchHome(), getJobTargets(), getLatestAgentRun(), getOpenAgentInbox(),
     ]);
+    schedules = await Promise.all(targets.targets.map(async (target) => [target.targetId, await getJobDiscoverySchedule(target.targetId)] as const));
   } catch (error) {
     unstable_rethrow(error);
     return (
@@ -35,5 +38,5 @@ export default async function WorkbenchHomePage() {
     );
   }
 
-  return <WorkbenchHomeView home={home} inbox={inbox} initialRun={latestRun.run} targets={targets} />;
+  return <WorkbenchHomeView home={home} inbox={inbox} initialRun={latestRun.run} schedules={Object.fromEntries(schedules)} targets={targets} />;
 }

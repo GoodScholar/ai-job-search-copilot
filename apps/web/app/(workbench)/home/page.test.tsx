@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   getJobTargets: vi.fn(),
   getLatestAgentRun: vi.fn(),
   getOpenAgentInbox: vi.fn(),
+  getJobDiscoverySchedule: vi.fn(),
   unstableRethrow: vi.fn((error: unknown) => {
     throw error;
   }),
@@ -14,6 +15,7 @@ vi.mock("@/lib/server/workbench", () => ({ getWorkbenchHome: mocks.getWorkbenchH
 vi.mock("@/lib/server/job-targets", () => ({ getJobTargets: mocks.getJobTargets }));
 vi.mock("@/lib/server/agent-runs", () => ({ getLatestAgentRun: mocks.getLatestAgentRun }));
 vi.mock("@/lib/server/agent-inbox", () => ({ getOpenAgentInbox: mocks.getOpenAgentInbox }));
+vi.mock("@/lib/server/job-discovery-schedules", () => ({ getJobDiscoverySchedule: mocks.getJobDiscoverySchedule }));
 vi.mock("next/navigation", () => ({ unstable_rethrow: mocks.unstableRethrow }));
 
 import WorkbenchHomePage, { metadata } from "./page";

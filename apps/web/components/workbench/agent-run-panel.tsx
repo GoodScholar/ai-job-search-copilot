@@ -11,8 +11,11 @@ import {
   type AgentRunSseEvent,
 } from "@job-copilot/contracts/agent-runs";
 import type { JobTarget } from "@job-copilot/contracts/job-targets";
+import type { JobDiscoveryScheduleResponse } from "@job-copilot/contracts/job-discovery-schedules";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { DiscoverySchedulePanel } from "./discovery-schedule-panel";
 
 type TimelineEvent = {
   sequence: number;
@@ -100,11 +103,12 @@ async function fetchRunDetail(runId: string): Promise<AgentRunDetail> {
   return parsed.data;
 }
 
-export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVersion = 0 }: {
+export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVersion = 0, schedules = {} }: {
   targets: JobTarget[];
   initialRun: AgentRunDetail | null;
   onInboxRefresh?: () => Promise<boolean>;
   refreshVersion?: number;
+  schedules?: Record<string, JobDiscoveryScheduleResponse>;
 }) {
   const activeTargets = targets.filter((target) => target.state === "active");
   const initialTargetId = activeTargets.some((target) => target.targetId === initialRun?.targetId)
@@ -122,6 +126,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
   const runRef = useRef(run);
   const mountedRef = useRef(false);
   const [pendingControls, setPendingControls] = useState<Record<"pause" | "resume" | "cancel", boolean>>({ pause: false, resume: false, cancel: false });
+  const selectedTarget = targets.find((target) => target.targetId === selectedTargetId);
 
   const replaceRun = useCallback((next: AgentRunDetail | null) => {
     runRef.current = next;
@@ -357,11 +362,12 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
           }} value={selectedTargetId}>
             {activeTargets.map((target) => <option key={target.targetId} value={target.targetId}>{target.constraints.roleFamily} · {target.priority === "primary" ? "主目标" : "次目标"}</option>)}
           </select>
-          <button className="agent-run-start workbench-touch-target" disabled={isStarting || runIsUnfinished} onClick={startRun} type="button">
+          <Button className="agent-run-start workbench-touch-target" disabled={isStarting || runIsUnfinished} onClick={startRun} size="lg" type="button">
             {isStarting ? "正在启动…" : runIsUnfinished ? "发现中…" : "发现岗位"}
-          </button>
+          </Button>
         </div>
       </div>
+      {selectedTarget && schedules[selectedTarget.targetId] ? <DiscoverySchedulePanel initialSchedule={schedules[selectedTarget.targetId]} key={selectedTarget.targetId} targetId={selectedTarget.targetId} targetState={selectedTarget.state} /> : null}
       {run ? <>
         <div className="agent-run-command-row">
           {run.status === "queued" || (run.status === "running" && run.controlState === "none") ? <button className="agent-run-action workbench-touch-target" disabled={pendingControls.pause} onClick={() => void controlRun("pause")} type="button">暂停岗位发现</button> : null}

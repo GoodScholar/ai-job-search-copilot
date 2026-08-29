@@ -16,7 +16,10 @@ import {
   JobDiscoveryScheduleSchema,
   SetJobDiscoveryScheduleCommandSchema,
   classifyGreenhousePublicSource,
+  JobDiscoveryScheduleResponseSchema,
   type JobDiscoverySchedule,
+  type JobDiscoveryScheduleResponse,
+  type JobDiscoverySourceSupport,
   type JobDiscoveryScheduleOccurrence,
   type SetJobDiscoveryScheduleCommand,
 } from "@job-copilot/contracts/job-discovery-schedules";
@@ -79,6 +82,22 @@ async function dispatchReason(db: Pick<Database, "select">, userId: string, targ
   return classifications.some((result) => result.kind === "supported") ? null : "NO_SUPPORTED_SOURCE";
 }
 
+async function sourceSupport(db: Pick<Database, "select">, userId: string, targetId: string): Promise<JobDiscoverySourceSupport> {
+  const [watchlist] = await db.select({ items: companyWatchlistRevisions.items }).from(companyWatchlists).innerJoin(companyWatchlistRevisions, and(
+    eq(companyWatchlistRevisions.userId, companyWatchlists.userId),
+    eq(companyWatchlistRevisions.watchlistId, companyWatchlists.id),
+    eq(companyWatchlistRevisions.version, companyWatchlists.version),
+  )).where(and(eq(companyWatchlists.userId, userId), eq(companyWatchlists.targetId, targetId)));
+  const classifications = (watchlist ? CompanyWatchlistItemSchema.array().parse(watchlist.items) : [])
+    .filter((item) => item.state === "enabled")
+    .map((item) => classifyGreenhousePublicSource({ itemId: item.itemId, canonicalCompanyName: item.canonicalCompanyName, careersUrl: item.careersUrl, allowedDomains: item.allowedDomains }));
+  if (classifications.some((result) => result.kind === "policy_required")) {
+    return { status: "policy_required", message: "需允许 boards-api.greenhouse.io" };
+  }
+  const supportedSourceCount = classifications.filter((result) => result.kind === "supported").length;
+  return supportedSourceCount > 0 ? { status: "executable", supportedSourceCount } : { status: "unsupported" };
+}
+
 async function appendScheduleAudit(auditTrail: AuditTrail, input: {
   userId: string; requestId: string; eventType: "schedule_set" | "occurrence_materialized" | "occurrence_dispatched" | "occurrence_skipped";
   scheduleId: string; targetId: string; occurrenceId?: string; runId?: string; version?: number; scheduledFor?: Date; state?: "enabled" | "disabled" | "pending" | "dispatched" | "skipped"; now: Date;
@@ -94,15 +113,20 @@ async function appendScheduleAudit(auditTrail: AuditTrail, input: {
 }
 
 export function createJobDiscoverySchedules(deps: Dependencies): {
-  get(input: { userId: string; targetId: string }): Promise<JobDiscoverySchedule | null>;
+  get(input: { userId: string; targetId: string }): Promise<JobDiscoveryScheduleResponse | null>;
   set(input: { userId: string; targetId: string; requestId: string; command: SetJobDiscoveryScheduleCommand }): Promise<JobDiscoverySchedule>;
   materializeDue(input: { limit: number }): Promise<JobDiscoveryScheduleOccurrence[]>;
   dispatchPending(input: { limit: number }): Promise<void>;
 } {
   return {
     async get(input) {
+      try { await scheduleTarget(deps.db, input.userId, input.targetId); }
+      catch (error) {
+        if (error instanceof JobDiscoveryScheduleError && error.code === "JOB_DISCOVERY_SCHEDULE_TARGET_NOT_FOUND") return null;
+        throw error;
+      }
       const [schedule] = await deps.db.select().from(jobDiscoverySchedules).where(and(eq(jobDiscoverySchedules.userId, input.userId), eq(jobDiscoverySchedules.targetId, input.targetId)));
-      return schedule ? scheduleView(schedule) : null;
+      return JobDiscoveryScheduleResponseSchema.parse({ schedule: schedule ? scheduleView(schedule) : null, sourceSupport: await sourceSupport(deps.db, input.userId, input.targetId) });
     },
     async set(input) {
       const command = SetJobDiscoveryScheduleCommandSchema.parse(input.command);

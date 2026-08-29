@@ -66,6 +66,12 @@ import {
   type StartAgentRunResponse,
 } from "@job-copilot/contracts/agent-runs";
 import {
+  JobDiscoveryScheduleResponseSchema,
+  SetJobDiscoveryScheduleCommandSchema,
+  type JobDiscoveryScheduleResponse,
+  type SetJobDiscoveryScheduleCommand,
+} from "@job-copilot/contracts/job-discovery-schedules";
+import {
   AgentInboxActionCommandSchema,
   AgentInboxActionResponseSchema,
   AgentInboxListSchema,
@@ -494,6 +500,29 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
         throw new ApiClientError("api", problem?.message ?? "无法启动岗位发现", response.status, problem ?? undefined);
       }
       return parseSuccess(response, StartAgentRunResponseSchema);
+    },
+
+    async getJobDiscoverySchedule(sessionToken: string, targetId: string): Promise<JobDiscoveryScheduleResponse> {
+      const response = await request(`/v1/job-targets/${targetId}/discovery-schedule`, {
+        method: "GET", headers: { authorization: `Bearer ${sessionToken}` }, cache: "no-store",
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法读取每日检查", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, JobDiscoveryScheduleResponseSchema);
+    },
+
+    async setJobDiscoverySchedule(sessionToken: string, targetId: string, command: SetJobDiscoveryScheduleCommand): Promise<JobDiscoveryScheduleResponse> {
+      const requestBody = SetJobDiscoveryScheduleCommandSchema.parse(command);
+      const response = await request(`/v1/job-targets/${targetId}/discovery-schedule`, {
+        method: "PUT", headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" }, body: JSON.stringify(requestBody),
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法保存每日检查", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, JobDiscoveryScheduleResponseSchema);
     },
 
     async getLatestAgentRun(sessionToken: string) {
