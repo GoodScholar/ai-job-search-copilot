@@ -3,6 +3,7 @@ import {
   AGENT_RUN_BUDGET,
   AGENT_RUN_RULE_VERSION,
   AGENT_RUN_TOOL_ALLOWLIST,
+  AGENT_RUN_TERMINAL_EVENT_TYPES,
   AGENT_RUN_CLAIM_LEASE_MS,
   AGENT_RUN_JOB_NAME,
   AGENT_RUN_QUEUE,
@@ -43,6 +44,7 @@ import {
   StartAgentRunResponseSchema,
   ControlAgentRunCommandSchema,
   ControlAgentRunResponseSchema,
+  isAgentRunTerminalEvent,
 } from "./agent-runs";
 
 const targetId = "87a0d3ac-4aed-4bd5-a703-68bf82cc6c49";
@@ -178,16 +180,26 @@ describe("agent run contracts", () => {
     ]);
   });
 
-  it("serializes nonnegative safe cursors as decimal SSE ids", () => {
-    const event = { id: "0", event: "run.queued", data: { eventType: "run.queued", status: "queued", currentStep: "queued", attemptCount: 0 } };
+  it("serializes versioned strict SSE envelopes with decimal cursors", () => {
+    const event = { id: "0", event: "run.queued", runVersion: 1, data: { eventType: "run.queued", status: "queued", currentStep: "queued", attemptCount: 0 } };
     expect(AgentRunSseEventSchema.parse(event)).toEqual(event);
     expect(AgentRunSseEventSchema.safeParse({ ...event, id: "01" }).success).toBe(false);
     expect(AgentRunSseEventSchema.safeParse({ ...event, id: "9007199254740992" }).success).toBe(false);
+    expect(AgentRunSseEventSchema.safeParse(({ id: event.id, event: event.event, data: event.data })).success).toBe(false);
+    expect(AgentRunSseEventSchema.safeParse({ ...event, runVersion: 0 }).success).toBe(false);
+  });
+
+  it("exports one terminal event policy for all four terminal and three request events", () => {
+    expect(AGENT_RUN_TERMINAL_EVENT_TYPES).toEqual(["run.paused", "run.cancelled", "run.completed", "run.failed"]);
+    for (const eventType of AGENT_RUN_TERMINAL_EVENT_TYPES) expect(isAgentRunTerminalEvent(eventType)).toBe(true);
+    for (const eventType of ["run.pause_requested", "run.resume_requested", "run.cancel_requested"] as const) {
+      expect(isAgentRunTerminalEvent(eventType)).toBe(false);
+    }
   });
 
   it("rejects an unexpected key from every public object schema", () => {
     const start = { targetId, idempotencyKey: "08614f5c-b5cb-4c1d-8fca-3777105b5f19" };
-    const sseEvent = { id: "1", event: "run.queued", data: eventData };
+    const sseEvent = { id: "1", event: "run.queued", runVersion: 1, data: eventData };
     const adapterError = { code: "SOURCE_UNAVAILABLE", retryable: true };
     for (const [schema, sample] of [
       [StartAgentRunCommandSchema, start], [AgentRunBudgetSchema, AGENT_RUN_BUDGET],

@@ -5,18 +5,19 @@ import {
   AgentRunSseEventSchema,
   ControlAgentRunResponseSchema,
   StartAgentRunResponseSchema,
+  isAgentRunTerminalEvent,
   type AgentRunDetail,
-  type AgentRunEventTypeSchema,
+  type AgentRunEventType,
   type AgentRunSseEvent,
 } from "@job-copilot/contracts/agent-runs";
 import type { JobTarget } from "@job-copilot/contracts/job-targets";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { z } from "zod";
 
 type TimelineEvent = {
   sequence: number;
-  eventType: z.infer<typeof AgentRunEventTypeSchema>;
+  runVersion: number;
+  eventType: AgentRunEventType;
   data: AgentRunSseEvent["data"];
 };
 
@@ -54,7 +55,7 @@ function cursorKey(runId: string): string {
 }
 
 function detailTimeline(run: AgentRunDetail | null): TimelineEvent[] {
-  return run?.events.map(({ sequence, eventType, data }) => ({ sequence, eventType, data })) ?? [];
+  return run?.events.map(({ sequence, runVersion, eventType, data }) => ({ sequence, runVersion, eventType, data })) ?? [];
 }
 
 function timelineLabel(event: TimelineEvent): string {
@@ -127,11 +128,23 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
     setRun(next);
   }
 
-  function applyControlSnapshot(snapshot: z.infer<typeof ControlAgentRunResponseSchema>["run"]): boolean {
+  function applyRunProjection(snapshot: Pick<AgentRunDetail, "status" | "currentStep" | "controlState" | "version">): boolean {
     const current = runRef.current;
     if (!current) return false;
     if (snapshot.version < current.version || (current.controlState === "cancel_requested" && snapshot.controlState !== "cancel_requested" && snapshot.status !== "cancelled")) return false;
     replaceRun({ ...current, ...snapshot });
+    return true;
+  }
+
+  function applyControlSnapshot(snapshot: Pick<AgentRunDetail, "status" | "currentStep" | "controlState" | "version">): boolean {
+    return applyRunProjection(snapshot);
+  }
+
+  function applyAuthoritativeDetail(detail: AgentRunDetail): boolean {
+    const current = runRef.current;
+    if (!current || current.runId !== detail.runId) return false;
+    if (detail.version < current.version || (current.controlState === "cancel_requested" && detail.controlState !== "cancel_requested" && detail.status !== "cancelled")) return false;
+    replaceRun(detail);
     return true;
   }
 
@@ -154,9 +167,10 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
     const runId = runRef.current.runId;
     void fetchRunDetail(runId).then((detail) => {
       if (!mountedRef.current || runRef.current?.runId !== runId) return;
-      replaceRun(detail);
-      setTimeline(detailTimeline(detail));
-      setMessage("");
+      if (applyAuthoritativeDetail(detail)) {
+        setTimeline(detailTimeline(detail));
+        setMessage("");
+      }
     }).catch(() => {
       if (mountedRef.current && runRef.current?.runId === runId) {
         setMessage("运行状态已更新，但详情暂时无法读取。请刷新页面重试。");
@@ -176,38 +190,42 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
     const applyEvent = (type: typeof streamEventTypes[number]) => (event: Event) => {
       if (!streamActive) return;
       const messageEvent = event as MessageEvent<string>;
-      let data: unknown;
-      try { data = JSON.parse(messageEvent.data); } catch { return; }
-      const parsed = AgentRunSseEventSchema.safeParse({ id: messageEvent.lastEventId, event: type, data });
-      if (!parsed.success) return;
+      let envelope: unknown;
+      try { envelope = JSON.parse(messageEvent.data); } catch { return; }
+      const parsed = AgentRunSseEventSchema.safeParse(envelope);
+      if (!parsed.success || parsed.data.id !== messageEvent.lastEventId || parsed.data.event !== type) return;
       const sequence = Number(parsed.data.id);
       if (sequence <= cursor) return;
       cursor = sequence;
       window.sessionStorage.setItem(cursorKey(run.runId), String(sequence));
       setMessage("");
-      setTimeline((events) => [...events, { sequence, eventType: parsed.data.event, data: parsed.data.data }]);
+      setTimeline((events) => [...events, { sequence, runVersion: parsed.data.runVersion, eventType: parsed.data.event, data: parsed.data.data }]);
       const current = runRef.current;
       if (current) {
         const data = parsed.data.data;
-        if (data.eventType === "run.pause_requested" && current.controlState !== "cancel_requested") replaceRun({ ...current, controlState: "pause_requested" });
-        if (data.eventType === "run.cancel_requested") replaceRun({ ...current, controlState: "cancel_requested" });
-        if (data.eventType === "run.resume_requested" && current.controlState !== "cancel_requested") replaceRun({ ...current, controlState: "none" });
-        if (data.eventType === "run.resumed" && current.controlState !== "cancel_requested") replaceRun({ ...current, status: "queued", currentStep: "queued", controlState: "none" });
-        if (data.eventType === "run.budget_updated") replaceRun({ ...current, usage: data.usage });
+        const controlState = data.eventType === "run.cancel_requested" ? "cancel_requested"
+          : (data.eventType === "run.pause_requested" ? "pause_requested"
+            : (data.eventType === "run.resume_requested" || data.eventType === "run.resumed" ? "none" : current.controlState));
+        const applied = applyRunProjection({
+          status: data.status,
+          currentStep: data.currentStep,
+          controlState,
+          version: parsed.data.runVersion,
+        });
+        if (applied && data.eventType === "run.budget_updated") replaceRun({ ...runRef.current!, usage: data.usage });
       }
-      if (["run.paused", "run.completed", "run.failed", "run.cancelled"].includes(type)) {
+      if (isAgentRunTerminalEvent(type)) {
         stream.close();
-        void fetchRunDetail(run.runId).then((detail) => {
-          if (!streamActive) return;
-          replaceRun(detail);
+        const refreshedRunId = run.runId;
+        void fetchRunDetail(refreshedRunId).then((detail) => {
+          if (!mountedRef.current || runRef.current?.runId !== refreshedRunId || !applyAuthoritativeDetail(detail)) return;
           setTimeline(detailTimeline(detail));
           setMessage("");
-          const refreshedRunId = run.runId;
           void refreshInboxSafely().then((refreshed) => {
             if (mountedRef.current && runRef.current?.runId === refreshedRunId && !refreshed) setMessage("待处理事项暂未刷新，请刷新页面查看。");
           });
         }).catch(() => {
-          if (streamActive) setMessage("岗位发现已结束，但结果暂时无法读取。请刷新页面重试。");
+          if (mountedRef.current && runRef.current?.runId === refreshedRunId) setMessage("岗位发现已结束，但结果暂时无法读取。请刷新页面重试。");
         });
       }
     };
@@ -287,7 +305,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
       if (parsed.data.run.status === "paused" || parsed.data.run.status === "cancelled") {
         try {
           const detail = await fetchRunDetail(run.runId);
-          replaceRun(detail);
+          if (!applyAuthoritativeDetail(detail)) return;
           setTimeline(detailTimeline(detail));
           const inboxRefreshed = await refreshInboxSafely();
           if (!mountedRef.current || runRef.current?.runId !== run.runId) return;
@@ -354,12 +372,12 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
           <dl>
             <div><dt>求职目标</dt><dd>{run.executionSpec.targetSnapshot.constraints.roleFamily} · v{run.targetVersion}</dd></div>
             <div><dt>当前步骤</dt><dd>{currentStepLabel(run.currentStep)}</dd></div>
-            <div><dt>工作流</dt><dd>{run.executionSpec.workflowVersion}</dd></div>
-            <div><dt>规则</dt><dd>{run.executionSpec.ruleVersion}</dd></div>
-            <div><dt>Adapter</dt><dd>{run.executionSpec.adapter}/{run.executionSpec.adapterVersion}</dd></div>
-            <div><dt>输出结构</dt><dd>{run.executionSpec.outputSchemaVersion}</dd></div>
+            <div><dt>执行流程版本</dt><dd>{run.executionSpec.workflowVersion}</dd></div>
+            <div><dt>匹配规则版本</dt><dd>{run.executionSpec.ruleVersion}</dd></div>
+            <div><dt>岗位来源连接版本</dt><dd>{run.executionSpec.adapter}/{run.executionSpec.adapterVersion}</dd></div>
+            <div><dt>结果格式版本</dt><dd>{run.executionSpec.outputSchemaVersion}</dd></div>
             <div><dt>来源范围</dt><dd>{run.executionSpec.sourceScope.sources.length} 个固定来源</dd></div>
-            <div><dt>工具白名单</dt><dd>{run.executionSpec.toolAllowlist.join("、")}</dd></div>
+            <div><dt>允许的操作范围</dt><dd>{run.executionSpec.toolAllowlist.join("、")}</dd></div>
             <div><dt>模型</dt><dd>本流程未使用模型</dd></div>
           </dl>
         </section>

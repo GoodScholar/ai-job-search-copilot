@@ -516,7 +516,7 @@ describe("authenticated workbench HTTP API", () => {
     expect(successfulEvents.statusCode).toBe(200);
     expect(successfulEvents.headers["content-type"]).toBe("text/event-stream; charset=utf-8");
     expect(successfulEvents.headers["cache-control"]).toBe("no-cache, no-transform");
-    expect(successfulEvents.body).toBe('id: 2\nevent: run.completed\ndata: {"eventType":"run.completed","status":"completed","currentStep":"completed","attemptCount":1,"resultCount":0}\n\n');
+    expect(successfulEvents.body).toBe('id: 2\nevent: run.completed\ndata: {"id":"2","event":"run.completed","runVersion":2,"data":{"eventType":"run.completed","status":"completed","currentStep":"completed","attemptCount":1,"resultCount":0}}\n\n');
 
     agentRunQueue.failNext = true;
     const durable = await app.getHttpAdapter().getInstance().inject({

@@ -112,8 +112,8 @@ class FakeEventSource {
   dispatch(type: string, event: Event) {
     this.listeners.get(type)?.forEach((listener) => listener(event));
   }
-  emit(type: string, id: string, data: unknown) {
-    const event = new MessageEvent(type, { data: JSON.stringify(data), lastEventId: id });
+  emit(type: string, id: string, data: unknown, runVersion = Number(id)) {
+    const event = new MessageEvent(type, { data: JSON.stringify({ id, event: type, runVersion, data }), lastEventId: id });
     this.dispatch(type, event);
   }
 }
@@ -163,6 +163,11 @@ it("显示冻结的执行规格、模型说明和预算账本", () => {
   expect(screen.getByRole("button", { name: "暂停岗位发现" })).toBeEnabled();
   expect(screen.getByText("搜索岗位来源")).toBeVisible();
   expect(screen.getByText("job-discovery-result-v1")).toBeVisible();
+  expect(screen.getByText("执行流程版本")).toBeVisible();
+  expect(screen.getByText("匹配规则版本")).toBeVisible();
+  expect(screen.getByText("岗位来源连接版本")).toBeVisible();
+  expect(screen.getByText("结果格式版本")).toBeVisible();
+  expect(screen.getByText("允许的操作范围")).toBeVisible();
 });
 
 it("历史消费明细不完整时只展示预算上限", () => {
@@ -256,8 +261,27 @@ it("忽略晚到的低版本暂停响应，保留更高版本的取消请求", a
   expect(screen.queryByRole("button", { name: "取消岗位发现" })).not.toBeInTheDocument();
 });
 
+it("SSE 推进运行版本后忽略迟到的低版本暂停响应", async () => {
+  let resolvePause!: (value: Response) => void;
+  const pause = { applied: true, run: { runId, status: "running", currentStep: "batch_search", controlState: "pause_requested", version: 2 } };
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockReturnValueOnce(new Promise((done) => { resolvePause = done; })));
+  const user = userEvent.setup();
+  render(<AgentRunPanel initialRun={detail()} targets={[target()]} />);
+  const source = FakeEventSource.instances[0]!;
+
+  await user.click(screen.getByRole("button", { name: "暂停岗位发现" }));
+  act(() => {
+    source.emit("run.pause_requested", "3", { eventType: "run.pause_requested", status: "running", currentStep: "batch_search", attemptCount: 1 }, 2);
+    source.emit("run.resumed", "4", { eventType: "run.resumed", status: "queued", currentStep: "queued", attemptCount: 1 }, 3);
+  });
+  resolvePause(Response.json(pause));
+
+  await waitFor(() => expect(screen.getByRole("button", { name: "暂停岗位发现" })).toBeVisible());
+  expect(screen.queryByRole("button", { name: "继续本次岗位发现" })).not.toBeInTheDocument();
+});
+
 it("暂停事件关闭投影、重读详情并提供继续和取消", async () => {
-  const paused = { ...detail(), status: "paused" as const, currentStep: "batch_search" as const, controlState: "none" as const };
+  const paused = { ...detail(), status: "paused" as const, currentStep: "batch_search" as const, controlState: "none" as const, version: 3 };
   vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(Response.json(paused)));
   render(<AgentRunPanel initialRun={detail()} targets={[target()]} />);
   const source = FakeEventSource.instances[0]!;
@@ -270,7 +294,7 @@ it("暂停事件关闭投影、重读详情并提供继续和取消", async () =
 });
 
 it("暂停的权威详情读取后刷新开放 Inbox", async () => {
-  const paused = { ...detail(), status: "paused" as const, currentStep: "batch_search" as const, controlState: "none" as const };
+  const paused = { ...detail(), status: "paused" as const, currentStep: "batch_search" as const, controlState: "none" as const, version: 3 };
   const refreshInbox = vi.fn().mockResolvedValue(true);
   vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(Response.json(paused)));
   render(<AgentRunPanel initialRun={detail()} onInboxRefresh={refreshInbox} targets={[target()]} />);
@@ -281,7 +305,7 @@ it("暂停的权威详情读取后刷新开放 Inbox", async () => {
 });
 
 it("SSE 权威详情成功后 Inbox 刷新失败不会回退运行状态", async () => {
-  const paused = { ...detail(), status: "paused" as const, currentStep: "batch_search" as const, controlState: "none" as const };
+  const paused = { ...detail(), status: "paused" as const, currentStep: "batch_search" as const, controlState: "none" as const, version: 3 };
   vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(Response.json(paused)));
   const refreshInbox = vi.fn().mockRejectedValue(new Error("offline"));
   render(<AgentRunPanel initialRun={detail()} onInboxRefresh={refreshInbox} targets={[target()]} />);
@@ -294,7 +318,7 @@ it("SSE 权威详情成功后 Inbox 刷新失败不会回退运行状态", async
 });
 
 it("暂停详情落地后延迟的 Inbox 刷新失败仍会显示警告", async () => {
-  const paused = { ...detail(), status: "paused" as const, currentStep: "batch_search" as const, controlState: "none" as const };
+  const paused = { ...detail(), status: "paused" as const, currentStep: "batch_search" as const, controlState: "none" as const, version: 3 };
   let resolveInbox!: (value: boolean) => void;
   const refreshInbox = vi.fn().mockReturnValue(new Promise<boolean>((resolve) => { resolveInbox = resolve; }));
   vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(Response.json(paused)));

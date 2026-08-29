@@ -83,11 +83,12 @@ describe("Agent Run SSE", () => {
 
     expect(eventsAfter).toHaveBeenCalledWith({ userId, runId, afterSequence: 0 });
     expect(text).toBe([
-      'id: 1\nevent: run.queued\ndata: {"eventType":"run.queued","status":"queued","currentStep":"queued","attemptCount":0}\n\n',
-      'id: 2\nevent: run.started\ndata: {"eventType":"run.started","status":"running","currentStep":"batch_search","attemptCount":1}\n\n',
-      'id: 3\nevent: run.completed\ndata: {"eventType":"run.completed","status":"completed","currentStep":"completed","attemptCount":1,"resultCount":2}\n\n',
+      'id: 1\nevent: run.queued\ndata: {"id":"1","event":"run.queued","runVersion":1,"data":{"eventType":"run.queued","status":"queued","currentStep":"queued","attemptCount":0}}\n\n',
+      'id: 2\nevent: run.started\ndata: {"id":"2","event":"run.started","runVersion":2,"data":{"eventType":"run.started","status":"running","currentStep":"batch_search","attemptCount":1}}\n\n',
+      'id: 3\nevent: run.completed\ndata: {"id":"3","event":"run.completed","runVersion":3,"data":{"eventType":"run.completed","status":"completed","currentStep":"completed","attemptCount":1,"resultCount":2}}\n\n',
     ].join(""));
-    expect(text).not.toMatch(/createdAt|runVersion|rawPayload|description|objectKey/);
+    expect(text).not.toMatch(/createdAt|rawPayload|description|objectKey/);
+    expect(text).toContain('"runVersion":3');
   });
 
   it.each([

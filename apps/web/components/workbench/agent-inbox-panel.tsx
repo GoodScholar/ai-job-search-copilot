@@ -66,7 +66,7 @@ export function AgentInboxPanel({ items, onResolved, onRunUpdated }: {
   return (
     <section aria-labelledby="agent-inbox-title" className="workbench-ledger agent-inbox-panel">
       <div className="workbench-ledger-heading">
-        <p>Agent Inbox · 待处理</p>
+        <p>待处理事项</p>
         <h2 id="agent-inbox-title">需要你决定的事项</h2>
       </div>
       <p aria-live="polite" className={message ? "agent-inbox-live" : "agent-inbox-live is-empty"} role="status">{message}</p>

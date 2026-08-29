@@ -51,6 +51,12 @@ export const AgentRunEventTypeSchema = z.enum([
   "run.queued", "run.started", "step.started", "step.completed", "run.retry_scheduled", "run.completed", "run.failed",
   "run.pause_requested", "run.paused", "run.resume_requested", "run.resumed", "run.cancel_requested", "run.cancelled", "run.budget_updated",
 ]);
+export type AgentRunEventType = z.infer<typeof AgentRunEventTypeSchema>;
+export const AGENT_RUN_TERMINAL_EVENT_TYPES = ["run.paused", "run.cancelled", "run.completed", "run.failed"] as const;
+
+export function isAgentRunTerminalEvent(eventType: AgentRunEventType): boolean {
+  return (AGENT_RUN_TERMINAL_EVENT_TYPES as readonly AgentRunEventType[]).includes(eventType);
+}
 
 export const AgentRunBudgetSchema = z.object({
   maxActiveDurationMs: z.literal(60_000), maxAttempts: z.literal(3), maxToolCalls: z.literal(10),
@@ -215,7 +221,7 @@ export const LatestAgentRunResponseSchema = z.object({ run: AgentRunDetailSchema
 export const AgentRunJobSchema = z.object({ version: z.literal(AGENT_RUN_JOB_VERSION), runId: z.uuid(), userId: z.uuid() }).strict();
 export const AgentRunSseCursorSchema = z.string().regex(/^(0|[1-9]\d*)$/u).refine((value) => Number(value) <= Number.MAX_SAFE_INTEGER, "must be a safe integer");
 export const AgentRunSseEventSchema = z.object({
-  id: AgentRunSseCursorSchema, event: AgentRunEventTypeSchema, data: AgentRunEventDataSchema,
+  id: AgentRunSseCursorSchema, event: AgentRunEventTypeSchema, runVersion: positiveInteger, data: AgentRunEventDataSchema,
 }).strict().superRefine(({ event, data }, context) => {
   if (event !== data.eventType) context.addIssue({ code: "custom", path: ["data", "eventType"], message: "event must match data" });
 });

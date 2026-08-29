@@ -19,6 +19,7 @@ afterEach(() => vi.restoreAllMocks());
 
 it("把开放事项作为语义化 article 呈现，并让调整目标不自动解决事项", () => {
   render(<AgentInboxPanel items={[item]} onResolved={vi.fn()} />);
+  expect(screen.getByText("待处理事项")).toBeVisible();
   expect(screen.getByRole("article", { name: "岗位发现预算已用尽" })).toBeVisible();
   expect(screen.getByRole("link", { name: "调整求职目标" })).toHaveAttribute("href", "/profile/targets");
   expect(screen.getByRole("button", { name: "标记已处理：岗位发现预算已用尽" })).toBeEnabled();

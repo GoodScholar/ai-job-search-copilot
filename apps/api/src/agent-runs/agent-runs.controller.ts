@@ -8,6 +8,7 @@ import {
   LatestAgentRunResponseSchema,
   StartAgentRunCommandSchema,
   StartAgentRunResponseSchema,
+  isAgentRunTerminalEvent,
   type AgentRunDetail,
 } from "@job-copilot/contracts/agent-runs";
 import { AgentRunControlError, AgentRunError } from "@job-copilot/domain/agent-runs";
@@ -148,14 +149,13 @@ export class AgentRunsController {
     const abort = new AbortController();
     request.raw.once("aborted", () => abort.abort());
     reply.raw.once("close", () => abort.abort());
+    const latestEvent = owned.events.at(-1);
     const stream = createAgentRunEventStream({
       queries: this.queries,
       userId,
       runId: params.runId,
       afterSequence,
-      terminalSequence: owned.status === "paused" || owned.status === "cancelled" || owned.status === "completed" || owned.status === "failed"
-        ? owned.events.at(-1)?.sequence
-        : undefined,
+      terminalSequence: latestEvent && isAgentRunTerminalEvent(latestEvent.eventType) ? latestEvent.sequence : undefined,
       signal: abort.signal,
     });
     reply
