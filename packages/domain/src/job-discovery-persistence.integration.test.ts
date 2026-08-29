@@ -31,10 +31,11 @@ class Queue implements AgentRunQueue { async enqueue() {} }
 describe("job discovery persistence lifecycle", () => {
   let container: StartedPostgreSqlContainer;
   let database: Database;
+  let statementCount = 0;
 
   beforeAll(async () => {
     container = await new PostgreSqlContainer("postgres:17-alpine").start();
-    database = createDatabase(container.getConnectionUri());
+    database = createDatabase(container.getConnectionUri(), { observer: { onQuery: () => { statementCount += 1; } } });
     await migrateDatabase(database);
   }, 60_000);
   afterAll(async () => { await database?.$client.end(); await container?.stop(); });
@@ -312,5 +313,23 @@ describe("job discovery persistence lifecycle", () => {
     await expect(failing.persistSuccessfulDiscovery({ run, details: [], scans: [{ sourceId, observedDetailIds: [], complete: true }], storedObjects: [], now: later })).rejects.toThrow("late audit");
     await expect(database.select({ availability: jobSourcePostingVersions.availability }).from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, userId))).resolves.toEqual([{ availability: "open" }]);
     await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, run.id))).resolves.toEqual([{ status: "running" }]);
+  });
+
+  it("complete scan reconciliation 的 SQL statement 数不随同一 board posting 数线性增长", async () => {
+    const reconcile = async (count: number) => {
+      const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const sourceId = `greenhouse:statement-${count}`;
+      await database.insert(jobAccounts).values({ id: userId });
+      await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: firstSeen, updatedAt: firstSeen });
+      await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: firstSeen });
+      const persistence = createJobDiscoveryPersistence({ db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => later }) });
+      const details = Array.from({ length: count }, (_, index) => ({ sourceId, detailId: String(index), company: "Fictional", title: "AI Engineer", location: null, postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true, rawPayload: {} }));
+      await persistence.persistSuccessfulDiscovery({ run: await claimRun(userId, targetId, firstSeen), details, scans: [{ sourceId, observedDetailIds: details.map((detail) => detail.detailId), complete: true }], storedObjects: details.map((detail, index) => ({ sourceId, detailId: detail.detailId, objectKey: `${count}-${index}.json`, rawContentSha256: `${index.toString(16)}`.padStart(64, "a").slice(-64) })), now: firstSeen });
+      statementCount = 0;
+      await persistence.persistSuccessfulDiscovery({ run: await claimRun(userId, targetId, later), details: [], scans: [{ sourceId, observedDetailIds: [], complete: true }], storedObjects: [], now: later });
+      return statementCount;
+    };
+    const one = await reconcile(1);
+    const many = await reconcile(12);
+    expect(many).toBeLessThanOrEqual(one + 2);
   });
 });
