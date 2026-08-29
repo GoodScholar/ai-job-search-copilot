@@ -124,7 +124,7 @@ describe("岗位发现 Agent Run Worker", () => {
   afterAll(async () => {
     await context?.close();
     await queue?.close();
-    if (queueRedis?.status !== "end") await queueRedis.quit();
+    if (queueRedis && queueRedis.status !== "end") await queueRedis.quit();
     await database?.$client.end();
     await minioContainer?.stop();
     await redisContainer?.stop();

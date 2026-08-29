@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "node ../../scripts/nest-dev.mjs",
-    "test": "vitest run",
+    "test": "vitest run --no-file-parallelism",
     "build": "nest build",
     "typecheck": "tsc --noEmit"
   },
