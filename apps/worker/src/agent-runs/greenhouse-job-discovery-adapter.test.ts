@@ -160,6 +160,21 @@ describe("GreenhouseJobDiscoveryAdapter", () => {
   });
 
   it.each([
+    ["targetSnapshot:null", { targetSnapshot: null, sourceScope: scope }],
+    ["constraints:null", { targetSnapshot: { ...targetSnapshot, constraints: null }, sourceScope: scope }],
+    ["invalid constraint type", { targetSnapshot: { ...targetSnapshot, constraints: { ...targetSnapshot.constraints, locations: "Beijing" } }, sourceScope: scope }],
+    ["unknown input field", { targetSnapshot, sourceScope: scope, unexpected: true }],
+    ["unknown target field", { targetSnapshot: { ...targetSnapshot, unexpected: true }, sourceScope: scope }],
+  ])("list whole input %s fails closed before DNS or transport", async (_label, input) => {
+    let lookups = 0;
+    let transports = 0;
+    const client = createPublicSourceClientForTest({ exactHosts: ["boards-api.greenhouse.io"], lookup: async () => { lookups += 1; return []; }, transport: async () => { transports += 1; throw new Error("must not run"); } });
+    const result = await new GreenhouseJobDiscoveryAdapter({ client }).searchBatch(input as never);
+    expect(result).toEqual({ ok: false, error: { code: "GREENHOUSE_SOURCE_UNSUPPORTED", retryable: false } });
+    expect({ lookups, transports }).toEqual({ lookups: 0, transports: 0 });
+  });
+
+  it.each([
     ["401", { status: 401 }, "GREENHOUSE_AUTH_FAILED", false, 1],
     ["403", { status: 403 }, "GREENHOUSE_AUTH_FAILED", false, 1],
     ["404", { status: 404 }, "GREENHOUSE_NOT_FOUND", false, 1],

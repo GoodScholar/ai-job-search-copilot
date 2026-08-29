@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   PUBLIC_JOB_DISCOVERY_BUDGET,
+  AgentRunTargetSnapshotSchema,
   type DiscoveryDetailInput,
   type DiscoveryDetailResult,
   type DiscoverySearchInput,
@@ -13,6 +14,17 @@ import { PublicSourceAccessError, createPublicSourceClient, type PublicSourceCli
 import type { JobDiscoveryAdapter } from "@job-copilot/domain/agent-runs";
 
 const GREENHOUSE_API_HOST = "boards-api.greenhouse.io";
+const RuntimeGreenhouseSourceSchema = z.object({
+  sourceId: z.string(), watchlistItemId: z.string(), canonicalCompanyName: z.string(), careersUrl: z.string(),
+  allowedDomains: z.array(z.string()), boardToken: z.string(),
+}).strict();
+const GreenhouseBatchSearchInputSchema = z.object({
+  targetSnapshot: AgentRunTargetSnapshotSchema,
+  sourceScope: z.object({
+    kind: z.literal("company_watchlist"), adapter: z.literal("greenhouse"), adapterVersion: z.literal("greenhouse-job-board-v1"),
+    watchlistVersion: z.number().int().positive(), sources: z.array(RuntimeGreenhouseSourceSchema).min(1).max(50),
+  }).strict(),
+}).strict();
 const ListJobSchema = z.object({
   id: z.union([z.number().int(), z.string().trim().min(1)]),
   title: z.string().trim().min(1),
@@ -129,10 +141,9 @@ export class GreenhouseJobDiscoveryAdapter implements JobDiscoveryAdapter {
     this.sources.clear();
     this.candidates.clear();
     this.detailCache.clear();
-    const rawSources = input.sourceScope && typeof input.sourceScope === "object" && Array.isArray((input.sourceScope as { sources?: unknown }).sources)
-      ? (input.sourceScope as { sources: unknown[] }).sources
-      : null;
-    if (!rawSources) return { ok: false, error: { code: "GREENHOUSE_SOURCE_UNSUPPORTED", retryable: false } };
+    const parsedInput = GreenhouseBatchSearchInputSchema.safeParse(input);
+    if (!parsedInput.success) return { ok: false, error: { code: "GREENHOUSE_SOURCE_UNSUPPORTED", retryable: false } };
+    const rawSources = parsedInput.data.sourceScope.sources;
     const authorizedSources: AuthorizedSource[] = [];
     for (const rawSource of rawSources) {
       if (!rawSource || typeof rawSource !== "object" || Array.isArray(rawSource)) return { ok: false, error: { code: "GREENHOUSE_SOURCE_UNSUPPORTED", retryable: false } };
@@ -140,7 +151,7 @@ export class GreenhouseJobDiscoveryAdapter implements JobDiscoveryAdapter {
       if (!authorized.ok) return { ok: false, error: { code: authorized.code, retryable: false } };
       authorizedSources.push(authorized.value);
     }
-    const strictScope = PublicAgentRunSourceScopeSchema.safeParse(input.sourceScope);
+    const strictScope = PublicAgentRunSourceScopeSchema.safeParse(parsedInput.data.sourceScope);
     if (!strictScope.success || strictScope.data.sources.length !== authorizedSources.length) {
       return { ok: false, error: { code: "GREENHOUSE_SOURCE_UNSUPPORTED", retryable: false } };
     }
@@ -162,7 +173,7 @@ export class GreenhouseJobDiscoveryAdapter implements JobDiscoveryAdapter {
       const observedDetailIds = [...new Set(parsed.data.jobs.map((job) => String(job.id)))];
       scans.push({ sourceId: rawSource.sourceId, observedDetailIds, complete: observedDetailIds.length === parsed.data.meta.total });
       for (const job of parsed.data.jobs) {
-        if (items.length >= PUBLIC_JOB_DISCOVERY_BUDGET.maxResults || !matchesTarget(job, input.targetSnapshot)) continue;
+        if (items.length >= PUBLIC_JOB_DISCOVERY_BUDGET.maxResults || !matchesTarget(job, parsedInput.data.targetSnapshot)) continue;
         const detailId = String(job.id);
         nextCandidates.add(`${rawSource.sourceId}:${detailId}`);
         items.push({ sourceId: rawSource.sourceId, detailId, company: null, title: job.title, location: job.location.name });

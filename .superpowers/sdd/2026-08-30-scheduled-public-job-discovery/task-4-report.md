@@ -29,6 +29,27 @@ Base: `a891f21e896fc20e9e26e0a14874196d1515dee1`
 
 `git diff --check` → success.
 
+## Fix Round 3/5
+
+Base: `8a737b078f6a4c02a5afeff74dab66e9b546079e`
+
+### RED / GREEN
+
+- RED: 合法 scope 加 `targetSnapshot:null` 时，旧实现会通过 source 校验并进入 public client，而不是在 Adapter 入口稳定失败。
+- GREEN: 新增单一严格 Zod `GreenhouseBatchSearchInputSchema`，覆盖整个 Public v2 batch input（target snapshot、constraints、scope、source 字段与未知字段）。解析失败一律在任何 classifier/DNS/transport 前返回 `GREENHOUSE_SOURCE_UNSUPPORTED`。
+
+### Evidence
+
+- 表驱动 whole-input 测试覆盖 `targetSnapshot:null`、`constraints:null`、错误 locations 类型、unknown input field 与 unknown target field；每行断言 stable non-retryable result 和 lookup/transport 均为 0。
+
+### Fix verification
+
+`APP_ENV=test pnpm --filter worker exec vitest run --no-file-parallelism src/agent-runs/greenhouse-job-discovery-adapter.test.ts src/agent-runs/job-discovery-adapter-resolver.test.ts src/agent-runs/agent-run.module.test.ts src/agent-runs/fake-job-discovery-adapter.test.ts` → 4 files / 59 tests passed.
+
+`pnpm --filter worker typecheck` → success.
+
+`git diff --check` → success.
+
 ## Fix Round 2/5
 
 Base: `a32ae14de8e72dcbdd4a81e8aa2e6ad9908f2eb2`
