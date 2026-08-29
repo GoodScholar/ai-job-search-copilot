@@ -28,7 +28,7 @@ function createMinioClient(): MinioClient {
   providers: [
     { provide: JOB_CONTENT_STORE, useFactory: (): JobContentStore => new MinioJobContentStore(createMinioClient()) },
     { provide: JOB_IMPORT_QUEUE, useFactory: (): JobImportQueue => new BullmqJobImportQueue() },
-    { provide: JOB_PAGE_FETCHER, useFactory: (): JobPageFetcher => new SecureJobPageFetcher({ appEnv: process.env.APP_ENV ?? "development", testOrigin: process.env.JOB_PAGE_FETCHER_TEST_ORIGIN }) },
+    { provide: JOB_PAGE_FETCHER, useFactory: (): JobPageFetcher => new SecureJobPageFetcher({ testOrigin: process.env.JOB_PAGE_FETCHER_TEST_ORIGIN }) },
     {
       provide: JOB_IMPORT_COMMANDS,
       inject: [DATABASE, AUDIT_TRAIL, JOB_CONTENT_STORE, JOB_IMPORT_QUEUE],

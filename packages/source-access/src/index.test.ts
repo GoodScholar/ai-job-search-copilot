@@ -87,6 +87,23 @@ describe("PublicSourceClient", () => {
     }
   });
 
+  it("does not grant HTTPS loopback test-origin capability outside real test mode", async () => {
+    const appEnv = process.env.APP_ENV;
+    let transports = 0;
+    process.env.APP_ENV = "production";
+    try {
+      const access = createPublicSourceClientForTest({
+        exactHosts: ["127.0.0.1"], testOrigin: "https://127.0.0.1:443",
+        transport: async () => { transports += 1; throw new Error("must not run"); },
+      });
+      await expect(access.get({ url: new URL("https://127.0.0.1/jobs"), allowedDomains: ["127.0.0.1"], accept: "text/html", maxRedirects: 0, retry: "none" }))
+        .rejects.toMatchObject({ code: "PUBLIC_SOURCE_TARGET_REJECTED" });
+      expect(transports).toBe(0);
+    } finally {
+      process.env.APP_ENV = appEnv;
+    }
+  });
+
   it("uses only the explicit controlled test origin and validates response policy", async () => {
     const access = client();
     await expect(access.get({ url: new URL(`${origin}/html`), allowedDomains: ["127.0.0.1"], accept: "text/html", maxRedirects: 0, retry: "none" }))

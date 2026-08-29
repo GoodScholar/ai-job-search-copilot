@@ -140,6 +140,32 @@ describe("SecureJobPageFetcher", () => {
       .rejects.toMatchObject({ code: "JOB_PAGE_REDIRECT_INVALID" } satisfies Pick<JobPageFetchError, "code">);
   });
 
+  it("响应头到达后仍以总时限终止缓慢响应正文", async () => {
+    await expect(new SecureJobPageFetcher({ testOrigin: origin, totalTimeoutMs: 50 }).fetch({ url: `${origin}/slow-body` }))
+      .rejects.toMatchObject({ code: "JOB_PAGE_TIMEOUT" } satisfies Pick<JobPageFetchError, "code">);
+  });
+
+  it("DNS 解析不返回时在总时限内失败且不会发起请求", async () => {
+    const configuredOrigin = `http://fixture.test:${new URL(origin).port}`;
+    const lookup = () => new Promise<never>(() => undefined);
+    await expect(new SecureJobPageFetcher({ testOrigin: configuredOrigin, totalTimeoutMs: 25, lookup }).fetch({ url: `${configuredOrigin}/lookup-never` }))
+      .rejects.toMatchObject({ code: "JOB_PAGE_TIMEOUT" } satisfies Pick<JobPageFetchError, "code">);
+    expect(neverLookupRequests).toBe(0);
+  });
+
+  it("重定向后的 DNS 解析共享同一总时限预算", async () => {
+    const configuredOrigin = `http://fixture.test:${new URL(origin).port}`;
+    let calls = 0;
+    const lookup = async () => {
+      calls += 1;
+      await new Promise((resolve) => setTimeout(resolve, calls === 1 ? 10 : 100));
+      return [{ address: "127.0.0.1", family: 4 }];
+    };
+    await expect(new SecureJobPageFetcher({ testOrigin: configuredOrigin, totalTimeoutMs: 50, lookup }).fetch({ url: `${configuredOrigin}/two-step-redirect` }))
+      .rejects.toMatchObject({ code: "JOB_PAGE_TIMEOUT" } satisfies Pick<JobPageFetchError, "code">);
+    expect(calls).toBe(2);
+  });
+
   it.each([
     ["/listing", "JOB_PAGE_LISTING"],
     ["/login", "JOB_PAGE_LOGIN_REQUIRED"],

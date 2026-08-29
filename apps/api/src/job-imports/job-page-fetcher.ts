@@ -1,4 +1,5 @@
 import { createPublicSourceClient, PublicSourceAccessError } from "@job-copilot/source-access";
+import { createPublicSourceClientForTest } from "@job-copilot/source-access/testing";
 import { parse, type DefaultTreeAdapterMap } from "parse5";
 
 export const JOB_PAGE_MAX_BYTES = 2 * 1024 * 1024;
@@ -37,11 +38,16 @@ export interface JobPageFetcher {
 
 type HtmlNode = DefaultTreeAdapterMap["node"];
 export class SecureJobPageFetcher implements JobPageFetcher {
-  constructor(_legacyTestConfig?: unknown) {}
+  constructor(private readonly config: { appEnv?: string; testOrigin?: string; connectTimeoutMs?: number; totalTimeoutMs?: number; lookup?: (hostname: string) => Promise<Array<{ address: string; family: number }>> } = {}) {}
 
   async fetch({ url }: { url: string }): Promise<FetchedJobPage> {
     const requested = this.parseUrl(url, "JOB_PAGE_URL_INVALID");
-    const client = createPublicSourceClient({ exactHosts: [requested.hostname] });
+    const client = process.env.APP_ENV === "test"
+      ? createPublicSourceClientForTest({
+        exactHosts: [requested.hostname], testOrigin: this.config.testOrigin ?? process.env.JOB_PAGE_FETCHER_TEST_ORIGIN,
+        connectTimeoutMs: this.config.connectTimeoutMs, totalTimeoutMs: this.config.totalTimeoutMs, lookup: this.config.lookup,
+      })
+      : createPublicSourceClient({ exactHosts: [requested.hostname] });
     let response: { status: number; headers: Readonly<Record<string, string>>; body: Uint8Array; finalUrl: URL; attemptCount: number };
     try {
       response = await client.get({ url: requested, allowedDomains: [requested.hostname], accept: "text/html", maxRedirects: 3, retry: "none" });
@@ -54,7 +60,7 @@ export class SecureJobPageFetcher implements JobPageFetcher {
     const extracted = extractJobPage(rawHtml, finalUrl);
     return {
       requestedUrl: requested.toString(), finalUrl: finalUrl.toString(), canonicalUrl: extracted.canonicalUrl,
-      rawHtml, visibleText: extracted.visibleText, pageClassification: "job", sourceKind: sourceKind(finalUrl),
+      rawHtml, visibleText: extracted.visibleText, pageClassification: "job", sourceKind: sourceKind(finalUrl, this.config.testOrigin ?? process.env.JOB_PAGE_FETCHER_TEST_ORIGIN),
     };
   }
 
@@ -179,8 +185,8 @@ function normalizedHostname(hostname: string): string {
   return hostname.toLowerCase().replace(/^www\./u, "");
 }
 
-function sourceKind(url: URL): "official" | "aggregator" {
-  if (process.env.APP_ENV === "test" && process.env.PUBLIC_SOURCE_TEST_ORIGIN && url.origin === process.env.PUBLIC_SOURCE_TEST_ORIGIN) return "official";
+function sourceKind(url: URL, testOrigin: string | undefined): "official" | "aggregator" {
+  if (process.env.APP_ENV === "test" && testOrigin && url.origin === testOrigin) return "official";
   return ["boards.greenhouse.io", "job-boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com", "apply.workable.com", "jobs.smartrecruiters.com"].includes(normalizedHostname(url.hostname))
     ? "official"
     : "aggregator";

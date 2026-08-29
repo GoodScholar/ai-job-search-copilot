@@ -57,3 +57,19 @@
 ### Concern
 
 The broad API command starts Testcontainers and failed during reaper port binding in this environment; the focused fetcher suite required for this slice passed with `pnpm --filter api exec vitest run src/job-imports/job-page-fetcher.test.ts`.
+
+## Fix Round 2
+
+### RED / GREEN
+
+- RED: a test-only `https://127.0.0.1` origin could still pass the old testing factory when the real environment was production; the restored fetcher timeout/DNS tests also no longer exercised the previous constructor wiring.
+- GREEN: `pnpm --filter @job-copilot/source-access test` — 15 tests passing, including production HTTPS loopback rejection with `transport=0`.
+- GREEN: `pnpm --filter api exec vitest run src/job-imports/job-page-fetcher.test.ts` — 26 tests passing, including restored slow-body total timeout, DNS timeout, and redirect shared-deadline coverage.
+- GREEN: source-access/API typecheck and `git diff --check` pass.
+
+### Changes
+
+- The testing factory now removes test origin and injected-transport capability unless the real `process.env.APP_ENV` is `test`; no call parameter can enable the loopback/private-IP exception in production.
+- #8 fetcher uses the test-only factory only under real test mode and keeps consuming `JOB_PAGE_FETCHER_TEST_ORIGIN` through its module provider. Production uses the root factory.
+- The fetcher’s legacy `appEnv` constructor field remains accepted for source compatibility but is intentionally not authoritative; actual environment controls test capability.
+- Restored timeout/DNS redirect-budget behavior uses the testing seam only under real test mode; stable `JobPageFetchError` mappings remain covered.
