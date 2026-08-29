@@ -99,7 +99,7 @@ async function fetchRunDetail(runId: string): Promise<AgentRunDetail> {
   return parsed.data;
 }
 
-export function AgentRunPanel({ targets, initialRun, onInboxRefresh }: { targets: JobTarget[]; initialRun: AgentRunDetail | null; onInboxRefresh?: () => Promise<void> }) {
+export function AgentRunPanel({ targets, initialRun, onInboxRefresh }: { targets: JobTarget[]; initialRun: AgentRunDetail | null; onInboxRefresh?: () => Promise<boolean> }) {
   const activeTargets = targets.filter((target) => target.state === "active");
   const initialTargetId = activeTargets.some((target) => target.targetId === initialRun?.targetId)
     ? initialRun!.targetId
@@ -127,6 +127,15 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh }: { targets
     if (snapshot.version < current.version || (current.controlState === "cancel_requested" && snapshot.controlState !== "cancel_requested" && snapshot.status !== "cancelled")) return false;
     replaceRun({ ...current, ...snapshot });
     return true;
+  }
+
+  async function refreshInboxSafely(): Promise<boolean> {
+    if (!onInboxRefresh) return true;
+    try {
+      return await onInboxRefresh();
+    } catch {
+      return false;
+    }
   }
 
   useEffect(() => {
@@ -167,7 +176,9 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh }: { targets
           replaceRun(detail);
           setTimeline(detailTimeline(detail));
           setMessage("");
-          void onInboxRefresh?.();
+          void refreshInboxSafely().then((refreshed) => {
+            if (streamActive && !refreshed) setMessage("待处理事项暂未刷新，请刷新页面查看。");
+          });
         }).catch(() => {
           if (streamActive) setMessage("岗位发现已结束，但结果暂时无法读取。请刷新页面重试。");
         });
@@ -251,7 +262,11 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh }: { targets
           const detail = await fetchRunDetail(run.runId);
           replaceRun(detail);
           setTimeline(detailTimeline(detail));
-          await onInboxRefresh?.();
+          const inboxRefreshed = await refreshInboxSafely();
+          if (!inboxRefreshed) {
+            setMessage("待处理事项暂未刷新，请刷新页面查看。");
+            return;
+          }
         } catch {
           setMessage("运行状态已更新，但详情暂时无法读取。请刷新页面重试。");
           return;

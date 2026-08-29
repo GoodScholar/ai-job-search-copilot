@@ -261,13 +261,41 @@ it("暂停事件关闭投影、重读详情并提供继续和取消", async () =
 
 it("暂停的权威详情读取后刷新开放 Inbox", async () => {
   const paused = { ...detail(), status: "paused" as const, currentStep: "batch_search" as const, controlState: "none" as const };
-  const refreshInbox = vi.fn().mockResolvedValue(undefined);
+  const refreshInbox = vi.fn().mockResolvedValue(true);
   vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(Response.json(paused)));
   render(<AgentRunPanel initialRun={detail()} onInboxRefresh={refreshInbox} targets={[target()]} />);
   const source = FakeEventSource.instances[0]!;
 
   act(() => source.emit("run.paused", "3", { eventType: "run.paused", status: "paused", currentStep: "batch_search", attemptCount: 1 }));
   await waitFor(() => expect(refreshInbox).toHaveBeenCalledOnce());
+});
+
+it("SSE 权威详情成功后 Inbox 刷新失败不会回退运行状态", async () => {
+  const paused = { ...detail(), status: "paused" as const, currentStep: "batch_search" as const, controlState: "none" as const };
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(Response.json(paused)));
+  const refreshInbox = vi.fn().mockRejectedValue(new Error("offline"));
+  render(<AgentRunPanel initialRun={detail()} onInboxRefresh={refreshInbox} targets={[target()]} />);
+  const source = FakeEventSource.instances[0]!;
+
+  act(() => source.emit("run.paused", "3", { eventType: "run.paused", status: "paused", currentStep: "batch_search", attemptCount: 1 }));
+
+  expect(await screen.findByRole("button", { name: "继续本次岗位发现" })).toBeVisible();
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("待处理事项暂未刷新，请刷新页面查看。"));
+});
+
+it("直接控制的权威详情成功后 Inbox 刷新失败不会误报详情失败", async () => {
+  const paused = { ...detail(), status: "paused" as const, currentStep: "batch_search" as const, controlState: "none" as const, version: 3 };
+  const response = { applied: true, run: { runId, status: "paused", currentStep: "batch_search", controlState: "none", version: 3 } };
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(response)).mockResolvedValueOnce(Response.json(paused)));
+  const refreshInbox = vi.fn().mockResolvedValue(false);
+  const user = userEvent.setup();
+  render(<AgentRunPanel initialRun={{ ...detail(), status: "queued", currentStep: "queued" }} onInboxRefresh={refreshInbox} targets={[target()]} />);
+
+  await user.click(screen.getByRole("button", { name: "暂停岗位发现" }));
+
+  expect(await screen.findByRole("button", { name: "继续本次岗位发现" })).toBeVisible();
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("待处理事项暂未刷新，请刷新页面查看。"));
+  expect(screen.getByRole("status")).not.toHaveTextContent("详情暂时无法读取");
 });
 
 it("reuses one idempotency UUID while the same start submission is retried", async () => {

@@ -23,15 +23,26 @@ const summaryItems = [
   ["投递记录", "applications"],
 ] as const;
 
+export async function loadOpenAgentInbox(): Promise<AgentInboxItem[] | false> {
+  try {
+    const response = await fetch("/api/agent-inbox?status=open", { cache: "no-store" });
+    if (!response.ok) return false;
+    const parsed = AgentInboxListSchema.safeParse(await response.json().catch(() => null));
+    return parsed.success ? parsed.data.items : false;
+  } catch {
+    return false;
+  }
+}
+
 export function WorkbenchHomeView({ home, targets, initialRun, inbox }: WorkbenchHomeViewProps) {
   const hasPendingFacts = home.summary.pendingFacts > 0;
   const [inboxItems, setInboxItems] = useState(inbox.items);
 
   const refreshInbox = useCallback(async () => {
-    const response = await fetch("/api/agent-inbox?status=open", { cache: "no-store" });
-    if (!response.ok) return;
-    const parsed = AgentInboxListSchema.safeParse(await response.json().catch(() => null));
-    if (parsed.success) setInboxItems(parsed.data.items);
+    const nextItems = await loadOpenAgentInbox();
+    if (nextItems === false) return false;
+    setInboxItems(nextItems);
+    return true;
   }, []);
 
   return (

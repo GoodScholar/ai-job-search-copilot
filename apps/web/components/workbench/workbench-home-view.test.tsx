@@ -1,7 +1,13 @@
 import { render, screen } from "@testing-library/react";
-import { WorkbenchHomeView } from "./workbench-home-view";
+import { vi } from "vitest";
+import { loadOpenAgentInbox, WorkbenchHomeView } from "./workbench-home-view";
 
 const emptyTargets = { suggestions: [], targets: [] };
+
+it("Inbox 刷新网络失败返回稳定 false，不抛出未处理异常", async () => {
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockRejectedValue(new Error("offline")));
+  await expect(loadOpenAgentInbox()).resolves.toBe(false);
+});
 
 it("shows only persisted empty workbench data", () => {
   render(<WorkbenchHomeView inbox={{ items: [] }} initialRun={null} targets={emptyTargets} home={{

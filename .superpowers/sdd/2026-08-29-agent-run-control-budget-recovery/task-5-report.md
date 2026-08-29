@@ -47,3 +47,9 @@
 - **RED：** 审查新增 9 个失败断言，覆盖暂停/终态后的 Inbox 刷新、低版本暂停响应晚于高版本取消、请求发出时的即时反馈、历史消费不完整、当前步骤与输出结构、控制按钮矩阵、409 后 UUID 轮换，以及四种 Inbox 动作的成功/失败语义。
 - **GREEN：** `WorkbenchHomeView` 持有开放 Inbox 的唯一客户端投影，并通过同源 GET 显式刷新；运行面板只在暂停或终态详情权威重读后触发刷新。控制响应按 version 单调应用，且已观察到的取消意图不可被旧暂停覆盖。每个动作请求前立即显示稳定状态。历史运行只显示预算上限。最后一项解决后保留带成功消息的 `aria-live` 区域。
 - **验证：** focused Web suite 42 files / 214 tests passed；`pnpm --filter web typecheck`、`pnpm --filter @job-copilot/contracts typecheck`、`git diff --check` 全部通过。
+
+## Review-fix round 2
+
+- **RED：** Inbox 网络/解析辅助读取能够 reject，导致 SSE fire-and-forget 未处理拒绝，直接控制把辅助刷新失败误归类为详情读取失败。
+- **GREEN：** 同源 Inbox 读取统一返回 `AgentInboxItem[] | false`，并捕获网络、HTTP 与解析失败。SSE 显式处理辅助刷新结果；直接控制先完成权威详情读取，再单独处理刷新。两条路径均保留已应用的运行状态，并仅显示“待处理事项暂未刷新，请刷新页面查看”。
+- **验证：** focused Web suite 42 files / 217 tests passed；Web typecheck、Contracts typecheck、diff check 全部通过。
