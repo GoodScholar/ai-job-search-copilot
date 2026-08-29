@@ -18,16 +18,29 @@ export function discoveryNormalizedData(detail: Discovery) {
 /** 仅负责机会 dedup/upsert 与来源证据链接；来源 posting/version 的生命周期由调用方维护。 */
 export async function persistJobOpportunity(db: PersistenceDb, input: {
   id: () => string; userId: string; importId: string | null; sourcePostingVersionId: string; isOfficial: boolean;
+  existingOpportunityId?: string;
   company: string | null; title: string | null; location: string | null; postedAt: string | null; deadline: string | null; description: string | null; normalizedData: Record<string, unknown>; now: Date;
 }): Promise<{ opportunityId: string }> {
   const dedupKey = opportunityKey(input);
-  let [opportunity] = await db.select({ id: jobOpportunities.id }).from(jobOpportunities).where(and(eq(jobOpportunities.userId, input.userId), eq(jobOpportunities.dedupKey, dedupKey)));
+  let [opportunity] = input.existingOpportunityId
+    ? await db.select({ id: jobOpportunities.id }).from(jobOpportunities).where(and(eq(jobOpportunities.userId, input.userId), eq(jobOpportunities.id, input.existingOpportunityId)))
+    : await db.select({ id: jobOpportunities.id }).from(jobOpportunities).where(and(eq(jobOpportunities.userId, input.userId), eq(jobOpportunities.dedupKey, dedupKey)));
   if (!opportunity) {
     const [created] = await db.insert(jobOpportunities).values({ id: input.id(), userId: input.userId, importId: input.importId, sourcePostingVersionId: input.sourcePostingVersionId, dedupKey, company: input.company, title: input.title, location: input.location, postedAt: input.postedAt ? new Date(input.postedAt) : null, deadline: input.deadline ? new Date(input.deadline) : null, description: input.description, normalizedData: input.normalizedData, createdAt: input.now, updatedAt: input.now }).returning({ id: jobOpportunities.id });
     if (!created) throw new Error("AGENT_RUN_PERSIST_FAILED");
     opportunity = created;
   } else if (input.isOfficial) {
-    await db.update(jobOpportunities).set({ sourcePostingVersionId: input.sourcePostingVersionId, updatedAt: input.now }).where(and(eq(jobOpportunities.userId, input.userId), eq(jobOpportunities.id, opportunity.id)));
+    await db.update(jobOpportunities).set({
+      sourcePostingVersionId: input.sourcePostingVersionId,
+      company: input.company,
+      title: input.title,
+      location: input.location,
+      postedAt: input.postedAt ? new Date(input.postedAt) : null,
+      deadline: input.deadline ? new Date(input.deadline) : null,
+      description: input.description,
+      normalizedData: input.normalizedData,
+      updatedAt: input.now,
+    }).where(and(eq(jobOpportunities.userId, input.userId), eq(jobOpportunities.id, opportunity.id)));
   }
   await db.insert(jobOpportunitySources).values({ id: input.id(), userId: input.userId, opportunityId: opportunity.id, sourcePostingVersionId: input.sourcePostingVersionId, createdAt: input.now }).onConflictDoNothing();
   return { opportunityId: opportunity.id };

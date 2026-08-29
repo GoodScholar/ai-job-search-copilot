@@ -4,6 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { agentRunEvents, agentRunJobResults, agentRunUsageEntries, agentRuns, createDatabase, jobAccounts, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
 import { createAgentRunCheckpoint, createAgentRunCommands, createAgentRunProcessor, createAgentRunQueries, type AgentRunCheckpoint, type AgentRunQueue, type DiscoveryContentStore, type JobDiscoveryAdapter, type JobDiscoveryAdapterResolver } from "./agent-runs";
+import { GREENHOUSE_JOB_DISCOVERY_ADAPTER, GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION, GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, GREENHOUSE_JOB_DISCOVERY_RULE_VERSION, GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION, PUBLIC_JOB_DISCOVERY_BUDGET } from "@job-copilot/contracts/agent-runs";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
 const constraints = { roleFamily: "AI 应用工程师", seniority: null, locations: [], workModes: [], relocation: "unknown" as const, salary: null, industries: [], dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] } };
@@ -151,6 +152,29 @@ describe("AgentRunProcessor checkpoints", () => {
       .resolves.toEqual([expect.objectContaining({ amount: 1, stepKey: "persist_results", attemptCount: 1 })]);
     await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({ usage: { toolCalls: 2, sourceRequests: 2, modelCalls: 0, results: 1 } });
     await expect(database.select().from(agentRunEvents).where(and(eq(agentRunEvents.runId, job.runId), eq(agentRunEvents.eventType, "run.budget_updated")))).resolves.toHaveLength(4);
+  });
+
+  it("Public v2 每个 board 列表和每个已选详情各预占一次逻辑预算，并持久完整扫描事实", async () => {
+    const job = await run();
+    const sources = [
+      { sourceId: "greenhouse:fictional-labs", watchlistItemId: crypto.randomUUID(), canonicalCompanyName: "Fictional Labs", careersUrl: "https://boards.greenhouse.io/fictional-labs", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], boardToken: "fictional-labs" },
+      { sourceId: "greenhouse:fictional-labs-secondary", watchlistItemId: crypto.randomUUID(), canonicalCompanyName: "Fictional Labs Secondary", careersUrl: "https://boards.greenhouse.io/fictional-labs-secondary", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], boardToken: "fictional-labs-secondary" },
+    ];
+    await database.update(agentRuns).set({
+      adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER, adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
+      workflowVersion: GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION, ruleVersion: GREENHOUSE_JOB_DISCOVERY_RULE_VERSION,
+      outputSchemaVersion: GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, budgetSnapshot: PUBLIC_JOB_DISCOVERY_BUDGET,
+      sourceScope: { kind: "company_watchlist", adapter: "greenhouse", adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION, watchlistVersion: 1, sources },
+    }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId)));
+    const adapter: JobDiscoveryAdapter = {
+      search: async () => ({ ok: false, error: { code: "UNUSED", retryable: false } }),
+      searchBatch: async () => ({ ok: true, data: { items: [{ sourceId: sources[0]!.sourceId, detailId: "701", company: null, title: "AI Engineer", location: "Shanghai" }], scans: [{ sourceId: sources[0]!.sourceId, observedDetailIds: ["701"], complete: true }, { sourceId: sources[1]!.sourceId, observedDetailIds: [], complete: true }] } }),
+      getDetail: async () => ({ ok: true, data: { sourceId: sources[0]!.sourceId, detailId: "701", company: "Fictional Labs", title: "AI Engineer", location: "Shanghai", postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true, rawPayload: { job: 701 } } }),
+    };
+
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(adapter), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("completed");
+    await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({ adapter: "greenhouse", usage: { toolCalls: 3, sourceRequests: 3, results: 1 } });
   });
 
   it("冻结 execution spec 的 model 为 null 时不产生模型调用计费", async () => {
