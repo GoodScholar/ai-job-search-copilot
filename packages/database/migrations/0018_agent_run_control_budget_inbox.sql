@@ -139,7 +139,7 @@ ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_fake_model_usage_check" CHEC
 ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_termination_kind_check" CHECK ("agent_runs"."termination_kind" is null or "agent_runs"."termination_kind" in ('completed', 'cancelled_by_user', 'source_failed', 'content_storage_failed', 'persistence_failed', 'budget_exhausted'));--> statement-breakpoint
 ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_termination_budget_dimension_check" CHECK (("agent_runs"."termination_kind" = 'budget_exhausted' and "agent_runs"."termination_budget_dimension" in ('active_duration', 'attempts', 'tool_calls', 'model_calls', 'tokens')) or ("agent_runs"."termination_kind" is distinct from 'budget_exhausted' and "agent_runs"."termination_budget_dimension" is null));--> statement-breakpoint
 ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_cancelled_step_check" CHECK (("agent_runs"."status" = 'cancelled') = ("agent_runs"."current_step" = 'cancelled'));--> statement-breakpoint
-ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_termination_mapping_check" CHECK (
+ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_termination_mapping_check" CHECK (coalesce((
     ("agent_runs"."status" in ('queued', 'running', 'paused') and "agent_runs"."termination_kind" is null and "agent_runs"."termination_budget_dimension" is null)
     or ("agent_runs"."status" = 'completed' and ((not "agent_runs"."usage_complete" and "agent_runs"."termination_kind" is null) or ("agent_runs"."termination_kind" = 'completed' and "agent_runs"."failure_code" is null and "agent_runs"."termination_budget_dimension" is null)))
     or ("agent_runs"."status" = 'cancelled' and ((not "agent_runs"."usage_complete" and "agent_runs"."termination_kind" is null) or ("agent_runs"."termination_kind" = 'cancelled_by_user' and "agent_runs"."failure_code" is null and "agent_runs"."termination_budget_dimension" is null)))
@@ -150,7 +150,7 @@ ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_termination_mapping_check" C
       or ("agent_runs"."termination_kind" = 'persistence_failed' and "agent_runs"."failure_code" = 'AGENT_RUN_PERSIST_FAILED' and "agent_runs"."termination_budget_dimension" is null)
       or ("agent_runs"."termination_kind" = 'budget_exhausted' and "agent_runs"."failure_code" = 'AGENT_RUN_BUDGET_EXCEEDED' and "agent_runs"."termination_budget_dimension" is not null)
     ))
-  );--> statement-breakpoint
+  ), false));--> statement-breakpoint
 ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_status_check" CHECK ("agent_runs"."status" in ('queued', 'running', 'paused', 'completed', 'failed', 'cancelled'));--> statement-breakpoint
 ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_current_step_check" CHECK ("agent_runs"."current_step" in ('queued', 'batch_search', 'fetch_details', 'persist_results', 'completed', 'failed', 'cancelled'));--> statement-breakpoint
 ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_failure_code_check" CHECK ("agent_runs"."failure_code" is null or "agent_runs"."failure_code" in ('AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_CONTENT_STORAGE_FAILED', 'AGENT_RUN_PERSIST_FAILED', 'AGENT_RUN_BUDGET_EXCEEDED', 'AGENT_RUN_MODEL_RETRYABLE', 'AGENT_RUN_MODEL_AUTH_FAILED', 'AGENT_RUN_MODEL_POLICY_REJECTED', 'AGENT_RUN_MODEL_INVALID_RESPONSE'));--> statement-breakpoint

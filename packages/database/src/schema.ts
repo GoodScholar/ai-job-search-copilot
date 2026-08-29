@@ -513,7 +513,7 @@ export const agentRuns = pgTable("agent_runs", {
   check("agent_runs_termination_kind_check", sql`${table.terminationKind} is null or ${table.terminationKind} in ('completed', 'cancelled_by_user', 'source_failed', 'content_storage_failed', 'persistence_failed', 'budget_exhausted')`),
   check("agent_runs_termination_budget_dimension_check", sql`(${table.terminationKind} = 'budget_exhausted' and ${table.terminationBudgetDimension} in ('active_duration', 'attempts', 'tool_calls', 'model_calls', 'tokens')) or (${table.terminationKind} is distinct from 'budget_exhausted' and ${table.terminationBudgetDimension} is null)`),
   check("agent_runs_cancelled_step_check", sql`(${table.status} = 'cancelled') = (${table.currentStep} = 'cancelled')`),
-  check("agent_runs_termination_mapping_check", sql`
+  check("agent_runs_termination_mapping_check", sql`coalesce((
     (${table.status} in ('queued', 'running', 'paused') and ${table.terminationKind} is null and ${table.terminationBudgetDimension} is null)
     or (${table.status} = 'completed' and ((not ${table.usageComplete} and ${table.terminationKind} is null) or (${table.terminationKind} = 'completed' and ${table.failureCode} is null and ${table.terminationBudgetDimension} is null)))
     or (${table.status} = 'cancelled' and ((not ${table.usageComplete} and ${table.terminationKind} is null) or (${table.terminationKind} = 'cancelled_by_user' and ${table.failureCode} is null and ${table.terminationBudgetDimension} is null)))
@@ -524,7 +524,7 @@ export const agentRuns = pgTable("agent_runs", {
       or (${table.terminationKind} = 'persistence_failed' and ${table.failureCode} = 'AGENT_RUN_PERSIST_FAILED' and ${table.terminationBudgetDimension} is null)
       or (${table.terminationKind} = 'budget_exhausted' and ${table.failureCode} = 'AGENT_RUN_BUDGET_EXCEEDED' and ${table.terminationBudgetDimension} is not null)
     ))
-  `),
+  ), false)`),
   check("agent_runs_timestamp_state_check", sql`
     (${table.status} in ('queued', 'paused') and ${table.completedAt} is null and ${table.failedAt} is null and ${table.cancelledAt} is null)
     or (${table.status} = 'running' and ${table.startedAt} is not null and ${table.completedAt} is null and ${table.failedAt} is null and ${table.cancelledAt} is null)

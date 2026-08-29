@@ -723,6 +723,30 @@ describe("database migrations", () => {
       where id = ${runId}
     `)).rejects.toMatchObject({ cause: { code: "23514" } });
     await expect(migratedDatabase.execute(sql`
+      update agent_runs
+      set status = 'completed', current_step = 'completed', started_at = now(), completed_at = now(),
+          usage_complete = true, termination_kind = null, failure_code = null, termination_budget_dimension = null
+      where id = ${runId}
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
+      update agent_runs
+      set status = 'failed', current_step = 'failed', started_at = now(), failed_at = now(),
+          usage_complete = true, termination_kind = 'source_failed', failure_code = null, termination_budget_dimension = null
+      where id = ${runId}
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
+      update agent_runs
+      set status = 'failed', current_step = 'failed', started_at = now(), failed_at = now(),
+          usage_complete = true, termination_kind = 'budget_exhausted', failure_code = null, termination_budget_dimension = null
+      where id = ${runId}
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
+      update agent_runs
+      set status = 'completed', current_step = 'completed', started_at = now(), completed_at = now(),
+          usage_complete = false, termination_kind = null, failure_code = null, termination_budget_dimension = null
+      where id = ${runId}
+    `)).resolves.toBeDefined();
+    await expect(migratedDatabase.execute(sql`
       insert into agent_run_usage_entries (user_id, run_id, usage_key, category, amount, attempt_count)
       values (${userId}, ${runId}, 'claim:1', 'tool_call', -1, 0)
     `)).rejects.toMatchObject({ cause: { code: "23514" } });
