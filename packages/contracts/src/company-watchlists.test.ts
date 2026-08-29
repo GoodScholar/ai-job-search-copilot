@@ -84,6 +84,13 @@ describe("company watchlist contracts", () => {
       expectedVersion: 1,
       orderedItemIds: Array.from({ length: 51 }, (_, index) => `a${index}84ef6d-7dc3-4e4e-8692-7d3199575716`),
     }).success).toBe(false);
+    expect(AddCompanyWatchlistItemCommandSchema.safeParse({ ...addCommand, expectedVersion: -1 }).success).toBe(false);
+    expect(ReorderCompanyWatchlistCommandSchema.safeParse({
+      expectedVersion: 1, orderedItemIds: [firstItemId], extra: true,
+    }).success).toBe(false);
+    expect(SetCompanyWatchlistItemStateCommandSchema.safeParse({
+      expectedVersion: 1, state: "enabled", extra: true,
+    }).success).toBe(false);
 
     for (const forbiddenField of ["username", "password", "cookie", "captchaBypass", "loginWallAuthorization"]) {
       expect(AddCompanyWatchlistItemCommandSchema.safeParse({
@@ -125,6 +132,15 @@ describe("company watchlist contracts", () => {
       ...overview,
       items: [secondItem, firstItem],
     }).success).toBe(false);
+    expect(CompanyWatchlistOverviewSchema.safeParse({ ...overview, version: 0 }).success).toBe(false);
+    expect(CompanyWatchlistOverviewSchema.safeParse({
+      ...overview,
+      items: Array.from({ length: 51 }, (_, index) => ({
+        ...firstItem,
+        itemId: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+        position: index + 1,
+      })),
+    }).success).toBe(false);
   });
 
   it("requires a public careers URL hosted by an allowed domain without credentials", () => {
@@ -141,12 +157,23 @@ describe("company watchlist contracts", () => {
       "https://user:password@aurora.example/careers",
       "https://aurora.example/careers?access_token=secret",
       "https://aurora.example/careers?PASSWORD=secret",
+      "https://aurora.example/careers?api_key=secret",
+      "https://aurora.example/careers?client_secret=secret",
       "https://localhost/careers",
-      "https://127.0.0.1/careers",
       "https://[::1]/careers",
     ]) {
       expect(AddCompanyWatchlistItemCommandSchema.safeParse({ ...addCommand, careersUrl }).success).toBe(false);
     }
+
+    const urlAtLimit = `https://aurora.example/${"a".repeat(2_025)}`;
+    expect(urlAtLimit).toHaveLength(2_048);
+    expect(AddCompanyWatchlistItemCommandSchema.safeParse({ ...addCommand, careersUrl: urlAtLimit }).success).toBe(true);
+    expect(AddCompanyWatchlistItemCommandSchema.safeParse({ ...addCommand, careersUrl: `${urlAtLimit}a` }).success).toBe(false);
+    expect(AddCompanyWatchlistItemCommandSchema.safeParse({
+      ...addCommand,
+      careersUrl: "https://127.0.0.1/careers",
+      allowedDomains: ["127.0.0.1"],
+    }).success).toBe(false);
 
     expect(AddCompanyWatchlistItemCommandSchema.safeParse({
       ...addCommand,
@@ -159,6 +186,10 @@ describe("company watchlist contracts", () => {
     expect(AddCompanyWatchlistItemCommandSchema.safeParse({
       ...addCommand,
       allowedDomains: ["*.aurora.example"],
+    }).success).toBe(false);
+    expect(AddCompanyWatchlistItemCommandSchema.safeParse({
+      ...addCommand,
+      allowedDomains: ["aurora.example", "aurora.example"],
     }).success).toBe(false);
   });
 });

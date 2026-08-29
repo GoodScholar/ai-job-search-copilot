@@ -4,10 +4,16 @@ const version = z.int().min(0);
 const positiveInteger = z.int().min(1);
 const sensitiveQueryKeys = new Set([
   "token", "access_token", "auth", "session", "password", "secret", "key", "code",
+  "api_key", "api_token", "client_secret", "client_token", "private_key", "refresh_token", "id_token",
 ]);
 
+function isIpv4Literal(value: string): boolean {
+  const parts = value.split(".");
+  return parts.length === 4 && parts.every((part) => /^\d{1,3}$/u.test(part) && Number(part) <= 255);
+}
+
 function isPublicDnsName(value: string): boolean {
-  if (value.length > 253 || value === "localhost" || value.endsWith(".localhost")) return false;
+  if (value.length > 253 || isIpv4Literal(value) || value === "localhost" || value.endsWith(".localhost")) return false;
   const labels = value.split(".");
   return labels.length >= 2 && labels.every((label) => (
     label.length >= 1
@@ -16,13 +22,17 @@ function isPublicDnsName(value: string): boolean {
   ));
 }
 
+function isCredentialQueryKey(value: string): boolean {
+  return sensitiveQueryKeys.has(value.toLowerCase().replaceAll(/[-.]/gu, "_"));
+}
+
 function isAllowedCareersUrl(value: string, allowedDomains: string[]): boolean {
   try {
     const url = new URL(value);
     if (!/^https?:$/u.test(url.protocol) || url.username || url.password) return false;
     const host = url.hostname.toLowerCase();
     if (host.includes(":") || !isPublicDnsName(host)) return false;
-    if (Array.from(url.searchParams.keys()).some((key) => sensitiveQueryKeys.has(key.toLowerCase()))) return false;
+    if (Array.from(url.searchParams.keys()).some(isCredentialQueryKey)) return false;
     return allowedDomains.some((domain) => host === domain || host.endsWith(`.${domain}`));
   } catch {
     return false;
@@ -78,6 +88,9 @@ export const CompanyWatchlistOverviewSchema = z.object({
   }
   if (value.items.some(({ position }, index) => position !== index + 1)) {
     context.addIssue({ code: "custom", path: ["items"], message: "item positions must be contiguous" });
+  }
+  if ((value.version === 0) !== (value.items.length === 0)) {
+    context.addIssue({ code: "custom", path: ["items"], message: "version zero must represent an empty Watchlist" });
   }
 });
 

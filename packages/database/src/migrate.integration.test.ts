@@ -926,6 +926,14 @@ describe("database migrations", () => {
     `)).rejects.toMatchObject({ cause: { code: "23514" } });
     await expect(migratedDatabase.execute(sql`
       insert into company_watchlist_revisions (user_id, watchlist_id, target_id, version, items)
+      values (${firstUserId}, ${watchlistId}, ${targetId}, 1, '[]'::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23505" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into company_watchlist_revisions (user_id, watchlist_id, target_id, version, items)
+      values (${firstUserId}, ${watchlistId}, ${targetId}, 0, '[]'::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into company_watchlist_revisions (user_id, watchlist_id, target_id, version, items)
       values (${secondUserId}, ${watchlistId}, ${targetId}, 2, '[]'::jsonb)
     `)).rejects.toMatchObject({ cause: { code: "23503" } });
   });
