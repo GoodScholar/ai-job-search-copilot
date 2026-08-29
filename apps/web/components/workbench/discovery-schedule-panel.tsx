@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 
 type Props = { targetId: string; targetState: "active" | "inactive" };
-type LoadState = { kind: "loading" } | { kind: "error" } | { kind: "ready"; value: JobDiscoveryScheduleResponse };
+type LoadState = { targetId: string; kind: "loading" } | { targetId: string; kind: "error" } | { targetId: string; kind: "ready"; value: JobDiscoveryScheduleResponse };
 
 function scheduleStatus(input: JobDiscoveryScheduleResponse, targetState: Props["targetState"]) {
   if (targetState !== "active") return { text: "该求职目标已停用，不能启用每日检查。", canEnable: false };
@@ -15,27 +15,27 @@ function scheduleStatus(input: JobDiscoveryScheduleResponse, targetState: Props[
 }
 
 export function DiscoverySchedulePanel({ targetId, targetState }: Props) {
-  const [loaded, setLoaded] = useState<LoadState>({ kind: "loading" });
+  const [loaded, setLoaded] = useState<LoadState>(() => ({ targetId, kind: "loading" }));
   const generation = useRef(0);
   useEffect(() => {
     const requestGeneration = ++generation.current;
     const controller = new AbortController();
-    setLoaded({ kind: "loading" });
     void fetch(`/api/job-targets/${targetId}/discovery-schedule`, { cache: "no-store", signal: controller.signal }).then(async (response) => {
       if (!response.ok) throw new Error("schedule unavailable");
       const parsed = JobDiscoveryScheduleResponseSchema.safeParse(await response.json().catch(() => null));
       if (!parsed.success) throw new Error("invalid schedule");
-      if (generation.current === requestGeneration) setLoaded({ kind: "ready", value: parsed.data });
+      if (generation.current === requestGeneration) setLoaded({ targetId, kind: "ready", value: parsed.data });
     }).catch(() => {
-      if (!controller.signal.aborted && generation.current === requestGeneration) setLoaded({ kind: "error" });
+      if (!controller.signal.aborted && generation.current === requestGeneration) setLoaded({ targetId, kind: "error" });
     });
     return () => controller.abort();
   }, [targetId]);
+  const visible = loaded.targetId === targetId ? loaded : { targetId, kind: "loading" } as const;
   return <section aria-labelledby="discovery-schedule-title" className="discovery-schedule-panel">
     <div className="discovery-schedule-heading"><div><p>自动检查 · 计划</p><h3 id="discovery-schedule-title">每天检查新岗位</h3></div></div>
-    {loaded.kind === "loading" ? <p aria-live="polite" className="discovery-schedule-live">正在读取每日检查…</p> : null}
-    {loaded.kind === "error" ? <p aria-live="polite" className="discovery-schedule-live">每日检查暂时无法读取，请稍后重试。</p> : null}
-    {loaded.kind === "ready" ? <DiscoveryScheduleForm key={`${targetId}:${loaded.value.schedule?.version ?? 0}`} initialSchedule={loaded.value} targetId={targetId} targetState={targetState} /> : null}
+    {visible.kind === "loading" ? <p aria-live="polite" className="discovery-schedule-live">正在读取每日检查…</p> : null}
+    {visible.kind === "error" ? <p aria-live="polite" className="discovery-schedule-live">每日检查暂时无法读取，请稍后重试。</p> : null}
+    {visible.kind === "ready" ? <DiscoveryScheduleForm key={`${targetId}:${visible.value.schedule?.version ?? 0}`} initialSchedule={visible.value} targetId={targetId} targetState={targetState} /> : null}
   </section>;
 }
 
