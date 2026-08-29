@@ -123,30 +123,30 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
   const mountedRef = useRef(false);
   const [pendingControls, setPendingControls] = useState<Record<"pause" | "resume" | "cancel", boolean>>({ pause: false, resume: false, cancel: false });
 
-  function replaceRun(next: AgentRunDetail | null) {
+  const replaceRun = useCallback((next: AgentRunDetail | null) => {
     runRef.current = next;
     setRun(next);
-  }
+  }, []);
 
-  function applyRunProjection(snapshot: Pick<AgentRunDetail, "status" | "currentStep" | "controlState" | "version">): boolean {
+  const applyRunProjection = useCallback((snapshot: Pick<AgentRunDetail, "status" | "currentStep" | "controlState" | "version">): boolean => {
     const current = runRef.current;
     if (!current) return false;
     if (snapshot.version < current.version || (current.controlState === "cancel_requested" && snapshot.controlState !== "cancel_requested" && snapshot.status !== "cancelled")) return false;
     replaceRun({ ...current, ...snapshot });
     return true;
-  }
+  }, [replaceRun]);
 
   function applyControlSnapshot(snapshot: Pick<AgentRunDetail, "status" | "currentStep" | "controlState" | "version">): boolean {
     return applyRunProjection(snapshot);
   }
 
-  function applyAuthoritativeDetail(detail: AgentRunDetail): boolean {
+  const applyAuthoritativeDetail = useCallback((detail: AgentRunDetail): boolean => {
     const current = runRef.current;
     if (!current || current.runId !== detail.runId) return false;
     if (detail.version < current.version || (current.controlState === "cancel_requested" && detail.controlState !== "cancel_requested" && detail.status !== "cancelled")) return false;
     replaceRun(detail);
     return true;
-  }
+  }, [replaceRun]);
 
   const refreshInboxSafely = useCallback(async (): Promise<boolean> => {
     if (!onInboxRefresh) return true;
@@ -176,7 +176,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
         setMessage("运行状态已更新，但详情暂时无法读取。请刷新页面重试。");
       }
     });
-  }, [refreshVersion]);
+  }, [applyAuthoritativeDetail, refreshVersion]);
 
   useEffect(() => {
     if (!run || ["paused", "completed", "failed", "cancelled"].includes(run.status)) return;
@@ -239,7 +239,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
       stream.removeEventListener("error", handleError);
       stream.close();
     };
-  }, [onInboxRefresh, refreshInboxSafely, run]);
+  }, [applyAuthoritativeDetail, applyRunProjection, refreshInboxSafely, replaceRun, run]);
 
   async function startRun() {
     if (!selectedTargetId || runIsUnfinished || isStarting) return;
