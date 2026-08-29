@@ -41,7 +41,7 @@ it("starts the four authenticated first reads in parallel and passes their stric
   let resolveHome!: (value: unknown) => void;
   const homePromise = new Promise((resolve) => { resolveHome = resolve; });
   const home = { account: { userId: "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3" }, summary: { recommendations: 0, pendingFacts: 0, runningAgentRuns: 0, applications: 0 } };
-  const targets = { suggestions: [], targets: [] };
+  const targets = { suggestions: [], targets: [{ targetId: "4f8c6eb3-2b92-4d91-aad4-959b7d4cd7a3", version: 1, state: "active", roleFamily: "engineering", preferredLocations: [], workModes: [], employmentTypes: [], salaryCurrency: null, salaryMin: null, salaryMax: null, createdAt: "2026-08-30T02:00:00.000Z", updatedAt: "2026-08-30T02:00:00.000Z" }] };
   const latest = { run: null };
   const inbox = { items: [] };
   mocks.getWorkbenchHome.mockReturnValue(homePromise);
@@ -55,6 +55,7 @@ it("starts the four authenticated first reads in parallel and passes their stric
   expect(mocks.getJobTargets).toHaveBeenCalledOnce();
   expect(mocks.getLatestAgentRun).toHaveBeenCalledOnce();
   expect(mocks.getOpenAgentInbox).toHaveBeenCalledOnce();
+  expect(mocks.getJobDiscoverySchedule).not.toHaveBeenCalled();
   resolveHome(home);
 
   const page = await pendingPage;
