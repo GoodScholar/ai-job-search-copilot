@@ -1,0 +1,121 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AgentRunDetail } from "@job-copilot/contracts/agent-runs";
+import { createAgentRunEventStream, resolveAgentRunEventCursor } from "./agent-run-event-stream.js";
+
+const userId = "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3";
+const runId = "b0d2bfbf-7e40-49fc-86c8-3a15d7ad4f98";
+const createdAt = "2026-08-29T08:00:00.000Z";
+
+const queuedEvent: AgentRunDetail["events"][number] = {
+  sequence: 1,
+  runVersion: 1,
+  eventType: "run.queued",
+  data: { eventType: "run.queued", status: "queued", currentStep: "queued", attemptCount: 0 },
+  createdAt,
+};
+const startedEvent: AgentRunDetail["events"][number] = {
+  sequence: 2,
+  runVersion: 2,
+  eventType: "run.started",
+  data: { eventType: "run.started", status: "running", currentStep: "batch_search", attemptCount: 1 },
+  createdAt,
+};
+const completedEvent: AgentRunDetail["events"][number] = {
+  sequence: 3,
+  runVersion: 3,
+  eventType: "run.completed",
+  data: { eventType: "run.completed", status: "completed", currentStep: "completed", attemptCount: 1, resultCount: 2 },
+  createdAt,
+};
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+describe("Agent Run SSE", () => {
+  it("从游标零完整有序回放脱敏事件，并在终态后关闭", async () => {
+    const eventsAfter = vi.fn().mockResolvedValue([queuedEvent, startedEvent, completedEvent]);
+    const stream = createAgentRunEventStream({ queries: { eventsAfter }, userId, runId, afterSequence: 0 });
+
+    const text = await readAll(stream);
+
+    expect(eventsAfter).toHaveBeenCalledWith({ userId, runId, afterSequence: 0 });
+    expect(text).toBe([
+      'id: 1\nevent: run.queued\ndata: {"eventType":"run.queued","status":"queued","currentStep":"queued","attemptCount":0}\n\n',
+      'id: 2\nevent: run.started\ndata: {"eventType":"run.started","status":"running","currentStep":"batch_search","attemptCount":1}\n\n',
+      'id: 3\nevent: run.completed\ndata: {"eventType":"run.completed","status":"completed","currentStep":"completed","attemptCount":1,"resultCount":2}\n\n',
+    ].join(""));
+    expect(text).not.toMatch(/createdAt|runVersion|rawPayload|description|objectKey/);
+  });
+
+  it.each([
+    ["2", undefined, 2],
+    [undefined, "1", 1],
+    ["1", "2", 2],
+  ] as const)("选择 Last-Event-ID=%s 与 afterEventId=%s 的较大合法游标", (lastEventId, afterEventId, expected) => {
+    expect(resolveAgentRunEventCursor({ lastEventId, afterEventId })).toBe(expected);
+  });
+
+  it("从已确认游标之后继续回放且不重复旧事件", async () => {
+    const eventsAfter = vi.fn().mockResolvedValue([completedEvent]);
+    const afterSequence = resolveAgentRunEventCursor({ lastEventId: "1", afterEventId: "2" });
+
+    const text = await readAll(createAgentRunEventStream({ queries: { eventsAfter }, userId, runId, afterSequence }));
+
+    expect(eventsAfter).toHaveBeenCalledWith({ userId, runId, afterSequence: 2 });
+    expect(text).toContain("id: 3");
+    expect(text).not.toContain("id: 1");
+    expect(text).not.toContain("id: 2");
+  });
+
+  it("终态游标已被客户端确认时立即关闭而不继续轮询", async () => {
+    const eventsAfter = vi.fn().mockResolvedValue([]);
+    const stream = createAgentRunEventStream({
+      queries: { eventsAfter }, userId, runId, afterSequence: 3, terminalSequence: 3,
+    });
+
+    await expect(stream.getReader().read()).resolves.toEqual({ done: true, value: undefined });
+    expect(eventsAfter).not.toHaveBeenCalled();
+  });
+
+  it("空闲十五秒发送注释心跳并继续轮询数据库", async () => {
+    vi.useFakeTimers();
+    const eventsAfter = vi.fn().mockResolvedValue([]);
+    const reader = createAgentRunEventStream({ queries: { eventsAfter }, userId, runId, afterSequence: 0 }).getReader();
+    const next = reader.read();
+
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    await expect(next).resolves.toEqual({ done: false, value: new TextEncoder().encode(": heartbeat\n\n") });
+    expect(eventsAfter.mock.calls.length).toBeGreaterThan(1);
+    await reader.cancel();
+  });
+
+  it("请求中止后清理计时器、停止查询并关闭流", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const eventsAfter = vi.fn().mockResolvedValue([]);
+    const reader = createAgentRunEventStream({
+      queries: { eventsAfter }, userId, runId, afterSequence: 0, signal: controller.signal,
+    }).getReader();
+    await vi.advanceTimersByTimeAsync(250);
+    const callsBeforeAbort = eventsAfter.mock.calls.length;
+
+    controller.abort();
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    await expect(reader.read()).resolves.toEqual({ done: true, value: undefined });
+    expect(eventsAfter).toHaveBeenCalledTimes(callsBeforeAbort);
+  });
+});
+
+async function readAll(stream: ReadableStream<Uint8Array>): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) return text;
+    text += decoder.decode(chunk.value, { stream: true });
+  }
+}

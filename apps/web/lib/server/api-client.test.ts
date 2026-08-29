@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vitest";
 import type { JobTargetOverview } from "@job-copilot/contracts/job-targets";
 import type { JobImportDetail } from "@job-copilot/contracts/job-imports";
+import type { AgentRunDetail, StartAgentRunResponse } from "@job-copilot/contracts/agent-runs";
 
 vi.mock("server-only", () => ({}));
 
@@ -13,6 +14,7 @@ const documentId = "b4d4a7c1-9a17-4a8c-8b36-0f815d042e9a";
 const conflictId = "c4d4a7c1-9a17-4a8c-8b36-0f815d042e9a";
 const targetId = "4f8c6eb3-2b92-4d91-aad4-959b7d4cd7a3";
 const jobImportId = "b0d2bfbf-7e40-49fc-86c8-3a15d7ad4f98";
+const agentRunId = "d194d0ce-fc7e-45db-9425-e8ff4eaf8c08";
 
 const queuedImport = {
   importId,
@@ -69,6 +71,37 @@ const jobImportSummary = {
   importId: jobImportId, inputType: "pasted_text", originalFilename: null, status: "imported", failureCode: null,
   createdAt: "2026-08-28T08:00:00.000Z", updatedAt: "2026-08-28T08:00:00.000Z",
 } as const;
+const agentRunSummary = {
+  runId: agentRunId,
+  targetId,
+  targetVersion: 1,
+  targetSnapshot: { targetId, version: 1, priority: "primary", state: "active", constraints: jobTargetOverview.targets[0].constraints },
+  sourceScope: {
+    kind: "company_watchlist", adapter: "fake", adapterVersion: "fake-job-discovery-v1",
+    sources: ["fake:aurora-careers", "fake:orbit-careers"],
+  },
+  workflowVersion: "job-discovery-workflow-v1",
+  adapter: "fake",
+  adapterVersion: "fake-job-discovery-v1",
+  outputSchemaVersion: "job-discovery-result-v1",
+  budget: { maxDurationMs: 60_000, maxAttempts: 3, maxToolCalls: 10, maxResults: 5, maxModelCalls: 0, maxTokens: 0 },
+  status: "queued",
+  currentStep: "queued",
+  version: 1,
+  attemptCount: 0,
+  failureCode: null,
+  queuedAt: "2026-08-29T08:00:00.000Z",
+  startedAt: null,
+  completedAt: null,
+  failedAt: null,
+  updatedAt: "2026-08-29T08:00:00.000Z",
+} satisfies Omit<StartAgentRunResponse, "reused">;
+const agentRunDetail = {
+  ...agentRunSummary,
+  steps: [],
+  events: [],
+  results: [],
+} satisfies AgentRunDetail;
 
 it("starts a dev session with an opaque request id and parses the shared response", async () => {
   const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
@@ -353,4 +386,72 @@ it("拒绝不符合岗位导入契约的成功响应", async () => {
   });
 
   await expect(api.listJobImports(sessionToken)).rejects.toMatchObject({ kind: "invalid_response" });
+});
+
+it("通过服务端 bearer 启动并严格读取 Agent Run DTO", async () => {
+  const fetchImpl = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response(JSON.stringify({ ...agentRunSummary, reused: false }), { status: 201 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ run: agentRunDetail }), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(agentRunDetail), { status: 200 }));
+  const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+  const command = { targetId, idempotencyKey: "91cc6d11-6e50-4456-b2f0-393461336376" };
+
+  await expect(client.startAgentRun(sessionToken, command)).resolves.toEqual({ ...agentRunSummary, reused: false });
+  await expect(client.getLatestAgentRun(sessionToken)).resolves.toEqual({ run: agentRunDetail });
+  await expect(client.getAgentRun(sessionToken, agentRunId)).resolves.toEqual(agentRunDetail);
+
+  expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+    "http://127.0.0.1:3021/v1/agent-runs",
+    "http://127.0.0.1:3021/v1/agent-runs/latest",
+    `http://127.0.0.1:3021/v1/agent-runs/${agentRunId}`,
+  ]);
+  expect(fetchImpl.mock.calls[0]![1]).toMatchObject({ method: "POST", body: JSON.stringify(command) });
+  for (const [, init] of fetchImpl.mock.calls) {
+    expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${sessionToken}`);
+  }
+});
+
+it("拒绝不符合 Agent Run 契约的成功 JSON", async () => {
+  const fetchImpl = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response(JSON.stringify({ ...agentRunSummary, reused: false, rawPayload: "secret" }), { status: 201 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ run: { ...agentRunDetail, unknown: true } }), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ ...agentRunDetail, unknown: true }), { status: 200 }));
+  const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+  const command = { targetId, idempotencyKey: "91cc6d11-6e50-4456-b2f0-393461336376" };
+
+  await expect(client.startAgentRun(sessionToken, command)).rejects.toMatchObject({ kind: "invalid_response" });
+  await expect(client.getLatestAgentRun(sessionToken)).rejects.toMatchObject({ kind: "invalid_response" });
+  await expect(client.getAgentRun(sessionToken, agentRunId)).rejects.toMatchObject({ kind: "invalid_response" });
+});
+
+it("原样打开 SSE 响应体并转发游标与下游取消信号", async () => {
+  const body = new ReadableStream<Uint8Array>();
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(body, {
+    status: 200,
+    headers: { "content-type": "text/event-stream; charset=utf-8" },
+  }));
+  const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+  const abort = new AbortController();
+
+  const response = await client.openAgentRunEventStream(sessionToken, agentRunId, {
+    lastEventId: "3", afterEventId: "2", signal: abort.signal,
+  });
+
+  expect(response.body).toBe(body);
+  const [url, init] = fetchImpl.mock.calls[0]!;
+  expect(url).toBe(`http://127.0.0.1:3021/v1/agent-runs/${agentRunId}/events?afterEventId=2`);
+  expect(init?.signal).toBe(abort.signal);
+  expect(new Headers(init?.headers)).toMatchObject(expect.any(Headers));
+  expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${sessionToken}`);
+  expect(new Headers(init?.headers).get("last-event-id")).toBe("3");
+});
+
+it("拒绝伪装成成功响应的非 SSE 上游流", async () => {
+  const client = createApiClient({
+    apiInternalUrl: "http://127.0.0.1:3021",
+    devAuthSharedSecret: "secret",
+    fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(new Response("{}", { status: 200, headers: { "content-type": "application/json" } })),
+  });
+
+  await expect(client.openAgentRunEventStream(sessionToken, agentRunId, {})).rejects.toMatchObject({ kind: "invalid_response" });
 });

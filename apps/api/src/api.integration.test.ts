@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { auditEvents, candidateFactEvidence, candidateFacts, careerDocuments, careerFactConflicts, careerImports, createDatabase, migrateDatabase, type Database } from "@job-copilot/database";
 import type { CareerDocumentStore, CareerImportQueue } from "@job-copilot/domain/career-imports";
 import type { JobContentStore, JobImportQueue } from "@job-copilot/domain/job-imports";
+import type { AgentRunQueue } from "@job-copilot/domain/agent-runs";
 import { AppModule } from "./app.module.js";
 import { configureApiApplication } from "./configure-api-application.js";
 import { DATABASE } from "./config/runtime-config.module.js";
@@ -15,6 +16,7 @@ import { JOB_CONTENT_STORE, JOB_IMPORT_QUEUE, JOB_PAGE_FETCHER } from "./job-imp
 import { JobPageFetchError, type JobPageFetcher } from "./job-imports/job-page-fetcher.js";
 import { createMinimalDocx } from "./career-import/minimal-docx.test-support.js";
 import { CAREER_FACT_CONFLICT_REVIEW_COMMANDS, PROFILE_REVIEW_COMMANDS, type ProfileReviewCommands } from "./profile-review/profile-review.tokens.js";
+import { AGENT_RUN_QUEUE_PORT } from "./agent-runs/agent-runs.tokens.js";
 import { z } from "zod";
 
 const testSecret = "test-dev-auth-shared-secret-must-be-at-least-32-characters";
@@ -66,6 +68,17 @@ describe("authenticated workbench HTTP API", () => {
       if (this.failNext) {
         this.failNext = false;
         throw new Error("job queue unavailable with private-job@example.test");
+      }
+      this.jobs.push(job);
+    },
+  };
+  const agentRunQueue: AgentRunQueue & { jobs: unknown[]; failNext: boolean } = {
+    jobs: [],
+    failNext: false,
+    async enqueue(job) {
+      if (this.failNext) {
+        this.failNext = false;
+        throw new Error("agent queue unavailable with private-agent@example.test");
       }
       this.jobs.push(job);
     },
@@ -124,6 +137,7 @@ describe("authenticated workbench HTTP API", () => {
       .overrideProvider(JOB_CONTENT_STORE).useValue(jobContentStore)
       .overrideProvider(JOB_IMPORT_QUEUE).useValue(jobQueue)
       .overrideProvider(JOB_PAGE_FETCHER).useValue(jobPageFetcher)
+      .overrideProvider(AGENT_RUN_QUEUE_PORT).useValue(agentRunQueue)
       .overrideProvider(CAREER_FACT_CONFLICT_REVIEW_COMMANDS).useValue(conflictReviewCommands)
       .compile();
     app = module.createNestApplication<NestFastifyApplication>(new FastifyAdapter({ loggerInstance: testLogger as never }));
@@ -133,6 +147,7 @@ describe("authenticated workbench HTTP API", () => {
     expect(app.get(CAREER_DOCUMENT_STORE)).toBe(documentStore);
     expect(app.get(JOB_IMPORT_QUEUE)).toBe(jobQueue);
     expect(app.get(JOB_CONTENT_STORE)).toBe(jobContentStore);
+    expect(app.get(AGENT_RUN_QUEUE_PORT)).toBe(agentRunQueue);
   }, 60_000);
 
   afterAll(async () => {
@@ -393,6 +408,97 @@ describe("authenticated workbench HTTP API", () => {
     expect(invalidBody.statusCode).toBe(400);
     expect(invalidBody.json()).toMatchObject({ code: "INVALID_REQUEST", message: "请求无效", requestId: expect.any(String) });
     expect(invalidBody.body).not.toContain("ZodError");
+  });
+
+  it("以持久化运行提供幂等且账户隔离的岗位发现入口", async () => {
+    const primary = await createSession(app, "agent-runs-primary");
+    const other = await createSession(app, "agent-runs-other");
+    const primaryTarget = await createActiveTarget(app, primary.sessionToken, "前端工程师");
+    const otherTarget = await createActiveTarget(app, other.sessionToken, "全栈工程师");
+    const inactiveTarget = await createActiveTarget(app, primary.sessionToken, "AI 应用工程师", "secondary");
+    const deactivated = await app.getHttpAdapter().getInstance().inject({
+      method: "POST",
+      url: `/v1/job-targets/${inactiveTarget}/deactivations`,
+      headers: { ...bearer(primary.sessionToken), "content-type": "application/json" },
+      payload: { expectedVersion: 1 },
+    });
+    expect(deactivated.statusCode).toBe(201);
+
+    const unauthenticated = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: "/v1/agent-runs",
+      payload: { targetId: primaryTarget, idempotencyKey: randomUUID() },
+    });
+    expect(unauthenticated.statusCode).toBe(401);
+
+    const invalid = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: "/v1/agent-runs", headers: bearer(primary.sessionToken),
+      payload: { targetId: primaryTarget, idempotencyKey: randomUUID(), rawJobDescription: "secret" },
+    });
+    expect(invalid.statusCode).toBe(400);
+    expect(invalid.body).not.toContain("secret");
+
+    for (const targetId of [otherTarget, inactiveTarget]) {
+      const hidden = await app.getHttpAdapter().getInstance().inject({
+        method: "POST", url: "/v1/agent-runs", headers: bearer(primary.sessionToken),
+        payload: { targetId, idempotencyKey: randomUUID() },
+      });
+      expect(hidden.statusCode).toBe(404);
+    }
+
+    const idempotencyKey = randomUUID();
+    const created = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: "/v1/agent-runs", headers: bearer(primary.sessionToken),
+      payload: { targetId: primaryTarget, idempotencyKey },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(created.json()).toMatchObject({ targetId: primaryTarget, status: "queued", reused: false });
+    const runId = created.json().runId as string;
+
+    const reused = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: "/v1/agent-runs", headers: bearer(primary.sessionToken),
+      payload: { targetId: otherTarget, idempotencyKey },
+    });
+    expect(reused.statusCode).toBe(200);
+    expect(reused.json()).toMatchObject({ runId, targetId: primaryTarget, reused: true });
+    expect(agentRunQueue.jobs.slice(-2)).toEqual([
+      { version: 1, runId, userId: primary.account.userId },
+      { version: 1, runId, userId: primary.account.userId },
+    ]);
+    expect(JSON.stringify(agentRunQueue.jobs.slice(-2))).not.toMatch(/targetSnapshot|description|rawPayload/);
+
+    const [latest, detail, hiddenDetail, otherLatest] = await Promise.all([
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-runs/latest", headers: bearer(primary.sessionToken) }),
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/agent-runs/${runId}`, headers: bearer(primary.sessionToken) }),
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/agent-runs/${runId}`, headers: bearer(other.sessionToken) }),
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-runs/latest", headers: bearer(other.sessionToken) }),
+    ]);
+    expect(latest.statusCode).toBe(200);
+    expect(latest.json().run.runId).toBe(runId);
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json()).toMatchObject({ runId, events: [{ sequence: 1, eventType: "run.queued" }] });
+    expect(hiddenDetail.statusCode).toBe(404);
+    expect(otherLatest.statusCode).toBe(200);
+    expect(otherLatest.json()).toEqual({ run: null });
+
+    const [unauthenticatedEvents, hiddenEvents, invalidCursor] = await Promise.all([
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/agent-runs/${runId}/events` }),
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/agent-runs/${runId}/events`, headers: bearer(other.sessionToken) }),
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/agent-runs/${runId}/events?afterEventId=invalid`, headers: bearer(primary.sessionToken) }),
+    ]);
+    expect(unauthenticatedEvents.statusCode).toBe(401);
+    expect(hiddenEvents.statusCode).toBe(404);
+    expect(invalidCursor.statusCode).toBe(400);
+    for (const response of [unauthenticatedEvents, hiddenEvents, invalidCursor]) {
+      expect(response.headers["content-type"]).not.toContain("text/event-stream");
+    }
+
+    agentRunQueue.failNext = true;
+    const durable = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: "/v1/agent-runs", headers: bearer(primary.sessionToken),
+      payload: { targetId: primaryTarget, idempotencyKey: randomUUID() },
+    });
+    expect(durable.statusCode).toBe(201);
+    expect(durable.json()).toMatchObject({ status: "queued", reused: false });
   });
 
   it("keeps a command-side Zod error as an internal error rather than blaming the request", async () => {
@@ -950,6 +1056,24 @@ async function createSession(api: NestFastifyApplication, subject: string): Prom
   });
   expect(response.statusCode).toBe(201);
   return response.json();
+}
+
+async function createActiveTarget(
+  api: NestFastifyApplication,
+  sessionToken: string,
+  roleFamily: string,
+  priority: "primary" | "secondary" = "primary",
+): Promise<string> {
+  const response = await api.getHttpAdapter().getInstance().inject({
+    method: "POST",
+    url: "/v1/job-targets",
+    headers: { ...bearer(sessionToken), "content-type": "application/json" },
+    payload: { priority, constraints: jobTargetConstraints(roleFamily) },
+  });
+  expect(response.statusCode).toBe(201);
+  const target = response.json().targets.find((item: { constraints: { roleFamily: string } }) => item.constraints.roleFamily === roleFamily);
+  expect(target).toBeDefined();
+  return target.targetId;
 }
 
 function jobTargetConstraints(roleFamily: string, excludedCompany = "") {

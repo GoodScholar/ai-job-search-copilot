@@ -43,6 +43,16 @@ import {
   type JobImportList,
 } from "@job-copilot/contracts/job-imports";
 import { WorkbenchHomeSchema, type WorkbenchHome } from "@job-copilot/contracts/workbench";
+import {
+  AgentRunDetailSchema,
+  AgentRunSseCursorSchema,
+  LatestAgentRunResponseSchema,
+  StartAgentRunCommandSchema,
+  StartAgentRunResponseSchema,
+  type AgentRunDetail,
+  type StartAgentRunCommand,
+  type StartAgentRunResponse,
+} from "@job-copilot/contracts/agent-runs";
 import { z } from "zod";
 
 type ApiClientConfig = {
@@ -386,6 +396,65 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
         throw new ApiClientError("invalid_response", "API 返回了无效岗位原文", response.status);
       }
       return response.text();
+    },
+
+    async startAgentRun(sessionToken: string, command: StartAgentRunCommand): Promise<StartAgentRunResponse> {
+      const requestBody = StartAgentRunCommandSchema.parse(command);
+      const response = await request("/v1/agent-runs", {
+        method: "POST",
+        headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" },
+        body: JSON.stringify(requestBody),
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法启动岗位发现", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, StartAgentRunResponseSchema);
+    },
+
+    async getLatestAgentRun(sessionToken: string) {
+      const response = await request("/v1/agent-runs/latest", {
+        method: "GET",
+        headers: { authorization: `Bearer ${sessionToken}` },
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法读取最近 Agent 运行", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, LatestAgentRunResponseSchema);
+    },
+
+    async getAgentRun(sessionToken: string, runId: string): Promise<AgentRunDetail> {
+      const response = await request(`/v1/agent-runs/${runId}`, {
+        method: "GET",
+        headers: { authorization: `Bearer ${sessionToken}` },
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法读取 Agent 运行", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, AgentRunDetailSchema);
+    },
+
+    async openAgentRunEventStream(
+      sessionToken: string,
+      runId: string,
+      options: { lastEventId?: string; afterEventId?: string; signal?: AbortSignal },
+    ): Promise<Response> {
+      const query = new URLSearchParams();
+      if (options.afterEventId !== undefined) query.set("afterEventId", AgentRunSseCursorSchema.parse(options.afterEventId));
+      const path = `/v1/agent-runs/${runId}/events${query.size > 0 ? `?${query.toString()}` : ""}`;
+      const headers: Record<string, string> = { authorization: `Bearer ${sessionToken}` };
+      if (options.lastEventId !== undefined) headers["last-event-id"] = AgentRunSseCursorSchema.parse(options.lastEventId);
+      const response = await request(path, { method: "GET", headers, signal: options.signal });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法读取 Agent 运行进度", response.status, problem ?? undefined);
+      }
+      if (!response.body || !response.headers.get("content-type")?.startsWith("text/event-stream")) {
+        throw new ApiClientError("invalid_response", "API 返回了无效 Agent 运行事件流", response.status);
+      }
+      return response;
     },
   };
 }
