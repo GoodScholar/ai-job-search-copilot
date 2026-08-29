@@ -50,6 +50,7 @@
 - **Ruling 3 — Fake 来源标识：** 保留 #10 的 `fake:aurora-careers`、`fake:orbit-careers` 常量，不把它们改写成 URL。Watchlist 招聘入口以 URL 字符串加入 ordered sources；Fake Adapter 对未知 URL 返回零结果，既有 Fake 来源作为未明确禁用的公开来源继续追加。这样避免为 #28 改写 #10 fixture 身份；若此判断错误，代价只限于 Fake 环境中自定义 URL 无结果，不会产生越权网络访问。
 - **Ruling 4 — 执行规格边界：** `AgentRunSourceScopeSchema` 只增加 `watchlistVersion` 并放宽 `sources` 为有序唯一字符串数组；`AgentRunExecutionSpecSchema` 的其他 #10 字段和不变量不变。若此判断错误，代价是已有运行无法恢复或预算/工具边界失真，因此 Task 4 必须以完整 execution spec、控制、预算、恢复和审计回归测试作为门禁。
 - **Ruling 5 — Drizzle 元数据连续性：** #10 的 journal 已登记 `0019_agent_inbox_action_ownership`，但仓库没有独立 `0019_snapshot.json`。#28 生成 `0020` 时必须让新 snapshot 表示应用 0019 后再加入 Watchlist 的最终 schema，且 `0020` SQL 不得重复或撤销 0019 的 outcome constraint。若处理错误，代价是空库迁移与 schema snapshot 分叉。
+- **Ruling 6 — Agent Run 启动锁顺序：** #10 的真实实现是在事务内先获取账户 advisory lock，再查询同账户 idempotency existing；原计划将两者顺序误写为相反。Task 4 必须保留 #10 的实际顺序，在该锁内、通过幂等复用检查之后读取当前 Watchlist revision 并构造新运行快照，不得为了贴合旧计划文字重排控制流程。若处理错误，代价是改变 #10 已验证的并发与幂等语义。
 
 ---
 
@@ -390,7 +391,7 @@ Persist the current Watchlist version, or `0` when no aggregate exists. Do not i
 
 - [ ] **Step 5: Implement dynamic scope in the existing #10 start transaction**
 
-Read the current Watchlist revision under the account advisory lock already held by `start`. Preserve the existing order: idempotency reuse first, owned active target check, immutable target/execution snapshot insertion, step/event creation, redacted audit, and post-commit recoverable queue wakeup. Change only the local `sourceScope` value used for the new row.
+Read the current Watchlist revision under the account advisory lock already held by `start`. Preserve the actual #10 order: acquire the account advisory lock, query and reuse the idempotent existing run, check the owned active target, read the current Watchlist revision, insert the immutable target/execution snapshot, create the step/event and redacted audit, then perform the post-commit recoverable queue wakeup. Change only the local `sourceScope` value used for the new row.
 
 - [ ] **Step 6: Verify priority, disable, immutability and target deactivation**
 
