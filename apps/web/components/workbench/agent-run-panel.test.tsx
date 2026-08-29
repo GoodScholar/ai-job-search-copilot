@@ -151,6 +151,17 @@ it("显示冻结的执行规格、模型说明和预算账本", () => {
   expect(screen.getByText("本流程未使用模型")).toBeVisible();
   expect(screen.getByText("2 / 10 次来源请求")).toBeVisible();
   expect(screen.getByRole("button", { name: "暂停岗位发现" })).toBeEnabled();
+  expect(screen.getByText("搜索岗位来源")).toBeVisible();
+  expect(screen.getByText("job-discovery-result-v1")).toBeVisible();
+});
+
+it("历史消费明细不完整时只展示预算上限", () => {
+  const legacy = { ...detail(), usage: { ...detail().usage, complete: false } };
+  render(<AgentRunPanel initialRun={legacy} targets={[target()]} />);
+
+  expect(screen.getByText(/历史消费明细不完整/u)).toBeVisible();
+  expect(screen.queryByText("2 / 10 次来源请求")).not.toBeInTheDocument();
+  expect(screen.getByText("上限：10 次来源请求")).toBeVisible();
 });
 
 it("暂停会保留同一命令 UUID 供失败后的重试", async () => {
@@ -170,6 +181,71 @@ it("暂停会保留同一命令 UUID 供失败后的重试", async () => {
   ]);
 });
 
+it("在控制请求尚未返回时立即说明正在等待安全暂停", async () => {
+  let resolve!: (value: Response) => void;
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockReturnValue(new Promise((done) => { resolve = done; })));
+  const user = userEvent.setup();
+  render(<AgentRunPanel initialRun={detail()} targets={[target()]} />);
+
+  await user.click(screen.getByRole("button", { name: "暂停岗位发现" }));
+  expect(screen.getByRole("status")).toHaveTextContent("等待安全暂停");
+  resolve(new Response(null, { status: 502 }));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("暂停请求暂时无法提交，请稍后重试。"));
+});
+
+it.each([
+  ["running", "none", ["暂停岗位发现", "取消岗位发现"]],
+  ["running", "pause_requested", ["继续本次岗位发现", "取消岗位发现"]],
+  ["running", "cancel_requested", []],
+  ["paused", "none", ["继续本次岗位发现", "取消岗位发现"]],
+  ["completed", "none", []],
+] as const)("控制按钮矩阵：%s/%s", (status, controlState, expected) => {
+  const currentStep = status === "completed" ? "completed" : "batch_search";
+  render(<AgentRunPanel initialRun={{ ...detail(), status, currentStep, controlState } as AgentRunDetail} targets={[target()]} />);
+
+  ["暂停岗位发现", "继续本次岗位发现", "取消岗位发现"].forEach((name) => {
+    expect(Boolean(screen.queryByRole("button", { name }))).toBe((expected as readonly string[]).includes(name));
+  });
+});
+
+it("409 冲突后清除控制 UUID，下一次尝试生成新 UUID", async () => {
+  const secondKey = "aee8d950-b36e-42ee-aac5-6763673757fc";
+  vi.mocked(crypto.randomUUID).mockReturnValueOnce(idempotencyKey).mockReturnValueOnce(secondKey);
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response(null, { status: 409 }))
+    .mockResolvedValueOnce(new Response(null, { status: 409 })));
+  const user = userEvent.setup();
+  render(<AgentRunPanel initialRun={detail()} targets={[target()]} />);
+
+  await user.click(screen.getByRole("button", { name: "暂停岗位发现" }));
+  await user.click(screen.getByRole("button", { name: "暂停岗位发现" }));
+
+  expect(vi.mocked(fetch).mock.calls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
+    { commandId: idempotencyKey, action: "pause" }, { commandId: secondKey, action: "pause" },
+  ]);
+});
+
+it("忽略晚到的低版本暂停响应，保留更高版本的取消请求", async () => {
+  let resolvePause!: (value: Response) => void;
+  const cancel = { applied: true, run: { runId, status: "running", currentStep: "batch_search", controlState: "cancel_requested", version: 4 } };
+  const pause = { applied: true, run: { runId, status: "running", currentStep: "batch_search", controlState: "pause_requested", version: 3 } };
+  const fetchMock = vi.fn<typeof fetch>()
+    .mockReturnValueOnce(new Promise((done) => { resolvePause = done; }))
+    .mockResolvedValueOnce(Response.json(cancel));
+  vi.stubGlobal("fetch", fetchMock);
+  const user = userEvent.setup();
+  render(<AgentRunPanel initialRun={detail()} targets={[target()]} />);
+
+  await user.click(screen.getByRole("button", { name: "暂停岗位发现" }));
+  await user.click(screen.getByRole("button", { name: "取消岗位发现" }));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("等待安全取消"));
+  resolvePause(Response.json(pause));
+
+  await waitFor(() => expect(screen.queryByRole("button", { name: "继续本次岗位发现" })).not.toBeInTheDocument());
+  expect(screen.queryByRole("button", { name: "暂停岗位发现" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "取消岗位发现" })).not.toBeInTheDocument();
+});
+
 it("暂停事件关闭投影、重读详情并提供继续和取消", async () => {
   const paused = { ...detail(), status: "paused" as const, currentStep: "batch_search" as const, controlState: "none" as const };
   vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(Response.json(paused)));
@@ -181,6 +257,17 @@ it("暂停事件关闭投影、重读详情并提供继续和取消", async () =
   await waitFor(() => expect(source.closed).toBe(true));
   expect(await screen.findByRole("button", { name: "继续本次岗位发现" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "取消岗位发现" })).toBeEnabled();
+});
+
+it("暂停的权威详情读取后刷新开放 Inbox", async () => {
+  const paused = { ...detail(), status: "paused" as const, currentStep: "batch_search" as const, controlState: "none" as const };
+  const refreshInbox = vi.fn().mockResolvedValue(undefined);
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(Response.json(paused)));
+  render(<AgentRunPanel initialRun={detail()} onInboxRefresh={refreshInbox} targets={[target()]} />);
+  const source = FakeEventSource.instances[0]!;
+
+  act(() => source.emit("run.paused", "3", { eventType: "run.paused", status: "paused", currentStep: "batch_search", attemptCount: 1 }));
+  await waitFor(() => expect(refreshInbox).toHaveBeenCalledOnce());
 });
 
 it("reuses one idempotency UUID while the same start submission is retried", async () => {

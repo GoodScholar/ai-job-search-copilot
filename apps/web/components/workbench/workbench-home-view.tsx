@@ -1,8 +1,11 @@
+"use client";
+
 import type { WorkbenchHome } from "@job-copilot/contracts/workbench";
 import type { AgentRunDetail } from "@job-copilot/contracts/agent-runs";
+import { AgentInboxListSchema, type AgentInboxItem } from "@job-copilot/contracts/agent-inbox";
 import type { JobTargetOverview } from "@job-copilot/contracts/job-targets";
-import type { AgentInboxItem } from "@job-copilot/contracts/agent-inbox";
 import Link from "next/link";
+import { useCallback, useState } from "react";
 import { AgentRunPanel } from "./agent-run-panel";
 import { AgentInboxPanel } from "./agent-inbox-panel";
 
@@ -22,6 +25,14 @@ const summaryItems = [
 
 export function WorkbenchHomeView({ home, targets, initialRun, inbox }: WorkbenchHomeViewProps) {
   const hasPendingFacts = home.summary.pendingFacts > 0;
+  const [inboxItems, setInboxItems] = useState(inbox.items);
+
+  const refreshInbox = useCallback(async () => {
+    const response = await fetch("/api/agent-inbox?status=open", { cache: "no-store" });
+    if (!response.ok) return;
+    const parsed = AgentInboxListSchema.safeParse(await response.json().catch(() => null));
+    if (parsed.success) setInboxItems(parsed.data.items);
+  }, []);
 
   return (
     <main className="container workbench-main">
@@ -42,8 +53,8 @@ export function WorkbenchHomeView({ home, targets, initialRun, inbox }: Workbenc
         ))}
       </dl>
 
-      <AgentRunPanel initialRun={initialRun} targets={targets.targets} />
-      <AgentInboxPanel initialInbox={inbox.items} />
+      <AgentRunPanel initialRun={initialRun} onInboxRefresh={refreshInbox} targets={targets.targets} />
+      <AgentInboxPanel items={inboxItems} onResolved={(itemId) => setInboxItems((items) => items.filter((item) => item.itemId !== itemId))} />
 
       <section aria-labelledby="ledger-title" className="workbench-ledger">
         <div className="workbench-ledger-heading">

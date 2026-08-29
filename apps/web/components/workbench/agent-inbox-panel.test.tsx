@@ -18,27 +18,32 @@ beforeEach(() => vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(actio
 afterEach(() => vi.restoreAllMocks());
 
 it("把开放事项作为语义化 article 呈现，并让调整目标不自动解决事项", () => {
-  render(<AgentInboxPanel initialInbox={[item]} />);
+  render(<AgentInboxPanel items={[item]} onResolved={vi.fn()} />);
   expect(screen.getByRole("article", { name: "岗位发现预算已用尽" })).toBeVisible();
   expect(screen.getByRole("link", { name: "调整求职目标" })).toHaveAttribute("href", "/profile/targets");
   expect(screen.getByRole("button", { name: "标记已处理：岗位发现预算已用尽" })).toBeEnabled();
 });
 
-it("失败重试复用 Inbox 动作 UUID，成功后移除事项", async () => {
+it.each(["restart_run", "resume_run", "cancel_run", "dismiss"] as const)("%s 动作失败时保留事项与 UUID，成功后移除但保留成功播报", async (action) => {
   const user = userEvent.setup();
   const resolved = { ...item, status: "resolved" as const, availableActions: [], resolvedAt: now };
   const fetchMock = vi.fn<typeof fetch>()
     .mockResolvedValueOnce(new Response(null, { status: 502 }))
     .mockResolvedValueOnce(Response.json({ applied: true, item: resolved, run: null }));
   vi.stubGlobal("fetch", fetchMock);
-  render(<AgentInboxPanel initialInbox={[item]} />);
+  const actions = [action];
+  const label = action === "restart_run" ? "重新开始岗位发现" : action === "resume_run" ? "继续本次岗位发现" : action === "cancel_run" ? "取消岗位发现" : "标记已处理";
+  const update = vi.fn();
+  render(<AgentInboxPanel items={[{ ...item, availableActions: actions }]} onResolved={update} />);
 
-  await user.click(screen.getByRole("button", { name: "标记已处理：岗位发现预算已用尽" }));
+  await user.click(screen.getByRole("button", { name: `${label}：岗位发现预算已用尽` }));
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("暂时无法处理该事项，请稍后重试。"));
-  await user.click(screen.getByRole("button", { name: "标记已处理：岗位发现预算已用尽" }));
+  expect(screen.getByRole("article", { name: "岗位发现预算已用尽" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: `${label}：岗位发现预算已用尽` }));
 
-  await waitFor(() => expect(screen.queryByRole("article", { name: "岗位发现预算已用尽" })).not.toBeInTheDocument());
+  await waitFor(() => expect(update).toHaveBeenCalledWith(itemId));
+  expect(screen.getByRole("status")).toHaveTextContent("事项已处理。");
   expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
-    { actionId, action: "dismiss" }, { actionId, action: "dismiss" },
+    { actionId, action }, { actionId, action },
   ]);
 });

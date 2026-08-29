@@ -15,8 +15,7 @@ const actionLabels: Record<AgentInboxActionCommand["action"], string> = {
   dismiss: "标记已处理",
 };
 
-export function AgentInboxPanel({ initialInbox }: { initialInbox: AgentInboxItem[] }) {
-  const [items, setItems] = useState(initialInbox);
+export function AgentInboxPanel({ items, onResolved }: { items: AgentInboxItem[]; onResolved: (itemId: string) => void }) {
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState<string | null>(null);
   const actionIds = useRef(new Map<string, string>());
@@ -44,7 +43,7 @@ export function AgentInboxPanel({ initialInbox }: { initialInbox: AgentInboxItem
       }
       actionIds.current.delete(key);
       if (parsed.data.item.status === "resolved") {
-        setItems((current) => current.filter((currentItem) => currentItem.itemId !== item.itemId));
+        onResolved(item.itemId);
         setMessage("事项已处理。");
       } else {
         setMessage("事项状态已更新。");
@@ -56,7 +55,7 @@ export function AgentInboxPanel({ initialInbox }: { initialInbox: AgentInboxItem
     }
   }
 
-  if (items.length === 0) return null;
+  if (items.length === 0 && !message) return null;
 
   return (
     <section aria-labelledby="agent-inbox-title" className="workbench-ledger agent-inbox-panel">

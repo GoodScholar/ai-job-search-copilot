@@ -964,6 +964,7 @@ body {
 .agent-run-detail dt, .agent-run-budget dt { color: var(--muted); font-size: 0.75rem; font-weight: 700; }
 .agent-run-detail dd, .agent-run-budget dd { font-size: 0.9rem; font-variant-numeric: tabular-nums; margin: 0.25rem 0 0; overflow-wrap: anywhere; }
 .agent-run-budget h3 { font-size: 1rem; margin: 0 0 0.85rem; }
+.agent-run-usage-incomplete { color: var(--amber-ink) !important; font-size: 0.88rem; font-weight: 700; margin: 0 0 0.85rem !important; }
 .agent-run-live { color: var(--emerald-strong) !important; font-size: 0.88rem; font-weight: 700; padding-block: 1rem; }
 .agent-run-live-error { color: var(--amber-ink) !important; }
 .agent-run-timeline { border-left: 1px solid var(--rule); list-style: none; margin: 0.5rem 0 0 0.65rem; padding: 0 0 0 1.3rem; }

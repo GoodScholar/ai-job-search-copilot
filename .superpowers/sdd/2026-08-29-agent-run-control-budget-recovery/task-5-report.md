@@ -41,3 +41,9 @@
 ## Concerns
 
 - Task 6 仍负责真实 Web/API/Worker 的 Playwright 暂停、取消、重试和预算耗尽验收；本 Task 仅覆盖组件与页面边界。
+
+## Review-fix RED/GREEN
+
+- **RED：** 审查新增 9 个失败断言，覆盖暂停/终态后的 Inbox 刷新、低版本暂停响应晚于高版本取消、请求发出时的即时反馈、历史消费不完整、当前步骤与输出结构、控制按钮矩阵、409 后 UUID 轮换，以及四种 Inbox 动作的成功/失败语义。
+- **GREEN：** `WorkbenchHomeView` 持有开放 Inbox 的唯一客户端投影，并通过同源 GET 显式刷新；运行面板只在暂停或终态详情权威重读后触发刷新。控制响应按 version 单调应用，且已观察到的取消意图不可被旧暂停覆盖。每个动作请求前立即显示稳定状态。历史运行只显示预算上限。最后一项解决后保留带成功消息的 `aria-live` 区域。
+- **验证：** focused Web suite 42 files / 214 tests passed；`pnpm --filter web typecheck`、`pnpm --filter @job-copilot/contracts typecheck`、`git diff --check` 全部通过。
