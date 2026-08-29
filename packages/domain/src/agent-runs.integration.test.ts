@@ -102,6 +102,14 @@ describe("agent runs", () => {
       .resolves.toEqual([expect.objectContaining({ sequence: 1, runVersion: 1, eventType: "run.queued", data: { eventType: "run.queued", status: "queued", currentStep: "queued", attemptCount: 0 } })]);
     await expect(createAgentRunQueries({ db: database }).eventsAfter({ userId, runId: first.runId, afterSequence: 0 }))
       .resolves.toEqual([expect.objectContaining({ sequence: 1, eventType: "run.queued" })]);
+    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: first.runId })).resolves.toMatchObject({
+      executionSpec: {
+        ruleVersion: "fake-job-discovery-rules-v1", toolAllowlist: ["job_discovery.search_batch", "job_discovery.get_detail"], model: null,
+      },
+      controlState: "none",
+      usage: { complete: true, activeDurationMs: 0, attempts: 0, toolCalls: 0, sourceRequests: 0, modelCalls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, results: 0 },
+      termination: null,
+    });
   });
 
   it("拒绝缺失、跨账户或已停用目标，并让队列故障保留可恢复 run", async () => {
@@ -174,7 +182,12 @@ describe("agent runs", () => {
     const processor = createAgentRunProcessor({ db: database, adapter: adapter(), contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
     await expect(processor.process({ version: 1, runId: first.runId, userId, finalAttempt: true })).resolves.toBe("completed");
     await expect(processor.process({ version: 1, runId: first.runId, userId, finalAttempt: true })).resolves.toBe("stale");
-    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: first.runId })).resolves.toMatchObject({ status: "completed", currentStep: "completed", attemptCount: 1, results: [expect.objectContaining({ ordinal: 1, company: "示例科技" })] });
+    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: first.runId })).resolves.toMatchObject({
+      status: "completed", currentStep: "completed", attemptCount: 1,
+      usage: { complete: true, activeDurationMs: 0, toolCalls: 0, sourceRequests: 0, modelCalls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, results: 1 },
+      termination: { kind: "completed", failureCode: null, budgetDimension: null },
+      results: [expect.objectContaining({ ordinal: 1, company: "示例科技" })],
+    });
     const events = await database.select({ sequence: agentRunEvents.sequence, runVersion: agentRunEvents.runVersion, eventType: agentRunEvents.eventType })
       .from(agentRunEvents).where(and(eq(agentRunEvents.userId, userId), eq(agentRunEvents.runId, first.runId))).orderBy(agentRunEvents.sequence);
     expect(events).toEqual([
@@ -284,7 +297,11 @@ describe("agent runs", () => {
     const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
     await database.update(agentRuns).set({ attemptCount: 3 }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)));
     await expect(createAgentRunProcessor({ db: database, adapter: adapter(), contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("failed");
-    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({ attemptCount: 3, status: "failed", failureCode: "AGENT_RUN_BUDGET_EXCEEDED", events: expect.arrayContaining([expect.objectContaining({ eventType: "run.failed", data: expect.objectContaining({ attemptCount: 3 }) })]) });
+    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({
+      attemptCount: 3, status: "failed", failureCode: "AGENT_RUN_BUDGET_EXCEEDED",
+      termination: { kind: "budget_exhausted", failureCode: "AGENT_RUN_BUDGET_EXCEEDED", budgetDimension: "attempts" },
+      events: expect.arrayContaining([expect.objectContaining({ eventType: "run.failed", data: expect.objectContaining({ attemptCount: 3, failureCode: "AGENT_RUN_BUDGET_EXCEEDED" }) })]),
+    });
   });
 
   it("不可重试 Adapter 失败原子终止当前 running step，并且不保存原文", async () => {
@@ -511,13 +528,18 @@ describe("agent runs", () => {
       .resolves.toEqual([{ status: "failed", failureCode: "AGENT_RUN_CONTENT_STORAGE_FAILED" }]);
   }, 1_000);
 
-  it("在可重试失败时重新排队，在最终尝试时终止且不暴露原始错误", async () => {
+  it("在第三次可重试来源失败后以尝试预算终止且不暴露原始错误", async () => {
     const { userId, targetId } = await activeTarget();
     const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
     const retrying = createAgentRunProcessor({ db: database, adapter: adapter({ retryable: true }), contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
     await expect(retrying.process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("retry");
     await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({ status: "queued", startedAt: null, failureCode: null, events: expect.arrayContaining([expect.objectContaining({ eventType: "run.retry_scheduled", data: expect.not.objectContaining({ message: expect.anything() }) })]) });
+    await expect(retrying.process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("retry");
     await expect(retrying.process({ version: 1, runId: run.runId, userId, finalAttempt: true })).resolves.toBe("failed");
-    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({ status: "failed", failureCode: "AGENT_RUN_ADAPTER_RETRYABLE", events: expect.arrayContaining([expect.objectContaining({ eventType: "run.failed" })]) });
+    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({
+      status: "failed", failureCode: "AGENT_RUN_BUDGET_EXCEEDED",
+      termination: { kind: "budget_exhausted", failureCode: "AGENT_RUN_BUDGET_EXCEEDED", budgetDimension: "attempts" },
+      events: expect.arrayContaining([expect.objectContaining({ eventType: "run.failed", data: expect.objectContaining({ attemptCount: 3, failureCode: "AGENT_RUN_BUDGET_EXCEEDED" }) })]),
+    });
   });
 });

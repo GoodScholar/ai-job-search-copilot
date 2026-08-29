@@ -241,6 +241,9 @@ export const DiscoveryBatchSearchResultSchema = adapterResult(z.array(DiscoveryS
 export const DiscoveryDetailResultSchema = adapterResult(DiscoveryDetailSchema);
 
 export type StartAgentRunCommand = z.infer<typeof StartAgentRunCommandSchema>;
+export type ControlAgentRunCommand = z.infer<typeof ControlAgentRunCommandSchema>;
+export type AgentRunControlSnapshot = z.infer<typeof AgentRunControlSnapshotSchema>;
+export type ControlAgentRunResponse = z.infer<typeof ControlAgentRunResponseSchema>;
 export type AgentRunStartErrorCode = z.infer<typeof AgentRunStartErrorCodeSchema>;
 export type AgentRunDetail = z.infer<typeof AgentRunDetailSchema>;
 export type StartAgentRunResponse = z.infer<typeof StartAgentRunResponseSchema>;

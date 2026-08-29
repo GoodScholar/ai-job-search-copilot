@@ -54,6 +54,9 @@ const FailedJobImportMetadataSchema = z.object({
 const QueuedAgentRunMetadataSchema = z.object({ runId: z.uuid(), targetId: z.uuid(), targetVersion: z.int().min(1), workflowVersion: z.string().min(1), adapterVersion: z.string().min(1) }).strict();
 const CompletedAgentRunMetadataSchema = z.object({ runId: z.uuid(), targetId: z.uuid(), attemptCount: z.int().min(1), resultCount: z.int().min(0) }).strict();
 const FailedAgentRunMetadataSchema = z.object({ runId: z.uuid(), targetId: z.uuid(), attemptCount: z.int().min(1), failureCode: AgentRunFailureCodeSchema }).strict();
+const ControlAgentRunMetadataSchema = z.object({
+  runId: z.uuid(), version: z.int().min(1), action: z.enum(["pause", "resume", "cancel"]), attemptCount: z.int().min(0),
+}).strict();
 
 const AuditEventInputSchema = z.discriminatedUnion("eventType", [
   z.object({
@@ -164,6 +167,12 @@ const AuditEventInputSchema = z.discriminatedUnion("eventType", [
   z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("agent.run_queued"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.literal("AGENT_RUN_QUEUED"), resourceType: z.literal("agent_run"), resourceId: z.uuid(), metadata: QueuedAgentRunMetadataSchema }).strict(),
   z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("agent.run_completed"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.literal("AGENT_RUN_COMPLETED"), resourceType: z.literal("agent_run"), resourceId: z.uuid(), metadata: CompletedAgentRunMetadataSchema }).strict(),
   z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("agent.run_failed"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("failure"), reasonCode: AgentRunFailureCodeSchema, resourceType: z.literal("agent_run"), resourceId: z.uuid(), metadata: FailedAgentRunMetadataSchema }).strict(),
+  z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("agent.run_pause_requested"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.literal("AGENT_RUN_PAUSE_REQUESTED"), resourceType: z.literal("agent_run"), resourceId: z.uuid(), metadata: ControlAgentRunMetadataSchema }).strict(),
+  z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("agent.run_paused"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.literal("AGENT_RUN_PAUSED"), resourceType: z.literal("agent_run"), resourceId: z.uuid(), metadata: ControlAgentRunMetadataSchema }).strict(),
+  z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("agent.run_resume_requested"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.literal("AGENT_RUN_RESUME_REQUESTED"), resourceType: z.literal("agent_run"), resourceId: z.uuid(), metadata: ControlAgentRunMetadataSchema }).strict(),
+  z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("agent.run_resumed"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.literal("AGENT_RUN_RESUMED"), resourceType: z.literal("agent_run"), resourceId: z.uuid(), metadata: ControlAgentRunMetadataSchema }).strict(),
+  z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("agent.run_cancel_requested"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.literal("AGENT_RUN_CANCEL_REQUESTED"), resourceType: z.literal("agent_run"), resourceId: z.uuid(), metadata: ControlAgentRunMetadataSchema }).strict(),
+  z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("agent.run_cancelled"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.literal("AGENT_RUN_CANCELLED"), resourceType: z.literal("agent_run"), resourceId: z.uuid(), metadata: ControlAgentRunMetadataSchema }).strict(),
 ]);
 
 type AuditEventInput = z.input<typeof AuditEventInputSchema>;
