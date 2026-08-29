@@ -1,6 +1,6 @@
 import { and, desc, eq } from "drizzle-orm";
 import {
-  agentInboxItems, agentRunControlCommands, agentRunEvents, agentRunSteps, agentRuns, jobTargetRevisions, jobTargets, type Database,
+  agentInboxItems, agentRunControlCommands, agentRunEvents, agentRunSteps, agentRuns, companyWatchlistRevisions, companyWatchlists, jobTargetRevisions, jobTargets, type Database,
 } from "@job-copilot/database";
 import {
   AGENT_RUN_BUDGET, AGENT_RUN_JOB_VERSION, AGENT_RUN_RULE_VERSION, AGENT_RUN_TOOL_ALLOWLIST, FAKE_JOB_DISCOVERY_ADAPTER,
@@ -8,6 +8,7 @@ import {
   FAKE_JOB_DISCOVERY_WORKFLOW_VERSION, ControlAgentRunCommandSchema, StartAgentRunCommandSchema,
   type AgentRunJob, type AgentRunStartErrorCode, type ControlAgentRunResponse, type StartAgentRunCommand, type StartAgentRunResponse,
 } from "@job-copilot/contracts/agent-runs";
+import { CompanyWatchlistItemSchema } from "@job-copilot/contracts/company-watchlists";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import type { AuditTrail } from "./audit-trail";
 import { reduceControl } from "./agent-run-state";
@@ -25,8 +26,20 @@ export class AgentRunControlError extends Error {
 type CommandDependencies = { db: Database; queue: AgentRunQueue; auditTrail: AuditTrail; id: () => string; clock: () => Date };
 type RunRow = typeof agentRuns.$inferSelect;
 type ControlSnapshot = ControlAgentRunResponse["run"];
-const sourceScope = { kind: "company_watchlist", adapter: FAKE_JOB_DISCOVERY_ADAPTER, adapterVersion: FAKE_JOB_DISCOVERY_ADAPTER_VERSION, sources: FAKE_JOB_DISCOVERY_SOURCE_IDS } as const;
 const stepKeys = ["batch_search", "fetch_details", "persist_results"] as const;
+
+function sourceScope(watchlist: { version: number; items: unknown } | undefined) {
+  const items = watchlist ? CompanyWatchlistItemSchema.array().parse(watchlist.items) : [];
+  const disabled = new Set(items.filter((item) => item.state === "disabled").map((item) => item.careersUrl));
+  const enabled = items.filter((item) => item.state === "enabled").sort((left, right) => left.position - right.position).map((item) => item.careersUrl);
+  return {
+    kind: "company_watchlist" as const,
+    adapter: FAKE_JOB_DISCOVERY_ADAPTER,
+    adapterVersion: FAKE_JOB_DISCOVERY_ADAPTER_VERSION,
+    watchlistVersion: watchlist?.version ?? 0,
+    sources: [...new Set([...enabled, ...FAKE_JOB_DISCOVERY_SOURCE_IDS.filter((source) => !disabled.has(source))])],
+  };
+}
 
 function summary(row: RunRow, reused: boolean): StartAgentRunResponse {
   return {
@@ -96,9 +109,18 @@ export function createAgentRunCommands(deps: CommandDependencies): {
         if (target.state !== "active") throw new AgentRunError("AGENT_RUN_TARGET_INACTIVE");
         const runId = deps.id();
         const targetSnapshot = { targetId: target.id, version: target.version, priority: target.priority, state: target.state, constraints: target.constraints };
+        const [watchlist] = await transaction.select({
+          version: companyWatchlists.version,
+          items: companyWatchlistRevisions.items,
+        }).from(companyWatchlists).innerJoin(companyWatchlistRevisions, and(
+          eq(companyWatchlistRevisions.userId, companyWatchlists.userId),
+          eq(companyWatchlistRevisions.watchlistId, companyWatchlists.id),
+          eq(companyWatchlistRevisions.version, companyWatchlists.version),
+        )).where(and(eq(companyWatchlists.userId, input.userId), eq(companyWatchlists.targetId, target.id)));
+        const runSourceScope = sourceScope(watchlist);
         const [created] = await transaction.insert(agentRuns).values({
           id: runId, userId: input.userId, targetId: target.id, idempotencyKey: command.idempotencyKey, targetVersion: target.version,
-          targetSnapshot, sourceScope, budgetSnapshot: AGENT_RUN_BUDGET, workflowVersion: FAKE_JOB_DISCOVERY_WORKFLOW_VERSION,
+          targetSnapshot, sourceScope: runSourceScope, budgetSnapshot: AGENT_RUN_BUDGET, workflowVersion: FAKE_JOB_DISCOVERY_WORKFLOW_VERSION,
           ruleVersion: AGENT_RUN_RULE_VERSION, toolAllowlist: AGENT_RUN_TOOL_ALLOWLIST, modelSnapshot: null,
           adapter: FAKE_JOB_DISCOVERY_ADAPTER, adapterVersion: FAKE_JOB_DISCOVERY_ADAPTER_VERSION, outputSchemaVersion: FAKE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
           status: "queued", currentStep: "queued", controlState: "none", version: 1, attemptCount: 0,

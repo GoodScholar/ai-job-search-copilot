@@ -16,7 +16,7 @@ describe("AgentRunModule", () => {
         targetId: "30000000-0000-4000-8000-000000000003", version: 1, priority: "primary", state: "active",
         constraints: { roleFamily: "工程师", seniority: null, locations: [], workModes: [], relocation: "unknown", salary: null, industries: [], dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] } },
       },
-      sourceScope: { kind: "company_watchlist", adapter: "fake", adapterVersion: "fake-job-discovery-v1", sources: ["fake:aurora-careers", "fake:orbit-careers"] },
+      sourceScope: { kind: "company_watchlist", adapter: "fake", adapterVersion: "fake-job-discovery-v1", watchlistVersion: 0, sources: ["fake:aurora-careers", "fake:orbit-careers"] },
     })).resolves.toMatchObject({ ok: true });
   });
 

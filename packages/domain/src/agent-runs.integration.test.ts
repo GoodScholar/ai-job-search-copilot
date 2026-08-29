@@ -5,6 +5,7 @@ import { agentInboxItems, agentRunEvents, agentRunJobResults, agentRunSteps, age
 import { createAuditTrail } from "./audit-trail";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { createAgentRunCommands, createAgentRunProcessor as createDomainAgentRunProcessor, createAgentRunQueries, createAgentRunRecoveryQueries, type AgentRunQueue, type DiscoveryContentStore, type JobDiscoveryAdapter, type JobDiscoveryAdapterResolver } from "./agent-runs";
+import { createCompanyWatchlistCommands } from "./company-watchlists";
 import { createJobTargetCommands } from "./job-targets";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
@@ -91,6 +92,10 @@ describe("agent runs", () => {
     return createAgentRunCommands({ db: database, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
   }
 
+  function watchlistCommands() {
+    return createCompanyWatchlistCommands({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+  }
+
   it("快照活动目标、原子创建待处理步骤和首个事件，并按账户幂等唤醒队列", async () => {
     const { userId, targetId } = await activeTarget();
     const queue = new MemoryQueue();
@@ -161,6 +166,60 @@ describe("agent runs", () => {
     });
     await expect(database.select({ version: jobTargets.version }).from(jobTargets).where(and(eq(jobTargets.userId, userId), eq(jobTargets.id, targetId))))
       .resolves.toEqual([{ version: 2 }]);
+  });
+
+  it("通过版本化 Watchlist 快照来源优先级、禁用状态和不可变运行范围", async () => {
+    const { userId, targetId } = await activeTarget();
+    const queue = new MemoryQueue();
+    const firstItem = await watchlistCommands().addItem({
+      userId, targetId, requestId: crypto.randomUUID(),
+      command: {
+        expectedVersion: 0, canonicalCompanyName: "Alpha", careersUrl: "https://careers.alpha.test/jobs",
+        allowedDomains: ["alpha.test"], sourceNote: "仅供用户查看",
+      },
+    });
+    const secondItem = await watchlistCommands().addItem({
+      userId, targetId, requestId: crypto.randomUUID(),
+      command: {
+        expectedVersion: firstItem.version, canonicalCompanyName: "Beta", careersUrl: "https://jobs.beta.test/openings",
+        allowedDomains: ["beta.test"], sourceNote: null,
+      },
+    });
+    const disabled = await watchlistCommands().setItemState({
+      userId, targetId, requestId: crypto.randomUUID(), itemId: secondItem.items[1]!.itemId,
+      command: { expectedVersion: secondItem.version, state: "disabled" },
+    });
+    const expectedSourceScope = {
+      kind: "company_watchlist" as const,
+      adapter: "fake" as const,
+      adapterVersion: "fake-job-discovery-v1" as const,
+      watchlistVersion: disabled.version,
+      sources: ["https://careers.alpha.test/jobs", "fake:aurora-careers", "fake:orbit-careers"],
+    };
+
+    const first = await commands(queue).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const [persisted] = await database.select({ sourceScope: agentRuns.sourceScope }).from(agentRuns)
+      .where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, first.runId)));
+    const projection = await createAgentRunQueries({ db: database }).get({ userId, runId: first.runId });
+
+    expect(first.sourceScope).toEqual(expectedSourceScope);
+    expect(persisted!.sourceScope).toEqual(expectedSourceScope);
+    expect(projection).toMatchObject({ sourceScope: expectedSourceScope, executionSpec: { sourceScope: expectedSourceScope } });
+
+    await watchlistCommands().setItemState({
+      userId, targetId, requestId: crypto.randomUUID(), itemId: secondItem.items[1]!.itemId,
+      command: { expectedVersion: disabled.version, state: "enabled" },
+    });
+    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: first.runId }))
+      .resolves.toMatchObject({ sourceScope: expectedSourceScope, executionSpec: { sourceScope: expectedSourceScope } });
+
+    const runCount = (await database.select().from(agentRuns).where(eq(agentRuns.userId, userId))).length;
+    const queueCount = queue.jobs.length;
+    await database.update(jobTargets).set({ state: "inactive", activeSlot: null }).where(and(eq(jobTargets.userId, userId), eq(jobTargets.id, targetId)));
+    await expect(commands(queue).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } }))
+      .rejects.toMatchObject({ code: "AGENT_RUN_TARGET_INACTIVE" });
+    await expect(database.select().from(agentRuns).where(eq(agentRuns.userId, userId))).resolves.toHaveLength(runCount);
+    expect(queue.jobs).toHaveLength(queueCount);
   });
 
   it("对没有完整账本的历史 run 明确标记 usage 不完整", async () => {

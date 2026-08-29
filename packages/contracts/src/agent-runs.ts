@@ -71,7 +71,11 @@ export const AgentRunTargetSnapshotSchema = z.object({
 export const AgentRunSourceScopeSchema = z.object({
   kind: z.literal("company_watchlist"), adapter: z.literal(FAKE_JOB_DISCOVERY_ADAPTER),
   adapterVersion: z.literal(FAKE_JOB_DISCOVERY_ADAPTER_VERSION),
-  sources: z.tuple([z.literal(FAKE_JOB_DISCOVERY_SOURCE_IDS[0]), z.literal(FAKE_JOB_DISCOVERY_SOURCE_IDS[1])]),
+  watchlistVersion: nonnegativeInteger,
+  sources: z.array(z.string().trim().min(1).max(2_048)).max(52).refine(
+    (values) => new Set(values).size === values.length,
+    { message: "sources must be unique" },
+  ),
 }).strict();
 
 export const AgentRunExecutionSpecSchema = z.object({
@@ -231,11 +235,11 @@ const adapterResult = <T extends z.ZodType>(data: T) => z.discriminatedUnion("ok
   z.object({ ok: z.literal(true), data }).strict(), z.object({ ok: z.literal(false), error: AgentRunAdapterErrorSchema }).strict(),
 ]);
 
-export const DiscoverySearchInputSchema = z.object({ targetSnapshot: AgentRunTargetSnapshotSchema, sourceId: z.string().trim().min(1).max(256) }).strict();
+export const DiscoverySearchInputSchema = z.object({ targetSnapshot: AgentRunTargetSnapshotSchema, sourceId: z.string().trim().min(1).max(2_048) }).strict();
 export const DiscoveryBatchSearchInputSchema = z.object({ targetSnapshot: AgentRunTargetSnapshotSchema, sourceScope: AgentRunSourceScopeSchema }).strict();
-export const DiscoveryDetailInputSchema = z.object({ sourceId: z.string().trim().min(1).max(256), detailId: z.string().trim().min(1).max(256) }).strict();
+export const DiscoveryDetailInputSchema = z.object({ sourceId: z.string().trim().min(1).max(2_048), detailId: z.string().trim().min(1).max(256) }).strict();
 export const DiscoverySearchSummarySchema = z.object({
-  sourceId: z.string().trim().min(1).max(256), detailId: z.string().trim().min(1).max(256),
+  sourceId: z.string().trim().min(1).max(2_048), detailId: z.string().trim().min(1).max(256),
   company: nullableJobField, title: nullableJobField, location: nullableJobField,
   postedAt: z.iso.datetime().nullable(), deadline: z.iso.datetime().nullable(),
 }).strict();

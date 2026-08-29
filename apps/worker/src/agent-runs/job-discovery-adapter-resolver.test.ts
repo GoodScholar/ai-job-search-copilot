@@ -19,7 +19,7 @@ const targetSnapshot = {
 };
 const batchInput = {
   targetSnapshot,
-  sourceScope: { kind: "company_watchlist" as const, adapter: "fake" as const, adapterVersion: "fake-job-discovery-v1" as const, sources: ["fake:aurora-careers", "fake:orbit-careers"] as ["fake:aurora-careers", "fake:orbit-careers"] },
+  sourceScope: { kind: "company_watchlist" as const, adapter: "fake" as const, adapterVersion: "fake-job-discovery-v1" as const, watchlistVersion: 0, sources: ["fake:aurora-careers", "fake:orbit-careers"] },
 };
 
 describe("JobDiscoveryAdapterResolver", () => {

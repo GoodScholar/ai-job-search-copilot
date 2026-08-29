@@ -61,6 +61,7 @@ const targetSnapshot = {
 };
 const sourceScope = {
   kind: "company_watchlist", adapter: "fake", adapterVersion: FAKE_JOB_DISCOVERY_ADAPTER_VERSION,
+  watchlistVersion: 0,
   sources: FAKE_JOB_DISCOVERY_SOURCE_IDS,
 };
 const runTargetSnapshot = { targetId, version: 1, priority: "primary", state: "active", constraints: targetSnapshot };
@@ -151,6 +152,43 @@ describe("agent run contracts", () => {
     expect(ControlAgentRunResponseSchema.parse({
       applied: true, run: { runId, status: "running", currentStep: "fetch_details", controlState: "none", version: 2 },
     })).toMatchObject({ applied: true, run: { runId, status: "running" } });
+  });
+
+  it("允许版本化的有序唯一 Watchlist 来源范围，同时保留完整执行规格", () => {
+    const watchlistSourceScope = {
+      kind: "company_watchlist",
+      adapter: "fake",
+      adapterVersion: "fake-job-discovery-v1",
+      watchlistVersion: 3,
+      sources: ["https://careers.example.com/jobs", "fake:aurora-careers"],
+    };
+    const completeExecutionSpec = {
+      targetSnapshot: runTargetSnapshot,
+      sourceScope: watchlistSourceScope,
+      workflowVersion: "job-discovery-workflow-v1",
+      ruleVersion: "fake-job-discovery-rules-v1",
+      adapter: "fake",
+      adapterVersion: "fake-job-discovery-v1",
+      outputSchemaVersion: "job-discovery-result-v1",
+      toolAllowlist: ["job_discovery.search_batch", "job_discovery.get_detail"],
+      model: null,
+      budget: {
+        maxActiveDurationMs: 60_000,
+        maxAttempts: 3,
+        maxToolCalls: 10,
+        maxResults: 5,
+        maxModelCalls: 0,
+        maxTokens: 0,
+      },
+    };
+
+    expect(AgentRunSourceScopeSchema.parse(watchlistSourceScope)).toEqual(watchlistSourceScope);
+    expect(AgentRunSourceScopeSchema.safeParse({ ...watchlistSourceScope, watchlistVersion: -1 }).success).toBe(false);
+    expect(AgentRunSourceScopeSchema.safeParse({ ...watchlistSourceScope, sources: ["duplicate", "duplicate"] }).success).toBe(false);
+    expect(AgentRunSourceScopeSchema.safeParse({ ...watchlistSourceScope, sources: ["x".repeat(2_049)] }).success).toBe(false);
+    expect(AgentRunSourceScopeSchema.safeParse({ ...watchlistSourceScope, sources: Array.from({ length: 53 }, (_, index) => `source-${index}`) }).success).toBe(false);
+    expect(AgentRunSourceScopeSchema.parse({ ...watchlistSourceScope, sources: [] }).sources).toEqual([]);
+    expect(AgentRunExecutionSpecSchema.parse(completeExecutionSpec)).toEqual(completeExecutionSpec);
   });
 
   it("parses the strict start command and queued run detail", () => {

@@ -198,6 +198,13 @@ describe("岗位发现 Agent Run Worker", () => {
     });
     expect(firstDetail).not.toBeNull();
     if (!firstDetail) throw new Error("completed run detail is missing");
+    expect(firstDetail.sourceScope).toEqual({
+      kind: "company_watchlist",
+      adapter: "fake",
+      adapterVersion: "fake-job-discovery-v1",
+      watchlistVersion: 0,
+      sources: ["fake:aurora-careers", "fake:orbit-careers"],
+    });
     expect(firstDetail.events.filter((event) => event.eventType !== "run.budget_updated").map((event) => event.eventType)).toEqual([
       "run.queued", "run.started", "step.started", "step.completed", "step.started",
       "step.completed", "step.started", "step.completed", "run.completed",
