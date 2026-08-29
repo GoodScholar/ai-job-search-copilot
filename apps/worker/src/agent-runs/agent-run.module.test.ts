@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createConfiguredJobDiscoveryAdapterResolver } from "./agent-run.module.js";
 
 describe("AgentRunModule", () => {
-  it.each(["local", "test"])("%s 环境构造按持久化元数据解析的 Fake resolver", async (appEnv) => {
+  it.each(["local", "test", "production"])("%s 环境构造按持久化元数据解析的 Fake resolver", async (appEnv) => {
     const resolver = createConfiguredJobDiscoveryAdapterResolver({ APP_ENV: appEnv });
     await expect(resolver.resolve({
       runId: "10000000-0000-4000-8000-000000000001",
@@ -20,7 +20,7 @@ describe("AgentRunModule", () => {
     })).resolves.toMatchObject({ ok: true });
   });
 
-  it.each([undefined, "production", "development", "LOCAL", "tesst"])(
+  it.each([undefined, "development", "staging", "LOCAL", "tesst"])(
     "APP_ENV=%s 时 fail-closed 拒绝 Fake",
     (appEnv) => {
       expect(() => createConfiguredJobDiscoveryAdapterResolver(appEnv === undefined ? {} : { APP_ENV: appEnv }))

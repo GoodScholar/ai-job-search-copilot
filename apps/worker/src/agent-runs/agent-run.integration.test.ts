@@ -196,11 +196,31 @@ describe("岗位发现 Agent Run Worker", () => {
       status: "completed",
       attemptCount: 1,
     });
-    expect(firstDetail?.events.map((event) => event.eventType)).toEqual([
+    expect(firstDetail).not.toBeNull();
+    if (!firstDetail) throw new Error("completed run detail is missing");
+    expect(firstDetail.events.filter((event) => event.eventType !== "run.budget_updated").map((event) => event.eventType)).toEqual([
       "run.queued", "run.started", "step.started", "step.completed", "step.started",
       "step.completed", "step.started", "step.completed", "run.completed",
     ]);
-    expect(firstDetail?.results).toHaveLength(5);
+    const budgetEvents = firstDetail.events.filter((event) => event.eventType === "run.budget_updated");
+    expect(budgetEvents.length).toBeGreaterThan(0);
+    for (const [index, event] of budgetEvents.entries()) {
+      const prior = budgetEvents[index - 1];
+      if (prior) {
+        expect(event.sequence).toBeGreaterThan(prior.sequence);
+        expect(event.runVersion).toBeGreaterThanOrEqual(prior.runVersion);
+      }
+      expect(event.data.eventType).toBe("run.budget_updated");
+      if (event.data.eventType !== "run.budget_updated") throw new Error("budget event data is missing usage");
+      for (const field of ["activeDurationMs", "attempts", "toolCalls", "sourceRequests", "modelCalls", "inputTokens", "outputTokens", "totalTokens", "results"] as const) {
+        const priorUsage = prior?.data.eventType === "run.budget_updated" ? prior.data.usage[field] : 0;
+        expect(event.data.usage[field]).toBeGreaterThanOrEqual(priorUsage);
+      }
+    }
+    const latestBudgetEvent = budgetEvents.at(-1);
+    if (!latestBudgetEvent || latestBudgetEvent.data.eventType !== "run.budget_updated") throw new Error("final budget event is missing usage");
+    expect(latestBudgetEvent.data.usage).toEqual(firstDetail.usage);
+    expect(firstDetail.results).toHaveLength(5);
     await expect(createAgentRunRecoveryQueries({ db: database, clock: () => new Date() }).listRecoverable())
       .resolves.not.toContainEqual({ version: 1, runId: first.runId, userId });
 
@@ -246,7 +266,8 @@ describe("岗位发现 Agent Run Worker", () => {
     await database.execute(`
       update agent_runs
       set status = 'running', current_step = 'batch_search', claim_token = '${expiredClaimToken}',
-          claim_expires_at = now() - interval '1 second', started_at = now() - interval '31 seconds', attempt_count = 1
+          claim_expires_at = now() - interval '1 second', active_slice_started_at = now() - interval '31 seconds',
+          started_at = now() - interval '31 seconds', attempt_count = 1
       where user_id = '${userId}' and id = '${recovered.runId}'
     `);
 
