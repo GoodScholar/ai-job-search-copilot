@@ -19,16 +19,11 @@ export { createAgentRunCheckpoint, type AgentRunCheckpoint, type AgentRunCheckpo
 export { createAgentRunQueries } from "./agent-run-queries";
 export { AgentInboxActionError, AgentInboxError, createAgentInbox } from "./agent-inbox";
 
-type CompatibilityProcessorDependencies = Omit<AgentRunProcessorDependencies, "adapterResolver" | "checkpoint"> & {
-  adapterResolver?: JobDiscoveryAdapterResolver;
+type FacadeProcessorDependencies = Omit<AgentRunProcessorDependencies, "checkpoint"> & {
   checkpoint?: AgentRunCheckpoint;
-  /** Transitional facade adapter; the domain processor itself requires a resolver. */
-  adapter?: JobDiscoveryAdapter;
 };
 
-export function createAgentRunProcessor(deps: CompatibilityProcessorDependencies) {
-  const adapterResolver = deps.adapterResolver ?? (deps.adapter ? { resolve: () => deps.adapter! } : undefined);
-  if (!adapterResolver) throw new Error("AGENT_RUN_ADAPTER_RESOLVER_REQUIRED");
+export function createAgentRunProcessor(deps: FacadeProcessorDependencies) {
   const checkpoint = deps.checkpoint ?? createAgentRunCheckpoint({ db: deps.db as Database, auditTrail: deps.auditTrail as AuditTrail, id: deps.id, clock: deps.clock });
-  return createDomainAgentRunProcessor({ ...deps, adapterResolver, checkpoint });
+  return createDomainAgentRunProcessor({ ...deps, checkpoint });
 }

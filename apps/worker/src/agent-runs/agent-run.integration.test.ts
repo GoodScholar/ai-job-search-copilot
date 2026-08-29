@@ -109,6 +109,7 @@ describe("岗位发现 Agent Run Worker", () => {
       MINIO_ACCESS_KEY: process.env.MINIO_ACCESS_KEY,
       MINIO_SECRET_KEY: process.env.MINIO_SECRET_KEY,
       MINIO_BUCKET: process.env.MINIO_BUCKET,
+      E2E_AGENT_RUN_SCENARIOS: process.env.E2E_AGENT_RUN_SCENARIOS,
     };
     Object.assign(process.env, {
       APP_ENV: "test",
@@ -135,17 +136,21 @@ describe("岗位发现 Agent Run Worker", () => {
     }
   });
 
-  function createDurableQueuedRun() {
+  function commands() {
     return createAgentRunCommands({
       db: database,
       queue: { enqueue: async () => { throw new Error("API queue wakeup unavailable"); } },
       auditTrail: createAuditTrail({ db: database, clock: () => new Date() }),
       id: randomUUID,
       clock: () => new Date(),
-    }).start({
+    });
+  }
+
+  function createDurableQueuedRun(idempotencyKey = randomUUID()) {
+    return commands().start({
       userId,
       requestId: randomUUID(),
-      command: { targetId, idempotencyKey: randomUUID() },
+      command: { targetId, idempotencyKey },
     });
   }
 
@@ -256,4 +261,55 @@ describe("岗位发现 Agent Run Worker", () => {
     await expect(database.select().from(jobOpportunities)).resolves.toHaveLength(5);
     await expect(database.select().from(agentRunJobResults)).resolves.toHaveLength(10);
   }, 60_000);
+
+  it("暂停 run 不被恢复扫描，恢复后完成，取消的 run 不产生结果", async () => {
+    await stopWorker();
+    delete process.env.E2E_AGENT_RUN_SCENARIOS;
+    const paused = await createDurableQueuedRun();
+    await commands().control({ userId, requestId: randomUUID(), runId: paused.runId, command: { commandId: randomUUID(), action: "pause" } });
+
+    await startWorker();
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: paused.runId }))
+      .resolves.toMatchObject({ status: "paused" });
+    await expect(createAgentRunRecoveryQueries({ db: database, clock: () => new Date() }).listRecoverable())
+      .resolves.not.toContainEqual({ version: 1, runId: paused.runId, userId });
+
+    await commands().control({ userId, requestId: randomUUID(), runId: paused.runId, command: { commandId: randomUUID(), action: "resume" } });
+    await waitFor(
+      async () => (await createAgentRunQueries({ db: database }).get({ userId, runId: paused.runId }))?.status === "completed",
+      "timed out waiting for resumed agent run",
+    );
+
+    const cancelled = await createDurableQueuedRun();
+    await commands().control({ userId, requestId: randomUUID(), runId: cancelled.runId, command: { commandId: randomUUID(), action: "cancel" } });
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: cancelled.runId }))
+      .resolves.toMatchObject({ status: "cancelled", results: [] });
+  }, 30_000);
+
+  it("test-only retry 场景经真实 Worker 有限重试：retry_once 成功且 retry_until_budget 终止", async () => {
+    await stopWorker();
+    const retryOnceKey = randomUUID();
+    const retryBudgetKey = randomUUID();
+    process.env.E2E_AGENT_RUN_SCENARIOS = JSON.stringify({ [retryOnceKey]: "retry_once", [retryBudgetKey]: "retry_until_budget" });
+    const retryOnce = await createDurableQueuedRun(retryOnceKey);
+    const retryUntilBudget = await createDurableQueuedRun(retryBudgetKey);
+
+    await startWorker();
+    await waitFor(
+      async () => (await createAgentRunQueries({ db: database }).get({ userId, runId: retryOnce.runId }))?.status === "completed",
+      "timed out waiting for retry_once completion",
+      45_000,
+    );
+    await waitFor(
+      async () => (await createAgentRunQueries({ db: database }).get({ userId, runId: retryUntilBudget.runId }))?.termination?.kind === "budget_exhausted",
+      "timed out waiting for retry_until_budget termination",
+      75_000,
+    );
+    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: retryOnce.runId }))
+      .resolves.toMatchObject({ status: "completed", attemptCount: 2 });
+    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: retryUntilBudget.runId }))
+      .resolves.toMatchObject({ status: "failed", termination: { kind: "budget_exhausted", budgetDimension: "attempts" }, results: [] });
+  }, 90_000);
 });

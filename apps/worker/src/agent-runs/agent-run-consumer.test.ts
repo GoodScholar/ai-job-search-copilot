@@ -30,7 +30,7 @@ describe("AgentRunConsumer", () => {
     expect(observed).toEqual([{ ...payload, finalAttempt: false }]);
   });
 
-  it.each(["completed", "failed", "stale"] as const)("领域 %s 结果正常确认，不制造重复工作", async (outcome) => {
+  it.each(["completed", "paused", "cancelled", "budget_exhausted", "failed", "stale"] as const)("领域 %s 结果正常确认，不制造重复工作", async (outcome) => {
     const processor = { process: async () => outcome };
 
     await expect(processAgentRunJob({ data: payload, attemptsMade: 2, attempts: 3 }, processor))

@@ -12,7 +12,7 @@ import {
   type AgentRunRecoveryFailure,
   type AgentRunRecoveryReporter,
 } from "./agent-run-reconciler.js";
-import { FakeJobDiscoveryAdapter } from "./fake-job-discovery-adapter.js";
+import { createJobDiscoveryAdapterResolver } from "./job-discovery-adapter-resolver.js";
 import { MinioDiscoveryContentStore } from "./minio-discovery-content-store.js";
 
 export const AGENT_RUN_CONSUMER = Symbol("AGENT_RUN_CONSUMER");
@@ -46,11 +46,8 @@ function createMinioClient(): MinioClient {
   });
 }
 
-export function createConfiguredJobDiscoveryAdapter(environment: NodeJS.ProcessEnv = process.env): FakeJobDiscoveryAdapter {
-  if (environment.APP_ENV !== "local" && environment.APP_ENV !== "test") {
-    throw new Error("JobDiscoveryAdapter 环境未获允许");
-  }
-  return new FakeJobDiscoveryAdapter();
+export function createConfiguredJobDiscoveryAdapterResolver(environment: NodeJS.ProcessEnv = process.env) {
+  return createJobDiscoveryAdapterResolver(environment);
 }
 
 @Injectable()
@@ -87,7 +84,7 @@ class AgentRunDatabase implements OnModuleDestroy {
           redisUrl: redisUrl(),
           processor: createAgentRunProcessor({
             db,
-            adapter: createConfiguredJobDiscoveryAdapter(),
+            adapterResolver: createConfiguredJobDiscoveryAdapterResolver(),
             contentStore: new MinioDiscoveryContentStore(createMinioClient(), required("MINIO_BUCKET", "career-documents")),
             auditTrail: createAuditTrail({ db, clock: () => new Date() }),
             id: randomUUID,

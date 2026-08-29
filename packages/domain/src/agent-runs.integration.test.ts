@@ -4,7 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { agentInboxItems, agentRunEvents, agentRunJobResults, agentRunSteps, agentRunUsageEntries, agentRuns, auditEvents, createDatabase, jobAccounts, jobOpportunities, jobOpportunitySources, jobSourcePostingVersions, jobSourcePostings, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
-import { createAgentRunCommands, createAgentRunProcessor, createAgentRunQueries, createAgentRunRecoveryQueries, type AgentRunQueue, type DiscoveryContentStore, type JobDiscoveryAdapter } from "./agent-runs";
+import { createAgentRunCommands, createAgentRunProcessor as createDomainAgentRunProcessor, createAgentRunQueries, createAgentRunRecoveryQueries, type AgentRunQueue, type DiscoveryContentStore, type JobDiscoveryAdapter, type JobDiscoveryAdapterResolver } from "./agent-runs";
 import { createJobTargetCommands } from "./job-targets";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
@@ -36,6 +36,14 @@ function adapter(result: { retryable?: boolean } = {}): JobDiscoveryAdapter {
     searchBatch: async () => result.retryable ? { ok: false, error: { code: "UPSTREAM", retryable: true } } : { ok: true, data: [summary] },
     getDetail: async () => ({ ok: true, data: { ...summary, sourceType: "company_careers", isOfficial: true, rawPayload: { b: 2, a: 1 } } }),
   };
+}
+
+type TestProcessorInput = Omit<Parameters<typeof createDomainAgentRunProcessor>[0], "adapterResolver"> & { adapter: JobDiscoveryAdapter };
+
+function createAgentRunProcessor(input: TestProcessorInput) {
+  const { adapter: testAdapter, ...deps } = input;
+  const adapterResolver: JobDiscoveryAdapterResolver = { resolve: () => testAdapter };
+  return createDomainAgentRunProcessor({ ...deps, adapterResolver });
 }
 
 function twoSourceAdapter(): JobDiscoveryAdapter {
