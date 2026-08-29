@@ -5,7 +5,7 @@ import { FakeJobDiscoveryAdapter } from "./fake-job-discovery-adapter.js";
 
 const FAKE_ADAPTER = "fake";
 const FAKE_ADAPTER_VERSION = "fake-job-discovery-v1";
-const SLOW_CHECKPOINT_DELAY_MS = 25;
+const SLOW_CHECKPOINT_DELAY_MS = 750;
 
 const FakeScenarioMapSchema = z.record(
   z.uuid(),

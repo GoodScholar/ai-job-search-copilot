@@ -5,6 +5,7 @@ import {
   type AgentInboxActionCommand,
   type AgentInboxItem,
 } from "@job-copilot/contracts/agent-inbox";
+import type { AgentRunControlSnapshot } from "@job-copilot/contracts/agent-runs";
 import Link from "next/link";
 import { useRef, useState } from "react";
 
@@ -15,7 +16,11 @@ const actionLabels: Record<AgentInboxActionCommand["action"], string> = {
   dismiss: "标记已处理",
 };
 
-export function AgentInboxPanel({ items, onResolved }: { items: AgentInboxItem[]; onResolved: (itemId: string) => void }) {
+export function AgentInboxPanel({ items, onResolved, onRunUpdated }: {
+  items: AgentInboxItem[];
+  onResolved: (itemId: string) => void;
+  onRunUpdated?: (run: AgentRunControlSnapshot) => void;
+}) {
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState<string | null>(null);
   const actionIds = useRef(new Map<string, string>());
@@ -42,6 +47,7 @@ export function AgentInboxPanel({ items, onResolved }: { items: AgentInboxItem[]
         return;
       }
       actionIds.current.delete(key);
+      if (parsed.data.run) onRunUpdated?.(parsed.data.run);
       if (parsed.data.item.status === "resolved") {
         onResolved(item.itemId);
         setMessage("事项已处理。");

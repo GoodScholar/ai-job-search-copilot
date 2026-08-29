@@ -74,6 +74,6 @@ describe("JobDiscoveryAdapterResolver", () => {
     });
     const startedAt = Date.now();
     await expect(resolver.resolve({ ...metadata, attemptCount: 1 }).searchBatch(batchInput)).resolves.toMatchObject({ ok: true });
-    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(10);
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(500);
   });
 });

@@ -127,6 +127,16 @@ beforeEach(() => {
 
 afterEach(() => vi.restoreAllMocks());
 
+it("收到 Inbox 已处理通知后重新读取权威运行详情", async () => {
+  const paused = { ...detail(), status: "paused" as const, currentStep: "batch_search" as const, version: 4 };
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(Response.json(detail("completed"))));
+  const view = render(<AgentRunPanel initialRun={paused} refreshVersion={0} targets={[target()]} />);
+
+  view.rerender(<AgentRunPanel initialRun={paused} refreshVersion={1} targets={[target()]} />);
+
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("岗位发现完成，共保存 1 个岗位机会"));
+});
+
 it("lets the user choose an active target and exposes a touch-sized discovery action", async () => {
   render(<AgentRunPanel initialRun={null} targets={[
     target(), target(secondTargetId, "前端工程师", "secondary"),

@@ -47,3 +47,26 @@ it.each(["restart_run", "resume_run", "cancel_run", "dismiss"] as const)("%s 动
     { actionId, action }, { actionId, action },
   ]);
 });
+
+it("恢复事项成功后把权威运行快照交给工作台刷新", async () => {
+  const user = userEvent.setup();
+  const decision: AgentInboxItem = {
+    ...item,
+    kind: "decision_required",
+    reasonCode: "AGENT_RUN_PAUSED",
+    budgetDimension: null,
+    title: "岗位发现已暂停",
+    message: "选择继续或取消本次岗位发现。",
+    availableActions: ["resume_run", "cancel_run"],
+    targetHref: null,
+  };
+  const resolved = { ...decision, status: "resolved" as const, availableActions: [], resolvedAt: now };
+  const run = { runId, status: "queued" as const, currentStep: "queued" as const, controlState: "none" as const, version: 4 };
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(Response.json({ applied: true, item: resolved, run })));
+  const onRunUpdated = vi.fn();
+  render(<AgentInboxPanel items={[decision]} onResolved={vi.fn()} onRunUpdated={onRunUpdated} />);
+
+  await user.click(screen.getByRole("button", { name: "继续本次岗位发现：岗位发现已暂停" }));
+
+  await waitFor(() => expect(onRunUpdated).toHaveBeenCalledWith(run));
+});

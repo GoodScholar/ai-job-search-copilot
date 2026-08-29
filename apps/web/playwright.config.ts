@@ -17,7 +17,20 @@ export default defineConfig({
   webServer: {
     command: "node scripts/local-runtime.mjs --test",
     cwd: repositoryRoot,
-    env: { E2E_JOB_NORMALIZER_DELAY_MS: "750", JOB_PAGE_FETCHER_TEST_ORIGIN: "http://127.0.0.1:39333" },
+    env: {
+      E2E_JOB_NORMALIZER_DELAY_MS: "750",
+      JOB_PAGE_FETCHER_TEST_ORIGIN: "http://127.0.0.1:39333",
+      E2E_AGENT_RUN_SCENARIOS: JSON.stringify({
+        "10000000-0000-4000-8000-000000000101": "slow_checkpoint",
+        "10000000-0000-4000-8000-000000000102": "slow_checkpoint",
+        "10000000-0000-4000-8000-000000000103": "retry_once",
+        "10000000-0000-4000-8000-000000000104": "retry_until_budget",
+        "10000000-0000-4000-8000-000000000111": "slow_checkpoint",
+        "10000000-0000-4000-8000-000000000112": "slow_checkpoint",
+        "10000000-0000-4000-8000-000000000113": "retry_once",
+        "10000000-0000-4000-8000-000000000114": "retry_until_budget",
+      }),
+    },
     reuseExistingServer: false,
     gracefulShutdown: { signal: "SIGTERM", timeout: 30_000 },
     stdout: "pipe",

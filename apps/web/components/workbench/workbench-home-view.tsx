@@ -37,6 +37,7 @@ export async function loadOpenAgentInbox(): Promise<AgentInboxItem[] | false> {
 export function WorkbenchHomeView({ home, targets, initialRun, inbox }: WorkbenchHomeViewProps) {
   const hasPendingFacts = home.summary.pendingFacts > 0;
   const [inboxItems, setInboxItems] = useState(inbox.items);
+  const [runRefreshVersion, setRunRefreshVersion] = useState(0);
 
   const refreshInbox = useCallback(async () => {
     const nextItems = await loadOpenAgentInbox();
@@ -64,8 +65,12 @@ export function WorkbenchHomeView({ home, targets, initialRun, inbox }: Workbenc
         ))}
       </dl>
 
-      <AgentRunPanel initialRun={initialRun} onInboxRefresh={refreshInbox} targets={targets.targets} />
-      <AgentInboxPanel items={inboxItems} onResolved={(itemId) => setInboxItems((items) => items.filter((item) => item.itemId !== itemId))} />
+      <AgentRunPanel initialRun={initialRun} onInboxRefresh={refreshInbox} refreshVersion={runRefreshVersion} targets={targets.targets} />
+      <AgentInboxPanel
+        items={inboxItems}
+        onResolved={(itemId) => setInboxItems((items) => items.filter((item) => item.itemId !== itemId))}
+        onRunUpdated={() => setRunRefreshVersion((version) => version + 1)}
+      />
 
       <section aria-labelledby="ledger-title" className="workbench-ledger">
         <div className="workbench-ledger-heading">

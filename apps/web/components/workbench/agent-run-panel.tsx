@@ -11,7 +11,7 @@ import {
 } from "@job-copilot/contracts/agent-runs";
 import type { JobTarget } from "@job-copilot/contracts/job-targets";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { z } from "zod";
 
 type TimelineEvent = {
@@ -99,7 +99,12 @@ async function fetchRunDetail(runId: string): Promise<AgentRunDetail> {
   return parsed.data;
 }
 
-export function AgentRunPanel({ targets, initialRun, onInboxRefresh }: { targets: JobTarget[]; initialRun: AgentRunDetail | null; onInboxRefresh?: () => Promise<boolean> }) {
+export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVersion = 0 }: {
+  targets: JobTarget[];
+  initialRun: AgentRunDetail | null;
+  onInboxRefresh?: () => Promise<boolean>;
+  refreshVersion?: number;
+}) {
   const activeTargets = targets.filter((target) => target.state === "active");
   const initialTargetId = activeTargets.some((target) => target.targetId === initialRun?.targetId)
     ? initialRun!.targetId
@@ -130,19 +135,34 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh }: { targets
     return true;
   }
 
-  async function refreshInboxSafely(): Promise<boolean> {
+  const refreshInboxSafely = useCallback(async (): Promise<boolean> => {
     if (!onInboxRefresh) return true;
     try {
       return await onInboxRefresh();
     } catch {
       return false;
     }
-  }
+  }, [onInboxRefresh]);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
+
+  useEffect(() => {
+    if (refreshVersion === 0 || !runRef.current) return;
+    const runId = runRef.current.runId;
+    void fetchRunDetail(runId).then((detail) => {
+      if (!mountedRef.current || runRef.current?.runId !== runId) return;
+      replaceRun(detail);
+      setTimeline(detailTimeline(detail));
+      setMessage("");
+    }).catch(() => {
+      if (mountedRef.current && runRef.current?.runId === runId) {
+        setMessage("运行状态已更新，但详情暂时无法读取。请刷新页面重试。");
+      }
+    });
+  }, [refreshVersion]);
 
   useEffect(() => {
     if (!run || ["paused", "completed", "failed", "cancelled"].includes(run.status)) return;
@@ -201,7 +221,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh }: { targets
       stream.removeEventListener("error", handleError);
       stream.close();
     };
-  }, [onInboxRefresh, run]);
+  }, [onInboxRefresh, refreshInboxSafely, run]);
 
   async function startRun() {
     if (!selectedTargetId || runIsUnfinished || isStarting) return;
