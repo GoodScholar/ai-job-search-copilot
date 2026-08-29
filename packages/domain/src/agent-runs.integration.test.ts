@@ -132,7 +132,7 @@ describe("agent runs", () => {
     await expect(processor.process({ version: 1, runId: second.runId, userId, finalAttempt: true })).resolves.toBe("completed");
     await expect(database.select().from(jobOpportunities).where(eq(jobOpportunities.userId, userId))).resolves.toHaveLength(1);
     await expect(database.select().from(agentRunJobResults).where(eq(agentRunJobResults.userId, userId))).resolves.toHaveLength(2);
-    expect(store.puts[0]).toMatch(new RegExp(`^accounts/${userId}/agent-runs/${first.runId}/sources/[0-9a-f]{64}/[0-9a-f]{64}\\.json$`));
+    expect(store.puts[0]).toMatch(new RegExp(`^accounts/${userId}/agent-runs/${first.runId}/sources/[0-9a-f]{64}/[0-9a-f-]{36}/[0-9a-f]{64}\\.json$`));
     expect(store.deletes).toHaveLength(1);
   });
 

@@ -151,8 +151,8 @@ async function bounded<T>(clock: () => Date, deadline: Date, operation: () => Pr
   } finally { if (timer) clearTimeout(timer); }
 }
 
-async function removeBestEffort(store: DiscoveryContentStore, objectKeys: string[]) {
-  await Promise.all(objectKeys.map(async (objectKey) => { try { await store.delete({ objectKey }); } catch { /* 补偿不得覆盖主结果。 */ } }));
+async function removeBestEffort(store: DiscoveryContentStore, clock: () => Date, deadline: Date, objectKeys: string[]) {
+  await Promise.all(objectKeys.map(async (objectKey) => { try { await bounded(clock, deadline, () => store.delete({ objectKey })); } catch { /* 补偿不得覆盖主结果或 attempt deadline。 */ } }));
 }
 
 async function appendEvent(db: any, input: { id: () => string; userId: string; runId: string; version: number; eventType: string; data: Record<string, unknown>; now: Date }) {
@@ -273,10 +273,19 @@ export function createAgentRunProcessor(deps: ProcessorDependencies): { process(
         const bytes = canonicalJsonBytes(detail.rawPayload);
         const sourceIdentifier = discoverySourceIdentifier(detail.sourceId, detail.detailId);
         const rawContentSha256 = createHash("sha256").update(bytes).digest("hex");
-        return { detail, bytes, sourceIdentifier, rawContentSha256, objectKey: `accounts/${job.userId}/agent-runs/${job.runId}/sources/${sourceIdentifier}/${rawContentSha256}.json` };
+        return { detail, bytes, sourceIdentifier, rawContentSha256, objectKey: `accounts/${job.userId}/agent-runs/${job.runId}/sources/${sourceIdentifier}/${claimed.claimToken}/${rawContentSha256}.json` };
       });
       const putObjectKeys: string[] = [];
-      try { for (const item of stored) { await bounded(deps.clock, deadline, () => deps.contentStore.put({ objectKey: item.objectKey, bytes: item.bytes, mediaType: "application/json", runId: job.runId })); putObjectKeys.push(item.objectKey); } } catch (error) { await removeBestEffort(deps.contentStore, putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failureCode: error instanceof AgentRunBudgetError ? "AGENT_RUN_BUDGET_EXCEEDED" : "AGENT_RUN_CONTENT_STORAGE_FAILED" }); }
+      try {
+        for (const item of stored) {
+          putObjectKeys.push(item.objectKey);
+          const put = deps.contentStore.put({ objectKey: item.objectKey, bytes: item.bytes, mediaType: "application/json", runId: job.runId });
+          try { await bounded(deps.clock, deadline, () => put); } catch (error) {
+            void put.then(() => removeBestEffort(deps.contentStore, deps.clock, deadline, [item.objectKey]), () => removeBestEffort(deps.contentStore, deps.clock, deadline, [item.objectKey]));
+            throw error;
+          }
+        }
+      } catch (error) { await removeBestEffort(deps.contentStore, deps.clock, deadline, putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failureCode: error instanceof AgentRunBudgetError ? "AGENT_RUN_BUDGET_EXCEEDED" : "AGENT_RUN_CONTENT_STORAGE_FAILED" }); }
       try {
         const completed = await deps.db.transaction(async (transaction) => {
           await acquireAccountAdvisoryLock(transaction, job.userId);
@@ -299,9 +308,9 @@ export function createAgentRunProcessor(deps: ProcessorDependencies): { process(
           await deps.auditTrail.bind(transaction).append({ userId: job.userId, actorUserId: job.userId, eventType: "agent.run_completed", occurredAt: now, requestId: job.runId, outcome: "success", reasonCode: "AGENT_RUN_COMPLETED", resourceType: "agent_run", resourceId: job.runId, metadata: { runId: job.runId, targetId: run.targetId, attemptCount: claimed.attemptCount, resultCount: stored.length } });
           return { completed: true, cleanup };
         });
-        await removeBestEffort(deps.contentStore, completed.cleanup);
+        await removeBestEffort(deps.contentStore, deps.clock, deadline, completed.cleanup);
         return completed.completed ? "completed" : "stale";
-      } catch { await removeBestEffort(deps.contentStore, putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failureCode: "AGENT_RUN_PERSIST_FAILED" }); }
+      } catch { await removeBestEffort(deps.contentStore, deps.clock, deadline, putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failureCode: "AGENT_RUN_PERSIST_FAILED" }); }
     },
   };
 }

@@ -35,3 +35,10 @@
 - 每个 Adapter 调用显式累计 tool call，所有 Adapter/对象存储边界使用 attempt deadline 的受控 timeout，并在调用后以可推进时钟复核；超限终态为 `AGENT_RUN_BUDGET_EXCEEDED`。
 - claim 前先处理耗尽 attempts 的 run，原子写入 `run.failed` 和脱敏审计，避免第四次 claim；详情请求以前按 source identity 去重，ordinal/resultCount 使用实际持久化的唯一结果。
 - PostgreSQL 集成测试覆盖活动 claim、过期接管及旧 token stale、attempt budget、重复 identity、来源版本复用和对象键/删除。未修改审查 ledger 已记录的 Minor。
+
+## Fix round 2（claim 隔离对象清理）
+
+- 实施：对象键遵循 controller ruling，改为 `accounts/{user}/agent-runs/{run}/sources/{sourceIdentifier}/{claimToken}/{rawHash}.json`。put 前即登记自身 key；put 异常/超时、stale、版本复用和事务失败均仅清理该 claimant 的未提交 key。
+- 实施：删除操作纳入同一 attempt deadline 的 `bounded` 调用；删除挂起、失败或超时被吞没，不能延长 process 或覆盖主结果。超时 put 的原 Promise 通过 settle continuation 触发自身 key 的补偿，避免未处理 rejection。
+- 覆盖：对象键集成断言已更新为 source hash、claim token、raw hash；既有 PostgreSQL lease takeover、旧 token stale、source-version 复用对象删除和完整事件顺序用例继续覆盖。
+- 实际命令：`pnpm --filter @job-copilot/domain test -- src/agent-runs.integration.test.ts src/agent-runs.test.ts src/job-opportunity-persistence.test.ts src/job-imports.integration.test.ts src/audit-trail.integration.test.ts src/workbench-home.integration.test.ts`，退出码 0，15 个文件、123 个测试通过；`pnpm --filter @job-copilot/domain typecheck` 与 `pnpm --filter @job-copilot/contracts typecheck` 均退出码 0；`git diff --check` 退出码 0、无输出。
