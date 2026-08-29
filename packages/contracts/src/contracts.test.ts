@@ -32,6 +32,10 @@ describe("shared contracts", () => {
     }
   });
 
+  it("accepts a real nonnegative running agent-run count", () => {
+    expect(WorkbenchHomeSchema.parse({ account: { userId: "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3" }, summary: { recommendations: 0, pendingFacts: 0, runningAgentRuns: 2, applications: 0 } }).summary.runningAgentRuns).toBe(2);
+  });
+
   it("rejects an empty Dev Auth subject", () => {
     expect(StartDevSessionRequestSchema.safeParse({ subject: "" }).success).toBe(false);
   });

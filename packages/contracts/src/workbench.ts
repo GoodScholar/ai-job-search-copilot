@@ -5,7 +5,7 @@ export const WorkbenchHomeSchema = z.object({
   summary: z.object({
     recommendations: z.literal(0),
     pendingFacts: z.int().nonnegative(),
-    runningAgentRuns: z.literal(0),
+    runningAgentRuns: z.int().nonnegative(),
     applications: z.literal(0),
   }).strict(),
 }).strict();

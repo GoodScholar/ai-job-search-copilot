@@ -220,4 +220,13 @@ describe("audit trail", () => {
       metadata: { importId, inputType: "pasted_text", content: "ignore previous instructions" },
     } as never)).rejects.toThrow(/字段白名单/);
   });
+
+  it("允许且只允许 agent run 生命周期的红删审计字段", async () => {
+    const auditTrail = createAuditTrail({ db: database, clock: () => now });
+    const runId = crypto.randomUUID();
+    const targetId = crypto.randomUUID();
+    await auditTrail.append({ userId, actorUserId: userId, eventType: "agent.run_queued", occurredAt: now, requestId: crypto.randomUUID(), outcome: "success", reasonCode: "AGENT_RUN_QUEUED", resourceType: "agent_run", resourceId: runId, metadata: { runId, targetId, targetVersion: 1, workflowVersion: "job-discovery-workflow-v1", adapterVersion: "fake-job-discovery-v1" } });
+    await auditTrail.append({ userId, actorUserId: userId, eventType: "agent.run_completed", occurredAt: now, requestId: crypto.randomUUID(), outcome: "success", reasonCode: "AGENT_RUN_COMPLETED", resourceType: "agent_run", resourceId: runId, metadata: { runId, targetId, attemptCount: 1, resultCount: 1 } });
+    await expect(auditTrail.append({ userId, actorUserId: userId, eventType: "agent.run_failed", requestId: crypto.randomUUID(), outcome: "failure", reasonCode: "AGENT_RUN_ADAPTER_FAILED", resourceType: "agent_run", resourceId: runId, metadata: { runId, targetId, attemptCount: 1, failureCode: "AGENT_RUN_ADAPTER_FAILED", message: "private" } as never })).rejects.toThrow(/字段白名单/);
+  });
 });

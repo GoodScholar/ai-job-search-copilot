@@ -19,6 +19,7 @@ import {
 } from "@job-copilot/contracts/job-imports";
 import type { AuditTrail } from "./audit-trail";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
+import { persistJobOpportunity } from "./job-opportunity-persistence";
 
 export interface JobContentStore {
   put(input: { objectKey: string; bytes: Uint8Array; mediaType: "text/markdown" | "text/html" | "text/plain"; importId: string }): Promise<void>;
@@ -92,6 +93,10 @@ function rawContentHash(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+function sha256(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
 function sourceObjectKey(userId: string, importId: string): string {
   return `accounts/${userId}/job-imports/${importId}/source.md`;
 }
@@ -118,19 +123,6 @@ function response(record: {
     detailUrl: `/v1/job-imports/${record.id}`,
     reused,
   };
-}
-
-function sha256(value: string): string {
-  return createHash("sha256").update(value, "utf8").digest("hex");
-}
-
-function opportunityDedupKey(output: {
-  company: string | null; title: string | null; location: string | null; postedAt: string | null; deadline: string | null; description: string | null;
-}): string {
-  return sha256(JSON.stringify([
-    output.company, output.title, output.location, output.postedAt, output.deadline,
-    output.description === null ? null : sha256(output.description),
-  ]));
 }
 
 function importBase(record: {
@@ -454,30 +446,11 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
           )).returning({ id: jobImports.id });
           if (!completionClaimed) return false;
 
-          const dedupKey = opportunityDedupKey(output);
-          let [opportunity] = await transaction.select({ id: jobOpportunities.id }).from(jobOpportunities).where(and(
-            eq(jobOpportunities.userId, parsedJob.userId), eq(jobOpportunities.dedupKey, dedupKey),
-          ));
-          if (!opportunity) {
-            const [created] = await transaction.insert(jobOpportunities).values({
-              id: deps.id(), userId: parsedJob.userId, importId: parsedJob.importId, sourcePostingVersionId: sourceVersion.id,
-              dedupKey, company: output.company, title: output.title, location: output.location,
-              postedAt: output.postedAt ? new Date(output.postedAt) : null, deadline: output.deadline ? new Date(output.deadline) : null,
-              description: output.description, normalizedData: output, createdAt: now, updatedAt: now,
-            }).returning({ id: jobOpportunities.id });
-            if (!created) throw new Error("JOB_IMPORT_PERSIST_FAILED");
-            opportunity = created;
-          } else if (sourceVersion.isOfficial) {
-            await transaction.update(jobOpportunities).set({ sourcePostingVersionId: sourceVersion.id, updatedAt: now })
-              .where(and(eq(jobOpportunities.userId, parsedJob.userId), eq(jobOpportunities.id, opportunity.id)));
-          }
-          await transaction.insert(jobOpportunitySources).values({
-            userId: parsedJob.userId, opportunityId: opportunity.id, sourcePostingVersionId: sourceVersion.id, createdAt: now,
-          }).onConflictDoNothing();
+          const opportunity = await persistJobOpportunity(transaction, { id: deps.id, userId: parsedJob.userId, importId: parsedJob.importId, sourcePostingVersionId: sourceVersion.id, isOfficial: sourceVersion.isOfficial, company: output.company, title: output.title, location: output.location, postedAt: output.postedAt, deadline: output.deadline, description: output.description, normalizedData: output, now });
           await deps.auditTrail.bind(transaction).append({
             userId: parsedJob.userId, actorUserId: parsedJob.userId, eventType: "job.import_completed", occurredAt: now,
             requestId: parsedJob.importId, outcome: "success", reasonCode: "JOB_IMPORT_COMPLETED", resourceType: "job_import", resourceId: parsedJob.importId,
-            metadata: { importId: parsedJob.importId, sourcePostingId: sourceVersion.sourcePostingId, sourcePostingVersionId: sourceVersion.id, opportunityId: opportunity.id, version: sourceVersion.version, inputType, attemptCount },
+            metadata: { importId: parsedJob.importId, sourcePostingId: sourceVersion.sourcePostingId, sourcePostingVersionId: sourceVersion.id, opportunityId: opportunity.opportunityId, version: sourceVersion.version, inputType, attemptCount },
           });
           return true;
         });

@@ -6,6 +6,8 @@ import {
   careerImports,
   createDatabase,
   jobAccounts,
+  agentRuns,
+  jobTargets,
   migrateDatabase,
   type Database,
 } from "@job-copilot/database";
@@ -80,5 +82,19 @@ describe("workbench home", () => {
       account: { userId: secondActiveUserId },
       summary: { recommendations: 0, pendingFacts: 1, runningAgentRuns: 0, applications: 0 },
     });
+  });
+
+  it("只统计当前账户排队或运行中的 agent run", async () => {
+    const activeTargetId = crypto.randomUUID();
+    const otherTargetId = crypto.randomUUID();
+    await database.insert(jobTargets).values([
+      { id: activeTargetId, userId: activeUserId, version: 1, priority: "primary", state: "active", activeSlot: null },
+      { id: otherTargetId, userId: secondActiveUserId, version: 1, priority: "primary", state: "active", activeSlot: null },
+    ]);
+    await database.insert(agentRuns).values([
+      { id: crypto.randomUUID(), userId: activeUserId, targetId: activeTargetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1, targetSnapshot: {}, sourceScope: {}, budgetSnapshot: {}, workflowVersion: "v", adapter: "a", adapterVersion: "v", outputSchemaVersion: "v", status: "queued", currentStep: "queued" },
+      { id: crypto.randomUUID(), userId: secondActiveUserId, targetId: otherTargetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1, targetSnapshot: {}, sourceScope: {}, budgetSnapshot: {}, workflowVersion: "v", adapter: "a", adapterVersion: "v", outputSchemaVersion: "v", status: "queued", currentStep: "queued" },
+    ]);
+    await expect(createWorkbenchHome({ db: database })({ userId: activeUserId })).resolves.toMatchObject({ summary: { runningAgentRuns: 1 } });
   });
 });
