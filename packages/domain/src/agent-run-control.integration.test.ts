@@ -1,9 +1,9 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { agentRunControlCommands, agentRunEvents, agentRuns, auditEvents, createDatabase, jobAccounts, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
+import { agentInboxItems, agentRunControlCommands, agentRunEvents, agentRunUsageEntries, agentRuns, auditEvents, createDatabase, jobAccounts, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
-import { AgentRunControlError, createAgentRunCommands, type AgentRunQueue } from "./agent-runs";
+import { AgentRunControlError, createAgentRunCheckpoint, createAgentRunCommands, type AgentRunQueue } from "./agent-runs";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
 const constraints = {
@@ -41,6 +41,10 @@ describe("agent run controls", () => {
 
   function commands(queue: AgentRunQueue) {
     return createAgentRunCommands({ db: database, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+  }
+
+  function checkpoints(at = now) {
+    return createAgentRunCheckpoint({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => at }), id: () => crypto.randomUUID(), clock: () => at });
   }
 
   it("重放同一暂停命令时返回首次快照且只写一次事件、控制记录和审计", async () => {
@@ -90,5 +94,63 @@ describe("agent run controls", () => {
     await expect(commands(queue).control({ userId, requestId: crypto.randomUUID(), runId: queued.runId, command: { commandId: crypto.randomUUID(), action: "resume" } })).resolves.toMatchObject({ applied: true, run: { status: "queued", currentStep: "queued", controlState: "none" } });
     await expect(database.select({ status: agentRuns.status, controlState: agentRuns.controlState }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, queued.runId)))).resolves.toEqual([{ status: "queued", controlState: "none" }]);
     await expect(database.select({ eventType: auditEvents.eventType }).from(auditEvents).where(and(eq(auditEvents.userId, userId), eq(auditEvents.resourceId, queued.runId), eq(auditEvents.eventType, "agent.run_resumed")))).resolves.toHaveLength(1);
+  });
+
+  it("以稳定 checkpoint key 原子预占来源预算，并在耗尽时仅写一次终态、Inbox 与审计", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const claimToken = crypto.randomUUID();
+    await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", attemptCount: 1, startedAt: now, claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), activeSliceStartedAt: now }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)));
+
+    const checkpointAt = new Date(now.getTime() + 100);
+    const first = await checkpoints(checkpointAt).check({ userId, runId: run.runId, claimToken, checkpointKey: `${claimToken}:source:search:1`, reserve: { toolCalls: 1, sourceRequests: 1 } });
+    const replay = await checkpoints(checkpointAt).check({ userId, runId: run.runId, claimToken, checkpointKey: `${claimToken}:source:search:1`, reserve: { toolCalls: 1, sourceRequests: 1 } });
+    expect(first).toMatchObject({ kind: "continue" });
+    expect(replay).toEqual(first);
+    await expect(database.select().from(agentRunUsageEntries).where(and(eq(agentRunUsageEntries.userId, userId), eq(agentRunUsageEntries.runId, run.runId)))).resolves.toHaveLength(3);
+
+    for (let ordinal = 2; ordinal <= 10; ordinal += 1) {
+      await expect(checkpoints(checkpointAt).check({ userId, runId: run.runId, claimToken, checkpointKey: `${claimToken}:source:search:${ordinal}`, reserve: { toolCalls: 1, sourceRequests: 1 } })).resolves.toMatchObject({ kind: "continue" });
+    }
+    await expect(checkpoints(checkpointAt).check({ userId, runId: run.runId, claimToken, checkpointKey: `${claimToken}:source:search:11`, reserve: { toolCalls: 1, sourceRequests: 1 } })).resolves.toMatchObject({ kind: "budget_exhausted", budgetDimension: "tool_calls" });
+    await expect(checkpoints(checkpointAt).check({ userId, runId: run.runId, claimToken, checkpointKey: `${claimToken}:source:search:12`, reserve: { toolCalls: 1, sourceRequests: 1 } })).resolves.toMatchObject({ kind: "stale" });
+    await expect(database.select().from(agentRunEvents).where(and(eq(agentRunEvents.userId, userId), eq(agentRunEvents.runId, run.runId), eq(agentRunEvents.eventType, "run.failed")))).resolves.toHaveLength(1);
+    await expect(database.select().from(agentInboxItems).where(and(eq(agentInboxItems.userId, userId), eq(agentInboxItems.runId, run.runId), eq(agentInboxItems.kind, "budget_exhausted")))).resolves.toHaveLength(1);
+    await expect(database.select().from(auditEvents).where(and(eq(auditEvents.userId, userId), eq(auditEvents.resourceId, run.runId), eq(auditEvents.eventType, "agent.run_budget_exhausted")))).resolves.toHaveLength(1);
+  });
+
+  it("checkpoint 先处理控制请求与过期 claim，且暂停只开一条安全决策事项", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const claimToken = crypto.randomUUID();
+    await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", attemptCount: 1, startedAt: now, claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), activeSliceStartedAt: now, controlState: "pause_requested" }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)));
+    await expect(checkpoints().check({ userId, runId: run.runId, claimToken, checkpointKey: `${claimToken}:pause` })).resolves.toMatchObject({ kind: "paused" });
+    await expect(checkpoints().check({ userId, runId: run.runId, claimToken, checkpointKey: `${claimToken}:pause:replay` })).resolves.toMatchObject({ kind: "stale" });
+    await expect(database.select().from(agentInboxItems).where(and(eq(agentInboxItems.userId, userId), eq(agentInboxItems.runId, run.runId), eq(agentInboxItems.kind, "decision_required")))).resolves.toHaveLength(1);
+
+    const stale = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const staleToken = crypto.randomUUID();
+    await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", attemptCount: 1, startedAt: now, claimToken: staleToken, claimExpiresAt: new Date(now.getTime() - 1), activeSliceStartedAt: now }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, stale.runId)));
+    await expect(checkpoints().check({ userId, runId: stale.runId, claimToken: staleToken, checkpointKey: `${staleToken}:stale` })).resolves.toEqual({ kind: "stale" });
+
+    const cancelling = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const cancelToken = crypto.randomUUID();
+    await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", attemptCount: 1, startedAt: now, claimToken: cancelToken, claimExpiresAt: new Date(now.getTime() + 30_000), activeSliceStartedAt: now, controlState: "cancel_requested" }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, cancelling.runId)));
+    await expect(checkpoints().check({ userId, runId: cancelling.runId, claimToken: cancelToken, checkpointKey: `${cancelToken}:cancel` })).resolves.toEqual({ kind: "cancelled" });
+    await expect(database.select({ status: agentRuns.status, claimToken: agentRuns.claimToken, activeSliceStartedAt: agentRuns.activeSliceStartedAt }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, cancelling.runId)))).resolves.toEqual([{ status: "cancelled", claimToken: null, activeSliceStartedAt: null }]);
+  });
+
+  it("模型零预算在调用前拒绝，且暂停区间不计入 active time", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const firstToken = crypto.randomUUID();
+    await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", attemptCount: 1, startedAt: now, claimToken: firstToken, claimExpiresAt: new Date(now.getTime() + 30_000), activeSliceStartedAt: now, controlState: "pause_requested" }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)));
+    await expect(checkpoints(new Date(now.getTime() + 100)).check({ userId, runId: run.runId, claimToken: firstToken, checkpointKey: `${firstToken}:pause` })).resolves.toEqual({ kind: "paused" });
+
+    const secondToken = crypto.randomUUID();
+    const resumedAt = new Date(now.getTime() + 10_000);
+    await database.update(agentRuns).set({ status: "running", controlState: "none", claimToken: secondToken, claimExpiresAt: new Date(resumedAt.getTime() + 30_000), activeSliceStartedAt: resumedAt, startedAt: now }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)));
+    await expect(checkpoints(new Date(resumedAt.getTime() + 100)).check({ userId, runId: run.runId, claimToken: secondToken, checkpointKey: `${secondToken}:model`, reserve: { modelCalls: 1 } })).resolves.toMatchObject({ kind: "budget_exhausted", budgetDimension: "model_calls" });
+    await expect(database.select({ activeDurationMs: agentRuns.activeDurationMs, modelCallCount: agentRuns.modelCallCount }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)))).resolves.toEqual([{ activeDurationMs: 200, modelCallCount: 0 }]);
   });
 });

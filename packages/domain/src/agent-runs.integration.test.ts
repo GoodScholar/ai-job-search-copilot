@@ -155,6 +155,16 @@ describe("agent runs", () => {
       .resolves.toEqual([{ version: 2 }]);
   });
 
+  it("对没有完整账本的历史 run 明确标记 usage 不完整", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    await database.update(agentRuns).set({ usageComplete: false, toolCallCount: 3, sourceRequestCount: 3 }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)));
+
+    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({
+      usage: { complete: false, toolCalls: 3, sourceRequests: 3 },
+    });
+  });
+
   it("只暴露当前账户的最新 run 和事件", async () => {
     const { userId, targetId } = await activeTarget();
     const { userId: otherUserId } = await activeTarget();

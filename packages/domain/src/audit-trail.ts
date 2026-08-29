@@ -57,6 +57,15 @@ const FailedAgentRunMetadataSchema = z.object({ runId: z.uuid(), targetId: z.uui
 const ControlAgentRunMetadataSchema = z.object({
   runId: z.uuid(), version: z.int().min(1), action: z.enum(["pause", "resume", "cancel"]), attemptCount: z.int().min(0),
 }).strict();
+const AgentRunBudgetConsumedMetadataSchema = z.object({
+  runId: z.uuid(), activeDurationMs: z.int().nonnegative(), toolCalls: z.int().nonnegative(), sourceRequests: z.int().nonnegative(), modelCalls: z.int().nonnegative(),
+}).strict();
+const AgentRunBudgetExhaustedMetadataSchema = z.object({
+  runId: z.uuid(), budgetDimension: z.enum(["active_duration", "attempts", "tool_calls", "model_calls", "tokens"]), attemptCount: z.int().min(0),
+}).strict();
+const AgentInboxOpenedMetadataSchema = z.object({
+  runId: z.uuid(), kind: z.enum(["decision_required", "budget_exhausted"]), reasonCode: z.enum(["AGENT_RUN_PAUSED", "AGENT_RUN_BUDGET_EXCEEDED"]), budgetDimension: z.enum(["active_duration", "attempts", "tool_calls", "model_calls", "tokens"]).nullable(),
+}).strict();
 
 const AuditEventInputSchema = z.discriminatedUnion("eventType", [
   z.object({
@@ -173,6 +182,9 @@ const AuditEventInputSchema = z.discriminatedUnion("eventType", [
   z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("agent.run_resumed"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.literal("AGENT_RUN_RESUMED"), resourceType: z.literal("agent_run"), resourceId: z.uuid(), metadata: ControlAgentRunMetadataSchema }).strict(),
   z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("agent.run_cancel_requested"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.literal("AGENT_RUN_CANCEL_REQUESTED"), resourceType: z.literal("agent_run"), resourceId: z.uuid(), metadata: ControlAgentRunMetadataSchema }).strict(),
   z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("agent.run_cancelled"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.literal("AGENT_RUN_CANCELLED"), resourceType: z.literal("agent_run"), resourceId: z.uuid(), metadata: ControlAgentRunMetadataSchema }).strict(),
+  z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("agent.run_budget_consumed"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.literal("AGENT_RUN_BUDGET_CONSUMED"), resourceType: z.literal("agent_run"), resourceId: z.uuid(), metadata: AgentRunBudgetConsumedMetadataSchema }).strict(),
+  z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("agent.run_budget_exhausted"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("failure"), reasonCode: z.literal("AGENT_RUN_BUDGET_EXCEEDED"), resourceType: z.literal("agent_run"), resourceId: z.uuid(), metadata: AgentRunBudgetExhaustedMetadataSchema }).strict(),
+  z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("agent.inbox_opened"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.enum(["AGENT_RUN_PAUSED", "AGENT_RUN_BUDGET_EXCEEDED"]), resourceType: z.literal("agent_inbox_item"), resourceId: z.uuid(), metadata: AgentInboxOpenedMetadataSchema }).strict(),
 ]);
 
 type AuditEventInput = z.input<typeof AuditEventInputSchema>;

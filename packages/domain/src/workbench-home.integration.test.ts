@@ -84,7 +84,7 @@ describe("workbench home", () => {
     });
   });
 
-  it("只统计当前账户排队或运行中的 agent run", async () => {
+  it("只统计当前账户排队、运行或暂停中的 agent run", async () => {
     const activeTargetId = crypto.randomUUID();
     const otherTargetId = crypto.randomUUID();
     await database.insert(jobTargets).values([
@@ -92,9 +92,10 @@ describe("workbench home", () => {
       { id: otherTargetId, userId: secondActiveUserId, version: 1, priority: "primary", state: "active", activeSlot: null },
     ]);
     await database.insert(agentRuns).values([
-      { id: crypto.randomUUID(), userId: activeUserId, targetId: activeTargetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1, targetSnapshot: {}, sourceScope: {}, budgetSnapshot: {}, workflowVersion: "v", adapter: "a", adapterVersion: "v", outputSchemaVersion: "v", status: "queued", currentStep: "queued" },
-      { id: crypto.randomUUID(), userId: secondActiveUserId, targetId: otherTargetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1, targetSnapshot: {}, sourceScope: {}, budgetSnapshot: {}, workflowVersion: "v", adapter: "a", adapterVersion: "v", outputSchemaVersion: "v", status: "queued", currentStep: "queued" },
+      { id: crypto.randomUUID(), userId: activeUserId, targetId: activeTargetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1, targetSnapshot: {}, sourceScope: {}, budgetSnapshot: {}, workflowVersion: "v", ruleVersion: "v", adapter: "a", adapterVersion: "v", outputSchemaVersion: "v", toolAllowlist: [], status: "queued", currentStep: "queued" },
+      { id: crypto.randomUUID(), userId: activeUserId, targetId: activeTargetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1, targetSnapshot: {}, sourceScope: {}, budgetSnapshot: {}, workflowVersion: "v", ruleVersion: "v", adapter: "a", adapterVersion: "v", outputSchemaVersion: "v", toolAllowlist: [], status: "paused", currentStep: "queued" },
+      { id: crypto.randomUUID(), userId: secondActiveUserId, targetId: otherTargetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1, targetSnapshot: {}, sourceScope: {}, budgetSnapshot: {}, workflowVersion: "v", ruleVersion: "v", adapter: "a", adapterVersion: "v", outputSchemaVersion: "v", toolAllowlist: [], status: "queued", currentStep: "queued" },
     ]);
-    await expect(createWorkbenchHome({ db: database })({ userId: activeUserId })).resolves.toMatchObject({ summary: { runningAgentRuns: 1 } });
+    await expect(createWorkbenchHome({ db: database })({ userId: activeUserId })).resolves.toMatchObject({ summary: { runningAgentRuns: 2 } });
   });
 });

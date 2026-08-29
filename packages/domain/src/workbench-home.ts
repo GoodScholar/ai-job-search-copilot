@@ -30,7 +30,7 @@ export function createWorkbenchHome(input: { db: Database }): GetWorkbenchHome {
       throw new Error("待确认候选事实计数超出安全范围");
     }
 
-    const [runs] = await input.db.select({ count: count() }).from(agentRuns).where(and(eq(agentRuns.userId, userId), inArray(agentRuns.status, ["queued", "running"])));
+    const [runs] = await input.db.select({ count: count() }).from(agentRuns).where(and(eq(agentRuns.userId, userId), inArray(agentRuns.status, ["queued", "running", "paused"])));
     const runningAgentRuns = Number(runs?.count ?? 0);
     if (!Number.isSafeInteger(runningAgentRuns)) throw new Error("运行中的 Agent Run 计数超出安全范围");
     return {
