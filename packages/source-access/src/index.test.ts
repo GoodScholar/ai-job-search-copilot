@@ -17,6 +17,7 @@ describe("PublicSourceClient", () => {
       switch (request.url) {
         case "/html": response.writeHead(200, { "content-type": "text/html" }).end("<h1>job</h1>"); return;
         case "/json": response.writeHead(200, { "content-type": "application/json" }).end("{}"); return;
+        case "/json-wrong-content": response.writeHead(200, { "content-type": "text/html" }).end("json-body-secret"); return;
         case "/redirect": response.writeHead(302, { location: "/html" }).end(); return;
         case "/outside": response.writeHead(302, { location: "https://outside.test/html" }).end(); return;
         case "/bad-content": response.writeHead(200, { "content-type": "image/png" }).end(); return;
@@ -121,6 +122,20 @@ describe("PublicSourceClient", () => {
   it("accepts application/json only with its declared content type", async () => {
     await expect(client().get({ url: new URL(`${origin}/json`), allowedDomains: ["127.0.0.1"], accept: "application/json", maxRedirects: 0, retry: "none" }))
       .resolves.toMatchObject({ status: 200, body: expect.any(Uint8Array), attemptCount: 1 });
+  });
+
+  it("rejects JSON responses with a non-JSON content type without exposing their body", async () => {
+    const error = await client().get({ url: new URL(`${origin}/json-wrong-content`), allowedDomains: ["127.0.0.1"], accept: "application/json", maxRedirects: 0, retry: "none" })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({ code: "PUBLIC_SOURCE_CONTENT_TYPE_INVALID", attemptCount: 1 });
+    const rendered = JSON.stringify({
+      enumerable: Object.fromEntries(Object.entries(error as object)),
+      message: error instanceof Error ? error.message : undefined,
+      cause: error instanceof Error ? error.cause : undefined,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    expect(rendered).not.toContain("json-body-secret");
   });
 
   it("allows only exact-host redirects within its per-call authorization", async () => {
@@ -406,6 +421,74 @@ describe("PublicSourceClient", () => {
       .rejects.toMatchObject({ code: "PUBLIC_SOURCE_TIMEOUT" });
   });
 
+  it("releases the global permit after each of three per-host queued aborts", async () => {
+    for (let round = 0; round < 3; round += 1) {
+      let hostALookups = 0;
+      let releaseHolder: (() => void) | undefined;
+      const holderReleased = new Promise<void>((resolve) => { releaseHolder = resolve; });
+      let holderEntered: () => void;
+      const holderStarted = new Promise<void>((resolve) => { holderEntered = resolve; });
+      let releaseWaiterLookup: ((answers: readonly { address: string; family: number }[]) => void) | undefined;
+      let waiterLookupStarted: () => void;
+      const waiterLookupReady = new Promise<void>((resolve) => { waiterLookupStarted = resolve; });
+      let probeEntered = false;
+      let hostBEntered: () => void;
+      const access = createPublicSourceClientForTest({
+        exactHosts: ["host-a.test", "probe.test", "host-b.test"],
+        lookup: async (hostname) => {
+          if (hostname === "host-a.test" && ++hostALookups === 2) {
+            waiterLookupStarted();
+            return new Promise<readonly { address: string; family: number }[]>((resolve) => { releaseWaiterLookup = resolve; });
+          }
+          return [{ address: "93.184.216.34", family: 4 }];
+        },
+        transport: async ({ url }) => {
+          if (url.hostname === "host-a.test") {
+            holderEntered();
+            await holderReleased;
+          }
+          if (url.hostname === "probe.test") probeEntered = true;
+          if (url.hostname === "host-b.test") hostBEntered();
+          return { status: 200, headers: { "content-type": "text/html" }, body: new Uint8Array() };
+        },
+      });
+      const holder = access.get({ url: new URL("https://host-a.test/holder"), allowedDomains: ["host-a.test"], accept: "text/html", maxRedirects: 0, retry: "none" });
+      let hostB: Promise<unknown> | undefined;
+
+      try {
+        await holderStarted;
+        const waiterController = new AbortController();
+        const waiter = access.get({ url: new URL("https://host-a.test/waiter"), allowedDomains: ["host-a.test"], accept: "text/html", maxRedirects: 0, retry: "none", signal: waiterController.signal });
+        await waiterLookupReady;
+        if (!releaseWaiterLookup) throw new Error("waiter lookup was not blocked");
+        releaseWaiterLookup([{ address: "93.184.216.34", family: 4 }]);
+        await new Promise<void>((resolve) => setImmediate(resolve));
+
+        const probeController = new AbortController();
+        const probe = access.get({ url: new URL("https://probe.test/probe"), allowedDomains: ["probe.test"], accept: "text/html", maxRedirects: 0, retry: "none", signal: probeController.signal });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(probeEntered).toBe(false);
+
+        waiterController.abort();
+        probeController.abort();
+        await expect(waiter).rejects.toMatchObject({ code: "PUBLIC_SOURCE_ABORTED" });
+        await expect(probe).rejects.toMatchObject({ code: "PUBLIC_SOURCE_ABORTED" });
+
+        const hostBStarted = new Promise<void>((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error(`host B did not start in round ${round}`)), 100);
+          hostBEntered = () => { clearTimeout(timeout); resolve(); };
+        });
+        hostB = access.get({ url: new URL("https://host-b.test/jobs"), allowedDomains: ["host-b.test"], accept: "text/html", maxRedirects: 0, retry: "none" });
+        await hostBStarted;
+        await expect(hostB).resolves.toMatchObject({ status: 200 });
+      } finally {
+        releaseHolder?.();
+        await holder;
+        await hostB?.catch(() => undefined);
+      }
+    }
+  });
+
   it("removes three consecutively aborted queued requests so another host reaches global concurrency two", async () => {
     let releaseA: (() => void) | undefined;
     let releaseB: (() => void) | undefined;
@@ -504,5 +587,30 @@ describe("PublicSourceClient", () => {
       { code: "PUBLIC_SOURCE_UNREACHABLE", retryable: true, attemptCount: 1 },
       { code: "PUBLIC_SOURCE_CONTENT_TYPE_INVALID", retryable: false, attemptCount: 1 },
     ]);
+  });
+
+  it("exposes only stable enumerable fields for policy and transport failures", async () => {
+    const secrets = ["policy-secret", "transport-secret"];
+    const policyError = await createPublicSourceClientForTest({ exactHosts: ["policy.test"] })
+      .get({ url: new URL("https://user:policy-secret@policy.test/jobs"), allowedDomains: ["policy.test"], accept: "text/html", maxRedirects: 0, retry: "none" })
+      .catch((caught: unknown) => caught);
+    const transportError = await createPublicSourceClientForTest({
+      exactHosts: ["transport.test"],
+      lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+      transport: async () => { throw new Error("transport-secret"); },
+    }).get({ url: new URL("https://transport.test/jobs"), allowedDomains: ["transport.test"], accept: "text/html", maxRedirects: 0, retry: "none" })
+      .catch((caught: unknown) => caught);
+
+    for (const error of [policyError, transportError]) {
+      expect(Object.keys(error as object).sort()).toEqual(["attemptCount", "code", "retryable"]);
+      const rendered = JSON.stringify({
+        message: error instanceof Error ? error.message : undefined,
+        cause: error instanceof Error ? error.cause : undefined,
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+      for (const secret of secrets) expect(rendered).not.toContain(secret);
+    }
+    expect(policyError).toMatchObject({ code: "PUBLIC_SOURCE_TARGET_REJECTED", attemptCount: 0, retryable: false });
+    expect(transportError).toMatchObject({ code: "PUBLIC_SOURCE_UNREACHABLE", attemptCount: 1, retryable: true });
   });
 });

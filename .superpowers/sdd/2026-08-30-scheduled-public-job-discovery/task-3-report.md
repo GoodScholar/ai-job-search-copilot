@@ -115,3 +115,30 @@ The broad API command starts Testcontainers and failed during reaper port bindin
 
 - 仅修改 `packages/source-access` 的策略代码和测试；没有修改 Greenhouse adapter、API fetcher、Worker 或 UI。
 - 测试只使用受控 loopback fixture 或 injected lookup/transport，未访问真实招聘网站。
+
+## Fix Round 5
+
+### TDD / mutation evidence
+
+- 新增 JSON 错误 content-type 与公开 enumerable surface 断言后，现有实现首次即为 GREEN，记录为既有正确行为的回归证据；JSON controlled response 使用 `text/html` 和 `json-body-secret` body，稳定得到 `PUBLIC_SOURCE_CONTENT_TYPE_INVALID`、`attemptCount: 1`，且错误对象、message、cause、stack 均不含 body。
+- per-host queued-abort 回归以单一 `host-a.test` holder 占用 host A/global permit 1 为起点；每轮只启动一个同 host waiter，先由 lookup gate 放行，使其取得 global permit 2 后卡在 host A semaphore。一个独立 probe 在 abort 前不能进入 transport，证明第二个 global permit 已被该 waiter 占用。该 waiter 与 probe abort 并稳定退出后，holder 仍运行时才启动 host B，host B 必须在 100ms 内进入 transport。该序列连续三轮执行。
+- RED (mutation): 临时把 `internal.ts` 的 `finally { globalRelease(); }` 回退为只有取得 host release 时才释放全局 permit；focused test 失败：`host B did not start in round 0`（1 failed, 33 skipped）。恢复无条件 `globalRelease()` 后，focused test 通过（1 passed, 33 skipped）。这证明新测试会抓住 per-host queued abort 的 global permit 泄漏。
+
+### Security-matrix additions
+
+- D: `releases the global permit after each of three per-host queued aborts` 证明同 host 排队阶段的 abort 不会泄漏全局容量；不使用两个不同 holder 预占 global capacity，也不把被测 waiter 留在 global queue。
+- E: `rejects JSON responses with a non-JSON content type without exposing their body` 覆盖 `accept: application/json` 配合受控 `text/html` response，精确 error code、attempt count 与 body redaction。
+- E: `exposes only stable enumerable fields for policy and transport failures` 分别实际触发 credential-bearing policy rejection 与 transport failure，并精确断言 `Object.keys(error).sort()` 仅为 `attemptCount`、`code`、`retryable`；message/cause/stack 无 policy/transport secrets。
+
+### Final verification
+
+- `pnpm --filter @job-copilot/source-access test` — 34/34 passed.
+- `pnpm --filter api exec vitest run src/job-imports/job-page-fetcher.test.ts` — 26/26 passed.
+- `pnpm --filter @job-copilot/source-access typecheck` — exit 0.
+- `pnpm --filter api typecheck` — exit 0.
+- `git diff --check` — clean.
+
+### Scope / concern
+
+- 最终生产实现没有扩大改动；无条件释放 global permit 已正确存在，本轮只补足可突变验证的回归证据与另外两项缺失的安全矩阵断言。
+- 测试继续只使用受控 loopback fixture 或 injected lookup/transport，未访问真实招聘网站。
