@@ -234,26 +234,38 @@ export const AgentRunResultSchema = z.object({
   sourceType: z.string().trim().min(1).max(32), isOfficial: z.boolean(),
 }).strict();
 
-export const AgentRunSummarySchema = z.object({
+const AgentRunSummaryFields = {
   runId: z.uuid(), targetId: z.uuid(), targetVersion: positiveInteger, targetSnapshot: AgentRunTargetSnapshotSchema,
-  sourceScope: AgentRunSourceScopeSchema, workflowVersion: z.literal(FAKE_JOB_DISCOVERY_WORKFLOW_VERSION),
-  adapter: z.literal(FAKE_JOB_DISCOVERY_ADAPTER), adapterVersion: z.literal(FAKE_JOB_DISCOVERY_ADAPTER_VERSION),
-  outputSchemaVersion: z.literal(FAKE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION), budget: AgentRunBudgetSchema,
   status: AgentRunStatusSchema, currentStep: AgentRunCurrentStepSchema, version: positiveInteger,
   attemptCount: nonnegativeInteger, failureCode: AgentRunFailureCodeSchema.nullable(), queuedAt: z.iso.datetime(),
   startedAt: z.iso.datetime().nullable(), completedAt: z.iso.datetime().nullable(), failedAt: z.iso.datetime().nullable(), cancelledAt: z.iso.datetime().nullable(),
   updatedAt: z.iso.datetime(),
-}).strict().superRefine((summary, context) => {
+};
+const FakeAgentRunSummarySchema = z.object({
+  ...AgentRunSummaryFields, sourceScope: AgentRunSourceScopeSchema, workflowVersion: z.literal(FAKE_JOB_DISCOVERY_WORKFLOW_VERSION),
+  adapter: z.literal(FAKE_JOB_DISCOVERY_ADAPTER), adapterVersion: z.literal(FAKE_JOB_DISCOVERY_ADAPTER_VERSION),
+  outputSchemaVersion: z.literal(FAKE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION), budget: AgentRunBudgetSchema,
+}).strict();
+const PublicAgentRunSummarySchema = z.object({
+  ...AgentRunSummaryFields, sourceScope: PublicAgentRunSourceScopeSchema, workflowVersion: z.literal(GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION),
+  adapter: z.literal(GREENHOUSE_JOB_DISCOVERY_ADAPTER), adapterVersion: z.literal(GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION),
+  outputSchemaVersion: z.literal(GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION), budget: PublicAgentRunBudgetSchema,
+}).strict();
+export const AgentRunSummarySchema = z.discriminatedUnion("adapter", [FakeAgentRunSummarySchema, PublicAgentRunSummarySchema]).superRefine((summary, context) => {
   if ((summary.status === "cancelled") !== (summary.currentStep === "cancelled")) {
     context.addIssue({ code: "custom", path: ["currentStep"], message: "cancelled status and step must pair" });
   }
 });
 
-export const AgentRunDetailSchema = AgentRunSummarySchema.extend({
-  executionSpec: AgentRunExecutionSpecSchema, controlState: AgentRunControlStateSchema, usage: AgentRunUsageSchema,
+const AgentRunDetailFields = {
+  controlState: AgentRunControlStateSchema, usage: AgentRunUsageSchema,
   termination: AgentRunTerminationSchema.nullable(), retryOfRunId: z.uuid().nullable(),
   steps: z.array(AgentRunStepSchema), events: z.array(AgentRunEventSchema), results: z.array(AgentRunResultSchema),
-}).strict().superRefine((detail, context) => {
+};
+export const AgentRunDetailSchema = z.discriminatedUnion("adapter", [
+  FakeAgentRunSummarySchema.extend({ ...AgentRunDetailFields, executionSpec: FakeAgentRunExecutionSpecSchema }).strict(),
+  PublicAgentRunSummarySchema.extend({ ...AgentRunDetailFields, executionSpec: PublicAgentRunExecutionSpecSchema }).strict(),
+]).superRefine((detail, context) => {
   const terminal = detail.status === "completed" || detail.status === "failed" || detail.status === "cancelled";
   if (!terminal && detail.termination !== null) context.addIssue({ code: "custom", path: ["termination"], message: "nonterminal runs have no termination" });
   if (terminal && detail.usage.complete && detail.termination === null) context.addIssue({ code: "custom", path: ["termination"], message: "complete terminal runs require termination" });
@@ -267,7 +279,10 @@ export const AgentRunDetailSchema = AgentRunSummarySchema.extend({
   if ((detail.status === "cancelled") !== (detail.currentStep === "cancelled")) context.addIssue({ code: "custom", path: ["currentStep"], message: "cancelled status and step must pair" });
 });
 
-export const StartAgentRunResponseSchema = AgentRunSummarySchema.extend({ reused: z.boolean() }).strict();
+export const StartAgentRunResponseSchema = z.discriminatedUnion("adapter", [
+  FakeAgentRunSummarySchema.extend({ reused: z.boolean() }).strict(),
+  PublicAgentRunSummarySchema.extend({ reused: z.boolean() }).strict(),
+]);
 export const LatestAgentRunResponseSchema = z.object({ run: AgentRunDetailSchema.nullable() }).strict();
 
 export const AgentRunJobSchema = z.object({ version: z.literal(AGENT_RUN_JOB_VERSION), runId: z.uuid(), userId: z.uuid() }).strict();

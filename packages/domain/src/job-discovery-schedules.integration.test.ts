@@ -14,7 +14,7 @@ import {
   type Database,
 } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
-import { createAgentRunCommands, type AgentRunQueue } from "./agent-runs";
+import { createAgentRunCommands, createAgentRunQueries, type AgentRunQueue, type AgentRunStarter } from "./agent-runs";
 import { createCompanyWatchlistCommands } from "./company-watchlists";
 import { JobDiscoveryScheduleError, createJobDiscoverySchedules } from "./job-discovery-schedules";
 
@@ -67,10 +67,10 @@ describe("job discovery schedules", () => {
     };
   }
 
-  async function addWatchlistSource(input: { userId: string; targetId: string; careersUrl: string; allowedDomains: string[] }) {
+  async function addWatchlistSource(input: { userId: string; targetId: string; careersUrl: string; allowedDomains: string[]; expectedVersion?: number; companyName?: string }) {
     await createCompanyWatchlistCommands({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).addItem({
       userId: input.userId, targetId: input.targetId, requestId: crypto.randomUUID(),
-      command: { expectedVersion: 0, canonicalCompanyName: "Example AI", careersUrl: input.careersUrl, allowedDomains: input.allowedDomains, sourceNote: null },
+      command: { expectedVersion: input.expectedVersion ?? 0, canonicalCompanyName: input.companyName ?? "Example AI", careersUrl: input.careersUrl, allowedDomains: input.allowedDomains, sourceNote: null },
     });
   }
 
@@ -147,7 +147,9 @@ describe("job discovery schedules", () => {
 
     const policyOwner = await target();
     await addWatchlistSource({ userId: policyOwner.userId, targetId: policyOwner.targetId, careersUrl: "https://boards.greenhouse.io/example", allowedDomains: ["boards.greenhouse.io"] });
-    const policyOccurrence = await dueOccurrence(policyOwner);
+    const policyScheduleId = crypto.randomUUID();
+    await database.insert(jobDiscoverySchedules).values({ id: policyScheduleId, userId: policyOwner.userId, targetId: policyOwner.targetId, version: 1, state: "enabled", dailyTime: "09:30", timeZone: "Asia/Shanghai", nextRunAt: new Date("2026-08-27T01:30:00.000Z"), createdAt: now, updatedAt: now });
+    const [policyOccurrence] = await schedules().service.materializeDue({ limit: 10 });
     await schedules().service.dispatchPending({ limit: 10 });
     await expect(database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, policyOccurrence.occurrenceId))).resolves.toEqual([expect.objectContaining({ status: "skipped", skipReason: "SOURCE_POLICY_REQUIRED", runId: null })]);
     await expect(database.select().from(agentRuns).where(and(eq(agentRuns.userId, policyOwner.userId), lt(agentRuns.createdAt, new Date("2026-09-01T00:00:00.000Z"))))).resolves.toHaveLength(0);
@@ -157,5 +159,55 @@ describe("job discovery schedules", () => {
     const unsupportedOccurrence = await dueOccurrence(unsupportedOwner);
     await schedules().service.dispatchPending({ limit: 10 });
     await expect(database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, unsupportedOccurrence.occurrenceId))).resolves.toEqual([expect.objectContaining({ status: "skipped", skipReason: "NO_SUPPORTED_SOURCE", runId: null })]);
+  });
+
+  it("绑定崩溃后即使目标变更也优先复用 occurrence 已创建的 run", async () => {
+    const owner = await target();
+    await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/example", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
+    const occurrence = await dueOccurrence(owner);
+    const queue = new Queue();
+    const auditTrail = createAuditTrail({ db: database, clock: () => now });
+    const real = createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now });
+    let failAfterCommit = true;
+    const runs: AgentRunStarter = { start: async (input) => {
+      const started = await real.start(input);
+      if (failAfterCommit) { failAfterCommit = false; throw new Error("bind interrupted"); }
+      return started;
+    } };
+    const service = createJobDiscoverySchedules({ db: database, runs, auditTrail, id: () => crypto.randomUUID(), clock: () => now });
+
+    await expect(service.dispatchPending({ limit: 10 })).rejects.toThrow("bind interrupted");
+    await database.update(jobTargets).set({ state: "inactive" }).where(eq(jobTargets.id, owner.targetId));
+    await service.dispatchPending({ limit: 10 });
+
+    const [persisted] = await database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, occurrence.occurrenceId));
+    expect(persisted).toMatchObject({ status: "dispatched", runId: expect.any(String), skipReason: null });
+    await expect(database.select().from(agentRuns).where(and(eq(agentRuns.userId, owner.userId), eq(agentRuns.idempotencyKey, occurrence.occurrenceId)))).resolves.toHaveLength(1);
+  });
+
+  it("混合 Watchlist 中任一未授权 Greenhouse source 阻止启用和新 occurrence 派发", async () => {
+    const owner = await target();
+    await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/allowed", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
+    await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, expectedVersion: 1, companyName: "Policy Required", careersUrl: "https://job-boards.greenhouse.io/blocked", allowedDomains: ["job-boards.greenhouse.io"] });
+    const { service } = schedules();
+
+    await expect(service.set({ userId: owner.userId, targetId: owner.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } })).rejects.toMatchObject({ code: "SOURCE_POLICY_REQUIRED" });
+    await database.insert(jobDiscoverySchedules).values({ id: crypto.randomUUID(), userId: owner.userId, targetId: owner.targetId, version: 1, state: "enabled", dailyTime: "09:30", timeZone: "Asia/Shanghai", nextRunAt: new Date("2026-08-27T01:30:00.000Z"), createdAt: now, updatedAt: now });
+    const [occurrence] = await service.materializeDue({ limit: 10 });
+    await service.dispatchPending({ limit: 10 });
+    await expect(database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, occurrence!.occurrenceId))).resolves.toEqual([expect.objectContaining({ status: "skipped", skipReason: "SOURCE_POLICY_REQUIRED", runId: null })]);
+  });
+
+  it("重复 board token 只持久化 Watchlist 优先的一个 public source，并可由查询响应严格序列化", async () => {
+    const owner = await target();
+    await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/shared", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
+    await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, expectedVersion: 1, companyName: "Second Company", careersUrl: "https://job-boards.greenhouse.io/shared", allowedDomains: ["job-boards.greenhouse.io", "boards-api.greenhouse.io"] });
+    const occurrence = await dueOccurrence(owner);
+    await schedules().service.dispatchPending({ limit: 10 });
+    const [run] = await database.select().from(agentRuns).where(and(eq(agentRuns.userId, owner.userId), eq(agentRuns.idempotencyKey, occurrence.occurrenceId)));
+
+    expect(run!.sourceScope).toMatchObject({ sources: [expect.objectContaining({ sourceId: "greenhouse:shared", canonicalCompanyName: "Example AI" })] });
+    expect((run!.sourceScope as { sources: unknown[] }).sources).toHaveLength(1);
+    await expect(createAgentRunQueries({ db: database }).get({ userId: owner.userId, runId: run!.id })).resolves.toMatchObject({ adapter: "greenhouse", sourceScope: expect.objectContaining({ sources: [expect.any(Object)] }) });
   });
 });

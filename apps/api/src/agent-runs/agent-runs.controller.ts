@@ -25,8 +25,8 @@ import { AGENT_RUN_COMMANDS, AGENT_RUN_QUERIES, type AgentRunCommands, type Agen
 class StartAgentRunCommandDto extends createZodDto(StartAgentRunCommandSchema) {}
 class ControlAgentRunCommandDto extends createZodDto(ControlAgentRunCommandSchema) {}
 class ControlAgentRunResponseDto extends createZodDto(ControlAgentRunResponseSchema) {}
-class StartAgentRunResponseDto extends createZodDto(StartAgentRunResponseSchema) {}
-class AgentRunDetailDto extends createZodDto(AgentRunDetailSchema) {}
+class StartAgentRunResponseDto extends createZodDto(z.object({}).passthrough()) {}
+class AgentRunDetailDto extends createZodDto(z.object({}).passthrough()) {}
 class LatestAgentRunResponseDto extends createZodDto(LatestAgentRunResponseSchema) {}
 class AgentRunPathDto extends createZodDto(z.object({ runId: z.uuid() }).strict()) {}
 class AgentRunEventsQueryDto extends createZodDto(z.object({ afterEventId: z.string().optional() }).strict()) {}
@@ -51,8 +51,7 @@ function mapControlError(error: AgentRunControlError): ApiException {
 }
 
 function publicDetail(run: AgentRunDetail): AgentRunDetail {
-  const { reused: _reused, ...detail } = run as AgentRunDetail & { reused?: boolean };
-  return detail;
+  return AgentRunDetailSchema.parse(run);
 }
 
 @Controller("v1/agent-runs")
@@ -82,8 +81,9 @@ export class AgentRunsController {
         requestId: getRequestId(request),
         command,
       });
-      reply.status(result.reused ? HttpStatus.OK : HttpStatus.CREATED);
-      return result;
+      const response = StartAgentRunResponseSchema.parse(result);
+      reply.status(response.reused ? HttpStatus.OK : HttpStatus.CREATED);
+      return response;
     } catch (error) {
       if (error instanceof AgentRunError) throw mapStartError(error);
       throw error;
@@ -120,7 +120,7 @@ export class AgentRunsController {
   @ApiUnauthorizedResponse({ type: ApiProblem })
   async latest(@Req() request: FastifyRequest) {
     const result = await this.queries.latest({ userId: request.authenticatedAccount!.userId });
-    return { run: result.run ? publicDetail(result.run) : null };
+    return LatestAgentRunResponseSchema.parse({ run: result.run ? publicDetail(result.run) : null });
   }
 
   @Get(":runId/events")
@@ -173,6 +173,6 @@ export class AgentRunsController {
   async get(@Req() request: FastifyRequest, @Param() params: AgentRunPathDto) {
     const run = await this.queries.get({ userId: request.authenticatedAccount!.userId, runId: params.runId });
     if (!run) throw notFound();
-    return publicDetail(run);
+    return AgentRunDetailSchema.parse(publicDetail(run));
   }
 }

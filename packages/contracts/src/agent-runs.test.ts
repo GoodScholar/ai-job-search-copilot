@@ -71,6 +71,14 @@ const sourceScope = {
   watchlistVersion: 0,
   sources: FAKE_JOB_DISCOVERY_SOURCE_IDS,
 };
+const publicSourceScope = {
+  kind: "company_watchlist", adapter: "greenhouse", adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
+  watchlistVersion: 1,
+  sources: [{
+    sourceId: "greenhouse:example", watchlistItemId: "9c4b4001-25a6-4fb6-8090-9e957d6fca0c", canonicalCompanyName: "Example AI",
+    careersUrl: "https://boards.greenhouse.io/example", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], boardToken: "example",
+  }],
+};
 const runTargetSnapshot = { targetId, version: 1, priority: "primary", state: "active", constraints: targetSnapshot };
 const queuedSummary = {
   runId, targetId, targetVersion: 1, targetSnapshot: runTargetSnapshot, sourceScope,
@@ -117,6 +125,25 @@ function expectUnknownKeyRejected(schema: { safeParse(input: unknown): { success
 }
 
 describe("agent run contracts", () => {
+  it("将 Fake v1 与 Public v2 严格联合用于启动、详情和 latest 响应", () => {
+    const publicSummary = {
+      ...queuedSummary, sourceScope: publicSourceScope, workflowVersion: GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION,
+      adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER, adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
+      outputSchemaVersion: GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+    };
+    const publicExecution = {
+      targetSnapshot: runTargetSnapshot, sourceScope: publicSourceScope, workflowVersion: GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION,
+      ruleVersion: GREENHOUSE_JOB_DISCOVERY_RULE_VERSION, adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER,
+      adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION, outputSchemaVersion: GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+      toolAllowlist: AGENT_RUN_TOOL_ALLOWLIST, model: null, budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+    };
+    const publicDetail = { ...publicSummary, executionSpec: publicExecution, controlState: "none", usage, termination: null, retryOfRunId: null, steps: [step], events: [event], results: [] };
+
+    expect(StartAgentRunResponseSchema.safeParse({ ...publicSummary, reused: false }).success).toBe(true);
+    expect(AgentRunDetailSchema.safeParse(publicDetail).success).toBe(true);
+    expect(LatestAgentRunResponseSchema.safeParse({ run: publicDetail }).success).toBe(true);
+    expect(StartAgentRunResponseSchema.safeParse({ ...publicSummary, adapter: "fake", reused: false }).success).toBe(false);
+  });
   it("defines strict control state, control command, and public budget", () => {
     const commandId = "17fcd7b1-1a1d-4f25-9d10-45522417e919";
 

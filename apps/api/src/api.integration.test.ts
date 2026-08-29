@@ -7,7 +7,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { auditEvents, candidateFactEvidence, candidateFacts, careerDocuments, careerFactConflicts, careerImports, createDatabase, migrateDatabase, type Database } from "@job-copilot/database";
 import type { CareerDocumentStore, CareerImportQueue } from "@job-copilot/domain/career-imports";
 import type { JobContentStore, JobImportQueue } from "@job-copilot/domain/job-imports";
-import type { AgentRunQueue } from "@job-copilot/domain/agent-runs";
+import { createAgentRunCommands, type AgentRunQueue } from "@job-copilot/domain/agent-runs";
+import { createAuditTrail } from "@job-copilot/domain/audit-trail";
+import { createCompanyWatchlistCommands } from "@job-copilot/domain/company-watchlists";
+import { createJobDiscoverySchedules } from "@job-copilot/domain/job-discovery-schedules";
 import { AppModule } from "./app.module.js";
 import { configureApiApplication } from "./configure-api-application.js";
 import { DATABASE } from "./config/runtime-config.module.js";
@@ -674,6 +677,33 @@ describe("authenticated workbench HTTP API", () => {
     });
     expect(durable.statusCode).toBe(201);
     expect(durable.json()).toMatchObject({ status: "queued", reused: false });
+  });
+
+  it("通过真实 HTTP 序列化 Public v2 scheduled run 的 latest 与 detail 响应", async () => {
+    const session = await createSession(app, "public-v2-run-response");
+    const targetId = await createActiveTarget(app, session.sessionToken, "Public v2 工程师");
+    const setupClock = () => new Date("2026-08-30T01:31:00.000Z");
+    const dueClock = () => new Date("2026-08-31T01:31:00.000Z");
+    const auditTrail = createAuditTrail({ db: database, clock: setupClock });
+    await createCompanyWatchlistCommands({ db: database, auditTrail, id: randomUUID, clock: setupClock }).addItem({
+      userId: session.account.userId, targetId, requestId: randomUUID(),
+      command: { expectedVersion: 0, canonicalCompanyName: "Public Example", careersUrl: "https://boards.greenhouse.io/public-example", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null },
+    });
+    const runs = createAgentRunCommands({ db: database, queue: agentRunQueue, auditTrail, id: randomUUID, clock: setupClock });
+    const schedules = createJobDiscoverySchedules({ db: database, runs, auditTrail, id: randomUUID, clock: setupClock });
+    const schedule = await schedules.set({ userId: session.account.userId, targetId, requestId: randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
+    expect(schedule.nextRunAt).toBe("2026-08-31T01:30:00.000Z");
+    const dueSchedules = createJobDiscoverySchedules({ db: database, runs, auditTrail, id: randomUUID, clock: dueClock });
+    await dueSchedules.materializeDue({ limit: 1 });
+    await dueSchedules.dispatchPending({ limit: 1 });
+    const headers = bearer(session.sessionToken);
+    const latest = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-runs/latest", headers });
+
+    expect(latest.statusCode).toBe(200);
+    expect(latest.json().run).toMatchObject({ adapter: "greenhouse", sourceScope: { sources: [expect.objectContaining({ sourceId: "greenhouse:public-example" })] } });
+    const detail = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/agent-runs/${latest.json().run.runId}`, headers });
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json()).toMatchObject({ adapter: "greenhouse", executionSpec: { adapter: "greenhouse" } });
   });
 
   it("以认证账户暴露幂等运行控制和可处理 Inbox", async () => {

@@ -8,7 +8,7 @@ import {
   FAKE_JOB_DISCOVERY_WORKFLOW_VERSION, GREENHOUSE_JOB_DISCOVERY_ADAPTER, GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
   GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, GREENHOUSE_JOB_DISCOVERY_RULE_VERSION,
   GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION, PUBLIC_JOB_DISCOVERY_BUDGET, ControlAgentRunCommandSchema, StartAgentRunCommandSchema,
-  type AgentRunJob, type AgentRunStartErrorCode, type ControlAgentRunResponse, type StartAgentRunCommand, type StartAgentRunResponse,
+  PublicAgentRunSourceScopeSchema, StartAgentRunResponseSchema, type AgentRunJob, type AgentRunStartErrorCode, type ControlAgentRunResponse, type StartAgentRunCommand, type StartAgentRunResponse,
 } from "@job-copilot/contracts/agent-runs";
 import { CompanyWatchlistItemSchema } from "@job-copilot/contracts/company-watchlists";
 import { classifyGreenhousePublicSource } from "@job-copilot/contracts/job-discovery-schedules";
@@ -55,31 +55,35 @@ function sourceScope(watchlist: { version: number; items: unknown } | undefined)
 
 function publicSourceScope(watchlist: { version: number; items: unknown } | undefined) {
   const items = watchlist ? CompanyWatchlistItemSchema.array().parse(watchlist.items) : [];
-  const sources = items.filter((item) => item.state === "enabled").map((item) => classifyGreenhousePublicSource({
+  const classifications = items.filter((item) => item.state === "enabled").map((item) => classifyGreenhousePublicSource({
     itemId: item.itemId, canonicalCompanyName: item.canonicalCompanyName, careersUrl: item.careersUrl, allowedDomains: item.allowedDomains,
-  })).filter((result): result is Extract<typeof result, { kind: "supported" }> => result.kind === "supported").map((result) => result.source);
+  }));
+  if (classifications.some((result) => result.kind === "policy_required")) throw new AgentRunError("AGENT_RUN_UNAVAILABLE");
+  const sourceById = new Map<string, Extract<typeof classifications[number], { kind: "supported" }>["source"]>();
+  for (const result of classifications) if (result.kind === "supported" && !sourceById.has(result.source.sourceId)) sourceById.set(result.source.sourceId, result.source);
+  const sources = [...sourceById.values()];
   if (sources.length === 0) throw new AgentRunError("AGENT_RUN_UNAVAILABLE");
-  return {
+  return PublicAgentRunSourceScopeSchema.parse({
     kind: "company_watchlist" as const,
     adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER,
     adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
     watchlistVersion: watchlist?.version ?? 0,
     sources,
-  };
+  });
 }
 
 function summary(row: RunRow, reused: boolean): StartAgentRunResponse {
   const sourceScope = normalizeAgentRunSourceScope(row.sourceScope);
-  return {
+  return StartAgentRunResponseSchema.parse({
     runId: row.id, targetId: row.targetId, targetVersion: row.targetVersion,
-    targetSnapshot: row.targetSnapshot as StartAgentRunResponse["targetSnapshot"], sourceScope: sourceScope as StartAgentRunResponse["sourceScope"],
-    workflowVersion: row.workflowVersion as StartAgentRunResponse["workflowVersion"], adapter: row.adapter as StartAgentRunResponse["adapter"],
-    adapterVersion: row.adapterVersion as StartAgentRunResponse["adapterVersion"], outputSchemaVersion: row.outputSchemaVersion as StartAgentRunResponse["outputSchemaVersion"],
-    budget: row.budgetSnapshot as StartAgentRunResponse["budget"], status: row.status as StartAgentRunResponse["status"], currentStep: row.currentStep as StartAgentRunResponse["currentStep"],
-    version: row.version, attemptCount: row.attemptCount, failureCode: row.failureCode as StartAgentRunResponse["failureCode"],
+    targetSnapshot: row.targetSnapshot, sourceScope,
+    workflowVersion: row.workflowVersion, adapter: row.adapter,
+    adapterVersion: row.adapterVersion, outputSchemaVersion: row.outputSchemaVersion,
+    budget: row.budgetSnapshot, status: row.status, currentStep: row.currentStep,
+    version: row.version, attemptCount: row.attemptCount, failureCode: row.failureCode,
     queuedAt: row.queuedAt.toISOString(), startedAt: row.startedAt?.toISOString() ?? null, completedAt: row.completedAt?.toISOString() ?? null,
     failedAt: row.failedAt?.toISOString() ?? null, cancelledAt: row.cancelledAt?.toISOString() ?? null, updatedAt: row.updatedAt.toISOString(), reused,
-  };
+  });
 }
 
 async function appendEvent(db: any, input: { id: () => string; userId: string; runId: string; version: number; eventType: string; data: Record<string, unknown>; now: Date }) {

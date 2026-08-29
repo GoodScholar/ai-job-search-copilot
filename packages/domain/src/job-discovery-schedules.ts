@@ -2,6 +2,7 @@ import { and, asc, eq, lte, sql } from "drizzle-orm";
 import {
   companyWatchlistRevisions,
   companyWatchlists,
+  agentRuns,
   jobDiscoveryScheduleOccurrences,
   jobDiscoverySchedules,
   jobTargets,
@@ -24,7 +25,7 @@ import { AgentRunError, type AgentRunStarter } from "./agent-run-control";
 import type { AuditTrail } from "./audit-trail";
 
 export class JobDiscoveryScheduleError extends Error {
-  constructor(public readonly code: "JOB_DISCOVERY_SCHEDULE_TARGET_NOT_FOUND" | "JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE" | "JOB_DISCOVERY_SCHEDULE_VERSION_CONFLICT") { super(code); }
+  constructor(public readonly code: "JOB_DISCOVERY_SCHEDULE_TARGET_NOT_FOUND" | "JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE" | "JOB_DISCOVERY_SCHEDULE_VERSION_CONFLICT" | "SOURCE_POLICY_REQUIRED") { super(code); }
 }
 
 type Dependencies = { db: Database; runs: AgentRunStarter; auditTrail: AuditTrail; id: () => string; clock: () => Date };
@@ -74,8 +75,8 @@ async function dispatchReason(db: Pick<Database, "select">, userId: string, targ
   const classifications = (watchlist ? CompanyWatchlistItemSchema.array().parse(watchlist.items) : []).filter((item) => item.state === "enabled").map((item) => classifyGreenhousePublicSource({
     itemId: item.itemId, canonicalCompanyName: item.canonicalCompanyName, careersUrl: item.careersUrl, allowedDomains: item.allowedDomains,
   }));
-  if (classifications.some((result) => result.kind === "supported")) return null;
-  return classifications.some((result) => result.kind === "policy_required") ? "SOURCE_POLICY_REQUIRED" : "NO_SUPPORTED_SOURCE";
+  if (classifications.some((result) => result.kind === "policy_required")) return "SOURCE_POLICY_REQUIRED";
+  return classifications.some((result) => result.kind === "supported") ? null : "NO_SUPPORTED_SOURCE";
 }
 
 async function appendScheduleAudit(auditTrail: AuditTrail, input: {
@@ -110,6 +111,7 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
         await acquireAccountAdvisoryLock(transaction, input.userId);
         const target = await scheduleTarget(transaction, input.userId, input.targetId);
         if (command.state === "enabled" && target.state !== "active") throw new JobDiscoveryScheduleError("JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE");
+        if (command.state === "enabled" && await dispatchReason(transaction, input.userId, input.targetId) === "SOURCE_POLICY_REQUIRED") throw new JobDiscoveryScheduleError("SOURCE_POLICY_REQUIRED");
         const [current] = await transaction.select().from(jobDiscoverySchedules).where(and(eq(jobDiscoverySchedules.userId, input.userId), eq(jobDiscoverySchedules.targetId, input.targetId)));
         const currentVersion = current?.version ?? 0;
         if (currentVersion !== command.expectedVersion) throw new JobDiscoveryScheduleError("JOB_DISCOVERY_SCHEDULE_VERSION_CONFLICT");
@@ -154,6 +156,13 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
       const pending = await deps.db.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.status, "pending")).orderBy(asc(jobDiscoveryScheduleOccurrences.scheduledFor), asc(jobDiscoveryScheduleOccurrences.id)).limit(Math.max(1, input.limit));
       for (const occurrence of pending) {
         const now = deps.clock();
+        const [existingRun] = await deps.db.select({ id: agentRuns.id }).from(agentRuns).where(and(eq(agentRuns.userId, occurrence.userId), eq(agentRuns.idempotencyKey, occurrence.id)));
+        if (existingRun) {
+          const run = await deps.runs.start({ userId: occurrence.userId, requestId: deps.id(), command: { targetId: occurrence.targetId, idempotencyKey: occurrence.id }, trigger: { kind: "schedule", occurrenceId: occurrence.id, scheduledFor: occurrence.scheduledFor } });
+          const [dispatched] = await deps.db.update(jobDiscoveryScheduleOccurrences).set({ status: "dispatched", runId: run.runId, skipReason: null }).where(and(eq(jobDiscoveryScheduleOccurrences.id, occurrence.id), eq(jobDiscoveryScheduleOccurrences.status, "pending"))).returning();
+          if (dispatched) await appendScheduleAudit(deps.auditTrail, { userId: dispatched.userId, requestId: deps.id(), eventType: "occurrence_dispatched", scheduleId: dispatched.scheduleId, targetId: dispatched.targetId, occurrenceId: dispatched.id, runId: run.runId, scheduledFor: dispatched.scheduledFor, state: "dispatched", now });
+          continue;
+        }
         let reason: Awaited<ReturnType<typeof dispatchReason>>;
         try { reason = await dispatchReason(deps.db, occurrence.userId, occurrence.targetId); } catch (error) {
           if (!(error instanceof JobDiscoveryScheduleError)) throw error;

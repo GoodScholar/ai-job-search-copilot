@@ -366,8 +366,9 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
       };
       const snapshot = claimed.run.targetSnapshot as import("@job-copilot/contracts/agent-runs").AgentRunDetail["targetSnapshot"];
       let sourceScope: import("@job-copilot/contracts/agent-runs").AgentRunDetail["sourceScope"];
-      try { sourceScope = normalizeAgentRunSourceScope(claimed.run.sourceScope) as typeof sourceScope; }
+      try { sourceScope = normalizeAgentRunSourceScope(claimed.run.sourceScope); }
       catch (error) { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline }); }
+      if (sourceScope.adapter !== "fake") return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "source" }, deadline });
       const batchStart = await transition("batch_search", false); if (batchStart) return batchStart;
       let batch: import("@job-copilot/contracts/agent-runs").DiscoveryBatchSearchResult;
       try {
