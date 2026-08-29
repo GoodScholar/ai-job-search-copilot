@@ -6,7 +6,12 @@ import { createAuditTrail } from "@job-copilot/domain/audit-trail";
 import { createAgentRunProcessor, createAgentRunRecoveryQueries } from "@job-copilot/domain/agent-runs";
 
 import { AgentRunConsumer } from "./agent-run-consumer.js";
-import { AgentRunReconciler, BullmqAgentRunQueue } from "./agent-run-reconciler.js";
+import {
+  AgentRunReconciler,
+  BullmqAgentRunQueue,
+  type AgentRunRecoveryFailure,
+  type AgentRunRecoveryReporter,
+} from "./agent-run-reconciler.js";
 import { FakeJobDiscoveryAdapter } from "./fake-job-discovery-adapter.js";
 import { MinioDiscoveryContentStore } from "./minio-discovery-content-store.js";
 
@@ -14,6 +19,7 @@ export const AGENT_RUN_CONSUMER = Symbol("AGENT_RUN_CONSUMER");
 export const AGENT_RUN_RECONCILER = Symbol("AGENT_RUN_RECONCILER");
 export const AGENT_RUN_QUEUE = Symbol("AGENT_RUN_QUEUE");
 export const AGENT_RUN_DATABASE = Symbol("AGENT_RUN_DATABASE");
+export const AGENT_RUN_RECOVERY_REPORTER = Symbol("AGENT_RUN_RECOVERY_REPORTER");
 
 function required(
   name: "DATABASE_URL" | "REDIS_URL" | "MINIO_ENDPOINT" | "MINIO_ACCESS_KEY" | "MINIO_SECRET_KEY" | "MINIO_BUCKET",
@@ -41,7 +47,9 @@ function createMinioClient(): MinioClient {
 }
 
 export function createConfiguredJobDiscoveryAdapter(environment: NodeJS.ProcessEnv = process.env): FakeJobDiscoveryAdapter {
-  if (environment.APP_ENV === "production") throw new Error("生产 JobDiscoveryAdapter 尚未配置");
+  if (environment.APP_ENV !== "local" && environment.APP_ENV !== "test") {
+    throw new Error("JobDiscoveryAdapter 环境未获允许");
+  }
   return new FakeJobDiscoveryAdapter();
 }
 
@@ -65,6 +73,12 @@ class AgentRunDatabase implements OnModuleDestroy {
       useFactory: () => new BullmqAgentRunQueue(redisUrl()),
     },
     {
+      provide: AGENT_RUN_RECOVERY_REPORTER,
+      useValue: {
+        report: (failure: AgentRunRecoveryFailure) => console.error("Agent run recovery failure", failure),
+      } satisfies AgentRunRecoveryReporter,
+    },
+    {
       provide: AGENT_RUN_CONSUMER,
       inject: [AGENT_RUN_DATABASE],
       useFactory: (database: AgentRunDatabase) => {
@@ -84,10 +98,15 @@ class AgentRunDatabase implements OnModuleDestroy {
     },
     {
       provide: AGENT_RUN_RECONCILER,
-      inject: [AGENT_RUN_DATABASE, AGENT_RUN_QUEUE],
-      useFactory: (database: AgentRunDatabase, queue: BullmqAgentRunQueue) => new AgentRunReconciler({
+      inject: [AGENT_RUN_DATABASE, AGENT_RUN_QUEUE, AGENT_RUN_RECOVERY_REPORTER],
+      useFactory: (
+        database: AgentRunDatabase,
+        queue: BullmqAgentRunQueue,
+        reporter: AgentRunRecoveryReporter,
+      ) => new AgentRunReconciler({
         recoveryQueries: createAgentRunRecoveryQueries({ db: database.db, clock: () => new Date() }),
         queue,
+        reporter,
       }),
     },
   ],

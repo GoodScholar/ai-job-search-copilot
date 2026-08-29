@@ -13,6 +13,18 @@ import type { AgentRunQueue, createAgentRunRecoveryQueries } from "@job-copilot/
 
 type AgentRunRecoveryQueries = ReturnType<typeof createAgentRunRecoveryQueries>;
 
+export type AgentRunRecoveryFailure =
+  | { failureCode: "AGENT_RUN_RECOVERY_SCAN_FAILED" }
+  | {
+    failureCode: "AGENT_RUN_RECOVERY_ENQUEUE_FAILED";
+    runId: string;
+    userId: string;
+  };
+
+export interface AgentRunRecoveryReporter {
+  report(failure: AgentRunRecoveryFailure): void | Promise<void>;
+}
+
 export function agentRunQueueJobOptions(runId: string): JobsOptions {
   return {
     jobId: runId,
@@ -52,11 +64,15 @@ export class AgentRunReconciler implements OnModuleInit, OnModuleDestroy {
   private timer: ReturnType<typeof setInterval> | undefined;
   private scanning = false;
 
-  constructor(private readonly input: { recoveryQueries: AgentRunRecoveryQueries; queue: AgentRunQueue }) {}
+  constructor(private readonly input: {
+    recoveryQueries: AgentRunRecoveryQueries;
+    queue: AgentRunQueue;
+    reporter: AgentRunRecoveryReporter;
+  }) {}
 
   async onModuleInit(): Promise<void> {
-    await this.scan().catch(() => undefined);
-    this.timer = setInterval(() => { void this.scan().catch(() => undefined); }, AGENT_RUN_SCAN_INTERVAL_MS);
+    await this.scan();
+    this.timer = setInterval(() => { void this.scan(); }, AGENT_RUN_SCAN_INTERVAL_MS);
   }
 
   onModuleDestroy(): void {
@@ -68,12 +84,30 @@ export class AgentRunReconciler implements OnModuleInit, OnModuleDestroy {
     if (this.scanning) return;
     this.scanning = true;
     try {
-      const jobs = await this.input.recoveryQueries.listRecoverable();
+      let jobs: AgentRunJob[];
+      try {
+        jobs = await this.input.recoveryQueries.listRecoverable();
+      } catch {
+        await this.report({ failureCode: "AGENT_RUN_RECOVERY_SCAN_FAILED" });
+        return;
+      }
       for (const job of jobs) {
-        try { await this.input.queue.enqueue(job); } catch { /* 下一次扫描会重试，单个失败不能阻塞其他 run。 */ }
+        try {
+          await this.input.queue.enqueue(job);
+        } catch {
+          await this.report({
+            failureCode: "AGENT_RUN_RECOVERY_ENQUEUE_FAILED",
+            runId: job.runId,
+            userId: job.userId,
+          });
+        }
       }
     } finally {
       this.scanning = false;
     }
+  }
+
+  private async report(failure: AgentRunRecoveryFailure): Promise<void> {
+    try { await this.input.reporter.report(failure); } catch { /* Reporter 故障不能改变恢复控制流。 */ }
   }
 }

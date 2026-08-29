@@ -66,6 +66,7 @@ describe("岗位发现 Agent Run Worker", () => {
   let database: Database;
   let redisUrl: string;
   let minio: MinioClient;
+  let queueRedis: Redis;
   let queue: Queue;
   let context: Awaited<ReturnType<typeof NestFactory.createApplicationContext>> | undefined;
   let originalEnvironment: Record<string, string | undefined>;
@@ -90,7 +91,8 @@ describe("岗位发现 Agent Run Worker", () => {
       secretKey: minioSecretKey,
     });
     await minio.makeBucket(minioBucket);
-    queue = new Queue(AGENT_RUN_QUEUE, { connection: new Redis(redisUrl, { maxRetriesPerRequest: null }) });
+    queueRedis = new Redis(redisUrl, { maxRetriesPerRequest: null });
+    queue = new Queue(AGENT_RUN_QUEUE, { connection: queueRedis });
     await database.insert(jobAccounts).values({ id: userId });
     await database.insert(jobTargets).values({
       id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null,
@@ -122,6 +124,7 @@ describe("岗位发现 Agent Run Worker", () => {
   afterAll(async () => {
     await context?.close();
     await queue?.close();
+    if (queueRedis?.status !== "end") await queueRedis.quit();
     await database?.$client.end();
     await minioContainer?.stop();
     await redisContainer?.stop();
@@ -215,8 +218,19 @@ describe("岗位发现 Agent Run Worker", () => {
       await expect(minio.statObject(minioBucket, objectKey)).resolves.toBeDefined();
     }
 
-    await queue.add(AGENT_RUN_JOB_NAME, { version: 1, runId: first.runId, userId }, agentRunQueueJobOptions(first.runId));
-    await waitFor(async () => (await queue.getJob(first.runId)) === undefined, "duplicate agent run job was not acknowledged");
+    await waitFor(async () => (await queue.getJob(first.runId)) === undefined, "original agent run job was not removed");
+    const duplicateJob = await queue.add(
+      AGENT_RUN_JOB_NAME,
+      { version: 1, runId: first.runId, userId },
+      { ...agentRunQueueJobOptions(first.runId), removeOnComplete: false },
+    );
+    expect(duplicateJob.id).toBe(first.runId);
+    await waitFor(async () => (await queue.getJob(first.runId))?.returnvalue === "stale", "duplicate agent run job was not consumed");
+    const completedDuplicate = await queue.getJob(first.runId);
+    expect(await completedDuplicate?.getState()).toBe("completed");
+    expect(completedDuplicate?.returnvalue).toBe("stale");
+    await completedDuplicate?.remove();
+    await waitFor(async () => (await queue.getJob(first.runId)) === undefined, "duplicate agent run job was not removed");
     await expect(database.select().from(jobSourcePostingVersions)).resolves.toHaveLength(5);
     await expect(database.select().from(jobOpportunities)).resolves.toHaveLength(5);
     await expect(database.select().from(agentRunJobResults)).resolves.toHaveLength(5);

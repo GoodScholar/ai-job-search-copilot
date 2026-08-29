@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AgentRunReconciler,
   agentRunQueueJobOptions,
+  type AgentRunRecoveryFailure,
 } from "./agent-run-reconciler.js";
 
 const first = {
@@ -22,6 +23,10 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+function memoryReporter(failures: AgentRunRecoveryFailure[]) {
+  return { report: async (failure: AgentRunRecoveryFailure) => { failures.push(failure); } };
+}
+
 afterEach(() => vi.useRealTimers());
 
 describe("AgentRunReconciler", () => {
@@ -29,9 +34,11 @@ describe("AgentRunReconciler", () => {
     vi.useFakeTimers();
     const scans = [[first], [second]];
     const enqueued: unknown[] = [];
+    const failures: AgentRunRecoveryFailure[] = [];
     const reconciler = new AgentRunReconciler({
       recoveryQueries: { listRecoverable: async () => scans.shift() ?? [] },
       queue: { enqueue: async (job) => { enqueued.push(job); } },
+      reporter: memoryReporter(failures),
     });
 
     await reconciler.onModuleInit();
@@ -42,6 +49,7 @@ describe("AgentRunReconciler", () => {
     reconciler.onModuleDestroy();
     await vi.advanceTimersByTimeAsync(2_000);
     expect(enqueued).toEqual([first, second]);
+    expect(failures).toEqual([]);
   });
 
   it("前一次扫描未结束时跳过定时 tick，禁止重叠扫描", async () => {
@@ -56,6 +64,7 @@ describe("AgentRunReconciler", () => {
         },
       },
       queue: { enqueue: async () => undefined },
+      reporter: memoryReporter([]),
     });
 
     await reconciler.onModuleInit();
@@ -68,18 +77,50 @@ describe("AgentRunReconciler", () => {
 
   it("一个 run 入队失败时仍继续补发同批其他可恢复 run", async () => {
     const enqueued: string[] = [];
+    const failures: AgentRunRecoveryFailure[] = [];
     const reconciler = new AgentRunReconciler({
       recoveryQueries: { listRecoverable: async () => [first, second] },
       queue: {
         enqueue: async (job) => {
           enqueued.push(job.runId);
-          if (job.runId === first.runId) throw new Error("redis temporarily unavailable");
+          if (job.runId === first.runId) throw new Error("redis://secret:password@private-host raw failure");
         },
       },
+      reporter: memoryReporter(failures),
     });
 
     await reconciler.onModuleInit();
     expect(enqueued).toEqual([first.runId, second.runId]);
+    expect(failures).toEqual([{
+      failureCode: "AGENT_RUN_RECOVERY_ENQUEUE_FAILED",
+      runId: first.runId,
+      userId: first.userId,
+    }]);
+    expect(JSON.stringify(failures)).not.toContain("secret");
+    reconciler.onModuleDestroy();
+  });
+
+  it("整体扫描失败只报告稳定故障码，并在下一轮继续扫描", async () => {
+    vi.useFakeTimers();
+    const failures: AgentRunRecoveryFailure[] = [];
+    let scans = 0;
+    const reconciler = new AgentRunReconciler({
+      recoveryQueries: {
+        listRecoverable: async () => {
+          scans += 1;
+          if (scans === 1) throw new Error("postgresql://private-user:private-password@database raw failure");
+          return [];
+        },
+      },
+      queue: { enqueue: async () => undefined },
+      reporter: memoryReporter(failures),
+    });
+
+    await reconciler.onModuleInit();
+    expect(failures).toEqual([{ failureCode: "AGENT_RUN_RECOVERY_SCAN_FAILED" }]);
+    expect(JSON.stringify(failures)).not.toContain("private-password");
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(scans).toBe(2);
     reconciler.onModuleDestroy();
   });
 
