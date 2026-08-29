@@ -1,13 +1,7 @@
-import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
-import { request as httpRequest } from "node:http";
-import { request as httpsRequest } from "node:https";
+import { createPublicSourceClient, PublicSourceAccessError } from "@job-copilot/source-access";
 import { parse, type DefaultTreeAdapterMap } from "parse5";
 
 export const JOB_PAGE_MAX_BYTES = 2 * 1024 * 1024;
-const MAX_REDIRECTS = 3;
-const CONNECT_TIMEOUT_MS = 3_000;
-const TOTAL_TIMEOUT_MS = 8_000;
 
 export type JobPageFetchFailureCode =
   | "JOB_PAGE_URL_INVALID"
@@ -41,7 +35,6 @@ export interface JobPageFetcher {
   fetch(input: { url: string }): Promise<FetchedJobPage>;
 }
 
-type ResolvedTarget = { address: string; family: 4 | 6 };
 type HtmlNode = DefaultTreeAdapterMap["node"];
 type DnsLookup = (hostname: string) => Promise<Array<{ address: string; family: number }>>;
 
@@ -50,38 +43,28 @@ export class SecureJobPageFetcher implements JobPageFetcher {
 
   async fetch({ url }: { url: string }): Promise<FetchedJobPage> {
     const requested = this.parseUrl(url, "JOB_PAGE_URL_INVALID");
-    const startedAt = Date.now();
-    let current = requested;
-
-    for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
-      const remaining = this.remainingTimeout(startedAt);
-      if (remaining <= 0) throw new JobPageFetchError("JOB_PAGE_TIMEOUT");
-      const target = await this.resolveTarget(current, remaining);
-      const requestTimeout = this.remainingTimeout(startedAt);
-      if (requestTimeout <= 0) throw new JobPageFetchError("JOB_PAGE_TIMEOUT");
-      const response = await this.request(current, target, requestTimeout);
-      if (response.statusCode >= 300 && response.statusCode < 400) {
-        const location = response.headers.location;
-        if (!location || Array.isArray(location)) throw new JobPageFetchError("JOB_PAGE_REDIRECT_INVALID");
-        if (redirects === MAX_REDIRECTS) throw new JobPageFetchError("JOB_PAGE_REDIRECT_INVALID");
-        const redirected = this.parseUrl(location, "JOB_PAGE_REDIRECT_INVALID", current);
-        if (!hasRelatedHost(current, redirected)) throw new JobPageFetchError("JOB_PAGE_REDIRECT_INVALID");
-        current = redirected;
-        continue;
-      }
-      this.assertStatus(response.statusCode);
-      const contentType = response.headers["content-type"];
-      if (typeof contentType !== "string" || !/^text\/html(?:\s*;|$)/iu.test(contentType)) {
-        throw new JobPageFetchError("JOB_PAGE_CONTENT_TYPE_INVALID");
-      }
-      const rawHtml = response.body.toString("utf8");
-      const extracted = extractJobPage(rawHtml, current);
-      return {
-        requestedUrl: requested.toString(), finalUrl: current.toString(), canonicalUrl: extracted.canonicalUrl,
-        rawHtml, visibleText: extracted.visibleText, pageClassification: "job", sourceKind: sourceKind(current, this.config),
-      };
+    const client = createPublicSourceClient({
+      appEnv: this.config.appEnv,
+      testOrigin: this.config.testOrigin,
+      exactHosts: [requested.hostname],
+      connectTimeoutMs: this.config.connectTimeoutMs,
+      totalTimeoutMs: this.config.totalTimeoutMs,
+      lookup: this.config.lookup,
+    });
+    let response: { status: number; headers: Readonly<Record<string, string>>; body: Uint8Array };
+    try {
+      response = await client.get({ url: requested, allowedDomains: [requested.hostname], accept: "text/html", maxRedirects: 3, retry: "none" });
+    } catch (error) {
+      throw this.mapError(error);
     }
-    throw new JobPageFetchError("JOB_PAGE_REDIRECT_INVALID");
+    this.assertStatus(response.status);
+    const finalUrl = (response as typeof response & { __finalUrl?: URL }).__finalUrl ?? requested;
+    const rawHtml = Buffer.from(response.body).toString("utf8");
+    const extracted = extractJobPage(rawHtml, finalUrl);
+    return {
+      requestedUrl: requested.toString(), finalUrl: finalUrl.toString(), canonicalUrl: extracted.canonicalUrl,
+      rawHtml, visibleText: extracted.visibleText, pageClassification: "job", sourceKind: sourceKind(finalUrl, this.config),
+    };
   }
 
   private parseUrl(value: string, code: JobPageFetchFailureCode, base?: URL): URL {
@@ -93,94 +76,19 @@ export class SecureJobPageFetcher implements JobPageFetcher {
     return parsed;
   }
 
-  private remainingTimeout(startedAt: number): number {
-    return (this.config.totalTimeoutMs ?? TOTAL_TIMEOUT_MS) - (Date.now() - startedAt);
-  }
-
-  private async resolveTarget(url: URL, timeoutMs: number): Promise<ResolvedTarget> {
-    const testOrigin = this.config.appEnv === "test" ? this.config.testOrigin : undefined;
-    if (testOrigin && url.origin === testOrigin) {
-      const family = isIP(url.hostname);
-      if (family === 4 || family === 6) return { address: url.hostname, family };
-      const addresses = await this.lookupAddresses(url.hostname, timeoutMs);
-      if (addresses.length !== 1 || (addresses[0]!.family !== 4 && addresses[0]!.family !== 6)) throw new JobPageFetchError("JOB_PAGE_TARGET_REJECTED");
-      return { address: addresses[0]!.address, family: addresses[0]!.family };
-    }
-    if (isIP(url.hostname)) throw new JobPageFetchError("JOB_PAGE_TARGET_REJECTED");
-    let addresses: Array<{ address: string; family: number }>;
-    try { addresses = await this.lookupAddresses(url.hostname, timeoutMs); } catch (error) {
-      if (error instanceof JobPageFetchError) throw error;
-      throw new JobPageFetchError("JOB_PAGE_UNREACHABLE");
-    }
-    if (addresses.length === 0 || addresses.some((address) => !isPublicAddress(address.address, address.family))) {
-      throw new JobPageFetchError("JOB_PAGE_TARGET_REJECTED");
-    }
-    const selected = addresses[0]!;
-    return { address: selected.address, family: selected.family as 4 | 6 };
-  }
-
-  private async lookupAddresses(hostname: string, timeoutMs: number): Promise<Array<{ address: string; family: number }>> {
-    if (timeoutMs <= 0) throw new JobPageFetchError("JOB_PAGE_TIMEOUT");
-    const resolve = this.config.lookup ?? ((value: string) => lookup(value, { all: true, verbatim: true }));
-    return new Promise((resolvePromise, rejectPromise) => {
-      let settled = false;
-      const resolveAddresses = (addresses: Array<{ address: string; family: number }>) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolvePromise(addresses);
-      };
-      const rejectLookup = (error: unknown) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        rejectPromise(error);
-      };
-      const timer = setTimeout(() => rejectLookup(new JobPageFetchError("JOB_PAGE_TIMEOUT")), timeoutMs);
-      Promise.resolve().then(() => resolve(hostname)).then(
-        resolveAddresses,
-        rejectLookup,
-      );
-    });
-  }
-
-  private async request(url: URL, target: ResolvedTarget, totalTimeoutMs: number): Promise<{ statusCode: number; headers: Record<string, string | string[] | undefined>; body: Buffer }> {
-    return new Promise((resolve, reject) => {
-      const send = url.protocol === "https:" ? httpsRequest : httpRequest;
-      const request = send(url, {
-        headers: { accept: "text/html,application/xhtml+xml" },
-        lookup: (_hostname, options, callback) => {
-          if (options.all) {
-            (callback as (error: NodeJS.ErrnoException | null, addresses: ResolvedTarget[]) => void)(null, [target]);
-            return;
-          }
-          (callback as (error: NodeJS.ErrnoException | null, address: string, family: 4 | 6) => void)(null, target.address, target.family);
-        },
-      }, (response) => {
-        const chunks: Buffer[] = [];
-        let size = 0;
-        response.on("data", (chunk: Buffer) => {
-          size += chunk.length;
-          if (size > JOB_PAGE_MAX_BYTES) request.destroy(new JobPageFetchError("JOB_PAGE_RESPONSE_TOO_LARGE"));
-          else chunks.push(chunk);
-        });
-        response.on("end", () => resolve({ statusCode: response.statusCode ?? 0, headers: response.headers, body: Buffer.concat(chunks) }));
-      });
-      const connectTimeout = setTimeout(() => request.destroy(new JobPageFetchError("JOB_PAGE_TIMEOUT")), Math.min(this.config.connectTimeoutMs ?? CONNECT_TIMEOUT_MS, totalTimeoutMs));
-      const totalTimeout = setTimeout(() => request.destroy(new JobPageFetchError("JOB_PAGE_TIMEOUT")), totalTimeoutMs);
-      const clearTimers = () => { clearTimeout(connectTimeout); clearTimeout(totalTimeout); };
-      request.once("error", (error) => {
-        clearTimers();
-        reject(error instanceof JobPageFetchError ? error : new JobPageFetchError("JOB_PAGE_UNREACHABLE"));
-      });
-      request.once("socket", (socket) => {
-        if (!socket.connecting) clearTimeout(connectTimeout);
-        else socket.once(url.protocol === "https:" ? "secureConnect" : "connect", () => clearTimeout(connectTimeout));
-      });
-      request.once("response", () => clearTimeout(connectTimeout));
-      request.once("response", (response) => response.once("end", clearTimers));
-      request.end();
-    });
+  private mapError(error: unknown): JobPageFetchError {
+    if (!(error instanceof PublicSourceAccessError)) return new JobPageFetchError("JOB_PAGE_UNREACHABLE");
+    const codes: Record<PublicSourceAccessError["code"], JobPageFetchFailureCode> = {
+      PUBLIC_SOURCE_NETWORK_DISABLED: "JOB_PAGE_TARGET_REJECTED",
+      PUBLIC_SOURCE_TARGET_REJECTED: "JOB_PAGE_TARGET_REJECTED",
+      PUBLIC_SOURCE_REDIRECT_INVALID: "JOB_PAGE_REDIRECT_INVALID",
+      PUBLIC_SOURCE_TIMEOUT: "JOB_PAGE_TIMEOUT",
+      PUBLIC_SOURCE_ABORTED: "JOB_PAGE_TIMEOUT",
+      PUBLIC_SOURCE_UNREACHABLE: "JOB_PAGE_UNREACHABLE",
+      PUBLIC_SOURCE_RESPONSE_TOO_LARGE: "JOB_PAGE_RESPONSE_TOO_LARGE",
+      PUBLIC_SOURCE_CONTENT_TYPE_INVALID: "JOB_PAGE_CONTENT_TYPE_INVALID",
+    };
+    return new JobPageFetchError(codes[error.code]);
   }
 
   private assertStatus(statusCode: number): void {
