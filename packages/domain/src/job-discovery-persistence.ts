@@ -214,8 +214,17 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
           eq(agentRuns.claimToken, input.run.claimToken), eq(agentRuns.controlState, "none"),
         ));
         if (!run || !run.claimToken) return { resultCount: 0, cleanupObjectKeys: input.storedObjects.map((item) => item.objectKey), completed: false };
-        if (input.scans.length > 0) {
-          const observed = new Map(input.scans.map((scan) => [scan.sourceId, new Set(scan.observedDetailIds)]));
+        if (run.adapter === "greenhouse") {
+          // The persistence seam independently protects lifecycle facts from
+          // malformed adapter output; upstream schema parsing is not authority.
+          if (input.scans.length === 0) throw new Error("AGENT_RUN_PERSIST_FAILED");
+          const sourceIds = new Set<string>();
+          const observed = new Map<string, Set<string>>();
+          for (const scan of input.scans) {
+            if (sourceIds.has(scan.sourceId) || new Set(scan.observedDetailIds).size !== scan.observedDetailIds.length) throw new Error("AGENT_RUN_PERSIST_FAILED");
+            sourceIds.add(scan.sourceId);
+            observed.set(scan.sourceId, new Set(scan.observedDetailIds));
+          }
           if (input.details.some((detail) => !observed.get(detail.sourceId)?.has(detail.detailId))) throw new Error("AGENT_RUN_PERSIST_FAILED");
         }
         const cleanupObjectKeys: string[] = [];

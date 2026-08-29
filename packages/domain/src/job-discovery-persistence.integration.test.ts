@@ -8,6 +8,7 @@ import {
   createDatabase,
   jobAccounts,
   jobOpportunities,
+  jobOpportunitySources,
   jobSourcePostingVersions,
   jobTargetRevisions,
   jobTargets,
@@ -194,6 +195,30 @@ describe("job discovery persistence lifecycle", () => {
     await expect(database.select({ title: jobOpportunities.title }).from(jobOpportunities).where(eq(jobOpportunities.userId, userId))).resolves.toEqual([{ title: "Senior AI Engineer" }]);
   });
 
+  it("K2 已由另一来源占用时，官方 A 从 K1 更新到 K2 合并全部历史 evidence 与结果", async () => {
+    const userId = crypto.randomUUID();
+    const targetId = crypto.randomUUID();
+    await database.insert(jobAccounts).values({ id: userId });
+    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: firstSeen, updatedAt: firstSeen });
+    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: firstSeen });
+    const persistence = createJobDiscoveryPersistence({ db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => later }) });
+    const fields = { company: "Fictional Labs", location: "Shanghai", postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true };
+    const persist = async (sourceId: string, detailId: string, title: string, raw: string) => persistence.persistSuccessfulDiscovery({
+      run: await claimRun(userId, targetId, later), details: [{ sourceId, detailId, ...fields, title, rawPayload: { raw } }],
+      scans: [{ sourceId, observedDetailIds: [detailId], complete: true }], storedObjects: [{ sourceId, detailId, objectKey: `${raw}.json`, rawContentSha256: raw.repeat(64) }], now: later,
+    });
+    await persist("greenhouse:b", "b", "Senior AI Engineer", "b");
+    await persist("greenhouse:a", "a", "AI Engineer", "a");
+    await persist("greenhouse:a", "a", "Senior AI Engineer", "c");
+
+    const opportunities = await database.select({ id: jobOpportunities.id, title: jobOpportunities.title }).from(jobOpportunities).where(eq(jobOpportunities.userId, userId));
+    expect(opportunities).toEqual([{ id: expect.any(String), title: "Senior AI Engineer" }]);
+    await expect(database.select().from(jobOpportunitySources).where(eq(jobOpportunitySources.userId, userId))).resolves.toHaveLength(3);
+    const results = await database.select().from(agentRunJobResults).where(eq(agentRunJobResults.userId, userId));
+    expect(results).toHaveLength(3);
+    expect(new Set(results.map((result) => result.opportunityId))).toEqual(new Set([opportunities[0]!.id]));
+  });
+
   it("持久化失败回滚详情与完整扫描 reconciliation", async () => {
     const userId = crypto.randomUUID();
     const targetId = crypto.randomUUID();
@@ -206,5 +231,22 @@ describe("job discovery persistence lifecycle", () => {
     await expect(persistence.persistSuccessfulDiscovery({ run: await claimRun(userId, targetId, later), details: [detail], scans: [{ sourceId: detail.sourceId, observedDetailIds: [], complete: true }], storedObjects: [], now: later })).rejects.toThrow("AGENT_RUN_PERSIST_FAILED");
     await expect(database.select({ availability: jobOpportunities.availability }).from(jobOpportunities).where(eq(jobOpportunities.userId, userId))).resolves.toEqual([{ availability: "open" }]);
     await expect(database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, userId))).resolves.toHaveLength(1);
+  });
+
+  it.each([
+    ["empty scans", [], []],
+    ["duplicate source", [{ sourceId: "greenhouse:invalid", observedDetailIds: [], complete: true }, { sourceId: "greenhouse:invalid", observedDetailIds: [], complete: true }], []],
+    ["duplicate observed", [{ sourceId: "greenhouse:invalid", observedDetailIds: ["x", "x"], complete: true }], []],
+    ["detail outside observed", [{ sourceId: "greenhouse:invalid", observedDetailIds: [], complete: true }], [{ sourceId: "greenhouse:invalid", detailId: "x", company: "Fictional", title: "AI Engineer", location: null, postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true, rawPayload: {} }]],
+  ] as const)("Greenhouse seam 对 %s 在任何 lifecycle 写入前失败", async (_name, scans, details) => {
+    const userId = crypto.randomUUID();
+    const targetId = crypto.randomUUID();
+    await database.insert(jobAccounts).values({ id: userId });
+    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: firstSeen, updatedAt: firstSeen });
+    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: firstSeen });
+    const persistence = createJobDiscoveryPersistence({ db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => later }) });
+    await expect(persistence.persistSuccessfulDiscovery({ run: await claimRun(userId, targetId, later), details: details as any, scans: scans as any, storedObjects: [], now: later })).rejects.toThrow("AGENT_RUN_PERSIST_FAILED");
+    await expect(database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, userId))).resolves.toHaveLength(0);
+    await expect(database.select().from(jobOpportunities).where(eq(jobOpportunities.userId, userId))).resolves.toHaveLength(0);
   });
 });

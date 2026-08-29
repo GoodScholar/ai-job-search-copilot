@@ -1075,7 +1075,7 @@ describe("database migrations", () => {
         insert into agent_runs (id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot, workflow_version, rule_version, adapter, adapter_version, output_schema_version, tool_allowlist, status, current_step)
         values (${runId}, ${userId}, ${targetId}, 'cc5035d8-eddb-4058-95f1-330ec3d4114e', 1, '{}'::jsonb, '{"kind":"company_watchlist","adapter":"fake"}'::jsonb, '{}'::jsonb, 'workflow-v1', 'fake-job-discovery-rules-v1', 'fake', 'fake-v1', 'result-v1', '[]'::jsonb, 'queued', 'queued')
       `);
-      await legacyDatabase.execute(sql`insert into job_source_postings (id, user_id, source_type, source_identifier, source_identity) values (${postingId}, ${userId}, 'fake', 'legacy-posting', '{}'::jsonb)`);
+      await legacyDatabase.execute(sql`insert into job_source_postings (id, user_id, source_type, source_identifier, source_identity) values (${postingId}, ${userId}, 'fake', 'legacy-posting', '{"sourceId":"legacy-source"}'::jsonb)`);
       await legacyDatabase.execute(sql`
         insert into job_source_posting_versions (id, user_id, source_posting_id, version, content_sha256, raw_content_sha256, raw_object_reference, retrieved_at)
         values (${versionId}, ${userId}, ${postingId}, 1, ${"a".repeat(64)}, ${"b".repeat(64)}, '{}'::jsonb, now())
@@ -1083,7 +1083,7 @@ describe("database migrations", () => {
       await legacyDatabase.execute(sql`insert into job_opportunities (id, user_id, source_posting_version_id, dedup_key, normalized_data) values (${opportunityId}, ${userId}, ${versionId}, ${"c".repeat(64)}, '{}'::jsonb)`);
       await migrateDatabase(legacyDatabase);
       const [upgraded] = await legacyDatabase.execute(sql`
-        select p.availability as posting_availability, p.availability_updated_at is not null as posting_time,
+        select p.availability as posting_availability, p.availability_updated_at is not null as posting_time, p.source_id,
                v.availability as version_availability, o.availability as opportunity_availability,
                o.availability_updated_at is not null as opportunity_time, r.source_scope
         from job_source_postings p
@@ -1093,7 +1093,7 @@ describe("database migrations", () => {
         where p.id = ${postingId}
       `) as unknown as Array<Record<string, unknown>>;
       expect(upgraded).toEqual({
-        posting_availability: "open", posting_time: true, version_availability: "open",
+        posting_availability: "open", posting_time: true, source_id: "legacy-source", version_availability: "open",
         opportunity_availability: "open", opportunity_time: true,
         source_scope: { kind: "company_watchlist", adapter: "fake" },
       });
@@ -1103,4 +1103,12 @@ describe("database migrations", () => {
       await rm(migrationsFolder, { recursive: true, force: true });
     }
   }, 60_000);
+
+  it("keeps the 0021 snapshot aligned with source scan columns and index", async () => {
+    const snapshotPath = fileURLToPath(new URL("../migrations/meta/0021_snapshot.json", import.meta.url));
+    const snapshot = JSON.parse(await readFile(snapshotPath, "utf8")) as { tables: Record<string, { columns: Record<string, unknown>; indexes: Record<string, unknown> }> };
+    const postings = snapshot.tables["public.job_source_postings"];
+    expect(postings?.columns).toMatchObject({ source_id: expect.any(Object), application_deadline: expect.any(Object) });
+    expect(postings?.indexes).toHaveProperty("job_source_postings_source_scan_idx");
+  });
 });
