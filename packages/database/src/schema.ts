@@ -394,7 +394,7 @@ export const jobSourcePostingVersions = pgTable("job_source_posting_versions", {
 export const jobOpportunities = pgTable("job_opportunities", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").notNull().references(() => jobAccounts.id),
-  importId: uuid("import_id").notNull().references(() => jobImports.id),
+  importId: uuid("import_id").references(() => jobImports.id),
   sourcePostingVersionId: uuid("source_posting_version_id").notNull().references(() => jobSourcePostingVersions.id),
   dedupKey: varchar("dedup_key", { length: 64 }).notNull(),
   company: text("company"),
@@ -442,4 +442,119 @@ export const jobOpportunitySources = pgTable("job_opportunity_sources", {
     foreignColumns: [jobSourcePostingVersions.userId, jobSourcePostingVersions.id],
     name: "job_opportunity_sources_owner_posting_version_fk",
   }),
+]);
+
+export const agentRuns = pgTable("agent_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  targetId: uuid("target_id").notNull().references(() => jobTargets.id),
+  idempotencyKey: uuid("idempotency_key").notNull(),
+  targetVersion: integer("target_version").notNull(),
+  targetSnapshot: jsonb("target_snapshot").notNull(),
+  sourceScope: jsonb("source_scope").notNull(),
+  budgetSnapshot: jsonb("budget_snapshot").notNull(),
+  workflowVersion: varchar("workflow_version", { length: 64 }).notNull(),
+  adapter: varchar("adapter", { length: 64 }).notNull(),
+  adapterVersion: varchar("adapter_version", { length: 64 }).notNull(),
+  outputSchemaVersion: varchar("output_schema_version", { length: 64 }).notNull(),
+  status: varchar("status", { length: 16 }).notNull().default("queued"),
+  currentStep: varchar("current_step", { length: 32 }).notNull().default("queued"),
+  version: integer("version").notNull().default(1),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  failureCode: varchar("failure_code", { length: 64 }),
+  claimToken: uuid("claim_token"),
+  claimExpiresAt: timestamp("claim_expires_at", { withTimezone: true }),
+  queuedAt: timestamp("queued_at", { withTimezone: true }).notNull().defaultNow(),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  failedAt: timestamp("failed_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("agent_runs_user_id_id_unique").on(table.userId, table.id),
+  unique("agent_runs_user_idempotency_unique").on(table.userId, table.idempotencyKey),
+  foreignKey({ columns: [table.userId, table.targetId], foreignColumns: [jobTargets.userId, jobTargets.id], name: "agent_runs_owner_target_fk" }),
+  check("agent_runs_target_version_positive", sql`${table.targetVersion} >= 1`),
+  check("agent_runs_target_snapshot_object", sql`jsonb_typeof(${table.targetSnapshot}) = 'object'`),
+  check("agent_runs_source_scope_object", sql`jsonb_typeof(${table.sourceScope}) = 'object'`),
+  check("agent_runs_budget_snapshot_object", sql`jsonb_typeof(${table.budgetSnapshot}) = 'object'`),
+  check("agent_runs_status_check", sql`${table.status} in ('queued', 'running', 'completed', 'failed')`),
+  check("agent_runs_current_step_check", sql`${table.currentStep} in ('queued', 'batch_search', 'fetch_details', 'persist_results', 'completed', 'failed')`),
+  check("agent_runs_version_positive", sql`${table.version} >= 1`),
+  check("agent_runs_attempt_count_nonnegative", sql`${table.attemptCount} >= 0`),
+  check("agent_runs_failure_code_check", sql`${table.failureCode} is null or ${table.failureCode} in ('AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_CONTENT_STORAGE_FAILED', 'AGENT_RUN_PERSIST_FAILED', 'AGENT_RUN_BUDGET_EXCEEDED')`),
+  check("agent_runs_claim_consistency_check", sql`(${table.claimToken} is null) = (${table.claimExpiresAt} is null)`),
+  check("agent_runs_timestamp_state_check", sql`
+    (${table.status} = 'queued' and ${table.startedAt} is null and ${table.completedAt} is null and ${table.failedAt} is null)
+    or (${table.status} = 'running' and ${table.startedAt} is not null and ${table.completedAt} is null and ${table.failedAt} is null)
+    or (${table.status} = 'completed' and ${table.startedAt} is not null and ${table.completedAt} is not null and ${table.failedAt} is null)
+    or (${table.status} = 'failed' and ${table.startedAt} is not null and ${table.completedAt} is null and ${table.failedAt} is not null)
+  `),
+]);
+
+export const agentRunSteps = pgTable("agent_run_steps", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  runId: uuid("run_id").notNull().references(() => agentRuns.id),
+  stepKey: varchar("step_key", { length: 32 }).notNull(),
+  ordinal: integer("ordinal").notNull(),
+  status: varchar("status", { length: 16 }).notNull().default("pending"),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  failedAt: timestamp("failed_at", { withTimezone: true }),
+  failureCode: varchar("failure_code", { length: 64 }),
+}, (table) => [
+  unique("agent_run_steps_user_id_id_unique").on(table.userId, table.id),
+  unique("agent_run_steps_run_step_unique").on(table.runId, table.stepKey),
+  unique("agent_run_steps_run_ordinal_unique").on(table.runId, table.ordinal),
+  foreignKey({ columns: [table.userId, table.runId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "agent_run_steps_owner_run_fk" }),
+  check("agent_run_steps_step_key_check", sql`${table.stepKey} in ('batch_search', 'fetch_details', 'persist_results')`),
+  check("agent_run_steps_ordinal_check", sql`${table.ordinal} between 1 and 3`),
+  check("agent_run_steps_status_check", sql`${table.status} in ('pending', 'running', 'completed', 'failed')`),
+  check("agent_run_steps_attempt_count_nonnegative", sql`${table.attemptCount} >= 0`),
+  check("agent_run_steps_failure_code_check", sql`${table.failureCode} is null or ${table.failureCode} in ('AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_CONTENT_STORAGE_FAILED', 'AGENT_RUN_PERSIST_FAILED', 'AGENT_RUN_BUDGET_EXCEEDED')`),
+  check("agent_run_steps_timestamp_state_check", sql`
+    (${table.status} = 'pending' and ${table.startedAt} is null and ${table.completedAt} is null and ${table.failedAt} is null)
+    or (${table.status} = 'running' and ${table.startedAt} is not null and ${table.completedAt} is null and ${table.failedAt} is null)
+    or (${table.status} = 'completed' and ${table.startedAt} is not null and ${table.completedAt} is not null and ${table.failedAt} is null)
+    or (${table.status} = 'failed' and ${table.startedAt} is not null and ${table.completedAt} is null and ${table.failedAt} is not null)
+  `),
+]);
+
+export const agentRunEvents = pgTable("agent_run_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  runId: uuid("run_id").notNull().references(() => agentRuns.id),
+  sequence: integer("sequence").notNull(),
+  runVersion: integer("run_version").notNull(),
+  eventType: varchar("event_type", { length: 32 }).notNull(),
+  data: jsonb("data").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("agent_run_events_user_id_id_unique").on(table.userId, table.id),
+  unique("agent_run_events_run_sequence_unique").on(table.runId, table.sequence),
+  foreignKey({ columns: [table.userId, table.runId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "agent_run_events_owner_run_fk" }),
+  check("agent_run_events_sequence_positive", sql`${table.sequence} >= 1`),
+  check("agent_run_events_run_version_positive", sql`${table.runVersion} >= 1`),
+  check("agent_run_events_event_type_check", sql`${table.eventType} in ('run.queued', 'run.started', 'step.started', 'step.completed', 'run.retry_scheduled', 'run.completed', 'run.failed')`),
+  check("agent_run_events_data_object", sql`jsonb_typeof(${table.data}) = 'object'`),
+]);
+
+export const agentRunJobResults = pgTable("agent_run_job_results", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  runId: uuid("run_id").notNull().references(() => agentRuns.id),
+  opportunityId: uuid("opportunity_id").notNull().references(() => jobOpportunities.id),
+  sourcePostingVersionId: uuid("source_posting_version_id").notNull().references(() => jobSourcePostingVersions.id),
+  ordinal: integer("ordinal").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("agent_run_job_results_user_id_id_unique").on(table.userId, table.id),
+  unique("agent_run_job_results_run_opportunity_source_unique").on(table.runId, table.opportunityId, table.sourcePostingVersionId),
+  unique("agent_run_job_results_run_ordinal_unique").on(table.runId, table.ordinal),
+  foreignKey({ columns: [table.userId, table.runId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "agent_run_job_results_owner_run_fk" }),
+  foreignKey({ columns: [table.userId, table.opportunityId], foreignColumns: [jobOpportunities.userId, jobOpportunities.id], name: "agent_run_job_results_owner_opportunity_fk" }),
+  foreignKey({ columns: [table.userId, table.sourcePostingVersionId], foreignColumns: [jobSourcePostingVersions.userId, jobSourcePostingVersions.id], name: "agent_run_job_results_owner_posting_version_fk" }),
+  check("agent_run_job_results_ordinal_positive", sql`${table.ordinal} >= 1`),
 ]);

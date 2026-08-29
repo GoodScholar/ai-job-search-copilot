@@ -544,4 +544,24 @@ describe("database migrations", () => {
       { table_name: "job_source_posting_versions", column_name: "raw_content_sha256", data_type: "character varying" },
     ]));
   });
+
+  it("migrates durable account-owned agent runs without requiring an import", async () => {
+    expect(await listPublicTables(migratedDatabase)).toEqual(expect.arrayContaining([
+      "agent_runs", "agent_run_steps", "agent_run_events", "agent_run_job_results",
+    ]));
+    expect(await listConstraintNames(migratedDatabase)).toEqual(expect.arrayContaining([
+      "agent_runs_user_idempotency_unique",
+      "agent_run_steps_run_step_unique",
+      "agent_run_events_run_sequence_unique",
+      "agent_run_job_results_run_opportunity_source_unique",
+      "job_opportunities_owner_import_fk",
+      "job_opportunities_owner_posting_version_fk",
+    ]));
+    const [importId] = await migratedDatabase.execute(sql`
+      select is_nullable
+      from information_schema.columns
+      where table_schema = 'public' and table_name = 'job_opportunities' and column_name = 'import_id'
+    `) as unknown as Array<{ is_nullable: string }>;
+    expect(importId).toEqual({ is_nullable: "YES" });
+  });
 });
