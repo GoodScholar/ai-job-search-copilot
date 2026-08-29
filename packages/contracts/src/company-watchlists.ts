@@ -2,9 +2,8 @@ import { z } from "zod";
 
 const version = z.int().min(0);
 const positiveInteger = z.int().min(1);
-const sensitiveQueryKeys = new Set([
-  "token", "access_token", "auth", "session", "password", "secret", "key", "code",
-  "api_key", "api_token", "client_secret", "client_token", "private_key", "refresh_token", "id_token",
+const sensitiveQueryKeySegments = new Set([
+  "token", "auth", "session", "password", "secret", "key", "code",
 ]);
 
 function isIpv4Literal(value: string): boolean {
@@ -23,7 +22,12 @@ function isPublicDnsName(value: string): boolean {
 }
 
 function isCredentialQueryKey(value: string): boolean {
-  return sensitiveQueryKeys.has(value.toLowerCase().replaceAll(/[-.]/gu, "_"));
+  const segments = value
+    .replace(/([a-z\d])([A-Z])/gu, "$1_$2")
+    .toLowerCase()
+    .split(/[_\-.]+/u)
+    .filter(Boolean);
+  return segments.some((segment) => sensitiveQueryKeySegments.has(segment));
 }
 
 function isAllowedCareersUrl(value: string, allowedDomains: string[]): boolean {

@@ -159,6 +159,9 @@ describe("company watchlist contracts", () => {
       "https://aurora.example/careers?PASSWORD=secret",
       "https://aurora.example/careers?api_key=secret",
       "https://aurora.example/careers?client_secret=secret",
+      "https://aurora.example/careers?secret_key=secret",
+      "https://aurora.example/careers?auth_token=secret",
+      "https://aurora.example/careers?clientSecret=secret",
       "https://localhost/careers",
       "https://[::1]/careers",
     ]) {
@@ -169,6 +172,10 @@ describe("company watchlist contracts", () => {
     expect(urlAtLimit).toHaveLength(2_048);
     expect(AddCompanyWatchlistItemCommandSchema.safeParse({ ...addCommand, careersUrl: urlAtLimit }).success).toBe(true);
     expect(AddCompanyWatchlistItemCommandSchema.safeParse({ ...addCommand, careersUrl: `${urlAtLimit}a` }).success).toBe(false);
+    expect(AddCompanyWatchlistItemCommandSchema.safeParse({
+      ...addCommand,
+      careersUrl: "https://aurora.example/careers?monkey=public",
+    }).success).toBe(true);
     expect(AddCompanyWatchlistItemCommandSchema.safeParse({
       ...addCommand,
       careersUrl: "https://127.0.0.1/careers",
