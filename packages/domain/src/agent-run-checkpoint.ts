@@ -67,11 +67,12 @@ export function createAgentRunCheckpoint(deps: Dependencies): AgentRunCheckpoint
         await acquireAccountAdvisoryLock(transaction, input.userId);
         const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.claimToken, input.claimToken)));
         const now = deps.clock();
-        if (!run || run.status !== "running" || !run.claimExpiresAt || run.claimExpiresAt <= now) return { kind: "stale" };
+        const expired = Boolean(run?.claimExpiresAt && run.claimExpiresAt <= now);
+        if (!run || run.status !== "running" || !run.claimExpiresAt || (expired && run.controlState === "none")) return { kind: "stale" };
         const prior = await transaction.select({ category: agentRunUsageEntries.category, amount: agentRunUsageEntries.amount }).from(agentRunUsageEntries)
           .where(and(eq(agentRunUsageEntries.runId, input.runId), eq(agentRunUsageEntries.usageKey, input.checkpointKey)));
         if (run.controlState === "none" && prior.length > 0 && !sameReserve(prior, reserve)) throw new AgentRunCheckpointError("AGENT_RUN_CHECKPOINT_CONFLICT");
-        const elapsed = run.controlState !== "none" || prior.length === 0 ? await settleActiveSlice(transaction, { id: deps.id, userId: input.userId, run, now }) : 0;
+        const elapsed = run.controlState !== "none" || prior.length === 0 ? await settleActiveSlice(transaction, { id: deps.id, userId: input.userId, run, now, until: expired ? run.claimExpiresAt : undefined }) : 0;
         const activeDurationMs = run.activeDurationMs + elapsed;
         const dimension = exhausted({ ...run, activeDurationMs }, reserve, 0);
         const chargedReserve = run.controlState === "none" && dimension === null && prior.length === 0 ? reserve : {};

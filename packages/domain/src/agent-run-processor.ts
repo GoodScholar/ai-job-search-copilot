@@ -216,7 +216,7 @@ async function stepTransition(deps: AgentRunProcessorDependencies, input: { user
   });
 }
 
-async function failOrRetry(deps: AgentRunProcessorDependencies, input: { userId: string; runId: string; claimToken: string; attemptCount: number; finalAttempt: boolean; failure: Failure; deadline: Date }): Promise<"retry" | "failed" | "stale"> {
+async function failOrRetry(deps: AgentRunProcessorDependencies, input: { userId: string; runId: string; claimToken: string; attemptCount: number; failure: Failure; deadline: Date }): Promise<"retry" | "budget_exhausted" | "failed" | "stale"> {
   const now = deps.clock();
   // 预算到点后仍要用极短、可取消的控制事务写出明确终态，不能让运行悬空。
   const controlDeadline = remainingBudget(deps.clock, input.deadline) <= 0 ? new Date(now.getTime() + 1_000) : input.deadline;
@@ -230,7 +230,7 @@ async function failOrRetry(deps: AgentRunProcessorDependencies, input: { userId:
       ? { kind: "budget_exhausted" as const, budgetDimension: input.failure.budgetDimension ?? "active_duration" }
       : decideRetry({ failure: { category: input.failure.category, retryable: input.failure.retryable }, usage: { attempts: run.attemptCount, activeDurationMs }, budget: run.budgetSnapshot as { maxAttempts: number; maxActiveDurationMs: number; maxToolCalls: number; maxModelCalls: number } });
     const version = run.version + 1;
-    if (decision.kind === "retry" && !input.finalAttempt) {
+    if (decision.kind === "retry") {
       await transaction.update(agentRunSteps).set({ status: "pending", startedAt: null, completedAt: null, failedAt: null, failureCode: null }).where(and(eq(agentRunSteps.userId, input.userId), eq(agentRunSteps.runId, input.runId)));
       await transaction.update(agentRuns).set({ status: "queued", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, activeDurationMs, startedAt: null, completedAt: null, failedAt: null, failureCode: null, version, updatedAt: now }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.claimToken, input.claimToken)));
       await appendEvent(transaction, { id: deps.id, userId: input.userId, runId: input.runId, version, eventType: "run.retry_scheduled", data: { eventType: "run.retry_scheduled", status: "queued", currentStep: run.currentStep, attemptCount: input.attemptCount, failureCode: input.failure.failureCode }, now });
@@ -242,7 +242,7 @@ async function failOrRetry(deps: AgentRunProcessorDependencies, input: { userId:
     await transaction.update(agentRunSteps).set({ status: "failed", completedAt: null, failedAt: now, failureCode }).where(and(eq(agentRunSteps.userId, input.userId), eq(agentRunSteps.runId, input.runId), eq(agentRunSteps.stepKey, run.currentStep), eq(agentRunSteps.status, "running")));
     if (budgetExhausted) {
       await terminateBudgetRun(transaction, { id: deps.id, auditTrail: deps.auditTrail, userId: input.userId, requestId: input.runId, run, now, budgetDimension: decision.budgetDimension, activeDurationMs });
-      return "failed";
+      return "budget_exhausted";
     }
     const terminationKind = failureCode === "AGENT_RUN_CONTENT_STORAGE_FAILED" ? "content_storage_failed" : failureCode === "AGENT_RUN_PERSIST_FAILED" ? "persistence_failed" : "source_failed";
     await transaction.update(agentRuns).set({ status: "failed", currentStep: "failed", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, activeDurationMs, failureCode, terminationKind, terminationBudgetDimension: null, failedAt: now, version, updatedAt: now }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.claimToken, input.claimToken)));
@@ -274,7 +274,7 @@ async function checkPoint(checkpoint: AgentRunCheckpoint, input: { userId: strin
   }
 }
 
-export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { process(job: AgentRunJob & { finalAttempt: boolean }): Promise<ProcessorOutcome> } {
+export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { process(job: AgentRunJob & { finalAttempt?: boolean }): Promise<ProcessorOutcome> } {
   return {
     async process(job) {
       const now = deps.clock();
@@ -285,11 +285,12 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         if (remainingBudget(deps.clock, deadline) <= 0) throw new AgentRunBudgetError("active_duration");
         let [current] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId)));
         if (!current || current.status === "completed") return { kind: "stale" as const };
-        if (current.status === "failed") return { kind: "failed" as const };
+        if (current.status === "failed") return { kind: current.terminationKind === "budget_exhausted" ? "budget_exhausted" as const : "failed" as const };
         if (current.status === "paused") return { kind: "paused" as const };
         if (current.status === "cancelled") return { kind: "cancelled" as const };
         if (current.status === "running" && current.claimExpiresAt && current.claimExpiresAt > claimNow) return { kind: "retry" as const };
         if (current.status === "running" && current.claimExpiresAt && current.claimExpiresAt <= claimNow) {
+          if (current.controlState !== "none" && current.claimToken) return { kind: "pending_control" as const, claimToken: current.claimToken };
           const elapsed = await settleActiveSlice(transaction, { id: deps.id, userId: job.userId, run: current, now: claimNow, until: current.claimExpiresAt });
           const activeDurationMs = current.activeDurationMs + elapsed;
           const budget = current.budgetSnapshot as { maxActiveDurationMs: number };
@@ -298,7 +299,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
               eq(agentRunSteps.userId, job.userId), eq(agentRunSteps.runId, job.runId), eq(agentRunSteps.stepKey, current.currentStep), eq(agentRunSteps.status, "running"),
             ));
             await terminateBudgetRun(transaction, { id: deps.id, auditTrail: deps.auditTrail, userId: job.userId, requestId: job.runId, run: current, now: claimNow, budgetDimension: "active_duration", activeDurationMs });
-            return { kind: "failed" as const };
+            return { kind: "budget_exhausted" as const };
           }
           current = { ...current, activeDurationMs };
         }
@@ -307,7 +308,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
             eq(agentRunSteps.userId, job.userId), eq(agentRunSteps.runId, job.runId), eq(agentRunSteps.stepKey, current.currentStep), eq(agentRunSteps.status, "running"),
           ));
           await terminateBudgetRun(transaction, { id: deps.id, auditTrail: deps.auditTrail, userId: job.userId, requestId: job.runId, run: current, now: claimNow, budgetDimension: "attempts" });
-          return { kind: "failed" as const };
+          return { kind: "budget_exhausted" as const };
         }
         const claimToken = deps.id();
         const attemptCount = current.attemptCount + 1;
@@ -317,17 +318,26 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         await appendEvent(transaction, { id: deps.id, userId: job.userId, runId: job.runId, version, eventType: "run.started", data: { eventType: "run.started", status: "running", currentStep: "batch_search", attemptCount }, now: claimNow });
         return { kind: "claimed" as const, run, claimToken, attemptCount };
       });
+      if (claimed.kind === "pending_control") {
+        const controlOutcome = await checkPoint(deps.checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "recovery_control", ordinal: 1 });
+        return controlOutcome ?? "stale";
+      }
       if (claimed.kind !== "claimed") return claimed.kind;
       const checkpoint = deps.checkpoint;
       const claimOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "claim", ordinal: 1 });
       if (claimOutcome) return claimOutcome;
-      const adapter = deps.adapterResolver.resolve({
-        runId: claimed.run.id,
-        idempotencyKey: claimed.run.idempotencyKey,
-        adapter: claimed.run.adapter,
-        adapterVersion: claimed.run.adapterVersion,
-        attemptCount: claimed.attemptCount,
-      });
+      let adapter: JobDiscoveryAdapter;
+      try {
+        adapter = deps.adapterResolver.resolve({
+          runId: claimed.run.id,
+          idempotencyKey: claimed.run.idempotencyKey,
+          adapter: claimed.run.adapter,
+          adapterVersion: claimed.run.adapterVersion,
+          attemptCount: claimed.attemptCount,
+        });
+      } catch (error) {
+        return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
+      }
       const stopHeartbeat = startClaimHeartbeat(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, deadline });
       try {
       const adapterCall = async <T>(operation: string, ordinal: number, call: () => Promise<T>): Promise<{ value?: T; outcome?: ProcessorOutcome }> => {
@@ -348,9 +358,9 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         const called = await adapterCall("source_search_batch", 1, () => adapter.searchBatch({ targetSnapshot: snapshot, sourceScope: claimed.run.sourceScope as import("@job-copilot/contracts/agent-runs").AgentRunDetail["sourceScope"] }));
         if (called.outcome) return called.outcome;
         batch = DiscoveryBatchSearchResultSchema.parse(called.value);
-      } catch (error) { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failure: adapterFailure(error), deadline }); }
-      if (!batch.ok) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failure: { failureCode: batch.error.retryable ? "AGENT_RUN_ADAPTER_RETRYABLE" : "AGENT_RUN_ADAPTER_FAILED", retryable: batch.error.retryable, category: "source" }, deadline });
-      if (batch.data.length > AGENT_RUN_BUDGET.maxResults || batch.data.some((item) => !(claimed.run.sourceScope as { sources: string[] }).sources.includes(item.sourceId))) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failure: { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "source" }, deadline });
+      } catch (error) { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline }); }
+      if (!batch.ok) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: batch.error.retryable ? "AGENT_RUN_ADAPTER_RETRYABLE" : "AGENT_RUN_ADAPTER_FAILED", retryable: batch.error.retryable, category: "source" }, deadline });
+      if (batch.data.length > AGENT_RUN_BUDGET.maxResults || batch.data.some((item) => !(claimed.run.sourceScope as { sources: string[] }).sources.includes(item.sourceId))) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "source" }, deadline });
       const batchComplete = await transition("batch_search", true); if (batchComplete) return batchComplete;
       const detailsStart = await transition("fetch_details", false); if (detailsStart) return detailsStart;
       const details: Array<{ sourceId: string; detailId: string; company: string | null; title: string | null; location: string | null; postedAt: string | null; deadline: string | null; sourceType: string; isOfficial: boolean; rawPayload: Record<string, unknown> }> = [];
@@ -361,9 +371,9 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           const called = await adapterCall("source_get_detail", details.length + 1, () => adapter.getDetail({ sourceId: result.sourceId, detailId: result.detailId }));
           if (called.outcome) return called.outcome;
           detail = DiscoveryDetailResultSchema.parse(called.value);
-        } catch (error) { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failure: adapterFailure(error), deadline }); }
-        if (!detail.ok) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failure: { failureCode: detail.error.retryable ? "AGENT_RUN_ADAPTER_RETRYABLE" : "AGENT_RUN_ADAPTER_FAILED", retryable: detail.error.retryable, category: "source" }, deadline });
-        if (detail.data.sourceId !== result.sourceId || detail.data.detailId !== result.detailId || !(claimed.run.sourceScope as { sources: string[] }).sources.includes(detail.data.sourceId)) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failure: { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "source" }, deadline });
+        } catch (error) { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline }); }
+        if (!detail.ok) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: detail.error.retryable ? "AGENT_RUN_ADAPTER_RETRYABLE" : "AGENT_RUN_ADAPTER_FAILED", retryable: detail.error.retryable, category: "source" }, deadline });
+        if (detail.data.sourceId !== result.sourceId || detail.data.detailId !== result.detailId || !(claimed.run.sourceScope as { sources: string[] }).sources.includes(detail.data.sourceId)) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "source" }, deadline });
         details.push(detail.data);
       }
       const detailsComplete = await transition("fetch_details", true); if (detailsComplete) return detailsComplete;
@@ -392,7 +402,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
             return writeOutcome;
           }
         }
-      } catch (error) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failure: { failureCode: error instanceof AgentRunBudgetError ? "AGENT_RUN_BUDGET_EXCEEDED" : "AGENT_RUN_CONTENT_STORAGE_FAILED", retryable: !(error instanceof AgentRunBudgetError), category: "source", budgetDimension: error instanceof AgentRunBudgetError ? error.budgetDimension : undefined }, deadline }); }
+      } catch (error) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: error instanceof AgentRunBudgetError ? "AGENT_RUN_BUDGET_EXCEEDED" : "AGENT_RUN_CONTENT_STORAGE_FAILED", retryable: !(error instanceof AgentRunBudgetError), category: "source", budgetDimension: error instanceof AgentRunBudgetError ? error.budgetDimension : undefined }, deadline }); }
       const commitBefore = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_before", ordinal: 1 });
       if (commitBefore) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return commitBefore; }
       try {
@@ -425,7 +435,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         // intentionally observational and cannot turn the committed result stale.
         await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_after", ordinal: 1 });
         return "completed";
-      } catch { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failure: { failureCode: "AGENT_RUN_PERSIST_FAILED", retryable: true, category: "source" }, deadline }); }
+      } catch { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_PERSIST_FAILED", retryable: true, category: "source" }, deadline }); }
       } finally {
         await stopHeartbeat().catch(() => undefined);
       }

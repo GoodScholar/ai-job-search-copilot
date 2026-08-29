@@ -310,11 +310,11 @@ describe("agent runs", () => {
     await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({ results: [expect.objectContaining({ ordinal: 1 })], events: expect.arrayContaining([expect.objectContaining({ eventType: "run.completed", data: expect.objectContaining({ resultCount: 1 }) })]) });
   });
 
-  it("达到已持久化的第三次尝试时不创建第四个 claim，而是直接失败", async () => {
+  it("达到已持久化的第三次尝试时不创建第四个 claim，而是返回预算终止 outcome", async () => {
     const { userId, targetId } = await activeTarget();
     const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
     await database.update(agentRuns).set({ attemptCount: 3 }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)));
-    await expect(createAgentRunProcessor({ db: database, adapter: adapter(), contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("failed");
+    await expect(createAgentRunProcessor({ db: database, adapter: adapter(), contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("budget_exhausted");
     await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({
       attemptCount: 3, status: "failed", failureCode: "AGENT_RUN_BUDGET_EXCEEDED",
       termination: { kind: "budget_exhausted", failureCode: "AGENT_RUN_BUDGET_EXCEEDED", budgetDimension: "attempts" },
@@ -483,7 +483,7 @@ describe("agent runs", () => {
       instant = new Date(now.getTime() + 60_000);
       return { ok: true, data: [] };
     };
-    await expect(createAgentRunProcessor({ db: database, adapter: slow, contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => instant }), id: () => crypto.randomUUID(), clock: () => instant }).process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("failed");
+    await expect(createAgentRunProcessor({ db: database, adapter: slow, contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => instant }), id: () => crypto.randomUUID(), clock: () => instant }).process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("budget_exhausted");
     await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({ status: "failed", failureCode: "AGENT_RUN_BUDGET_EXCEEDED", termination: { kind: "budget_exhausted", failureCode: "AGENT_RUN_BUDGET_EXCEEDED", budgetDimension: "active_duration" } });
   });
 
@@ -512,7 +512,7 @@ describe("agent runs", () => {
     });
     const processing = processor.process({ version: 1, runId: run.runId, userId, finalAttempt: true });
     await putStarted.promise;
-    await expect(processing).resolves.toBe("failed");
+    await expect(processing).resolves.toBe("budget_exhausted");
     expect(store.deletes).toEqual([store.puts[0]]);
     settlePut.resolve();
     await lateDelete.promise;
@@ -543,21 +543,21 @@ describe("agent runs", () => {
       processing,
       new Promise<"timed out">((resolve) => setTimeout(() => resolve("timed out"), 250)),
     ]);
-    expect(result).toBe("failed");
+    expect(result).toBe("retry");
     expect(store.puts.every((objectKey) => store.deletes.includes(objectKey))).toBe(true);
     await expect(database.select({ status: agentRuns.status, failureCode: agentRuns.failureCode }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId))))
-      .resolves.toEqual([{ status: "failed", failureCode: "AGENT_RUN_CONTENT_STORAGE_FAILED" }]);
+      .resolves.toEqual([{ status: "queued", failureCode: null }]);
   }, 1_000);
 
   it("在第三次可重试来源失败后以尝试预算终止且不暴露原始错误", async () => {
     const { userId, targetId } = await activeTarget();
     const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
     const retrying = createAgentRunProcessor({ db: database, adapter: adapter({ retryable: true }), contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
-    await expect(retrying.process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("retry");
+    await expect(retrying.process({ version: 1, runId: run.runId, userId, finalAttempt: true })).resolves.toBe("retry");
     await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({ status: "queued", startedAt: null, failureCode: null, events: expect.arrayContaining([expect.objectContaining({ eventType: "run.retry_scheduled", data: expect.not.objectContaining({ message: expect.anything() }) })]) });
     await expect(database.select().from(auditEvents).where(and(eq(auditEvents.userId, userId), eq(auditEvents.resourceId, run.runId), eq(auditEvents.eventType, "agent.run_retry_scheduled")))).resolves.toHaveLength(1);
     await expect(retrying.process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("retry");
-    await expect(retrying.process({ version: 1, runId: run.runId, userId, finalAttempt: true })).resolves.toBe("failed");
+    await expect(retrying.process({ version: 1, runId: run.runId, userId, finalAttempt: true })).resolves.toBe("budget_exhausted");
     await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({
       status: "failed", failureCode: "AGENT_RUN_BUDGET_EXCEEDED",
       termination: { kind: "budget_exhausted", failureCode: "AGENT_RUN_BUDGET_EXCEEDED", budgetDimension: "attempts" },
@@ -614,7 +614,7 @@ describe("agent runs", () => {
     const oldToken = crypto.randomUUID();
     await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", attemptCount: 1, activeDurationMs: 30_000, startedAt: now, claimToken: oldToken, claimExpiresAt: new Date(now.getTime() + 30_000), activeSliceStartedAt: now }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)));
     const instant = new Date(now.getTime() + 60_000);
-    await expect(createAgentRunProcessor({ db: database, adapter: adapter(), contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => instant }), id: () => crypto.randomUUID(), clock: () => instant }).process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("failed");
+    await expect(createAgentRunProcessor({ db: database, adapter: adapter(), contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => instant }), id: () => crypto.randomUUID(), clock: () => instant }).process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("budget_exhausted");
     await expect(database.select({ status: agentRuns.status, attemptCount: agentRuns.attemptCount, activeDurationMs: agentRuns.activeDurationMs, terminationBudgetDimension: agentRuns.terminationBudgetDimension }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)))).resolves.toEqual([{ status: "failed", attemptCount: 1, activeDurationMs: 60_000, terminationBudgetDimension: "active_duration" }]);
     await expect(database.select().from(agentRunEvents).where(and(eq(agentRunEvents.runId, run.runId), eq(agentRunEvents.eventType, "run.started")))).resolves.toHaveLength(0);
   });

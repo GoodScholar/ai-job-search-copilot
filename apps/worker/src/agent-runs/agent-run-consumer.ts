@@ -25,19 +25,12 @@ async function closeWithinDeadline(operation: Promise<void>): Promise<void> {
   }
 }
 
-export function agentRunAttemptContext(attemptsMade: number, attempts: number | undefined): { finalAttempt: boolean } {
-  return { finalAttempt: attemptsMade + 1 >= (attempts ?? 1) };
-}
-
 export async function processAgentRunJob(
   job: { data: unknown; attemptsMade: number; attempts: number | undefined },
   processor: AgentRunProcessor,
 ): Promise<AgentRunOutcome> {
   const payload: AgentRunJob = AgentRunJobSchema.parse(job.data);
-  const outcome = await processor.process({
-    ...payload,
-    ...agentRunAttemptContext(job.attemptsMade, job.attempts),
-  });
+  const outcome = await processor.process(payload);
   if (outcome === "retry") throw new Error("agent run temporarily unavailable");
   return outcome;
 }

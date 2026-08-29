@@ -155,4 +155,40 @@ describe("AgentRunProcessor checkpoints", () => {
       .process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("completed");
     await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({ executionSpec: { model: null }, usage: { modelCalls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0 } });
   });
+
+  it("冻结 adapter 解析失败会按不可重试来源失败终止，而不遗留 running claim", async () => {
+    const job = await run();
+    const processor = createAgentRunProcessor({
+      db: database,
+      adapterResolver: { resolve: () => { throw new Error("AGENT_RUN_ADAPTER_UNSUPPORTED"); } },
+      contentStore: new Store(),
+      auditTrail: createAuditTrail({ db: database, clock: () => now }),
+      id: () => crypto.randomUUID(),
+      clock: () => now,
+    });
+
+    await expect(processor.process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("failed");
+    await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({
+      status: "failed", failureCode: "AGENT_RUN_ADAPTER_FAILED", currentStep: "failed",
+    });
+  });
+
+  it.each(["cancel_requested", "pause_requested"] as const)("过期 lease 的 %s 先于 attempts/active budget 被处理", async (controlState) => {
+    const job = await run();
+    const oldToken = crypto.randomUUID();
+    await database.update(agentRuns).set({
+      status: "running", currentStep: "batch_search", controlState, attemptCount: 3,
+      startedAt: new Date(now.getTime() - 30_000), activeDurationMs: 60_000, claimToken: oldToken, claimExpiresAt: new Date(now.getTime() - 1), activeSliceStartedAt: new Date(now.getTime() - 30_000),
+    }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId)));
+    const calls = { search: 0, detail: 0 };
+
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(successAdapter(calls)), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .process({ version: 1, ...job, finalAttempt: true })).resolves.toBe(controlState === "cancel_requested" ? "cancelled" : "paused");
+    expect(calls).toEqual({ search: 0, detail: 0 });
+    await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({
+      status: controlState === "cancel_requested" ? "cancelled" : "paused",
+      controlState: "none",
+      termination: controlState === "cancel_requested" ? { kind: "cancelled_by_user" } : null,
+    });
+  });
 });
