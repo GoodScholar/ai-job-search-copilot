@@ -607,7 +607,7 @@ export const agentInboxItemActions = pgTable("agent_inbox_item_actions", {
   foreignKey({ columns: [table.userId, table.itemId], foreignColumns: [agentInboxItems.userId, agentInboxItems.id], name: "agent_inbox_item_actions_owner_item_fk" }),
   foreignKey({ columns: [table.userId, table.relatedRunId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "agent_inbox_item_actions_owner_related_run_fk" }),
   check("agent_inbox_item_actions_action_check", sql`${table.action} in ('restart_run', 'resume_run', 'cancel_run', 'dismiss')`),
-  check("agent_inbox_item_actions_outcome_check", sql`${table.outcome} in ('applied', 'no_change', 'failed')`),
+  check("agent_inbox_item_actions_outcome_check", sql`${table.outcome} in ('pending', 'applied', 'no_change', 'failed')`),
 ]);
 
 export const agentRunSteps = pgTable("agent_run_steps", {

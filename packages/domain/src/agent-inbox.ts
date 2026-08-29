@@ -18,6 +18,9 @@ type Commands = {
 export class AgentInboxError extends Error {
   constructor(public readonly code: "AGENT_INBOX_NOT_FOUND" | "AGENT_INBOX_ACTION_CONFLICT") { super(code); }
 }
+export class AgentInboxActionError extends Error {
+  constructor(public readonly code: "AGENT_INBOX_ACTION_FAILED") { super(code); }
+}
 
 function projection(item: InboxItemRow): AgentInboxItem {
   const open = item.status === "open";
@@ -68,11 +71,11 @@ export function createAgentInbox(deps: { db: Database; commands: Commands; audit
     await deps.db.transaction(async (transaction) => {
       await acquireAccountAdvisoryLock(transaction, input.userId);
       const item = await itemFor(transaction, input.userId, input.itemId);
-      if (!item || item.status !== "open") return;
+      if (!item) return;
       const [prior] = await transaction.select().from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, input.userId), eq(agentInboxItemActions.itemId, input.itemId), eq(agentInboxItemActions.actionId, input.actionId)));
-      if (prior) return;
-      await transaction.insert(agentInboxItemActions).values({ id: deps.id(), userId: input.userId, itemId: item.id, actionId: input.actionId, action: input.action, outcome: "failed", relatedRunId: null, reasonCode: item.reasonCode, createdAt: now });
-      const reasonCode = item.reasonCode as AgentInboxItem["reasonCode"];
+      if (!prior || prior.outcome !== "pending") return;
+      const reasonCode = "AGENT_INBOX_ACTION_FAILED" as const;
+      await transaction.update(agentInboxItemActions).set({ outcome: "failed", reasonCode }).where(eq(agentInboxItemActions.id, prior.id));
       await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.inbox_action_applied", occurredAt: now, requestId: input.requestId, outcome: "failure", reasonCode, resourceType: "agent_inbox_item", resourceId: item.id, metadata: { itemId: item.id, runId: item.runId, action: input.action, outcome: "failed", reasonCode } });
     });
   }
@@ -84,14 +87,15 @@ export function createAgentInbox(deps: { db: Database; commands: Commands; audit
       const item = await itemFor(transaction, input.userId, input.itemId);
       if (!item) throw new AgentInboxError("AGENT_INBOX_NOT_FOUND");
       const [prior] = await transaction.select().from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, input.userId), eq(agentInboxItemActions.itemId, input.itemId), eq(agentInboxItemActions.actionId, input.actionId)));
-      if (prior) {
+      if (prior && prior.outcome !== "pending") {
         if (prior.action !== input.action) throw new AgentInboxError("AGENT_INBOX_ACTION_CONFLICT");
+        if (prior.outcome === "failed") throw new AgentInboxActionError("AGENT_INBOX_ACTION_FAILED");
         return { replay: true, applied: prior.outcome === "applied", relatedRunId: prior.relatedRunId };
       }
       if (!accepts(item, input.action)) throw new AgentInboxError("AGENT_INBOX_ACTION_CONFLICT");
       if (item.status !== "open") {
         const outcome = input.alreadyResolved ? "applied" : "no_change";
-        await transaction.insert(agentInboxItemActions).values({ id: deps.id(), userId: input.userId, itemId: item.id, actionId: input.actionId, action: input.action, outcome, relatedRunId: input.relatedRunId, reasonCode: item.reasonCode, createdAt: now });
+        await transaction.update(agentInboxItemActions).set({ outcome, relatedRunId: input.relatedRunId, reasonCode: item.reasonCode }).where(and(eq(agentInboxItemActions.userId, input.userId), eq(agentInboxItemActions.itemId, item.id), eq(agentInboxItemActions.actionId, input.actionId)));
         if (input.alreadyResolved) {
           const reasonCode = item.reasonCode as AgentInboxItem["reasonCode"];
           await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.inbox_action_applied", occurredAt: now, requestId: input.requestId, outcome: "success", reasonCode, resourceType: "agent_inbox_item", resourceId: item.id, metadata: { itemId: item.id, runId: item.runId, action: input.action, outcome: "applied", reasonCode } });
@@ -104,10 +108,31 @@ export function createAgentInbox(deps: { db: Database; commands: Commands; audit
         const reasonCode = item.reasonCode as AgentInboxItem["reasonCode"];
         await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.inbox_resolved", occurredAt: now, requestId: input.requestId, outcome: "success", reasonCode, resourceType: "agent_inbox_item", resourceId: item.id, metadata: { itemId: item.id, runId: item.runId, action: input.action, reasonCode } });
       }
-      await transaction.insert(agentInboxItemActions).values({ id: deps.id(), userId: input.userId, itemId: item.id, actionId: input.actionId, action: input.action, outcome: "applied", relatedRunId: input.relatedRunId, reasonCode: item.reasonCode, createdAt: now });
+      await transaction.update(agentInboxItemActions).set({ outcome: "applied", relatedRunId: input.relatedRunId, reasonCode: item.reasonCode }).where(and(eq(agentInboxItemActions.userId, input.userId), eq(agentInboxItemActions.itemId, item.id), eq(agentInboxItemActions.actionId, input.actionId)));
       const reasonCode = item.reasonCode as AgentInboxItem["reasonCode"];
       await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.inbox_action_applied", occurredAt: now, requestId: input.requestId, outcome: "success", reasonCode, resourceType: "agent_inbox_item", resourceId: item.id, metadata: { itemId: item.id, runId: item.runId, action: input.action, outcome: "applied", reasonCode } });
       return { replay: false, applied: true, relatedRunId: input.relatedRunId };
+    });
+  }
+
+  async function claimAction(input: { userId: string; itemId: string; actionId: string; action: InboxAction }) {
+    const now = deps.clock();
+    return deps.db.transaction(async (transaction) => {
+      await acquireAccountAdvisoryLock(transaction, input.userId);
+      const item = await itemFor(transaction, input.userId, input.itemId);
+      if (!item) throw new AgentInboxError("AGENT_INBOX_NOT_FOUND");
+      const [prior] = await transaction.select().from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, input.userId), eq(agentInboxItemActions.itemId, item.id), eq(agentInboxItemActions.actionId, input.actionId)));
+      if (prior) {
+        if (prior.action !== input.action) throw new AgentInboxError("AGENT_INBOX_ACTION_CONFLICT");
+        if (prior.outcome === "failed") throw new AgentInboxActionError("AGENT_INBOX_ACTION_FAILED");
+        if (prior.outcome !== "pending") return { item, replay: true, relatedRunId: prior.relatedRunId, applied: prior.outcome === "applied" };
+        return { item, replay: false, relatedRunId: null, applied: false };
+      }
+      const [other] = await transaction.select({ id: agentInboxItemActions.id }).from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, input.userId), eq(agentInboxItemActions.itemId, item.id))).limit(1);
+      if (other) throw new AgentInboxError("AGENT_INBOX_ACTION_CONFLICT");
+      if (!accepts(item, input.action)) throw new AgentInboxError("AGENT_INBOX_ACTION_CONFLICT");
+      await transaction.insert(agentInboxItemActions).values({ id: deps.id(), userId: input.userId, itemId: item.id, actionId: input.actionId, action: input.action, outcome: "pending", relatedRunId: null, reasonCode: null, createdAt: now });
+      return { item, replay: false, relatedRunId: null, applied: false };
     });
   }
 
@@ -118,14 +143,9 @@ export function createAgentInbox(deps: { db: Database; commands: Commands; audit
     },
     async act(input) {
       const command = AgentInboxActionCommandSchema.parse(input.command);
-      const item = await itemFor(deps.db, input.userId, input.itemId);
-      if (!item) throw new AgentInboxError("AGENT_INBOX_NOT_FOUND");
-      const [prior] = await deps.db.select().from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, input.userId), eq(agentInboxItemActions.itemId, item.id), eq(agentInboxItemActions.actionId, command.actionId)));
-      if (prior) {
-        if (prior.action !== command.action) throw new AgentInboxError("AGENT_INBOX_ACTION_CONFLICT");
-        return response(input.userId, item.id, prior.relatedRunId, prior.outcome === "applied");
-      }
-      if (!accepts(item, command.action)) throw new AgentInboxError("AGENT_INBOX_ACTION_CONFLICT");
+      const claim = await claimAction({ userId: input.userId, itemId: input.itemId, actionId: command.actionId, action: command.action });
+      const item = claim.item;
+      if (claim.replay) return response(input.userId, item.id, claim.relatedRunId, claim.applied);
       if (item.status !== "open") {
         const settled = await resolveAndRecord({ userId: input.userId, requestId: input.requestId, itemId: item.id, actionId: command.actionId, action: command.action, relatedRunId: null });
         return response(input.userId, item.id, settled.relatedRunId, settled.applied);
@@ -140,7 +160,7 @@ export function createAgentInbox(deps: { db: Database; commands: Commands; audit
           started = await deps.commands.start({ userId: input.userId, requestId: input.requestId, command: { targetId: (await deps.db.select({ targetId: agentRuns.targetId }).from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, item.runId))))[0]?.targetId ?? "", idempotencyKey: command.actionId } });
         } catch (error) {
           await recordFailure({ userId: input.userId, requestId: input.requestId, itemId: item.id, actionId: command.actionId, action: command.action });
-          throw error;
+          throw new AgentInboxActionError("AGENT_INBOX_ACTION_FAILED");
         }
         const settled = await resolveAndRecord({ userId: input.userId, requestId: input.requestId, itemId: item.id, actionId: command.actionId, action: command.action, relatedRunId: started.runId, retryOfRunId: item.runId });
         return response(input.userId, item.id, settled.relatedRunId, settled.applied);
@@ -150,7 +170,7 @@ export function createAgentInbox(deps: { db: Database; commands: Commands; audit
         controlled = await deps.commands.control({ userId: input.userId, requestId: input.requestId, runId: item.runId, command: { commandId: command.actionId, action: command.action === "resume_run" ? "resume" : "cancel" } });
       } catch (error) {
         await recordFailure({ userId: input.userId, requestId: input.requestId, itemId: item.id, actionId: command.actionId, action: command.action });
-        throw error;
+        throw new AgentInboxActionError("AGENT_INBOX_ACTION_FAILED");
       }
       const settled = await resolveAndRecord({ userId: input.userId, requestId: input.requestId, itemId: item.id, actionId: command.actionId, action: command.action, relatedRunId: controlled.run.runId, alreadyResolved: controlled.applied });
       return response(input.userId, item.id, settled.relatedRunId, settled.applied);

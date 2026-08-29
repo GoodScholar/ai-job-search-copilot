@@ -171,4 +171,17 @@ describe("agent run controls", () => {
     await expect(checkpoints(new Date(resumedAt.getTime() + 100)).check({ userId, runId: run.runId, claimToken: secondToken, checkpointKey: `${secondToken}:model`, reserve: { modelCalls: 1 } })).resolves.toMatchObject({ kind: "budget_exhausted", budgetDimension: "model_calls" });
     await expect(database.select({ activeDurationMs: agentRuns.activeDurationMs, modelCallCount: agentRuns.modelCallCount }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)))).resolves.toEqual([{ activeDurationMs: 200, modelCallCount: 0 }]);
   });
+
+  it("重复 checkpoint key 仍执行控制，且 reserve 形状必须与首次一致", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const claimToken = crypto.randomUUID();
+    await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", attemptCount: 1, startedAt: now, claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), activeSliceStartedAt: now }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)));
+    const key = `${claimToken}:source:search:1`;
+    await expect(checkpoints(new Date(now.getTime() + 100)).check({ userId, runId: run.runId, claimToken, checkpointKey: key, reserve: { toolCalls: 1, sourceRequests: 1 } })).resolves.toEqual({ kind: "continue" });
+    await expect(checkpoints(new Date(now.getTime() + 100)).check({ userId, runId: run.runId, claimToken, checkpointKey: key, reserve: { toolCalls: 1 } })).rejects.toMatchObject({ code: "AGENT_RUN_CHECKPOINT_CONFLICT" });
+    await commands(new MemoryQueue()).control({ userId, requestId: crypto.randomUUID(), runId: run.runId, command: { commandId: crypto.randomUUID(), action: "pause" } });
+    await expect(checkpoints(new Date(now.getTime() + 200)).check({ userId, runId: run.runId, claimToken, checkpointKey: key, reserve: { toolCalls: 1, sourceRequests: 1 } })).resolves.toEqual({ kind: "paused" });
+    await expect(database.select().from(agentRunUsageEntries).where(and(eq(agentRunUsageEntries.userId, userId), eq(agentRunUsageEntries.runId, run.runId), eq(agentRunUsageEntries.usageKey, key)))).resolves.toHaveLength(2);
+  });
 });

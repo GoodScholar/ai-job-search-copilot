@@ -107,8 +107,10 @@ describe("agent inbox", () => {
     await database.update(agentRuns).set({ status: "failed", currentStep: "failed", startedAt: now, failedAt: now, failureCode: "AGENT_RUN_ADAPTER_FAILED", terminationKind: "source_failed", usageComplete: true }).where(and(eq(agentRuns.userId, owner.userId), eq(agentRuns.id, failed.runId)));
     await database.update(jobTargets).set({ state: "inactive", activeSlot: null }).where(and(eq(jobTargets.userId, owner.userId), eq(jobTargets.id, owner.targetId)));
     const actionId = crypto.randomUUID();
-    await expect(inbox().act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: failed.itemId, command: { actionId, action: "restart_run" } })).rejects.toMatchObject({ code: "AGENT_RUN_TARGET_INACTIVE" });
-    await expect(database.select({ outcome: agentInboxItemActions.outcome }).from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, owner.userId), eq(agentInboxItemActions.itemId, failed.itemId), eq(agentInboxItemActions.actionId, actionId)))).resolves.toEqual([{ outcome: "failed" }]);
+    const action = { userId: owner.userId, requestId: crypto.randomUUID(), itemId: failed.itemId, command: { actionId, action: "restart_run" as const } };
+    await expect(inbox().act(action)).rejects.toMatchObject({ code: "AGENT_INBOX_ACTION_FAILED" });
+    await expect(inbox().act({ ...action, requestId: crypto.randomUUID() })).rejects.toMatchObject({ code: "AGENT_INBOX_ACTION_FAILED" });
+    await expect(database.select({ outcome: agentInboxItemActions.outcome, reasonCode: agentInboxItemActions.reasonCode }).from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, owner.userId), eq(agentInboxItemActions.itemId, failed.itemId), eq(agentInboxItemActions.actionId, actionId)))).resolves.toEqual([{ outcome: "failed", reasonCode: "AGENT_INBOX_ACTION_FAILED" }]);
     await expect(inbox().list({ userId: owner.userId, status: "open" })).resolves.toMatchObject({ items: [expect.objectContaining({ itemId: failed.itemId, status: "open" })] });
   });
 
@@ -140,5 +142,17 @@ describe("agent inbox", () => {
     await expect(database.select().from(agentRuns).where(and(eq(agentRuns.userId, owner.userId), eq(agentRuns.idempotencyKey, actionId)))).resolves.toHaveLength(1);
     await expect(inbox().act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: failed.itemId, command: { actionId, action: "restart_run" } })).resolves.toMatchObject({ applied: true, item: { status: "resolved" } });
     await expect(database.select().from(agentRuns).where(and(eq(agentRuns.userId, owner.userId), eq(agentRuns.idempotencyKey, actionId)))).resolves.toHaveLength(1);
+  });
+
+  it("同一 open 事项的不同 action 并发时，至多一个命令获得 durable ownership", async () => {
+    const owner = await activeTarget();
+    const { itemId } = await openItem({ ...owner, kind: "decision_required", reasonCode: "AGENT_RUN_PAUSED" });
+    const [resume, cancel] = await Promise.allSettled([
+      inbox().act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId, command: { actionId: crypto.randomUUID(), action: "resume_run" } }),
+      inbox().act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId, command: { actionId: crypto.randomUUID(), action: "cancel_run" } }),
+    ]);
+    expect([resume, cancel].filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    await expect(database.select().from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, owner.userId), eq(agentInboxItemActions.itemId, itemId)))).resolves.toHaveLength(1);
+    await expect(database.select({ status: agentInboxItems.status }).from(agentInboxItems).where(and(eq(agentInboxItems.userId, owner.userId), eq(agentInboxItems.id, itemId)))).resolves.toEqual([{ status: "resolved" }]);
   });
 });

@@ -161,3 +161,32 @@ Fresh `pnpm --filter @job-copilot/domain typecheck` passed. The focused integrat
 ### Remaining review items
 
 - Shared active-slice settlement/budget-terminal helper, duplicate-key reserve matching/control priority, retry classification, Inbox failed-action replay and concurrent different-action ownership still require subsequent review fix rounds.
+
+## Task 2 review fix round 1 — remaining findings closed
+
+### Status
+
+已关闭本轮 A–F 的剩余 finding；未接入 Task 3 的逐外部调用 checkpoint、resolver、API 或 UI。
+
+### RED/GREEN evidence
+
+| Slice | RED | GREEN |
+| --- | --- | --- |
+| A / active slice | `pnpm --filter @job-copilot/domain exec vitest run src/agent-runs.integration.test.ts src/agent-run-control.integration.test.ts src/agent-inbox.integration.test.ts`：真实 Processor retry/completed 都显示 `activeDurationMs: 0`。 | 同命令最终 3 files、40 tests passed；真实 claim 在 retry、completion 和 heartbeat 通过稳定 `claimToken + activeSliceStartedAt` ledger key 结算，离开 running 清空 slice。 |
+| B / shared budget terminal | 上述 RED 同时暴露旧 Processor claim-before-attempt 与 checkpoint 各自写终态；前者没有 Inbox/budget audit 的共享语义。 | 新内部 lifecycle helper 统一 attempts、active deadline 与 checkpoint 的 `run.failed`、`agent.run_failed`、`agent.run_budget_exhausted`、唯一 Inbox 和类型化维度；第三次合法 attempt 不提前终止。 |
+| C / checkpoint replay | 同一 checkpoint key 以不同 reserve 重放错误地返回 continue，且已有 key 会跳过 pause/cancel。 | checkpoint integration 新测试 GREEN：reserve 形状不一致稳定抛 `AGENT_RUN_CHECKPOINT_CONFLICT`；同 key 在 pause request 后仍完成 pause，且不重复 reserve usage。 |
+| D / retry typing | 未类型化 `Error` 被映射为 retryable，Processor 返回 retry。 | 新 Processor 测试 GREEN：未知异常永久失败；仅 adapter 明确 `retryable` 的 source result 可经 `decideRetry` 重试，预算由同一纯策略判定。 |
+| E / failed Inbox replay | 首次 restart failure 抛 `AGENT_RUN_TARGET_INACTIVE`，相同 actionId 重放却返回 `{ applied: false }`。 | Green 后两次均稳定抛 `AGENT_INBOX_ACTION_FAILED`；动作账本与审计保存该实际稳定原因，而非复用 run 的旧 failure reason。 |
+| F / Inbox concurrency | 两个不同 actionId 并发 resume/cancel 都可完成。 | `Promise.allSettled` PostgreSQL 集成测试 GREEN：先持久化 `pending` ownership；不同 action 不能穿透，只有一个 action row/终态转换。迁移 `0019` 仅扩展内部 outcome check。 |
+
+### Verification
+
+- `pnpm --filter @job-copilot/domain exec vitest run src/agent-run-state.test.ts src/agent-run-control.integration.test.ts src/agent-inbox.integration.test.ts src/agent-runs.test.ts src/agent-runs.integration.test.ts src/audit-trail.integration.test.ts src/workbench-home.integration.test.ts` → 7 files, 62 tests passed。
+- `pnpm --filter @job-copilot/database exec vitest run src/migrate.integration.test.ts` → 15 tests passed。
+- `pnpm --filter @job-copilot/domain typecheck`、`pnpm --filter @job-copilot/contracts typecheck`、`pnpm --filter @job-copilot/database typecheck`、`git diff --check` → passed。
+
+### Self-review / concerns
+
+- `pending` 仅是 durable Inbox action ownership，不是用户自由文本或公共 DTO；restart 在 start 成功而 resolution 回滚后仍可用相同 actionId 重放完成。
+- active-time ledger 与 aggregate 在同一事务中更新，使用稳定 slice key 的冲突结果决定是否累计，避免事务重试双计。
+- Processor 仍不在每次 Adapter 调用前调用 checkpoint：这是 Task 3 的外部调用接线边界，本轮只修复既有 Processor lifecycle 和 retry/terminal 语义。

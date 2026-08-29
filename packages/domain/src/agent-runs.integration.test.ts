@@ -1,7 +1,7 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { agentInboxItems, agentRunEvents, agentRunJobResults, agentRunSteps, agentRuns, auditEvents, createDatabase, jobAccounts, jobOpportunities, jobOpportunitySources, jobSourcePostingVersions, jobSourcePostings, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
+import { agentInboxItems, agentRunEvents, agentRunJobResults, agentRunSteps, agentRunUsageEntries, agentRuns, auditEvents, createDatabase, jobAccounts, jobOpportunities, jobOpportunitySources, jobSourcePostingVersions, jobSourcePostings, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { createAgentRunCommands, createAgentRunProcessor, createAgentRunQueries, createAgentRunRecoveryQueries, type AgentRunQueue, type DiscoveryContentStore, type JobDiscoveryAdapter } from "./agent-runs";
@@ -359,6 +359,7 @@ describe("agent runs", () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     const recoverable = await createAgentRunRecoveryQueries({ db: database, clock: () => instant }).listRecoverable();
     expect(recoverable).not.toContainEqual({ version: 1, runId: run.runId, userId });
+    await expect(database.select().from(agentRunUsageEntries).where(and(eq(agentRunUsageEntries.userId, userId), eq(agentRunUsageEntries.runId, run.runId), eq(agentRunUsageEntries.category, "active_duration")))).resolves.toHaveLength(1);
     release.resolve();
     await expect(processing).resolves.toBe("completed");
   });
@@ -556,5 +557,37 @@ describe("agent runs", () => {
       termination: { kind: "budget_exhausted", failureCode: "AGENT_RUN_BUDGET_EXCEEDED", budgetDimension: "attempts" },
       events: expect.arrayContaining([expect.objectContaining({ eventType: "run.failed", data: expect.objectContaining({ attemptCount: 3, failureCode: "AGENT_RUN_BUDGET_EXCEEDED" }) })]),
     });
+  });
+
+  it("Processor 的真实 claim 在重试和完成时结算 active slice，且不会遗留 running slice", async () => {
+    const { userId, targetId } = await activeTarget();
+    const retryRun = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    let instant = now;
+    const retrying = adapter({ retryable: true });
+    retrying.searchBatch = async () => {
+      instant = new Date(instant.getTime() + 25);
+      return { ok: false, error: { code: "UPSTREAM", retryable: true } };
+    };
+    await expect(createAgentRunProcessor({ db: database, adapter: retrying, contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => instant }), id: () => crypto.randomUUID(), clock: () => instant }).process({ version: 1, runId: retryRun.runId, userId, finalAttempt: false })).resolves.toBe("retry");
+    await expect(database.select({ status: agentRuns.status, activeDurationMs: agentRuns.activeDurationMs, activeSliceStartedAt: agentRuns.activeSliceStartedAt }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, retryRun.runId)))).resolves.toEqual([{ status: "queued", activeDurationMs: 25, activeSliceStartedAt: null }]);
+
+    const completedRun = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    instant = now;
+    const completing = adapter();
+    completing.searchBatch = async () => {
+      instant = new Date(instant.getTime() + 25);
+      return { ok: true, data: [] };
+    };
+    await expect(createAgentRunProcessor({ db: database, adapter: completing, contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => instant }), id: () => crypto.randomUUID(), clock: () => instant }).process({ version: 1, runId: completedRun.runId, userId, finalAttempt: true })).resolves.toBe("completed");
+    await expect(database.select({ status: agentRuns.status, activeDurationMs: agentRuns.activeDurationMs, activeSliceStartedAt: agentRuns.activeSliceStartedAt }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, completedRun.runId)))).resolves.toEqual([{ status: "completed", activeDurationMs: 25, activeSliceStartedAt: null }]);
+  });
+
+  it("未知异常属于永久失败，不会被 Processor 重新排队", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const broken = adapter();
+    broken.searchBatch = async () => { throw new Error("untyped upstream error"); };
+    await expect(createAgentRunProcessor({ db: database, adapter: broken, contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("failed");
+    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({ status: "failed", failureCode: "AGENT_RUN_ADAPTER_FAILED" });
   });
 });
