@@ -3,6 +3,7 @@
 import {
   AgentRunDetailSchema,
   AgentRunSseEventSchema,
+  ControlAgentRunResponseSchema,
   StartAgentRunResponseSchema,
   type AgentRunDetail,
   type AgentRunEventTypeSchema,
@@ -22,6 +23,8 @@ type TimelineEvent = {
 const streamEventTypes = [
   "run.queued", "run.started", "step.started", "step.completed",
   "run.retry_scheduled", "run.completed", "run.failed",
+  "run.pause_requested", "run.paused", "run.resume_requested", "run.resumed",
+  "run.cancel_requested", "run.cancelled", "run.budget_updated",
 ] as const;
 
 const stepLabels = {
@@ -40,6 +43,10 @@ const failureMessages: Record<NonNullable<AgentRunDetail["failureCode"]>, string
   AGENT_RUN_CONTENT_STORAGE_FAILED: "岗位证据暂时无法保存，请稍后重新发起发现。",
   AGENT_RUN_PERSIST_FAILED: "岗位结果暂时无法保存，请稍后重新发起发现。",
   AGENT_RUN_BUDGET_EXCEEDED: "本次发现超过固定处理预算，请缩小求职目标后重新发起。",
+  AGENT_RUN_MODEL_RETRYABLE: "模型服务暂时不可用，请稍后重新发起发现。",
+  AGENT_RUN_MODEL_AUTH_FAILED: "模型服务授权未通过，请联系支持人员后再试。",
+  AGENT_RUN_MODEL_POLICY_REJECTED: "模型服务未接受本次处理，请调整求职目标后重试。",
+  AGENT_RUN_MODEL_INVALID_RESPONSE: "模型服务返回无效结果，请稍后重新发起发现。",
 };
 
 function cursorKey(runId: string): string {
@@ -59,6 +66,13 @@ function timelineLabel(event: TimelineEvent): string {
     case "run.retry_scheduled": return "正在重新尝试";
     case "run.completed": return "岗位发现完成";
     case "run.failed": return "岗位发现未完成";
+    case "run.pause_requested": return "等待安全暂停";
+    case "run.paused": return "岗位发现已暂停";
+    case "run.resume_requested": return "正在继续岗位发现";
+    case "run.resumed": return "岗位发现已重新排队";
+    case "run.cancel_requested": return "等待安全取消";
+    case "run.cancelled": return "岗位发现已取消";
+    case "run.budget_updated": return "预算使用已更新";
   }
 }
 
@@ -66,6 +80,8 @@ function runStatusLabel(run: AgentRunDetail | null): string {
   if (!run) return "尚未开始岗位发现";
   if (run.status === "queued") return "岗位发现已排队";
   if (run.status === "running") return `岗位发现进行中：${run.currentStep in stepLabels ? stepLabels[run.currentStep as keyof typeof stepLabels] : "准备中"}`;
+  if (run.status === "paused") return "岗位发现已暂停";
+  if (run.status === "cancelled") return "岗位发现已取消";
   if (run.status === "completed") return `岗位发现完成，共保存 ${run.results.length} 个岗位机会`;
   return failureMessages[run.failureCode ?? "AGENT_RUN_PERSIST_FAILED"];
 }
@@ -90,10 +106,11 @@ export function AgentRunPanel({ targets, initialRun }: { targets: JobTarget[]; i
   const [isStarting, setIsStarting] = useState(false);
   const idempotencyKey = useRef<string | null>(null);
   const pendingRunId = useRef<string | null>(null);
-  const runIsActive = run?.status === "queued" || run?.status === "running";
+  const runIsUnfinished = run != null && ["queued", "running", "paused"].includes(run.status);
+  const commandIds = useRef<Record<"pause" | "resume" | "cancel", string | null>>({ pause: null, resume: null, cancel: null });
 
   useEffect(() => {
-    if (!run || run.status === "completed" || run.status === "failed") return;
+    if (!run || ["paused", "completed", "failed", "cancelled"].includes(run.status)) return;
     const lastDetailSequence = run.events.at(-1)?.sequence ?? 0;
     const storedSequence = Number.parseInt(window.sessionStorage.getItem(cursorKey(run.runId)) ?? "0", 10);
     let cursor = Math.max(lastDetailSequence, Number.isSafeInteger(storedSequence) ? storedSequence : 0);
@@ -114,7 +131,17 @@ export function AgentRunPanel({ targets, initialRun }: { targets: JobTarget[]; i
       window.sessionStorage.setItem(cursorKey(run.runId), String(sequence));
       setMessage("");
       setTimeline((events) => [...events, { sequence, eventType: parsed.data.event, data: parsed.data.data }]);
-      if (type === "run.completed" || type === "run.failed") {
+      setRun((current) => {
+        if (!current) return current;
+        const data = parsed.data.data;
+        if (data.eventType === "run.pause_requested") return { ...current, controlState: "pause_requested" };
+        if (data.eventType === "run.cancel_requested") return { ...current, controlState: "cancel_requested" };
+        if (data.eventType === "run.resume_requested") return { ...current, controlState: "none" };
+        if (data.eventType === "run.resumed") return { ...current, status: "queued", currentStep: "queued", controlState: "none" };
+        if (data.eventType === "run.budget_updated") return { ...current, usage: data.usage };
+        return current;
+      });
+      if (["run.paused", "run.completed", "run.failed", "run.cancelled"].includes(type)) {
         stream.close();
         void fetchRunDetail(run.runId).then((detail) => {
           if (!current) return;
@@ -139,7 +166,7 @@ export function AgentRunPanel({ targets, initialRun }: { targets: JobTarget[]; i
   }, [run]);
 
   async function startRun() {
-    if (!selectedTargetId || runIsActive || isStarting) return;
+    if (!selectedTargetId || runIsUnfinished || isStarting) return;
     idempotencyKey.current ??= crypto.randomUUID();
     setIsStarting(true);
     setMessage("");
@@ -177,6 +204,43 @@ export function AgentRunPanel({ targets, initialRun }: { targets: JobTarget[]; i
     }
   }
 
+  async function controlRun(action: "pause" | "resume" | "cancel") {
+    if (!run) return;
+    const commandId = commandIds.current[action] ?? crypto.randomUUID();
+    commandIds.current[action] = commandId;
+    setMessage("");
+    try {
+      const response = await fetch(`/api/agent-runs/${run.runId}/controls`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ commandId, action }),
+      });
+      if (!response.ok) {
+        if (response.status === 409) commandIds.current[action] = null;
+        setMessage(response.status === 409 ? "该运行状态已变化，请刷新后查看。" : `${action === "pause" ? "暂停" : action === "resume" ? "继续" : "取消"}请求暂时无法提交，请稍后重试。`);
+        return;
+      }
+      const parsed = ControlAgentRunResponseSchema.safeParse(await response.json().catch(() => null));
+      if (!parsed.success) {
+        setMessage("运行状态暂时无法确认，请稍后重试。");
+        return;
+      }
+      commandIds.current[action] = null;
+      setRun((current) => current ? { ...current, ...parsed.data.run } : current);
+      if (parsed.data.run.status === "paused" || parsed.data.run.status === "cancelled") {
+        try {
+          const detail = await fetchRunDetail(run.runId);
+          setRun(detail);
+          setTimeline(detailTimeline(detail));
+        } catch {
+          setMessage("运行状态已更新，但详情暂时无法读取。请刷新页面重试。");
+          return;
+        }
+      }
+      setMessage(parsed.data.run.status === "paused" ? "岗位发现已暂停" : parsed.data.run.status === "cancelled" ? "岗位发现已取消" : action === "pause" ? "等待安全暂停" : action === "cancel" ? "等待安全取消" : "正在继续岗位发现");
+    } catch {
+      setMessage(`${action === "pause" ? "暂停" : action === "resume" ? "继续" : "取消"}请求暂时无法提交，请稍后重试。`);
+    }
+  }
+
   if (activeTargets.length === 0) {
     return (
       <section aria-labelledby="agent-run-title" className="workbench-ledger agent-run-panel">
@@ -201,18 +265,48 @@ export function AgentRunPanel({ targets, initialRun }: { targets: JobTarget[]; i
       <div className="agent-run-controls">
         <label htmlFor="agent-run-target">用于发现岗位的求职目标</label>
         <div>
-          <select disabled={isStarting || runIsActive} id="agent-run-target" onChange={(event) => {
+          <select disabled={isStarting || runIsUnfinished} id="agent-run-target" onChange={(event) => {
             setSelectedTargetId(event.target.value);
             idempotencyKey.current = null;
             pendingRunId.current = null;
           }} value={selectedTargetId}>
             {activeTargets.map((target) => <option key={target.targetId} value={target.targetId}>{target.constraints.roleFamily} · {target.priority === "primary" ? "主目标" : "次目标"}</option>)}
           </select>
-          <button className="agent-run-start workbench-touch-target" disabled={isStarting || runIsActive} onClick={startRun} type="button">
-            {isStarting ? "正在启动…" : runIsActive ? "发现中…" : "发现岗位"}
+          <button className="agent-run-start workbench-touch-target" disabled={isStarting || runIsUnfinished} onClick={startRun} type="button">
+            {isStarting ? "正在启动…" : runIsUnfinished ? "发现中…" : "发现岗位"}
           </button>
         </div>
       </div>
+      {run ? <>
+        <div className="agent-run-command-row">
+          {run.status === "queued" || (run.status === "running" && run.controlState === "none") ? <button className="agent-run-action workbench-touch-target" onClick={() => void controlRun("pause")} type="button">暂停岗位发现</button> : null}
+          {run.status === "paused" || run.controlState === "pause_requested" ? <button className="agent-run-action workbench-touch-target" onClick={() => void controlRun("resume")} type="button">继续本次岗位发现</button> : null}
+          {["queued", "running", "paused"].includes(run.status) && run.controlState !== "cancel_requested" ? <button className="agent-run-action agent-run-cancel workbench-touch-target" onClick={() => void controlRun("cancel")} type="button">取消岗位发现</button> : null}
+        </div>
+        <section aria-label="本次岗位发现执行规格" className="agent-run-detail">
+          <dl>
+            <div><dt>求职目标</dt><dd>{run.executionSpec.targetSnapshot.constraints.roleFamily} · v{run.targetVersion}</dd></div>
+            <div><dt>工作流</dt><dd>{run.executionSpec.workflowVersion}</dd></div>
+            <div><dt>规则</dt><dd>{run.executionSpec.ruleVersion}</dd></div>
+            <div><dt>Adapter</dt><dd>{run.executionSpec.adapter}/{run.executionSpec.adapterVersion}</dd></div>
+            <div><dt>来源范围</dt><dd>{run.executionSpec.sourceScope.sources.length} 个固定来源</dd></div>
+            <div><dt>工具白名单</dt><dd>{run.executionSpec.toolAllowlist.join("、")}</dd></div>
+            <div><dt>模型</dt><dd>本流程未使用模型</dd></div>
+          </dl>
+        </section>
+        <section aria-labelledby="agent-run-budget-title" className="agent-run-budget">
+          <h3 id="agent-run-budget-title">预算使用分录</h3>
+          <dl>
+            <div><dt>活跃时间</dt><dd>{run.usage.activeDurationMs} / {run.executionSpec.budget.maxActiveDurationMs} ms</dd></div>
+            <div><dt>来源请求</dt><dd>{run.usage.sourceRequests} / {run.executionSpec.budget.maxToolCalls} 次来源请求</dd></div>
+            <div><dt>工具调用</dt><dd>{run.usage.toolCalls} / {run.executionSpec.budget.maxToolCalls} 次工具调用</dd></div>
+            <div><dt>模型调用</dt><dd>{run.usage.modelCalls} / {run.executionSpec.budget.maxModelCalls} 次</dd></div>
+            <div><dt>Token</dt><dd>{run.usage.totalTokens} / {run.executionSpec.budget.maxTokens} 个</dd></div>
+            <div><dt>结果</dt><dd>{run.usage.results} / {run.executionSpec.budget.maxResults} 条</dd></div>
+            <div><dt>尝试</dt><dd>{run.usage.attempts} / {run.executionSpec.budget.maxAttempts} 次尝试</dd></div>
+          </dl>
+        </section>
+      </> : null}
       <p aria-live="polite" className={message ? "agent-run-live agent-run-live-error" : "agent-run-live"} role="status">
         {message || runStatusLabel(run)}
       </p>

@@ -4,6 +4,7 @@ import { unstable_rethrow } from "next/navigation";
 import { getWorkbenchHome } from "@/lib/server/workbench";
 import { getJobTargets } from "@/lib/server/job-targets";
 import { getLatestAgentRun } from "@/lib/server/agent-runs";
+import { getOpenAgentInbox } from "@/lib/server/agent-inbox";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -14,10 +15,11 @@ export default async function WorkbenchHomePage() {
   let home: WorkbenchHome;
   let targets;
   let latestRun;
+  let inbox;
 
   try {
-    [home, targets, latestRun] = await Promise.all([
-      getWorkbenchHome(), getJobTargets(), getLatestAgentRun(),
+    [home, targets, latestRun, inbox] = await Promise.all([
+      getWorkbenchHome(), getJobTargets(), getLatestAgentRun(), getOpenAgentInbox(),
     ]);
   } catch (error) {
     unstable_rethrow(error);
@@ -33,5 +35,5 @@ export default async function WorkbenchHomePage() {
     );
   }
 
-  return <WorkbenchHomeView home={home} initialRun={latestRun.run} targets={targets} />;
+  return <WorkbenchHomeView home={home} inbox={inbox} initialRun={latestRun.run} targets={targets} />;
 }

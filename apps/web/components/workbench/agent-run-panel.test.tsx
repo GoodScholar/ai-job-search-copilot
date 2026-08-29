@@ -52,7 +52,7 @@ function detail(status: AgentRunDetail["status"] = "running"): AgentRunDetail {
     adapter: "fake",
     adapterVersion: "fake-job-discovery-v1",
     outputSchemaVersion: "job-discovery-result-v1",
-    budget: { maxDurationMs: 60_000, maxAttempts: 3, maxToolCalls: 10, maxResults: 5, maxModelCalls: 0, maxTokens: 0 },
+    budget: { maxActiveDurationMs: 60_000, maxAttempts: 3, maxToolCalls: 10, maxResults: 5, maxModelCalls: 0, maxTokens: 0 },
     status,
     currentStep: terminal ? "completed" : failed ? "failed" : "batch_search",
     version: terminal ? 8 : 2,
@@ -62,7 +62,19 @@ function detail(status: AgentRunDetail["status"] = "running"): AgentRunDetail {
     startedAt: now,
     completedAt: terminal ? "2026-08-29T08:00:03.000Z" : null,
     failedAt: failed ? "2026-08-29T08:00:03.000Z" : null,
+    cancelledAt: null,
     updatedAt: terminal ? "2026-08-29T08:00:03.000Z" : now,
+    executionSpec: {
+      targetSnapshot: { targetId, version: 1, priority: "primary", state: "active", constraints: target().constraints },
+      sourceScope: { kind: "company_watchlist", adapter: "fake", adapterVersion: "fake-job-discovery-v1", sources: ["fake:aurora-careers", "fake:orbit-careers"] },
+      workflowVersion: "job-discovery-workflow-v1", ruleVersion: "fake-job-discovery-rules-v1", adapter: "fake", adapterVersion: "fake-job-discovery-v1",
+      outputSchemaVersion: "job-discovery-result-v1", toolAllowlist: ["job_discovery.search_batch", "job_discovery.get_detail"], model: null,
+      budget: { maxActiveDurationMs: 60_000, maxAttempts: 3, maxToolCalls: 10, maxResults: 5, maxModelCalls: 0, maxTokens: 0 },
+    },
+    controlState: "none",
+    usage: { activeDurationMs: 1200, attempts: 1, toolCalls: 2, sourceRequests: 2, modelCalls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, results: terminal ? 1 : 0, complete: true },
+    termination: terminal ? { kind: "completed", failureCode: null, budgetDimension: null } : failed ? { kind: "budget_exhausted", failureCode: "AGENT_RUN_BUDGET_EXCEEDED", budgetDimension: "attempts" } : null,
+    retryOfRunId: null,
     steps: [
       { stepKey: "batch_search", ordinal: 1, status: terminal ? "completed" : failed ? "failed" : "running", attemptCount: 1, startedAt: now, completedAt: terminal ? now : null, failedAt: failed ? "2026-08-29T08:00:03.000Z" : null, failureCode: failed ? "AGENT_RUN_BUDGET_EXCEEDED" : null },
       { stepKey: "fetch_details", ordinal: 2, status: terminal ? "completed" : "pending", attemptCount: terminal ? 1 : 0, startedAt: terminal ? now : null, completedAt: terminal ? now : null, failedAt: null, failureCode: null },
@@ -132,6 +144,45 @@ it("按稳定失败码解释固定预算，而不泄露异常正文或误导为�
   expect(screen.queryByText(/Error|exception|稍后重新尝试/u)).not.toBeInTheDocument();
 });
 
+it("显示冻结的执行规格、模型说明和预算账本", () => {
+  render(<AgentRunPanel initialRun={detail()} targets={[target()]} />);
+
+  expect(screen.getByText("fake-job-discovery-rules-v1")).toBeVisible();
+  expect(screen.getByText("本流程未使用模型")).toBeVisible();
+  expect(screen.getByText("2 / 10 次来源请求")).toBeVisible();
+  expect(screen.getByRole("button", { name: "暂停岗位发现" })).toBeEnabled();
+});
+
+it("暂停会保留同一命令 UUID 供失败后的重试", async () => {
+  const user = userEvent.setup();
+  const fetchMock = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response(null, { status: 502 }))
+    .mockResolvedValueOnce(new Response(null, { status: 502 }));
+  vi.stubGlobal("fetch", fetchMock);
+  render(<AgentRunPanel initialRun={detail()} targets={[target()]} />);
+
+  await user.click(screen.getByRole("button", { name: "暂停岗位发现" }));
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("暂停请求暂时无法提交，请稍后重试。"));
+  await user.click(screen.getByRole("button", { name: "暂停岗位发现" }));
+
+  expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
+    { commandId: idempotencyKey, action: "pause" }, { commandId: idempotencyKey, action: "pause" },
+  ]);
+});
+
+it("暂停事件关闭投影、重读详情并提供继续和取消", async () => {
+  const paused = { ...detail(), status: "paused" as const, currentStep: "batch_search" as const, controlState: "none" as const };
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(Response.json(paused)));
+  render(<AgentRunPanel initialRun={detail()} targets={[target()]} />);
+  const source = FakeEventSource.instances[0]!;
+
+  act(() => source.emit("run.paused", "3", { eventType: "run.paused", status: "paused", currentStep: "batch_search", attemptCount: 1 }));
+
+  await waitFor(() => expect(source.closed).toBe(true));
+  expect(await screen.findByRole("button", { name: "继续本次岗位发现" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "取消岗位发现" })).toBeEnabled();
+});
+
 it("reuses one idempotency UUID while the same start submission is retried", async () => {
   const user = userEvent.setup();
   const fetchMock = vi.fn<typeof fetch>()
@@ -181,6 +232,11 @@ it("recovers the created run detail without posting a second run or rotating its
   delete (summary as Partial<AgentRunDetail>).steps;
   delete (summary as Partial<AgentRunDetail>).events;
   delete (summary as Partial<AgentRunDetail>).results;
+  delete (summary as Partial<AgentRunDetail>).executionSpec;
+  delete (summary as Partial<AgentRunDetail>).controlState;
+  delete (summary as Partial<AgentRunDetail>).usage;
+  delete (summary as Partial<AgentRunDetail>).termination;
+  delete (summary as Partial<AgentRunDetail>).retryOfRunId;
   const fetchMock = vi.fn<typeof fetch>()
     .mockResolvedValueOnce(Response.json({ ...summary, reused: false }, { status: 201 }))
     .mockResolvedValueOnce(new Response(null, { status: 502 }))

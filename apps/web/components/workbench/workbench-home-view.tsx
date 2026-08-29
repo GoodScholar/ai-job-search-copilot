@@ -1,13 +1,16 @@
 import type { WorkbenchHome } from "@job-copilot/contracts/workbench";
 import type { AgentRunDetail } from "@job-copilot/contracts/agent-runs";
 import type { JobTargetOverview } from "@job-copilot/contracts/job-targets";
+import type { AgentInboxItem } from "@job-copilot/contracts/agent-inbox";
 import Link from "next/link";
 import { AgentRunPanel } from "./agent-run-panel";
+import { AgentInboxPanel } from "./agent-inbox-panel";
 
 type WorkbenchHomeViewProps = {
   home: WorkbenchHome;
   targets: JobTargetOverview;
   initialRun: AgentRunDetail | null;
+  inbox: { items: AgentInboxItem[] };
 };
 
 const summaryItems = [
@@ -17,7 +20,7 @@ const summaryItems = [
   ["投递记录", "applications"],
 ] as const;
 
-export function WorkbenchHomeView({ home, targets, initialRun }: WorkbenchHomeViewProps) {
+export function WorkbenchHomeView({ home, targets, initialRun, inbox }: WorkbenchHomeViewProps) {
   const hasPendingFacts = home.summary.pendingFacts > 0;
 
   return (
@@ -40,6 +43,7 @@ export function WorkbenchHomeView({ home, targets, initialRun }: WorkbenchHomeVi
       </dl>
 
       <AgentRunPanel initialRun={initialRun} targets={targets.targets} />
+      <AgentInboxPanel initialInbox={inbox.items} />
 
       <section aria-labelledby="ledger-title" className="workbench-ledger">
         <div className="workbench-ledger-heading">

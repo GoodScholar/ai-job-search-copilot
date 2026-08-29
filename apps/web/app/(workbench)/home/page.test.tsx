@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   getWorkbenchHome: vi.fn(),
   getJobTargets: vi.fn(),
   getLatestAgentRun: vi.fn(),
+  getOpenAgentInbox: vi.fn(),
   unstableRethrow: vi.fn((error: unknown) => {
     throw error;
   }),
@@ -12,6 +13,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/server/workbench", () => ({ getWorkbenchHome: mocks.getWorkbenchHome }));
 vi.mock("@/lib/server/job-targets", () => ({ getJobTargets: mocks.getJobTargets }));
 vi.mock("@/lib/server/agent-runs", () => ({ getLatestAgentRun: mocks.getLatestAgentRun }));
+vi.mock("@/lib/server/agent-inbox", () => ({ getOpenAgentInbox: mocks.getOpenAgentInbox }));
 vi.mock("next/navigation", () => ({ unstable_rethrow: mocks.unstableRethrow }));
 
 import WorkbenchHomePage, { metadata } from "./page";
@@ -27,28 +29,32 @@ it("does not turn an authentication redirect into a retryable workbench error", 
   mocks.getWorkbenchHome.mockRejectedValue(redirectError);
   mocks.getJobTargets.mockResolvedValue({ suggestions: [], targets: [] });
   mocks.getLatestAgentRun.mockResolvedValue({ run: null });
+  mocks.getOpenAgentInbox.mockResolvedValue({ items: [] });
 
   await expect(WorkbenchHomePage()).rejects.toThrow("NEXT_REDIRECT:/login?returnTo=%2Fhome");
   expect(mocks.unstableRethrow).toHaveBeenCalledWith(redirectError);
 });
 
-it("starts the three authenticated first reads in parallel and passes their strict DTOs to the workbench", async () => {
+it("starts the four authenticated first reads in parallel and passes their strict DTOs to the workbench", async () => {
   let resolveHome!: (value: unknown) => void;
   const homePromise = new Promise((resolve) => { resolveHome = resolve; });
   const home = { account: { userId: "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3" }, summary: { recommendations: 0, pendingFacts: 0, runningAgentRuns: 0, applications: 0 } };
   const targets = { suggestions: [], targets: [] };
   const latest = { run: null };
+  const inbox = { items: [] };
   mocks.getWorkbenchHome.mockReturnValue(homePromise);
   mocks.getJobTargets.mockResolvedValue(targets);
   mocks.getLatestAgentRun.mockResolvedValue(latest);
+  mocks.getOpenAgentInbox.mockResolvedValue(inbox);
 
   const pendingPage = WorkbenchHomePage();
   await Promise.resolve();
   expect(mocks.getWorkbenchHome).toHaveBeenCalledOnce();
   expect(mocks.getJobTargets).toHaveBeenCalledOnce();
   expect(mocks.getLatestAgentRun).toHaveBeenCalledOnce();
+  expect(mocks.getOpenAgentInbox).toHaveBeenCalledOnce();
   resolveHome(home);
 
   const page = await pendingPage;
-  expect(page.props).toMatchObject({ home, targets, initialRun: null });
+  expect(page.props).toMatchObject({ home, targets, initialRun: null, inbox });
 });

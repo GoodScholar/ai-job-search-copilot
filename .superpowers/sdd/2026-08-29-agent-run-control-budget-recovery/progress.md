@@ -1,0 +1,67 @@
+# SDD ledger — plan: docs/superpowers/plans/2026-08-29-agent-run-control-budget-recovery.md
+
+Branch: `codex/issue-10-agent-run-controls`
+Branch base: `b4883da18f362301abe0e1aa898eb59e52d392b7`
+Spec: `docs/superpowers/specs/2026-08-29-agent-run-control-budget-recovery-design.md`
+Baseline: `pnpm test` — 639 passed, 0 failed.
+
+## Pre-flight conflict scan
+
+| Tasks | Producer / consumer or shared surface | Result |
+| --- | --- | --- |
+| 1 → 2 | Task 1 produces strict contracts, Drizzle columns/tables and migration; Task 2 consumes them in commands, checkpoint, queries, Inbox and audit. | Consistent: names, owner compound keys, lifecycle/control split and `usage.complete` match the spec. |
+| 1 → 3 | Task 1 produces execution spec, usage, termination and event variants; Task 3 consumes them in Processor outcomes and Worker scenarios. | Consistent: model-null budgets remain zero; Worker does not invent a second state source. |
+| 1 → 4 | Task 1 produces control/Inbox DTOs; Task 4 exposes REST/SSE/BFF parsing. | Consistent: strict schemas and stable 200/404/409 mapping are preserved. |
+| 1 → 5 | Task 1 produces detail, usage and Inbox projections; Task 5 renders those public DTOs. | Consistent: UI does not depend on database/internal fields. |
+| 1 → 6 | Task 1 persists budget/control evidence; Task 6 asserts it through public journeys. | Consistent: E2E observes public detail and Inbox rather than direct database writes. |
+| 2 → 3 | Task 2 produces commands/checkpoint/retry policy/queries; Task 3 integrates them into the Processor and existing façade. | Consistent: safe-checkpoint decisions and cumulative attempt/time budgets control Worker behavior. |
+| 2 → 4 | Task 2 produces commands, queries and Inbox interfaces; Task 4 composes API controllers and event streaming. | Consistent: controllers adapt results and do not duplicate state transitions. |
+| 2 → 5 | Task 2 produces current authoritative state and active-count semantics; Task 5 consumes them in mission controls. | Consistent: `queued/running/paused` are uniformly unfinished. |
+| 2 → 6 | Task 2 produces idempotent control/Inbox actions and audit; Task 6 proves user journeys. | Consistent: fixed UUIDs provide stable replay keys without product backdoors. |
+| 3 → 4 | Task 3 updates Processor events/outcomes while Task 4 streams and exposes the same persisted events. | Consistent: PostgreSQL remains authoritative; SSE is projection only. |
+| 3 → 5 | Task 3 emits pause/cancel/retry/budget events; Task 5 updates UI from them and re-reads details at terminal boundaries. | Consistent: client event handling is incremental, not a second state machine. |
+| 3 → 6 | Task 3 produces test-only scenario resolver; Task 6 configures fixed scenario UUIDs. | Consistent: exact scenario names and `APP_ENV=test` boundary match. |
+| 4 → 5 | Task 4 produces same-origin controls/Inbox routes and replayable SSE; Task 5 consumes them. | Consistent: Bearer Token remains server-only and actions retain UUID idempotency. |
+| 4 → 6 | Task 4 exposes authenticated public paths; Task 6 uses real login and those paths. | Consistent: no direct product test-control endpoint is introduced. |
+| 5 → 6 | Task 5 provides accessible controls, detail and Inbox UI; Task 6 drives the same semantics on desktop/mobile. | Consistent: labels, 44px controls, refresh and terminal feedback line up. |
+| Task 1 internal | Contract RED tests, migration assertions and produced files. | Consistent: tests precede implementation; migration number `0018` follows existing `0017`; public `maxActiveDurationMs` has legacy storage compatibility only. |
+| Task 2 internal | Reducer, command transaction, checkpoint ledger, Inbox and queries. | Consistent: control idempotency, bounded source/model retry and budget termination all have explicit tests and one transaction owner. |
+| Task 3 internal | Processor tests, resolver, consumer/reconciler and integration verification. | Consistent: `retry` is the only retry-signalling outcome; all safe-stop outcomes are handled without BullMQ retry. |
+| Task 4 internal | API, SSE, server client and BFF tests/implementation. | Consistent: strict validation plus non-disclosing resource handling; malformed route identifiers follow the planned 404 BFF convention, while invalid request bodies remain 400. |
+| Task 5 internal | Component/page RED tests, UI implementation and accessibility styles. | Consistent: rendering rules are derived from public state and all requested actions have visible outcomes. |
+| Task 6 internal | Scenario configuration, four journeys, full gates, two-axis review and closure. | Consistent: test scenario injection is startup-only and test-only; no acceptance criterion is skipped. |
+
+Pre-flight result: no plan/spec conflict requiring a ruling before Task 1.
+
+Task 1: NEEDS_CONTEXT before implementation — brief omitted immutable DTO and migration field shapes; no source changes or commit were retained.
+Task 1: Ruling: use `task-1-context.md` as an authoritative supplement; add a redacted `result_snapshot` to control commands so identical command IDs can return the exact first result required by the design — this adds one JSONB column; if wrong, the cost is a small migration/schema removal before downstream tasks depend on replay.
+Task 1: review at `1131533` — spec ❌ / quality needs fixes; Important: terminal status/termination/failure mappings are not fully enforced in contracts or PostgreSQL; Important: `result_snapshot` accepts arbitrary JSON instead of an exact control snapshot tied to row IDs/version.
+Task 1: minor (deferred): unknown-key matrix omits several new public objects, Inbox resolved/response regression coverage is incomplete; final whole-branch review must triage this before merge.
+Task 1: reviewer ⚠️ resolved by controller — RED/GREEN and generated-snapshot provenance are process evidence rather than diff-verifiable behavior; implementer report records the commands/counts and the final verification gate will independently rerun focused/full suites and diff checks. No product gap identified.
+Task 1: fix round 1/5 (1 addressed, 1 open — strict `result_snapshot` addressed; PostgreSQL termination mapping remains NULL-bypassable; commits 1131533..fcfcf8c)
+Task 1: fix round 2/5 (1 addressed, 0 open — PostgreSQL termination mapping is NULL-safe; commits fcfcf8c..babb8e4)
+Task 1: complete (commits b4883da..babb8e4, review clean; 1 deferred minor)
+Task 2: NEEDS_CONTEXT during first RED slice — real PostgreSQL rejects new control/budget event types because Task 1 left `agent_run_events_event_type_check` on the legacy set; probe changes are being withdrawn and no Task 2 commit exists.
+Task 1: Ruling: reopen fix loop for the downstream-discovered event CHECK gap instead of letting Task 2 amend its dependency; `rule_version`/`tool_allowlist` remain required without defaults and Task 2 start must explicitly write the complete #10 snapshot — if wrong, the cost is one additional Task 1 fix/re-review and explicit start mapping, but it preserves honest new-run completeness.
+Task 1: fix round 3/5 (1 addressed, 0 open — PostgreSQL accepts all seven new control/budget events and rejects unknown types; commits babb8e4..d5654a4)
+Task 1: complete after downstream repair (commits b4883da..d5654a4, scoped review approved; 1 deferred minor)
+Task 2: Ruling: because new starts are truthfully `usage_complete=true`, Task 2 may minimally update the existing Processor's terminal writes to satisfy Task 1 termination invariants; full checkpoint/usage execution wiring remains Task 3 — if wrong, the cost is touching existing Processor paths one task earlier, but postponing or falsifying completeness would violate the approved design and break all Task 2 integration tests.
+Task 2: Ruling: the original implementer repeatedly returned incomplete on the oversized domain task, so split Task 2 sequentially into 2A state/control/start compatibility, 2B checkpoint/usage/queries, and 2C Inbox/audit/workbench, then review their net diff as one Task 2 unit — if wrong, the cost is extra handoff overhead and multiple commits, but it preserves focused TDD and prevents an unreviewable partial implementation.
+Task 2A: Ruling: add the six control audit allowlist variants with the control transaction now; leave budget/retry/Inbox audit variants to 2B/2C — if wrong, the cost is audit-trail.ts being touched by two sequential slices, but omitting control audit would violate Task 2 idempotency evidence.
+Task 2: review at `9c52ae6` — spec ❌ / quality needs fixes; Critical: active-slice lifecycle is not attached to real claim/exit paths; current attempt boundary rejects the legal third attempt; Processor budget exits omit budget Inbox/audit and can misclassify dimension. Important: duplicate checkpoint key bypasses later control and reserve mismatch; Processor retries unknown exceptions without `decideRetry`; failed Inbox action replay/reason is inconsistent; concurrent different actions can both apply; checkpoint final pause/cancel lacks final audit and queued pause lacks decision Inbox.
+Task 2: Ruling: fix the minimal existing Processor claim/heartbeat/exit and terminal side effects now, while Task 3 still owns applying checkpoint around every external call and extracting the Processor — if wrong, the cost is touching Processor earlier than its planned refactor, but leaving it broken would make the new complete usage ledger and Task 2 public seams false before Task 3 starts.
+Task 2: fix round 1/5 (5 addressed, 4 open — expired reclaim slice not settled; budget error dimension still collapses; reserve mismatch precedes control; failed action blocks all future action IDs; commits 9c52ae6..efc7518)
+Task 2: fix round 2/5 (4 addressed, 0 open — expired reclaim settlement, typed budget dimension, control priority, and failed-action retryability fixed; commits efc7518..b45eec7)
+Task 2: complete (commits d5654a4..b45eec7, review approved)
+Task 3: Ruling: split the planned Worker task sequentially into 3A domain Processor/checkpoint extraction and 3B resolver/consumer/reconciler wiring, then review the combined net diff — if wrong, the cost is one extra handoff/commit, but it isolates the concurrency-critical domain seam from environment-specific Worker composition.
+Task 3: review findings — BullMQ local attempt must not override persisted retry budget; resolver failures must settle claims; expired recovery must honor pending controls before budget settlement; all budget exits must expose `budget_exhausted` outcome.
+Task 3: Ruling: PostgreSQL persisted attempt/budget is the sole retry authority, and pending cancel/pause wins over recovery budget termination; if wrong, the contained cost is revising only Processor/checkpoint outcome plumbing and its focused tests.
+Task 3: fix round 1/5 (4 addressed, 0 open — durable retry authority, resolver settlement, control-first expired recovery, and budget outcome consistency fixed; commits 7389da0..5af60db)
+Task 3: complete (commits b45eec7..5af60db, scoped review approved)
+Task 4: Ruling: split the planned public-surface task sequentially into 4A API/SSE and 4B Web server adapters/BFF, then review the combined net diff — if wrong, the cost is one extra handoff/commit, but it keeps authentication/event semantics separate from same-origin forwarding behavior.
+Task 4: Ruling: defer the three full-Web type errors caused by the new public run contract to Task 5, which already owns `agent-run-panel.tsx` and its test; Task 4 focused BFF tests remain green, and Task 5 must begin with these errors as RED and restore the full Web typecheck — if wrong, the cost is delaying a compile-clean Web tree by one planned sequential task, but editing UI during the transport-only task would violate precise scope.
+Task 4: review at `9e4e1cc` — changes required; Important: reuse of a command ID for a different action is an idempotency-key conflict, but domain/API exposed the lifecycle conflict code; Important: Inbox execution failure was incorrectly collapsed to 409; Minor: SSE terminal/nonterminal coverage was not table-driven.
+Task 4: Ruling: publish `AGENT_RUN_COMMAND_ID_CONFLICT` only from the durable prior-command branch, retain `AGENT_RUN_CONTROL_CONFLICT` for reducer lifecycle conflicts, and let `AGENT_INBOX_ACTION_FAILED` propagate to the global redacted 500 rather than inventing an HTTP 409 — if wrong, the limited correction is to the control/inbox API error mapping, but this preserves the domain as the only state-decision owner.
+Task 4: fix round 1/5 (3 addressed, 0 open — dedicated command-ID conflict, truthful Inbox execution-failure handling, and table-driven SSE terminal policy; commit pending)
+Task 4: complete (commits 5af60db..8ed8d8e, scoped review approved; full Web typecheck defer remains an explicit Task 5 RED)
+Task 5: Ruling: Task 4 deferred Web typecheck errors are closed here because this slice owns the affected run panel fixture, exhaustive failure projection and timeline rendering; the contained change keeps transport/UI responsibilities separated while restoring a compile-clean Web tree.
