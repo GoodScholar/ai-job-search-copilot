@@ -84,7 +84,7 @@ export function classifyGreenhousePublicSource(candidate: GreenhouseSourceCandid
   const host = url.hostname.toLowerCase();
   const supportedHost = host === "boards.greenhouse.io" || host === "job-boards.greenhouse.io";
   const tokenMatch = /^\/([A-Za-z0-9_-]+)$/u.exec(url.pathname);
-  if (url.protocol !== "https:" || !supportedHost || !tokenMatch) return { kind: "unsupported" };
+  if (url.protocol !== "https:" || url.port !== "" || !supportedHost || !tokenMatch) return { kind: "unsupported" };
   if (!candidate.allowedDomains.includes(GREENHOUSE_API_HOST)) {
     return { kind: "policy_required", code: "GREENHOUSE_API_HOST_NOT_ALLOWED" };
   }

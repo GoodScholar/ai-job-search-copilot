@@ -54,6 +54,7 @@ CREATE INDEX "job_discovery_schedule_occurrences_pending_idx" ON "job_discovery_
 CREATE INDEX "job_discovery_schedules_due_idx" ON "job_discovery_schedules" USING btree ("state","next_run_at","id");--> statement-breakpoint
 CREATE INDEX "job_opportunities_availability_idx" ON "job_opportunities" USING btree ("user_id","availability","availability_updated_at");--> statement-breakpoint
 CREATE INDEX "job_source_postings_availability_idx" ON "job_source_postings" USING btree ("user_id","availability","availability_updated_at");--> statement-breakpoint
+CREATE INDEX "job_source_posting_versions_availability_idx" ON "job_source_posting_versions" USING btree ("user_id","availability","created_at","source_posting_id");--> statement-breakpoint
 ALTER TABLE "job_opportunities" ADD CONSTRAINT "job_opportunities_availability_check" CHECK ("job_opportunities"."availability" in ('open', 'closed', 'expired'));--> statement-breakpoint
 ALTER TABLE "job_source_posting_versions" ADD CONSTRAINT "job_source_posting_versions_availability_check" CHECK ("job_source_posting_versions"."availability" in ('open', 'closed', 'expired'));--> statement-breakpoint
 ALTER TABLE "job_source_postings" ADD CONSTRAINT "job_source_postings_availability_check" CHECK ("job_source_postings"."availability" in ('open', 'closed', 'expired'));

@@ -4229,7 +4229,21 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "job_source_posting_versions_availability_idx": {
+          "name": "job_source_posting_versions_availability_idx",
+          "columns": [
+            { "expression": "user_id", "isExpression": false, "asc": true, "nulls": "last" },
+            { "expression": "availability", "isExpression": false, "asc": true, "nulls": "last" },
+            { "expression": "created_at", "isExpression": false, "asc": true, "nulls": "last" },
+            { "expression": "source_posting_id", "isExpression": false, "asc": true, "nulls": "last" }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "job_source_posting_versions_user_id_job_accounts_id_fk": {
           "name": "job_source_posting_versions_user_id_job_accounts_id_fk",

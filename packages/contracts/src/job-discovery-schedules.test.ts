@@ -82,6 +82,7 @@ describe("job discovery schedule contracts", () => {
       "https://boards.greenhouse.io/aurora/jobs",
       "https://boards.greenhouse.io/",
       "https://greenhouse.io/aurora",
+      "https://boards.greenhouse.io:8443/aurora",
       "https://job-boards.greenhouse.io/aurora/extra",
     ]) {
       expect(classifyGreenhousePublicSource({ ...greenhouseCandidate, careersUrl }))

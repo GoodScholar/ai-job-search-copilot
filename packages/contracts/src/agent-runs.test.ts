@@ -237,16 +237,20 @@ describe("agent run contracts", () => {
   });
 
   it("fixes public v2 batch success to complete scan facts without changing the v1 array shape", () => {
+    const publicListCandidate = {
+      sourceId: "greenhouse:aurora", detailId: "42", company: "Aurora Labs", title: "AI 工程师", location: "上海",
+    };
     expect(DiscoveryBatchSearchResultSchema.parse({ ok: true, data: [searchSummary] })).toEqual({ ok: true, data: [searchSummary] });
     expect(PublicDiscoveryBatchSearchResultSchema.parse({
-      ok: true,
-      data: { items: [searchSummary], scans: [{ sourceId: "greenhouse:aurora", observedDetailIds: ["42", "84"], complete: true }] },
+      ok: true, data: { items: [publicListCandidate], scans: [{ sourceId: "greenhouse:aurora", observedDetailIds: ["42", "84"], complete: true }] },
     })).toEqual({
-      ok: true,
-      data: { items: [searchSummary], scans: [{ sourceId: "greenhouse:aurora", observedDetailIds: ["42", "84"], complete: true }] },
+      ok: true, data: { items: [publicListCandidate], scans: [{ sourceId: "greenhouse:aurora", observedDetailIds: ["42", "84"], complete: true }] },
     });
     expect(PublicDiscoveryBatchSearchResultSchema.safeParse({
-      ok: true, data: { items: [searchSummary], scans: [{ sourceId: "greenhouse:aurora", observedDetailIds: ["42", "42"], complete: true }] },
+      ok: true, data: { items: [publicListCandidate], scans: [{ sourceId: "greenhouse:aurora", observedDetailIds: ["42", "42"], complete: true }] },
+    }).success).toBe(false);
+    expect(PublicDiscoveryBatchSearchResultSchema.safeParse({
+      ok: true, data: { items: [{ ...publicListCandidate, postedAt: null }], scans: [{ sourceId: "greenhouse:aurora", observedDetailIds: ["42"], complete: true }] },
     }).success).toBe(false);
   });
 

@@ -296,6 +296,13 @@ export const DiscoveryDetailSchema = DiscoverySearchSummarySchema.extend({
 }).strict();
 export const DiscoverySearchResultSchema = adapterResult(DiscoverySearchSummarySchema);
 export const DiscoveryBatchSearchResultSchema = adapterResult(z.array(DiscoverySearchSummarySchema).max(AGENT_RUN_BUDGET.maxResults));
+export const PublicDiscoveryListCandidateSchema = z.object({
+  sourceId: z.string().trim().regex(/^greenhouse:[A-Za-z0-9_-]+$/u),
+  detailId: z.string().trim().min(1).max(256),
+  company: nullableJobField,
+  title: nullableJobField,
+  location: nullableJobField,
+}).strict();
 export const PublicDiscoveryScanSchema = z.object({
   sourceId: z.string().trim().regex(/^greenhouse:[A-Za-z0-9_-]+$/u),
   observedDetailIds: z.array(z.string().trim().min(1).max(256)).refine(
@@ -305,7 +312,7 @@ export const PublicDiscoveryScanSchema = z.object({
   complete: z.boolean(),
 }).strict();
 export const PublicDiscoveryBatchSearchResultSchema = adapterResult(z.object({
-  items: z.array(DiscoverySearchSummarySchema).max(PUBLIC_JOB_DISCOVERY_BUDGET.maxResults),
+  items: z.array(PublicDiscoveryListCandidateSchema).max(PUBLIC_JOB_DISCOVERY_BUDGET.maxResults),
   scans: z.array(PublicDiscoveryScanSchema).min(1).max(50).refine(
     (scans) => new Set(scans.map((scan) => scan.sourceId)).size === scans.length,
     { message: "scan source IDs must be unique" },

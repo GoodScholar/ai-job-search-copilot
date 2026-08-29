@@ -1040,10 +1040,11 @@ describe("database migrations", () => {
       select indexname from pg_indexes
       where schemaname = 'public' and indexname in (
         'job_discovery_schedules_due_idx', 'job_discovery_schedule_occurrences_pending_idx',
-        'job_source_postings_availability_idx', 'job_opportunities_availability_idx'
+        'job_source_postings_availability_idx', 'job_source_posting_versions_availability_idx',
+        'job_opportunities_availability_idx'
       ) order by indexname
     `);
-    expect(indexes).toHaveLength(4);
+    expect(indexes).toHaveLength(5);
   });
 
   it("upgrades a 0020 snapshot with open lifecycle defaults without changing stored run JSON", async () => {

@@ -428,6 +428,7 @@ export const jobSourcePostingVersions = pgTable("job_source_posting_versions", {
 }, (table) => [
   unique("job_source_posting_versions_posting_version_unique").on(table.sourcePostingId, table.version),
   unique("job_source_posting_versions_user_id_id_unique").on(table.userId, table.id),
+  index("job_source_posting_versions_availability_idx").on(table.userId, table.availability, table.createdAt, table.sourcePostingId),
   foreignKey({
     columns: [table.userId, table.sourcePostingId],
     foreignColumns: [jobSourcePostings.userId, jobSourcePostings.id],

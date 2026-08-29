@@ -132,7 +132,7 @@ type JobDiscoveryScheduleOccurrence = {
 };
 ```
 
-- [ ] 写失败的契约测试：严格拒绝未知字段、非法 `HH:mm`、客户端时区、零/负版本；v1 Fake run 完整样例继续通过。v2 Greenhouse scope 必须携带 Watchlist item ID、公司规范名称、入口 URL、运行快照允许域、board token 与稳定 source ID；supported-source 判定必须同时要求合法 careers host/单段 path 和精确 `boards-api.greenhouse.io` 授权，parent domain 不足。
+- [ ] 写失败的契约测试：严格拒绝未知字段、非法 `HH:mm`、客户端时区、负版本；首次创建的 `expectedVersion=0` 合法。v1 Fake run 完整样例继续通过。v2 Greenhouse scope 必须携带 Watchlist item ID、公司规范名称、入口 URL、运行快照允许域、board token 与稳定 source ID；supported-source 判定必须同时要求合法 careers host/单段 path 和精确 `boards-api.greenhouse.io` 授权，parent domain 不足。
 - [ ] 运行 `pnpm --filter @job-copilot/contracts exec vitest run src/agent-runs.test.ts src/job-discovery-schedules.test.ts`，预期因新导出/Schema 不存在失败。
 - [ ] 最小实现 schedule schemas 和 Fake v1/Public v2 判别式联合；v2 batch success 形状固定为 `{ items, scans: [{ sourceId, observedDetailIds, complete }] }`，v1 形状不变。
 - [ ] 在数据库测试中先断言迁移后存在 `job_discovery_schedules`、`job_discovery_schedule_occurrences`，以及 `(user_id,target_id)`、`(schedule_id,scheduled_for)`、occurrence/run owner FK、状态/时间/版本检查；断言 source posting/version/opportunity 新 lifecycle 字段和索引。
