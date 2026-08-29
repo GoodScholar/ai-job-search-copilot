@@ -41,6 +41,13 @@ const JobTargetMaintenanceMetadataSchema = z.object({
   targetId: z.uuid(), action: z.enum(["created", "revised", "deactivated"]), version: z.int().min(1),
   priority: z.enum(["primary", "secondary"]), state: z.enum(["active", "inactive"]),
 }).strict();
+const CompanyWatchlistMaintenanceMetadataSchema = z.discriminatedUnion("action", [
+  z.object({ targetId: z.uuid(), action: z.literal("item_added"), version: z.int().min(1), itemId: z.uuid(), itemCount: z.int().min(1).max(50) }).strict(),
+  z.object({ targetId: z.uuid(), action: z.literal("item_revised"), version: z.int().min(1), itemId: z.uuid(), itemCount: z.int().min(1).max(50) }).strict(),
+  z.object({ targetId: z.uuid(), action: z.literal("reordered"), version: z.int().min(1), itemCount: z.int().min(1).max(50) }).strict(),
+  z.object({ targetId: z.uuid(), action: z.literal("item_enabled"), version: z.int().min(1), itemId: z.uuid(), itemCount: z.int().min(1).max(50) }).strict(),
+  z.object({ targetId: z.uuid(), action: z.literal("item_disabled"), version: z.int().min(1), itemId: z.uuid(), itemCount: z.int().min(1).max(50) }).strict(),
+]);
 const SubmittedJobImportMetadataSchema = z.object({
   importId: z.uuid(), inputType: JobImportInputTypeSchema,
 }).strict();
@@ -169,6 +176,18 @@ const AuditEventInputSchema = z.discriminatedUnion("eventType", [
     occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"),
     reasonCode: z.enum(["JOB_TARGET_CREATED", "JOB_TARGET_REVISED", "JOB_TARGET_DEACTIVATED"]),
     resourceType: z.literal("job_target"), resourceId: z.uuid(), metadata: JobTargetMaintenanceMetadataSchema,
+  }).strict(),
+  z.object({
+    userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("profile.company_watchlist_maintained"),
+    occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"),
+    reasonCode: z.enum([
+      "COMPANY_WATCHLIST_ITEM_ADDED",
+      "COMPANY_WATCHLIST_ITEM_REVISED",
+      "COMPANY_WATCHLIST_REORDERED",
+      "COMPANY_WATCHLIST_ITEM_ENABLED",
+      "COMPANY_WATCHLIST_ITEM_DISABLED",
+    ]),
+    resourceType: z.literal("company_watchlist"), resourceId: z.uuid(), metadata: CompanyWatchlistMaintenanceMetadataSchema,
   }).strict(),
   z.object({
     userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("job.import_submitted"), occurredAt: z.date().optional(),

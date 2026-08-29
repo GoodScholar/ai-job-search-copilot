@@ -191,6 +191,40 @@ describe("audit trail", () => {
     })).rejects.toThrow(/字段白名单/);
   });
 
+  it("allows only redacted Watchlist maintenance metadata", async () => {
+    const auditTrail = createAuditTrail({ db: database, clock: () => now });
+    const targetId = crypto.randomUUID();
+    const itemId = crypto.randomUUID();
+    await auditTrail.append({
+      userId, actorUserId: userId, eventType: "profile.company_watchlist_maintained", occurredAt: now, requestId: crypto.randomUUID(),
+      outcome: "success", reasonCode: "COMPANY_WATCHLIST_ITEM_ADDED", resourceType: "company_watchlist", resourceId: targetId,
+      metadata: { targetId, action: "item_added", version: 1, itemId, itemCount: 1 },
+    } as never);
+    await expect(auditTrail.append({
+      userId, actorUserId: userId, eventType: "profile.company_watchlist_maintained", occurredAt: now, requestId: crypto.randomUUID(),
+      outcome: "success", reasonCode: "COMPANY_WATCHLIST_ITEM_ADDED", resourceType: "company_watchlist", resourceId: targetId,
+      metadata: { targetId, action: "item_added", version: 1, itemId, itemCount: 1, canonicalCompanyName: "不应记录" },
+    } as never)).rejects.toThrow(/字段白名单/);
+  });
+
+  it("allows each approved Watchlist action without source content", async () => {
+    const auditTrail = createAuditTrail({ db: database, clock: () => now });
+    const targetId = crypto.randomUUID();
+    const itemId = crypto.randomUUID();
+    const actions = [
+      { action: "item_revised", reasonCode: "COMPANY_WATCHLIST_ITEM_REVISED", metadata: { targetId, action: "item_revised", version: 2, itemId, itemCount: 1 } },
+      { action: "reordered", reasonCode: "COMPANY_WATCHLIST_REORDERED", metadata: { targetId, action: "reordered", version: 3, itemCount: 2 } },
+      { action: "item_enabled", reasonCode: "COMPANY_WATCHLIST_ITEM_ENABLED", metadata: { targetId, action: "item_enabled", version: 4, itemId, itemCount: 2 } },
+      { action: "item_disabled", reasonCode: "COMPANY_WATCHLIST_ITEM_DISABLED", metadata: { targetId, action: "item_disabled", version: 5, itemId, itemCount: 2 } },
+    ] as const;
+    for (const entry of actions) {
+      await auditTrail.append({
+        userId, actorUserId: userId, eventType: "profile.company_watchlist_maintained", occurredAt: now, requestId: crypto.randomUUID(),
+        outcome: "success", reasonCode: entry.reasonCode, resourceType: "company_watchlist", resourceId: targetId, metadata: entry.metadata,
+      } as never);
+    }
+  });
+
   it("allows only redacted metadata for job import lifecycle events", async () => {
     const auditTrail = createAuditTrail({ db: database, clock: () => now });
     const importId = "fa7753f2-2ff3-4bd6-9fbd-6b4ae41d8364";

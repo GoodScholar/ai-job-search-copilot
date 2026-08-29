@@ -12,6 +12,7 @@
     "./profile-review": "./src/profile-review.ts",
     "./career-fact-conflict-review": "./src/career-fact-conflict-review.ts",
     "./job-targets": "./src/job-targets.ts",
+    "./company-watchlists": "./src/company-watchlists.ts",
     "./job-imports": "./src/job-imports.ts",
     "./agent-runs": "./src/agent-runs.ts"
   },
