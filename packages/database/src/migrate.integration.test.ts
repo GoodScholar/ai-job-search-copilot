@@ -73,6 +73,15 @@ describe("database migrations", () => {
     ]));
   });
 
+  it("PostgreSQL 17 的 transaction_timeout 覆盖同一事务内累计语句并回滚写入", async () => {
+    const accountId = "c9462b80-3fa0-4400-87ea-bd909e703b18";
+    // transaction_timeout 会终止会话；使用容器内独立 psql 验证，避免刻意杀死应用共享连接池。
+    const command = `begin; set local transaction_timeout = 100; insert into job_accounts (id) values ('${accountId}'); select pg_sleep(0.08); select pg_sleep(0.08); commit;`;
+    const result = await container.exec(["psql", "-U", container.getUsername(), "-d", container.getDatabase(), "-v", "ON_ERROR_STOP=1", "-c", command]);
+    expect(result.exitCode).not.toBe(0);
+    await expect(migratedDatabase.execute(sql`select id from job_accounts where id = ${accountId}`)).resolves.toEqual([]);
+  });
+
   it("records active account and audit trail fields with PostgreSQL types", async () => {
     const columns = await listColumns(migratedDatabase);
     expect(columns).toEqual(expect.arrayContaining([

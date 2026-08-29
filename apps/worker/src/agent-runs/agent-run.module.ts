@@ -61,7 +61,7 @@ class AgentRunDatabase implements OnModuleDestroy {
   ));
 
   async onModuleDestroy(): Promise<void> {
-    await this.db.$client.end();
+    await this.db.$client.end({ timeout: 5 });
   }
 }
 

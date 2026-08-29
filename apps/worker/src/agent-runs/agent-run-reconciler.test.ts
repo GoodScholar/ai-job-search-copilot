@@ -149,4 +149,48 @@ describe("AgentRunReconciler", () => {
     expect(failures).toEqual([{ failureCode: "AGENT_RUN_RECOVERY_ENQUEUE_FAILED", runId: first.runId, userId: first.userId }]);
     await reconciler.onModuleDestroy();
   });
+
+  it("恢复查询永不 settle 时在 scan 总预算内结束启动", async () => {
+    vi.useFakeTimers();
+    const failures: AgentRunRecoveryFailure[] = [];
+    const reconciler = new AgentRunReconciler({
+      recoveryQueries: { listRecoverable: async () => new Promise<never>(() => undefined) },
+      queue: { enqueue: async () => undefined },
+      reporter: memoryReporter(failures),
+      scanTimeoutMs: 50,
+    });
+
+    const initializing = reconciler.onModuleInit();
+    await vi.advanceTimersByTimeAsync(50);
+    await initializing;
+    expect(failures).toEqual([{ failureCode: "AGENT_RUN_RECOVERY_SCAN_FAILED" }]);
+    await reconciler.onModuleDestroy();
+  });
+
+  it("每轮总预算限制住大量挂起入队，并在下一轮从最旧 run 重新尝试", async () => {
+    vi.useFakeTimers();
+    const jobs = Array.from({ length: 100 }, (_, index) => ({ ...first, runId: `10000000-0000-4000-8000-${String(index).padStart(12, "0")}` }));
+    const observed: string[] = [];
+    let firstFails = true;
+    const reconciler = new AgentRunReconciler({
+      recoveryQueries: { listRecoverable: async () => jobs },
+      queue: { enqueue: async (job) => {
+        observed.push(job.runId);
+        if (firstFails) return new Promise<void>(() => undefined);
+      } },
+      reporter: memoryReporter([]),
+      scanTimeoutMs: 50,
+    });
+
+    const initializing = reconciler.onModuleInit();
+    await vi.advanceTimersByTimeAsync(50);
+    await initializing;
+    expect(observed).toHaveLength(2);
+    expect(observed[0]).toBe(jobs[0]!.runId);
+    const beforeRetry = observed.length;
+    firstFails = false;
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(observed[beforeRetry]).toBe(jobs[0]!.runId);
+    await reconciler.onModuleDestroy();
+  });
 });

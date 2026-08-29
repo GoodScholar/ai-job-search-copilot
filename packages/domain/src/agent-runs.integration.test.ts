@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { agentRunEvents, agentRunJobResults, agentRunSteps, agentRuns, createDatabase, jobAccounts, jobOpportunities, jobOpportunitySources, jobSourcePostingVersions, jobSourcePostings, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
+import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { createAgentRunCommands, createAgentRunProcessor, createAgentRunQueries, createAgentRunRecoveryQueries, type AgentRunQueue, type DiscoveryContentStore, type JobDiscoveryAdapter } from "./agent-runs";
 import { createJobTargetCommands } from "./job-targets";
 
@@ -330,6 +331,56 @@ describe("agent runs", () => {
     release.resolve();
     await expect(processing).resolves.toBe("completed");
   });
+
+  it("claim 在账户锁后重新取时，提交的租约不会使用等待前已过期时间", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    let instant = now;
+    const locked = deferred<void>();
+    const releaseLock = deferred<void>();
+    const blocker = database.transaction(async (transaction) => {
+      await acquireAccountAdvisoryLock(transaction, userId);
+      locked.resolve();
+      await releaseLock.promise;
+    });
+    await locked.promise;
+    const searched = deferred<void>();
+    const releaseSearch = deferred<void>();
+    const slow = adapter();
+    slow.searchBatch = async () => { searched.resolve(); await releaseSearch.promise; return { ok: true, data: [] }; };
+    const processor = createAgentRunProcessor({ db: database, adapter: slow, contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => instant }), id: () => crypto.randomUUID(), clock: () => instant, heartbeatIntervalMs: 5 });
+    const processing = processor.process({ version: 1, runId: run.runId, userId, finalAttempt: true });
+    instant = new Date(now.getTime() + 31_000);
+    releaseLock.resolve();
+    await blocker;
+    await searched.promise;
+    const [claimed] = await database.select({ claimExpiresAt: agentRuns.claimExpiresAt }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)));
+    expect(claimed?.claimExpiresAt?.getTime()).toBeGreaterThan(instant.getTime() + 29_000);
+    releaseSearch.resolve();
+    await expect(processing).resolves.toBe("completed");
+  });
+
+  it("慢 heartbeat 续租保持 single-flight，停止只等待独立有界窗口", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const searched = deferred<void>();
+    const releaseSearch = deferred<void>();
+    const slow = adapter();
+    slow.searchBatch = async () => { searched.resolve(); await releaseSearch.promise; return { ok: true, data: [] }; };
+    let renewals = 0;
+    const pendingRenewal = new Promise<boolean>(() => undefined);
+    const processor = createAgentRunProcessor({
+      db: database, adapter: slow, contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+      heartbeatIntervalMs: 5, heartbeatStopTimeoutMs: 20,
+      heartbeatRenew: async () => { renewals += 1; return pendingRenewal; },
+    });
+    const processing = processor.process({ version: 1, runId: run.runId, userId, finalAttempt: true });
+    await searched.promise;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(renewals).toBe(1);
+    releaseSearch.resolve();
+    await expect(processing).resolves.toBe("completed");
+  }, 1_000);
 
   it("来源写入部分成功后发生瞬态存储失败时，删除登记的 claim 对象并重新排队", async () => {
     const { userId, targetId } = await activeTarget();

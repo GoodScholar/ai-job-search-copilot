@@ -123,21 +123,30 @@ export function createAgentRunQueries(deps: { db: Database }): {
   };
 }
 
-export function createAgentRunRecoveryQueries(deps: { db: Database; clock: () => Date; batchSize?: number }): {
-  listRecoverable(input?: { offset?: number }): Promise<AgentRunJob[]>;
+export function createAgentRunRecoveryQueries(deps: { db: Database; clock: () => Date; batchSize?: number; queryTimeoutMs?: number }): {
+  listRecoverable(): Promise<AgentRunJob[]>;
 } {
   return {
-    async listRecoverable(input = {}) {
-      const now = deps.clock();
-      const rows = await deps.db.select({ runId: agentRuns.id, userId: agentRuns.userId }).from(agentRuns)
-        .where(or(eq(agentRuns.status, "queued"), and(eq(agentRuns.status, "running"), lte(agentRuns.claimExpiresAt, now))))
-        .orderBy(asc(agentRuns.queuedAt), asc(agentRuns.id)).limit(deps.batchSize ?? 100).offset(Math.max(0, input.offset ?? 0));
+    async listRecoverable() {
+      const timeoutMs = deps.queryTimeoutMs ?? 1_000;
+      const deadline = new Date(deps.clock().getTime() + timeoutMs);
+      const rows = await bounded(deps.clock, deadline, () => deps.db.transaction(async (transaction) => {
+        const remaining = remainingBudget(deps.clock, deadline);
+        if (remaining <= 0) throw new AgentRunBudgetError();
+        await transaction.execute(sql.raw(`set local transaction_timeout = ${Math.max(1, Math.floor(remaining))}`));
+        await transaction.execute(sql.raw(`set local statement_timeout = ${Math.max(1, Math.floor(remaining))}`));
+        const now = deps.clock();
+        if (remainingBudget(deps.clock, deadline) <= 0) throw new AgentRunBudgetError();
+        return transaction.select({ runId: agentRuns.id, userId: agentRuns.userId }).from(agentRuns)
+          .where(or(eq(agentRuns.status, "queued"), and(eq(agentRuns.status, "running"), lte(agentRuns.claimExpiresAt, now))))
+          .orderBy(asc(agentRuns.queuedAt), asc(agentRuns.id)).limit(deps.batchSize ?? 100);
+      }) as Promise<Array<{ runId: string; userId: string }>>);
       return rows.map((row) => ({ version: AGENT_RUN_JOB_VERSION, runId: row.runId, userId: row.userId }));
     },
   };
 }
 
-type ProcessorDependencies = { db: Database; adapter: JobDiscoveryAdapter; contentStore: DiscoveryContentStore; auditTrail: AuditTrail; id: () => string; clock: () => Date; cleanupTimeoutMs?: number; heartbeatIntervalMs?: number };
+type ProcessorDependencies = { db: Database; adapter: JobDiscoveryAdapter; contentStore: DiscoveryContentStore; auditTrail: AuditTrail; id: () => string; clock: () => Date; cleanupTimeoutMs?: number; heartbeatIntervalMs?: number; heartbeatStopTimeoutMs?: number; heartbeatRenew?: (input: { userId: string; runId: string; claimToken: string; deadline: Date }) => Promise<boolean> };
 type FailureCode = "AGENT_RUN_ADAPTER_RETRYABLE" | "AGENT_RUN_ADAPTER_FAILED" | "AGENT_RUN_CONTENT_STORAGE_FAILED" | "AGENT_RUN_PERSIST_FAILED" | "AGENT_RUN_BUDGET_EXCEEDED";
 const CLEANUP_TIMEOUT_MS = 1_000;
 class AgentRunBudgetError extends Error {}
@@ -149,13 +158,20 @@ function remainingBudget(clock: () => Date, deadline: Date): number {
 }
 
 async function runTransaction<T>(deps: ProcessorDependencies, deadline: Date, operation: (transaction: any) => Promise<T>): Promise<T> {
-  const remaining = remainingBudget(deps.clock, deadline);
-  if (remaining <= 0) throw new AgentRunBudgetError();
-  return deps.db.transaction(async (transaction) => {
-    // PostgreSQL 在服务端中断超时语句，避免 Promise.race 留下不可控写入。
-    await transaction.execute(sql.raw(`set local statement_timeout = ${Math.max(1, Math.floor(remaining))}`));
-    return operation(transaction);
+  const transaction = deps.db.transaction(async (connection) => {
+    // 连接池等待结束后重新读取时间，迟到事务不执行任何业务 SQL。
+    const remaining = remainingBudget(deps.clock, deadline);
+    if (remaining <= 0) throw new AgentRunBudgetError();
+    const timeout = Math.max(1, Math.floor(remaining));
+    // PostgreSQL 17 的 transaction_timeout 覆盖整个事务，statement/lock timeout 覆盖单次慢语句和锁等待。
+    await connection.execute(sql.raw(`set local transaction_timeout = ${timeout}`));
+    await connection.execute(sql.raw(`set local statement_timeout = ${timeout}`));
+    await connection.execute(sql.raw(`set local lock_timeout = ${timeout}`));
+    if (remainingBudget(deps.clock, deadline) <= 0) throw new AgentRunBudgetError();
+    return operation(connection);
   }) as Promise<T>;
+  // 池等待本身不可由 postgres-js 取消；晚到 callback 会先通过上面的 fresh deadline 检查自弃。
+  return bounded(deps.clock, deadline, () => transaction);
 }
 
 function adapterFailure(error: unknown): Failure {
@@ -165,21 +181,31 @@ function adapterFailure(error: unknown): Failure {
 }
 
 async function renewClaim(deps: ProcessorDependencies, input: { userId: string; runId: string; claimToken: string; deadline: Date }): Promise<boolean> {
-  if (remainingBudget(deps.clock, input.deadline) <= 0) return false;
-  const now = deps.clock();
-  const [renewed] = await runTransaction<Array<{ id: string }>>(deps, input.deadline, (transaction) => transaction.update(agentRuns).set({
-    claimExpiresAt: new Date(now.getTime() + 30_000), updatedAt: now,
-  }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.claimToken))).returning({ id: agentRuns.id }));
+  const [renewed] = await runTransaction<Array<{ id: string }>>(deps, input.deadline, (transaction) => {
+    const now = deps.clock();
+    if (remainingBudget(deps.clock, input.deadline) <= 0) throw new AgentRunBudgetError();
+    return transaction.update(agentRuns).set({
+      claimExpiresAt: new Date(now.getTime() + 30_000), updatedAt: now,
+    }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.claimToken))).returning({ id: agentRuns.id });
+  });
   return Boolean(renewed);
 }
 
 function startClaimHeartbeat(deps: ProcessorDependencies, input: { userId: string; runId: string; claimToken: string; deadline: Date }) {
   let stopped = false;
-  const interval = setInterval(() => {
-    if (stopped) return;
-    void renewClaim(deps, input).catch(() => undefined);
-  }, deps.heartbeatIntervalMs ?? 15_000);
-  return () => { stopped = true; (clearInterval as unknown as (timer: typeof interval) => void)(interval); };
+  let inFlight: Promise<void> | undefined;
+  const tick = () => {
+    if (stopped || inFlight) return;
+    const renew = deps.heartbeatRenew ?? ((renewInput) => renewClaim(deps, renewInput));
+    inFlight = renew(input).then(() => undefined, () => undefined).finally(() => { inFlight = undefined; });
+  };
+  tick();
+  const interval = setInterval(tick, deps.heartbeatIntervalMs ?? 15_000);
+  return async () => {
+    stopped = true;
+    (clearInterval as unknown as (timer: typeof interval) => void)(interval);
+    if (inFlight) await bounded(deps.clock, new Date(deps.clock().getTime() + (deps.heartbeatStopTimeoutMs ?? 1_000)), () => inFlight!);
+  };
 }
 
 async function bounded<T>(clock: () => Date, deadline: Date, operation: () => Promise<T>): Promise<T> {
@@ -281,25 +307,27 @@ export function createAgentRunProcessor(deps: ProcessorDependencies): { process(
       const deadline = new Date(now.getTime() + AGENT_RUN_BUDGET.maxDurationMs);
       const claimed = await runTransaction(deps, deadline, async (transaction) => {
         await acquireAccountAdvisoryLock(transaction, job.userId);
+        const claimNow = deps.clock();
+        if (remainingBudget(deps.clock, deadline) <= 0) throw new AgentRunBudgetError();
         const [current] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId)));
         if (!current || current.status === "completed" || current.status === "failed") return { kind: "stale" as const };
-        if (current.status === "running" && current.claimExpiresAt && current.claimExpiresAt > now) return { kind: "retry" as const };
+        if (current.status === "running" && current.claimExpiresAt && current.claimExpiresAt > claimNow) return { kind: "retry" as const };
         if (current.attemptCount >= AGENT_RUN_BUDGET.maxAttempts) {
           const version = current.version + 1;
-          await transaction.update(agentRunSteps).set({ status: "failed", completedAt: null, failedAt: now, failureCode: "AGENT_RUN_BUDGET_EXCEEDED" }).where(and(
+          await transaction.update(agentRunSteps).set({ status: "failed", completedAt: null, failedAt: claimNow, failureCode: "AGENT_RUN_BUDGET_EXCEEDED" }).where(and(
             eq(agentRunSteps.userId, job.userId), eq(agentRunSteps.runId, job.runId), eq(agentRunSteps.stepKey, current.currentStep), eq(agentRunSteps.status, "running"),
           ));
-          await transaction.update(agentRuns).set({ status: "failed", currentStep: "failed", claimToken: null, claimExpiresAt: null, startedAt: current.startedAt ?? now, failedAt: now, failureCode: "AGENT_RUN_BUDGET_EXCEEDED", version, updatedAt: now }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId)));
-          await appendEvent(transaction, { id: deps.id, userId: job.userId, runId: job.runId, version, eventType: "run.failed", data: { eventType: "run.failed", status: "failed", currentStep: "failed", attemptCount: current.attemptCount, failureCode: "AGENT_RUN_BUDGET_EXCEEDED" }, now });
-          await deps.auditTrail.bind(transaction).append({ userId: job.userId, actorUserId: job.userId, eventType: "agent.run_failed", occurredAt: now, requestId: job.runId, outcome: "failure", reasonCode: "AGENT_RUN_BUDGET_EXCEEDED", resourceType: "agent_run", resourceId: job.runId, metadata: { runId: job.runId, targetId: current.targetId, attemptCount: current.attemptCount, failureCode: "AGENT_RUN_BUDGET_EXCEEDED" } });
+          await transaction.update(agentRuns).set({ status: "failed", currentStep: "failed", claimToken: null, claimExpiresAt: null, startedAt: current.startedAt ?? claimNow, failedAt: claimNow, failureCode: "AGENT_RUN_BUDGET_EXCEEDED", version, updatedAt: claimNow }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId)));
+          await appendEvent(transaction, { id: deps.id, userId: job.userId, runId: job.runId, version, eventType: "run.failed", data: { eventType: "run.failed", status: "failed", currentStep: "failed", attemptCount: current.attemptCount, failureCode: "AGENT_RUN_BUDGET_EXCEEDED" }, now: claimNow });
+          await deps.auditTrail.bind(transaction).append({ userId: job.userId, actorUserId: job.userId, eventType: "agent.run_failed", occurredAt: claimNow, requestId: job.runId, outcome: "failure", reasonCode: "AGENT_RUN_BUDGET_EXCEEDED", resourceType: "agent_run", resourceId: job.runId, metadata: { runId: job.runId, targetId: current.targetId, attemptCount: current.attemptCount, failureCode: "AGENT_RUN_BUDGET_EXCEEDED" } });
           return { kind: "failed" as const };
         }
         const claimToken = deps.id();
         const attemptCount = current.attemptCount + 1;
         const version = current.version + 1;
-        const [run] = await transaction.update(agentRuns).set({ status: "running", currentStep: "batch_search", claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), attemptCount, startedAt: now, completedAt: null, failedAt: null, failureCode: null, version, updatedAt: now }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), or(eq(agentRuns.status, "queued"), and(eq(agentRuns.status, "running"), lte(agentRuns.claimExpiresAt, now))))).returning();
+        const [run] = await transaction.update(agentRuns).set({ status: "running", currentStep: "batch_search", claimToken, claimExpiresAt: new Date(claimNow.getTime() + 30_000), attemptCount, startedAt: claimNow, completedAt: null, failedAt: null, failureCode: null, version, updatedAt: claimNow }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), or(eq(agentRuns.status, "queued"), and(eq(agentRuns.status, "running"), lte(agentRuns.claimExpiresAt, claimNow))))).returning();
         if (!run) return { kind: "stale" as const };
-        await appendEvent(transaction, { id: deps.id, userId: job.userId, runId: job.runId, version, eventType: "run.started", data: { eventType: "run.started", status: "running", currentStep: "batch_search", attemptCount }, now });
+        await appendEvent(transaction, { id: deps.id, userId: job.userId, runId: job.runId, version, eventType: "run.started", data: { eventType: "run.started", status: "running", currentStep: "batch_search", attemptCount }, now: claimNow });
         return { kind: "claimed" as const, run, claimToken, attemptCount };
       });
       if (claimed.kind !== "claimed") return claimed.kind;
@@ -377,7 +405,7 @@ export function createAgentRunProcessor(deps: ProcessorDependencies): { process(
         return completed.completed ? "completed" : "stale";
       } catch { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failure: { failureCode: "AGENT_RUN_PERSIST_FAILED", retryable: true }, deadline }); }
       } finally {
-        stopHeartbeat();
+        await stopHeartbeat().catch(() => undefined);
       }
     },
   };
