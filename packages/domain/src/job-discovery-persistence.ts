@@ -137,35 +137,41 @@ async function persistDiscoverySource(db: any, input: { id: () => string; userId
   return { sourcePostingId: posting.id, sourcePostingVersionId: created.id, isOfficial: posting.isOfficial, sourceVersionCreated: true };
 }
 
-async function closeMissingSourcePostings(db: any, input: { id: () => string; userId: string; sourceType: string; scan: { sourceId: string; observedDetailIds: string[]; complete: boolean }; now: Date }) {
+async function closeMissingSourcePostings(db: any, input: { id: () => string; userId: string; sourceType: string; scan: { sourceId: string; observedDetailIds: string[]; complete: boolean }; now: Date }): Promise<string[]> {
   if (!input.scan.complete) return [] as string[];
   const postings = await db.select().from(jobSourcePostings).where(and(
     eq(jobSourcePostings.userId, input.userId), eq(jobSourcePostings.sourceType, input.sourceType), eq(jobSourcePostings.sourceId, input.scan.sourceId),
   ));
   const observed = new Set(input.scan.observedDetailIds);
-  const impacted = new Set<string>();
+  const candidates: Array<{ posting: typeof jobSourcePostings.$inferSelect; availability: Availability }> = [];
   for (const posting of postings) {
     const identity = posting.sourceIdentity as { detailId?: string };
     if (!identity.detailId || posting.availability === "closed") continue;
     const availability: Availability | null = observed.has(identity.detailId)
       ? (posting.availability === "open" && posting.applicationDeadline && posting.applicationDeadline.getTime() <= input.now.getTime() ? "expired" : null)
       : "closed";
-    if (!availability) continue;
-    const latest = await latestSourceVersion(db, input.userId, posting.id);
-    if (!latest) continue;
-    const [closed] = await db.insert(jobSourcePostingVersions).values({
-      id: input.id(), userId: input.userId, sourcePostingId: posting.id, version: latest.version + 1,
-      contentSha256: latest.contentSha256, rawContentSha256: latest.rawContentSha256,
-      rawObjectReference: latest.rawObjectReference, retrievedAt: input.now, availability, createdAt: input.now,
-    }).returning();
-    if (!closed) throw new Error("AGENT_RUN_PERSIST_FAILED");
-    await db.update(jobSourcePostings).set({ availability, availabilityUpdatedAt: input.now, updatedAt: input.now })
-      .where(and(eq(jobSourcePostings.userId, input.userId), eq(jobSourcePostings.id, posting.id)));
-    const rows = await db.select({ opportunityId: jobOpportunitySources.opportunityId }).from(jobOpportunitySources)
-      .innerJoin(jobSourcePostingVersions, and(eq(jobSourcePostingVersions.userId, jobOpportunitySources.userId), eq(jobSourcePostingVersions.id, jobOpportunitySources.sourcePostingVersionId)))
-      .where(and(eq(jobOpportunitySources.userId, input.userId), eq(jobSourcePostingVersions.sourcePostingId, posting.id)));
-    rows.forEach((row: { opportunityId: string }) => impacted.add(row.opportunityId));
+    if (availability) candidates.push({ posting, availability });
   }
+  if (candidates.length === 0) return [] as string[];
+  const postingIds = candidates.map((candidate) => candidate.posting.id);
+  const versions = await db.select().from(jobSourcePostingVersions).where(and(eq(jobSourcePostingVersions.userId, input.userId), inArray(jobSourcePostingVersions.sourcePostingId, postingIds))).orderBy(desc(jobSourcePostingVersions.version));
+  const latestByPosting = new Map<string, typeof jobSourcePostingVersions.$inferSelect>();
+  for (const version of versions) if (!latestByPosting.has(version.sourcePostingId)) latestByPosting.set(version.sourcePostingId, version);
+  const inserts = candidates.flatMap(({ posting, availability }) => {
+    const latest = latestByPosting.get(posting.id);
+    return latest ? [{ id: input.id(), userId: input.userId, sourcePostingId: posting.id, version: latest.version + 1, contentSha256: latest.contentSha256, rawContentSha256: latest.rawContentSha256, rawObjectReference: latest.rawObjectReference, retrievedAt: input.now, availability, createdAt: input.now }] : [];
+  });
+  if (inserts.length !== candidates.length) throw new Error("AGENT_RUN_PERSIST_FAILED");
+  await db.insert(jobSourcePostingVersions).values(inserts).returning({ id: jobSourcePostingVersions.id });
+  for (const availability of ["closed", "expired"] as const) {
+    const ids = candidates.filter((candidate) => candidate.availability === availability).map((candidate) => candidate.posting.id);
+    if (ids.length > 0) await db.update(jobSourcePostings).set({ availability, availabilityUpdatedAt: input.now, updatedAt: input.now })
+      .where(and(eq(jobSourcePostings.userId, input.userId), inArray(jobSourcePostings.id, ids)));
+  }
+  const rows = await db.select({ opportunityId: jobOpportunitySources.opportunityId }).from(jobOpportunitySources)
+    .innerJoin(jobSourcePostingVersions, and(eq(jobSourcePostingVersions.userId, jobOpportunitySources.userId), eq(jobSourcePostingVersions.id, jobOpportunitySources.sourcePostingVersionId)))
+    .where(and(eq(jobOpportunitySources.userId, input.userId), inArray(jobSourcePostingVersions.sourcePostingId, postingIds)));
+  const impacted = new Set<string>((rows as Array<{ opportunityId: string }>).map((row) => row.opportunityId));
   return [...impacted];
 }
 

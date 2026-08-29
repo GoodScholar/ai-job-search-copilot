@@ -277,4 +277,19 @@ describe("job discovery persistence lifecycle", () => {
     await expect(database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, userId))).resolves.toHaveLength(1);
     await expect(database.select().from(agentRunJobResults).where(eq(agentRunJobResults.userId, userId))).resolves.toHaveLength(1);
   });
+
+  it("late audit failure 回滚已执行的 scan close、版本和 run completion", async () => {
+    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID();
+    await database.insert(jobAccounts).values({ id: userId });
+    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: firstSeen, updatedAt: firstSeen });
+    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: firstSeen });
+    const normal = createJobDiscoveryPersistence({ db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => later }) });
+    const sourceId = "greenhouse:rollback"; const detail = { sourceId, detailId: "rollback", company: "Fictional", title: "AI Engineer", location: null, postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true, rawPayload: {} };
+    await normal.persistSuccessfulDiscovery({ run: await claimRun(userId, targetId, firstSeen), details: [detail], scans: [{ sourceId, observedDetailIds: [detail.detailId], complete: true }], storedObjects: [{ sourceId, detailId: detail.detailId, objectKey: "before.json", rawContentSha256: "d".repeat(64) }], now: firstSeen });
+    const failing = createJobDiscoveryPersistence({ db: database, id: () => crypto.randomUUID(), auditTrail: { bind: () => ({ append: async (event: { eventType: string }) => { if (event.eventType === "agent.run_completed") throw new Error("late audit"); } }) } as any });
+    const run = await claimRun(userId, targetId, later);
+    await expect(failing.persistSuccessfulDiscovery({ run, details: [], scans: [{ sourceId, observedDetailIds: [], complete: true }], storedObjects: [], now: later })).rejects.toThrow("late audit");
+    await expect(database.select({ availability: jobSourcePostingVersions.availability }).from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, userId))).resolves.toEqual([{ availability: "open" }]);
+    await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, run.id))).resolves.toEqual([{ status: "running" }]);
+  });
 });
