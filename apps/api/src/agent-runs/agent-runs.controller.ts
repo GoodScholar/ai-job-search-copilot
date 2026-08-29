@@ -1,14 +1,16 @@
 import { Readable } from "node:stream";
-import { Body, Controller, Get, Headers, HttpStatus, Inject, Param, Post, Query, Req, Res, UseGuards } from "@nestjs/common";
-import { ApiBadRequestResponse, ApiBearerAuth, ApiNotFoundResponse, ApiServiceUnavailableResponse, ApiUnauthorizedResponse } from "@nestjs/swagger";
+import { Body, Controller, Get, Headers, HttpCode, HttpStatus, Inject, Param, Post, Query, Req, Res, UseGuards } from "@nestjs/common";
+import { ApiBadRequestResponse, ApiBearerAuth, ApiConflictResponse, ApiNotFoundResponse, ApiServiceUnavailableResponse, ApiUnauthorizedResponse } from "@nestjs/swagger";
 import {
   AgentRunDetailSchema,
+  ControlAgentRunCommandSchema,
+  ControlAgentRunResponseSchema,
   LatestAgentRunResponseSchema,
   StartAgentRunCommandSchema,
   StartAgentRunResponseSchema,
   type AgentRunDetail,
 } from "@job-copilot/contracts/agent-runs";
-import { AgentRunError } from "@job-copilot/domain/agent-runs";
+import { AgentRunControlError, AgentRunError } from "@job-copilot/domain/agent-runs";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { createZodDto, ZodResponse } from "nestjs-zod";
 import { z } from "zod";
@@ -20,6 +22,8 @@ import { createAgentRunEventStream, resolveAgentRunEventCursor } from "./agent-r
 import { AGENT_RUN_COMMANDS, AGENT_RUN_QUERIES, type AgentRunCommands, type AgentRunQueries } from "./agent-runs.tokens.js";
 
 class StartAgentRunCommandDto extends createZodDto(StartAgentRunCommandSchema) {}
+class ControlAgentRunCommandDto extends createZodDto(ControlAgentRunCommandSchema) {}
+class ControlAgentRunResponseDto extends createZodDto(ControlAgentRunResponseSchema) {}
 class StartAgentRunResponseDto extends createZodDto(StartAgentRunResponseSchema) {}
 class AgentRunDetailDto extends createZodDto(AgentRunDetailSchema) {}
 class LatestAgentRunResponseDto extends createZodDto(LatestAgentRunResponseSchema) {}
@@ -35,6 +39,11 @@ function mapStartError(error: AgentRunError): ApiException {
     return new ApiException(error.code, HttpStatus.SERVICE_UNAVAILABLE, "Agent 运行暂时不可用，请稍后重试");
   }
   return notFound(error.code, error.code === "AGENT_RUN_TARGET_INACTIVE" ? "求职目标不可用" : "求职目标不存在");
+}
+
+function mapControlError(error: AgentRunControlError): ApiException {
+  if (error.code === "AGENT_RUN_NOT_FOUND") return notFound(error.code);
+  return new ApiException(error.code, HttpStatus.CONFLICT, "Agent 运行状态已变化，请刷新后重试");
 }
 
 function publicDetail(run: AgentRunDetail): AgentRunDetail {
@@ -73,6 +82,31 @@ export class AgentRunsController {
       return result;
     } catch (error) {
       if (error instanceof AgentRunError) throw mapStartError(error);
+      throw error;
+    }
+  }
+
+  @Post(":runId/controls")
+  @HttpCode(HttpStatus.OK)
+  @ZodResponse({ type: ControlAgentRunResponseDto })
+  @ApiBadRequestResponse({ type: ApiProblem })
+  @ApiConflictResponse({ type: ApiProblem })
+  @ApiNotFoundResponse({ type: ApiProblem })
+  @ApiUnauthorizedResponse({ type: ApiProblem })
+  async control(
+    @Req() request: FastifyRequest,
+    @Param() params: AgentRunPathDto,
+    @Body() command: ControlAgentRunCommandDto,
+  ) {
+    try {
+      return await this.commands.control({
+        userId: request.authenticatedAccount!.userId,
+        requestId: getRequestId(request),
+        runId: params.runId,
+        command,
+      });
+    } catch (error) {
+      if (error instanceof AgentRunControlError) throw mapControlError(error);
       throw error;
     }
   }
@@ -116,7 +150,7 @@ export class AgentRunsController {
       userId,
       runId: params.runId,
       afterSequence,
-      terminalSequence: owned.status === "completed" || owned.status === "failed"
+      terminalSequence: owned.status === "paused" || owned.status === "cancelled" || owned.status === "completed" || owned.status === "failed"
         ? owned.events.at(-1)?.sequence
         : undefined,
       signal: abort.signal,

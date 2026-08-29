@@ -27,6 +27,34 @@ const completedEvent: AgentRunDetail["events"][number] = {
   data: { eventType: "run.completed", status: "completed", currentStep: "completed", attemptCount: 1, resultCount: 2 },
   createdAt,
 };
+const pauseRequestedEvent: AgentRunDetail["events"][number] = {
+  sequence: 3,
+  runVersion: 3,
+  eventType: "run.pause_requested",
+  data: { eventType: "run.pause_requested", status: "running", currentStep: "fetch_details", attemptCount: 1 },
+  createdAt,
+};
+const pausedEvent: AgentRunDetail["events"][number] = {
+  sequence: 4,
+  runVersion: 4,
+  eventType: "run.paused",
+  data: { eventType: "run.paused", status: "paused", currentStep: "fetch_details", attemptCount: 1 },
+  createdAt,
+};
+const resumeRequestedEvent: AgentRunDetail["events"][number] = {
+  sequence: 3,
+  runVersion: 3,
+  eventType: "run.resume_requested",
+  data: { eventType: "run.resume_requested", status: "running", currentStep: "fetch_details", attemptCount: 1 },
+  createdAt,
+};
+const cancelledEvent: AgentRunDetail["events"][number] = {
+  sequence: 3,
+  runVersion: 3,
+  eventType: "run.cancelled",
+  data: { eventType: "run.cancelled", status: "cancelled", currentStep: "cancelled", attemptCount: 1 },
+  createdAt,
+};
 
 afterEach(() => {
   vi.useRealTimers();
@@ -66,6 +94,41 @@ describe("Agent Run SSE", () => {
     expect(text).toContain("id: 3");
     expect(text).not.toContain("id: 1");
     expect(text).not.toContain("id: 2");
+  });
+
+  it("请求暂停不是终止事件，安全暂停后关闭并可从旧游标恢复而不重复", async () => {
+    const eventsAfter = vi.fn().mockResolvedValue([pauseRequestedEvent, pausedEvent]);
+    const reader = createAgentRunEventStream({ queries: { eventsAfter }, userId, runId, afterSequence: 2 }).getReader();
+    expect(new TextDecoder().decode((await reader.read()).value)).toContain("event: run.pause_requested");
+    expect(new TextDecoder().decode((await reader.read()).value)).toContain("event: run.paused");
+    const done = await Promise.race([
+      reader.read(),
+      new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 10)),
+    ]);
+    await reader.cancel();
+    expect(done).toEqual({ done: true, value: undefined });
+    expect(eventsAfter).toHaveBeenCalledTimes(1);
+
+    const resumedCompleted = { ...completedEvent, sequence: 5, runVersion: 5 };
+    const resumedEventsAfter = vi.fn().mockResolvedValue([resumedCompleted]);
+    const resumed = await readAll(createAgentRunEventStream({ queries: { eventsAfter: resumedEventsAfter }, userId, runId, afterSequence: 4 }));
+    expect(resumed).toContain("id: 5");
+    expect(resumed).not.toContain("id: 4");
+  });
+
+  it("取消事件终止流", async () => {
+    const eventsAfter = vi.fn().mockResolvedValue([cancelledEvent]);
+    const text = await readAll(createAgentRunEventStream({ queries: { eventsAfter }, userId, runId, afterSequence: 2 }));
+    expect(text).toContain("event: run.cancelled");
+    expect(eventsAfter).toHaveBeenCalledTimes(1);
+  });
+
+  it("恢复请求不是终止事件", async () => {
+    const completedAfterResume = { ...completedEvent, sequence: 4, runVersion: 4 };
+    const eventsAfter = vi.fn().mockResolvedValue([resumeRequestedEvent, completedAfterResume]);
+    const text = await readAll(createAgentRunEventStream({ queries: { eventsAfter }, userId, runId, afterSequence: 2 }));
+    expect(text).toContain("event: run.resume_requested");
+    expect(text).toContain("event: run.completed");
   });
 
   it("终态游标已被客户端确认时立即关闭而不继续轮询", async () => {

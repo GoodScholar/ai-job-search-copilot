@@ -6,7 +6,14 @@ import {
 
 const POLL_INTERVAL_MS = 250;
 const HEARTBEAT_INTERVAL_MS = 15_000;
-const terminalEvents = new Set(["run.completed", "run.failed"]);
+type AgentRunEventType = AgentRunDetail["events"][number]["eventType"];
+
+export function isStreamTerminal(eventType: AgentRunEventType): boolean {
+  return eventType === "run.paused"
+    || eventType === "run.cancelled"
+    || eventType === "run.completed"
+    || eventType === "run.failed";
+}
 
 type EventQueries = {
   eventsAfter(input: { userId: string; runId: string; afterSequence: number }): Promise<AgentRunDetail["events"] | null>;
@@ -99,7 +106,7 @@ export function createAgentRunEventStream(input: {
         controller.enqueue(encoder.encode(`id: ${sse.id}\nevent: ${sse.event}\ndata: ${JSON.stringify(sse.data)}\n\n`));
         pendingEvents.shift();
         cursor = event.sequence;
-        if (terminalEvents.has(event.eventType)) {
+        if (isStreamTerminal(event.eventType)) {
           finish();
           return;
         }

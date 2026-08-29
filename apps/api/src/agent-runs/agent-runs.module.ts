@@ -27,6 +27,6 @@ import { BullmqAgentRunQueue } from "./bullmq-agent-run-queue.js";
       useFactory: (db: Database) => createAgentRunQueries({ db }),
     },
   ],
-  exports: [AGENT_RUN_QUEUE_PORT],
+  exports: [AGENT_RUN_QUEUE_PORT, AGENT_RUN_COMMANDS, AGENT_RUN_QUERIES],
 })
 export class AgentRunsModule {}

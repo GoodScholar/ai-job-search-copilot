@@ -496,6 +496,7 @@ describe("authenticated workbench HTTP API", () => {
     await database.$client`
       update agent_runs
       set status = 'completed', current_step = 'completed', version = 2, attempt_count = 1,
+          termination_kind = 'completed', termination_budget_dimension = null,
           started_at = ${completedAt.toISOString()}, completed_at = ${completedAt.toISOString()}, updated_at = ${completedAt.toISOString()}
       where id = ${runId} and user_id = ${primary.account.userId}
     `;
@@ -524,6 +525,132 @@ describe("authenticated workbench HTTP API", () => {
     });
     expect(durable.statusCode).toBe(201);
     expect(durable.json()).toMatchObject({ status: "queued", reused: false });
+  });
+
+  it("以认证账户暴露幂等运行控制和可处理 Inbox", async () => {
+    const primary = await createSession(app, "agent-run-controls-primary");
+    const other = await createSession(app, "agent-run-controls-other");
+    const targetId = await createActiveTarget(app, primary.sessionToken, "Agent 控制工程师");
+    const createRun = async () => {
+      const response = await app.getHttpAdapter().getInstance().inject({
+        method: "POST", url: "/v1/agent-runs", headers: bearer(primary.sessionToken),
+        payload: { targetId, idempotencyKey: randomUUID() },
+      });
+      expect(response.statusCode).toBe(201);
+      return response.json().runId as string;
+    };
+    const runId = await createRun();
+
+    const [unauthenticated, malformed, hidden, unauthenticatedInbox] = await Promise.all([
+      app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/agent-runs/${runId}/controls`, payload: { commandId: randomUUID(), action: "pause" } }),
+      app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/agent-runs/${runId}/controls`, headers: bearer(primary.sessionToken), payload: { commandId: randomUUID(), action: "pause", ownerId: other.account.userId } }),
+      app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/agent-runs/${runId}/controls`, headers: bearer(other.sessionToken), payload: { commandId: randomUUID(), action: "pause" } }),
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=open" }),
+    ]);
+    expect(unauthenticated.statusCode).toBe(401);
+    expect(malformed.statusCode).toBe(400);
+    expect(hidden.statusCode).toBe(404);
+    expect(unauthenticatedInbox.statusCode).toBe(401);
+
+    const commandId = randomUUID();
+    const paused = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-runs/${runId}/controls`, headers: bearer(primary.sessionToken),
+      payload: { commandId, action: "pause" },
+    });
+    expect(paused.statusCode).toBe(200);
+    expect(paused.json()).toMatchObject({ applied: true, run: { runId, status: "paused", controlState: "none" } });
+
+    const replay = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-runs/${runId}/controls`, headers: bearer(primary.sessionToken),
+      payload: { commandId, action: "pause" },
+    });
+    const commandConflict = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-runs/${runId}/controls`, headers: bearer(primary.sessionToken),
+      payload: { commandId, action: "cancel" },
+    });
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json()).toEqual(paused.json());
+    expect(commandConflict.statusCode).toBe(409);
+    expect(commandConflict.json()).toMatchObject({ code: "AGENT_RUN_CONTROL_CONFLICT" });
+
+    const inbox = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=open", headers: bearer(primary.sessionToken) });
+    expect(inbox.statusCode).toBe(200);
+    expect(inbox.json()).toMatchObject({ items: [expect.objectContaining({ runId, kind: "decision_required", availableActions: ["resume_run", "cancel_run"] })] });
+    const pauseItemId = inbox.json().items[0].itemId as string;
+    const hiddenItem = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-inbox/${pauseItemId}/actions`, headers: bearer(other.sessionToken),
+      payload: { actionId: randomUUID(), action: "dismiss" },
+    });
+    expect(hiddenItem.statusCode).toBe(404);
+
+    agentRunQueue.failNext = true;
+    const resumed = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-inbox/${pauseItemId}/actions`, headers: bearer(primary.sessionToken),
+      payload: { actionId: randomUUID(), action: "resume_run" },
+    });
+    expect(resumed.statusCode).toBe(200);
+    expect(resumed.json()).toMatchObject({ applied: true, item: { status: "resolved" }, run: { runId, status: "queued" } });
+
+    const cancelRunId = await createRun();
+    const cancelPause = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-runs/${cancelRunId}/controls`, headers: bearer(primary.sessionToken),
+      payload: { commandId: randomUUID(), action: "pause" },
+    });
+    expect(cancelPause.statusCode).toBe(200);
+    const cancelInbox = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=open", headers: bearer(primary.sessionToken) });
+    const cancelItemId = cancelInbox.json().items.find((item: { runId: string }) => item.runId === cancelRunId).itemId as string;
+    const cancelled = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-inbox/${cancelItemId}/actions`, headers: bearer(primary.sessionToken),
+      payload: { actionId: randomUUID(), action: "cancel_run" },
+    });
+    expect(cancelled.statusCode).toBe(200);
+    expect(cancelled.json()).toMatchObject({ applied: true, item: { status: "resolved" }, run: { runId: cancelRunId, status: "cancelled" } });
+
+    const failedRunId = await createRun();
+    const budgetRunId = await createRun();
+    const now = new Date("2026-08-29T10:00:00.000Z").toISOString();
+    await database.$client`
+      update agent_runs set status = 'failed', current_step = 'failed', version = 2, attempt_count = 1,
+        failure_code = 'AGENT_RUN_ADAPTER_FAILED', termination_kind = 'source_failed', termination_budget_dimension = null,
+        started_at = ${now}, failed_at = ${now}, updated_at = ${now}
+      where id = ${failedRunId} and user_id = ${primary.account.userId}
+    `;
+    await database.$client`
+      update agent_runs set status = 'failed', current_step = 'failed', version = 2, attempt_count = 3,
+        failure_code = 'AGENT_RUN_BUDGET_EXCEEDED', termination_kind = 'budget_exhausted', termination_budget_dimension = 'attempts',
+        started_at = ${now}, failed_at = ${now}, updated_at = ${now}
+      where id = ${budgetRunId} and user_id = ${primary.account.userId}
+    `;
+    await database.$client`
+      insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, kind, status, reason_code, budget_dimension, created_at, resolved_at)
+      values (${randomUUID()}, ${primary.account.userId}, ${failedRunId}, 2, 'run_failed', 'open', 'AGENT_RUN_ADAPTER_FAILED', null, ${now}, null)
+    `;
+    await database.$client`
+      insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, kind, status, reason_code, budget_dimension, created_at, resolved_at)
+      values (${randomUUID()}, ${primary.account.userId}, ${budgetRunId}, 2, 'budget_exhausted', 'open', 'AGENT_RUN_BUDGET_EXCEEDED', 'attempts', ${now}, null)
+    `;
+    const afterFailures = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=open", headers: bearer(primary.sessionToken) });
+    const restartItemId = afterFailures.json().items.find((item: { runId: string }) => item.runId === failedRunId).itemId as string;
+    const dismissItemId = afterFailures.json().items.find((item: { runId: string }) => item.runId === budgetRunId).itemId as string;
+    const restarted = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-inbox/${restartItemId}/actions`, headers: bearer(primary.sessionToken),
+      payload: { actionId: randomUUID(), action: "restart_run" },
+    });
+    const dismissed = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-inbox/${dismissItemId}/actions`, headers: bearer(primary.sessionToken),
+      payload: { actionId: randomUUID(), action: "dismiss" },
+    });
+    expect(restarted.statusCode).toBe(200);
+    expect(restarted.json()).toMatchObject({ applied: true, item: { status: "resolved" }, run: { status: "queued" } });
+    expect(dismissed.statusCode).toBe(200);
+    expect(dismissed.json()).toMatchObject({ applied: true, item: { status: "resolved" }, run: null });
+
+    const terminal = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-runs/${cancelRunId}/controls`, headers: bearer(primary.sessionToken),
+      payload: { commandId: randomUUID(), action: "resume" },
+    });
+    expect(terminal.statusCode).toBe(409);
+    expect(terminal.json()).toMatchObject({ code: "AGENT_RUN_CONTROL_CONFLICT" });
   });
 
   it("keeps a command-side Zod error as an internal error rather than blaming the request", async () => {
