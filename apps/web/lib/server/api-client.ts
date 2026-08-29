@@ -33,6 +33,14 @@ import {
   type ReviseJobTargetCommand,
 } from "@job-copilot/contracts/job-targets";
 import {
+  CompanyWatchlistOverviewSchema,
+  type AddCompanyWatchlistItemCommand,
+  type CompanyWatchlistOverview,
+  type ReorderCompanyWatchlistCommand,
+  type ReviseCompanyWatchlistItemCommand,
+  type SetCompanyWatchlistItemStateCommand,
+} from "@job-copilot/contracts/company-watchlists";
+import {
   CreateJobImportCommandSchema,
   CreateJobImportResponseSchema,
   JobImportDetailSchema,
@@ -307,6 +315,70 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
         throw new ApiClientError("api", problem?.message ?? "无法维护求职目标", response.status, problem ?? undefined);
       }
       return parseSuccess(response, JobTargetOverviewSchema);
+    },
+
+    async getCompanyWatchlist(sessionToken: string, targetId: string): Promise<CompanyWatchlistOverview> {
+      const response = await request(`/v1/job-targets/${targetId}/company-watchlist`, {
+        method: "GET",
+        headers: { authorization: `Bearer ${sessionToken}` },
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法读取目标公司 Watchlist", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, CompanyWatchlistOverviewSchema);
+    },
+
+    async addCompanyWatchlistItem(sessionToken: string, targetId: string, command: AddCompanyWatchlistItemCommand): Promise<CompanyWatchlistOverview> {
+      const response = await request(`/v1/job-targets/${targetId}/company-watchlist/items`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" },
+        body: JSON.stringify(command),
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法维护目标公司 Watchlist", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, CompanyWatchlistOverviewSchema);
+    },
+
+    async reviseCompanyWatchlistItem(sessionToken: string, targetId: string, itemId: string, command: ReviseCompanyWatchlistItemCommand): Promise<CompanyWatchlistOverview> {
+      const response = await request(`/v1/job-targets/${targetId}/company-watchlist/items/${itemId}/revisions`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" },
+        body: JSON.stringify(command),
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法维护目标公司 Watchlist", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, CompanyWatchlistOverviewSchema);
+    },
+
+    async setCompanyWatchlistItemState(sessionToken: string, targetId: string, itemId: string, command: SetCompanyWatchlistItemStateCommand): Promise<CompanyWatchlistOverview> {
+      const response = await request(`/v1/job-targets/${targetId}/company-watchlist/items/${itemId}/state-changes`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" },
+        body: JSON.stringify(command),
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法维护目标公司 Watchlist", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, CompanyWatchlistOverviewSchema);
+    },
+
+    async reorderCompanyWatchlist(sessionToken: string, targetId: string, command: ReorderCompanyWatchlistCommand): Promise<CompanyWatchlistOverview> {
+      const response = await request(`/v1/job-targets/${targetId}/company-watchlist/reorders`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" },
+        body: JSON.stringify(command),
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法维护目标公司 Watchlist", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, CompanyWatchlistOverviewSchema);
     },
 
     async listCareerImports(sessionToken: string): Promise<CareerImportList> {

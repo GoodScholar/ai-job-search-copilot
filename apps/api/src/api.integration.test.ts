@@ -410,6 +410,155 @@ describe("authenticated workbench HTTP API", () => {
     expect(invalidBody.body).not.toContain("ZodError");
   });
 
+  it("通过认证 API 维护目标公司 Watchlist，并将输入与领域错误映射为固定问题体", async () => {
+    const primary = await createSession(app, "company-watchlist-primary");
+    const other = await createSession(app, "company-watchlist-other");
+    const targetId = await createActiveTarget(app, primary.sessionToken, "Watchlist API 工程师");
+    const headers = { ...bearer(primary.sessionToken), "content-type": "application/json" };
+    const sourceNote = "不要回显的来源备注";
+    const careersUrl = "https://careers.example.com/jobs";
+    const allowedDomain = "example.com";
+
+    const empty = await app.getHttpAdapter().getInstance().inject({
+      method: "GET", url: `/v1/job-targets/${targetId}/company-watchlist`, headers: bearer(primary.sessionToken),
+    });
+    expect(empty.statusCode).toBe(200);
+    expect(empty.json()).toEqual({
+      target: { targetId, targetVersion: 1, targetState: "active", roleFamily: "Watchlist API 工程师" },
+      version: 0,
+      items: [],
+    });
+
+    const invalid = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/items`, headers,
+      payload: { expectedVersion: 0, canonicalCompanyName: "不得回显的公司", careersUrl: "https://evil.example.test/?token=private", allowedDomains: [allowedDomain], sourceNote, captchaBypass: true },
+    });
+    expect(invalid.statusCode).toBe(400);
+    expect(invalid.json()).toEqual({ code: "INVALID_REQUEST", message: "请求无效", requestId: expect.any(String) });
+    for (const secret of ["不得回显的公司", "evil.example.test", "private", sourceNote, "captchaBypass"]) {
+      expect(invalid.body).not.toContain(secret);
+    }
+
+    const added = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/items`, headers,
+      payload: { expectedVersion: 0, canonicalCompanyName: "示例公司", careersUrl, allowedDomains: [allowedDomain], sourceNote },
+    });
+    expect(added.statusCode).toBe(201);
+    expect(added.json()).toMatchObject({ version: 1, items: [{ canonicalCompanyName: "示例公司", careersUrl, allowedDomains: [allowedDomain], sourceNote, state: "enabled", position: 1 }] });
+    const itemId = added.json().items[0].itemId as string;
+
+    const revised = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/items/${itemId}/revisions`, headers,
+      payload: { expectedVersion: 1, canonicalCompanyName: "示例公司（修订）", careersUrl: "https://jobs.example.com/openings", allowedDomains: [allowedDomain], sourceNote: null },
+    });
+    expect(revised.statusCode).toBe(201);
+    expect(revised.json()).toMatchObject({ version: 2, items: [{ itemId, canonicalCompanyName: "示例公司（修订）", state: "enabled", position: 1 }] });
+
+    const reordered = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/reorders`, headers,
+      payload: { expectedVersion: 2, orderedItemIds: [itemId] },
+    });
+    expect(reordered.statusCode).toBe(201);
+    const disabled = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/items/${itemId}/state-changes`, headers,
+      payload: { expectedVersion: 3, state: "disabled" },
+    });
+    expect(disabled.statusCode).toBe(201);
+    const enabled = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/items/${itemId}/state-changes`, headers,
+      payload: { expectedVersion: 4, state: "enabled" },
+    });
+    expect(enabled.statusCode).toBe(201);
+
+    const stale = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/items`, headers,
+      payload: { expectedVersion: 0, canonicalCompanyName: "陈旧写入", careersUrl: "https://new.example.com/jobs", allowedDomains: [allowedDomain], sourceNote: null },
+    });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json()).toEqual({ code: "COMPANY_WATCHLIST_VERSION_CONFLICT", message: "目标公司 Watchlist 已在其他位置更新，请刷新后重试", requestId: expect.any(String) });
+    expect(stale.body).not.toContain("陈旧写入");
+
+    const crossAccount = await app.getHttpAdapter().getInstance().inject({
+      method: "GET", url: `/v1/job-targets/${targetId}/company-watchlist`, headers: bearer(other.sessionToken),
+    });
+    expect(crossAccount.statusCode).toBe(404);
+    expect(crossAccount.json()).toEqual({ code: "COMPANY_WATCHLIST_TARGET_NOT_FOUND", message: "求职目标不存在", requestId: expect.any(String) });
+
+    const reloaded = await app.getHttpAdapter().getInstance().inject({
+      method: "GET", url: `/v1/job-targets/${targetId}/company-watchlist`, headers: bearer(primary.sessionToken),
+    });
+    expect(reloaded.statusCode).toBe(200);
+    expect(reloaded.json()).toMatchObject({ version: 5, items: [{ itemId, state: "enabled" }] });
+  });
+
+  it("拒绝所有凭据或绕过字段，并将缺失条目、重复项和上限固定映射为 404 或 409", async () => {
+    const session = await createSession(app, "company-watchlist-errors");
+    const targetId = await createActiveTarget(app, session.sessionToken, "Watchlist 错误映射工程师");
+    const headers = { ...bearer(session.sessionToken), "content-type": "application/json" };
+    const command = (expectedVersion: number, index: number) => ({
+      expectedVersion,
+      canonicalCompanyName: `示例公司 ${index}`,
+      careersUrl: `https://jobs-${index}.example.com/openings`,
+      allowedDomains: ["example.com"],
+      sourceNote: null,
+    });
+
+    for (const field of ["username", "password", "cookie", "captchaBypass", "loginWallAuthorization"]) {
+      const rejected = await app.getHttpAdapter().getInstance().inject({
+        method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/items`, headers,
+        payload: { ...command(0, 0), [field]: "private-value" },
+      });
+      expect(rejected.statusCode).toBe(400);
+      expect(rejected.json()).toEqual({ code: "INVALID_REQUEST", message: "请求无效", requestId: expect.any(String) });
+      expect(rejected.body).not.toContain("private-value");
+      expect(rejected.body).not.toContain(field);
+    }
+
+    const first = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/items`, headers, payload: command(0, 0),
+    });
+    expect(first.statusCode).toBe(201);
+    const itemId = first.json().items[0].itemId as string;
+
+    const missingItem = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/items/6b8c6eb3-2b92-4d91-aad4-959b7d4cd7a3/revisions`, headers,
+      payload: command(1, 1),
+    });
+    expect(missingItem.statusCode).toBe(404);
+    expect(missingItem.json()).toEqual({ code: "COMPANY_WATCHLIST_ITEM_NOT_FOUND", message: "目标公司 Watchlist 项不存在", requestId: expect.any(String) });
+
+    const duplicateCompany = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/items`, headers,
+      payload: { ...command(1, 1), canonicalCompanyName: "示例公司 0" },
+    });
+    expect(duplicateCompany.statusCode).toBe(409);
+    expect(duplicateCompany.json()).toEqual({ code: "COMPANY_WATCHLIST_DUPLICATE_COMPANY", message: "目标公司 Watchlist 中已存在该公司", requestId: expect.any(String) });
+
+    const duplicateSource = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/items`, headers,
+      payload: { ...command(1, 1), careersUrl: command(1, 0).careersUrl },
+    });
+    expect(duplicateSource.statusCode).toBe(409);
+    expect(duplicateSource.json()).toEqual({ code: "COMPANY_WATCHLIST_DUPLICATE_SOURCE", message: "目标公司 Watchlist 中已存在该岗位来源", requestId: expect.any(String) });
+
+    let version = 1;
+    for (let index = 1; index < 50; index += 1) {
+      const added = await app.getHttpAdapter().getInstance().inject({
+        method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/items`, headers, payload: command(version, index),
+      });
+      expect(added.statusCode).toBe(201);
+      version += 1;
+    }
+    const limit = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/items`, headers, payload: command(version, 50),
+    });
+    expect(limit.statusCode).toBe(409);
+    expect(limit.json()).toEqual({ code: "COMPANY_WATCHLIST_LIMIT", message: "目标公司 Watchlist 已达上限", requestId: expect.any(String) });
+    expect(limit.body).not.toContain("示例公司 50");
+
+    expect(itemId).toMatch(/^[0-9a-f-]{36}$/i);
+  });
+
   it("以持久化运行提供幂等且账户隔离的岗位发现入口", async () => {
     const primary = await createSession(app, "agent-runs-primary");
     const other = await createSession(app, "agent-runs-other");
@@ -1152,6 +1301,11 @@ describe("authenticated workbench HTTP API", () => {
       "/v1/job-targets": expect.anything(),
       "/v1/job-targets/{targetId}/revisions": expect.anything(),
       "/v1/job-targets/{targetId}/deactivations": expect.anything(),
+      "/v1/job-targets/{targetId}/company-watchlist": expect.anything(),
+      "/v1/job-targets/{targetId}/company-watchlist/items": expect.anything(),
+      "/v1/job-targets/{targetId}/company-watchlist/items/{itemId}/revisions": expect.anything(),
+      "/v1/job-targets/{targetId}/company-watchlist/items/{itemId}/state-changes": expect.anything(),
+      "/v1/job-targets/{targetId}/company-watchlist/reorders": expect.anything(),
       "/v1/career-documents/imports": expect.anything(),
       "/v1/career-documents/imports/{importId}": expect.anything(),
       "/health/live": expect.anything(),
@@ -1177,6 +1331,11 @@ describe("authenticated workbench HTTP API", () => {
       ["/v1/job-targets", "post"],
       ["/v1/job-targets/{targetId}/revisions", "post"],
       ["/v1/job-targets/{targetId}/deactivations", "post"],
+      ["/v1/job-targets/{targetId}/company-watchlist", "get"],
+      ["/v1/job-targets/{targetId}/company-watchlist/items", "post"],
+      ["/v1/job-targets/{targetId}/company-watchlist/items/{itemId}/revisions", "post"],
+      ["/v1/job-targets/{targetId}/company-watchlist/items/{itemId}/state-changes", "post"],
+      ["/v1/job-targets/{targetId}/company-watchlist/reorders", "post"],
       ["/v1/career-documents/imports", "get"],
       ["/v1/career-documents/imports", "post"],
       ["/v1/career-documents/imports/{importId}", "get"],
@@ -1198,6 +1357,19 @@ describe("authenticated workbench HTTP API", () => {
     expect(document.paths["/v1/job-targets"].post.responses["201"].content["application/json"].schema).toEqual(jobTargetResponseSchema);
     expect(document.paths["/v1/job-targets/{targetId}/revisions"].post.responses["201"].content["application/json"].schema).toEqual(jobTargetResponseSchema);
     expect(document.paths["/v1/job-targets/{targetId}/deactivations"].post.responses["201"].content["application/json"].schema).toEqual(jobTargetResponseSchema);
+    const watchlistOverviewSchema = document.paths["/v1/job-targets/{targetId}/company-watchlist"].get.responses["200"].content["application/json"].schema;
+    for (const path of [
+      "/v1/job-targets/{targetId}/company-watchlist/items",
+      "/v1/job-targets/{targetId}/company-watchlist/items/{itemId}/revisions",
+      "/v1/job-targets/{targetId}/company-watchlist/items/{itemId}/state-changes",
+      "/v1/job-targets/{targetId}/company-watchlist/reorders",
+    ]) {
+      expect(document.paths[path].post.responses["201"].content["application/json"].schema).toEqual(watchlistOverviewSchema);
+      const requestSchema = document.paths[path].post.requestBody.content["application/json"].schema;
+      const reference = requestSchema.$ref as string;
+      expect(reference).toMatch(/^#\/components\/schemas\//);
+      expect(document.components.schemas[reference.slice("#/components/schemas/".length)].additionalProperties).toBe(false);
+    }
     expect(document.paths["/v1/career-documents/imports/{importId}"].get.responses["400"])
       .toEqual(expect.objectContaining({ description: expect.any(String) }));
   });

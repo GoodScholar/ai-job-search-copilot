@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
 import type { JobTargetOverview } from "@job-copilot/contracts/job-targets";
+import type { CompanyWatchlistOverview } from "@job-copilot/contracts/company-watchlists";
 import type { JobImportDetail } from "@job-copilot/contracts/job-imports";
 import type {
   AgentRunDetail,
@@ -59,6 +60,20 @@ const jobTargetOverview: JobTargetOverview = {
     },
     createdAt: "2026-08-28T08:00:00.000Z",
     updatedAt: "2026-08-28T08:00:00.000Z",
+  }],
+};
+
+const companyWatchlistOverview: CompanyWatchlistOverview = {
+  target: { targetId, targetVersion: 1, targetState: "active", roleFamily: "前端工程师" },
+  version: 5,
+  items: [{
+    itemId: "af8c6eb3-2b92-4d91-aad4-959b7d4cd7a3",
+    canonicalCompanyName: "示例公司",
+    careersUrl: "https://careers.example.com/jobs",
+    allowedDomains: ["example.com"],
+    sourceNote: null,
+    state: "enabled",
+    position: 1,
   }],
 };
 
@@ -292,6 +307,81 @@ it("拒绝四个求职目标 API 的无效成功响应", async () => {
   await expect(api.createJobTarget(sessionToken, { priority: "primary", constraints })).rejects.toMatchObject({ kind: "invalid_response" });
   await expect(api.reviseJobTarget(sessionToken, targetId, { expectedVersion: 1, priority: "primary", constraints })).rejects.toMatchObject({ kind: "invalid_response" });
   await expect(api.deactivateJobTarget(sessionToken, targetId, { expectedVersion: 1 })).rejects.toMatchObject({ kind: "invalid_response" });
+});
+
+it("通过 bearer 调用五个目标公司 Watchlist API，并严格返回共享概览 DTO", async () => {
+  const fetchImpl = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response(JSON.stringify(companyWatchlistOverview), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(companyWatchlistOverview), { status: 201 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(companyWatchlistOverview), { status: 201 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(companyWatchlistOverview), { status: 201 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(companyWatchlistOverview), { status: 201 }));
+  const api = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+  const itemId = companyWatchlistOverview.items[0].itemId;
+  const add = { expectedVersion: 0, canonicalCompanyName: "示例公司", careersUrl: "https://careers.example.com/jobs", allowedDomains: ["example.com"], sourceNote: null };
+  const revise = { ...add, expectedVersion: 1 };
+
+  await expect(api.getCompanyWatchlist(sessionToken, targetId)).resolves.toEqual(companyWatchlistOverview);
+  await expect(api.addCompanyWatchlistItem(sessionToken, targetId, add)).resolves.toEqual(companyWatchlistOverview);
+  await expect(api.reviseCompanyWatchlistItem(sessionToken, targetId, itemId, revise)).resolves.toEqual(companyWatchlistOverview);
+  await expect(api.setCompanyWatchlistItemState(sessionToken, targetId, itemId, { expectedVersion: 2, state: "disabled" })).resolves.toEqual(companyWatchlistOverview);
+  await expect(api.reorderCompanyWatchlist(sessionToken, targetId, { expectedVersion: 3, orderedItemIds: [itemId] })).resolves.toEqual(companyWatchlistOverview);
+
+  expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+    `http://127.0.0.1:3021/v1/job-targets/${targetId}/company-watchlist`,
+    `http://127.0.0.1:3021/v1/job-targets/${targetId}/company-watchlist/items`,
+    `http://127.0.0.1:3021/v1/job-targets/${targetId}/company-watchlist/items/${itemId}/revisions`,
+    `http://127.0.0.1:3021/v1/job-targets/${targetId}/company-watchlist/items/${itemId}/state-changes`,
+    `http://127.0.0.1:3021/v1/job-targets/${targetId}/company-watchlist/reorders`,
+  ]);
+  expect(fetchImpl.mock.calls.map(([, init]) => ({ method: init?.method, body: init?.body }))).toEqual([
+    { method: "GET", body: undefined },
+    { method: "POST", body: JSON.stringify(add) },
+    { method: "POST", body: JSON.stringify(revise) },
+    { method: "POST", body: JSON.stringify({ expectedVersion: 2, state: "disabled" }) },
+    { method: "POST", body: JSON.stringify({ expectedVersion: 3, orderedItemIds: [itemId] }) },
+  ]);
+  for (const [, init] of fetchImpl.mock.calls) {
+    expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${sessionToken}`);
+  }
+});
+
+it("将五个目标公司 Watchlist API 的无效成功体映射为 invalid_response", async () => {
+  const fetchImpl = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response(JSON.stringify({ version: 0 }), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [] }), { status: 201 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ target: {} }), { status: 201 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ unknown: true }), { status: 201 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ version: 1, unknown: true }), { status: 201 }));
+  const api = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+  const itemId = companyWatchlistOverview.items[0].itemId;
+  const add = { expectedVersion: 0, canonicalCompanyName: "示例公司", careersUrl: "https://careers.example.com/jobs", allowedDomains: ["example.com"], sourceNote: null };
+
+  await expect(api.getCompanyWatchlist(sessionToken, targetId)).rejects.toMatchObject({ kind: "invalid_response" });
+  await expect(api.addCompanyWatchlistItem(sessionToken, targetId, add)).rejects.toMatchObject({ kind: "invalid_response" });
+  await expect(api.reviseCompanyWatchlistItem(sessionToken, targetId, itemId, { ...add, expectedVersion: 1 })).rejects.toMatchObject({ kind: "invalid_response" });
+  await expect(api.setCompanyWatchlistItemState(sessionToken, targetId, itemId, { expectedVersion: 2, state: "enabled" })).rejects.toMatchObject({ kind: "invalid_response" });
+  await expect(api.reorderCompanyWatchlist(sessionToken, targetId, { expectedVersion: 3, orderedItemIds: [itemId] })).rejects.toMatchObject({ kind: "invalid_response" });
+});
+
+it("保留五个目标公司 Watchlist API 的标准 problem 响应", async () => {
+  const problem = { code: "COMPANY_WATCHLIST_VERSION_CONFLICT", message: "目标公司 Watchlist 已在其他位置更新，请刷新后重试", requestId: "cf8c6eb3-2b92-4d91-aad4-959b7d4cd7a3" };
+  const fetchImpl = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response(JSON.stringify(problem), { status: 409 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(problem), { status: 409 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(problem), { status: 409 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(problem), { status: 409 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(problem), { status: 409 }));
+  const api = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+  const itemId = companyWatchlistOverview.items[0].itemId;
+  const add = { expectedVersion: 0, canonicalCompanyName: "示例公司", careersUrl: "https://careers.example.com/jobs", allowedDomains: ["example.com"], sourceNote: null };
+  const expectProblem = { kind: "api", status: 409, problem };
+
+  await expect(api.getCompanyWatchlist(sessionToken, targetId)).rejects.toMatchObject(expectProblem);
+  await expect(api.addCompanyWatchlistItem(sessionToken, targetId, add)).rejects.toMatchObject(expectProblem);
+  await expect(api.reviseCompanyWatchlistItem(sessionToken, targetId, itemId, { ...add, expectedVersion: 1 })).rejects.toMatchObject(expectProblem);
+  await expect(api.setCompanyWatchlistItemState(sessionToken, targetId, itemId, { expectedVersion: 2, state: "enabled" })).rejects.toMatchObject(expectProblem);
+  await expect(api.reorderCompanyWatchlist(sessionToken, targetId, { expectedVersion: 3, orderedItemIds: [itemId] })).rejects.toMatchObject(expectProblem);
 });
 
 it("recognizes an already-invalid current session from the shared error response", async () => {
