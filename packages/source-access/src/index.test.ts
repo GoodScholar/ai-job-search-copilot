@@ -1,6 +1,7 @@
 import { createServer, type Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PublicSourceAccessError, createPublicSourceClient } from "./index.js";
+import { createPublicSourceClientForTest } from "./testing.js";
 
 describe("PublicSourceClient", () => {
   let server: Server;
@@ -9,6 +10,7 @@ describe("PublicSourceClient", () => {
   let userAgent: string | undefined;
 
   beforeAll(async () => {
+    process.env.APP_ENV = "test";
     server = createServer((request, response) => {
       requests += 1;
       userAgent = request.headers["user-agent"];
@@ -33,8 +35,8 @@ describe("PublicSourceClient", () => {
 
   afterAll(async () => { await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); });
 
-  function client(overrides: Partial<Parameters<typeof createPublicSourceClient>[0]> = {}) {
-    return createPublicSourceClient({ appEnv: "test", testOrigin: origin, exactHosts: ["127.0.0.1"], ...overrides });
+  function client(overrides: Partial<Parameters<typeof createPublicSourceClientForTest>[0]> = {}) {
+    return createPublicSourceClientForTest({ testOrigin: origin, exactHosts: ["127.0.0.1"], ...overrides });
   }
 
   it.each([
@@ -64,10 +66,25 @@ describe("PublicSourceClient", () => {
 
   it("fails closed in test without an explicit controlled origin before DNS", async () => {
     let lookups = 0;
-    const guarded = createPublicSourceClient({ appEnv: "test", exactHosts: ["example.test"], lookup: async () => { lookups += 1; return [{ address: "93.184.216.34", family: 4 }]; } });
+    const guarded = createPublicSourceClientForTest({ exactHosts: ["example.test"], lookup: async () => { lookups += 1; return [{ address: "93.184.216.34", family: 4 }]; } });
     await expect(guarded.get({ url: new URL("https://example.test/job"), allowedDomains: ["example.test"], accept: "text/html", maxRedirects: 0, retry: "none" }))
       .rejects.toMatchObject({ code: "PUBLIC_SOURCE_NETWORK_DISABLED" });
     expect(lookups).toBe(0);
+  });
+
+  it("does not accept test-origin or transport overrides through the production factory", async () => {
+    const appEnv = process.env.APP_ENV;
+    let transports = 0;
+    process.env.APP_ENV = "production";
+    try {
+      const productionFactory = createPublicSourceClient as unknown as (config: { exactHosts: string[]; testOrigin: string; transport: () => Promise<never> }) => ReturnType<typeof createPublicSourceClient>;
+      const access = productionFactory({ exactHosts: ["127.0.0.1"], testOrigin: origin, transport: async () => { transports += 1; throw new Error("must not run"); } });
+      await expect(access.get({ url: new URL(`${origin}/html`), allowedDomains: ["127.0.0.1"], accept: "text/html", maxRedirects: 0, retry: "none" }))
+        .rejects.toMatchObject({ code: "PUBLIC_SOURCE_TARGET_REJECTED" });
+      expect(transports).toBe(0);
+    } finally {
+      process.env.APP_ENV = appEnv;
+    }
   });
 
   it("uses only the explicit controlled test origin and validates response policy", async () => {
@@ -93,7 +110,7 @@ describe("PublicSourceClient", () => {
     const seenDelays: number[] = [];
     const access = client({ totalTimeoutMs: 60_000, sleep: async (ms) => { seenDelays.push(ms); } });
     await expect(access.get({ url: new URL(`${origin}/rate-limited`), allowedDomains: ["127.0.0.1"], accept: "text/html", maxRedirects: 0, retry: "bounded" }))
-      .resolves.toMatchObject({ status: 429 });
+      .resolves.toMatchObject({ status: 429, attemptCount: 2 });
     expect(seenDelays).toEqual([30_000]);
 
     const retry5xx = client({ sleep: async () => undefined });
@@ -114,8 +131,8 @@ describe("PublicSourceClient", () => {
 
   it("rejects private and mixed DNS answers before transport, while pinning an approved answer", async () => {
     let transports = 0;
-    const mixed = createPublicSourceClient({
-      appEnv: "development", exactHosts: ["source.test"],
+    const mixed = createPublicSourceClientForTest({
+      exactHosts: ["source.test"],
       lookup: async () => [{ address: "93.184.216.34", family: 4 }, { address: "127.0.0.1", family: 4 }],
       transport: async () => { transports += 1; throw new Error("must not run"); },
     });
@@ -124,8 +141,8 @@ describe("PublicSourceClient", () => {
     expect(transports).toBe(0);
 
     let pinnedAddress: string | undefined;
-    const pinned = createPublicSourceClient({
-      appEnv: "development", exactHosts: ["source.test"],
+    const pinned = createPublicSourceClientForTest({
+      exactHosts: ["source.test"],
       lookup: async () => [{ address: "93.184.216.34", family: 4 }],
       transport: async ({ target }) => { pinnedAddress = target.address; return { status: 200, headers: { "content-type": "text/html" }, body: new Uint8Array() }; },
     });
@@ -143,21 +160,21 @@ describe("PublicSourceClient", () => {
       active -= 1;
       return { status: 200, headers: { "content-type": "text/html" }, body: new Uint8Array() };
     };
-    const access = createPublicSourceClient({ appEnv: "development", exactHosts: ["one.test", "two.test", "three.test"], lookup: async () => [{ address: "93.184.216.34", family: 4 }], transport });
+    const access = createPublicSourceClientForTest({ exactHosts: ["one.test", "two.test", "three.test"], lookup: async () => [{ address: "93.184.216.34", family: 4 }], transport });
     await Promise.all(["one.test", "two.test", "three.test"].map((host) => access.get({ url: new URL(`https://${host}/jobs`), allowedDomains: [host], accept: "text/html", maxRedirects: 0, retry: "none" })));
     expect(maximum).toBe(2);
 
     active = 0;
     maximum = 0;
-    const sameHost = createPublicSourceClient({ appEnv: "development", exactHosts: ["one.test"], lookup: async () => [{ address: "93.184.216.34", family: 4 }], transport });
+    const sameHost = createPublicSourceClientForTest({ exactHosts: ["one.test"], lookup: async () => [{ address: "93.184.216.34", family: 4 }], transport });
     await Promise.all([sameHost.get({ url: new URL("https://one.test/a"), allowedDomains: ["one.test"], accept: "text/html", maxRedirects: 0, retry: "none" }), sameHost.get({ url: new URL("https://one.test/b"), allowedDomains: ["one.test"], accept: "text/html", maxRedirects: 0, retry: "none" })]);
     expect(maximum).toBe(1);
   });
 
   it("reports a bounded retry as one logical request with two stable attempts", async () => {
     let calls = 0;
-    const access = createPublicSourceClient({
-      appEnv: "development", exactHosts: ["unreachable.test"],
+    const access = createPublicSourceClientForTest({
+      exactHosts: ["unreachable.test"],
       lookup: async () => [{ address: "93.184.216.34", family: 4 }],
       transport: async () => { calls += 1; throw new Error("offline"); },
       sleep: async () => undefined,
@@ -170,8 +187,8 @@ describe("PublicSourceClient", () => {
   it("removes an aborted queued request without consuming a later permit", async () => {
     let release: (() => void) | undefined;
     const held = new Promise<void>((resolve) => { release = resolve; });
-    const access = createPublicSourceClient({
-      appEnv: "development", exactHosts: ["hold-one.test", "hold-two.test", "queued.test", "later.test"],
+    const access = createPublicSourceClientForTest({
+      exactHosts: ["hold-one.test", "hold-two.test", "queued.test", "later.test"],
       lookup: async () => [{ address: "93.184.216.34", family: 4 }],
       transport: async ({ url }) => {
         if (url.hostname === "hold-one.test" || url.hostname === "hold-two.test") await held;

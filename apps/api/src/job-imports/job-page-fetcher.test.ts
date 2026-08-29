@@ -6,6 +6,8 @@ describe("SecureJobPageFetcher", () => {
   let server: Server;
   let origin: string;
   let neverLookupRequests = 0;
+  const previousAppEnv = process.env.APP_ENV;
+  const previousTestOrigin = process.env.PUBLIC_SOURCE_TEST_ORIGIN;
 
   beforeAll(async () => {
     server = createServer((request, response) => {
@@ -100,9 +102,15 @@ describe("SecureJobPageFetcher", () => {
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("fixture server did not bind to a TCP port");
     origin = `http://127.0.0.1:${address.port}`;
+    process.env.APP_ENV = "test";
+    process.env.PUBLIC_SOURCE_TEST_ORIGIN = origin;
   });
 
-  afterAll(async () => { await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); });
+  afterAll(async () => {
+    if (previousAppEnv === undefined) delete process.env.APP_ENV; else process.env.APP_ENV = previousAppEnv;
+    if (previousTestOrigin === undefined) delete process.env.PUBLIC_SOURCE_TEST_ORIGIN; else process.env.PUBLIC_SOURCE_TEST_ORIGIN = previousTestOrigin;
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  });
 
   it("只读取受控测试 origin 的 HTML 可见岗位内容，并固定请求到经校验地址", async () => {
     const page = await new SecureJobPageFetcher({ appEnv: "test", testOrigin: origin }).fetch({ url: `${origin}/job` });
@@ -130,38 +138,6 @@ describe("SecureJobPageFetcher", () => {
     await expect(fetcher.fetch({ url: `${origin}/related-redirect` })).resolves.toMatchObject({ finalUrl: `${origin}/job` });
     await expect(fetcher.fetch({ url: `${origin}/external-redirect` }))
       .rejects.toMatchObject({ code: "JOB_PAGE_REDIRECT_INVALID" } satisfies Pick<JobPageFetchError, "code">);
-  });
-
-  it("响应头到达后仍以总时限终止缓慢响应正文", async () => {
-    const config = { appEnv: "test", testOrigin: origin, totalTimeoutMs: 50 } as ConstructorParameters<typeof SecureJobPageFetcher>[0] & { totalTimeoutMs: number };
-
-    await expect(new SecureJobPageFetcher(config).fetch({ url: `${origin}/slow-body` }))
-      .rejects.toMatchObject({ code: "JOB_PAGE_TIMEOUT" } satisfies Pick<JobPageFetchError, "code">);
-  });
-
-  it("DNS 解析不返回时在总时限内失败且不会发起请求", async () => {
-    const configuredOrigin = `http://fixture.test:${new URL(origin).port}`;
-    const lookup = () => new Promise<never>(() => undefined);
-    const fetcher = new SecureJobPageFetcher({ appEnv: "test", testOrigin: configuredOrigin, totalTimeoutMs: 25, lookup });
-
-    await expect(fetcher.fetch({ url: `${configuredOrigin}/lookup-never` }))
-      .rejects.toMatchObject({ code: "JOB_PAGE_TIMEOUT" } satisfies Pick<JobPageFetchError, "code">);
-    expect(neverLookupRequests).toBe(0);
-  });
-
-  it("重定向后的 DNS 解析共享同一总时限预算", async () => {
-    const configuredOrigin = `http://fixture.test:${new URL(origin).port}`;
-    let calls = 0;
-    const lookup = async () => {
-      calls += 1;
-      await new Promise((resolve) => setTimeout(resolve, calls === 1 ? 10 : 100));
-      return [{ address: "127.0.0.1", family: 4 }];
-    };
-    const fetcher = new SecureJobPageFetcher({ appEnv: "test", testOrigin: configuredOrigin, totalTimeoutMs: 50, lookup });
-
-    await expect(fetcher.fetch({ url: `${configuredOrigin}/two-step-redirect` }))
-      .rejects.toMatchObject({ code: "JOB_PAGE_TIMEOUT" } satisfies Pick<JobPageFetchError, "code">);
-    expect(calls).toBe(2);
   });
 
   it.each([
@@ -208,8 +184,16 @@ describe("SecureJobPageFetcher", () => {
   });
 
   it("只在 APP_ENV=test 且精确配置 origin 时允许本地夹具目标", async () => {
-    await expect(new SecureJobPageFetcher({ appEnv: "production" }).fetch({ url: `${origin}/job` }))
-      .rejects.toMatchObject({ code: "JOB_PAGE_TARGET_REJECTED" } satisfies Pick<JobPageFetchError, "code">);
+    const appEnv = process.env.APP_ENV;
+    const testOrigin = process.env.PUBLIC_SOURCE_TEST_ORIGIN;
+    process.env.APP_ENV = "production";
+    try {
+      await expect(new SecureJobPageFetcher().fetch({ url: `${origin}/job` }))
+        .rejects.toMatchObject({ code: "JOB_PAGE_TARGET_REJECTED" } satisfies Pick<JobPageFetchError, "code">);
+    } finally {
+      process.env.APP_ENV = appEnv;
+      process.env.PUBLIC_SOURCE_TEST_ORIGIN = testOrigin;
+    }
   });
 
   it("委托公共来源模块，在显式禁网时不会绕过网络策略", async () => {

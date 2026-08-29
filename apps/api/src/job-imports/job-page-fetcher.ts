@@ -36,34 +36,25 @@ export interface JobPageFetcher {
 }
 
 type HtmlNode = DefaultTreeAdapterMap["node"];
-type DnsLookup = (hostname: string) => Promise<Array<{ address: string; family: number }>>;
-
 export class SecureJobPageFetcher implements JobPageFetcher {
-  constructor(private readonly config: { appEnv: string; testOrigin?: string; connectTimeoutMs?: number; totalTimeoutMs?: number; lookup?: DnsLookup } = { appEnv: process.env.APP_ENV ?? "development" }) {}
+  constructor(_legacyTestConfig?: unknown) {}
 
   async fetch({ url }: { url: string }): Promise<FetchedJobPage> {
     const requested = this.parseUrl(url, "JOB_PAGE_URL_INVALID");
-    const client = createPublicSourceClient({
-      appEnv: this.config.appEnv,
-      testOrigin: this.config.testOrigin,
-      exactHosts: [requested.hostname],
-      connectTimeoutMs: this.config.connectTimeoutMs,
-      totalTimeoutMs: this.config.totalTimeoutMs,
-      lookup: this.config.lookup,
-    });
-    let response: { status: number; headers: Readonly<Record<string, string>>; body: Uint8Array };
+    const client = createPublicSourceClient({ exactHosts: [requested.hostname] });
+    let response: { status: number; headers: Readonly<Record<string, string>>; body: Uint8Array; finalUrl: URL; attemptCount: number };
     try {
       response = await client.get({ url: requested, allowedDomains: [requested.hostname], accept: "text/html", maxRedirects: 3, retry: "none" });
     } catch (error) {
       throw this.mapError(error);
     }
     this.assertStatus(response.status);
-    const finalUrl = (response as typeof response & { __finalUrl?: URL }).__finalUrl ?? requested;
+    const finalUrl = response.finalUrl;
     const rawHtml = Buffer.from(response.body).toString("utf8");
     const extracted = extractJobPage(rawHtml, finalUrl);
     return {
       requestedUrl: requested.toString(), finalUrl: finalUrl.toString(), canonicalUrl: extracted.canonicalUrl,
-      rawHtml, visibleText: extracted.visibleText, pageClassification: "job", sourceKind: sourceKind(finalUrl, this.config),
+      rawHtml, visibleText: extracted.visibleText, pageClassification: "job", sourceKind: sourceKind(finalUrl),
     };
   }
 
@@ -188,8 +179,8 @@ function normalizedHostname(hostname: string): string {
   return hostname.toLowerCase().replace(/^www\./u, "");
 }
 
-function sourceKind(url: URL, config: { appEnv: string; testOrigin?: string }): "official" | "aggregator" {
-  if (config.appEnv === "test" && config.testOrigin && url.origin === config.testOrigin) return "official";
+function sourceKind(url: URL): "official" | "aggregator" {
+  if (process.env.APP_ENV === "test" && process.env.PUBLIC_SOURCE_TEST_ORIGIN && url.origin === process.env.PUBLIC_SOURCE_TEST_ORIGIN) return "official";
   return ["boards.greenhouse.io", "job-boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com", "apply.workable.com", "jobs.smartrecruiters.com"].includes(normalizedHostname(url.hostname))
     ? "official"
     : "aggregator";

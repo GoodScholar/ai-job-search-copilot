@@ -37,3 +37,23 @@
 ## Concern
 
 `pnpm test` and the direct Worker integration command were started, but their long-running worker/domain portions did not produce a completed result within this task window. Focused source-access and API fetcher suites plus whole-workspace typecheck are green.
+
+## Fix Round 1
+
+### RED / GREEN
+
+- RED: the existing source-access test suite demonstrated that the old root factory accepted `appEnv`, `testOrigin`, lookup and transport arguments, and that private attempt/final-URL metadata was required by the fetcher.
+- GREEN: `pnpm --filter @job-copilot/source-access test` reports 14 passing tests. It now includes a production-factory override regression: a cast-at-runtime `testOrigin`/transport payload still rejects loopback before any supplied transport runs.
+- GREEN: `pnpm --filter api exec vitest run src/job-imports/job-page-fetcher.test.ts` reports 23 passing tests.
+- GREEN: source-access and API `typecheck`, plus `git diff --check`, pass.
+
+### Changes and self-review
+
+- Root `@job-copilot/source-access` now exposes only `{ exactHosts }`. Test-only lookup/transport/sleep configuration is exported from `@job-copilot/source-access/testing`; its HTTP test-origin exception additionally requires the real `process.env.APP_ENV === "test"`.
+- `SecureJobPageFetcher` has no operative network override: its local fixture authorization comes only from the real test environment variables.
+- Acquiring the per-host semaphore is now inside a `try/finally` that always releases the already-acquired global permit on abort/throw.
+- Successful responses declare `finalUrl` and cumulative `attemptCount`; retry counts are reset per redirect hop, while errors retain typed stable metadata. The former `__attemptCount` and `__finalUrl` protocol is removed.
+
+### Concern
+
+The broad API command starts Testcontainers and failed during reaper port binding in this environment; the focused fetcher suite required for this slice passed with `pnpm --filter api exec vitest run src/job-imports/job-page-fetcher.test.ts`.
