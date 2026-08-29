@@ -29,6 +29,24 @@ git diff --check
 
 - `AGENT_RUN_COMMAND_ID_CONFLICT` 是任务说明中的 HTTP 映射名；当前领域控制接口只会公开 `AGENT_RUN_CONTROL_CONFLICT`（相同 command ID 的不同动作），因此 controller 如实映射现有领域稳定码。后续联合审查应确认是否需要在领域层区分该码，不能由 API 擅自制造第二套判断规则。
 
+## 联合审查修复
+
+- RED（命令 ID）：领域控制集成测试先将同 `commandId` 不同动作的预期改为 `AGENT_RUN_COMMAND_ID_CONFLICT`，旧实现仍返回生命周期冲突码而失败。
+- RED（Inbox）：API 集成测试使 `restart_run` 的目标不可用，旧 controller 将 `AGENT_INBOX_ACTION_FAILED` 映射为 409；预期为全局过滤器产生的脱敏 500，且 action ledger 保持 `failed`、相同 actionId 重放仍失败。
+- GREEN：领域仅在 durable prior-command 的不同动作分支公开 `AGENT_RUN_COMMAND_ID_CONFLICT`；controller 明确映射两个控制冲突码为 409，而 Inbox controller 只映射明确 not-found/conflict，真实执行失败向上抛给全局脱敏 500。
+- SSE 覆盖重构为表驱动：`paused/cancelled/completed/failed` 终止；`pause_requested/resume_requested/cancel_requested` 继续流；原有游标恢复断言保留。
+
+```text
+pnpm --filter api test -- src/agent-runs/agent-run-event-stream.test.ts src/api.integration.test.ts
+# 12 files、150 tests passed
+pnpm --filter @job-copilot/domain test -- src/agent-run-control.integration.test.ts
+# 19 files、175 tests passed
+pnpm --filter api typecheck
+pnpm --filter @job-copilot/domain typecheck
+pnpm --filter @job-copilot/contracts typecheck
+git diff --check
+```
+
 ---
 
 # Task 4B — Web server adapters 与同源 BFF 交付报告

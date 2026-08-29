@@ -571,7 +571,7 @@ describe("authenticated workbench HTTP API", () => {
     expect(replay.statusCode).toBe(200);
     expect(replay.json()).toEqual(paused.json());
     expect(commandConflict.statusCode).toBe(409);
-    expect(commandConflict.json()).toMatchObject({ code: "AGENT_RUN_CONTROL_CONFLICT" });
+    expect(commandConflict.json()).toMatchObject({ code: "AGENT_RUN_COMMAND_ID_CONFLICT" });
 
     const inbox = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=open", headers: bearer(primary.sessionToken) });
     expect(inbox.statusCode).toBe(200);
@@ -632,6 +632,31 @@ describe("authenticated workbench HTTP API", () => {
     const afterFailures = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=open", headers: bearer(primary.sessionToken) });
     const restartItemId = afterFailures.json().items.find((item: { runId: string }) => item.runId === failedRunId).itemId as string;
     const dismissItemId = afterFailures.json().items.find((item: { runId: string }) => item.runId === budgetRunId).itemId as string;
+    await database.$client`
+      update job_targets set state = 'inactive', active_slot = null
+      where id = ${targetId} and user_id = ${primary.account.userId}
+    `;
+    const failedRestartActionId = randomUUID();
+    const failedRestart = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-inbox/${restartItemId}/actions`, headers: bearer(primary.sessionToken),
+      payload: { actionId: failedRestartActionId, action: "restart_run" },
+    });
+    const failedRestartReplay = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-inbox/${restartItemId}/actions`, headers: bearer(primary.sessionToken),
+      payload: { actionId: failedRestartActionId, action: "restart_run" },
+    });
+    expect(failedRestart.statusCode).toBe(500);
+    expect(failedRestart.json()).toMatchObject({ code: "INTERNAL_ERROR", message: "服务暂时不可用", requestId: expect.any(String) });
+    expect(failedRestart.body).not.toContain("AGENT_INBOX_ACTION_FAILED");
+    expect(failedRestartReplay.statusCode).toBe(500);
+    await expect(database.$client`
+      select outcome, reason_code as "reasonCode" from agent_inbox_item_actions
+      where user_id = ${primary.account.userId} and item_id = ${restartItemId} and action_id = ${failedRestartActionId}
+    `).resolves.toEqual([{ outcome: "failed", reasonCode: "AGENT_INBOX_ACTION_FAILED" }]);
+    await database.$client`
+      update job_targets set state = 'active', active_slot = null
+      where id = ${targetId} and user_id = ${primary.account.userId}
+    `;
     const restarted = await app.getHttpAdapter().getInstance().inject({
       method: "POST", url: `/v1/agent-inbox/${restartItemId}/actions`, headers: bearer(primary.sessionToken),
       payload: { actionId: randomUUID(), action: "restart_run" },

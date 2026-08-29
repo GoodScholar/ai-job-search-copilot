@@ -43,7 +43,10 @@ function mapStartError(error: AgentRunError): ApiException {
 
 function mapControlError(error: AgentRunControlError): ApiException {
   if (error.code === "AGENT_RUN_NOT_FOUND") return notFound(error.code);
-  return new ApiException(error.code, HttpStatus.CONFLICT, "Agent 运行状态已变化，请刷新后重试");
+  if (error.code === "AGENT_RUN_COMMAND_ID_CONFLICT" || error.code === "AGENT_RUN_CONTROL_CONFLICT") {
+    return new ApiException(error.code, HttpStatus.CONFLICT, "Agent 运行状态已变化，请刷新后重试");
+  }
+  throw error;
 }
 
 function publicDetail(run: AgentRunDetail): AgentRunDetail {

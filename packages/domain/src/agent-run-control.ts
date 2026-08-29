@@ -19,7 +19,7 @@ export class AgentRunError extends Error {
 }
 
 export class AgentRunControlError extends Error {
-  constructor(public readonly code: "AGENT_RUN_CONTROL_CONFLICT" | "AGENT_RUN_NOT_FOUND") { super(code); }
+  constructor(public readonly code: "AGENT_RUN_COMMAND_ID_CONFLICT" | "AGENT_RUN_CONTROL_CONFLICT" | "AGENT_RUN_NOT_FOUND") { super(code); }
 }
 
 type CommandDependencies = { db: Database; queue: AgentRunQueue; auditTrail: AuditTrail; id: () => string; clock: () => Date };
@@ -123,7 +123,7 @@ export function createAgentRunCommands(deps: CommandDependencies): {
         if (!run) throw new AgentRunControlError("AGENT_RUN_NOT_FOUND");
         const [prior] = await transaction.select().from(agentRunControlCommands).where(and(eq(agentRunControlCommands.userId, input.userId), eq(agentRunControlCommands.runId, input.runId), eq(agentRunControlCommands.commandId, command.commandId)));
         if (prior) {
-          if (prior.action !== command.action) throw new AgentRunControlError("AGENT_RUN_CONTROL_CONFLICT");
+          if (prior.action !== command.action) throw new AgentRunControlError("AGENT_RUN_COMMAND_ID_CONFLICT");
           return { response: { applied: prior.applied, run: prior.resultSnapshot as ControlSnapshot }, wake: false };
         }
         const transition = reduceControl({ status: run.status as "queued" | "running" | "paused" | "completed" | "failed" | "cancelled", controlState: run.controlState as "none" | "pause_requested" | "cancel_requested" }, command.action);

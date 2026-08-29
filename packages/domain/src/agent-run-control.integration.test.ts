@@ -61,7 +61,7 @@ describe("agent run controls", () => {
     await expect(database.select().from(auditEvents).where(and(eq(auditEvents.userId, userId), eq(auditEvents.resourceId, run.runId), eq(auditEvents.eventType, "agent.run_paused")))).resolves.toHaveLength(1);
   });
 
-  it("将跨账户运行隐藏为 404，并拒绝 commandId 改变动作", async () => {
+  it("将跨账户运行隐藏为 404，并将 commandId 改变动作标为幂等键冲突", async () => {
     const owner = await activeTarget();
     const other = await activeTarget();
     const run = await commands(new MemoryQueue()).start({ userId: owner.userId, requestId: crypto.randomUUID(), command: { targetId: owner.targetId, idempotencyKey: crypto.randomUUID() } });
@@ -69,7 +69,7 @@ describe("agent run controls", () => {
     await commands(new MemoryQueue()).control({ userId: owner.userId, requestId: crypto.randomUUID(), runId: run.runId, command: { commandId, action: "pause" } });
 
     await expect(commands(new MemoryQueue()).control({ userId: other.userId, requestId: crypto.randomUUID(), runId: run.runId, command: { commandId: crypto.randomUUID(), action: "cancel" } })).rejects.toMatchObject({ code: "AGENT_RUN_NOT_FOUND" } satisfies Partial<AgentRunControlError>);
-    await expect(commands(new MemoryQueue()).control({ userId: owner.userId, requestId: crypto.randomUUID(), runId: run.runId, command: { commandId, action: "cancel" } })).rejects.toMatchObject({ code: "AGENT_RUN_CONTROL_CONFLICT" } satisfies Partial<AgentRunControlError>);
+    await expect(commands(new MemoryQueue()).control({ userId: owner.userId, requestId: crypto.randomUUID(), runId: run.runId, command: { commandId, action: "cancel" } })).rejects.toMatchObject({ code: "AGENT_RUN_COMMAND_ID_CONFLICT" } satisfies Partial<AgentRunControlError>);
   });
 
   it("让取消覆盖运行中的暂停，并让队列唤醒故障不回滚恢复后的状态", async () => {

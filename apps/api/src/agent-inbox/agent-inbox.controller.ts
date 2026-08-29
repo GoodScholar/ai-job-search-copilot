@@ -7,7 +7,7 @@ import {
   AgentInboxListSchema,
   AgentInboxStatusSchema,
 } from "@job-copilot/contracts/agent-inbox";
-import { AgentInboxActionError, AgentInboxError } from "@job-copilot/domain/agent-runs";
+import { AgentInboxError } from "@job-copilot/domain/agent-runs";
 import type { FastifyRequest } from "fastify";
 import { createZodDto, ZodResponse } from "nestjs-zod";
 import { z } from "zod";
@@ -25,14 +25,14 @@ class AgentInboxActionResponseDto extends createZodDto(AgentInboxActionResponseS
 class AgentInboxPathDto extends createZodDto(z.object({ itemId: z.uuid() }).strict()) {}
 class AgentInboxListQueryDto extends createZodDto(z.object({ status: AgentInboxStatusSchema.default("open") }).strict()) {}
 
-function inboxProblem(error: AgentInboxError | AgentInboxActionError): ApiException {
-  if (error instanceof AgentInboxError && error.code === "AGENT_INBOX_NOT_FOUND") {
+function inboxProblem(error: AgentInboxError): ApiException {
+  if (error.code === "AGENT_INBOX_NOT_FOUND") {
     return new ApiException("AGENT_INBOX_ITEM_NOT_FOUND", HttpStatus.NOT_FOUND, "Agent Inbox 事项不存在");
   }
-  if (error instanceof AgentInboxError && error.code === "AGENT_INBOX_ACTION_CONFLICT") {
+  if (error.code === "AGENT_INBOX_ACTION_CONFLICT") {
     return new ApiException(error.code, HttpStatus.CONFLICT, "Agent Inbox 事项状态已变化，请刷新后重试");
   }
-  return new ApiException("AGENT_INBOX_ACTION_CONFLICT", HttpStatus.CONFLICT, "Agent Inbox 事项暂时无法处理，请稍后重试");
+  throw error;
 }
 
 @Controller("v1/agent-inbox")
@@ -69,7 +69,7 @@ export class AgentInboxController {
         command: AgentInboxActionCommandSchema.parse(command),
       });
     } catch (error) {
-      if (error instanceof AgentInboxError || error instanceof AgentInboxActionError) throw inboxProblem(error);
+      if (error instanceof AgentInboxError) throw inboxProblem(error);
       throw error;
     }
   }
