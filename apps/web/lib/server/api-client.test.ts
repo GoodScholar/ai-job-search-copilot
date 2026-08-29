@@ -1,7 +1,12 @@
 import { expect, it, vi } from "vitest";
 import type { JobTargetOverview } from "@job-copilot/contracts/job-targets";
 import type { JobImportDetail } from "@job-copilot/contracts/job-imports";
-import type { AgentRunDetail, StartAgentRunResponse } from "@job-copilot/contracts/agent-runs";
+import type {
+  AgentRunDetail,
+  ControlAgentRunResponse,
+  StartAgentRunResponse,
+} from "@job-copilot/contracts/agent-runs";
+import type { AgentInboxActionResponse, AgentInboxItem } from "@job-copilot/contracts/agent-inbox";
 
 vi.mock("server-only", () => ({}));
 
@@ -84,7 +89,7 @@ const agentRunSummary = {
   adapter: "fake",
   adapterVersion: "fake-job-discovery-v1",
   outputSchemaVersion: "job-discovery-result-v1",
-  budget: { maxDurationMs: 60_000, maxAttempts: 3, maxToolCalls: 10, maxResults: 5, maxModelCalls: 0, maxTokens: 0 },
+  budget: { maxActiveDurationMs: 60_000, maxAttempts: 3, maxToolCalls: 10, maxResults: 5, maxModelCalls: 0, maxTokens: 0 },
   status: "queued",
   currentStep: "queued",
   version: 1,
@@ -94,14 +99,56 @@ const agentRunSummary = {
   startedAt: null,
   completedAt: null,
   failedAt: null,
+  cancelledAt: null,
   updatedAt: "2026-08-29T08:00:00.000Z",
 } satisfies Omit<StartAgentRunResponse, "reused">;
 const agentRunDetail = {
   ...agentRunSummary,
+  executionSpec: {
+    targetSnapshot: agentRunSummary.targetSnapshot,
+    sourceScope: agentRunSummary.sourceScope,
+    workflowVersion: "job-discovery-workflow-v1",
+    ruleVersion: "fake-job-discovery-rules-v1",
+    adapter: "fake",
+    adapterVersion: "fake-job-discovery-v1",
+    outputSchemaVersion: "job-discovery-result-v1",
+    toolAllowlist: ["job_discovery.search_batch", "job_discovery.get_detail"],
+    model: null,
+    budget: agentRunSummary.budget,
+  },
+  controlState: "none",
+  usage: {
+    activeDurationMs: 0, attempts: 0, toolCalls: 0, sourceRequests: 0, modelCalls: 0,
+    inputTokens: 0, outputTokens: 0, totalTokens: 0, results: 0, complete: true,
+  },
+  termination: null,
+  retryOfRunId: null,
   steps: [],
   events: [],
   results: [],
 } satisfies AgentRunDetail;
+
+const controlResponse: ControlAgentRunResponse = {
+  applied: true,
+  run: { runId: agentRunId, status: "paused", currentStep: "queued", controlState: "none", version: 2 },
+};
+
+const inboxItem: AgentInboxItem = {
+  itemId: "39d2bfbf-7e40-49fc-86c8-3a15d7ad4f98",
+  runId: agentRunId,
+  kind: "decision_required",
+  status: "open",
+  reasonCode: "AGENT_RUN_PAUSED",
+  budgetDimension: null,
+  title: "岗位发现已暂停",
+  message: "选择继续或取消本次岗位发现。",
+  availableActions: ["resume_run", "cancel_run"],
+  targetHref: null,
+  createdAt: "2026-08-29T08:00:00.000Z",
+  resolvedAt: null,
+};
+
+const inboxActionResponse: AgentInboxActionResponse = { applied: true, item: inboxItem, run: controlResponse.run };
 
 it("starts a dev session with an opaque request id and parses the shared response", async () => {
   const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
@@ -422,6 +469,48 @@ it("拒绝不符合 Agent Run 契约的成功 JSON", async () => {
   await expect(client.startAgentRun(sessionToken, command)).rejects.toMatchObject({ kind: "invalid_response" });
   await expect(client.getLatestAgentRun(sessionToken)).rejects.toMatchObject({ kind: "invalid_response" });
   await expect(client.getAgentRun(sessionToken, agentRunId)).rejects.toMatchObject({ kind: "invalid_response" });
+});
+
+it("通过服务端 bearer 严格处理运行控制与 Agent Inbox", async () => {
+  const fetchImpl = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response(JSON.stringify(controlResponse), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [inboxItem] }), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(inboxActionResponse), { status: 200 }));
+  const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+  const control = { commandId: "48d2bfbf-7e40-49fc-86c8-3a15d7ad4f98", action: "pause" as const };
+  const action = { actionId: "59d2bfbf-7e40-49fc-86c8-3a15d7ad4f98", action: "resume_run" as const };
+
+  await expect(client.controlAgentRun(sessionToken, agentRunId, control)).resolves.toEqual(controlResponse);
+  await expect(client.listAgentInbox(sessionToken, "open")).resolves.toEqual({ items: [inboxItem] });
+  await expect(client.actOnAgentInboxItem(sessionToken, inboxItem.itemId, action)).resolves.toEqual(inboxActionResponse);
+
+  expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+    `http://127.0.0.1:3021/v1/agent-runs/${agentRunId}/controls`,
+    "http://127.0.0.1:3021/v1/agent-inbox?status=open",
+    `http://127.0.0.1:3021/v1/agent-inbox/${inboxItem.itemId}/actions`,
+  ]);
+  expect(fetchImpl.mock.calls.map(([, init]) => ({ method: init?.method, body: init?.body }))).toEqual([
+    { method: "POST", body: JSON.stringify(control) },
+    { method: "GET", body: undefined },
+    { method: "POST", body: JSON.stringify(action) },
+  ]);
+  for (const [, init] of fetchImpl.mock.calls) {
+    expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${sessionToken}`);
+  }
+});
+
+it("拒绝不符合控制和 Inbox 共享契约的成功 JSON", async () => {
+  const fetchImpl = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response(JSON.stringify({ ...controlResponse, rawError: "secret" }), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ items: [{ ...inboxItem, rawError: "secret" }] }), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ ...inboxActionResponse, internal: "secret" }), { status: 200 }));
+  const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+  const control = { commandId: "48d2bfbf-7e40-49fc-86c8-3a15d7ad4f98", action: "pause" as const };
+  const action = { actionId: "59d2bfbf-7e40-49fc-86c8-3a15d7ad4f98", action: "resume_run" as const };
+
+  await expect(client.controlAgentRun(sessionToken, agentRunId, control)).rejects.toMatchObject({ kind: "invalid_response" });
+  await expect(client.listAgentInbox(sessionToken, "open")).rejects.toMatchObject({ kind: "invalid_response" });
+  await expect(client.actOnAgentInboxItem(sessionToken, inboxItem.itemId, action)).rejects.toMatchObject({ kind: "invalid_response" });
 });
 
 it("原样打开 SSE 响应体并转发游标与下游取消信号", async () => {

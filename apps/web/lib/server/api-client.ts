@@ -46,13 +46,25 @@ import { WorkbenchHomeSchema, type WorkbenchHome } from "@job-copilot/contracts/
 import {
   AgentRunDetailSchema,
   AgentRunSseCursorSchema,
+  ControlAgentRunCommandSchema,
+  ControlAgentRunResponseSchema,
   LatestAgentRunResponseSchema,
   StartAgentRunCommandSchema,
   StartAgentRunResponseSchema,
   type AgentRunDetail,
+  type ControlAgentRunCommand,
+  type ControlAgentRunResponse,
   type StartAgentRunCommand,
   type StartAgentRunResponse,
 } from "@job-copilot/contracts/agent-runs";
+import {
+  AgentInboxActionCommandSchema,
+  AgentInboxActionResponseSchema,
+  AgentInboxListSchema,
+  AgentInboxStatusSchema,
+  type AgentInboxActionCommand,
+  type AgentInboxActionResponse,
+} from "@job-copilot/contracts/agent-inbox";
 import { z } from "zod";
 
 type ApiClientConfig = {
@@ -434,6 +446,47 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
         throw new ApiClientError("api", problem?.message ?? "无法读取 Agent 运行", response.status, problem ?? undefined);
       }
       return parseSuccess(response, AgentRunDetailSchema);
+    },
+
+    async controlAgentRun(sessionToken: string, runId: string, command: ControlAgentRunCommand): Promise<ControlAgentRunResponse> {
+      const requestBody = ControlAgentRunCommandSchema.parse(command);
+      const response = await request(`/v1/agent-runs/${runId}/controls`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" },
+        body: JSON.stringify(requestBody),
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法控制 Agent 运行", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, ControlAgentRunResponseSchema);
+    },
+
+    async listAgentInbox(sessionToken: string, status: z.infer<typeof AgentInboxStatusSchema>): Promise<z.infer<typeof AgentInboxListSchema>> {
+      const query = new URLSearchParams({ status: AgentInboxStatusSchema.parse(status) });
+      const response = await request(`/v1/agent-inbox?${query.toString()}`, {
+        method: "GET",
+        headers: { authorization: `Bearer ${sessionToken}` },
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法读取 Agent Inbox", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, AgentInboxListSchema);
+    },
+
+    async actOnAgentInboxItem(sessionToken: string, itemId: string, command: AgentInboxActionCommand): Promise<AgentInboxActionResponse> {
+      const requestBody = AgentInboxActionCommandSchema.parse(command);
+      const response = await request(`/v1/agent-inbox/${itemId}/actions`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" },
+        body: JSON.stringify(requestBody),
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法处理 Agent Inbox", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, AgentInboxActionResponseSchema);
     },
 
     async openAgentRunEventStream(
