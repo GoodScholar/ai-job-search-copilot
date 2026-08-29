@@ -29,6 +29,29 @@ Base: `a891f21e896fc20e9e26e0a14874196d1515dee1`
 
 `git diff --check` → success.
 
+## Fix Round 2/5
+
+Base: `a32ae14de8e72dcbdd4a81e8aa2e6ad9908f2eb2`
+
+### RED / GREEN
+
+- RED: `allowedDomains: null` 会穿透 Adapter 并在 classifier 抛出 TypeError。
+- GREEN: `searchBatch` 对 source scope 做运行时严格结构验证；null allowlist、非法 careers URL、unknown field、错误 source identity 都稳定映射 `GREENHOUSE_SOURCE_UNSUPPORTED`、不可重试，且 lookup/transport 均为 0。
+
+### Stable-error matrix
+
+- list logical-call 表驱动实际覆盖 malformed、401、403、404、429、5xx、timeout、too-large、redirect、invalid JSON、schema mismatch；429/5xx/timeout 以受控 source-access transport 证明 bounded 两 HTTP attempts。
+- detail logical-call 表驱动实际覆盖 401、403、404、429、5xx、timeout、too-large、redirect、invalid JSON、schema mismatch、ID mismatch；每个失败同一 detail ID 的下一调用都重新精确 GET 并可从成功 fixture 返回，证明没有缓存失败。
+- 所有错误断言仅包含稳定 code/retryable，并检查结果序列化不含 fixture secret、URL/域名或 stack；所有网络使用 `/testing` transport。
+
+### Fix verification
+
+`APP_ENV=test pnpm --filter worker exec vitest run --no-file-parallelism src/agent-runs/greenhouse-job-discovery-adapter.test.ts src/agent-runs/job-discovery-adapter-resolver.test.ts src/agent-runs/agent-run.module.test.ts src/agent-runs/fake-job-discovery-adapter.test.ts` → 4 files / 54 tests passed.
+
+`pnpm --filter worker typecheck` → success.
+
+`git diff --check` → success.
+
 ### Self-review / concerns
 
 - 没有调度 API/UI、生命周期持久化或 Worker scheduler 改动；详情失败只以稳定 Adapter error 返回，让现有 Processor 重试边界处理。

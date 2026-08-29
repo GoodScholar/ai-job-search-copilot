@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { createPublicSourceClientForTest } from "@job-copilot/source-access/testing";
+import { PublicSourceAccessError } from "@job-copilot/source-access";
 import { PublicDiscoveryBatchSearchResultSchema } from "@job-copilot/contracts/agent-runs";
 
 import { GreenhouseDetailResponseSchema, GreenhouseJobDiscoveryAdapter } from "./greenhouse-job-discovery-adapter.js";
@@ -142,5 +143,71 @@ describe("GreenhouseJobDiscoveryAdapter", () => {
     expect(result).toEqual({ ok: false, error: { code: "GREENHOUSE_RATE_LIMITED", retryable: true } });
     expect(attempts).toBe(2);
     expect(JSON.stringify(result)).not.toContain("secret");
+  });
+
+  it.each([
+    ["allowedDomains:null", { ...scope, sources: [{ ...source, allowedDomains: null }] }, "GREENHOUSE_SOURCE_UNSUPPORTED"],
+    ["invalid careers URL", { ...scope, sources: [{ ...source, careersUrl: "not-a-url" }] }, "GREENHOUSE_SOURCE_UNSUPPORTED"],
+    ["unknown source field", { ...scope, sources: [{ ...source, unexpected: true }] }, "GREENHOUSE_SOURCE_UNSUPPORTED"],
+    ["invalid source identity", { ...scope, sources: [{ ...source, sourceId: "greenhouse:other" }] }, "GREENHOUSE_SOURCE_UNSUPPORTED"],
+  ])("list malformed input %s is stable and has zero network", async (_label, sourceScope, code) => {
+    let lookups = 0;
+    let transports = 0;
+    const client = createPublicSourceClientForTest({ exactHosts: ["boards-api.greenhouse.io"], lookup: async () => { lookups += 1; return []; }, transport: async () => { transports += 1; throw new Error("must not run"); } });
+    const result = await new GreenhouseJobDiscoveryAdapter({ client }).searchBatch({ targetSnapshot, sourceScope: sourceScope as typeof scope });
+    expect(result).toEqual({ ok: false, error: { code, retryable: false } });
+    expect({ lookups, transports }).toEqual({ lookups: 0, transports: 0 });
+  });
+
+  it.each([
+    ["401", { status: 401 }, "GREENHOUSE_AUTH_FAILED", false, 1],
+    ["403", { status: 403 }, "GREENHOUSE_AUTH_FAILED", false, 1],
+    ["404", { status: 404 }, "GREENHOUSE_NOT_FOUND", false, 1],
+    ["429", { status: 429 }, "GREENHOUSE_RATE_LIMITED", true, 2],
+    ["5xx", { status: 500 }, "GREENHOUSE_SERVER_ERROR", true, 2],
+    ["timeout", { error: new PublicSourceAccessError("PUBLIC_SOURCE_TIMEOUT", 1) }, "GREENHOUSE_TIMEOUT", true, 2],
+    ["too-large", { error: new PublicSourceAccessError("PUBLIC_SOURCE_RESPONSE_TOO_LARGE", 1) }, "GREENHOUSE_RESPONSE_TOO_LARGE", false, 1],
+    ["redirect", { error: new PublicSourceAccessError("PUBLIC_SOURCE_REDIRECT_INVALID", 1) }, "GREENHOUSE_REDIRECT_INVALID", false, 1],
+    ["invalid JSON", { body: "{" }, "GREENHOUSE_LIST_SCHEMA_INVALID", false, 1],
+    ["list schema mismatch", { body: JSON.stringify({ jobs: [{}], meta: { total: 1 } }) }, "GREENHOUSE_LIST_SCHEMA_INVALID", false, 1],
+  ])("list logical call maps %s without leaking response data", async (_label, response, code, retryable, expectedAttempts) => {
+    let attempts = 0;
+    const client = createPublicSourceClientForTest({ exactHosts: ["boards-api.greenhouse.io"], testOrigin: "https://boards-api.greenhouse.io", lookup: async () => [{ address: "93.184.216.34", family: 4 }], sleep: async () => undefined,
+      transport: async () => { attempts += 1; if ("error" in response) throw response.error; return { status: "status" in response ? response.status : 200, headers: { "content-type": "application/json" }, body: new TextEncoder().encode("body" in response ? response.body : '{"secret":"no-leak"}') }; },
+    });
+    const result = await new GreenhouseJobDiscoveryAdapter({ client }).searchBatch({ targetSnapshot, sourceScope: scope });
+    expect(result).toEqual({ ok: false, error: { code, retryable } });
+    expect(attempts).toBe(expectedAttempts);
+    expect(JSON.stringify(result)).not.toMatch(/secret|greenhouse\.io|stack/u);
+  });
+
+  it.each([
+    ["401", { status: 401 }, "GREENHOUSE_AUTH_FAILED", false, 1], ["403", { status: 403 }, "GREENHOUSE_AUTH_FAILED", false, 1],
+    ["404", { status: 404 }, "GREENHOUSE_NOT_FOUND", false, 1], ["429", { status: 429 }, "GREENHOUSE_RATE_LIMITED", true, 2],
+    ["5xx", { status: 500 }, "GREENHOUSE_SERVER_ERROR", true, 2], ["timeout", { error: new PublicSourceAccessError("PUBLIC_SOURCE_TIMEOUT", 1) }, "GREENHOUSE_TIMEOUT", true, 2],
+    ["too-large", { error: new PublicSourceAccessError("PUBLIC_SOURCE_RESPONSE_TOO_LARGE", 1) }, "GREENHOUSE_RESPONSE_TOO_LARGE", false, 1],
+    ["redirect", { error: new PublicSourceAccessError("PUBLIC_SOURCE_REDIRECT_INVALID", 1) }, "GREENHOUSE_REDIRECT_INVALID", false, 1],
+    ["invalid JSON", { body: "{" }, "GREENHOUSE_DETAIL_SCHEMA_INVALID", false, 1], ["detail schema mismatch", { body: "{}" }, "GREENHOUSE_DETAIL_SCHEMA_INVALID", false, 1],
+    ["ID mismatch", { body: JSON.stringify({ id: 999, title: "Wrong ID", company_name: "Fictional Labs", location: { name: "Beijing" }, first_published: "2026-08-17T08:30:00.000Z", application_deadline: null }) }, "GREENHOUSE_DETAIL_SCHEMA_INVALID", false, 1],
+  ])("detail logical call maps %s, redacts it, and retries the same ID after failure", async (_label, response, code, retryable, expectedAttempts) => {
+    const list = await fixture("list-jobs.json");
+    const detail = await fixture("job-detail.json");
+    let detailAttempts = 0;
+    const client = createPublicSourceClientForTest({ exactHosts: ["boards-api.greenhouse.io"], testOrigin: "https://boards-api.greenhouse.io", lookup: async () => [{ address: "93.184.216.34", family: 4 }], sleep: async () => undefined,
+      transport: async ({ url }) => {
+        if (url.pathname.endsWith("/jobs")) return { status: 200, headers: { "content-type": "application/json" }, body: new TextEncoder().encode(JSON.stringify(list)) };
+        detailAttempts += 1;
+        if (detailAttempts <= expectedAttempts) { if ("error" in response) throw response.error; return { status: "status" in response ? response.status : 200, headers: { "content-type": "application/json" }, body: new TextEncoder().encode("body" in response ? response.body : '{"secret":"no-leak"}') }; }
+        return { status: 200, headers: { "content-type": "application/json" }, body: new TextEncoder().encode(JSON.stringify(detail)) };
+      },
+    });
+    const adapter = new GreenhouseJobDiscoveryAdapter({ client });
+    await expect(adapter.searchBatch({ targetSnapshot, sourceScope: scope })).resolves.toMatchObject({ ok: true });
+    const failedResult = await adapter.getDetail({ sourceId: source.sourceId, detailId: "701" });
+    expect(failedResult).toEqual({ ok: false, error: { code, retryable } });
+    expect(detailAttempts).toBe(expectedAttempts);
+    expect(JSON.stringify(failedResult)).not.toMatch(/secret|greenhouse\.io|stack/u);
+    await expect(adapter.getDetail({ sourceId: source.sourceId, detailId: "701" })).resolves.toMatchObject({ ok: true, data: { title: "Machine Learning Engineer" } });
+    expect(detailAttempts).toBe(expectedAttempts + 1);
   });
 });

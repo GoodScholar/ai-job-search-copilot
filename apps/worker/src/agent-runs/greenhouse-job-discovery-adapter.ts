@@ -47,18 +47,30 @@ function apiUrl(boardToken: string, detailId?: string): URL {
   return url;
 }
 
-function sourceAuthorization(source: Source): { ok: true; value: AuthorizedSource } | { ok: false; code: string } {
-  const classification = classifyGreenhousePublicSource({
-    itemId: source.watchlistItemId,
-    canonicalCompanyName: source.canonicalCompanyName,
-    careersUrl: source.careersUrl,
-    allowedDomains: source.allowedDomains,
-  });
-  if (classification.kind === "policy_required") return { ok: false, code: classification.code };
-  if (classification.kind !== "supported" || classification.source.sourceId !== source.sourceId || classification.source.boardToken !== source.boardToken) {
+function sourceAuthorization(value: unknown): { ok: true; value: AuthorizedSource } | { ok: false; code: string } {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { ok: false, code: "GREENHOUSE_SOURCE_UNSUPPORTED" };
+  const source = value as Record<string, unknown>;
+  const expected = ["sourceId", "watchlistItemId", "canonicalCompanyName", "careersUrl", "allowedDomains", "boardToken"];
+  if (Object.keys(source).length !== expected.length || expected.some((key) => !(key in source))
+    || !["sourceId", "watchlistItemId", "canonicalCompanyName", "careersUrl", "boardToken"].every((key) => typeof source[key] === "string")
+    || !Array.isArray(source.allowedDomains) || source.allowedDomains.some((domain) => typeof domain !== "string")) {
     return { ok: false, code: "GREENHOUSE_SOURCE_UNSUPPORTED" };
   }
-  return { ok: true, value: { source, boardToken: classification.source.boardToken } };
+  const typed = source as unknown as Source;
+  let classification;
+  try {
+    classification = classifyGreenhousePublicSource({
+      itemId: typed.watchlistItemId,
+      canonicalCompanyName: typed.canonicalCompanyName,
+      careersUrl: typed.careersUrl,
+      allowedDomains: typed.allowedDomains,
+    });
+  } catch { return { ok: false, code: "GREENHOUSE_SOURCE_UNSUPPORTED" }; }
+  if (classification.kind === "policy_required") return { ok: false, code: classification.code };
+  if (classification.kind !== "supported" || classification.source.sourceId !== typed.sourceId || classification.source.boardToken !== typed.boardToken) {
+    return { ok: false, code: "GREENHOUSE_SOURCE_UNSUPPORTED" };
+  }
+  return { ok: true, value: { source: typed, boardToken: classification.source.boardToken } };
 }
 
 function matchesTarget(job: z.infer<typeof ListJobSchema>, target: DiscoverySearchInput["targetSnapshot"]): boolean {
@@ -124,7 +136,7 @@ export class GreenhouseJobDiscoveryAdapter implements JobDiscoveryAdapter {
     const authorizedSources: AuthorizedSource[] = [];
     for (const rawSource of rawSources) {
       if (!rawSource || typeof rawSource !== "object" || Array.isArray(rawSource)) return { ok: false, error: { code: "GREENHOUSE_SOURCE_UNSUPPORTED", retryable: false } };
-      const authorized = sourceAuthorization(rawSource as Source);
+      const authorized = sourceAuthorization(rawSource);
       if (!authorized.ok) return { ok: false, error: { code: authorized.code, retryable: false } };
       authorizedSources.push(authorized.value);
     }
