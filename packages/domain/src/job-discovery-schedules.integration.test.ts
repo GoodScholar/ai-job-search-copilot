@@ -100,6 +100,7 @@ describe("job discovery schedules", () => {
 
   it("停机跨越多个时点只物化一个 occurrence，并把下一时点推进到当前之后", async () => {
     const owner = await target();
+    await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/catchup", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
     const occurrence = await dueOccurrence(owner);
 
     expect(occurrence).toMatchObject({ targetId: owner.targetId, status: "pending", scheduledFor: "2026-08-27T01:30:00.000Z" });
@@ -158,7 +159,9 @@ describe("job discovery schedules", () => {
 
     const unsupportedOwner = await target();
     await addWatchlistSource({ userId: unsupportedOwner.userId, targetId: unsupportedOwner.targetId, careersUrl: "https://careers.example.test/jobs", allowedDomains: ["careers.example.test"] });
-    const unsupportedOccurrence = await dueOccurrence(unsupportedOwner);
+    const unsupportedScheduleId = crypto.randomUUID();
+    await database.insert(jobDiscoverySchedules).values({ id: unsupportedScheduleId, userId: unsupportedOwner.userId, targetId: unsupportedOwner.targetId, version: 1, state: "enabled", dailyTime: "09:30", timeZone: "Asia/Shanghai", nextRunAt: new Date("2026-08-27T01:30:00.000Z"), createdAt: now, updatedAt: now });
+    const [unsupportedOccurrence] = await schedules().service.materializeDue({ limit: 10 });
     await schedules().service.dispatchPending({ limit: 10 });
     await expect(database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, unsupportedOccurrence.occurrenceId))).resolves.toEqual([expect.objectContaining({ status: "skipped", skipReason: "NO_SUPPORTED_SOURCE", runId: null })]);
   });
