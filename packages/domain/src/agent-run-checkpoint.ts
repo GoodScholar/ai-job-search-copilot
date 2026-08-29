@@ -2,7 +2,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { agentInboxItems, agentRunEvents, agentRunUsageEntries, agentRuns, type Database } from "@job-copilot/database";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import type { AuditTrail } from "./audit-trail";
-import { settleActiveSlice, terminateBudgetRun, type BudgetDimension } from "./agent-run-lifecycle";
+import { agentRunUsageSnapshot, appendBudgetFacts, settleActiveSlice, terminateBudgetRun, type BudgetDimension } from "./agent-run-lifecycle";
 
 type Reserve = { toolCalls?: number; sourceRequests?: number; modelCalls?: number };
 export type AgentRunCheckpointDecision =
@@ -31,13 +31,6 @@ async function appendEvent(db: any, input: { id: () => string; userId: string; r
 }
 
 function amount(value: number | undefined) { return value ?? 0; }
-function usageSnapshot(run: typeof agentRuns.$inferSelect, input: { activeDurationMs: number; toolCallCount: number; sourceRequestCount: number; modelCallCount: number }) {
-  return {
-    activeDurationMs: input.activeDurationMs, attempts: run.attemptCount, toolCalls: input.toolCallCount,
-    sourceRequests: input.sourceRequestCount, modelCalls: input.modelCallCount, inputTokens: run.inputTokenCount,
-    outputTokens: run.outputTokenCount, totalTokens: run.totalTokenCount, results: run.resultCount, complete: run.usageComplete,
-  };
-}
 function exhausted(run: typeof agentRuns.$inferSelect, reserve: Reserve, activeDurationMs: number): BudgetDimension | null {
   const budget = run.budgetSnapshot as { maxActiveDurationMs: number; maxAttempts: number; maxToolCalls: number; maxModelCalls: number; maxTokens: number };
   // attempt 是领取时预增的；第 3 次已合法领取，预算只阻止第 4 次领取。
@@ -87,11 +80,10 @@ export function createAgentRunCheckpoint(deps: Dependencies): AgentRunCheckpoint
         const usageUpdate = { activeDurationMs, toolCallCount: run.toolCallCount + amount(chargedReserve.toolCalls), sourceRequestCount: run.sourceRequestCount + amount(chargedReserve.sourceRequests), modelCallCount: run.modelCallCount + amount(chargedReserve.modelCalls), activeSliceStartedAt: now, updatedAt: now };
         const usageChanged = elapsed > 0 || usageEntries.length > 0;
         const usageVersion = usageChanged ? run.version + 1 : run.version;
-        const usage = usageSnapshot(run, usageUpdate);
+        const usage = agentRunUsageSnapshot(run, usageUpdate);
         if (usageChanged) {
           await transaction.update(agentRuns).set({ ...usageUpdate, version: usageVersion }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId)));
-          await appendEvent(transaction, { id: deps.id, userId: input.userId, runId: input.runId, version: usageVersion, eventType: "run.budget_updated", data: { eventType: "run.budget_updated", status: "running", currentStep: run.currentStep, attemptCount: run.attemptCount, usage }, now });
-          await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.run_budget_consumed", occurredAt: now, requestId: input.runId, outcome: "success", reasonCode: "AGENT_RUN_BUDGET_CONSUMED", resourceType: "agent_run", resourceId: input.runId, metadata: { runId: input.runId, activeDurationMs: elapsed, toolCalls: amount(chargedReserve.toolCalls), sourceRequests: amount(chargedReserve.sourceRequests), modelCalls: amount(chargedReserve.modelCalls), attempts: run.attemptCount, results: run.resultCount, tokens: run.totalTokenCount } });
+          await appendBudgetFacts(transaction, { id: deps.id, auditTrail: deps.auditTrail, userId: input.userId, requestId: input.runId, runId: input.runId, version: usageVersion, currentStep: run.currentStep, usage, consumed: { activeDurationMs: elapsed, toolCalls: amount(chargedReserve.toolCalls), sourceRequests: amount(chargedReserve.sourceRequests), modelCalls: amount(chargedReserve.modelCalls) }, now });
         }
         if (run.controlState === "cancel_requested") {
           const version = usageVersion + 1;

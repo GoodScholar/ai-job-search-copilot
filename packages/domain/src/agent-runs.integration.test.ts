@@ -211,16 +211,17 @@ describe("agent runs", () => {
     expect(events).toEqual([
       { sequence: 1, runVersion: 1, eventType: "run.queued" },
       { sequence: 2, runVersion: 2, eventType: "run.started" },
-      { sequence: 3, runVersion: 3, eventType: "step.started" },
-      { sequence: 4, runVersion: 4, eventType: "run.budget_updated" },
-      { sequence: 5, runVersion: 5, eventType: "step.completed" },
-      { sequence: 6, runVersion: 6, eventType: "step.started" },
-      { sequence: 7, runVersion: 7, eventType: "run.budget_updated" },
-      { sequence: 8, runVersion: 8, eventType: "step.completed" },
-      { sequence: 9, runVersion: 9, eventType: "step.started" },
-      { sequence: 10, runVersion: 10, eventType: "run.budget_updated" },
-      { sequence: 11, runVersion: 11, eventType: "step.completed" },
-      { sequence: 12, runVersion: 12, eventType: "run.completed" },
+      { sequence: 3, runVersion: 3, eventType: "run.budget_updated" },
+      { sequence: 4, runVersion: 4, eventType: "step.started" },
+      { sequence: 5, runVersion: 5, eventType: "run.budget_updated" },
+      { sequence: 6, runVersion: 6, eventType: "step.completed" },
+      { sequence: 7, runVersion: 7, eventType: "step.started" },
+      { sequence: 8, runVersion: 8, eventType: "run.budget_updated" },
+      { sequence: 9, runVersion: 9, eventType: "step.completed" },
+      { sequence: 10, runVersion: 10, eventType: "step.started" },
+      { sequence: 11, runVersion: 11, eventType: "run.budget_updated" },
+      { sequence: 12, runVersion: 12, eventType: "step.completed" },
+      { sequence: 13, runVersion: 13, eventType: "run.completed" },
     ]);
   });
 
@@ -371,8 +372,56 @@ describe("agent runs", () => {
     const recoverable = await createAgentRunRecoveryQueries({ db: database, clock: () => instant }).listRecoverable();
     expect(recoverable).not.toContainEqual({ version: 1, runId: run.runId, userId });
     await expect(database.select().from(agentRunUsageEntries).where(and(eq(agentRunUsageEntries.userId, userId), eq(agentRunUsageEntries.runId, run.runId), eq(agentRunUsageEntries.category, "active_duration")))).resolves.toHaveLength(1);
+    const heartbeatEvents = await database.select({ runVersion: agentRunEvents.runVersion, data: agentRunEvents.data }).from(agentRunEvents)
+      .where(and(eq(agentRunEvents.userId, userId), eq(agentRunEvents.runId, run.runId), eq(agentRunEvents.eventType, "run.budget_updated")));
+    expect(heartbeatEvents).toEqual(expect.arrayContaining([expect.objectContaining({ data: expect.objectContaining({ usage: expect.objectContaining({ activeDurationMs: 31_000, attempts: 1 }) }) })]));
+    await expect(database.select({ metadata: auditEvents.metadata }).from(auditEvents).where(and(eq(auditEvents.userId, userId), eq(auditEvents.resourceId, run.runId), eq(auditEvents.eventType, "agent.run_budget_consumed"))))
+      .resolves.toEqual(expect.arrayContaining([expect.objectContaining({ metadata: expect.objectContaining({ activeDurationMs: 31_000, attempts: 1, results: 0, tokens: 0 }) })]));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await expect(database.select().from(agentRunEvents).where(and(eq(agentRunEvents.userId, userId), eq(agentRunEvents.runId, run.runId), eq(agentRunEvents.eventType, "run.budget_updated")))).resolves.toHaveLength(3);
     release.resolve();
     await expect(processing).resolves.toBe("completed");
+  });
+
+  it("成功领取在外部执行前持久化 attempt 预算事实，重复或陈旧任务不重复记账", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const crashBeforeAdapter = adapter();
+    crashBeforeAdapter.searchBatch = async () => { throw new Error("worker crashed before adapter result"); };
+    const processor = createAgentRunProcessor({ db: database, adapter: crashBeforeAdapter, contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+
+    await expect(processor.process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("failed");
+    await expect(processor.process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("failed");
+    await expect(database.select({ sequence: agentRunEvents.sequence, runVersion: agentRunEvents.runVersion, data: agentRunEvents.data }).from(agentRunEvents)
+      .where(and(eq(agentRunEvents.userId, userId), eq(agentRunEvents.runId, run.runId), eq(agentRunEvents.eventType, "run.budget_updated"))))
+      .resolves.toEqual(expect.arrayContaining([expect.objectContaining({ sequence: 3, runVersion: 3, data: {
+        eventType: "run.budget_updated", status: "running", currentStep: "batch_search", attemptCount: 1,
+        usage: { activeDurationMs: 0, attempts: 1, toolCalls: 0, sourceRequests: 0, modelCalls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, results: 0, complete: true },
+      } })]));
+    await expect(database.select().from(auditEvents).where(and(eq(auditEvents.userId, userId), eq(auditEvents.resourceId, run.runId), eq(auditEvents.eventType, "agent.run_budget_consumed")))).resolves.toHaveLength(2);
+  });
+
+  it("陈旧 heartbeat 不追加预算事件或审计", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    let instant = now;
+    const started = deferred<void>();
+    const release = deferred<void>();
+    const slow = adapter();
+    slow.searchBatch = async () => { started.resolve(); await release.promise; return { ok: true, data: [] }; };
+    const processing = createAgentRunProcessor({ db: database, adapter: slow, contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => instant }), id: () => crypto.randomUUID(), clock: () => instant, heartbeatIntervalMs: 5 })
+      .process({ version: 1, runId: run.runId, userId, finalAttempt: true });
+    await started.promise;
+    instant = new Date(now.getTime() + 1_000);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await database.update(agentRuns).set({ claimToken: crypto.randomUUID() }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)));
+    const before = await database.select().from(agentRunEvents).where(and(eq(agentRunEvents.userId, userId), eq(agentRunEvents.runId, run.runId), eq(agentRunEvents.eventType, "run.budget_updated")));
+    const auditsBefore = await database.select().from(auditEvents).where(and(eq(auditEvents.userId, userId), eq(auditEvents.resourceId, run.runId), eq(auditEvents.eventType, "agent.run_budget_consumed")));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await expect(database.select().from(agentRunEvents).where(and(eq(agentRunEvents.userId, userId), eq(agentRunEvents.runId, run.runId), eq(agentRunEvents.eventType, "run.budget_updated")))).resolves.toHaveLength(before.length);
+    await expect(database.select().from(auditEvents).where(and(eq(auditEvents.userId, userId), eq(auditEvents.resourceId, run.runId), eq(auditEvents.eventType, "agent.run_budget_consumed")))).resolves.toHaveLength(auditsBefore.length);
+    release.resolve();
+    await expect(processing).resolves.toBe("stale");
   });
 
   it("claim 在账户锁后重新取时，提交的租约不会使用等待前已过期时间", async () => {

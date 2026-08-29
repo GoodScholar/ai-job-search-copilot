@@ -12,7 +12,7 @@ import type { AuditTrail } from "./audit-trail";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { discoveryNormalizedData, persistJobOpportunity } from "./job-opportunity-persistence";
 import { decideRetry } from "./agent-run-state";
-import { settleActiveSlice, terminateBudgetRun, type BudgetDimension } from "./agent-run-lifecycle";
+import { agentRunUsageSnapshot, appendBudgetFacts, settleActiveSlice, terminateBudgetRun, type BudgetDimension } from "./agent-run-lifecycle";
 import type { AgentRunCheckpoint } from "./agent-run-checkpoint";
 
 export interface DiscoveryContentStore {
@@ -118,13 +118,18 @@ function adapterFailure(error: unknown): Failure {
 
 async function renewClaim(deps: AgentRunProcessorDependencies, input: { userId: string; runId: string; claimToken: string; deadline: Date }): Promise<boolean> {
   const [renewed] = await runTransaction<Array<{ id: string }>>(deps, input.deadline, async (transaction) => {
+    await acquireAccountAdvisoryLock(transaction, input.userId);
     const now = deps.clock();
     if (remainingBudget(deps.clock, input.deadline) <= 0) throw new AgentRunBudgetError("active_duration");
     const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.claimToken)));
     if (!run) return [];
     const elapsed = await settleActiveSlice(transaction, { id: deps.id, userId: input.userId, run, now });
-    return transaction.update(agentRuns).set({ claimExpiresAt: new Date(now.getTime() + 30_000), activeDurationMs: run.activeDurationMs + elapsed, activeSliceStartedAt: now, updatedAt: now })
+    const activeDurationMs = run.activeDurationMs + elapsed;
+    const version = elapsed > 0 ? run.version + 1 : run.version;
+    const updated = await transaction.update(agentRuns).set({ claimExpiresAt: new Date(now.getTime() + 30_000), activeDurationMs, activeSliceStartedAt: now, version, updatedAt: now })
       .where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.claimToken))).returning({ id: agentRuns.id });
+    if (updated[0] && elapsed > 0) await appendBudgetFacts(transaction, { id: deps.id, auditTrail: deps.auditTrail, userId: input.userId, requestId: input.runId, runId: input.runId, version, currentStep: run.currentStep, usage: agentRunUsageSnapshot(run, { activeDurationMs }), consumed: { activeDurationMs: elapsed, toolCalls: 0, sourceRequests: 0, modelCalls: 0 }, now });
+    return updated;
   });
   return Boolean(renewed);
 }
@@ -319,7 +324,11 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         const [run] = await transaction.update(agentRuns).set({ status: "running", currentStep: "batch_search", claimToken, claimExpiresAt: new Date(claimNow.getTime() + 30_000), activeSliceStartedAt: claimNow, activeDurationMs: current.activeDurationMs, attemptCount, startedAt: claimNow, completedAt: null, failedAt: null, failureCode: null, version, updatedAt: claimNow }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), or(eq(agentRuns.status, "queued"), and(eq(agentRuns.status, "running"), lte(agentRuns.claimExpiresAt, claimNow))))).returning();
         if (!run) return { kind: "stale" as const };
         await appendEvent(transaction, { id: deps.id, userId: job.userId, runId: job.runId, version, eventType: "run.started", data: { eventType: "run.started", status: "running", currentStep: "batch_search", attemptCount }, now: claimNow });
-        return { kind: "claimed" as const, run, claimToken, attemptCount };
+        const usageVersion = version + 1;
+        await transaction.update(agentRuns).set({ version: usageVersion, updatedAt: claimNow }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.claimToken, claimToken)));
+        const claimedRun = { ...run, version: usageVersion };
+        await appendBudgetFacts(transaction, { id: deps.id, auditTrail: deps.auditTrail, userId: job.userId, requestId: job.runId, runId: job.runId, version: usageVersion, currentStep: "batch_search", usage: agentRunUsageSnapshot(claimedRun), consumed: { activeDurationMs: 0, toolCalls: 0, sourceRequests: 0, modelCalls: 0 }, now: claimNow });
+        return { kind: "claimed" as const, run: claimedRun, claimToken, attemptCount };
       });
       if (claimed.kind === "pending_control") {
         const controlOutcome = await checkPoint(deps.checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "recovery_control", ordinal: 1 });
@@ -428,10 +437,9 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           const budgetChanged = elapsed > 0 || stored.length > 0;
           const budgetVersion = budgetChanged ? run.version + 1 : run.version;
           if (budgetChanged) {
-            const usage = { activeDurationMs, attempts: run.attemptCount, toolCalls: run.toolCallCount, sourceRequests: run.sourceRequestCount, modelCalls: run.modelCallCount, inputTokens: run.inputTokenCount, outputTokens: run.outputTokenCount, totalTokens: run.totalTokenCount, results: resultCount, complete: run.usageComplete };
+            const usage = agentRunUsageSnapshot(run, { activeDurationMs, resultCount });
             await transaction.update(agentRuns).set({ activeDurationMs, resultCount, version: budgetVersion, updatedAt: completedAt }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.claimToken, claimed.claimToken), eq(agentRuns.controlState, "none")));
-            await appendEvent(transaction, { id: deps.id, userId: job.userId, runId: job.runId, version: budgetVersion, eventType: "run.budget_updated", data: { eventType: "run.budget_updated", status: "running", currentStep: "persist_results", attemptCount: claimed.attemptCount, usage }, now: completedAt });
-            await deps.auditTrail.bind(transaction).append({ userId: job.userId, actorUserId: job.userId, eventType: "agent.run_budget_consumed", occurredAt: completedAt, requestId: job.runId, outcome: "success", reasonCode: "AGENT_RUN_BUDGET_CONSUMED", resourceType: "agent_run", resourceId: job.runId, metadata: { runId: job.runId, activeDurationMs: elapsed, toolCalls: 0, sourceRequests: 0, modelCalls: 0, attempts: run.attemptCount, results: stored.length, tokens: run.totalTokenCount } });
+            await appendBudgetFacts(transaction, { id: deps.id, auditTrail: deps.auditTrail, userId: job.userId, requestId: job.runId, runId: job.runId, version: budgetVersion, currentStep: "persist_results", usage, consumed: { activeDurationMs: elapsed, toolCalls: 0, sourceRequests: 0, modelCalls: 0 }, now: completedAt });
           }
           const stepVersion = budgetVersion + 1;
           await transaction.update(agentRunSteps).set({ status: "completed", completedAt }).where(and(eq(agentRunSteps.userId, job.userId), eq(agentRunSteps.runId, job.runId), eq(agentRunSteps.stepKey, "persist_results")));

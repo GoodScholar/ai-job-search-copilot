@@ -150,7 +150,7 @@ describe("AgentRunProcessor checkpoints", () => {
       .where(and(eq(agentRunUsageEntries.runId, job.runId), eq(agentRunUsageEntries.category, "result"))))
       .resolves.toEqual([expect.objectContaining({ amount: 1, stepKey: "persist_results", attemptCount: 1 })]);
     await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({ usage: { toolCalls: 2, sourceRequests: 2, modelCalls: 0, results: 1 } });
-    await expect(database.select().from(agentRunEvents).where(and(eq(agentRunEvents.runId, job.runId), eq(agentRunEvents.eventType, "run.budget_updated")))).resolves.toHaveLength(3);
+    await expect(database.select().from(agentRunEvents).where(and(eq(agentRunEvents.runId, job.runId), eq(agentRunEvents.eventType, "run.budget_updated")))).resolves.toHaveLength(4);
   });
 
   it("冻结 execution spec 的 model 为 null 时不产生模型调用计费", async () => {
