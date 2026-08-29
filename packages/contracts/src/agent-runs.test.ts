@@ -1,13 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
   AGENT_RUN_BUDGET,
+  AGENT_RUN_RULE_VERSION,
+  AGENT_RUN_TOOL_ALLOWLIST,
   AGENT_RUN_CLAIM_LEASE_MS,
   AGENT_RUN_JOB_NAME,
   AGENT_RUN_QUEUE,
   AGENT_RUN_SCAN_INTERVAL_MS,
   AgentRunAdapterErrorSchema,
   AgentRunBudgetSchema,
+  AgentRunBudgetDimensionSchema,
+  AgentRunControlActionSchema,
+  AgentRunControlStateSchema,
   AgentRunDetailSchema,
+  AgentRunExecutionSpecSchema,
   AgentRunEventDataSchema,
   AgentRunEventSchema,
   AgentRunJobSchema,
@@ -17,7 +23,9 @@ import {
   AgentRunSseEventSchema,
   AgentRunStepSchema,
   AgentRunSummarySchema,
+  AgentRunTerminationSchema,
   AgentRunTargetSnapshotSchema,
+  AgentRunUsageSchema,
   DiscoveryBatchSearchInputSchema,
   DiscoveryBatchSearchResultSchema,
   DiscoveryDetailInputSchema,
@@ -33,6 +41,8 @@ import {
   LatestAgentRunResponseSchema,
   StartAgentRunCommandSchema,
   StartAgentRunResponseSchema,
+  ControlAgentRunCommandSchema,
+  ControlAgentRunResponseSchema,
 } from "./agent-runs";
 
 const targetId = "87a0d3ac-4aed-4bd5-a703-68bf82cc6c49";
@@ -58,7 +68,17 @@ const queuedSummary = {
   adapter: FAKE_JOB_DISCOVERY_ADAPTER, adapterVersion: FAKE_JOB_DISCOVERY_ADAPTER_VERSION,
   outputSchemaVersion: "job-discovery-result-v1", budget: AGENT_RUN_BUDGET,
   status: "queued", currentStep: "queued", version: 1, attemptCount: 0,
-  failureCode: null, queuedAt: now, startedAt: null, completedAt: null, failedAt: null, updatedAt: now,
+  failureCode: null, queuedAt: now, startedAt: null, completedAt: null, failedAt: null, cancelledAt: null, updatedAt: now,
+};
+const executionSpec = {
+  targetSnapshot: runTargetSnapshot, sourceScope, workflowVersion: FAKE_JOB_DISCOVERY_WORKFLOW_VERSION,
+  ruleVersion: AGENT_RUN_RULE_VERSION, adapter: FAKE_JOB_DISCOVERY_ADAPTER,
+  adapterVersion: FAKE_JOB_DISCOVERY_ADAPTER_VERSION, outputSchemaVersion: "job-discovery-result-v1",
+  toolAllowlist: AGENT_RUN_TOOL_ALLOWLIST, model: null, budget: AGENT_RUN_BUDGET,
+};
+const usage = {
+  activeDurationMs: 0, attempts: 0, toolCalls: 0, sourceRequests: 0, modelCalls: 0,
+  inputTokens: 0, outputTokens: 0, totalTokens: 0, results: 0, complete: false,
 };
 const step = {
   stepKey: "batch_search", ordinal: 1, status: "pending", attemptCount: 0,
@@ -72,7 +92,10 @@ const result = {
   sourcePostingVersionId: "d6804068-4fae-4c49-af06-7de4c08ff8cf", company: "示例科技", title: "AI 工程师",
   location: "上海", postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true,
 };
-const detail = { ...queuedSummary, steps: [step], events: [event], results: [result] };
+const detail = {
+  ...queuedSummary, executionSpec, controlState: "none", usage, termination: null, retryOfRunId: null,
+  steps: [step], events: [event], results: [result],
+};
 const searchSummary = {
   sourceId: "fake:aurora-careers", detailId: "aurora-1", company: "示例科技", title: "AI 工程师",
   location: "上海", postedAt: null, deadline: null,
@@ -84,10 +107,54 @@ function expectUnknownKeyRejected(schema: { safeParse(input: unknown): { success
 }
 
 describe("agent run contracts", () => {
+  it("defines strict control state, control command, and public budget", () => {
+    const commandId = "17fcd7b1-1a1d-4f25-9d10-45522417e919";
+
+    expect(AgentRunControlStateSchema.options).toEqual(["none", "pause_requested", "cancel_requested"]);
+    expect(AgentRunControlActionSchema.options).toEqual(["pause", "resume", "cancel"]);
+    expect(AgentRunBudgetDimensionSchema.options).toEqual([
+      "active_duration", "attempts", "tool_calls", "model_calls", "tokens",
+    ]);
+    expect(ControlAgentRunCommandSchema.parse({ commandId, action: "pause" }))
+      .toEqual({ commandId, action: "pause" });
+    expect(ControlAgentRunCommandSchema.safeParse({ commandId, action: "pause", extra: true }).success)
+      .toBe(false);
+    expect(AGENT_RUN_RULE_VERSION).toBe("fake-job-discovery-rules-v1");
+    expect(AGENT_RUN_TOOL_ALLOWLIST).toEqual([
+      "job_discovery.search_batch", "job_discovery.get_detail",
+    ]);
+    expect(AgentRunBudgetSchema.parse({
+      maxActiveDurationMs: 60_000, maxAttempts: 3, maxToolCalls: 10, maxResults: 5,
+      maxModelCalls: 0, maxTokens: 0,
+    })).toEqual(AGENT_RUN_BUDGET);
+  });
+
+  it("defines execution usage termination and control response contracts", () => {
+    const usage = {
+      activeDurationMs: 1_250, attempts: 1, toolCalls: 2, sourceRequests: 2,
+      modelCalls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, results: 1, complete: true,
+    };
+    const executionSpec = {
+      targetSnapshot: runTargetSnapshot, sourceScope, workflowVersion: FAKE_JOB_DISCOVERY_WORKFLOW_VERSION,
+      ruleVersion: "fake-job-discovery-rules-v1", adapter: "fake",
+      adapterVersion: FAKE_JOB_DISCOVERY_ADAPTER_VERSION, outputSchemaVersion: "job-discovery-result-v1",
+      toolAllowlist: ["job_discovery.search_batch", "job_discovery.get_detail"], model: null, budget: AGENT_RUN_BUDGET,
+    };
+    expect(AgentRunExecutionSpecSchema.parse(executionSpec)).toEqual(executionSpec);
+    expect(AgentRunUsageSchema.parse(usage)).toMatchObject({ activeDurationMs: 1_250, sourceRequests: 2 });
+    expect(AgentRunUsageSchema.safeParse({ ...usage, inputTokens: 1 }).success).toBe(false);
+    expect(AgentRunTerminationSchema.parse({
+      kind: "budget_exhausted", failureCode: "AGENT_RUN_BUDGET_EXCEEDED", budgetDimension: "attempts",
+    })).toEqual({ kind: "budget_exhausted", failureCode: "AGENT_RUN_BUDGET_EXCEEDED", budgetDimension: "attempts" });
+    expect(ControlAgentRunResponseSchema.parse({
+      applied: true, run: { runId, status: "running", currentStep: "fetch_details", controlState: "none", version: 2 },
+    })).toMatchObject({ applied: true, run: { runId, status: "running" } });
+  });
+
   it("parses the strict start command and queued run detail", () => {
     expect(StartAgentRunCommandSchema.parse({ targetId, idempotencyKey: "08614f5c-b5cb-4c1d-8fca-3777105b5f19" }))
       .toEqual({ targetId, idempotencyKey: "08614f5c-b5cb-4c1d-8fca-3777105b5f19" });
-    expect(AgentRunDetailSchema.parse({ ...queuedSummary, steps: [], events: [], results: [] }))
+    expect(AgentRunDetailSchema.parse({ ...detail, steps: [], events: [], results: [] }))
       .toMatchObject({ runId, targetId, status: "queued", currentStep: "queued" });
     expect(StartAgentRunResponseSchema.parse({ ...queuedSummary, reused: false }))
       .toMatchObject({ runId, targetId, reused: false });
@@ -101,7 +168,7 @@ describe("agent run contracts", () => {
       sources: FAKE_JOB_DISCOVERY_SOURCE_IDS,
     }).toEqual({
       queue: "agent-runs", job: "discover-jobs", lease: 30_000, scan: 1_000,
-      budget: { maxDurationMs: 60_000, maxAttempts: 3, maxToolCalls: 10, maxResults: 5, maxModelCalls: 0, maxTokens: 0 },
+      budget: { maxActiveDurationMs: 60_000, maxAttempts: 3, maxToolCalls: 10, maxResults: 5, maxModelCalls: 0, maxTokens: 0 },
       adapter: "fake", adapterVersion: "fake-job-discovery-v1", workflow: "job-discovery-workflow-v1",
       sources: ["fake:aurora-careers", "fake:orbit-careers"],
     });
@@ -156,5 +223,27 @@ describe("agent run contracts", () => {
         failureCode: "AGENT_RUN_ADAPTER_RETRYABLE",
       }).success).toBe(false);
     }
+  });
+
+  it("models control, budget, and cancelled events with matching lifecycle pairs", () => {
+    const usageFixture = {
+      activeDurationMs: 1_250, attempts: 1, toolCalls: 2, sourceRequests: 2,
+      modelCalls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, results: 1, complete: true,
+    };
+    expect(AgentRunEventDataSchema.parse({
+      eventType: "run.pause_requested", status: "running", currentStep: "fetch_details", attemptCount: 1,
+    })).toMatchObject({ eventType: "run.pause_requested" });
+    expect(AgentRunEventDataSchema.parse({
+      eventType: "run.budget_updated", status: "running", currentStep: "fetch_details", attemptCount: 1, usage: usageFixture,
+    })).toMatchObject({ usage: usageFixture });
+    expect(AgentRunEventDataSchema.parse({
+      eventType: "run.cancelled", status: "cancelled", currentStep: "cancelled", attemptCount: 1,
+    })).toMatchObject({ status: "cancelled" });
+    expect(AgentRunEventDataSchema.safeParse({
+      eventType: "run.cancelled", status: "cancelled", currentStep: "fetch_details", attemptCount: 1,
+    }).success).toBe(false);
+    expect(AgentRunSummarySchema.safeParse({
+      ...queuedSummary, status: "cancelled", currentStep: "queued", cancelledAt: now,
+    }).success).toBe(false);
   });
 });

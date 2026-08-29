@@ -10,6 +10,7 @@
     "./career-import": "./src/career-import.ts",
     "./job-imports": "./src/job-imports.ts",
     "./agent-runs": "./src/agent-runs.ts",
+    "./agent-inbox": "./src/agent-inbox.ts",
     "./job-targets": "./src/job-targets.ts",
     "./pdf-career-processing": "./src/pdf-career-processing.ts",
     "./profile-review": "./src/profile-review.ts",

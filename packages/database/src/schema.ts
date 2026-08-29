@@ -455,13 +455,30 @@ export const agentRuns = pgTable("agent_runs", {
   sourceScope: jsonb("source_scope").notNull(),
   budgetSnapshot: jsonb("budget_snapshot").notNull(),
   workflowVersion: varchar("workflow_version", { length: 64 }).notNull(),
+  ruleVersion: varchar("rule_version", { length: 64 }).notNull(),
   adapter: varchar("adapter", { length: 64 }).notNull(),
   adapterVersion: varchar("adapter_version", { length: 64 }).notNull(),
   outputSchemaVersion: varchar("output_schema_version", { length: 64 }).notNull(),
+  toolAllowlist: jsonb("tool_allowlist").notNull(),
+  modelSnapshot: jsonb("model_snapshot"),
   status: varchar("status", { length: 16 }).notNull().default("queued"),
   currentStep: varchar("current_step", { length: 32 }).notNull().default("queued"),
+  controlState: varchar("control_state", { length: 24 }).notNull().default("none"),
   version: integer("version").notNull().default(1),
   attemptCount: integer("attempt_count").notNull().default(0),
+  activeSliceStartedAt: timestamp("active_slice_started_at", { withTimezone: true }),
+  activeDurationMs: integer("active_duration_ms").notNull().default(0),
+  toolCallCount: integer("tool_call_count").notNull().default(0),
+  sourceRequestCount: integer("source_request_count").notNull().default(0),
+  modelCallCount: integer("model_call_count").notNull().default(0),
+  inputTokenCount: integer("input_token_count").notNull().default(0),
+  outputTokenCount: integer("output_token_count").notNull().default(0),
+  totalTokenCount: integer("total_token_count").notNull().default(0),
+  resultCount: integer("result_count").notNull().default(0),
+  usageComplete: boolean("usage_complete").notNull().default(false),
+  terminationKind: varchar("termination_kind", { length: 64 }),
+  terminationBudgetDimension: varchar("termination_budget_dimension", { length: 32 }),
+  retryOfRunId: uuid("retry_of_run_id"),
   failureCode: varchar("failure_code", { length: 64 }),
   claimToken: uuid("claim_token"),
   claimExpiresAt: timestamp("claim_expires_at", { withTimezone: true }),
@@ -469,6 +486,7 @@ export const agentRuns = pgTable("agent_runs", {
   startedAt: timestamp("started_at", { withTimezone: true }),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   failedAt: timestamp("failed_at", { withTimezone: true }),
+  cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
@@ -476,22 +494,94 @@ export const agentRuns = pgTable("agent_runs", {
   unique("agent_runs_user_idempotency_unique").on(table.userId, table.idempotencyKey),
   index("agent_runs_recovery_status_expiry_idx").on(table.status, table.claimExpiresAt, table.queuedAt, table.id),
   foreignKey({ columns: [table.userId, table.targetId], foreignColumns: [jobTargets.userId, jobTargets.id], name: "agent_runs_owner_target_fk" }),
+  foreignKey({ columns: [table.userId, table.retryOfRunId], foreignColumns: [table.userId, table.id], name: "agent_runs_owner_retry_fk" }),
   check("agent_runs_target_version_positive", sql`${table.targetVersion} >= 1`),
   check("agent_runs_target_snapshot_object", sql`jsonb_typeof(${table.targetSnapshot}) = 'object'`),
   check("agent_runs_source_scope_object", sql`jsonb_typeof(${table.sourceScope}) = 'object'`),
   check("agent_runs_budget_snapshot_object", sql`jsonb_typeof(${table.budgetSnapshot}) = 'object'`),
-  check("agent_runs_status_check", sql`${table.status} in ('queued', 'running', 'completed', 'failed')`),
-  check("agent_runs_current_step_check", sql`${table.currentStep} in ('queued', 'batch_search', 'fetch_details', 'persist_results', 'completed', 'failed')`),
+  check("agent_runs_status_check", sql`${table.status} in ('queued', 'running', 'paused', 'completed', 'failed', 'cancelled')`),
+  check("agent_runs_current_step_check", sql`${table.currentStep} in ('queued', 'batch_search', 'fetch_details', 'persist_results', 'completed', 'failed', 'cancelled')`),
+  check("agent_runs_control_state_check", sql`${table.controlState} in ('none', 'pause_requested', 'cancel_requested')`),
   check("agent_runs_version_positive", sql`${table.version} >= 1`),
   check("agent_runs_attempt_count_nonnegative", sql`${table.attemptCount} >= 0`),
-  check("agent_runs_failure_code_check", sql`${table.failureCode} is null or ${table.failureCode} in ('AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_CONTENT_STORAGE_FAILED', 'AGENT_RUN_PERSIST_FAILED', 'AGENT_RUN_BUDGET_EXCEEDED')`),
+  check("agent_runs_failure_code_check", sql`${table.failureCode} is null or ${table.failureCode} in ('AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_CONTENT_STORAGE_FAILED', 'AGENT_RUN_PERSIST_FAILED', 'AGENT_RUN_BUDGET_EXCEEDED', 'AGENT_RUN_MODEL_RETRYABLE', 'AGENT_RUN_MODEL_AUTH_FAILED', 'AGENT_RUN_MODEL_POLICY_REJECTED', 'AGENT_RUN_MODEL_INVALID_RESPONSE')`),
   check("agent_runs_claim_consistency_check", sql`(${table.claimToken} is null) = (${table.claimExpiresAt} is null)`),
+  check("agent_runs_execution_claim_check", sql`(${table.claimToken} is null and ${table.activeSliceStartedAt} is null) or ${table.status} = 'running'`),
+  check("agent_runs_aggregate_nonnegative", sql`${table.activeDurationMs} >= 0 and ${table.toolCallCount} >= 0 and ${table.sourceRequestCount} >= 0 and ${table.modelCallCount} >= 0 and ${table.inputTokenCount} >= 0 and ${table.outputTokenCount} >= 0 and ${table.totalTokenCount} >= 0 and ${table.resultCount} >= 0`),
+  check("agent_runs_total_tokens_check", sql`${table.totalTokenCount} = ${table.inputTokenCount} + ${table.outputTokenCount}`),
+  check("agent_runs_fake_model_usage_check", sql`${table.modelSnapshot} is null and ${table.modelCallCount} = 0 and ${table.inputTokenCount} = 0 and ${table.outputTokenCount} = 0 and ${table.totalTokenCount} = 0`),
+  check("agent_runs_termination_kind_check", sql`${table.terminationKind} is null or ${table.terminationKind} in ('completed', 'cancelled_by_user', 'source_failed', 'content_storage_failed', 'persistence_failed', 'budget_exhausted')`),
+  check("agent_runs_termination_budget_dimension_check", sql`(${table.terminationKind} = 'budget_exhausted' and ${table.terminationBudgetDimension} in ('active_duration', 'attempts', 'tool_calls', 'model_calls', 'tokens')) or (${table.terminationKind} is distinct from 'budget_exhausted' and ${table.terminationBudgetDimension} is null)`),
+  check("agent_runs_cancelled_step_check", sql`(${table.status} = 'cancelled') = (${table.currentStep} = 'cancelled')`),
+  check("agent_runs_complete_termination_check", sql`not ${table.usageComplete} or ${table.status} not in ('completed', 'failed', 'cancelled') or ${table.terminationKind} is not null`),
   check("agent_runs_timestamp_state_check", sql`
-    (${table.status} = 'queued' and ${table.startedAt} is null and ${table.completedAt} is null and ${table.failedAt} is null)
-    or (${table.status} = 'running' and ${table.startedAt} is not null and ${table.completedAt} is null and ${table.failedAt} is null)
-    or (${table.status} = 'completed' and ${table.startedAt} is not null and ${table.completedAt} is not null and ${table.failedAt} is null)
-    or (${table.status} = 'failed' and ${table.startedAt} is not null and ${table.completedAt} is null and ${table.failedAt} is not null)
+    (${table.status} in ('queued', 'paused') and ${table.completedAt} is null and ${table.failedAt} is null and ${table.cancelledAt} is null)
+    or (${table.status} = 'running' and ${table.startedAt} is not null and ${table.completedAt} is null and ${table.failedAt} is null and ${table.cancelledAt} is null)
+    or (${table.status} = 'completed' and ${table.startedAt} is not null and ${table.completedAt} is not null and ${table.failedAt} is null and ${table.cancelledAt} is null)
+    or (${table.status} = 'failed' and ${table.startedAt} is not null and ${table.completedAt} is null and ${table.failedAt} is not null and ${table.cancelledAt} is null)
+    or (${table.status} = 'cancelled' and ${table.completedAt} is null and ${table.failedAt} is null and ${table.cancelledAt} is not null)
   `),
+]);
+
+export const agentRunControlCommands = pgTable("agent_run_control_commands", {
+  id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  runId: uuid("run_id").notNull().references(() => agentRuns.id), commandId: uuid("command_id").notNull(),
+  action: varchar("action", { length: 16 }).notNull(), applied: boolean("applied").notNull(),
+  resultRunVersion: integer("result_run_version").notNull(), resultSnapshot: jsonb("result_snapshot").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("agent_run_control_commands_user_run_command_unique").on(table.userId, table.runId, table.commandId),
+  foreignKey({ columns: [table.userId, table.runId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "agent_run_control_commands_owner_run_fk" }),
+  check("agent_run_control_commands_action_check", sql`${table.action} in ('pause', 'resume', 'cancel')`),
+  check("agent_run_control_commands_result_version_positive", sql`${table.resultRunVersion} >= 1`),
+  check("agent_run_control_commands_result_snapshot_object", sql`jsonb_typeof(${table.resultSnapshot}) = 'object'`),
+]);
+
+export const agentRunUsageEntries = pgTable("agent_run_usage_entries", {
+  id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  runId: uuid("run_id").notNull().references(() => agentRuns.id), usageKey: varchar("usage_key", { length: 128 }).notNull(),
+  category: varchar("category", { length: 32 }).notNull(), amount: integer("amount").notNull(), stepKey: varchar("step_key", { length: 32 }),
+  attemptCount: integer("attempt_count").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("agent_run_usage_entries_run_key_category_unique").on(table.runId, table.usageKey, table.category),
+  foreignKey({ columns: [table.userId, table.runId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "agent_run_usage_entries_owner_run_fk" }),
+  check("agent_run_usage_entries_category_check", sql`${table.category} in ('active_duration', 'tool_call', 'source_request', 'model_call', 'input_tokens', 'output_tokens', 'result')`),
+  check("agent_run_usage_entries_amount_positive", sql`${table.amount} >= 1`),
+  check("agent_run_usage_entries_attempt_nonnegative", sql`${table.attemptCount} >= 0`),
+  check("agent_run_usage_entries_step_check", sql`${table.stepKey} is null or ${table.stepKey} in ('batch_search', 'fetch_details', 'persist_results')`),
+]);
+
+export const agentInboxItems = pgTable("agent_inbox_items", {
+  id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  runId: uuid("run_id").notNull().references(() => agentRuns.id), triggerEventSequence: integer("trigger_event_sequence").notNull(),
+  kind: varchar("kind", { length: 32 }).notNull(), status: varchar("status", { length: 16 }).notNull().default("open"),
+  reasonCode: varchar("reason_code", { length: 64 }).notNull(), budgetDimension: varchar("budget_dimension", { length: 32 }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+}, (table) => [
+  unique("agent_inbox_items_user_id_id_unique").on(table.userId, table.id),
+  unique("agent_inbox_items_run_event_kind_unique").on(table.runId, table.triggerEventSequence, table.kind),
+  index("agent_inbox_items_open_lookup_idx").on(table.userId, table.status, table.createdAt),
+  foreignKey({ columns: [table.userId, table.runId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "agent_inbox_items_owner_run_fk" }),
+  check("agent_inbox_items_trigger_event_positive", sql`${table.triggerEventSequence} >= 1`),
+  check("agent_inbox_items_kind_check", sql`${table.kind} in ('run_failed', 'budget_exhausted', 'decision_required')`),
+  check("agent_inbox_items_status_check", sql`${table.status} in ('open', 'resolved')`),
+  check("agent_inbox_items_reason_check", sql`${table.reasonCode} = 'AGENT_RUN_PAUSED' or ${table.reasonCode} in ('AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_CONTENT_STORAGE_FAILED', 'AGENT_RUN_PERSIST_FAILED', 'AGENT_RUN_BUDGET_EXCEEDED', 'AGENT_RUN_MODEL_RETRYABLE', 'AGENT_RUN_MODEL_AUTH_FAILED', 'AGENT_RUN_MODEL_POLICY_REJECTED', 'AGENT_RUN_MODEL_INVALID_RESPONSE')`),
+  check("agent_inbox_items_dimension_check", sql`${table.budgetDimension} is null or ${table.budgetDimension} in ('active_duration', 'attempts', 'tool_calls', 'model_calls', 'tokens')`),
+  check("agent_inbox_items_resolved_check", sql`(${table.status} = 'open') = (${table.resolvedAt} is null)`),
+]);
+
+export const agentInboxItemActions = pgTable("agent_inbox_item_actions", {
+  id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  itemId: uuid("item_id").notNull().references(() => agentInboxItems.id), actionId: uuid("action_id").notNull(),
+  action: varchar("action", { length: 16 }).notNull(), outcome: varchar("outcome", { length: 16 }).notNull(),
+  relatedRunId: uuid("related_run_id"), reasonCode: varchar("reason_code", { length: 64 }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("agent_inbox_item_actions_user_item_action_unique").on(table.userId, table.itemId, table.actionId),
+  foreignKey({ columns: [table.userId, table.itemId], foreignColumns: [agentInboxItems.userId, agentInboxItems.id], name: "agent_inbox_item_actions_owner_item_fk" }),
+  foreignKey({ columns: [table.userId, table.relatedRunId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "agent_inbox_item_actions_owner_related_run_fk" }),
+  check("agent_inbox_item_actions_action_check", sql`${table.action} in ('restart_run', 'resume_run', 'cancel_run', 'dismiss')`),
+  check("agent_inbox_item_actions_outcome_check", sql`${table.outcome} in ('applied', 'no_change', 'failed')`),
 ]);
 
 export const agentRunSteps = pgTable("agent_run_steps", {
