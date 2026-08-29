@@ -52,7 +52,7 @@ it("将复用通知告知用户，并以 literal pre 展示不可信 Markdown", 
   await user.type(screen.getByRole("textbox", { name: "岗位描述" }), "岗位正文");
   await user.click(screen.getByRole("button", { name: "导入岗位" }));
   await waitFor(() => expect(screen.getByText("已复用已有岗位导入记录。")).toBeInTheDocument());
-  expect(screen.getByRole("status")).toHaveTextContent("导入完成");
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("导入完成"));
   const evidence = await screen.findByText((_, element) => element?.tagName === "PRE" && element.textContent?.includes("<img src=x onerror=alert(1)>") === true);
   expect(evidence).toBeInTheDocument();
   expect(evidence.closest("pre")).not.toBeNull();
