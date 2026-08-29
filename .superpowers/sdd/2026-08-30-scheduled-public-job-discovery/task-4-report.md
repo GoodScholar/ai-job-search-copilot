@@ -34,3 +34,25 @@ Base: `a891f21e896fc20e9e26e0a14874196d1515dee1`
 - 没有调度 API/UI、生命周期持久化或 Worker scheduler 改动；详情失败只以稳定 Adapter error 返回，让现有 Processor 重试边界处理。
 - 全部 Adapter 契约网络通过 source-access `/testing` transport 和固定 fixtures，不访问真实招聘站。
 - `pnpm --filter worker test` 全量命令在本任务剩余窗口内没有完成输出；已运行的 focused module + typecheck 作为本切片证据。
+
+## Fix Round 1/5
+
+Base: `19473c4be630372e982de94383fd6165558a7c0e`
+
+### RED / GREEN
+
+- RED: 多 source 测试证明旧实现会在发现第二个 parent-only source 前已 DNS/transport 第一个 source；success→empty/failed batch 也会继续返回上一 generation 的 cached detail，更新 fixture 未重新读取。
+- GREEN: `searchBatch` 首先清空 active generation/cache，并纯校验所有 sources；只有严格 scope 与全部列表都成功后才原子替换 source/candidate state。缺少精确 API host 的第二 source 现在返回 `GREENHOUSE_API_HOST_NOT_ALLOWED`，lookup 与 transport 都为 0。
+
+### State and cache evidence
+
+- successful→empty、successful→第二 source 5xx、重复 success 均不会让旧或半成品 candidate 进入 `getDetail`。
+- 详情失败不写 cache；同 ID 下次成功会再次 GET；成功详情在同一 generation 被复用；新 batch generation 清空成功 cache，`updated-job-detail.json` 的 title/deadline 得到新值。
+
+### Fix verification
+
+`APP_ENV=test pnpm --filter worker exec vitest run --no-file-parallelism src/agent-runs/greenhouse-job-discovery-adapter.test.ts src/agent-runs/job-discovery-adapter-resolver.test.ts src/agent-runs/agent-run.module.test.ts src/agent-runs/fake-job-discovery-adapter.test.ts` → 4 files / 29 tests passed.
+
+`pnpm --filter worker typecheck` → success.
+
+`git diff --check` → success.

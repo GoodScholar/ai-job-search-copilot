@@ -97,9 +97,9 @@ function decode(body: Uint8Array): unknown { return JSON.parse(new TextDecoder()
 
 /** 只读取已授权 Greenhouse Job Board API 的列表和精确岗位详情。 */
 export class GreenhouseJobDiscoveryAdapter implements JobDiscoveryAdapter {
-  private readonly sources = new Map<string, AuthorizedSource>();
-  private readonly candidates = new Set<string>();
-  private readonly detailCache = new Map<string, DiscoveryDetailResult>();
+  private sources = new Map<string, AuthorizedSource>();
+  private candidates = new Set<string>();
+  private detailCache = new Map<string, DiscoveryDetailResult>();
   private readonly client: PublicSourceClient;
 
   constructor(input: { client?: PublicSourceClient } = {}) {
@@ -112,15 +112,36 @@ export class GreenhouseJobDiscoveryAdapter implements JobDiscoveryAdapter {
   }
 
   async searchBatch(input: { targetSnapshot: DiscoverySearchInput["targetSnapshot"]; sourceScope: PublicAgentRunSourceScope }): Promise<PublicDiscoveryBatchSearchResult> {
+    // A batch owns one discovery generation. No prior generation may serve a
+    // detail while this one is empty, malformed, or only partially fetched.
+    this.sources.clear();
+    this.candidates.clear();
+    this.detailCache.clear();
+    const rawSources = input.sourceScope && typeof input.sourceScope === "object" && Array.isArray((input.sourceScope as { sources?: unknown }).sources)
+      ? (input.sourceScope as { sources: unknown[] }).sources
+      : null;
+    if (!rawSources) return { ok: false, error: { code: "GREENHOUSE_SOURCE_UNSUPPORTED", retryable: false } };
+    const authorizedSources: AuthorizedSource[] = [];
+    for (const rawSource of rawSources) {
+      if (!rawSource || typeof rawSource !== "object" || Array.isArray(rawSource)) return { ok: false, error: { code: "GREENHOUSE_SOURCE_UNSUPPORTED", retryable: false } };
+      const authorized = sourceAuthorization(rawSource as Source);
+      if (!authorized.ok) return { ok: false, error: { code: authorized.code, retryable: false } };
+      authorizedSources.push(authorized.value);
+    }
+    const strictScope = PublicAgentRunSourceScopeSchema.safeParse(input.sourceScope);
+    if (!strictScope.success || strictScope.data.sources.length !== authorizedSources.length) {
+      return { ok: false, error: { code: "GREENHOUSE_SOURCE_UNSUPPORTED", retryable: false } };
+    }
     const items: PublicItems = [];
     const scans: PublicScans = [];
-    for (const rawSource of input.sourceScope.sources) {
-      const authorized = sourceAuthorization(rawSource);
-      if (!authorized.ok) return { ok: false, error: { code: authorized.code, retryable: false } };
-      this.sources.set(rawSource.sourceId, authorized.value);
+    const nextSources = new Map<string, AuthorizedSource>();
+    const nextCandidates = new Set<string>();
+    for (const authorized of authorizedSources) {
+      const rawSource = authorized.source;
+      nextSources.set(rawSource.sourceId, authorized);
       let response;
       try {
-        response = await this.client.get({ url: apiUrl(authorized.value.boardToken), allowedDomains: [GREENHOUSE_API_HOST], accept: "application/json", maxRedirects: 0, retry: "bounded" });
+        response = await this.client.get({ url: apiUrl(authorized.boardToken), allowedDomains: [GREENHOUSE_API_HOST], accept: "application/json", maxRedirects: 0, retry: "bounded" });
       } catch (error) { return { ok: false, error: failure(error) }; }
       const httpFailure = statusFailure(response.status);
       if (httpFailure) return { ok: false, error: httpFailure };
@@ -131,10 +152,12 @@ export class GreenhouseJobDiscoveryAdapter implements JobDiscoveryAdapter {
       for (const job of parsed.data.jobs) {
         if (items.length >= PUBLIC_JOB_DISCOVERY_BUDGET.maxResults || !matchesTarget(job, input.targetSnapshot)) continue;
         const detailId = String(job.id);
-        this.candidates.add(`${rawSource.sourceId}:${detailId}`);
+        nextCandidates.add(`${rawSource.sourceId}:${detailId}`);
         items.push({ sourceId: rawSource.sourceId, detailId, company: null, title: job.title, location: job.location.name });
       }
     }
+    this.sources = nextSources;
+    this.candidates = nextCandidates;
     return { ok: true, data: { items, scans } };
   }
 

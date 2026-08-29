@@ -70,6 +70,68 @@ describe("GreenhouseJobDiscoveryAdapter", () => {
     expect(lookups).toBe(0);
   });
 
+  it("validates every source before the first list request, so a later policy source produces zero DNS and transport", async () => {
+    let lookups = 0;
+    let transports = 0;
+    const client = createPublicSourceClientForTest({
+      exactHosts: ["boards-api.greenhouse.io"],
+      lookup: async () => { lookups += 1; return [{ address: "93.184.216.34", family: 4 }]; },
+      transport: async () => { transports += 1; throw new Error("must not transport"); },
+    });
+    const second = { ...source, sourceId: "greenhouse:second-board", careersUrl: "https://job-boards.greenhouse.io/second-board", boardToken: "second-board", allowedDomains: ["greenhouse.io"] };
+    const result = await new GreenhouseJobDiscoveryAdapter({ client }).searchBatch({ targetSnapshot, sourceScope: { ...scope, sources: [source, second] } });
+    expect(result).toEqual({ ok: false, error: { code: "GREENHOUSE_API_HOST_NOT_ALLOWED", retryable: false } });
+    expect({ lookups, transports }).toEqual({ lookups: 0, transports: 0 });
+  });
+
+  it("invalidates successful generation state before empty or failed replacement batches", async () => {
+    const list = await fixture("list-jobs.json");
+    const empty = await fixture("empty-list-jobs.json");
+    const responses = [list, await fixture("job-detail.json"), empty, list, { failure: 500 }, { failure: 500 }];
+    const client = createPublicSourceClientForTest({
+      exactHosts: ["boards-api.greenhouse.io"], testOrigin: "https://boards-api.greenhouse.io", lookup: async () => [{ address: "93.184.216.34", family: 4 }], sleep: async () => undefined,
+      transport: async () => {
+        const next = responses.shift();
+        if (next && typeof next === "object" && "failure" in next) return { status: Number(next.failure), headers: { "content-type": "application/json" }, body: new Uint8Array() };
+        return { status: 200, headers: { "content-type": "application/json" }, body: new TextEncoder().encode(JSON.stringify(next)) };
+      },
+    });
+    const adapter = new GreenhouseJobDiscoveryAdapter({ client });
+    await expect(adapter.searchBatch({ targetSnapshot, sourceScope: scope })).resolves.toMatchObject({ ok: true });
+    await expect(adapter.getDetail({ sourceId: source.sourceId, detailId: "701" })).resolves.toMatchObject({ ok: true });
+    await expect(adapter.searchBatch({ targetSnapshot, sourceScope: scope })).resolves.toMatchObject({ ok: true });
+    await expect(adapter.getDetail({ sourceId: source.sourceId, detailId: "701" })).resolves.toEqual({ ok: false, error: { code: "GREENHOUSE_DETAIL_NOT_SELECTED", retryable: false } });
+    const second = { ...source, sourceId: "greenhouse:second-board", careersUrl: "https://job-boards.greenhouse.io/second-board", boardToken: "second-board" };
+    await expect(adapter.searchBatch({ targetSnapshot, sourceScope: { ...scope, sources: [source, second] } })).resolves.toEqual({ ok: false, error: { code: "GREENHOUSE_SERVER_ERROR", retryable: true } });
+    await expect(adapter.getDetail({ sourceId: source.sourceId, detailId: "701" })).resolves.toEqual({ ok: false, error: { code: "GREENHOUSE_DETAIL_NOT_SELECTED", retryable: false } });
+  });
+
+  it("does not cache a failed detail, caches a success, and resets that cache for an updated generation", async () => {
+    const list = await fixture("list-jobs.json");
+    const detail = await fixture("job-detail.json");
+    const updated = await fixture("updated-job-detail.json");
+    let requests = 0;
+    const responses = [list, { failure: 404 }, detail, list, updated];
+    const client = createPublicSourceClientForTest({
+      exactHosts: ["boards-api.greenhouse.io"], testOrigin: "https://boards-api.greenhouse.io", lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+      transport: async () => {
+        requests += 1;
+        const next = responses.shift();
+        if (next && typeof next === "object" && "failure" in next) return { status: Number(next.failure), headers: { "content-type": "application/json" }, body: new Uint8Array() };
+        return { status: 200, headers: { "content-type": "application/json" }, body: new TextEncoder().encode(JSON.stringify(next)) };
+      },
+    });
+    const adapter = new GreenhouseJobDiscoveryAdapter({ client });
+    await adapter.searchBatch({ targetSnapshot, sourceScope: scope });
+    await expect(adapter.getDetail({ sourceId: source.sourceId, detailId: "701" })).resolves.toEqual({ ok: false, error: { code: "GREENHOUSE_NOT_FOUND", retryable: false } });
+    await expect(adapter.getDetail({ sourceId: source.sourceId, detailId: "701" })).resolves.toMatchObject({ ok: true });
+    const afterSuccess = requests;
+    await expect(adapter.getDetail({ sourceId: source.sourceId, detailId: "701" })).resolves.toMatchObject({ ok: true });
+    expect(requests).toBe(afterSuccess);
+    await adapter.searchBatch({ targetSnapshot, sourceScope: scope });
+    await expect(adapter.getDetail({ sourceId: source.sourceId, detailId: "701" })).resolves.toMatchObject({ ok: true, data: { title: "Senior Machine Learning Engineer", deadline: "2026-10-15T15:59:59.000Z" } });
+  });
+
   it("maps untrusted list failures to stable codes without response bodies or URLs", async () => {
     let attempts = 0;
     const client = createPublicSourceClientForTest({
