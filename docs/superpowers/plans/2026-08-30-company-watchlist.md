@@ -51,6 +51,7 @@
 - **Ruling 4 — 执行规格边界：** `AgentRunSourceScopeSchema` 只增加 `watchlistVersion` 并放宽 `sources` 为有序唯一字符串数组；`AgentRunExecutionSpecSchema` 的其他 #10 字段和不变量不变。若此判断错误，代价是已有运行无法恢复或预算/工具边界失真，因此 Task 4 必须以完整 execution spec、控制、预算、恢复和审计回归测试作为门禁。
 - **Ruling 5 — Drizzle 元数据连续性：** #10 的 journal 已登记 `0019_agent_inbox_action_ownership`，但仓库没有独立 `0019_snapshot.json`。#28 生成 `0020` 时必须让新 snapshot 表示应用 0019 后再加入 Watchlist 的最终 schema，且 `0020` SQL 不得重复或撤销 0019 的 outcome constraint。若处理错误，代价是空库迁移与 schema snapshot 分叉。
 - **Ruling 6 — Agent Run 启动锁顺序：** #10 的真实实现是在事务内先获取账户 advisory lock，再查询同账户 idempotency existing；原计划将两者顺序误写为相反。Task 4 必须保留 #10 的实际顺序，在该锁内、通过幂等复用检查之后读取当前 Watchlist revision 并构造新运行快照，不得为了贴合旧计划文字重排控制流程。若处理错误，代价是改变 #10 已验证的并发与幂等语义。
+- **Ruling 7 — 最终 lint 门禁的相邻基线修复：** #10 基线中的 `apps/web/app/(workbench)/profile/targets/page.tsx` 在 #28 开始前已触发 `react-hooks/error-boundaries`，且文件在 Task 5 前后内容未变；但 Task 6 明确要求全量 `pnpm lint` 成功。允许在 Task 5 修复波次中只把数据 await 移出 JSX 构造的 `try/catch`，保持页面成功、控制流重抛与固定失败态行为不变。若不修复，代价是无法满足 #28 的强制全仓验收门禁。
 
 ---
 
