@@ -136,8 +136,9 @@ export function createAgentRunRecoveryQueries(deps: { db: Database; clock: () =>
   };
 }
 
-type ProcessorDependencies = { db: Database; adapter: JobDiscoveryAdapter; contentStore: DiscoveryContentStore; auditTrail: AuditTrail; id: () => string; clock: () => Date };
+type ProcessorDependencies = { db: Database; adapter: JobDiscoveryAdapter; contentStore: DiscoveryContentStore; auditTrail: AuditTrail; id: () => string; clock: () => Date; cleanupTimeoutMs?: number };
 type FailureCode = "AGENT_RUN_ADAPTER_RETRYABLE" | "AGENT_RUN_ADAPTER_FAILED" | "AGENT_RUN_CONTENT_STORAGE_FAILED" | "AGENT_RUN_PERSIST_FAILED" | "AGENT_RUN_BUDGET_EXCEEDED";
+const CLEANUP_TIMEOUT_MS = 1_000;
 class AgentRunBudgetError extends Error {}
 
 async function bounded<T>(clock: () => Date, deadline: Date, operation: () => Promise<T>): Promise<T> {
@@ -153,6 +154,10 @@ async function bounded<T>(clock: () => Date, deadline: Date, operation: () => Pr
 
 async function removeBestEffort(store: DiscoveryContentStore, clock: () => Date, deadline: Date, objectKeys: string[]) {
   await Promise.all(objectKeys.map(async (objectKey) => { try { await bounded(clock, deadline, () => store.delete({ objectKey })); } catch { /* 补偿不得覆盖主结果或 attempt deadline。 */ } }));
+}
+
+function cleanupDeadline(deps: ProcessorDependencies): Date {
+  return new Date(deps.clock().getTime() + (deps.cleanupTimeoutMs ?? CLEANUP_TIMEOUT_MS));
 }
 
 async function appendEvent(db: any, input: { id: () => string; userId: string; runId: string; version: number; eventType: string; data: Record<string, unknown>; now: Date }) {
@@ -281,11 +286,14 @@ export function createAgentRunProcessor(deps: ProcessorDependencies): { process(
           putObjectKeys.push(item.objectKey);
           const put = deps.contentStore.put({ objectKey: item.objectKey, bytes: item.bytes, mediaType: "application/json", runId: job.runId });
           try { await bounded(deps.clock, deadline, () => put); } catch (error) {
-            void put.then(() => removeBestEffort(deps.contentStore, deps.clock, deadline, [item.objectKey]), () => removeBestEffort(deps.contentStore, deps.clock, deadline, [item.objectKey]));
+            void put.then(
+              () => removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), [item.objectKey]),
+              () => removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), [item.objectKey]),
+            ).catch(() => undefined);
             throw error;
           }
         }
-      } catch (error) { await removeBestEffort(deps.contentStore, deps.clock, deadline, putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failureCode: error instanceof AgentRunBudgetError ? "AGENT_RUN_BUDGET_EXCEEDED" : "AGENT_RUN_CONTENT_STORAGE_FAILED" }); }
+      } catch (error) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failureCode: error instanceof AgentRunBudgetError ? "AGENT_RUN_BUDGET_EXCEEDED" : "AGENT_RUN_CONTENT_STORAGE_FAILED" }); }
       try {
         const completed = await deps.db.transaction(async (transaction) => {
           await acquireAccountAdvisoryLock(transaction, job.userId);
@@ -308,9 +316,9 @@ export function createAgentRunProcessor(deps: ProcessorDependencies): { process(
           await deps.auditTrail.bind(transaction).append({ userId: job.userId, actorUserId: job.userId, eventType: "agent.run_completed", occurredAt: now, requestId: job.runId, outcome: "success", reasonCode: "AGENT_RUN_COMPLETED", resourceType: "agent_run", resourceId: job.runId, metadata: { runId: job.runId, targetId: run.targetId, attemptCount: claimed.attemptCount, resultCount: stored.length } });
           return { completed: true, cleanup };
         });
-        await removeBestEffort(deps.contentStore, deps.clock, deadline, completed.cleanup);
+        await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), completed.cleanup);
         return completed.completed ? "completed" : "stale";
-      } catch { await removeBestEffort(deps.contentStore, deps.clock, deadline, putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failureCode: "AGENT_RUN_PERSIST_FAILED" }); }
+      } catch { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, finalAttempt: job.finalAttempt, failureCode: "AGENT_RUN_PERSIST_FAILED" }); }
     },
   };
 }

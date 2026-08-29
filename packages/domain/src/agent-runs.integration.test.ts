@@ -192,6 +192,16 @@ describe("agent runs", () => {
     await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({ status: "failed", failureCode: "AGENT_RUN_BUDGET_EXCEEDED" });
   });
 
+  it("put 在写入后跨过 attempt deadline 时，仍以独立 cleanup deadline 删除本 claim 的对象", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    let instant = now;
+    const store = new MemoryStore();
+    store.put = async ({ objectKey }) => { store.puts.push(objectKey); instant = new Date(now.getTime() + 60_000); };
+    await expect(createAgentRunProcessor({ db: database, adapter: adapter(), contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => instant }), id: () => crypto.randomUUID(), clock: () => instant, cleanupTimeoutMs: 1 }).process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("failed");
+    expect(store.deletes).toEqual(expect.arrayContaining(store.puts));
+  });
+
   it("在可重试失败时重新排队，在最终尝试时终止且不暴露原始错误", async () => {
     const { userId, targetId } = await activeTarget();
     const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
