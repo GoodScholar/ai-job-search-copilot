@@ -34,6 +34,14 @@ const sourceLabels: Record<string, string> = {
   company_careers: "公司招聘官网",
 };
 
+const failureMessages: Record<NonNullable<AgentRunDetail["failureCode"]>, string> = {
+  AGENT_RUN_ADAPTER_RETRYABLE: "岗位来源暂时不可用，请稍后重新发起发现。",
+  AGENT_RUN_ADAPTER_FAILED: "岗位来源返回的数据无法验证，请更换求职目标后重新发起。",
+  AGENT_RUN_CONTENT_STORAGE_FAILED: "岗位证据暂时无法保存，请稍后重新发起发现。",
+  AGENT_RUN_PERSIST_FAILED: "岗位结果暂时无法保存，请稍后重新发起发现。",
+  AGENT_RUN_BUDGET_EXCEEDED: "本次发现超过固定处理预算，请缩小求职目标后重新发起。",
+};
+
 function cursorKey(runId: string): string {
   return `job-copilot:agent-run:${runId}:cursor`;
 }
@@ -59,7 +67,7 @@ function runStatusLabel(run: AgentRunDetail | null): string {
   if (run.status === "queued") return "岗位发现已排队";
   if (run.status === "running") return `岗位发现进行中：${run.currentStep in stepLabels ? stepLabels[run.currentStep as keyof typeof stepLabels] : "准备中"}`;
   if (run.status === "completed") return `岗位发现完成，共保存 ${run.results.length} 个岗位机会`;
-  return "岗位发现未完成，请稍后重新尝试。";
+  return failureMessages[run.failureCode ?? "AGENT_RUN_PERSIST_FAILED"];
 }
 
 async function fetchRunDetail(runId: string): Promise<AgentRunDetail> {

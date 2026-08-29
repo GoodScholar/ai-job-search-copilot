@@ -133,4 +133,20 @@ describe("AgentRunReconciler", () => {
       removeOnFail: true,
     });
   });
+
+  it("Redis 入队永不 settle 时在截止时间后报告故障并释放扫描锁", async () => {
+    vi.useFakeTimers();
+    const failures: AgentRunRecoveryFailure[] = [];
+    const reconciler = new AgentRunReconciler({
+      recoveryQueries: { listRecoverable: async () => [first] },
+      queue: { enqueue: async () => new Promise<void>(() => undefined) },
+      reporter: memoryReporter(failures),
+    });
+
+    const initializing = reconciler.onModuleInit();
+    await vi.advanceTimersByTimeAsync(5_000);
+    await initializing;
+    expect(failures).toEqual([{ failureCode: "AGENT_RUN_RECOVERY_ENQUEUE_FAILED", runId: first.runId, userId: first.userId }]);
+    await reconciler.onModuleDestroy();
+  });
 });

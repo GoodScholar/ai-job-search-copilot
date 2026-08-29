@@ -571,6 +571,8 @@ describe("database migrations", () => {
       "agent_run_job_results_owner_run_fk",
       "agent_run_job_results_owner_opportunity_fk",
       "agent_run_job_results_owner_posting_version_fk",
+      "agent_run_job_results_evidence_tuple_fk",
+      "job_opportunity_sources_evidence_tuple_unique",
     ]));
 
     const firstAccountId = "29a65f3c-6e60-4d03-8098-6ef15f21e43e";
@@ -631,13 +633,21 @@ describe("database migrations", () => {
       values (${firstOpportunityId}, ${firstAccountId}, ${firstVersionId}, ${"e".repeat(64)}, '{}'::jsonb),
              (${secondOpportunityId}, ${secondAccountId}, ${secondVersionId}, ${"f".repeat(64)}, '{}'::jsonb)
     `);
+    await migratedDatabase.execute(sql`
+      insert into job_opportunity_sources (id, user_id, opportunity_id, source_posting_version_id)
+      values ('2f6ab2d5-5cd1-45c6-920a-c0162593031a', ${firstAccountId}, ${firstOpportunityId}, ${firstVersionId})
+    `);
+    await migratedDatabase.execute(sql`
+      insert into agent_run_job_results (id, user_id, run_id, opportunity_id, source_posting_version_id, ordinal)
+      values ('18db43ed-b15d-4c2b-b659-979d75cdcbd9', ${firstAccountId}, ${runId}, ${firstOpportunityId}, ${firstVersionId}, 1)
+    `);
     await expect(migratedDatabase.execute(sql`
       insert into agent_run_job_results (id, user_id, run_id, opportunity_id, source_posting_version_id, ordinal)
-      values ('6be339cd-57b6-4c0d-bc75-62bf15b2b6b5', ${firstAccountId}, ${runId}, ${secondOpportunityId}, ${firstVersionId}, 1)
+      values ('6be339cd-57b6-4c0d-bc75-62bf15b2b6b5', ${firstAccountId}, ${runId}, ${secondOpportunityId}, ${firstVersionId}, 2)
     `)).rejects.toMatchObject({ cause: { code: "23503" } });
     await expect(migratedDatabase.execute(sql`
       insert into agent_run_job_results (id, user_id, run_id, opportunity_id, source_posting_version_id, ordinal)
-      values ('1eb77c10-d6e1-4f75-9e8c-a32db63967ee', ${firstAccountId}, ${runId}, ${firstOpportunityId}, ${secondVersionId}, 1)
+      values ('1eb77c10-d6e1-4f75-9e8c-a32db63967ee', ${firstAccountId}, ${runId}, ${firstOpportunityId}, ${secondVersionId}, 3)
     `)).rejects.toMatchObject({ cause: { code: "23503" } });
   });
 });

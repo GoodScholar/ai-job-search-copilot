@@ -38,6 +38,7 @@ function target(id = targetId, roleFamily = "AI 应用工程师", priority: JobT
 
 function detail(status: AgentRunDetail["status"] = "running"): AgentRunDetail {
   const terminal = status === "completed";
+  const failed = status === "failed";
   return {
     runId,
     targetId,
@@ -53,17 +54,17 @@ function detail(status: AgentRunDetail["status"] = "running"): AgentRunDetail {
     outputSchemaVersion: "job-discovery-result-v1",
     budget: { maxDurationMs: 60_000, maxAttempts: 3, maxToolCalls: 10, maxResults: 5, maxModelCalls: 0, maxTokens: 0 },
     status,
-    currentStep: terminal ? "completed" : "batch_search",
+    currentStep: terminal ? "completed" : failed ? "failed" : "batch_search",
     version: terminal ? 8 : 2,
     attemptCount: 1,
-    failureCode: null,
+    failureCode: failed ? "AGENT_RUN_BUDGET_EXCEEDED" : null,
     queuedAt: now,
     startedAt: now,
     completedAt: terminal ? "2026-08-29T08:00:03.000Z" : null,
-    failedAt: null,
+    failedAt: failed ? "2026-08-29T08:00:03.000Z" : null,
     updatedAt: terminal ? "2026-08-29T08:00:03.000Z" : now,
     steps: [
-      { stepKey: "batch_search", ordinal: 1, status: terminal ? "completed" : "running", attemptCount: 1, startedAt: now, completedAt: terminal ? now : null, failedAt: null, failureCode: null },
+      { stepKey: "batch_search", ordinal: 1, status: terminal ? "completed" : failed ? "failed" : "running", attemptCount: 1, startedAt: now, completedAt: terminal ? now : null, failedAt: failed ? "2026-08-29T08:00:03.000Z" : null, failureCode: failed ? "AGENT_RUN_BUDGET_EXCEEDED" : null },
       { stepKey: "fetch_details", ordinal: 2, status: terminal ? "completed" : "pending", attemptCount: terminal ? 1 : 0, startedAt: terminal ? now : null, completedAt: terminal ? now : null, failedAt: null, failureCode: null },
       { stepKey: "persist_results", ordinal: 3, status: terminal ? "completed" : "pending", attemptCount: terminal ? 1 : 0, startedAt: terminal ? now : null, completedAt: terminal ? now : null, failedAt: null, failureCode: null },
     ],
@@ -122,6 +123,13 @@ it("lets the user choose an active target and exposes a touch-sized discovery ac
   expect(screen.getByRole("combobox", { name: "用于发现岗位的求职目标" })).toHaveValue(targetId);
   await userEvent.selectOptions(screen.getByRole("combobox", { name: "用于发现岗位的求职目标" }), secondTargetId);
   expect(screen.getByRole("button", { name: "发现岗位" })).toHaveClass("workbench-touch-target");
+});
+
+it("按稳定失败码解释固定预算，而不泄露异常正文或误导为稍后重试", () => {
+  render(<AgentRunPanel initialRun={detail("failed")} targets={[target()]} />);
+
+  expect(screen.getByText("本次发现超过固定处理预算，请缩小求职目标后重新发起。")).toBeInTheDocument();
+  expect(screen.queryByText(/Error|exception|稍后重新尝试/u)).not.toBeInTheDocument();
 });
 
 it("reuses one idempotency UUID while the same start submission is retried", async () => {

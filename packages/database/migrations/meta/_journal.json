@@ -113,6 +113,20 @@
       "when": 1787965829782,
       "tag": "0015_agent_runs",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1787981755597,
+      "tag": "0016_agent_run_evidence_recovery",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1787981781118,
+      "tag": "0017_agent_run_recovery_index",
+      "breakpoints": true
     }
   ]
 }

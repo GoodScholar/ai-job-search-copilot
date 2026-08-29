@@ -244,6 +244,28 @@ describe("agent runs", () => {
     expect(winnerKeys.every((objectKey) => !store.deletes.includes(objectKey))).toBe(true);
   });
 
+  it("摘要不变而原始正文变化时追加不可变来源版本并保留新对象", async () => {
+    const { userId, targetId } = await activeTarget();
+    const store = new MemoryStore();
+    const first = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const firstAdapter = adapter();
+    await expect(createAgentRunProcessor({ db: database, adapter: firstAdapter, contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).process({ version: 1, runId: first.runId, userId, finalAttempt: true })).resolves.toBe("completed");
+
+    const second = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const changedRaw = adapter();
+    changedRaw.getDetail = async ({ sourceId, detailId }) => ({ ok: true, data: {
+      sourceId, detailId, company: "示例科技", title: "AI 工程师", location: "上海", postedAt: null, deadline: null,
+      sourceType: "company_careers", isOfficial: true, rawPayload: { b: 2, a: 1, requirements: "新增 Python 与 Kubernetes 要求" },
+    } });
+    await expect(createAgentRunProcessor({ db: database, adapter: changedRaw, contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).process({ version: 1, runId: second.runId, userId, finalAttempt: true })).resolves.toBe("completed");
+
+    const versions = await database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, userId));
+    expect(versions).toHaveLength(2);
+    const references = versions.map((version) => (version.rawObjectReference as { objectKey: string }).objectKey);
+    expect(references).toEqual(expect.arrayContaining([store.puts[0]!, store.puts[1]!]));
+    expect(store.deletes).not.toContain(store.puts[1]);
+  });
+
   it("在持久化前去重同一来源身份，并以实际 result 链接数完成", async () => {
     const { userId, targetId } = await activeTarget();
     const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
@@ -264,7 +286,52 @@ describe("agent runs", () => {
     await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({ attemptCount: 3, status: "failed", failureCode: "AGENT_RUN_BUDGET_EXCEEDED", events: expect.arrayContaining([expect.objectContaining({ eventType: "run.failed", data: expect.objectContaining({ attemptCount: 3 }) })]) });
   });
 
-  it("来源写入部分成功后发生存储失败时，删除登记的 claim 对象并写入失败终态", async () => {
+  it("不可重试 Adapter 失败原子终止当前 running step，并且不保存原文", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const store = new MemoryStore();
+    const nonretryable = adapter();
+    nonretryable.searchBatch = async () => ({ ok: false, error: { code: "INVALID_RESPONSE", retryable: false } });
+    await expect(createAgentRunProcessor({ db: database, adapter: nonretryable, contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("failed");
+
+    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({
+      status: "failed", failureCode: "AGENT_RUN_ADAPTER_FAILED",
+      steps: expect.arrayContaining([expect.objectContaining({ stepKey: "batch_search", status: "failed", failureCode: "AGENT_RUN_ADAPTER_FAILED", failedAt: expect.any(String) })]),
+    });
+    expect(store.puts).toEqual([]);
+  });
+
+  it("拒绝 Adapter 的未知字段与详情身份交换，且不保存原文", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const malformed = adapter();
+    malformed.searchBatch = async () => ({ ok: true, data: [{ sourceId: "fake:aurora-careers", detailId: "opening-1", company: "示例科技", title: "AI 工程师", location: "上海", postedAt: null, deadline: null, unexpected: true }] } as never);
+    const store = new MemoryStore();
+    await expect(createAgentRunProcessor({ db: database, adapter: malformed, contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("failed");
+    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({ status: "failed", failureCode: "AGENT_RUN_ADAPTER_FAILED" });
+    expect(store.puts).toEqual([]);
+  });
+
+  it("健康尝试跨越原始 30 秒租约时由 token 续租，不被恢复扫描接管", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    let instant = now;
+    const started = deferred<void>();
+    const release = deferred<void>();
+    const slow = adapter();
+    slow.searchBatch = async () => { started.resolve(); await release.promise; return { ok: true, data: [] }; };
+    const processor = createAgentRunProcessor({ db: database, adapter: slow, contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => instant }), id: () => crypto.randomUUID(), clock: () => instant, heartbeatIntervalMs: 5 });
+    const processing = processor.process({ version: 1, runId: run.runId, userId, finalAttempt: true });
+    await started.promise;
+    instant = new Date(now.getTime() + 31_000);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const recoverable = await createAgentRunRecoveryQueries({ db: database, clock: () => instant }).listRecoverable();
+    expect(recoverable).not.toContainEqual({ version: 1, runId: run.runId, userId });
+    release.resolve();
+    await expect(processing).resolves.toBe("completed");
+  });
+
+  it("来源写入部分成功后发生瞬态存储失败时，删除登记的 claim 对象并重新排队", async () => {
     const { userId, targetId } = await activeTarget();
     const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
     const twoDetails = adapter();
@@ -279,10 +346,10 @@ describe("agent runs", () => {
       if (store.puts.length === 2) throw new Error("object store unavailable");
     };
     const processor = createAgentRunProcessor({ db: database, adapter: twoDetails, contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
-    await expect(processor.process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("failed");
+    await expect(processor.process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("retry");
     expect(store.puts.every((objectKey) => store.deletes.includes(objectKey))).toBe(true);
     await expect(database.select({ status: agentRuns.status, failureCode: agentRuns.failureCode }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId))))
-      .resolves.toEqual([{ status: "failed", failureCode: "AGENT_RUN_CONTENT_STORAGE_FAILED" }]);
+      .resolves.toEqual([{ status: "queued", failureCode: null }]);
   });
 
   it("过期接管后旧 claimant 只删除自己的对象，保留 winner 的数据库引用和对象", async () => {

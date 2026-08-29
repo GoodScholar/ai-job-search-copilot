@@ -11,6 +11,19 @@ import type { createAgentRunProcessor } from "@job-copilot/domain/agent-runs";
 
 type AgentRunProcessor = ReturnType<typeof createAgentRunProcessor>;
 type AgentRunOutcome = Awaited<ReturnType<AgentRunProcessor["process"]>>;
+const CLOSE_TIMEOUT_MS = 5_000;
+
+async function closeWithinDeadline(operation: Promise<void>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      operation,
+      new Promise<void>((_, reject) => { timer = setTimeout(() => reject(new Error("agent run worker close deadline")), CLOSE_TIMEOUT_MS); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 export function agentRunAttemptContext(attemptsMade: number, attempts: number | undefined): { finalAttempt: boolean } {
   return { finalAttempt: attemptsMade + 1 >= (attempts ?? 1) };
@@ -58,7 +71,7 @@ export class AgentRunConsumer implements OnModuleDestroy {
   }
 
   private async closeResources(): Promise<void> {
-    await this.worker.close();
-    if (this.redis.status !== "end") await this.redis.quit();
+    try { await closeWithinDeadline(this.worker.close()); } catch { /* Redis 故障不能卡住进程销毁。 */ }
+    if (this.redis.status !== "end") this.redis.disconnect();
   }
 }

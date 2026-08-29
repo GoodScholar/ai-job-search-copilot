@@ -25,6 +25,20 @@ export interface AgentRunRecoveryReporter {
   report(failure: AgentRunRecoveryFailure): void | Promise<void>;
 }
 
+const REDIS_LIFECYCLE_TIMEOUT_MS = 5_000;
+
+async function withinDeadline<T>(operation: Promise<T>, timeoutMs = REDIS_LIFECYCLE_TIMEOUT_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_, reject) => { timer = setTimeout(() => reject(new Error("agent run redis deadline")), timeoutMs); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export function agentRunQueueJobOptions(runId: string): JobsOptions {
   return {
     jobId: runId,
@@ -46,7 +60,7 @@ export class BullmqAgentRunQueue implements AgentRunQueue, OnModuleDestroy {
   }
 
   async enqueue(job: AgentRunJob): Promise<void> {
-    await this.queue.add(AGENT_RUN_JOB_NAME, job, agentRunQueueJobOptions(job.runId));
+    await withinDeadline(this.queue.add(AGENT_RUN_JOB_NAME, job, agentRunQueueJobOptions(job.runId)));
   }
 
   async onModuleDestroy(): Promise<void> {
@@ -55,14 +69,17 @@ export class BullmqAgentRunQueue implements AgentRunQueue, OnModuleDestroy {
   }
 
   private async closeResources(): Promise<void> {
-    await this.queue.close();
-    if (this.redis.status !== "end") await this.redis.quit();
+    try { await withinDeadline(this.queue.close()); } catch { /* 关闭不能永久阻塞 Worker 退出。 */ }
+    if (this.redis.status !== "end") this.redis.disconnect();
   }
 }
 
 export class AgentRunReconciler implements OnModuleInit, OnModuleDestroy {
   private timer: ReturnType<typeof setInterval> | undefined;
   private scanning = false;
+  private destroyed = false;
+  private scanPromise: Promise<void> | undefined;
+  private recoveryOffset = 0;
 
   constructor(private readonly input: {
     recoveryQueries: AgentRunRecoveryQueries;
@@ -75,25 +92,31 @@ export class AgentRunReconciler implements OnModuleInit, OnModuleDestroy {
     this.timer = setInterval(() => { void this.scan(); }, AGENT_RUN_SCAN_INTERVAL_MS);
   }
 
-  onModuleDestroy(): void {
+  async onModuleDestroy(): Promise<void> {
+    this.destroyed = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
+    if (this.scanPromise) {
+      try { await withinDeadline(this.scanPromise); } catch { /* 超时后已停止继续入队。 */ }
+    }
   }
 
   private async scan(): Promise<void> {
-    if (this.scanning) return;
+    if (this.destroyed || this.scanning) return;
     this.scanning = true;
-    try {
+    this.scanPromise = (async () => {
+      try {
       let jobs: AgentRunJob[];
       try {
-        jobs = await this.input.recoveryQueries.listRecoverable();
+        jobs = await this.input.recoveryQueries.listRecoverable({ offset: this.recoveryOffset });
       } catch {
         await this.report({ failureCode: "AGENT_RUN_RECOVERY_SCAN_FAILED" });
         return;
       }
       for (const job of jobs) {
+        if (this.destroyed) return;
         try {
-          await this.input.queue.enqueue(job);
+          await withinDeadline(this.input.queue.enqueue(job));
         } catch {
           await this.report({
             failureCode: "AGENT_RUN_RECOVERY_ENQUEUE_FAILED",
@@ -102,9 +125,13 @@ export class AgentRunReconciler implements OnModuleInit, OnModuleDestroy {
           });
         }
       }
-    } finally {
-      this.scanning = false;
-    }
+      // 在 Worker 尚未领取积压时轮换分页窗口，避免每秒反复只唤醒首批记录。
+      this.recoveryOffset = jobs.length === 0 ? 0 : this.recoveryOffset + jobs.length;
+      } finally {
+        this.scanning = false;
+      }
+    })();
+    await this.scanPromise;
   }
 
   private async report(failure: AgentRunRecoveryFailure): Promise<void> {

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, check, foreignKey, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
+import { boolean, check, foreignKey, index, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uniqueIndex, uuid, varchar } from "drizzle-orm/pg-core";
 
 export const jobAccounts = pgTable("job_accounts", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -431,6 +431,7 @@ export const jobOpportunitySources = pgTable("job_opportunity_sources", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   unique("job_opportunity_sources_opportunity_version_unique").on(table.opportunityId, table.sourcePostingVersionId),
+  unique("job_opportunity_sources_evidence_tuple_unique").on(table.userId, table.opportunityId, table.sourcePostingVersionId),
   unique("job_opportunity_sources_user_id_id_unique").on(table.userId, table.id),
   foreignKey({
     columns: [table.userId, table.opportunityId],
@@ -473,6 +474,7 @@ export const agentRuns = pgTable("agent_runs", {
 }, (table) => [
   unique("agent_runs_user_id_id_unique").on(table.userId, table.id),
   unique("agent_runs_user_idempotency_unique").on(table.userId, table.idempotencyKey),
+  index("agent_runs_recovery_status_expiry_idx").on(table.status, table.claimExpiresAt, table.queuedAt, table.id),
   foreignKey({ columns: [table.userId, table.targetId], foreignColumns: [jobTargets.userId, jobTargets.id], name: "agent_runs_owner_target_fk" }),
   check("agent_runs_target_version_positive", sql`${table.targetVersion} >= 1`),
   check("agent_runs_target_snapshot_object", sql`jsonb_typeof(${table.targetSnapshot}) = 'object'`),
@@ -556,5 +558,10 @@ export const agentRunJobResults = pgTable("agent_run_job_results", {
   foreignKey({ columns: [table.userId, table.runId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "agent_run_job_results_owner_run_fk" }),
   foreignKey({ columns: [table.userId, table.opportunityId], foreignColumns: [jobOpportunities.userId, jobOpportunities.id], name: "agent_run_job_results_owner_opportunity_fk" }),
   foreignKey({ columns: [table.userId, table.sourcePostingVersionId], foreignColumns: [jobSourcePostingVersions.userId, jobSourcePostingVersions.id], name: "agent_run_job_results_owner_posting_version_fk" }),
+  foreignKey({
+    columns: [table.userId, table.opportunityId, table.sourcePostingVersionId],
+    foreignColumns: [jobOpportunitySources.userId, jobOpportunitySources.opportunityId, jobOpportunitySources.sourcePostingVersionId],
+    name: "agent_run_job_results_evidence_tuple_fk",
+  }),
   check("agent_run_job_results_ordinal_positive", sql`${table.ordinal} >= 1`),
 ]);

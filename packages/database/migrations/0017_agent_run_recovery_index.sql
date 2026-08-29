@@ -1,0 +1,1 @@
+CREATE INDEX "agent_runs_recovery_status_expiry_idx" ON "agent_runs" USING btree ("status","claim_expires_at","queued_at","id");

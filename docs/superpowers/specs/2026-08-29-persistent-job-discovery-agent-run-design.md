@@ -244,10 +244,10 @@ Fake Adapter 根据目标快照和固定来源夹具确定性返回最多 5 个�
 Worker 将详情的规范 JSON 编码为 UTF-8，并保存到：
 
 ```text
-accounts/{userId}/agent-runs/{runId}/sources/{sourceIdentifier}/{sha256}.json
+accounts/{userId}/agent-runs/{runId}/sources/{sourceIdentifier}/{claimToken}/{sha256}.json
 ```
 
-对象 key 只使用内部稳定标识，不使用职位名称、公司名称或用户输入。`job_source_postings` 按 `(user_id, source_type, source_identifier)` 复用；内容指纹相同时复用已有来源版本，变化时追加版本。
+对象 key 只使用内部稳定标识，不使用职位名称、公司名称或用户输入。`claimToken` 隔离并发或过期领取者的对象清理，旧 claimant 永远不能删除新 claimant 的证据。`job_source_postings` 按 `(user_id, source_type, source_identifier)` 复用；规范化摘要与原始正文内容指纹均相同时复用已有来源版本，任一变化时追加版本。
 
 岗位机会沿用现有账户内 `dedup_key`。发现运行创建机会时 `import_id = null`，并写入 `job_opportunity_sources`。已有机会被再次发现时只追加缺失的来源证据和当前运行结果；官方来源版本可以成为首选 `source_posting_version_id`。
 
@@ -345,4 +345,3 @@ Next.js Route Handler 读取 HttpOnly 会话 Cookie，向 API 转发 Bearer、�
 - 所有运行、事件、来源和结果均按账户隔离。
 - 工作台刷新后仍能恢复进度并展示最终岗位。
 - 全量测试、类型检查、构建和本切片 Playwright 通过；已知无关 lint 问题单独披露，不在本切片顺手修改。
-

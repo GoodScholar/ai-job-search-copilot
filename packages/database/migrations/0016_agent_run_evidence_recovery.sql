@@ -1,0 +1,2 @@
+ALTER TABLE "job_opportunity_sources" ADD CONSTRAINT "job_opportunity_sources_evidence_tuple_unique" UNIQUE("user_id","opportunity_id","source_posting_version_id");--> statement-breakpoint
+ALTER TABLE "agent_run_job_results" ADD CONSTRAINT "agent_run_job_results_evidence_tuple_fk" FOREIGN KEY ("user_id","opportunity_id","source_posting_version_id") REFERENCES "public"."job_opportunity_sources"("user_id","opportunity_id","source_posting_version_id") ON DELETE no action ON UPDATE no action;
