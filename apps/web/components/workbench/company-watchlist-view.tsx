@@ -155,7 +155,7 @@ export function CompanyWatchlistView({ initialOverview }: { initialOverview: Com
         <label>来源备注<textarea disabled={inactive || isSaving} onChange={(event) => updateDraft("sourceNote", event.target.value)} value={draft.sourceNote} /></label>
         <div className="company-watchlist-form-actions">
           <button className="workbench-touch-target" disabled={inactive || isSaving} type="submit">{editingItem ? "保存修改" : "保存目标公司"}</button>
-          {!editingItem ? <button className="workbench-touch-target" disabled={inactive || isSaving} type="submit">添加目标公司</button> : <button className="workbench-touch-target" disabled={isSaving} onClick={() => { setEditingItemId(null); setDraft(emptyDraft); setMessage(""); }} type="button">取消编辑</button>}
+          {editingItem ? <button className="workbench-touch-target" disabled={isSaving} onClick={() => { setEditingItemId(null); setDraft(emptyDraft); setMessage(""); }} type="button">取消编辑</button> : null}
         </div>
       </form>
       {message ? <p aria-live="polite" className="profile-status" role="status">{message}</p> : null}
@@ -164,7 +164,7 @@ export function CompanyWatchlistView({ initialOverview }: { initialOverview: Com
     <section aria-labelledby="company-watchlist-ledger-title" className="company-watchlist-section">
       <h2 id="company-watchlist-ledger-title">已登记来源</h2>
       {overview.items.length ? <ol className="company-watchlist-list">{overview.items.map((item, index) => <li key={item.itemId}>
-        <article>
+        <article aria-label={`目标公司来源：${item.canonicalCompanyName}`}>
           <p className="company-watchlist-priority">优先级 {String(item.position).padStart(2, "0")}</p>
           <div className="company-watchlist-row-heading"><div><h3>{item.canonicalCompanyName}</h3><p>{item.state === "enabled" ? "已启用" : "已停用"}</p></div><p>来源状态</p></div>
           <p className="company-watchlist-url">{item.careersUrl}</p>

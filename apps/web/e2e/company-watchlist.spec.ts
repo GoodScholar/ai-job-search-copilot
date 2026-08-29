@@ -61,9 +61,21 @@ test("目标公司 Watchlist 可添加、排序、禁用、重载并显示并发
   await expect(page.getByText("已停用", { exact: true })).toBeVisible();
 
   await page.reload();
-  await expect(page.getByText("星轨智造", { exact: true })).toBeVisible();
-  await expect(page.getByText("曙光云图", { exact: true })).toBeVisible();
-  await expect(page.getByText("优先核验 AI 平台团队")).toBeVisible();
+  const rows = page.getByRole("article");
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toHaveAccessibleName("目标公司来源：星轨智造");
+  await expect(rows.nth(0)).toContainText("星轨智造");
+  await expect(rows.nth(0)).toContainText("优先级 01");
+  await expect(rows.nth(0)).toContainText("已停用");
+  await expect(rows.nth(0)).toContainText("https://careers.orbit.example/jobs");
+  await expect(rows.nth(0)).toContainText("允许域：careers.orbit.example");
+  await expect(rows.nth(1)).toHaveAccessibleName("目标公司来源：曙光云图");
+  await expect(rows.nth(1)).toContainText("曙光云图");
+  await expect(rows.nth(1)).toContainText("优先级 02");
+  await expect(rows.nth(1)).toContainText("已启用");
+  await expect(rows.nth(1)).toContainText("https://careers.aurora.example/jobs");
+  await expect(rows.nth(1)).toContainText("允许域：careers.aurora.example");
+  await expect(rows.nth(1)).toContainText("优先核验 AI 平台团队");
   await expect(page.getByText("Watchlist 版本 4")).toBeVisible();
   const apiOverview = await request.get(`${apiBaseUrl}/v1/job-targets/${targetId}/company-watchlist`, { headers: { authorization: `Bearer ${token}` } });
   expect(apiOverview.status()).toBe(200);
@@ -84,7 +96,7 @@ test("目标公司 Watchlist 可添加、排序、禁用、重载并显示并发
   await expect(cancel).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("heading", { name: "添加目标公司" })).toBeVisible();
-  const controls = page.locator(".company-watchlist-main button, .company-watchlist-main a");
+  const controls = page.locator(".company-watchlist-main button, .company-watchlist-main a, .company-watchlist-main input:not([type=hidden]), .company-watchlist-main textarea");
   expect(await controls.evaluateAll((nodes) => nodes.every((node) => node.getBoundingClientRect().height >= 44))).toBe(true);
   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);

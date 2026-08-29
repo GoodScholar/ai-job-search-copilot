@@ -8,8 +8,9 @@ export const metadata: Metadata = {
 };
 
 export default async function JobTargetsPage() {
+  let overview;
   try {
-    return <JobTargetsView initialOverview={await getJobTargets()} />;
+    overview = await getJobTargets();
   } catch (error) {
     unstable_rethrow(error);
     return (
@@ -23,4 +24,5 @@ export default async function JobTargetsPage() {
       </main>
     );
   }
+  return <JobTargetsView initialOverview={overview} />;
 }

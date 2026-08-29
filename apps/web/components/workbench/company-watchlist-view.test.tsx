@@ -19,11 +19,14 @@ function item(itemId: string, position: number, canonicalCompanyName: string, st
 
 afterEach(() => vi.unstubAllGlobals());
 
-it("为空 Watchlist 呈现目标角色、添加操作和固定安全提示", () => {
+it("为空 Watchlist 呈现目标角色、唯一新增提交和固定安全提示", () => {
   render(<CompanyWatchlistView initialOverview={overview()} />);
 
   expect(screen.getByRole("heading", { name: "AI 应用工程的目标公司 Watchlist" })).toBeVisible();
-  expect(screen.getByRole("button", { name: "添加目标公司" })).toHaveClass("workbench-touch-target");
+  const submitButtons = screen.getAllByRole("button").filter((button) => button.getAttribute("type") === "submit");
+  expect(submitButtons).toHaveLength(1);
+  expect(submitButtons[0]).toHaveAccessibleName("保存目标公司");
+  expect(submitButtons[0]).toHaveClass("workbench-touch-target");
   expect(screen.getByText("不要填写账号、密码、Cookie、验证码或绕过登录限制的说明。")).toBeVisible();
 });
 
@@ -31,7 +34,7 @@ it("分别说明缺少名称、无效 URL、域名不匹配和凭据型 URL", as
   const user = userEvent.setup();
   render(<CompanyWatchlistView initialOverview={overview()} />);
 
-  await user.click(screen.getByRole("button", { name: "添加目标公司" }));
+  await user.click(screen.getByRole("button", { name: "保存目标公司" }));
   expect(screen.getByText("请填写公司规范名称。")).toBeVisible();
   await user.type(screen.getByLabelText("公司规范名称"), "曙光云图");
   await user.type(screen.getByLabelText("公开招聘入口"), "bad-url");
