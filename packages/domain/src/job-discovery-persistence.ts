@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import {
   agentRunEvents,
   agentRunJobResults,
@@ -170,29 +170,36 @@ async function closeMissingSourcePostings(db: any, input: { id: () => string; us
 }
 
 async function recomputeOpportunityAvailability(db: any, input: { userId: string; opportunityIds: Iterable<string>; now: Date }) {
-  for (const opportunityId of new Set(input.opportunityIds)) {
-    const sources = await db.select({ sourcePostingId: jobSourcePostingVersions.sourcePostingId }).from(jobOpportunitySources)
-      .innerJoin(jobSourcePostingVersions, and(eq(jobSourcePostingVersions.userId, jobOpportunitySources.userId), eq(jobSourcePostingVersions.id, jobOpportunitySources.sourcePostingVersionId)))
-      .where(and(eq(jobOpportunitySources.userId, input.userId), eq(jobOpportunitySources.opportunityId, opportunityId)));
-    const sourcePostingIds = new Set<string>((sources as Array<{ sourcePostingId: string }>).map((source) => source.sourcePostingId));
-    const latest = await Promise.all([...sourcePostingIds].map((sourcePostingId) => latestSourceVersion(db, input.userId, sourcePostingId)));
-    const current = latest.filter(Boolean) as Array<typeof jobSourcePostingVersions.$inferSelect>;
-    const availability: Availability = current.some((version) => version.availability === "open") ? "open"
-      : current.some((version) => version.availability === "expired") ? "expired" : "closed";
-    const officialOpen = await Promise.all(current.filter((version) => version.availability === "open").map(async (version) => {
-      const [posting] = await db.select({ isOfficial: jobSourcePostings.isOfficial }).from(jobSourcePostings).where(and(eq(jobSourcePostings.userId, input.userId), eq(jobSourcePostings.id, version.sourcePostingId)));
-      return posting?.isOfficial ? version : undefined;
-    }));
-    const evidence = officialOpen.filter(Boolean).sort((left, right) => right!.createdAt.getTime() - left!.createdAt.getTime())[0];
-    const [opportunity] = await db.select().from(jobOpportunities).where(and(eq(jobOpportunities.userId, input.userId), eq(jobOpportunities.id, opportunityId)));
-    if (!opportunity) continue;
+  const opportunityIds = [...new Set(input.opportunityIds)];
+  if (opportunityIds.length === 0) return new Set<string>();
+  const sources = await db.select({ opportunityId: jobOpportunitySources.opportunityId, sourcePostingId: jobSourcePostingVersions.sourcePostingId, isOfficial: jobSourcePostings.isOfficial })
+    .from(jobOpportunitySources).innerJoin(jobSourcePostingVersions, and(eq(jobSourcePostingVersions.userId, jobOpportunitySources.userId), eq(jobSourcePostingVersions.id, jobOpportunitySources.sourcePostingVersionId)))
+    .innerJoin(jobSourcePostings, and(eq(jobSourcePostings.userId, jobSourcePostingVersions.userId), eq(jobSourcePostings.id, jobSourcePostingVersions.sourcePostingId)))
+    .where(and(eq(jobOpportunitySources.userId, input.userId), inArray(jobOpportunitySources.opportunityId, opportunityIds)));
+  const postingIds: string[] = [...new Set((sources as Array<{ sourcePostingId: string }>).map((source) => source.sourcePostingId))];
+  const versions = postingIds.length === 0 ? [] : await db.select().from(jobSourcePostingVersions).where(and(eq(jobSourcePostingVersions.userId, input.userId), inArray(jobSourcePostingVersions.sourcePostingId, postingIds)))
+    .orderBy(desc(jobSourcePostingVersions.version));
+  const latestByPosting = new Map<string, typeof jobSourcePostingVersions.$inferSelect>();
+  for (const version of versions) if (!latestByPosting.has(version.sourcePostingId)) latestByPosting.set(version.sourcePostingId, version);
+  const opportunities = await db.select().from(jobOpportunities).where(and(eq(jobOpportunities.userId, input.userId), inArray(jobOpportunities.id, opportunityIds)));
+  const sourceByOpportunity = new Map<string, Array<{ sourcePostingId: string; isOfficial: boolean }>>();
+  const openOpportunityIds = new Set<string>();
+  for (const source of sources) sourceByOpportunity.set(source.opportunityId, [...(sourceByOpportunity.get(source.opportunityId) ?? []), source]);
+  for (const opportunity of opportunities) {
+    const current = [...new Map((sourceByOpportunity.get(opportunity.id) ?? []).map((source) => [source.sourcePostingId, source])).values()]
+      .map((source) => ({ source, version: latestByPosting.get(source.sourcePostingId) })).filter((item): item is { source: { sourcePostingId: string; isOfficial: boolean }; version: typeof jobSourcePostingVersions.$inferSelect } => Boolean(item.version));
+    const availability: Availability = current.some((item) => item.version.availability === "open") ? "open"
+      : current.some((item) => item.version.availability === "expired") ? "expired" : "closed";
+    if (availability === "open") openOpportunityIds.add(opportunity.id);
+    const evidence = current.filter((item) => item.source.isOfficial && item.version.availability === "open").sort((left, right) => right.version.createdAt.getTime() - left.version.createdAt.getTime())[0]?.version;
     await db.update(jobOpportunities).set({
       availability,
       availabilityUpdatedAt: opportunity.availability === availability ? opportunity.availabilityUpdatedAt : input.now,
       sourcePostingVersionId: evidence?.id ?? opportunity.sourcePostingVersionId,
       updatedAt: input.now,
-    }).where(and(eq(jobOpportunities.userId, input.userId), eq(jobOpportunities.id, opportunityId)));
+    }).where(and(eq(jobOpportunities.userId, input.userId), eq(jobOpportunities.id, opportunity.id)));
   }
+  return openOpportunityIds;
 }
 
 export function createJobDiscoveryPersistence(deps: { db: Database; id: () => string; auditTrail: AuditTrail }) {
@@ -249,14 +256,12 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
         // spec is the only authority for translating a public adapter to it.
         const sourceType = run.adapter === "greenhouse" ? "company_careers" : undefined;
         if (sourceType) for (const scan of input.scans) (await closeMissingSourcePostings(transaction, { id: deps.id, userId: run.userId, sourceType, scan, now: input.now })).forEach((opportunityId) => opportunityIds.add(opportunityId));
-        await recomputeOpportunityAvailability(transaction, { userId: run.userId, opportunityIds, now: input.now });
+        const openOpportunityIds = await recomputeOpportunityAvailability(transaction, { userId: run.userId, opportunityIds, now: input.now });
         let resultCount = 0;
         for (const result of resultRows) {
           // reconciliation can close an item selected earlier in this batch; only
-          // the final, transaction-visible opportunity state may produce a result.
-          const [opportunity] = await transaction.select({ availability: jobOpportunities.availability }).from(jobOpportunities)
-            .where(and(eq(jobOpportunities.userId, run.userId), eq(jobOpportunities.id, result.opportunityId)));
-          if (opportunity?.availability !== "open") continue;
+          // the final, transaction-visible availability may produce a result.
+          if (!openOpportunityIds.has(result.opportunityId)) continue;
           const inserted = await transaction.insert(agentRunJobResults).values({ id: deps.id(), userId: run.userId, runId: run.id, opportunityId: result.opportunityId, sourcePostingVersionId: result.sourcePostingVersionId, ordinal: resultCount + 1, createdAt: input.now }).onConflictDoNothing().returning({ id: agentRunJobResults.id });
           if (!inserted[0]) continue;
           resultCount += 1;

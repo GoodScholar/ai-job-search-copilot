@@ -102,6 +102,20 @@ describe("job discovery persistence lifecycle", () => {
       .resolves.toEqual([{ title: "Senior AI Engineer", normalizedData: expect.objectContaining({ title: "Senior AI Engineer" }) }]);
   });
 
+  it("normalized-only 与 raw-only 变化各自追加一个来源版本", async () => {
+    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID();
+    await database.insert(jobAccounts).values({ id: userId });
+    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: firstSeen, updatedAt: firstSeen });
+    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: firstSeen });
+    const persistence = createJobDiscoveryPersistence({ db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => later }) });
+    const sourceId = "greenhouse:hashes"; const base = { sourceId, detailId: "hash", company: "Fictional", title: "AI Engineer", location: null, postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true, rawPayload: {} };
+    const persist = async (detail: typeof base, rawContentSha256: string) => persistence.persistSuccessfulDiscovery({ run: await claimRun(userId, targetId, later), details: [detail], scans: [{ sourceId, observedDetailIds: [base.detailId], complete: true }], storedObjects: [{ sourceId, detailId: base.detailId, objectKey: `${rawContentSha256}.json`, rawContentSha256 }], now: later });
+    await persist(base, "a".repeat(64));
+    await persist({ ...base, title: "Senior AI Engineer" }, "a".repeat(64));
+    await persist({ ...base, title: "Senior AI Engineer" }, "b".repeat(64));
+    await expect(database.select({ version: jobSourcePostingVersions.version }).from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, userId)).orderBy(asc(jobSourcePostingVersions.version))).resolves.toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
+  });
+
   it("不完整扫描不关闭，过期详情不写 run result，全部来源关闭后机会关闭", async () => {
     const userId = crypto.randomUUID();
     const targetId = crypto.randomUUID();
@@ -248,5 +262,19 @@ describe("job discovery persistence lifecycle", () => {
     await expect(persistence.persistSuccessfulDiscovery({ run: await claimRun(userId, targetId, later), details: details as any, scans: scans as any, storedObjects: [], now: later })).rejects.toThrow("AGENT_RUN_PERSIST_FAILED");
     await expect(database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, userId))).resolves.toHaveLength(0);
     await expect(database.select().from(jobOpportunities).where(eq(jobOpportunities.userId, userId))).resolves.toHaveLength(0);
+  });
+
+  it("同一 claim 的并发 persistence 由账户锁和 claim 状态保持幂等", async () => {
+    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID();
+    await database.insert(jobAccounts).values({ id: userId });
+    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: firstSeen, updatedAt: firstSeen });
+    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: firstSeen });
+    const persistence = createJobDiscoveryPersistence({ db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => later }) });
+    const run = await claimRun(userId, targetId, later);
+    const input = { run, details: [{ sourceId: "greenhouse:race", detailId: "race", company: "Fictional", title: "AI Engineer", location: null, postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true, rawPayload: {} }], scans: [{ sourceId: "greenhouse:race", observedDetailIds: ["race"], complete: true }], storedObjects: [{ sourceId: "greenhouse:race", detailId: "race", objectKey: "race.json", rawContentSha256: "9".repeat(64) }], now: later };
+    const outcomes = await Promise.all([persistence.persistSuccessfulDiscovery(input), persistence.persistSuccessfulDiscovery(input)]);
+    expect(outcomes.filter((outcome) => outcome.completed)).toHaveLength(1);
+    await expect(database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, userId))).resolves.toHaveLength(1);
+    await expect(database.select().from(agentRunJobResults).where(eq(agentRunJobResults.userId, userId))).resolves.toHaveLength(1);
   });
 });
