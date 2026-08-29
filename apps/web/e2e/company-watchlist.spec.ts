@@ -96,8 +96,25 @@ test("目标公司 Watchlist 可添加、排序、禁用、重载并显示并发
   await expect(cancel).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("heading", { name: "添加目标公司" })).toBeVisible();
-  const controls = page.locator(".company-watchlist-main button, .company-watchlist-main a, .company-watchlist-main input:not([type=hidden]), .company-watchlist-main textarea");
-  expect(await controls.evaluateAll((nodes) => nodes.every((node) => node.getBoundingClientRect().height >= 44))).toBe(true);
+  const controls = page.locator([
+    ".company-watchlist-main button:not(:disabled):not([aria-disabled=true]):not([aria-hidden=true]):visible",
+    ".company-watchlist-main a[href]:not([aria-disabled=true]):not([aria-hidden=true]):visible",
+    ".company-watchlist-main input:not([type=hidden]):not(:disabled):not([aria-disabled=true]):not([aria-hidden=true]):visible",
+    ".company-watchlist-main textarea:not(:disabled):not([aria-disabled=true]):not([aria-hidden=true]):visible",
+  ].join(", "));
+  const controlCount = await controls.count();
+  expect(controlCount).toBeGreaterThan(0);
+  const controlsByTag = await controls.evaluateAll((nodes) => nodes.reduce<Record<string, number>>((counts, node) => {
+    counts[node.tagName] = (counts[node.tagName] ?? 0) + 1;
+    return counts;
+  }, {}));
+  expect(controlsByTag.BUTTON).toBeGreaterThan(0);
+  expect(controlsByTag.INPUT).toBeGreaterThan(0);
+  expect(controlsByTag.TEXTAREA).toBeGreaterThan(0);
+  for (let index = 0; index < controlCount; index += 1) {
+    const box = await controls.nth(index).boundingBox();
+    expect(box?.height).toBeGreaterThanOrEqual(44);
+  }
   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
