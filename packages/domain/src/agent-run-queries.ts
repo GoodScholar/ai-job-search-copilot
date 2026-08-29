@@ -4,13 +4,15 @@ import {
   type Database,
 } from "@job-copilot/database";
 import type { AgentRunDetail, StartAgentRunResponse } from "@job-copilot/contracts/agent-runs";
+import { normalizeAgentRunSourceScope } from "./agent-run-source-scope";
 
 type RunRow = typeof agentRuns.$inferSelect;
 
 function summary(row: RunRow): StartAgentRunResponse {
+  const sourceScope = normalizeAgentRunSourceScope(row.sourceScope);
   return {
     runId: row.id, targetId: row.targetId, targetVersion: row.targetVersion,
-    targetSnapshot: row.targetSnapshot as StartAgentRunResponse["targetSnapshot"], sourceScope: row.sourceScope as StartAgentRunResponse["sourceScope"],
+    targetSnapshot: row.targetSnapshot as StartAgentRunResponse["targetSnapshot"], sourceScope,
     workflowVersion: row.workflowVersion as StartAgentRunResponse["workflowVersion"], adapter: row.adapter as StartAgentRunResponse["adapter"],
     adapterVersion: row.adapterVersion as StartAgentRunResponse["adapterVersion"], outputSchemaVersion: row.outputSchemaVersion as StartAgentRunResponse["outputSchemaVersion"],
     budget: row.budgetSnapshot as StartAgentRunResponse["budget"], status: row.status as StartAgentRunResponse["status"], currentStep: row.currentStep as StartAgentRunResponse["currentStep"],
@@ -32,7 +34,8 @@ async function detail(db: Database, userId: string, runId: string): Promise<Agen
   ]);
   const usage = { activeDurationMs: run.activeDurationMs, attempts: run.attemptCount, toolCalls: run.toolCallCount, sourceRequests: run.sourceRequestCount, modelCalls: run.modelCallCount, inputTokens: run.inputTokenCount, outputTokens: run.outputTokenCount, totalTokens: run.totalTokenCount, results: run.resultCount, complete: run.usageComplete };
   const termination = run.terminationKind === null ? null : { kind: run.terminationKind, failureCode: run.failureCode, budgetDimension: run.terminationBudgetDimension };
-  return { ...summary(run), executionSpec: { targetSnapshot: run.targetSnapshot, sourceScope: run.sourceScope, workflowVersion: run.workflowVersion, ruleVersion: run.ruleVersion, adapter: run.adapter, adapterVersion: run.adapterVersion, outputSchemaVersion: run.outputSchemaVersion, toolAllowlist: run.toolAllowlist, model: run.modelSnapshot, budget: run.budgetSnapshot }, controlState: run.controlState as AgentRunDetail["controlState"], usage, termination, retryOfRunId: run.retryOfRunId, steps: steps.map((step) => ({ stepKey: step.stepKey as AgentRunDetail["steps"][number]["stepKey"], ordinal: step.ordinal, status: step.status as AgentRunDetail["steps"][number]["status"], attemptCount: step.attemptCount, startedAt: step.startedAt?.toISOString() ?? null, completedAt: step.completedAt?.toISOString() ?? null, failedAt: step.failedAt?.toISOString() ?? null, failureCode: step.failureCode as AgentRunDetail["steps"][number]["failureCode"] })), events: events.map((event) => ({ sequence: event.sequence, runVersion: event.runVersion, eventType: event.eventType as AgentRunDetail["events"][number]["eventType"], data: event.data as AgentRunDetail["events"][number]["data"], createdAt: event.createdAt.toISOString() })), results: results.map((result) => ({ ...result, postedAt: result.postedAt?.toISOString() ?? null, deadline: result.deadline?.toISOString() ?? null })) } as AgentRunDetail;
+  const sourceScope = normalizeAgentRunSourceScope(run.sourceScope);
+  return { ...summary(run), executionSpec: { targetSnapshot: run.targetSnapshot, sourceScope, workflowVersion: run.workflowVersion, ruleVersion: run.ruleVersion, adapter: run.adapter, adapterVersion: run.adapterVersion, outputSchemaVersion: run.outputSchemaVersion, toolAllowlist: run.toolAllowlist, model: run.modelSnapshot, budget: run.budgetSnapshot }, controlState: run.controlState as AgentRunDetail["controlState"], usage, termination, retryOfRunId: run.retryOfRunId, steps: steps.map((step) => ({ stepKey: step.stepKey as AgentRunDetail["steps"][number]["stepKey"], ordinal: step.ordinal, status: step.status as AgentRunDetail["steps"][number]["status"], attemptCount: step.attemptCount, startedAt: step.startedAt?.toISOString() ?? null, completedAt: step.completedAt?.toISOString() ?? null, failedAt: step.failedAt?.toISOString() ?? null, failureCode: step.failureCode as AgentRunDetail["steps"][number]["failureCode"] })), events: events.map((event) => ({ sequence: event.sequence, runVersion: event.runVersion, eventType: event.eventType as AgentRunDetail["events"][number]["eventType"], data: event.data as AgentRunDetail["events"][number]["data"], createdAt: event.createdAt.toISOString() })), results: results.map((result) => ({ ...result, postedAt: result.postedAt?.toISOString() ?? null, deadline: result.deadline?.toISOString() ?? null })) } as AgentRunDetail;
 }
 
 export function createAgentRunQueries(deps: { db: Database }): {

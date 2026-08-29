@@ -46,6 +46,7 @@ function detail(status: AgentRunDetail["status"] = "running"): AgentRunDetail {
     targetSnapshot: { targetId, version: 1, priority: "primary", state: "active", constraints: target().constraints },
     sourceScope: {
       kind: "company_watchlist", adapter: "fake", adapterVersion: "fake-job-discovery-v1",
+      watchlistVersion: 0,
       sources: ["fake:aurora-careers", "fake:orbit-careers"],
     },
     workflowVersion: "job-discovery-workflow-v1",
@@ -66,7 +67,7 @@ function detail(status: AgentRunDetail["status"] = "running"): AgentRunDetail {
     updatedAt: terminal ? "2026-08-29T08:00:03.000Z" : now,
     executionSpec: {
       targetSnapshot: { targetId, version: 1, priority: "primary", state: "active", constraints: target().constraints },
-      sourceScope: { kind: "company_watchlist", adapter: "fake", adapterVersion: "fake-job-discovery-v1", sources: ["fake:aurora-careers", "fake:orbit-careers"] },
+      sourceScope: { kind: "company_watchlist", adapter: "fake", adapterVersion: "fake-job-discovery-v1", watchlistVersion: 0, sources: ["fake:aurora-careers", "fake:orbit-careers"] },
       workflowVersion: "job-discovery-workflow-v1", ruleVersion: "fake-job-discovery-rules-v1", adapter: "fake", adapterVersion: "fake-job-discovery-v1",
       outputSchemaVersion: "job-discovery-result-v1", toolAllowlist: ["job_discovery.search_batch", "job_discovery.get_detail"], model: null,
       budget: { maxActiveDurationMs: 60_000, maxAttempts: 3, maxToolCalls: 10, maxResults: 5, maxModelCalls: 0, maxTokens: 0 },

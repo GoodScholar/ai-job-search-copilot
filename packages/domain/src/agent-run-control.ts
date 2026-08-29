@@ -12,6 +12,7 @@ import { CompanyWatchlistItemSchema } from "@job-copilot/contracts/company-watch
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import type { AuditTrail } from "./audit-trail";
 import { reduceControl } from "./agent-run-state";
+import { normalizeAgentRunSourceScope } from "./agent-run-source-scope";
 
 export interface AgentRunQueue { enqueue(job: AgentRunJob): Promise<void>; }
 
@@ -42,9 +43,10 @@ function sourceScope(watchlist: { version: number; items: unknown } | undefined)
 }
 
 function summary(row: RunRow, reused: boolean): StartAgentRunResponse {
+  const sourceScope = normalizeAgentRunSourceScope(row.sourceScope);
   return {
     runId: row.id, targetId: row.targetId, targetVersion: row.targetVersion,
-    targetSnapshot: row.targetSnapshot as StartAgentRunResponse["targetSnapshot"], sourceScope: row.sourceScope as StartAgentRunResponse["sourceScope"],
+    targetSnapshot: row.targetSnapshot as StartAgentRunResponse["targetSnapshot"], sourceScope,
     workflowVersion: row.workflowVersion as StartAgentRunResponse["workflowVersion"], adapter: row.adapter as StartAgentRunResponse["adapter"],
     adapterVersion: row.adapterVersion as StartAgentRunResponse["adapterVersion"], outputSchemaVersion: row.outputSchemaVersion as StartAgentRunResponse["outputSchemaVersion"],
     budget: row.budgetSnapshot as StartAgentRunResponse["budget"], status: row.status as StartAgentRunResponse["status"], currentStep: row.currentStep as StartAgentRunResponse["currentStep"],

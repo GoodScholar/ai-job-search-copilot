@@ -168,6 +168,33 @@ describe("agent runs", () => {
       .resolves.toEqual([{ version: 2 }]);
   });
 
+  it("把历史固定来源范围归一为版本 0，供查询、幂等复用和处理恢复使用", async () => {
+    const { userId, targetId } = await activeTarget();
+    const queue = new MemoryQueue();
+    const command = { targetId, idempotencyKey: crypto.randomUUID() };
+    const run = await commands(queue).start({ userId, requestId: crypto.randomUUID(), command });
+    const legacySourceScope = {
+      kind: "company_watchlist",
+      adapter: "fake",
+      adapterVersion: "fake-job-discovery-v1",
+      sources: ["fake:aurora-careers", "fake:orbit-careers"],
+    };
+    const normalizedSourceScope = { ...legacySourceScope, watchlistVersion: 0 };
+    await database.update(agentRuns).set({ sourceScope: legacySourceScope }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)));
+
+    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId }))
+      .resolves.toMatchObject({ sourceScope: normalizedSourceScope, executionSpec: { sourceScope: normalizedSourceScope } });
+    await expect(createAgentRunQueries({ db: database }).latest({ userId }))
+      .resolves.toMatchObject({ run: { sourceScope: normalizedSourceScope, executionSpec: { sourceScope: normalizedSourceScope } } });
+    await expect(commands(queue).start({ userId, requestId: crypto.randomUUID(), command }))
+      .resolves.toMatchObject({ reused: true, sourceScope: normalizedSourceScope });
+
+    const processor = createAgentRunProcessor({ db: database, adapter: adapter(), contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    await expect(processor.process({ version: 1, runId: run.runId, userId, finalAttempt: true })).resolves.toBe("completed");
+    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId }))
+      .resolves.toMatchObject({ status: "completed", sourceScope: normalizedSourceScope, executionSpec: { sourceScope: normalizedSourceScope } });
+  });
+
   it("通过版本化 Watchlist 快照来源优先级、禁用状态和不可变运行范围", async () => {
     const { userId, targetId } = await activeTarget();
     const queue = new MemoryQueue();
@@ -185,16 +212,17 @@ describe("agent runs", () => {
         allowedDomains: ["beta.test"], sourceNote: null,
       },
     });
-    const disabled = await watchlistCommands().setItemState({
-      userId, targetId, requestId: crypto.randomUUID(), itemId: secondItem.items[1]!.itemId,
-      command: { expectedVersion: secondItem.version, state: "disabled" },
+    const reordered = await watchlistCommands().reorder({
+      userId, targetId, requestId: crypto.randomUUID(),
+      command: { expectedVersion: secondItem.version, orderedItemIds: [secondItem.items[1]!.itemId, secondItem.items[0]!.itemId] },
     });
-    const expectedSourceScope = {
+    expect(reordered.version).toBe(3);
+    const firstSourceScope = {
       kind: "company_watchlist" as const,
       adapter: "fake" as const,
       adapterVersion: "fake-job-discovery-v1" as const,
-      watchlistVersion: disabled.version,
-      sources: ["https://careers.alpha.test/jobs", "fake:aurora-careers", "fake:orbit-careers"],
+      watchlistVersion: 3,
+      sources: ["https://jobs.beta.test/openings", "https://careers.alpha.test/jobs", "fake:aurora-careers", "fake:orbit-careers"],
     };
 
     const first = await commands(queue).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
@@ -202,16 +230,20 @@ describe("agent runs", () => {
       .where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, first.runId)));
     const projection = await createAgentRunQueries({ db: database }).get({ userId, runId: first.runId });
 
-    expect(first.sourceScope).toEqual(expectedSourceScope);
-    expect(persisted!.sourceScope).toEqual(expectedSourceScope);
-    expect(projection).toMatchObject({ sourceScope: expectedSourceScope, executionSpec: { sourceScope: expectedSourceScope } });
+    expect(first.sourceScope).toEqual(firstSourceScope);
+    expect(persisted!.sourceScope).toEqual(firstSourceScope);
+    expect(projection).toMatchObject({ sourceScope: firstSourceScope, executionSpec: { sourceScope: firstSourceScope } });
 
-    await watchlistCommands().setItemState({
-      userId, targetId, requestId: crypto.randomUUID(), itemId: secondItem.items[1]!.itemId,
-      command: { expectedVersion: disabled.version, state: "enabled" },
+    const disabled = await watchlistCommands().setItemState({
+      userId, targetId, requestId: crypto.randomUUID(), itemId: secondItem.items[0]!.itemId,
+      command: { expectedVersion: reordered.version, state: "disabled" },
     });
+    expect(disabled.version).toBe(4);
+    const secondSourceScope = { ...firstSourceScope, watchlistVersion: 4, sources: ["https://jobs.beta.test/openings", "fake:aurora-careers", "fake:orbit-careers"] };
+    const second = await commands(queue).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    expect(second.sourceScope).toEqual(secondSourceScope);
     await expect(createAgentRunQueries({ db: database }).get({ userId, runId: first.runId }))
-      .resolves.toMatchObject({ sourceScope: expectedSourceScope, executionSpec: { sourceScope: expectedSourceScope } });
+      .resolves.toMatchObject({ sourceScope: firstSourceScope, executionSpec: { sourceScope: firstSourceScope } });
 
     const runCount = (await database.select().from(agentRuns).where(eq(agentRuns.userId, userId))).length;
     const queueCount = queue.jobs.length;

@@ -183,6 +183,10 @@ describe("agent run contracts", () => {
     };
 
     expect(AgentRunSourceScopeSchema.parse(watchlistSourceScope)).toEqual(watchlistSourceScope);
+    expect(AgentRunSourceScopeSchema.safeParse({
+      kind: "company_watchlist", adapter: "fake", adapterVersion: "fake-job-discovery-v1",
+      sources: ["fake:aurora-careers", "fake:orbit-careers"],
+    }).success).toBe(false);
     expect(AgentRunSourceScopeSchema.safeParse({ ...watchlistSourceScope, watchlistVersion: -1 }).success).toBe(false);
     expect(AgentRunSourceScopeSchema.safeParse({ ...watchlistSourceScope, sources: ["duplicate", "duplicate"] }).success).toBe(false);
     expect(AgentRunSourceScopeSchema.safeParse({ ...watchlistSourceScope, sources: ["x".repeat(2_049)] }).success).toBe(false);
