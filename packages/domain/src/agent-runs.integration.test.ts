@@ -194,7 +194,7 @@ describe("agent runs", () => {
     await expect(processor.process({ version: 1, runId: first.runId, userId, finalAttempt: true })).resolves.toBe("stale");
     await expect(createAgentRunQueries({ db: database }).get({ userId, runId: first.runId })).resolves.toMatchObject({
       status: "completed", currentStep: "completed", attemptCount: 1,
-      usage: { complete: true, activeDurationMs: 0, toolCalls: 0, sourceRequests: 0, modelCalls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, results: 1 },
+      usage: { complete: true, activeDurationMs: 0, toolCalls: 2, sourceRequests: 2, modelCalls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, results: 1 },
       termination: { kind: "completed", failureCode: null, budgetDimension: null },
       results: [expect.objectContaining({ ordinal: 1, company: "示例科技" })],
     });
@@ -484,16 +484,14 @@ describe("agent runs", () => {
     const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
     let instant = now;
     const shortDeadlineAdapter = adapter();
-    shortDeadlineAdapter.getDetail = async ({ sourceId, detailId }) => {
-      instant = new Date(now.getTime() + 59_980);
-      return { ok: true, data: { sourceId, detailId, company: "示例科技", title: "AI 工程师", location: "上海", postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true, rawPayload: { b: 2, a: 1 } } };
-    };
+    shortDeadlineAdapter.getDetail = async ({ sourceId, detailId }) => ({ ok: true, data: { sourceId, detailId, company: "示例科技", title: "AI 工程师", location: "上海", postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true, rawPayload: { b: 2, a: 1 } } });
     const putStarted = deferred<void>();
     const settlePut = deferred<void>();
     const lateDelete = deferred<void>();
     const store = new MemoryStore();
     store.put = ({ objectKey }) => {
       store.puts.push(objectKey);
+      instant = new Date(now.getTime() + 59_980);
       putStarted.resolve();
       return settlePut.promise;
     };
@@ -617,7 +615,7 @@ describe("agent runs", () => {
     const { userId, targetId } = await activeTarget();
     const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
     await database.update(agentRuns).set({ budgetSnapshot: { maxActiveDurationMs: 60_000, maxAttempts: 3, maxToolCalls: 0, maxResults: 5, maxModelCalls: 0, maxTokens: 0 } }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)));
-    await expect(createAgentRunProcessor({ db: database, adapter: adapter(), contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("failed");
+    await expect(createAgentRunProcessor({ db: database, adapter: adapter(), contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).process({ version: 1, runId: run.runId, userId, finalAttempt: false })).resolves.toBe("budget_exhausted");
     await expect(database.select({ terminationBudgetDimension: agentRuns.terminationBudgetDimension }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)))).resolves.toEqual([{ terminationBudgetDimension: "tool_calls" }]);
     await expect(database.select().from(agentInboxItems).where(and(eq(agentInboxItems.runId, run.runId), eq(agentInboxItems.kind, "budget_exhausted")))).resolves.toHaveLength(1);
     for (const eventType of ["run.failed", "agent.run_budget_exhausted", "agent.inbox_opened"] as const) {

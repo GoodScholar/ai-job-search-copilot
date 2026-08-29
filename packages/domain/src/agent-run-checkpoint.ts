@@ -12,6 +12,10 @@ export type AgentRunCheckpointDecision =
   | { kind: "budget_exhausted"; budgetDimension: BudgetDimension }
   | { kind: "stale" };
 
+export interface AgentRunCheckpoint {
+  check(input: { userId: string; runId: string; claimToken: string; checkpointKey: string; reserve?: Reserve }): Promise<AgentRunCheckpointDecision>;
+}
+
 type Dependencies = { db: Database; auditTrail: AuditTrail; id: () => string; clock: () => Date };
 
 export class AgentRunCheckpointError extends Error {
@@ -55,9 +59,7 @@ function sameReserve(entries: Array<{ category: string; amount: number }>, reser
     && actual.size === [reserve.toolCalls, reserve.sourceRequests, reserve.modelCalls].filter((value) => (value ?? 0) > 0).length;
 }
 
-export function createAgentRunCheckpoint(deps: Dependencies): {
-  check(input: { userId: string; runId: string; claimToken: string; checkpointKey: string; reserve?: Reserve }): Promise<AgentRunCheckpointDecision>;
-} {
+export function createAgentRunCheckpoint(deps: Dependencies): AgentRunCheckpoint {
   return {
     async check(input) {
       const reserve = input.reserve ?? {};
