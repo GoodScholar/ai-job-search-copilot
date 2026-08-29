@@ -6,13 +6,30 @@ import {
   AGENT_RUN_QUEUE,
   AGENT_RUN_SCAN_INTERVAL_MS,
   AgentRunAdapterErrorSchema,
+  AgentRunBudgetSchema,
   AgentRunDetailSchema,
+  AgentRunEventDataSchema,
+  AgentRunEventSchema,
   AgentRunJobSchema,
+  AgentRunResultSchema,
+  AgentRunSourceScopeSchema,
   AgentRunSseEventSchema,
+  AgentRunStepSchema,
+  AgentRunSummarySchema,
+  AgentRunTargetSnapshotSchema,
+  DiscoveryBatchSearchInputSchema,
+  DiscoveryBatchSearchResultSchema,
+  DiscoveryDetailInputSchema,
+  DiscoveryDetailResultSchema,
+  DiscoveryDetailSchema,
+  DiscoverySearchInputSchema,
+  DiscoverySearchResultSchema,
+  DiscoverySearchSummarySchema,
   FAKE_JOB_DISCOVERY_ADAPTER,
   FAKE_JOB_DISCOVERY_ADAPTER_VERSION,
   FAKE_JOB_DISCOVERY_SOURCE_IDS,
   FAKE_JOB_DISCOVERY_WORKFLOW_VERSION,
+  LatestAgentRunResponseSchema,
   StartAgentRunCommandSchema,
   StartAgentRunResponseSchema,
 } from "./agent-runs";
@@ -29,28 +46,49 @@ const targetSnapshot = {
     excludeDispatch: false, excludeHeadhunter: false, other: [],
   },
 };
+const sourceScope = {
+  kind: "company_watchlist", adapter: "fake", adapterVersion: FAKE_JOB_DISCOVERY_ADAPTER_VERSION,
+  sources: FAKE_JOB_DISCOVERY_SOURCE_IDS,
+};
+const runTargetSnapshot = { targetId, version: 1, priority: "primary", state: "active", constraints: targetSnapshot };
+const queuedSummary = {
+  runId, targetId, targetVersion: 1, targetSnapshot: runTargetSnapshot, sourceScope,
+  workflowVersion: FAKE_JOB_DISCOVERY_WORKFLOW_VERSION,
+  adapter: FAKE_JOB_DISCOVERY_ADAPTER, adapterVersion: FAKE_JOB_DISCOVERY_ADAPTER_VERSION,
+  outputSchemaVersion: "job-discovery-result-v1", budget: AGENT_RUN_BUDGET,
+  status: "queued", currentStep: "queued", version: 1, attemptCount: 0,
+  failureCode: null, queuedAt: now, startedAt: null, completedAt: null, failedAt: null, updatedAt: now,
+};
+const step = {
+  stepKey: "batch_search", ordinal: 1, status: "pending", attemptCount: 0,
+  startedAt: null, completedAt: null, failedAt: null, failureCode: null,
+};
+const eventData = { eventType: "run.queued", status: "queued", currentStep: "queued", attemptCount: 0 };
+const event = { sequence: 1, runVersion: 1, eventType: "run.queued", data: eventData, createdAt: now };
+const result = {
+  resultId: "ca3f587c-eac6-4533-9347-11f654d9ecdf", ordinal: 1,
+  opportunityId: "a9722f16-e91d-4c3f-968a-a89b2d592401", sourcePostingId: "9b1d0e37-d2ff-4f05-b6cd-bc9e8c9d9c98",
+  sourcePostingVersionId: "d6804068-4fae-4c49-af06-7de4c08ff8cf", company: "示例科技", title: "AI 工程师",
+  location: "上海", postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true,
+};
+const detail = { ...queuedSummary, steps: [step], events: [event], results: [result] };
+const searchSummary = {
+  sourceId: "fake:aurora-careers", detailId: "aurora-1", company: "示例科技", title: "AI 工程师",
+  location: "上海", postedAt: null, deadline: null,
+};
+const discoveryDetail = { ...searchSummary, sourceType: "company_careers", isOfficial: true, rawPayload: {} };
+
+function expectUnknownKeyRejected(schema: { safeParse(input: unknown): { success: boolean } }, sample: Record<string, unknown>) {
+  expect(schema.safeParse({ ...sample, unexpected: true }).success).toBe(false);
+}
 
 describe("agent run contracts", () => {
   it("parses the strict start command and queued run detail", () => {
     expect(StartAgentRunCommandSchema.parse({ targetId, idempotencyKey: "08614f5c-b5cb-4c1d-8fca-3777105b5f19" }))
       .toEqual({ targetId, idempotencyKey: "08614f5c-b5cb-4c1d-8fca-3777105b5f19" });
-    const summary = {
-      runId, targetId, targetVersion: 1,
-      targetSnapshot: { targetId, version: 1, priority: "primary", state: "active", constraints: targetSnapshot },
-      sourceScope: {
-        kind: "company_watchlist", adapter: "fake", adapterVersion: FAKE_JOB_DISCOVERY_ADAPTER_VERSION,
-        sources: FAKE_JOB_DISCOVERY_SOURCE_IDS,
-      },
-      workflowVersion: FAKE_JOB_DISCOVERY_WORKFLOW_VERSION,
-      adapter: FAKE_JOB_DISCOVERY_ADAPTER, adapterVersion: FAKE_JOB_DISCOVERY_ADAPTER_VERSION,
-      outputSchemaVersion: "job-discovery-result-v1", budget: AGENT_RUN_BUDGET,
-      status: "queued", currentStep: "queued", version: 1, attemptCount: 0,
-      failureCode: null, queuedAt: now, startedAt: null, completedAt: null,
-      failedAt: null, updatedAt: now,
-    };
-    expect(AgentRunDetailSchema.parse({ ...summary, steps: [], events: [], results: [] }))
+    expect(AgentRunDetailSchema.parse({ ...queuedSummary, steps: [], events: [], results: [] }))
       .toMatchObject({ runId, targetId, status: "queued", currentStep: "queued" });
-    expect(StartAgentRunResponseSchema.parse({ ...summary, reused: false }))
+    expect(StartAgentRunResponseSchema.parse({ ...queuedSummary, reused: false }))
       .toMatchObject({ runId, targetId, reused: false });
   });
 
@@ -76,17 +114,43 @@ describe("agent run contracts", () => {
     expect(AgentRunSseEventSchema.safeParse({ ...event, id: "9007199254740992" }).success).toBe(false);
   });
 
-  it("rejects unknown keys from every public schema and keeps adapter errors stable", () => {
-    expect(StartAgentRunCommandSchema.safeParse({ targetId, idempotencyKey: "key", extra: true }).success).toBe(false);
-    expect(AgentRunDetailSchema.safeParse({ runId, extra: true }).success).toBe(false);
-    expect(AgentRunJobSchema.safeParse({ version: 1, runId, userId, targetSnapshot }).success).toBe(false);
-    expect(AgentRunSseEventSchema.safeParse({
-      id: "1", event: "run.queued",
-      data: { eventType: "run.queued", status: "queued", currentStep: "queued", attemptCount: 0 }, extra: true,
-    }).success).toBe(false);
+  it("rejects an unexpected key from every public object schema", () => {
+    const start = { targetId, idempotencyKey: "08614f5c-b5cb-4c1d-8fca-3777105b5f19" };
+    const sseEvent = { id: "1", event: "run.queued", data: eventData };
+    const adapterError = { code: "SOURCE_UNAVAILABLE", retryable: true };
+    for (const [schema, sample] of [
+      [StartAgentRunCommandSchema, start], [AgentRunBudgetSchema, AGENT_RUN_BUDGET],
+      [AgentRunTargetSnapshotSchema, runTargetSnapshot], [AgentRunSourceScopeSchema, sourceScope],
+      [AgentRunStepSchema, step], [AgentRunEventDataSchema, eventData], [AgentRunEventSchema, event],
+      [AgentRunResultSchema, result], [AgentRunSummarySchema, queuedSummary], [AgentRunDetailSchema, detail],
+      [StartAgentRunResponseSchema, { ...queuedSummary, reused: false }], [LatestAgentRunResponseSchema, { run: detail }],
+      [AgentRunJobSchema, { version: 1, runId, userId }], [AgentRunSseEventSchema, sseEvent],
+      [AgentRunAdapterErrorSchema, adapterError], [DiscoverySearchInputSchema, { targetSnapshot: runTargetSnapshot, sourceId: "fake:aurora-careers" }],
+      [DiscoveryBatchSearchInputSchema, { targetSnapshot: runTargetSnapshot, sourceScope }],
+      [DiscoveryDetailInputSchema, { sourceId: "fake:aurora-careers", detailId: "aurora-1" }],
+      [DiscoverySearchSummarySchema, searchSummary], [DiscoveryDetailSchema, discoveryDetail],
+      [DiscoverySearchResultSchema, { ok: true, data: searchSummary }],
+      [DiscoveryBatchSearchResultSchema, { ok: true, data: [searchSummary] }],
+      [DiscoveryDetailResultSchema, { ok: true, data: discoveryDetail }],
+    ] as const) expectUnknownKeyRejected(schema, sample);
     expect(AgentRunAdapterErrorSchema.parse({ code: "SOURCE_UNAVAILABLE", retryable: true }))
       .toEqual({ code: "SOURCE_UNAVAILABLE", retryable: true });
     expect(AgentRunAdapterErrorSchema.safeParse({ code: "SOURCE_UNAVAILABLE", retryable: true, message: "unstable" }).success)
       .toBe(false);
+  });
+
+  it("rejects self-contradictory step and retry event data", () => {
+    expect(AgentRunEventDataSchema.safeParse({
+      eventType: "step.started", status: "running", currentStep: "batch_search", stepKey: "persist_results", attemptCount: 1,
+    }).success).toBe(false);
+    expect(AgentRunEventDataSchema.safeParse({
+      eventType: "step.completed", status: "running", currentStep: "fetch_details", stepKey: "batch_search", attemptCount: 1,
+    }).success).toBe(false);
+    for (const currentStep of ["completed", "failed"]) {
+      expect(AgentRunEventDataSchema.safeParse({
+        eventType: "run.retry_scheduled", status: "queued", currentStep, attemptCount: 1,
+        failureCode: "AGENT_RUN_ADAPTER_RETRYABLE",
+      }).success).toBe(false);
+    }
   });
 });

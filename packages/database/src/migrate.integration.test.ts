@@ -563,5 +563,81 @@ describe("database migrations", () => {
       where table_schema = 'public' and table_name = 'job_opportunities' and column_name = 'import_id'
     `) as unknown as Array<{ is_nullable: string }>;
     expect(importId).toEqual({ is_nullable: "YES" });
+
+    expect(await listConstraintNames(migratedDatabase)).toEqual(expect.arrayContaining([
+      "agent_runs_owner_target_fk",
+      "agent_run_steps_owner_run_fk",
+      "agent_run_events_owner_run_fk",
+      "agent_run_job_results_owner_run_fk",
+      "agent_run_job_results_owner_opportunity_fk",
+      "agent_run_job_results_owner_posting_version_fk",
+    ]));
+
+    const firstAccountId = "29a65f3c-6e60-4d03-8098-6ef15f21e43e";
+    const secondAccountId = "c0923c50-01ac-45bd-96f6-25c05e6531ec";
+    const targetId = "0bd83c11-c3f1-420b-964b-eeed48f062b8";
+    const runId = "8402621f-4f92-4d5f-8904-dbf65d1a2aa4";
+    const firstPostingId = "acbbc261-72b2-48bc-9f41-029fd22cf2a7";
+    const secondPostingId = "e6e4c08e-ab0d-40fb-9039-17236b685965";
+    const firstVersionId = "0b363d9a-8f15-4f48-96ce-dff6023b7b93";
+    const secondVersionId = "57ba64e3-c48d-47ae-9982-2c4f7c4e4d48";
+    const firstOpportunityId = "8ba999fe-3db6-4ed1-bf96-4e9c7ce4bc38";
+    const secondOpportunityId = "29d3d5a8-79f2-4136-83e1-6754f4fd9b6b";
+    const checksum = "a".repeat(64);
+
+    await migratedDatabase.execute(sql`insert into job_accounts (id) values (${firstAccountId}), (${secondAccountId})`);
+    await migratedDatabase.execute(sql`
+      insert into job_targets (id, user_id, version, priority, state)
+      values (${targetId}, ${firstAccountId}, 1, 'primary', 'active')
+    `);
+    await migratedDatabase.execute(sql`
+      insert into agent_runs (
+        id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot,
+        workflow_version, adapter, adapter_version, output_schema_version, status, current_step
+      ) values (
+        ${runId}, ${firstAccountId}, ${targetId}, '2f15fd9f-0398-4a5c-94e2-103167bcd1c2', 1,
+        '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 'workflow-v1', 'fake', 'fake-v1', 'result-v1', 'queued', 'queued'
+      )
+    `);
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_runs (
+        id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot,
+        workflow_version, adapter, adapter_version, output_schema_version, status, current_step
+      ) values (
+        'c1367bbf-f608-4be2-85ea-0742160a16d8', ${secondAccountId}, ${targetId},
+        '5572512a-e2f2-43d6-8290-88d64f12ed46', 1, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb,
+        'workflow-v1', 'fake', 'fake-v1', 'result-v1', 'queued', 'queued'
+      )
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_run_steps (id, user_id, run_id, step_key, ordinal)
+      values ('0505954e-e2e9-4b8f-ae5f-b5a0ba6c9093', ${secondAccountId}, ${runId}, 'batch_search', 1)
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
+
+    await migratedDatabase.execute(sql`
+      insert into job_source_postings (id, user_id, source_type, source_identifier, source_identity)
+      values (${firstPostingId}, ${firstAccountId}, 'fake', 'first-posting', '{}'::jsonb),
+             (${secondPostingId}, ${secondAccountId}, 'fake', 'second-posting', '{}'::jsonb)
+    `);
+    await migratedDatabase.execute(sql`
+      insert into job_source_posting_versions (
+        id, user_id, source_posting_id, version, content_sha256, raw_content_sha256, raw_object_reference, retrieved_at
+      ) values
+        (${firstVersionId}, ${firstAccountId}, ${firstPostingId}, 1, ${checksum}, ${"b".repeat(64)}, '{}'::jsonb, now()),
+        (${secondVersionId}, ${secondAccountId}, ${secondPostingId}, 1, ${"c".repeat(64)}, ${"d".repeat(64)}, '{}'::jsonb, now())
+    `);
+    await migratedDatabase.execute(sql`
+      insert into job_opportunities (id, user_id, source_posting_version_id, dedup_key, normalized_data)
+      values (${firstOpportunityId}, ${firstAccountId}, ${firstVersionId}, ${"e".repeat(64)}, '{}'::jsonb),
+             (${secondOpportunityId}, ${secondAccountId}, ${secondVersionId}, ${"f".repeat(64)}, '{}'::jsonb)
+    `);
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_run_job_results (id, user_id, run_id, opportunity_id, source_posting_version_id, ordinal)
+      values ('6be339cd-57b6-4c0d-bc75-62bf15b2b6b5', ${firstAccountId}, ${runId}, ${secondOpportunityId}, ${firstVersionId}, 1)
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_run_job_results (id, user_id, run_id, opportunity_id, source_posting_version_id, ordinal)
+      values ('1eb77c10-d6e1-4f75-9e8c-a32db63967ee', ${firstAccountId}, ${runId}, ${firstOpportunityId}, ${secondVersionId}, 1)
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
   });
 });

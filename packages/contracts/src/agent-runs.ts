@@ -73,10 +73,14 @@ export const AgentRunEventDataSchema = z.discriminatedUnion("eventType", [
   z.object({ eventType: z.literal("run.started"), status: z.literal("running"), currentStep: z.literal("batch_search"), attemptCount: positiveInteger }).strict(),
   z.object({ eventType: z.literal("step.started"), status: z.literal("running"), currentStep: AgentRunStepKeySchema, stepKey: AgentRunStepKeySchema, attemptCount: positiveInteger }).strict(),
   z.object({ eventType: z.literal("step.completed"), status: z.literal("running"), currentStep: AgentRunStepKeySchema, stepKey: AgentRunStepKeySchema, attemptCount: positiveInteger }).strict(),
-  z.object({ eventType: z.literal("run.retry_scheduled"), status: z.literal("queued"), currentStep: AgentRunCurrentStepSchema, attemptCount: positiveInteger, failureCode: AgentRunFailureCodeSchema }).strict(),
+  z.object({ eventType: z.literal("run.retry_scheduled"), status: z.literal("queued"), currentStep: AgentRunStepKeySchema, attemptCount: positiveInteger, failureCode: AgentRunFailureCodeSchema }).strict(),
   z.object({ eventType: z.literal("run.completed"), status: z.literal("completed"), currentStep: z.literal("completed"), attemptCount: positiveInteger, resultCount: nonnegativeInteger }).strict(),
   z.object({ eventType: z.literal("run.failed"), status: z.literal("failed"), currentStep: z.literal("failed"), attemptCount: positiveInteger, failureCode: AgentRunFailureCodeSchema }).strict(),
-]);
+]).superRefine((data, context) => {
+  if ((data.eventType === "step.started" || data.eventType === "step.completed") && data.currentStep !== data.stepKey) {
+    context.addIssue({ code: "custom", path: ["currentStep"], message: "current step must match step key" });
+  }
+});
 
 export const AgentRunEventSchema = z.object({
   sequence: positiveInteger, runVersion: positiveInteger, eventType: AgentRunEventTypeSchema,
