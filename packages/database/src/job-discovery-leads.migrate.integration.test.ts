@@ -49,7 +49,8 @@ describe("job discovery lead migrations", () => {
     expect(snapshot.prevId).toBe(priorSnapshot.id);
     expect(snapshot.tables).toHaveProperty("public.job_discovery_leads");
     expect(snapshot.tables).toHaveProperty("public.job_discovery_attributions");
-    expect(journal.entries.at(-1)?.tag).toBe("0024_fat_jane_foster");
+    const leadMigrationIndex = journal.entries.findIndex(({ tag }) => tag === "0024_fat_jane_foster");
+    expect(journal.entries[leadMigrationIndex + 1]?.tag).toBe("0025_layered_public_discovery_workflow");
     const tables = await database.execute(sql`
       select table_name from information_schema.tables where table_schema = 'public'
         and table_name in ('job_discovery_leads', 'job_discovery_attributions') order by table_name
@@ -204,10 +205,21 @@ describe("job discovery lead migrations", () => {
     try {
       const migrationSource = fileURLToPath(new URL("../migrations", import.meta.url));
       await cp(migrationSource, migrationsFolder, { recursive: true });
-      await unlink(join(migrationsFolder, "0024_fat_jane_foster.sql"));
+      await Promise.all([
+        unlink(join(migrationsFolder, "0024_fat_jane_foster.sql")),
+        unlink(join(migrationsFolder, "0025_layered_public_discovery_workflow.sql")),
+        unlink(join(migrationsFolder, "0026_discovery_attention.sql")),
+        unlink(join(migrationsFolder, "0027_massive_purple_man.sql")),
+        unlink(join(migrationsFolder, "meta", "0024_snapshot.json")),
+        unlink(join(migrationsFolder, "meta", "0025_snapshot.json")),
+        unlink(join(migrationsFolder, "meta", "0026_snapshot.json")),
+        unlink(join(migrationsFolder, "meta", "0027_snapshot.json")),
+      ]);
       const journalPath = join(migrationsFolder, "meta", "_journal.json");
       const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
-      journal.entries = journal.entries.filter((entry) => entry.tag !== "0024_fat_jane_foster");
+      journal.entries = journal.entries.filter((entry) => ![
+        "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man",
+      ].includes(entry.tag));
       await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
       await migrate(legacyDatabase, { migrationsFolder });
       const accountId = "18181818-1818-4181-8181-181818181818";

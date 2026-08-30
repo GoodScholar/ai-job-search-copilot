@@ -1130,8 +1130,8 @@ describe("database migrations", () => {
     const journalPath = fileURLToPath(new URL("../migrations/meta/_journal.json", import.meta.url));
     const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
     await expect(readFile(fileURLToPath(new URL("../migrations/0023_source_attention_inbox.sql", import.meta.url)), "utf8")).resolves.toContain("source_attention");
-    expect(journal.entries.at(-2)?.tag).toBe("0023_source_attention_inbox");
-    expect(journal.entries.at(-1)?.tag).toBe("0024_fat_jane_foster");
+    const sourceAttentionIndex = journal.entries.findIndex(({ tag }) => tag === "0023_source_attention_inbox");
+    expect(journal.entries[sourceAttentionIndex + 1]?.tag).toBe("0024_fat_jane_foster");
   });
 
   it("upgrades an existing 0022 database to source-attention without losing rows", async () => {
@@ -1141,13 +1141,23 @@ describe("database migrations", () => {
     try {
       const migrationSource = fileURLToPath(new URL("../migrations", import.meta.url));
       await cp(migrationSource, migrationsFolder, { recursive: true });
-      await unlink(join(migrationsFolder, "0023_source_attention_inbox.sql"));
-      await unlink(join(migrationsFolder, "meta", "0023_snapshot.json"));
-      await unlink(join(migrationsFolder, "0024_fat_jane_foster.sql"));
-      await unlink(join(migrationsFolder, "meta", "0024_snapshot.json"));
+      await Promise.all([
+        unlink(join(migrationsFolder, "0023_source_attention_inbox.sql")),
+        unlink(join(migrationsFolder, "0024_fat_jane_foster.sql")),
+        unlink(join(migrationsFolder, "0025_layered_public_discovery_workflow.sql")),
+        unlink(join(migrationsFolder, "0026_discovery_attention.sql")),
+        unlink(join(migrationsFolder, "0027_massive_purple_man.sql")),
+        unlink(join(migrationsFolder, "meta", "0023_snapshot.json")),
+        unlink(join(migrationsFolder, "meta", "0024_snapshot.json")),
+        unlink(join(migrationsFolder, "meta", "0025_snapshot.json")),
+        unlink(join(migrationsFolder, "meta", "0026_snapshot.json")),
+        unlink(join(migrationsFolder, "meta", "0027_snapshot.json")),
+      ]);
       const journalPath = join(migrationsFolder, "meta", "_journal.json");
       const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
-      await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter((entry) => entry.tag !== "0023_source_attention_inbox" && entry.tag !== "0024_fat_jane_foster") }, null, 2));
+      await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter((entry) => ![
+        "0023_source_attention_inbox", "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man",
+      ].includes(entry.tag)) }, null, 2));
       await migrate(upgradeDatabase, { migrationsFolder });
       const userId = "a9f4da20-e9e9-44c4-a6a5-fc2cf5b9ed93"; const targetId = "f1e7a7a6-a3e6-458e-9f53-33cdbbf2d6ea"; const runId = "833f4544-376c-4f8d-81af-16e50df78624";
       await upgradeDatabase.execute(sql`insert into job_accounts (id) values (${userId})`);
