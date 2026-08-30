@@ -27,4 +27,4 @@
 
 ## 提交
 
-待本次变更提交后补充。
+实现提交：`24c9c7cd34d172b1339782e5d5beb50d69d80715`（`fix(worker): close lifecycle-owned resources`）。
