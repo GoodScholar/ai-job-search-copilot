@@ -117,15 +117,15 @@ function extractJobPage(rawHtml: string, finalUrl: URL): { visibleText: string; 
   const visibleText = title ? `# ${title}\n${plainText}` : plainText;
   const hasLoginText = /(登录|登陆|sign\s*in|log\s*in|login|验证身份)/iu.test(visibleText);
   const hasJobDetails = /(职责|responsibilit|任职要求|qualif|公司|company|地点|location|薪资|salary|经验|experience)/iu.test(visibleText);
-  const hasDetailEvidence = h2Texts.some((parts) => isJobDetailHeading(parts.join(" ").replace(/\s+/gu, " ").trim()));
+  const detailCategories = new Set(h2Texts.map((parts) => jobDetailCategory(parts.join(" ").replace(/\s+/gu, " ").trim())).filter((category): category is JobDetailCategory => category !== undefined));
   const hasJobTitle = title !== undefined && hasJobTitleEvidence(title);
   if (/^(?:登录后查看职位|请登录后查看职位|sign\s*in\s*to\s*(?:view|see).{0,40}job)/iu.test(title ?? "")
     || (visibleFormCount > 0 && hasLoginText && !hasJobDetails && visibleText.length < 800)) throw new JobPageFetchError("JOB_PAGE_LOGIN_REQUIRED");
   if (/(职位|岗位).{0,12}(已下架|已关闭|过期)|(?:已下架|已关闭|过期).{0,12}(职位|岗位)|this\s+(?:job|position)\s+is\s+no\s+longer\s+available|(?:job|position)\s+closed/iu.test(visibleText)) throw new JobPageFetchError("JOB_PAGE_EXPIRED");
-  if ((h1Texts.length === 0 && headingCount >= 2) || (h2Count >= 2 && isListingTitle(title))) throw new JobPageFetchError("JOB_PAGE_LISTING");
+  if ((h1Texts.length === 0 && headingCount >= 2) || isListingTitle(title)) throw new JobPageFetchError("JOB_PAGE_LISTING");
   if (isNonJobPageTitle(title)) throw new JobPageFetchError("JOB_PAGE_UNRECOGNIZED");
   const jobContextSignals = [/(公司|company)/iu, /(地点|location)/iu, /(薪资|salary)/iu, /(经验|experience)/iu, /(职责|responsibilit|任职要求|qualif|负责)/iu];
-  if (!title || jobContextSignals.filter((signal) => signal.test(visibleText)).length < 2 || (!hasJobTitle && !hasDetailEvidence)) throw new JobPageFetchError("JOB_PAGE_UNRECOGNIZED");
+  if (!title || jobContextSignals.filter((signal) => signal.test(visibleText)).length < 2 || (!hasJobTitle && detailCategories.size < 2)) throw new JobPageFetchError("JOB_PAGE_UNRECOGNIZED");
   let canonicalUrl = finalUrl.toString();
   if (canonical) {
     try {
@@ -149,8 +149,15 @@ function isListingTitle(title: string | undefined): boolean {
   return /(?:\bjobs\b|\bopen\s+positions\b|全部职位|职位列表|招聘岗位)/iu.test(title ?? "");
 }
 
-function isJobDetailHeading(heading: string): boolean {
-  return /^(?:responsibilities|qualifications|requirements|what\s+you\s+(?:will|['’]ll)\s+do|what\s+we\s+(?:are|['’]re)\s+looking\s+for|job\s+description|(?:职位|岗位)?职责|任职要求|岗位要求|职位描述)$/iu.test(heading);
+type JobDetailCategory = "responsibilities" | "requirements" | "candidate-profile" | "benefits";
+
+function jobDetailCategory(heading: string): JobDetailCategory | undefined {
+  const normalized = heading.replace(/\s+/gu, " ").trim().replace(/[:：]+$/u, "").trim();
+  if (/^(?:(?:key|your)\s+)?responsibilit(?:y|ies)$/iu.test(normalized) || /^what\s+you(?:\s+will|['’]ll)\s+do$/iu.test(normalized) || /^(?:职位|岗位)?职责$|^职位描述$|^job\s+description$/iu.test(normalized)) return "responsibilities";
+  if (/^(?:(?:key|minimum)\s+)?(?:requirements?|qualifications?)$/iu.test(normalized) || /^(?:任职要求|岗位要求)$/u.test(normalized)) return "requirements";
+  if (/^what\s+we(?:\s+are|['’]re)\s+looking\s+for$|^(?:about\s+you|candidate\s+profile)$/iu.test(normalized)) return "candidate-profile";
+  if (/^benefits?$/iu.test(normalized)) return "benefits";
+  return undefined;
 }
 
 function visit(node: HtmlNode, hidden: boolean, text: string[], h1Texts: string[][], h2Texts: string[][], onElement: (tagName: string, attributes: Array<{ name: string; value: string }>, visible: boolean) => void, h1Index?: number, h2Index?: number): void {
