@@ -303,13 +303,18 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
   trustedSourcePostingVersionIds: readonly string[];
   trustedSourceIds: readonly string[];
   complete?: boolean;
+  interrupted?: "paused" | "cancelled" | "budget_exhausted" | "stale";
 }): Promise<"completed" | "stale" | "facts"> {
   return runTransaction(deps, input.deadline, async (transaction) => {
     await acquireAccountAdvisoryLock(transaction, input.userId);
-    const [run] = await transaction.select().from(agentRuns).where(and(
-      eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.claimToken), eq(agentRuns.controlState, "none"),
-    ));
+    const [run] = await transaction.select().from(agentRuns).where(input.interrupted
+      ? and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId))
+      : and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.claimToken), eq(agentRuns.controlState, "none")));
     if (!run) return "stale";
+    if (input.interrupted === "paused" && run.status !== "paused") return "stale";
+    if (input.interrupted === "cancelled" && run.status !== "cancelled") return "stale";
+    if (input.interrupted === "budget_exhausted" && !(run.status === "failed" && run.terminationKind === "budget_exhausted")) return "stale";
+    if (input.interrupted === "stale" && run.status === "running" && run.claimToken === input.claimToken) return "stale";
     const plannedQueries = new Map(((run.sourceScope as { publicDiscovery?: { queries?: Array<{ queryId: string; kind: string; stableFingerprint: string }> } }).publicDiscovery?.queries ?? []).map((query) => [query.queryId, query]));
     for (const diagnostic of input.diagnostics) {
       if (diagnostic.scope === "provider" && !AnySearchProviderErrorCodeSchema.safeParse(diagnostic.code).success) throw new Error("LAYERED_PUBLIC_DIAGNOSTIC_INVALID");
@@ -530,6 +535,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
       if (claimed.run.workflowVersion === "layered-public-job-discovery-v1") {
         const batchStart = await transition("batch_search", false); if (batchStart) return batchStart;
         let physicalOrdinal = 0;
+        let trustedStop: "paused" | "cancelled" | "budget_exhausted" | "stale" | undefined;
         const controller = layeredController!;
         const abortAtDeadline = setTimeout(() => controller.abort(), Math.max(0, remainingBudget(deps.clock, deadline)));
         try {
@@ -541,12 +547,12 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
               const identity = createHash("sha256").update(operation.identity).digest("hex").slice(0, 16);
               const reserve = operation.kind === "search" || operation.kind === "extract" || operation.kind === "fetch" ? { toolCalls: 1, sourceRequests: 1 } : undefined;
               const checkpointOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: `layered_${operation.kind}_${identity}`, ordinal: ++physicalOrdinal, reserve });
-              if (checkpointOutcome) { controller.abort(); throw new LayeredPublicWorkflowInterruption(checkpointOutcome as "paused" | "cancelled" | "budget_exhausted" | "stale"); }
+              if (checkpointOutcome) { trustedStop = checkpointOutcome as "paused" | "cancelled" | "budget_exhausted" | "stale"; controller.abort(); throw new LayeredPublicWorkflowInterruption(trustedStop); }
               if (controller.signal.aborted) throw new LayeredPublicWorkflowInterruption("stale");
             },
           }));
-          if (isLayeredPublicWorkflowInterruption(outcome)) {
-            try { await persistLayeredPublicOutcome(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), deadline, diagnostics: outcome.diagnostics, sourceIssues: [], sourcePostingVersionIds: [], trustedSourcePostingVersionIds: [], trustedSourceIds: [], complete: false }); }
+          if (isLayeredPublicWorkflowInterruption(outcome) && trustedStop === outcome.interruption) {
+            try { await persistLayeredPublicOutcome(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), deadline, diagnostics: outcome.diagnostics, sourceIssues: [], sourcePostingVersionIds: [], trustedSourcePostingVersionIds: [], trustedSourceIds: [], complete: false, interrupted: trustedStop }); }
             catch (error) { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline }); }
             return outcome.interruption;
           }
