@@ -24,7 +24,9 @@ const GreenhouseSourceListSchema = z.object({
     }
   }),
   meta: z.object({ total: z.number().int().nonnegative() }).passthrough(),
-}).passthrough();
+}).passthrough().superRefine((list, context) => {
+  if (list.jobs.length !== list.meta.total) context.addIssue({ code: "custom", path: ["meta", "total"], message: "provider job list must be complete" });
+});
 const GreenhouseSourceDetailSchema = z.object({
   id: z.union([z.number().int(), z.string().trim().min(1)]),
   title: z.string().trim().min(1),

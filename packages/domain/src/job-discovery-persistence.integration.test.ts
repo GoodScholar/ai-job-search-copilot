@@ -690,7 +690,21 @@ describe("job discovery persistence lifecycle", () => {
     await expect(persistence.persistSuccessfulDiscovery({ run: { ...frozen, claimToken: run.claimToken }, details: [], scans: [{ sourceId, observedDetailIds: ["1"], complete: variant === "completion" ? false : true }], storedObjects: [], sourceChecks: [check], now: later })).rejects.toThrow("AGENT_RUN_PERSIST_FAILED");
   });
 
-  it("非 v3 health check 与 scope 外 complete scan 均在事务前拒绝，且不关闭历史 posting", async () => {
+  it("非 v3 frozen scope 即使 scan 完整合法也拒绝 sourceChecks", async () => {
+    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const sourceId = "greenhouse:in_scope";
+    await database.insert(jobAccounts).values({ id: userId });
+    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: firstSeen, updatedAt: firstSeen });
+    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: firstSeen });
+    const persistence = createJobDiscoveryPersistence({ db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => later }) });
+    const run = await claimRun(userId, targetId, later); const watchlistItemId = crypto.randomUUID();
+    const scope = { kind: "company_watchlist", adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v1", watchlistVersion: 1, sources: [{ sourceId, watchlistItemId, canonicalCompanyName: "In", careersUrl: "https://boards.greenhouse.io/in_scope", allowedDomains: ["boards-api.greenhouse.io"], boardToken: "in_scope" }] };
+    const [frozen] = await database.update(agentRuns).set({ workflowVersion: "job-discovery-workflow-v2", adapterVersion: "greenhouse-job-board-v1", outputSchemaVersion: "job-discovery-result-v2", ruleVersion: "greenhouse-job-discovery-rules-v1", sourceScope: scope }).where(eq(agentRuns.id, run.id)).returning();
+    if (!frozen) throw new Error("run not frozen");
+    const check = { checkId: crypto.randomUUID(), runId: run.id, targetId, watchlistItemId, sourceId, status: "zero_valid_results" as const, reasonCodes: [], impact: { scope: "none" as const, affectedCount: null }, observedPostingCount: 0, selectedDetailCount: 0, validDetailCount: 0, requestAttemptCount: 1, checkedAt: later.toISOString() };
+    await expect(persistence.persistSuccessfulDiscovery({ run: { ...frozen, claimToken: run.claimToken }, details: [], scans: [{ sourceId, observedDetailIds: [], complete: true }], storedObjects: [], sourceChecks: [check], now: later })).rejects.toThrow("AGENT_RUN_PERSIST_FAILED");
+  });
+
+  it("v2 scope 外 complete scan 在没有 sourceChecks 时也拒绝，且不关闭历史 posting", async () => {
     const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const inScopeId = "greenhouse:in_scope"; const outsideId = "greenhouse:outside_scope";
     await database.insert(jobAccounts).values({ id: userId });
     await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: firstSeen, updatedAt: firstSeen });
@@ -701,9 +715,8 @@ describe("job discovery persistence lifecycle", () => {
     const scope = { kind: "company_watchlist", adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v1", watchlistVersion: 1, sources: [{ sourceId: inScopeId, watchlistItemId: crypto.randomUUID(), canonicalCompanyName: "In", careersUrl: "https://boards.greenhouse.io/in_scope", allowedDomains: ["boards-api.greenhouse.io"], boardToken: "in_scope" }] };
     const [frozen] = await database.update(agentRuns).set({ workflowVersion: "job-discovery-workflow-v2", adapterVersion: "greenhouse-job-board-v1", outputSchemaVersion: "job-discovery-result-v2", ruleVersion: "greenhouse-job-discovery-rules-v1", sourceScope: scope }).where(eq(agentRuns.id, run.id)).returning();
     if (!frozen) throw new Error("run not frozen");
-    const check = { checkId: crypto.randomUUID(), runId: run.id, targetId, watchlistItemId: scope.sources[0]!.watchlistItemId, sourceId: inScopeId, status: "zero_valid_results" as const, reasonCodes: [], impact: { scope: "none" as const, affectedCount: null }, observedPostingCount: 0, selectedDetailCount: 0, validDetailCount: 0, requestAttemptCount: 1, checkedAt: later.toISOString() };
     const before = await Promise.all([database.select().from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, run.id)), database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, run.id)), database.select().from(agentRunEvents).where(eq(agentRunEvents.runId, run.id)), database.select().from(agentInboxItems).where(eq(agentInboxItems.runId, run.id)), database.select().from(auditEvents).where(eq(auditEvents.resourceId, run.id))]);
-    await expect(persistence.persistSuccessfulDiscovery({ run: { ...frozen, claimToken: run.claimToken }, details: [], scans: [{ sourceId: inScopeId, observedDetailIds: [], complete: true }, { sourceId: outsideId, observedDetailIds: [], complete: true }], storedObjects: [], sourceChecks: [check], now: later })).rejects.toThrow("AGENT_RUN_PERSIST_FAILED");
+    await expect(persistence.persistSuccessfulDiscovery({ run: { ...frozen, claimToken: run.claimToken }, details: [], scans: [{ sourceId: inScopeId, observedDetailIds: [], complete: true }, { sourceId: outsideId, observedDetailIds: [], complete: true }], storedObjects: [], now: later })).rejects.toThrow("AGENT_RUN_PERSIST_FAILED");
     await expect(Promise.all([database.select().from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, run.id)), database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, run.id)), database.select().from(agentRunEvents).where(eq(agentRunEvents.runId, run.id)), database.select().from(agentInboxItems).where(eq(agentInboxItems.runId, run.id)), database.select().from(auditEvents).where(eq(auditEvents.resourceId, run.id))])).resolves.toEqual(before);
     await expect(database.select({ availability: jobSourcePostings.availability }).from(jobSourcePostings).where(and(eq(jobSourcePostings.userId, userId), eq(jobSourcePostings.sourceId, outsideId)))).resolves.toEqual([{ availability: "open" }]);
   });

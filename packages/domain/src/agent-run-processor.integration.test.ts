@@ -275,6 +275,7 @@ describe("AgentRunProcessor checkpoints", () => {
     [["zero_valid_results", "hard_failed"], "completed_with_source_issues", 0],
     [["zero_valid_results", "rate_limited"], "completed_with_source_issues", 0],
     [["zero_valid_results", "parser_degraded"], "completed_with_source_issues", 0],
+    [["zero_valid_results", "list_parser_degraded"], "completed_with_source_issues", 0],
     [["zero_valid_results", "zero_valid_results"], "completed", 0],
     [["hard_failed", "rate_limited"], "source_failed", 0],
     [["parser_retained", "hard_failed"], "completed_with_source_issues", 1],
@@ -297,6 +298,7 @@ describe("AgentRunProcessor checkpoints", () => {
         const scenario = sources.find((item) => item.sourceId === source.sourceId)!.outcome;
         if (scenario === "rate_limited") return { ok: false, failure: { category: "rate_limited", reasonCode: "SOURCE_RATE_LIMITED", retryable: true, attemptCount: 2 } };
         if (scenario === "hard_failed") return { ok: false, failure: { category: "hard_failed", reasonCode: "SOURCE_SERVER_ERROR", retryable: true, attemptCount: 2 } };
+        if (scenario === "list_parser_degraded") return { ok: false, failure: { category: "parser_degraded", reasonCode: "SOURCE_LIST_SCHEMA_INVALID", retryable: false, attemptCount: 1 } };
         if (scenario === "zero_valid_results") return { ok: true, attemptCount: 1, data: { sourceId: source.sourceId, observedDetailIds: [], candidates: [] } };
         const ids = ["parser_retained", "rate_retained", "hard_retained"].includes(scenario) ? ["701", "702"] : ["701"];
         return { ok: true, attemptCount: 1, data: { sourceId: source.sourceId, observedDetailIds: ids, candidates: ids.map((detailId) => ({ sourceId: source.sourceId, detailId, company: null, title: "AI Engineer", location: "Shanghai" })) } };
@@ -316,6 +318,7 @@ describe("AgentRunProcessor checkpoints", () => {
       healthy: { status: "healthy", reasonCodes: [], impactScope: "none", impactAffectedCount: null, observedPostingCount: 1, selectedDetailCount: 1, validDetailCount: 1, requestAttemptCount: 2, availability: "closed" },
       zero_valid_results: { status: "zero_valid_results", reasonCodes: [], impactScope: "none", impactAffectedCount: null, observedPostingCount: 0, selectedDetailCount: 0, validDetailCount: 0, requestAttemptCount: 1, availability: "closed" },
       parser_degraded: { status: "parser_degraded", reasonCodes: ["SOURCE_DETAIL_FIELDS_MISSING"], impactScope: "job_details", impactAffectedCount: 1, observedPostingCount: 1, selectedDetailCount: 1, validDetailCount: 0, requestAttemptCount: 2, availability: "open" },
+      list_parser_degraded: { status: "parser_degraded", reasonCodes: ["SOURCE_LIST_SCHEMA_INVALID"], impactScope: "entire_source", impactAffectedCount: null, observedPostingCount: 0, selectedDetailCount: 0, validDetailCount: 0, requestAttemptCount: 1, availability: "open" },
       parser_retained: { status: "parser_degraded", reasonCodes: ["SOURCE_DETAIL_FIELDS_MISSING"], impactScope: "job_details", impactAffectedCount: 1, observedPostingCount: 2, selectedDetailCount: 2, validDetailCount: 1, requestAttemptCount: 3, availability: "open" },
       rate_retained: { status: "rate_limited", reasonCodes: ["SOURCE_RATE_LIMITED"], impactScope: "entire_source", impactAffectedCount: null, observedPostingCount: 2, selectedDetailCount: 2, validDetailCount: 1, requestAttemptCount: 4, availability: "open" },
       hard_retained: { status: "hard_failed", reasonCodes: ["SOURCE_SERVER_ERROR"], impactScope: "entire_source", impactAffectedCount: null, observedPostingCount: 2, selectedDetailCount: 2, validDetailCount: 1, requestAttemptCount: 4, availability: "open" },
