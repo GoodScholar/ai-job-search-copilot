@@ -19,7 +19,8 @@
     "./public-job-discovery-sources": "./src/public-job-discovery-sources.ts",
     "./job-discovery-execution-mode": "./src/job-discovery-execution-mode.ts",
     "./agent-runs": "./src/agent-runs.ts",
-    "./anysearch-query-plan": "./src/anysearch-query-plan.ts"
+    "./anysearch-query-plan": "./src/anysearch-query-plan.ts",
+    "./job-discovery-leads": "./src/job-discovery-leads.ts"
   },
   "scripts": {
     "test": "vitest run --no-file-parallelism",

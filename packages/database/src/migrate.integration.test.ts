@@ -1126,11 +1126,12 @@ describe("database migrations", () => {
     expect(postings?.indexes).toHaveProperty("job_source_postings_source_scan_idx");
   });
 
-  it("keeps source-attention as a post-0022 upgrade migration", async () => {
+  it("keeps source-attention immutable before the lead persistence upgrade", async () => {
     const journalPath = fileURLToPath(new URL("../migrations/meta/_journal.json", import.meta.url));
     const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
     await expect(readFile(fileURLToPath(new URL("../migrations/0023_source_attention_inbox.sql", import.meta.url)), "utf8")).resolves.toContain("source_attention");
-    expect(journal.entries.at(-1)?.tag).toBe("0023_source_attention_inbox");
+    expect(journal.entries.at(-2)?.tag).toBe("0023_source_attention_inbox");
+    expect(journal.entries.at(-1)?.tag).toBe("0024_fat_jane_foster");
   });
 
   it("upgrades an existing 0022 database to source-attention without losing rows", async () => {
@@ -1142,9 +1143,11 @@ describe("database migrations", () => {
       await cp(migrationSource, migrationsFolder, { recursive: true });
       await unlink(join(migrationsFolder, "0023_source_attention_inbox.sql"));
       await unlink(join(migrationsFolder, "meta", "0023_snapshot.json"));
+      await unlink(join(migrationsFolder, "0024_fat_jane_foster.sql"));
+      await unlink(join(migrationsFolder, "meta", "0024_snapshot.json"));
       const journalPath = join(migrationsFolder, "meta", "_journal.json");
       const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
-      await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter((entry) => entry.tag !== "0023_source_attention_inbox") }, null, 2));
+      await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter((entry) => entry.tag !== "0023_source_attention_inbox" && entry.tag !== "0024_fat_jane_foster") }, null, 2));
       await migrate(upgradeDatabase, { migrationsFolder });
       const userId = "a9f4da20-e9e9-44c4-a6a5-fc2cf5b9ed93"; const targetId = "f1e7a7a6-a3e6-458e-9f53-33cdbbf2d6ea"; const runId = "833f4544-376c-4f8d-81af-16e50df78624";
       await upgradeDatabase.execute(sql`insert into job_accounts (id) values (${userId})`);

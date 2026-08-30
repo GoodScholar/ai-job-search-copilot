@@ -601,6 +601,79 @@ export const agentRuns = pgTable("agent_runs", {
   `),
 ]);
 
+export const jobDiscoveryLeads = pgTable("job_discovery_leads", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull(),
+  runId: uuid("run_id").notNull(),
+  targetId: uuid("target_id").notNull(),
+  provider: varchar("provider", { length: 32 }).notNull(),
+  queryId: uuid("query_id").notNull(),
+  queryKind: varchar("query_kind", { length: 32 }).notNull(),
+  queryFingerprint: varchar("query_fingerprint", { length: 64 }).notNull(),
+  normalizedUrl: varchar("normalized_url", { length: 2_048 }).notNull(),
+  stableFingerprint: varchar("stable_fingerprint", { length: 64 }).notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  state: varchar("state", { length: 16 }).notNull().default("pending"),
+  sourcePostingVersionId: uuid("source_posting_version_id"),
+  rejectionCode: varchar("rejection_code", { length: 64 }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_discovery_leads_owner_run_provider_identity_unique").on(table.userId, table.runId, table.provider, table.stableFingerprint),
+  unique("job_discovery_leads_user_id_id_unique").on(table.userId, table.id),
+  unique("job_discovery_leads_attr_ref_unique").on(table.userId, table.id, table.runId, table.provider, table.queryId, table.sourcePostingVersionId),
+  index("job_discovery_leads_owner_run_state_idx").on(table.userId, table.runId, table.state, table.createdAt, table.id),
+  foreignKey({
+    columns: [table.userId, table.runId, table.targetId],
+    foreignColumns: [agentRuns.userId, agentRuns.id, agentRuns.targetId],
+    name: "job_discovery_leads_owner_run_target_fk",
+  }),
+  foreignKey({
+    columns: [table.userId, table.sourcePostingVersionId],
+    foreignColumns: [jobSourcePostingVersions.userId, jobSourcePostingVersions.id],
+    name: "job_discovery_leads_owner_version_fk",
+  }),
+  check("job_discovery_leads_provider_check", sql`${table.provider} = 'anysearch'`),
+  check("job_discovery_leads_query_kind_check", sql`${table.queryKind} in ('general', 'site_constrained', 'target_company')`),
+  check("job_discovery_leads_query_fingerprint_format", sql`${table.queryFingerprint} ~ '^[0-9a-f]{64}$'`),
+  check("job_discovery_leads_stable_fingerprint_format", sql`${table.stableFingerprint} ~ '^[0-9a-f]{64}$'`),
+  check("job_discovery_leads_url_length_check", sql`length(${table.normalizedUrl}) between 1 and 2048`),
+  check("job_discovery_leads_ttl_check", sql`${table.expiresAt} = ${table.createdAt} + interval '30 days'`),
+  check("job_discovery_leads_state_check", sql`${table.state} in ('pending', 'verified', 'rejected')`),
+  check("job_discovery_leads_rejection_code_check", sql`${table.rejectionCode} is null or ${table.rejectionCode} ~ '^[A-Z][A-Z0-9_]{1,63}$'`),
+  check("job_discovery_leads_outcome_check", sql`
+    (${table.state} = 'pending' and ${table.sourcePostingVersionId} is null and ${table.rejectionCode} is null)
+    or (${table.state} = 'verified' and ${table.sourcePostingVersionId} is not null and ${table.rejectionCode} is null)
+    or (${table.state} = 'rejected' and ${table.sourcePostingVersionId} is null and ${table.rejectionCode} is not null)
+  `),
+]);
+
+export const jobDiscoveryAttributions = pgTable("job_discovery_attributions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull(),
+  runId: uuid("run_id").notNull(),
+  leadId: uuid("lead_id").notNull(),
+  queryId: uuid("query_id").notNull(),
+  provider: varchar("provider", { length: 32 }).notNull(),
+  sourcePostingVersionId: uuid("source_posting_version_id").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_discovery_attributions_lead_unique").on(table.leadId),
+  unique("job_discovery_attributions_user_id_id_unique").on(table.userId, table.id),
+  index("job_discovery_attributions_owner_run_idx").on(table.userId, table.runId, table.createdAt, table.id),
+  foreignKey({
+    columns: [table.userId, table.leadId, table.runId, table.provider, table.queryId, table.sourcePostingVersionId],
+    foreignColumns: [jobDiscoveryLeads.userId, jobDiscoveryLeads.id, jobDiscoveryLeads.runId, jobDiscoveryLeads.provider, jobDiscoveryLeads.queryId, jobDiscoveryLeads.sourcePostingVersionId],
+    name: "job_discovery_attributions_lead_ref_fk",
+  }),
+  foreignKey({
+    columns: [table.userId, table.sourcePostingVersionId],
+    foreignColumns: [jobSourcePostingVersions.userId, jobSourcePostingVersions.id],
+    name: "job_discovery_attributions_owner_version_fk",
+  }),
+  check("job_discovery_attributions_provider_check", sql`${table.provider} = 'anysearch'`),
+]);
+
 export const jobDiscoverySchedules = pgTable("job_discovery_schedules", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").notNull().references(() => jobAccounts.id),

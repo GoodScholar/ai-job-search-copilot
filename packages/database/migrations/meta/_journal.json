@@ -169,6 +169,13 @@
       "when": 1788060617070,
       "tag": "0023_source_attention_inbox",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1788089830066,
+      "tag": "0024_fat_jane_foster",
+      "breakpoints": true
     }
   ]
 }
