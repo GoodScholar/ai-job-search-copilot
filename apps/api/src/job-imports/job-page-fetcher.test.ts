@@ -147,10 +147,19 @@ describe("SecureJobPageFetcher", () => {
 
   it("DNS 解析不返回时在总时限内失败且不会发起请求", async () => {
     const configuredOrigin = `http://fixture.test:${new URL(origin).port}`;
-    const lookup = () => new Promise<never>(() => undefined);
-    await expect(new SecureJobPageFetcher({ testOrigin: configuredOrigin, totalTimeoutMs: 25, lookup }).fetch({ url: `${configuredOrigin}/lookup-never` }))
-      .rejects.toMatchObject({ code: "JOB_PAGE_TIMEOUT" } satisfies Pick<JobPageFetchError, "code">);
-    expect(neverLookupRequests).toBe(0);
+    const previousNetworkMode = process.env.PUBLIC_SOURCE_NETWORK_MODE;
+    let lookupCalls = 0;
+    process.env.PUBLIC_SOURCE_NETWORK_MODE = "enabled";
+    try {
+      const lookup = () => { lookupCalls += 1; return new Promise<never>(() => undefined); };
+      await expect(new SecureJobPageFetcher({ testOrigin: configuredOrigin, totalTimeoutMs: 25, lookup }).fetch({ url: `${configuredOrigin}/lookup-never` }))
+        .rejects.toMatchObject({ code: "JOB_PAGE_TIMEOUT" } satisfies Pick<JobPageFetchError, "code">);
+      expect(lookupCalls).toBe(1);
+      expect(neverLookupRequests).toBe(0);
+    } finally {
+      if (previousNetworkMode === undefined) delete process.env.PUBLIC_SOURCE_NETWORK_MODE;
+      else process.env.PUBLIC_SOURCE_NETWORK_MODE = previousNetworkMode;
+    }
   });
 
   it("重定向后的 DNS 解析共享同一总时限预算", async () => {
@@ -161,9 +170,16 @@ describe("SecureJobPageFetcher", () => {
       await new Promise((resolve) => setTimeout(resolve, calls === 1 ? 10 : 100));
       return [{ address: "127.0.0.1", family: 4 }];
     };
-    await expect(new SecureJobPageFetcher({ testOrigin: configuredOrigin, totalTimeoutMs: 50, lookup }).fetch({ url: `${configuredOrigin}/two-step-redirect` }))
-      .rejects.toMatchObject({ code: "JOB_PAGE_TIMEOUT" } satisfies Pick<JobPageFetchError, "code">);
-    expect(calls).toBe(2);
+    const previousNetworkMode = process.env.PUBLIC_SOURCE_NETWORK_MODE;
+    process.env.PUBLIC_SOURCE_NETWORK_MODE = "enabled";
+    try {
+      await expect(new SecureJobPageFetcher({ testOrigin: configuredOrigin, totalTimeoutMs: 50, lookup }).fetch({ url: `${configuredOrigin}/two-step-redirect` }))
+        .rejects.toMatchObject({ code: "JOB_PAGE_TIMEOUT" } satisfies Pick<JobPageFetchError, "code">);
+      expect(calls).toBe(2);
+    } finally {
+      if (previousNetworkMode === undefined) delete process.env.PUBLIC_SOURCE_NETWORK_MODE;
+      else process.env.PUBLIC_SOURCE_NETWORK_MODE = previousNetworkMode;
+    }
   });
 
   it.each([

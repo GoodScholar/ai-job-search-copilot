@@ -183,6 +183,44 @@ describe("PublicSourceClient", () => {
     }
   });
 
+  it("requires paired injected lookup and transport for a non-loopback test origin under disabled mode", async () => {
+    const previous = process.env.PUBLIC_SOURCE_NETWORK_MODE;
+    process.env.PUBLIC_SOURCE_NETWORK_MODE = "disabled";
+    try {
+      let lookupOnlyCalls = 0;
+      const lookupOnly = createPublicSourceClientForTest({
+        exactHosts: ["fixture.example.test"],
+        testOrigin: "https://fixture.example.test",
+        lookup: async () => { lookupOnlyCalls += 1; return [{ address: "93.184.216.34", family: 4 }]; },
+      });
+      await expect(lookupOnly.get({ url: new URL("https://fixture.example.test/jobs"), allowedDomains: ["fixture.example.test"], accept: "text/html", maxRedirects: 0, retry: "none" }))
+        .rejects.toMatchObject({ code: "PUBLIC_SOURCE_NETWORK_DISABLED" });
+      expect(lookupOnlyCalls).toBe(0);
+
+      let transportOnlyCalls = 0;
+      const transportOnly = createPublicSourceClientForTest({
+        exactHosts: ["fixture.example.test"],
+        testOrigin: "https://fixture.example.test",
+        transport: async () => { transportOnlyCalls += 1; return { status: 200, headers: { "content-type": "text/html" }, body: new Uint8Array() }; },
+      });
+      await expect(transportOnly.get({ url: new URL("https://fixture.example.test/jobs"), allowedDomains: ["fixture.example.test"], accept: "text/html", maxRedirects: 0, retry: "none" }))
+        .rejects.toMatchObject({ code: "PUBLIC_SOURCE_NETWORK_DISABLED" });
+      expect(transportOnlyCalls).toBe(0);
+
+      const controlled = createPublicSourceClientForTest({
+        exactHosts: ["fixture.example.test"],
+        testOrigin: "https://fixture.example.test",
+        lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+        transport: async () => ({ status: 200, headers: { "content-type": "text/html" }, body: new Uint8Array() }),
+      });
+      await expect(controlled.get({ url: new URL("https://fixture.example.test/jobs"), allowedDomains: ["fixture.example.test"], accept: "text/html", maxRedirects: 0, retry: "none" }))
+        .resolves.toMatchObject({ status: 200 });
+    } finally {
+      if (previous === undefined) delete process.env.PUBLIC_SOURCE_NETWORK_MODE;
+      else process.env.PUBLIC_SOURCE_NETWORK_MODE = previous;
+    }
+  });
+
   it("aborts a never-resolving retry backoff and immediately frees its global and host permits", async () => {
     let releaseSleep!: () => void;
     let sleepStarted!: () => void;
@@ -217,6 +255,47 @@ describe("PublicSourceClient", () => {
         .resolves.toMatchObject({ status: 200 });
       await expect(access.get({ url: new URL("https://retry.test/reused"), allowedDomains: ["retry.test"], accept: "text/html", maxRedirects: 0, retry: "none" }))
         .resolves.toMatchObject({ status: 429 });
+    } finally {
+      releaseSleep();
+      releaseHeld();
+      await retrying.catch(() => undefined);
+      await heldRequest?.catch(() => undefined);
+    }
+  });
+
+  it("handles an abort raised by transport before a retry backoff listener is registered", async () => {
+    let releaseSleep!: () => void;
+    let releaseHeld!: () => void;
+    let heldStarted!: () => void;
+    const sleeping = new Promise<void>((resolve) => { releaseSleep = resolve; });
+    const held = new Promise<void>((resolve) => { releaseHeld = resolve; });
+    const controller = new AbortController();
+    let sleepCalls = 0;
+    const access = createPublicSourceClientForTest({
+      exactHosts: ["sync-abort.test", "held-after-abort.test", "probe-after-abort.test"],
+      lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+      sleep: async () => { sleepCalls += 1; await sleeping; },
+      transport: async ({ url }): Promise<{ status: number; headers: Readonly<Record<string, string>>; body: Uint8Array }> => {
+        if (url.hostname === "sync-abort.test") {
+          controller.abort();
+          return { status: 429, headers: { "content-type": "text/html", "retry-after": "60" }, body: new Uint8Array() };
+        }
+        if (url.hostname === "held-after-abort.test") { heldStarted(); await held; }
+        return { status: 200, headers: { "content-type": "text/html" }, body: new Uint8Array() };
+      },
+    });
+    const retrying = access.get({ url: new URL("https://sync-abort.test/jobs"), allowedDomains: ["sync-abort.test"], accept: "text/html", maxRedirects: 0, retry: "bounded", signal: controller.signal });
+    let heldRequest: Promise<unknown> | undefined;
+    try {
+      heldRequest = access.get({ url: new URL("https://held-after-abort.test/jobs"), allowedDomains: ["held-after-abort.test"], accept: "text/html", maxRedirects: 0, retry: "none" });
+      await new Promise<void>((resolve) => { heldStarted = resolve; });
+      await expect(Promise.race([
+        retrying,
+        new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("synchronous abort did not interrupt retry backoff")), 80)),
+      ])).rejects.toMatchObject({ code: "PUBLIC_SOURCE_ABORTED" });
+      expect(sleepCalls).toBe(0);
+      await expect(access.get({ url: new URL("https://probe-after-abort.test/jobs"), allowedDomains: ["probe-after-abort.test"], accept: "text/html", maxRedirects: 0, retry: "none" }))
+        .resolves.toMatchObject({ status: 200 });
     } finally {
       releaseSleep();
       releaseHeld();

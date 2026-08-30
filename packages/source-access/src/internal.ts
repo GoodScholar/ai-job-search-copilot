@@ -57,6 +57,7 @@ export type InternalPublicSourceClientConfig = {
   sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
   allowTestTransport?: boolean;
   allowTesting?: boolean;
+  allowTestOrigin?: boolean;
   exposeHostPermitCountForTesting?: boolean;
 };
 
@@ -137,7 +138,7 @@ export function createInternalPublicSourceClient(config: InternalPublicSourceCli
 
   const client: PublicSourceClient = {
     async get(input: Parameters<PublicSourceClient["get"]>[0]) {
-      assertInitialPolicy(input, exactHosts, networkMode, testOrigin, config.allowTesting === true, config.allowTestTransport === true);
+      assertInitialPolicy(input, exactHosts, networkMode, testOrigin, config.allowTesting === true, config.allowTestOrigin === true, config.allowTestTransport === true);
       const startedAt = Date.now();
       let current = input.url;
       let redirects = 0;
@@ -209,20 +210,31 @@ async function requestWithRetry(args: {
 }
 
 async function waitForBackoff(args: { input: Parameters<PublicSourceClient["get"]>[0]; startedAt: number; totalTimeoutMs: number; sleep: (milliseconds: number, signal?: AbortSignal) => Promise<void> }, delay: number): Promise<void> {
+  if (args.input.signal?.aborted) throw new PublicSourceAccessError("PUBLIC_SOURCE_ABORTED");
   const timeoutMs = remaining(args.startedAt, args.totalTimeoutMs);
   if (timeoutMs <= 0) throw new PublicSourceAccessError("PUBLIC_SOURCE_TIMEOUT");
   const controller = new AbortController();
   let rejectWait!: (error: PublicSourceAccessError) => void;
   const interrupted = new Promise<never>((_resolve, reject) => { rejectWait = reject; });
-  const abort = () => { controller.abort(); rejectWait(new PublicSourceAccessError("PUBLIC_SOURCE_ABORTED")); };
-  const timer = setTimeout(() => { controller.abort(); rejectWait(new PublicSourceAccessError("PUBLIC_SOURCE_TIMEOUT")); }, timeoutMs);
+  let interruption: PublicSourceAccessError | undefined;
+  const interrupt = (error: PublicSourceAccessError) => {
+    if (interruption) return;
+    interruption = error;
+    controller.abort();
+    rejectWait(error);
+  };
+  const abort = () => interrupt(new PublicSourceAccessError("PUBLIC_SOURCE_ABORTED"));
+  const timer = setTimeout(() => interrupt(new PublicSourceAccessError("PUBLIC_SOURCE_TIMEOUT")), timeoutMs);
   args.input.signal?.addEventListener("abort", abort, { once: true });
+  if (args.input.signal?.aborted) abort();
   try {
+    if (interruption) throw interruption;
     await Promise.race([args.sleep(Math.min(delay, timeoutMs), controller.signal), interrupted]);
     if (args.input.signal?.aborted) throw new PublicSourceAccessError("PUBLIC_SOURCE_ABORTED");
     if (remaining(args.startedAt, args.totalTimeoutMs) <= 0) throw new PublicSourceAccessError("PUBLIC_SOURCE_TIMEOUT");
   } catch (error) {
     if (args.input.signal?.aborted) throw new PublicSourceAccessError("PUBLIC_SOURCE_ABORTED");
+    if (interruption) throw interruption;
     if (controller.signal.aborted) throw new PublicSourceAccessError("PUBLIC_SOURCE_TIMEOUT");
     throw error;
   } finally {
@@ -231,11 +243,12 @@ async function waitForBackoff(args: { input: Parameters<PublicSourceClient["get"
   }
 }
 
-function assertInitialPolicy(input: Parameters<PublicSourceClient["get"]>[0], exactHosts: ReadonlySet<string>, networkMode: "disabled" | "test" | "enabled", testOrigin: URL | undefined, allowTesting: boolean, allowTestTransport: boolean): void {
+function assertInitialPolicy(input: Parameters<PublicSourceClient["get"]>[0], exactHosts: ReadonlySet<string>, networkMode: "disabled" | "test" | "enabled", testOrigin: URL | undefined, allowTesting: boolean, allowTestOrigin: boolean, allowTestTransport: boolean): void {
   throwIfAborted(input.signal);
   if (!isAuthorizedUrl(input.url, input.allowedDomains, exactHosts, testOrigin)) throw new PublicSourceAccessError("PUBLIC_SOURCE_TARGET_REJECTED");
   const usesTestingSeam = allowTesting && (testOrigin ? testOrigin.origin === input.url.origin : allowTestTransport);
-  if ((networkMode === "disabled" || networkMode === "test") && !usesTestingSeam) throw new PublicSourceAccessError("PUBLIC_SOURCE_NETWORK_DISABLED");
+  const usesDisabledTestingSeam = allowTesting && (testOrigin ? allowTestOrigin && testOrigin.origin === input.url.origin : allowTestTransport);
+  if ((networkMode === "disabled" && !usesDisabledTestingSeam) || (networkMode === "test" && !usesTestingSeam)) throw new PublicSourceAccessError("PUBLIC_SOURCE_NETWORK_DISABLED");
 }
 
 function isAuthorizedUrl(url: URL, allowedDomains: readonly string[], exactHosts: ReadonlySet<string>, testOrigin: URL | undefined): boolean {
