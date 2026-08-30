@@ -76,7 +76,7 @@ describe("layered public job discovery workflow", () => {
     const result = await workflow.run({ userId: targetId, runId, now: new Date(), executionSpec: executionSpec as never, attemptCount: 1, beforePhysicalOperation: async ({ kind }) => { calls.push(`checkpoint:${kind}`); }, signal: new AbortController().signal });
 
     expect(calls).toEqual(["checkpoint:search", "checkpoint:search", "trusted", "checkpoint:search", `search:${queryId}`, "pending", "checkpoint:extract", "extract", "checkpoint:fetch", "fetch", "verify"]);
-    expect(result).toEqual({ hasTrustedSuccess: true, branchSuccess: { trusted: true, publicDiscovery: true }, sourcePostingVersionIds: ["44444444-4444-8444-8444-444444444444", "77777777-7777-8777-8777-777777777777"], trustedSourcePostingVersionIds: ["44444444-4444-8444-8444-444444444444"], sourceIssues: [], diagnostics: [] });
+    expect(result).toEqual({ branchOutcome: { trusted: "succeeded", publicDiscovery: "verified" }, sourcePostingVersionIds: ["44444444-4444-8444-8444-444444444444", "77777777-7777-8777-8777-777777777777"], trustedSourcePostingVersionIds: ["44444444-4444-8444-8444-444444444444"], sourceIssues: [], diagnostics: [] });
     const capability = { userId: targetId, runId, queryId, queryFingerprint: "b".repeat(64), normalizedUrl: "https://careers.example.com/jobs/1", stableFingerprint: "a".repeat(64), allowedSiteDomains: [] };
     expect(proofs.preflight).toMatchObject({ candidate: capability });
     expect(proofs.pending).toMatchObject({ candidate: capability });
@@ -112,7 +112,7 @@ describe("layered public job discovery workflow", () => {
     const outcome = await workflow.run({ userId: targetId, runId, now: new Date(), executionSpec: executionSpec as never, attemptCount: 1, beforePhysicalOperation: async () => { checkpoints += 1; }, signal: new AbortController().signal });
     expect({ posts, checkpoints }).toEqual({ posts: 0, checkpoints: 0 });
     expect(outcome).toMatchObject({
-      hasTrustedSuccess: false,
+      branchOutcome: { trusted: "failed", publicDiscovery: "failed" },
       diagnostics: [
         { scope: "provider", code: "ANYSEARCH_AUTH_FAILED", retryable: false, affectedCount: 1 },
         { scope: "provider", code: "ANYSEARCH_NOT_CONFIGURED", retryable: false, affectedCount: 2 },
@@ -141,7 +141,49 @@ describe("layered public job discovery workflow", () => {
       executionSpec: executionSpecFor([{ ordinal: 1, queryId, kind: "general", stableFingerprint: "e".repeat(64), query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }]) as never,
       beforePhysicalOperation: async () => undefined,
     });
-    expect(outcome).toMatchObject({ hasTrustedSuccess: true, branchSuccess: { trusted: true, publicDiscovery: true }, sourcePostingVersionIds: [] });
+    expect(outcome).toMatchObject({ branchOutcome: { trusted: "succeeded", publicDiscovery: "clean_zero" }, sourcePostingVersionIds: [] });
+  });
+
+  it("真实 search 零候选是 clean-zero 成功，而非依赖 trusted 分支", async () => {
+    const workflow = createLayeredPublicJobDiscoveryWorkflow({
+      trustedSources: { discover: async () => ({ succeeded: false, verifiedSourcePostingVersionIds: [] }) },
+      anySearch: { search: async ({ beforeRequest }) => { await beforeRequest(); return { candidates: [] }; }, extract: async () => { throw new Error("UNUSED"); } },
+      preflight: async () => null, leads: { recordPending: async () => { throw new Error("UNUSED"); } }, fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
+      gate: { verify: async () => { throw new Error("UNUSED"); }, reject: async () => undefined },
+    });
+    await expect(workflow.run({ userId: targetId, runId, now: new Date(), attemptCount: 1, signal: new AbortController().signal, executionSpec: executionSpecFor([{ ordinal: 1, queryId, kind: "general", stableFingerprint: "e".repeat(64), query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }]) as never, beforePhysicalOperation: async () => undefined }))
+      .resolves.toMatchObject({ branchOutcome: { trusted: "failed", publicDiscovery: "clean_zero" }, sourcePostingVersionIds: [] });
+  });
+
+  it("候选均在验证链 terminal reject 时标记 candidate-failures，而非错误成功", async () => {
+    const workflow = createLayeredPublicJobDiscoveryWorkflow({
+      trustedSources: { discover: async () => ({ succeeded: false, verifiedSourcePostingVersionIds: [] }) },
+      anySearch: {
+        search: async ({ beforeRequest }) => { await beforeRequest(); return { candidates: [{ normalizedUrl: "https://careers.example.com/jobs/1", stableFingerprint: "a".repeat(64) }] }; },
+        extract: async ({ beforeRequest }) => { await beforeRequest(); return { normalizedUrl: "https://careers.example.com/jobs/1" }; },
+      },
+      preflight: async ({ candidate }) => ({ normalizedUrl: candidate.normalizedUrl }), leads: { recordPending: async () => ({ leadId: "66666666-6666-8666-8666-666666666666" }) },
+      fetcher: { fetch: async () => { throw { code: "JOB_PAGE_LOGIN_REQUIRED" }; } },
+      gate: { verify: async () => { throw new Error("UNUSED"); }, reject: async () => undefined },
+    });
+    await expect(workflow.run({ userId: targetId, runId, now: new Date(), attemptCount: 1, signal: new AbortController().signal, executionSpec: executionSpecFor([{ ordinal: 1, queryId, kind: "general", stableFingerprint: "b".repeat(64), query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }]) as never, beforePhysicalOperation: async () => undefined }))
+      .resolves.toMatchObject({ branchOutcome: { trusted: "failed", publicDiscovery: "candidate_failures" }, sourcePostingVersionIds: [], diagnostics: [expect.objectContaining({ code: "JOB_PAGE_LOGIN_REQUIRED", retryable: false })] });
+  });
+
+  it("一个 verified result 与局部失败仍标记 verified，并保留脱敏问题", async () => {
+    let candidate = 0;
+    const workflow = createLayeredPublicJobDiscoveryWorkflow({
+      trustedSources: { discover: async () => ({ succeeded: false, verifiedSourcePostingVersionIds: [] }) },
+      anySearch: {
+        search: async ({ beforeRequest }) => { await beforeRequest(); return { candidates: ["a", "b"].map((suffix) => ({ normalizedUrl: `https://careers.example.com/jobs/${suffix}`, stableFingerprint: suffix.repeat(64) })) }; },
+        extract: async ({ beforeRequest, candidate: input }) => { await beforeRequest(); return { normalizedUrl: input.normalizedUrl }; },
+      },
+      preflight: async ({ candidate: input }) => ({ normalizedUrl: input.normalizedUrl }), leads: { recordPending: async () => ({ leadId: candidate++ === 0 ? "66666666-6666-8666-8666-666666666666" : "77777777-7777-8777-8777-777777777777" }) },
+      fetcher: { fetch: async ({ candidate: input }) => { if (input.normalizedUrl.endsWith("/b")) throw { code: "JOB_PAGE_TIMEOUT" }; return { requestedUrl: input.normalizedUrl, finalUrl: input.normalizedUrl, canonicalUrl: input.normalizedUrl, rawHtml: "<h1>job</h1>", visibleText: "job", pageClassification: "job", sourceKind: "official" }; } },
+      gate: { verify: async () => ({ sourcePostingVersionId: "88888888-8888-8888-8888-888888888888" }), reject: async () => undefined },
+    });
+    await expect(workflow.run({ userId: targetId, runId, now: new Date(), attemptCount: 1, signal: new AbortController().signal, executionSpec: executionSpecFor([{ ordinal: 1, queryId, kind: "general", stableFingerprint: "c".repeat(64), query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }]) as never, beforePhysicalOperation: async () => undefined }))
+      .resolves.toMatchObject({ branchOutcome: { trusted: "failed", publicDiscovery: "verified" }, sourcePostingVersionIds: ["88888888-8888-8888-8888-888888888888"], diagnostics: [expect.objectContaining({ code: "JOB_PAGE_TIMEOUT", retryable: true })] });
   });
 
   it("只允许已签发 URL capability，并将安全但不在批准域的候选终结为 policy rejected Lead", async () => {
