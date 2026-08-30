@@ -394,6 +394,25 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(database.select().from(jobDiscoveryDiagnostics).where(eq(jobDiscoveryDiagnostics.runId, job.runId))).resolves.toHaveLength(1);
   });
 
+  it("v4 active-duration deadline 在第二次操作前终止时保留 partial diagnostic 且重放不重复", async () => {
+    const job = await layeredRun(); const secondQueryId = crypto.randomUUID(); let instant = now;
+    const [stored] = await database.select({ sourceScope: agentRuns.sourceScope }).from(agentRuns).where(eq(agentRuns.id, job.runId));
+    const sourceScope = stored!.sourceScope as any;
+    sourceScope.publicDiscovery.queries.push({ ...sourceScope.publicDiscovery.queries[0], ordinal: 2, queryId: secondQueryId, stableFingerprint: "d".repeat(64) });
+    await database.update(agentRuns).set({ sourceScope }).where(eq(agentRuns.id, job.runId));
+    let searches = 0;
+    const workflow = createLayeredPublicJobDiscoveryWorkflow({
+      trustedSources: { discover: async () => ({ succeeded: false, verifiedSourcePostingVersionIds: [] }) },
+      anySearch: { search: async ({ beforeRequest }) => { await beforeRequest(); searches += 1; if (searches === 1) { instant = new Date(now.getTime() + 60_000); return { error: { code: "ANYSEARCH_UNAVAILABLE", retryable: true, httpStatus: 503 } }; } return { candidates: [] }; }, extract: async () => { throw new Error("UNUSED"); } },
+      preflight: async () => null, leads: { recordPendingForClaim: async () => { throw new Error("UNUSED"); } }, fetcher: { fetch: async () => { throw new Error("UNUSED"); } }, gate: { verifyForClaim: async () => { throw new Error("UNUSED"); }, rejectForClaim: async () => undefined },
+    });
+    const processor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => workflow }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => instant }), id: () => crypto.randomUUID(), clock: () => instant });
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("budget_exhausted");
+    await expect(Promise.all([database.select().from(jobDiscoveryDiagnostics).where(eq(jobDiscoveryDiagnostics.runId, job.runId)), database.select().from(agentInboxItems).where(and(eq(agentInboxItems.runId, job.runId), eq(agentInboxItems.kind, "discovery_attention")))] )).resolves.toEqual([[expect.objectContaining({ code: "ANYSEARCH_UNAVAILABLE" })], []]);
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("budget_exhausted");
+    await expect(database.select().from(jobDiscoveryDiagnostics).where(eq(jobDiscoveryDiagnostics.runId, job.runId))).resolves.toHaveLength(1);
+  });
+
   it.each([
     ["cancel", "cancel_requested", "cancelled", "cancelled"],
     ["budget", "budget", "budget_exhausted", "failed"],
