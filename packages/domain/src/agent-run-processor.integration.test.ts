@@ -220,6 +220,16 @@ describe("AgentRunProcessor checkpoints", () => {
     expect(hooks).toEqual(["search", "extract", "fetch"].slice(0, ["search", "extract", "fetch"].indexOf(stopAt) + 1));
   });
 
+  it.each(["cancelled", "budget_exhausted", "stale"] as const)("v4 checkpoint 返回 %s 时不调用 workflow 后续物理操作", async (outcome) => {
+    const job = await layeredRun(); let hooks = 0;
+    const durable = checkpoint();
+    const stop = outcome === "budget_exhausted" ? { kind: "budget_exhausted" as const, budgetDimension: "tool_calls" as const } : outcome === "cancelled" ? { kind: "cancelled" as const } : { kind: "stale" as const };
+    const controlled: AgentRunCheckpoint = { check: async (input) => input.checkpointKey.includes(":layered_search_") ? stop : durable.check(input) };
+    const processor = createAgentRunProcessor({ db: database, checkpoint: controlled, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async ({ beforePhysicalOperation }) => { hooks += 1; await beforePhysicalOperation({ kind: "search", identity: job.queryId }); hooks += 1; return { hasTrustedSuccess: true, diagnostics: [] }; } }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe(outcome);
+    expect(hooks).toBe(1);
+  });
+
   it("v4 retry 只保留诊断；后续成功不遗留 source issue 或 attention", async () => {
     const job = await layeredRun(); let retry = true;
     const processor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => retry
