@@ -101,7 +101,40 @@ describe("AgentRunProcessor checkpoints", () => {
     const processor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({ hasTrustedSuccess: false, branchSuccess: { trusted: false, publicDiscovery: false }, diagnostics: [{ scope: "provider", code: "ANYSEARCH_QUOTA_EXHAUSTED", retryable: true, affectedCount: 1 }], sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_QUOTA_EXHAUSTED", affectedCount: 1 }] }) }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
     await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: false })).resolves.toBe("budget_exhausted");
     await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: false })).resolves.toBe("budget_exhausted");
-    await expect(Promise.all([database.select().from(jobDiscoverySourceIssues).where(eq(jobDiscoverySourceIssues.runId, job.runId)), database.select().from(agentInboxItems).where(eq(agentInboxItems.runId, job.runId))])).resolves.toEqual([[expect.objectContaining({ code: "ANYSEARCH_QUOTA_EXHAUSTED" })], expect.arrayContaining([expect.objectContaining({ kind: "budget_exhausted" }), expect.objectContaining({ kind: "discovery_attention" })])]);
+    const [issues, inbox, attentionAudit] = await Promise.all([
+      database.select().from(jobDiscoverySourceIssues).where(eq(jobDiscoverySourceIssues.runId, job.runId)),
+      database.select().from(agentInboxItems).where(eq(agentInboxItems.runId, job.runId)),
+      database.select().from(auditEvents).where(and(eq(auditEvents.requestId, job.runId), eq(auditEvents.reasonCode, "DISCOVERY_ATTENTION"))),
+    ]);
+    expect(issues).toEqual([expect.objectContaining({ code: "ANYSEARCH_QUOTA_EXHAUSTED", affectedCount: 1 })]);
+    expect(inbox.filter((item) => item.kind === "budget_exhausted")).toHaveLength(1);
+    expect(inbox.filter((item) => item.kind === "discovery_attention")).toHaveLength(1);
+    expect(attentionAudit).toHaveLength(1);
+  });
+
+  it("v4 实际不可重试终态不受 finalAttempt 影响，并且重放不重复 attention", async () => {
+    const job = await layeredRun();
+    const processor = createAgentRunProcessor({
+      db: database,
+      adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
+      layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({
+        hasTrustedSuccess: false,
+        branchSuccess: { trusted: false, publicDiscovery: false },
+        diagnostics: [{ scope: "provider", code: "ANYSEARCH_NOT_CONFIGURED", retryable: false, affectedCount: 1 }],
+        sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED", affectedCount: 1 }],
+      }) }) },
+      contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: false })).resolves.toBe("failed");
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("failed");
+    const [issues, attention, attentionAudit] = await Promise.all([
+      database.select().from(jobDiscoverySourceIssues).where(eq(jobDiscoverySourceIssues.runId, job.runId)),
+      database.select().from(agentInboxItems).where(and(eq(agentInboxItems.runId, job.runId), eq(agentInboxItems.kind, "discovery_attention"))),
+      database.select().from(auditEvents).where(and(eq(auditEvents.requestId, job.runId), eq(auditEvents.reasonCode, "DISCOVERY_ATTENTION"))),
+    ]);
+    expect(issues).toEqual([expect.objectContaining({ code: "ANYSEARCH_NOT_CONFIGURED", affectedCount: 1 })]);
+    expect(attention).toHaveLength(1);
+    expect(attentionAudit).toHaveLength(1);
   });
 
   it("v4 retry 只保留诊断；后续成功不遗留 source issue 或 attention", async () => {

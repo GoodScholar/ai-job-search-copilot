@@ -72,7 +72,9 @@ describe("layered public job discovery workflow", () => {
     const workflow = createLayeredPublicJobDiscoveryWorkflow({
       trustedSources: { discover: async () => ({ verifiedSourcePostingVersionIds: [] }) },
       anySearch: {
-        search: async () => ({ error: { code: "ANYSEARCH_NOT_CONFIGURED", retryable: false, httpStatus: null } }),
+        search: async ({ query }) => ({ error: query.ordinal === 2
+          ? { code: "ANYSEARCH_AUTH_FAILED", retryable: false, httpStatus: 401 }
+          : { code: "ANYSEARCH_NOT_CONFIGURED", retryable: false, httpStatus: null } }),
         extract: async () => { throw new Error("UNUSED"); },
       },
       preflight: async () => null,
@@ -87,7 +89,19 @@ describe("layered public job discovery workflow", () => {
       workflowVersion: LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION, ruleVersion: LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION, adapter: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER, adapterVersion: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION, outputSchemaVersion: LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, toolAllowlist: ["job_discovery.list_source", "job_discovery.search", "job_discovery.extract", "job_discovery.fetch"] as const, model: null, budget: PUBLIC_JOB_DISCOVERY_BUDGET,
     };
     executionSpec.sourceScope.publicDiscovery.queries.push({ ordinal: 2, queryId: "88888888-8888-8888-8888-888888888888", kind: "general", stableFingerprint: "c".repeat(64), query: "AI 工程师 远程", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 });
+    executionSpec.sourceScope.publicDiscovery.queries.push({ ordinal: 3, queryId: "99999999-9999-8999-8999-999999999999", kind: "general", stableFingerprint: "d".repeat(64), query: "AI 工程师 杭州", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 });
     const outcome = await workflow.run({ userId: targetId, runId, now: new Date(), executionSpec: executionSpec as never, attemptCount: 1, beforePhysicalOperation: async () => { checkpoints += 1; }, signal: new AbortController().signal });
-    expect({ posts, checkpoints, outcome }).toEqual({ posts: 0, checkpoints: 0, outcome: expect.objectContaining({ hasTrustedSuccess: false, diagnostics: [expect.objectContaining({ scope: "provider", code: "ANYSEARCH_NOT_CONFIGURED", affectedCount: 2 })], sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED", affectedCount: 2 }] }) });
+    expect({ posts, checkpoints }).toEqual({ posts: 0, checkpoints: 0 });
+    expect(outcome).toMatchObject({
+      hasTrustedSuccess: false,
+      diagnostics: [
+        { scope: "provider", code: "ANYSEARCH_AUTH_FAILED", retryable: false, affectedCount: 1 },
+        { scope: "provider", code: "ANYSEARCH_NOT_CONFIGURED", retryable: false, affectedCount: 2 },
+      ],
+      sourceIssues: [
+        { provider: "anysearch", code: "ANYSEARCH_AUTH_FAILED", affectedCount: 1 },
+        { provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED", affectedCount: 2 },
+      ],
+    });
   });
 });
