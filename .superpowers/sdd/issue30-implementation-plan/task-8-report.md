@@ -40,6 +40,14 @@
 
 迁移命名审查项（Standards Minor）技术驳回：仓库全部 Drizzle migration 均采用自动生成名，`0027` 沿用该既有风格；重命名会制造与本 Issue 无关的历史噪音，故不改名。
 
+## 审查修复 round 2
+
+- A：`2194e65` 先使 v4 workflow 必须传递 claim mutation authority（Red），`6f7010c` 在 Lead 的 account-lock transaction 和 Gate verify/reject 的同一 account-lock transaction 内校验 owner/run/running/claim token/未过期；旧 API 没有 token 时保持兼容。claim stale 会被工作流转换为 `stale` interruption。
+- B：伪造 resolver 的 plain `interruption` 不再被 Processor 信任：`7aa241a` 只接受 workflow 私有 marker 产生的 interruption，伪造值按普通失败路径处理。focused processor **49 passed**，domain typecheck 通过。
+- C：`948ebfb` 为 extract URL mismatch 建立 Red（**9 tests / 1 failed**）；`79ee9c4` 在拒绝 Lead 后聚合 `JOB_PAGE_URL_INVALID` lead diagnostic 与 AnySearch source issue，focused workflow **9 passed**、domain typecheck 通过。
+
+本轮提交：`2194e65`、`6f7010c`、`948ebfb`、`79ee9c4`、`7aa241a`。 
+
 ## 提交链（`768b8c6..HEAD`，报告提交前）
 
 ```text
