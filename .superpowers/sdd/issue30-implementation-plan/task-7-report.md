@@ -1,0 +1,51 @@
+# Task 7 / Slice 6 报告：已验证公开岗位来源持久化门禁
+
+固定最终审查基线：`3a1a3940773921a1a03c3b25ea7baa378c025e83`。  
+开始 HEAD：`b56c3f17eb4240608ef9e82657413485b1b68252`。  
+实现提交：`04e8cfc6c419d95a0ff5f0a1b6aeb84d5f147abe`（`feat(domain): gate verified public job sources`）。
+
+## 范围
+
+- 新增唯一 public seam `createVerifiedJobSourceGate`：严格接收 pending Lead、candidate proof、最小 extract URL 证据、本地 `VerifiedJobPage` 和 `now`；不接收 provider title/snippet/content/credentials/rawUrl 等字段。
+- 仅本地页面的 requested/final/canonical URL、raw HTML、visible text 与 `sourceKind` 可以建立 Source Posting/Version。extract 仅证明调用成功，绝不进入来源身份、raw/normalized data 或对象存储。
+- 新增版本化 taxonomy `public-job-source-taxonomy-v1`，只输出 `company_careers | recruitment_platform | wechat_recruitment_h5 | public_web`。BOSS/猎聘/智联、微信 H5 和共享 verifier 已声明的 ATS host 均为固定 policy，`isOfficial` 只来自本地 page 的 `sourceKind`。
+- 深化 Slice 5 repository：`verifyAndAttributeInTransaction` 复用同一状态转换逻辑，使 canonical dedup、version append、Lead verified 与 Attribution insert 处在一次 account advisory lock + DB transaction 内；没有提交后补 Attribution，也没有创建 Opportunity 或 AgentRunResult。
+- raw HTML/visible text 用 owner-scoped deterministic keys 分别写入；仅 store 明确返回 `created` 的对象可在 DB/Attribution 失败后补偿删除。
+- 仅列出的 verifier terminal code 通过 `reject` 写 rejected Lead；timeout/cancelled/unreachable/rate-limited 返回稳定 `VERIFIED_JOB_SOURCE_RETRYABLE_FAILURE`，Lead 保持 pending。
+
+## TDD 证据
+
+1. **Red 1（公共成功门禁）**：先新增 `verified-job-source-gate.integration.test.ts`，执行
+   `DOCKER_API_VERSION=1.51 pnpm --filter @job-copilot/domain exec vitest run src/verified-job-source-gate.integration.test.ts --no-file-parallelism`。
+   真实失败为 `Cannot find module './verified-job-source-gate'`，套件为 0 tests；原因是公开模块尚不存在。
+2. **Green 1**：最小实现 strict gate、taxonomy、双 hash 对象/version 与 transaction-bound Lead seam 后，同一命令为 **1/1**。
+3. **Red 2（terminal seam）**：暂未实现 `reject` 公共入口时，带 terminal/retryable 表驱动测试的 focused run 为 **3 tests，1 failed**，真实错误为 `TypeError: gate.reject is not a function`。
+4. **Green 2**：恢复仅所需 terminal/retryable policy 后为 **3/3**。
+5. **Red 3（DB 失败分类和补偿）**：用已存在 Attribution ID 强制新 Lead 在对象写入后发生 Attribution 主键冲突。focused run 为 **4 tests，1 failed**，实际得到错误的 `VERIFIED_JOB_SOURCE_STORAGE_FAILED`，而期望为 `VERIFIED_JOB_SOURCE_PERSIST_FAILED`。
+6. **Green 3**：区分 store 和未知 DB/persistence failure，成功只补偿本次 `created` 对象后为 **4/4**。
+7. **Red 4（ATS taxonomy）**：general query 的 `job-boards.greenhouse.io` 本地 official page 在固定名单缺失时被误分为 `public_web`。focused run 为 **8 tests，1 failed**。
+8. **Green 4**：使 ATS hostname 固定 policy 与共享 verifier 的已有 official host 对齐后，最终 focused gate 为 **8/8**。
+
+## 验收证据
+
+均串行运行 Testcontainers，运行前检查没有活跃 Vitest/Testcontainers 进程：
+
+- Gate focused：**1 file / 8 tests passed**。
+- Slice 5 Lead focused regression：**1 file / 8 tests passed**。
+- `DOCKER_API_VERSION=1.51 pnpm --filter @job-copilot/domain test`：**25 files / 289 tests passed**。
+- `pnpm --filter @job-copilot/source-access test`：**2 files / 125 tests passed**。
+- `DOCKER_API_VERSION=1.51 pnpm --filter @job-copilot/database test`：**2 files / 24 tests passed**。
+- `@job-copilot/domain`、`@job-copilot/source-access`、`@job-copilot/database` typecheck：均退出 0。
+- `git diff --check` 与 fixed-base diff check：通过。
+
+首次 domain full 在 `career-imports.integration` 的 Testcontainer host-port wait（10 秒）发生环境启动期超时，已有 **24 files / 248 tests passed，41 skipped**；没有修改任何产品代码或清理活跃资源。随后检查确认异常容器已由 Testcontainers 自动回收、无测试进程；在资源空闲条件下的一次受控复验得到上面的 **25/289** fresh Green。
+
+## 关键不变量自审
+
+- **隐私/来源**：AnySearch 在持久层只作为 Attribution `provider`；成功 gate 的 source identifier、source id、identity、hash、objects 均由本地 page 派生。strict negative cases 验证 provider content/title 被拒绝且 Lead 仍 pending、来源/version/Attribution/object puts 均为零。
+- **URL/candidate**：重算 SHA-256 fingerprint；比对 Lead 的 queryId/normalized URL/fingerprint；extract 和 requested URL 必须等于 candidate，final 与 requested、canonical 与 final 必须同 origin，三者均通过 Safe public HTTPS URL schema。
+- **原子性**：account lock 与单一 transaction 覆盖 posting/version/Lead/Attribution。第一或第二个对象 put 失败不会提交 DB；Attribution 冲突会回滚 DB、删除本次新对象而保留预先存在对象。
+- **dedup/replay**：同 owner + canonical + 双 hash 复用一个 version，两个 Lead 各得到独立 Attribution；任一真实 hash 变化追加 version；同 Lead replay 不再 put、不新增 version 或 Attribution。
+- **范围**：未改 source-health、v1–v3 adapter/Execution Spec/recovery/runtime/UI；未创建 Opportunity、AgentRunResult 或 workflow/budget/diagnostic 行为。
+
+下一步需要独立 `gpt-5.6-sol/high` 按 Standards 与 Spec 双轴审查至 `0/0/0`，再开始 Slice 7。
