@@ -116,12 +116,12 @@ function extractJobPage(rawHtml: string, finalUrl: URL): { visibleText: string; 
   const visibleText = title ? `# ${title}\n${plainText}` : plainText;
   const hasLoginText = /(登录|登陆|sign\s*in|log\s*in|login|验证身份)/iu.test(visibleText);
   const hasJobDetails = /(职责|responsibilit|任职要求|qualif|公司|company|地点|location|薪资|salary|经验|experience)/iu.test(visibleText);
-  const hasDetailEvidence = /(职责|responsibilit|任职要求|qualif|岗位要求|职位描述|job\s+description)/iu.test(visibleText);
+  const hasDetailEvidence = /(职责|responsibilit|任职要求|qualif|岗位要求|职位描述|job\s+description|requirements?|what\s+you\s+(?:will|['’]ll)\s+do|what\s+we\s+(?:are|['’]re)\s+looking\s+for)/iu.test(visibleText);
   const hasJobTitle = title !== undefined && hasJobTitleEvidence(title);
   if (/^(?:登录后查看职位|请登录后查看职位|sign\s*in\s*to\s*(?:view|see).{0,40}job)/iu.test(title ?? "")
     || (visibleFormCount > 0 && hasLoginText && !hasJobDetails && visibleText.length < 800)) throw new JobPageFetchError("JOB_PAGE_LOGIN_REQUIRED");
   if (/(职位|岗位).{0,12}(已下架|已关闭|过期)|(?:已下架|已关闭|过期).{0,12}(职位|岗位)|this\s+(?:job|position)\s+is\s+no\s+longer\s+available|(?:job|position)\s+closed/iu.test(visibleText)) throw new JobPageFetchError("JOB_PAGE_EXPIRED");
-  if ((h1Texts.length === 0 && headingCount >= 2) || (h2Count >= 2 && !hasDetailEvidence && !hasJobTitle)) throw new JobPageFetchError("JOB_PAGE_LISTING");
+  if ((h1Texts.length === 0 && headingCount >= 2) || (h2Count >= 2 && (!hasDetailEvidence || isListingTitle(title)))) throw new JobPageFetchError("JOB_PAGE_LISTING");
   if (isNonJobPageTitle(title)) throw new JobPageFetchError("JOB_PAGE_UNRECOGNIZED");
   const jobContextSignals = [/(公司|company)/iu, /(地点|location)/iu, /(薪资|salary)/iu, /(经验|experience)/iu, /(职责|responsibilit|任职要求|qualif|负责)/iu];
   if (!title || jobContextSignals.filter((signal) => signal.test(visibleText)).length < 2 || (!hasJobTitle && !hasDetailEvidence)) throw new JobPageFetchError("JOB_PAGE_UNRECOGNIZED");
@@ -141,8 +141,12 @@ function isNonJobPageTitle(title: string | undefined): boolean {
 }
 
 function hasJobTitleEvidence(title: string): boolean {
-  return /(?:工程师|经理|总监|专员|顾问|分析师|架构师|设计师|实习生|销售代表|开发者)(?=$|[\s（(【\[]|[-—:：|/])/u.test(title)
+  return /(?:工程师|经理|总监|专员|顾问|分析师|架构师|设计师|实习生|销售代表|开发者)(?=$|[（(【\[]|\s*[-—:：|/])/u.test(title)
     || /\b(?:scientist|engineer|developer|designer|manager|executive|director|analyst|architect|consultant|specialist|intern|officer)\b/iu.test(title);
+}
+
+function isListingTitle(title: string | undefined): boolean {
+  return /(?:\b(?:engineering|software\s+engineer)\s+jobs\b|\bopen\s+positions\b|全部职位|职位列表|招聘岗位)/iu.test(title ?? "");
 }
 
 function visit(node: HtmlNode, hidden: boolean, text: string[], h1Texts: string[][], onElement: (tagName: string, attributes: Array<{ name: string; value: string }>, visible: boolean) => void, h1Index?: number): void {
