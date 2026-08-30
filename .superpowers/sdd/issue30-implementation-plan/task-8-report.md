@@ -50,6 +50,8 @@
 
 后续 round 2 证据：`b6382c1` 的真实 pause checkpoint 覆盖与实现同提交，未保留独立 Red；`e23250e`（Red）→`251c29c`（Green）拒绝 resolver 直接伪造 stop throw；`552da3d` 首次运行即绿，覆盖真实 cancel、budget 与 stale checkpoint terminal（processor focused **54 passed**），不将其表述为 Red→Green。
 
+TOCTOU 补强均为 `6f7010c` 后新增、首跑即绿的真实数据库回归：`3116563` 覆盖 stale claim 的 `recordPending`（0 Lead）；`8e07114` 覆盖 `verify`（0 object put/Posting/Version/Attribution，new claim 成功）；`fea62f1` 覆盖 `reject`（old claim 后 Lead 仍 pending，new claim 成功 rejected）。这些回归没有保留独立 Red。尚未把 no-reserve checkpoint continue 本身嵌入此三场景，不能将它们描述为完整 checkpoint-before-takeover 证明。
+
 ## 提交链（`768b8c6..HEAD`，报告提交前）
 
 ```text
