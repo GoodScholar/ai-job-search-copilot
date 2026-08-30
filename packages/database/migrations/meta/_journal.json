@@ -176,6 +176,13 @@
       "when": 1788089830066,
       "tag": "0024_fat_jane_foster",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1788096120000,
+      "tag": "0025_layered_public_discovery_workflow",
+      "breakpoints": true
     }
   ]
 }

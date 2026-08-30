@@ -518,6 +518,8 @@ export const agentRuns = pgTable("agent_runs", {
   idempotencyKey: uuid("idempotency_key").notNull(),
   targetVersion: integer("target_version").notNull(),
   targetSnapshot: jsonb("target_snapshot").notNull(),
+  profileSnapshot: jsonb("profile_snapshot"),
+  watchlistSnapshot: jsonb("watchlist_snapshot"),
   sourceScope: jsonb("source_scope").notNull(),
   budgetSnapshot: jsonb("budget_snapshot").notNull(),
   workflowVersion: varchar("workflow_version", { length: 64 }).notNull(),
@@ -564,6 +566,17 @@ export const agentRuns = pgTable("agent_runs", {
   foreignKey({ columns: [table.userId, table.retryOfRunId], foreignColumns: [table.userId, table.id], name: "agent_runs_owner_retry_fk" }),
   check("agent_runs_target_version_positive", sql`${table.targetVersion} >= 1`),
   check("agent_runs_target_snapshot_object", sql`jsonb_typeof(${table.targetSnapshot}) = 'object'`),
+  check("agent_runs_v4_snapshot_pair_check", sql`(
+    ${table.workflowVersion} = 'layered-public-job-discovery-v1'
+    and jsonb_typeof(${table.profileSnapshot}) = 'object'
+    and jsonb_typeof(${table.watchlistSnapshot}) = 'object'
+    and ${table.profileSnapshot} ->> 'targetId' = ${table.targetSnapshot} ->> 'targetId'
+    and ${table.watchlistSnapshot} ->> 'targetId' = ${table.targetSnapshot} ->> 'targetId'
+  ) or (
+    ${table.workflowVersion} <> 'layered-public-job-discovery-v1'
+    and ${table.profileSnapshot} is null
+    and ${table.watchlistSnapshot} is null
+  )`),
   check("agent_runs_source_scope_object", sql`jsonb_typeof(${table.sourceScope}) = 'object'`),
   check("agent_runs_budget_snapshot_object", sql`jsonb_typeof(${table.budgetSnapshot}) = 'object'`),
   check("agent_runs_status_check", sql`${table.status} in ('queued', 'running', 'paused', 'completed', 'failed', 'cancelled')`),
@@ -672,6 +685,38 @@ export const jobDiscoveryAttributions = pgTable("job_discovery_attributions", {
     name: "job_discovery_attributions_owner_version_fk",
   }),
   check("job_discovery_attributions_provider_check", sql`${table.provider} = 'anysearch'`),
+]);
+
+/** 与 Watchlist 来源健康严格分离的 v4 run/查询/线索诊断；不保存 URL、查询正文或 provider 内容。 */
+export const jobDiscoveryDiagnostics = pgTable("job_discovery_diagnostics", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull(),
+  runId: uuid("run_id").notNull(),
+  scope: varchar("scope", { length: 16 }).notNull(),
+  provider: varchar("provider", { length: 32 }).notNull(),
+  queryId: uuid("query_id"),
+  queryKind: varchar("query_kind", { length: 32 }),
+  queryFingerprint: varchar("query_fingerprint", { length: 64 }),
+  leadId: uuid("lead_id"),
+  code: varchar("code", { length: 64 }).notNull(),
+  retryable: boolean("retryable").notNull(),
+  affectedCount: integer("affected_count").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_discovery_diagnostics_owner_run_identity_unique").on(table.userId, table.runId, table.scope, table.provider, table.queryId, table.leadId, table.code).nullsNotDistinct(),
+  unique("job_discovery_diagnostics_user_id_id_unique").on(table.userId, table.id),
+  index("job_discovery_diagnostics_owner_run_idx").on(table.userId, table.runId, table.createdAt, table.id),
+  foreignKey({ columns: [table.userId, table.runId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "job_discovery_diagnostics_owner_run_fk" }),
+  foreignKey({ columns: [table.userId, table.leadId], foreignColumns: [jobDiscoveryLeads.userId, jobDiscoveryLeads.id], name: "job_discovery_diagnostics_owner_lead_fk" }),
+  check("job_discovery_diagnostics_scope_check", sql`${table.scope} in ('provider', 'query', 'lead')`),
+  check("job_discovery_diagnostics_provider_check", sql`${table.provider} = 'anysearch'`),
+  check("job_discovery_diagnostics_code_check", sql`${table.code} ~ '^[A-Z][A-Z0-9_]{1,63}$'`),
+  check("job_discovery_diagnostics_affected_count_check", sql`${table.affectedCount} between 0 and 10`),
+  check("job_discovery_diagnostics_scope_pair_check", sql`
+    (${table.scope} = 'provider' and ${table.queryId} is null and ${table.queryKind} is null and ${table.queryFingerprint} is null and ${table.leadId} is null)
+    or (${table.scope} = 'query' and ${table.queryId} is not null and ${table.queryKind} in ('general', 'site_constrained', 'target_company') and ${table.queryFingerprint} ~ '^[0-9a-f]{64}$' and ${table.leadId} is null)
+    or (${table.scope} = 'lead' and ${table.queryId} is null and ${table.queryKind} is null and ${table.queryFingerprint} is null and ${table.leadId} is not null)
+  `),
 ]);
 
 export const jobDiscoverySchedules = pgTable("job_discovery_schedules", {
