@@ -19,6 +19,7 @@ import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { agentRunUsageSnapshot, appendBudgetFacts, settleActiveSlice } from "./agent-run-lifecycle";
 import { discoveryNormalizedData, persistJobOpportunity } from "./job-opportunity-persistence";
 import { deriveSourceHealthTerminal } from "./source-health-terminal";
+import type { SourceHealthTerminal } from "./source-health-terminal";
 import { GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, JobSourceHealthCheckSchema, PublicAgentRunSourceScopeSchema, PublicSourceHealthAgentRunSourceScopeSchema, type JobSourceHealthCheck } from "@job-copilot/contracts/agent-runs";
 
 export type DiscoveryDetail = {
@@ -283,7 +284,7 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
       scans: Array<{ sourceId: string; observedDetailIds: string[]; complete: boolean }>;
       storedObjects: StoredDiscoveryObject[];
       sourceChecks?: JobSourceHealthCheck[];
-      terminal?: "completed" | "completed_with_source_issues" | "source_failed";
+      terminal?: SourceHealthTerminal;
       now: Date;
       /** Processor-only seam: caller has already started the bounded account transaction. */
       transaction?: any;
