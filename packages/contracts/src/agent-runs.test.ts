@@ -67,6 +67,13 @@ import {
   ControlAgentRunResponseSchema,
   isAgentRunTerminalEvent,
 } from "./agent-runs";
+import {
+  LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER,
+  LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION,
+  LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+  LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION,
+  LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION,
+} from "./job-discovery";
 
 const targetId = "87a0d3ac-4aed-4bd5-a703-68bf82cc6c49";
 const runId = "1e764df5-19f3-49f3-b16e-512147298baa";
@@ -615,6 +622,155 @@ describe("agent run contracts", () => {
       completedAt: now,
       usage: { ...usage, complete: true },
       termination: { kind: "cancelled_by_user", failureCode: null, budgetDimension: null },
+    }).success).toBe(false);
+  });
+
+  it("round-trips the immutable v4 layered public discovery execution and detail", () => {
+    const v4TargetSnapshot = {
+      targetId,
+      version: 1,
+      priority: "primary",
+      state: "active",
+      constraints: targetSnapshot,
+    };
+    const v4ExecutionSpec = {
+      targetSnapshot: v4TargetSnapshot,
+      profileSnapshot: {
+        targetId,
+        version: 2,
+        confirmedActiveSkillNames: ["TypeScript", "Agent Engineering"],
+      },
+      watchlistSnapshot: {
+        targetId,
+        version: 3,
+        companies: [],
+      },
+      sourceScope: {
+        kind: "layered_public",
+        trustedSources: [{
+          kind: "greenhouse_trusted_source",
+          source: publicSourceScope.sources[0],
+        }],
+        publicDiscovery: {
+          provider: "anysearch",
+          queries: [{
+            ordinal: 1,
+            queryId: "general-ai-engineer",
+            kind: "general",
+            stableFingerprint: "a".repeat(64),
+            query: "AI 工程师 上海",
+            allowedSiteDomains: [],
+            targetCompanyNames: [],
+            resultLimit: 5,
+          }],
+          batchSize: 5,
+          maxVerificationCandidates: 10,
+        },
+      },
+      workflowVersion: LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION,
+      ruleVersion: LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION,
+      adapter: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER,
+      adapterVersion: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION,
+      outputSchemaVersion: LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+      toolAllowlist: ["job_discovery.list_source", "job_discovery.search", "job_discovery.extract", "job_discovery.fetch"],
+      model: null,
+      budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+    };
+    const v4Detail = {
+      ...queuedSummary,
+      targetSnapshot: v4TargetSnapshot,
+      sourceScope: v4ExecutionSpec.sourceScope,
+      workflowVersion: LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION,
+      adapter: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER,
+      adapterVersion: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION,
+      outputSchemaVersion: LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+      budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+      executionSpec: v4ExecutionSpec,
+      controlState: "none",
+      usage,
+      termination: null,
+      retryOfRunId: null,
+      steps: [],
+      events: [],
+      results: [],
+      discoveryDiagnostics: [],
+      sourceIssues: [],
+    };
+
+    expect(AgentRunExecutionSpecSchema.parse(v4ExecutionSpec)).toEqual(v4ExecutionSpec);
+    expect(AgentRunDetailSchema.parse(v4Detail)).toEqual(v4Detail);
+    expect(AgentRunDetailSchema.safeParse({
+      ...v4Detail,
+      targetId: "9f5346c4-9955-4193-9f70-5f33cc79f5ab",
+    }).success).toBe(false);
+  });
+
+  it("permits source-issue completion only for v3 and v4 workflows", () => {
+    const v4TargetSnapshot = { targetId, version: 1, priority: "primary", state: "active", constraints: targetSnapshot };
+    const v4ExecutionSpec = {
+      targetSnapshot: v4TargetSnapshot,
+      profileSnapshot: { targetId, version: 2, confirmedActiveSkillNames: [] },
+      watchlistSnapshot: { targetId, version: 0, companies: [] },
+      sourceScope: {
+        kind: "layered_public",
+        trustedSources: [],
+        publicDiscovery: {
+          provider: "anysearch",
+          queries: [{ ordinal: 1, queryId: "general-ai-engineer", kind: "general", stableFingerprint: "a".repeat(64), query: "AI 工程师 上海", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }],
+          batchSize: 5,
+          maxVerificationCandidates: 10,
+        },
+      },
+      workflowVersion: LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION,
+      ruleVersion: LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION,
+      adapter: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER,
+      adapterVersion: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION,
+      outputSchemaVersion: LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+      toolAllowlist: ["job_discovery.list_source", "job_discovery.search", "job_discovery.extract", "job_discovery.fetch"],
+      model: null,
+      budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+    };
+    const v4CompletedDetail = {
+      ...queuedSummary,
+      targetSnapshot: v4TargetSnapshot,
+      sourceScope: v4ExecutionSpec.sourceScope,
+      workflowVersion: LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION,
+      adapter: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER,
+      adapterVersion: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION,
+      outputSchemaVersion: LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+      budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+      status: "completed",
+      currentStep: "completed",
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      executionSpec: v4ExecutionSpec,
+      controlState: "none",
+      usage: { ...usage, complete: true },
+      termination: { kind: "completed_with_source_issues", failureCode: null, budgetDimension: null },
+      retryOfRunId: null,
+      steps: [],
+      events: [],
+      results: [],
+      discoveryDiagnostics: [{
+        scope: "provider",
+        diagnosticId: "1d300e98-1979-4c5c-8789-9a9055622a2a",
+        runId,
+        provider: "anysearch",
+        code: "ANYSEARCH_NOT_CONFIGURED",
+        retryable: false,
+        affectedCount: 1,
+      }],
+      sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED", affectedCount: 1 }],
+    };
+
+    expect(AgentRunDetailSchema.parse(v4CompletedDetail)).toEqual(v4CompletedDetail);
+    expect(AgentRunDetailSchema.safeParse({
+      ...v4CompletedDetail,
+      workflowVersion: FAKE_JOB_DISCOVERY_WORKFLOW_VERSION,
+      adapter: FAKE_JOB_DISCOVERY_ADAPTER,
+      adapterVersion: FAKE_JOB_DISCOVERY_ADAPTER_VERSION,
+      outputSchemaVersion: "job-discovery-result-v1",
     }).success).toBe(false);
   });
 });

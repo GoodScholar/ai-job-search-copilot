@@ -1,5 +1,20 @@
 import { z } from "zod";
 import { GreenhousePublicSourceSchema } from "./job-discovery-schedules";
+import {
+  DiscoveryDiagnosticSchema,
+  DiscoverySourceIssueSummarySchema,
+  LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER,
+  LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION,
+  LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+  LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION,
+  LAYERED_PUBLIC_JOB_DISCOVERY_TOOL_ALLOWLIST,
+  LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION,
+  LayeredPublicJobDiscoveryProfileSnapshotSchema,
+  LayeredPublicJobDiscoveryResultSummarySchema,
+  LayeredPublicJobDiscoverySourceScopeSchema,
+  LayeredPublicJobDiscoveryTargetSnapshotSchema,
+  LayeredPublicJobDiscoveryWatchlistSnapshotSchema,
+} from "./job-discovery";
 import { JobTargetConstraintsSchema } from "./job-targets";
 
 export const AGENT_RUN_QUEUE = "agent-runs";
@@ -298,10 +313,35 @@ const PublicSourceHealthAgentRunExecutionSpecSchema = z.object({
   budget: PublicAgentRunBudgetSchema,
 }).strict();
 
+const LayeredPublicAgentRunExecutionSpecSchema = z.object({
+  targetSnapshot: LayeredPublicJobDiscoveryTargetSnapshotSchema,
+  profileSnapshot: LayeredPublicJobDiscoveryProfileSnapshotSchema,
+  watchlistSnapshot: LayeredPublicJobDiscoveryWatchlistSnapshotSchema,
+  sourceScope: LayeredPublicJobDiscoverySourceScopeSchema,
+  workflowVersion: z.literal(LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION),
+  ruleVersion: z.literal(LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION),
+  adapter: z.literal(LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER),
+  adapterVersion: z.literal(LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION),
+  outputSchemaVersion: z.literal(LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION),
+  toolAllowlist: z.tuple([
+    z.literal(LAYERED_PUBLIC_JOB_DISCOVERY_TOOL_ALLOWLIST[0]),
+    z.literal(LAYERED_PUBLIC_JOB_DISCOVERY_TOOL_ALLOWLIST[1]),
+    z.literal(LAYERED_PUBLIC_JOB_DISCOVERY_TOOL_ALLOWLIST[2]),
+    z.literal(LAYERED_PUBLIC_JOB_DISCOVERY_TOOL_ALLOWLIST[3]),
+  ]),
+  model: z.null(),
+  budget: PublicAgentRunBudgetSchema,
+}).strict().superRefine((spec, context) => {
+  if (spec.profileSnapshot.targetId !== spec.targetSnapshot.targetId || spec.watchlistSnapshot.targetId !== spec.targetSnapshot.targetId) {
+    context.addIssue({ code: "custom", message: "v4 snapshots must bind to the same target" });
+  }
+});
+
 export const AgentRunExecutionSpecSchema = z.union([
   FakeAgentRunExecutionSpecSchema,
   PublicAgentRunExecutionSpecSchema,
   PublicSourceHealthAgentRunExecutionSpecSchema,
+  LayeredPublicAgentRunExecutionSpecSchema,
 ]);
 
 export const AgentRunUsageSchema = z.object({
@@ -423,7 +463,17 @@ const PublicSourceHealthAgentRunSummarySchema = z.object({
   adapter: z.literal(GREENHOUSE_JOB_DISCOVERY_ADAPTER), adapterVersion: z.literal(GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION),
   outputSchemaVersion: z.literal(GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION), budget: PublicAgentRunBudgetSchema,
 }).strict();
-export const AgentRunSummarySchema = z.union([FakeAgentRunSummarySchema, PublicAgentRunSummarySchema, PublicSourceHealthAgentRunSummarySchema]).superRefine((summary, context) => {
+const LayeredPublicAgentRunSummarySchema = z.object({
+  ...AgentRunSummaryFields,
+  targetSnapshot: LayeredPublicJobDiscoveryTargetSnapshotSchema,
+  sourceScope: LayeredPublicJobDiscoverySourceScopeSchema,
+  workflowVersion: z.literal(LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION),
+  adapter: z.literal(LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER),
+  adapterVersion: z.literal(LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION),
+  outputSchemaVersion: z.literal(LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION),
+  budget: PublicAgentRunBudgetSchema,
+}).strict();
+export const AgentRunSummarySchema = z.union([FakeAgentRunSummarySchema, PublicAgentRunSummarySchema, PublicSourceHealthAgentRunSummarySchema, LayeredPublicAgentRunSummarySchema]).superRefine((summary, context) => {
   if ((summary.status === "cancelled") !== (summary.currentStep === "cancelled")) {
     context.addIssue({ code: "custom", path: ["currentStep"], message: "cancelled status and step must pair" });
   }
@@ -438,6 +488,13 @@ export const AgentRunDetailSchema = z.union([
   FakeAgentRunSummarySchema.extend({ ...AgentRunDetailFields, executionSpec: FakeAgentRunExecutionSpecSchema }).strict(),
   PublicAgentRunSummarySchema.extend({ ...AgentRunDetailFields, executionSpec: PublicAgentRunExecutionSpecSchema }).strict(),
   PublicSourceHealthAgentRunSummarySchema.extend({ ...AgentRunDetailFields, executionSpec: PublicSourceHealthAgentRunExecutionSpecSchema, sourceChecks: z.array(JobSourceHealthCheckSchema).max(50) }).strict(),
+  LayeredPublicAgentRunSummarySchema.extend({
+    ...AgentRunDetailFields,
+    executionSpec: LayeredPublicAgentRunExecutionSpecSchema,
+    results: z.array(LayeredPublicJobDiscoveryResultSummarySchema).max(PUBLIC_JOB_DISCOVERY_BUDGET.maxResults),
+    discoveryDiagnostics: z.array(DiscoveryDiagnosticSchema).max(50),
+    sourceIssues: z.array(DiscoverySourceIssueSummarySchema).max(10),
+  }).strict(),
 ]).superRefine((detail, context) => {
   const terminal = detail.status === "completed" || detail.status === "failed" || detail.status === "cancelled";
   if (!terminal && detail.termination !== null) context.addIssue({ code: "custom", path: ["termination"], message: "nonterminal runs have no termination" });
@@ -447,12 +504,21 @@ export const AgentRunDetailSchema = z.union([
       || (detail.status === "cancelled" && detail.termination.kind === "cancelled_by_user")
       || (detail.status === "failed" && ["source_failed", "content_storage_failed", "persistence_failed", "budget_exhausted"].includes(detail.termination.kind));
     if (!statusMatches) context.addIssue({ code: "custom", path: ["termination", "kind"], message: "termination kind must match status" });
-    if (detail.termination.kind === "completed_with_source_issues" && detail.workflowVersion !== GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION) {
-      context.addIssue({ code: "custom", path: ["termination", "kind"], message: "source issue completion requires the v3 source-health contract" });
+    if (detail.termination.kind === "completed_with_source_issues"
+      && detail.workflowVersion !== GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION
+      && detail.workflowVersion !== LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION) {
+      context.addIssue({ code: "custom", path: ["termination", "kind"], message: "source issue completion requires the v3 or v4 source-issue contract" });
     }
     if (detail.failureCode !== detail.termination.failureCode) context.addIssue({ code: "custom", path: ["failureCode"], message: "failure code must match termination" });
   }
   if ((detail.status === "cancelled") !== (detail.currentStep === "cancelled")) context.addIssue({ code: "custom", path: ["currentStep"], message: "cancelled status and step must pair" });
+  if (detail.workflowVersion === LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION
+    && (detail.targetId !== detail.targetSnapshot.targetId
+      || detail.targetVersion !== detail.targetSnapshot.version
+      || detail.executionSpec.targetSnapshot.targetId !== detail.targetId
+      || detail.executionSpec.targetSnapshot.version !== detail.targetVersion)) {
+    context.addIssue({ code: "custom", path: ["targetId"], message: "v4 run detail and execution snapshots must bind to the same target version" });
+  }
   if (detail.workflowVersion === GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION && "sourceChecks" in detail) {
     const sources = detail.sourceScope.sources.filter((source) => typeof source !== "string");
     const sourceWatchlistItems = new Map(sources.map((source) => [source.sourceId, source.watchlistItemId]));
@@ -475,6 +541,7 @@ export const StartAgentRunResponseSchema = z.union([
   FakeAgentRunSummarySchema.extend({ reused: z.boolean() }).strict(),
   PublicAgentRunSummarySchema.extend({ reused: z.boolean() }).strict(),
   PublicSourceHealthAgentRunSummarySchema.extend({ reused: z.boolean() }).strict(),
+  LayeredPublicAgentRunSummarySchema.extend({ reused: z.boolean() }).strict(),
 ]);
 export const LatestAgentRunResponseSchema = z.object({ run: AgentRunDetailSchema.nullable() }).strict();
 
