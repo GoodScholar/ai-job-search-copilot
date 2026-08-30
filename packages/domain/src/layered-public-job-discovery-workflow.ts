@@ -28,6 +28,11 @@ function aggregateSourceIssues(items: Array<{ provider: "anysearch" | "greenhous
   for (const item of items) { const key = `${item.provider}\u001f${item.code}`; const previous = grouped.get(key); grouped.set(key, { ...item, affectedCount: Math.min(10, (previous?.affectedCount ?? 0) + item.affectedCount) }); }
   return [...grouped.values()].sort((left, right) => left.provider.localeCompare(right.provider) || left.code.localeCompare(right.code));
 }
+function aggregateDiagnostics(items: LayeredPublicWorkflowDiagnostic[]) {
+  const grouped = new Map<string, LayeredPublicWorkflowDiagnostic>();
+  for (const item of items) { const key = item.scope === "provider" ? `p\u001f${item.code}` : item.scope === "query" ? `q\u001f${item.queryId}\u001f${item.code}` : `l\u001f${item.leadId}\u001f${item.code}`; const previous = grouped.get(key); grouped.set(key, { ...item, affectedCount: Math.min(10, (previous?.affectedCount ?? 0) + item.affectedCount) } as LayeredPublicWorkflowDiagnostic); }
+  return [...grouped.values()].sort((left, right) => `${left.scope}\u001f${left.code}`.localeCompare(`${right.scope}\u001f${right.code}`));
+}
 
 /** v4 安全链路；Slice 8 只组装 provider/config，不能改变 pending → extract → fetch → gate 的顺序。 */
 export function createLayeredPublicJobDiscoveryWorkflow(deps: {
@@ -70,6 +75,6 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
         }
       }
     }
-    return { hasTrustedSuccess: trusted.verifiedSourcePostingVersionIds.length > 0, branchSuccess: { trusted: trusted.verifiedSourcePostingVersionIds.length > 0, publicDiscovery: publicDiscoverySucceeded }, sourcePostingVersionIds: [...new Set(sourcePostingVersionIds)], trustedSourcePostingVersionIds: trusted.verifiedSourcePostingVersionIds, sourceIssues: aggregateSourceIssues(sourceIssues), diagnostics };
+    return { hasTrustedSuccess: trusted.verifiedSourcePostingVersionIds.length > 0, branchSuccess: { trusted: trusted.verifiedSourcePostingVersionIds.length > 0, publicDiscovery: publicDiscoverySucceeded }, sourcePostingVersionIds: [...new Set(sourcePostingVersionIds)], trustedSourcePostingVersionIds: trusted.verifiedSourcePostingVersionIds, sourceIssues: aggregateSourceIssues(sourceIssues), diagnostics: aggregateDiagnostics(diagnostics) };
   } };
 }
