@@ -320,13 +320,13 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
           : { id: deps.id(), userId: input.userId, runId: input.runId, scope: "lead" as const, provider: "anysearch" as const, queryId: null, queryKind: null, queryFingerprint: null, leadId: diagnostic.leadId, code: diagnostic.code, retryable: diagnostic.retryable, affectedCount: 1, createdAt: input.now };
       await transaction.insert(jobDiscoveryDiagnostics).values(values).onConflictDoUpdate({
         target: [jobDiscoveryDiagnostics.userId, jobDiscoveryDiagnostics.runId, jobDiscoveryDiagnostics.scope, jobDiscoveryDiagnostics.provider, jobDiscoveryDiagnostics.queryId, jobDiscoveryDiagnostics.leadId, jobDiscoveryDiagnostics.code],
-        set: { affectedCount: sql`least(10, ${jobDiscoveryDiagnostics.affectedCount} + excluded.affected_count)` },
+        set: { affectedCount: sql`greatest(${jobDiscoveryDiagnostics.affectedCount}, excluded.affected_count)` },
       });
     }
     for (const issue of input.sourceIssues) {
       await transaction.insert(jobDiscoverySourceIssues).values({ id: deps.id(), userId: input.userId, runId: input.runId, provider: issue.provider, code: issue.code, affectedCount: issue.affectedCount, createdAt: input.now }).onConflictDoUpdate({
         target: [jobDiscoverySourceIssues.userId, jobDiscoverySourceIssues.runId, jobDiscoverySourceIssues.provider, jobDiscoverySourceIssues.code],
-        set: { affectedCount: sql`least(10, ${jobDiscoverySourceIssues.affectedCount} + excluded.affected_count)` },
+        set: { affectedCount: sql`greatest(${jobDiscoverySourceIssues.affectedCount}, excluded.affected_count)` },
       });
     }
     if (input.complete === false) {
