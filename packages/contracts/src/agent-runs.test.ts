@@ -258,6 +258,13 @@ describe("agent run contracts", () => {
       [{ ...sourceCheck, sourceId: "greenhouse:outside" }],
       [sourceCheck, sourceCheck],
     ]) expect(AgentRunDetailSchema.safeParse({ ...v3Detail, sourceChecks }).success).toBe(false);
+
+    const secondSource = { ...v3Summary.sourceScope.sources[0]!, sourceId: "greenhouse:second", watchlistItemId: "13f96a8e-6262-4e12-a8f7-091081ca6f48", canonicalCompanyName: "Second", careersUrl: "https://boards.greenhouse.io/second", boardToken: "second" };
+    const secondCheck = { ...sourceCheck, checkId: "7d5ee5dd-49f0-4a92-bab6-e8d2740c14f9", sourceId: secondSource.sourceId, watchlistItemId: secondSource.watchlistItemId };
+    const twoSourceDetail = { ...v3Detail, sourceScope: { ...v3Detail.sourceScope, sources: [v3Detail.sourceScope.sources[0]!, secondSource] }, executionSpec: { ...v3Detail.executionSpec, sourceScope: { ...v3Detail.executionSpec.sourceScope, sources: [v3Detail.sourceScope.sources[0]!, secondSource] } } };
+    expect(AgentRunDetailSchema.safeParse(twoSourceDetail).success).toBe(false);
+    expect(AgentRunDetailSchema.safeParse({ ...twoSourceDetail, sourceChecks: [sourceCheck, secondCheck] }).success).toBe(true);
+    expect(AgentRunDetailSchema.safeParse({ ...twoSourceDetail, status: "running", currentStep: "batch_search", completedAt: null, termination: null, usage: { ...twoSourceDetail.usage, complete: false } }).success).toBe(true);
   });
 
   it("拒绝矛盾的来源健康事实、未经检查的伪证据和 URL 形式来源 ID", () => {

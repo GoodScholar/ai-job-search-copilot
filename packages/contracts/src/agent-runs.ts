@@ -464,6 +464,9 @@ export const AgentRunDetailSchema = z.union([
       }
       checkedSourceIds.add(check.sourceId);
     }
+    if (terminal && (checkedSourceIds.size !== sourceWatchlistItems.size || [...sourceWatchlistItems.keys()].some((sourceId) => !checkedSourceIds.has(sourceId)))) {
+      context.addIssue({ code: "custom", path: ["sourceChecks"], message: "terminal v3 runs require one source check for every frozen source" });
+    }
   }
 });
 

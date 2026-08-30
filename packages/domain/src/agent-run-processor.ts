@@ -440,9 +440,9 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         } catch (error) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: error instanceof AgentRunBudgetError ? "AGENT_RUN_BUDGET_EXCEEDED" : "AGENT_RUN_CONTENT_STORAGE_FAILED", retryable: !(error instanceof AgentRunBudgetError), category: "source", budgetDimension: error instanceof AgentRunBudgetError ? error.budgetDimension : undefined }, deadline }); }
         const commitBefore = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_before", ordinal: 1 });
         if (commitBefore) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return commitBefore; }
-        const completedSource = checks.some((check) => check.status === "healthy" || check.status === "zero_valid_results" || check.validDetailCount > 0);
+        const hasCompletedSourceOrRetainedProgress = checks.some((check) => check.status === "healthy" || check.status === "zero_valid_results" || check.validDetailCount > 0);
         const hasIssues = checks.some((check) => check.status === "parser_degraded" || check.status === "rate_limited" || check.status === "hard_failed");
-        const terminal = completedSource ? (hasIssues ? "completed_with_source_issues" : "completed") : "source_failed";
+        const terminal = hasCompletedSourceOrRetainedProgress ? (hasIssues ? "completed_with_source_issues" : "completed") : "source_failed";
         let persisted: { resultCount: number; cleanupObjectKeys: string[]; completed: boolean };
         try {
           persisted = await runTransaction(deps, deadline, (transaction) => createJobDiscoveryPersistence({ db: deps.db, id: deps.id, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({

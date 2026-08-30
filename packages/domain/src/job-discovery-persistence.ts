@@ -337,6 +337,15 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
         } else if (sourceChecks.length > 0) {
           throw new Error("AGENT_RUN_PERSIST_FAILED");
         }
+        const terminal = run.workflowVersion === GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION
+          ? (() => {
+              const hasCompletedSourceOrRetainedProgress = sourceChecks.some((check) => check.status === "healthy" || check.status === "zero_valid_results" || check.validDetailCount > 0);
+              const hasIssues = sourceChecks.some((check) => check.status === "parser_degraded" || check.status === "rate_limited" || check.status === "hard_failed");
+              const derived = !hasCompletedSourceOrRetainedProgress ? "source_failed" : hasIssues ? "completed_with_source_issues" : "completed";
+              if (input.terminal !== undefined && input.terminal !== derived) throw new Error("AGENT_RUN_PERSIST_FAILED");
+              return derived;
+            })()
+          : input.terminal ?? "completed";
         if (sourceChecks.length > 0) {
           const inserted = await transaction.insert(jobSourceHealthChecks).values(sourceChecks.map((check) => ({
           id: check.checkId, userId: run.userId, runId: check.runId, targetId: check.targetId, watchlistItemId: check.watchlistItemId,
@@ -417,7 +426,6 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
         await transaction.update(agentRuns).set({ currentStep: "persist_results", version: stepVersion, updatedAt: input.now }).where(and(eq(agentRuns.userId, run.userId), eq(agentRuns.id, run.id), eq(agentRuns.claimToken, run.claimToken), eq(agentRuns.controlState, "none")));
         await appendEvent(transaction, { id: deps.id, userId: run.userId, runId: run.id, version: stepVersion, eventType: "step.completed", data: { eventType: "step.completed", status: "running", currentStep: "persist_results", stepKey: "persist_results", attemptCount: run.attemptCount }, now: input.now });
         const terminalVersion = stepVersion + 1;
-        const terminal = input.terminal ?? "completed";
         const failed = terminal === "source_failed";
         await transaction.update(agentRuns).set({ status: failed ? "failed" : "completed", currentStep: failed ? "failed" : "completed", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, activeDurationMs, ...(failed ? { failedAt: input.now, failureCode: "AGENT_RUN_ADAPTER_FAILED", terminationKind: "source_failed" } : { completedAt: input.now, failureCode: null, terminationKind: terminal }), terminationBudgetDimension: null, resultCount: run.resultCount + resultCount, version: terminalVersion, updatedAt: input.now }).where(and(eq(agentRuns.userId, run.userId), eq(agentRuns.id, run.id), eq(agentRuns.claimToken, run.claimToken), eq(agentRuns.controlState, "none")));
         const terminalSequence = await appendEvent(transaction, {

@@ -690,6 +690,30 @@ describe("job discovery persistence lifecycle", () => {
     await expect(persistence.persistSuccessfulDiscovery({ run: { ...frozen, claimToken: run.claimToken }, details: [], scans: [{ sourceId, observedDetailIds: ["1"], complete: variant === "completion" ? false : true }], storedObjects: [], sourceChecks: [check], now: later })).rejects.toThrow("AGENT_RUN_PERSIST_FAILED");
   });
 
+  it.each([
+    ["all_zero", ["zero_valid_results"], "completed_with_source_issues"],
+    ["zero_and_hard", ["zero_valid_results", "hard_failed"], "completed"],
+    ["all_hard", ["hard_failed"], "completed"],
+  ] as const)("v3 persistence 拒绝与来源健康事实矛盾的终态：%s", async (_label, statuses, terminal) => {
+    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID();
+    await database.insert(jobAccounts).values({ id: userId });
+    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: firstSeen, updatedAt: firstSeen });
+    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: firstSeen });
+    const persistence = createJobDiscoveryPersistence({ db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => later }) });
+    const run = await claimRun(userId, targetId, later);
+    const sources = statuses.map((_, index) => ({ sourceId: `greenhouse:terminal_${index}`, watchlistItemId: crypto.randomUUID(), canonicalCompanyName: `Terminal ${index}`, careersUrl: `https://boards.greenhouse.io/terminal_${index}`, allowedDomains: ["boards-api.greenhouse.io"], boardToken: `terminal_${index}` }));
+    const [frozen] = await database.update(agentRuns).set({ workflowVersion: GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, adapterVersion: "greenhouse-job-board-v2", outputSchemaVersion: "job-discovery-result-v3", ruleVersion: "job-discovery-source-health-rules-v1", toolAllowlist: ["job_discovery.list_source", "job_discovery.get_detail"], sourceScope: { kind: "company_watchlist", adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2", watchlistVersion: 1, sources } }).where(eq(agentRuns.id, run.id)).returning();
+    if (!frozen) throw new Error("run not frozen");
+    const sourceChecks: import("@job-copilot/contracts/agent-runs").JobSourceHealthCheck[] = sources.map((source, index) => {
+      const status = statuses[index]!;
+      return { checkId: crypto.randomUUID(), runId: run.id, targetId, watchlistItemId: source.watchlistItemId, sourceId: source.sourceId, status, reasonCodes: status === "hard_failed" ? ["SOURCE_SERVER_ERROR"] : [], impact: status === "hard_failed" ? { scope: "entire_source" as const, affectedCount: null } : { scope: "none" as const, affectedCount: null }, observedPostingCount: 0, selectedDetailCount: 0, validDetailCount: 0, requestAttemptCount: status === "hard_failed" ? 2 : 1, checkedAt: later.toISOString() } as import("@job-copilot/contracts/agent-runs").JobSourceHealthCheck;
+    });
+    const before = await Promise.all([database.select().from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, run.id)), database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, run.id)), database.select().from(agentRunEvents).where(eq(agentRunEvents.runId, run.id)), database.select().from(agentInboxItems).where(eq(agentInboxItems.runId, run.id)), database.select().from(auditEvents).where(eq(auditEvents.resourceId, run.id))]);
+    await expect(persistence.persistSuccessfulDiscovery({ run: { ...frozen, claimToken: run.claimToken }, details: [], scans: sources.map((source, index) => ({ sourceId: source.sourceId, observedDetailIds: [], complete: statuses[index] === "zero_valid_results" })), storedObjects: [], sourceChecks, terminal, now: later })).rejects.toThrow("AGENT_RUN_PERSIST_FAILED");
+    await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, run.id))).resolves.toEqual([{ status: "running" }]);
+    await expect(Promise.all([database.select().from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, run.id)), database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, run.id)), database.select().from(agentRunEvents).where(eq(agentRunEvents.runId, run.id)), database.select().from(agentInboxItems).where(eq(agentInboxItems.runId, run.id)), database.select().from(auditEvents).where(eq(auditEvents.resourceId, run.id))])).resolves.toEqual(before);
+  });
+
   it("非 v3 frozen scope 即使 scan 完整合法也拒绝 sourceChecks", async () => {
     const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const sourceId = "greenhouse:in_scope";
     await database.insert(jobAccounts).values({ id: userId });
