@@ -1397,6 +1397,7 @@ describe("authenticated workbench HTTP API", () => {
       "/v1/job-targets/{targetId}/company-watchlist/items/{itemId}/revisions": expect.anything(),
       "/v1/job-targets/{targetId}/company-watchlist/items/{itemId}/state-changes": expect.anything(),
       "/v1/job-targets/{targetId}/company-watchlist/reorders": expect.anything(),
+      "/v1/job-targets/{targetId}/source-health": expect.anything(),
       "/v1/job-targets/{targetId}/discovery-schedule": expect.anything(),
       "/v1/career-documents/imports": expect.anything(),
       "/v1/career-documents/imports/{importId}": expect.anything(),
@@ -1407,9 +1408,10 @@ describe("authenticated workbench HTTP API", () => {
     const startRunSchema = document.components.schemas.StartAgentRunResponseDto_Output;
     expect(JSON.stringify(agentRunResponses)).toContain("StartAgentRunResponseDto_Output");
     expect(startRunSchema).toMatchObject({
-      oneOf: expect.arrayContaining([
+      anyOf: expect.arrayContaining([
         expect.objectContaining({ additionalProperties: false, properties: expect.objectContaining({ adapter: expect.objectContaining({ enum: ["fake"] }) }) }),
-        expect.objectContaining({ additionalProperties: false, properties: expect.objectContaining({ adapter: expect.objectContaining({ enum: ["greenhouse"] }) }) }),
+        expect.objectContaining({ additionalProperties: false, properties: expect.objectContaining({ adapterVersion: expect.objectContaining({ enum: ["greenhouse-job-board-v1"] }) }) }),
+        expect.objectContaining({ additionalProperties: false, properties: expect.objectContaining({ adapterVersion: expect.objectContaining({ enum: ["greenhouse-job-board-v2"] }) }) }),
       ]),
     });
     expect(JSON.stringify(startRunSchema)).not.toContain('"additionalProperties":{}');

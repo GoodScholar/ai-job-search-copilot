@@ -33,3 +33,10 @@ it("不把上游内部错误泄漏给浏览器，并保留安全 404", async () 
   expect(response.status).toBe(404);
   expect(await response.text()).not.toContain("internal-api");
 });
+
+it("拒绝不符合来源健康概览契约的上游成功 JSON", async () => {
+  mocks.readSessionToken.mockResolvedValue("a".repeat(43));
+  mocks.getSourceHealth.mockResolvedValue({ ...overview, leaked: true });
+  const response = await GET(new Request("http://localhost"), context());
+  expect(response.status).toBe(502);
+});

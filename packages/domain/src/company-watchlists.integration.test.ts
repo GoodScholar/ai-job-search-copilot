@@ -6,12 +6,14 @@ import {
   companyWatchlists,
   createDatabase,
   jobAccounts,
+  jobSourceHealthChecks,
   jobTargetRevisions,
   jobTargets,
   migrateDatabase,
   type Database,
 } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
+import { createAgentRunCommands } from "./agent-run-control";
 import { createCompanyWatchlistCommands, createCompanyWatchlistQueries } from "./company-watchlists";
 import { createSourceHealthQueries } from "./source-health";
 
@@ -245,5 +247,20 @@ describe("company watchlists", () => {
     const foreignUserId = crypto.randomUUID();
     await database.insert(jobAccounts).values({ id: foreignUserId });
     await expect(queries.get({ userId: foreignUserId, targetId })).rejects.toMatchObject({ code: "COMPANY_WATCHLIST_TARGET_NOT_FOUND" });
+  });
+
+  it("不把旧来源身份的健康证据继承给当前修订来源", async () => {
+    const { userId, targetId } = await activeTarget();
+    const initial = await commands().addItem({ userId, targetId, requestId: crypto.randomUUID(), command: {
+      expectedVersion: 0, canonicalCompanyName: "Stale Board", careersUrl: "https://boards.greenhouse.io/stale-board", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null,
+    } });
+    const item = initial.items[0]!;
+    const started = await createAgentRunCommands({ db: database, queue: { enqueue: async () => {} }, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    await database.insert(jobSourceHealthChecks).values({ id: crypto.randomUUID(), userId, runId: started.runId, targetId, watchlistItemId: item.itemId, sourceId: "greenhouse:stale-board", status: "healthy", reasonCodes: [], impactScope: "none", impactAffectedCount: null, observedPostingCount: 1, selectedDetailCount: 1, validDetailCount: 1, requestAttemptCount: 1, checkedAt: now });
+    const revised = await commands().reviseItem({ userId, targetId, itemId: item.itemId, requestId: crypto.randomUUID(), command: {
+      expectedVersion: 1, canonicalCompanyName: "Stale Board", careersUrl: "https://boards.greenhouse.io/replacement-board", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null,
+    } });
+    await expect(createSourceHealthQueries({ db: database }).get({ userId, targetId })).resolves.toMatchObject({ watchlistVersion: revised.version, sources: [{ sourceId: "greenhouse:replacement-board", status: null, runId: null, reasonCodes: [], lastCheckedAt: null, suggestedAction: "wait_for_next_run" }] });
   });
 });

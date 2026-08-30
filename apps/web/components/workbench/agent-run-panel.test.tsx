@@ -128,6 +128,22 @@ beforeEach(() => {
 
 afterEach(() => vi.restoreAllMocks());
 
+it("来源问题完成显示诊断状态、问题来源数量和锚点链接", () => {
+  const partial = {
+    ...detail("completed"),
+    workflowVersion: "job-discovery-workflow-v3",
+    adapter: "greenhouse",
+    adapterVersion: "greenhouse-job-board-v2",
+    outputSchemaVersion: "job-discovery-result-v3",
+    termination: { kind: "completed_with_source_issues", failureCode: null, budgetDimension: null },
+    sourceChecks: [{ status: "rate_limited" }, { status: "healthy" }],
+  } as unknown as AgentRunDetail;
+  render(<AgentRunPanel targets={[target()]} initialRun={partial} />);
+  expect(screen.getByText("岗位发现部分完成")).toBeVisible();
+  expect(screen.getByText("问题来源 1 个。", { exact: false })).toBeVisible();
+  expect(screen.getByRole("link", { name: "查看来源诊断" })).toHaveAttribute("href", `/profile/targets/${targetId}/watchlist#source-health`);
+});
+
 it("收到 Inbox 已处理通知后重新读取权威运行详情", async () => {
   const paused = { ...detail(), status: "paused" as const, currentStep: "batch_search" as const, version: 4 };
   vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(Response.json(detail("completed"))));
