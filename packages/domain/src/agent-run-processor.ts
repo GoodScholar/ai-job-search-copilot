@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, asc, count, desc, eq, lte, or, sql } from "drizzle-orm";
 import {
-  agentInboxItems, agentRunEvents, agentRunSteps, agentRuns, jobDiscoveryAttributions, jobDiscoveryDiagnostics, jobDiscoveryRunResults, jobDiscoverySourceIssues, jobSourcePostingVersions, jobSourcePostings,
+  agentInboxItems, agentRunEvents, agentRunSteps, agentRuns, jobDiscoveryAttributions, jobDiscoveryDiagnostics, jobDiscoveryLeads, jobDiscoveryRunResults, jobDiscoverySourceIssues, jobSourcePostingVersions, jobSourcePostings,
   type Database,
 } from "@job-copilot/database";
 import {
@@ -10,6 +10,7 @@ import {
   type JobSourceHealthCheck,
   type AgentRunJob,
 } from "@job-copilot/contracts/agent-runs";
+import { AnySearchProviderErrorCodeSchema } from "@job-copilot/contracts/job-discovery";
 import type { AuditTrail } from "./audit-trail";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { createJobDiscoveryPersistence, discoverySourceIdentifier, type DiscoveryDetail } from "./job-discovery-persistence";
@@ -295,7 +296,17 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
       eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.claimToken), eq(agentRuns.controlState, "none"),
     ));
     if (!run) return "stale";
+    const plannedQueries = new Map(((run.sourceScope as { publicDiscovery?: { queries?: Array<{ queryId: string; kind: string; stableFingerprint: string }> } }).publicDiscovery?.queries ?? []).map((query) => [query.queryId, query]));
     for (const diagnostic of input.diagnostics) {
+      if (diagnostic.scope === "provider" && !AnySearchProviderErrorCodeSchema.safeParse(diagnostic.code).success) throw new Error("LAYERED_PUBLIC_DIAGNOSTIC_INVALID");
+      if (diagnostic.scope === "query") {
+        const query = plannedQueries.get(diagnostic.queryId);
+        if (!query || query.kind !== diagnostic.kind || query.stableFingerprint !== diagnostic.stableFingerprint) throw new Error("LAYERED_PUBLIC_DIAGNOSTIC_INVALID");
+      }
+      if (diagnostic.scope === "lead") {
+        const [lead] = await transaction.select({ runId: jobDiscoveryLeads.runId }).from(jobDiscoveryLeads).where(and(eq(jobDiscoveryLeads.userId, input.userId), eq(jobDiscoveryLeads.id, diagnostic.leadId))).limit(1);
+        if (!lead || lead.runId !== input.runId) throw new Error("LAYERED_PUBLIC_DIAGNOSTIC_INVALID");
+      }
       const values = diagnostic.scope === "provider"
         ? { id: deps.id(), userId: input.userId, runId: input.runId, scope: "provider" as const, provider: "anysearch" as const, queryId: null, queryKind: null, queryFingerprint: null, leadId: null, code: diagnostic.code, retryable: diagnostic.retryable, affectedCount: diagnostic.affectedCount, createdAt: input.now }
         : diagnostic.scope === "query"

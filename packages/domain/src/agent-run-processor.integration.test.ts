@@ -1,7 +1,7 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, asc, eq } from "drizzle-orm";
-import { agentInboxItems, agentRunEvents, agentRunJobResults, agentRunSteps, agentRunUsageEntries, agentRuns, auditEvents, createDatabase, jobAccounts, jobDiscoverySourceIssues, jobOpportunities, jobOpportunitySources, jobSourceHealthChecks, jobSourcePostings, jobSourcePostingVersions, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
+import { agentInboxItems, agentRunEvents, agentRunJobResults, agentRunSteps, agentRunUsageEntries, agentRuns, auditEvents, createDatabase, jobAccounts, jobDiscoveryDiagnostics, jobDiscoveryRunResults, jobDiscoverySourceIssues, jobOpportunities, jobOpportunitySources, jobSourceHealthChecks, jobSourcePostings, jobSourcePostingVersions, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
 import { createAgentRunCheckpoint, createAgentRunCommands, createAgentRunProcessor, createAgentRunQueries, type AgentRunCheckpoint, type AgentRunQueue, type DiscoveryContentStore, type JobDiscoveryAdapter, type JobDiscoveryAdapterResolver } from "./agent-runs";
 import { createCompanyWatchlistCommands } from "./company-watchlists";
@@ -86,6 +86,13 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(database.select().from(jobDiscoverySourceIssues).where(eq(jobDiscoverySourceIssues.runId, job.runId))).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED" }), expect.objectContaining({ provider: "greenhouse", code: "GREENHOUSE_DEGRADED" })]));
     await expect(database.select().from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, job.runId))).resolves.toEqual([]);
     await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({ status: "completed", termination: { kind: "completed_with_source_issues" }, results: [{ sourcePostingVersionId: job.sourcePostingVersionId }], sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED" }, { provider: "greenhouse", code: "GREENHOUSE_DEGRADED" }], usage: { toolCalls: 1, sourceRequests: 1 } });
+  });
+
+  it("拒绝 plan 外 diagnostic 的恶意 resolver，事务不写 discovery facts", async () => {
+    const job = await layeredRun();
+    const outcome = await createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({ hasTrustedSuccess: true, sourcePostingVersionIds: [job.sourcePostingVersionId], trustedSourcePostingVersionIds: [job.sourcePostingVersionId], diagnostics: [{ scope: "query", queryId: crypto.randomUUID(), kind: "general", stableFingerprint: "f".repeat(64), code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: 1 }] }) }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true });
+    expect(outcome).toBe("failed");
+    await expect(Promise.all([database.select().from(jobDiscoveryDiagnostics).where(eq(jobDiscoveryDiagnostics.runId, job.runId)), database.select().from(jobDiscoveryRunResults).where(eq(jobDiscoveryRunResults.runId, job.runId)), database.select().from(jobDiscoverySourceIssues).where(eq(jobDiscoverySourceIssues.runId, job.runId))])).resolves.toEqual([[], [], []]);
   });
 
   it("来源调用后暂停会阻止后续外部调用", async () => {
