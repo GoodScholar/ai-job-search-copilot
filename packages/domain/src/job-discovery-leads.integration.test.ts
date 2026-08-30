@@ -60,8 +60,8 @@ describe("job discovery lead repository", () => {
     return { userId, targetId, runId, versionId };
   }
 
-  function repository() {
-    return createJobDiscoveryLeadRepository({ db: database, id: () => crypto.randomUUID() });
+  function repository(id: () => string = () => crypto.randomUUID()) {
+    return createJobDiscoveryLeadRepository({ db: database, id });
   }
 
   function pendingInput(input: { userId: string; runId: string; targetId: string; queryId?: string; stableFingerprint?: string }) {
@@ -152,6 +152,7 @@ describe("job discovery lead repository", () => {
     expect(first).toMatchObject({ lead: { state: "verified", sourcePostingVersionId: subject.versionId, rejectionCode: null }, attribution: expect.objectContaining({ ownerId: subject.userId, runId: subject.runId, leadId: created.leadId, provider: "anysearch", sourcePostingVersionId: subject.versionId }) });
     await expect(database.select().from(jobDiscoveryAttributions).where(and(eq(jobDiscoveryAttributions.userId, subject.userId), eq(jobDiscoveryAttributions.leadId, created.leadId))))
       .resolves.toHaveLength(1);
+    await expect(repository().getAttribution({ userId: subject.userId, leadId: created.leadId })).resolves.toEqual(first.attribution);
     await expect(Promise.all([
       database.select().from(jobSourcePostings).where(eq(jobSourcePostings.userId, subject.userId)),
       database.select().from(jobOpportunities).where(eq(jobOpportunities.userId, subject.userId)),
@@ -169,9 +170,12 @@ describe("job discovery lead repository", () => {
       .rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_NOT_FOUND" } satisfies Partial<JobDiscoveryLeadError>);
     await expect(repository().verifyAndAttribute({ userId: subject.userId, leadId: created.leadId, sourcePostingVersionId: other.versionId, now }))
       .rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_VERSION_NOT_FOUND" } satisfies Partial<JobDiscoveryLeadError>);
+    await expect(repository().verifyAndAttribute({ userId: other.userId, leadId: created.leadId, sourcePostingVersionId: other.versionId, now }))
+      .rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_NOT_FOUND" } satisfies Partial<JobDiscoveryLeadError>);
     await expect(database.select().from(jobDiscoveryLeads).where(eq(jobDiscoveryLeads.id, created.leadId)))
       .resolves.toEqual([expect.objectContaining({ state: "pending", sourcePostingVersionId: null, rejectionCode: null })]);
     await expect(database.select().from(jobDiscoveryAttributions).where(eq(jobDiscoveryAttributions.leadId, created.leadId))).resolves.toEqual([]);
+    await expect(repository().getAttribution({ userId: other.userId, leadId: created.leadId })).resolves.toBeNull();
   });
 
   it("过期 Lead 不转换，且重复 recordPending 只返回原记录", async () => {
@@ -185,5 +189,40 @@ describe("job discovery lead repository", () => {
     await expect(repository().verifyAndAttribute({ userId: subject.userId, leadId: first.leadId, sourcePostingVersionId: subject.versionId, now: new Date("2026-09-29T12:00:00.000Z") }))
       .rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_EXPIRED" } satisfies Partial<JobDiscoveryLeadError>);
     await expect(database.select().from(jobDiscoveryLeads).where(eq(jobDiscoveryLeads.id, first.leadId))).resolves.toEqual([expect.objectContaining({ state: "pending" })]);
+  });
+
+  it("recordPending 只将完全相同的不可变事实视为重试，忽略晚到 retry 的 now", async () => {
+    const subject = await owner("identity");
+    const input = pendingInput(subject);
+    const first = await repository().recordPending(input);
+    const later = await repository().recordPending({ ...input, now: new Date("2026-08-31T12:00:00.000Z") });
+
+    expect(later).toEqual(first);
+    for (const mismatch of [
+      { targetId: crypto.randomUUID() },
+      { queryId: crypto.randomUUID() },
+      { queryKind: "site_constrained" as const },
+      { queryFingerprint: "c".repeat(64) },
+      { normalizedUrl: "https://jobs.example.com/opening?id=456" },
+    ]) {
+      await expect(repository().recordPending({ ...input, ...mismatch }))
+        .rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_IDENTITY_CONFLICT" } satisfies Partial<JobDiscoveryLeadError>);
+    }
+    await expect(database.select().from(jobDiscoveryLeads).where(eq(jobDiscoveryLeads.id, first.leadId)))
+      .resolves.toEqual([expect.objectContaining({ targetId: subject.targetId, queryId: input.queryId, normalizedUrl: input.normalizedUrl })]);
+  });
+
+  it("recordPending 将预期 owner/run/target 与 id 约束映射为稳定领域错误", async () => {
+    const subject = await owner("record-errors");
+    const other = await owner("record-errors-other");
+    await expect(repository().recordPending({ ...pendingInput(subject), runId: crypto.randomUUID() }))
+      .rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_RUN_NOT_FOUND" } satisfies Partial<JobDiscoveryLeadError>);
+    await expect(repository().recordPending({ ...pendingInput(subject), targetId: other.targetId }))
+      .rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_RUN_NOT_FOUND" } satisfies Partial<JobDiscoveryLeadError>);
+
+    const duplicateId = crypto.randomUUID();
+    await repository(() => duplicateId).recordPending(pendingInput(subject));
+    await expect(repository(() => duplicateId).recordPending(pendingInput(other)))
+      .rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_ID_CONFLICT" } satisfies Partial<JobDiscoveryLeadError>);
   });
 });

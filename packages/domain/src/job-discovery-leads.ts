@@ -40,7 +40,10 @@ export class JobDiscoveryLeadError extends Error {
     | "JOB_DISCOVERY_LEAD_STATE_CONFLICT"
     | "JOB_DISCOVERY_LEAD_REJECTION_CONFLICT"
     | "JOB_DISCOVERY_LEAD_VERSION_NOT_FOUND"
-    | "JOB_DISCOVERY_LEAD_ATTRIBUTION_CONFLICT") {
+    | "JOB_DISCOVERY_LEAD_ATTRIBUTION_CONFLICT"
+    | "JOB_DISCOVERY_LEAD_IDENTITY_CONFLICT"
+    | "JOB_DISCOVERY_LEAD_RUN_NOT_FOUND"
+    | "JOB_DISCOVERY_LEAD_ID_CONFLICT") {
     super(code);
   }
 }
@@ -53,6 +56,34 @@ function parseOrThrow<T>(schema: z.ZodType<T>, input: unknown): T {
 
 function expiresInThirtyDays(now: Date): Date {
   return new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+}
+
+function databaseConstraint(error: unknown) {
+  const cause = error && typeof error === "object" && "cause" in error ? error.cause : null;
+  if (!cause || typeof cause !== "object") return null;
+  const value = cause as { code?: unknown; constraint_name?: unknown };
+  return typeof value.code === "string" && typeof value.constraint_name === "string"
+    ? { code: value.code, name: value.constraint_name }
+    : null;
+}
+
+function recordPendingDatabaseError(error: unknown) {
+  const constraint = databaseConstraint(error);
+  if (constraint?.code === "23503" && constraint.name === "job_discovery_leads_owner_run_target_fk") {
+    return new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_RUN_NOT_FOUND");
+  }
+  if (constraint?.code === "23505" && ["job_discovery_leads_pkey", "job_discovery_leads_user_id_id_unique"].includes(constraint.name)) {
+    return new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_ID_CONFLICT");
+  }
+  return null;
+}
+
+function matchesRecordPendingFacts(row: typeof jobDiscoveryLeads.$inferSelect, input: z.infer<typeof RecordPendingInputSchema>) {
+  return row.targetId === input.targetId
+    && row.queryId === input.queryId
+    && row.queryKind === input.queryKind
+    && row.queryFingerprint === input.queryFingerprint
+    && row.normalizedUrl === input.normalizedUrl;
 }
 
 function leadFact(row: typeof jobDiscoveryLeads.$inferSelect) {
@@ -111,18 +142,25 @@ export function createJobDiscoveryLeadRepository({ db, id }: Dependencies) {
     async recordPending(input: unknown) {
       const value = parseOrThrow(RecordPendingInputSchema, input);
       const expiresAt = expiresInThirtyDays(value.now);
-      await db.insert(jobDiscoveryLeads).values({
-        id: id(), userId: value.userId, runId: value.runId, targetId: value.targetId,
-        provider: "anysearch", queryId: value.queryId, queryKind: value.queryKind,
-        queryFingerprint: value.queryFingerprint, normalizedUrl: value.normalizedUrl,
-        stableFingerprint: value.stableFingerprint, expiresAt, state: "pending",
-        sourcePostingVersionId: null, rejectionCode: null, createdAt: value.now, updatedAt: value.now,
-      }).onConflictDoNothing({ target: [jobDiscoveryLeads.userId, jobDiscoveryLeads.runId, jobDiscoveryLeads.provider, jobDiscoveryLeads.stableFingerprint] });
+      try {
+        await db.insert(jobDiscoveryLeads).values({
+          id: id(), userId: value.userId, runId: value.runId, targetId: value.targetId,
+          provider: "anysearch", queryId: value.queryId, queryKind: value.queryKind,
+          queryFingerprint: value.queryFingerprint, normalizedUrl: value.normalizedUrl,
+          stableFingerprint: value.stableFingerprint, expiresAt, state: "pending",
+          sourcePostingVersionId: null, rejectionCode: null, createdAt: value.now, updatedAt: value.now,
+        }).onConflictDoNothing({ target: [jobDiscoveryLeads.userId, jobDiscoveryLeads.runId, jobDiscoveryLeads.provider, jobDiscoveryLeads.stableFingerprint] });
+      } catch (error) {
+        const mapped = recordPendingDatabaseError(error);
+        if (mapped) throw mapped;
+        throw error;
+      }
       const [lead] = await db.select().from(jobDiscoveryLeads).where(and(
         eq(jobDiscoveryLeads.userId, value.userId), eq(jobDiscoveryLeads.runId, value.runId),
         eq(jobDiscoveryLeads.provider, "anysearch"), eq(jobDiscoveryLeads.stableFingerprint, value.stableFingerprint),
       )).limit(1);
       if (!lead) throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_STATE_CONFLICT");
+      if (!matchesRecordPendingFacts(lead, value)) throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_IDENTITY_CONFLICT");
       return leadFact(lead);
     },
 

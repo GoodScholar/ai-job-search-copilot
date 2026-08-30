@@ -40,6 +40,16 @@ describe("job discovery lead migrations", () => {
   });
 
   it("migrates owner-bound leads and attributions with database-enforced outcomes", async () => {
+    const migrationSql = await readFile(fileURLToPath(new URL("../migrations/0024_fat_jane_foster.sql", import.meta.url)), "utf8");
+    const snapshot = JSON.parse(await readFile(fileURLToPath(new URL("../migrations/meta/0024_snapshot.json", import.meta.url)), "utf8")) as { prevId: string; tables: Record<string, unknown> };
+    const priorSnapshot = JSON.parse(await readFile(fileURLToPath(new URL("../migrations/meta/0023_snapshot.json", import.meta.url)), "utf8")) as { id: string };
+    const journal = JSON.parse(await readFile(fileURLToPath(new URL("../migrations/meta/_journal.json", import.meta.url)), "utf8")) as { entries: Array<{ tag: string }> };
+    expect(migrationSql).toContain('CREATE TABLE "job_discovery_leads"');
+    expect(migrationSql).toContain('CREATE TABLE "job_discovery_attributions"');
+    expect(snapshot.prevId).toBe(priorSnapshot.id);
+    expect(snapshot.tables).toHaveProperty("public.job_discovery_leads");
+    expect(snapshot.tables).toHaveProperty("public.job_discovery_attributions");
+    expect(journal.entries.at(-1)?.tag).toBe("0024_fat_jane_foster");
     const tables = await database.execute(sql`
       select table_name from information_schema.tables where table_schema = 'public'
         and table_name in ('job_discovery_leads', 'job_discovery_attributions') order by table_name
@@ -56,6 +66,14 @@ describe("job discovery lead migrations", () => {
       ) order by conname
     `) as unknown as Array<{ conname: string }>;
     expect(constraints).toHaveLength(10);
+    const indexes = await database.execute(sql`
+      select indexname from pg_indexes where schemaname = 'public' and indexname in (
+        'job_discovery_leads_owner_run_state_idx', 'job_discovery_attributions_owner_run_idx'
+      ) order by indexname
+    `) as unknown as Array<{ indexname: string }>;
+    expect(indexes.map(({ indexname }) => indexname)).toEqual([
+      "job_discovery_attributions_owner_run_idx", "job_discovery_leads_owner_run_state_idx",
+    ]);
 
     const ownerId = "11111111-1111-4111-8111-111111111111";
     const otherOwnerId = "22222222-2222-4222-8222-222222222222";
@@ -63,6 +81,8 @@ describe("job discovery lead migrations", () => {
     const otherTargetId = "44444444-4444-4444-8444-444444444444";
     const runId = "55555555-5555-4555-8555-555555555555";
     const otherRunId = "66666666-6666-4666-8666-666666666666";
+    const sameOwnerOtherTargetId = "21212121-2121-4212-8212-212121212121";
+    const sameOwnerOtherRunId = "23232323-2323-4232-8232-232323232323";
     const versionId = "77777777-7777-4777-8777-777777777777";
     const otherVersionId = "88888888-8888-4888-8888-888888888888";
     const queryId = "99999999-9999-4999-8999-999999999999";
@@ -72,6 +92,8 @@ describe("job discovery lead migrations", () => {
     await database.execute(sql`insert into job_targets (id, user_id, version, priority, state) values (${targetId}, ${ownerId}, 1, 'primary', 'active'), (${otherTargetId}, ${otherOwnerId}, 1, 'primary', 'active')`);
     await insertRun(database, { userId: ownerId, targetId, runId, idempotencyKey: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb" });
     await insertRun(database, { userId: otherOwnerId, targetId: otherTargetId, runId: otherRunId, idempotencyKey: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" });
+    await database.execute(sql`insert into job_targets (id, user_id, version, priority, state) values (${sameOwnerOtherTargetId}, ${ownerId}, 1, 'secondary', 'inactive')`);
+    await insertRun(database, { userId: ownerId, targetId: sameOwnerOtherTargetId, runId: sameOwnerOtherRunId, idempotencyKey: "24242424-2424-4242-8242-242424242424" });
     await database.execute(sql`
       insert into job_source_postings (id, user_id, source_type, source_identifier, source_identity)
       values ('dddddddd-dddd-4ddd-8ddd-dddddddddddd', ${ownerId}, 'official', 'source', '{}'::jsonb),
@@ -107,6 +129,18 @@ describe("job discovery lead migrations", () => {
     `)).rejects.toMatchObject({ cause: { code: "23514" } });
     await expect(database.execute(sql`
       insert into job_discovery_leads (id, user_id, run_id, target_id, provider, query_id, query_kind, query_fingerprint, normalized_url, stable_fingerprint, expires_at, state, source_posting_version_id, rejection_code, created_at, updated_at)
+      values ('15151515-1515-4151-8151-151515151516', ${ownerId}, ${runId}, ${targetId}, 'anysearch', ${queryId}, 'general', ${queryFingerprint}, 'https://jobs.example.com/opening?id=126', 'not-a-fingerprint', now() + interval '30 days', 'pending', null, null, now(), now())
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(database.execute(sql`
+      insert into job_discovery_leads (id, user_id, run_id, target_id, provider, query_id, query_kind, query_fingerprint, normalized_url, stable_fingerprint, expires_at, state, source_posting_version_id, rejection_code, created_at, updated_at)
+      values ('16161616-1616-4161-8161-161616161617', ${ownerId}, ${sameOwnerOtherRunId}, ${targetId}, 'anysearch', ${queryId}, 'general', ${queryFingerprint}, 'https://jobs.example.com/opening?id=129', ${"9".repeat(64)}, now() + interval '30 days', 'pending', null, null, now(), now())
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
+    await expect(database.execute(sql`
+      insert into job_discovery_leads (id, user_id, run_id, target_id, provider, query_id, query_kind, query_fingerprint, normalized_url, stable_fingerprint, expires_at, state, source_posting_version_id, rejection_code, created_at, updated_at)
+      values ('17171717-1717-4171-8171-171717171718', ${ownerId}, ${runId}, ${sameOwnerOtherTargetId}, 'anysearch', ${queryId}, 'general', ${queryFingerprint}, 'https://jobs.example.com/opening?id=130', ${"8".repeat(64)}, now() + interval '30 days', 'pending', null, null, now(), now())
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
+    await expect(database.execute(sql`
+      insert into job_discovery_leads (id, user_id, run_id, target_id, provider, query_id, query_kind, query_fingerprint, normalized_url, stable_fingerprint, expires_at, state, source_posting_version_id, rejection_code, created_at, updated_at)
       values ('14141414-1414-4141-8141-141414141414', ${ownerId}, ${runId}, ${targetId}, 'anysearch', ${queryId}, 'general', ${queryFingerprint}, 'https://jobs.example.com/opening?id=127', ${"f".repeat(64)}, now() + interval '29 days', 'pending', null, null, now(), now())
     `)).rejects.toMatchObject({ cause: { code: "23514" } });
     await expect(database.execute(sql`
@@ -118,6 +152,15 @@ describe("job discovery lead migrations", () => {
 
     await database.execute(sql`
       update job_discovery_leads set state = 'verified', source_posting_version_id = ${versionId}, updated_at = now() where id = ${leadId}
+    `);
+    await database.execute(sql`
+      insert into job_discovery_leads (
+        id, user_id, run_id, target_id, provider, query_id, query_kind, query_fingerprint,
+        normalized_url, stable_fingerprint, expires_at, state, source_posting_version_id, rejection_code, created_at, updated_at
+      ) values (
+        '18181818-1818-4181-8181-181818181819', ${ownerId}, ${runId}, ${targetId}, 'anysearch', ${queryId}, 'general', ${queryFingerprint},
+        'https://jobs.example.com/opening?id=131', ${"7".repeat(64)}, now() + interval '30 days', 'verified', ${versionId}, null, now(), now()
+      )
     `);
     await database.execute(sql`
       insert into job_discovery_leads (
@@ -139,6 +182,18 @@ describe("job discovery lead migrations", () => {
     await expect(database.execute(sql`
       insert into job_discovery_attributions (id, user_id, run_id, lead_id, query_id, provider, source_posting_version_id)
       values ('17171717-1717-4171-8171-171717171717', ${ownerId}, ${runId}, '19191919-1919-4191-8191-191919191919', ${queryId}, 'anysearch', ${otherVersionId})
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
+    await expect(database.execute(sql`
+      insert into job_discovery_attributions (id, user_id, run_id, lead_id, query_id, provider, source_posting_version_id)
+      values ('20202020-2020-4202-8202-202020202020', ${ownerId}, ${sameOwnerOtherRunId}, '18181818-1818-4181-8181-181818181819', ${queryId}, 'anysearch', ${versionId})
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
+    await expect(database.execute(sql`
+      insert into job_discovery_attributions (id, user_id, run_id, lead_id, query_id, provider, source_posting_version_id)
+      values ('21212121-2121-4212-8212-212121212122', ${ownerId}, ${runId}, '18181818-1818-4181-8181-181818181819', ${queryId}, 'other', ${versionId})
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(database.execute(sql`
+      insert into job_discovery_attributions (id, user_id, run_id, lead_id, query_id, provider, source_posting_version_id)
+      values ('22222222-2222-4222-8222-222222222223', ${ownerId}, ${runId}, '18181818-1818-4181-8181-181818181819', '23232323-2323-4232-8232-232323232324', 'anysearch', ${versionId})
     `)).rejects.toMatchObject({ cause: { code: "23503" } });
   });
 
