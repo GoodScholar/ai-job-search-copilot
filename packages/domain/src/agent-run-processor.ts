@@ -518,7 +518,8 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           const branchSucceeded = outcome.branchSuccess?.trusted === true || outcome.branchSuccess?.publicDiscovery === true || outcome.hasTrustedSuccess || (outcome.sourcePostingVersionIds?.length ?? 0) > 0;
           if (!branchSucceeded) {
             const retryable = outcome.diagnostics.some((diagnostic) => diagnostic.retryable);
-            try { await persistLayeredPublicOutcome(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), deadline, diagnostics: outcome.diagnostics, sourceIssues: outcome.sourceIssues ?? [], sourcePostingVersionIds: [], trustedSourcePostingVersionIds: [], trustedSourceIds: [], complete: false }); }
+            // 可重试尝试只保留 attempt diagnostic；最终投递才冻结 run-level issue/attention，避免随后成功仍被旧问题污染终态。
+            try { await persistLayeredPublicOutcome(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), deadline, diagnostics: outcome.diagnostics, sourceIssues: job.finalAttempt ? outcome.sourceIssues ?? [] : [], sourcePostingVersionIds: [], trustedSourcePostingVersionIds: [], trustedSourceIds: [], complete: false }); }
             catch (error) { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline }); }
             return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: retryable ? "AGENT_RUN_ADAPTER_RETRYABLE" : "AGENT_RUN_ADAPTER_FAILED", retryable, category: "source" }, deadline });
           }
