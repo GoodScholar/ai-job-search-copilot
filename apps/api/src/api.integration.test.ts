@@ -689,7 +689,7 @@ describe("authenticated workbench HTTP API", () => {
       userId: session.account.userId, targetId, requestId: randomUUID(),
       command: { expectedVersion: 0, canonicalCompanyName: "Public Example", careersUrl: "https://boards.greenhouse.io/public-example", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null },
     });
-    const runs = createAgentRunCommands({ db: database, queue: agentRunQueue, auditTrail, id: randomUUID, clock: setupClock });
+    const runs = createAgentRunCommands({ db: database, queue: agentRunQueue, auditTrail, id: randomUUID, clock: setupClock, executionMode: "greenhouse" });
     const schedules = createJobDiscoverySchedules({ db: database, runs, auditTrail, id: randomUUID, clock: setupClock });
     const schedule = await schedules.set({ userId: session.account.userId, targetId, requestId: randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
     expect(schedule.nextRunAt).toBe("2026-08-31T01:30:00.000Z");
