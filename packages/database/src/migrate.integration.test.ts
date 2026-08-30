@@ -1162,6 +1162,29 @@ describe("database migrations", () => {
         'job-discovery-result-v3', '[]'::jsonb, 'queued', 'queued'
       )
     `);
+    const completedRunId = "da4812a8-cc62-44da-94b5-4f5681d87dca";
+    await migratedDatabase.execute(sql`
+      insert into agent_runs (
+        id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot,
+        workflow_version, rule_version, adapter, adapter_version, output_schema_version, tool_allowlist,
+        status, current_step, usage_complete, termination_kind, started_at, completed_at
+      ) values (
+        ${completedRunId}, ${userId}, ${targetId}, '6f17ac03-bdc5-4e38-a91b-6cf831b51c7a', 1, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb,
+        'job-discovery-workflow-v3', 'job-discovery-source-health-rules-v1', 'greenhouse', 'greenhouse-job-board-v2',
+        'job-discovery-result-v3', '[]'::jsonb, 'completed', 'completed', true, 'completed_with_source_issues', now(), now()
+      )
+    `);
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_runs (
+        id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot,
+        workflow_version, rule_version, adapter, adapter_version, output_schema_version, tool_allowlist,
+        status, current_step, usage_complete, termination_kind, started_at, failed_at
+      ) values (
+        '1a49ddd1-a3f0-4468-bcb5-40db759d0570', ${userId}, ${targetId}, '03893e59-78b5-49d8-87c2-0aef0fef21b6', 1, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb,
+        'job-discovery-workflow-v3', 'job-discovery-source-health-rules-v1', 'greenhouse', 'greenhouse-job-board-v2',
+        'job-discovery-result-v3', '[]'::jsonb, 'failed', 'failed', true, 'completed_with_source_issues', now(), now()
+      )
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
     await migratedDatabase.execute(sql`
       insert into job_source_health_checks (
         id, user_id, run_id, target_id, watchlist_item_id, source_id, status, reason_codes, impact_scope, impact_affected_count,
@@ -1177,7 +1200,7 @@ describe("database migrations", () => {
         observed_posting_count, selected_detail_count, valid_detail_count, request_attempt_count, checked_at
       ) values (
         ${userId}, ${runId}, ${targetId}, '3f906934-fac2-4db9-93c4-09ccdec40ee6', 'greenhouse:example',
-        'healthy', '[]'::jsonb, 'none', 0, 0, 0, 0, 1, now()
+        'parser_degraded', '["SOURCE_DETAIL_FIELDS_MISSING"]'::jsonb, 'job_details', 1, 1, 1, 0, 1, now()
       )
     `)).rejects.toMatchObject({ cause: { code: "23505" } });
     await expect(migratedDatabase.execute(sql`
@@ -1201,6 +1224,23 @@ describe("database migrations", () => {
     await expect(migratedDatabase.execute(sql`
       update job_source_health_checks set status = 'healthy' where id = ${checkId}
     `)).rejects.toMatchObject({ cause: { code: "55000" } });
+    for (const invalid of [
+      { sourceId: "greenhouse:zero-invalid", status: "zero_valid_results", reasonCodes: "[]", impactScope: "none", impactAffectedCount: null, observed: 1, selected: 1, valid: 1, attempts: 1 },
+      { sourceId: "greenhouse:rate-invalid", status: "rate_limited", reasonCodes: '["SOURCE_TIMEOUT"]', impactScope: "entire_source", impactAffectedCount: null, observed: 1, selected: 1, valid: 1, attempts: 1 },
+      { sourceId: "greenhouse:count-invalid", status: "parser_degraded", reasonCodes: '["SOURCE_DETAIL_FIELDS_MISSING"]', impactScope: "job_details", impactAffectedCount: 1, observed: 1, selected: 1, valid: 2, attempts: 1 },
+      { sourceId: "https://boards.greenhouse.io/unsafe?token=secret", status: "hard_failed", reasonCodes: '["SOURCE_UNREACHABLE"]', impactScope: "entire_source", impactAffectedCount: null, observed: 0, selected: 0, valid: 0, attempts: 1 },
+      { sourceId: "greenhouse:impact-invalid", status: "healthy", reasonCodes: "[]", impactScope: "none", impactAffectedCount: 0, observed: 1, selected: 1, valid: 1, attempts: 0 },
+    ]) {
+      await expect(migratedDatabase.execute(sql`
+        insert into job_source_health_checks (
+          user_id, run_id, target_id, watchlist_item_id, source_id, status, reason_codes, impact_scope, impact_affected_count,
+          observed_posting_count, selected_detail_count, valid_detail_count, request_attempt_count, checked_at
+        ) values (
+          ${userId}, ${runId}, ${targetId}, '3f906934-fac2-4db9-93c4-09ccdec40ee6', ${invalid.sourceId}, ${invalid.status}, ${invalid.reasonCodes}::jsonb,
+          ${invalid.impactScope}, ${invalid.impactAffectedCount}, ${invalid.observed}, ${invalid.selected}, ${invalid.valid}, ${invalid.attempts}, now()
+        )
+      `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    }
 
     const indexes = await migratedDatabase.execute(sql`
       select indexname from pg_indexes

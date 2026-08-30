@@ -215,10 +215,10 @@ describe("agent run contracts", () => {
     expect(JobSourceHealthCheckSchema.safeParse({ ...sourceCheck, impact: { scope: "job_details", affectedCount: null } }).success).toBe(false);
     expect(JobSourceHealthProjectionSchema.parse({
       watchlistItemId: sourceCheck.watchlistItemId, sourceId: sourceCheck.sourceId, name: "Example AI",
-      state: "enabled", status: null, runId: null, reasonCodes: [], impact: { scope: "none", affectedCount: 0 },
-      lastCheckedAt: null, suggestedAction: "none",
+      state: "enabled", status: null, runId: null, reasonCodes: [], impact: { scope: "none", affectedCount: null },
+      lastCheckedAt: null, suggestedAction: "wait_for_next_run",
     }).status).toBeNull();
-    expect(AgentRunDetailSchema.parse({
+    const v3Detail = {
       ...v3Summary,
       executionSpec: v3ExecutionSpec,
       controlState: "none",
@@ -226,8 +226,56 @@ describe("agent run contracts", () => {
       termination: { kind: "completed_with_source_issues", failureCode: null, budgetDimension: null },
       retryOfRunId: null,
       steps: [], events: [], results: [], sourceChecks: [sourceCheck],
-    }).termination).toMatchObject({ kind: "completed_with_source_issues" });
+    };
+    expect(AgentRunDetailSchema.parse(v3Detail).termination).toMatchObject({ kind: "completed_with_source_issues" });
     expect(AgentRunDetailSchema.safeParse({ ...detail, sourceChecks: [sourceCheck] }).success).toBe(false);
+    for (const sourceChecks of [
+      [{ ...sourceCheck, runId: "c9862e7d-5821-46d1-b1d5-4b2c1170b8c7" }],
+      [{ ...sourceCheck, targetId: "9a208a3c-a1ec-4d52-8fac-a3aeecd34b36" }],
+      [{ ...sourceCheck, watchlistItemId: "12f96a8e-6262-4e12-a8f7-091081ca6f48" }],
+      [{ ...sourceCheck, sourceId: "greenhouse:outside" }],
+      [sourceCheck, sourceCheck],
+    ]) expect(AgentRunDetailSchema.safeParse({ ...v3Detail, sourceChecks }).success).toBe(false);
+  });
+
+  it("拒绝矛盾的来源健康事实、未经检查的伪证据和 URL 形式来源 ID", () => {
+    const base = {
+      checkId: "6d5ee5dd-49f0-4a92-bab6-e8d2740c14f9", runId, targetId,
+      watchlistItemId: publicSourceScope.sources[0]!.watchlistItemId, sourceId: "greenhouse:example",
+      status: "parser_degraded", reasonCodes: ["SOURCE_DETAIL_FIELDS_MISSING"],
+      impact: { scope: "job_details", affectedCount: 2 }, observedPostingCount: 3,
+      selectedDetailCount: 3, validDetailCount: 1, requestAttemptCount: 1, checkedAt: now,
+    };
+    const unchecked = {
+      watchlistItemId: base.watchlistItemId, sourceId: base.sourceId, name: "Example AI", state: "enabled",
+      status: null, runId: null, reasonCodes: [], impact: { scope: "none", affectedCount: null },
+      lastCheckedAt: null, suggestedAction: "wait_for_next_run",
+    };
+
+    expect(JobSourceHealthCheckSchema.safeParse({ ...base, sourceId: "https://boards.greenhouse.io/example?token=secret" }).success).toBe(false);
+    expect(JobSourceHealthCheckSchema.safeParse({ ...base, status: "zero_valid_results", reasonCodes: [], impact: { scope: "none", affectedCount: null }, validDetailCount: 1 }).success).toBe(false);
+    expect(JobSourceHealthCheckSchema.safeParse({ ...base, status: "healthy", reasonCodes: [], impact: { scope: "none", affectedCount: null }, validDetailCount: 0 }).success).toBe(false);
+    expect(JobSourceHealthCheckSchema.safeParse({ ...base, status: "rate_limited", reasonCodes: ["SOURCE_TIMEOUT"], impact: { scope: "entire_source", affectedCount: null } }).success).toBe(false);
+    expect(JobSourceHealthCheckSchema.safeParse({ ...base, status: "parser_degraded", reasonCodes: ["SOURCE_UNREACHABLE"] }).success).toBe(false);
+    expect(JobSourceHealthCheckSchema.safeParse({ ...base, status: "hard_failed", reasonCodes: ["SOURCE_DETAIL_URL_INVALID"] }).success).toBe(false);
+    expect(JobSourceHealthCheckSchema.safeParse({ ...base, selectedDetailCount: 4 }).success).toBe(false);
+    expect(JobSourceHealthCheckSchema.safeParse({ ...base, requestAttemptCount: 0 }).success).toBe(false);
+    expect(JobSourceHealthCheckSchema.safeParse({ ...base, impact: { scope: "none", affectedCount: 0 } }).success).toBe(false);
+    expect(JobSourceHealthCheckSchema.safeParse({ ...base, impact: { scope: "job_details", affectedCount: 0 } }).success).toBe(false);
+    expect(JobSourceHealthProjectionSchema.safeParse({ ...unchecked, suggestedAction: "none" }).success).toBe(false);
+    expect(JobSourceHealthProjectionSchema.safeParse({ ...unchecked, runId }).success).toBe(false);
+    expect(JobSourceHealthProjectionSchema.safeParse({ ...unchecked, state: "disabled", status: "healthy", runId, lastCheckedAt: now }).success).toBe(false);
+    expect(JobSourceHealthProjectionSchema.safeParse({
+      ...unchecked, state: "disabled", status: "disabled", runId, lastCheckedAt: now,
+      reasonCodes: ["SOURCE_UNREACHABLE"], impact: { scope: "entire_source", affectedCount: null }, suggestedAction: "reenable_source",
+    }).success).toBe(false);
+  });
+
+  it("保留 legacy 详情的原始输出，不投射 v3 的来源检查字段", () => {
+    const parsed = AgentRunDetailSchema.parse(detail);
+
+    expect(parsed).toEqual(detail);
+    expect("sourceChecks" in parsed).toBe(false);
   });
 
   it("将 Fake v1 与 Public v2 严格联合用于启动、详情和 latest 响应", () => {

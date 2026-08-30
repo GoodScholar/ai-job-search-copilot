@@ -577,12 +577,12 @@ export const agentRuns = pgTable("agent_runs", {
   check("agent_runs_aggregate_nonnegative", sql`${table.activeDurationMs} >= 0 and ${table.toolCallCount} >= 0 and ${table.sourceRequestCount} >= 0 and ${table.modelCallCount} >= 0 and ${table.inputTokenCount} >= 0 and ${table.outputTokenCount} >= 0 and ${table.totalTokenCount} >= 0 and ${table.resultCount} >= 0`),
   check("agent_runs_total_tokens_check", sql`${table.totalTokenCount} = ${table.inputTokenCount} + ${table.outputTokenCount}`),
   check("agent_runs_fake_model_usage_check", sql`${table.modelSnapshot} is null and ${table.modelCallCount} = 0 and ${table.inputTokenCount} = 0 and ${table.outputTokenCount} = 0 and ${table.totalTokenCount} = 0`),
-  check("agent_runs_termination_kind_check", sql`${table.terminationKind} is null or ${table.terminationKind} in ('completed', 'cancelled_by_user', 'source_failed', 'content_storage_failed', 'persistence_failed', 'budget_exhausted')`),
+  check("agent_runs_termination_kind_check", sql`${table.terminationKind} is null or ${table.terminationKind} in ('completed', 'completed_with_source_issues', 'cancelled_by_user', 'source_failed', 'content_storage_failed', 'persistence_failed', 'budget_exhausted')`),
   check("agent_runs_termination_budget_dimension_check", sql`(${table.terminationKind} = 'budget_exhausted' and ${table.terminationBudgetDimension} in ('active_duration', 'attempts', 'tool_calls', 'model_calls', 'tokens')) or (${table.terminationKind} is distinct from 'budget_exhausted' and ${table.terminationBudgetDimension} is null)`),
   check("agent_runs_cancelled_step_check", sql`(${table.status} = 'cancelled') = (${table.currentStep} = 'cancelled')`),
   check("agent_runs_termination_mapping_check", sql`coalesce((
     (${table.status} in ('queued', 'running', 'paused') and ${table.terminationKind} is null and ${table.terminationBudgetDimension} is null)
-    or (${table.status} = 'completed' and ((not ${table.usageComplete} and ${table.terminationKind} is null) or (${table.terminationKind} = 'completed' and ${table.failureCode} is null and ${table.terminationBudgetDimension} is null)))
+    or (${table.status} = 'completed' and ((not ${table.usageComplete} and ${table.terminationKind} is null) or (${table.terminationKind} in ('completed', 'completed_with_source_issues') and ${table.failureCode} is null and ${table.terminationBudgetDimension} is null)))
     or (${table.status} = 'cancelled' and ((not ${table.usageComplete} and ${table.terminationKind} is null) or (${table.terminationKind} = 'cancelled_by_user' and ${table.failureCode} is null and ${table.terminationBudgetDimension} is null)))
     or (${table.status} = 'failed' and (
       (not ${table.usageComplete} and ${table.terminationKind} is null)
@@ -838,6 +838,14 @@ export const jobSourceHealthChecks = pgTable("job_source_health_checks", {
   check("job_source_health_checks_status_check", sql`${table.status} in ('healthy', 'zero_valid_results', 'parser_degraded', 'rate_limited', 'hard_failed')`),
   check("job_source_health_checks_reason_codes_array_check", sql`jsonb_typeof(${table.reasonCodes}) = 'array'`),
   check("job_source_health_checks_reason_codes_safe_check", sql`${table.reasonCodes} <@ '["SOURCE_LIST_SCHEMA_INVALID", "SOURCE_DETAIL_FIELDS_MISSING", "SOURCE_DETAIL_URL_INVALID", "SOURCE_DETAIL_IDENTITY_INVALID", "SOURCE_RATE_LIMITED", "SOURCE_AUTH_FAILED", "SOURCE_TIMEOUT", "SOURCE_UNREACHABLE", "SOURCE_SERVER_ERROR", "SOURCE_POLICY_REJECTED"]'::jsonb`),
-  check("job_source_health_checks_impact_scope_check", sql`${table.impactScope} in ('none', 'entire_source', 'job_details') and (${table.impactAffectedCount} is not null or ${table.impactScope} = 'entire_source')`),
-  check("job_source_health_checks_counts_nonnegative", sql`${table.observedPostingCount} >= 0 and ${table.selectedDetailCount} >= 0 and ${table.validDetailCount} >= 0 and ${table.requestAttemptCount} >= 0 and (${table.impactAffectedCount} is null or ${table.impactAffectedCount} >= 0)`),
+  check("job_source_health_checks_source_id_check", sql`${table.sourceId} ~ '^greenhouse:[A-Za-z0-9_-]{1,128}$'`),
+  check("job_source_health_checks_impact_scope_check", sql`(${table.impactScope} = 'none' and ${table.impactAffectedCount} is null) or (${table.impactScope} = 'job_details' and ${table.impactAffectedCount} >= 1) or (${table.impactScope} = 'entire_source' and (${table.impactAffectedCount} is null or ${table.impactAffectedCount} >= 0))`),
+  check("job_source_health_checks_counts_nonnegative", sql`${table.observedPostingCount} >= 0 and ${table.selectedDetailCount} >= 0 and ${table.validDetailCount} >= 0 and ${table.requestAttemptCount} >= 1 and ${table.validDetailCount} <= ${table.selectedDetailCount} and ${table.selectedDetailCount} <= ${table.observedPostingCount}`),
+  check("job_source_health_checks_status_evidence_check", sql`
+    (${table.status} = 'healthy' and ${table.validDetailCount} >= 1 and ${table.reasonCodes} = '[]'::jsonb and ${table.impactScope} = 'none' and ${table.impactAffectedCount} is null)
+    or (${table.status} = 'zero_valid_results' and ${table.validDetailCount} = 0 and ${table.reasonCodes} = '[]'::jsonb and ${table.impactScope} = 'none' and ${table.impactAffectedCount} is null)
+    or (${table.status} = 'parser_degraded' and ${table.reasonCodes} ?| array['SOURCE_LIST_SCHEMA_INVALID', 'SOURCE_DETAIL_FIELDS_MISSING', 'SOURCE_DETAIL_URL_INVALID', 'SOURCE_DETAIL_IDENTITY_INVALID'])
+    or (${table.status} = 'rate_limited' and ${table.reasonCodes} = '["SOURCE_RATE_LIMITED"]'::jsonb)
+    or (${table.status} = 'hard_failed' and ${table.reasonCodes} ?| array['SOURCE_AUTH_FAILED', 'SOURCE_TIMEOUT', 'SOURCE_UNREACHABLE', 'SOURCE_SERVER_ERROR', 'SOURCE_POLICY_REJECTED'])
+  `),
 ]);
