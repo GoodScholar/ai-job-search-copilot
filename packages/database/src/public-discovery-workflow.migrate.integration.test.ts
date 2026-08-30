@@ -20,4 +20,15 @@ describe("public discovery workflow migration", () => {
     expect(migrationSql).toContain('DISCOVERY_ATTENTION');
     expect(migrationSql).toContain("SOURCE_HEALTH_ATTENTION");
   });
+
+  it("以 additive 0027 固化 v4 result/source issue 的 owner 约束和双唯一结果身份", async () => {
+    const migrationSql = await readFile(fileURLToPath(new URL("../migrations/0027_massive_purple_man.sql", import.meta.url)), "utf8");
+    expect(migrationSql).toContain('CREATE TABLE "job_discovery_run_results"');
+    expect(migrationSql).toContain('CREATE TABLE "job_discovery_source_issues"');
+    expect(migrationSql).toContain('UNIQUE("user_id","run_id","ordinal")');
+    expect(migrationSql).toContain('UNIQUE("user_id","run_id","source_posting_version_id")');
+    expect(migrationSql).toContain('job_discovery_run_results_owner_run_fk');
+    expect(migrationSql).toContain('job_discovery_source_issues_owner_run_fk');
+    expect(migrationSql).toContain('ordinal" between 1 and 5');
+  });
 });
