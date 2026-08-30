@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { Queue } from "bullmq";
 import Redis from "ioredis";
 import { Client as MinioClient } from "minio";
+import { NestFactory } from "@nestjs/core";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { RedisContainer, type StartedRedisContainer } from "@testcontainers/redis";
 import { GenericContainer, type StartedTestContainer, Wait } from "testcontainers";
@@ -343,5 +344,26 @@ describe("CareerImportConsumer", () => {
       .from(careerImports);
     expect(result).toEqual({ status: "failed", failureCode: "CAREER_IMPORT_FACT_LIMIT_EXCEEDED", attemptCount: 1 });
     await expect(database.select({ id: candidateFacts.id }).from(candidateFacts)).resolves.toEqual([]);
+  });
+
+  it("Nest context 关闭时释放 factory owner 的 BullMQ 和 Redis 资源一次", async () => {
+    const closed: string[] = [];
+    const lifecycleConsumer = Object.create(CareerImportConsumer.prototype) as CareerImportConsumer;
+    Object.assign(lifecycleConsumer as object, {
+      worker: { close: async () => { closed.push("worker"); } },
+      redis: {
+        status: "ready",
+        quit: async () => { closed.push("redis"); },
+      },
+    });
+    const context = await NestFactory.createApplicationContext({
+      module: class LifecycleTestModule {},
+      providers: [{ provide: CareerImportConsumer, useValue: lifecycleConsumer }],
+    }, { logger: false });
+
+    await context.close();
+    await context.close();
+
+    expect(closed).toEqual(["worker", "redis"]);
   });
 });

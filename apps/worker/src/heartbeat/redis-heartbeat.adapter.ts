@@ -3,6 +3,7 @@ import {
   WorkerHeartbeatSchema,
   type WorkerHeartbeat,
 } from "@job-copilot/contracts/runtime";
+import type { OnModuleDestroy } from "@nestjs/common";
 import type Redis from "ioredis";
 import {
   WORKER_HEARTBEAT_FRESHNESS_MS,
@@ -11,7 +12,9 @@ import {
   type Heartbeat,
 } from "./heartbeat.js";
 
-export class RedisHeartbeatAdapter implements Heartbeat {
+export class RedisHeartbeatAdapter implements Heartbeat, OnModuleDestroy {
+  private closePromise: Promise<void> | undefined;
+
   constructor(private readonly redis: Redis) {}
 
   async write(heartbeat: WorkerHeartbeat): Promise<void> {
@@ -34,6 +37,15 @@ export class RedisHeartbeatAdapter implements Heartbeat {
   }
 
   async close(): Promise<void> {
+    this.closePromise ??= this.closeResources();
+    return this.closePromise;
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    await this.close();
+  }
+
+  private async closeResources(): Promise<void> {
     if (this.redis.status !== "end") {
       await this.redis.quit();
     }

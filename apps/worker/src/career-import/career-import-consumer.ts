@@ -1,13 +1,15 @@
 import { Worker } from "bullmq";
+import type { OnModuleDestroy } from "@nestjs/common";
 import Redis from "ioredis";
 import { CAREER_IMPORT_QUEUE, CareerImportJobSchema } from "@job-copilot/contracts/career-import";
 import type { createCareerImportProcessor } from "@job-copilot/domain/career-imports";
 
 type CareerImportProcessor = ReturnType<typeof createCareerImportProcessor>;
 
-export class CareerImportConsumer {
+export class CareerImportConsumer implements OnModuleDestroy {
   private readonly redis: Redis;
   private readonly worker: Worker;
+  private closePromise: Promise<void> | undefined;
 
   constructor(input: { redisUrl: string; processor: CareerImportProcessor }) {
     this.redis = new Redis(input.redisUrl, { maxRetriesPerRequest: null });
@@ -19,6 +21,15 @@ export class CareerImportConsumer {
   }
 
   async close(): Promise<void> {
+    this.closePromise ??= this.closeResources();
+    return this.closePromise;
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    await this.close();
+  }
+
+  private async closeResources(): Promise<void> {
     await this.worker.close();
     if (this.redis.status !== "end") await this.redis.quit();
   }
