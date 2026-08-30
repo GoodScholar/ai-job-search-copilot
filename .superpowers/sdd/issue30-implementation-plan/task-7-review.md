@@ -1,16 +1,19 @@
 # Task 7 / Slice 6 独立审查
 
-当前结论：`CHANGES_REQUESTED`，不得进入 Slice 7。
+当前结论：`APPROVED`，Slice 6 双轴已达到 `0/0/0`。
 
 - focused base：`b56c3f17eb4240608ef9e82657413485b1b68252`
 - 初审 HEAD：`707d530cf0a9f9636cfbe4a0d97039a7702f97aa`
 - Fix round 1 reviewed HEAD：`050372f8252509a3a6669b67b89dd57535c31596`
 - Fix round 2 reviewed HEAD：`acbb3031b7c309b476a5fc0736b6d8801a9ec95a`
+- Fix round 3 reviewed HEAD：`b65693f4460d3abe78cdbf9779c292f7e591abd5`
 - 初始实现 SHA：`04e8cfc6c419d95a0ff5f0a1b6aeb84d5f147abe`
 - 核心修复 SHA：`7ec543e8e895923052ac06f1c27fd2c90564b14d`
 - 补测 SHA：`249c5df`
 - Fix round 2 核心修复 SHA：`6db2d8f80bfee96caa1a7821004f74712d0c817f`
 - Fix round 2 error-identity 补测 SHA：`1a239c27924b84314357762bc2303de0f33759b1`
+- Fix round 3 实现/测试 SHA：`563a59a`
+- Fix round 3 报告 SHA：`b65693f`
 - 固定最终审查基线仍为：`3a1a3940773921a1a03c3b25ea7baa378c025e83`
 
 以下 Standards/Spec 为 HEAD `707d530` 的初审记录；历次复审与当前裁定见文末。
@@ -158,3 +161,43 @@ Scope creep：`0`。
 - 审查前实现 worktree clean；未运行 root full，未修改产品实现，未 push、创建 PR 或 merge。
 
 最终两轴仍不为 `0/0/0`，因此 Slice 6 **NOT APPROVED**。
+
+## Fix round 3 最终复审（实现 HEAD `b65693f`）
+
+结论：`APPROVED`。
+
+- Standards Critical / Important / Minor：`0 / 0 / 0`
+- Spec Critical / Important / Minor：`0 / 0 / 0`
+- Scope creep：`0`
+
+### Standards
+
+上一轮唯一 Standards Minor 已关闭：`packages/domain/src/verified-job-source-gate.ts` 不再导入未使用的 `JobDiscoveryLeadError`。Round 3 仅在既有 gate 内提取并复用 `cleanupUnreferencedObjects`，测试只增加目标交错回归，报告只记录真实证据；未发现新的 Duplicated Code、Shotgun Surgery、Speculative Generality 或其他 baseline smell，也未违反根 `AGENTS.md` 的简洁、精准修改与可验证要求。
+
+### Spec
+
+上一轮唯一 Spec Important 已关闭：
+
+1. `packages/domain/src/verified-job-source-gate.ts:176-180` 在取得 owner-scoped Lead、query taxonomy 与本地双 hash 后，先确定本 Lead 的稳定 UUIDv8 generation 与 recovery keys；不同 Lead 仍因 `leadId` 不同而得到不同 generation。
+2. 当同 owner/canonical/content 已有另一兼容 Version 时，`:201-217` 先完成 Posting ID、双 hash、raw references 与 exact `normalizedData == {}` 校验，再于**当前 account advisory lock transaction** 内调用 `cleanupUnreferencedObjects`。`:127-143` 扫描该 owner 全部 Version references，只删除未被引用的本 Lead recovery keys；B Version 的 refs 因 reference set 保护不受影响。
+3. typed delete unavailable 映射为 `VERIFIED_JOB_SOURCE_CLEANUP_REQUIRED`，unknown delete 保持原 error identity；两者都在 `verifyAndAttributeInTransaction` 之前抛出，transaction 回滚，因此 A Lead 保持 pending。对象不存在时 delete 的幂等语义由成功 replay 覆盖。
+4. `packages/domain/src/verified-job-source-gate.integration.test.ts:335-398` 真实建立 A cleanup failure → B 不同 UUIDv8 generation 成功提交 → A same-input retry 的确定性交错：先分别断言 unknown/typed cleanup 失败及 A pending，再断言 A keys 被删除、B raw/visible refs 仍存在、A/B 两条 Attribution 均存在，最后 replay 返回同一事实且零新增 put。
+
+### 原不变量非回归
+
+- public repository/API 枚举仍无 reject/verify/transaction injection；package subpath probe 对 internal transitions 返回 `ERR_PACKAGE_PATH_NOT_EXPORTED`，verified/terminal public seam 仍唯一。
+- candidate fingerprint/query/URL、extract proof、requested/final/canonical SafeNormalized + origin、固定 taxonomy/ATS exact policy、local page-only provenance、canonical/version dedup、owner/state/replay、transaction 原子性、unknown error identity 与 `normalizedData == {}` 回归均保持 Green。
+- success/rejected 路径仍不创建 Opportunity 或 AgentRunResult；privacy 矩阵仍覆盖 source-health/audit/object。Round 3 cumulative diff 未改 source-health、v1-v3 workflow/adapter/recovery 或 UI。
+
+### Fresh 验证
+
+- 运行前检查：无其他 Vitest/Testcontainers 进程或活跃测试容器。
+- public/internal/gate focused：`3 files / 24 tests passed`。
+- source-access regression：`2 files / 125 tests passed`。
+- contracts regression：`12 files / 108 tests passed`。
+- `@job-copilot/contracts`、`@job-copilot/domain`、`@job-copilot/source-access`、`@job-copilot/database` typecheck：均退出 `0`。
+- internal transition package subpath probe：`ERR_PACKAGE_PATH_NOT_EXPORTED`。
+- `git diff --check b56c3f1..b65693f` 与 `git diff --check a902b79..b65693f`：均退出 `0`；报告无 trailing whitespace，focused 计数与本轮 fresh 结果一致。
+- 未运行 root full；未修改产品实现，未 push、创建 PR 或 merge。
+
+最终 Standards 与 Spec 均为 `0/0/0`，因此 Slice 6 **APPROVED**。
