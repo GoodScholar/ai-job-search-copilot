@@ -31,6 +31,12 @@ it("来源关注项使用诊断链接与保留来源动作文字", () => {
   expect(screen.getByRole("button", { name: "保留来源，稍后重试" })).toBeEnabled();
 });
 
+it("公开岗位发现关注项精确落到指定运行详情，不复用 Watchlist 诊断", () => {
+  render(<AgentInboxPanel items={[{ ...item, kind: "discovery_attention", reasonCode: "DISCOVERY_ATTENTION", budgetDimension: null, title: "公开岗位发现需要关注", message: "部分公开岗位发现未完成。可查看本次运行诊断。", targetHref: `/home?runId=${runId}#agent-run` }]} onResolved={vi.fn()} />);
+  expect(screen.getByRole("link", { name: "查看本次运行诊断" })).toHaveAttribute("href", `/home?runId=${runId}#agent-run`);
+  expect(screen.getByRole("button", { name: "标记已处理：公开岗位发现需要关注" })).toBeEnabled();
+});
+
 it.each(["restart_run", "resume_run", "cancel_run", "dismiss"] as const)("%s 动作失败时保留事项与 UUID，成功后移除但保留成功播报", async (action) => {
   const user = userEvent.setup();
   const resolved = { ...item, status: "resolved" as const, availableActions: [], resolvedAt: now };

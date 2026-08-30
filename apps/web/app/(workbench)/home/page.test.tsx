@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   getWorkbenchHome: vi.fn(),
   getJobTargets: vi.fn(),
   getLatestAgentRun: vi.fn(),
+  getAgentRun: vi.fn(),
   getOpenAgentInbox: vi.fn(),
   getJobDiscoverySchedule: vi.fn(),
   unstableRethrow: vi.fn((error: unknown) => {
@@ -13,7 +14,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/server/workbench", () => ({ getWorkbenchHome: mocks.getWorkbenchHome }));
 vi.mock("@/lib/server/job-targets", () => ({ getJobTargets: mocks.getJobTargets }));
-vi.mock("@/lib/server/agent-runs", () => ({ getLatestAgentRun: mocks.getLatestAgentRun }));
+vi.mock("@/lib/server/agent-runs", () => ({ getLatestAgentRun: mocks.getLatestAgentRun, getAgentRun: mocks.getAgentRun }));
 vi.mock("@/lib/server/agent-inbox", () => ({ getOpenAgentInbox: mocks.getOpenAgentInbox }));
 vi.mock("@/lib/server/job-discovery-schedules", () => ({ getJobDiscoverySchedule: mocks.getJobDiscoverySchedule }));
 vi.mock("next/navigation", () => ({ unstable_rethrow: mocks.unstableRethrow }));
@@ -60,4 +61,33 @@ it("starts the four authenticated first reads in parallel and passes their stric
 
   const page = await pendingPage;
   expect(page.props).toMatchObject({ home, targets, initialRun: null, inbox });
+});
+
+it("只为合法指定 runId 读取 owner-bound 运行，且不回退到 latest", async () => {
+  const home = { account: { userId: "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3" }, summary: { recommendations: 0, pendingFacts: 0, runningAgentRuns: 0, applications: 0 } };
+  const targets = { suggestions: [], targets: [] };
+  const inbox = { items: [] };
+  const runId = "4f8c6eb3-2b92-4d91-aad4-959b7d4cd7a3";
+  mocks.getWorkbenchHome.mockResolvedValue(home);
+  mocks.getJobTargets.mockResolvedValue(targets);
+  mocks.getOpenAgentInbox.mockResolvedValue(inbox);
+  mocks.getAgentRun.mockResolvedValue(null);
+
+  const page = await WorkbenchHomePage({ searchParams: Promise.resolve({ runId }) });
+
+  expect(mocks.getAgentRun).toHaveBeenCalledWith(runId);
+  expect(mocks.getLatestAgentRun).not.toHaveBeenCalled();
+  expect(page.props).toMatchObject({ initialRun: null });
+});
+
+it("拒绝非法或数组 runId，且不把它们替换为 latest", async () => {
+  mocks.getWorkbenchHome.mockResolvedValue({ account: { userId: "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3" }, summary: { recommendations: 0, pendingFacts: 0, runningAgentRuns: 0, applications: 0 } });
+  mocks.getJobTargets.mockResolvedValue({ suggestions: [], targets: [] });
+  mocks.getOpenAgentInbox.mockResolvedValue({ items: [] });
+
+  const page = await WorkbenchHomePage({ searchParams: Promise.resolve({ runId: ["not-a-uuid"] }) });
+
+  expect(mocks.getAgentRun).not.toHaveBeenCalled();
+  expect(mocks.getLatestAgentRun).not.toHaveBeenCalled();
+  expect(page.props).toMatchObject({ initialRun: null });
 });

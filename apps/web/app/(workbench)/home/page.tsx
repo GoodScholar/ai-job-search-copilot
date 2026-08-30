@@ -3,7 +3,7 @@ import { WorkbenchHomeView } from "@/components/workbench/workbench-home-view";
 import { unstable_rethrow } from "next/navigation";
 import { getWorkbenchHome } from "@/lib/server/workbench";
 import { getJobTargets } from "@/lib/server/job-targets";
-import { getLatestAgentRun } from "@/lib/server/agent-runs";
+import { getAgentRun, getLatestAgentRun } from "@/lib/server/agent-runs";
 import { getOpenAgentInbox } from "@/lib/server/agent-inbox";
 import type { Metadata } from "next";
 
@@ -11,15 +11,23 @@ export const metadata: Metadata = {
   title: "工作台 | AI Job Search Copilot",
 };
 
-export default async function WorkbenchHomePage() {
+type WorkbenchHomePageProps = { searchParams: Promise<{ runId?: string | string[] }> };
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+export default async function WorkbenchHomePage({ searchParams }: WorkbenchHomePageProps = { searchParams: Promise.resolve({}) }) {
   let home: WorkbenchHome;
   let targets;
-  let latestRun;
+  let initialRun;
   let inbox;
 
   try {
-    [home, targets, latestRun, inbox] = await Promise.all([
-      getWorkbenchHome(), getJobTargets(), getLatestAgentRun(), getOpenAgentInbox(),
+    const requestedRunId = (await searchParams).runId;
+    const hasRequestedRun = requestedRunId !== undefined;
+    const runPromise = typeof requestedRunId === "string" && uuid.test(requestedRunId)
+      ? getAgentRun(requestedRunId)
+      : hasRequestedRun ? Promise.resolve(null) : getLatestAgentRun().then((response) => response.run);
+    [home, targets, initialRun, inbox] = await Promise.all([
+      getWorkbenchHome(), getJobTargets(), runPromise, getOpenAgentInbox(),
     ]);
   } catch (error) {
     unstable_rethrow(error);
@@ -35,5 +43,5 @@ export default async function WorkbenchHomePage() {
     );
   }
 
-  return <WorkbenchHomeView home={home} inbox={inbox} initialRun={latestRun.run} targets={targets} />;
+  return <WorkbenchHomeView home={home} inbox={inbox} initialRun={initialRun} targets={targets} />;
 }

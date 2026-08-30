@@ -10,6 +10,7 @@ import {
   type AgentRunEventType,
   type AgentRunSseEvent,
 } from "@job-copilot/contracts/agent-runs";
+import { LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION } from "@job-copilot/contracts/job-discovery";
 import type { JobTarget } from "@job-copilot/contracts/job-targets";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -116,6 +117,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
     : activeTargets.find((target) => target.priority === "primary")?.targetId ?? activeTargets[0]?.targetId ?? "";
   const [selectedTargetId, setSelectedTargetId] = useState(initialTargetId);
   const [run, setRun] = useState(initialRun);
+  const isLayeredPublicRun = run?.workflowVersion === LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION;
   const [timeline, setTimeline] = useState<TimelineEvent[]>(() => detailTimeline(initialRun));
   const [message, setMessage] = useState("");
   const [isStarting, setIsStarting] = useState(false);
@@ -347,7 +349,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
   }
 
   return (
-    <section aria-labelledby="agent-run-title" className="workbench-ledger agent-run-panel">
+    <section aria-labelledby="agent-run-title" className="workbench-ledger agent-run-panel" id="agent-run">
       <div className="workbench-ledger-heading">
         <p>岗位发现 · 运行记录</p>
         <h2 id="agent-run-title">发现新的岗位机会</h2>
@@ -382,7 +384,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
             <div><dt>匹配规则版本</dt><dd>{run.executionSpec.ruleVersion}</dd></div>
             <div><dt>岗位来源连接版本</dt><dd>{run.executionSpec.adapter}/{run.executionSpec.adapterVersion}</dd></div>
             <div><dt>结果格式版本</dt><dd>{run.executionSpec.outputSchemaVersion}</dd></div>
-            <div><dt>来源范围</dt><dd>{run.executionSpec.sourceScope.sources.length} 个固定来源</dd></div>
+            <div><dt>来源范围</dt><dd>{"trustedSources" in run.executionSpec.sourceScope ? `${run.executionSpec.sourceScope.trustedSources.length} 个可信来源，${run.executionSpec.sourceScope.publicDiscovery.queries.length} 个公开发现查询` : `${run.executionSpec.sourceScope.sources.length} 个固定来源`}</dd></div>
             <div><dt>允许的操作范围</dt><dd>{run.executionSpec.toolAllowlist.join("、")}</dd></div>
             <div><dt>模型</dt><dd>本流程未使用模型</dd></div>
           </dl>
@@ -415,7 +417,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
         {message || runStatusLabel(run)}
       </p>
       {run?.status === "completed" && run.termination?.kind === "completed_with_source_issues" ? <p>
-        问题来源 {("sourceChecks" in run ? run.sourceChecks : []).filter((check) => ["parser_degraded", "rate_limited", "hard_failed"].includes(check.status)).length} 个。 <Link className="workbench-touch-target" href={`/profile/targets/${run.targetId}/watchlist#source-health`}>查看来源诊断</Link>
+        {isLayeredPublicRun ? <>公开岗位发现存在待关注诊断。 <Link className="workbench-touch-target" href={`/home?runId=${run.runId}#agent-run`}>查看本次运行诊断</Link></> : <>问题来源 {("sourceChecks" in run ? run.sourceChecks : []).filter((check) => ["parser_degraded", "rate_limited", "hard_failed"].includes(check.status)).length} 个。 <Link className="workbench-touch-target" href={`/profile/targets/${run.targetId}/watchlist#source-health`}>查看来源诊断</Link></>}
       </p> : null}
 
       {timeline.length > 0 ? (
@@ -433,11 +435,11 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
           <ol>
             {run.results.map((result) => <li key={result.resultId}>
               <article>
-                <p>{result.company ?? "公司待确认"}</p>
-                <h4>{result.title ?? "岗位名称待确认"}</h4>
+                <p>{"company" in result ? result.company ?? "公司待确认" : "已验证公开岗位来源"}</p>
+                <h4>{"title" in result ? result.title ?? "岗位名称待确认" : "已验证岗位"}</h4>
                 <dl>
-                  <div><dt>地点</dt><dd>{result.location ?? "未注明"}</dd></div>
-                  <div><dt>发布时间</dt><dd>{result.postedAt ? new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium" }).format(new Date(result.postedAt)) : "未注明"}</dd></div>
+                  {"location" in result ? <><div><dt>地点</dt><dd>{result.location ?? "未注明"}</dd></div>
+                  <div><dt>发布时间</dt><dd>{result.postedAt ? new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium" }).format(new Date(result.postedAt)) : "未注明"}</dd></div></> : null}
                   <div><dt>来源</dt><dd>{sourceLabels[result.sourceType] ?? "公开岗位来源"}</dd></div>
                 </dl>
               </article>

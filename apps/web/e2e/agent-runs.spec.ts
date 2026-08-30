@@ -92,7 +92,7 @@ function runStatus(page: Page) {
 
 function assertExecutionEvidence(run: AgentRunDetail): void {
   expect(run.targetSnapshot.constraints.roleFamily).toBe("AI 应用工程师");
-  expect(run.executionSpec.sourceScope.sources).toEqual(["fake:aurora-careers", "fake:orbit-careers"]);
+  expect("sources" in run.executionSpec.sourceScope ? run.executionSpec.sourceScope.sources : []).toEqual(["fake:aurora-careers", "fake:orbit-careers"]);
   expect(run.executionSpec.ruleVersion).toBe("fake-job-discovery-rules-v1");
   expect(run.executionSpec.budget).toMatchObject({ maxAttempts: 3, maxToolCalls: 10, maxResults: 5 });
   expect(run.usage.complete).toBe(true);
