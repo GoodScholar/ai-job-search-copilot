@@ -96,6 +96,14 @@ describe("job discovery lead repository", () => {
       .resolves.toEqual([expect.objectContaining({ expiresAt: new Date("2026-09-29T12:00:00.000Z"), state: "pending" })]);
   });
 
+  it("携旧 claim authority 的 pending 写入在 claim 被接管后原子拒绝", async () => {
+    const subject = await owner("claim-stale"); const oldToken = crypto.randomUUID();
+    await database.update(agentRuns).set({ status: "running", startedAt: now, claimToken: oldToken, claimExpiresAt: new Date(Date.now() + 60_000), activeSliceStartedAt: now }).where(eq(agentRuns.id, subject.runId));
+    await database.update(agentRuns).set({ claimToken: crypto.randomUUID(), claimExpiresAt: new Date(Date.now() + 60_000) }).where(eq(agentRuns.id, subject.runId));
+    await expect(repository().recordPending({ ...pendingInput(subject), claimToken: oldToken })).rejects.toMatchObject({ code: "JOB_DISCOVERY_CLAIM_STALE" });
+    await expect(database.select().from(jobDiscoveryLeads).where(eq(jobDiscoveryLeads.runId, subject.runId))).resolves.toEqual([]);
+  });
+
   it("拒绝敏感 URL 与未知输入字段，不持久化 AnySearch 内容", async () => {
     const subject = await owner("privacy");
     const secret = "secret-token-sentinel";
