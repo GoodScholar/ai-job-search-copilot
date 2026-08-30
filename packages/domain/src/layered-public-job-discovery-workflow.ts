@@ -23,6 +23,11 @@ function candidateFingerprint(url: string) { return createHash("sha256").update(
 function matchesAllowedDomain(url: string, domains: readonly string[]) { if (domains.length === 0) return true; const host = new URL(url).hostname; return domains.some((domain) => host === domain || host.endsWith(`.${domain}`)); }
 function rejection(error: unknown): RejectionCode | null { const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : ""; return ["JOB_PAGE_URL_INVALID", "JOB_PAGE_TARGET_REJECTED", "JOB_PAGE_REDIRECT_INVALID", "JOB_PAGE_LOGIN_REQUIRED", "JOB_PAGE_LISTING", "JOB_PAGE_EXPIRED", "JOB_PAGE_UNRECOGNIZED", "JOB_PAGE_RESPONSE_TOO_LARGE", "JOB_PAGE_CONTENT_TYPE_INVALID"].includes(code) ? code as RejectionCode : null; }
 function retryablePageCode(error: unknown): "JOB_PAGE_TIMEOUT" | "JOB_PAGE_CANCELLED" | "JOB_PAGE_UNREACHABLE" | "JOB_PAGE_RATE_LIMITED" | null { const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : ""; return ["JOB_PAGE_TIMEOUT", "JOB_PAGE_CANCELLED", "JOB_PAGE_UNREACHABLE", "JOB_PAGE_RATE_LIMITED"].includes(code) ? code as "JOB_PAGE_TIMEOUT" | "JOB_PAGE_CANCELLED" | "JOB_PAGE_UNREACHABLE" | "JOB_PAGE_RATE_LIMITED" : null; }
+function aggregateSourceIssues(items: Array<{ provider: "anysearch" | "greenhouse"; code: string; affectedCount: number }>) {
+  const grouped = new Map<string, { provider: "anysearch" | "greenhouse"; code: string; affectedCount: number }>();
+  for (const item of items) { const key = `${item.provider}\u001f${item.code}`; const previous = grouped.get(key); grouped.set(key, { ...item, affectedCount: Math.min(10, (previous?.affectedCount ?? 0) + item.affectedCount) }); }
+  return [...grouped.values()].sort((left, right) => left.provider.localeCompare(right.provider) || left.code.localeCompare(right.code));
+}
 
 /** v4 安全链路；Slice 8 只组装 provider/config，不能改变 pending → extract → fetch → gate 的顺序。 */
 export function createLayeredPublicJobDiscoveryWorkflow(deps: {
@@ -65,6 +70,6 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
         }
       }
     }
-    return { hasTrustedSuccess: trusted.verifiedSourcePostingVersionIds.length > 0, branchSuccess: { trusted: trusted.verifiedSourcePostingVersionIds.length > 0, publicDiscovery: publicDiscoverySucceeded }, sourcePostingVersionIds: [...new Set(sourcePostingVersionIds)], trustedSourcePostingVersionIds: trusted.verifiedSourcePostingVersionIds, sourceIssues, diagnostics };
+    return { hasTrustedSuccess: trusted.verifiedSourcePostingVersionIds.length > 0, branchSuccess: { trusted: trusted.verifiedSourcePostingVersionIds.length > 0, publicDiscovery: publicDiscoverySucceeded }, sourcePostingVersionIds: [...new Set(sourcePostingVersionIds)], trustedSourcePostingVersionIds: trusted.verifiedSourcePostingVersionIds, sourceIssues: aggregateSourceIssues(sourceIssues), diagnostics };
   } };
 }
