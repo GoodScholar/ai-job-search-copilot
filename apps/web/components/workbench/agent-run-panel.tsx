@@ -85,6 +85,7 @@ function runStatusLabel(run: AgentRunDetail | null): string {
   if (run.status === "running") return `岗位发现进行中：${run.currentStep in stepLabels ? stepLabels[run.currentStep as keyof typeof stepLabels] : "准备中"}`;
   if (run.status === "paused") return "岗位发现已暂停";
   if (run.status === "cancelled") return "岗位发现已取消";
+  if (run.status === "completed" && run.termination?.kind === "completed_with_source_issues") return "岗位发现部分完成";
   if (run.status === "completed") return `岗位发现完成，共保存 ${run.results.length} 个岗位机会`;
   return failureMessages[run.failureCode ?? "AGENT_RUN_PERSIST_FAILED"];
 }
@@ -413,6 +414,9 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
       <p aria-live="polite" className={message ? "agent-run-live agent-run-live-error" : "agent-run-live"} role="status">
         {message || runStatusLabel(run)}
       </p>
+      {run?.status === "completed" && run.termination?.kind === "completed_with_source_issues" ? <p>
+        问题来源 {("sourceChecks" in run ? run.sourceChecks : []).filter((check) => ["parser_degraded", "rate_limited", "hard_failed"].includes(check.status)).length} 个。 <Link href={`/profile/targets/${run.targetId}/watchlist#source-health`}>查看来源诊断</Link>
+      </p> : null}
 
       {timeline.length > 0 ? (
         <ol aria-label="岗位发现运行时间线" className="agent-run-timeline">

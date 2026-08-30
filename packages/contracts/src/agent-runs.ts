@@ -171,6 +171,16 @@ export const JobSourceHealthProjectionSchema = z.object({
   }
 });
 
+/** 当前 Watchlist 来源的 owner-bound 健康诊断概览。 */
+export const JobSourceHealthOverviewSchema = z.object({
+  targetId: z.uuid(),
+  watchlistVersion: nonnegativeInteger,
+  sources: z.array(JobSourceHealthProjectionSchema).max(50),
+}).strict().superRefine((overview, context) => {
+  const keys = overview.sources.map((source) => `${source.watchlistItemId}:${source.sourceId}`);
+  if (new Set(keys).size !== keys.length) context.addIssue({ code: "custom", path: ["sources"], message: "current sources must be unique" });
+});
+
 export const AgentRunStatusSchema = z.enum(["queued", "running", "paused", "completed", "failed", "cancelled"]);
 export const AgentRunControlStateSchema = z.enum(["none", "pause_requested", "cancel_requested"]);
 export const AgentRunControlActionSchema = z.enum(["pause", "resume", "cancel"]);
@@ -583,6 +593,7 @@ export type PublicAgentRunSourceScope = z.infer<typeof PublicAgentRunSourceScope
 export type PublicSourceHealthAgentRunSourceScope = z.infer<typeof PublicSourceHealthAgentRunSourceScopeSchema>;
 export type JobSourceHealthCheck = z.infer<typeof JobSourceHealthCheckSchema>;
 export type JobSourceHealthProjection = z.infer<typeof JobSourceHealthProjectionSchema>;
+export type JobSourceHealthOverview = z.infer<typeof JobSourceHealthOverviewSchema>;
 export type DiscoveryDetailInput = z.infer<typeof DiscoveryDetailInputSchema>;
 export type DiscoverySearchResult = z.infer<typeof DiscoverySearchResultSchema>;
 export type DiscoveryBatchSearchResult = z.infer<typeof DiscoveryBatchSearchResultSchema>;

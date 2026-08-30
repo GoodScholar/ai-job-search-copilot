@@ -494,6 +494,20 @@ describe("authenticated workbench HTTP API", () => {
     expect(reloaded.json()).toMatchObject({ version: 5, items: [{ itemId, state: "enabled" }] });
   });
 
+  it("仅向所有者返回严格的来源健康概览，并沿用认证与不存在问题体", async () => {
+    const owner = await createSession(app, "source-health-owner");
+    const other = await createSession(app, "source-health-other");
+    const targetId = await createActiveTarget(app, owner.sessionToken, "来源健康 API 工程师");
+    const anonymous = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/job-targets/${targetId}/source-health` });
+    expect(anonymous.statusCode).toBe(401);
+    const owned = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/job-targets/${targetId}/source-health`, headers: bearer(owner.sessionToken) });
+    expect(owned.statusCode).toBe(200);
+    expect(owned.json()).toEqual({ targetId, watchlistVersion: 0, sources: [] });
+    const foreign = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/job-targets/${targetId}/source-health`, headers: bearer(other.sessionToken) });
+    expect(foreign.statusCode).toBe(404);
+    expect(foreign.json()).toEqual({ code: "COMPANY_WATCHLIST_TARGET_NOT_FOUND", message: "求职目标不存在", requestId: expect.any(String) });
+  });
+
   it("拒绝所有凭据或绕过字段，并将缺失条目、重复项和上限固定映射为 404 或 409", async () => {
     const session = await createSession(app, "company-watchlist-errors");
     const targetId = await createActiveTarget(app, session.sessionToken, "Watchlist 错误映射工程师");

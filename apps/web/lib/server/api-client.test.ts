@@ -655,3 +655,17 @@ it("上游非 2xx 且没有响应体时返回稳定 API 错误", async () => {
     problem: undefined,
   });
 });
+
+it("通过 bearer 读取并严格验证来源健康概览", async () => {
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+    targetId, watchlistVersion: 0, sources: [],
+  }), { status: 200 }));
+  const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+
+  await expect(client.getSourceHealth(sessionToken, targetId)).resolves.toEqual({ targetId, watchlistVersion: 0, sources: [] });
+  expect(fetchImpl).toHaveBeenCalledWith(`http://127.0.0.1:3021/v1/job-targets/${targetId}/source-health`, expect.objectContaining({ method: "GET" }));
+  expect(new Headers(fetchImpl.mock.calls[0]![1]?.headers).get("authorization")).toBe(`Bearer ${sessionToken}`);
+
+  fetchImpl.mockResolvedValueOnce(new Response(JSON.stringify({ targetId, watchlistVersion: 0, sources: [], leaked: true }), { status: 200 }));
+  await expect(client.getSourceHealth(sessionToken, targetId)).rejects.toMatchObject({ kind: "invalid_response" });
+});

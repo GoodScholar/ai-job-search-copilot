@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { CompanyWatchlistOverview } from "@job-copilot/contracts/company-watchlists";
+import type { JobSourceHealthOverview } from "@job-copilot/contracts/agent-runs";
 
 import { CompanyWatchlistView } from "./company-watchlist-view";
 
@@ -28,6 +29,22 @@ it("为空 Watchlist 呈现目标角色、唯一新增提交和固定安全提�
   expect(submitButtons[0]).toHaveAccessibleName("保存目标公司");
   expect(submitButtons[0]).toHaveClass("workbench-touch-target");
   expect(screen.getByText("不要填写账号、密码、Cookie、验证码或绕过登录限制的说明。")).toBeVisible();
+});
+
+it("逐来源以文字呈现七种诊断状态、时间、影响和建议动作", () => {
+  const states: JobSourceHealthOverview["sources"] = [
+    { watchlistItemId: crypto.randomUUID(), sourceId: "greenhouse:source0", name: "来源 0", state: "enabled", status: "healthy", runId: crypto.randomUUID(), reasonCodes: [], impact: { scope: "none", affectedCount: null }, lastCheckedAt: "2026-08-30T00:00:00.000Z", suggestedAction: "none" },
+    { watchlistItemId: crypto.randomUUID(), sourceId: "greenhouse:source1", name: "来源 1", state: "enabled", status: "zero_valid_results", runId: crypto.randomUUID(), reasonCodes: [], impact: { scope: "none", affectedCount: null }, lastCheckedAt: "2026-08-30T00:00:00.000Z", suggestedAction: "wait_for_next_run" },
+    { watchlistItemId: crypto.randomUUID(), sourceId: "greenhouse:source2", name: "来源 2", state: "enabled", status: "parser_degraded", runId: crypto.randomUUID(), reasonCodes: ["SOURCE_DETAIL_FIELDS_MISSING"], impact: { scope: "entire_source", affectedCount: null }, lastCheckedAt: "2026-08-30T00:00:00.000Z", suggestedAction: "retry_or_disable" },
+    { watchlistItemId: crypto.randomUUID(), sourceId: "greenhouse:source3", name: "来源 3", state: "enabled", status: "rate_limited", runId: crypto.randomUUID(), reasonCodes: ["SOURCE_RATE_LIMITED"], impact: { scope: "entire_source", affectedCount: null }, lastCheckedAt: "2026-08-30T00:00:00.000Z", suggestedAction: "retry_later" },
+    { watchlistItemId: crypto.randomUUID(), sourceId: "greenhouse:source4", name: "来源 4", state: "enabled", status: "hard_failed", runId: crypto.randomUUID(), reasonCodes: ["SOURCE_SERVER_ERROR"], impact: { scope: "entire_source", affectedCount: null }, lastCheckedAt: "2026-08-30T00:00:00.000Z", suggestedAction: "retry_or_disable" },
+    { watchlistItemId: crypto.randomUUID(), sourceId: "greenhouse:source5", name: "来源 5", state: "disabled", status: "disabled", runId: null, reasonCodes: [], impact: { scope: "none", affectedCount: null }, lastCheckedAt: null, suggestedAction: "reenable_source" },
+    { watchlistItemId: crypto.randomUUID(), sourceId: "greenhouse:source6", name: "来源 6", state: "enabled", status: null, runId: null, reasonCodes: [], impact: { scope: "none", affectedCount: null }, lastCheckedAt: null, suggestedAction: "wait_for_next_run" },
+  ];
+  render(<CompanyWatchlistView initialOverview={overview()} initialSourceHealth={{ targetId, watchlistVersion: 0, sources: states }} />);
+  ["健康", "暂无有效岗位", "解析异常", "访问受限", "来源不可用", "已停用", "尚未检查", "无需处理", "等待下次发现", "稍后重试", "稍后重试或停用来源", "可重新启用来源"].forEach((text) => expect(screen.getAllByText(text, { exact: false }).length).toBeGreaterThan(0));
+  expect(screen.getAllByText("影响范围：整个来源")).toHaveLength(3);
+  expect(screen.getAllByText("最后检查：尚未检查")).toHaveLength(2);
 });
 
 it("分别说明缺少名称、无效 URL、域名不匹配和凭据型 URL", async () => {

@@ -28,6 +28,7 @@ import {
   AgentRunTargetSnapshotSchema,
   AgentRunUsageSchema,
   JobSourceHealthCheckSchema,
+  JobSourceHealthOverviewSchema,
   JobSourceHealthProjectionSchema,
   SourceHealthDetailResultSchema,
   SourceHealthListResultSchema,
@@ -235,6 +236,10 @@ describe("agent run contracts", () => {
       state: "enabled", status: null, runId: null, reasonCodes: [], impact: { scope: "none", affectedCount: null },
       lastCheckedAt: null, suggestedAction: "wait_for_next_run",
     }).status).toBeNull();
+    expect(JobSourceHealthOverviewSchema.parse({
+      targetId: runTargetSnapshot.targetId, watchlistVersion: 1,
+      sources: [{ watchlistItemId: sourceCheck.watchlistItemId, sourceId: sourceCheck.sourceId, name: "Example AI", state: "disabled", status: "disabled", runId: null, reasonCodes: [], impact: { scope: "none", affectedCount: null }, lastCheckedAt: null, suggestedAction: "reenable_source" }],
+    }).sources).toHaveLength(1);
     const v3Detail = {
       ...v3Summary,
       executionSpec: v3ExecutionSpec,

@@ -13,6 +13,7 @@ import {
 } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
 import { createCompanyWatchlistCommands, createCompanyWatchlistQueries } from "./company-watchlists";
+import { createSourceHealthQueries } from "./source-health";
 
 const now = new Date("2026-08-30T12:00:00.000Z");
 
@@ -222,5 +223,27 @@ describe("company watchlists", () => {
       expectedVersion: 0, canonicalCompanyName: "Inactive", careersUrl: "https://inactive.test", allowedDomains: ["inactive.test"], sourceNote: null,
     } })).rejects.toMatchObject({ code: "COMPANY_WATCHLIST_TARGET_INACTIVE" });
     await expect(database.select().from(companyWatchlists).where(eq(companyWatchlists.targetId, inactive.targetId))).resolves.toEqual([]);
+  });
+
+  it("来源健康查询只投影当前 Watchlist：未检查、停用覆盖与外部所有者均安全", async () => {
+    const { userId, targetId } = await activeTarget();
+    const initial = await commands().addItem({ userId, targetId, requestId: crypto.randomUUID(), command: {
+      expectedVersion: 0, canonicalCompanyName: "Health Board", careersUrl: "https://boards.greenhouse.io/health-board",
+      allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null,
+    } });
+    const item = initial.items[0]!;
+    const queries = createSourceHealthQueries({ db: database });
+
+    await expect(queries.get({ userId, targetId })).resolves.toMatchObject({ targetId, watchlistVersion: 1, sources: [{
+      watchlistItemId: item.itemId, sourceId: "greenhouse:health-board", state: "enabled", status: null,
+      runId: null, reasonCodes: [], impact: { scope: "none", affectedCount: null }, lastCheckedAt: null, suggestedAction: "wait_for_next_run",
+    }] });
+    const disabled = await commands().setItemState({ userId, targetId, itemId: item.itemId, requestId: crypto.randomUUID(), command: { expectedVersion: 1, state: "disabled" } });
+    await expect(queries.get({ userId, targetId })).resolves.toMatchObject({ watchlistVersion: disabled.version, sources: [{
+      watchlistItemId: item.itemId, state: "disabled", status: "disabled", runId: null, reasonCodes: [], lastCheckedAt: null, suggestedAction: "reenable_source",
+    }] });
+    const foreignUserId = crypto.randomUUID();
+    await database.insert(jobAccounts).values({ id: foreignUserId });
+    await expect(queries.get({ userId: foreignUserId, targetId })).rejects.toMatchObject({ code: "COMPANY_WATCHLIST_TARGET_NOT_FOUND" });
   });
 });

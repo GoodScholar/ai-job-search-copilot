@@ -53,6 +53,7 @@ import {
 import { WorkbenchHomeSchema, type WorkbenchHome } from "@job-copilot/contracts/workbench";
 import {
   AgentRunDetailSchema,
+  JobSourceHealthOverviewSchema,
   AgentRunSseCursorSchema,
   ControlAgentRunCommandSchema,
   ControlAgentRunResponseSchema,
@@ -60,6 +61,7 @@ import {
   StartAgentRunCommandSchema,
   StartAgentRunResponseSchema,
   type AgentRunDetail,
+  type JobSourceHealthOverview,
   type ControlAgentRunCommand,
   type ControlAgentRunResponse,
   type StartAgentRunCommand,
@@ -333,6 +335,15 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
         throw new ApiClientError("api", problem?.message ?? "无法读取目标公司 Watchlist", response.status, problem ?? undefined);
       }
       return parseSuccess(response, CompanyWatchlistOverviewSchema);
+    },
+
+    async getSourceHealth(sessionToken: string, targetId: string): Promise<JobSourceHealthOverview> {
+      const response = await request(`/v1/job-targets/${targetId}/source-health`, { method: "GET", headers: { authorization: `Bearer ${sessionToken}` } });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法读取来源诊断", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, JobSourceHealthOverviewSchema);
     },
 
     async addCompanyWatchlistItem(sessionToken: string, targetId: string, command: AddCompanyWatchlistItemCommand): Promise<CompanyWatchlistOverview> {

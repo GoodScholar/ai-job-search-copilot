@@ -25,6 +25,12 @@ it("把开放事项作为语义化 article 呈现，并让调整目标不自动�
   expect(screen.getByRole("button", { name: "标记已处理：岗位发现预算已用尽" })).toBeEnabled();
 });
 
+it("来源关注项使用诊断链接与保留来源动作文字", () => {
+  render(<AgentInboxPanel items={[{ ...item, kind: "source_attention", reasonCode: "SOURCE_HEALTH_ATTENTION", budgetDimension: null, title: "部分来源需要关注", message: "部分岗位来源未完成检查。可查看诊断、稍后重试或停用来源。", targetHref: "/profile/targets/d194d0ce-fc7e-45db-9425-e8ff4eaf8c08/watchlist#source-health" }]} onResolved={vi.fn()} />);
+  expect(screen.getByRole("link", { name: "查看来源诊断" })).toHaveAttribute("href", expect.stringContaining("#source-health"));
+  expect(screen.getByRole("button", { name: "保留来源，稍后重试" })).toBeEnabled();
+});
+
 it.each(["restart_run", "resume_run", "cancel_run", "dismiss"] as const)("%s 动作失败时保留事项与 UUID，成功后移除但保留成功播报", async (action) => {
   const user = userEvent.setup();
   const resolved = { ...item, status: "resolved" as const, availableActions: [], resolvedAt: now };

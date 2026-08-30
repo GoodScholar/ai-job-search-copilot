@@ -2,6 +2,7 @@ import { expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   getCompanyWatchlist: vi.fn(),
+  getSourceHealth: vi.fn(),
   view: vi.fn(() => null),
   notFound: vi.fn(() => { throw new Error("NEXT_NOT_FOUND"); }),
   unstableRethrow: vi.fn((error: unknown) => {
@@ -10,6 +11,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/server/company-watchlists", () => ({ getCompanyWatchlist: mocks.getCompanyWatchlist }));
+vi.mock("@/lib/server/source-health", () => ({ getSourceHealth: mocks.getSourceHealth }));
 vi.mock("@/components/workbench/company-watchlist-view", () => ({ CompanyWatchlistView: mocks.view }));
 vi.mock("next/navigation", () => ({ notFound: mocks.notFound, unstable_rethrow: mocks.unstableRethrow }));
 
@@ -30,14 +32,17 @@ it("保留 Next 控制流错误并声明 Watchlist 页面元数据", async () =>
 it("将服务端已验证概览传给客户端视图", async () => {
   const overview = { target: { targetId, targetVersion: 1, targetState: "active", roleFamily: "AI 应用工程" }, version: 0, items: [] };
   mocks.getCompanyWatchlist.mockResolvedValue(overview);
+  mocks.getSourceHealth.mockResolvedValue({ targetId, watchlistVersion: 0, sources: [] });
 
   const page = await WatchlistPage(context);
 
   expect(page.props.initialOverview).toEqual(overview);
+  expect(page.props.initialSourceHealth).toEqual({ targetId, watchlistVersion: 0, sources: [] });
 });
 
 it("为可恢复读取失败展示固定重试提示且不泄漏内部详情", async () => {
   mocks.getCompanyWatchlist.mockRejectedValue(new Error("http://internal-api:3021 secret"));
+  mocks.getSourceHealth.mockResolvedValue({ targetId, watchlistVersion: 0, sources: [] });
 
   const page = await WatchlistPage(context);
 

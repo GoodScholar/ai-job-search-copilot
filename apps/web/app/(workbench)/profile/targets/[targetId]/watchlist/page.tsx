@@ -3,6 +3,7 @@ import { notFound, unstable_rethrow } from "next/navigation";
 import { z } from "zod";
 import { CompanyWatchlistView } from "@/components/workbench/company-watchlist-view";
 import { getCompanyWatchlist } from "@/lib/server/company-watchlists";
+import { getSourceHealth } from "@/lib/server/source-health";
 
 export const metadata: Metadata = {
   title: "目标公司 Watchlist | AI Job Search Copilot",
@@ -15,7 +16,8 @@ export default async function WatchlistPage({ params }: { params: Promise<{ targ
   if (!TargetIdSchema.safeParse(targetId).success) notFound();
   let overview;
   try {
-    overview = await getCompanyWatchlist(targetId);
+    const [watchlist, sourceHealth] = await Promise.all([getCompanyWatchlist(targetId), getSourceHealth(targetId)]);
+    overview = { watchlist, sourceHealth };
   } catch (error) {
     unstable_rethrow(error);
     return (
@@ -29,5 +31,5 @@ export default async function WatchlistPage({ params }: { params: Promise<{ targ
       </main>
     );
   }
-  return <CompanyWatchlistView initialOverview={overview} />;
+  return <CompanyWatchlistView initialOverview={overview.watchlist} initialSourceHealth={overview.sourceHealth} />;
 }

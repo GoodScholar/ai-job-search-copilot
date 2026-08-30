@@ -76,11 +76,11 @@ export function AgentInboxPanel({ items, onResolved, onRunUpdated }: {
             <h3>{item.title}</h3>
             <p>{item.message}</p>
             <div className="agent-inbox-actions">
-              {item.targetHref ? <Link className="workbench-ledger-link workbench-touch-target" href={item.targetHref}>调整求职目标</Link> : null}
+              {item.targetHref ? <Link className="workbench-ledger-link workbench-touch-target" href={item.targetHref}>{item.kind === "source_attention" ? "查看来源诊断" : "调整求职目标"}</Link> : null}
               {item.availableActions.map((action) => {
                 const key = `${item.itemId}:${action}`;
                 return <button className="agent-run-action workbench-touch-target" disabled={pending === key} key={action} onClick={() => void actOn(item, action)} type="button">
-                  {pending === key ? "正在处理…" : `${actionLabels[action]}：${item.title}`}
+                  {pending === key ? "正在处理…" : item.kind === "source_attention" && action === "dismiss" ? "保留来源，稍后重试" : `${actionLabels[action]}：${item.title}`}
                 </button>;
               })}
             </div>

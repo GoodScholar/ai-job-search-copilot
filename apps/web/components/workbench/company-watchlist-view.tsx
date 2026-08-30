@@ -7,6 +7,7 @@ import {
   type CompanyWatchlistItem,
   type CompanyWatchlistOverview,
 } from "@job-copilot/contracts/company-watchlists";
+import type { JobSourceHealthOverview } from "@job-copilot/contracts/agent-runs";
 import { useState, type FormEvent } from "react";
 
 type Draft = {
@@ -68,8 +69,12 @@ function validateDraft(draft: Draft, expectedVersion: number): { command?: AddCo
   return parsed.success ? { command: parsed.data } : { message: "请检查目标公司的公开来源信息。" };
 }
 
-export function CompanyWatchlistView({ initialOverview }: { initialOverview: CompanyWatchlistOverview }) {
+const healthLabels = { healthy: "健康", zero_valid_results: "暂无有效岗位", parser_degraded: "解析异常", rate_limited: "访问受限", hard_failed: "来源不可用", disabled: "已停用", unchecked: "尚未检查" } as const;
+const actionLabels = { none: "无需处理", wait_for_next_run: "等待下次发现", retry_later: "稍后重试", retry_or_disable: "稍后重试或停用来源", reenable_source: "可重新启用来源" } as const;
+
+export function CompanyWatchlistView({ initialOverview, initialSourceHealth }: { initialOverview: CompanyWatchlistOverview; initialSourceHealth?: JobSourceHealthOverview }) {
   const [overview, setOverview] = useState(initialOverview);
+  const [sourceHealth, setSourceHealth] = useState(initialSourceHealth);
   const [draft, setDraft] = useState<Draft>(emptyDraft);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
@@ -111,7 +116,17 @@ export function CompanyWatchlistView({ initialOverview }: { initialOverview: Com
       if (!response.ok) { setMessage(response.status === 409 ? conflictMessage : "暂时无法更新 Watchlist，请稍后重试。"); return; }
       const parsed = CompanyWatchlistOverviewSchema.safeParse(await response.json());
       if (!parsed.success) { setMessage("暂时无法更新 Watchlist，请稍后重试。"); return; }
-      setOverview(parsed.data); setMessage(successMessage);
+      setOverview(parsed.data);
+      setSourceHealth((current) => current && {
+        ...current,
+        sources: current.sources.map((source) => {
+          const state = parsed.data.items.find((item) => item.itemId === source.watchlistItemId)?.state ?? source.state;
+          if (state === "disabled") return { ...source, state, status: "disabled", runId: null, reasonCodes: [], impact: { scope: "none", affectedCount: null }, lastCheckedAt: null, suggestedAction: "reenable_source" as const };
+          if (source.state === "disabled") return { ...source, state, status: null, runId: null, reasonCodes: [], impact: { scope: "none", affectedCount: null }, lastCheckedAt: null, suggestedAction: "wait_for_next_run" as const };
+          return { ...source, state };
+        }),
+      });
+      setMessage(successMessage);
     } catch {
       setMessage("暂时无法更新 Watchlist，请稍后重试。");
     } finally {
@@ -179,5 +194,18 @@ export function CompanyWatchlistView({ initialOverview }: { initialOverview: Com
         </article>
       </li>)}</ol> : <p className="profile-next-step">尚未登记目标公司。添加第一个公开来源后，它会成为优先级 01。</p>}
     </section>
+    {sourceHealth ? <section aria-labelledby="source-health-title" className="company-watchlist-section" id="source-health">
+      <h2 id="source-health-title">来源诊断</h2>
+      <p>显示当前 Watchlist 来源最近一次受控检查；尚未检查的启用来源不会被视为健康。</p>
+      <ol className="company-watchlist-list">{sourceHealth.sources.map((source) => <li key={`${source.watchlistItemId}:${source.sourceId}`}>
+        <article aria-label={`${source.name} 来源诊断`}>
+          <h3>{source.name}</h3>
+          <p>状态：{healthLabels[source.status ?? "unchecked"]}</p>
+          <p>最后检查：{source.lastCheckedAt ? new Intl.DateTimeFormat("zh-CN", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Shanghai" }).format(new Date(source.lastCheckedAt)) : "尚未检查"}</p>
+          <p>影响范围：{source.impact.scope === "none" ? "无" : source.impact.scope === "entire_source" ? "整个来源" : `岗位详情（${source.impact.affectedCount} 项）`}</p>
+          <p>建议动作：{actionLabels[source.suggestedAction]}</p>
+        </article>
+      </li>)}</ol>
+    </section> : null}
   </main>;
 }

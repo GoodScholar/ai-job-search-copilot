@@ -13,6 +13,7 @@
     "./career-fact-conflict-review": "./src/career-fact-conflict-review.ts",
     "./job-targets": "./src/job-targets.ts",
     "./company-watchlists": "./src/company-watchlists.ts",
+    "./source-health": "./src/source-health.ts",
     "./job-imports": "./src/job-imports.ts",
     "./job-discovery-schedules": "./src/job-discovery-schedules.ts",
     "./public-job-discovery-sources": "./src/public-job-discovery-sources.ts",
