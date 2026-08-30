@@ -8,7 +8,7 @@ const fingerprint = z.string().regex(/^[a-f0-9]{64}$/u);
 type LayeredSpec = Extract<z.infer<typeof AgentRunExecutionSpecSchema>, { workflowVersion: "layered-public-job-discovery-v1" }>;
 type Query = z.infer<typeof LayeredPublicJobDiscoveryQuerySchema>;
 type Candidate = { normalizedUrl: string; stableFingerprint: string };
-type IssuedCandidateCapability = {
+export type IssuedCandidateCapability = {
   userId: string;
   runId: string;
   queryId: string;
@@ -17,7 +17,7 @@ type IssuedCandidateCapability = {
   stableFingerprint: string;
   allowedSiteDomains: readonly string[];
 };
-type RecoveredCandidateCapability = IssuedCandidateCapability & { leadId: string };
+export type RecoveredCandidateCapability = IssuedCandidateCapability & { leadId: string };
 export type LayeredPublicPhysicalOperation = { kind: "search" | "extract" | "fetch"; identity: string };
 export type LayeredPublicWorkflowDiagnostic =
   | { scope: "provider"; code: string; retryable: boolean; affectedCount: number }
