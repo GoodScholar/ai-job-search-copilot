@@ -1,15 +1,12 @@
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { jobDiscoveryAttributions, jobDiscoveryLeads, type Database } from "@job-copilot/database";
-import {
-  AnySearchLeadSchema,
-  DiscoveryAttributionSchema,
-  PublicJobDiscoveryQueryKindSchema,
-  SafeNormalizedPublicJobUrlSchema,
-} from "@job-copilot/contracts/job-discovery";
+import { PublicJobDiscoveryQueryKindSchema, SafeNormalizedPublicJobUrlSchema } from "@job-copilot/contracts/job-discovery";
 import { z } from "zod";
+import { attributionFact, JobDiscoveryLeadError, leadFact, parseLeadInput } from "./job-discovery-lead-internal";
+
+export { JobDiscoveryLeadError } from "./job-discovery-lead-internal";
 
 const fingerprint = z.string().regex(/^[a-f0-9]{64}$/u);
-const rejectionCode = z.string().regex(/^[A-Z][A-Z0-9_]{1,63}$/u);
 
 const RecordPendingInputSchema = z.object({
   userId: z.uuid(),
@@ -24,28 +21,6 @@ const RecordPendingInputSchema = z.object({
 }).strict();
 const GetLeadInputSchema = z.object({ userId: z.uuid(), leadId: z.uuid(), now: z.date() }).strict();
 const GetAttributionInputSchema = z.object({ userId: z.uuid(), leadId: z.uuid() }).strict();
-
-export class JobDiscoveryLeadError extends Error {
-  constructor(public readonly code:
-    | "JOB_DISCOVERY_LEAD_INVALID_INPUT"
-    | "JOB_DISCOVERY_LEAD_NOT_FOUND"
-    | "JOB_DISCOVERY_LEAD_EXPIRED"
-    | "JOB_DISCOVERY_LEAD_STATE_CONFLICT"
-    | "JOB_DISCOVERY_LEAD_REJECTION_CONFLICT"
-    | "JOB_DISCOVERY_LEAD_VERSION_NOT_FOUND"
-    | "JOB_DISCOVERY_LEAD_ATTRIBUTION_CONFLICT"
-    | "JOB_DISCOVERY_LEAD_IDENTITY_CONFLICT"
-    | "JOB_DISCOVERY_LEAD_RUN_NOT_FOUND"
-    | "JOB_DISCOVERY_LEAD_ID_CONFLICT") {
-    super(code);
-  }
-}
-
-function parseOrThrow<T>(schema: z.ZodType<T>, input: unknown): T {
-  const parsed = schema.safeParse(input);
-  if (!parsed.success) throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_INVALID_INPUT");
-  return parsed.data;
-}
 
 function expiresInThirtyDays(now: Date): Date {
   return new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
@@ -79,37 +54,6 @@ function matchesRecordPendingFacts(row: typeof jobDiscoveryLeads.$inferSelect, i
     && row.normalizedUrl === input.normalizedUrl;
 }
 
-function leadFact(row: typeof jobDiscoveryLeads.$inferSelect) {
-  return AnySearchLeadSchema.parse({
-    leadId: row.id,
-    ownerId: row.userId,
-    runId: row.runId,
-    targetId: row.targetId,
-    provider: row.provider,
-    normalizedUrl: row.normalizedUrl,
-    stableFingerprint: row.stableFingerprint,
-    queryId: row.queryId,
-    queryKind: row.queryKind,
-    queryFingerprint: row.queryFingerprint,
-    expiresAt: row.expiresAt.toISOString(),
-    state: row.state,
-    sourcePostingVersionId: row.sourcePostingVersionId,
-    rejectionCode: row.rejectionCode,
-  });
-}
-
-function attributionFact(row: typeof jobDiscoveryAttributions.$inferSelect) {
-  return DiscoveryAttributionSchema.parse({
-    attributionId: row.id,
-    ownerId: row.userId,
-    runId: row.runId,
-    leadId: row.leadId,
-    queryId: row.queryId,
-    provider: row.provider,
-    sourcePostingVersionId: row.sourcePostingVersionId,
-  });
-}
-
 function projectLead(row: typeof jobDiscoveryLeads.$inferSelect, now: Date) {
   return { ...leadFact(row), expired: now.getTime() >= row.expiresAt.getTime() };
 }
@@ -133,7 +77,7 @@ export function createJobDiscoveryLeadRepository({ db, id }: Dependencies) {
 
   return {
     async recordPending(input: unknown) {
-      const value = parseOrThrow(RecordPendingInputSchema, input);
+      const value = parseLeadInput(RecordPendingInputSchema, input);
       const expiresAt = expiresInThirtyDays(value.now);
       try {
         await db.insert(jobDiscoveryLeads).values({
@@ -158,13 +102,13 @@ export function createJobDiscoveryLeadRepository({ db, id }: Dependencies) {
     },
 
     async getLead(input: unknown) {
-      const value = parseOrThrow(GetLeadInputSchema, input);
+      const value = parseLeadInput(GetLeadInputSchema, input);
       const lead = await loadLead(value.userId, value.leadId);
       return lead ? projectLead(lead, value.now) : null;
     },
 
     async getAttribution(input: unknown) {
-      const value = parseOrThrow(GetAttributionInputSchema, input);
+      const value = parseLeadInput(GetAttributionInputSchema, input);
       const attribution = await loadAttribution(value.userId, value.leadId);
       return attribution ? attributionFact(attribution) : null;
     },

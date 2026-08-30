@@ -222,8 +222,7 @@ function isFarNegativeOffset(value: string | undefined): boolean {
   return match !== null && Number(match[1]) <= -100;
 }
 
-function normalizedHostname(hostname: string): string { return hostname.toLowerCase().replace(/^www\./u, ""); }
 function sourceKind(url: URL, testOrigin: string | undefined): "official" | "aggregator" {
   if (process.env.APP_ENV === "test" && testOrigin && url.origin === testOrigin) return "official";
-  return isOfficialPublicJobAtsHost(normalizedHostname(url.hostname)) ? "official" : "aggregator";
+  return isOfficialPublicJobAtsHost(url.hostname) ? "official" : "aggregator";
 }

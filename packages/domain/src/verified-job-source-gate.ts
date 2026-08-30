@@ -57,6 +57,7 @@ export class VerifiedJobSourceGateError extends Error {
     | "VERIFIED_JOB_SOURCE_LEAD_NOT_FOUND"
     | "VERIFIED_JOB_SOURCE_LEAD_CONFLICT"
     | "VERIFIED_JOB_SOURCE_STORAGE_FAILED"
+    | "VERIFIED_JOB_SOURCE_CLEANUP_REQUIRED"
     | "VERIFIED_JOB_SOURCE_PERSIST_FAILED"
     | "VERIFIED_JOB_SOURCE_RETRYABLE_FAILURE") {
     super(code);
@@ -104,6 +105,15 @@ function evidenceObjectKeys(userId: string, sourceVersionId: string, rawHash: st
   const base = `accounts/${userId}/public-job-pages/${sourceVersionId}`;
   return { rawHtmlObjectKey: `${base}/${rawHash}.html`, visibleTextObjectKey: `${base}/${visibleHash}.txt` };
 }
+function deterministicSourceVersionId(input: { userId: string; leadId: string; sourceType: string; canonicalUrl: string; rawHash: string; visibleHash: string }): string {
+  const value = createHash("sha256").update([
+    "public-job-source-generation-v1", input.userId, input.leadId, input.sourceType, input.canonicalUrl, input.rawHash, input.visibleHash,
+  ].join("\u001f"), "utf8").digest();
+  value[6] = (value[6]! & 0x0f) | 0x80;
+  value[8] = (value[8]! & 0x3f) | 0x80;
+  const hex = value.subarray(0, 16).toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 
 function stableJson(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stableJson);
@@ -114,6 +124,27 @@ function sameJson(left: unknown, right: unknown): boolean { return JSON.stringif
 
 export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: VerifiedJobEvidenceStore; id: () => string }) {
   const transitions = createJobDiscoveryLeadTransitions({ db: deps.db, id: deps.id });
+
+  async function cleanupCreatedObjects(userId: string, objectKeys: readonly string[]) {
+    if (objectKeys.length === 0) return;
+    try {
+      await deps.db.transaction(async (transaction) => {
+        await acquireAccountAdvisoryLock(transaction, userId);
+        const versions = await transaction.select({ rawObjectReference: jobSourcePostingVersions.rawObjectReference }).from(jobSourcePostingVersions)
+          .where(eq(jobSourcePostingVersions.userId, userId));
+        const referenced = new Set(versions.flatMap(({ rawObjectReference }) => {
+          if (!rawObjectReference || typeof rawObjectReference !== "object" || Array.isArray(rawObjectReference)) return [];
+          return Object.values(rawObjectReference).filter((value): value is string => typeof value === "string");
+        }));
+        for (const objectKey of objectKeys) {
+          if (!referenced.has(objectKey)) await deps.contentStore.delete({ objectKey });
+        }
+      });
+    } catch (error) {
+      if (error instanceof VerifiedJobEvidenceStoreUnavailableError) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_CLEANUP_REQUIRED");
+      throw error;
+    }
+  }
 
   return {
     async verify(input: unknown) {
@@ -162,6 +193,7 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
             id: jobSourcePostingVersions.id, sourcePostingId: jobSourcePostingVersions.sourcePostingId,
             version: jobSourcePostingVersions.version, contentSha256: jobSourcePostingVersions.contentSha256,
             rawContentSha256: jobSourcePostingVersions.rawContentSha256, rawObjectReference: jobSourcePostingVersions.rawObjectReference,
+            normalizedData: jobSourcePostingVersions.normalizedData,
             createdAt: jobSourcePostingVersions.createdAt,
           }).from(jobSourcePostingVersions).innerJoin(jobSourcePostings, and(
             eq(jobSourcePostings.userId, jobSourcePostingVersions.userId), eq(jobSourcePostings.id, jobSourcePostingVersions.sourcePostingId),
@@ -169,7 +201,8 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
             eq(jobSourcePostingVersions.userId, value.userId), eq(jobSourcePostingVersions.sourcePostingId, posting.id),
             eq(jobSourcePostingVersions.contentSha256, contentSha256), eq(jobSourcePostingVersions.rawContentSha256, rawContentSha256),
           )).limit(1);
-          if (existingVersion && !sameJson(existingVersion.rawObjectReference, evidenceObjectKeys(value.userId, existingVersion.id, rawContentSha256, contentSha256))) {
+          if (existingVersion && (!sameJson(existingVersion.rawObjectReference, evidenceObjectKeys(value.userId, existingVersion.id, rawContentSha256, contentSha256))
+            || !sameJson(existingVersion.normalizedData, {}))) {
             throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_CONFLICT");
           }
           if (lead.state === "verified" && lead.sourcePostingVersionId !== existingVersion?.id) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_CONFLICT");
@@ -177,7 +210,10 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
 
           let version = existingVersion;
           if (!version) {
-            const sourceVersionId = deps.id();
+            const sourceVersionId = deterministicSourceVersionId({
+              userId: value.userId, leadId: value.leadId, sourceType: expectedSourceType, canonicalUrl: value.page.canonicalUrl,
+              rawHash: rawContentSha256, visibleHash: contentSha256,
+            });
             const objectKeys = evidenceObjectKeys(value.userId, sourceVersionId, rawContentSha256, contentSha256);
             let rawPut: { created: boolean };
             let visiblePut: { created: boolean };
@@ -199,7 +235,7 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
             const [createdVersion] = await transaction.insert(jobSourcePostingVersions).values({
               id: sourceVersionId, userId: value.userId, sourcePostingId: posting.id, version: (latest?.version ?? 0) + 1,
               contentSha256, rawContentSha256, rawObjectReference: objectKeys, normalizedData: {}, retrievedAt: value.now, createdAt: value.now,
-            }).returning({ id: jobSourcePostingVersions.id, sourcePostingId: jobSourcePostingVersions.sourcePostingId, version: jobSourcePostingVersions.version, contentSha256: jobSourcePostingVersions.contentSha256, rawContentSha256: jobSourcePostingVersions.rawContentSha256, rawObjectReference: jobSourcePostingVersions.rawObjectReference, createdAt: jobSourcePostingVersions.createdAt });
+            }).returning({ id: jobSourcePostingVersions.id, sourcePostingId: jobSourcePostingVersions.sourcePostingId, version: jobSourcePostingVersions.version, contentSha256: jobSourcePostingVersions.contentSha256, rawContentSha256: jobSourcePostingVersions.rawContentSha256, rawObjectReference: jobSourcePostingVersions.rawObjectReference, normalizedData: jobSourcePostingVersions.normalizedData, createdAt: jobSourcePostingVersions.createdAt });
             if (!createdVersion) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_PERSIST_FAILED");
             version = createdVersion;
           }
@@ -211,10 +247,7 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
           };
         });
       } catch (error) {
-        for (const objectKey of createdObjectKeys) {
-          try { await deps.contentStore.delete({ objectKey }); } catch { /* original failure remains authoritative */ }
-        }
-        if (error instanceof VerifiedJobSourceGateError || error instanceof JobDiscoveryLeadError) throw error;
+        await cleanupCreatedObjects(value.userId, createdObjectKeys);
         throw error;
       }
     },

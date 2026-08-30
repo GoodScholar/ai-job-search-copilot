@@ -31,11 +31,14 @@ class EvidenceStore {
   readonly puts: string[] = [];
   readonly deletes: string[] = [];
   failAtPut: number | null = null;
+  unknownAtPut: { ordinal: number; error: Error } | null = null;
   failDelete = false;
+  unknownDelete: Error | null = null;
   onDelete: ((objectKey: string) => Promise<void>) | undefined;
 
   async put(input: { objectKey: string; bytes: Uint8Array; mediaType: "text/html" | "text/plain" }): Promise<{ created: boolean }> {
     this.puts.push(input.objectKey);
+    if (this.unknownAtPut?.ordinal === this.puts.length) throw this.unknownAtPut.error;
     if (this.failAtPut === this.puts.length) throw new VerifiedJobEvidenceStoreUnavailableError();
     const created = !this.objects.has(input.objectKey);
     if (created) this.objects.set(input.objectKey, input.bytes);
@@ -45,6 +48,7 @@ class EvidenceStore {
   async delete(input: { objectKey: string }): Promise<void> {
     this.deletes.push(input.objectKey);
     await this.onDelete?.(input.objectKey);
+    if (this.unknownDelete) throw this.unknownDelete;
     if (this.failDelete) throw new VerifiedJobEvidenceStoreUnavailableError();
     this.objects.delete(input.objectKey);
   }
@@ -54,6 +58,16 @@ function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   const promise = new Promise<T>((next) => { resolve = next; });
   return { promise, resolve };
+}
+
+function generationId(userId: string, leadId: string, sourceType: string, canonicalUrl: string, rawHash: string, visibleHash: string): string {
+  const value = createHash("sha256").update([
+    "public-job-source-generation-v1", userId, leadId, sourceType, canonicalUrl, rawHash, visibleHash,
+  ].join("\u001f"), "utf8").digest();
+  value[6] = (value[6]! & 0x0f) | 0x80;
+  value[8] = (value[8]! & 0x3f) | 0x80;
+  const hex = value.subarray(0, 16).toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 describe("verified public job source gate", () => {
@@ -228,14 +242,14 @@ describe("verified public job source gate", () => {
     const second = await owner(secondUrl);
     const store = new EvidenceStore();
     const postingId = crypto.randomUUID();
-    const sourceVersionId = crypto.randomUUID();
     const rawHash = createHash("sha256").update(page(secondUrl).rawHtml, "utf8").digest("hex");
     const visibleHash = createHash("sha256").update(page(secondUrl).visibleText, "utf8").digest("hex");
+    const sourceVersionId = generationId(second.userId, second.leadId, "company_careers", secondUrl, rawHash, visibleHash);
     const rawKey = `accounts/${second.userId}/public-job-pages/${sourceVersionId}/${rawHash}.html`;
     const visibleKey = `accounts/${second.userId}/public-job-pages/${sourceVersionId}/${visibleHash}.txt`;
     store.objects.set(rawKey, new Uint8Array([1]));
     store.objects.set(visibleKey, new Uint8Array([2]));
-    const ids = [postingId, sourceVersionId, firstResult.attribution.attributionId];
+    const ids = [postingId, firstResult.attribution.attributionId];
     const gate = createVerifiedJobSourceGate({ db: database, contentStore: store, id: () => ids.shift()! });
 
     await expect(gate.verify({
@@ -253,7 +267,7 @@ describe("verified public job source gate", () => {
     ])).resolves.toEqual([[], [], []]);
   });
 
-  it("删除补偿失败仍保留原始已知持久化错误，并且不会提交断链 version", async () => {
+  it("删除补偿失败要求可重试清理；相同输入重试会正式引用同一代际对象", async () => {
     const reserved = await owner();
     const reservedResult = await createVerifiedJobSourceGate({ db: database, contentStore: new EvidenceStore(), id: () => crypto.randomUUID() }).verify({
       userId: reserved.userId, leadId: reserved.leadId,
@@ -263,19 +277,99 @@ describe("verified public job source gate", () => {
     const subject = await owner(subjectUrl);
     const store = new EvidenceStore();
     store.failDelete = true;
-    const ids = [crypto.randomUUID(), crypto.randomUUID(), reservedResult.attribution.attributionId];
-    const gate = createVerifiedJobSourceGate({ db: database, contentStore: store, id: () => ids.shift()! });
+    const ids = [crypto.randomUUID(), reservedResult.attribution.attributionId];
+    const gate = createVerifiedJobSourceGate({ db: database, contentStore: store, id: () => ids.shift() ?? crypto.randomUUID() });
 
-    await expect(gate.verify({
+    const input = {
       userId: subject.userId, leadId: subject.leadId,
       candidate: { queryId: subject.queryId, normalizedUrl: subjectUrl, candidateFingerprint: createHash("sha256").update(subjectUrl, "utf8").digest("hex") },
       extract: { normalizedUrl: subjectUrl }, page: page(subjectUrl), now,
-    })).rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_ATTRIBUTION_CONFLICT" });
+    };
+    await expect(gate.verify(input)).rejects.toMatchObject({ code: "VERIFIED_JOB_SOURCE_CLEANUP_REQUIRED" });
 
-    expect(store.deletes).toEqual(store.puts);
+    expect(store.deletes).toHaveLength(1);
     expect(store.objects.size).toBe(2);
     await noWrites(subject.userId, subject.leadId, new EvidenceStore());
     await expect(database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, subject.userId))).resolves.toEqual([]);
+    const failedKeys = [...store.objects.keys()].sort();
+    store.failDelete = false;
+    const retried = await gate.verify(input);
+    expect(Object.values(retried.sourcePostingVersion.rawObjectReference as Record<string, string>).sort()).toEqual(failedKeys);
+    const generation = (retried.sourcePostingVersion.rawObjectReference as { rawHtmlObjectKey: string }).rawHtmlObjectKey.split("/")[3]!;
+    expect(generation).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u);
+    expect(store.objects.size).toBe(2);
+    await expect(database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, subject.userId))).resolves.toHaveLength(1);
+  });
+
+  it("拒绝复用带 provider normalizedData 的 taxonomy Version，且不会写入或归因", async () => {
+    const subject = await owner();
+    const local = page();
+    const rawHash = createHash("sha256").update(local.rawHtml, "utf8").digest("hex");
+    const visibleHash = createHash("sha256").update(local.visibleText, "utf8").digest("hex");
+    const postingId = crypto.randomUUID();
+    const versionId = crypto.randomUUID();
+    const objectKeys = {
+      rawHtmlObjectKey: `accounts/${subject.userId}/public-job-pages/${versionId}/${rawHash}.html`,
+      visibleTextObjectKey: `accounts/${subject.userId}/public-job-pages/${versionId}/${visibleHash}.txt`,
+    };
+    await database.insert(jobSourcePostings).values({
+      id: postingId, userId: subject.userId, sourceType: "company_careers", sourceIdentifier: createHash("sha256").update(normalizedUrl, "utf8").digest("hex"),
+      sourceId: normalizedUrl, sourceIdentity: { taxonomyPolicy: "public-job-source-taxonomy-v1", canonicalUrl: normalizedUrl, finalUrl: normalizedUrl }, isOfficial: true,
+      createdAt: now, updatedAt: now,
+    });
+    await database.insert(jobSourcePostingVersions).values({
+      id: versionId, userId: subject.userId, sourcePostingId: postingId, version: 1, contentSha256: visibleHash, rawContentSha256: rawHash,
+      rawObjectReference: objectKeys, normalizedData: { provider: "anysearch", snippet: "provider-normalized-sentinel" }, retrievedAt: now, createdAt: now,
+    });
+    const store = new EvidenceStore();
+    const gate = createVerifiedJobSourceGate({ db: database, contentStore: store, id: () => crypto.randomUUID() });
+
+    await expect(gate.verify({
+      userId: subject.userId, leadId: subject.leadId,
+      candidate: { queryId: subject.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: local, now,
+    })).rejects.toMatchObject({ code: "VERIFIED_JOB_SOURCE_LEAD_CONFLICT" });
+    expect(store.puts).toEqual([]);
+    await expect(database.select().from(jobDiscoveryAttributions).where(eq(jobDiscoveryAttributions.leadId, subject.leadId))).resolves.toEqual([]);
+  });
+
+  it("未知 put、delete 与 id 错误保持原始对象 identity，typed unavailable 才映射领域码", async () => {
+    for (const ordinal of [1, 2]) {
+      const subject = await owner();
+      const store = new EvidenceStore();
+      const failure = new Error(`unknown put ${ordinal}`);
+      store.unknownAtPut = { ordinal, error: failure };
+      const gate = createVerifiedJobSourceGate({ db: database, contentStore: store, id: () => crypto.randomUUID() });
+      await expect(gate.verify({
+        userId: subject.userId, leadId: subject.leadId,
+        candidate: { queryId: subject.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: page(), now,
+      })).rejects.toBe(failure);
+      expect(store.deletes).toHaveLength(ordinal - 1);
+      await noWrites(subject.userId, subject.leadId, new EvidenceStore());
+    }
+    const idSubject = await owner();
+    const idFailure = new Error("unknown id");
+    const idGate = createVerifiedJobSourceGate({ db: database, contentStore: new EvidenceStore(), id: () => { throw idFailure; } });
+    await expect(idGate.verify({
+      userId: idSubject.userId, leadId: idSubject.leadId,
+      candidate: { queryId: idSubject.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: page(), now,
+    })).rejects.toBe(idFailure);
+
+    const deleteSubject = await owner("https://careers.acme.com/jobs/unknown-delete?job=1");
+    const deleteFailure = new Error("unknown delete");
+    const deleteStore = new EvidenceStore();
+    deleteStore.unknownDelete = deleteFailure;
+    const existing = await owner("https://careers.acme.com/jobs/attribution-reservation?job=1");
+    const existingResult = await createVerifiedJobSourceGate({ db: database, contentStore: new EvidenceStore(), id: () => crypto.randomUUID() }).verify({
+      userId: existing.userId, leadId: existing.leadId,
+      candidate: { queryId: existing.queryId, normalizedUrl: "https://careers.acme.com/jobs/attribution-reservation?job=1", candidateFingerprint: createHash("sha256").update("https://careers.acme.com/jobs/attribution-reservation?job=1", "utf8").digest("hex") },
+      extract: { normalizedUrl: "https://careers.acme.com/jobs/attribution-reservation?job=1" }, page: page("https://careers.acme.com/jobs/attribution-reservation?job=1"), now,
+    });
+    const deleteGate = createVerifiedJobSourceGate({ db: database, contentStore: deleteStore, id: (() => { const ids = [crypto.randomUUID(), existingResult.attribution.attributionId]; return () => ids.shift() ?? crypto.randomUUID(); })() });
+    const deleteUrl = "https://careers.acme.com/jobs/unknown-delete?job=1";
+    await expect(deleteGate.verify({
+      userId: deleteSubject.userId, leadId: deleteSubject.leadId,
+      candidate: { queryId: deleteSubject.queryId, normalizedUrl: deleteUrl, candidateFingerprint: createHash("sha256").update(deleteUrl, "utf8").digest("hex") }, extract: { normalizedUrl: deleteUrl }, page: page(deleteUrl), now,
+    })).rejects.toBe(deleteFailure);
   });
 
   it("回滚事务只清理自己的 sourceVersion generation，不会删除随后提交版本的证据", async () => {
@@ -298,28 +392,31 @@ describe("verified public job source gate", () => {
       }
     };
     const firstPostingId = crypto.randomUUID();
-    const firstVersionId = crypto.randomUUID();
     const secondPostingId = crypto.randomUUID();
-    const secondVersionId = crypto.randomUUID();
+    const rawHash = createHash("sha256").update(page().rawHtml, "utf8").digest("hex");
+    const visibleHash = createHash("sha256").update(page().visibleText, "utf8").digest("hex");
+    const firstVersionId = generationId(first.userId, first.leadId, "company_careers", normalizedUrl, rawHash, visibleHash);
+    const secondVersionId = generationId(second.userId, second.leadId, "company_careers", normalizedUrl, rawHash, visibleHash);
     const firstGate = createVerifiedJobSourceGate({
       db: database, contentStore: store,
-      id: (() => { const ids = [firstPostingId, firstVersionId, reserved.attribution.attributionId]; return () => ids.shift()!; })(),
+      id: (() => { const ids = [firstPostingId, reserved.attribution.attributionId]; return () => ids.shift()!; })(),
     });
     const secondGate = createVerifiedJobSourceGate({
       db: database, contentStore: store,
-      id: (() => { const ids = [secondPostingId, secondVersionId, crypto.randomUUID()]; return () => ids.shift()!; })(),
+      id: (() => { const ids = [secondPostingId, crypto.randomUUID()]; return () => ids.shift()!; })(),
     });
     const firstAttempt = firstGate.verify({
       userId: first.userId, leadId: first.leadId,
       candidate: { queryId: first.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: page(), now,
     });
     await cleanupStarted.promise;
-    const secondResult = await secondGate.verify({
+    const secondAttempt = secondGate.verify({
       userId: second.userId, leadId: second.leadId,
       candidate: { queryId: second.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: page(), now,
     });
     allowCleanup.resolve();
     await expect(firstAttempt).rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_ATTRIBUTION_CONFLICT" });
+    const secondResult = await secondAttempt;
 
     const refs = secondResult.sourcePostingVersion.rawObjectReference as { rawHtmlObjectKey: string; visibleTextObjectKey: string };
     expect(refs.rawHtmlObjectKey).not.toContain(firstVersionId);

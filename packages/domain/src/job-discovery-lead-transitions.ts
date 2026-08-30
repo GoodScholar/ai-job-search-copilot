@@ -1,35 +1,12 @@
 import { and, eq, gt } from "drizzle-orm";
 import { jobDiscoveryAttributions, jobDiscoveryLeads, jobSourcePostingVersions, type Database } from "@job-copilot/database";
-import { AnySearchLeadSchema, DiscoveryAttributionSchema } from "@job-copilot/contracts/job-discovery";
 import { z } from "zod";
-import { JobDiscoveryLeadError } from "./job-discovery-leads";
+import { attributionFact, JobDiscoveryLeadError, leadFact, parseLeadInput } from "./job-discovery-lead-internal";
 
 const rejectionCode = z.string().regex(/^[A-Z][A-Z0-9_]{1,63}$/u);
 const RejectInputSchema = z.object({ userId: z.uuid(), leadId: z.uuid(), rejectionCode, now: z.date() }).strict();
 const VerifyInputSchema = z.object({ userId: z.uuid(), leadId: z.uuid(), sourcePostingVersionId: z.uuid(), now: z.date() }).strict();
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
-
-function parseOrThrow<T>(schema: z.ZodType<T>, input: unknown): T {
-  const parsed = schema.safeParse(input);
-  if (!parsed.success) throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_INVALID_INPUT");
-  return parsed.data;
-}
-
-function leadFact(row: typeof jobDiscoveryLeads.$inferSelect) {
-  return AnySearchLeadSchema.parse({
-    leadId: row.id, ownerId: row.userId, runId: row.runId, targetId: row.targetId, provider: row.provider,
-    normalizedUrl: row.normalizedUrl, stableFingerprint: row.stableFingerprint, queryId: row.queryId,
-    queryKind: row.queryKind, queryFingerprint: row.queryFingerprint, expiresAt: row.expiresAt.toISOString(),
-    state: row.state, sourcePostingVersionId: row.sourcePostingVersionId, rejectionCode: row.rejectionCode,
-  });
-}
-
-function attributionFact(row: typeof jobDiscoveryAttributions.$inferSelect) {
-  return DiscoveryAttributionSchema.parse({
-    attributionId: row.id, ownerId: row.userId, runId: row.runId, leadId: row.leadId, queryId: row.queryId,
-    provider: row.provider, sourcePostingVersionId: row.sourcePostingVersionId,
-  });
-}
 
 function attributionInsertError(error: unknown): JobDiscoveryLeadError | null {
   const cause = error && typeof error === "object" && "cause" in error ? error.cause : null;
@@ -81,11 +58,11 @@ export function createJobDiscoveryLeadTransitions({ db, id }: { db: Database; id
 
   return {
     async verifyAndAttribute(input: unknown) {
-      const value = parseOrThrow(VerifyInputSchema, input);
+      const value = parseLeadInput(VerifyInputSchema, input);
       return db.transaction((transaction) => transitionVerify(transaction, value));
     },
     async reject(input: unknown) {
-      const value = parseOrThrow(RejectInputSchema, input);
+      const value = parseLeadInput(RejectInputSchema, input);
       const [updated] = await db.update(jobDiscoveryLeads).set({ state: "rejected", rejectionCode: value.rejectionCode, updatedAt: value.now }).where(and(
         eq(jobDiscoveryLeads.userId, value.userId), eq(jobDiscoveryLeads.id, value.leadId), eq(jobDiscoveryLeads.state, "pending"), gt(jobDiscoveryLeads.expiresAt, value.now),
       )).returning();
@@ -100,7 +77,7 @@ export function createJobDiscoveryLeadTransitions({ db, id }: { db: Database; id
       throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_STATE_CONFLICT");
     },
     async verifyAndAttributeInTransaction(input: unknown, transaction: Transaction) {
-      return transitionVerify(transaction, parseOrThrow(VerifyInputSchema, input));
+      return transitionVerify(transaction, parseLeadInput(VerifyInputSchema, input));
     },
   };
 }
