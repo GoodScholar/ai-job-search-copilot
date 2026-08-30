@@ -40,6 +40,46 @@ it("将服务端已验证概览传给客户端视图", async () => {
   expect(page.props.initialSourceHealth).toEqual({ targetId, watchlistVersion: 0, sources: [] });
 });
 
+it("将初次 target 或 Watchlist 版本不匹配的健康概览降级为可重试诊断", async () => {
+  const overview = { target: { targetId, targetVersion: 1, targetState: "active", roleFamily: "AI 应用工程" }, version: 3, items: [] };
+  mocks.getCompanyWatchlist.mockResolvedValue(overview);
+
+  for (const sourceHealth of [
+    { targetId: "a194d0ce-fc7e-45db-9425-e8ff4eaf8c08", watchlistVersion: 3, sources: [] },
+    { targetId, watchlistVersion: 2, sources: [] },
+  ]) {
+    mocks.getSourceHealth.mockResolvedValue(sourceHealth);
+    const page = await WatchlistPage(context);
+    expect(page.props.initialOverview).toEqual(overview);
+    expect(page.props.initialSourceHealth).toBeUndefined();
+    expect(page.props.initialHealthRefreshFailed).toBe(true);
+  }
+});
+
+it("仅初次健康读取失败时仍将 Watchlist 和可恢复诊断传给视图", async () => {
+  const overview = { target: { targetId, targetVersion: 1, targetState: "active", roleFamily: "AI 应用工程" }, version: 0, items: [] };
+  const healthError = new Error("http://internal-api:3021 source health");
+  mocks.getCompanyWatchlist.mockResolvedValue(overview);
+  mocks.getSourceHealth.mockRejectedValue(healthError);
+
+  const page = await WatchlistPage(context);
+
+  expect(page.props.initialOverview).toEqual(overview);
+  expect(page.props.initialSourceHealth).toBeUndefined();
+  expect(page.props.initialHealthRefreshFailed).toBe(true);
+  expect(mocks.unstableRethrow).toHaveBeenCalledWith(healthError);
+  expect(JSON.stringify(page)).not.toContain("无法读取目标公司 Watchlist");
+});
+
+it("保留来源健康读取的 Next 控制流错误", async () => {
+  const redirectError = new Error("NEXT_REDIRECT:/login?returnTo=%2Fprofile%2Ftargets");
+  mocks.getCompanyWatchlist.mockResolvedValue({ target: { targetId, targetVersion: 1, targetState: "active", roleFamily: "AI 应用工程" }, version: 0, items: [] });
+  mocks.getSourceHealth.mockRejectedValue(redirectError);
+
+  await expect(WatchlistPage(context)).rejects.toThrow("NEXT_REDIRECT:/login");
+  expect(mocks.unstableRethrow).toHaveBeenCalledWith(redirectError);
+});
+
 it("为可恢复读取失败展示固定重试提示且不泄漏内部详情", async () => {
   mocks.getCompanyWatchlist.mockRejectedValue(new Error("http://internal-api:3021 secret"));
   mocks.getSourceHealth.mockResolvedValue({ targetId, watchlistVersion: 0, sources: [] });

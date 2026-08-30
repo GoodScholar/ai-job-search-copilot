@@ -47,6 +47,20 @@ it("为空 Watchlist 呈现目标角色、唯一新增提交和固定安全提�
   expect(screen.getByText("不要填写账号、密码、Cookie、验证码或绕过登录限制的说明。")).toBeVisible();
 });
 
+it("初始健康读取降级时保留 Watchlist 控制与可恢复诊断", async () => {
+  const user = userEvent.setup();
+  const initial = overview([item(firstItemId, 1, "曙光云图")], 1);
+  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json(health(1, [source(firstItemId, "greenhouse:aurora", "曙光", "disabled")])));
+  vi.stubGlobal("fetch", fetchMock);
+  render(<CompanyWatchlistView initialOverview={initial} initialHealthRefreshFailed />);
+
+  expect(screen.getByRole("button", { name: "编辑 曙光云图" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "停用 曙光云图" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "重新加载来源诊断" }));
+  await waitFor(() => expect(screen.getByLabelText("曙光 来源诊断")).toHaveTextContent("已停用"));
+  expect(screen.queryByRole("button", { name: "重新加载来源诊断" })).not.toBeInTheDocument();
+});
+
 it("逐来源以文字呈现七种诊断状态、时间、影响和建议动作", () => {
   const states: JobSourceHealthOverview["sources"] = [
     { watchlistItemId: crypto.randomUUID(), sourceId: "greenhouse:source0", name: "来源 0", state: "enabled", status: "healthy", runId: crypto.randomUUID(), reasonCodes: [], impact: { scope: "none", affectedCount: null }, lastCheckedAt: "2026-08-30T00:00:00.000Z", suggestedAction: "none" },

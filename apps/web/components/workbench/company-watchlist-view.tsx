@@ -73,13 +73,13 @@ function validateDraft(draft: Draft, expectedVersion: number): { command?: AddCo
 const healthLabels = { healthy: "健康", zero_valid_results: "暂无有效岗位", parser_degraded: "解析异常", rate_limited: "访问受限", hard_failed: "来源不可用", disabled: "已停用", unchecked: "尚未检查" } as const;
 const actionLabels = { none: "无需处理", wait_for_next_run: "等待下次发现", retry_later: "稍后重试", retry_or_disable: "稍后重试或停用来源", reenable_source: "可重新启用来源" } as const;
 
-export function CompanyWatchlistView({ initialOverview, initialSourceHealth }: { initialOverview: CompanyWatchlistOverview; initialSourceHealth?: JobSourceHealthOverview }) {
+export function CompanyWatchlistView({ initialOverview, initialSourceHealth, initialHealthRefreshFailed = false }: { initialOverview: CompanyWatchlistOverview; initialSourceHealth?: JobSourceHealthOverview; initialHealthRefreshFailed?: boolean }) {
   const [overview, setOverview] = useState(initialOverview);
   const [sourceHealth, setSourceHealth] = useState(initialSourceHealth);
   const [draft, setDraft] = useState<Draft>(emptyDraft);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
-  const [healthRefreshFailed, setHealthRefreshFailed] = useState(false);
+  const [healthRefreshFailed, setHealthRefreshFailed] = useState(initialHealthRefreshFailed);
   const [isSaving, setIsSaving] = useState(false);
   const inactive = overview.target.targetState === "inactive";
   const editingItem = overview.items.find((item) => item.itemId === editingItemId) ?? null;

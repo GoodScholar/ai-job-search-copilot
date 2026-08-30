@@ -14,12 +14,11 @@ const TargetIdSchema = z.uuid();
 export default async function WatchlistPage({ params }: { params: Promise<{ targetId: string }> }) {
   const { targetId } = await params;
   if (!TargetIdSchema.safeParse(targetId).success) notFound();
-  let overview;
-  try {
-    const [watchlist, sourceHealth] = await Promise.all([getCompanyWatchlist(targetId), getSourceHealth(targetId)]);
-    overview = { watchlist, sourceHealth };
-  } catch (error) {
-    unstable_rethrow(error);
+  const [watchlistResult, sourceHealthResult] = await Promise.allSettled([getCompanyWatchlist(targetId), getSourceHealth(targetId)]);
+  for (const result of [watchlistResult, sourceHealthResult]) {
+    if (result.status === "rejected") unstable_rethrow(result.reason);
+  }
+  if (watchlistResult.status === "rejected") {
     return (
       <main className="container workbench-main">
         <section aria-labelledby="company-watchlist-error-title" className="workbench-error" role="status">
@@ -31,5 +30,10 @@ export default async function WatchlistPage({ params }: { params: Promise<{ targ
       </main>
     );
   }
-  return <CompanyWatchlistView initialOverview={overview.watchlist} initialSourceHealth={overview.sourceHealth} />;
+  if (sourceHealthResult.status === "rejected") {
+    return <CompanyWatchlistView initialHealthRefreshFailed initialOverview={watchlistResult.value} />;
+  }
+  const sourceHealth = sourceHealthResult.value;
+  const healthMatchesWatchlist = sourceHealth.targetId === watchlistResult.value.target.targetId && sourceHealth.watchlistVersion === watchlistResult.value.version;
+  return <CompanyWatchlistView initialHealthRefreshFailed={!healthMatchesWatchlist} initialOverview={watchlistResult.value} initialSourceHealth={healthMatchesWatchlist ? sourceHealth : undefined} />;
 }
