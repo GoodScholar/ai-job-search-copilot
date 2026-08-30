@@ -220,7 +220,7 @@ async function stepTransition(deps: AgentRunProcessorDependencies, input: { user
   });
 }
 
-async function failOrRetry(deps: AgentRunProcessorDependencies, input: { userId: string; runId: string; claimToken: string; attemptCount: number; failure: Failure; deadline: Date }): Promise<"retry" | "budget_exhausted" | "failed" | "stale"> {
+async function failOrRetry(deps: AgentRunProcessorDependencies, input: { userId: string; runId: string; claimToken: string; attemptCount: number; failure: Failure; deadline: Date; discoveryIssues?: Array<{ provider: "anysearch" | "greenhouse"; code: string; affectedCount: number }> }): Promise<"retry" | "budget_exhausted" | "failed" | "stale"> {
   const now = deps.clock();
   // 预算到点后仍要用极短、可取消的控制事务写出明确终态，不能让运行悬空。
   const controlDeadline = remainingBudget(deps.clock, input.deadline) <= 0 ? new Date(now.getTime() + 1_000) : input.deadline;
@@ -254,6 +254,8 @@ async function failOrRetry(deps: AgentRunProcessorDependencies, input: { userId:
     const terminationKind = failureCode === "AGENT_RUN_CONTENT_STORAGE_FAILED" ? "content_storage_failed" : failureCode === "AGENT_RUN_PERSIST_FAILED" ? "persistence_failed" : "source_failed";
     await transaction.update(agentRuns).set({ status: "failed", currentStep: "failed", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, activeDurationMs, failureCode, terminationKind, terminationBudgetDimension: null, failedAt: now, version, updatedAt: now }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.claimToken, input.claimToken)));
     const sequence = await appendEvent(transaction, { id: deps.id, userId: input.userId, runId: input.runId, version, eventType: "run.failed", data: { eventType: "run.failed", status: "failed", currentStep: "failed", attemptCount: input.attemptCount, failureCode }, now });
+    for (const issue of input.discoveryIssues ?? []) await transaction.insert(jobDiscoverySourceIssues).values({ id: deps.id(), userId: input.userId, runId: input.runId, provider: issue.provider, code: issue.code, affectedCount: issue.affectedCount, createdAt: now }).onConflictDoNothing();
+    if ((input.discoveryIssues?.length ?? 0) > 0) await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: input.userId, runId: input.runId, triggerEventSequence: sequence, kind: "discovery_attention", status: "open", reasonCode: "DISCOVERY_ATTENTION", budgetDimension: null, createdAt: now }).onConflictDoNothing();
     await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.run_failed", occurredAt: now, requestId: input.runId, outcome: "failure", reasonCode: failureCode, resourceType: "agent_run", resourceId: input.runId, metadata: { runId: input.runId, targetId: run.targetId, attemptCount: input.attemptCount, failureCode } });
     const nonBudgetFailureCode = failureCode as NonBudgetFailureCode;
     const [item] = await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: input.userId, runId: input.runId, triggerEventSequence: sequence, kind: "run_failed", status: "open", reasonCode: nonBudgetFailureCode, budgetDimension: null, createdAt: now }).onConflictDoNothing().returning({ id: agentInboxItems.id });
@@ -519,9 +521,9 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           if (!branchSucceeded) {
             const retryable = outcome.diagnostics.some((diagnostic) => diagnostic.retryable);
             // 可重试尝试只保留 attempt diagnostic；最终投递才冻结 run-level issue/attention，避免随后成功仍被旧问题污染终态。
-            try { await persistLayeredPublicOutcome(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), deadline, diagnostics: outcome.diagnostics, sourceIssues: job.finalAttempt ? outcome.sourceIssues ?? [] : [], sourcePostingVersionIds: [], trustedSourcePostingVersionIds: [], trustedSourceIds: [], complete: false }); }
+            try { await persistLayeredPublicOutcome(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), deadline, diagnostics: outcome.diagnostics, sourceIssues: [], sourcePostingVersionIds: [], trustedSourcePostingVersionIds: [], trustedSourceIds: [], complete: false }); }
             catch (error) { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline }); }
-            return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: retryable ? "AGENT_RUN_ADAPTER_RETRYABLE" : "AGENT_RUN_ADAPTER_FAILED", retryable, category: "source" }, deadline });
+            return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: retryable ? "AGENT_RUN_ADAPTER_RETRYABLE" : "AGENT_RUN_ADAPTER_FAILED", retryable, category: "source" }, deadline, discoveryIssues: outcome.sourceIssues ?? [] });
           }
           const batchComplete = await transition("batch_search", true); if (batchComplete) return batchComplete;
           const detailsStart = await transition("fetch_details", false); if (detailsStart) return detailsStart;
