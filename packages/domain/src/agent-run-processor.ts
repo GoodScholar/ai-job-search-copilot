@@ -347,8 +347,13 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
     const attributed = new Set((await transaction.select({ sourcePostingVersionId: jobDiscoveryAttributions.sourcePostingVersionId }).from(jobDiscoveryAttributions).where(and(eq(jobDiscoveryAttributions.userId, input.userId), eq(jobDiscoveryAttributions.runId, input.runId)))).map((row: { sourcePostingVersionId: string }) => row.sourcePostingVersionId));
     const trusted = new Set(input.trustedSourcePostingVersionIds);
     for (const sourcePostingVersionId of input.sourcePostingVersionIds) {
-      const [version] = await transaction.select({ sourceId: jobSourcePostings.sourceId }).from(jobSourcePostingVersions).innerJoin(jobSourcePostings, and(eq(jobSourcePostings.userId, jobSourcePostingVersions.userId), eq(jobSourcePostings.id, jobSourcePostingVersions.sourcePostingId))).where(and(eq(jobSourcePostingVersions.userId, input.userId), eq(jobSourcePostingVersions.id, sourcePostingVersionId))).limit(1);
-      if (!version || (!attributed.has(sourcePostingVersionId) && !(trusted.has(sourcePostingVersionId) && version.sourceId !== null && input.trustedSourceIds.includes(version.sourceId)))) throw new Error("LAYERED_PUBLIC_RESULT_PROVENANCE_INVALID");
+      const [version] = await transaction.select({ sourceId: jobSourcePostings.sourceId, sourceType: jobSourcePostings.sourceType, isOfficial: jobSourcePostings.isOfficial }).from(jobSourcePostingVersions).innerJoin(jobSourcePostings, and(eq(jobSourcePostings.userId, jobSourcePostingVersions.userId), eq(jobSourcePostings.id, jobSourcePostingVersions.sourcePostingId))).where(and(eq(jobSourcePostingVersions.userId, input.userId), eq(jobSourcePostingVersions.id, sourcePostingVersionId))).limit(1);
+      const trustedVersion = trusted.has(sourcePostingVersionId)
+        && version?.sourceId !== null
+        && input.trustedSourceIds.includes(version?.sourceId ?? "")
+        && version?.sourceType === "company_careers"
+        && version.isOfficial;
+      if (!version || (!attributed.has(sourcePostingVersionId) && !trustedVersion)) throw new Error("LAYERED_PUBLIC_RESULT_PROVENANCE_INVALID");
     }
     const existingResults: Array<{ ordinal: number; sourcePostingVersionId: string }> = await transaction.select({ ordinal: jobDiscoveryRunResults.ordinal, sourcePostingVersionId: jobDiscoveryRunResults.sourcePostingVersionId })
       .from(jobDiscoveryRunResults).where(and(eq(jobDiscoveryRunResults.userId, input.userId), eq(jobDiscoveryRunResults.runId, input.runId))).orderBy(asc(jobDiscoveryRunResults.ordinal));

@@ -57,10 +57,10 @@ describe("AgentRunProcessor checkpoints", () => {
     return { userId, targetId, runId, queryId, sourcePostingVersionId };
   }
 
-  async function extraTrustedVersion(job: { userId: string }, index: number) {
+  async function extraTrustedVersion(job: { userId: string }, index: number, input: { sourceType?: "company_careers" | "public_web"; isOfficial?: boolean } = {}) {
     const sourcePostingId = crypto.randomUUID();
     const sourcePostingVersionId = crypto.randomUUID();
-    await database.insert(jobSourcePostings).values({ id: sourcePostingId, userId: job.userId, sourceType: "company_careers", sourceIdentifier: `greenhouse:example:opening-extra-${index}`, sourceId: "greenhouse:example", sourceIdentity: { sourceId: "greenhouse:example", detailId: `opening-extra-${index}` }, applicationDeadline: null, isOfficial: true, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
+    await database.insert(jobSourcePostings).values({ id: sourcePostingId, userId: job.userId, sourceType: input.sourceType ?? "company_careers", sourceIdentifier: `greenhouse:example:opening-extra-${index}`, sourceId: "greenhouse:example", sourceIdentity: { sourceId: "greenhouse:example", detailId: `opening-extra-${index}` }, applicationDeadline: null, isOfficial: input.isOfficial ?? true, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
     await database.insert(jobSourcePostingVersions).values({ id: sourcePostingVersionId, userId: job.userId, sourcePostingId, version: 1, contentSha256: `${index.toString(16)}`.repeat(64).slice(0, 64), rawContentSha256: `${(index + 8).toString(16)}`.repeat(64).slice(0, 64), rawObjectReference: {}, normalizedData: {}, retrievedAt: now, availability: "open", createdAt: now });
     return sourcePostingVersionId;
   }
@@ -164,6 +164,19 @@ describe("AgentRunProcessor checkpoints", () => {
       { sourcePostingVersionId: extra[2] },
       { sourcePostingVersionId: extra[3] },
     ] });
+  });
+
+  it("v4 trusted result 必须属于获批可信来源且仍为官方 company careers", async () => {
+    const job = await layeredRun();
+    const untrustedVersion = await extraTrustedVersion(job, 9, { sourceType: "public_web", isOfficial: false });
+    const processor = createAgentRunProcessor({
+      db: database,
+      adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
+      layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({ hasTrustedSuccess: true, branchSuccess: { trusted: true, publicDiscovery: false }, sourcePostingVersionIds: [untrustedVersion], trustedSourcePostingVersionIds: [untrustedVersion], diagnostics: [] }) }) },
+      contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("failed");
+    await expect(database.select().from(jobDiscoveryRunResults).where(eq(jobDiscoveryRunResults.runId, job.runId))).resolves.toEqual([]);
   });
 
   it("v4 retry 只保留诊断；后续成功不遗留 source issue 或 attention", async () => {
