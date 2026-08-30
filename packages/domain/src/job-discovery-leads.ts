@@ -1,4 +1,4 @@
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, gt, sql } from "drizzle-orm";
 import { agentRuns, jobDiscoveryAttributions, jobDiscoveryLeads, type Database } from "@job-copilot/database";
 import { PublicJobDiscoveryQueryKindSchema, SafeNormalizedPublicJobUrlSchema } from "@job-copilot/contracts/job-discovery";
 import { z } from "zod";
@@ -67,7 +67,7 @@ export function createJobDiscoveryLeadRepository({ db, id }: Dependencies) {
     if (!input.claimToken) return;
     await acquireAccountAdvisoryLock(transaction, input.userId);
     const [run] = await transaction.select({ id: agentRuns.id }).from(agentRuns).where(and(
-      eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.claimToken), gt(agentRuns.claimExpiresAt, input.now),
+      eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.claimToken), gt(agentRuns.claimExpiresAt, sql`current_timestamp`),
     )).limit(1);
     if (!run) throw new JobDiscoveryLeadError("JOB_DISCOVERY_CLAIM_STALE");
   }

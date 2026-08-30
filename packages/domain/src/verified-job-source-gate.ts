@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq, gt } from "drizzle-orm";
+import { and, desc, eq, gt, sql } from "drizzle-orm";
 import {
   agentRuns,
   jobDiscoveryLeads,
@@ -154,7 +154,7 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
   async function assertClaim(transaction: Parameters<Parameters<Database["transaction"]>[0]>[0], input: { userId: string; runId: string; claimToken?: string; now: Date }) {
     if (!input.claimToken) return;
     const [run] = await transaction.select({ id: agentRuns.id }).from(agentRuns).where(and(
-      eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.claimToken), gt(agentRuns.claimExpiresAt, input.now),
+      eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.claimToken), gt(agentRuns.claimExpiresAt, sql`current_timestamp`),
     )).limit(1);
     if (!run) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_CLAIM_STALE");
   }

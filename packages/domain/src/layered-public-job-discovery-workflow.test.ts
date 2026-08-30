@@ -116,7 +116,7 @@ describe("layered public job discovery workflow", () => {
     };
     executionSpec.sourceScope.publicDiscovery.queries.push({ ordinal: 2, queryId: "88888888-8888-8888-8888-888888888888", kind: "general", stableFingerprint: "c".repeat(64), query: "AI 工程师 远程", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 });
     executionSpec.sourceScope.publicDiscovery.queries.push({ ordinal: 3, queryId: "99999999-9999-8999-8999-999999999999", kind: "general", stableFingerprint: "d".repeat(64), query: "AI 工程师 杭州", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 });
-    const outcome = await workflow.run({ userId: targetId, runId, now: new Date(), executionSpec: executionSpec as never, attemptCount: 1, beforePhysicalOperation: async () => { checkpoints += 1; }, signal: new AbortController().signal });
+    const outcome = await workflow.run({ userId: targetId, runId, claimToken: crypto.randomUUID(), now: new Date(), executionSpec: executionSpec as never, attemptCount: 1, beforePhysicalOperation: async () => { checkpoints += 1; }, signal: new AbortController().signal });
     expect({ posts, checkpoints }).toEqual({ posts: 0, checkpoints: 0 });
     expect(outcome).toMatchObject({
       branchOutcome: { trusted: "failed", publicDiscovery: "failed" },
@@ -146,7 +146,7 @@ describe("layered public job discovery workflow", () => {
     });
     const secondQueryId = "88888888-8888-8888-8888-888888888888";
     await expect(workflow.run({
-      userId: targetId, runId, now: new Date(), attemptCount: 1, signal: new AbortController().signal,
+      userId: targetId, runId, claimToken: crypto.randomUUID(), now: new Date(), attemptCount: 1, signal: new AbortController().signal,
       executionSpec: executionSpecFor([
         { ordinal: 1, queryId, kind: "general", stableFingerprint: "f".repeat(64), query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 },
         { ordinal: 2, queryId: secondQueryId, kind: "general", stableFingerprint: "e".repeat(64), query: "AI 工程师 远程", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 },
@@ -175,7 +175,7 @@ describe("layered public job discovery workflow", () => {
       gate: { verify: async () => ({ sourcePostingVersionId: "77777777-7777-8777-8777-777777777777" }), reject: async () => undefined },
     });
     const outcome = await workflow.run({
-      userId: targetId, runId, now: new Date(), attemptCount: 1, signal: new AbortController().signal,
+      userId: targetId, runId, claimToken: crypto.randomUUID(), now: new Date(), attemptCount: 1, signal: new AbortController().signal,
       executionSpec: executionSpecFor([{ ordinal: 1, queryId, kind: "general", stableFingerprint: "e".repeat(64), query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }]) as never,
       beforePhysicalOperation: async () => undefined,
     });
@@ -189,7 +189,7 @@ describe("layered public job discovery workflow", () => {
       preflight: async () => null, leads: { recordPending: async () => { throw new Error("UNUSED"); } }, fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
       gate: { verify: async () => { throw new Error("UNUSED"); }, reject: async () => undefined },
     });
-    await expect(workflow.run({ userId: targetId, runId, now: new Date(), attemptCount: 1, signal: new AbortController().signal, executionSpec: executionSpecFor([{ ordinal: 1, queryId, kind: "general", stableFingerprint: "e".repeat(64), query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }]) as never, beforePhysicalOperation: async () => undefined }))
+    await expect(workflow.run({ userId: targetId, runId, claimToken: crypto.randomUUID(), now: new Date(), attemptCount: 1, signal: new AbortController().signal, executionSpec: executionSpecFor([{ ordinal: 1, queryId, kind: "general", stableFingerprint: "e".repeat(64), query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }]) as never, beforePhysicalOperation: async () => undefined }))
       .resolves.toMatchObject({ branchOutcome: { trusted: "failed", publicDiscovery: "clean_zero" }, sourcePostingVersionIds: [] });
   });
 
@@ -204,7 +204,7 @@ describe("layered public job discovery workflow", () => {
       fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
       gate: { verify: async () => { throw new Error("UNUSED"); }, reject: async (input) => { expect(input.code).toBe("JOB_PAGE_URL_INVALID"); } },
     });
-    await expect(workflow.run({ userId: targetId, runId, now: new Date(), attemptCount: 1, signal: new AbortController().signal, executionSpec: executionSpecFor([{ ordinal: 1, queryId, kind: "general", stableFingerprint: "b".repeat(64), query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }]) as never, beforePhysicalOperation: async () => undefined }))
+    await expect(workflow.run({ userId: targetId, runId, claimToken: crypto.randomUUID(), now: new Date(), attemptCount: 1, signal: new AbortController().signal, executionSpec: executionSpecFor([{ ordinal: 1, queryId, kind: "general", stableFingerprint: "b".repeat(64), query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }]) as never, beforePhysicalOperation: async () => undefined }))
       .resolves.toMatchObject({ branchOutcome: { trusted: "failed", publicDiscovery: "candidate_failures" }, sourcePostingVersionIds: [], diagnostics: [expect.objectContaining({ scope: "lead", code: "JOB_PAGE_URL_INVALID", retryable: false })], sourceIssues: [expect.objectContaining({ provider: "anysearch", code: "JOB_PAGE_URL_INVALID" })] });
   });
 
@@ -220,7 +220,7 @@ describe("layered public job discovery workflow", () => {
       fetcher: { fetch: async ({ candidate: input }) => { if (input.normalizedUrl.endsWith("/b")) throw { code: "JOB_PAGE_TIMEOUT" }; return { requestedUrl: input.normalizedUrl, finalUrl: input.normalizedUrl, canonicalUrl: input.normalizedUrl, rawHtml: "<h1>job</h1>", visibleText: "job", pageClassification: "job", sourceKind: "official" }; } },
       gate: { verify: async () => ({ sourcePostingVersionId: "88888888-8888-8888-8888-888888888888" }), reject: async () => undefined },
     });
-    await expect(workflow.run({ userId: targetId, runId, now: new Date(), attemptCount: 1, signal: new AbortController().signal, executionSpec: executionSpecFor([{ ordinal: 1, queryId, kind: "general", stableFingerprint: "c".repeat(64), query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }]) as never, beforePhysicalOperation: async () => undefined }))
+    await expect(workflow.run({ userId: targetId, runId, claimToken: crypto.randomUUID(), now: new Date(), attemptCount: 1, signal: new AbortController().signal, executionSpec: executionSpecFor([{ ordinal: 1, queryId, kind: "general", stableFingerprint: "c".repeat(64), query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }]) as never, beforePhysicalOperation: async () => undefined }))
       .resolves.toMatchObject({ branchOutcome: { trusted: "failed", publicDiscovery: "verified" }, sourcePostingVersionIds: ["88888888-8888-8888-8888-888888888888"], diagnostics: [expect.objectContaining({ code: "JOB_PAGE_TIMEOUT", retryable: true })] });
   });
 
@@ -246,7 +246,7 @@ describe("layered public job discovery workflow", () => {
       gate: { verify: async () => { calls.push("verify"); throw new Error("UNUSED"); }, reject: async ({ code }) => { calls.push(`reject:${String(code)}`); } },
     });
     const outcome = await workflow.run({
-      userId: targetId, runId, now: new Date(), attemptCount: 1, signal: new AbortController().signal,
+      userId: targetId, runId, claimToken: crypto.randomUUID(), now: new Date(), attemptCount: 1, signal: new AbortController().signal,
       executionSpec: executionSpecFor([{ ordinal: 1, queryId, kind: "target_company", stableFingerprint: "1".repeat(64), query: "AI 工程师 Acme", allowedSiteDomains: ["approved.acme.com"], targetCompanyNames: ["Acme"], resultLimit: 5 }]) as never,
       beforePhysicalOperation: async () => undefined,
     });
@@ -278,7 +278,7 @@ describe("layered public job discovery workflow", () => {
       fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
       gate: { verify: async () => { throw new Error("UNUSED"); }, reject: async () => undefined },
     });
-    await workflow.run({ userId: targetId, runId, now: new Date(), attemptCount: 1, signal: new AbortController().signal, executionSpec: executionSpecFor(queries) as never, beforePhysicalOperation: async () => undefined });
+    await workflow.run({ userId: targetId, runId, claimToken: crypto.randomUUID(), now: new Date(), attemptCount: 1, signal: new AbortController().signal, executionSpec: executionSpecFor(queries) as never, beforePhysicalOperation: async () => undefined });
     expect({ preflightCount, leadCount }).toEqual({ preflightCount: 10, leadCount: 10 });
   });
 });
