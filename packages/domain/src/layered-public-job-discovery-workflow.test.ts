@@ -63,7 +63,7 @@ describe("layered public job discovery workflow", () => {
     const result = await workflow.run({ userId: targetId, runId, now: new Date(), executionSpec: executionSpec as never, attemptCount: 1, beforePhysicalOperation: async ({ kind }) => { calls.push(`checkpoint:${kind}`); }, signal: new AbortController().signal });
 
     expect(calls).toEqual(["trusted", "checkpoint:search", `search:${queryId}`, "pending", "checkpoint:extract", "extract", "checkpoint:fetch", "fetch", "verify"]);
-    expect(result).toEqual({ hasTrustedSuccess: true, sourcePostingVersionIds: ["44444444-4444-8444-8444-444444444444", "77777777-7777-8777-8777-777777777777"], trustedSourcePostingVersionIds: ["44444444-4444-8444-8444-444444444444"], sourceIssues: [], diagnostics: [] });
+    expect(result).toEqual({ hasTrustedSuccess: true, branchSuccess: { trusted: true, publicDiscovery: true }, sourcePostingVersionIds: ["44444444-4444-8444-8444-444444444444", "77777777-7777-8777-8777-777777777777"], trustedSourcePostingVersionIds: ["44444444-4444-8444-8444-444444444444"], sourceIssues: [], diagnostics: [] });
     expect(JSON.stringify(result)).not.toContain("careers.example.com");
   });
 

@@ -493,7 +493,8 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
               if (checkpointOutcome) { controller.abort(); throw new LayeredPublicWorkflowStop(checkpointOutcome); }
             },
           }));
-          if ((outcome.hasTrustedSuccess && (outcome.trustedSourcePostingVersionIds?.length ?? 0) === 0) || (outcome.sourcePostingVersionIds?.length ?? 0) === 0) {
+          const branchSucceeded = outcome.branchSuccess?.trusted === true || outcome.branchSuccess?.publicDiscovery === true || outcome.hasTrustedSuccess || (outcome.sourcePostingVersionIds?.length ?? 0) > 0;
+          if (!branchSucceeded) {
             const retryable = outcome.diagnostics.some((diagnostic) => diagnostic.retryable);
             return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: retryable ? "AGENT_RUN_ADAPTER_RETRYABLE" : "AGENT_RUN_ADAPTER_FAILED", retryable, category: "source" }, deadline });
           }

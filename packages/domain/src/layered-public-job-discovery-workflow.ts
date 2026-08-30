@@ -13,7 +13,7 @@ export type LayeredPublicWorkflowDiagnostic =
   | { scope: "provider"; code: string; retryable: boolean; affectedCount: number }
   | { scope: "query"; queryId: string; kind: Query["kind"]; stableFingerprint: string; code: string; retryable: boolean; affectedCount: number }
   | { scope: "lead"; leadId: string; code: string; retryable: boolean; affectedCount: 1 };
-export type LayeredPublicWorkflowOutcome = { hasTrustedSuccess: boolean; sourcePostingVersionIds?: string[]; trustedSourcePostingVersionIds?: string[]; sourceIssues?: Array<{ provider: "anysearch" | "greenhouse"; code: string; affectedCount: number }>; diagnostics: LayeredPublicWorkflowDiagnostic[] };
+export type LayeredPublicWorkflowOutcome = { hasTrustedSuccess: boolean; branchSuccess?: { trusted: boolean; publicDiscovery: boolean }; sourcePostingVersionIds?: string[]; trustedSourcePostingVersionIds?: string[]; sourceIssues?: Array<{ provider: "anysearch" | "greenhouse"; code: string; affectedCount: number }>; diagnostics: LayeredPublicWorkflowDiagnostic[] };
 export interface LayeredPublicJobDiscoveryWorkflow { run(input: { userId: string; runId: string; now: Date; executionSpec: LayeredSpec; attemptCount: number; beforePhysicalOperation(operation: LayeredPublicPhysicalOperation): Promise<void>; signal: AbortSignal }): Promise<LayeredPublicWorkflowOutcome>; }
 export interface LayeredPublicJobDiscoveryWorkflowResolver { resolve(input: { runId: string; idempotencyKey: string; executionSpec: LayeredSpec; attemptCount: number }): LayeredPublicJobDiscoveryWorkflow; }
 
@@ -36,10 +36,11 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
     const value = RunInputSchema.parse(input);
     if (value.executionSpec.workflowVersion !== LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION || value.executionSpec.sourceScope.kind !== "layered_public") throw new Error("LAYERED_PUBLIC_WORKFLOW_SPEC_REQUIRED");
     const spec = value.executionSpec; const trusted = await deps.trustedSources.discover({ runId: value.runId, executionSpec: spec, signal: value.signal, beforeRequest: (watchlistItemId) => value.beforePhysicalOperation({ kind: "search", identity: watchlistItemId }) });
-    const sourcePostingVersionIds = [...trusted.verifiedSourcePostingVersionIds]; const diagnostics: LayeredPublicWorkflowDiagnostic[] = []; const sourceIssues: Array<{ provider: "anysearch" | "greenhouse"; code: string; affectedCount: number }> = trusted.sourceIssues?.map((issue) => ({ provider: "greenhouse" as const, ...issue })) ?? []; const seen = new Set<string>(); let verificationCandidates = 0;
+    const sourcePostingVersionIds = [...trusted.verifiedSourcePostingVersionIds]; const diagnostics: LayeredPublicWorkflowDiagnostic[] = []; const sourceIssues: Array<{ provider: "anysearch" | "greenhouse"; code: string; affectedCount: number }> = trusted.sourceIssues?.map((issue) => ({ provider: "greenhouse" as const, ...issue })) ?? []; const seen = new Set<string>(); let verificationCandidates = 0; let publicDiscoverySucceeded = false;
     for (const query of spec.sourceScope.publicDiscovery.queries) {
       const searched = await deps.anySearch.search({ runId: value.runId, executionSpec: spec, query, signal: value.signal, beforeRequest: () => value.beforePhysicalOperation({ kind: "search", identity: query.queryId }) });
       if ("error" in searched) { diagnostics.push({ scope: "provider", code: searched.error.code, retryable: searched.error.retryable, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: searched.error.code, affectedCount: 1 }); continue; }
+      publicDiscoverySucceeded = true;
       for (const candidate of searched.candidates.slice(0, query.resultLimit)) {
         if (!fingerprint.safeParse(candidate.stableFingerprint).success || seen.has(candidate.stableFingerprint)) continue;
         seen.add(candidate.stableFingerprint); const safe = await deps.preflight({ normalizedUrl: candidate.normalizedUrl, query });
@@ -59,6 +60,6 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
         }
       }
     }
-    return { hasTrustedSuccess: sourcePostingVersionIds.length > 0, sourcePostingVersionIds: [...new Set(sourcePostingVersionIds)], trustedSourcePostingVersionIds: trusted.verifiedSourcePostingVersionIds, sourceIssues, diagnostics };
+    return { hasTrustedSuccess: trusted.verifiedSourcePostingVersionIds.length > 0, branchSuccess: { trusted: trusted.verifiedSourcePostingVersionIds.length > 0, publicDiscovery: publicDiscoverySucceeded }, sourcePostingVersionIds: [...new Set(sourcePostingVersionIds)], trustedSourcePostingVersionIds: trusted.verifiedSourcePostingVersionIds, sourceIssues, diagnostics };
   } };
 }
