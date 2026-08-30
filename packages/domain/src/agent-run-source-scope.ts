@@ -1,6 +1,7 @@
 import {
   AgentRunSourceScopeSchema,
   PublicAgentRunSourceScopeSchema,
+  PublicSourceHealthAgentRunSourceScopeSchema,
   FAKE_JOB_DISCOVERY_ADAPTER,
   FAKE_JOB_DISCOVERY_ADAPTER_VERSION,
   FAKE_JOB_DISCOVERY_SOURCE_IDS,
@@ -27,5 +28,7 @@ function isLegacySourceScope(value: unknown): value is {
 export function normalizeAgentRunSourceScope(value: unknown) {
   if (isLegacySourceScope(value)) return AgentRunSourceScopeSchema.parse({ ...value, watchlistVersion: 0 });
   const fake = AgentRunSourceScopeSchema.safeParse(value);
-  return fake.success ? fake.data : PublicAgentRunSourceScopeSchema.parse(value);
+  if (fake.success) return fake.data;
+  const publicV2 = PublicAgentRunSourceScopeSchema.safeParse(value);
+  return publicV2.success ? publicV2.data : PublicSourceHealthAgentRunSourceScopeSchema.parse(value);
 }

@@ -22,7 +22,7 @@ export class AgentInboxActionError extends Error {
   constructor(public readonly code: "AGENT_INBOX_ACTION_FAILED") { super(code); }
 }
 
-function projection(item: InboxItemRow): AgentInboxItem {
+function projection(item: InboxItemRow, targetId: string): AgentInboxItem {
   const open = item.status === "open";
   const common = {
     itemId: item.id, runId: item.runId, kind: item.kind, status: item.status, reasonCode: item.reasonCode,
@@ -30,6 +30,7 @@ function projection(item: InboxItemRow): AgentInboxItem {
   } as const;
   if (item.kind === "decision_required") return { ...common, title: "岗位发现已暂停", message: "选择继续或取消本次岗位发现。", availableActions: open ? ["resume_run", "cancel_run"] : [], targetHref: null } as AgentInboxItem;
   if (item.kind === "run_failed") return { ...common, title: "岗位发现未完成", message: "可以重新运行或标记为已处理。", availableActions: open ? ["restart_run", "dismiss"] : [], targetHref: null } as AgentInboxItem;
+  if (item.kind === "source_attention") return { ...common, title: "部分来源需要关注", message: "部分岗位来源未完成检查。可查看诊断、稍后重试或停用来源。", availableActions: open ? ["dismiss"] : [], targetHref: `/profile/targets/${targetId}/watchlist#source-health` } as AgentInboxItem;
   const messages = {
     active_duration: "本次岗位发现达到活跃时间上限。请调整目标后重试。",
     attempts: "本次岗位发现达到重试次数上限。请调整目标后重试。",
@@ -43,7 +44,8 @@ function projection(item: InboxItemRow): AgentInboxItem {
 function accepts(item: InboxItemRow, action: InboxAction) {
   return (item.kind === "decision_required" && (action === "resume_run" || action === "cancel_run"))
     || (item.kind === "run_failed" && (action === "restart_run" || action === "dismiss"))
-    || (item.kind === "budget_exhausted" && action === "dismiss");
+    || (item.kind === "budget_exhausted" && action === "dismiss")
+    || (item.kind === "source_attention" && action === "dismiss");
 }
 
 function snapshot(run: typeof agentRuns.$inferSelect) {
@@ -55,15 +57,23 @@ async function itemFor(database: Pick<Database, "select">, userId: string, itemI
   return item;
 }
 
+async function itemProjectionFor(database: Pick<Database, "select">, userId: string, itemId: string) {
+  const [row] = await database.select({ item: agentInboxItems, targetId: agentRuns.targetId }).from(agentInboxItems)
+    .innerJoin(agentRuns, and(eq(agentRuns.userId, agentInboxItems.userId), eq(agentRuns.id, agentInboxItems.runId)))
+    .where(and(eq(agentInboxItems.userId, userId), eq(agentInboxItems.id, itemId)));
+  return row;
+}
+
 export function createAgentInbox(deps: { db: Database; commands: Commands; auditTrail: AuditTrail; id: () => string; clock: () => Date }): {
   list(input: { userId: string; status: "open" | "resolved" }): Promise<{ items: AgentInboxItem[] }>;
   act(input: { userId: string; requestId: string; itemId: string; command: AgentInboxActionCommand }): Promise<AgentInboxActionResponse>;
 } {
   async function response(userId: string, itemId: string, relatedRunId: string | null, applied: boolean): Promise<AgentInboxActionResponse> {
-    const item = await itemFor(deps.db, userId, itemId);
-    if (!item) throw new AgentInboxError("AGENT_INBOX_NOT_FOUND");
+    const row = await itemProjectionFor(deps.db, userId, itemId);
+    if (!row) throw new AgentInboxError("AGENT_INBOX_NOT_FOUND");
+    const item = row.item;
     const [run] = relatedRunId ? await deps.db.select().from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, relatedRunId))) : [];
-    return AgentInboxActionResponseSchema.parse({ applied, item: projection(item), run: run ? snapshot(run) : null });
+    return AgentInboxActionResponseSchema.parse({ applied, item: projection(item, row.targetId), run: run ? snapshot(run) : null });
   }
 
   async function recordFailure(input: { userId: string; requestId: string; itemId: string; actionId: string; action: InboxAction }) {
@@ -139,7 +149,12 @@ export function createAgentInbox(deps: { db: Database; commands: Commands; audit
   return {
     async list({ userId, status }) {
       const rows = await deps.db.select().from(agentInboxItems).where(and(eq(agentInboxItems.userId, userId), eq(agentInboxItems.status, status))).orderBy(asc(agentInboxItems.createdAt), asc(agentInboxItems.id));
-      return AgentInboxListSchema.parse({ items: rows.map(projection) });
+      const projected = await Promise.all(rows.map(async (item) => {
+        const [run] = await deps.db.select({ targetId: agentRuns.targetId }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, item.runId)));
+        if (!run) throw new AgentInboxError("AGENT_INBOX_NOT_FOUND");
+        return projection(item, run.targetId);
+      }));
+      return AgentInboxListSchema.parse({ items: projected });
     },
     async act(input) {
       const command = AgentInboxActionCommandSchema.parse(input.command);

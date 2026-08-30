@@ -1263,5 +1263,16 @@ describe("database migrations", () => {
       where schemaname = 'public' and indexname = 'job_source_health_checks_latest_lookup_idx'
     `);
     expect(indexes).toHaveLength(1);
+    expect(await listConstraintNames(migratedDatabase)).toEqual(expect.arrayContaining([
+      "agent_inbox_items_kind_check", "agent_inbox_items_reason_check",
+    ]));
+    await migratedDatabase.execute(sql`
+      insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, kind, status, reason_code, budget_dimension)
+      values ('0f7a4f89-cf14-4d5c-b3ea-492a17c64f79', ${userId}, ${runId}, 99, 'source_attention', 'open', 'SOURCE_HEALTH_ATTENTION', null)
+    `);
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, kind, status, reason_code, budget_dimension)
+      values ('e6337e34-3662-47e1-913c-fc40a12fe969', ${userId}, ${runId}, 100, 'source_attention', 'open', 'AGENT_RUN_ADAPTER_FAILED', null)
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
   });
 });

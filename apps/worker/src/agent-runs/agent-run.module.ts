@@ -19,7 +19,7 @@ import {
   type AgentRunScheduleFailure,
   type AgentRunScheduleReporter,
 } from "./agent-run-scheduler.js";
-import { createJobDiscoveryAdapterResolver } from "./job-discovery-adapter-resolver.js";
+import { createJobDiscoveryAdapterResolver, createSourceHealthDiscoveryAdapterResolver } from "./job-discovery-adapter-resolver.js";
 import { MinioDiscoveryContentStore } from "./minio-discovery-content-store.js";
 
 export const AGENT_RUN_CONSUMER = Symbol("AGENT_RUN_CONSUMER");
@@ -104,6 +104,7 @@ class AgentRunDatabase implements OnModuleDestroy {
           processor: createAgentRunProcessor({
             db,
             adapterResolver: createConfiguredJobDiscoveryAdapterResolver(),
+            sourceHealthAdapterResolver: createSourceHealthDiscoveryAdapterResolver(),
             contentStore: new MinioDiscoveryContentStore(createMinioClient(), required("MINIO_BUCKET", "career-documents")),
             auditTrail: createAuditTrail({ db, clock: () => new Date() }),
             id: randomUUID,

@@ -39,7 +39,7 @@ describe("agent inbox", () => {
   const commands = () => createAgentRunCommands({ db: database, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
   const inbox = () => createAgentInbox({ db: database, commands: commands(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
 
-  async function openItem(input: { userId: string; targetId: string; kind: "decision_required" | "run_failed" | "budget_exhausted"; reasonCode: "AGENT_RUN_PAUSED" | "AGENT_RUN_ADAPTER_FAILED" | "AGENT_RUN_BUDGET_EXCEEDED"; budgetDimension?: "tool_calls" }) {
+  async function openItem(input: { userId: string; targetId: string; kind: "decision_required" | "run_failed" | "budget_exhausted" | "source_attention"; reasonCode: "AGENT_RUN_PAUSED" | "AGENT_RUN_ADAPTER_FAILED" | "AGENT_RUN_BUDGET_EXCEEDED" | "SOURCE_HEALTH_ATTENTION"; budgetDimension?: "tool_calls" }) {
     const run = await commands().start({ userId: input.userId, requestId: crypto.randomUUID(), command: { targetId: input.targetId, idempotencyKey: crypto.randomUUID() } });
     if (input.kind === "decision_required") await database.update(agentRuns).set({ status: "paused" }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, run.runId)));
     const itemId = crypto.randomUUID();
@@ -60,6 +60,23 @@ describe("agent inbox", () => {
       expect.objectContaining({ kind: "budget_exhausted", availableActions: ["dismiss"], targetHref: "/profile/targets" }),
     ]) });
     await expect(inbox().list({ userId: other.userId, status: "open" })).resolves.toEqual({ items: [] });
+  });
+
+  it("为来源关注项从 owner-bound run 投影精确诊断链接，并以 actionId 幂等 dismiss", async () => {
+    const owner = await activeTarget();
+    const other = await activeTarget();
+    const item = await openItem({ ...owner, kind: "source_attention", reasonCode: "SOURCE_HEALTH_ATTENTION" });
+    await expect(inbox().list({ userId: owner.userId, status: "open" })).resolves.toMatchObject({ items: [expect.objectContaining({
+      itemId: item.itemId, kind: "source_attention", availableActions: ["dismiss"],
+      targetHref: `/profile/targets/${owner.targetId}/watchlist#source-health`,
+    })] });
+    await expect(inbox().list({ userId: other.userId, status: "open" })).resolves.toEqual({ items: [] });
+    const actionId = crypto.randomUUID();
+    const first = await inbox().act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: item.itemId, command: { actionId, action: "dismiss" } });
+    const replay = await inbox().act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: item.itemId, command: { actionId, action: "dismiss" } });
+    expect(first).toMatchObject({ applied: true, item: { status: "resolved", availableActions: [], targetHref: `/profile/targets/${owner.targetId}/watchlist#source-health` }, run: null });
+    expect(replay).toEqual(first);
+    await expect(database.select().from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, owner.userId), eq(agentInboxItemActions.itemId, item.itemId)))).resolves.toHaveLength(1);
   });
 
   it("恢复或取消 decision 项时只执行允许的控制并解决项，重放不重复审计或事件", async () => {

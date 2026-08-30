@@ -6,6 +6,8 @@ import {
 } from "@job-copilot/database";
 import {
   AGENT_RUN_BUDGET, AGENT_RUN_JOB_VERSION, DiscoveryBatchSearchResultSchema, DiscoveryDetailResultSchema, PublicDiscoveryBatchSearchResultSchema,
+  GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, parseSourceHealthDetailResult, parseSourceHealthListResult,
+  type JobSourceHealthCheck,
   type AgentRunJob,
 } from "@job-copilot/contracts/agent-runs";
 import type { AuditTrail } from "./audit-trail";
@@ -16,6 +18,7 @@ import { agentRunUsageSnapshot, appendBudgetFacts, settleActiveSlice, terminateB
 import type { AgentRunCheckpoint } from "./agent-run-checkpoint";
 import { normalizeAgentRunSourceScope } from "./agent-run-source-scope";
 import { applyTransactionDeadline } from "./transaction-deadline";
+import type { SourceHealthDiscoveryAdapter, SourceHealthDiscoveryAdapterResolver } from "./source-health-discovery-adapter";
 
 export interface DiscoveryContentStore {
   put(input: { objectKey: string; bytes: Uint8Array; mediaType: "application/json"; runId: string }): Promise<void>;
@@ -79,6 +82,7 @@ export function createAgentRunRecoveryQueries(deps: { db: Database; clock: () =>
 export type AgentRunProcessorDependencies = {
   db: Database;
   adapterResolver: JobDiscoveryAdapterResolver;
+  sourceHealthAdapterResolver?: SourceHealthDiscoveryAdapterResolver;
   checkpoint: AgentRunCheckpoint;
   contentStore: DiscoveryContentStore;
   auditTrail: AuditTrail;
@@ -322,9 +326,10 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
       const checkpoint = deps.checkpoint;
       const claimOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "claim", ordinal: 1 });
       if (claimOutcome) return claimOutcome;
-      let adapter: JobDiscoveryAdapter;
+      let adapter!: JobDiscoveryAdapter;
+      let sourceHealthAdapter!: SourceHealthDiscoveryAdapter;
       try {
-        adapter = deps.adapterResolver.resolve({
+        const resolverInput = {
           runId: claimed.run.id,
           idempotencyKey: claimed.run.idempotencyKey,
           executionSpec: {
@@ -340,7 +345,11 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
             budget: claimed.run.budgetSnapshot,
           },
           attemptCount: claimed.attemptCount,
-        });
+        };
+        if (claimed.run.workflowVersion === GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION) {
+          if (!deps.sourceHealthAdapterResolver) throw new Error("AGENT_RUN_ADAPTER_UNSUPPORTED");
+          sourceHealthAdapter = deps.sourceHealthAdapterResolver.resolve(resolverInput);
+        } else adapter = deps.adapterResolver.resolve(resolverInput);
       } catch (error) {
         return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
       }
@@ -361,6 +370,88 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
       let sourceScope: import("@job-copilot/contracts/agent-runs").AgentRunDetail["sourceScope"];
       try { sourceScope = normalizeAgentRunSourceScope(claimed.run.sourceScope); }
       catch (error) { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline }); }
+      if (claimed.run.workflowVersion === GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION) {
+        const v3Scope = sourceScope as import("@job-copilot/contracts/agent-runs").PublicSourceHealthAgentRunSourceScope;
+        const batchStart = await transition("batch_search", false); if (batchStart) return batchStart;
+        const sourceStates: Array<{ source: typeof v3Scope.sources[number]; observedDetailIds: string[]; candidates: Array<{ sourceId: string; detailId: string }>; requestAttemptCount: number; failure?: Extract<import("@job-copilot/contracts/agent-runs").SourceHealthListResult, { ok: false }>["failure"] }> = [];
+        try {
+          for (const [index, source] of v3Scope.sources.entries()) {
+            const called = await adapterCall("source_list", index + 1, () => sourceHealthAdapter.listSource({ targetSnapshot: snapshot, source }));
+            if (called.outcome) return called.outcome;
+            const list = parseSourceHealthListResult(called.value, source.sourceId);
+            if (!list.ok) { sourceStates.push({ source, observedDetailIds: [], candidates: [], requestAttemptCount: list.failure.attemptCount, failure: list.failure }); continue; }
+            sourceStates.push({ source, observedDetailIds: list.data.observedDetailIds, candidates: list.data.candidates.map((candidate) => ({ sourceId: candidate.sourceId, detailId: candidate.detailId })), requestAttemptCount: list.attemptCount });
+          }
+        } catch (error) { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline }); }
+        const batchComplete = await transition("batch_search", true); if (batchComplete) return batchComplete;
+        const detailsStart = await transition("fetch_details", false); if (detailsStart) return detailsStart;
+        const details: Array<{ sourceId: string; detailId: string; company: string; title: string; location: string; postedAt: string; deadline: string | null; sourceType: "company_careers"; isOfficial: true; rawPayload: Record<string, unknown> }> = [];
+        try {
+          let detailOrdinal = 0;
+          for (const state of sourceStates) {
+            if (state.failure) continue;
+            for (const candidate of state.candidates) {
+              const called = await adapterCall("source_get_detail", ++detailOrdinal, () => sourceHealthAdapter.getSourceDetail({ source: state.source, detailId: candidate.detailId }));
+              if (called.outcome) return called.outcome;
+              const detail = parseSourceHealthDetailResult(called.value, candidate);
+              if (!detail.ok) { state.requestAttemptCount += detail.failure.attemptCount; state.failure = detail.failure; break; }
+              state.requestAttemptCount += detail.attemptCount;
+              details.push(detail.data);
+            }
+          }
+        } catch (error) { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline }); }
+        const checks: JobSourceHealthCheck[] = sourceStates.map((state) => {
+          const validDetailCount = details.filter((detail) => detail.sourceId === state.source.sourceId).length;
+          const failure = state.failure;
+          const status = !failure ? (validDetailCount === 0 ? "zero_valid_results" : "healthy") : failure.category;
+          const detailFailure = state.observedDetailIds.length > 0;
+          const impact = !failure ? { scope: "none" as const, affectedCount: null }
+            : failure.category === "parser_degraded" && detailFailure ? { scope: "job_details" as const, affectedCount: state.candidates.length - validDetailCount }
+              : { scope: "entire_source" as const, affectedCount: null };
+          return {
+            checkId: deps.id(), runId: claimed.run.id, targetId: claimed.run.targetId, watchlistItemId: state.source.watchlistItemId,
+            sourceId: state.source.sourceId, status, reasonCodes: failure ? [failure.reasonCode] : [], impact,
+            observedPostingCount: state.observedDetailIds.length, selectedDetailCount: state.candidates.length, validDetailCount,
+            requestAttemptCount: state.requestAttemptCount, checkedAt: deps.clock().toISOString(),
+          };
+        });
+        const detailsComplete = await transition("fetch_details", true); if (detailsComplete) return detailsComplete;
+        const persistStart = await transition("persist_results", false); if (persistStart) return persistStart;
+        const stored = details.map((detail) => {
+          const bytes = canonicalJsonBytes(detail.rawPayload);
+          const sourceIdentifier = discoverySourceIdentifier(detail.sourceId, detail.detailId);
+          const rawContentSha256 = createHash("sha256").update(bytes).digest("hex");
+          return { detail, bytes, sourceIdentifier, rawContentSha256, objectKey: `accounts/${job.userId}/agent-runs/${job.runId}/sources/${sourceIdentifier}/${claimed.claimToken}/${rawContentSha256}.json` };
+        });
+        const putObjectKeys: string[] = [];
+        try {
+          for (const item of stored) {
+            putObjectKeys.push(item.objectKey);
+            const put = deps.contentStore.put({ objectKey: item.objectKey, bytes: item.bytes, mediaType: "application/json", runId: job.runId });
+            try { await bounded(deps.clock, deadline, () => put); } catch (error) {
+              void put.then(() => removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), [item.objectKey]), () => removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), [item.objectKey])).catch(() => undefined);
+              throw error;
+            }
+            const writeOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "object_write", ordinal: putObjectKeys.length });
+            if (writeOutcome) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return writeOutcome; }
+          }
+        } catch (error) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: error instanceof AgentRunBudgetError ? "AGENT_RUN_BUDGET_EXCEEDED" : "AGENT_RUN_CONTENT_STORAGE_FAILED", retryable: !(error instanceof AgentRunBudgetError), category: "source", budgetDimension: error instanceof AgentRunBudgetError ? error.budgetDimension : undefined }, deadline }); }
+        const commitBefore = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_before", ordinal: 1 });
+        if (commitBefore) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return commitBefore; }
+        const completedSource = checks.some((check) => check.status === "healthy" || check.status === "zero_valid_results" || (check.status === "parser_degraded" && check.validDetailCount > 0));
+        const hasIssues = checks.some((check) => check.status === "parser_degraded" || check.status === "rate_limited" || check.status === "hard_failed");
+        const terminal = completedSource ? (hasIssues ? "completed_with_source_issues" : "completed") : "source_failed";
+        try {
+          const persisted = await runTransaction(deps, deadline, (transaction) => createJobDiscoveryPersistence({ db: deps.db, id: deps.id, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({
+            run: { ...claimed.run, claimToken: claimed.claimToken }, details, scans: sourceStates.map((state) => ({ sourceId: state.source.sourceId, observedDetailIds: state.observedDetailIds, complete: !state.failure })),
+            storedObjects: stored.map((item) => ({ sourceId: item.detail.sourceId, detailId: item.detail.detailId, objectKey: item.objectKey, rawContentSha256: item.rawContentSha256 })), sourceChecks: checks, terminal, now: deps.clock(), transaction,
+          }));
+          await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), persisted.cleanupObjectKeys);
+          if (!persisted.completed) return "stale";
+          await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_after", ordinal: 1 });
+          return terminal === "source_failed" ? "failed" : "completed";
+        } catch { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_PERSIST_FAILED", retryable: true, category: "source" }, deadline }); }
+      }
       const batchStart = await transition("batch_search", false); if (batchStart) return batchStart;
       let summaries: Array<{ sourceId: string; detailId: string }>;
       let scans: Array<{ sourceId: string; observedDetailIds: string[]; complete: boolean }> = [];
@@ -373,15 +464,16 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           if (batch.data.length > AGENT_RUN_BUDGET.maxResults || batch.data.some((item) => !sourceScope.sources.includes(item.sourceId))) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "source" }, deadline });
           summaries = batch.data;
         } else {
-          const ordinals = new Map(sourceScope.sources.map((source, index) => [source.sourceId, index + 1]));
-          const batch = PublicDiscoveryBatchSearchResultSchema.parse(await bounded(deps.clock, deadline, () => adapter.searchBatch({ targetSnapshot: snapshot, sourceScope, beforeList: async (sourceId: string) => {
+          const publicScope = sourceScope as import("@job-copilot/contracts/agent-runs").PublicAgentRunSourceScope;
+          const ordinals = new Map(publicScope.sources.map((source, index) => [source.sourceId, index + 1]));
+          const batch = PublicDiscoveryBatchSearchResultSchema.parse(await bounded(deps.clock, deadline, () => adapter.searchBatch({ targetSnapshot: snapshot, sourceScope: publicScope, beforeList: async (sourceId: string) => {
             const ordinal = ordinals.get(sourceId);
             if (!ordinal) throw new Error("AGENT_RUN_ADAPTER_FAILED");
             const outcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "source_search_batch", ordinal, reserve: { toolCalls: 1, sourceRequests: 1 } });
             if (outcome) throw new PublicListCheckpointStop(outcome);
           } })));
           if (!batch.ok) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: batch.error.retryable ? "AGENT_RUN_ADAPTER_RETRYABLE" : "AGENT_RUN_ADAPTER_FAILED", retryable: batch.error.retryable, category: "source" }, deadline });
-          const sourceIds = new Set(sourceScope.sources.map((source) => source.sourceId));
+          const sourceIds = new Set(publicScope.sources.map((source) => source.sourceId));
           if (batch.data.items.some((item) => !sourceIds.has(item.sourceId)) || batch.data.scans.some((scan) => !sourceIds.has(scan.sourceId))) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "source" }, deadline });
           summaries = batch.data.items;
           scans = batch.data.scans;
