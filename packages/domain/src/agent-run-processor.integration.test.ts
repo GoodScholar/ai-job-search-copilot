@@ -201,6 +201,25 @@ describe("AgentRunProcessor checkpoints", () => {
     ])).resolves.toEqual([[expect.objectContaining({ sourcePostingVersionId: job.sourcePostingVersionId })], [{ toolCalls: 1, sourceRequests: 1, resultCount: 1 }]]);
   });
 
+  it.each(["search", "extract", "fetch"] as const)("v4 checkpoint 在 %s 前停止后续物理调用", async (stopAt) => {
+    const job = await layeredRun();
+    const hooks: string[] = [];
+    const durable = checkpoint();
+    const controlled: AgentRunCheckpoint = { check: async (input) => input.checkpointKey.includes(`:layered_${stopAt}_`)
+      ? { kind: "paused" }
+      : durable.check(input) };
+    const processor = createAgentRunProcessor({
+      db: database, checkpoint: controlled,
+      adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
+      layeredPublicWorkflowResolver: { resolve: () => ({ run: async ({ beforePhysicalOperation }) => {
+        for (const kind of ["search", "extract", "fetch"] as const) { hooks.push(kind); await beforePhysicalOperation({ kind, identity: kind === "search" ? job.queryId : crypto.randomUUID() }); }
+        return { hasTrustedSuccess: true, branchSuccess: { trusted: true, publicDiscovery: false }, sourcePostingVersionIds: [job.sourcePostingVersionId], trustedSourcePostingVersionIds: [job.sourcePostingVersionId], diagnostics: [] };
+      } }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("paused");
+    expect(hooks).toEqual(["search", "extract", "fetch"].slice(0, ["search", "extract", "fetch"].indexOf(stopAt) + 1));
+  });
+
   it("v4 retry 只保留诊断；后续成功不遗留 source issue 或 attention", async () => {
     const job = await layeredRun(); let retry = true;
     const processor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => retry
