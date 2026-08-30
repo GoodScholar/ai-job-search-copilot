@@ -354,6 +354,15 @@ describe("verified public job source gate", () => {
       candidate: { queryId: idSubject.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: page(), now,
     })).rejects.toBe(idFailure);
 
+    const dbSubject = await owner();
+    const dbFailure = new Error("unknown database transaction");
+    const brokenDatabase = Object.assign(Object.create(database), { transaction: async () => { throw dbFailure; } }) as Database;
+    const dbGate = createVerifiedJobSourceGate({ db: brokenDatabase, contentStore: new EvidenceStore(), id: () => crypto.randomUUID() });
+    await expect(dbGate.verify({
+      userId: dbSubject.userId, leadId: dbSubject.leadId,
+      candidate: { queryId: dbSubject.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: page(), now,
+    })).rejects.toBe(dbFailure);
+
     const deleteSubject = await owner("https://careers.acme.com/jobs/unknown-delete?job=1");
     const deleteFailure = new Error("unknown delete");
     const deleteStore = new EvidenceStore();
