@@ -110,7 +110,13 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
         try {
           const extract = await deps.anySearch.extract({ candidate: recovered, signal: value.signal, beforeRequest: () => value.beforePhysicalOperation({ kind: "extract", identity: pending.leadId }) });
           if ("error" in extract) { diagnostics.push({ scope: "lead", leadId: pending.leadId, code: extract.error.code, retryable: extract.error.retryable, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: extract.error.code, affectedCount: 1 }); continue; }
-          if (extract.normalizedUrl !== safe.normalizedUrl) { await value.beforePhysicalOperation({ kind: "gate_reject", identity: pending.leadId }); await deps.gate.reject({ candidate: recovered, code: "JOB_PAGE_URL_INVALID", claimToken: value.claimToken, now: value.now }); continue; }
+          if (extract.normalizedUrl !== safe.normalizedUrl) {
+            await value.beforePhysicalOperation({ kind: "gate_reject", identity: pending.leadId });
+            await deps.gate.reject({ candidate: recovered, code: "JOB_PAGE_URL_INVALID", claimToken: value.claimToken, now: value.now });
+            diagnostics.push({ scope: "lead", leadId: pending.leadId, code: "JOB_PAGE_URL_INVALID", retryable: false, affectedCount: 1 });
+            sourceIssues.push({ provider: "anysearch", code: "JOB_PAGE_URL_INVALID", affectedCount: 1 });
+            continue;
+          }
           await value.beforePhysicalOperation({ kind: "fetch", identity: pending.leadId }); const page = await deps.fetcher.fetch({ candidate: recovered, signal: value.signal });
           await value.beforePhysicalOperation({ kind: "gate_verify", identity: pending.leadId });
           const verified = await deps.gate.verify({ candidate: recovered, candidateFingerprint: candidateFingerprint(safe.normalizedUrl), extract, page, claimToken: value.claimToken, now: value.now }); sourcePostingVersionIds.push(verified.sourcePostingVersionId); publicVerifiedCount += 1;
