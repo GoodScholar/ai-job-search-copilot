@@ -41,6 +41,14 @@ Round 2 首次 fresh Worker full 仍复现原 afterAll 问题：19/20 文件通�
 
 该次环境启动失败不用于推断或掩盖原 teardown flaky；临时标记已全部撤销。Round 2 数据库 deadline/finally fix 已基于 focused 验证提交，但最终 fresh acceptance 仍待后续重新执行。
 
+## 最终 fresh acceptance
+
+在 HEAD `215204858cca88c42593732e095383b9055e32e4`、clean worktree、无并发测试进程且未手工清理 Docker/Testcontainers 资源的固定环境中，串行执行：
+
+`DOCKER_API_VERSION=1.51 pnpm --filter worker test`
+
+结果为 **20/20 test files、256/256 tests passed**，退出码 0，Vitest duration 87.01 秒。原 `agent-run.integration.test.ts` afterAll timeout 与独立 Redis Testcontainer 端口绑定失败均未复现；本次结果作为 Task 5a 最终 full 验收证据，但不改写前述历史诊断边界。
+
 ## 提交
 
 第一轮实现提交：`24c9c7c5ce51ad67fb9b16ee228174982d1f6014`（`fix(worker): close lifecycle-owned resources`）。
