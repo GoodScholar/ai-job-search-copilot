@@ -16,7 +16,6 @@ import {
 import { JOB_PAGE_MAX_BYTES } from "@job-copilot/source-access";
 import { z } from "zod";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
-import { JobDiscoveryLeadError } from "./job-discovery-leads";
 import { createJobDiscoveryLeadTransitions } from "./job-discovery-lead-transitions";
 
 const TAXONOMY_POLICY = PUBLIC_JOB_SOURCE_TAXONOMY_POLICY_VERSION;
@@ -125,25 +124,30 @@ function sameJson(left: unknown, right: unknown): boolean { return JSON.stringif
 export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: VerifiedJobEvidenceStore; id: () => string }) {
   const transitions = createJobDiscoveryLeadTransitions({ db: deps.db, id: deps.id });
 
+  async function cleanupUnreferencedObjects(transaction: Parameters<Parameters<Database["transaction"]>[0]>[0], userId: string, objectKeys: readonly string[]) {
+    const versions = await transaction.select({ rawObjectReference: jobSourcePostingVersions.rawObjectReference }).from(jobSourcePostingVersions)
+      .where(eq(jobSourcePostingVersions.userId, userId));
+    const referenced = new Set(versions.flatMap(({ rawObjectReference }) => {
+      if (!rawObjectReference || typeof rawObjectReference !== "object" || Array.isArray(rawObjectReference)) return [];
+      return Object.values(rawObjectReference).filter((value): value is string => typeof value === "string");
+    }));
+    for (const objectKey of objectKeys) {
+      if (!referenced.has(objectKey)) {
+        try { await deps.contentStore.delete({ objectKey }); }
+        catch (error) {
+          if (error instanceof VerifiedJobEvidenceStoreUnavailableError) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_CLEANUP_REQUIRED");
+          throw error;
+        }
+      }
+    }
+  }
+
   async function cleanupCreatedObjects(userId: string, objectKeys: readonly string[]) {
     if (objectKeys.length === 0) return;
-    try {
-      await deps.db.transaction(async (transaction) => {
-        await acquireAccountAdvisoryLock(transaction, userId);
-        const versions = await transaction.select({ rawObjectReference: jobSourcePostingVersions.rawObjectReference }).from(jobSourcePostingVersions)
-          .where(eq(jobSourcePostingVersions.userId, userId));
-        const referenced = new Set(versions.flatMap(({ rawObjectReference }) => {
-          if (!rawObjectReference || typeof rawObjectReference !== "object" || Array.isArray(rawObjectReference)) return [];
-          return Object.values(rawObjectReference).filter((value): value is string => typeof value === "string");
-        }));
-        for (const objectKey of objectKeys) {
-          if (!referenced.has(objectKey)) await deps.contentStore.delete({ objectKey });
-        }
-      });
-    } catch (error) {
-      if (error instanceof VerifiedJobEvidenceStoreUnavailableError) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_CLEANUP_REQUIRED");
-      throw error;
-    }
+    await deps.db.transaction(async (transaction) => {
+      await acquireAccountAdvisoryLock(transaction, userId);
+      await cleanupUnreferencedObjects(transaction, userId, objectKeys);
+    });
   }
 
   return {
@@ -169,6 +173,11 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
           const expectedSourceType = sourceType(value.page, lead.queryKind as z.infer<typeof PublicJobDiscoveryQueryKindSchema>);
           const expectedSourceIdentity = { taxonomyPolicy: TAXONOMY_POLICY, canonicalUrl: value.page.canonicalUrl, finalUrl: value.page.finalUrl };
           const expectedOfficial = value.page.sourceKind === "official";
+          const sourceVersionId = deterministicSourceVersionId({
+            userId: value.userId, leadId: value.leadId, sourceType: expectedSourceType, canonicalUrl: value.page.canonicalUrl,
+            rawHash: rawContentSha256, visibleHash: contentSha256,
+          });
+          const objectKeys = evidenceObjectKeys(value.userId, sourceVersionId, rawContentSha256, contentSha256);
           let posting: { id: string; sourceType: string; sourceIdentifier: string; sourceId: string | null; sourceIdentity: unknown; isOfficial: boolean };
           const [foundPosting] = await transaction.select({
             id: jobSourcePostings.id, sourceType: jobSourcePostings.sourceType, sourceIdentifier: jobSourcePostings.sourceIdentifier,
@@ -205,16 +214,12 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
             || !sameJson(existingVersion.normalizedData, {}))) {
             throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_CONFLICT");
           }
+          if (existingVersion && existingVersion.id !== sourceVersionId) await cleanupUnreferencedObjects(transaction, value.userId, Object.values(objectKeys));
           if (lead.state === "verified" && lead.sourcePostingVersionId !== existingVersion?.id) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_CONFLICT");
           if (lead.state === "rejected") throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_CONFLICT");
 
           let version = existingVersion;
           if (!version) {
-            const sourceVersionId = deterministicSourceVersionId({
-              userId: value.userId, leadId: value.leadId, sourceType: expectedSourceType, canonicalUrl: value.page.canonicalUrl,
-              rawHash: rawContentSha256, visibleHash: contentSha256,
-            });
-            const objectKeys = evidenceObjectKeys(value.userId, sourceVersionId, rawContentSha256, contentSha256);
             let rawPut: { created: boolean };
             let visiblePut: { created: boolean };
             try { rawPut = await deps.contentStore.put({ objectKey: objectKeys.rawHtmlObjectKey, bytes: rawBytes, mediaType: "text/html" }); }

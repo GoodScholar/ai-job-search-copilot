@@ -332,6 +332,71 @@ describe("verified public job source gate", () => {
     await expect(database.select().from(jobDiscoveryAttributions).where(eq(jobDiscoveryAttributions.leadId, subject.leadId))).resolves.toEqual([]);
   });
 
+  it("另一 Lead 已提交兼容 Version 后，失败 Lead 重试会清理自己的 recovery generation", async () => {
+    const reservation = await owner("https://careers.acme.com/jobs/reservation?job=1");
+    const reservationUrl = "https://careers.acme.com/jobs/reservation?job=1";
+    const reserved = await createVerifiedJobSourceGate({ db: database, contentStore: new EvidenceStore(), id: () => crypto.randomUUID() }).verify({
+      userId: reservation.userId, leadId: reservation.leadId,
+      candidate: { queryId: reservation.queryId, normalizedUrl: reservationUrl, candidateFingerprint: createHash("sha256").update(reservationUrl, "utf8").digest("hex") },
+      extract: { normalizedUrl: reservationUrl }, page: page(reservationUrl), now,
+    });
+    const first = await owner();
+    const second = await anotherLead(first);
+    const store = new EvidenceStore();
+    const rawHash = createHash("sha256").update(page().rawHtml, "utf8").digest("hex");
+    const visibleHash = createHash("sha256").update(page().visibleText, "utf8").digest("hex");
+    const firstGeneration = generationId(first.userId, first.leadId, "company_careers", normalizedUrl, rawHash, visibleHash);
+    const secondGeneration = generationId(second.userId, second.leadId, "company_careers", normalizedUrl, rawHash, visibleHash);
+    const firstKeys = [
+      `accounts/${first.userId}/public-job-pages/${firstGeneration}/${rawHash}.html`,
+      `accounts/${first.userId}/public-job-pages/${firstGeneration}/${visibleHash}.txt`,
+    ];
+    const firstGate = createVerifiedJobSourceGate({ db: database, contentStore: store, id: (() => { const ids = [crypto.randomUUID(), reserved.attribution.attributionId]; return () => ids.shift() ?? crypto.randomUUID(); })() });
+    const firstInput = {
+      userId: first.userId, leadId: first.leadId,
+      candidate: { queryId: first.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: page(), now,
+    };
+    store.failDelete = true;
+    await expect(firstGate.verify(firstInput)).rejects.toMatchObject({ code: "VERIFIED_JOB_SOURCE_CLEANUP_REQUIRED" });
+    expect([...store.objects.keys()].sort()).toEqual(firstKeys.sort());
+
+    store.failDelete = false;
+    const secondGate = createVerifiedJobSourceGate({ db: database, contentStore: store, id: () => crypto.randomUUID() });
+    const secondResult = await secondGate.verify({
+      userId: second.userId, leadId: second.leadId,
+      candidate: { queryId: second.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: page(), now,
+    });
+    const secondRefs = Object.values(secondResult.sourcePostingVersion.rawObjectReference as Record<string, string>).sort();
+    expect(firstGeneration).not.toBe(secondGeneration);
+    expect(secondRefs.every((key) => key.includes(secondGeneration))).toBe(true);
+    expect(store.objects.size).toBe(4);
+
+    const unknownCleanup = new Error("unknown recovery cleanup");
+    store.unknownDelete = unknownCleanup;
+    await expect(firstGate.verify(firstInput)).rejects.toBe(unknownCleanup);
+    await expect(createJobDiscoveryLeadRepository({ db: database, id: () => crypto.randomUUID() }).getLead({ userId: first.userId, leadId: first.leadId, now }))
+      .resolves.toMatchObject({ state: "pending" });
+    store.unknownDelete = null;
+    store.failDelete = true;
+    await expect(firstGate.verify(firstInput)).rejects.toMatchObject({ code: "VERIFIED_JOB_SOURCE_CLEANUP_REQUIRED" });
+    store.failDelete = false;
+    const retried = await firstGate.verify(firstInput);
+    expect(retried.sourcePostingVersion.sourcePostingVersionId).toBe(secondResult.sourcePostingVersion.sourcePostingVersionId);
+    expect(store.objects.has(firstKeys[0]!)).toBe(false);
+    expect(store.objects.has(firstKeys[1]!)).toBe(false);
+    expect(secondRefs.every((key) => store.objects.has(key))).toBe(true);
+    await expect(Promise.all([
+      database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, first.userId)),
+      database.select().from(jobDiscoveryAttributions).where(eq(jobDiscoveryAttributions.leadId, first.leadId)),
+      database.select().from(jobDiscoveryAttributions).where(eq(jobDiscoveryAttributions.leadId, second.leadId)),
+    ])).resolves.toEqual([[expect.anything()], [expect.anything()], [expect.anything()]]);
+    const putCount = store.puts.length;
+    const replay = await firstGate.verify(firstInput);
+    expect(replay).toEqual(retried);
+    expect(store.puts).toHaveLength(putCount);
+    expect(secondRefs.every((key) => store.objects.has(key))).toBe(true);
+  });
+
   it("未知 put、delete 与 id 错误保持原始对象 identity，typed unavailable 才映射领域码", async () => {
     for (const ordinal of [1, 2]) {
       const subject = await owner();
