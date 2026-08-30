@@ -16,14 +16,14 @@ const nonnegativeInteger = z.int().nonnegative();
 const stableFingerprint = z.string().regex(/^[a-f0-9]{64}$/u);
 const opaqueQueryId = z.uuid();
 const stableCode = z.string().regex(/^[A-Z][A-Z0-9_]{1,63}$/u);
-const publicJobIdentityValue = /^[A-Za-z0-9._~-]{1,128}$/u;
-const publicJobIdentityParameters: ReadonlySet<string> = new Set([
+export const PublicJobIdentityValue = /^[A-Za-z0-9._~-]{1,128}$/u;
+export const PublicJobIdentityParameters: ReadonlySet<string> = new Set([
   "id", "job", "jobid", "job_id", "openingid", "opening_id", "positionid", "position_id", "requisitionid", "requisition_id",
 ]);
-const safeNormalizedUrl = z.url().max(2_048).superRefine((value, context) => {
+export const SafeNormalizedPublicJobUrlSchema = z.url().max(2_048).superRefine((value, context) => {
   const url = new URL(value);
   const hasUnsafeAuthority = url.protocol !== "https:" || url.username !== "" || url.password !== "" || url.hash !== "";
-  const invalidQueryParameter = [...url.searchParams].some(([key, parameterValue]) => !publicJobIdentityParameters.has(key.toLowerCase()) || !publicJobIdentityValue.test(parameterValue));
+  const invalidQueryParameter = [...url.searchParams].some(([key, parameterValue]) => !PublicJobIdentityParameters.has(key.toLowerCase()) || !PublicJobIdentityValue.test(parameterValue));
   if (hasUnsafeAuthority || invalidQueryParameter) {
     context.addIssue({ code: "custom", message: "lead URLs must be normalized HTTPS URLs with only public job identity query parameters" });
   }
@@ -154,7 +154,7 @@ const AnySearchLeadFacts = {
   runId: z.uuid(),
   targetId: z.uuid(),
   provider: z.literal("anysearch"),
-  normalizedUrl: safeNormalizedUrl,
+  normalizedUrl: SafeNormalizedPublicJobUrlSchema,
   stableFingerprint,
   queryId: opaqueQueryId,
   queryKind: PublicJobDiscoveryQueryKindSchema,

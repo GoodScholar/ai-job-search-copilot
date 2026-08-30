@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   AnySearchLeadSchema,
   AnySearchProviderErrorSchema,
+  PublicJobIdentityParameters,
+  PublicJobIdentityValue,
+  SafeNormalizedPublicJobUrlSchema,
   DiscoveryAttributionSchema,
   DiscoveryDiagnosticSchema,
   LayeredPublicJobDiscoveryQueryAuditSchema,
@@ -13,6 +16,13 @@ import {
 const queryId = "d3b1f38c-36c3-47df-8f40-4e62bb749e7f";
 
 describe("AnySearch job discovery contracts", () => {
+  it("exports the public job identity URL policy used by provider boundaries", () => {
+    expect([...PublicJobIdentityParameters]).toContain("jobid");
+    expect(PublicJobIdentityValue.test("opening-123_A")).toBe(true);
+    expect(PublicJobIdentityValue.test("opening/123")).toBe(false);
+    expect(SafeNormalizedPublicJobUrlSchema.safeParse("https://jobs.example.com/opening?jobId=opening-123_A").success).toBe(true);
+    expect(SafeNormalizedPublicJobUrlSchema.safeParse("https://jobs.example.com/opening?token=secret").success).toBe(false);
+  });
   it("keeps an AnySearch lead unverified and outside trusted-source documents", () => {
     const lead = {
       leadId: "f1a56b94-838d-4a68-856f-2b943a61a289",
