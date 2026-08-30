@@ -17,16 +17,20 @@
 - [ ] 一个已发现候选只为其单一安全规范化 URL 授予一次验证尝试能力；页面文本、链接、重定向、搜索结果和提取结果均不得扩大能力，跨主机重定向继续拒绝。
 - [ ] `CONTEXT.md` 只定义岗位发现线索、发现归因和发现诊断的概念与不变量；不得包含字段或实现状态机。
 - [ ] 冻结 v1–v3；新增不可变 v4 `layered-public-job-discovery-v1`，在同一持久化运行中组合 Greenhouse/ATS 与 AnySearch 分支。
+- [ ] v4 taxonomy 精确为 `company_careers | recruitment_platform | wechat_recruitment_h5 | public_web`；BOSS、猎聘、智联统一为 `recruitment_platform`。变更必须 additive/versioned，v1–v3 parser 与 fixtures 保持不变。
 - [ ] 岗位发现线索绝不是来源发布记录、来源发布版本、岗位机会或 Agent 运行结果。只有本地抓取并验证的最终/规范 URL 可创建来源发布版本。
+- [ ] Lead 的持久事实仅为 `pending`、`verified`、`rejected`；`expired` 默认由 `now >= expiresAt` 投影。`pending` 没有 Source Posting Version，`verified` owner-bound 指向真实版本，`rejected` 必有稳定 rejection code；`owner/run/provider/lead identity` 唯一，retry 必须幂等。
 - [ ] 发现归因记录供应方/查询如何发现已验证来源发布版本，绝不替代真实来源身份；发现诊断属于 Agent 运行/线索，绝不写入 `job_source_health_checks` 或 Watchlist-only 诊断。
 - [ ] 只持久化安全规范化候选 URL 与稳定指纹；持久化前去除凭据、会话令牌、片段及敏感追踪参数。搜索标题/摘要和提取内容绝不成为来源原始内容。
 - [ ] 验证顺序固定为：候选 URL 安全预检 → AnySearch `/extract` → 本地安全抓取 → 最终 URL 验证 → DOM/岗位页分类。`/extract` 只接收候选 URL，结果是不可信辅助数据。
 - [ ] 查询事实仅限岗位方向、资历、地点、工作方式、最多 10 个已确认活动技能名、Watchlist 公司/域；绝不包含姓名、联系方式、完整简历、证据节选、自由文本 `dealBreakers.other` 或无关目标。
+- [ ] 查询快照冻结当前 target/profile/watchlist version，且只包含当前 target；普通审计只记录相关 ID、query kind、stable fingerprint 与有界计数，绝不记录 raw query、用户身份、完整画像或外部摘要/正文。
 - [ ] 查询计划默认一条通用查询、四条版本化站点限定查询（BOSS、Liepin、Zhaopin、微信招聘 H5）及最多五条 Watchlist 公司查询；最多 10 条查询、客户端每批最多 5 条、每条最多 5 条线索、最多 10 个验证候选、最多 5 个持久化结果。站点域只能来自版本化固定策略/allowlist。
 - [ ] 每次物理 `/search`、`/extract` 和本地抓取均独立 reserve/checkpoint/count 预算；并发必须确定、有界、可取消、可重放幂等，并保留原子预算。
 - [ ] AnySearch 稳定错误为 `ANYSEARCH_NOT_CONFIGURED`、`ANYSEARCH_AUTH_FAILED`、`ANYSEARCH_RATE_LIMITED`、`ANYSEARCH_QUOTA_EXHAUSTED`、`ANYSEARCH_TIMEOUT`、`ANYSEARCH_CANCELLED`、`ANYSEARCH_UNAVAILABLE`、`ANYSEARCH_INVALID_RESPONSE`、`ANYSEARCH_POLICY_REJECTED`。
 - [ ] 官方机器契约固定为成功 envelope `code=0/message/request_id/data`；HTTP 402 quota symbols 映射 `ANYSEARCH_QUOTA_EXHAUSTED`；HTTP 429 rate symbols 映射 `ANYSEARCH_RATE_LIMITED`。绝不按 `message` 分类，绝不猜测权威 schema 不存在的 JSON symbol 字段。匿名模式禁用；402 匿名响应中的任何凭据必须丢弃，绝不记录或持久化。
 - [ ] 缺少 AnySearch key 只以 `ANYSEARCH_NOT_CONFIGURED` 失败该分支；若 Greenhouse/ATS 成功，运行状态为 `completed_with_source_issues`。同一根因只聚合为一个脱敏运行级 attention item，不能每条查询各建一个。
+- [ ] Greenhouse 必须通过 v4 wrapper 接入；旧 v1–v3 adapter、Execution Spec 与恢复语义原样保留，绝不改写旧输入输出。
 - [ ] 线索持久化投影为 30 天 `expiresAt`，不做后台 sweep；已验证的 owner-bound 关联由数据库约束或同一事务内的强校验保证。
 - [ ] 登录墙、列表页、过期页、不安全页及内容不足只保留 rejected Lead，不能创建 Source Posting、Opportunity 或 AgentRunResult。
 - [ ] 测试使用公开 seam，以一个纵切的 Red → Green TDD 切片逐步实现；实现与测试执行使用 `gpt-5.6-terra/high`，规划与最终审查使用 `gpt-5.6-sol/high`。
