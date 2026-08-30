@@ -96,6 +96,72 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({ status: "completed", termination: { kind: "completed_with_source_issues" }, results: [{ sourcePostingVersionId: job.sourcePostingVersionId }], sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED" }, { provider: "greenhouse", code: "GREENHOUSE_DEGRADED" }], usage: { toolCalls: 1, sourceRequests: 1 } });
   });
 
+  it("v4 detail、latest 与 eventsAfter 只投影同 owner 的有序脱敏事实，并保持 resultCount", async () => {
+    const job = await layeredRun();
+    const firstExtraVersionId = await extraTrustedVersion(job, 1);
+    const secondExtraVersionId = await extraTrustedVersion(job, 2);
+    const secretUrl = "https://untrusted.example.com/jobs/secret-123";
+    const secretTitle = "不应泄漏的外部岗位标题";
+    await database.update(jobSourcePostings).set({ sourceIdentifier: secretUrl }).where(eq(jobSourcePostings.id, (await database.select({ sourcePostingId: jobSourcePostingVersions.sourcePostingId }).from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.id, job.sourcePostingVersionId)))[0]!.sourcePostingId));
+    await database.update(jobSourcePostingVersions).set({ normalizedData: { title: secretTitle, applicationUrl: secretUrl } }).where(eq(jobSourcePostingVersions.userId, job.userId));
+    const processor = createAgentRunProcessor({
+      db: database,
+      adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
+      layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({
+        hasTrustedSuccess: true,
+        branchSuccess: { trusted: true, publicDiscovery: false },
+        sourcePostingVersionIds: [secondExtraVersionId, job.sourcePostingVersionId, firstExtraVersionId],
+        trustedSourcePostingVersionIds: [secondExtraVersionId, job.sourcePostingVersionId, firstExtraVersionId],
+        sourceIssues: [
+          { provider: "greenhouse", code: "GREENHOUSE_DEGRADED", affectedCount: 1 },
+          { provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED", affectedCount: 1 },
+        ],
+        diagnostics: [],
+      }) }) },
+      contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("completed");
+    await database.insert(jobDiscoveryDiagnostics).values([
+      { id: "11111111-aaaa-4111-8111-111111111111", userId: job.userId, runId: job.runId, scope: "provider", provider: "anysearch", queryId: null, queryKind: null, queryFingerprint: null, leadId: null, code: "ANYSEARCH_NOT_CONFIGURED", retryable: false, affectedCount: 1, createdAt: new Date(now.getTime() + 2_000) },
+      { id: "22222222-bbbb-4222-8222-222222222222", userId: job.userId, runId: job.runId, scope: "query", provider: "anysearch", queryId: job.queryId, queryKind: "general", queryFingerprint: "a".repeat(64), leadId: null, code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: 1, createdAt: new Date(now.getTime() + 1_000) },
+    ]);
+    const [run] = await database.select().from(agentRuns).where(eq(agentRuns.id, job.runId));
+    await database.insert(agentRuns).values({
+      ...run!, id: crypto.randomUUID(), idempotencyKey: crypto.randomUUID(), status: "queued", currentStep: "queued", attemptCount: 0,
+      claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, completedAt: null, failedAt: null, cancelledAt: null,
+      terminationKind: null, terminationBudgetDimension: null, failureCode: null, resultCount: 0, usageComplete: false,
+      queuedAt: new Date(now.getTime() - 1_000), createdAt: new Date(now.getTime() - 1_000), updatedAt: new Date(now.getTime() - 1_000),
+    });
+    await database.update(agentRuns).set({ queuedAt: new Date(now.getTime() + 1_000) }).where(eq(agentRuns.id, job.runId));
+
+    const queries = createAgentRunQueries({ db: database });
+    const detail = await queries.get(job);
+    expect(detail).toMatchObject({
+      runId: job.runId,
+      usage: { results: 3, complete: true },
+      results: [
+        { sourcePostingVersionId: secondExtraVersionId },
+        { sourcePostingVersionId: job.sourcePostingVersionId },
+        { sourcePostingVersionId: firstExtraVersionId },
+      ],
+      sourceIssues: [
+        { provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED" },
+        { provider: "greenhouse", code: "GREENHOUSE_DEGRADED" },
+      ],
+    });
+    expect(detail?.discoveryDiagnostics.map(({ code }) => code)).toEqual(["ANYSEARCH_POLICY_REJECTED", "ANYSEARCH_NOT_CONFIGURED"]);
+    expect(JSON.stringify(detail)).not.toContain(secretUrl);
+    expect(JSON.stringify(detail)).not.toContain(secretTitle);
+    expect(JSON.stringify(detail)).not.toContain("provider response body");
+    await expect(queries.latest({ userId: job.userId })).resolves.toMatchObject({ run: { runId: job.runId, usage: { results: 3 } } });
+    await expect(queries.eventsAfter({ userId: job.userId, runId: job.runId, afterSequence: detail!.events[1]!.sequence })).resolves.toEqual(detail!.events.slice(2));
+
+    const other = await layeredRun();
+    await expect(queries.get({ userId: other.userId, runId: job.runId })).resolves.toBeNull();
+    await expect(queries.eventsAfter({ userId: other.userId, runId: job.runId, afterSequence: 0 })).resolves.toBeNull();
+    await expect(queries.latest({ userId: other.userId })).resolves.toMatchObject({ run: { runId: other.runId } });
+  });
+
   it("拒绝 plan 外 diagnostic 的恶意 resolver，事务不写 discovery facts", async () => {
     const job = await layeredRun();
     const outcome = await createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({ hasTrustedSuccess: true, sourcePostingVersionIds: [job.sourcePostingVersionId], trustedSourcePostingVersionIds: [job.sourcePostingVersionId], diagnostics: [{ scope: "query", queryId: crypto.randomUUID(), kind: "general", stableFingerprint: "f".repeat(64), code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: 1 }] }) }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true });
