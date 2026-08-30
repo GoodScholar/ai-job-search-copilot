@@ -6,6 +6,8 @@ const phases = ["ordinary", "source-health"];
 const require = createRequire(import.meta.url);
 const playwrightCli = require.resolve("@playwright/test/cli");
 
+/** @typedef {string[] | { error: { code: number | null, signal?: string }, signal?: never } | { signal: string, error?: never }} E2EPhaseSelection */
+
 export function normalizeE2EArguments(arguments_) {
   return arguments_[0] === "--" ? arguments_.slice(1) : arguments_;
 }
@@ -31,6 +33,7 @@ function listedTestCount(stdout) {
   return match ? Number(match[1]) : 0;
 }
 
+/** @returns {Promise<E2EPhaseSelection>} */
 export async function selectE2EPhases(arguments_, run) {
   if (!arguments_.length) return phases;
   const explicit = explicitSpecPhase(arguments_);
@@ -40,6 +43,7 @@ export async function selectE2EPhases(arguments_, run) {
   const selected = [];
   for (const phase of phases) {
     const result = await run({ phase, args: ["--list", ...arguments_], environment: phaseEnvironment(phase, {}) });
+    if (result.signal) return { signal: result.signal };
     if (listedTestCount(result.stdout) > 0) selected.push(phase);
     else if (result.code && !/No tests found/u.test(result.stdout)) return { error: result };
   }
@@ -49,6 +53,7 @@ export async function selectE2EPhases(arguments_, run) {
 export async function executeE2E(arguments_, { environment = process.env, run }) {
   const phaseRun = (call) => run({ ...call, environment: phaseEnvironment(call.phase, environment) });
   const selected = await selectE2EPhases(arguments_, phaseRun);
+  if ("signal" in selected) return { signal: selected.signal };
   if ("error" in selected) return { code: selected.error.code ?? 1, signal: selected.error.signal };
   if (!selected.length) return { code: 1 };
   for (const phase of selected) {

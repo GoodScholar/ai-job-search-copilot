@@ -79,6 +79,22 @@ describe("E2E runner", () => {
     ]);
   });
 
+  it.each(["SIGINT", "SIGTERM"] as const)("通用预检收到 %s 时原样传播且不启动后续阶段", async (signal) => {
+    const calls: RunnerCall[] = [];
+    const result = await executeE2E(["--grep", "x"], {
+      environment: baseEnvironment,
+      run: async (call: RunnerCall) => {
+        calls.push(call);
+        return { code: null, signal, stdout: "" };
+      },
+    });
+
+    expect(result).toEqual({ signal });
+    expect(calls).toEqual([
+      { phase: "ordinary", args: ["--list", "--grep", "x"], environment: { CI: "true", KEEP_ME: "yes" } },
+    ]);
+  });
+
   it("两个阶段都匹配时按顺序运行，且首阶段失败、专用阶段失败或信号都会停止后续阶段", async () => {
     const both = async (call: RunnerCall) => ({ code: 0, stdout: call.args[0] === "--list" ? "Total: 1 test" : "" });
     await expect(executeE2E(["--grep", ".*"], { environment: baseEnvironment, run: both })).resolves.toEqual({ code: 0 });
