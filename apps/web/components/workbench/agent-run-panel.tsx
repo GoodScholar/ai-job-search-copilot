@@ -415,7 +415,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
         {message || runStatusLabel(run)}
       </p>
       {run?.status === "completed" && run.termination?.kind === "completed_with_source_issues" ? <p>
-        问题来源 {("sourceChecks" in run ? run.sourceChecks : []).filter((check) => ["parser_degraded", "rate_limited", "hard_failed"].includes(check.status)).length} 个。 <Link href={`/profile/targets/${run.targetId}/watchlist#source-health`}>查看来源诊断</Link>
+        问题来源 {("sourceChecks" in run ? run.sourceChecks : []).filter((check) => ["parser_degraded", "rate_limited", "hard_failed"].includes(check.status)).length} 个。 <Link className="workbench-touch-target" href={`/profile/targets/${run.targetId}/watchlist#source-health`}>查看来源诊断</Link>
       </p> : null}
 
       {timeline.length > 0 ? (

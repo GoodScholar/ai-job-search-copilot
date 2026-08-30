@@ -7,7 +7,7 @@ import {
   type CompanyWatchlistItem,
   type CompanyWatchlistOverview,
 } from "@job-copilot/contracts/company-watchlists";
-import type { JobSourceHealthOverview } from "@job-copilot/contracts/agent-runs";
+import { JobSourceHealthOverviewSchema, type JobSourceHealthOverview } from "@job-copilot/contracts/agent-runs";
 import { useState, type FormEvent } from "react";
 
 type Draft = {
@@ -19,6 +19,7 @@ type Draft = {
 
 const emptyDraft: Draft = { canonicalCompanyName: "", careersUrl: "", allowedDomains: "", sourceNote: "" };
 const conflictMessage = "Watchlist 已在其他位置更新，请刷新后重试。";
+const healthRefreshMessage = "Watchlist 已保存，但来源诊断刷新失败。请重新加载来源诊断或刷新页面。";
 const safetyNotice = "不要填写账号、密码、Cookie、验证码或绕过登录限制的说明。";
 
 function domains(value: string): string[] {
@@ -86,6 +87,40 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth }: {
     setDraft((current) => ({ ...current, [key]: value }));
   }
 
+  async function fetchSourceHealth(nextOverview: CompanyWatchlistOverview): Promise<JobSourceHealthOverview> {
+    const response = await fetch(`/api/job-targets/${nextOverview.target.targetId}/source-health`, { cache: "no-store" });
+    if (!response.ok) throw new Error("source health unavailable");
+    const parsed = JobSourceHealthOverviewSchema.safeParse(await response.json());
+    if (!parsed.success || parsed.data.targetId !== nextOverview.target.targetId || parsed.data.watchlistVersion !== nextOverview.version) throw new Error("source health invalid");
+    return parsed.data;
+  }
+
+  async function applySuccessfulMutation(nextOverview: CompanyWatchlistOverview, successMessage: string) {
+    // A successful write invalidates every prior health identity/version before the
+    // authoritative projection has returned.
+    setSourceHealth(undefined);
+    setOverview(nextOverview);
+    try {
+      setSourceHealth(await fetchSourceHealth(nextOverview));
+      setMessage(successMessage);
+    } catch {
+      setSourceHealth(undefined);
+      setMessage(healthRefreshMessage);
+    }
+  }
+
+  async function retrySourceHealth() {
+    setMessage(""); setIsSaving(true);
+    try {
+      setSourceHealth(await fetchSourceHealth(overview));
+    } catch {
+      setSourceHealth(undefined);
+      setMessage(healthRefreshMessage);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (inactive) return;
@@ -100,7 +135,8 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth }: {
       if (!response.ok) { setMessage(response.status === 409 ? conflictMessage : "暂时无法保存目标公司，请稍后重试。"); return; }
       const parsed = CompanyWatchlistOverviewSchema.safeParse(await response.json());
       if (!parsed.success) { setMessage("暂时无法保存目标公司，请稍后重试。"); return; }
-      setOverview(parsed.data); setDraft(emptyDraft); setEditingItemId(null); setMessage(editingItem ? "目标公司已更新。" : "目标公司已添加。");
+      await applySuccessfulMutation(parsed.data, editingItem ? "目标公司已更新。" : "目标公司已添加。");
+      setDraft(emptyDraft); setEditingItemId(null);
     } catch {
       setMessage("暂时无法保存目标公司，请稍后重试。");
     } finally {
@@ -116,17 +152,7 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth }: {
       if (!response.ok) { setMessage(response.status === 409 ? conflictMessage : "暂时无法更新 Watchlist，请稍后重试。"); return; }
       const parsed = CompanyWatchlistOverviewSchema.safeParse(await response.json());
       if (!parsed.success) { setMessage("暂时无法更新 Watchlist，请稍后重试。"); return; }
-      setOverview(parsed.data);
-      setSourceHealth((current) => current && {
-        ...current,
-        sources: current.sources.map((source) => {
-          const state = parsed.data.items.find((item) => item.itemId === source.watchlistItemId)?.state ?? source.state;
-          if (state === "disabled") return { ...source, state, status: "disabled", runId: null, reasonCodes: [], impact: { scope: "none", affectedCount: null }, lastCheckedAt: null, suggestedAction: "reenable_source" as const };
-          if (source.state === "disabled") return { ...source, state, status: null, runId: null, reasonCodes: [], impact: { scope: "none", affectedCount: null }, lastCheckedAt: null, suggestedAction: "wait_for_next_run" as const };
-          return { ...source, state };
-        }),
-      });
-      setMessage(successMessage);
+      await applySuccessfulMutation(parsed.data, successMessage);
     } catch {
       setMessage("暂时无法更新 Watchlist，请稍后重试。");
     } finally {
@@ -206,6 +232,10 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth }: {
           <p>建议动作：{actionLabels[source.suggestedAction]}</p>
         </article>
       </li>)}</ol>
+    </section> : message === healthRefreshMessage ? <section aria-labelledby="source-health-title" className="company-watchlist-section" id="source-health">
+      <h2 id="source-health-title">来源诊断</h2>
+      <p>{healthRefreshMessage}</p>
+      <button className="workbench-touch-target" disabled={isSaving} onClick={() => void retrySourceHealth()} type="button">重新加载来源诊断</button>
     </section> : null}
   </main>;
 }

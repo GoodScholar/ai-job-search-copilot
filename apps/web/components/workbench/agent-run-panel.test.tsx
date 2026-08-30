@@ -142,6 +142,7 @@ it("来源问题完成显示诊断状态、问题来源数量和锚点链接", (
   expect(screen.getByText("岗位发现部分完成")).toBeVisible();
   expect(screen.getByText("问题来源 1 个。", { exact: false })).toBeVisible();
   expect(screen.getByRole("link", { name: "查看来源诊断" })).toHaveAttribute("href", `/profile/targets/${targetId}/watchlist#source-health`);
+  expect(screen.getByRole("link", { name: "查看来源诊断" })).toHaveClass("workbench-touch-target");
 });
 
 it("收到 Inbox 已处理通知后重新读取权威运行详情", async () => {
