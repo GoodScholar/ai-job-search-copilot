@@ -2,12 +2,17 @@ import { Module } from "@nestjs/common";
 import type { Database } from "@job-copilot/database";
 import type { AgentRunQueue } from "@job-copilot/domain/agent-runs";
 import { createAgentRunCommands, createAgentRunQueries } from "@job-copilot/domain/agent-runs";
+import { resolveJobDiscoveryExecutionMode } from "@job-copilot/domain/job-discovery-execution-mode";
 import type { AuditTrail } from "@job-copilot/domain/audit-trail";
 import { AuthModule, AUDIT_TRAIL } from "../auth/auth.module.js";
 import { DATABASE, RuntimeConfigModule } from "../config/runtime-config.module.js";
 import { AgentRunsController } from "./agent-runs.controller.js";
 import { AGENT_RUN_COMMANDS, AGENT_RUN_QUERIES, AGENT_RUN_QUEUE_PORT } from "./agent-runs.tokens.js";
 import { BullmqAgentRunQueue } from "./bullmq-agent-run-queue.js";
+
+export function createConfiguredJobDiscoveryExecutionMode(environment: NodeJS.ProcessEnv = process.env) {
+  return resolveJobDiscoveryExecutionMode(environment);
+}
 
 @Module({
   imports: [RuntimeConfigModule, AuthModule],
@@ -18,7 +23,7 @@ import { BullmqAgentRunQueue } from "./bullmq-agent-run-queue.js";
       provide: AGENT_RUN_COMMANDS,
       inject: [DATABASE, AGENT_RUN_QUEUE_PORT, AUDIT_TRAIL],
       useFactory: (db: Database, queue: AgentRunQueue, auditTrail: AuditTrail) => createAgentRunCommands({
-        db, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => new Date(),
+        db, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => new Date(), executionMode: createConfiguredJobDiscoveryExecutionMode(),
       }),
     },
     {

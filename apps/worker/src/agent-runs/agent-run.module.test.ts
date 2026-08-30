@@ -1,8 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-import { createConfiguredJobDiscoveryAdapterResolver } from "./agent-run.module.js";
+import { createConfiguredJobDiscoveryAdapterResolver, createConfiguredJobDiscoveryExecutionMode } from "./agent-run.module.js";
 
 describe("AgentRunModule", () => {
+  it.each([
+    [{ APP_ENV: "production" }, "greenhouse"],
+    [{ APP_ENV: "test", PUBLIC_JOB_DISCOVERY_ADAPTER: "greenhouse" }, "fake"],
+    [{ APP_ENV: "local" }, "fake"],
+    [{ APP_ENV: "local", PUBLIC_JOB_DISCOVERY_ADAPTER: "greenhouse" }, "greenhouse"],
+  ] as const)("为 %o 选择与 API 相同的新运行执行模式", (environment, expected) => {
+    expect(createConfiguredJobDiscoveryExecutionMode(environment)).toBe(expected);
+  });
+
   it.each(["local", "test"])("%s 环境构造按持久化元数据解析的 Fake resolver", async (appEnv) => {
     const resolver = createConfiguredJobDiscoveryAdapterResolver({ APP_ENV: appEnv });
     await expect(resolver.resolve({

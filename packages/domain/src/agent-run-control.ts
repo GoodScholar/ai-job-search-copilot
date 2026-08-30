@@ -17,6 +17,7 @@ import { reduceControl } from "./agent-run-state";
 import { normalizeAgentRunSourceScope } from "./agent-run-source-scope";
 import { analyzePublicJobDiscoverySources } from "./public-job-discovery-sources";
 import { applyTransactionDeadline } from "./transaction-deadline";
+import type { JobDiscoveryExecutionMode } from "./job-discovery-execution-mode";
 
 export interface AgentRunQueue { enqueue(job: AgentRunJob): Promise<void>; }
 
@@ -34,8 +35,8 @@ type CommandDependencies = {
   auditTrail: AuditTrail;
   id: () => string;
   clock: () => Date;
-  /** 测试 Worker 的计划运行只能使用确定性 Fake；省略时保持生产 Greenhouse 语义。 */
-  scheduledAdapter?: "fake";
+  /** 所有新运行共享的、在 API/Worker 边界选择的执行规格；省略时保持直接领域测试的 Fake 默认值。 */
+  executionMode?: JobDiscoveryExecutionMode;
 };
 export type AgentRunStarter = {
   start(input: {
@@ -150,10 +151,9 @@ function createAgentRunStarter(deps: CommandDependencies): AgentRunStarter {
           eq(companyWatchlistRevisions.watchlistId, companyWatchlists.id),
           eq(companyWatchlistRevisions.version, companyWatchlists.version),
         )).where(and(eq(companyWatchlists.userId, input.userId), eq(companyWatchlists.targetId, target.id)));
-        const isScheduled = input.trigger?.kind === "schedule";
-        const useFakeScheduledAdapter = isScheduled && deps.scheduledAdapter === "fake";
-        const runSourceScope = isScheduled && !useFakeScheduledAdapter ? publicSourceScope(watchlist) : sourceScope(watchlist);
-        const execution = isScheduled && !useFakeScheduledAdapter ? {
+        const executionMode = deps.executionMode ?? "fake";
+        const runSourceScope = executionMode === "greenhouse" ? publicSourceScope(watchlist) : sourceScope(watchlist);
+        const execution = executionMode === "greenhouse" ? {
           budget: PUBLIC_JOB_DISCOVERY_BUDGET,
           workflowVersion: GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION,
           ruleVersion: GREENHOUSE_JOB_DISCOVERY_RULE_VERSION,

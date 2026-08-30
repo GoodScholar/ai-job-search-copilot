@@ -69,18 +69,23 @@ describe("agent run controls", () => {
     await expect(database.select().from(auditEvents).where(and(eq(auditEvents.userId, userId), eq(auditEvents.resourceId, run.runId), eq(auditEvents.eventType, "agent.run_paused")))).resolves.toHaveLength(1);
   });
 
-  it("测试 Worker 可把经过公开来源校验的计划 occurrence 固定为 Fake v1，而手动路径不变", async () => {
+  it("新的 Greenhouse 执行模式让手动与计划运行共享公开执行规格", async () => {
     const { userId, targetId } = await activeTarget();
     await addGreenhouseWatchlistSource(userId, targetId);
-    const run = await createAgentRunCommands({
+    const runtimeCommands = createAgentRunCommands({
       db: database, queue: new MemoryQueue(), auditTrail: createAuditTrail({ db: database, clock: () => now }),
-      id: () => crypto.randomUUID(), clock: () => now, scheduledAdapter: "fake",
-    }).start({
+      id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse",
+    });
+    const manual = await runtimeCommands.start({
+      userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() },
+    });
+    const scheduled = await runtimeCommands.start({
       userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() },
       trigger: { kind: "schedule", occurrenceId: crypto.randomUUID(), scheduledFor: now },
     });
 
-    expect(run).toMatchObject({ adapter: "fake", adapterVersion: "fake-job-discovery-v1", workflowVersion: "job-discovery-workflow-v1" });
+    expect(manual).toMatchObject({ adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v1", workflowVersion: "job-discovery-workflow-v2" });
+    expect(scheduled).toMatchObject({ adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v1", workflowVersion: "job-discovery-workflow-v2" });
   });
 
   it("将跨账户运行隐藏为 404，并将 commandId 改变动作标为幂等键冲突", async () => {

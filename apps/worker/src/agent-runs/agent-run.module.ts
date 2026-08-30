@@ -4,6 +4,7 @@ import { Client as MinioClient } from "minio";
 import { createDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
 import { createAgentRunCommands, createAgentRunProcessor, createAgentRunRecoveryQueries } from "@job-copilot/domain/agent-runs";
+import { resolveJobDiscoveryExecutionMode } from "@job-copilot/domain/job-discovery-execution-mode";
 import { createJobDiscoverySchedules } from "@job-copilot/domain/job-discovery-schedules";
 
 import { AgentRunConsumer } from "./agent-run-consumer.js";
@@ -54,8 +55,8 @@ function createMinioClient(): MinioClient {
   });
 }
 
-function usesFakeScheduledAdapter(environment: NodeJS.ProcessEnv = process.env): boolean {
-  return environment.APP_ENV === "test" || (environment.APP_ENV === "local" && environment.PUBLIC_JOB_DISCOVERY_ADAPTER !== "greenhouse");
+export function createConfiguredJobDiscoveryExecutionMode(environment: NodeJS.ProcessEnv = process.env) {
+  return resolveJobDiscoveryExecutionMode(environment);
 }
 
 export function createConfiguredJobDiscoveryAdapterResolver(environment: NodeJS.ProcessEnv = process.env) {
@@ -140,7 +141,7 @@ class AgentRunDatabase implements OnModuleDestroy {
           auditTrail,
           id: randomUUID,
           clock: () => new Date(),
-          ...(usesFakeScheduledAdapter() ? { scheduledAdapter: "fake" as const } : {}),
+          executionMode: createConfiguredJobDiscoveryExecutionMode(),
         });
         return new AgentRunScheduler({
           schedules: createJobDiscoverySchedules({ db, runs, auditTrail, id: randomUUID, clock: () => new Date() }),
