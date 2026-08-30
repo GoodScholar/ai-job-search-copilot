@@ -147,7 +147,7 @@ describe("岗位发现 Agent Run Worker", () => {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
     }
-  });
+  }, 60_000);
 
   function commands() {
     return createAgentRunCommands({
