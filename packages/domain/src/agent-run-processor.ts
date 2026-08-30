@@ -160,13 +160,13 @@ async function renewClaim(deps: AgentRunProcessorDependencies, input: { userId: 
   return Boolean(renewed);
 }
 
-function startClaimHeartbeat(deps: AgentRunProcessorDependencies, input: { userId: string; runId: string; claimToken: string; deadline: Date }) {
+function startClaimHeartbeat(deps: AgentRunProcessorDependencies, input: { userId: string; runId: string; claimToken: string; deadline: Date; onLeaseLost?(): void }) {
   let stopped = false;
   let inFlight: Promise<void> | undefined;
   const tick = () => {
     if (stopped || inFlight) return;
     const renew = deps.heartbeatRenew ?? ((renewInput) => renewClaim(deps, renewInput));
-    inFlight = renew(input).then(() => undefined, () => undefined).finally(() => { inFlight = undefined; });
+    inFlight = renew(input).then((renewed) => { if (!renewed) input.onLeaseLost?.(); }, () => { input.onLeaseLost?.(); }).finally(() => { inFlight = undefined; });
   };
   tick();
   const interval = setInterval(tick, deps.heartbeatIntervalMs ?? 15_000);
@@ -488,7 +488,8 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
       } catch (error) {
         return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
       }
-      const stopHeartbeat = startClaimHeartbeat(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, deadline });
+      const layeredController = claimed.run.workflowVersion === "layered-public-job-discovery-v1" ? new AbortController() : undefined;
+      const stopHeartbeat = startClaimHeartbeat(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, deadline, onLeaseLost: () => layeredController?.abort() });
       try {
       const adapterCall = async <T>(operation: string, ordinal: number, call: () => Promise<T>): Promise<{ value?: T; outcome?: ProcessorOutcome }> => {
         const before = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation, ordinal, reserve: { toolCalls: 1, sourceRequests: 1 } });
@@ -527,15 +528,19 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
       if (claimed.run.workflowVersion === "layered-public-job-discovery-v1") {
         const batchStart = await transition("batch_search", false); if (batchStart) return batchStart;
         let physicalOrdinal = 0;
-        const controller = new AbortController();
+        const controller = layeredController!;
+        const abortAtDeadline = setTimeout(() => controller.abort(), Math.max(0, remainingBudget(deps.clock, deadline)));
         try {
           const outcome = await bounded(deps.clock, deadline, () => layeredWorkflow.run({
             userId: job.userId, runId: job.runId, now: deps.clock(), executionSpec: layeredExecutionSpec, attemptCount: claimed.attemptCount, signal: controller.signal,
             beforePhysicalOperation: async (operation) => {
               if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(operation.identity)) throw new Error("LAYERED_PUBLIC_OPERATION_IDENTITY_INVALID");
+              if (controller.signal.aborted) throw new LayeredPublicWorkflowStop("stale");
               const identity = createHash("sha256").update(operation.identity).digest("hex").slice(0, 16);
-              const checkpointOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: `layered_${operation.kind}_${identity}`, ordinal: ++physicalOrdinal, reserve: { toolCalls: 1, sourceRequests: 1 } });
+              const reserve = operation.kind === "search" || operation.kind === "extract" || operation.kind === "fetch" ? { toolCalls: 1, sourceRequests: 1 } : undefined;
+              const checkpointOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: `layered_${operation.kind}_${identity}`, ordinal: ++physicalOrdinal, reserve });
               if (checkpointOutcome) { controller.abort(); throw new LayeredPublicWorkflowStop(checkpointOutcome); }
+              if (controller.signal.aborted) throw new LayeredPublicWorkflowStop("stale");
             },
           }));
           const branchOutcome = LayeredPublicWorkflowBranchOutcomeSchema.parse(outcome.branchOutcome);
@@ -556,7 +561,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         } catch (error) {
           if (error instanceof LayeredPublicWorkflowStop) return error.outcome;
           return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
-        }
+        } finally { clearTimeout(abortAtDeadline); }
       }
       const snapshot = claimed.run.targetSnapshot as import("@job-copilot/contracts/agent-runs").AgentRunDetail["targetSnapshot"];
       let sourceScope: import("@job-copilot/contracts/agent-runs").AgentRunDetail["sourceScope"];

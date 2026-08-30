@@ -1,7 +1,7 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, asc, eq } from "drizzle-orm";
-import { agentInboxItems, agentRunEvents, agentRunJobResults, agentRunSteps, agentRunUsageEntries, agentRuns, auditEvents, createDatabase, jobAccounts, jobDiscoveryDiagnostics, jobDiscoveryRunResults, jobDiscoverySourceIssues, jobOpportunities, jobOpportunitySources, jobSourceHealthChecks, jobSourcePostings, jobSourcePostingVersions, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
+import { agentInboxItems, agentRunEvents, agentRunJobResults, agentRunSteps, agentRunUsageEntries, agentRuns, auditEvents, createDatabase, jobAccounts, jobDiscoveryAttributions, jobDiscoveryDiagnostics, jobDiscoveryLeads, jobDiscoveryRunResults, jobDiscoverySourceIssues, jobOpportunities, jobOpportunitySources, jobSourceHealthChecks, jobSourcePostings, jobSourcePostingVersions, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
 import { createAgentRunCheckpoint, createAgentRunCommands, createAgentRunProcessor, createAgentRunQueries, type AgentRunCheckpoint, type AgentRunQueue, type DiscoveryContentStore, type JobDiscoveryAdapter, type JobDiscoveryAdapterResolver } from "./agent-runs";
 import { createCompanyWatchlistCommands } from "./company-watchlists";
@@ -293,6 +293,47 @@ describe("AgentRunProcessor checkpoints", () => {
     const processor = createAgentRunProcessor({ db: database, checkpoint: controlled, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async ({ beforePhysicalOperation }) => { hooks += 1; await beforePhysicalOperation({ kind: "search", identity: job.queryId }); hooks += 1; return { branchOutcome: { trusted: "succeeded", publicDiscovery: "clean_zero" }, diagnostics: [] }; } }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
     await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe(outcome);
     expect(hooks).toBe(1);
+  });
+
+  it("v4 heartbeat renew=false 立即中止同一 signal，并在旧 claim 返回后阻止无保留写入围栏", async () => {
+    const job = await layeredRun();
+    let resolveHeartbeat!: (value: boolean) => void;
+    const heartbeat = new Promise<boolean>((resolve) => { resolveHeartbeat = resolve; });
+    let releaseOldFetch!: () => void;
+    const oldFetch = new Promise<void>((resolve) => { releaseOldFetch = resolve; });
+    let reachedFetch!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => { reachedFetch = resolve; });
+    let signal: AbortSignal | undefined;
+    const hooks: string[] = [];
+    const processor = createAgentRunProcessor({
+      db: database,
+      heartbeatRenew: async () => heartbeat,
+      adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
+      layeredPublicWorkflowResolver: { resolve: () => ({ run: async ({ signal: receivedSignal, beforePhysicalOperation }) => {
+        signal = receivedSignal;
+        await beforePhysicalOperation({ kind: "search", identity: job.queryId });
+        hooks.push("fetch"); reachedFetch();
+        await oldFetch; // 模拟 provider 忽略 AbortSignal 后才返回。
+        hooks.push("record_pending");
+        await beforePhysicalOperation({ kind: "record_pending", identity: job.queryId });
+        throw new Error("must not write after lost lease");
+      } }) },
+      contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+    const processing = processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true });
+    await fetchStarted;
+    expect(signal?.aborted).toBe(false);
+    resolveHeartbeat(false);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(signal?.aborted).toBe(true);
+    releaseOldFetch();
+    await expect(processing).resolves.toBe("stale");
+    expect(hooks).toEqual(["fetch", "record_pending"]);
+    await expect(Promise.all([
+      database.select().from(jobDiscoveryLeads).where(eq(jobDiscoveryLeads.runId, job.runId)),
+      database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, job.userId)),
+      database.select().from(jobDiscoveryAttributions).where(eq(jobDiscoveryAttributions.runId, job.runId)),
+    ])).resolves.toEqual([[], [expect.objectContaining({ id: job.sourcePostingVersionId })], []]);
   });
 
   it("v4 旧 claim 活跃时不执行，过期后新 attempt 独立计费", async () => {
