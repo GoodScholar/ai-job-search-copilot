@@ -24,6 +24,7 @@ import type { SourceHealthDiscoveryAdapter, SourceHealthDiscoveryAdapterResolver
 import {
   type LayeredPublicJobDiscoveryWorkflow,
   type LayeredPublicJobDiscoveryWorkflowResolver,
+  LayeredPublicWorkflowBranchOutcomeSchema,
   type LayeredPublicWorkflowDiagnostic,
 } from "./layered-public-job-discovery-workflow";
 
@@ -537,7 +538,8 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
               if (checkpointOutcome) { controller.abort(); throw new LayeredPublicWorkflowStop(checkpointOutcome); }
             },
           }));
-          const branchSucceeded = outcome.branchSuccess?.trusted === true || outcome.branchSuccess?.publicDiscovery === true || outcome.hasTrustedSuccess || (outcome.sourcePostingVersionIds?.length ?? 0) > 0;
+          const branchOutcome = LayeredPublicWorkflowBranchOutcomeSchema.parse(outcome.branchOutcome);
+          const branchSucceeded = branchOutcome.trusted === "succeeded" || branchOutcome.publicDiscovery === "verified" || branchOutcome.publicDiscovery === "clean_zero";
           if (!branchSucceeded) {
             const retryable = outcome.diagnostics.some((diagnostic) => diagnostic.retryable);
             // 可重试尝试只保留 attempt diagnostic；最终投递才冻结 run-level issue/attention，避免随后成功仍被旧问题污染终态。

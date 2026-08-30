@@ -23,7 +23,17 @@ export type LayeredPublicWorkflowDiagnostic =
   | { scope: "provider"; code: string; retryable: boolean; affectedCount: number }
   | { scope: "query"; queryId: string; kind: Query["kind"]; stableFingerprint: string; code: string; retryable: boolean; affectedCount: number }
   | { scope: "lead"; leadId: string; code: string; retryable: boolean; affectedCount: 1 };
-export type LayeredPublicWorkflowOutcome = { hasTrustedSuccess: boolean; branchSuccess?: { trusted: boolean; publicDiscovery: boolean }; sourcePostingVersionIds?: string[]; trustedSourcePostingVersionIds?: string[]; sourceIssues?: Array<{ provider: "anysearch" | "greenhouse"; code: string; affectedCount: number }>; diagnostics: LayeredPublicWorkflowDiagnostic[] };
+export const LayeredPublicWorkflowBranchOutcomeSchema = z.object({
+  trusted: z.enum(["succeeded", "failed"]),
+  publicDiscovery: z.enum(["verified", "clean_zero", "candidate_failures", "failed"]),
+}).strict();
+export type LayeredPublicWorkflowOutcome = {
+  branchOutcome: z.infer<typeof LayeredPublicWorkflowBranchOutcomeSchema>;
+  sourcePostingVersionIds?: string[];
+  trustedSourcePostingVersionIds?: string[];
+  sourceIssues?: Array<{ provider: "anysearch" | "greenhouse"; code: string; affectedCount: number }>;
+  diagnostics: LayeredPublicWorkflowDiagnostic[];
+};
 export interface LayeredPublicJobDiscoveryWorkflow { run(input: { userId: string; runId: string; now: Date; executionSpec: LayeredSpec; attemptCount: number; beforePhysicalOperation(operation: LayeredPublicPhysicalOperation): Promise<void>; signal: AbortSignal }): Promise<LayeredPublicWorkflowOutcome>; }
 export interface LayeredPublicJobDiscoveryWorkflowResolver { resolve(input: { runId: string; idempotencyKey: string; executionSpec: LayeredSpec; attemptCount: number }): LayeredPublicJobDiscoveryWorkflow; }
 
@@ -57,11 +67,12 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
     const value = RunInputSchema.parse(input);
     if (value.executionSpec.workflowVersion !== LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION || value.executionSpec.sourceScope.kind !== "layered_public") throw new Error("LAYERED_PUBLIC_WORKFLOW_SPEC_REQUIRED");
     const spec = value.executionSpec; const trusted = await deps.trustedSources.discover({ runId: value.runId, executionSpec: spec, signal: value.signal, beforeRequest: (watchlistItemId) => value.beforePhysicalOperation({ kind: "search", identity: watchlistItemId }) });
-    const sourcePostingVersionIds = [...trusted.verifiedSourcePostingVersionIds]; const diagnostics: LayeredPublicWorkflowDiagnostic[] = []; const sourceIssues: Array<{ provider: "anysearch" | "greenhouse"; code: string; affectedCount: number }> = trusted.sourceIssues?.map((issue) => ({ provider: "greenhouse" as const, ...issue })) ?? []; const seen = new Set<string>(); let verificationCandidates = 0; let publicDiscoverySucceeded = false;
+    const sourcePostingVersionIds = [...trusted.verifiedSourcePostingVersionIds]; const diagnostics: LayeredPublicWorkflowDiagnostic[] = []; const sourceIssues: Array<{ provider: "anysearch" | "greenhouse"; code: string; affectedCount: number }> = trusted.sourceIssues?.map((issue) => ({ provider: "greenhouse" as const, ...issue })) ?? []; const seen = new Set<string>(); let verificationCandidates = 0; let publicSearchSucceeded = false; let publicCandidateCount = 0; let publicVerifiedCount = 0;
     for (const query of spec.sourceScope.publicDiscovery.queries) {
       const searched = await deps.anySearch.search({ runId: value.runId, executionSpec: spec, query, signal: value.signal, beforeRequest: () => value.beforePhysicalOperation({ kind: "search", identity: query.queryId }) });
       if ("error" in searched) { diagnostics.push({ scope: "provider", code: searched.error.code, retryable: searched.error.retryable, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: searched.error.code, affectedCount: 1 }); continue; }
-      publicDiscoverySucceeded = true;
+      publicSearchSucceeded = true;
+      publicCandidateCount += searched.candidates.length;
       for (const candidate of searched.candidates.slice(0, query.resultLimit)) {
         if (!fingerprint.safeParse(candidate.stableFingerprint).success || seen.has(candidate.stableFingerprint)) continue;
         if (verificationCandidates >= spec.sourceScope.publicDiscovery.maxVerificationCandidates) continue;
@@ -82,7 +93,7 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
           if ("error" in extract) { diagnostics.push({ scope: "lead", leadId: pending.leadId, code: extract.error.code, retryable: extract.error.retryable, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: extract.error.code, affectedCount: 1 }); continue; }
           if (extract.normalizedUrl !== safe.normalizedUrl) { await deps.gate.reject({ candidate: recovered, code: "JOB_PAGE_URL_INVALID", now: value.now }); continue; }
           await value.beforePhysicalOperation({ kind: "fetch", identity: pending.leadId }); const page = await deps.fetcher.fetch({ candidate: recovered, signal: value.signal });
-          const verified = await deps.gate.verify({ candidate: recovered, candidateFingerprint: candidateFingerprint(safe.normalizedUrl), extract, page, now: value.now }); sourcePostingVersionIds.push(verified.sourcePostingVersionId);
+          const verified = await deps.gate.verify({ candidate: recovered, candidateFingerprint: candidateFingerprint(safe.normalizedUrl), extract, page, now: value.now }); sourcePostingVersionIds.push(verified.sourcePostingVersionId); publicVerifiedCount += 1;
         } catch (error) {
           const code = rejection(error);
           if (code) { await deps.gate.reject({ candidate: recovered, code, now: value.now }); diagnostics.push({ scope: "lead", leadId: pending.leadId, code, retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code, affectedCount: 1 }); }
@@ -94,6 +105,13 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
         }
       }
     }
-    return { hasTrustedSuccess: trusted.succeeded, branchSuccess: { trusted: trusted.succeeded, publicDiscovery: publicDiscoverySucceeded }, sourcePostingVersionIds: [...new Set(sourcePostingVersionIds)], trustedSourcePostingVersionIds: trusted.verifiedSourcePostingVersionIds, sourceIssues: aggregateSourceIssues(sourceIssues), diagnostics: aggregateDiagnostics(diagnostics) };
+    return {
+      branchOutcome: {
+        trusted: trusted.succeeded ? "succeeded" : "failed",
+        publicDiscovery: publicVerifiedCount > 0 ? "verified" : publicCandidateCount > 0 ? "candidate_failures" : publicSearchSucceeded ? "clean_zero" : "failed",
+      },
+      sourcePostingVersionIds: [...new Set(sourcePostingVersionIds)], trustedSourcePostingVersionIds: trusted.verifiedSourcePostingVersionIds,
+      sourceIssues: aggregateSourceIssues(sourceIssues), diagnostics: aggregateDiagnostics(diagnostics),
+    };
   } };
 }

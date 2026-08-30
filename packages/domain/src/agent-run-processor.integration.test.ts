@@ -85,7 +85,7 @@ describe("AgentRunProcessor checkpoints", () => {
       layeredPublicWorkflowResolver: { resolve: ({ executionSpec }) => ({ run: async ({ beforePhysicalOperation }) => {
         observedSpec = executionSpec;
         await beforePhysicalOperation({ kind: "search", identity: job.queryId });
-        return { hasTrustedSuccess: true, sourcePostingVersionIds: [job.sourcePostingVersionId], trustedSourcePostingVersionIds: [job.sourcePostingVersionId], diagnostics: [{ scope: "provider", code: "ANYSEARCH_NOT_CONFIGURED", retryable: false, affectedCount: 1 }], sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED", affectedCount: 1 }, { provider: "greenhouse", code: "GREENHOUSE_DEGRADED", affectedCount: 1 }] };
+        return { branchOutcome: { trusted: "succeeded", publicDiscovery: "clean_zero" }, sourcePostingVersionIds: [job.sourcePostingVersionId], trustedSourcePostingVersionIds: [job.sourcePostingVersionId], diagnostics: [{ scope: "provider", code: "ANYSEARCH_NOT_CONFIGURED", retryable: false, affectedCount: 1 }], sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED", affectedCount: 1 }, { provider: "greenhouse", code: "GREENHOUSE_DEGRADED", affectedCount: 1 }] };
       } }) },
       contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
     }).process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true });
@@ -108,8 +108,7 @@ describe("AgentRunProcessor checkpoints", () => {
       db: database,
       adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
       layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({
-        hasTrustedSuccess: true,
-        branchSuccess: { trusted: true, publicDiscovery: false },
+        branchOutcome: { trusted: "succeeded", publicDiscovery: "clean_zero" },
         sourcePostingVersionIds: [secondExtraVersionId, job.sourcePostingVersionId, firstExtraVersionId],
         trustedSourcePostingVersionIds: [secondExtraVersionId, job.sourcePostingVersionId, firstExtraVersionId],
         sourceIssues: [
@@ -165,7 +164,7 @@ describe("AgentRunProcessor checkpoints", () => {
 
   it("拒绝 plan 外 diagnostic 的恶意 resolver，事务不写 discovery facts", async () => {
     const job = await layeredRun();
-    const outcome = await createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({ hasTrustedSuccess: true, sourcePostingVersionIds: [job.sourcePostingVersionId], trustedSourcePostingVersionIds: [job.sourcePostingVersionId], diagnostics: [{ scope: "query", queryId: crypto.randomUUID(), kind: "general", stableFingerprint: "f".repeat(64), code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: 1 }] }) }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true });
+    const outcome = await createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({ branchOutcome: { trusted: "succeeded", publicDiscovery: "clean_zero" }, sourcePostingVersionIds: [job.sourcePostingVersionId], trustedSourcePostingVersionIds: [job.sourcePostingVersionId], diagnostics: [{ scope: "query", queryId: crypto.randomUUID(), kind: "general", stableFingerprint: "f".repeat(64), code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: 1 }] }) }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true });
     expect(outcome).toBe("failed");
     await expect(Promise.all([database.select().from(jobDiscoveryDiagnostics).where(eq(jobDiscoveryDiagnostics.runId, job.runId)), database.select().from(jobDiscoveryRunResults).where(eq(jobDiscoveryRunResults.runId, job.runId)), database.select().from(jobDiscoverySourceIssues).where(eq(jobDiscoverySourceIssues.runId, job.runId))])).resolves.toEqual([[], [], []]);
   });
@@ -173,7 +172,7 @@ describe("AgentRunProcessor checkpoints", () => {
   it("v4 budget terminal 与预算 inbox 并存 discovery attention，重放不重复", async () => {
     const job = await layeredRun();
     await database.update(agentRuns).set({ attemptCount: 2 }).where(eq(agentRuns.id, job.runId));
-    const processor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({ hasTrustedSuccess: false, branchSuccess: { trusted: false, publicDiscovery: false }, diagnostics: [{ scope: "provider", code: "ANYSEARCH_QUOTA_EXHAUSTED", retryable: true, affectedCount: 1 }], sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_QUOTA_EXHAUSTED", affectedCount: 1 }] }) }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    const processor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({ branchOutcome: { trusted: "failed", publicDiscovery: "failed" }, diagnostics: [{ scope: "provider", code: "ANYSEARCH_QUOTA_EXHAUSTED", retryable: true, affectedCount: 1 }], sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_QUOTA_EXHAUSTED", affectedCount: 1 }] }) }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
     await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: false })).resolves.toBe("budget_exhausted");
     await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: false })).resolves.toBe("budget_exhausted");
     const [issues, inbox, attentionAudit] = await Promise.all([
@@ -193,8 +192,7 @@ describe("AgentRunProcessor checkpoints", () => {
       db: database,
       adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
       layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({
-        hasTrustedSuccess: false,
-        branchSuccess: { trusted: false, publicDiscovery: false },
+        branchOutcome: { trusted: "failed", publicDiscovery: "failed" },
         diagnostics: [{ scope: "provider", code: "ANYSEARCH_NOT_CONFIGURED", retryable: false, affectedCount: 1 }],
         sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED", affectedCount: 1 }],
       }) }) },
@@ -219,7 +217,7 @@ describe("AgentRunProcessor checkpoints", () => {
     const processor = createAgentRunProcessor({
       db: database,
       adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
-      layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({ hasTrustedSuccess: true, branchSuccess: { trusted: true, publicDiscovery: false }, sourcePostingVersionIds: [...extra, job.sourcePostingVersionId], trustedSourcePostingVersionIds: [...extra, job.sourcePostingVersionId], diagnostics: [] }) }) },
+      layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({ branchOutcome: { trusted: "succeeded", publicDiscovery: "clean_zero" }, sourcePostingVersionIds: [...extra, job.sourcePostingVersionId], trustedSourcePostingVersionIds: [...extra, job.sourcePostingVersionId], diagnostics: [] }) }) },
       contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
     });
     await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("completed");
@@ -239,7 +237,7 @@ describe("AgentRunProcessor checkpoints", () => {
     const processor = createAgentRunProcessor({
       db: database,
       adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
-      layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({ hasTrustedSuccess: true, branchSuccess: { trusted: true, publicDiscovery: false }, sourcePostingVersionIds: [untrustedVersion], trustedSourcePostingVersionIds: [untrustedVersion], diagnostics: [] }) }) },
+      layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({ branchOutcome: { trusted: "succeeded", publicDiscovery: "clean_zero" }, sourcePostingVersionIds: [untrustedVersion], trustedSourcePostingVersionIds: [untrustedVersion], diagnostics: [] }) }) },
       contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
     });
     await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("failed");
@@ -255,7 +253,7 @@ describe("AgentRunProcessor checkpoints", () => {
       layeredPublicWorkflowResolver: { resolve: () => ({ run: async ({ beforePhysicalOperation }) => {
         calls += 1;
         await beforePhysicalOperation({ kind: "search", identity: job.queryId });
-        return { hasTrustedSuccess: true, branchSuccess: { trusted: true, publicDiscovery: false }, sourcePostingVersionIds: [job.sourcePostingVersionId], trustedSourcePostingVersionIds: [job.sourcePostingVersionId], diagnostics: [] };
+        return { branchOutcome: { trusted: "succeeded", publicDiscovery: "clean_zero" }, sourcePostingVersionIds: [job.sourcePostingVersionId], trustedSourcePostingVersionIds: [job.sourcePostingVersionId], diagnostics: [] };
       } }) },
       contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
     });
@@ -280,7 +278,7 @@ describe("AgentRunProcessor checkpoints", () => {
       adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
       layeredPublicWorkflowResolver: { resolve: () => ({ run: async ({ beforePhysicalOperation }) => {
         for (const kind of ["search", "extract", "fetch"] as const) { hooks.push(kind); await beforePhysicalOperation({ kind, identity: kind === "search" ? job.queryId : crypto.randomUUID() }); }
-        return { hasTrustedSuccess: true, branchSuccess: { trusted: true, publicDiscovery: false }, sourcePostingVersionIds: [job.sourcePostingVersionId], trustedSourcePostingVersionIds: [job.sourcePostingVersionId], diagnostics: [] };
+        return { branchOutcome: { trusted: "succeeded", publicDiscovery: "clean_zero" }, sourcePostingVersionIds: [job.sourcePostingVersionId], trustedSourcePostingVersionIds: [job.sourcePostingVersionId], diagnostics: [] };
       } }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
     });
     await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("paused");
@@ -292,7 +290,7 @@ describe("AgentRunProcessor checkpoints", () => {
     const durable = checkpoint();
     const stop = outcome === "budget_exhausted" ? { kind: "budget_exhausted" as const, budgetDimension: "tool_calls" as const } : outcome === "cancelled" ? { kind: "cancelled" as const } : { kind: "stale" as const };
     const controlled: AgentRunCheckpoint = { check: async (input) => input.checkpointKey.includes(":layered_search_") ? stop : durable.check(input) };
-    const processor = createAgentRunProcessor({ db: database, checkpoint: controlled, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async ({ beforePhysicalOperation }) => { hooks += 1; await beforePhysicalOperation({ kind: "search", identity: job.queryId }); hooks += 1; return { hasTrustedSuccess: true, diagnostics: [] }; } }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    const processor = createAgentRunProcessor({ db: database, checkpoint: controlled, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async ({ beforePhysicalOperation }) => { hooks += 1; await beforePhysicalOperation({ kind: "search", identity: job.queryId }); hooks += 1; return { branchOutcome: { trusted: "succeeded", publicDiscovery: "clean_zero" }, diagnostics: [] }; } }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
     await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe(outcome);
     expect(hooks).toBe(1);
   });
@@ -301,7 +299,7 @@ describe("AgentRunProcessor checkpoints", () => {
     const job = await layeredRun(); let calls = 0;
     const oldToken = crypto.randomUUID();
     await database.update(agentRuns).set({ status: "running", startedAt: now, claimToken: oldToken, claimExpiresAt: new Date(now.getTime() + 30_000), activeSliceStartedAt: now, attemptCount: 1 }).where(eq(agentRuns.id, job.runId));
-    const processor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async ({ beforePhysicalOperation }) => { calls += 1; await beforePhysicalOperation({ kind: "search", identity: job.queryId }); return { hasTrustedSuccess: true, branchSuccess: { trusted: true, publicDiscovery: false }, sourcePostingVersionIds: [job.sourcePostingVersionId], trustedSourcePostingVersionIds: [job.sourcePostingVersionId], diagnostics: [] }; } }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    const processor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async ({ beforePhysicalOperation }) => { calls += 1; await beforePhysicalOperation({ kind: "search", identity: job.queryId }); return { branchOutcome: { trusted: "succeeded", publicDiscovery: "clean_zero" }, sourcePostingVersionIds: [job.sourcePostingVersionId], trustedSourcePostingVersionIds: [job.sourcePostingVersionId], diagnostics: [] }; } }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
     await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("retry");
     expect(calls).toBe(0);
     await database.update(agentRuns).set({ claimExpiresAt: new Date(now.getTime() - 1) }).where(eq(agentRuns.id, job.runId));
@@ -313,8 +311,8 @@ describe("AgentRunProcessor checkpoints", () => {
   it("v4 retry 只保留诊断；后续成功不遗留 source issue 或 attention", async () => {
     const job = await layeredRun(); let retry = true;
     const processor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => retry
-      ? { hasTrustedSuccess: false, branchSuccess: { trusted: false, publicDiscovery: false }, diagnostics: [{ scope: "provider", code: "ANYSEARCH_UNAVAILABLE", retryable: true, affectedCount: 1 }], sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_UNAVAILABLE", affectedCount: 1 }] }
-      : { hasTrustedSuccess: true, branchSuccess: { trusted: true, publicDiscovery: false }, sourcePostingVersionIds: [job.sourcePostingVersionId], trustedSourcePostingVersionIds: [job.sourcePostingVersionId], diagnostics: [] } }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+      ? { branchOutcome: { trusted: "failed", publicDiscovery: "failed" }, diagnostics: [{ scope: "provider", code: "ANYSEARCH_UNAVAILABLE", retryable: true, affectedCount: 1 }], sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_UNAVAILABLE", affectedCount: 1 }] }
+      : { branchOutcome: { trusted: "succeeded", publicDiscovery: "clean_zero" }, sourcePostingVersionIds: [job.sourcePostingVersionId], trustedSourcePostingVersionIds: [job.sourcePostingVersionId], diagnostics: [] } }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
     await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("retry");
     await expect(Promise.all([database.select().from(jobDiscoveryDiagnostics).where(eq(jobDiscoveryDiagnostics.runId, job.runId)), database.select().from(jobDiscoverySourceIssues).where(eq(jobDiscoverySourceIssues.runId, job.runId)), database.select().from(agentInboxItems).where(and(eq(agentInboxItems.runId, job.runId), eq(agentInboxItems.kind, "discovery_attention")))] )).resolves.toEqual([[expect.objectContaining({ code: "ANYSEARCH_UNAVAILABLE" })], [], []]);
     retry = false;
