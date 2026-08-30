@@ -44,6 +44,9 @@ describe("AnySearch job discovery contracts", () => {
     for (const sensitiveParameter of ["session", "token", "utm_source", "gclid", "fbclid"]) {
       expect(AnySearchLeadSchema.safeParse({ ...lead, normalizedUrl: `https://careers.example.com/jobs?${sensitiveParameter}=secret` }).success).toBe(false);
     }
+    for (const encodedSensitiveValue of ["session%3Dsecret", "utm_source%3Dcampaign", "job%26token%3Dsecret"]) {
+      expect(AnySearchLeadSchema.safeParse({ ...lead, normalizedUrl: `https://careers.example.com/jobs?jobId=${encodedSensitiveValue}` }).success).toBe(false);
+    }
   });
 
   it("redacts provider diagnostics while binding attribution to a verified source version", () => {
@@ -82,6 +85,8 @@ describe("AnySearch job discovery contracts", () => {
     ]) expect(AnySearchProviderErrorSchema.parse(persistedProviderError)).toEqual(persistedProviderError);
     expect(AnySearchProviderErrorSchema.safeParse({ code: "ANYSEARCH_QUOTA_EXHAUSTED", retryable: false, httpStatus: 429 }).success).toBe(false);
     expect(AnySearchProviderErrorSchema.safeParse({ code: "ANYSEARCH_RATE_LIMITED", retryable: true, httpStatus: 402 }).success).toBe(false);
+    expect(AnySearchProviderErrorSchema.safeParse({ code: "ANYSEARCH_TIMEOUT", retryable: true, httpStatus: 402 }).success).toBe(false);
+    expect(AnySearchProviderErrorSchema.safeParse({ code: "ANYSEARCH_UNAVAILABLE", retryable: true, httpStatus: 429 }).success).toBe(false);
     expect(DiscoveryAttributionSchema.parse(attribution)).toEqual(attribution);
     expect(DiscoveryDiagnosticSchema.parse(diagnostic)).toEqual(diagnostic);
     expect(AnySearchProviderErrorSchema.safeParse({ ...providerError, message: "quota exceeded" }).success).toBe(false);

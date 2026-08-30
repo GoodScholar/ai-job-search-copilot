@@ -14,16 +14,16 @@ export const LAYERED_PUBLIC_JOB_DISCOVERY_TOOL_ALLOWLIST = [
 const positiveInteger = z.int().min(1);
 const nonnegativeInteger = z.int().nonnegative();
 const stableFingerprint = z.string().regex(/^[a-f0-9]{64}$/u);
-const boundedIdentifier = z.string().trim().min(1).max(128);
 const opaqueQueryId = z.uuid();
 const stableCode = z.string().regex(/^[A-Z][A-Z0-9_]{1,63}$/u);
+const publicJobIdentityValue = /^[A-Za-z0-9._~-]{1,128}$/u;
 const publicJobIdentityParameters: ReadonlySet<string> = new Set([
   "id", "job", "jobid", "job_id", "openingid", "opening_id", "positionid", "position_id", "requisitionid", "requisition_id",
 ]);
 const safeNormalizedUrl = z.url().max(2_048).superRefine((value, context) => {
   const url = new URL(value);
   const hasUnsafeAuthority = url.protocol !== "https:" || url.username !== "" || url.password !== "" || url.hash !== "";
-  const invalidQueryParameter = [...url.searchParams].some(([key, parameterValue]) => !publicJobIdentityParameters.has(key.toLowerCase()) || parameterValue.length < 1 || parameterValue.length > 256);
+  const invalidQueryParameter = [...url.searchParams].some(([key, parameterValue]) => !publicJobIdentityParameters.has(key.toLowerCase()) || !publicJobIdentityValue.test(parameterValue));
   if (hasUnsafeAuthority || invalidQueryParameter) {
     context.addIssue({ code: "custom", message: "lead URLs must be normalized HTTPS URLs with only public job identity query parameters" });
   }
@@ -58,6 +58,12 @@ export const AnySearchProviderErrorSchema = z.object({
   }
   if (error.code === "ANYSEARCH_RATE_LIMITED" && error.httpStatus !== 429) {
     context.addIssue({ code: "custom", path: ["httpStatus"], message: "rate limiting must retain HTTP 429" });
+  }
+  if (error.httpStatus === 402 && error.code !== "ANYSEARCH_QUOTA_EXHAUSTED") {
+    context.addIssue({ code: "custom", path: ["code"], message: "HTTP 402 must classify as quota exhaustion" });
+  }
+  if (error.httpStatus === 429 && error.code !== "ANYSEARCH_RATE_LIMITED") {
+    context.addIssue({ code: "custom", path: ["code"], message: "HTTP 429 must classify as rate limiting" });
   }
 });
 
