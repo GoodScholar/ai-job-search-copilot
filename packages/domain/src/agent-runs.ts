@@ -19,6 +19,13 @@ export { AgentRunControlError, AgentRunError, createAgentRunCommands, type Agent
 export { createAgentRunCheckpoint, type AgentRunCheckpoint, type AgentRunCheckpointDecision } from "./agent-run-checkpoint";
 export { createAgentRunQueries } from "./agent-run-queries";
 export { AgentInboxActionError, AgentInboxError, createAgentInbox } from "./agent-inbox";
+export type {
+  SourceHealthAdapterFailure,
+  SourceHealthDetailResult,
+  SourceHealthDiscoveryAdapter,
+  SourceHealthDiscoveryAdapterResolver,
+  SourceHealthListResult,
+} from "./source-health-discovery-adapter";
 
 type FacadeProcessorDependencies = Omit<AgentRunProcessorDependencies, "checkpoint"> & {
   checkpoint?: AgentRunCheckpoint;

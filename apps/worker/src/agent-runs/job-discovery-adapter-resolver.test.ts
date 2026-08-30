@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { createJobDiscoveryAdapterResolver } from "./job-discovery-adapter-resolver.js";
+import { createJobDiscoveryAdapterResolver, createSourceHealthDiscoveryAdapterResolver } from "./job-discovery-adapter-resolver.js";
+import { FakePublicSourceHealthAdapter } from "./fake-public-source-health-adapter.js";
+import { GreenhouseSourceHealthAdapter } from "./greenhouse-source-health-adapter.js";
 import { GreenhouseJobDiscoveryAdapter } from "./greenhouse-job-discovery-adapter.js";
 
 const runId = "10000000-0000-4000-8000-000000000001";
@@ -53,6 +55,15 @@ const greenhouseExecutionSpec = {
   model: null,
   budget: { maxActiveDurationMs: 180_000, maxAttempts: 3, maxToolCalls: 60, maxResults: 5, maxModelCalls: 0, maxTokens: 0 },
 } as const;
+const sourceHealthExecutionSpec = {
+  ...greenhouseExecutionSpec,
+  sourceScope: { ...greenhouseExecutionSpec.sourceScope, adapterVersion: "greenhouse-job-board-v2" as const },
+  workflowVersion: "job-discovery-workflow-v3",
+  ruleVersion: "job-discovery-source-health-rules-v1",
+  adapterVersion: "greenhouse-job-board-v2",
+  outputSchemaVersion: "job-discovery-result-v3",
+  toolAllowlist: ["job_discovery.list_source", "job_discovery.get_detail"],
+} as const;
 
 describe("JobDiscoveryAdapterResolver", () => {
   it("非测试环境携带场景配置时 fail-closed", () => {
@@ -88,6 +99,31 @@ describe("JobDiscoveryAdapterResolver", () => {
 
   it("未知 APP_ENV 时拒绝启动", () => {
     expect(() => createJobDiscoveryAdapterResolver({ APP_ENV: "staging" })).toThrow("JobDiscoveryAdapter 环境未获允许");
+  });
+
+  it("v3 只在测试环境通过受控场景映射选择无网络 fake-public", async () => {
+    const resolver = createSourceHealthDiscoveryAdapterResolver({
+      APP_ENV: "test",
+      E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: JSON.stringify({ [idempotencyKey]: { "greenhouse:example": "rate_limited" } }),
+    });
+    const adapter = resolver.resolve({ runId, idempotencyKey, executionSpec: sourceHealthExecutionSpec, attemptCount: 1 });
+
+    expect(adapter).toBeInstanceOf(FakePublicSourceHealthAdapter);
+    await expect(adapter.listSource({ targetSnapshot, source: { ...sourceHealthExecutionSpec.sourceScope.sources[0]!, allowedDomains: [...sourceHealthExecutionSpec.sourceScope.sources[0]!.allowedDomains] } })).resolves.toEqual({
+      ok: false, failure: { category: "rate_limited", reasonCode: "SOURCE_RATE_LIMITED", retryable: true, attemptCount: 2 },
+    });
+    expect(() => createSourceHealthDiscoveryAdapterResolver({ APP_ENV: "production", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: "{}" }))
+      .toThrow("E2E Public Source Health 场景只允许测试环境");
+  });
+
+  it("v3 production 使用 greenhouse，local 必须显式 opt-in，并拒绝无效测试场景", () => {
+    const metadata = { runId, idempotencyKey, executionSpec: sourceHealthExecutionSpec, attemptCount: 1 };
+
+    expect(createSourceHealthDiscoveryAdapterResolver({ APP_ENV: "production" }).resolve(metadata)).toBeInstanceOf(GreenhouseSourceHealthAdapter);
+    expect(() => createSourceHealthDiscoveryAdapterResolver({ APP_ENV: "local" }).resolve(metadata)).toThrow("AGENT_RUN_ADAPTER_UNSUPPORTED");
+    expect(createSourceHealthDiscoveryAdapterResolver({ APP_ENV: "local", PUBLIC_JOB_DISCOVERY_ADAPTER: "greenhouse" }).resolve(metadata)).toBeInstanceOf(GreenhouseSourceHealthAdapter);
+    expect(() => createSourceHealthDiscoveryAdapterResolver({ APP_ENV: "test", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: JSON.stringify({ [idempotencyKey]: { invalid: "healthy" } }) }))
+      .toThrow("E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS 格式无效");
   });
 
   it("retry_once 仅使第一次持久化 attempt 返回可重试来源错误", async () => {

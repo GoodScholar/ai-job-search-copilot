@@ -77,7 +77,7 @@ const SourceHealthReasonCodesSchema = z.array(SourceHealthReasonCodeSchema).max(
   (codes) => new Set(codes).size === codes.length,
   { message: "reason codes must be unique" },
 );
-type SourceHealthReasonCode = z.infer<typeof SourceHealthReasonCodeSchema>;
+export type SourceHealthReasonCode = z.infer<typeof SourceHealthReasonCodeSchema>;
 
 const parserDegradationReasons: ReadonlySet<SourceHealthReasonCode> = new Set([
   "SOURCE_LIST_SCHEMA_INVALID", "SOURCE_DETAIL_FIELDS_MISSING", "SOURCE_DETAIL_URL_INVALID", "SOURCE_DETAIL_IDENTITY_INVALID",
