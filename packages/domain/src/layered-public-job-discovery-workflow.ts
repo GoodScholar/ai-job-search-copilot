@@ -4,7 +4,7 @@ import { AgentRunExecutionSpecSchema } from "@job-copilot/contracts/agent-runs";
 import { LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION, LayeredPublicJobDiscoveryQuerySchema, SafeNormalizedPublicJobUrlSchema, type AnySearchProviderError } from "@job-copilot/contracts/job-discovery";
 
 const LayeredPublicOperationKindSchema = z.enum(["search", "extract", "fetch", "record_pending", "gate_reject", "gate_verify"]);
-const RunInputSchema = z.object({ userId: z.uuid(), runId: z.uuid(), claimToken: z.uuid(), now: z.date(), executionSpec: AgentRunExecutionSpecSchema, attemptCount: z.int().min(1).max(3), beforePhysicalOperation: z.function({ input: [z.object({ kind: LayeredPublicOperationKindSchema, identity: z.uuid() }).strict()], output: z.promise(z.void()) }), signal: z.instanceof(AbortSignal) }).strict();
+const RunInputSchema = z.object({ userId: z.uuid(), runId: z.uuid(), claimToken: z.uuid(), now: z.date(), executionSpec: AgentRunExecutionSpecSchema, attemptCount: z.int().min(1).max(3), beforePhysicalOperation: z.function({ input: [z.object({ kind: LayeredPublicOperationKindSchema, identity: z.uuid() }).strict()], output: z.promise(z.void()) }), onDiagnostics: z.function({ input: [z.array(z.unknown())], output: z.void() }), signal: z.instanceof(AbortSignal) }).strict();
 const fingerprint = z.string().regex(/^[a-f0-9]{64}$/u);
 type LayeredSpec = Extract<z.infer<typeof AgentRunExecutionSpecSchema>, { workflowVersion: "layered-public-job-discovery-v1" }>;
 type Query = z.infer<typeof LayeredPublicJobDiscoveryQuerySchema>;
@@ -43,7 +43,7 @@ export type LayeredPublicWorkflowOutcome = {
   diagnostics: LayeredPublicWorkflowDiagnostic[];
   interruption?: "paused" | "cancelled" | "budget_exhausted" | "stale";
 };
-export interface LayeredPublicJobDiscoveryWorkflow { run(input: { userId: string; runId: string; claimToken: string; now: Date; executionSpec: LayeredSpec; attemptCount: number; beforePhysicalOperation(operation: LayeredPublicPhysicalOperation): Promise<void>; signal: AbortSignal }): Promise<LayeredPublicWorkflowOutcome>; }
+export interface LayeredPublicJobDiscoveryWorkflow { run(input: { userId: string; runId: string; claimToken: string; now: Date; executionSpec: LayeredSpec; attemptCount: number; beforePhysicalOperation(operation: LayeredPublicPhysicalOperation): Promise<void>; onDiagnostics(snapshot: readonly LayeredPublicWorkflowDiagnostic[]): void; signal: AbortSignal }): Promise<LayeredPublicWorkflowOutcome>; }
 export interface LayeredPublicJobDiscoveryWorkflowResolver { resolve(input: { runId: string; idempotencyKey: string; executionSpec: LayeredSpec; attemptCount: number }): LayeredPublicJobDiscoveryWorkflow; }
 
 type Page = { requestedUrl: string; finalUrl: string; canonicalUrl: string; rawHtml: string; visibleText: string; pageClassification: "job"; sourceKind: "official" | "aggregator" };
@@ -76,6 +76,7 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
     const value = RunInputSchema.parse(input);
     if (value.executionSpec.workflowVersion !== LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION || value.executionSpec.sourceScope.kind !== "layered_public") throw new Error("LAYERED_PUBLIC_WORKFLOW_SPEC_REQUIRED");
     const spec = value.executionSpec; const diagnostics: LayeredPublicWorkflowDiagnostic[] = []; const sourceIssues: Array<{ provider: "anysearch" | "greenhouse"; code: string; affectedCount: number }> = []; const sourcePostingVersionIds: string[] = []; const seen = new Set<string>(); let trusted: { succeeded: boolean; verifiedSourcePostingVersionIds: string[]; sourceIssues?: Array<{ code: string; affectedCount: number }> } = { succeeded: false, verifiedSourcePostingVersionIds: [] }; let verificationCandidates = 0; let publicSearchSucceeded = false; let publicCandidateCount = 0; let publicVerifiedCount = 0;
+    const recordDiagnostic = (diagnostic: LayeredPublicWorkflowDiagnostic) => { diagnostics.push(diagnostic); value.onDiagnostics(aggregateDiagnostics(diagnostics)); };
     const result = () => ({
       branchOutcome: {
         trusted: trusted.succeeded ? "succeeded" as const : "failed" as const,
@@ -90,7 +91,7 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
     sourceIssues.push(...(trusted.sourceIssues?.map((issue) => ({ provider: "greenhouse" as const, ...issue })) ?? []));
     for (const query of spec.sourceScope.publicDiscovery.queries) {
       const searched = await deps.anySearch.search({ runId: value.runId, executionSpec: spec, query, signal: value.signal, beforeRequest: () => value.beforePhysicalOperation({ kind: "search", identity: query.queryId }) });
-      if ("error" in searched) { diagnostics.push({ scope: "provider", code: searched.error.code, retryable: searched.error.retryable, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: searched.error.code, affectedCount: 1 }); continue; }
+      if ("error" in searched) { recordDiagnostic({ scope: "provider", code: searched.error.code, retryable: searched.error.retryable, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: searched.error.code, affectedCount: 1 }); continue; }
       publicSearchSucceeded = true;
       publicCandidateCount += searched.candidates.length;
       for (const candidate of searched.candidates.slice(0, query.resultLimit)) {
@@ -99,13 +100,13 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
         seen.add(candidate.stableFingerprint);
         const issued: IssuedCandidateCapability = { userId: value.userId, runId: value.runId, queryId: query.queryId, queryFingerprint: query.stableFingerprint, normalizedUrl: candidate.normalizedUrl, stableFingerprint: candidate.stableFingerprint, allowedSiteDomains: query.allowedSiteDomains };
         const safe = await deps.preflight({ candidate: issued });
-        if (!safe || safe.normalizedUrl !== candidate.normalizedUrl || !SafeNormalizedPublicJobUrlSchema.safeParse(safe.normalizedUrl).success) { diagnostics.push({ scope: "query", queryId: query.queryId, kind: query.kind, stableFingerprint: query.stableFingerprint, code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: "ANYSEARCH_POLICY_REJECTED", affectedCount: 1 }); continue; }
+        if (!safe || safe.normalizedUrl !== candidate.normalizedUrl || !SafeNormalizedPublicJobUrlSchema.safeParse(safe.normalizedUrl).success) { recordDiagnostic({ scope: "query", queryId: query.queryId, kind: query.kind, stableFingerprint: query.stableFingerprint, code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: "ANYSEARCH_POLICY_REJECTED", affectedCount: 1 }); continue; }
         if (!matchesAllowedDomain(safe.normalizedUrl, query.allowedSiteDomains)) {
           await value.beforePhysicalOperation({ kind: "record_pending", identity: issued.queryId });
           const pending = await deps.leads.recordPendingForClaim({ targetId: spec.targetSnapshot.targetId, candidate: issued, claimToken: value.claimToken, now: value.now });
           await value.beforePhysicalOperation({ kind: "gate_reject", identity: pending.leadId });
           await deps.gate.rejectForClaim({ candidate: { ...issued, leadId: pending.leadId }, code: "POLICY_REJECTED", claimToken: value.claimToken, now: value.now });
-          diagnostics.push({ scope: "query", queryId: query.queryId, kind: query.kind, stableFingerprint: query.stableFingerprint, code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: "ANYSEARCH_POLICY_REJECTED", affectedCount: 1 }); continue;
+          recordDiagnostic({ scope: "query", queryId: query.queryId, kind: query.kind, stableFingerprint: query.stableFingerprint, code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: "ANYSEARCH_POLICY_REJECTED", affectedCount: 1 }); continue;
         }
         verificationCandidates += 1;
         await value.beforePhysicalOperation({ kind: "record_pending", identity: issued.queryId });
@@ -113,11 +114,11 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
         const recovered: RecoveredCandidateCapability = { ...issued, leadId: pending.leadId };
         try {
           const extract = await deps.anySearch.extract({ candidate: recovered, signal: value.signal, beforeRequest: () => value.beforePhysicalOperation({ kind: "extract", identity: pending.leadId }) });
-          if ("error" in extract) { diagnostics.push({ scope: "lead", leadId: pending.leadId, code: extract.error.code, retryable: extract.error.retryable, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: extract.error.code, affectedCount: 1 }); continue; }
+          if ("error" in extract) { recordDiagnostic({ scope: "lead", leadId: pending.leadId, code: extract.error.code, retryable: extract.error.retryable, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: extract.error.code, affectedCount: 1 }); continue; }
           if (extract.normalizedUrl !== safe.normalizedUrl) {
             await value.beforePhysicalOperation({ kind: "gate_reject", identity: pending.leadId });
             await deps.gate.rejectForClaim({ candidate: recovered, code: "JOB_PAGE_URL_INVALID", claimToken: value.claimToken, now: value.now });
-            diagnostics.push({ scope: "lead", leadId: pending.leadId, code: "JOB_PAGE_URL_INVALID", retryable: false, affectedCount: 1 });
+            recordDiagnostic({ scope: "lead", leadId: pending.leadId, code: "JOB_PAGE_URL_INVALID", retryable: false, affectedCount: 1 });
             sourceIssues.push({ provider: "anysearch", code: "JOB_PAGE_URL_INVALID", affectedCount: 1 });
             continue;
           }
@@ -126,10 +127,10 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
           const verified = await deps.gate.verifyForClaim({ candidate: recovered, candidateFingerprint: candidateFingerprint(safe.normalizedUrl), extract, page, claimToken: value.claimToken, now: value.now }); sourcePostingVersionIds.push(verified.sourcePostingVersionId); publicVerifiedCount += 1;
         } catch (error) {
           const code = rejection(error);
-          if (code) { await value.beforePhysicalOperation({ kind: "gate_reject", identity: pending.leadId }); await deps.gate.rejectForClaim({ candidate: recovered, code, claimToken: value.claimToken, now: value.now }); diagnostics.push({ scope: "lead", leadId: pending.leadId, code, retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code, affectedCount: 1 }); }
+          if (code) { await value.beforePhysicalOperation({ kind: "gate_reject", identity: pending.leadId }); await deps.gate.rejectForClaim({ candidate: recovered, code, claimToken: value.claimToken, now: value.now }); recordDiagnostic({ scope: "lead", leadId: pending.leadId, code, retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code, affectedCount: 1 }); }
           else {
             const retryable = retryablePageCode(error);
-            if (retryable) { diagnostics.push({ scope: "lead", leadId: pending.leadId, code: retryable, retryable: true, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: retryable, affectedCount: 1 }); }
+            if (retryable) { recordDiagnostic({ scope: "lead", leadId: pending.leadId, code: retryable, retryable: true, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: retryable, affectedCount: 1 }); }
             else throw error;
           }
         }

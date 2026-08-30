@@ -536,21 +536,25 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         const batchStart = await transition("batch_search", false); if (batchStart) return batchStart;
         let physicalOrdinal = 0;
         let trustedStop: "paused" | "cancelled" | "budget_exhausted" | "stale" | undefined;
+        let budgetTerminatedByCheckpoint = false;
+        let latestDiagnostics: readonly LayeredPublicWorkflowDiagnostic[] = [];
         const controller = layeredController!;
         const abortAtDeadline = setTimeout(() => { trustedStop = "budget_exhausted"; controller.abort(); }, Math.max(0, remainingBudget(deps.clock, deadline)));
         try {
-          const outcome = await layeredWorkflow.run({
+          const workflowPromise = layeredWorkflow.run({
             userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), executionSpec: layeredExecutionSpec, attemptCount: claimed.attemptCount, signal: controller.signal,
+            onDiagnostics: (snapshot) => { latestDiagnostics = snapshot; },
             beforePhysicalOperation: async (operation) => {
               if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(operation.identity)) throw new Error("LAYERED_PUBLIC_OPERATION_IDENTITY_INVALID");
               if (controller.signal.aborted) throw new LayeredPublicWorkflowInterruption(trustedStop ?? "stale");
               const identity = createHash("sha256").update(operation.identity).digest("hex").slice(0, 16);
               const reserve = operation.kind === "search" || operation.kind === "extract" || operation.kind === "fetch" ? { toolCalls: 1, sourceRequests: 1 } : undefined;
               const checkpointOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: `layered_${operation.kind}_${identity}`, ordinal: ++physicalOrdinal, reserve });
-              if (checkpointOutcome) { trustedStop = checkpointOutcome as "paused" | "cancelled" | "budget_exhausted" | "stale"; controller.abort(); throw new LayeredPublicWorkflowInterruption(trustedStop); }
+              if (checkpointOutcome) { trustedStop = checkpointOutcome as "paused" | "cancelled" | "budget_exhausted" | "stale"; budgetTerminatedByCheckpoint = trustedStop === "budget_exhausted"; controller.abort(); throw new LayeredPublicWorkflowInterruption(trustedStop); }
               if (controller.signal.aborted) throw new LayeredPublicWorkflowInterruption(trustedStop ?? "stale");
             },
           });
+          const outcome = await bounded(deps.clock, deadline, () => workflowPromise);
           if (isLayeredPublicWorkflowInterruption(outcome) && trustedStop === outcome.interruption) {
             try { await persistLayeredPublicOutcome(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), deadline: trustedStop === "budget_exhausted" ? cleanupDeadline(deps) : deadline, diagnostics: outcome.diagnostics, sourceIssues: [], sourcePostingVersionIds: [], trustedSourcePostingVersionIds: [], trustedSourceIds: [], complete: false, interrupted: trustedStop }); }
             catch (error) { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline }); }
@@ -572,6 +576,16 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           const persisted = await persistLayeredPublicOutcome(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), deadline, diagnostics: outcome.diagnostics, sourceIssues: outcome.sourceIssues ?? [], sourcePostingVersionIds: outcome.sourcePostingVersionIds ?? [], trustedSourcePostingVersionIds: outcome.trustedSourcePostingVersionIds ?? [], trustedSourceIds: layeredExecutionSpec.sourceScope.trustedSources.map(({ source }) => source.sourceId) });
           return persisted === "facts" ? "stale" : persisted;
         } catch (error) {
+          if (error instanceof AgentRunBudgetError) {
+            trustedStop = "budget_exhausted";
+            controller.abort();
+            const terminal = budgetTerminatedByCheckpoint ? "budget_exhausted" : await failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
+            if (terminal === "budget_exhausted") {
+              try { await persistLayeredPublicOutcome(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), deadline: cleanupDeadline(deps), diagnostics: latestDiagnostics, sourceIssues: [], sourcePostingVersionIds: [], trustedSourcePostingVersionIds: [], trustedSourceIds: [], complete: false, interrupted: "budget_exhausted" }); }
+              catch { /* 预算终态已经落库；诊断补写不得把 run 留在运行中。 */ }
+            }
+            return terminal;
+          }
           if (error instanceof LayeredPublicWorkflowStop) return error.outcome;
           if (error instanceof LayeredPublicWorkflowInterruption && trustedStop === error.outcome) return error.outcome;
           return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });

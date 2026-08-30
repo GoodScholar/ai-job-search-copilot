@@ -142,3 +142,10 @@ Drizzle: pnpm --filter @job-copilot/database exec drizzle-kit check --config=dri
 ## 后续门槛
 
 本 Slice 完成实现与验收收口，但按 issue workflow，进入 Slice 8 前仍须由独立 `gpt-5.6-sol/high` 进行 Standards/Spec 双轴审查并达到 `0/0/0`。
+
+## 审查修复 round 3：忽略 abort 的 workflow deadline
+
+- `10df05a` 为保留 deadline 前 diagnostic 移除了 v4 `workflow.run` 外层的 `bounded(...)`。这使得只响应 `AbortSignal` 的 provider 看似会停止，但忽略 signal 且永不 settle 的 workflow 会让 processor 永久 await，属于中间实现缺陷。
+- Red `8f89d52`：真实 PostgreSQL fixture 先完成 claim；workflow 通过 Deferred `entered` 屏障后上报一条合法、脱敏的 `ANYSEARCH_UNAVAILABLE` diagnostic，随后永久 pending 且忽略 signal。测试不使用 fake timers 或任意 sleep；其业务断言是 processor 在 active-duration deadline 返回 `budget_exhausted`、run 进入 `failed/budget_exhausted`、诊断恰一条且 `discovery_attention` 为零。在 `10df05a` 上该用例在 Vitest 的 **5 秒防挂阈值**超时（**56 tests / 1 failed**），该阈值不是业务断言。
+- Green：恢复 `bounded(deps.clock, deadline, () => workflowPromise)`；v4 run input 新增 strict required `onDiagnostics(snapshot)`。官方 workflow 每次 diagnostic 改变时报告聚合、排序且不含 provider body/URL/query 的 snapshot，processor 保存最新 snapshot。`AgentRunBudgetError` 会中止 controller、先经 `failOrRetry`（checkpoint 已先终结预算时保持该终态）写出 run budget terminal，再用 fresh cleanup deadline 以 terminal-aware 方式补写最新 diagnostic；不会 await 永久 pending workflow。
+- Green 证据：processor focused **1 file / 56 tests passed**；workflow focused **1 file / 9 tests passed**；domain typecheck **exit 0**。`verified-job-source-gate.integration.test.ts` 既有矩阵覆盖普通 API 兼容、v4 仅使用 `recordPendingForClaim` / `verifyForClaim` / `rejectForClaim`，并覆盖 checkpoint 后 `pause_requested` / `cancel_requested` 对 strict claim mutation 的围栏；本轮没有改动其接口或语义。

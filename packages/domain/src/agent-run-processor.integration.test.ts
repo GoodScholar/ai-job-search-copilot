@@ -415,22 +415,25 @@ describe("AgentRunProcessor checkpoints", () => {
 
   it("v4 workflow 忽略 abort 时仍在 active-duration deadline 内终结并保留最新 diagnostic", async () => {
     const job = await layeredRun();
-    await database.update(agentRuns).set({ budgetSnapshot: { ...PUBLIC_JOB_DISCOVERY_BUDGET, maxActiveDurationMs: 200 } }).where(eq(agentRuns.id, job.runId));
-    const entered = Promise.withResolvers<void>();
+    let resolveEntered!: () => void;
+    const entered = new Promise<void>((resolve) => { resolveEntered = resolve; });
+    const instant = new Date();
+    let nearDeadline = false;
     const processor = createAgentRunProcessor({
       db: database,
       adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
       layeredPublicWorkflowResolver: { resolve: () => ({ run: async (input) => {
-        entered.resolve();
+        resolveEntered();
+        nearDeadline = true;
         const onDiagnostics = (input as unknown as { onDiagnostics?: (snapshot: Array<{ scope: "provider"; code: "ANYSEARCH_UNAVAILABLE"; retryable: true; affectedCount: 1 }>) => void }).onDiagnostics;
         onDiagnostics?.([{ scope: "provider", code: "ANYSEARCH_UNAVAILABLE", retryable: true, affectedCount: 1 }]);
         return new Promise<never>(() => undefined);
       } }) },
-      contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: () => crypto.randomUUID(), clock: () => new Date(), heartbeatIntervalMs: 60_000,
+      contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => instant }), id: () => crypto.randomUUID(), clock: () => nearDeadline ? new Date(instant.getTime() + PUBLIC_JOB_DISCOVERY_BUDGET.maxActiveDurationMs - 200) : instant, heartbeatIntervalMs: 60_000,
     });
 
     const processing = processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true });
-    await entered.promise;
+    await entered;
     await expect(processing).resolves.toBe("budget_exhausted");
     await expect(Promise.all([
       database.select({ status: agentRuns.status, terminationKind: agentRuns.terminationKind }).from(agentRuns).where(eq(agentRuns.id, job.runId)),
