@@ -136,6 +136,7 @@ describe("AgentRunProcessor checkpoints", () => {
 
     const queries = createAgentRunQueries({ db: database });
     const detail = await queries.get(job);
+    if (!detail || detail.workflowVersion !== LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION) throw new Error("expected v4 detail");
     expect(detail).toMatchObject({
       runId: job.runId,
       usage: { results: 3, complete: true },
@@ -149,12 +150,12 @@ describe("AgentRunProcessor checkpoints", () => {
         { provider: "greenhouse", code: "GREENHOUSE_DEGRADED" },
       ],
     });
-    expect(detail?.discoveryDiagnostics.map(({ code }) => code)).toEqual(["ANYSEARCH_POLICY_REJECTED", "ANYSEARCH_NOT_CONFIGURED"]);
+    expect(detail.discoveryDiagnostics.map(({ code }) => code)).toEqual(["ANYSEARCH_POLICY_REJECTED", "ANYSEARCH_NOT_CONFIGURED"]);
     expect(JSON.stringify(detail)).not.toContain(secretUrl);
     expect(JSON.stringify(detail)).not.toContain(secretTitle);
     expect(JSON.stringify(detail)).not.toContain("provider response body");
     await expect(queries.latest({ userId: job.userId })).resolves.toMatchObject({ run: { runId: job.runId, usage: { results: 3 } } });
-    await expect(queries.eventsAfter({ userId: job.userId, runId: job.runId, afterSequence: detail!.events[1]!.sequence })).resolves.toEqual(detail!.events.slice(2));
+    await expect(queries.eventsAfter({ userId: job.userId, runId: job.runId, afterSequence: detail.events[1]!.sequence })).resolves.toEqual(detail.events.slice(2));
 
     const other = await layeredRun();
     await expect(queries.get({ userId: other.userId, runId: job.runId })).resolves.toBeNull();
