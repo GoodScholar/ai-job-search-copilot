@@ -155,6 +155,17 @@ describe("verified public job source gate", () => {
     await expect(gate.verify({ ...input, claimToken: newToken })).resolves.toMatchObject({ lead: { state: "verified" } });
   });
 
+  it("旧 claim authority 在接管后不能 reject，new claim 才能终结 Lead", async () => {
+    const subject = await owner(); const oldToken = crypto.randomUUID(); const newToken = crypto.randomUUID();
+    await database.update(agentRuns).set({ status: "running", startedAt: now, claimToken: oldToken, claimExpiresAt: new Date(Date.now() + 60_000), activeSliceStartedAt: now }).where(eq(agentRuns.id, subject.runId));
+    await database.update(agentRuns).set({ claimToken: newToken, claimExpiresAt: new Date(Date.now() + 60_000) }).where(eq(agentRuns.id, subject.runId));
+    const gate = createVerifiedJobSourceGate({ db: database, contentStore: new EvidenceStore(), id: () => crypto.randomUUID() });
+    const input = { userId: subject.userId, leadId: subject.leadId, code: "JOB_PAGE_URL_INVALID" as const, now };
+    await expect(gate.reject({ ...input, claimToken: oldToken })).rejects.toMatchObject({ code: "VERIFIED_JOB_SOURCE_CLAIM_STALE" });
+    await expect(database.select({ state: jobDiscoveryLeads.state }).from(jobDiscoveryLeads).where(eq(jobDiscoveryLeads.id, subject.leadId))).resolves.toEqual([{ state: "pending" }]);
+    await expect(gate.reject({ ...input, claimToken: newToken })).resolves.toMatchObject({ state: "rejected" });
+  });
+
   it("仅由本地已验证页面建立真实来源版本，并把 AnySearch 保持为归因", async () => {
     const subject = await owner();
     const store = new EvidenceStore();
