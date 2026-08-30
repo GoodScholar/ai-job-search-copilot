@@ -1125,4 +1125,87 @@ describe("database migrations", () => {
     expect(versions?.columns).toHaveProperty("normalized_data");
     expect(postings?.indexes).toHaveProperty("job_source_postings_source_scan_idx");
   });
+
+  it("migrates immutable owner-bound per-run source health checks with a latest lookup", async () => {
+    expect(await listPublicTables(migratedDatabase)).toContain("job_source_health_checks");
+    expect(await listConstraintNames(migratedDatabase)).toEqual(expect.arrayContaining([
+      "job_source_health_checks_run_source_unique",
+      "job_source_health_checks_owner_run_target_fk",
+      "job_source_health_checks_status_check",
+      "job_source_health_checks_reason_codes_safe_check",
+      "job_source_health_checks_impact_scope_check",
+      "job_source_health_checks_counts_nonnegative",
+    ]));
+    expect(await listColumns(migratedDatabase)).toEqual(expect.arrayContaining([
+      { table_name: "job_source_health_checks", column_name: "reason_codes", data_type: "jsonb" },
+      { table_name: "job_source_health_checks", column_name: "checked_at", data_type: "timestamp with time zone" },
+    ]));
+
+    const userId = "bbc4f321-2c8a-4ec0-8ae3-8e987dd5f5e1";
+    const otherUserId = "bd1ea9a4-6bf2-4bc2-8dad-7c5b89f6bb80";
+    const targetId = "a350a2ae-0f08-4e98-84bb-e6ad1a21e906";
+    const otherTargetId = "31bd0918-0624-44fd-8f52-1dfcfa653db9";
+    const runId = "e1a26335-2e06-4224-a58e-06225fbd3f40";
+    const checkId = "d96d2d4a-8709-41ca-9f0f-4c131d1d6f89";
+    await migratedDatabase.execute(sql`insert into job_accounts (id) values (${userId}), (${otherUserId})`);
+    await migratedDatabase.execute(sql`
+      insert into job_targets (id, user_id, version, priority, state)
+      values (${targetId}, ${userId}, 1, 'primary', 'active'), (${otherTargetId}, ${userId}, 1, 'secondary', 'inactive')
+    `);
+    await migratedDatabase.execute(sql`
+      insert into agent_runs (
+        id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot,
+        workflow_version, rule_version, adapter, adapter_version, output_schema_version, tool_allowlist, status, current_step
+      ) values (
+        ${runId}, ${userId}, ${targetId}, '9889ca8a-3ba6-4551-8c02-c12345cb0365', 1, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb,
+        'job-discovery-workflow-v3', 'job-discovery-source-health-rules-v1', 'greenhouse', 'greenhouse-job-board-v2',
+        'job-discovery-result-v3', '[]'::jsonb, 'queued', 'queued'
+      )
+    `);
+    await migratedDatabase.execute(sql`
+      insert into job_source_health_checks (
+        id, user_id, run_id, target_id, watchlist_item_id, source_id, status, reason_codes, impact_scope, impact_affected_count,
+        observed_posting_count, selected_detail_count, valid_detail_count, request_attempt_count, checked_at
+      ) values (
+        ${checkId}, ${userId}, ${runId}, ${targetId}, '3f906934-fac2-4db9-93c4-09ccdec40ee6', 'greenhouse:example',
+        'parser_degraded', '["SOURCE_DETAIL_FIELDS_MISSING"]'::jsonb, 'job_details', 2, 3, 3, 1, 4, now()
+      )
+    `);
+    await expect(migratedDatabase.execute(sql`
+      insert into job_source_health_checks (
+        user_id, run_id, target_id, watchlist_item_id, source_id, status, reason_codes, impact_scope, impact_affected_count,
+        observed_posting_count, selected_detail_count, valid_detail_count, request_attempt_count, checked_at
+      ) values (
+        ${userId}, ${runId}, ${targetId}, '3f906934-fac2-4db9-93c4-09ccdec40ee6', 'greenhouse:example',
+        'healthy', '[]'::jsonb, 'none', 0, 0, 0, 0, 1, now()
+      )
+    `)).rejects.toMatchObject({ cause: { code: "23505" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into job_source_health_checks (
+        user_id, run_id, target_id, watchlist_item_id, source_id, status, reason_codes, impact_scope, impact_affected_count,
+        observed_posting_count, selected_detail_count, valid_detail_count, request_attempt_count, checked_at
+      ) values (
+        ${otherUserId}, ${runId}, ${targetId}, '3f906934-fac2-4db9-93c4-09ccdec40ee6', 'greenhouse:other',
+        'hard_failed', '["SOURCE_UNREACHABLE"]'::jsonb, 'entire_source', null, 0, 0, 0, 3, now()
+      )
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into job_source_health_checks (
+        user_id, run_id, target_id, watchlist_item_id, source_id, status, reason_codes, impact_scope, impact_affected_count,
+        observed_posting_count, selected_detail_count, valid_detail_count, request_attempt_count, checked_at
+      ) values (
+        ${userId}, ${runId}, ${otherTargetId}, '3f906934-fac2-4db9-93c4-09ccdec40ee6', 'greenhouse:other',
+        'hard_failed', '["SOURCE_UNREACHABLE"]'::jsonb, 'entire_source', null, 0, 0, 0, 3, now()
+      )
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
+    await expect(migratedDatabase.execute(sql`
+      update job_source_health_checks set status = 'healthy' where id = ${checkId}
+    `)).rejects.toMatchObject({ cause: { code: "55000" } });
+
+    const indexes = await migratedDatabase.execute(sql`
+      select indexname from pg_indexes
+      where schemaname = 'public' and indexname = 'job_source_health_checks_latest_lookup_idx'
+    `);
+    expect(indexes).toHaveLength(1);
+  });
 });

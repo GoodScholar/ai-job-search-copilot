@@ -155,6 +155,13 @@
       "when": 1788031112341,
       "tag": "0021_scheduled_public_job_discovery",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1788054893724,
+      "tag": "0022_source_health_and_partial_discovery",
+      "breakpoints": true
     }
   ]
 }

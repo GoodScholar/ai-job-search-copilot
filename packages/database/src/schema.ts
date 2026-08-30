@@ -557,6 +557,7 @@ export const agentRuns = pgTable("agent_runs", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   unique("agent_runs_user_id_id_unique").on(table.userId, table.id),
+  unique("agent_runs_user_id_id_target_id_unique").on(table.userId, table.id, table.targetId),
   unique("agent_runs_user_idempotency_unique").on(table.userId, table.idempotencyKey),
   index("agent_runs_recovery_status_expiry_idx").on(table.status, table.claimExpiresAt, table.queuedAt, table.id),
   foreignKey({ columns: [table.userId, table.targetId], foreignColumns: [jobTargets.userId, jobTargets.id], name: "agent_runs_owner_target_fk" }),
@@ -806,4 +807,37 @@ export const agentRunJobResults = pgTable("agent_run_job_results", {
     name: "agent_run_job_results_evidence_tuple_fk",
   }),
   check("agent_run_job_results_ordinal_positive", sql`${table.ordinal} >= 1`),
+]);
+
+export const jobSourceHealthChecks = pgTable("job_source_health_checks", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  runId: uuid("run_id").notNull(),
+  targetId: uuid("target_id").notNull(),
+  watchlistItemId: uuid("watchlist_item_id").notNull(),
+  sourceId: varchar("source_id", { length: 2_048 }).notNull(),
+  status: varchar("status", { length: 32 }).notNull(),
+  reasonCodes: jsonb("reason_codes").notNull(),
+  impactScope: varchar("impact_scope", { length: 32 }).notNull(),
+  impactAffectedCount: integer("impact_affected_count"),
+  observedPostingCount: integer("observed_posting_count").notNull(),
+  selectedDetailCount: integer("selected_detail_count").notNull(),
+  validDetailCount: integer("valid_detail_count").notNull(),
+  requestAttemptCount: integer("request_attempt_count").notNull(),
+  checkedAt: timestamp("checked_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_source_health_checks_run_source_unique").on(table.runId, table.sourceId),
+  unique("job_source_health_checks_user_id_id_unique").on(table.userId, table.id),
+  index("job_source_health_checks_latest_lookup_idx").on(table.userId, table.targetId, table.watchlistItemId, table.sourceId, table.checkedAt, table.id),
+  foreignKey({
+    columns: [table.userId, table.runId, table.targetId],
+    foreignColumns: [agentRuns.userId, agentRuns.id, agentRuns.targetId],
+    name: "job_source_health_checks_owner_run_target_fk",
+  }),
+  check("job_source_health_checks_status_check", sql`${table.status} in ('healthy', 'zero_valid_results', 'parser_degraded', 'rate_limited', 'hard_failed')`),
+  check("job_source_health_checks_reason_codes_array_check", sql`jsonb_typeof(${table.reasonCodes}) = 'array'`),
+  check("job_source_health_checks_reason_codes_safe_check", sql`${table.reasonCodes} <@ '["SOURCE_LIST_SCHEMA_INVALID", "SOURCE_DETAIL_FIELDS_MISSING", "SOURCE_DETAIL_URL_INVALID", "SOURCE_DETAIL_IDENTITY_INVALID", "SOURCE_RATE_LIMITED", "SOURCE_AUTH_FAILED", "SOURCE_TIMEOUT", "SOURCE_UNREACHABLE", "SOURCE_SERVER_ERROR", "SOURCE_POLICY_REJECTED"]'::jsonb`),
+  check("job_source_health_checks_impact_scope_check", sql`${table.impactScope} in ('none', 'entire_source', 'job_details') and (${table.impactAffectedCount} is not null or ${table.impactScope} = 'entire_source')`),
+  check("job_source_health_checks_counts_nonnegative", sql`${table.observedPostingCount} >= 0 and ${table.selectedDetailCount} >= 0 and ${table.validDetailCount} >= 0 and ${table.requestAttemptCount} >= 0 and (${table.impactAffectedCount} is null or ${table.impactAffectedCount} >= 0)`),
 ]);

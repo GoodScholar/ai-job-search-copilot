@@ -10,6 +10,8 @@ export const AGENT_RUN_SCAN_INTERVAL_MS = 1_000;
 export const FAKE_JOB_DISCOVERY_WORKFLOW_VERSION = "job-discovery-workflow-v1";
 export const FAKE_JOB_DISCOVERY_ADAPTER = "fake";
 export const FAKE_JOB_DISCOVERY_ADAPTER_VERSION = "fake-job-discovery-v1";
+export const FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER = "fake-public";
+export const FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION = "fake-public-job-discovery-v1";
 export const FAKE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION = "job-discovery-result-v1";
 export const FAKE_JOB_DISCOVERY_SOURCE_IDS = ["fake:aurora-careers", "fake:orbit-careers"] as const;
 export const GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION = "job-discovery-workflow-v2";
@@ -17,6 +19,11 @@ export const GREENHOUSE_JOB_DISCOVERY_ADAPTER = "greenhouse";
 export const GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION = "greenhouse-job-board-v1";
 export const GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION = "job-discovery-result-v2";
 export const GREENHOUSE_JOB_DISCOVERY_RULE_VERSION = "greenhouse-job-discovery-rules-v1";
+export const GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION = "job-discovery-workflow-v3";
+export const GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION = "greenhouse-job-board-v2";
+export const GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION = "job-discovery-result-v3";
+export const GREENHOUSE_SOURCE_HEALTH_RULE_VERSION = "job-discovery-source-health-rules-v1";
+export const GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST = ["job_discovery.list_source", "job_discovery.get_detail"] as const;
 export const AGENT_RUN_RULE_VERSION = "fake-job-discovery-rules-v1";
 export const AGENT_RUN_TOOL_ALLOWLIST = ["job_discovery.search_batch", "job_discovery.get_detail"] as const;
 export const AGENT_RUN_BUDGET = {
@@ -40,6 +47,78 @@ const positiveInteger = z.int().min(1);
 const nonnegativeInteger = z.int().nonnegative();
 const nullableJobField = z.string().trim().min(1).max(20_000).nullable();
 const jsonObject = z.record(z.string(), z.unknown());
+
+export const SourceHealthStatusSchema = z.enum([
+  "healthy", "zero_valid_results", "parser_degraded", "rate_limited", "hard_failed",
+]);
+export const SourceHealthProjectionStatusSchema = z.enum([
+  "healthy", "zero_valid_results", "parser_degraded", "rate_limited", "hard_failed", "disabled",
+]);
+export const SourceHealthReasonCodeSchema = z.enum([
+  "SOURCE_LIST_SCHEMA_INVALID", "SOURCE_DETAIL_FIELDS_MISSING", "SOURCE_DETAIL_URL_INVALID",
+  "SOURCE_DETAIL_IDENTITY_INVALID", "SOURCE_RATE_LIMITED", "SOURCE_AUTH_FAILED", "SOURCE_TIMEOUT",
+  "SOURCE_UNREACHABLE", "SOURCE_SERVER_ERROR", "SOURCE_POLICY_REJECTED",
+]);
+export const SourceHealthImpactScopeSchema = z.enum(["none", "entire_source", "job_details"]);
+export const SourceHealthSuggestedActionSchema = z.enum([
+  "none", "wait_for_next_run", "retry_later", "retry_or_disable", "reenable_source",
+]);
+export const SourceHealthImpactSchema = z.object({
+  scope: SourceHealthImpactScopeSchema,
+  affectedCount: nonnegativeInteger.nullable(),
+}).strict().superRefine((impact, context) => {
+  if (impact.affectedCount === null && impact.scope !== "entire_source") {
+    context.addIssue({ code: "custom", path: ["affectedCount"], message: "only an unknown entire source impact may omit its affected count" });
+  }
+});
+const SourceHealthReasonCodesSchema = z.array(SourceHealthReasonCodeSchema).max(10).refine(
+  (codes) => new Set(codes).size === codes.length,
+  { message: "reason codes must be unique" },
+);
+export const JobSourceHealthCheckSchema = z.object({
+  checkId: z.uuid(),
+  runId: z.uuid(),
+  targetId: z.uuid(),
+  watchlistItemId: z.uuid(),
+  sourceId: z.string().trim().min(1).max(2_048),
+  status: SourceHealthStatusSchema,
+  reasonCodes: SourceHealthReasonCodesSchema,
+  impact: SourceHealthImpactSchema,
+  observedPostingCount: nonnegativeInteger,
+  selectedDetailCount: nonnegativeInteger,
+  validDetailCount: nonnegativeInteger,
+  requestAttemptCount: nonnegativeInteger,
+  checkedAt: z.iso.datetime(),
+}).strict().superRefine((check, context) => {
+  if ((check.status === "healthy" || check.status === "zero_valid_results") && check.reasonCodes.length !== 0) {
+    context.addIssue({ code: "custom", path: ["reasonCodes"], message: "healthy and zero-valid checks have no reasons" });
+  }
+  if ((check.status === "parser_degraded" || check.status === "rate_limited" || check.status === "hard_failed") && check.reasonCodes.length === 0) {
+    context.addIssue({ code: "custom", path: ["reasonCodes"], message: "affected checks require a classified reason" });
+  }
+});
+export const JobSourceHealthProjectionSchema = z.object({
+  watchlistItemId: z.uuid(),
+  sourceId: z.string().trim().min(1).max(2_048),
+  name: z.string().trim().min(1).max(200),
+  state: z.enum(["enabled", "disabled"]),
+  status: SourceHealthProjectionStatusSchema.nullable(),
+  runId: z.uuid().nullable(),
+  reasonCodes: SourceHealthReasonCodesSchema,
+  impact: SourceHealthImpactSchema,
+  lastCheckedAt: z.iso.datetime().nullable(),
+  suggestedAction: SourceHealthSuggestedActionSchema,
+}).strict().superRefine((projection, context) => {
+  if (projection.state === "disabled" && projection.status !== "disabled") {
+    context.addIssue({ code: "custom", path: ["status"], message: "disabled Watchlist sources project disabled status" });
+  }
+  if (projection.state === "enabled" && projection.status === "disabled") {
+    context.addIssue({ code: "custom", path: ["status"], message: "enabled Watchlist sources cannot project disabled status" });
+  }
+  if (projection.status === null && (projection.runId !== null || projection.lastCheckedAt !== null || projection.reasonCodes.length !== 0)) {
+    context.addIssue({ code: "custom", message: "unchecked sources contain no controlled-check evidence" });
+  }
+});
 
 export const AgentRunStatusSchema = z.enum(["queued", "running", "paused", "completed", "failed", "cancelled"]);
 export const AgentRunControlStateSchema = z.enum(["none", "pause_requested", "cancel_requested"]);
@@ -103,6 +182,17 @@ export const PublicAgentRunSourceScopeSchema = z.object({
   ),
 }).strict();
 
+export const PublicSourceHealthAgentRunSourceScopeSchema = z.object({
+  kind: z.literal("company_watchlist"),
+  adapter: z.literal(GREENHOUSE_JOB_DISCOVERY_ADAPTER),
+  adapterVersion: z.literal(GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION),
+  watchlistVersion: positiveInteger,
+  sources: z.array(GreenhousePublicSourceSchema).min(1).max(50).refine(
+    (sources) => new Set(sources.map((source) => source.sourceId)).size === sources.length,
+    { message: "source IDs must be unique" },
+  ),
+}).strict();
+
 const FakeAgentRunExecutionSpecSchema = z.object({
   targetSnapshot: AgentRunTargetSnapshotSchema,
   sourceScope: AgentRunSourceScopeSchema,
@@ -134,9 +224,23 @@ const PublicAgentRunExecutionSpecSchema = z.object({
   budget: PublicAgentRunBudgetSchema,
 }).strict();
 
-export const AgentRunExecutionSpecSchema = z.discriminatedUnion("adapter", [
+const PublicSourceHealthAgentRunExecutionSpecSchema = z.object({
+  targetSnapshot: AgentRunTargetSnapshotSchema,
+  sourceScope: PublicSourceHealthAgentRunSourceScopeSchema,
+  workflowVersion: z.literal(GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION),
+  ruleVersion: z.literal(GREENHOUSE_SOURCE_HEALTH_RULE_VERSION),
+  adapter: z.literal(GREENHOUSE_JOB_DISCOVERY_ADAPTER),
+  adapterVersion: z.literal(GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION),
+  outputSchemaVersion: z.literal(GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION),
+  toolAllowlist: z.tuple([z.literal(GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST[0]), z.literal(GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST[1])]),
+  model: z.null(),
+  budget: PublicAgentRunBudgetSchema,
+}).strict();
+
+export const AgentRunExecutionSpecSchema = z.union([
   FakeAgentRunExecutionSpecSchema,
   PublicAgentRunExecutionSpecSchema,
+  PublicSourceHealthAgentRunExecutionSpecSchema,
 ]);
 
 export const AgentRunUsageSchema = z.object({
@@ -161,6 +265,7 @@ export const AgentRunUsageSchema = z.object({
 
 export const AgentRunTerminationSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("completed"), failureCode: z.null(), budgetDimension: z.null() }).strict(),
+  z.object({ kind: z.literal("completed_with_source_issues"), failureCode: z.null(), budgetDimension: z.null() }).strict(),
   z.object({ kind: z.literal("cancelled_by_user"), failureCode: z.null(), budgetDimension: z.null() }).strict(),
   z.object({ kind: z.literal("source_failed"), failureCode: z.enum(["AGENT_RUN_ADAPTER_RETRYABLE", "AGENT_RUN_ADAPTER_FAILED", "AGENT_RUN_MODEL_RETRYABLE", "AGENT_RUN_MODEL_AUTH_FAILED", "AGENT_RUN_MODEL_POLICY_REJECTED", "AGENT_RUN_MODEL_INVALID_RESPONSE"]), budgetDimension: z.null() }).strict(),
   z.object({ kind: z.literal("content_storage_failed"), failureCode: z.literal("AGENT_RUN_CONTENT_STORAGE_FAILED"), budgetDimension: z.null() }).strict(),
@@ -251,7 +356,13 @@ const PublicAgentRunSummarySchema = z.object({
   adapter: z.literal(GREENHOUSE_JOB_DISCOVERY_ADAPTER), adapterVersion: z.literal(GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION),
   outputSchemaVersion: z.literal(GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION), budget: PublicAgentRunBudgetSchema,
 }).strict();
-export const AgentRunSummarySchema = z.discriminatedUnion("adapter", [FakeAgentRunSummarySchema, PublicAgentRunSummarySchema]).superRefine((summary, context) => {
+const PublicSourceHealthAgentRunSummarySchema = z.object({
+  ...AgentRunSummaryFields, sourceScope: PublicSourceHealthAgentRunSourceScopeSchema,
+  workflowVersion: z.literal(GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION),
+  adapter: z.literal(GREENHOUSE_JOB_DISCOVERY_ADAPTER), adapterVersion: z.literal(GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION),
+  outputSchemaVersion: z.literal(GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION), budget: PublicAgentRunBudgetSchema,
+}).strict();
+export const AgentRunSummarySchema = z.union([FakeAgentRunSummarySchema, PublicAgentRunSummarySchema, PublicSourceHealthAgentRunSummarySchema]).superRefine((summary, context) => {
   if ((summary.status === "cancelled") !== (summary.currentStep === "cancelled")) {
     context.addIssue({ code: "custom", path: ["currentStep"], message: "cancelled status and step must pair" });
   }
@@ -262,26 +373,31 @@ const AgentRunDetailFields = {
   termination: AgentRunTerminationSchema.nullable(), retryOfRunId: z.uuid().nullable(),
   steps: z.array(AgentRunStepSchema), events: z.array(AgentRunEventSchema), results: z.array(AgentRunResultSchema),
 };
-export const AgentRunDetailSchema = z.discriminatedUnion("adapter", [
-  FakeAgentRunSummarySchema.extend({ ...AgentRunDetailFields, executionSpec: FakeAgentRunExecutionSpecSchema }).strict(),
-  PublicAgentRunSummarySchema.extend({ ...AgentRunDetailFields, executionSpec: PublicAgentRunExecutionSpecSchema }).strict(),
+export const AgentRunDetailSchema = z.union([
+  FakeAgentRunSummarySchema.extend({ ...AgentRunDetailFields, executionSpec: FakeAgentRunExecutionSpecSchema, sourceChecks: z.array(JobSourceHealthCheckSchema).max(0).default([]) }).strict(),
+  PublicAgentRunSummarySchema.extend({ ...AgentRunDetailFields, executionSpec: PublicAgentRunExecutionSpecSchema, sourceChecks: z.array(JobSourceHealthCheckSchema).max(0).default([]) }).strict(),
+  PublicSourceHealthAgentRunSummarySchema.extend({ ...AgentRunDetailFields, executionSpec: PublicSourceHealthAgentRunExecutionSpecSchema, sourceChecks: z.array(JobSourceHealthCheckSchema).max(50) }).strict(),
 ]).superRefine((detail, context) => {
   const terminal = detail.status === "completed" || detail.status === "failed" || detail.status === "cancelled";
   if (!terminal && detail.termination !== null) context.addIssue({ code: "custom", path: ["termination"], message: "nonterminal runs have no termination" });
   if (terminal && detail.usage.complete && detail.termination === null) context.addIssue({ code: "custom", path: ["termination"], message: "complete terminal runs require termination" });
   if (detail.termination !== null) {
-    const statusMatches = (detail.status === "completed" && detail.termination.kind === "completed")
+    const statusMatches = (detail.status === "completed" && (detail.termination.kind === "completed" || detail.termination.kind === "completed_with_source_issues"))
       || (detail.status === "cancelled" && detail.termination.kind === "cancelled_by_user")
       || (detail.status === "failed" && ["source_failed", "content_storage_failed", "persistence_failed", "budget_exhausted"].includes(detail.termination.kind));
     if (!statusMatches) context.addIssue({ code: "custom", path: ["termination", "kind"], message: "termination kind must match status" });
+    if (detail.termination.kind === "completed_with_source_issues" && detail.workflowVersion !== GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION) {
+      context.addIssue({ code: "custom", path: ["termination", "kind"], message: "source issue completion requires the v3 source-health contract" });
+    }
     if (detail.failureCode !== detail.termination.failureCode) context.addIssue({ code: "custom", path: ["failureCode"], message: "failure code must match termination" });
   }
   if ((detail.status === "cancelled") !== (detail.currentStep === "cancelled")) context.addIssue({ code: "custom", path: ["currentStep"], message: "cancelled status and step must pair" });
 });
 
-export const StartAgentRunResponseSchema = z.discriminatedUnion("adapter", [
+export const StartAgentRunResponseSchema = z.union([
   FakeAgentRunSummarySchema.extend({ reused: z.boolean() }).strict(),
   PublicAgentRunSummarySchema.extend({ reused: z.boolean() }).strict(),
+  PublicSourceHealthAgentRunSummarySchema.extend({ reused: z.boolean() }).strict(),
 ]);
 export const LatestAgentRunResponseSchema = z.object({ run: AgentRunDetailSchema.nullable() }).strict();
 
@@ -347,6 +463,9 @@ export type AgentRunSseEvent = z.infer<typeof AgentRunSseEventSchema>;
 export type DiscoverySearchInput = z.infer<typeof DiscoverySearchInputSchema>;
 export type DiscoveryBatchSearchInput = z.infer<typeof DiscoveryBatchSearchInputSchema>;
 export type PublicAgentRunSourceScope = z.infer<typeof PublicAgentRunSourceScopeSchema>;
+export type PublicSourceHealthAgentRunSourceScope = z.infer<typeof PublicSourceHealthAgentRunSourceScopeSchema>;
+export type JobSourceHealthCheck = z.infer<typeof JobSourceHealthCheckSchema>;
+export type JobSourceHealthProjection = z.infer<typeof JobSourceHealthProjectionSchema>;
 export type DiscoveryDetailInput = z.infer<typeof DiscoveryDetailInputSchema>;
 export type DiscoverySearchResult = z.infer<typeof DiscoverySearchResultSchema>;
 export type DiscoveryBatchSearchResult = z.infer<typeof DiscoveryBatchSearchResultSchema>;

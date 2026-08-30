@@ -27,11 +27,18 @@ import {
   AgentRunTerminationSchema,
   AgentRunTargetSnapshotSchema,
   AgentRunUsageSchema,
+  JobSourceHealthCheckSchema,
+  JobSourceHealthProjectionSchema,
   GREENHOUSE_JOB_DISCOVERY_ADAPTER,
   GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
   GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
   GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION,
   GREENHOUSE_JOB_DISCOVERY_RULE_VERSION,
+  GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
+  GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION,
+  GREENHOUSE_SOURCE_HEALTH_RULE_VERSION,
+  GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST,
+  GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION,
   PUBLIC_JOB_DISCOVERY_BUDGET,
   PublicDiscoveryBatchSearchResultSchema,
   DiscoveryBatchSearchInputSchema,
@@ -44,6 +51,8 @@ import {
   DiscoverySearchSummarySchema,
   FAKE_JOB_DISCOVERY_ADAPTER,
   FAKE_JOB_DISCOVERY_ADAPTER_VERSION,
+  FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER,
+  FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION,
   FAKE_JOB_DISCOVERY_SOURCE_IDS,
   FAKE_JOB_DISCOVERY_WORKFLOW_VERSION,
   LatestAgentRunResponseSchema,
@@ -125,6 +134,102 @@ function expectUnknownKeyRejected(schema: { safeParse(input: unknown): { success
 }
 
 describe("agent run contracts", () => {
+  it("在保留 Fake v1 和 Greenhouse v2 语义的同时解析 Greenhouse 来源健康 v3 执行规格", () => {
+    const v3ExecutionSpec = {
+      targetSnapshot: runTargetSnapshot,
+      sourceScope: {
+        ...publicSourceScope,
+        adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
+      },
+      workflowVersion: GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION,
+      ruleVersion: GREENHOUSE_SOURCE_HEALTH_RULE_VERSION,
+      adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER,
+      adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
+      outputSchemaVersion: GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION,
+      toolAllowlist: GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST,
+      model: null,
+      budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+    };
+
+    expect(AgentRunExecutionSpecSchema.parse(executionSpec)).toEqual(executionSpec);
+    expect(AgentRunExecutionSpecSchema.parse({
+      targetSnapshot: runTargetSnapshot, sourceScope: publicSourceScope,
+      workflowVersion: GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION,
+      ruleVersion: GREENHOUSE_JOB_DISCOVERY_RULE_VERSION,
+      adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER,
+      adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
+      outputSchemaVersion: GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+      toolAllowlist: AGENT_RUN_TOOL_ALLOWLIST, model: null, budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+    })).toMatchObject({ workflowVersion: GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION });
+    expect(AgentRunExecutionSpecSchema.parse(v3ExecutionSpec)).toEqual(v3ExecutionSpec);
+    expect(AgentRunExecutionSpecSchema.safeParse({ ...v3ExecutionSpec, adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION }).success)
+      .toBe(false);
+    expect({ adapter: FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER, version: FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION })
+      .toEqual({ adapter: "fake-public", version: "fake-public-job-discovery-v1" });
+  });
+
+  it("为 v3 运行详情投影安全、可追溯的来源健康受控检查", () => {
+    const sourceCheck = {
+      checkId: "6d5ee5dd-49f0-4a92-bab6-e8d2740c14f9",
+      runId,
+      targetId,
+      watchlistItemId: publicSourceScope.sources[0]!.watchlistItemId,
+      sourceId: "greenhouse:example",
+      status: "parser_degraded",
+      reasonCodes: ["SOURCE_DETAIL_FIELDS_MISSING"],
+      impact: { scope: "job_details", affectedCount: 2 },
+      observedPostingCount: 3,
+      selectedDetailCount: 3,
+      validDetailCount: 1,
+      requestAttemptCount: 4,
+      checkedAt: now,
+    };
+    const v3Summary = {
+      ...queuedSummary,
+      sourceScope: { ...publicSourceScope, adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION },
+      workflowVersion: GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION,
+      adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER,
+      adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
+      outputSchemaVersion: GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION,
+      budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+      status: "completed",
+      currentStep: "completed",
+      startedAt: now,
+      completedAt: now,
+    };
+    const v3ExecutionSpec = {
+      targetSnapshot: runTargetSnapshot,
+      sourceScope: v3Summary.sourceScope,
+      workflowVersion: GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION,
+      ruleVersion: GREENHOUSE_SOURCE_HEALTH_RULE_VERSION,
+      adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER,
+      adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
+      outputSchemaVersion: GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION,
+      toolAllowlist: GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST,
+      model: null,
+      budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+    };
+
+    expect(JobSourceHealthCheckSchema.parse(sourceCheck)).toEqual(sourceCheck);
+    expect(JobSourceHealthCheckSchema.safeParse({ ...sourceCheck, reasonCodes: [] }).success).toBe(false);
+    expect(JobSourceHealthCheckSchema.safeParse({ ...sourceCheck, impact: { scope: "job_details", affectedCount: null } }).success).toBe(false);
+    expect(JobSourceHealthProjectionSchema.parse({
+      watchlistItemId: sourceCheck.watchlistItemId, sourceId: sourceCheck.sourceId, name: "Example AI",
+      state: "enabled", status: null, runId: null, reasonCodes: [], impact: { scope: "none", affectedCount: 0 },
+      lastCheckedAt: null, suggestedAction: "none",
+    }).status).toBeNull();
+    expect(AgentRunDetailSchema.parse({
+      ...v3Summary,
+      executionSpec: v3ExecutionSpec,
+      controlState: "none",
+      usage: { ...usage, complete: true },
+      termination: { kind: "completed_with_source_issues", failureCode: null, budgetDimension: null },
+      retryOfRunId: null,
+      steps: [], events: [], results: [], sourceChecks: [sourceCheck],
+    }).termination).toMatchObject({ kind: "completed_with_source_issues" });
+    expect(AgentRunDetailSchema.safeParse({ ...detail, sourceChecks: [sourceCheck] }).success).toBe(false);
+  });
+
   it("将 Fake v1 与 Public v2 严格联合用于启动、详情和 latest 响应", () => {
     const publicSummary = {
       ...queuedSummary, sourceScope: publicSourceScope, workflowVersion: GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION,
