@@ -146,13 +146,11 @@ function hasJobTitleEvidence(title: string): boolean {
 }
 
 function jobTitleMainSegment(title: string): string {
-  const withoutBracketMetadata = title.replace(/\s*[（(【\[][^）)\]】]*[）)\]】]\s*$/u, "").trim();
-  const commaSegments = /^(.+?),\s*([^,]+)$/u.exec(withoutBracketMetadata);
-  return commaSegments && commaSegments[2].trim().split(/\s+/u).length <= 4 ? commaSegments[1].trim() : withoutBracketMetadata;
+  return title.replace(/\s*[（(【\[][^）)\]】]*[）)\]】]\s*$/u, "").trim();
 }
 
 function isListingTitle(title: string | undefined): boolean {
-  return /(?:\bjobs(?:\s+(?:in|at)\s+.+|\s*(?:[-—|:：])\s*.+)?\s*$|\bopen\s+positions\b|全部职位|职位列表|招聘岗位)/iu.test(title ?? "");
+  return /^(?:[^,]*\bjobs(?:\s+(?:in|at)\s+.+|\s*(?:[|—–\x2f])\s*.+)?|[^,]*\bopen\s+positions(?:\s+(?:in|at)\s+.+|\s*(?:[|—–\x2f])\s*.+)?|[^,，]*(?:全部职位|职位列表|招聘岗位)(?:\s*(?:[|—–\x2f])\s*.+)?)\s*$/iu.test(title ?? "");
 }
 
 type JobDetailCategory = "responsibilities" | "requirements" | "candidate-profile" | "benefits";
