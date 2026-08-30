@@ -350,8 +350,15 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
       const [version] = await transaction.select({ sourceId: jobSourcePostings.sourceId }).from(jobSourcePostingVersions).innerJoin(jobSourcePostings, and(eq(jobSourcePostings.userId, jobSourcePostingVersions.userId), eq(jobSourcePostings.id, jobSourcePostingVersions.sourcePostingId))).where(and(eq(jobSourcePostingVersions.userId, input.userId), eq(jobSourcePostingVersions.id, sourcePostingVersionId))).limit(1);
       if (!version || (!attributed.has(sourcePostingVersionId) && !(trusted.has(sourcePostingVersionId) && version.sourceId !== null && input.trustedSourceIds.includes(version.sourceId)))) throw new Error("LAYERED_PUBLIC_RESULT_PROVENANCE_INVALID");
     }
-    for (const [index, sourcePostingVersionId] of [...new Set(input.sourcePostingVersionIds)].slice(0, 5).entries()) {
-      await transaction.insert(jobDiscoveryRunResults).values({ id: deps.id(), userId: input.userId, runId: input.runId, sourcePostingVersionId, ordinal: index + 1, createdAt: input.now }).onConflictDoNothing({ target: [jobDiscoveryRunResults.userId, jobDiscoveryRunResults.runId, jobDiscoveryRunResults.sourcePostingVersionId] });
+    const existingResults: Array<{ ordinal: number; sourcePostingVersionId: string }> = await transaction.select({ ordinal: jobDiscoveryRunResults.ordinal, sourcePostingVersionId: jobDiscoveryRunResults.sourcePostingVersionId })
+      .from(jobDiscoveryRunResults).where(and(eq(jobDiscoveryRunResults.userId, input.userId), eq(jobDiscoveryRunResults.runId, input.runId))).orderBy(asc(jobDiscoveryRunResults.ordinal));
+    const existingVersionIds = new Set(existingResults.map((result) => result.sourcePostingVersionId));
+    let nextOrdinal = Math.max(0, ...existingResults.map((result) => result.ordinal)) + 1;
+    for (const sourcePostingVersionId of [...new Set(input.sourcePostingVersionIds)]) {
+      if (existingVersionIds.has(sourcePostingVersionId) || nextOrdinal > 5) continue;
+      await transaction.insert(jobDiscoveryRunResults).values({ id: deps.id(), userId: input.userId, runId: input.runId, sourcePostingVersionId, ordinal: nextOrdinal, createdAt: input.now }).onConflictDoNothing({ target: [jobDiscoveryRunResults.userId, jobDiscoveryRunResults.runId, jobDiscoveryRunResults.sourcePostingVersionId] });
+      existingVersionIds.add(sourcePostingVersionId);
+      nextOrdinal += 1;
     }
     const [{ resultCount }] = await transaction.select({ resultCount: count() }).from(jobDiscoveryRunResults).where(and(
       eq(jobDiscoveryRunResults.userId, input.userId), eq(jobDiscoveryRunResults.runId, input.runId),

@@ -57,6 +57,14 @@ describe("AgentRunProcessor checkpoints", () => {
     return { userId, targetId, runId, queryId, sourcePostingVersionId };
   }
 
+  async function extraTrustedVersion(job: { userId: string }, index: number) {
+    const sourcePostingId = crypto.randomUUID();
+    const sourcePostingVersionId = crypto.randomUUID();
+    await database.insert(jobSourcePostings).values({ id: sourcePostingId, userId: job.userId, sourceType: "company_careers", sourceIdentifier: `greenhouse:example:opening-extra-${index}`, sourceId: "greenhouse:example", sourceIdentity: { sourceId: "greenhouse:example", detailId: `opening-extra-${index}` }, applicationDeadline: null, isOfficial: true, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
+    await database.insert(jobSourcePostingVersions).values({ id: sourcePostingVersionId, userId: job.userId, sourcePostingId, version: 1, contentSha256: `${index.toString(16)}`.repeat(64).slice(0, 64), rawContentSha256: `${(index + 8).toString(16)}`.repeat(64).slice(0, 64), rawObjectReference: {}, normalizedData: {}, retrievedAt: now, availability: "open", createdAt: now });
+    return sourcePostingVersionId;
+  }
+
   function resolver(adapter: JobDiscoveryAdapter): JobDiscoveryAdapterResolver { return { resolve: () => adapter }; }
   function checkpoint(): AgentRunCheckpoint {
     return createAgentRunCheckpoint({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
@@ -135,6 +143,27 @@ describe("AgentRunProcessor checkpoints", () => {
     expect(issues).toEqual([expect.objectContaining({ code: "ANYSEARCH_NOT_CONFIGURED", affectedCount: 1 })]);
     expect(attention).toHaveLength(1);
     expect(attentionAudit).toHaveLength(1);
+  });
+
+  it("v4 result 复原既有 ordinal，稳定截断为五条并保持 detail/resultCount 一致", async () => {
+    const job = await layeredRun();
+    const extra = await Promise.all([1, 2, 3, 4, 5].map((index) => extraTrustedVersion(job, index)));
+    await database.insert(jobDiscoveryRunResults).values({ id: crypto.randomUUID(), userId: job.userId, runId: job.runId, sourcePostingVersionId: job.sourcePostingVersionId, ordinal: 1, createdAt: now });
+    const processor = createAgentRunProcessor({
+      db: database,
+      adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
+      layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({ hasTrustedSuccess: true, branchSuccess: { trusted: true, publicDiscovery: false }, sourcePostingVersionIds: [...extra, job.sourcePostingVersionId], trustedSourcePostingVersionIds: [...extra, job.sourcePostingVersionId], diagnostics: [] }) }) },
+      contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("completed");
+    await expect(database.select({ resultCount: agentRuns.resultCount }).from(agentRuns).where(eq(agentRuns.id, job.runId))).resolves.toEqual([{ resultCount: 5 }]);
+    await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({ results: [
+      { sourcePostingVersionId: job.sourcePostingVersionId },
+      { sourcePostingVersionId: extra[0] },
+      { sourcePostingVersionId: extra[1] },
+      { sourcePostingVersionId: extra[2] },
+      { sourcePostingVersionId: extra[3] },
+    ] });
   });
 
   it("v4 retry 只保留诊断；后续成功不遗留 source issue 或 attention", async () => {
