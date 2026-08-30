@@ -264,6 +264,22 @@ describe("agent runs", () => {
     });
   });
 
+  it("历史 run 从结果绑定的不可变来源版本还原岗位字段", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const postingId = crypto.randomUUID(); const versionId = crypto.randomUUID(); const opportunityId = crypto.randomUUID();
+    await database.insert(jobSourcePostings).values({ id: postingId, userId, sourceType: "company_careers", sourceIdentifier: crypto.randomUUID(), sourceIdentity: { sourceId: "greenhouse:history", detailId: "1" }, isOfficial: true, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
+    await database.insert(jobSourcePostingVersions).values({ id: versionId, userId, sourcePostingId: postingId, version: 1, contentSha256: "a".repeat(64), rawContentSha256: "b".repeat(64), rawObjectReference: { objectKey: "history.json" }, normalizedData: { company: "Fictional", title: "AI Engineer", location: "Shanghai", postedAt: "2026-08-01T00:00:00.000Z", deadline: null }, retrievedAt: now, availability: "open", createdAt: now });
+    await database.insert(jobOpportunities).values({ id: opportunityId, userId, importId: null, sourcePostingVersionId: versionId, dedupKey: "c".repeat(64), company: "Fictional", title: "AI Engineer", location: "Shanghai", postedAt: new Date("2026-08-01T00:00:00.000Z"), deadline: null, description: null, normalizedData: { title: "AI Engineer" }, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
+    await database.insert(jobOpportunitySources).values({ id: crypto.randomUUID(), userId, opportunityId, sourcePostingVersionId: versionId, createdAt: now });
+    await database.insert(agentRunJobResults).values({ id: crypto.randomUUID(), userId, runId: run.runId, opportunityId, sourcePostingVersionId: versionId, ordinal: 1, createdAt: now });
+    await database.update(jobOpportunities).set({ title: "Senior AI Engineer", location: "Beijing", postedAt: new Date("2026-08-02T00:00:00.000Z"), updatedAt: new Date("2026-08-02T00:00:00.000Z") }).where(eq(jobOpportunities.id, opportunityId));
+
+    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({
+      results: [expect.objectContaining({ company: "Fictional", title: "AI Engineer", location: "Shanghai", postedAt: "2026-08-01T00:00:00.000Z", deadline: null, sourceType: "company_careers", isOfficial: true })],
+    });
+  });
+
   it("只暴露当前账户的最新 run 和事件", async () => {
     const { userId, targetId } = await activeTarget();
     const { userId: otherUserId } = await activeTarget();

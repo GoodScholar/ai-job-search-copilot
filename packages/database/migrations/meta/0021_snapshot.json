@@ -3725,6 +3725,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "canonical_opportunity_id": {
+          "name": "canonical_opportunity_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "dedup_key": {
           "name": "dedup_key",
           "type": "varchar(64)",
@@ -3829,6 +3835,29 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "job_opportunities_canonical_idx": {
+          "name": "job_opportunities_canonical_idx",
+          "columns": [
+            { "expression": "user_id", "isExpression": false, "asc": true, "nulls": "last" },
+            { "expression": "canonical_opportunity_id", "isExpression": false, "asc": true, "nulls": "last" }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "job_opportunities_current_dedup_unique": {
+          "name": "job_opportunities_current_dedup_unique",
+          "columns": [
+            { "expression": "user_id", "isExpression": false, "asc": true, "nulls": "last" },
+            { "expression": "dedup_key", "isExpression": false, "asc": true, "nulls": "last" }
+          ],
+          "isUnique": true,
+          "where": "\"job_opportunities\".\"canonical_opportunity_id\" is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -3900,18 +3929,25 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
+        },
+        "job_opportunities_owner_canonical_opportunity_fk": {
+          "name": "job_opportunities_owner_canonical_opportunity_fk",
+          "tableFrom": "job_opportunities",
+          "tableTo": "job_opportunities",
+          "columnsFrom": [
+            "user_id",
+            "canonical_opportunity_id"
+          ],
+          "columnsTo": [
+            "user_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "job_opportunities_user_dedup_unique": {
-          "name": "job_opportunities_user_dedup_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "user_id",
-            "dedup_key"
-          ]
-        },
         "job_opportunities_user_id_id_unique": {
           "name": "job_opportunities_user_id_id_unique",
           "nullsNotDistinct": false,
@@ -4207,6 +4243,13 @@
           "type": "jsonb",
           "primaryKey": false,
           "notNull": true
+        },
+        "normalized_data": {
+          "name": "normalized_data",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
         },
         "retrieved_at": {
           "name": "retrieved_at",

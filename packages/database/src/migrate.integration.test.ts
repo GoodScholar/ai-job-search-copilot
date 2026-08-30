@@ -538,7 +538,6 @@ describe("database migrations", () => {
     expect(await listConstraintNames(migratedDatabase)).toEqual(expect.arrayContaining([
       "job_source_postings_user_identity_unique",
       "job_source_posting_versions_posting_version_unique",
-      "job_opportunities_user_dedup_unique",
       "job_opportunity_sources_opportunity_version_unique",
       "job_opportunity_sources_owner_opportunity_fk",
       "job_opportunity_sources_owner_posting_version_fk",
@@ -969,6 +968,7 @@ describe("database migrations", () => {
       "job_source_postings_availability_check",
       "job_source_posting_versions_availability_check",
       "job_opportunities_availability_check",
+      "job_opportunities_owner_canonical_opportunity_fk",
     ]));
     expect(await listColumns(migratedDatabase)).toEqual(expect.arrayContaining([
       { table_name: "job_discovery_schedules", column_name: "daily_time", data_type: "character varying" },
@@ -981,8 +981,10 @@ describe("database migrations", () => {
       { table_name: "job_source_postings", column_name: "source_id", data_type: "character varying" },
       { table_name: "job_source_postings", column_name: "application_deadline", data_type: "timestamp with time zone" },
       { table_name: "job_source_posting_versions", column_name: "availability", data_type: "character varying" },
+      { table_name: "job_source_posting_versions", column_name: "normalized_data", data_type: "jsonb" },
       { table_name: "job_opportunities", column_name: "availability", data_type: "character varying" },
       { table_name: "job_opportunities", column_name: "availability_updated_at", data_type: "timestamp with time zone" },
+      { table_name: "job_opportunities", column_name: "canonical_opportunity_id", data_type: "uuid" },
     ]));
 
     const userId = "429ab3b5-3c62-4e21-aa78-00222a75d2cd";
@@ -1043,10 +1045,10 @@ describe("database migrations", () => {
       where schemaname = 'public' and indexname in (
         'job_discovery_schedules_due_idx', 'job_discovery_schedule_occurrences_pending_idx',
         'job_source_postings_availability_idx', 'job_source_posting_versions_availability_idx',
-        'job_opportunities_availability_idx', 'job_source_postings_source_scan_idx'
+        'job_opportunities_availability_idx', 'job_opportunities_canonical_idx', 'job_opportunities_current_dedup_unique', 'job_source_postings_source_scan_idx'
       ) order by indexname
     `);
-    expect(indexes).toHaveLength(6);
+    expect(indexes).toHaveLength(8);
   });
 
   it("upgrades a 0020 snapshot with open lifecycle defaults without changing stored run JSON", async () => {
@@ -1085,7 +1087,7 @@ describe("database migrations", () => {
       const [upgraded] = await legacyDatabase.execute(sql`
         select p.availability as posting_availability, p.availability_updated_at is not null as posting_time, p.source_id,
                v.availability as version_availability, o.availability as opportunity_availability,
-               o.availability_updated_at is not null as opportunity_time, r.source_scope
+               o.availability_updated_at is not null as opportunity_time, o.canonical_opportunity_id, v.normalized_data, r.source_scope
         from job_source_postings p
         join job_source_posting_versions v on v.id = ${versionId}
         join job_opportunities o on o.id = ${opportunityId}
@@ -1094,7 +1096,7 @@ describe("database migrations", () => {
       `) as unknown as Array<Record<string, unknown>>;
       expect(upgraded).toEqual({
         posting_availability: "open", posting_time: true, source_id: "legacy-source", version_availability: "open",
-        opportunity_availability: "open", opportunity_time: true,
+        opportunity_availability: "open", opportunity_time: true, canonical_opportunity_id: null, normalized_data: {},
         source_scope: { kind: "company_watchlist", adapter: "fake" },
       });
     } finally {
@@ -1104,11 +1106,18 @@ describe("database migrations", () => {
     }
   }, 60_000);
 
-  it("keeps the 0021 snapshot aligned with source scan columns and index", async () => {
+  it("keeps the 0021 snapshot aligned with source scan and immutable history columns", async () => {
     const snapshotPath = fileURLToPath(new URL("../migrations/meta/0021_snapshot.json", import.meta.url));
-    const snapshot = JSON.parse(await readFile(snapshotPath, "utf8")) as { tables: Record<string, { columns: Record<string, unknown>; indexes: Record<string, unknown> }> };
+    const snapshot = JSON.parse(await readFile(snapshotPath, "utf8")) as { tables: Record<string, { columns: Record<string, unknown>; indexes: Record<string, unknown>; foreignKeys: Record<string, unknown> }> };
     const postings = snapshot.tables["public.job_source_postings"];
+    const opportunities = snapshot.tables["public.job_opportunities"];
+    const versions = snapshot.tables["public.job_source_posting_versions"];
     expect(postings?.columns).toMatchObject({ source_id: expect.any(Object), application_deadline: expect.any(Object) });
+    expect(opportunities?.columns).toHaveProperty("canonical_opportunity_id");
+    expect(opportunities?.indexes).toHaveProperty("job_opportunities_canonical_idx");
+    expect(opportunities?.indexes).toHaveProperty("job_opportunities_current_dedup_unique");
+    expect(opportunities?.foreignKeys).toHaveProperty("job_opportunities_owner_canonical_opportunity_fk");
+    expect(versions?.columns).toHaveProperty("normalized_data");
     expect(postings?.indexes).toHaveProperty("job_source_postings_source_scan_idx");
   });
 });

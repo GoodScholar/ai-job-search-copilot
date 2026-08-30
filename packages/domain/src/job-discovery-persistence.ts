@@ -87,7 +87,7 @@ async function existingOpportunityForPosting(db: any, input: { userId: string; s
       eq(jobSourcePostingVersions.id, jobOpportunitySources.sourcePostingVersionId),
     ))
     .where(and(eq(jobOpportunitySources.userId, input.userId), eq(jobSourcePostingVersions.sourcePostingId, input.sourcePostingId)))
-    .orderBy(desc(jobOpportunitySources.createdAt)).limit(1);
+    .orderBy(desc(jobOpportunitySources.createdAt), desc(jobOpportunitySources.id)).limit(1);
   return evidence?.opportunityId;
 }
 
@@ -131,7 +131,7 @@ async function persistDiscoverySource(db: any, input: { id: () => string; userId
   const [created] = await db.insert(jobSourcePostingVersions).values({
     id: input.id(), userId: input.userId, sourcePostingId: posting.id, version: (latest?.version ?? 0) + 1,
     contentSha256: normalizedHash, rawContentSha256: input.stored.rawContentSha256,
-    rawObjectReference: { objectKey: input.stored.objectKey }, retrievedAt: input.now, availability, createdAt: input.now,
+      rawObjectReference: { objectKey: input.stored.objectKey }, normalizedData: discoveryNormalizedData(input.detail), retrievedAt: input.now, availability, createdAt: input.now,
   }).returning();
   if (!created) throw new Error("AGENT_RUN_PERSIST_FAILED");
   return { sourcePostingId: posting.id, sourcePostingVersionId: created.id, isOfficial: posting.isOfficial, sourceVersionCreated: true };
@@ -158,35 +158,35 @@ async function closeMissingSourcePostings(db: any, input: { id: () => string; us
     select distinct on (source_posting_id)
       id, source_posting_id as "sourcePostingId", version,
       content_sha256 as "contentSha256", raw_content_sha256 as "rawContentSha256",
-      raw_object_reference as "rawObjectReference"
+      raw_object_reference as "rawObjectReference", normalized_data as "normalizedData"
     from job_source_posting_versions
     where user_id = ${input.userId}::uuid and source_posting_id in (
       select value::uuid from jsonb_array_elements_text(${JSON.stringify(postingIds)}::jsonb)
     )
     order by source_posting_id, version desc
-  `) as Array<{ id: string; sourcePostingId: string; version: number; contentSha256: string; rawContentSha256: string; rawObjectReference: Record<string, unknown> }>;
+  `) as Array<{ id: string; sourcePostingId: string; version: number; contentSha256: string; rawContentSha256: string; rawObjectReference: Record<string, unknown>; normalizedData: Record<string, unknown> }>;
   const latestByPosting = new Map(versions.map((version) => [version.sourcePostingId, version]));
   const inserts = candidates.flatMap(({ posting, availability }) => {
     const latest = latestByPosting.get(posting.id);
-    return latest ? [{ id: input.id(), userId: input.userId, sourcePostingId: posting.id, version: latest.version + 1, contentSha256: latest.contentSha256, rawContentSha256: latest.rawContentSha256, rawObjectReference: latest.rawObjectReference, retrievedAt: input.now, availability, createdAt: input.now }] : [];
+    return latest ? [{ id: input.id(), userId: input.userId, sourcePostingId: posting.id, version: latest.version + 1, contentSha256: latest.contentSha256, rawContentSha256: latest.rawContentSha256, rawObjectReference: latest.rawObjectReference, normalizedData: latest.normalizedData, retrievedAt: input.now, availability, createdAt: input.now }] : [];
   });
   if (inserts.length !== candidates.length) throw new Error("AGENT_RUN_PERSIST_FAILED");
   const createdVersions = await db.execute(sql`
     insert into job_source_posting_versions (
       id, user_id, source_posting_id, version, content_sha256, raw_content_sha256,
-      raw_object_reference, retrieved_at, availability, created_at
+      raw_object_reference, normalized_data, retrieved_at, availability, created_at
     )
     select r.id::uuid, ${input.userId}::uuid, r.source_posting_id::uuid, r.version,
-      r.content_sha256, r.raw_content_sha256, r.raw_object_reference,
+      r.content_sha256, r.raw_content_sha256, r.raw_object_reference, r.normalized_data,
       r.retrieved_at::timestamptz, r.availability::varchar, r.created_at::timestamptz
     from jsonb_to_recordset(${JSON.stringify(inserts.map((item) => ({
       id: item.id, source_posting_id: item.sourcePostingId, version: item.version,
       content_sha256: item.contentSha256, raw_content_sha256: item.rawContentSha256,
-      raw_object_reference: item.rawObjectReference, retrieved_at: item.retrievedAt.toISOString(),
+      raw_object_reference: item.rawObjectReference, normalized_data: item.normalizedData, retrieved_at: item.retrievedAt.toISOString(),
       availability: item.availability, created_at: item.createdAt.toISOString(),
     }))) }::jsonb) as r(
       id text, source_posting_id text, version integer, content_sha256 text,
-      raw_content_sha256 text, raw_object_reference jsonb, retrieved_at text,
+      raw_content_sha256 text, raw_object_reference jsonb, normalized_data jsonb, retrieved_at text,
       availability text, created_at text
     )
     returning id, source_posting_id as "sourcePostingId"
@@ -252,7 +252,7 @@ async function recomputeOpportunityAvailability(db: any, input: { userId: string
       select linked_sources.opportunity_id as id,
         case when bool_or(latest.availability = 'open') then 'open'
           when bool_or(latest.availability = 'expired') then 'expired' else 'closed' end as availability,
-        (array_agg(latest.id order by latest.created_at desc) filter (where linked_sources.is_official and latest.availability = 'open'))[1] as current_evidence_id
+        (array_agg(latest.id order by latest.created_at desc, latest.id desc) filter (where linked_sources.is_official and latest.availability = 'open'))[1] as current_evidence_id
       from linked_sources join latest on latest.source_posting_id = linked_sources.source_posting_id
       group by linked_sources.opportunity_id
     )
