@@ -1,12 +1,24 @@
 import { Worker } from "bullmq";
-import type { OnModuleDestroy } from "@nestjs/common";
 import Redis from "ioredis";
 import { CAREER_IMPORT_QUEUE, CareerImportJobSchema } from "@job-copilot/contracts/career-import";
 import type { createCareerImportProcessor } from "@job-copilot/domain/career-imports";
 
 type CareerImportProcessor = ReturnType<typeof createCareerImportProcessor>;
+const CLOSE_TIMEOUT_MS = 5_000;
 
-export class CareerImportConsumer implements OnModuleDestroy {
+async function closeWithinDeadline(operation: Promise<unknown>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      operation,
+      new Promise<void>((_, reject) => { timer = setTimeout(() => reject(new Error("career import close deadline")), CLOSE_TIMEOUT_MS); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+export class CareerImportConsumer {
   private readonly redis: Redis;
   private readonly worker: Worker;
   private closePromise: Promise<void> | undefined;
@@ -25,12 +37,18 @@ export class CareerImportConsumer implements OnModuleDestroy {
     return this.closePromise;
   }
 
-  async onModuleDestroy(): Promise<void> {
-    await this.close();
-  }
-
   private async closeResources(): Promise<void> {
-    await this.worker.close();
-    if (this.redis.status !== "end") await this.redis.quit();
+    try {
+      await closeWithinDeadline(this.worker.close());
+    } catch {
+      // Redis fallback below releases the remaining live connection.
+    }
+    try {
+      if (this.redis.status !== "end") await closeWithinDeadline(this.redis.quit());
+    } catch {
+      // Disconnect below is the non-blocking final fallback.
+    } finally {
+      if (this.redis.status !== "end") this.redis.disconnect();
+    }
   }
 }

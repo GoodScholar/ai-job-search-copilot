@@ -12,6 +12,20 @@ import {
   type Heartbeat,
 } from "./heartbeat.js";
 
+const CLOSE_TIMEOUT_MS = 5_000;
+
+async function closeWithinDeadline(operation: Promise<unknown>): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      operation,
+      new Promise<void>((_, reject) => { timer = setTimeout(() => reject(new Error("heartbeat close deadline")), CLOSE_TIMEOUT_MS); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export class RedisHeartbeatAdapter implements Heartbeat, OnModuleDestroy {
   private closePromise: Promise<void> | undefined;
 
@@ -46,8 +60,12 @@ export class RedisHeartbeatAdapter implements Heartbeat, OnModuleDestroy {
   }
 
   private async closeResources(): Promise<void> {
-    if (this.redis.status !== "end") {
-      await this.redis.quit();
+    try {
+      if (this.redis.status !== "end") await closeWithinDeadline(this.redis.quit());
+    } catch {
+      // Disconnect below is the non-blocking final fallback.
+    } finally {
+      if (this.redis.status !== "end") this.redis.disconnect();
     }
   }
 }
