@@ -31,7 +31,9 @@ describe("layered public job discovery workflow", () => {
     const proofs: Record<string, unknown> = {};
     const workflow = createLayeredPublicJobDiscoveryWorkflow({
       trustedSources: {
-        discover: async () => {
+        discover: async ({ beforeRequest }) => {
+          await beforeRequest("55555555-5555-8555-8555-555555555555");
+          await beforeRequest("55555555-5555-8555-8555-555555555555");
           calls.push("trusted");
           return { succeeded: true, verifiedSourcePostingVersionIds: ["44444444-4444-8444-8444-444444444444"] };
         },
@@ -73,7 +75,7 @@ describe("layered public job discovery workflow", () => {
     };
     const result = await workflow.run({ userId: targetId, runId, now: new Date(), executionSpec: executionSpec as never, attemptCount: 1, beforePhysicalOperation: async ({ kind }) => { calls.push(`checkpoint:${kind}`); }, signal: new AbortController().signal });
 
-    expect(calls).toEqual(["trusted", "checkpoint:search", `search:${queryId}`, "pending", "checkpoint:extract", "extract", "checkpoint:fetch", "fetch", "verify"]);
+    expect(calls).toEqual(["checkpoint:search", "checkpoint:search", "trusted", "checkpoint:search", `search:${queryId}`, "pending", "checkpoint:extract", "extract", "checkpoint:fetch", "fetch", "verify"]);
     expect(result).toEqual({ hasTrustedSuccess: true, branchSuccess: { trusted: true, publicDiscovery: true }, sourcePostingVersionIds: ["44444444-4444-8444-8444-444444444444", "77777777-7777-8777-8777-777777777777"], trustedSourcePostingVersionIds: ["44444444-4444-8444-8444-444444444444"], sourceIssues: [], diagnostics: [] });
     const capability = { userId: targetId, runId, queryId, queryFingerprint: "b".repeat(64), normalizedUrl: "https://careers.example.com/jobs/1", stableFingerprint: "a".repeat(64), allowedSiteDomains: [] };
     expect(proofs.preflight).toMatchObject({ candidate: capability });
