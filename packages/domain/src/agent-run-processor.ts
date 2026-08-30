@@ -12,7 +12,7 @@ import {
 } from "@job-copilot/contracts/agent-runs";
 import type { AuditTrail } from "./audit-trail";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
-import { createJobDiscoveryPersistence, discoverySourceIdentifier } from "./job-discovery-persistence";
+import { createJobDiscoveryPersistence, discoverySourceIdentifier, type DiscoveryDetail } from "./job-discovery-persistence";
 import { decideRetry } from "./agent-run-state";
 import { agentRunUsageSnapshot, appendBudgetFacts, settleActiveSlice, terminateBudgetRun, type BudgetDimension } from "./agent-run-lifecycle";
 import type { AgentRunCheckpoint } from "./agent-run-checkpoint";
@@ -367,6 +367,28 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         if (!await stepTransition(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, stepKey, complete, attemptCount: claimed.attemptCount, deadline })) return "stale";
         return checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: `step_${stepKey}_${complete ? "complete" : "start"}`, ordinal: 1 });
       };
+      const persistDiscoveryOutcome = async (input: { details: DiscoveryDetail[]; scans: Array<{ sourceId: string; observedDetailIds: string[]; complete: boolean }>; sourceChecks?: JobSourceHealthCheck[]; terminal?: "completed" | "completed_with_source_issues" | "source_failed"; successOutcome: ProcessorOutcome }) => {
+        const stored = input.details.map((detail) => {
+          const bytes = canonicalJsonBytes(detail.rawPayload); const sourceIdentifier = discoverySourceIdentifier(detail.sourceId, detail.detailId); const rawContentSha256 = createHash("sha256").update(bytes).digest("hex");
+          return { detail, bytes, rawContentSha256, objectKey: `accounts/${job.userId}/agent-runs/${job.runId}/sources/${sourceIdentifier}/${claimed.claimToken}/${rawContentSha256}.json` };
+        });
+        const putObjectKeys: string[] = [];
+        try {
+          for (const item of stored) {
+            putObjectKeys.push(item.objectKey); const put = deps.contentStore.put({ objectKey: item.objectKey, bytes: item.bytes, mediaType: "application/json", runId: job.runId });
+            try { await bounded(deps.clock, deadline, () => put); } catch (error) { void put.then(() => removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), [item.objectKey]), () => removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), [item.objectKey])).catch(() => undefined); throw error; }
+            const writeOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "object_write", ordinal: putObjectKeys.length });
+            if (writeOutcome) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return writeOutcome; }
+          }
+        } catch (error) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: error instanceof AgentRunBudgetError ? "AGENT_RUN_BUDGET_EXCEEDED" : "AGENT_RUN_CONTENT_STORAGE_FAILED", retryable: !(error instanceof AgentRunBudgetError), category: "source", budgetDimension: error instanceof AgentRunBudgetError ? error.budgetDimension : undefined }, deadline }); }
+        const commitBefore = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_before", ordinal: 1 });
+        if (commitBefore) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return commitBefore; }
+        let persisted: { cleanupObjectKeys: string[]; completed: boolean };
+        try { persisted = await runTransaction(deps, deadline, (transaction) => createJobDiscoveryPersistence({ db: deps.db, id: deps.id, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({ run: { ...claimed.run, claimToken: claimed.claimToken }, details: input.details, scans: input.scans, storedObjects: stored.map((item) => ({ sourceId: item.detail.sourceId, detailId: item.detail.detailId, objectKey: item.objectKey, rawContentSha256: item.rawContentSha256 })), sourceChecks: input.sourceChecks, terminal: input.terminal, now: deps.clock(), transaction })); }
+        catch { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_PERSIST_FAILED", retryable: true, category: "source" }, deadline }); }
+        await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), persisted.cleanupObjectKeys); if (!persisted.completed) return "stale";
+        await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_after", ordinal: 1 }); return input.successOutcome;
+      };
       const snapshot = claimed.run.targetSnapshot as import("@job-copilot/contracts/agent-runs").AgentRunDetail["targetSnapshot"];
       let sourceScope: import("@job-copilot/contracts/agent-runs").AgentRunDetail["sourceScope"];
       try { sourceScope = normalizeAgentRunSourceScope(claimed.run.sourceScope); }
@@ -419,41 +441,10 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         const detailsComplete = await transition("fetch_details", true); if (detailsComplete) return detailsComplete;
         const persistStart = await transition("persist_results", false); if (persistStart) return persistStart;
         const detailsForPersistence = details.slice(0, claimed.run.budgetSnapshot.maxResults);
-        const stored = detailsForPersistence.map((detail) => {
-          const bytes = canonicalJsonBytes(detail.rawPayload);
-          const sourceIdentifier = discoverySourceIdentifier(detail.sourceId, detail.detailId);
-          const rawContentSha256 = createHash("sha256").update(bytes).digest("hex");
-          return { detail, bytes, sourceIdentifier, rawContentSha256, objectKey: `accounts/${job.userId}/agent-runs/${job.runId}/sources/${sourceIdentifier}/${claimed.claimToken}/${rawContentSha256}.json` };
-        });
-        const putObjectKeys: string[] = [];
-        try {
-          for (const item of stored) {
-            putObjectKeys.push(item.objectKey);
-            const put = deps.contentStore.put({ objectKey: item.objectKey, bytes: item.bytes, mediaType: "application/json", runId: job.runId });
-            try { await bounded(deps.clock, deadline, () => put); } catch (error) {
-              void put.then(() => removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), [item.objectKey]), () => removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), [item.objectKey])).catch(() => undefined);
-              throw error;
-            }
-            const writeOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "object_write", ordinal: putObjectKeys.length });
-            if (writeOutcome) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return writeOutcome; }
-          }
-        } catch (error) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: error instanceof AgentRunBudgetError ? "AGENT_RUN_BUDGET_EXCEEDED" : "AGENT_RUN_CONTENT_STORAGE_FAILED", retryable: !(error instanceof AgentRunBudgetError), category: "source", budgetDimension: error instanceof AgentRunBudgetError ? error.budgetDimension : undefined }, deadline }); }
-        const commitBefore = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_before", ordinal: 1 });
-        if (commitBefore) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return commitBefore; }
         const hasCompletedSourceOrRetainedProgress = checks.some((check) => check.status === "healthy" || check.status === "zero_valid_results" || check.validDetailCount > 0);
         const hasIssues = checks.some((check) => check.status === "parser_degraded" || check.status === "rate_limited" || check.status === "hard_failed");
         const terminal = hasCompletedSourceOrRetainedProgress ? (hasIssues ? "completed_with_source_issues" : "completed") : "source_failed";
-        let persisted: { resultCount: number; cleanupObjectKeys: string[]; completed: boolean };
-        try {
-          persisted = await runTransaction(deps, deadline, (transaction) => createJobDiscoveryPersistence({ db: deps.db, id: deps.id, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({
-            run: { ...claimed.run, claimToken: claimed.claimToken }, details: detailsForPersistence, scans: sourceStates.map((state) => ({ sourceId: state.source.sourceId, observedDetailIds: state.observedDetailIds, complete: !state.failure })),
-            storedObjects: stored.map((item) => ({ sourceId: item.detail.sourceId, detailId: item.detail.detailId, objectKey: item.objectKey, rawContentSha256: item.rawContentSha256 })), sourceChecks: checks, terminal, now: deps.clock(), transaction,
-          }));
-        } catch { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_PERSIST_FAILED", retryable: true, category: "source" }, deadline }); }
-        await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), persisted.cleanupObjectKeys);
-        if (!persisted.completed) return "stale";
-        await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_after", ordinal: 1 });
-        return terminal === "source_failed" ? "failed" : "completed";
+        return persistDiscoveryOutcome({ details: detailsForPersistence, scans: sourceStates.map((state) => ({ sourceId: state.source.sourceId, observedDetailIds: state.observedDetailIds, complete: !state.failure })), sourceChecks: checks, terminal, successOutcome: terminal === "source_failed" ? "failed" : "completed" });
       }
       const batchStart = await transition("batch_search", false); if (batchStart) return batchStart;
       let summaries: Array<{ sourceId: string; detailId: string }>;
@@ -503,52 +494,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
       }
       const detailsComplete = await transition("fetch_details", true); if (detailsComplete) return detailsComplete;
       const persistStart = await transition("persist_results", false); if (persistStart) return persistStart;
-      const stored = details.map((detail) => {
-        const bytes = canonicalJsonBytes(detail.rawPayload);
-        const sourceIdentifier = discoverySourceIdentifier(detail.sourceId, detail.detailId);
-        const rawContentSha256 = createHash("sha256").update(bytes).digest("hex");
-        return { detail, bytes, sourceIdentifier, rawContentSha256, objectKey: `accounts/${job.userId}/agent-runs/${job.runId}/sources/${sourceIdentifier}/${claimed.claimToken}/${rawContentSha256}.json` };
-      });
-      const putObjectKeys: string[] = [];
-      try {
-        for (const item of stored) {
-          putObjectKeys.push(item.objectKey);
-          const put = deps.contentStore.put({ objectKey: item.objectKey, bytes: item.bytes, mediaType: "application/json", runId: job.runId });
-          try { await bounded(deps.clock, deadline, () => put); } catch (error) {
-            void put.then(
-              () => removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), [item.objectKey]),
-              () => removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), [item.objectKey]),
-            ).catch(() => undefined);
-            throw error;
-          }
-          const writeOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "object_write", ordinal: putObjectKeys.length });
-          if (writeOutcome) {
-            await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys);
-            return writeOutcome;
-          }
-        }
-      } catch (error) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: error instanceof AgentRunBudgetError ? "AGENT_RUN_BUDGET_EXCEEDED" : "AGENT_RUN_CONTENT_STORAGE_FAILED", retryable: !(error instanceof AgentRunBudgetError), category: "source", budgetDimension: error instanceof AgentRunBudgetError ? error.budgetDimension : undefined }, deadline }); }
-      const commitBefore = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_before", ordinal: 1 });
-      if (commitBefore) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return commitBefore; }
-      let completed: { resultCount: number; cleanupObjectKeys: string[]; completed: boolean };
-      try {
-        completed = await runTransaction(deps, deadline, (transaction) =>
-          createJobDiscoveryPersistence({ db: deps.db, id: deps.id, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({
-            run: { ...claimed.run, claimToken: claimed.claimToken },
-            details,
-            scans,
-            storedObjects: stored.map((item) => ({ sourceId: item.detail.sourceId, detailId: item.detail.detailId, objectKey: item.objectKey, rawContentSha256: item.rawContentSha256 })),
-            now: deps.clock(),
-            transaction,
-          }),
-        );
-      } catch { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_PERSIST_FAILED", retryable: true, category: "source" }, deadline }); }
-      await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), completed.cleanupObjectKeys);
-      if (!completed.completed) return "stale";
-      // A completed run has no active claim, so this final durable boundary is
-      // intentionally observational and cannot turn the committed result stale.
-      await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_after", ordinal: 1 });
-      return "completed";
+      return persistDiscoveryOutcome({ details, scans, successOutcome: "completed" });
       } finally {
         await stopHeartbeat().catch(() => undefined);
       }
