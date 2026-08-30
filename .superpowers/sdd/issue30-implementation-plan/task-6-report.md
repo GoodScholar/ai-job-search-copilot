@@ -34,3 +34,13 @@
 - `git diff --check` 通过；实现提交前 working tree 仅含本 Slice 授权文件。
 
 待独立 Reviewer 复审达到 `Critical/Important/Minor = 0/0/0` 后，才可进入 Slice 6。
+
+## Fix round 1（reviewed HEAD `35bd611`）
+
+修复提交：`803728c48706a2eaab47eda8b5a4c35edacafc36`（`fix(domain): harden lead persistence retries`）。
+
+- 真实 Red：补充 repository tests 后，focused run 真实出现两类失败：同 identity、不同 `targetId/queryId/queryKind/queryFingerprint/normalizedUrl` 的调用被静默返回旧 Lead；缺失或 owner/run/target 不匹配的 run 直接抛出含 `23503`、constraint 名和参数的 `DrizzleQueryError`。
+- Green：`recordPending` 在 unique identity 回读后比较全部不可变事实，只有完全相同 facts（`now` 不参与比较）才视为 retry；其它情况返回 `JOB_DISCOVERY_LEAD_IDENTITY_CONFLICT`。仅将已知 owner/run/target FK 映射为 `JOB_DISCOVERY_LEAD_RUN_NOT_FOUND`，将已知 Lead primary/owner-id unique 映射为 `JOB_DISCOVERY_LEAD_ID_CONFLICT`，其它未知数据库错误继续原样抛出。
+- Migration focused 补强并通过：显式读取 `0024` SQL/snapshot/journal 链、锁定两张表与两个索引；raw SQL 覆盖无效 stable fingerprint、同 owner 跨 run/target、Attribution 跨 run/provider/query/version。`0023` SQL/snapshot 相对 Slice 5 基线无 diff，0023 → 0024 upgrade test 继续通过。
+- Repository focused 补强并通过：成功路径经公开 `getAttribution` 返回同一 Attribution；其他 owner 返回 `null`。other-owner verify 断言为 `JOB_DISCOVERY_LEAD_NOT_FOUND` 且 Lead 保持 pending、Attribution 为零。
+- Fresh verification：migration focused `2/2`、repository focused `8/8`、database full `24/24`、domain full `281/281`，两个 typecheck 通过，临时 Drizzle generate 显示无 migration，`git diff --check` 通过。
