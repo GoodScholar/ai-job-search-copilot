@@ -186,7 +186,29 @@ export function createJobDiscoveryLeadRepository({ db, id }: Dependencies) {
 
     async verifyAndAttribute(input: unknown) {
       const value = parseOrThrow(VerifyInputSchema, input);
-      return db.transaction(async (transaction) => {
+      return db.transaction(async (transaction) => verifyAndAttribute(transaction, value));
+    },
+
+    /** Internal persistence seam for a caller that already owns the account transaction. */
+    async verifyAndAttributeInTransaction(input: unknown, transaction: any) {
+      const value = parseOrThrow(VerifyInputSchema, input);
+      return verifyAndAttribute(transaction, value);
+    },
+
+    async getLead(input: unknown) {
+      const value = parseOrThrow(GetLeadInputSchema, input);
+      const lead = await loadLead(value.userId, value.leadId);
+      return lead ? projectLead(lead, value.now) : null;
+    },
+
+    async getAttribution(input: unknown) {
+      const value = parseOrThrow(GetAttributionInputSchema, input);
+      const attribution = await loadAttribution(value.userId, value.leadId);
+      return attribution ? attributionFact(attribution) : null;
+    },
+  };
+
+  async function verifyAndAttribute(transaction: any, value: z.infer<typeof VerifyInputSchema>) {
         const [version] = await transaction.select({ id: jobSourcePostingVersions.id }).from(jobSourcePostingVersions).where(and(
           eq(jobSourcePostingVersions.userId, value.userId), eq(jobSourcePostingVersions.id, value.sourcePostingVersionId),
         )).limit(1);
@@ -218,19 +240,5 @@ export function createJobDiscoveryLeadRepository({ db, id }: Dependencies) {
           throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_ATTRIBUTION_CONFLICT");
         }
         return { lead: leadFact(lead), attribution: attributionFact(attribution) };
-      });
-    },
-
-    async getLead(input: unknown) {
-      const value = parseOrThrow(GetLeadInputSchema, input);
-      const lead = await loadLead(value.userId, value.leadId);
-      return lead ? projectLead(lead, value.now) : null;
-    },
-
-    async getAttribution(input: unknown) {
-      const value = parseOrThrow(GetAttributionInputSchema, input);
-      const attribution = await loadAttribution(value.userId, value.leadId);
-      return attribution ? attributionFact(attribution) : null;
-    },
-  };
+  }
 }
