@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isPublicDnsHostname } from "./public-job-url-policy";
+import { isLexicallyValidDnsHostname } from "./public-job-url-policy";
 
 const version = z.int().min(0);
 const positiveInteger = z.int().min(1);
@@ -21,7 +21,7 @@ function isAllowedCareersUrl(value: string, allowedDomains: string[]): boolean {
     const url = new URL(value);
     if (!/^https?:$/u.test(url.protocol) || url.username || url.password) return false;
     const host = url.hostname.toLowerCase();
-    if (host.includes(":") || !isPublicDnsHostname(host)) return false;
+    if (host.includes(":") || !isLexicallyValidDnsHostname(host)) return false;
     if (Array.from(url.searchParams.keys()).some(isCredentialQueryKey)) return false;
     return allowedDomains.some((domain) => host === domain || host.endsWith(`.${domain}`));
   } catch {
@@ -30,7 +30,7 @@ function isAllowedCareersUrl(value: string, allowedDomains: string[]): boolean {
 }
 
 const canonicalCompanyName = z.string().trim().min(1).max(200);
-const allowedDomain = z.string().trim().toLowerCase().refine(isPublicDnsHostname, "must be a registrable public DNS hostname");
+const allowedDomain = z.string().trim().toLowerCase().refine(isLexicallyValidDnsHostname, "must be a public DNS name");
 const allowedDomains = z.array(allowedDomain).min(1).max(20).refine(
   (values) => new Set(values).size === values.length,
   { message: "allowed domains must be unique" },

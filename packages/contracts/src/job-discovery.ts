@@ -1,10 +1,11 @@
 import { z } from "zod";
 import { GreenhousePublicSourceSchema } from "./job-discovery-schedules";
 import { JobTargetConstraintsSchema } from "./job-targets";
-import { isPublicDnsHostname, SafeNormalizedPublicJobUrlSchema } from "./public-job-url-policy";
+import { isPublicJobDiscoveryHostname, SafeNormalizedPublicJobUrlSchema } from "./public-job-url-policy";
 
 export {
-  isPublicDnsHostname,
+  isLexicallyValidDnsHostname,
+  isPublicJobDiscoveryHostname,
   isPublicJobIdentityParameterName,
   isPublicJobIdentityValue,
   PublicJobIdentityParameterNames,
@@ -86,7 +87,7 @@ export const LayeredPublicJobDiscoveryWatchlistSnapshotSchema = z.object({
   companies: z.array(z.object({
     watchlistItemId: z.uuid(),
     canonicalCompanyName: z.string().trim().min(1).max(200),
-    allowedDomains: z.array(z.string().trim().toLowerCase().min(1).max(253).refine(isPublicDnsHostname, "must be a registrable public DNS hostname")).min(1).max(20),
+    allowedDomains: z.array(z.string().trim().toLowerCase().min(1).max(253).refine(isPublicJobDiscoveryHostname, "must be a registrable public DNS hostname")).min(1).max(20),
   }).strict()).max(50).refine(
     (companies) => new Set(companies.map((company) => company.watchlistItemId)).size === companies.length,
     { message: "watchlist companies must be unique" },
@@ -99,7 +100,7 @@ export const LayeredPublicJobDiscoveryQuerySchema = z.object({
   kind: PublicJobDiscoveryQueryKindSchema,
   stableFingerprint,
   query: z.string().trim().min(1).max(500),
-  allowedSiteDomains: z.array(z.string().trim().toLowerCase().min(1).max(253).refine(isPublicDnsHostname, "must be a registrable public DNS hostname")).max(5),
+  allowedSiteDomains: z.array(z.string().trim().toLowerCase().min(1).max(253).refine(isPublicJobDiscoveryHostname, "must be a registrable public DNS hostname")).max(5),
   targetCompanyNames: z.array(z.string().trim().min(1).max(200)).max(5),
   resultLimit: z.literal(5),
 }).strict().superRefine((query, context) => {

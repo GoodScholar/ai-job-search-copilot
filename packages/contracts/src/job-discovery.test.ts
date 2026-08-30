@@ -5,7 +5,7 @@ import {
   PublicJobIdentityParameterNames,
   isPublicJobIdentityParameterName,
   isPublicJobIdentityValue,
-  isPublicDnsHostname,
+  isPublicJobDiscoveryHostname,
   SafeNormalizedPublicJobUrlSchema,
   DiscoveryAttributionSchema,
   DiscoveryDiagnosticSchema,
@@ -14,7 +14,7 @@ import {
   LayeredPublicJobDiscoveryResultSummarySchema,
   PhysicalDiscoveryOperationSchema,
 } from "./job-discovery";
-import { isPublicDnsHostname as isPublicDnsHostnamePolicy } from "./public-job-url-policy";
+import { isLexicallyValidDnsHostname, isPublicJobDiscoveryHostname as isPublicJobDiscoveryHostnamePolicy } from "./public-job-url-policy";
 
 const queryId = "d3b1f38c-36c3-47df-8f40-4e62bb749e7f";
 
@@ -33,11 +33,23 @@ describe("AnySearch job discovery contracts", () => {
     expect(Object.isFrozen(PublicJobIdentityParameterNames)).toBe(true);
     expect(() => (PublicJobIdentityParameterNames as unknown as string[]).push("token")).toThrow();
     expect(isPublicJobIdentityParameterName("token")).toBe(false);
-    expect(isPublicDnsHostname("jobs.example.com")).toBe(true);
-    expect(isPublicDnsHostnamePolicy("jobs.example.com")).toBe(true);
+    expect(isPublicJobDiscoveryHostname("jobs.example.com")).toBe(true);
+    expect(isPublicJobDiscoveryHostnamePolicy("jobs.example.com")).toBe(true);
     for (const invalid of ["_jobs.example.com", "jobs..example.com", "-jobs.example.com", "jobs-.example.com", "localhost", "127.0.0.1"]) {
-      expect(isPublicDnsHostname(invalid)).toBe(false);
+      expect(isPublicJobDiscoveryHostname(invalid)).toBe(false);
     }
+  });
+
+  it("accepts only publicly registrable v4 discovery hosts while keeping private tenants distinct from roots", () => {
+    for (const rootOrReserved of ["github.io", "blogspot.com", "vercel.app", "pages.dev", "foo.invalid", "foo.test", "foo.example", "foo.onion", "home.arpa"]) {
+      expect(isPublicJobDiscoveryHostname(rootOrReserved)).toBe(false);
+      expect(SafeNormalizedPublicJobUrlSchema.safeParse(`https://${rootOrReserved}/job?job=1`).success).toBe(false);
+    }
+    for (const tenant of ["jobs.github.io", "jobs.blogspot.com", "jobs.vercel.app", "jobs.pages.dev", "jobs.example.com"]) {
+      expect(isPublicJobDiscoveryHostname(tenant)).toBe(true);
+      expect(SafeNormalizedPublicJobUrlSchema.safeParse(`https://${tenant}/job?job=1`).success).toBe(true);
+    }
+    expect(isLexicallyValidDnsHostname("jobs.example.test")).toBe(true);
   });
   it("keeps an AnySearch lead unverified and outside trusted-source documents", () => {
     const lead = {

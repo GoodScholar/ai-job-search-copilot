@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
@@ -361,7 +362,7 @@ describe("AnySearchPublicJobAdapter", () => {
     expect(result).toEqual({ ok: false, error: { code, retryable, httpStatus } });
   });
 
-  it("uses redirect error mode and releases streams for status and oversized response failures", async () => {
+  it("uses manual no-follow redirect mode and releases streams for status and oversized response failures", async () => {
     let init: RequestInit | undefined;
     let statusCancelled = false;
     const statusBody = new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array([1])); }, cancel() { statusCancelled = true; } });
@@ -422,6 +423,68 @@ describe("AnySearchPublicJobAdapter", () => {
       { ok: true, data: { candidates: [{ policy: "accepted" }, { policy: "accepted" }] } },
       { ok: true, data: { candidates: [{ policy: "rejected" }, { policy: "accepted" }] } },
     ]);
+  });
+
+  it("issues only the deterministic batch winner, never a reconstructable loser", async () => {
+    const sharedUrl = "https://jobs.example.com/shared?job=1";
+    const transport = vi.fn(async (url: RequestInfo | URL) => (url as URL).pathname === "/v1/search" ? jsonResponse(validSearch(sharedUrl)) : jsonResponse(validExtract(sharedUrl)));
+    const hook = vi.fn(async (): Promise<"proceed"> => "proceed");
+    const adapter = testAdapter({ transport, beforeRequest: hook });
+    const batch = await adapter.searchBatch([
+      searchInput({ kind: "general", allowedSiteDomains: [], ordinal: 1 }),
+      searchInput({ kind: "general", allowedSiteDomains: [], ordinal: 2, queryId: "018f2d4e-75a1-8f64-bc1d-0123456789ae", stableFingerprint: "b".repeat(64) }),
+    ]);
+    const winner = batch[0];
+    const loser = batch[1];
+    if (!winner?.ok || !("data" in winner) || !winner.data.candidates[0]?.candidate || !loser?.ok || !("data" in loser)) throw new Error("fixture batch should produce one accepted and one rejected candidate");
+    expect(loser.data.candidates[0]).toEqual({ normalizedUrl: sharedUrl, policy: "rejected" });
+    const reconstructed: AnySearchCandidate = {
+      kind: "anysearch_public_job_candidate",
+      normalizedUrl: sharedUrl,
+      allowedSiteDomains: [],
+      queryId: loser.data.queryId,
+      candidateFingerprint: createHash("sha256").update(sharedUrl, "utf8").digest("hex"),
+    };
+    await expect(adapter.extract({ candidate: reconstructed, identity: leadId })).resolves.toEqual({ ok: false, error: { code: "ANYSEARCH_POLICY_REJECTED", retryable: false, httpStatus: null } });
+    expect(hook).toHaveBeenCalledTimes(2);
+    expect(transport).toHaveBeenCalledTimes(2);
+    await expect(adapter.extract({ candidate: winner.data.candidates[0].candidate, identity: leadId })).resolves.toMatchObject({ ok: true, data: { normalizedUrl: sharedUrl } });
+  });
+
+  it("keeps batch winner authorization stable when response completion order is reversed", async () => {
+    const run = async (completionOrder: readonly number[]) => {
+      const releases: Array<() => void> = [];
+      const transport = vi.fn(async (url: RequestInfo | URL) => (url as URL).pathname === "/v1/search"
+        ? new Promise<Response>((resolve) => releases.push(() => resolve(jsonResponse(validSearch("https://jobs.example.com/shared?job=1")))))
+        : jsonResponse(validExtract("https://jobs.example.com/shared?job=1")));
+      const adapter = testAdapter({ transport });
+      const pending = adapter.searchBatch([
+        searchInput({ kind: "general", allowedSiteDomains: [], ordinal: 1 }),
+        searchInput({ kind: "general", allowedSiteDomains: [], ordinal: 2, queryId: "018f2d4e-75a1-8f64-bc1d-0123456789ae", stableFingerprint: "b".repeat(64) }),
+      ]);
+      await vi.waitFor(() => expect(releases).toHaveLength(2));
+      completionOrder.forEach((index) => releases[index]!());
+      const results = await pending;
+      const winner = results[0];
+      const loser = results[1];
+      if (!winner?.ok || !("data" in winner) || !winner.data.candidates[0]?.candidate || !loser?.ok || !("data" in loser)) throw new Error("fixture batch should have a deterministic winner");
+      const loserCandidate: AnySearchCandidate = { ...winner.data.candidates[0].candidate, queryId: loser.data.queryId };
+      await expect(adapter.extract({ candidate: loserCandidate, identity: leadId })).resolves.toMatchObject({ ok: false, error: { code: "ANYSEARCH_POLICY_REJECTED" } });
+      await expect(adapter.extract({ candidate: winner.data.candidates[0].candidate, identity: leadId })).resolves.toMatchObject({ ok: true });
+      return results;
+    };
+    expect(await run([0, 1])).toMatchObject(await run([1, 0]));
+  });
+
+  it.each(["github.io", "blogspot.com", "vercel.app", "pages.dev", "foo.invalid", "foo.test", "foo.example", "foo.onion", "home.arpa"])("rejects non-public v4 candidate and allowlist host before network: %s", async (host) => {
+    const transport = vi.fn();
+    expect(preflightAnySearchCandidate({ url: `https://${host}/job?job=1`, allowedSiteDomains: [] })).toEqual({ ok: false, error: { code: "ANYSEARCH_POLICY_REJECTED", retryable: false, httpStatus: null } });
+    await expect(testAdapter({ transport }).search(searchInput({ allowedSiteDomains: [host] }))).resolves.toEqual({ ok: false, error: { code: "ANYSEARCH_POLICY_REJECTED", retryable: false, httpStatus: null } });
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it.each(["jobs.github.io", "jobs.blogspot.com", "jobs.vercel.app", "jobs.pages.dev"])("allows a private-PSL tenant as a precise v4 candidate host: %s", (host) => {
+    expect(preflightAnySearchCandidate({ url: `https://${host}/job?job=1`, allowedSiteDomains: [host] })).toMatchObject({ ok: true, data: { normalizedUrl: `https://${host}/job?job=1` } });
   });
 
   it("uses explicit durable decisions and rolls back only blocked or thrown extract claims", async () => {

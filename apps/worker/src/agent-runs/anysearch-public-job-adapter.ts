@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import { z } from "zod";
 import {
-  isPublicDnsHostname,
+  isPublicJobDiscoveryHostname,
   isPublicJobIdentityParameterName,
   isPublicJobIdentityValue,
   LayeredPublicJobDiscoveryQuerySchema,
@@ -34,7 +34,7 @@ export type AnySearchCandidatePreflight = Success<{ normalizedUrl: string; allow
 const CandidateSchema = z.object({ kind: z.literal("anysearch_public_job_candidate"), normalizedUrl: SafeNormalizedPublicJobUrlSchema, allowedSiteDomains: z.array(z.string()).max(5), queryId: z.uuid(), candidateFingerprint: z.string().regex(/^[a-f0-9]{64}$/u) }).strict();
 function error(code: AnySearchProviderError["code"], retryable: boolean, httpStatus: AnySearchProviderError["httpStatus"]): Failure { return { ok: false, error: { code, retryable, httpStatus } }; }
 function normalizeHost(value: string): string { return value.toLowerCase().replace(/\.$/u, ""); }
-function isPublicHostname(hostname: string): boolean { return isIP(normalizeHost(hostname).replace(/^\[|\]$/gu, "")) === 0 && isPublicDnsHostname(normalizeHost(hostname)); }
+function isPublicHostname(hostname: string): boolean { return isIP(normalizeHost(hostname).replace(/^\[|\]$/gu, "")) === 0 && isPublicJobDiscoveryHostname(normalizeHost(hostname)); }
 function normalizeAllowedDomains(value: readonly string[]): readonly string[] | undefined {
   if (!Array.isArray(value) || value.length > MAX_BATCH_SIZE) return undefined;
   const domains: string[] = [];
@@ -108,6 +108,10 @@ export class AnySearchPublicJobAdapter {
   }
 
   async search(input: unknown): Promise<AnySearchOperationResult<{ queryId: string; ordinal: number; candidates: readonly AnySearchCandidateOutcome[] }>> {
+    return this.searchInternal(input, true);
+  }
+
+  private async searchInternal(input: unknown, issueCandidates: boolean): Promise<AnySearchOperationResult<{ queryId: string; ordinal: number; candidates: readonly AnySearchCandidateOutcome[] }>> {
     if (!this.apiKey) return error("ANYSEARCH_NOT_CONFIGURED", false, null);
     const parsedInput = parseSearchInput(input);
     if (!parsedInput) return error("ANYSEARCH_POLICY_REJECTED", false, null);
@@ -126,7 +130,7 @@ export class AnySearchPublicJobAdapter {
       if (seenInResponse.has(fingerprint)) return { normalizedUrl: preflight.data.normalizedUrl, policy: "rejected" as const };
       seenInResponse.add(fingerprint);
       const candidate = createCandidate(preflight.data.normalizedUrl, preflight.data.allowedSiteDomains, parsedInput.queryId, fingerprint);
-      this.issuedCandidates.add(candidateKey(candidate));
+      if (issueCandidates) this.issuedCandidates.add(candidateKey(candidate));
       return { normalizedUrl: candidate.normalizedUrl, policy: "accepted" as const, candidate };
     });
     return { ok: true, data: { queryId: parsedInput.queryId, ordinal: parsedInput.ordinal, candidates } };
@@ -136,7 +140,7 @@ export class AnySearchPublicJobAdapter {
     if (!Array.isArray(inputs) || inputs.length < 1 || inputs.length > MAX_BATCH_SIZE) return [error("ANYSEARCH_POLICY_REJECTED", false, null)];
     const results: Array<AnySearchOperationResult<{ queryId: string; ordinal: number; candidates: readonly AnySearchCandidateOutcome[] }> | undefined> = Array(inputs.length);
     let cursor = 0;
-    const worker = async () => { for (;;) { const index = cursor++; if (index >= inputs.length) return; results[index] = await this.search(inputs[index]); } };
+    const worker = async () => { for (;;) { const index = cursor++; if (index >= inputs.length) return; results[index] = await this.searchInternal(inputs[index], false); } };
     await Promise.all(Array.from({ length: inputs.length }, worker));
     const completed = results as readonly AnySearchOperationResult<{ queryId: string; ordinal: number; candidates: readonly AnySearchCandidateOutcome[] }>[];
     const rejected = new Set<string>();
@@ -151,7 +155,11 @@ export class AnySearchPublicJobAdapter {
     }
     return completed.map((result, inputIndex) => result.ok && "data" in result ? {
       ok: true,
-      data: { ...result.data, candidates: result.data.candidates.map((candidate, resultIndex) => rejected.has(`${inputIndex}:${resultIndex}`) ? { normalizedUrl: candidate.normalizedUrl, policy: "rejected" as const } : candidate) },
+      data: { ...result.data, candidates: result.data.candidates.map((candidate, resultIndex) => {
+        if (rejected.has(`${inputIndex}:${resultIndex}`)) return { normalizedUrl: candidate.normalizedUrl, policy: "rejected" as const };
+        if (candidate.candidate) this.issuedCandidates.add(candidateKey(candidate.candidate));
+        return candidate;
+      }) },
     } : result);
   }
 
