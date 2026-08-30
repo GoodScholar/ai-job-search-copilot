@@ -76,16 +76,17 @@ describe("layered public job discovery workflow", () => {
       budget: PUBLIC_JOB_DISCOVERY_BUDGET,
     };
     const controller = new AbortController();
-    const result = await workflow.run({ userId: targetId, runId, now: new Date(), executionSpec: executionSpec as never, attemptCount: 1, beforePhysicalOperation: async ({ kind }) => { calls.push(`checkpoint:${kind}`); }, signal: controller.signal });
+    const claimToken = "99999999-9999-8999-8999-999999999999";
+    const result = await workflow.run({ userId: targetId, runId, claimToken, now: new Date(), executionSpec: executionSpec as never, attemptCount: 1, beforePhysicalOperation: async ({ kind }) => { calls.push(`checkpoint:${kind}`); }, signal: controller.signal });
 
     expect(calls).toEqual(["checkpoint:search", "checkpoint:search", "trusted", "checkpoint:search", `search:${queryId}`, "checkpoint:record_pending", "pending", "checkpoint:extract", "extract", "checkpoint:fetch", "fetch", "checkpoint:gate_verify", "verify"]);
     expect(result).toEqual({ branchOutcome: { trusted: "succeeded", publicDiscovery: "verified" }, sourcePostingVersionIds: ["44444444-4444-8444-8444-444444444444", "77777777-7777-8777-8777-777777777777"], trustedSourcePostingVersionIds: ["44444444-4444-8444-8444-444444444444"], sourceIssues: [], diagnostics: [] });
     const capability = { userId: targetId, runId, queryId, queryFingerprint: "b".repeat(64), normalizedUrl: "https://careers.example.com/jobs/1", stableFingerprint: "a".repeat(64), allowedSiteDomains: [] };
     expect(proofs.preflight).toMatchObject({ candidate: capability });
-    expect(proofs.pending).toMatchObject({ candidate: capability });
+    expect(proofs.pending).toMatchObject({ candidate: capability, claimToken });
     expect(proofs.extract).toMatchObject({ candidate: { ...capability, leadId: "66666666-6666-8666-8666-666666666666" } });
     expect(proofs.fetch).toMatchObject({ candidate: { ...capability, leadId: "66666666-6666-8666-8666-666666666666" } });
-    expect(proofs.verify).toMatchObject({ candidate: { ...capability, leadId: "66666666-6666-8666-8666-666666666666" } });
+    expect(proofs.verify).toMatchObject({ candidate: { ...capability, leadId: "66666666-6666-8666-8666-666666666666" }, claimToken });
     expect(proofs.search).toMatchObject({ signal: controller.signal });
     expect(proofs.extract).toMatchObject({ signal: controller.signal });
     expect(proofs.fetch).toMatchObject({ signal: controller.signal });
