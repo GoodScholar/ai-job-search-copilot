@@ -75,6 +75,107 @@ describe("AnySearch query planner", () => {
     expect(plan.queries.every(({ allowedSiteDomains }) => allowedSiteDomains.length <= 5)).toBe(true);
   });
 
+  it("将公司域输出限制为前五个，但让全部已批准域参与公司指纹且不影响固定站点查询", () => {
+    const allowedDomains = [
+      "one.example.com", "two.example.com", "three.example.com", "four.example.com", "five.example.com", "six.example.com",
+    ];
+    const input = {
+      ...snapshots(),
+      watchlistSnapshot: {
+        targetId,
+        version: 1,
+        companies: [{
+          watchlistItemId: "11111111-1111-4111-8111-111111111111",
+          canonicalCompanyName: "域名公司",
+          allowedDomains,
+        }],
+      },
+    };
+    const plan = createAnySearchQueryPlan(input);
+    const revised = createAnySearchQueryPlan({
+      ...input,
+      watchlistSnapshot: {
+        ...input.watchlistSnapshot,
+        companies: [{ ...input.watchlistSnapshot.companies[0]!, allowedDomains: [...allowedDomains.slice(0, 5), "changed.example.com"] }],
+      },
+    });
+
+    expect(plan.queries[5]!.allowedSiteDomains).toEqual(allowedDomains.slice(0, 5));
+    expect(revised.queries[5]!.allowedSiteDomains).toEqual(allowedDomains.slice(0, 5));
+    expect(revised.queries[5]!.stableFingerprint).not.toBe(plan.queries[5]!.stableFingerprint);
+    expect(plan.queries.slice(1, 5).map(({ allowedSiteDomains }) => allowedSiteDomains)).toEqual(
+      ANYSEARCH_PUBLIC_JOB_QUERY_PLATFORM_POLICY.platforms.map(({ allowedSiteDomains }) => allowedSiteDomains),
+    );
+    expect(revised.queries.slice(1, 5)).toEqual(plan.queries.slice(1, 5));
+  });
+
+  it("为同名同域但不同 Watchlist 条目生成不同的公司查询标识", () => {
+    const plan = createAnySearchQueryPlan({
+      ...snapshots(),
+      watchlistSnapshot: {
+        targetId,
+        version: 1,
+        companies: [
+          { watchlistItemId: "11111111-1111-4111-8111-111111111111", canonicalCompanyName: "同名公司", allowedDomains: ["same.example.com"] },
+          { watchlistItemId: "22222222-2222-4222-8222-222222222222", canonicalCompanyName: "同名公司", allowedDomains: ["same.example.com"] },
+        ],
+      },
+    });
+
+    expect(plan.queries[5]!.stableFingerprint).not.toBe(plan.queries[6]!.stableFingerprint);
+    expect(plan.queries[5]!.queryId).not.toBe(plan.queries[6]!.queryId);
+  });
+
+  it("从合约允许的最大快照确定性地生成 roleFamily 优先且不超过 500 字符的查询", () => {
+    const roleFamily = "r".repeat(200);
+    const plan = createAnySearchQueryPlan({
+      ...snapshots(),
+      targetSnapshot: {
+        ...snapshots().targetSnapshot,
+        constraints: {
+          ...snapshots().targetSnapshot.constraints,
+          roleFamily,
+          seniority: "s".repeat(200),
+          locations: Array.from({ length: 20 }, (_, index) => `${index}${"l".repeat(200 - String(index).length)}`),
+          workModes: ["onsite", "hybrid", "remote"] as const,
+        },
+      },
+      profileSnapshot: { targetId, version: 1, confirmedActiveSkillNames: Array.from({ length: 10 }, (_, index) => `${index}${"k".repeat(99)}`) },
+      watchlistSnapshot: {
+        targetId,
+        version: 1,
+        companies: [{
+          watchlistItemId: "11111111-1111-4111-8111-111111111111",
+          canonicalCompanyName: "c".repeat(200),
+          allowedDomains: Array.from({ length: 20 }, (_, index) => `${index}.${"d".repeat(246)}.com`),
+        }],
+      },
+    });
+
+    const companyQuery = plan.queries[5]!;
+    const plannedSiteTokens = plan.queries.flatMap(({ query }) => query.split(" ").filter((term) => term.startsWith("site:")));
+
+    expect(plan.queries.every(({ query }) => query.length <= 500 && query.startsWith(roleFamily))).toBe(true);
+    expect(plan.queries.slice(1, 5).every(({ query }, index) => query.includes(
+      `site:${ANYSEARCH_PUBLIC_JOB_QUERY_PLATFORM_POLICY.platforms[index]!.allowedSiteDomains[0]}`,
+    ))).toBe(true);
+    expect(companyQuery.query).toContain(`${roleFamily} ${"c".repeat(200)}`);
+    expect(companyQuery.allowedSiteDomains).toEqual(Array.from({ length: 20 }, (_, index) => `${index}.${"d".repeat(246)}.com`).slice(0, 5));
+    expect(plannedSiteTokens.every((token) => [
+      ...ANYSEARCH_PUBLIC_JOB_QUERY_PLATFORM_POLICY.platforms.flatMap(({ allowedSiteDomains }) => allowedSiteDomains),
+      ...companyQuery.allowedSiteDomains,
+    ].includes(token.slice("site:".length)))).toBe(true);
+    expect(createAnySearchQueryPlan({
+      ...snapshots(),
+      targetSnapshot: {
+        ...snapshots().targetSnapshot,
+        constraints: { ...snapshots().targetSnapshot.constraints, roleFamily, seniority: "s".repeat(200), locations: Array.from({ length: 20 }, (_, index) => `${index}${"l".repeat(200 - String(index).length)}`), workModes: ["onsite", "hybrid", "remote"] as const },
+      },
+      profileSnapshot: { targetId, version: 1, confirmedActiveSkillNames: Array.from({ length: 10 }, (_, index) => `${index}${"k".repeat(99)}`) },
+      watchlistSnapshot: { targetId, version: 1, companies: [{ watchlistItemId: "11111111-1111-4111-8111-111111111111", canonicalCompanyName: "c".repeat(200), allowedDomains: Array.from({ length: 20 }, (_, index) => `${index}.${"d".repeat(246)}.com`) }] },
+    })).toEqual(plan);
+  });
+
   it("为相同快照生成相同 UUID 与指纹，并在已批准版本变化时更新相关指纹", () => {
     const input = snapshots();
     const first = createAnySearchQueryPlan(input);
@@ -93,6 +194,7 @@ describe("AnySearch query planner", () => {
 
     expect(second).toEqual(first);
     expect(first.queries.every(({ queryId }) => /^[0-9a-f-]{36}$/u.test(queryId))).toBe(true);
+    expect(first.queries.every(({ queryId }) => queryId[14] === "8" && /^[89ab]$/u.test(queryId[19]!))).toBe(true);
     expect(first.queries.every(({ stableFingerprint }) => /^[a-f0-9]{64}$/u.test(stableFingerprint))).toBe(true);
     expect(revised.queries.map(({ stableFingerprint }) => stableFingerprint)).not.toEqual(first.queries.map(({ stableFingerprint }) => stableFingerprint));
     expect(revisedFacts.queries.map(({ stableFingerprint }) => stableFingerprint)).not.toEqual(first.queries.map(({ stableFingerprint }) => stableFingerprint));
