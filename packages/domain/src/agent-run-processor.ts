@@ -418,7 +418,8 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         });
         const detailsComplete = await transition("fetch_details", true); if (detailsComplete) return detailsComplete;
         const persistStart = await transition("persist_results", false); if (persistStart) return persistStart;
-        const stored = details.map((detail) => {
+        const detailsForPersistence = details.slice(0, claimed.run.budgetSnapshot.maxResults);
+        const stored = detailsForPersistence.map((detail) => {
           const bytes = canonicalJsonBytes(detail.rawPayload);
           const sourceIdentifier = discoverySourceIdentifier(detail.sourceId, detail.detailId);
           const rawContentSha256 = createHash("sha256").update(bytes).digest("hex");
@@ -439,13 +440,13 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         } catch (error) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: error instanceof AgentRunBudgetError ? "AGENT_RUN_BUDGET_EXCEEDED" : "AGENT_RUN_CONTENT_STORAGE_FAILED", retryable: !(error instanceof AgentRunBudgetError), category: "source", budgetDimension: error instanceof AgentRunBudgetError ? error.budgetDimension : undefined }, deadline }); }
         const commitBefore = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_before", ordinal: 1 });
         if (commitBefore) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return commitBefore; }
-        const completedSource = checks.some((check) => check.status === "healthy" || check.status === "zero_valid_results" || (check.status === "parser_degraded" && check.validDetailCount > 0));
+        const completedSource = checks.some((check) => check.status === "healthy" || check.status === "zero_valid_results" || check.validDetailCount > 0);
         const hasIssues = checks.some((check) => check.status === "parser_degraded" || check.status === "rate_limited" || check.status === "hard_failed");
         const terminal = completedSource ? (hasIssues ? "completed_with_source_issues" : "completed") : "source_failed";
         let persisted: { resultCount: number; cleanupObjectKeys: string[]; completed: boolean };
         try {
           persisted = await runTransaction(deps, deadline, (transaction) => createJobDiscoveryPersistence({ db: deps.db, id: deps.id, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({
-            run: { ...claimed.run, claimToken: claimed.claimToken }, details, scans: sourceStates.map((state) => ({ sourceId: state.source.sourceId, observedDetailIds: state.observedDetailIds, complete: !state.failure })),
+            run: { ...claimed.run, claimToken: claimed.claimToken }, details: detailsForPersistence, scans: sourceStates.map((state) => ({ sourceId: state.source.sourceId, observedDetailIds: state.observedDetailIds, complete: !state.failure })),
             storedObjects: stored.map((item) => ({ sourceId: item.detail.sourceId, detailId: item.detail.detailId, objectKey: item.objectKey, rawContentSha256: item.rawContentSha256 })), sourceChecks: checks, terminal, now: deps.clock(), transaction,
           }));
         } catch { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_PERSIST_FAILED", retryable: true, category: "source" }, deadline }); }

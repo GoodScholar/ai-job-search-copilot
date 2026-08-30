@@ -46,7 +46,7 @@ function scenariosFrom(environment: NodeJS.ProcessEnv): FakeScenario {
 
 function sourceHealthScenariosFrom(environment: NodeJS.ProcessEnv): SourceHealthScenarioMap {
   const configured = environment.E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS;
-  if (process.env.APP_ENV !== "test") {
+  if (environment.APP_ENV !== "test") {
     if (configured?.trim()) throw new Error("E2E Public Source Health 场景只允许测试环境");
     return {};
   }

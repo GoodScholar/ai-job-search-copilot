@@ -18,7 +18,7 @@ import type { AuditTrail } from "./audit-trail";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { agentRunUsageSnapshot, appendBudgetFacts, settleActiveSlice } from "./agent-run-lifecycle";
 import { discoveryNormalizedData, persistJobOpportunity } from "./job-opportunity-persistence";
-import { JobSourceHealthCheckSchema, type JobSourceHealthCheck } from "@job-copilot/contracts/agent-runs";
+import { GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, JobSourceHealthCheckSchema, PublicSourceHealthAgentRunSourceScopeSchema, type JobSourceHealthCheck } from "@job-copilot/contracts/agent-runs";
 
 export type DiscoveryDetail = {
   sourceId: string;
@@ -313,6 +313,13 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
           return { ...check, reasonCodes: [...check.reasonCodes].sort() };
         }) ?? [];
         if (sourceChecks.some((check) => check.runId !== run.id || check.targetId !== run.targetId) || new Set(sourceChecks.map((check) => check.sourceId)).size !== sourceChecks.length) throw new Error("AGENT_RUN_PERSIST_FAILED");
+        if (run.workflowVersion === GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION) {
+          const frozenSources = PublicSourceHealthAgentRunSourceScopeSchema.parse(run.sourceScope).sources;
+          const sourceById = new Map(frozenSources.map((source) => [source.sourceId, source.watchlistItemId]));
+          if (sourceChecks.length !== sourceById.size || sourceChecks.some((check) => sourceById.get(check.sourceId) !== check.watchlistItemId)) {
+            throw new Error("AGENT_RUN_PERSIST_FAILED");
+          }
+        }
         if (sourceChecks.length > 0) {
           const inserted = await transaction.insert(jobSourceHealthChecks).values(sourceChecks.map((check) => ({
           id: check.checkId, userId: run.userId, runId: check.runId, targetId: check.targetId, watchlistItemId: check.watchlistItemId,
@@ -396,7 +403,14 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
         const terminal = input.terminal ?? "completed";
         const failed = terminal === "source_failed";
         await transaction.update(agentRuns).set({ status: failed ? "failed" : "completed", currentStep: failed ? "failed" : "completed", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, activeDurationMs, ...(failed ? { failedAt: input.now, failureCode: "AGENT_RUN_ADAPTER_FAILED", terminationKind: "source_failed" } : { completedAt: input.now, failureCode: null, terminationKind: terminal }), terminationBudgetDimension: null, resultCount: run.resultCount + resultCount, version: terminalVersion, updatedAt: input.now }).where(and(eq(agentRuns.userId, run.userId), eq(agentRuns.id, run.id), eq(agentRuns.claimToken, run.claimToken), eq(agentRuns.controlState, "none")));
-        const terminalSequence = await appendEvent(transaction, { id: deps.id, userId: run.userId, runId: run.id, version: terminalVersion, eventType: failed ? "run.failed" : "run.completed", data: { eventType: failed ? "run.failed" : "run.completed", status: failed ? "failed" : "completed", currentStep: failed ? "failed" : "completed", attemptCount: run.attemptCount, resultCount: run.resultCount + resultCount }, now: input.now });
+        const terminalSequence = await appendEvent(transaction, {
+          id: deps.id, userId: run.userId, runId: run.id, version: terminalVersion,
+          eventType: failed ? "run.failed" : "run.completed",
+          data: failed
+            ? { eventType: "run.failed", status: "failed", currentStep: "failed", attemptCount: run.attemptCount, failureCode: "AGENT_RUN_ADAPTER_FAILED" }
+            : { eventType: "run.completed", status: "completed", currentStep: "completed", attemptCount: run.attemptCount, resultCount: run.resultCount + resultCount },
+          now: input.now,
+        });
         if (failed) await deps.auditTrail.bind(transaction).append({ userId: run.userId, actorUserId: run.userId, eventType: "agent.run_failed", occurredAt: input.now, requestId: run.id, outcome: "failure", reasonCode: "AGENT_RUN_ADAPTER_FAILED", resourceType: "agent_run", resourceId: run.id, metadata: { runId: run.id, targetId: run.targetId, attemptCount: run.attemptCount, failureCode: "AGENT_RUN_ADAPTER_FAILED" } });
         else await deps.auditTrail.bind(transaction).append({ userId: run.userId, actorUserId: run.userId, eventType: "agent.run_completed", occurredAt: input.now, requestId: run.id, outcome: "success", reasonCode: "AGENT_RUN_COMPLETED", resourceType: "agent_run", resourceId: run.id, metadata: { runId: run.id, targetId: run.targetId, attemptCount: run.attemptCount, resultCount: run.resultCount + resultCount } });
         if (sourceChecks.some((check) => check.status === "parser_degraded" || check.status === "rate_limited" || check.status === "hard_failed")) {

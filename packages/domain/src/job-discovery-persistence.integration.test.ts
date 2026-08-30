@@ -24,6 +24,7 @@ import {
 import { createAuditTrail } from "./audit-trail";
 import { createAgentRunCommands, type AgentRunQueue } from "./agent-run-control";
 import { createJobDiscoveryPersistence, discoverySourceIdentifier } from "./job-discovery-persistence";
+import { GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION } from "@job-copilot/contracts/agent-runs";
 
 const firstSeen = new Date("2026-08-30T00:00:00.000Z");
 const later = new Date("2026-08-31T00:00:00.000Z");
@@ -631,5 +632,28 @@ describe("job discovery persistence lifecycle", () => {
       database.select().from(agentInboxItems).where(eq(agentInboxItems.runId, differentRun.id)),
       database.select().from(auditEvents).where(eq(auditEvents.resourceId, differentRun.id)),
     ])).resolves.toEqual(beforeConflict);
+  });
+
+  it.each(["wrong_source", "wrong_watchlist", "missing", "extra"] as const)("v3 sourceChecks 必须与冻结 sourceScope 一一对应：%s", async (variant) => {
+    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID();
+    await database.insert(jobAccounts).values({ id: userId });
+    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: firstSeen, updatedAt: firstSeen });
+    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: firstSeen });
+    const persistence = createJobDiscoveryPersistence({ db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => later }) });
+    const run = await claimRun(userId, targetId, later);
+    const watchlistA = crypto.randomUUID(); const watchlistB = crypto.randomUUID();
+    const source = (sourceId: string, watchlistItemId: string, boardToken: string) => ({ sourceId, watchlistItemId, canonicalCompanyName: boardToken, careersUrl: `https://boards.greenhouse.io/${boardToken}`, allowedDomains: ["boards-api.greenhouse.io"], boardToken });
+    const sources = [source("greenhouse:scope_a", watchlistA, "scope_a"), source("greenhouse:scope_b", watchlistB, "scope_b")];
+    const [frozen] = await database.update(agentRuns).set({ workflowVersion: GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, adapterVersion: "greenhouse-job-board-v2", outputSchemaVersion: "job-discovery-result-v3", ruleVersion: "job-discovery-source-health-rules-v1", toolAllowlist: ["job_discovery.list_source", "job_discovery.get_detail"], sourceScope: { kind: "company_watchlist", adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2", watchlistVersion: 1, sources } }).where(eq(agentRuns.id, run.id)).returning();
+    if (!frozen) throw new Error("run not frozen");
+    const check = (entry: typeof sources[number]) => ({ checkId: crypto.randomUUID(), runId: run.id, targetId, watchlistItemId: entry.watchlistItemId, sourceId: entry.sourceId, status: "zero_valid_results" as const, reasonCodes: [], impact: { scope: "none" as const, affectedCount: null }, observedPostingCount: 0, selectedDetailCount: 0, validDetailCount: 0, requestAttemptCount: 1, checkedAt: later.toISOString() });
+    let checks = sources.map(check);
+    if (variant === "wrong_source") checks = [{ ...checks[0]!, sourceId: "greenhouse:outside" }, checks[1]!];
+    if (variant === "wrong_watchlist") checks = [{ ...checks[0]!, watchlistItemId: crypto.randomUUID() }, checks[1]!];
+    if (variant === "missing") checks = [checks[0]!];
+    if (variant === "extra") checks = [...checks, check(source("greenhouse:scope_c", crypto.randomUUID(), "scope_c"))];
+    const before = await Promise.all([database.select().from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, run.id)), database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, run.id)), database.select().from(agentRunEvents).where(eq(agentRunEvents.runId, run.id)), database.select().from(agentInboxItems).where(eq(agentInboxItems.runId, run.id))]);
+    await expect(persistence.persistSuccessfulDiscovery({ run: { ...frozen, claimToken: run.claimToken }, details: [], scans: sources.map((item) => ({ sourceId: item.sourceId, observedDetailIds: [], complete: true })), storedObjects: [], sourceChecks: checks, now: later })).rejects.toThrow("AGENT_RUN_PERSIST_FAILED");
+    await expect(Promise.all([database.select().from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, run.id)), database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, run.id)), database.select().from(agentRunEvents).where(eq(agentRunEvents.runId, run.id)), database.select().from(agentInboxItems).where(eq(agentInboxItems.runId, run.id))])).resolves.toEqual(before);
   });
 });

@@ -116,6 +116,20 @@ describe("JobDiscoveryAdapterResolver", () => {
     expect(() => createSourceHealthDiscoveryAdapterResolver({ APP_ENV: "production", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: "{}" })).toThrow("E2E Public Source Health 场景只允许测试环境");
   });
 
+  it("v3 场景门禁只信任注入环境，不读取进程全局环境", () => {
+    const previous = process.env.APP_ENV;
+    process.env.APP_ENV = "test";
+    try {
+      expect(() => createSourceHealthDiscoveryAdapterResolver({ APP_ENV: "production", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: JSON.stringify({ [idempotencyKey]: { "greenhouse:example": "healthy" } }) }))
+        .toThrow("E2E Public Source Health 场景只允许测试环境");
+      expect(createSourceHealthDiscoveryAdapterResolver({ APP_ENV: "test", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: JSON.stringify({ [idempotencyKey]: { "greenhouse:example": "healthy" } }) }))
+        .toBeTruthy();
+    } finally {
+      if (previous === undefined) delete process.env.APP_ENV;
+      else process.env.APP_ENV = previous;
+    }
+  });
+
   it("v3 production 使用 greenhouse，local 必须显式 opt-in，并拒绝无效测试场景", () => {
     const metadata = { runId, idempotencyKey, executionSpec: sourceHealthExecutionSpec, attemptCount: 1 };
 
