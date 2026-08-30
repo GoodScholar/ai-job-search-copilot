@@ -73,3 +73,14 @@ Fresh verification：public API focused **1/1**；internal Lead + gate focused �
 - taxonomy 现在表驱动覆盖 zhipin/liepin/zhaopin 及批准子域、微信 exact/批准子域、六个 ATS exact host、evil ATS subdomain、unknown target-company、general、site-constrained；另回归预置 `url_import` 同 canonical 不会被复用。
 
 本轮 focused public/internal/gate：**3 files / 21 tests passed**；gate 专项：**1 file / 12 tests passed**；domain full：**26 files / 294 tests passed**；source-access：**2 files / 125 tests passed**；database：**2 files / 24 tests passed**；contracts/domain/source-access/database typecheck 均退出 0。最后在报告更新前后均执行 `git diff --check b56c3f17eb4240608ef9e82657413485b1b68252..HEAD`，fresh exit 0。
+
+## Fix round 2：Version 污染拒绝与可恢复对象补偿
+
+实现提交：`6db2d8f`（`fix(domain): recover verified evidence cleanup`）。
+
+1. **Red（poisoned Version）**：先预置同 owner/taxonomy/canonical/双 hash/正确 generation reference、但 `normalizedData` 含 AnySearch provider/snippet sentinel 的 Version。gate 错误地成功归因；随后将 `normalizedData` 加入 existing Version select，并精确要求 gate 唯一合法值 `{}`，Green 后返回稳定 Lead conflict、零 put、零 Attribution。
+2. **Red（delete failure）**：已知对象 store 删除失败时，gate 原样抛 Attribution conflict 并遗留 orphan。改为 versioned deterministic UUIDv8 generation（owner、lead、taxonomy、canonical、双 hash），并在新的 transaction 中重取 account lock、读取全部 Version references，只删除本次 created 且未被引用的对象。已知 cleanup store failure 返回 `VERIFIED_JOB_SOURCE_CLEANUP_REQUIRED`；相同输入重试得到同一 UUIDv8/key，`created=false` 对象被正式 Version 引用而不再 orphan。未知 cleanup/put/id 错误仍保留 exact object identity。
+3. generation 回归断言 UUID version nibble 为 `8`、RFC variant 为 `[89ab]`、同输入 retry 稳定、不同 Lead generation 不同；无 sleep barrier 覆盖 cleanup re-lock 后 T2 才能提交，且 T1 不删除 T2 reference。
+4. 清理 round 1 产生的无用 import/hostname normalization；将 public repository 和 internal transitions 的 input parser、Lead/Attribution fact projection 收敛为未导出的 package-internal helper，公开 surface 不变。
+
+Fresh verification：public/internal/gate focused **3 files / 23 tests**；gate **1 file / 14 tests**；domain full **26 files / 296 tests**；contracts **12 files / 108 tests**；source-access **2 files / 125 tests**；database **2 files / 24 tests**；contracts/domain/source-access/database typecheck 均退出 0。最后 `git diff --check b56c3f17eb4240608ef9e82657413485b1b68252..HEAD` fresh exit 0。
