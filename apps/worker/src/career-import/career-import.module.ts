@@ -35,7 +35,7 @@ class WorkerDatabase {
   private closePromise: Promise<void> | undefined;
 
   close(): Promise<void> {
-    this.closePromise ??= this.db.$client.end();
+    this.closePromise ??= this.db.$client.end({ timeout: 5 });
     return this.closePromise;
   }
 }
@@ -73,7 +73,16 @@ export class CareerImportModule implements OnModuleDestroy {
   ) {}
 
   async onModuleDestroy(): Promise<void> {
-    await this.consumer.close();
-    await this.database.close();
+    try {
+      await this.consumer.close();
+    } catch {
+      // Database cleanup still runs in finally.
+    } finally {
+      try {
+        await this.database.close();
+      } catch {
+        // postgres-js timeout is the final forced-release boundary.
+      }
+    }
   }
 }

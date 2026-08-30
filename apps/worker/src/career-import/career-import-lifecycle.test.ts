@@ -33,7 +33,7 @@ vi.mock("@job-copilot/database", async (importOriginal) => ({
 }));
 
 import { CareerImportConsumer } from "./career-import-consumer.js";
-import { CareerImportModule } from "./career-import.module.js";
+import { CAREER_IMPORT_CONSUMER, CareerImportModule } from "./career-import.module.js";
 
 beforeEach(() => {
   fake.worker.close.mockReset();
@@ -84,6 +84,32 @@ describe("CareerImport lifecycle", () => {
     }
 
     expect(events).toEqual(["consumer-start", "consumer-end", "database-start"]);
+  });
+
+  it("database close 使用 postgres-js 强制释放边界并且重复 context close 不重复 end", async () => {
+    const context = await NestFactory.createApplicationContext(CareerImportModule, { logger: false });
+
+    await context.close();
+    await context.close();
+
+    expect(fake.database.$client.end).toHaveBeenCalledTimes(1);
+    expect(fake.database.$client.end).toHaveBeenCalledWith({ timeout: 5 });
+  });
+
+  it.each([
+    ["同步", () => { throw new Error("consumer close failed"); }],
+    ["异步", async () => { throw new Error("consumer close failed"); }],
+  ] as const)("consumer close %s 失败时仍尝试 database close", async (_kind, close) => {
+    fake.database.$client.end.mockRejectedValue(new Error("database close failed"));
+    const context = await NestFactory.createApplicationContext(CareerImportModule, { logger: false });
+    const consumer = context.get<CareerImportConsumer>(CAREER_IMPORT_CONSUMER);
+    vi.spyOn(consumer, "close").mockImplementation(close);
+
+    await expect(context.close()).resolves.toBeUndefined();
+    await context.close();
+
+    expect(fake.database.$client.end).toHaveBeenCalledTimes(1);
+    expect(fake.database.$client.end).toHaveBeenCalledWith({ timeout: 5 });
   });
 
   it("worker close 超时后仍关闭 Redis，且重复 close 不启动第二轮", async () => {
