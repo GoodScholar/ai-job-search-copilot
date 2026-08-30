@@ -46,7 +46,7 @@ function scenariosFrom(environment: NodeJS.ProcessEnv): FakeScenario {
 
 function sourceHealthScenariosFrom(environment: NodeJS.ProcessEnv): SourceHealthScenarioMap {
   const configured = environment.E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS;
-  if (environment.APP_ENV !== "test") {
+  if (process.env.APP_ENV !== "test") {
     if (configured?.trim()) throw new Error("E2E Public Source Health 场景只允许测试环境");
     return {};
   }
@@ -105,7 +105,7 @@ export function createSourceHealthDiscoveryAdapterResolver(environment: NodeJS.P
         || executionSpec.data.adapterVersion !== GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION) {
         throw new Error("AGENT_RUN_ADAPTER_UNSUPPORTED");
       }
-      if (environment.APP_ENV === "test") return new FakePublicSourceHealthAdapter(scenarios[input.idempotencyKey] as Readonly<Record<string, FakePublicSourceHealthScenario>> | undefined, environment.APP_ENV);
+      if (environment.APP_ENV === "test") return new FakePublicSourceHealthAdapter(scenarios[input.idempotencyKey] as Readonly<Record<string, FakePublicSourceHealthScenario>> | undefined);
       if (environment.APP_ENV === "production" || (environment.APP_ENV === "local" && environment.PUBLIC_JOB_DISCOVERY_ADAPTER === "greenhouse")) {
         return new GreenhouseSourceHealthAdapter();
       }

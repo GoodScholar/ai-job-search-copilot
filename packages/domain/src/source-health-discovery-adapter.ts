@@ -4,29 +4,15 @@ import type {
   FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION,
   GREENHOUSE_JOB_DISCOVERY_ADAPTER,
   GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
-  DiscoveryDetailResult,
+  SourceHealthDetailResult,
+  SourceHealthListResult,
   PublicSourceHealthAgentRunSourceScope,
-  SourceHealthReasonCode,
 } from "@job-copilot/contracts/agent-runs";
+export type { SourceHealthDetailResult, SourceHealthListResult } from "@job-copilot/contracts/agent-runs";
 
 type Source = PublicSourceHealthAgentRunSourceScope["sources"][number];
-type Detail = Extract<DiscoveryDetailResult, { ok: true }>["data"];
 type TargetSnapshot = AgentRunDetail["targetSnapshot"];
-
-export type SourceHealthAdapterFailure = {
-  category: "parser_degraded" | "rate_limited" | "hard_failed";
-  reasonCode: SourceHealthReasonCode;
-  retryable: boolean;
-  attemptCount: number;
-};
-
-export type SourceHealthListResult =
-  | { ok: true; data: { sourceId: string; observedDetailIds: string[]; candidates: Array<{ sourceId: string; detailId: string; company: null; title: string; location: string }> }; attemptCount: number }
-  | { ok: false; failure: SourceHealthAdapterFailure };
-
-export type SourceHealthDetailResult =
-  | { ok: true; data: Detail; attemptCount: number }
-  | { ok: false; failure: SourceHealthAdapterFailure };
+export type SourceHealthAdapterFailure = Extract<SourceHealthListResult, { ok: false }> ["failure"];
 
 /** v3 受控检查只在单一来源范围内报告可审计的列表和详情结果。 */
 export interface SourceHealthDiscoveryAdapter {

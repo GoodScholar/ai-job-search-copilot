@@ -514,6 +514,60 @@ export const PublicDiscoveryBatchSearchResultSchema = adapterResult(z.object({
 }).strict());
 export const DiscoveryDetailResultSchema = adapterResult(DiscoveryDetailSchema);
 
+const SourceHealthAdapterFailureSchema = z.object({
+  category: z.enum(["parser_degraded", "rate_limited", "hard_failed"]),
+  reasonCode: SourceHealthReasonCodeSchema,
+  retryable: z.boolean(),
+  attemptCount: positiveInteger,
+}).strict().superRefine((failure, context) => {
+  const parser = ["SOURCE_LIST_SCHEMA_INVALID", "SOURCE_DETAIL_FIELDS_MISSING", "SOURCE_DETAIL_URL_INVALID", "SOURCE_DETAIL_IDENTITY_INVALID"];
+  const hard = ["SOURCE_AUTH_FAILED", "SOURCE_TIMEOUT", "SOURCE_UNREACHABLE", "SOURCE_SERVER_ERROR", "SOURCE_POLICY_REJECTED"];
+  const valid = failure.category === "rate_limited" ? failure.reasonCode === "SOURCE_RATE_LIMITED"
+    : failure.category === "parser_degraded" ? parser.includes(failure.reasonCode)
+      : hard.includes(failure.reasonCode);
+  if (!valid) context.addIssue({ code: "custom", path: ["reasonCode"], message: "source-health failure reason must match its category" });
+});
+const SourceHealthDetailIdSchema = z.string().trim().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,255}$/u);
+const SourceHealthListCandidateSchema = z.object({
+  sourceId: SourceHealthSourceIdSchema, detailId: SourceHealthDetailIdSchema, company: z.null(), title: z.string().trim().min(1).max(500), location: z.string().trim().min(1).max(500),
+}).strict();
+const SourceHealthListSuccessSchema = z.object({
+  ok: z.literal(true), attemptCount: positiveInteger,
+  data: z.object({
+    sourceId: SourceHealthSourceIdSchema,
+    observedDetailIds: z.array(SourceHealthDetailIdSchema).max(500).refine((ids) => new Set(ids).size === ids.length, { message: "observed detail IDs must be unique" }),
+    candidates: z.array(SourceHealthListCandidateSchema).max(PUBLIC_JOB_DISCOVERY_BUDGET.maxResults),
+  }).strict(),
+}).strict().superRefine((result, context) => {
+  if (result.data.candidates.some((candidate) => candidate.sourceId !== result.data.sourceId)) context.addIssue({ code: "custom", path: ["data", "candidates"], message: "candidate source must match list source" });
+});
+const SourceHealthDetailSuccessSchema = z.object({
+  ok: z.literal(true), attemptCount: positiveInteger,
+  data: z.object({
+    sourceId: SourceHealthSourceIdSchema, detailId: SourceHealthDetailIdSchema, company: z.string().trim().min(1).max(500), title: z.string().trim().min(1).max(500), location: z.string().trim().min(1).max(500),
+    postedAt: z.iso.datetime(), deadline: z.iso.datetime().nullable(), sourceType: z.literal("company_careers"), isOfficial: z.literal(true), absoluteUrl: z.url().max(2_048), rawPayload: jsonObject,
+  }).strict(),
+}).strict();
+export const SourceHealthListResultSchema = z.union([
+  SourceHealthListSuccessSchema,
+  z.object({ ok: z.literal(false), failure: SourceHealthAdapterFailureSchema }).strict(),
+]);
+export const SourceHealthDetailResultSchema = z.union([
+  SourceHealthDetailSuccessSchema,
+  z.object({ ok: z.literal(false), failure: SourceHealthAdapterFailureSchema }).strict(),
+]);
+
+export function parseSourceHealthListResult(value: unknown, expectedSourceId: string): z.infer<typeof SourceHealthListResultSchema> {
+  const result = SourceHealthListResultSchema.parse(value);
+  if (result.ok && result.data.sourceId !== expectedSourceId) throw new z.ZodError([{ code: "custom", path: ["data", "sourceId"], message: "list source must match expected source" }]);
+  return result;
+}
+export function parseSourceHealthDetailResult(value: unknown, expected: { sourceId: string; detailId: string }): z.infer<typeof SourceHealthDetailResultSchema> {
+  const result = SourceHealthDetailResultSchema.parse(value);
+  if (result.ok && (result.data.sourceId !== expected.sourceId || result.data.detailId !== expected.detailId)) throw new z.ZodError([{ code: "custom", path: ["data"], message: "detail identity must match expected source and detail" }]);
+  return result;
+}
+
 export type StartAgentRunCommand = z.infer<typeof StartAgentRunCommandSchema>;
 export type ControlAgentRunCommand = z.infer<typeof ControlAgentRunCommandSchema>;
 export type AgentRunControlSnapshot = z.infer<typeof AgentRunControlSnapshotSchema>;
@@ -534,3 +588,5 @@ export type DiscoverySearchResult = z.infer<typeof DiscoverySearchResultSchema>;
 export type DiscoveryBatchSearchResult = z.infer<typeof DiscoveryBatchSearchResultSchema>;
 export type PublicDiscoveryBatchSearchResult = z.infer<typeof PublicDiscoveryBatchSearchResultSchema>;
 export type DiscoveryDetailResult = z.infer<typeof DiscoveryDetailResultSchema>;
+export type SourceHealthListResult = z.infer<typeof SourceHealthListResultSchema>;
+export type SourceHealthDetailResult = z.infer<typeof SourceHealthDetailResultSchema>;

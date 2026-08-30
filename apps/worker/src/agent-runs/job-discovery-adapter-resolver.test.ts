@@ -102,18 +102,18 @@ describe("JobDiscoveryAdapterResolver", () => {
   });
 
   it("v3 只在测试环境通过受控场景映射选择无网络 fake-public", async () => {
-    const resolver = createSourceHealthDiscoveryAdapterResolver({
-      APP_ENV: "test",
-      E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: JSON.stringify({ [idempotencyKey]: { "greenhouse:example": "rate_limited" } }),
-    });
-    const adapter = resolver.resolve({ runId, idempotencyKey, executionSpec: sourceHealthExecutionSpec, attemptCount: 1 });
-
-    expect(adapter).toBeInstanceOf(FakePublicSourceHealthAdapter);
-    await expect(adapter.listSource({ targetSnapshot, source: { ...sourceHealthExecutionSpec.sourceScope.sources[0]!, allowedDomains: [...sourceHealthExecutionSpec.sourceScope.sources[0]!.allowedDomains] } })).resolves.toEqual({
-      ok: false, failure: { category: "rate_limited", reasonCode: "SOURCE_RATE_LIMITED", retryable: true, attemptCount: 2 },
-    });
-    expect(() => createSourceHealthDiscoveryAdapterResolver({ APP_ENV: "production", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: "{}" }))
-      .toThrow("E2E Public Source Health 场景只允许测试环境");
+    const previous = process.env.APP_ENV;
+    process.env.APP_ENV = "test";
+    try {
+      const resolver = createSourceHealthDiscoveryAdapterResolver({ APP_ENV: "test", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: JSON.stringify({ [idempotencyKey]: { "greenhouse:example": "rate_limited" } }) });
+      const adapter = resolver.resolve({ runId, idempotencyKey, executionSpec: sourceHealthExecutionSpec, attemptCount: 1 });
+      expect(adapter).toBeInstanceOf(FakePublicSourceHealthAdapter);
+      await expect(adapter.listSource({ targetSnapshot, source: { ...sourceHealthExecutionSpec.sourceScope.sources[0]!, allowedDomains: [...sourceHealthExecutionSpec.sourceScope.sources[0]!.allowedDomains] } })).resolves.toEqual({ ok: false, failure: { category: "rate_limited", reasonCode: "SOURCE_RATE_LIMITED", retryable: true, attemptCount: 2 } });
+    } finally {
+      if (previous === undefined) delete process.env.APP_ENV;
+      else process.env.APP_ENV = previous;
+    }
+    expect(() => createSourceHealthDiscoveryAdapterResolver({ APP_ENV: "production", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: "{}" })).toThrow("E2E Public Source Health 场景只允许测试环境");
   });
 
   it("v3 production 使用 greenhouse，local 必须显式 opt-in，并拒绝无效测试场景", () => {
@@ -122,8 +122,15 @@ describe("JobDiscoveryAdapterResolver", () => {
     expect(createSourceHealthDiscoveryAdapterResolver({ APP_ENV: "production" }).resolve(metadata)).toBeInstanceOf(GreenhouseSourceHealthAdapter);
     expect(() => createSourceHealthDiscoveryAdapterResolver({ APP_ENV: "local" }).resolve(metadata)).toThrow("AGENT_RUN_ADAPTER_UNSUPPORTED");
     expect(createSourceHealthDiscoveryAdapterResolver({ APP_ENV: "local", PUBLIC_JOB_DISCOVERY_ADAPTER: "greenhouse" }).resolve(metadata)).toBeInstanceOf(GreenhouseSourceHealthAdapter);
-    expect(() => createSourceHealthDiscoveryAdapterResolver({ APP_ENV: "test", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: JSON.stringify({ [idempotencyKey]: { invalid: "healthy" } }) }))
-      .toThrow("E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS 格式无效");
+    const previous = process.env.APP_ENV;
+    process.env.APP_ENV = "test";
+    try {
+      expect(() => createSourceHealthDiscoveryAdapterResolver({ APP_ENV: "test", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: JSON.stringify({ [idempotencyKey]: { invalid: "healthy" } }) }))
+        .toThrow("E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS 格式无效");
+    } finally {
+      if (previous === undefined) delete process.env.APP_ENV;
+      else process.env.APP_ENV = previous;
+    }
   });
 
   it("retry_once 仅使第一次持久化 attempt 返回可重试来源错误", async () => {

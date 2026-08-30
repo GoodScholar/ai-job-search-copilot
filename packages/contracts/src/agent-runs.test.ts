@@ -29,6 +29,10 @@ import {
   AgentRunUsageSchema,
   JobSourceHealthCheckSchema,
   JobSourceHealthProjectionSchema,
+  SourceHealthDetailResultSchema,
+  SourceHealthListResultSchema,
+  parseSourceHealthDetailResult,
+  parseSourceHealthListResult,
   GREENHOUSE_JOB_DISCOVERY_ADAPTER,
   GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
   GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
@@ -134,6 +138,19 @@ function expectUnknownKeyRejected(schema: { safeParse(input: unknown): { success
 }
 
 describe("agent run contracts", () => {
+  it("严格验证 v3 单来源 adapter 结果并绑定预期来源和详情", () => {
+    const list = { ok: true, attemptCount: 1, data: { sourceId: "greenhouse:example", observedDetailIds: ["701"], candidates: [{ sourceId: "greenhouse:example", detailId: "701", company: null, title: "Engineer", location: "Beijing" }] } };
+    const detail = { ok: true, attemptCount: 1, data: { sourceId: "greenhouse:example", detailId: "701", company: "Example", title: "Engineer", location: "Beijing", postedAt: "2026-08-20T00:00:00.000Z", deadline: null, sourceType: "company_careers", isOfficial: true, absoluteUrl: "https://boards.greenhouse.io/example/jobs/701", rawPayload: {} } };
+    expect(parseSourceHealthListResult(list, "greenhouse:example")).toEqual(list);
+    expect(parseSourceHealthDetailResult(detail, { sourceId: "greenhouse:example", detailId: "701" })).toEqual(detail);
+    for (const invalid of [
+      { ok: false, failure: { category: "parser_degraded", reasonCode: "SOURCE_RATE_LIMITED", retryable: false, attemptCount: 1 } },
+      { ...list, attemptCount: 0 }, { ...list, attemptCount: -1 },
+      { ...list, data: { ...list.data, sourceId: "greenhouse:other" } }, { ...list, extra: true },
+    ]) expect(SourceHealthListResultSchema.safeParse(invalid).success).toBe(false);
+    expect(() => parseSourceHealthDetailResult({ ...detail, data: { ...detail.data, detailId: "999" } }, { sourceId: "greenhouse:example", detailId: "701" })).toThrow();
+    expect(SourceHealthDetailResultSchema.safeParse({ ...detail, extra: true }).success).toBe(false);
+  });
   it("在保留 Fake v1 和 Greenhouse v2 语义的同时解析 Greenhouse 来源健康 v3 执行规格", () => {
     const v3ExecutionSpec = {
       targetSnapshot: runTargetSnapshot,

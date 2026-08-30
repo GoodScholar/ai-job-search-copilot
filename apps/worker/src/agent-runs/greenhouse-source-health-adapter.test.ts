@@ -114,4 +114,30 @@ describe("GreenhouseSourceHealthAdapter", () => {
     });
     expect(requests).toBe(0);
   });
+
+  it.each([
+    ["other board", "https://boards.greenhouse.io/other-company/jobs/701"],
+    ["other detail", "https://boards.greenhouse.io/fictional-labs/jobs/999"],
+    ["untrusted host", "https://evil.example/fictional-labs/jobs/701"],
+  ])("拒绝详情 absolute_url 的 %s 欺骗", async (_label, absoluteUrl) => {
+    const body = { id: 701, title: "Platform Engineer", company_name: "Fictional Labs", location: { name: "Beijing" }, first_published: "2026-08-17T08:30:00.000Z", application_deadline: null, absolute_url: absoluteUrl };
+    const client = createPublicSourceClientForTest({
+      exactHosts: ["boards-api.greenhouse.io"], testOrigin: "https://boards-api.greenhouse.io",
+      lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+      transport: async () => ({ status: 200, headers: { "content-type": "application/json" }, body: new TextEncoder().encode(JSON.stringify(body)) }),
+    });
+    await expect(new GreenhouseSourceHealthAdapter({ client }).getSourceDetail({ source, detailId: "701" })).resolves.toEqual({
+      ok: false, failure: { category: "parser_degraded", reasonCode: "SOURCE_DETAIL_URL_INVALID", retryable: false, attemptCount: 1 },
+    });
+  });
+
+  it("接受冻结来源和详情身份对应的官方 absolute_url", async () => {
+    const body = { id: 701, title: "Platform Engineer", company_name: "Fictional Labs", location: { name: "Beijing" }, first_published: "2026-08-17T08:30:00.000Z", application_deadline: null, absolute_url: "https://job-boards.greenhouse.io/fictional-labs/jobs/701" };
+    const client = createPublicSourceClientForTest({
+      exactHosts: ["boards-api.greenhouse.io"], testOrigin: "https://boards-api.greenhouse.io",
+      lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+      transport: async () => ({ status: 200, headers: { "content-type": "application/json" }, body: new TextEncoder().encode(JSON.stringify(body)) }),
+    });
+    await expect(new GreenhouseSourceHealthAdapter({ client }).getSourceDetail({ source, detailId: "701" })).resolves.toMatchObject({ ok: true, data: { absoluteUrl: body.absolute_url } });
+  });
 });

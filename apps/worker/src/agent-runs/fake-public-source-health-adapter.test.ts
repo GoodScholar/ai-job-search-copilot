@@ -59,6 +59,24 @@ describe("FakePublicSourceHealthAdapter", () => {
   });
 
   it("拒绝在非测试环境构造 Fake public adapter", () => {
-    expect(() => new FakePublicSourceHealthAdapter({}, "production")).toThrow("FAKE_PUBLIC_SOURCE_HEALTH_TEST_ONLY");
+    const current = process.env.APP_ENV;
+    process.env.APP_ENV = "production";
+    try {
+      expect(() => new (FakePublicSourceHealthAdapter as any)({}, "test")).toThrow("FAKE_PUBLIC_SOURCE_HEALTH_TEST_ONLY");
+    } finally {
+      if (current === undefined) delete process.env.APP_ENV;
+      else process.env.APP_ENV = current;
+    }
+  });
+
+  it("只信任真实 APP_ENV，不能用构造参数伪造成 test", () => {
+    const current = process.env.APP_ENV;
+    process.env.APP_ENV = "production";
+    try {
+      expect(() => new (FakePublicSourceHealthAdapter as any)({}, "test")).toThrow("FAKE_PUBLIC_SOURCE_HEALTH_TEST_ONLY");
+    } finally {
+      if (current === undefined) delete process.env.APP_ENV;
+      else process.env.APP_ENV = current;
+    }
   });
 });

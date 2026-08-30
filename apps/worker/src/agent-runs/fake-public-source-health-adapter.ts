@@ -33,8 +33,8 @@ function matchesTarget(target: TargetSnapshot): boolean {
 export class FakePublicSourceHealthAdapter implements SourceHealthDiscoveryAdapter {
   readonly adapter = FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER;
   readonly adapterVersion = FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION;
-  constructor(private readonly scenarios: Readonly<Record<string, FakePublicSourceHealthScenario>> = {}, appEnv = process.env.APP_ENV) {
-    if (appEnv !== "test") throw new Error("FAKE_PUBLIC_SOURCE_HEALTH_TEST_ONLY");
+  constructor(private readonly scenarios: Readonly<Record<string, FakePublicSourceHealthScenario>> = {}) {
+    if (process.env.APP_ENV !== "test") throw new Error("FAKE_PUBLIC_SOURCE_HEALTH_TEST_ONLY");
   }
 
   async listSource(input: { targetSnapshot: TargetSnapshot; source: Source }): Promise<SourceHealthListResult> {
@@ -57,6 +57,7 @@ export class FakePublicSourceHealthAdapter implements SourceHealthDiscoveryAdapt
       data: {
         sourceId: input.source.sourceId, detailId: input.detailId, company: input.source.canonicalCompanyName, title: "Engineer",
         location: "Beijing", postedAt: "2026-08-20T00:00:00.000Z", deadline: null, sourceType: "company_careers", isOfficial: true,
+        absoluteUrl: `https://boards.greenhouse.io/${input.source.boardToken}/jobs/${input.detailId}`,
         rawPayload: { fixtureVersion: "fake-public-job-discovery-v1", sourceId: input.source.sourceId, detailId: input.detailId },
       },
       attemptCount: 1,

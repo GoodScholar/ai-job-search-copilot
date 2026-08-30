@@ -82,10 +82,12 @@ function matchesTarget(job: z.infer<typeof ListJobSchema>, target: TargetSnapsho
     && (target.constraints.locations.length === 0 || target.constraints.locations.includes(job.location.name));
 }
 
-function isSafeAbsoluteUrl(value: string): boolean {
+function isSafeAbsoluteUrl(value: string, source: Source, detailId: string): boolean {
   try {
     const url = new URL(value);
-    return url.protocol === "https:" && !url.username && !url.password && Boolean(url.hostname);
+    return url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash
+      && (url.hostname === "boards.greenhouse.io" || url.hostname === "job-boards.greenhouse.io")
+      && url.pathname === `/${source.boardToken}/jobs/${encodeURIComponent(detailId)}`;
   } catch { return false; }
 }
 
@@ -140,14 +142,14 @@ export class GreenhouseSourceHealthAdapter implements SourceHealthDiscoveryAdapt
     const raw = decode(response.body);
     const parsed = GreenhouseSourceDetailSchema.safeParse(raw);
     if (!parsed.success) return { ok: false, failure: sourceFailure("SOURCE_DETAIL_FIELDS_MISSING", false, response.attemptCount) };
-    if (!isSafeAbsoluteUrl(parsed.data.absolute_url)) return { ok: false, failure: sourceFailure("SOURCE_DETAIL_URL_INVALID", false, response.attemptCount) };
+    if (!isSafeAbsoluteUrl(parsed.data.absolute_url, source, input.detailId)) return { ok: false, failure: sourceFailure("SOURCE_DETAIL_URL_INVALID", false, response.attemptCount) };
     if (String(parsed.data.id) !== input.detailId) return { ok: false, failure: sourceFailure("SOURCE_DETAIL_IDENTITY_INVALID", false, response.attemptCount) };
     return {
       ok: true,
       data: {
         sourceId: source.sourceId, detailId: input.detailId, company: parsed.data.company_name, title: parsed.data.title,
         location: parsed.data.location.name, postedAt: parsed.data.first_published, deadline: parsed.data.application_deadline,
-        sourceType: "company_careers", isOfficial: true, rawPayload: raw as Record<string, unknown>,
+        sourceType: "company_careers", isOfficial: true, absoluteUrl: parsed.data.absolute_url, rawPayload: raw as Record<string, unknown>,
       },
       attemptCount: response.attemptCount,
     };
