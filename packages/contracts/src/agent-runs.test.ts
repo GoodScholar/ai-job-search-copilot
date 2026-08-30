@@ -265,6 +265,12 @@ describe("agent run contracts", () => {
     expect(AgentRunDetailSchema.safeParse(twoSourceDetail).success).toBe(false);
     expect(AgentRunDetailSchema.safeParse({ ...twoSourceDetail, sourceChecks: [sourceCheck, secondCheck] }).success).toBe(true);
     expect(AgentRunDetailSchema.safeParse({ ...twoSourceDetail, status: "running", currentStep: "batch_search", completedAt: null, termination: null, usage: { ...twoSourceDetail.usage, complete: false } }).success).toBe(true);
+    const failedGlobal = { ...twoSourceDetail, status: "failed", currentStep: "failed", completedAt: null, failedAt: now, failureCode: "AGENT_RUN_ADAPTER_FAILED", termination: { kind: "source_failed", failureCode: "AGENT_RUN_ADAPTER_FAILED", budgetDimension: null }, sourceChecks: [] };
+    expect(AgentRunDetailSchema.safeParse(failedGlobal).success).toBe(true);
+    expect(AgentRunDetailSchema.safeParse({ ...failedGlobal, sourceChecks: [sourceCheck] }).success).toBe(false);
+    const cancelledGlobal = { ...twoSourceDetail, status: "cancelled", currentStep: "cancelled", completedAt: null, cancelledAt: now, failureCode: null, termination: { kind: "cancelled_by_user", failureCode: null, budgetDimension: null }, sourceChecks: [] };
+    expect(AgentRunDetailSchema.safeParse(cancelledGlobal).success).toBe(true);
+    expect(AgentRunDetailSchema.safeParse({ ...cancelledGlobal, sourceChecks: [sourceCheck] }).success).toBe(false);
   });
 
   it("拒绝矛盾的来源健康事实、未经检查的伪证据和 URL 形式来源 ID", () => {
