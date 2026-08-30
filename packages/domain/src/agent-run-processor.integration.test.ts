@@ -394,6 +394,27 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(database.select().from(jobDiscoveryDiagnostics).where(eq(jobDiscoveryDiagnostics.runId, job.runId))).resolves.toHaveLength(1);
   });
 
+  it.each([
+    ["cancel", "cancel_requested", "cancelled", "cancelled"],
+    ["budget", "budget", "budget_exhausted", "failed"],
+    ["stale", "stale", "stale", "running"],
+  ] as const)("真实 %s checkpoint 保留既有 diagnostic", async (_name, mode, expected, status) => {
+    const job = await layeredRun(); const secondQueryId = crypto.randomUUID();
+    const [stored] = await database.select({ sourceScope: agentRuns.sourceScope }).from(agentRuns).where(eq(agentRuns.id, job.runId));
+    const sourceScope = stored!.sourceScope as any;
+    sourceScope.publicDiscovery.queries.push({ ...sourceScope.publicDiscovery.queries[0], ordinal: 2, queryId: secondQueryId, stableFingerprint: "c".repeat(64) });
+    await database.update(agentRuns).set({ sourceScope }).where(eq(agentRuns.id, job.runId));
+    let searches = 0;
+    const workflow = createLayeredPublicJobDiscoveryWorkflow({
+      trustedSources: { discover: async () => ({ succeeded: false, verifiedSourcePostingVersionIds: [] }) },
+      anySearch: { search: async ({ beforeRequest }) => { await beforeRequest(); searches += 1; if (searches === 1) { if (mode === "budget") await database.update(agentRuns).set({ toolCallCount: 60 }).where(eq(agentRuns.id, job.runId)); else if (mode === "stale") await database.update(agentRuns).set({ claimToken: crypto.randomUUID(), claimExpiresAt: new Date(now.getTime() + 30_000) }).where(eq(agentRuns.id, job.runId)); else await database.update(agentRuns).set({ controlState: "cancel_requested" }).where(eq(agentRuns.id, job.runId)); return { error: { code: "ANYSEARCH_UNAVAILABLE", retryable: true, httpStatus: 503 } }; } return { candidates: [] }; }, extract: async () => { throw new Error("UNUSED"); } },
+      preflight: async () => null, leads: { recordPending: async () => { throw new Error("UNUSED"); } }, fetcher: { fetch: async () => { throw new Error("UNUSED"); } }, gate: { verify: async () => { throw new Error("UNUSED"); }, reject: async () => undefined },
+    });
+    const processor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => workflow }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe(expected);
+    await expect(Promise.all([database.select().from(jobDiscoveryDiagnostics).where(eq(jobDiscoveryDiagnostics.runId, job.runId)), database.select().from(agentInboxItems).where(and(eq(agentInboxItems.runId, job.runId), eq(agentInboxItems.kind, "discovery_attention"))), database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, job.runId))])).resolves.toEqual([[expect.objectContaining({ code: "ANYSEARCH_UNAVAILABLE" })], [], [{ status }]]);
+  });
+
   it("resolver 直接抛出的 interruption 不能伪造 checkpoint stop", async () => {
     const job = await layeredRun();
     const processor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => { throw new LayeredPublicWorkflowInterruption("paused"); } }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
