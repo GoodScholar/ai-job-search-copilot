@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   agentRunJobResults,
@@ -18,6 +18,8 @@ import {
   migrateDatabase,
   type Database,
 } from "@job-copilot/database";
+import { createAuditTrail } from "./audit-trail";
+import { createAgentRunCheckpoint } from "./agent-runs";
 import { createJobDiscoveryLeadRepository } from "./job-discovery-leads";
 import { createVerifiedJobSourceGate, VerifiedJobEvidenceStoreUnavailableError } from "./verified-job-source-gate";
 
@@ -164,6 +166,63 @@ describe("verified public job source gate", () => {
     await expect(gate.reject({ ...input, claimToken: oldToken })).rejects.toMatchObject({ code: "VERIFIED_JOB_SOURCE_CLAIM_STALE" });
     await expect(database.select({ state: jobDiscoveryLeads.state }).from(jobDiscoveryLeads).where(eq(jobDiscoveryLeads.id, subject.leadId))).resolves.toEqual([{ state: "pending" }]);
     await expect(gate.reject({ ...input, claimToken: newToken })).resolves.toMatchObject({ state: "rejected" });
+  });
+
+  it("checkpoint continue 后的 claim 接管会原子围栏所有 Lead 与 Gate mutation", async () => {
+    const subject = await owner();
+    const repository = createJobDiscoveryLeadRepository({ db: database, id: () => crypto.randomUUID() });
+    const verifyLead = subject.leadId;
+    const rejectLead = await repository.recordPending({
+      userId: subject.userId, runId: subject.runId, targetId: subject.targetId, queryId: crypto.randomUUID(),
+      queryKind: "target_company", queryFingerprint, normalizedUrl: "https://careers.acme.com/jobs/456?job=456",
+      stableFingerprint: createHash("sha256").update("https://careers.acme.com/jobs/456?job=456", "utf8").digest("hex"), now,
+    });
+    const oldToken = crypto.randomUUID();
+    const newToken = crypto.randomUUID();
+    const claimedAt = new Date();
+    const claimExpiresAt = new Date(claimedAt.getTime() + 60_000);
+    await database.update(agentRuns).set({
+      status: "running", startedAt: claimedAt, claimToken: oldToken, claimExpiresAt, activeSliceStartedAt: claimedAt,
+    }).where(eq(agentRuns.id, subject.runId));
+    const checkpoint = createAgentRunCheckpoint({
+      db: database, auditTrail: createAuditTrail({ db: database, clock: () => claimedAt }),
+      id: () => crypto.randomUUID(), clock: () => claimedAt,
+    });
+    await expect(checkpoint.check({
+      userId: subject.userId, runId: subject.runId, claimToken: oldToken,
+      checkpointKey: `${oldToken}:claim-mutation-fence`,
+    })).resolves.toEqual({ kind: "continue" });
+    await database.update(agentRuns).set({ claimToken: newToken, claimExpiresAt }).where(eq(agentRuns.id, subject.runId));
+
+    const staleQueryId = crypto.randomUUID();
+    const staleUrl = "https://careers.acme.com/jobs/789?job=789";
+    await expect(repository.recordPending({
+      userId: subject.userId, runId: subject.runId, targetId: subject.targetId, queryId: staleQueryId,
+      queryKind: "target_company", queryFingerprint, normalizedUrl: staleUrl,
+      stableFingerprint: createHash("sha256").update(staleUrl, "utf8").digest("hex"), claimToken: oldToken, now,
+    })).rejects.toMatchObject({ code: "JOB_DISCOVERY_CLAIM_STALE" });
+    await expect(database.select().from(jobDiscoveryLeads).where(and(eq(jobDiscoveryLeads.runId, subject.runId), eq(jobDiscoveryLeads.queryId, staleQueryId)))).resolves.toEqual([]);
+
+    const store = new EvidenceStore();
+    const gate = createVerifiedJobSourceGate({ db: database, contentStore: store, id: () => crypto.randomUUID() });
+    const verifyInput = {
+      userId: subject.userId, leadId: verifyLead,
+      candidate: { queryId: subject.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: page(), now,
+    };
+    await expect(gate.verify({ ...verifyInput, claimToken: oldToken })).rejects.toMatchObject({ code: "VERIFIED_JOB_SOURCE_CLAIM_STALE" });
+    await noWrites(subject.userId, verifyLead, store);
+
+    const rejectInput = { userId: subject.userId, leadId: rejectLead.leadId, code: "JOB_PAGE_URL_INVALID" as const, now };
+    await expect(gate.reject({ ...rejectInput, claimToken: oldToken })).rejects.toMatchObject({ code: "VERIFIED_JOB_SOURCE_CLAIM_STALE" });
+    await expect(database.select({ state: jobDiscoveryLeads.state }).from(jobDiscoveryLeads).where(eq(jobDiscoveryLeads.id, rejectLead.leadId))).resolves.toEqual([{ state: "pending" }]);
+
+    await expect(repository.recordPending({
+      userId: subject.userId, runId: subject.runId, targetId: subject.targetId, queryId: staleQueryId,
+      queryKind: "target_company", queryFingerprint, normalizedUrl: staleUrl,
+      stableFingerprint: createHash("sha256").update(staleUrl, "utf8").digest("hex"), claimToken: newToken, now,
+    })).resolves.toMatchObject({ state: "pending" });
+    await expect(gate.verify({ ...verifyInput, claimToken: newToken })).resolves.toMatchObject({ lead: { state: "verified" } });
+    await expect(gate.reject({ ...rejectInput, claimToken: newToken })).resolves.toMatchObject({ state: "rejected" });
   });
 
   it("仅由本地已验证页面建立真实来源版本，并把 AnySearch 保持为归因", async () => {
