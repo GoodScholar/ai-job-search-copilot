@@ -844,8 +844,8 @@ export const jobSourceHealthChecks = pgTable("job_source_health_checks", {
   check("job_source_health_checks_status_evidence_check", sql`
     (${table.status} = 'healthy' and ${table.validDetailCount} >= 1 and ${table.reasonCodes} = '[]'::jsonb and ${table.impactScope} = 'none' and ${table.impactAffectedCount} is null)
     or (${table.status} = 'zero_valid_results' and ${table.validDetailCount} = 0 and ${table.reasonCodes} = '[]'::jsonb and ${table.impactScope} = 'none' and ${table.impactAffectedCount} is null)
-    or (${table.status} = 'parser_degraded' and ${table.reasonCodes} ?| array['SOURCE_LIST_SCHEMA_INVALID', 'SOURCE_DETAIL_FIELDS_MISSING', 'SOURCE_DETAIL_URL_INVALID', 'SOURCE_DETAIL_IDENTITY_INVALID'])
-    or (${table.status} = 'rate_limited' and ${table.reasonCodes} = '["SOURCE_RATE_LIMITED"]'::jsonb)
-    or (${table.status} = 'hard_failed' and ${table.reasonCodes} ?| array['SOURCE_AUTH_FAILED', 'SOURCE_TIMEOUT', 'SOURCE_UNREACHABLE', 'SOURCE_SERVER_ERROR', 'SOURCE_POLICY_REJECTED'])
+    or (${table.status} = 'parser_degraded' and ${table.reasonCodes} <> '[]'::jsonb and ${table.reasonCodes} <@ '["SOURCE_LIST_SCHEMA_INVALID", "SOURCE_DETAIL_FIELDS_MISSING", "SOURCE_DETAIL_URL_INVALID", "SOURCE_DETAIL_IDENTITY_INVALID"]'::jsonb and ${table.impactScope} in ('job_details', 'entire_source'))
+    or (${table.status} = 'rate_limited' and ${table.reasonCodes} = '["SOURCE_RATE_LIMITED"]'::jsonb and ${table.impactScope} = 'entire_source')
+    or (${table.status} = 'hard_failed' and ${table.reasonCodes} <> '[]'::jsonb and ${table.reasonCodes} <@ '["SOURCE_AUTH_FAILED", "SOURCE_TIMEOUT", "SOURCE_UNREACHABLE", "SOURCE_SERVER_ERROR", "SOURCE_POLICY_REJECTED"]'::jsonb and ${table.impactScope} = 'entire_source')
   `),
 ]);

@@ -1241,6 +1241,22 @@ describe("database migrations", () => {
         )
       `)).rejects.toMatchObject({ cause: { code: "23514" } });
     }
+    for (const invalid of [
+      { sourceId: "greenhouse:parser-mixed", status: "parser_degraded", reasonCodes: '["SOURCE_DETAIL_FIELDS_MISSING", "SOURCE_RATE_LIMITED"]', impactScope: "job_details", impactAffectedCount: 1 },
+      { sourceId: "greenhouse:hard-mixed", status: "hard_failed", reasonCodes: '["SOURCE_UNREACHABLE", "SOURCE_DETAIL_URL_INVALID"]', impactScope: "entire_source", impactAffectedCount: null },
+      { sourceId: "greenhouse:parser-no-impact", status: "parser_degraded", reasonCodes: '["SOURCE_DETAIL_FIELDS_MISSING"]', impactScope: "none", impactAffectedCount: null },
+      { sourceId: "greenhouse:hard-no-impact", status: "hard_failed", reasonCodes: '["SOURCE_UNREACHABLE"]', impactScope: "none", impactAffectedCount: null },
+    ]) {
+      await expect(migratedDatabase.execute(sql`
+        insert into job_source_health_checks (
+          user_id, run_id, target_id, watchlist_item_id, source_id, status, reason_codes, impact_scope, impact_affected_count,
+          observed_posting_count, selected_detail_count, valid_detail_count, request_attempt_count, checked_at
+        ) values (
+          ${userId}, ${runId}, ${targetId}, '3f906934-fac2-4db9-93c4-09ccdec40ee6', ${invalid.sourceId}, ${invalid.status}, ${invalid.reasonCodes}::jsonb,
+          ${invalid.impactScope}, ${invalid.impactAffectedCount}, 1, 1, 0, 1, now()
+        )
+      `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    }
 
     const indexes = await migratedDatabase.execute(sql`
       select indexname from pg_indexes

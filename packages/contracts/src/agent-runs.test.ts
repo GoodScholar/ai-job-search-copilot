@@ -269,6 +269,32 @@ describe("agent run contracts", () => {
       ...unchecked, state: "disabled", status: "disabled", runId, lastCheckedAt: now,
       reasonCodes: ["SOURCE_UNREACHABLE"], impact: { scope: "entire_source", affectedCount: null }, suggestedAction: "reenable_source",
     }).success).toBe(false);
+
+    const parserPlusRateReasonAccepted = JobSourceHealthCheckSchema.safeParse({
+      ...base, reasonCodes: ["SOURCE_DETAIL_FIELDS_MISSING", "SOURCE_RATE_LIMITED"],
+    }).success;
+    const hardPlusParserReasonAccepted = JobSourceHealthCheckSchema.safeParse({
+      ...base, status: "hard_failed", reasonCodes: ["SOURCE_UNREACHABLE", "SOURCE_DETAIL_URL_INVALID"], impact: { scope: "entire_source", affectedCount: null },
+    }).success;
+    const parserWithNoImpactAccepted = JobSourceHealthCheckSchema.safeParse({
+      ...base, impact: { scope: "none", affectedCount: null },
+    }).success;
+    const hardFailureWithNoImpactAccepted = JobSourceHealthCheckSchema.safeParse({
+      ...base, status: "hard_failed", reasonCodes: ["SOURCE_UNREACHABLE"], impact: { scope: "none", affectedCount: null },
+    }).success;
+    const checkedRateProjectionWithoutIssueEvidenceAccepted = JobSourceHealthProjectionSchema.safeParse({
+      ...unchecked, status: "rate_limited", runId, lastCheckedAt: now, suggestedAction: "retry_later",
+    }).success;
+    const healthyProjectionWithRateEvidenceAccepted = JobSourceHealthProjectionSchema.safeParse({
+      ...unchecked, status: "healthy", runId, lastCheckedAt: now, reasonCodes: ["SOURCE_RATE_LIMITED"], impact: { scope: "entire_source", affectedCount: null }, suggestedAction: "none",
+    }).success;
+
+    expect(parserPlusRateReasonAccepted).toBe(false);
+    expect(hardPlusParserReasonAccepted).toBe(false);
+    expect(parserWithNoImpactAccepted).toBe(false);
+    expect(hardFailureWithNoImpactAccepted).toBe(false);
+    expect(checkedRateProjectionWithoutIssueEvidenceAccepted).toBe(false);
+    expect(healthyProjectionWithRateEvidenceAccepted).toBe(false);
   });
 
   it("保留 legacy 详情的原始输出，不投射 v3 的来源检查字段", () => {

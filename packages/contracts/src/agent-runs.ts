@@ -51,6 +51,7 @@ const jsonObject = z.record(z.string(), z.unknown());
 export const SourceHealthStatusSchema = z.enum([
   "healthy", "zero_valid_results", "parser_degraded", "rate_limited", "hard_failed",
 ]);
+type SourceHealthStatus = z.infer<typeof SourceHealthStatusSchema>;
 export const SourceHealthProjectionStatusSchema = z.enum([
   "healthy", "zero_valid_results", "parser_degraded", "rate_limited", "hard_failed", "disabled",
 ]);
@@ -76,6 +77,40 @@ const SourceHealthReasonCodesSchema = z.array(SourceHealthReasonCodeSchema).max(
   (codes) => new Set(codes).size === codes.length,
   { message: "reason codes must be unique" },
 );
+type SourceHealthReasonCode = z.infer<typeof SourceHealthReasonCodeSchema>;
+
+const parserDegradationReasons: ReadonlySet<SourceHealthReasonCode> = new Set([
+  "SOURCE_LIST_SCHEMA_INVALID", "SOURCE_DETAIL_FIELDS_MISSING", "SOURCE_DETAIL_URL_INVALID", "SOURCE_DETAIL_IDENTITY_INVALID",
+]);
+const hardFailureReasons: ReadonlySet<SourceHealthReasonCode> = new Set([
+  "SOURCE_AUTH_FAILED", "SOURCE_TIMEOUT", "SOURCE_UNREACHABLE", "SOURCE_SERVER_ERROR", "SOURCE_POLICY_REJECTED",
+]);
+const sourceHealthSuggestedActions: Record<SourceHealthStatus, z.infer<typeof SourceHealthSuggestedActionSchema>> = {
+  healthy: "none",
+  zero_valid_results: "wait_for_next_run",
+  parser_degraded: "retry_or_disable",
+  rate_limited: "retry_later",
+  hard_failed: "retry_or_disable",
+};
+
+function hasStatusMatchedSourceHealthEvidence(
+  status: SourceHealthStatus,
+  reasonCodes: SourceHealthReasonCode[],
+  impact: z.infer<typeof SourceHealthImpactSchema>,
+): boolean {
+  if (status === "healthy" || status === "zero_valid_results") {
+    return reasonCodes.length === 0 && impact.scope === "none" && impact.affectedCount === null;
+  }
+  if (status === "parser_degraded") {
+    return reasonCodes.length > 0 && reasonCodes.every((code) => parserDegradationReasons.has(code))
+      && (impact.scope === "job_details" || impact.scope === "entire_source");
+  }
+  if (status === "rate_limited") {
+    return reasonCodes.length === 1 && reasonCodes[0] === "SOURCE_RATE_LIMITED" && impact.scope === "entire_source";
+  }
+  return reasonCodes.length > 0 && reasonCodes.every((code) => hardFailureReasons.has(code)) && impact.scope === "entire_source";
+}
+
 export const JobSourceHealthCheckSchema = z.object({
   checkId: z.uuid(),
   runId: z.uuid(),
@@ -91,26 +126,18 @@ export const JobSourceHealthCheckSchema = z.object({
   requestAttemptCount: nonnegativeInteger,
   checkedAt: z.iso.datetime(),
 }).strict().superRefine((check, context) => {
-  const parserReasons = new Set(["SOURCE_LIST_SCHEMA_INVALID", "SOURCE_DETAIL_FIELDS_MISSING", "SOURCE_DETAIL_URL_INVALID", "SOURCE_DETAIL_IDENTITY_INVALID"]);
-  const hardFailureReasons = new Set(["SOURCE_AUTH_FAILED", "SOURCE_TIMEOUT", "SOURCE_UNREACHABLE", "SOURCE_SERVER_ERROR", "SOURCE_POLICY_REJECTED"]);
   const invalidOrdering = check.validDetailCount > check.selectedDetailCount || check.selectedDetailCount > check.observedPostingCount;
   if (invalidOrdering) context.addIssue({ code: "custom", path: ["validDetailCount"], message: "valid details must be selected and selected details observed" });
   if (check.requestAttemptCount < 1) context.addIssue({ code: "custom", path: ["requestAttemptCount"], message: "controlled checks require an attempt" });
-  const hasNoIssueEvidence = check.reasonCodes.length === 0 && check.impact.scope === "none" && check.impact.affectedCount === null;
-  if (check.status === "healthy" && (check.validDetailCount < 1 || !hasNoIssueEvidence)) {
+  if (check.status === "healthy" && (check.validDetailCount < 1 || !hasStatusMatchedSourceHealthEvidence(check.status, check.reasonCodes, check.impact))) {
     context.addIssue({ code: "custom", path: ["status"], message: "healthy checks retain verified progress without issue evidence" });
   }
-  if (check.status === "zero_valid_results" && (check.validDetailCount !== 0 || !hasNoIssueEvidence)) {
+  if (check.status === "zero_valid_results" && (check.validDetailCount !== 0 || !hasStatusMatchedSourceHealthEvidence(check.status, check.reasonCodes, check.impact))) {
     context.addIssue({ code: "custom", path: ["status"], message: "zero-valid checks are completed without issue evidence" });
   }
-  if (check.status === "parser_degraded" && !check.reasonCodes.some((code) => parserReasons.has(code))) {
-    context.addIssue({ code: "custom", path: ["reasonCodes"], message: "parser degradation requires a parser reason" });
-  }
-  if (check.status === "rate_limited" && !(check.reasonCodes.length > 0 && check.reasonCodes.every((code) => code === "SOURCE_RATE_LIMITED"))) {
-    context.addIssue({ code: "custom", path: ["reasonCodes"], message: "rate limiting has only rate-limit reasons" });
-  }
-  if (check.status === "hard_failed" && !check.reasonCodes.some((code) => hardFailureReasons.has(code))) {
-    context.addIssue({ code: "custom", path: ["reasonCodes"], message: "hard failures require a hard-failure reason" });
+  if ((check.status === "parser_degraded" || check.status === "rate_limited" || check.status === "hard_failed")
+    && !hasStatusMatchedSourceHealthEvidence(check.status, check.reasonCodes, check.impact)) {
+    context.addIssue({ code: "custom", path: ["reasonCodes"], message: "source health evidence must match its status" });
   }
 });
 export const JobSourceHealthProjectionSchema = z.object({
@@ -136,8 +163,11 @@ export const JobSourceHealthProjectionSchema = z.object({
   if (projection.status === "disabled" && !(projection.state === "disabled" && noIssueEvidence && projection.suggestedAction === "reenable_source")) {
     context.addIssue({ code: "custom", message: "disabled sources project current state without issue evidence" });
   }
-  if (projection.status !== null && projection.status !== "disabled" && (projection.runId === null || projection.lastCheckedAt === null)) {
-    context.addIssue({ code: "custom", message: "checked enabled sources retain their controlled-check reference" });
+  if (projection.status !== null && projection.status !== "disabled"
+    && (projection.runId === null || projection.lastCheckedAt === null
+      || !hasStatusMatchedSourceHealthEvidence(projection.status, projection.reasonCodes, projection.impact)
+      || projection.suggestedAction !== sourceHealthSuggestedActions[projection.status])) {
+    context.addIssue({ code: "custom", message: "checked enabled sources retain matched controlled-check evidence" });
   }
 });
 
