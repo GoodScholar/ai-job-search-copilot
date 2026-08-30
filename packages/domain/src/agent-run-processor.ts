@@ -573,7 +573,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           return persisted === "facts" ? "stale" : persisted;
         } catch (error) {
           if (error instanceof LayeredPublicWorkflowStop) return error.outcome;
-          if (error instanceof LayeredPublicWorkflowInterruption) return error.outcome;
+          if (error instanceof LayeredPublicWorkflowInterruption && trustedStop === error.outcome) return error.outcome;
           return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
         } finally { clearTimeout(abortAtDeadline); }
       }
