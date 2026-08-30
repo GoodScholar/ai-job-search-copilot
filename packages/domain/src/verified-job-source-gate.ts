@@ -39,10 +39,12 @@ const PageSchema = z.object({
 }).strict();
 const VerifyInputSchema = z.object({
   userId: z.uuid(), leadId: z.uuid(), candidate: CandidateSchema,
-  extract: z.object({ normalizedUrl: SafeNormalizedPublicJobUrlSchema }).strict(), claimToken: z.uuid().optional(),
+  extract: z.object({ normalizedUrl: SafeNormalizedPublicJobUrlSchema }).strict(),
   page: PageSchema, now: z.date(),
 }).strict();
-const RejectInputSchema = z.object({ userId: z.uuid(), leadId: z.uuid(), code: terminalRejectionCode, claimToken: z.uuid().optional(), now: z.date() }).strict();
+const VerifyForClaimInputSchema = VerifyInputSchema.extend({ claimToken: z.uuid() }).strict();
+const RejectInputSchema = z.object({ userId: z.uuid(), leadId: z.uuid(), code: terminalRejectionCode, now: z.date() }).strict();
+const RejectForClaimInputSchema = RejectInputSchema.extend({ claimToken: z.uuid() }).strict();
 
 export interface VerifiedJobEvidenceStore {
   put(input: { objectKey: string; bytes: Uint8Array; mediaType: "text/html" | "text/plain" }): Promise<{ created: boolean }>;
@@ -95,8 +97,8 @@ function sourceType(page: z.infer<typeof PageSchema>, queryKind: z.infer<typeof 
   return queryKind === "target_company" ? "company_careers" as const : "public_web" as const;
 }
 
-function parseVerifyInput(input: unknown) {
-  const parsed = VerifyInputSchema.safeParse(input);
+function parseVerifyInput(input: unknown, schema: typeof VerifyInputSchema | typeof VerifyForClaimInputSchema) {
+  const parsed = schema.safeParse(input);
   if (!parsed.success) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_INVALID_INPUT");
   validatePage(parsed.data);
   return parsed.data;
@@ -151,17 +153,22 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
       await cleanupUnreferencedObjects(transaction, userId, objectKeys);
     });
   }
-  async function assertClaim(transaction: Parameters<Parameters<Database["transaction"]>[0]>[0], input: { userId: string; runId: string; claimToken?: string; now: Date }) {
-    if (!input.claimToken) return;
+  async function assertClaim(transaction: Parameters<Parameters<Database["transaction"]>[0]>[0], input: { userId: string; runId: string; claimToken: string }) {
     const [run] = await transaction.select({ id: agentRuns.id }).from(agentRuns).where(and(
-      eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.claimToken), gt(agentRuns.claimExpiresAt, sql`current_timestamp`),
+      eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.controlState, "none"), eq(agentRuns.claimToken, input.claimToken), gt(agentRuns.claimExpiresAt, sql`current_timestamp`),
     )).limit(1);
     if (!run) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_CLAIM_STALE");
   }
 
   return {
-    async verify(input: unknown) {
-      const value = parseVerifyInput(input);
+    async verify(input: unknown) { return verify(input, VerifyInputSchema, false); },
+    async verifyForClaim(input: unknown) { return verify(input, VerifyForClaimInputSchema, true); },
+    async reject(input: unknown) { return reject(input, RejectInputSchema, false); },
+    async rejectForClaim(input: unknown) { return reject(input, RejectForClaimInputSchema, true); },
+  };
+
+  async function verify(input: unknown, schema: typeof VerifyInputSchema | typeof VerifyForClaimInputSchema, claimBound: boolean) {
+      const value = parseVerifyInput(input, schema) as z.infer<typeof VerifyForClaimInputSchema>;
       const rawBytes = bytes(value.page.rawHtml);
       const visibleBytes = bytes(value.page.visibleText);
       const rawContentSha256 = sha256(rawBytes);
@@ -175,7 +182,7 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
             eq(jobDiscoveryLeads.userId, value.userId), eq(jobDiscoveryLeads.id, value.leadId),
           )).limit(1);
           if (!lead) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_NOT_FOUND");
-          await assertClaim(transaction, { userId: value.userId, runId: lead.runId, claimToken: value.claimToken, now: value.now });
+          if (claimBound) await assertClaim(transaction, { userId: value.userId, runId: lead.runId, claimToken: value.claimToken });
           if (lead.queryId !== value.candidate.queryId || lead.normalizedUrl !== value.candidate.normalizedUrl
             || lead.stableFingerprint !== value.candidate.candidateFingerprint) {
             throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_CONFLICT");
@@ -265,10 +272,10 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
         await cleanupCreatedObjects(value.userId, createdObjectKeys);
         throw error;
       }
-    },
+  }
 
-    async reject(input: unknown) {
-      const parsed = RejectInputSchema.safeParse(input);
+  async function reject(input: unknown, schema: typeof RejectInputSchema | typeof RejectForClaimInputSchema, claimBound: boolean) {
+      const parsed = schema.safeParse(input);
       if (!parsed.success) {
         const retryable = z.object({
           userId: z.uuid(), leadId: z.uuid(),
@@ -281,11 +288,10 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
         await acquireAccountAdvisoryLock(transaction, parsed.data.userId);
         const [lead] = await transaction.select({ runId: jobDiscoveryLeads.runId }).from(jobDiscoveryLeads).where(and(eq(jobDiscoveryLeads.userId, parsed.data.userId), eq(jobDiscoveryLeads.id, parsed.data.leadId))).limit(1);
         if (!lead) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_NOT_FOUND");
-        await assertClaim(transaction, { userId: parsed.data.userId, runId: lead.runId, claimToken: parsed.data.claimToken, now: parsed.data.now });
+        if (claimBound) await assertClaim(transaction, { userId: parsed.data.userId, runId: lead.runId, claimToken: (parsed.data as z.infer<typeof RejectForClaimInputSchema>).claimToken });
         return transitions.rejectInTransaction({
           userId: parsed.data.userId, leadId: parsed.data.leadId, rejectionCode: parsed.data.code, now: parsed.data.now,
         }, transaction);
       });
-    },
-  };
+  }
 }

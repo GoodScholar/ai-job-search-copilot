@@ -100,7 +100,7 @@ describe("job discovery lead repository", () => {
     const subject = await owner("claim-stale"); const oldToken = crypto.randomUUID();
     await database.update(agentRuns).set({ status: "running", startedAt: now, claimToken: oldToken, claimExpiresAt: new Date(Date.now() + 60_000), activeSliceStartedAt: now }).where(eq(agentRuns.id, subject.runId));
     await database.update(agentRuns).set({ claimToken: crypto.randomUUID(), claimExpiresAt: new Date(Date.now() + 60_000) }).where(eq(agentRuns.id, subject.runId));
-    await expect(repository().recordPending({ ...pendingInput(subject), claimToken: oldToken })).rejects.toMatchObject({ code: "JOB_DISCOVERY_CLAIM_STALE" });
+    await expect(repository().recordPendingForClaim({ ...pendingInput(subject), claimToken: oldToken })).rejects.toMatchObject({ code: "JOB_DISCOVERY_CLAIM_STALE" });
     await expect(database.select().from(jobDiscoveryLeads).where(eq(jobDiscoveryLeads.runId, subject.runId))).resolves.toEqual([]);
   });
 
