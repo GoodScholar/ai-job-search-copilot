@@ -18,7 +18,7 @@ import type { AuditTrail } from "./audit-trail";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { agentRunUsageSnapshot, appendBudgetFacts, settleActiveSlice } from "./agent-run-lifecycle";
 import { discoveryNormalizedData, persistJobOpportunity } from "./job-opportunity-persistence";
-import { GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, JobSourceHealthCheckSchema, PublicSourceHealthAgentRunSourceScopeSchema, type JobSourceHealthCheck } from "@job-copilot/contracts/agent-runs";
+import { GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, JobSourceHealthCheckSchema, PublicAgentRunSourceScopeSchema, PublicSourceHealthAgentRunSourceScopeSchema, type JobSourceHealthCheck } from "@job-copilot/contracts/agent-runs";
 
 export type DiscoveryDetail = {
   sourceId: string;
@@ -306,6 +306,15 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
             sourceIds.add(scan.sourceId);
             observed.set(scan.sourceId, new Set(scan.observedDetailIds));
           }
+          if (run.workflowVersion === GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION || run.workflowVersion === "job-discovery-workflow-v2") {
+            const frozenSources = (run.workflowVersion === GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION
+              ? PublicSourceHealthAgentRunSourceScopeSchema.parse(run.sourceScope)
+              : PublicAgentRunSourceScopeSchema.parse(run.sourceScope)).sources;
+            const frozenSourceIds = new Set(frozenSources.map((source) => source.sourceId));
+            if (sourceIds.size !== frozenSourceIds.size || [...sourceIds].some((sourceId) => !frozenSourceIds.has(sourceId))) {
+              throw new Error("AGENT_RUN_PERSIST_FAILED");
+            }
+          }
           if (input.details.some((detail) => !observed.get(detail.sourceId)?.has(detail.detailId))) throw new Error("AGENT_RUN_PERSIST_FAILED");
         }
         const sourceChecks = input.sourceChecks?.map((inputCheck) => {
@@ -319,6 +328,14 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
           if (sourceChecks.length !== sourceById.size || sourceChecks.some((check) => sourceById.get(check.sourceId) !== check.watchlistItemId)) {
             throw new Error("AGENT_RUN_PERSIST_FAILED");
           }
+          const scansBySource = new Map(input.scans.map((scan) => [scan.sourceId, scan]));
+          if (sourceChecks.some((check) => {
+            const scan = scansBySource.get(check.sourceId);
+            const completed = check.status === "healthy" || check.status === "zero_valid_results";
+            return !scan || check.observedPostingCount !== scan.observedDetailIds.length || scan.complete !== completed;
+          })) throw new Error("AGENT_RUN_PERSIST_FAILED");
+        } else if (sourceChecks.length > 0) {
+          throw new Error("AGENT_RUN_PERSIST_FAILED");
         }
         if (sourceChecks.length > 0) {
           const inserted = await transaction.insert(jobSourceHealthChecks).values(sourceChecks.map((check) => ({
