@@ -83,4 +83,6 @@ Fresh verification：public API focused **1/1**；internal Lead + gate focused �
 3. generation 回归断言 UUID version nibble 为 `8`、RFC variant 为 `[89ab]`、同输入 retry 稳定、不同 Lead generation 不同；无 sleep barrier 覆盖 cleanup re-lock 后 T2 才能提交，且 T1 不删除 T2 reference。
 4. 清理 round 1 产生的无用 import/hostname normalization；将 public repository 和 internal transitions 的 input parser、Lead/Attribution fact projection 收敛为未导出的 package-internal helper，公开 surface 不变。
 
+补充测试提交：`1a239c2`，直接替换 transaction seam 为 unknown DB sentinel，连同 raw/visible put、id、delete sentinel 均断言 exact error object identity；typed unavailable 仍由既有回归断言映射稳定 storage/cleanup code。
+
 Fresh verification：public/internal/gate focused **3 files / 23 tests**；gate **1 file / 14 tests**；domain full **26 files / 296 tests**；contracts **12 files / 108 tests**；source-access **2 files / 125 tests**；database **2 files / 24 tests**；contracts/domain/source-access/database typecheck 均退出 0。最后 `git diff --check b56c3f17eb4240608ef9e82657413485b1b68252..HEAD` fresh exit 0。
