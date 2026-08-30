@@ -202,7 +202,7 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
             skipReason: row.skip_reason, createdAt: new Date(row.created_at),
           };
           const now = deps.clock();
-          const auditTrail = deps.auditTrail;
+          const auditTrail = deps.auditTrail.bind(transaction);
           const dispatch = async (runId: string) => {
             const [dispatched] = await transaction.update(jobDiscoveryScheduleOccurrences).set({ status: "dispatched", runId, skipReason: null })
               .where(and(eq(jobDiscoveryScheduleOccurrences.id, occurrence.id), eq(jobDiscoveryScheduleOccurrences.status, "pending"))).returning();

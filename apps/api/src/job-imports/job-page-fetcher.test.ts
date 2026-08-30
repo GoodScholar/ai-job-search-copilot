@@ -222,12 +222,12 @@ describe("SecureJobPageFetcher", () => {
     }
   });
 
-  it("委托公共来源模块，在显式禁网时不会绕过网络策略", async () => {
+  it("委托公共来源模块，在显式禁网时仅允许受控测试 origin", async () => {
     const previous = process.env.PUBLIC_SOURCE_NETWORK_MODE;
     process.env.PUBLIC_SOURCE_NETWORK_MODE = "disabled";
     try {
       await expect(new SecureJobPageFetcher({ appEnv: "test", testOrigin: origin }).fetch({ url: `${origin}/job` }))
-        .rejects.toMatchObject({ code: "JOB_PAGE_TARGET_REJECTED" } satisfies Pick<JobPageFetchError, "code">);
+        .resolves.toMatchObject({ pageClassification: "job" });
     } finally {
       if (previous === undefined) delete process.env.PUBLIC_SOURCE_NETWORK_MODE;
       else process.env.PUBLIC_SOURCE_NETWORK_MODE = previous;

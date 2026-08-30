@@ -6,6 +6,5 @@ export { PublicSourceAccessError, type PublicSourceAccessFailureCode, type Publi
 export function createPublicSourceClient(config: { exactHosts: readonly string[] }) {
   return createInternalPublicSourceClient({
     exactHosts: config.exactHosts,
-    testOrigin: process.env.APP_ENV === "test" ? process.env.PUBLIC_SOURCE_TEST_ORIGIN : undefined,
   });
 }

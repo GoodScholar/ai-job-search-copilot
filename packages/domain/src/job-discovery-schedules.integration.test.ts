@@ -14,7 +14,7 @@ import {
   migrateDatabase,
   type Database,
 } from "@job-copilot/database";
-import { createAuditTrail } from "./audit-trail";
+import { createAuditTrail, type AuditTrail } from "./audit-trail";
 import { createAgentRunCommands, createAgentRunQueries, type AgentRunQueue, type AgentRunStarter } from "./agent-runs";
 import { createCompanyWatchlistCommands } from "./company-watchlists";
 import { JobDiscoveryScheduleError, createJobDiscoverySchedules } from "./job-discovery-schedules";
@@ -80,10 +80,10 @@ describe("job discovery schedules", () => {
     const auditTrail = createAuditTrail({ db: database, clock: () => at });
     return {
       queue,
-      commands: createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => at }),
+      commands: createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => at, executionMode: "greenhouse" }),
       service: createJobDiscoverySchedules({
         db: database,
-        runs: createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => at }),
+        runs: createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => at, executionMode: "greenhouse" }),
         auditTrail,
         id: () => crypto.randomUUID(),
         clock: () => at,
@@ -192,6 +192,42 @@ describe("job discovery schedules", () => {
     await expect(database.select().from(auditEvents).where(eq(auditEvents.userId, owner.userId))).resolves.toSatisfy((events) => !JSON.stringify(events).includes("boards.greenhouse.io"));
   });
 
+  it("派发状态与绑定事务中的审计写入在审计失败时一起回滚", async () => {
+    const owner = await target();
+    await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/audit-rollback", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
+    const occurrence = await dueOccurrence(owner);
+    const realAuditTrail = createAuditTrail({ db: database, clock: () => now });
+    const auditTrail: AuditTrail = {
+      append: realAuditTrail.append,
+      query: realAuditTrail.query,
+      bind(transaction) {
+        const bound = realAuditTrail.bind(transaction);
+        return {
+          append: async (event) => {
+            await bound.append(event);
+            throw new Error("bound audit interrupted");
+          },
+          query: bound.query,
+          bind: bound.bind,
+        };
+      },
+    };
+    const queue = new Queue();
+    const service = createJobDiscoverySchedules({
+      db: database,
+      runs: createAgentRunCommands({ db: database, queue, auditTrail: realAuditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse" }),
+      auditTrail,
+      id: () => crypto.randomUUID(),
+      clock: () => now,
+    });
+
+    await expect(service.dispatchPending({ limit: 10 })).rejects.toThrow("bound audit interrupted");
+    await expect(database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, occurrence.occurrenceId)))
+      .resolves.toEqual([expect.objectContaining({ status: "pending", runId: null, skipReason: null })]);
+    await expect(database.select().from(auditEvents).where(and(eq(auditEvents.resourceId, occurrence.occurrenceId), eq(auditEvents.eventType, "job_discovery.occurrence_dispatched"))))
+      .resolves.toEqual([]);
+  });
+
   it("物化后目标停用会稳定跳过，缺失精确 Greenhouse API 授权也不创建 run", async () => {
     const inactiveOwner = await target();
     await addWatchlistSource({ userId: inactiveOwner.userId, targetId: inactiveOwner.targetId, careersUrl: "https://boards.greenhouse.io/example", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
@@ -224,7 +260,7 @@ describe("job discovery schedules", () => {
     const occurrence = await dueOccurrence(owner);
     const queue = new Queue();
     const auditTrail = createAuditTrail({ db: database, clock: () => now });
-    const real = createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now });
+    const real = createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse" });
     let failAfterCommit = true;
     const runs: AgentRunStarter = { start: async (input) => {
       const started = await real.start(input);
@@ -248,7 +284,7 @@ describe("job discovery schedules", () => {
     const occurrence = await dueOccurrence(owner);
     const queue = new Queue();
     const auditTrail = createAuditTrail({ db: database, clock: () => now });
-    const real = createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now });
+    const real = createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse" });
     let startCalls = 0;
     let firstStartCommitted!: () => void;
     let releaseFirstBind!: () => void;

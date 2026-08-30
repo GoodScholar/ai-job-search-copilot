@@ -160,6 +160,71 @@ describe("PublicSourceClient", () => {
     expect(requests - before).toBe(2);
   });
 
+  it("lets the explicit controlled testing seam run under disabled network mode without looking up another host", async () => {
+    const previous = process.env.PUBLIC_SOURCE_NETWORK_MODE;
+    let lookups = 0;
+    let transports = 0;
+    process.env.PUBLIC_SOURCE_NETWORK_MODE = "disabled";
+    try {
+      await expect(client().get({ url: new URL(`${origin}/html`), allowedDomains: ["127.0.0.1"], accept: "text/html", maxRedirects: 0, retry: "none" }))
+        .resolves.toMatchObject({ status: 200 });
+      const guarded = createPublicSourceClientForTest({
+        exactHosts: ["outside.test"], testOrigin: origin,
+        lookup: async () => { lookups += 1; return [{ address: "93.184.216.34", family: 4 }]; },
+        transport: async () => { transports += 1; return { status: 200, headers: { "content-type": "text/html" }, body: new Uint8Array() }; },
+      });
+      await expect(guarded.get({ url: new URL("https://outside.test/jobs"), allowedDomains: ["outside.test"], accept: "text/html", maxRedirects: 0, retry: "none" }))
+        .rejects.toMatchObject({ code: "PUBLIC_SOURCE_NETWORK_DISABLED" });
+      expect(lookups).toBe(0);
+      expect(transports).toBe(0);
+    } finally {
+      if (previous === undefined) delete process.env.PUBLIC_SOURCE_NETWORK_MODE;
+      else process.env.PUBLIC_SOURCE_NETWORK_MODE = previous;
+    }
+  });
+
+  it("aborts a never-resolving retry backoff and immediately frees its global and host permits", async () => {
+    let releaseSleep!: () => void;
+    let sleepStarted!: () => void;
+    let releaseHeld!: () => void;
+    let heldStarted!: () => void;
+    const sleeping = new Promise<void>((resolve) => { releaseSleep = resolve; });
+    const held = new Promise<void>((resolve) => { releaseHeld = resolve; });
+    const access = createPublicSourceClientForTest({
+      exactHosts: ["retry.test", "held.test", "probe.test"],
+      lookup: async () => [{ address: "93.184.216.34", family: 4 }],
+      sleep: async () => { sleepStarted(); await sleeping; },
+      transport: async ({ url, signal }): Promise<{ status: number; headers: Readonly<Record<string, string>>; body: Uint8Array }> => {
+        if (signal?.aborted) throw new PublicSourceAccessError("PUBLIC_SOURCE_ABORTED");
+        if (url.hostname === "retry.test") return { status: 429, headers: { "content-type": "text/html", "retry-after": "60" }, body: new Uint8Array() };
+        if (url.hostname === "held.test") { heldStarted(); await held; }
+        return { status: 200, headers: { "content-type": "text/html" }, body: new Uint8Array() };
+      },
+    });
+    const controller = new AbortController();
+    const retrying = access.get({ url: new URL("https://retry.test/jobs"), allowedDomains: ["retry.test"], accept: "text/html", maxRedirects: 0, retry: "bounded", signal: controller.signal });
+    let heldRequest: Promise<unknown> | undefined;
+    try {
+      await new Promise<void>((resolve) => { sleepStarted = resolve; });
+      heldRequest = access.get({ url: new URL("https://held.test/jobs"), allowedDomains: ["held.test"], accept: "text/html", maxRedirects: 0, retry: "none" });
+      await new Promise<void>((resolve) => { heldStarted = resolve; });
+      controller.abort();
+      await expect(Promise.race([
+        retrying,
+        new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("retry backoff did not abort")), 80)),
+      ])).rejects.toMatchObject({ code: "PUBLIC_SOURCE_ABORTED" });
+      await expect(access.get({ url: new URL("https://probe.test/jobs"), allowedDomains: ["probe.test"], accept: "text/html", maxRedirects: 0, retry: "none" }))
+        .resolves.toMatchObject({ status: 200 });
+      await expect(access.get({ url: new URL("https://retry.test/reused"), allowedDomains: ["retry.test"], accept: "text/html", maxRedirects: 0, retry: "none" }))
+        .resolves.toMatchObject({ status: 429 });
+    } finally {
+      releaseSleep();
+      releaseHeld();
+      await retrying.catch(() => undefined);
+      await heldRequest?.catch(() => undefined);
+    }
+  });
+
   it("maps abort and total timeout without leaking request data", async () => {
     const abort = new AbortController();
     abort.abort();
@@ -217,6 +282,33 @@ describe("PublicSourceClient", () => {
     const sameHost = createPublicSourceClientForTest({ exactHosts: ["one.test"], lookup: async () => [{ address: "93.184.216.34", family: 4 }], transport });
     await Promise.all([sameHost.get({ url: new URL("https://one.test/a"), allowedDomains: ["one.test"], accept: "text/html", maxRedirects: 0, retry: "none" }), sameHost.get({ url: new URL("https://one.test/b"), allowedDomains: ["one.test"], accept: "text/html", maxRedirects: 0, retry: "none" })]);
     expect(maximum).toBe(1);
+  });
+
+  it("limits DNS work before transport and cleans up idle per-host permits", async () => {
+    const hosts = Array.from({ length: 64 }, (_, index) => `lookup-${index}.test`);
+    const resolvers: Array<() => void> = [];
+    let activeLookups = 0;
+    let maximumLookups = 0;
+    let blockLookups = true;
+    const access = createPublicSourceClientForTest({
+      exactHosts: hosts,
+      lookup: async () => {
+        activeLookups += 1;
+        maximumLookups = Math.max(maximumLookups, activeLookups);
+        if (blockLookups) await new Promise<void>((resolve) => resolvers.push(resolve));
+        activeLookups -= 1;
+        return [{ address: "93.184.216.34", family: 4 }];
+      },
+      transport: async () => ({ status: 200, headers: { "content-type": "text/html" }, body: new Uint8Array() }),
+    });
+    const requests = hosts.slice(0, 4).map((host) => access.get({ url: new URL(`https://${host}/jobs`), allowedDomains: [host], accept: "text/html", maxRedirects: 0, retry: "none" }));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(maximumLookups).toBe(2);
+    blockLookups = false;
+    resolvers.forEach((resolve) => resolve());
+    await Promise.all(requests);
+    await Promise.all(hosts.slice(4).map((host) => access.get({ url: new URL(`https://${host}/jobs`), allowedDomains: [host], accept: "text/html", maxRedirects: 0, retry: "none" })));
+    expect((access as unknown as { hostPermitCountForTest: () => number }).hostPermitCountForTest()).toBe(0);
   });
 
   it("reports a bounded retry as one logical request with two stable attempts", async () => {
@@ -421,72 +513,28 @@ describe("PublicSourceClient", () => {
       .rejects.toMatchObject({ code: "PUBLIC_SOURCE_TIMEOUT" });
   });
 
-  it("releases the global permit after each of three per-host queued aborts", async () => {
-    for (let round = 0; round < 3; round += 1) {
-      let hostALookups = 0;
-      let releaseHolder: (() => void) | undefined;
-      const holderReleased = new Promise<void>((resolve) => { releaseHolder = resolve; });
-      let holderEntered: () => void;
-      const holderStarted = new Promise<void>((resolve) => { holderEntered = resolve; });
-      let releaseWaiterLookup: ((answers: readonly { address: string; family: number }[]) => void) | undefined;
-      let waiterLookupStarted: () => void;
-      const waiterLookupReady = new Promise<void>((resolve) => { waiterLookupStarted = resolve; });
-      let probeEntered = false;
-      let hostBEntered: () => void;
-      const access = createPublicSourceClientForTest({
-        exactHosts: ["host-a.test", "probe.test", "host-b.test"],
-        lookup: async (hostname) => {
-          if (hostname === "host-a.test" && ++hostALookups === 2) {
-            waiterLookupStarted();
-            return new Promise<readonly { address: string; family: number }[]>((resolve) => { releaseWaiterLookup = resolve; });
-          }
-          return [{ address: "93.184.216.34", family: 4 }];
-        },
-        transport: async ({ url }) => {
-          if (url.hostname === "host-a.test") {
-            holderEntered();
-            await holderReleased;
-          }
-          if (url.hostname === "probe.test") probeEntered = true;
-          if (url.hostname === "host-b.test") hostBEntered();
-          return { status: 200, headers: { "content-type": "text/html" }, body: new Uint8Array() };
-        },
-      });
-      const holder = access.get({ url: new URL("https://host-a.test/holder"), allowedDomains: ["host-a.test"], accept: "text/html", maxRedirects: 0, retry: "none" });
-      let hostB: Promise<unknown> | undefined;
-
-      try {
-        await holderStarted;
-        const waiterController = new AbortController();
-        const waiter = access.get({ url: new URL("https://host-a.test/waiter"), allowedDomains: ["host-a.test"], accept: "text/html", maxRedirects: 0, retry: "none", signal: waiterController.signal });
-        await waiterLookupReady;
-        if (!releaseWaiterLookup) throw new Error("waiter lookup was not blocked");
-        releaseWaiterLookup([{ address: "93.184.216.34", family: 4 }]);
-        await new Promise<void>((resolve) => setImmediate(resolve));
-
-        const probeController = new AbortController();
-        const probe = access.get({ url: new URL("https://probe.test/probe"), allowedDomains: ["probe.test"], accept: "text/html", maxRedirects: 0, retry: "none", signal: probeController.signal });
-        await new Promise<void>((resolve) => setImmediate(resolve));
-        expect(probeEntered).toBe(false);
-
-        waiterController.abort();
-        probeController.abort();
-        await expect(waiter).rejects.toMatchObject({ code: "PUBLIC_SOURCE_ABORTED" });
-        await expect(probe).rejects.toMatchObject({ code: "PUBLIC_SOURCE_ABORTED" });
-
-        const hostBStarted = new Promise<void>((resolve, reject) => {
-          const timeout = setTimeout(() => reject(new Error(`host B did not start in round ${round}`)), 100);
-          hostBEntered = () => { clearTimeout(timeout); resolve(); };
-        });
-        hostB = access.get({ url: new URL("https://host-b.test/jobs"), allowedDomains: ["host-b.test"], accept: "text/html", maxRedirects: 0, retry: "none" });
-        await hostBStarted;
-        await expect(hostB).resolves.toMatchObject({ status: 200 });
-      } finally {
-        releaseHolder?.();
-        await holder;
-        await hostB?.catch(() => undefined);
-      }
-    }
+  it("removes an aborted per-host waiter before it reaches DNS", async () => {
+    let releaseHolder!: () => void;
+    let holderStarted!: () => void;
+    let lookups = 0;
+    const held = new Promise<void>((resolve) => { releaseHolder = resolve; });
+    const access = createPublicSourceClientForTest({
+      exactHosts: ["host-a.test"],
+      lookup: async () => { lookups += 1; return [{ address: "93.184.216.34", family: 4 }]; },
+      transport: async ({ url }) => {
+        if (url.pathname === "/holder") { holderStarted(); await held; }
+        return { status: 200, headers: { "content-type": "text/html" }, body: new Uint8Array() };
+      },
+    });
+    const holder = access.get({ url: new URL("https://host-a.test/holder"), allowedDomains: ["host-a.test"], accept: "text/html", maxRedirects: 0, retry: "none" });
+    await new Promise<void>((resolve) => { holderStarted = resolve; });
+    const controller = new AbortController();
+    const waiter = access.get({ url: new URL("https://host-a.test/waiter"), allowedDomains: ["host-a.test"], accept: "text/html", maxRedirects: 0, retry: "none", signal: controller.signal });
+    controller.abort();
+    await expect(waiter).rejects.toMatchObject({ code: "PUBLIC_SOURCE_ABORTED" });
+    expect(lookups).toBe(1);
+    releaseHolder();
+    await holder;
   });
 
   it("removes three consecutively aborted queued requests so another host reaches global concurrency two", async () => {

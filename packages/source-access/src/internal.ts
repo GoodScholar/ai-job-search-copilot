@@ -54,8 +54,10 @@ export type InternalPublicSourceClientConfig = {
   totalTimeoutMs?: number;
   lookup?: (hostname: string) => Promise<readonly Address[]>;
   transport?: Transport;
-  sleep?: (milliseconds: number) => Promise<void>;
+  sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
   allowTestTransport?: boolean;
+  allowTesting?: boolean;
+  exposeHostPermitCountForTesting?: boolean;
 };
 
 class Semaphore {
@@ -88,22 +90,54 @@ class Semaphore {
 }
 
 const globalRequests = new Semaphore(2);
-const hostRequests = new Map<string, Semaphore>();
+
+class HostSemaphorePool {
+  private readonly entries = new Map<string, { semaphore: Semaphore; references: number }>();
+
+  async acquire(host: string, signal?: AbortSignal): Promise<() => void> {
+    const entry = this.entries.get(host) ?? { semaphore: new Semaphore(1), references: 0 };
+    this.entries.set(host, entry);
+    entry.references += 1;
+    let release: () => void;
+    try {
+      release = await entry.semaphore.acquire(signal);
+    } catch (error) {
+      this.releaseReference(host, entry);
+      throw error;
+    }
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      release();
+      this.releaseReference(host, entry);
+    };
+  }
+
+  size(): number { return this.entries.size; }
+
+  private releaseReference(host: string, entry: { semaphore: Semaphore; references: number }): void {
+    entry.references -= 1;
+    if (entry.references === 0 && this.entries.get(host) === entry) this.entries.delete(host);
+  }
+}
+
+const hostRequests = new HostSemaphorePool();
 
 export function createInternalPublicSourceClient(config: InternalPublicSourceClientConfig): PublicSourceClient {
   const exactHosts = new Set(config.exactHosts.map(normalizeHost));
   if (exactHosts.size === 0 || [...exactHosts].some((host) => !host)) throw new Error("exactHosts must contain exact host names");
   const testOrigin = config.testOrigin ? parseOrigin(config.testOrigin) : undefined;
-  const appEnv = process.env.APP_ENV ?? "development";
-  const networkMode = process.env.PUBLIC_SOURCE_NETWORK_MODE === "disabled" ? "disabled" : appEnv === "test" && !config.allowTestTransport ? "test" : "enabled";
+  const appEnv = config.appEnv ?? process.env.APP_ENV ?? "development";
+  const networkMode = process.env.PUBLIC_SOURCE_NETWORK_MODE === "disabled" ? "disabled" : appEnv === "test" ? "test" : "enabled";
   const lookup = config.lookup ?? ((hostname: string) => systemLookup(hostname, { all: true, verbatim: true }));
   const transport = config.transport ?? nodeTransport(config.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS);
-  const sleep = config.sleep ?? ((milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds)));
+  const sleep = config.sleep ?? wait;
   const totalTimeoutMs = config.totalTimeoutMs ?? DEFAULT_TOTAL_TIMEOUT_MS;
 
-  return {
-    async get(input) {
-      assertInitialPolicy(input, exactHosts, networkMode, testOrigin);
+  const client: PublicSourceClient = {
+    async get(input: Parameters<PublicSourceClient["get"]>[0]) {
+      assertInitialPolicy(input, exactHosts, networkMode, testOrigin, config.allowTesting === true, config.allowTestTransport === true);
       const startedAt = Date.now();
       let current = input.url;
       let redirects = 0;
@@ -111,22 +145,20 @@ export function createInternalPublicSourceClient(config: InternalPublicSourceCli
 
       for (;;) {
         throwIfAborted(input.signal);
-        const target = await resolveTarget(current, lookup, remaining(startedAt, totalTimeoutMs), testOrigin, input.signal);
-        const globalRelease = await globalRequests.acquire(input.signal);
         const hostKey = normalizeHost(current.hostname);
-        const hostSemaphore = hostRequests.get(hostKey) ?? new Semaphore(1);
-        hostRequests.set(hostKey, hostSemaphore);
-        let hostRelease: (() => void) | undefined;
+        const hostRelease = await hostRequests.acquire(hostKey, input.signal);
+        let globalRelease: (() => void) | undefined;
         let result: { response: TransportResponse; hopAttemptCount: number };
         try {
-          hostRelease = await hostSemaphore.acquire(input.signal);
+          globalRelease = await globalRequests.acquire(input.signal);
+          const target = await resolveTarget(current, lookup, remaining(startedAt, totalTimeoutMs), testOrigin, input.signal);
           result = await requestWithRetry({ current, target, input, startedAt, totalTimeoutMs, transport, sleep });
         } catch (error) {
           const mapped = mapError(error);
           throw new PublicSourceAccessError(mapped.code, attemptCount + mapped.attemptCount);
         } finally {
-          hostRelease?.();
-          globalRelease();
+          globalRelease?.();
+          hostRelease();
         }
         const { response, hopAttemptCount } = result;
         attemptCount += hopAttemptCount;
@@ -148,10 +180,14 @@ export function createInternalPublicSourceClient(config: InternalPublicSourceCli
       }
     },
   };
+  if (config.exposeHostPermitCountForTesting) {
+    return Object.assign(client, { hostPermitCountForTest: () => hostRequests.size() });
+  }
+  return client;
 }
 
 async function requestWithRetry(args: {
-  current: URL; target: { address: string; family: 4 | 6 }; input: Parameters<PublicSourceClient["get"]>[0]; startedAt: number; totalTimeoutMs: number; transport: Transport; sleep: (milliseconds: number) => Promise<void>;
+  current: URL; target: { address: string; family: 4 | 6 }; input: Parameters<PublicSourceClient["get"]>[0]; startedAt: number; totalTimeoutMs: number; transport: Transport; sleep: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
 }): Promise<{ response: TransportResponse; hopAttemptCount: number }> {
   let attempts = 0;
   for (;;) {
@@ -163,19 +199,43 @@ async function requestWithRetry(args: {
       response = await args.transport({ url: args.current, target: args.target, accept: args.input.accept, timeoutMs, signal: args.input.signal });
     } catch (error) {
       if (args.input.retry !== "bounded" || attempts >= MAX_ATTEMPTS || !isRetryable(error)) throw withAttempts(mapError(error), attempts);
-      await args.sleep(Math.min(250, remaining(args.startedAt, args.totalTimeoutMs)));
+      await waitForBackoff(args, 250);
       continue;
     }
     if (args.input.retry !== "bounded" || attempts >= MAX_ATTEMPTS || (response.status !== 429 && response.status < 500)) return { response, hopAttemptCount: attempts };
     const delay = retryDelay(response.headers["retry-after"]);
-    await args.sleep(Math.min(delay, remaining(args.startedAt, args.totalTimeoutMs)));
+    await waitForBackoff(args, delay);
   }
 }
 
-function assertInitialPolicy(input: Parameters<PublicSourceClient["get"]>[0], exactHosts: ReadonlySet<string>, networkMode: "disabled" | "test" | "enabled", testOrigin: URL | undefined): void {
+async function waitForBackoff(args: { input: Parameters<PublicSourceClient["get"]>[0]; startedAt: number; totalTimeoutMs: number; sleep: (milliseconds: number, signal?: AbortSignal) => Promise<void> }, delay: number): Promise<void> {
+  const timeoutMs = remaining(args.startedAt, args.totalTimeoutMs);
+  if (timeoutMs <= 0) throw new PublicSourceAccessError("PUBLIC_SOURCE_TIMEOUT");
+  const controller = new AbortController();
+  let rejectWait!: (error: PublicSourceAccessError) => void;
+  const interrupted = new Promise<never>((_resolve, reject) => { rejectWait = reject; });
+  const abort = () => { controller.abort(); rejectWait(new PublicSourceAccessError("PUBLIC_SOURCE_ABORTED")); };
+  const timer = setTimeout(() => { controller.abort(); rejectWait(new PublicSourceAccessError("PUBLIC_SOURCE_TIMEOUT")); }, timeoutMs);
+  args.input.signal?.addEventListener("abort", abort, { once: true });
+  try {
+    await Promise.race([args.sleep(Math.min(delay, timeoutMs), controller.signal), interrupted]);
+    if (args.input.signal?.aborted) throw new PublicSourceAccessError("PUBLIC_SOURCE_ABORTED");
+    if (remaining(args.startedAt, args.totalTimeoutMs) <= 0) throw new PublicSourceAccessError("PUBLIC_SOURCE_TIMEOUT");
+  } catch (error) {
+    if (args.input.signal?.aborted) throw new PublicSourceAccessError("PUBLIC_SOURCE_ABORTED");
+    if (controller.signal.aborted) throw new PublicSourceAccessError("PUBLIC_SOURCE_TIMEOUT");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+    args.input.signal?.removeEventListener("abort", abort);
+  }
+}
+
+function assertInitialPolicy(input: Parameters<PublicSourceClient["get"]>[0], exactHosts: ReadonlySet<string>, networkMode: "disabled" | "test" | "enabled", testOrigin: URL | undefined, allowTesting: boolean, allowTestTransport: boolean): void {
   throwIfAborted(input.signal);
   if (!isAuthorizedUrl(input.url, input.allowedDomains, exactHosts, testOrigin)) throw new PublicSourceAccessError("PUBLIC_SOURCE_TARGET_REJECTED");
-  if (networkMode === "disabled" || (networkMode === "test" && (!testOrigin || input.url.origin !== testOrigin.origin))) throw new PublicSourceAccessError("PUBLIC_SOURCE_NETWORK_DISABLED");
+  const usesTestingSeam = allowTesting && (testOrigin ? testOrigin.origin === input.url.origin : allowTestTransport);
+  if ((networkMode === "disabled" || networkMode === "test") && !usesTestingSeam) throw new PublicSourceAccessError("PUBLIC_SOURCE_NETWORK_DISABLED");
 }
 
 function isAuthorizedUrl(url: URL, allowedDomains: readonly string[], exactHosts: ReadonlySet<string>, testOrigin: URL | undefined): boolean {
@@ -260,6 +320,15 @@ function withTimeout<T>(promise: Promise<T>, milliseconds: number, signal?: Abor
     const cleanup = () => { clearTimeout(timer); signal?.removeEventListener("abort", abort); };
     signal?.addEventListener("abort", abort, { once: true });
     promise.then((value) => { cleanup(); resolve(value); }, (error) => { cleanup(); reject(error); });
+  });
+}
+
+function wait(milliseconds: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { cleanup(); resolve(); }, milliseconds);
+    const abort = () => { cleanup(); reject(new PublicSourceAccessError("PUBLIC_SOURCE_ABORTED")); };
+    const cleanup = () => { clearTimeout(timer); signal?.removeEventListener("abort", abort); };
+    signal?.addEventListener("abort", abort, { once: true });
   });
 }
 
