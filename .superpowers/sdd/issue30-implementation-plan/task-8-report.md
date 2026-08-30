@@ -48,6 +48,8 @@
 
 本轮提交：`2194e65`、`6f7010c`、`948ebfb`、`79ee9c4`、`7aa241a`。
 
+后续 round 2 证据：`b6382c1` 的真实 pause checkpoint 覆盖与实现同提交，未保留独立 Red；`e23250e`（Red）→`251c29c`（Green）拒绝 resolver 直接伪造 stop throw；`552da3d` 首次运行即绿，覆盖真实 cancel、budget 与 stale checkpoint terminal（processor focused **54 passed**），不将其表述为 Red→Green。
+
 ## 提交链（`768b8c6..HEAD`，报告提交前）
 
 ```text
