@@ -22,6 +22,7 @@ const GreenhouseSourceListSchema = z.object({
     for (const [index, job] of jobs.entries()) {
       if (!SourceHealthDetailIdSchema.safeParse(String(job.id)).success) context.addIssue({ code: "custom", path: [index, "id"], message: "provider job ID must be a safe detail ID" });
     }
+    if (new Set(jobs.map((job) => String(job.id))).size !== jobs.length) context.addIssue({ code: "custom", message: "provider job IDs must be unique after normalization" });
   }),
   meta: z.object({ total: z.number().int().nonnegative() }).passthrough(),
 }).passthrough().superRefine((list, context) => {

@@ -68,6 +68,12 @@ describe("GreenhouseSourceHealthAdapter", () => {
     });
   });
 
+  it("拒绝 number/string 规范化后重复的 provider job ID", async () => {
+    const body = { jobs: [{ id: 701, title: "Platform Engineer", location: { name: "Beijing" } }, { id: "701", title: "Platform Engineer", location: { name: "Beijing" } }], meta: { total: 2 } };
+    const client = createPublicSourceClientForTest({ exactHosts: ["boards-api.greenhouse.io"], testOrigin: "https://boards-api.greenhouse.io", lookup: async () => [{ address: "93.184.216.34", family: 4 }], transport: async () => ({ status: 200, headers: { "content-type": "application/json" }, body: new TextEncoder().encode(JSON.stringify(body)) }) });
+    await expect(new GreenhouseSourceHealthAdapter({ client }).listSource({ targetSnapshot, source })).resolves.toEqual({ ok: false, failure: { category: "parser_degraded", reasonCode: "SOURCE_LIST_SCHEMA_INVALID", retryable: false, attemptCount: 1 } });
+  });
+
   it.each(["bad/id", "0", "-1", "x".repeat(257)])("将不安全的 provider job ID %s 归类为列表 parser degradation", async (id) => {
     const body = { jobs: [{ id, title: "Engineer", location: { name: "Beijing" } }], meta: { total: 1 } };
     const client = createPublicSourceClientForTest({ exactHosts: ["boards-api.greenhouse.io"], testOrigin: "https://boards-api.greenhouse.io", lookup: async () => [{ address: "93.184.216.34", family: 4 }], transport: async () => ({ status: 200, headers: { "content-type": "application/json" }, body: new TextEncoder().encode(JSON.stringify(body)) }) });
