@@ -413,6 +413,36 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(database.select().from(jobDiscoveryDiagnostics).where(eq(jobDiscoveryDiagnostics.runId, job.runId))).resolves.toHaveLength(1);
   });
 
+  it("v4 workflow 忽略 abort 时仍在 active-duration deadline 内终结并保留最新 diagnostic", async () => {
+    const job = await layeredRun();
+    await database.update(agentRuns).set({ budgetSnapshot: { ...PUBLIC_JOB_DISCOVERY_BUDGET, maxActiveDurationMs: 200 } }).where(eq(agentRuns.id, job.runId));
+    const entered = Promise.withResolvers<void>();
+    const processor = createAgentRunProcessor({
+      db: database,
+      adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
+      layeredPublicWorkflowResolver: { resolve: () => ({ run: async (input) => {
+        entered.resolve();
+        const onDiagnostics = (input as unknown as { onDiagnostics?: (snapshot: Array<{ scope: "provider"; code: "ANYSEARCH_UNAVAILABLE"; retryable: true; affectedCount: 1 }>) => void }).onDiagnostics;
+        onDiagnostics?.([{ scope: "provider", code: "ANYSEARCH_UNAVAILABLE", retryable: true, affectedCount: 1 }]);
+        return new Promise<never>(() => undefined);
+      } }) },
+      contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: () => crypto.randomUUID(), clock: () => new Date(), heartbeatIntervalMs: 60_000,
+    });
+
+    const processing = processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true });
+    await entered.promise;
+    await expect(processing).resolves.toBe("budget_exhausted");
+    await expect(Promise.all([
+      database.select({ status: agentRuns.status, terminationKind: agentRuns.terminationKind }).from(agentRuns).where(eq(agentRuns.id, job.runId)),
+      database.select().from(jobDiscoveryDiagnostics).where(eq(jobDiscoveryDiagnostics.runId, job.runId)),
+      database.select().from(agentInboxItems).where(and(eq(agentInboxItems.runId, job.runId), eq(agentInboxItems.kind, "discovery_attention"))),
+    ])).resolves.toEqual([
+      [{ status: "failed", terminationKind: "budget_exhausted" }],
+      [expect.objectContaining({ scope: "provider", code: "ANYSEARCH_UNAVAILABLE", retryable: true, affectedCount: 1 })],
+      [],
+    ]);
+  }, 5_000);
+
   it.each([
     ["cancel", "cancel_requested", "cancelled", "cancelled"],
     ["budget", "budget", "budget_exhausted", "failed"],
