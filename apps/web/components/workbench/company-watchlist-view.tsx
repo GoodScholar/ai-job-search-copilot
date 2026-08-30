@@ -19,8 +19,11 @@ type Draft = {
 
 const emptyDraft: Draft = { canonicalCompanyName: "", careersUrl: "", allowedDomains: "", sourceNote: "" };
 const conflictMessage = "Watchlist 已在其他位置更新，请刷新后重试。";
-const healthRefreshMessage = "Watchlist 已保存，但来源诊断刷新失败。请重新加载来源诊断或刷新页面。";
+const initialHealthRefreshMessage = "来源诊断暂时无法读取，请重新加载或刷新页面。";
+const postWriteHealthRefreshMessage = "Watchlist 已保存，但来源诊断刷新失败。请重新加载来源诊断或刷新页面。";
 const safetyNotice = "不要填写账号、密码、Cookie、验证码或绕过登录限制的说明。";
+
+type HealthRefreshFailure = "initial" | "post_write" | null;
 
 function domains(value: string): string[] {
   return value.split(/[，,\s]+/u).map((domain) => domain.trim().toLowerCase()).filter(Boolean);
@@ -79,10 +82,11 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth, ini
   const [draft, setDraft] = useState<Draft>(emptyDraft);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
-  const [healthRefreshFailed, setHealthRefreshFailed] = useState(initialHealthRefreshFailed);
+  const [healthRefreshFailure, setHealthRefreshFailure] = useState<HealthRefreshFailure>(initialHealthRefreshFailed ? "initial" : null);
   const [isSaving, setIsSaving] = useState(false);
   const inactive = overview.target.targetState === "inactive";
   const editingItem = overview.items.find((item) => item.itemId === editingItemId) ?? null;
+  const healthRefreshMessage = healthRefreshFailure === "initial" ? initialHealthRefreshMessage : "来源诊断未能更新。请重新加载或刷新页面。";
 
   function updateDraft<Key extends keyof Draft>(key: Key, value: Draft[Key]) {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -103,12 +107,12 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth, ini
     setOverview(nextOverview);
     try {
       setSourceHealth(await fetchSourceHealth(nextOverview));
-      setHealthRefreshFailed(false);
+      setHealthRefreshFailure(null);
       setMessage(successMessage);
     } catch {
       setSourceHealth(undefined);
-      setHealthRefreshFailed(true);
-      setMessage(successMessage);
+      setHealthRefreshFailure("post_write");
+      setMessage(postWriteHealthRefreshMessage);
     }
   }
 
@@ -116,10 +120,10 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth, ini
     setMessage(""); setIsSaving(true);
     try {
       setSourceHealth(await fetchSourceHealth(overview));
-      setHealthRefreshFailed(false);
+      setHealthRefreshFailure(null);
     } catch {
       setSourceHealth(undefined);
-      setHealthRefreshFailed(true);
+      setHealthRefreshFailure((current) => current ?? "initial");
     } finally {
       setIsSaving(false);
     }
@@ -236,7 +240,7 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth, ini
           <p>建议动作：{actionLabels[source.suggestedAction]}</p>
         </article>
       </li>)}</ol>
-    </section> : healthRefreshFailed ? <section aria-labelledby="source-health-title" className="company-watchlist-section" id="source-health">
+    </section> : healthRefreshFailure ? <section aria-labelledby="source-health-title" className="company-watchlist-section" id="source-health">
       <h2 id="source-health-title">来源诊断</h2>
       <p>{healthRefreshMessage}</p>
       <button className="workbench-touch-target" disabled={isSaving} onClick={() => void retrySourceHealth()} type="button">重新加载来源诊断</button>

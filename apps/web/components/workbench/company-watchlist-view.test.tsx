@@ -54,6 +54,8 @@ it("初始健康读取降级时保留 Watchlist 控制与可恢复诊断", async
   vi.stubGlobal("fetch", fetchMock);
   render(<CompanyWatchlistView initialOverview={initial} initialHealthRefreshFailed />);
 
+  expect(screen.getByText("来源诊断暂时无法读取，请重新加载或刷新页面。")).toBeVisible();
+  expect(screen.queryByText(/Watchlist 已保存/u)).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "编辑 曙光云图" })).toBeEnabled();
   expect(screen.getByRole("button", { name: "停用 曙光云图" })).toBeEnabled();
   await user.click(screen.getByRole("button", { name: "重新加载来源诊断" }));
@@ -184,6 +186,8 @@ it("health 刷新失败后编辑或取消不会移除恢复入口，重试成功
 
   await user.click(screen.getByRole("button", { name: "停用 曙光云图" }));
   await waitFor(() => expect(screen.getByText("Watchlist 已保存，但来源诊断刷新失败。请重新加载来源诊断或刷新页面。")).toBeVisible());
+  expect(screen.getByRole("status")).toHaveTextContent("Watchlist 已保存，但来源诊断刷新失败。请重新加载来源诊断或刷新页面。");
+  expect(screen.getByRole("status")).not.toHaveTextContent("来源已停用。");
   expect(screen.queryByLabelText("旧证据 来源诊断")).not.toBeInTheDocument();
   expect(screen.getByText("Watchlist 版本 2")).toBeVisible();
   await user.click(screen.getByRole("button", { name: "编辑 曙光云图" }));
