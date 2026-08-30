@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { jobOpportunities, jobOpportunitySources } from "@job-copilot/database";
 
 type Discovery = { sourceId: string; detailId: string; company: string | null; title: string | null; location: string | null; postedAt: string | null; deadline: string | null; sourceType: string; isOfficial: boolean; rawPayload: Record<string, unknown> };
@@ -16,19 +16,28 @@ export function discoveryNormalizedData(detail: Discovery) {
 }
 
 async function resolveCurrentOpportunity(db: PersistenceDb, userId: string, opportunity: { id: string; canonicalOpportunityId: string | null }) {
-  const visited = new Set<string>();
-  let current = opportunity;
-  while (current.canonicalOpportunityId) {
-    if (current.canonicalOpportunityId === current.id || visited.has(current.id)) throw new Error("AGENT_RUN_PERSIST_FAILED");
-    visited.add(current.id);
-    const [next] = await db.select({ id: jobOpportunities.id, canonicalOpportunityId: jobOpportunities.canonicalOpportunityId }).from(jobOpportunities).where(and(
-      eq(jobOpportunities.userId, userId), eq(jobOpportunities.id, current.canonicalOpportunityId),
-    ));
-    if (!next) throw new Error("AGENT_RUN_PERSIST_FAILED");
-    current = next;
-  }
-  if (visited.has(current.id)) throw new Error("AGENT_RUN_PERSIST_FAILED");
-  return current;
+  const [resolved] = await db.execute(sql`
+    with recursive chain as (
+      select id, canonical_opportunity_id, array[id]::uuid[] as path, false as has_cycle
+      from job_opportunities
+      where user_id = ${userId}::uuid and id = ${opportunity.id}::uuid
+      union all
+      select next.id, next.canonical_opportunity_id, chain.path || next.id, next.id = any(chain.path)
+      from chain
+      join job_opportunities as next
+        on next.user_id = ${userId}::uuid and next.id = chain.canonical_opportunity_id
+      where chain.canonical_opportunity_id is not null and not chain.has_cycle
+    )
+    select id as "id", canonical_opportunity_id as "canonicalOpportunityId",
+      case when has_cycle then 'cycle'
+        when canonical_opportunity_id is null then 'root'
+        else 'missing' end as "status"
+    from chain
+    order by cardinality(path) desc
+    limit 1
+  `) as Array<{ id: string; canonicalOpportunityId: string | null; status: "root" | "cycle" | "missing" }>;
+  if (!resolved || resolved.status !== "root") throw new Error("AGENT_RUN_PERSIST_FAILED");
+  return resolved;
 }
 
 /** 仅负责机会 dedup/upsert 与来源证据链接；来源 posting/version 的生命周期由调用方维护。 */

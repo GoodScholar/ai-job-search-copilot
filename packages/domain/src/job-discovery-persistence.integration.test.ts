@@ -21,7 +21,7 @@ import {
 } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
 import { createAgentRunCommands, type AgentRunQueue } from "./agent-run-control";
-import { createJobDiscoveryPersistence } from "./job-discovery-persistence";
+import { createJobDiscoveryPersistence, discoverySourceIdentifier } from "./job-discovery-persistence";
 
 const firstSeen = new Date("2026-08-30T00:00:00.000Z");
 const later = new Date("2026-08-31T00:00:00.000Z");
@@ -301,6 +301,56 @@ describe("job discovery persistence lifecycle", () => {
       database.select().from(agentRunJobResults).where(eq(agentRunJobResults.userId, userId)),
     ]);
     expect(afterCycle.map((rows) => rows.map((row) => row.id).sort())).toEqual(beforeCycle.map((rows) => rows.map((row) => row.id).sort()));
+  });
+
+  it("canonical root 解析的 SQL 形状不随 alias 深度增长", async () => {
+    const updateFromAliasChain = async (depth: number) => {
+      const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const sourceId = `greenhouse:deep-alias-${depth}`;
+      const postingId = crypto.randomUUID(); const versionId = crypto.randomUUID();
+      await database.insert(jobAccounts).values({ id: userId });
+      await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: firstSeen, updatedAt: firstSeen });
+      await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: firstSeen });
+      await database.insert(jobSourcePostings).values({ id: postingId, userId, sourceType: "company_careers", sourceIdentifier: discoverySourceIdentifier(sourceId, "a"), sourceId, sourceIdentity: { sourceId, detailId: "a" }, applicationDeadline: null, isOfficial: true, availability: "open", availabilityUpdatedAt: firstSeen, createdAt: firstSeen, updatedAt: firstSeen });
+      await database.insert(jobSourcePostingVersions).values({ id: versionId, userId, sourcePostingId: postingId, version: 1, contentSha256: "a".repeat(64), rawContentSha256: "b".repeat(64), rawObjectReference: { objectKey: "initial.json" }, normalizedData: { sourceId, detailId: "a", company: "Fictional", title: "Initial", location: null, postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true }, retrievedAt: firstSeen, availability: "open", createdAt: firstSeen });
+      await database.execute(sql`
+        with generated as (
+          select ordinal, gen_random_uuid() as id from generate_series(1, ${depth}) as ordinal
+        ), chain as (
+          select ordinal, id, lead(id) over (order by ordinal) as canonical_id from generated
+        )
+        insert into job_opportunities (
+          id, user_id, source_posting_version_id, canonical_opportunity_id, dedup_key,
+          company, title, location, posted_at, deadline, description, normalized_data,
+          availability, availability_updated_at, created_at, updated_at
+        )
+        select id, ${userId}::uuid, ${versionId}::uuid, canonical_id,
+          md5('deep:' || ordinal::text) || md5('deep-extra:' || ordinal::text),
+          'Fictional', 'Alias ' || ordinal, null, null, null, null,
+          jsonb_build_object('sourceId', ${sourceId}::text, 'detailId', 'a'),
+          'open', ${firstSeen.toISOString()}::timestamptz, ${firstSeen.toISOString()}::timestamptz, ${firstSeen.toISOString()}::timestamptz
+        from chain
+      `);
+      const [first] = await database.select({ id: jobOpportunities.id }).from(jobOpportunities).where(and(eq(jobOpportunities.userId, userId), eq(jobOpportunities.title, "Alias 1")));
+      const [root] = await database.select({ id: jobOpportunities.id }).from(jobOpportunities).where(and(eq(jobOpportunities.userId, userId), isNull(jobOpportunities.canonicalOpportunityId)));
+      await database.insert(jobOpportunitySources).values({ id: crypto.randomUUID(), userId, opportunityId: first!.id, sourcePostingVersionId: versionId, createdAt: firstSeen });
+      const persistence = createJobDiscoveryPersistence({ db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => later }) });
+      statementCount = 0; observedStatements = [];
+      const run = await claimRun(userId, targetId, later);
+      statementCount = 0; observedStatements = [];
+      await persistence.persistSuccessfulDiscovery({ run, details: [{ sourceId, detailId: "a", company: "Fictional", title: "K5", location: null, postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true, rawPayload: { depth } }], scans: [{ sourceId, observedDetailIds: ["a"], complete: true }], storedObjects: [{ sourceId, detailId: "a", objectKey: "updated.json", rawContentSha256: "c".repeat(64) }], now: later });
+      const [result] = await database.select({ opportunityId: agentRunJobResults.opportunityId }).from(agentRunJobResults).where(eq(agentRunJobResults.runId, run.id));
+      return { rootId: root!.id, resultId: result!.opportunityId, count: statementCount, queries: observedStatements.map((statement) => statement.query), maxParams: Math.max(...observedStatements.map((statement) => statement.params.length)) };
+    };
+
+    const shallow = await updateFromAliasChain(3);
+    const deep = await updateFromAliasChain(256);
+    expect(shallow.resultId).toBe(shallow.rootId);
+    expect(deep.resultId).toBe(deep.rootId);
+    expect(deep.count).toBeLessThanOrEqual(31);
+    expect(deep.count).toBe(shallow.count);
+    expect(deep.queries).toEqual(shallow.queries);
+    expect(deep.maxParams).toBeLessThanOrEqual(32);
+    expect(deep.maxParams).toBe(shallow.maxParams);
   });
 
   it("官方 A 经关闭和 reopen 后撞入 B 的 K2 时保留所有历史 ID、对象引用和 evidence", async () => {
