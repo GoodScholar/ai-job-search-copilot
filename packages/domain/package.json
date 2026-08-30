@@ -20,7 +20,7 @@
     "./job-discovery-execution-mode": "./src/job-discovery-execution-mode.ts",
     "./agent-runs": "./src/agent-runs.ts",
     "./anysearch-query-plan": "./src/anysearch-query-plan.ts",
-    "./job-discovery-leads": "./src/job-discovery-leads.ts",
+    "./job-discovery-leads": "./src/job-discovery-leads.public.ts",
     "./verified-job-source-gate": "./src/verified-job-source-gate.ts"
   },
   "scripts": {
