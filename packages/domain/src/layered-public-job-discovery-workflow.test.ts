@@ -193,19 +193,19 @@ describe("layered public job discovery workflow", () => {
       .resolves.toMatchObject({ branchOutcome: { trusted: "failed", publicDiscovery: "clean_zero" }, sourcePostingVersionIds: [] });
   });
 
-  it("候选均在验证链 terminal reject 时标记 candidate-failures，而非错误成功", async () => {
+  it("extract URL 不一致会终结 Lead 并记录局部 source issue", async () => {
     const workflow = createLayeredPublicJobDiscoveryWorkflow({
       trustedSources: { discover: async () => ({ succeeded: false, verifiedSourcePostingVersionIds: [] }) },
       anySearch: {
         search: async ({ beforeRequest }) => { await beforeRequest(); return { candidates: [{ normalizedUrl: "https://careers.example.com/jobs/1", stableFingerprint: "a".repeat(64) }] }; },
-        extract: async ({ beforeRequest }) => { await beforeRequest(); return { normalizedUrl: "https://careers.example.com/jobs/1" }; },
+        extract: async ({ beforeRequest }) => { await beforeRequest(); return { normalizedUrl: "https://careers.example.com/jobs/other" }; },
       },
       preflight: async ({ candidate }) => ({ normalizedUrl: candidate.normalizedUrl }), leads: { recordPending: async () => ({ leadId: "66666666-6666-8666-8666-666666666666" }) },
-      fetcher: { fetch: async () => { throw { code: "JOB_PAGE_LOGIN_REQUIRED" }; } },
-      gate: { verify: async () => { throw new Error("UNUSED"); }, reject: async () => undefined },
+      fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
+      gate: { verify: async () => { throw new Error("UNUSED"); }, reject: async (input) => { expect(input.code).toBe("JOB_PAGE_URL_INVALID"); } },
     });
     await expect(workflow.run({ userId: targetId, runId, now: new Date(), attemptCount: 1, signal: new AbortController().signal, executionSpec: executionSpecFor([{ ordinal: 1, queryId, kind: "general", stableFingerprint: "b".repeat(64), query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }]) as never, beforePhysicalOperation: async () => undefined }))
-      .resolves.toMatchObject({ branchOutcome: { trusted: "failed", publicDiscovery: "candidate_failures" }, sourcePostingVersionIds: [], diagnostics: [expect.objectContaining({ code: "JOB_PAGE_LOGIN_REQUIRED", retryable: false })] });
+      .resolves.toMatchObject({ branchOutcome: { trusted: "failed", publicDiscovery: "candidate_failures" }, sourcePostingVersionIds: [], diagnostics: [expect.objectContaining({ scope: "lead", code: "JOB_PAGE_URL_INVALID", retryable: false })], sourceIssues: [expect.objectContaining({ provider: "anysearch", code: "JOB_PAGE_URL_INVALID" })] });
   });
 
   it("一个 verified result 与局部失败仍标记 verified，并保留脱敏问题", async () => {
