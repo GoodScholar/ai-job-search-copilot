@@ -28,6 +28,7 @@ function executionSpecFor(queries: Array<Record<string, unknown>>, trustedSource
 describe("layered public job discovery workflow", () => {
   it("在同一 run 调度可信来源和 AnySearch，并仅返回脱敏事实", async () => {
     const calls: string[] = [];
+    const proofs: Record<string, unknown> = {};
     const workflow = createLayeredPublicJobDiscoveryWorkflow({
       trustedSources: {
         discover: async () => {
@@ -41,12 +42,12 @@ describe("layered public job discovery workflow", () => {
           calls.push(`search:${query.queryId}`);
           return { candidates: [{ normalizedUrl: "https://careers.example.com/jobs/1", stableFingerprint: "a".repeat(64) }] };
         },
-        extract: async ({ beforeRequest }) => { await beforeRequest(); calls.push("extract"); return { normalizedUrl: "https://careers.example.com/jobs/1" }; },
+        extract: async (input) => { proofs.extract = input; await input.beforeRequest(); calls.push("extract"); return { normalizedUrl: "https://careers.example.com/jobs/1" }; },
       },
-      preflight: async () => ({ normalizedUrl: "https://careers.example.com/jobs/1" }),
-      leads: { recordPending: async () => { calls.push("pending"); return { leadId: "66666666-6666-8666-8666-666666666666" }; } },
-      fetcher: { fetch: async () => { calls.push("fetch"); return { requestedUrl: "https://careers.example.com/jobs/1", finalUrl: "https://careers.example.com/jobs/1", canonicalUrl: "https://careers.example.com/jobs/1", rawHtml: "<h1>AI Engineer</h1>", visibleText: "AI Engineer", pageClassification: "job", sourceKind: "official" }; } },
-      gate: { verify: async () => { calls.push("verify"); return { sourcePostingVersionId: "77777777-7777-8777-8777-777777777777" }; }, reject: async () => { calls.push("reject"); } },
+      preflight: async (input) => { proofs.preflight = input; return { normalizedUrl: "https://careers.example.com/jobs/1" }; },
+      leads: { recordPending: async (input) => { proofs.pending = input; calls.push("pending"); return { leadId: "66666666-6666-8666-8666-666666666666" }; } },
+      fetcher: { fetch: async (input) => { proofs.fetch = input; calls.push("fetch"); return { requestedUrl: "https://careers.example.com/jobs/1", finalUrl: "https://careers.example.com/jobs/1", canonicalUrl: "https://careers.example.com/jobs/1", rawHtml: "<h1>AI Engineer</h1>", visibleText: "AI Engineer", pageClassification: "job", sourceKind: "official" }; } },
+      gate: { verify: async (input) => { proofs.verify = input; calls.push("verify"); return { sourcePostingVersionId: "77777777-7777-8777-8777-777777777777" }; }, reject: async () => { calls.push("reject"); } },
     });
 
     const executionSpec = {
@@ -74,6 +75,12 @@ describe("layered public job discovery workflow", () => {
 
     expect(calls).toEqual(["trusted", "checkpoint:search", `search:${queryId}`, "pending", "checkpoint:extract", "extract", "checkpoint:fetch", "fetch", "verify"]);
     expect(result).toEqual({ hasTrustedSuccess: true, branchSuccess: { trusted: true, publicDiscovery: true }, sourcePostingVersionIds: ["44444444-4444-8444-8444-444444444444", "77777777-7777-8777-8777-777777777777"], trustedSourcePostingVersionIds: ["44444444-4444-8444-8444-444444444444"], sourceIssues: [], diagnostics: [] });
+    const capability = { userId: targetId, runId, queryId, queryFingerprint: "b".repeat(64), normalizedUrl: "https://careers.example.com/jobs/1", stableFingerprint: "a".repeat(64), allowedSiteDomains: [] };
+    expect(proofs.preflight).toMatchObject({ candidate: capability });
+    expect(proofs.pending).toMatchObject({ candidate: capability });
+    expect(proofs.extract).toMatchObject({ candidate: { ...capability, leadId: "66666666-6666-8666-8666-666666666666" } });
+    expect(proofs.fetch).toMatchObject({ candidate: { ...capability, leadId: "66666666-6666-8666-8666-666666666666" } });
+    expect(proofs.verify).toMatchObject({ candidate: { ...capability, leadId: "66666666-6666-8666-8666-666666666666" } });
     expect(JSON.stringify(result)).not.toContain("careers.example.com");
   });
 
@@ -149,10 +156,10 @@ describe("layered public job discovery workflow", () => {
         },
         extract: async () => { calls.push("extract"); throw new Error("UNUSED"); },
       },
-      preflight: async ({ normalizedUrl }) => normalizedUrl.includes("approved.acme.com") && !normalizedUrl.includes("unapproved")
+      preflight: async ({ candidate }) => candidate.normalizedUrl.includes("approved.acme.com") && !candidate.normalizedUrl.includes("unapproved")
         ? { normalizedUrl: "https://approved.acme.com/jobs?id=rewritten" }
-        : { normalizedUrl },
-      leads: { recordPending: async ({ normalizedUrl }) => { calls.push(`pending:${normalizedUrl}`); return { leadId: "66666666-6666-8666-8666-666666666666" }; } },
+        : { normalizedUrl: candidate.normalizedUrl },
+      leads: { recordPending: async ({ candidate }) => { calls.push(`pending:${candidate.normalizedUrl}`); return { leadId: "66666666-6666-8666-8666-666666666666" }; } },
       fetcher: { fetch: async () => { calls.push("fetch"); throw new Error("UNUSED"); } },
       gate: { verify: async () => { calls.push("verify"); throw new Error("UNUSED"); }, reject: async ({ code }) => { calls.push(`reject:${String(code)}`); } },
     });
