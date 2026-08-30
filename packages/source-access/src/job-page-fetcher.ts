@@ -150,7 +150,7 @@ function jobTitleMainSegment(title: string): string {
 }
 
 function isListingTitle(title: string | undefined): boolean {
-  return /^(?:[^,]*\bjobs(?:\s+(?:in|at)\s+.+|\s*(?:[|—–\x2f])\s*.+)?|[^,]*\bopen\s+positions(?:\s+(?:in|at)\s+.+|\s*(?:[|—–\x2f])\s*.+)?|[^,，]*(?:全部职位|职位列表|招聘岗位)(?:\s*(?:[|—–\x2f])\s*.+)?)\s*$/iu.test(title ?? "");
+  return /^(?:[^,]*\bjobs(?:\s+(?:in|at)\s+.+|\s*(?:[-|—–\x2f])\s*.+)?|[^,]*\bopen\s+positions(?:\s+(?:in|at)\s+.+|\s*(?:[|—–\x2f])\s*.+)?|[^,，]*(?:全部职位|职位列表|招聘岗位)(?:\s*(?:[|—–\x2f])\s*.+)?)\s*$/iu.test(title ?? "");
 }
 
 type JobDetailCategory = "responsibilities" | "requirements" | "candidate-profile" | "benefits";

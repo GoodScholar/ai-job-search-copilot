@@ -57,6 +57,7 @@ describe("SecureJobPageFetcher public seam", () => {
         case "/frontend-developer-jobs": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Frontend Developer Jobs</h1><p>Company: Example Corp</p><p>Location: Shanghai</p><article><h2>Frontend Developer</h2></article><article><h2>Frontend Lead</h2></article></main>"); return;
         case "/frontend-developer-jobs-single": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Frontend Developer Jobs</h1><p>Company: Example Corp</p><p>Location: Shanghai</p><article><h2>Frontend Developer</h2></article></main>"); return;
         case "/frontend-developer-jobs-shanghai": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Frontend Developer Jobs — Shanghai</h1><p>Company: Example Corp</p><p>Location: Shanghai</p><article><h2>Frontend Developer</h2></article></main>"); return;
+        case "/frontend-developer-jobs-hyphen": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Frontend Developer Jobs - Shanghai</h1><p>Company: Example Corp</p><p>Location: Shanghai</p><article><h2>Frontend Developer</h2></article></main>"); return;
         case "/frontend-developer-jobs-en-dash": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Frontend Developer Jobs – Shanghai</h1><p>Company: Example Corp</p><p>Location: Shanghai</p><article><h2>Frontend Developer</h2></article></main>"); return;
         case "/frontend-developer-jobs-slash": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Frontend Developer Jobs / Shanghai</h1><p>Company: Example Corp</p><p>Location: Shanghai</p><article><h2>Frontend Developer</h2></article></main>"); return;
         case "/jobs-example-corp": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Jobs | Example Corp</h1><p>Company: Example Corp</p><p>Location: Shanghai</p><article><h2>Frontend Developer</h2></article><article><h2>Backend Developer</h2></article></main>"); return;
@@ -185,6 +186,7 @@ describe("SecureJobPageFetcher public seam", () => {
     ["/frontend-developer-jobs", "JOB_PAGE_LISTING"],
     ["/frontend-developer-jobs-single", "JOB_PAGE_LISTING"],
     ["/frontend-developer-jobs-shanghai", "JOB_PAGE_LISTING"],
+    ["/frontend-developer-jobs-hyphen", "JOB_PAGE_LISTING"],
     ["/frontend-developer-jobs-en-dash", "JOB_PAGE_LISTING"],
     ["/frontend-developer-jobs-slash", "JOB_PAGE_LISTING"],
     ["/jobs-example-corp", "JOB_PAGE_LISTING"],
