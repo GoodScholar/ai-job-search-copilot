@@ -11,7 +11,7 @@
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
-    "test:e2e": "PLAYWRIGHT_HTML_OPEN=never playwright test && E2E_SOURCE_HEALTH_ONLY=1 PLAYWRIGHT_HTML_OPEN=never playwright test"
+    "test:e2e": "PLAYWRIGHT_HTML_OPEN=never node scripts/e2e-runner.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",

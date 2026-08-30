@@ -70,6 +70,13 @@ async function getOpenInbox(page: Page): Promise<AgentInboxItem[]> {
   return ((await response.json()) as { items: AgentInboxItem[] }).items;
 }
 
+async function expectCheckedAt(article: ReturnType<Page["getByRole"]>): Promise<void> {
+  const checkedAt = article.locator("p").filter({ hasText: /^最后检查：/u });
+  await expect(checkedAt).toBeVisible();
+  await expect(checkedAt).not.toHaveText("最后检查：尚未检查");
+  await expect(checkedAt).toHaveText(/^最后检查：.*\d{4}.+$/u);
+}
+
 test("两来源 Fake 运行保留成功岗位、展示局部诊断并可停用失败来源", async ({ page, request }, testInfo) => {
   test.setTimeout(90_000);
   const scenario = scenarioFor(testInfo);
@@ -115,8 +122,8 @@ test("两来源 Fake 运行保留成功岗位、展示局部诊断并可停用�
   await expect(page).toHaveURL(new RegExp(`/profile/targets/${targetId}/watchlist#source-health$`));
   const healthy = page.getByRole("article", { name: "健康来源 来源诊断" });
   const limited = page.getByRole("article", { name: "受限来源 来源诊断" });
-  await expect(healthy).toContainText("状态：健康"); await expect(healthy).toContainText("最后检查："); await expect(healthy).toContainText("影响范围：无"); await expect(healthy).toContainText("建议动作：无需处理");
-  await expect(limited).toContainText("状态：访问受限"); await expect(limited).toContainText("最后检查："); await expect(limited).toContainText("影响范围：整个来源"); await expect(limited).toContainText("建议动作：稍后重试");
+  await expect(healthy).toContainText("状态：健康"); await expectCheckedAt(healthy); await expect(healthy).toContainText("影响范围：无"); await expect(healthy).toContainText("建议动作：无需处理");
+  await expect(limited).toContainText("状态：访问受限"); await expectCheckedAt(limited); await expect(limited).toContainText("影响范围：整个来源"); await expect(limited).toContainText("建议动作：稍后重试");
   const disable = page.getByRole("button", { name: "停用 受限来源" });
   expect(await disable.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
   if (testInfo.project.name === "Desktop Chrome") { await disable.focus(); await page.keyboard.press("Enter"); } else await disable.tap();
