@@ -305,7 +305,7 @@ describe("AgentRunProcessor checkpoints", () => {
     const fetchStarted = new Promise<void>((resolve) => { reachedFetch = resolve; });
     let signal: AbortSignal | undefined;
     const hooks: string[] = [];
-    const processor = createAgentRunProcessor({
+    const oldProcessor = createAgentRunProcessor({
       db: database,
       heartbeatRenew: async () => heartbeat,
       adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
@@ -320,9 +320,20 @@ describe("AgentRunProcessor checkpoints", () => {
       } }) },
       contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
     });
-    const processing = processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true });
+    const processing = oldProcessor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true });
     await fetchStarted;
     expect(signal?.aborted).toBe(false);
+    await database.update(agentRuns).set({ claimExpiresAt: new Date(now.getTime() - 1) }).where(eq(agentRuns.id, job.runId));
+    const takeover = createAgentRunProcessor({
+      db: database,
+      adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
+      layeredPublicWorkflowResolver: { resolve: () => ({ run: async ({ beforePhysicalOperation }) => {
+        await beforePhysicalOperation({ kind: "search", identity: job.queryId });
+        return { branchOutcome: { trusted: "succeeded" as const, publicDiscovery: "clean_zero" as const }, sourcePostingVersionIds: [job.sourcePostingVersionId], trustedSourcePostingVersionIds: [job.sourcePostingVersionId], diagnostics: [] };
+      } }) },
+      contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+    await expect(takeover.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("completed");
     resolveHeartbeat(false);
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(signal?.aborted).toBe(true);
@@ -334,6 +345,7 @@ describe("AgentRunProcessor checkpoints", () => {
       database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, job.userId)),
       database.select().from(jobDiscoveryAttributions).where(eq(jobDiscoveryAttributions.runId, job.runId)),
     ])).resolves.toEqual([[], [expect.objectContaining({ id: job.sourcePostingVersionId })], []]);
+    await expect(database.select({ attempts: agentRuns.attemptCount }).from(agentRuns).where(eq(agentRuns.id, job.runId))).resolves.toEqual([{ attempts: 2 }]);
   });
 
   it("v4 中断持久化既有脱敏 diagnostic，重放只取最大事实且不提前投递 issue/attention", async () => {
