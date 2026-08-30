@@ -157,7 +157,7 @@ it("每次成功写入后都用 BFF 的当前 health 投影替换旧证据", asy
   expect(fetchMock).toHaveBeenNthCalledWith(10, `/api/job-targets/${targetId}/source-health`, expect.anything());
 });
 
-it("health 刷新失败时保留成功写入但清除旧证据并提供重试", async () => {
+it("health 刷新失败后编辑或取消不会移除恢复入口，重试成功才恢复诊断", async () => {
   const user = userEvent.setup();
   const initial = overview([item(firstItemId, 1, "曙光云图")], 1);
   const next = overview([{ ...initial.items[0]!, state: "disabled" }], 2);
@@ -169,11 +169,16 @@ it("health 刷新失败时保留成功写入但清除旧证据并提供重试", 
   render(<CompanyWatchlistView initialOverview={initial} initialSourceHealth={health(1, [source(firstItemId, "greenhouse:aurora", "旧证据")])} />);
 
   await user.click(screen.getByRole("button", { name: "停用 曙光云图" }));
-  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("来源诊断刷新失败"));
+  await waitFor(() => expect(screen.getByText("Watchlist 已保存，但来源诊断刷新失败。请重新加载来源诊断或刷新页面。")).toBeVisible());
   expect(screen.queryByLabelText("旧证据 来源诊断")).not.toBeInTheDocument();
   expect(screen.getByText("Watchlist 版本 2")).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "编辑 曙光云图" }));
+  expect(screen.getByRole("button", { name: "重新加载来源诊断" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "取消编辑" }));
+  expect(screen.getByRole("button", { name: "重新加载来源诊断" })).toBeVisible();
   await user.click(screen.getByRole("button", { name: "重新加载来源诊断" }));
   await waitFor(() => expect(screen.getByLabelText("曙光 来源诊断")).toHaveTextContent("已停用"));
+  expect(screen.queryByRole("button", { name: "重新加载来源诊断" })).not.toBeInTheDocument();
 });
 
 it("编辑、完整排列上移下移和启停均携带当前聚合版本并保持文本状态", async () => {

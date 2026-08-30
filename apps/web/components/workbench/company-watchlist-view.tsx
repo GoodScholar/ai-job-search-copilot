@@ -79,6 +79,7 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth }: {
   const [draft, setDraft] = useState<Draft>(emptyDraft);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  const [healthRefreshFailed, setHealthRefreshFailed] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const inactive = overview.target.targetState === "inactive";
   const editingItem = overview.items.find((item) => item.itemId === editingItemId) ?? null;
@@ -102,10 +103,12 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth }: {
     setOverview(nextOverview);
     try {
       setSourceHealth(await fetchSourceHealth(nextOverview));
+      setHealthRefreshFailed(false);
       setMessage(successMessage);
     } catch {
       setSourceHealth(undefined);
-      setMessage(healthRefreshMessage);
+      setHealthRefreshFailed(true);
+      setMessage(successMessage);
     }
   }
 
@@ -113,9 +116,10 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth }: {
     setMessage(""); setIsSaving(true);
     try {
       setSourceHealth(await fetchSourceHealth(overview));
+      setHealthRefreshFailed(false);
     } catch {
       setSourceHealth(undefined);
-      setMessage(healthRefreshMessage);
+      setHealthRefreshFailed(true);
     } finally {
       setIsSaving(false);
     }
@@ -232,7 +236,7 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth }: {
           <p>建议动作：{actionLabels[source.suggestedAction]}</p>
         </article>
       </li>)}</ol>
-    </section> : message === healthRefreshMessage ? <section aria-labelledby="source-health-title" className="company-watchlist-section" id="source-health">
+    </section> : healthRefreshFailed ? <section aria-labelledby="source-health-title" className="company-watchlist-section" id="source-health">
       <h2 id="source-health-title">来源诊断</h2>
       <p>{healthRefreshMessage}</p>
       <button className="workbench-touch-target" disabled={isSaving} onClick={() => void retrySourceHealth()} type="button">重新加载来源诊断</button>
