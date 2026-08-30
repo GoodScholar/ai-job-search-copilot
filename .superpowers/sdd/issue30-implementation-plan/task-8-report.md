@@ -52,6 +52,8 @@
 
 TOCTOU 补强均为 `6f7010c` 后新增、首跑即绿的真实数据库回归：`3116563` 覆盖 stale claim 的 `recordPending`（0 Lead）；`8e07114` 覆盖 `verify`（0 object put/Posting/Version/Attribution，new claim 成功）；`fea62f1` 覆盖 `reject`（old claim 后 Lead 仍 pending，new claim 成功 rejected）。这些回归没有保留独立 Red。尚未把 no-reserve checkpoint continue 本身嵌入此三场景，不能将它们描述为完整 checkpoint-before-takeover 证明。
 
+最终 TOCTOU 串联回归 `b5e367b` 使用真实 `createAgentRunCheckpoint.check`（old claim、无 reserve）先断言 `continue`，再切换至 new claim，并在同一运行中依次证明：old `recordPending` 为 `JOB_DISCOVERY_CLAIM_STALE` 且目标 query 为 0 Lead；old `verify` 为 `VERIFIED_JOB_SOURCE_CLAIM_STALE` 且 EvidenceStore 0 put、Source Posting/Version/Attribution 均为 0；old `reject` 为 stale 且 Lead 保持 pending；new claim 对三项 mutation 均成功。该测试最初因遗漏测试文件的 `and` 导入而报错；修正夹具后首个可执行产品断言运行即绿（focused **1 file / 18 tests passed**），没有生产 Green，也没有可保留的功能 Red。
+
 ## 提交链（`768b8c6..HEAD`，报告提交前）
 
 ```text
@@ -99,14 +101,23 @@ fddeacc test(domain): narrow v4 detail projection
 63f083e test(domain): preserve diagnostics on v4 interruption
 a17e110 fix(domain): retain v4 diagnostics across interruption
 4ef7051 test(domain): cover v4 lease takeover barrier
+b6382c1 fix(domain): persist real checkpoint interruption diagnostics
+e23250e test(domain): reject forged v4 stop throws
+251c29c fix(domain): trust only processor v4 stop throws
+552da3d test(domain): cover real v4 interruption terminals
+3116563 test(domain): reject stale claim lead mutations
+8e07114 test(domain): reject stale claim gate verification
+fea62f1 test(domain): reject stale claim gate rejection
+6cf637d docs(sdd): record v4 claim mutation barriers
+b5e367b test(domain): cover checkpoint claim takeover mutations
 ```
 
 ## Fresh 验收
 
-以下命令按包串行执行；Testcontainers 命令设置 `DOCKER_API_VERSION=1.51`：
+以下命令在本次报告提交前按包严格串行执行，任一时刻只有一个 test/typecheck 进程；所有命令均为 **exit 0**。Testcontainers 命令设置 `DOCKER_API_VERSION=1.51`：
 
 ```text
-domain:        DOCKER_API_VERSION=1.51 pnpm --filter @job-copilot/domain test      → 27 files / 321 tests passed
+domain:        DOCKER_API_VERSION=1.51 pnpm --filter @job-copilot/domain test      → 27 files / 333 tests passed
 database:      DOCKER_API_VERSION=1.51 pnpm --filter @job-copilot/database test    → 3 files / 28 tests passed
 contracts:     pnpm --filter @job-copilot/contracts test                            → 12 files / 108 tests passed
 web:           pnpm --filter web test                                                → 55 files / 289 tests passed
@@ -124,9 +135,9 @@ Drizzle: pnpm --filter @job-copilot/database exec drizzle-kit check --config=dri
          → Everything's fine
 ```
 
-`git diff --check 768b8c6..HEAD` 与工作区 `git diff --check` 在报告提交前均退出 0；报告提交后会再执行一次最终检查。未 push、未创建 PR、未 merge。
+完整输出捕获说明：domain 全量运行耗时 **38.67s**，前台工具流在 30 秒处截断，随后以同一单命令的 `tee` 进程会话取得最终摘要（**27 / 333, exit 0**）；worker 耗时 **86.64s**，通过同一串行进程的两次 wait 取得最终摘要（**20 / 256, exit 0**）。其余命令均直接返回完整最终摘要。没有将截断的中间输出当作通过证据。
 
-说明：一次 domain verbose 重复运行在发现后立即终止，不计入以上验收；以上 fresh 命令随后严格串行执行。桌面命令流对 domain/worker 在 30 秒截断后，通过进程退出确认其完成；其余命令均返回完整通过摘要。
+报告提交后会再执行 `git diff --check 768b8c6..HEAD` 与 `git status --short` 最终确认；未 push、未创建 PR、未 merge。
 
 ## 后续门槛
 
