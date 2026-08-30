@@ -1,7 +1,7 @@
 # Task 7 / Slice 6 报告：已验证公开岗位来源持久化门禁
 
-固定最终审查基线：`3a1a3940773921a1a03c3b25ea7baa378c025e83`。  
-开始 HEAD：`b56c3f17eb4240608ef9e82657413485b1b68252`。  
+固定最终审查基线：`3a1a3940773921a1a03c3b25ea7baa378c025e83`。
+开始 HEAD：`b56c3f17eb4240608ef9e82657413485b1b68252`。
 实现提交：`04e8cfc6c419d95a0ff5f0a1b6aeb84d5f147abe`（`feat(domain): gate verified public job sources`）。
 
 ## 范围
@@ -49,3 +49,15 @@
 - **范围**：未改 source-health、v1–v3 adapter/Execution Spec/recovery/runtime/UI；未创建 Opportunity、AgentRunResult 或 workflow/budget/diagnostic 行为。
 
 下一步需要独立 `gpt-5.6-sol/high` 按 Standards 与 Spec 双轴审查至 `0/0/0`，再开始 Slice 7。
+
+## Fix round 1：唯一门禁、来源身份与对象代际
+
+修复提交：`7ec543e8e895923052ac06f1c27fd2c90564b14d`。
+
+- public API enumeration 先真实 Red：consumer-visible repository 仍含 `reject`、`verifyAndAttribute`、`verifyAndAttributeInTransaction`；随后 public repository 收束为 `recordPending/getLead/getAttribution`，终态转换移到包未导出的强类型 sibling。gate 是唯一 public verified/terminal seam。
+- posting 先计算 taxonomy/local identity，再以 owner + sourceType + canonical hash 查询；版本查询绑定 posting ID 与双 hash。复用时核对 local sourceId、identity、official flag 与代际 object reference；`url_import` 不会被 taxonomy posting 复用。
+- object keys 改为 owner + 新 sourceVersionId generation + content hash。same-version replay 在 put 前返回；失败代际与后续事务不会共享 object key，故补偿不会断开其他已提交 version。
+- only `VerifiedJobEvidenceStoreUnavailableError` 映射 storage failure；未知 store/DB/id/programming error 保持原对象。已知 Attribution primary-key constraint 映射为稳定 Lead attribution conflict。
+- ATS host policy 改由 contracts 的版本化 exact-host predicate 统一供 source-access verifier 和 gate taxonomy 使用；平台/微信保留批准的子域匹配。
+
+Fresh verification：public API focused **1/1**；internal Lead + gate focused 合计 **16/16**，后续 gate focused **8/8**；source-access **125/125**；database **24/24**；domain full **26 files / 290 tests**；contracts/domain/source-access/database typecheck 均通过。`git diff --check b56c3f17eb4240608ef9e82657413485b1b68252` fresh exit 0。
