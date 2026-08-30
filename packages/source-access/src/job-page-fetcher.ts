@@ -1,4 +1,5 @@
 import { parse, type DefaultTreeAdapterMap } from "parse5";
+import { isOfficialPublicJobAtsHost } from "@job-copilot/contracts/job-discovery";
 import { PublicSourceAccessError, createInternalPublicSourceClient } from "./internal.js";
 import { createPublicSourceClientForTest } from "./testing.js";
 
@@ -224,5 +225,5 @@ function isFarNegativeOffset(value: string | undefined): boolean {
 function normalizedHostname(hostname: string): string { return hostname.toLowerCase().replace(/^www\./u, ""); }
 function sourceKind(url: URL, testOrigin: string | undefined): "official" | "aggregator" {
   if (process.env.APP_ENV === "test" && testOrigin && url.origin === testOrigin) return "official";
-  return ["boards.greenhouse.io", "job-boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com", "apply.workable.com", "jobs.smartrecruiters.com"].includes(normalizedHostname(url.hostname)) ? "official" : "aggregator";
+  return isOfficialPublicJobAtsHost(normalizedHostname(url.hostname)) ? "official" : "aggregator";
 }

@@ -9,14 +9,17 @@ import {
 import {
   PublicJobDiscoveryQueryKindSchema,
   PublicJobDiscoverySourceTypeSchema,
+  PUBLIC_JOB_SOURCE_TAXONOMY_POLICY_VERSION,
   SafeNormalizedPublicJobUrlSchema,
+  isOfficialPublicJobAtsHost,
 } from "@job-copilot/contracts/job-discovery";
 import { JOB_PAGE_MAX_BYTES } from "@job-copilot/source-access";
 import { z } from "zod";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
-import { JobDiscoveryLeadError, createJobDiscoveryLeadRepository } from "./job-discovery-leads";
+import { JobDiscoveryLeadError } from "./job-discovery-leads";
+import { createJobDiscoveryLeadTransitions } from "./job-discovery-lead-transitions";
 
-const TAXONOMY_POLICY = "public-job-source-taxonomy-v1";
+const TAXONOMY_POLICY = PUBLIC_JOB_SOURCE_TAXONOMY_POLICY_VERSION;
 const fingerprint = z.string().regex(/^[a-f0-9]{64}$/u);
 const terminalRejectionCode = z.enum([
   "JOB_PAGE_URL_INVALID", "JOB_PAGE_TARGET_REJECTED", "JOB_PAGE_REDIRECT_INVALID",
@@ -46,6 +49,8 @@ export interface VerifiedJobEvidenceStore {
   delete(input: { objectKey: string }): Promise<void>;
 }
 
+export class VerifiedJobEvidenceStoreUnavailableError extends Error {}
+
 export class VerifiedJobSourceGateError extends Error {
   constructor(public readonly code:
     | "VERIFIED_JOB_SOURCE_INVALID_INPUT"
@@ -57,8 +62,6 @@ export class VerifiedJobSourceGateError extends Error {
     super(code);
   }
 }
-
-class EvidenceStoreFailure extends Error {}
 
 function sha256(value: string | Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
@@ -86,7 +89,7 @@ function sourceType(page: z.infer<typeof PageSchema>, queryKind: z.infer<typeof 
   const host = new URL(page.canonicalUrl).hostname;
   if (["zhipin.com", "liepin.com", "zhaopin.com"].some((domain) => hostMatches(host, domain))) return "recruitment_platform" as const;
   if (hostMatches(host, "mp.weixin.qq.com")) return "wechat_recruitment_h5" as const;
-  if (["boards.greenhouse.io", "job-boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com", "apply.workable.com", "jobs.smartrecruiters.com"].some((domain) => hostMatches(host, domain))) return "company_careers" as const;
+  if (isOfficialPublicJobAtsHost(host)) return "company_careers" as const;
   return queryKind === "target_company" ? "company_careers" as const : "public_web" as const;
 }
 
@@ -97,13 +100,20 @@ function parseVerifyInput(input: unknown) {
   return parsed.data;
 }
 
-function evidenceObjectKeys(userId: string, canonicalUrl: string, rawHash: string, visibleHash: string) {
-  const base = `accounts/${userId}/public-job-pages/${sha256(canonicalUrl)}`;
+function evidenceObjectKeys(userId: string, sourceVersionId: string, rawHash: string, visibleHash: string) {
+  const base = `accounts/${userId}/public-job-pages/${sourceVersionId}`;
   return { rawHtmlObjectKey: `${base}/${rawHash}.html`, visibleTextObjectKey: `${base}/${visibleHash}.txt` };
 }
 
+function stableJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableJson);
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => [key, stableJson(item)]));
+  return value;
+}
+function sameJson(left: unknown, right: unknown): boolean { return JSON.stringify(stableJson(left)) === JSON.stringify(stableJson(right)); }
+
 export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: VerifiedJobEvidenceStore; id: () => string }) {
-  const leads = createJobDiscoveryLeadRepository({ db: deps.db, id: deps.id });
+  const transitions = createJobDiscoveryLeadTransitions({ db: deps.db, id: deps.id });
 
   return {
     async verify(input: unknown) {
@@ -113,7 +123,6 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
       const rawContentSha256 = sha256(rawBytes);
       const contentSha256 = sha256(visibleBytes);
       const sourceIdentifier = sha256(value.page.canonicalUrl);
-      const objectKeys = evidenceObjectKeys(value.userId, value.page.canonicalUrl, rawContentSha256, contentSha256);
       const createdObjectKeys: string[] = [];
       try {
         return await deps.db.transaction(async (transaction) => {
@@ -126,6 +135,29 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
             || lead.stableFingerprint !== value.candidate.candidateFingerprint) {
             throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_CONFLICT");
           }
+          const expectedSourceType = sourceType(value.page, lead.queryKind as z.infer<typeof PublicJobDiscoveryQueryKindSchema>);
+          const expectedSourceIdentity = { taxonomyPolicy: TAXONOMY_POLICY, canonicalUrl: value.page.canonicalUrl, finalUrl: value.page.finalUrl };
+          const expectedOfficial = value.page.sourceKind === "official";
+          let posting: { id: string; sourceType: string; sourceIdentifier: string; sourceId: string | null; sourceIdentity: unknown; isOfficial: boolean };
+          const [foundPosting] = await transaction.select({
+            id: jobSourcePostings.id, sourceType: jobSourcePostings.sourceType, sourceIdentifier: jobSourcePostings.sourceIdentifier,
+            sourceId: jobSourcePostings.sourceId, sourceIdentity: jobSourcePostings.sourceIdentity, isOfficial: jobSourcePostings.isOfficial,
+          }).from(jobSourcePostings).where(and(
+            eq(jobSourcePostings.userId, value.userId), eq(jobSourcePostings.sourceType, expectedSourceType), eq(jobSourcePostings.sourceIdentifier, sourceIdentifier),
+          )).limit(1);
+          if (foundPosting) {
+            if (foundPosting.sourceId !== value.page.canonicalUrl || !sameJson(foundPosting.sourceIdentity, expectedSourceIdentity) || foundPosting.isOfficial !== expectedOfficial) {
+              throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_CONFLICT");
+            }
+            posting = foundPosting;
+          } else {
+            const [createdPosting] = await transaction.insert(jobSourcePostings).values({
+              id: deps.id(), userId: value.userId, sourceType: PublicJobDiscoverySourceTypeSchema.parse(expectedSourceType), sourceIdentifier,
+              sourceId: value.page.canonicalUrl, sourceIdentity: expectedSourceIdentity, isOfficial: expectedOfficial, createdAt: value.now, updatedAt: value.now,
+            }).returning({ id: jobSourcePostings.id, sourceType: jobSourcePostings.sourceType, sourceIdentifier: jobSourcePostings.sourceIdentifier, sourceId: jobSourcePostings.sourceId, sourceIdentity: jobSourcePostings.sourceIdentity, isOfficial: jobSourcePostings.isOfficial });
+            if (!createdPosting) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_PERSIST_FAILED");
+            posting = createdPosting;
+          }
           const [existingVersion] = await transaction.select({
             id: jobSourcePostingVersions.id, sourcePostingId: jobSourcePostingVersions.sourcePostingId,
             version: jobSourcePostingVersions.version, contentSha256: jobSourcePostingVersions.contentSha256,
@@ -134,53 +166,44 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
           }).from(jobSourcePostingVersions).innerJoin(jobSourcePostings, and(
             eq(jobSourcePostings.userId, jobSourcePostingVersions.userId), eq(jobSourcePostings.id, jobSourcePostingVersions.sourcePostingId),
           )).where(and(
-            eq(jobSourcePostingVersions.userId, value.userId), eq(jobSourcePostings.sourceIdentifier, sourceIdentifier),
+            eq(jobSourcePostingVersions.userId, value.userId), eq(jobSourcePostingVersions.sourcePostingId, posting.id),
             eq(jobSourcePostingVersions.contentSha256, contentSha256), eq(jobSourcePostingVersions.rawContentSha256, rawContentSha256),
           )).limit(1);
+          if (existingVersion && !sameJson(existingVersion.rawObjectReference, evidenceObjectKeys(value.userId, existingVersion.id, rawContentSha256, contentSha256))) {
+            throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_CONFLICT");
+          }
           if (lead.state === "verified" && lead.sourcePostingVersionId !== existingVersion?.id) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_CONFLICT");
           if (lead.state === "rejected") throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_CONFLICT");
 
-          let posting: { id: string; sourceType: string; sourceIdentifier: string; sourceId: string | null; sourceIdentity: unknown; isOfficial: boolean };
-          const [foundPosting] = await transaction.select({
-            id: jobSourcePostings.id, sourceType: jobSourcePostings.sourceType, sourceIdentifier: jobSourcePostings.sourceIdentifier,
-            sourceId: jobSourcePostings.sourceId, sourceIdentity: jobSourcePostings.sourceIdentity, isOfficial: jobSourcePostings.isOfficial,
-          }).from(jobSourcePostings).where(and(eq(jobSourcePostings.userId, value.userId), eq(jobSourcePostings.sourceIdentifier, sourceIdentifier))).limit(1);
-          if (foundPosting) posting = foundPosting;
-          else {
-            const classified = sourceType(value.page, lead.queryKind as z.infer<typeof PublicJobDiscoveryQueryKindSchema>);
-            const [createdPosting] = await transaction.insert(jobSourcePostings).values({
-              id: deps.id(), userId: value.userId, sourceType: PublicJobDiscoverySourceTypeSchema.parse(classified), sourceIdentifier,
-              sourceId: value.page.canonicalUrl,
-              sourceIdentity: { taxonomyPolicy: TAXONOMY_POLICY, canonicalUrl: value.page.canonicalUrl, finalUrl: value.page.finalUrl },
-              isOfficial: value.page.sourceKind === "official", createdAt: value.now, updatedAt: value.now,
-            }).returning({ id: jobSourcePostings.id, sourceType: jobSourcePostings.sourceType, sourceIdentifier: jobSourcePostings.sourceIdentifier, sourceId: jobSourcePostings.sourceId, sourceIdentity: jobSourcePostings.sourceIdentity, isOfficial: jobSourcePostings.isOfficial });
-            if (!createdPosting) throw new Error("VERIFIED_JOB_SOURCE_PERSIST_FAILED");
-            posting = createdPosting;
-          }
-
           let version = existingVersion;
           if (!version) {
+            const sourceVersionId = deps.id();
+            const objectKeys = evidenceObjectKeys(value.userId, sourceVersionId, rawContentSha256, contentSha256);
             let rawPut: { created: boolean };
             let visiblePut: { created: boolean };
-            try {
-              rawPut = await deps.contentStore.put({ objectKey: objectKeys.rawHtmlObjectKey, bytes: rawBytes, mediaType: "text/html" });
-            } catch { throw new EvidenceStoreFailure(); }
+            try { rawPut = await deps.contentStore.put({ objectKey: objectKeys.rawHtmlObjectKey, bytes: rawBytes, mediaType: "text/html" }); }
+            catch (error) {
+              if (error instanceof VerifiedJobEvidenceStoreUnavailableError) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_STORAGE_FAILED");
+              throw error;
+            }
             if (rawPut.created) createdObjectKeys.push(objectKeys.rawHtmlObjectKey);
-            try {
-              visiblePut = await deps.contentStore.put({ objectKey: objectKeys.visibleTextObjectKey, bytes: visibleBytes, mediaType: "text/plain" });
-            } catch { throw new EvidenceStoreFailure(); }
+            try { visiblePut = await deps.contentStore.put({ objectKey: objectKeys.visibleTextObjectKey, bytes: visibleBytes, mediaType: "text/plain" }); }
+            catch (error) {
+              if (error instanceof VerifiedJobEvidenceStoreUnavailableError) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_STORAGE_FAILED");
+              throw error;
+            }
             if (visiblePut.created) createdObjectKeys.push(objectKeys.visibleTextObjectKey);
             const [latest] = await transaction.select({ version: jobSourcePostingVersions.version }).from(jobSourcePostingVersions).where(and(
               eq(jobSourcePostingVersions.userId, value.userId), eq(jobSourcePostingVersions.sourcePostingId, posting.id),
             )).orderBy(desc(jobSourcePostingVersions.version)).limit(1);
             const [createdVersion] = await transaction.insert(jobSourcePostingVersions).values({
-              id: deps.id(), userId: value.userId, sourcePostingId: posting.id, version: (latest?.version ?? 0) + 1,
+              id: sourceVersionId, userId: value.userId, sourcePostingId: posting.id, version: (latest?.version ?? 0) + 1,
               contentSha256, rawContentSha256, rawObjectReference: objectKeys, normalizedData: {}, retrievedAt: value.now, createdAt: value.now,
             }).returning({ id: jobSourcePostingVersions.id, sourcePostingId: jobSourcePostingVersions.sourcePostingId, version: jobSourcePostingVersions.version, contentSha256: jobSourcePostingVersions.contentSha256, rawContentSha256: jobSourcePostingVersions.rawContentSha256, rawObjectReference: jobSourcePostingVersions.rawObjectReference, createdAt: jobSourcePostingVersions.createdAt });
-            if (!createdVersion) throw new Error("VERIFIED_JOB_SOURCE_PERSIST_FAILED");
+            if (!createdVersion) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_PERSIST_FAILED");
             version = createdVersion;
           }
-          const verified = await leads.verifyAndAttributeInTransaction({ userId: value.userId, leadId: value.leadId, sourcePostingVersionId: version.id, now: value.now }, transaction);
+          const verified = await transitions.verifyAndAttributeInTransaction({ userId: value.userId, leadId: value.leadId, sourcePostingVersionId: version.id, now: value.now }, transaction);
           return {
             ...verified,
             sourcePosting: { postingId: posting.id, sourceType: posting.sourceType, sourceIdentifier: posting.sourceIdentifier, sourceId: posting.sourceId, sourceIdentity: posting.sourceIdentity, isOfficial: posting.isOfficial },
@@ -192,9 +215,7 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
           try { await deps.contentStore.delete({ objectKey }); } catch { /* original failure remains authoritative */ }
         }
         if (error instanceof VerifiedJobSourceGateError || error instanceof JobDiscoveryLeadError) throw error;
-        throw new VerifiedJobSourceGateError(error instanceof EvidenceStoreFailure
-          ? "VERIFIED_JOB_SOURCE_STORAGE_FAILED"
-          : "VERIFIED_JOB_SOURCE_PERSIST_FAILED");
+        throw error;
       }
     },
 
@@ -208,7 +229,7 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
         if (retryable.success) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_RETRYABLE_FAILURE");
         throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_INVALID_INPUT");
       }
-      return leads.reject({
+      return transitions.reject({
         userId: parsed.data.userId, leadId: parsed.data.leadId, rejectionCode: parsed.data.code, now: parsed.data.now,
       });
     },

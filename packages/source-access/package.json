@@ -17,6 +17,7 @@
     "vitest": "^4.1.11"
   },
   "dependencies": {
+    "@job-copilot/contracts": "workspace:*",
     "parse5": "8.0.1"
   }
 }

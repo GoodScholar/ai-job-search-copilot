@@ -17,7 +17,7 @@ import {
   type Database,
 } from "@job-copilot/database";
 import { createJobDiscoveryLeadRepository } from "./job-discovery-leads";
-import { createVerifiedJobSourceGate } from "./verified-job-source-gate";
+import { createVerifiedJobSourceGate, VerifiedJobEvidenceStoreUnavailableError } from "./verified-job-source-gate";
 
 const now = new Date("2026-08-30T12:00:00.000Z");
 const normalizedUrl = "https://careers.acme.com/jobs/123?job=123";
@@ -32,7 +32,7 @@ class EvidenceStore {
 
   async put(input: { objectKey: string; bytes: Uint8Array; mediaType: "text/html" | "text/plain" }): Promise<{ created: boolean }> {
     this.puts.push(input.objectKey);
-    if (this.failAtPut === this.puts.length) throw new Error("object store unavailable");
+    if (this.failAtPut === this.puts.length) throw new VerifiedJobEvidenceStoreUnavailableError();
     const created = !this.objects.has(input.objectKey);
     if (created) this.objects.set(input.objectKey, input.bytes);
     return { created };
@@ -208,7 +208,7 @@ describe("verified public job source gate", () => {
       userId: second.userId, leadId: second.leadId,
       candidate: { queryId: second.queryId, normalizedUrl: secondUrl, candidateFingerprint: secondFingerprint },
       extract: { normalizedUrl: secondUrl }, page: page(secondUrl), now,
-    })).rejects.toMatchObject({ code: "VERIFIED_JOB_SOURCE_PERSIST_FAILED" });
+    })).rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_ATTRIBUTION_CONFLICT" });
     expect(store.objects).toEqual(new Map([["already-referenced", new Uint8Array([1])]]));
     expect(store.deletes).toEqual(store.puts);
     await expect(Promise.all([

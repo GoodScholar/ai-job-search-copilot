@@ -16,6 +16,7 @@ import {
   type Database,
 } from "@job-copilot/database";
 import { JobDiscoveryLeadError, createJobDiscoveryLeadRepository } from "./job-discovery-leads";
+import { createJobDiscoveryLeadTransitions } from "./job-discovery-lead-transitions";
 
 const now = new Date("2026-08-30T12:00:00.000Z");
 const fingerprint = "a".repeat(64);
@@ -61,7 +62,7 @@ describe("job discovery lead repository", () => {
   }
 
   function repository(id: () => string = () => crypto.randomUUID()) {
-    return createJobDiscoveryLeadRepository({ db: database, id });
+    return { ...createJobDiscoveryLeadRepository({ db: database, id }), ...createJobDiscoveryLeadTransitions({ db: database, id }) };
   }
 
   function pendingInput(input: { userId: string; runId: string; targetId: string; queryId?: string; stableFingerprint?: string }) {

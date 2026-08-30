@@ -329,6 +329,9 @@ importers:
 
   packages/source-access:
     dependencies:
+      '@job-copilot/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       parse5:
         specifier: 8.0.1
         version: 8.0.1

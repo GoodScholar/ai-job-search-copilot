@@ -4,6 +4,14 @@ import { z } from "zod";
 export const PublicJobIdentityParameterNames = Object.freeze([
   "id", "job", "jobid", "job_id", "openingid", "opening_id", "positionid", "position_id", "requisitionid", "requisition_id",
 ]);
+export const PUBLIC_JOB_SOURCE_TAXONOMY_POLICY_VERSION = "public-job-source-taxonomy-v1";
+export const OfficialPublicJobAtsHosts = Object.freeze([
+  "boards.greenhouse.io", "job-boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com", "apply.workable.com", "jobs.smartrecruiters.com",
+]);
+
+export function isOfficialPublicJobAtsHost(value: string): boolean {
+  return OfficialPublicJobAtsHosts.includes(value.toLowerCase().replace(/^www\./u, ""));
+}
 
 const publicJobIdentityParameters = new Set(PublicJobIdentityParameterNames);
 const publicJobIdentityValue = /^[A-Za-z0-9._~-]{1,128}$/u;

@@ -1,10 +1,5 @@
 import { and, eq, gt } from "drizzle-orm";
-import {
-  jobDiscoveryAttributions,
-  jobDiscoveryLeads,
-  jobSourcePostingVersions,
-  type Database,
-} from "@job-copilot/database";
+import { jobDiscoveryAttributions, jobDiscoveryLeads, type Database } from "@job-copilot/database";
 import {
   AnySearchLeadSchema,
   DiscoveryAttributionSchema,
@@ -27,8 +22,6 @@ const RecordPendingInputSchema = z.object({
   stableFingerprint: fingerprint,
   now: z.date(),
 }).strict();
-const RejectInputSchema = z.object({ userId: z.uuid(), leadId: z.uuid(), rejectionCode, now: z.date() }).strict();
-const VerifyInputSchema = z.object({ userId: z.uuid(), leadId: z.uuid(), sourcePostingVersionId: z.uuid(), now: z.date() }).strict();
 const GetLeadInputSchema = z.object({ userId: z.uuid(), leadId: z.uuid(), now: z.date() }).strict();
 const GetAttributionInputSchema = z.object({ userId: z.uuid(), leadId: z.uuid() }).strict();
 
@@ -164,37 +157,6 @@ export function createJobDiscoveryLeadRepository({ db, id }: Dependencies) {
       return leadFact(lead);
     },
 
-    async reject(input: unknown) {
-      const value = parseOrThrow(RejectInputSchema, input);
-      const [updated] = await db.update(jobDiscoveryLeads).set({
-        state: "rejected", rejectionCode: value.rejectionCode, updatedAt: value.now,
-      }).where(and(
-        eq(jobDiscoveryLeads.userId, value.userId), eq(jobDiscoveryLeads.id, value.leadId),
-        eq(jobDiscoveryLeads.state, "pending"), gt(jobDiscoveryLeads.expiresAt, value.now),
-      )).returning();
-      if (updated) return leadFact(updated);
-
-      const lead = await loadLead(value.userId, value.leadId);
-      if (!lead) throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_NOT_FOUND");
-      if (lead.state === "rejected") {
-        if (lead.rejectionCode === value.rejectionCode) return leadFact(lead);
-        throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_REJECTION_CONFLICT");
-      }
-      if (value.now.getTime() >= lead.expiresAt.getTime()) throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_EXPIRED");
-      throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_STATE_CONFLICT");
-    },
-
-    async verifyAndAttribute(input: unknown) {
-      const value = parseOrThrow(VerifyInputSchema, input);
-      return db.transaction(async (transaction) => verifyAndAttribute(transaction, value));
-    },
-
-    /** Internal persistence seam for a caller that already owns the account transaction. */
-    async verifyAndAttributeInTransaction(input: unknown, transaction: any) {
-      const value = parseOrThrow(VerifyInputSchema, input);
-      return verifyAndAttribute(transaction, value);
-    },
-
     async getLead(input: unknown) {
       const value = parseOrThrow(GetLeadInputSchema, input);
       const lead = await loadLead(value.userId, value.leadId);
@@ -208,37 +170,4 @@ export function createJobDiscoveryLeadRepository({ db, id }: Dependencies) {
     },
   };
 
-  async function verifyAndAttribute(transaction: any, value: z.infer<typeof VerifyInputSchema>) {
-        const [version] = await transaction.select({ id: jobSourcePostingVersions.id }).from(jobSourcePostingVersions).where(and(
-          eq(jobSourcePostingVersions.userId, value.userId), eq(jobSourcePostingVersions.id, value.sourcePostingVersionId),
-        )).limit(1);
-        if (!version) throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_VERSION_NOT_FOUND");
-
-        const [updated] = await transaction.update(jobDiscoveryLeads).set({
-          state: "verified", sourcePostingVersionId: value.sourcePostingVersionId, updatedAt: value.now,
-        }).where(and(
-          eq(jobDiscoveryLeads.userId, value.userId), eq(jobDiscoveryLeads.id, value.leadId),
-          eq(jobDiscoveryLeads.state, "pending"), gt(jobDiscoveryLeads.expiresAt, value.now),
-        )).returning();
-        const lead = updated ?? (await transaction.select().from(jobDiscoveryLeads).where(and(
-          eq(jobDiscoveryLeads.userId, value.userId), eq(jobDiscoveryLeads.id, value.leadId),
-        )).limit(1))[0];
-        if (!lead) throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_NOT_FOUND");
-        if (value.now.getTime() >= lead.expiresAt.getTime() && lead.state === "pending") throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_EXPIRED");
-        if (lead.state === "rejected" || lead.state === "pending") throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_STATE_CONFLICT");
-        if (lead.sourcePostingVersionId !== value.sourcePostingVersionId) throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_ATTRIBUTION_CONFLICT");
-
-        await transaction.insert(jobDiscoveryAttributions).values({
-          id: id(), userId: value.userId, runId: lead.runId, leadId: lead.id, queryId: lead.queryId,
-          provider: "anysearch", sourcePostingVersionId: value.sourcePostingVersionId, createdAt: value.now,
-        }).onConflictDoNothing({ target: jobDiscoveryAttributions.leadId });
-        const [attribution] = await transaction.select().from(jobDiscoveryAttributions).where(and(
-          eq(jobDiscoveryAttributions.userId, value.userId), eq(jobDiscoveryAttributions.leadId, value.leadId),
-        )).limit(1);
-        if (!attribution || attribution.runId !== lead.runId || attribution.queryId !== lead.queryId
-          || attribution.provider !== lead.provider || attribution.sourcePostingVersionId !== lead.sourcePostingVersionId) {
-          throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_ATTRIBUTION_CONFLICT");
-        }
-        return { lead: leadFact(lead), attribution: attributionFact(attribution) };
-  }
 }
