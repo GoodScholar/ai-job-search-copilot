@@ -263,6 +263,9 @@ importers:
 
   packages/contracts:
     dependencies:
+      tldts:
+        specifier: 7.4.11
+        version: 7.4.11
       zod:
         specifier: 4.4.3
         version: 4.4.3

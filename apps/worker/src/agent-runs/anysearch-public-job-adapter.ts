@@ -1,7 +1,14 @@
 import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import { z } from "zod";
-import { LayeredPublicJobDiscoveryQuerySchema, PublicJobIdentityParameters, PublicJobIdentityValue, type AnySearchProviderError } from "@job-copilot/contracts/job-discovery";
+import {
+  isPublicDnsHostname,
+  isPublicJobIdentityParameterName,
+  isPublicJobIdentityValue,
+  LayeredPublicJobDiscoveryQuerySchema,
+  SafeNormalizedPublicJobUrlSchema,
+  type AnySearchProviderError,
+} from "@job-copilot/contracts/job-discovery";
 
 const ANYSEARCH_BASE_URL = "https://api.anysearch.com";
 const MAX_BATCH_SIZE = 5;
@@ -13,19 +20,21 @@ type Success<T> = { ok: true; data: T };
 export type AnySearchResult<T> = Success<T> | Failure;
 export type AnySearchCandidate = { readonly kind: "anysearch_public_job_candidate"; readonly normalizedUrl: string; readonly allowedSiteDomains: readonly string[]; readonly queryId: string; readonly candidateFingerprint: string };
 export type AnySearchCandidateOutcome = { readonly normalizedUrl: string | null; readonly policy: "accepted" | "rejected"; readonly candidate?: AnySearchCandidate };
+export type AnySearchReplay = { readonly ok: true; readonly replay: { readonly operationIdentity: string } };
+export type AnySearchOperationResult<T> = AnySearchResult<T> | AnySearchReplay;
 export type AnySearchSearchInput = z.infer<typeof LayeredPublicJobDiscoveryQuerySchema> & { signal?: AbortSignal };
+/** `identity` is an opaque caller-owned physical extract-attempt identity; reuse means the same operation. */
 export type AnySearchExtractInput = { candidate: AnySearchCandidate; identity: string; signal?: AbortSignal };
-export type AnySearchBeforeRequest = (input: { kind: "search"; queryId: string } | { kind: "extract"; identity: string; candidateFingerprint: string }) => Promise<void | false> | void | false;
+export type AnySearchRequestDecision = "proceed" | "already_completed" | "blocked";
+export type AnySearchBeforeRequest = (input: { kind: "search"; queryId: string; operationIdentity: string } | { kind: "extract"; identity: string; candidateFingerprint: string; operationIdentity: string }) => Promise<AnySearchRequestDecision> | AnySearchRequestDecision;
+export type AnySearchRecoveredCandidateAuthorization = (input: { queryId: string; candidateFingerprint: string; identity: string; operationIdentity: string }) => Promise<boolean> | boolean;
 export type AnySearchFetch = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 export type AnySearchCandidatePreflight = Success<{ normalizedUrl: string; allowedSiteDomains: readonly string[] }> | Failure;
 
-const CandidateSchema = z.object({ kind: z.literal("anysearch_public_job_candidate"), normalizedUrl: z.string(), allowedSiteDomains: z.array(z.string()).max(5), queryId: z.uuid(), candidateFingerprint: z.string().regex(/^[a-f0-9]{64}$/u) }).strict();
+const CandidateSchema = z.object({ kind: z.literal("anysearch_public_job_candidate"), normalizedUrl: SafeNormalizedPublicJobUrlSchema, allowedSiteDomains: z.array(z.string()).max(5), queryId: z.uuid(), candidateFingerprint: z.string().regex(/^[a-f0-9]{64}$/u) }).strict();
 function error(code: AnySearchProviderError["code"], retryable: boolean, httpStatus: AnySearchProviderError["httpStatus"]): Failure { return { ok: false, error: { code, retryable, httpStatus } }; }
 function normalizeHost(value: string): string { return value.toLowerCase().replace(/\.$/u, ""); }
-function isPublicHostname(hostname: string): boolean {
-  const host = normalizeHost(hostname);
-  return host.includes(".") && isIP(host.replace(/^\[|\]$/gu, "")) === 0 && !["localhost", "local", "internal", "lan"].some((suffix) => host === suffix || host.endsWith("." + suffix));
-}
+function isPublicHostname(hostname: string): boolean { return isIP(normalizeHost(hostname).replace(/^\[|\]$/gu, "")) === 0 && isPublicDnsHostname(normalizeHost(hostname)); }
 function normalizeAllowedDomains(value: readonly string[]): readonly string[] | undefined {
   if (!Array.isArray(value) || value.length > MAX_BATCH_SIZE) return undefined;
   const domains: string[] = [];
@@ -41,6 +50,8 @@ function normalizeAllowedDomains(value: readonly string[]): readonly string[] | 
 }
 function allowedHost(hostname: string, domains: readonly string[]): boolean { const host = normalizeHost(hostname); return domains.length === 0 || domains.some((domain) => host === domain || host.endsWith("." + domain)); }
 function candidateFingerprint(normalizedUrl: string): string { return createHash("sha256").update(normalizedUrl, "utf8").digest("hex"); }
+function operationIdentity(kind: "search" | "extract", ...opaqueValues: string[]): string { return createHash("sha256").update(["anysearch-public-job", kind, ...opaqueValues].join("\u0000"), "utf8").digest("hex"); }
+function candidateKey(candidate: AnySearchCandidate): string { return JSON.stringify(candidate); }
 function isAbortSignal(value: unknown): value is AbortSignal { return value === undefined || (typeof value === "object" && value !== null && "aborted" in value && typeof (value as AbortSignal).addEventListener === "function"); }
 
 /** Lexical preflight only; the later local fetch keeps DNS pinning and address verification authority. */
@@ -50,15 +61,28 @@ export function preflightAnySearchCandidate(input: { url: unknown; allowedSiteDo
   if (!allowedSiteDomains) return error("ANYSEARCH_POLICY_REJECTED", false, null);
   let url: URL;
   try { url = new URL(input.url); } catch { return error("ANYSEARCH_POLICY_REJECTED", false, null); }
+  url.hostname = normalizeHost(url.hostname);
   if (url.protocol !== "https:" || !url.hostname || url.username || url.password || !isPublicHostname(url.hostname)) return error("ANYSEARCH_POLICY_REJECTED", false, null);
-  const retained = [...url.searchParams].filter(([key, value]) => PublicJobIdentityParameters.has(key.toLowerCase()) && PublicJobIdentityValue.test(value));
-  if ([...url.searchParams].some(([key, value]) => PublicJobIdentityParameters.has(key.toLowerCase()) && !PublicJobIdentityValue.test(value))) return error("ANYSEARCH_POLICY_REJECTED", false, null);
+  const retained = [...url.searchParams].filter(([key, value]) => isPublicJobIdentityParameterName(key) && isPublicJobIdentityValue(value));
+  if ([...url.searchParams].some(([key, value]) => isPublicJobIdentityParameterName(key) && !isPublicJobIdentityValue(value))) return error("ANYSEARCH_POLICY_REJECTED", false, null);
   retained.sort(([leftKey, leftValue], [rightKey, rightValue]) => leftKey.localeCompare(rightKey) || leftValue.localeCompare(rightValue));
   url.search = "";
   for (const [key, value] of retained) url.searchParams.append(key, value);
   url.hash = "";
   if (!allowedHost(url.hostname, allowedSiteDomains)) return error("ANYSEARCH_POLICY_REJECTED", false, null);
-  return { ok: true, data: { normalizedUrl: url.toString(), allowedSiteDomains } };
+  const normalizedUrl = url.toString();
+  if (!SafeNormalizedPublicJobUrlSchema.safeParse(normalizedUrl).success) return error("ANYSEARCH_POLICY_REJECTED", false, null);
+  return { ok: true, data: { normalizedUrl, allowedSiteDomains } };
+}
+
+function createCandidate(normalizedUrl: string, allowedSiteDomains: readonly string[], queryId: string, fingerprint = candidateFingerprint(normalizedUrl)): AnySearchCandidate {
+  return Object.freeze({
+    kind: "anysearch_public_job_candidate" as const,
+    normalizedUrl,
+    allowedSiteDomains: Object.freeze([...allowedSiteDomains]),
+    queryId,
+    candidateFingerprint: fingerprint,
+  });
 }
 
 export class AnySearchPublicJobAdapter {
@@ -67,10 +91,11 @@ export class AnySearchPublicJobAdapter {
   private readonly baseUrl: URL;
   private readonly timeoutMs: number;
   private readonly beforeRequest?: AnySearchBeforeRequest;
-  private readonly issuedCandidateFingerprints = new Set<string>();
-  private readonly claimedCandidateFingerprints = new Set<string>();
+  private readonly authorizeRecoveredCandidate?: AnySearchRecoveredCandidateAuthorization;
+  private readonly issuedCandidates = new Set<string>();
+  private readonly claimedExtractOperations = new Set<string>();
 
-  constructor(input: { apiKey?: string; transport?: AnySearchFetch; baseUrl?: string; timeoutMs?: number; beforeRequest?: AnySearchBeforeRequest } = {}) {
+  constructor(input: { apiKey?: string; transport?: AnySearchFetch; baseUrl?: string; timeoutMs?: number; beforeRequest?: AnySearchBeforeRequest; authorizeRecoveredCandidate?: AnySearchRecoveredCandidateAuthorization } = {}) {
     if ((input.transport || input.baseUrl) && process.env.APP_ENV !== "test") throw new Error("ANYSEARCH_TEST_TRANSPORT_DISABLED");
     if (input.timeoutMs !== undefined && (!Number.isFinite(input.timeoutMs) || input.timeoutMs <= 0 || input.timeoutMs > MAX_TIMEOUT_MS)) throw new Error("ANYSEARCH_TIMEOUT_INVALID");
     this.apiKey = input.apiKey?.trim() || undefined;
@@ -79,59 +104,101 @@ export class AnySearchPublicJobAdapter {
     if (process.env.APP_ENV !== "test" && this.baseUrl.origin !== ANYSEARCH_BASE_URL) throw new Error("ANYSEARCH_BASE_URL_INVALID");
     this.timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.beforeRequest = input.beforeRequest;
+    this.authorizeRecoveredCandidate = input.authorizeRecoveredCandidate;
   }
 
-  async search(input: unknown): Promise<AnySearchResult<{ queryId: string; ordinal: number; candidates: readonly AnySearchCandidateOutcome[] }>> {
+  async search(input: unknown): Promise<AnySearchOperationResult<{ queryId: string; ordinal: number; candidates: readonly AnySearchCandidateOutcome[] }>> {
     if (!this.apiKey) return error("ANYSEARCH_NOT_CONFIGURED", false, null);
     const parsedInput = parseSearchInput(input);
     if (!parsedInput) return error("ANYSEARCH_POLICY_REJECTED", false, null);
-    const response = await this.request({ kind: "search", queryId: parsedInput.queryId }, "/v1/search", { query: parsedInput.query, max_results: 5 }, parsedInput.signal);
+    const requestOperationIdentity = operationIdentity("search", parsedInput.queryId);
+    const decision = await this.decide({ kind: "search", queryId: parsedInput.queryId, operationIdentity: requestOperationIdentity }, parsedInput.signal);
+    if (decision !== "proceed") return this.decisionResult(decision, requestOperationIdentity);
+    const response = await this.request("/v1/search", { query: parsedInput.query, max_results: 5 }, parsedInput.signal);
     if (!response.ok) return response;
     const parsed = parseSearch(response.data);
     if (!parsed.ok) return parsed;
+    const seenInResponse = new Set<string>();
     const candidates = parsed.data.map((result) => {
       const preflight = preflightAnySearchCandidate({ url: result.url, allowedSiteDomains: parsedInput.allowedSiteDomains });
       if (!preflight.ok) return { normalizedUrl: safeNormalizedUrl(result.url), policy: "rejected" as const };
       const fingerprint = candidateFingerprint(preflight.data.normalizedUrl);
-      if (this.issuedCandidateFingerprints.has(fingerprint)) return { normalizedUrl: preflight.data.normalizedUrl, policy: "rejected" as const };
-      this.issuedCandidateFingerprints.add(fingerprint);
-      const candidate: AnySearchCandidate = Object.freeze({ kind: "anysearch_public_job_candidate", normalizedUrl: preflight.data.normalizedUrl, allowedSiteDomains: preflight.data.allowedSiteDomains, queryId: parsedInput.queryId, candidateFingerprint: fingerprint });
+      if (seenInResponse.has(fingerprint)) return { normalizedUrl: preflight.data.normalizedUrl, policy: "rejected" as const };
+      seenInResponse.add(fingerprint);
+      const candidate = createCandidate(preflight.data.normalizedUrl, preflight.data.allowedSiteDomains, parsedInput.queryId, fingerprint);
+      this.issuedCandidates.add(candidateKey(candidate));
       return { normalizedUrl: candidate.normalizedUrl, policy: "accepted" as const, candidate };
     });
     return { ok: true, data: { queryId: parsedInput.queryId, ordinal: parsedInput.ordinal, candidates } };
   }
 
-  async searchBatch(inputs: readonly unknown[]): Promise<readonly AnySearchResult<{ queryId: string; ordinal: number; candidates: readonly AnySearchCandidateOutcome[] }>[]> {
+  async searchBatch(inputs: readonly unknown[]): Promise<readonly AnySearchOperationResult<{ queryId: string; ordinal: number; candidates: readonly AnySearchCandidateOutcome[] }>[]> {
     if (!Array.isArray(inputs) || inputs.length < 1 || inputs.length > MAX_BATCH_SIZE) return [error("ANYSEARCH_POLICY_REJECTED", false, null)];
-    const results: Array<AnySearchResult<{ queryId: string; ordinal: number; candidates: readonly AnySearchCandidateOutcome[] }> | undefined> = Array(inputs.length);
+    const results: Array<AnySearchOperationResult<{ queryId: string; ordinal: number; candidates: readonly AnySearchCandidateOutcome[] }> | undefined> = Array(inputs.length);
     let cursor = 0;
     const worker = async () => { for (;;) { const index = cursor++; if (index >= inputs.length) return; results[index] = await this.search(inputs[index]); } };
     await Promise.all(Array.from({ length: inputs.length }, worker));
-    return results as readonly AnySearchResult<{ queryId: string; ordinal: number; candidates: readonly AnySearchCandidateOutcome[] }>[];
+    const completed = results as readonly AnySearchOperationResult<{ queryId: string; ordinal: number; candidates: readonly AnySearchCandidateOutcome[] }>[];
+    const rejected = new Set<string>();
+    const ranked = completed.flatMap((result, inputIndex) => result.ok && "data" in result
+      ? result.data.candidates.map((candidate, resultIndex) => ({ candidate, inputIndex, resultIndex, ordinal: result.data.ordinal }))
+      : []);
+    const seen = new Set<string>();
+    for (const item of ranked.sort((left, right) => left.ordinal - right.ordinal || left.resultIndex - right.resultIndex || left.inputIndex - right.inputIndex)) {
+      if (!item.candidate.candidate) continue;
+      if (seen.has(item.candidate.candidate.candidateFingerprint)) rejected.add(`${item.inputIndex}:${item.resultIndex}`);
+      else seen.add(item.candidate.candidate.candidateFingerprint);
+    }
+    return completed.map((result, inputIndex) => result.ok && "data" in result ? {
+      ok: true,
+      data: { ...result.data, candidates: result.data.candidates.map((candidate, resultIndex) => rejected.has(`${inputIndex}:${resultIndex}`) ? { normalizedUrl: candidate.normalizedUrl, policy: "rejected" as const } : candidate) },
+    } : result);
   }
 
-  async extract(input: unknown): Promise<AnySearchResult<{ normalizedUrl: string; content: string }>> {
+  async extract(input: unknown): Promise<AnySearchOperationResult<{ normalizedUrl: string; content: string }>> {
     if (!this.apiKey) return error("ANYSEARCH_NOT_CONFIGURED", false, null);
     const parsedInput = parseExtractInput(input);
     if (!parsedInput) return error("ANYSEARCH_POLICY_REJECTED", false, null);
     const checked = preflightAnySearchCandidate({ url: parsedInput.candidate.normalizedUrl, allowedSiteDomains: parsedInput.candidate.allowedSiteDomains });
     if (!checked.ok || checked.data.normalizedUrl !== parsedInput.candidate.normalizedUrl || candidateFingerprint(checked.data.normalizedUrl) !== parsedInput.candidate.candidateFingerprint) return error("ANYSEARCH_POLICY_REJECTED", false, null);
-    const response = await this.request({ kind: "extract", identity: parsedInput.identity, candidateFingerprint: parsedInput.candidate.candidateFingerprint }, "/v1/extract", { url: checked.data.normalizedUrl }, parsedInput.signal, () => {
-      if (this.claimedCandidateFingerprints.has(parsedInput.candidate.candidateFingerprint)) return false;
-      this.claimedCandidateFingerprints.add(parsedInput.candidate.candidateFingerprint);
-      return true;
-    });
+    const candidate = createCandidate(checked.data.normalizedUrl, checked.data.allowedSiteDomains, parsedInput.candidate.queryId, parsedInput.candidate.candidateFingerprint);
+    const requestOperationIdentity = operationIdentity("extract", parsedInput.identity, candidate.queryId, candidate.candidateFingerprint);
+    if (!this.issuedCandidates.has(candidateKey(candidate))) {
+      if (!this.authorizeRecoveredCandidate || !await this.authorizeRecoveredCandidate({ queryId: candidate.queryId, candidateFingerprint: candidate.candidateFingerprint, identity: parsedInput.identity, operationIdentity: requestOperationIdentity })) return error("ANYSEARCH_POLICY_REJECTED", false, null);
+    }
+    if (this.claimedExtractOperations.has(requestOperationIdentity)) return error("ANYSEARCH_POLICY_REJECTED", false, null);
+    this.claimedExtractOperations.add(requestOperationIdentity);
+    let decision: AnySearchRequestDecision;
+    try {
+      decision = await this.decide({ kind: "extract", identity: parsedInput.identity, candidateFingerprint: candidate.candidateFingerprint, operationIdentity: requestOperationIdentity }, parsedInput.signal);
+    } catch (cause) {
+      this.claimedExtractOperations.delete(requestOperationIdentity);
+      throw cause;
+    }
+    if (decision !== "proceed") {
+      if (decision === "blocked") this.claimedExtractOperations.delete(requestOperationIdentity);
+      return this.decisionResult(decision, requestOperationIdentity);
+    }
+    const response = await this.request("/v1/extract", { url: checked.data.normalizedUrl }, parsedInput.signal);
     if (!response.ok) return response;
     const parsed = parseExtract(response.data);
     if (!parsed.ok) return parsed;
     return { ok: true, data: { normalizedUrl: checked.data.normalizedUrl, content: parsed.data.content } };
   }
 
-  private async request(hookInput: Parameters<AnySearchBeforeRequest>[0], path: "/v1/search" | "/v1/extract", body: Record<string, unknown>, signal?: AbortSignal, claim?: () => boolean): Promise<AnySearchResult<unknown>> {
+  private async decide(input: Parameters<AnySearchBeforeRequest>[0], signal?: AbortSignal): Promise<AnySearchRequestDecision> {
+    if (signal?.aborted) return "blocked";
+    const decision = this.beforeRequest ? await this.beforeRequest(input) : "proceed";
+    if (signal?.aborted || (decision !== "proceed" && decision !== "already_completed" && decision !== "blocked")) return "blocked";
+    return decision;
+  }
+
+  private decisionResult(decision: Exclude<AnySearchRequestDecision, "proceed">, requestOperationIdentity: string): Failure | AnySearchReplay {
+    return decision === "already_completed" ? { ok: true, replay: { operationIdentity: requestOperationIdentity } } : error("ANYSEARCH_CANCELLED", false, null);
+  }
+
+  private async request(path: "/v1/search" | "/v1/extract", body: Record<string, unknown>, signal?: AbortSignal): Promise<AnySearchResult<unknown>> {
     if (signal?.aborted) return error("ANYSEARCH_CANCELLED", false, null);
-    const proceed = await this.beforeRequest?.(hookInput);
-    if (proceed === false || signal?.aborted) return error("ANYSEARCH_CANCELLED", false, null);
-    if (claim && !claim()) return error("ANYSEARCH_POLICY_REJECTED", false, null);
     const controller = new AbortController();
     let timeout = false;
     const onAbort = () => controller.abort();
@@ -140,15 +207,16 @@ export class AnySearchPublicJobAdapter {
     try {
       let response: Response;
       try {
-        response = await abortable(this.fetch(new URL(path, this.baseUrl), { method: "POST", headers: { authorization: "Bearer " + this.apiKey, "content-type": "application/json" }, body: JSON.stringify(body), redirect: "error", signal: controller.signal }), controller.signal);
+        response = await abortable(this.fetch(new URL(path, this.baseUrl), { method: "POST", headers: { authorization: "Bearer " + this.apiKey, "content-type": "application/json" }, body: JSON.stringify(body), redirect: "manual", signal: controller.signal }), controller.signal);
       } catch {
         if (signal?.aborted) return error("ANYSEARCH_CANCELLED", false, null);
         if (timeout) return error("ANYSEARCH_TIMEOUT", true, null);
         return error("ANYSEARCH_UNAVAILABLE", true, null);
       }
+      if (response.status >= 300 && response.status < 400) { await discardBody(response); return error("ANYSEARCH_POLICY_REJECTED", false, null); }
       const status = statusError(response.status);
       if (status) { await discardBody(response); return status; }
-      try { return { ok: true, data: JSON.parse(new TextDecoder().decode(await readBytes(response, controller.signal))) }; } catch {
+      try { return { ok: true, data: await readJson(response, controller.signal) }; } catch {
         if (signal?.aborted) return error("ANYSEARCH_CANCELLED", false, null);
         if (timeout) return error("ANYSEARCH_TIMEOUT", true, null);
         return error("ANYSEARCH_INVALID_RESPONSE", false, null);
@@ -178,7 +246,7 @@ function parseExtractInput(input: unknown): { candidate: AnySearchCandidate; ide
   if (!candidate.success) return undefined;
   const allowedSiteDomains = normalizeAllowedDomains(candidate.data.allowedSiteDomains);
   if (!allowedSiteDomains || !sameValues(allowedSiteDomains, candidate.data.allowedSiteDomains)) return undefined;
-  return { candidate: Object.freeze({ ...candidate.data, allowedSiteDomains }), identity: facts.identity, signal: signal as AbortSignal | undefined };
+  return { candidate: createCandidate(candidate.data.normalizedUrl, allowedSiteDomains, candidate.data.queryId, candidate.data.candidateFingerprint), identity: facts.identity, signal: signal as AbortSignal | undefined };
 }
 function sameValues(left: readonly string[], right: readonly string[]): boolean { return left.length === right.length && left.every((value, index) => value === right[index]); }
 function statusError(status: number): Failure | undefined {
@@ -213,7 +281,7 @@ function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
   return new Promise<T>((resolve, reject) => { const abort = () => { cleanup(); reject(new Error("aborted")); }; const cleanup = () => signal.removeEventListener("abort", abort); signal.addEventListener("abort", abort, { once: true }); operation.then((value) => { cleanup(); resolve(value); }, (reason) => { cleanup(); reject(reason); }); });
 }
 async function discardBody(response: Response): Promise<void> { try { await response.body?.cancel(); } catch { /* do not read status body */ } }
-async function readBytes(response: Response, signal: AbortSignal): Promise<Uint8Array> {
+async function readJson(response: Response, signal: AbortSignal): Promise<unknown> {
   const reader = response.body?.getReader();
   if (!reader) return new Uint8Array();
   const chunks: Uint8Array[] = [];
@@ -223,7 +291,7 @@ async function readBytes(response: Response, signal: AbortSignal): Promise<Uint8
     const bytes = new Uint8Array(size);
     let offset = 0;
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
-    return bytes;
+    return JSON.parse(new TextDecoder().decode(bytes));
   } catch (cause) {
     try { await reader.cancel(cause); } catch { /* cancellation is best effort */ }
     throw cause;

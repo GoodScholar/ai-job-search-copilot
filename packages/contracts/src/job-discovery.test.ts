@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   AnySearchLeadSchema,
   AnySearchProviderErrorSchema,
-  PublicJobIdentityParameters,
-  PublicJobIdentityValue,
+  PublicJobIdentityParameterNames,
+  isPublicJobIdentityParameterName,
+  isPublicJobIdentityValue,
+  isPublicDnsHostname,
   SafeNormalizedPublicJobUrlSchema,
   DiscoveryAttributionSchema,
   DiscoveryDiagnosticSchema,
@@ -12,16 +14,30 @@ import {
   LayeredPublicJobDiscoveryResultSummarySchema,
   PhysicalDiscoveryOperationSchema,
 } from "./job-discovery";
+import { isPublicDnsHostname as isPublicDnsHostnamePolicy } from "./public-job-url-policy";
 
 const queryId = "d3b1f38c-36c3-47df-8f40-4e62bb749e7f";
 
 describe("AnySearch job discovery contracts", () => {
   it("exports the public job identity URL policy used by provider boundaries", () => {
-    expect([...PublicJobIdentityParameters]).toContain("jobid");
-    expect(PublicJobIdentityValue.test("opening-123_A")).toBe(true);
-    expect(PublicJobIdentityValue.test("opening/123")).toBe(false);
+    expect(PublicJobIdentityParameterNames).toContain("jobid");
+    expect(isPublicJobIdentityValue("opening-123_A")).toBe(true);
+    expect(isPublicJobIdentityValue("opening/123")).toBe(false);
+    expect(isPublicJobIdentityParameterName("jobId")).toBe(true);
+    expect(isPublicJobIdentityParameterName("token")).toBe(false);
     expect(SafeNormalizedPublicJobUrlSchema.safeParse("https://jobs.example.com/opening?jobId=opening-123_A").success).toBe(true);
     expect(SafeNormalizedPublicJobUrlSchema.safeParse("https://jobs.example.com/opening?token=secret").success).toBe(false);
+  });
+
+  it("exports immutable identity policy values and a shared strict public DNS predicate", () => {
+    expect(Object.isFrozen(PublicJobIdentityParameterNames)).toBe(true);
+    expect(() => (PublicJobIdentityParameterNames as unknown as string[]).push("token")).toThrow();
+    expect(isPublicJobIdentityParameterName("token")).toBe(false);
+    expect(isPublicDnsHostname("jobs.example.com")).toBe(true);
+    expect(isPublicDnsHostnamePolicy("jobs.example.com")).toBe(true);
+    for (const invalid of ["_jobs.example.com", "jobs..example.com", "-jobs.example.com", "jobs-.example.com", "localhost", "127.0.0.1"]) {
+      expect(isPublicDnsHostname(invalid)).toBe(false);
+    }
   });
   it("keeps an AnySearch lead unverified and outside trusted-source documents", () => {
     const lead = {

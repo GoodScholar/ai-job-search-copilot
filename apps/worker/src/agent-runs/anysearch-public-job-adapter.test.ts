@@ -1,9 +1,12 @@
+import { createServer } from "node:http";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   AnySearchPublicJobAdapter,
   preflightAnySearchCandidate,
   type AnySearchCandidate,
+  type AnySearchBeforeRequest,
+  type AnySearchOperationResult,
 } from "./anysearch-public-job-adapter.js";
 
 const secretKey = "test-anysearch-key-must-not-leak";
@@ -49,6 +52,12 @@ function validExtract(url = "https://jobs.example.com/opening?jobId=abc-123"): u
 
 function testAdapter(input: ConstructorParameters<typeof AnySearchPublicJobAdapter>[0] = {}) {
   return new AnySearchPublicJobAdapter({ apiKey: secretKey, baseUrl: "https://anysearch.test", ...input });
+}
+
+type SearchData = { queryId: string; ordinal: number; candidates: readonly { normalizedUrl: string | null; policy: "accepted" | "rejected"; candidate?: AnySearchCandidate }[] };
+function mustSearchData(result: AnySearchOperationResult<SearchData>): SearchData {
+  if (!result.ok || !("data" in result)) throw new Error("fixture search should succeed");
+  return result.data;
 }
 
 beforeAll(() => { process.env.APP_ENV = "test"; });
@@ -99,7 +108,7 @@ describe("AnySearchPublicJobAdapter", () => {
         else resolve(jsonResponse(validSearch(`https://jobs.example.com/${body.query}?job_id=${body.query}`)));
       });
     }));
-    const hook = vi.fn(async (_context: { kind: "search"; queryId: string } | { kind: "extract"; identity: string; candidateFingerprint: string }) => undefined);
+    const hook = vi.fn<AnySearchBeforeRequest>(async (): Promise<"proceed"> => "proceed");
     const adapter = testAdapter({ transport, beforeRequest: hook });
     const batch = adapter.searchBatch(Array.from({ length: 5 }, (_value, index) => searchInput({
       queryId: index === 0 ? queryId : `018f2d4e-75a1-8f64-bc1d-0123456789a${index}`,
@@ -113,15 +122,15 @@ describe("AnySearchPublicJobAdapter", () => {
     expect(peak).toBeLessThanOrEqual(5);
     expect(hook).toHaveBeenCalledTimes(5);
     expect(hook.mock.calls.map(([context]) => context)).toEqual([
-      { kind: "search", queryId },
-      { kind: "search", queryId: "018f2d4e-75a1-8f64-bc1d-0123456789a1" },
-      { kind: "search", queryId: "018f2d4e-75a1-8f64-bc1d-0123456789a2" },
-      { kind: "search", queryId: "018f2d4e-75a1-8f64-bc1d-0123456789a3" },
-      { kind: "search", queryId: "018f2d4e-75a1-8f64-bc1d-0123456789a4" },
+      expect.objectContaining({ kind: "search", queryId, operationIdentity: expect.stringMatching(/^[a-f0-9]{64}$/u) }),
+      expect.objectContaining({ kind: "search", queryId: "018f2d4e-75a1-8f64-bc1d-0123456789a1", operationIdentity: expect.stringMatching(/^[a-f0-9]{64}$/u) }),
+      expect.objectContaining({ kind: "search", queryId: "018f2d4e-75a1-8f64-bc1d-0123456789a2", operationIdentity: expect.stringMatching(/^[a-f0-9]{64}$/u) }),
+      expect.objectContaining({ kind: "search", queryId: "018f2d4e-75a1-8f64-bc1d-0123456789a3", operationIdentity: expect.stringMatching(/^[a-f0-9]{64}$/u) }),
+      expect.objectContaining({ kind: "search", queryId: "018f2d4e-75a1-8f64-bc1d-0123456789a4", operationIdentity: expect.stringMatching(/^[a-f0-9]{64}$/u) }),
     ]);
     releases.reverse().forEach((release) => release());
     const results = await batch;
-    expect(results.map((result) => result.ok ? result.data.queryId : result.error.code)).toEqual([
+    expect(results.map((result) => result.ok && "data" in result ? result.data.queryId : result.ok ? "replay" : result.error.code)).toEqual([
       queryId,
       "018f2d4e-75a1-8f64-bc1d-0123456789a1",
       "ANYSEARCH_RATE_LIMITED",
@@ -136,23 +145,26 @@ describe("AnySearchPublicJobAdapter", () => {
 
   it("extracts only a locally preflighted candidate and rejects forged or off-domain values before transport", async () => {
     const transport = vi.fn(async (url: RequestInfo | URL, _init?: RequestInit) => jsonResponse((url as URL).pathname === "/v1/search" ? validSearch() : validExtract()));
-    const hook = vi.fn(async (_context: { kind: "search"; queryId: string } | { kind: "extract"; identity: string; candidateFingerprint: string }) => undefined);
+    const hook = vi.fn<AnySearchBeforeRequest>(async (): Promise<"proceed"> => "proceed");
     const adapter = testAdapter({ transport, beforeRequest: hook });
     const searched = await adapter.search(searchInput());
-    if (!searched.ok) throw new Error("fixture search should succeed");
-    const candidate = searched.data.candidates[0]?.candidate;
+    const candidate = mustSearchData(searched).candidates[0]?.candidate;
     if (!candidate) throw new Error("fixture candidate should be accepted");
+    expect(Object.isFrozen(candidate)).toBe(true);
+    expect(Object.isFrozen(candidate.allowedSiteDomains)).toBe(true);
+
+    const forged = { ...candidate, queryId: "018f2d4e-75a1-8f64-bc1d-0123456789ae" } as AnySearchCandidate;
+    await expect(adapter.extract({ candidate: forged, identity: leadId })).resolves.toEqual({ ok: false, error: { code: "ANYSEARCH_POLICY_REJECTED", retryable: false, httpStatus: null } });
+    expect(transport).toHaveBeenCalledTimes(1);
 
     const result = await adapter.extract({ candidate, identity: leadId });
     expect(result).toEqual({ ok: true, data: { normalizedUrl: "https://jobs.example.com/opening?jobId=abc-123", content: "untrusted extract text" } });
     const extractCall = transport.mock.calls[1]!;
     expect(String(extractCall[0])).toBe("https://anysearch.test/v1/extract");
     expect(JSON.parse(String(extractCall[1]?.body))).toEqual({ url: "https://jobs.example.com/opening?jobId=abc-123" });
-    expect(hook.mock.calls[0]?.[0]).toEqual({ kind: "search", queryId });
+    expect(hook.mock.calls[0]?.[0]).toMatchObject({ kind: "search", queryId, operationIdentity: expect.stringMatching(/^[a-f0-9]{64}$/u) });
     expect(hook.mock.calls[1]?.[0]).toMatchObject({ kind: "extract", identity: leadId });
 
-    const forged = { ...candidate } as AnySearchCandidate;
-    await expect(adapter.extract({ candidate: forged, identity: leadId })).resolves.toEqual({ ok: false, error: { code: "ANYSEARCH_POLICY_REJECTED", retryable: false, httpStatus: null } });
     const offDomain = preflightAnySearchCandidate({ url: "https://evil-example.com/job?job=42", allowedSiteDomains: ["example.com"] });
     expect(offDomain).toEqual({ ok: false, error: { code: "ANYSEARCH_POLICY_REJECTED", retryable: false, httpStatus: null } });
     await expect(adapter.extract({ candidate, identity: leadId })).resolves.toEqual({ ok: false, error: { code: "ANYSEARCH_POLICY_REJECTED", retryable: false, httpStatus: null } });
@@ -168,9 +180,10 @@ describe("AnySearchPublicJobAdapter", () => {
     const transport = vi.fn(async (url: RequestInfo | URL) => (url as URL).pathname === "/v1/search" ? jsonResponse(validSearch()) : extractResponse);
     const adapter = testAdapter({ transport });
     const searched = await adapter.search(searchInput());
-    if (!searched.ok || !searched.data.candidates[0]?.candidate) throw new Error("fixture search should succeed");
+    const candidate = mustSearchData(searched).candidates[0]?.candidate;
+    if (!candidate) throw new Error("fixture search should succeed");
 
-    await expect(adapter.extract({ candidate: searched.data.candidates[0].candidate, identity: leadId })).resolves.toEqual({ ok: false, error: { code: "ANYSEARCH_INVALID_RESPONSE", retryable: false, httpStatus: null } });
+    await expect(adapter.extract({ candidate, identity: leadId })).resolves.toEqual({ ok: false, error: { code: "ANYSEARCH_INVALID_RESPONSE", retryable: false, httpStatus: null } });
   });
 
   it("maps abort, timeout, and stopped hooks without making an unintended request", async () => {
@@ -189,7 +202,7 @@ describe("AnySearchPublicJobAdapter", () => {
 
     await expect(testAdapter({ transport: async () => new Promise<Response>(() => undefined), timeoutMs: 10 }).search(searchInput())).resolves.toEqual({ ok: false, error: { code: "ANYSEARCH_TIMEOUT", retryable: true, httpStatus: null } });
     const stoppedTransport = vi.fn();
-    const stopped = testAdapter({ transport: stoppedTransport, beforeRequest: async (): Promise<false> => false });
+    const stopped = testAdapter({ transport: stoppedTransport, beforeRequest: async () => "blocked" as const });
     await expect(stopped.search(searchInput())).resolves.toEqual({ ok: false, error: { code: "ANYSEARCH_CANCELLED", retryable: false, httpStatus: null } });
     expect(stoppedTransport).not.toHaveBeenCalled();
   });
@@ -260,22 +273,32 @@ describe("AnySearchPublicJobAdapter", () => {
     expect(preflightAnySearchCandidate({ url, allowedSiteDomains: [] })).toEqual({ ok: false, error: { code: "ANYSEARCH_POLICY_REJECTED", retryable: false, httpStatus: null } });
   });
 
-  it("recovers a serializable candidate in a new adapter while preventing duplicate normalized URL claims per instance", async () => {
+  it("rejects an unapproved serialized recovery but accepts explicit opaque recovery authorization", async () => {
     const transport = vi.fn(async (url: RequestInfo | URL) => (url as URL).pathname === "/v1/search" ? jsonResponse(validSearch("https://jobs.example.com/opening?position_id=two&jobId=one")) : jsonResponse(validExtract()));
     const first = testAdapter({ transport });
     const fromFirst = await first.search(searchInput());
-    if (!fromFirst.ok || !fromFirst.data.candidates[0]?.candidate) throw new Error("fixture candidate should be accepted");
-    const recovered = JSON.parse(JSON.stringify(fromFirst.data.candidates[0].candidate));
+    const initialCandidate = mustSearchData(fromFirst).candidates[0]?.candidate;
+    if (!initialCandidate) throw new Error("fixture candidate should be accepted");
+    const recovered = JSON.parse(JSON.stringify(initialCandidate));
     const second = testAdapter({ transport });
-    await expect(second.extract({ candidate: recovered, identity: "018f2d4e-75a1-8f64-bc1d-0123456789ad" })).resolves.toMatchObject({ ok: true });
+    await expect(second.extract({ candidate: recovered, identity: "018f2d4e-75a1-8f64-bc1d-0123456789ad" })).resolves.toEqual({ ok: false, error: { code: "ANYSEARCH_POLICY_REJECTED", retryable: false, httpStatus: null } });
+
+    const authorized = testAdapter({
+      transport,
+      authorizeRecoveredCandidate: async ({ queryId: recoveredQueryId, candidateFingerprint, identity, operationIdentity }) => (
+        recoveredQueryId === queryId && candidateFingerprint === recovered.candidateFingerprint && identity === "018f2d4e-75a1-8f64-bc1d-0123456789ad" && /^[a-f0-9]{64}$/u.test(operationIdentity)
+      ),
+      beforeRequest: async (): Promise<"proceed"> => "proceed",
+    });
+    await expect(authorized.extract({ candidate: recovered, identity: "018f2d4e-75a1-8f64-bc1d-0123456789ad" })).resolves.toMatchObject({ ok: true, data: { normalizedUrl: recovered.normalizedUrl } });
 
     const duplicate = await first.search(searchInput({ queryId: "018f2d4e-75a1-8f64-bc1d-0123456789ae", stableFingerprint: "b".repeat(64) }));
-    expect(duplicate).toMatchObject({ ok: true, data: { candidates: [{ policy: "rejected" }] } });
+    expect(duplicate).toMatchObject({ ok: true, data: { candidates: [{ policy: "accepted" }] } });
   });
 
   it("keeps false and abort hooks unclaimed, while rethrowing workflow control errors", async () => {
     const transport = vi.fn(async () => jsonResponse(validSearch()));
-    const stopped = testAdapter({ transport, beforeRequest: async (): Promise<false> => false });
+    const stopped = testAdapter({ transport, beforeRequest: async () => "blocked" as const });
     await expect(stopped.search(searchInput())).resolves.toEqual({ ok: false, error: { code: "ANYSEARCH_CANCELLED", retryable: false, httpStatus: null } });
     expect(transport).not.toHaveBeenCalled();
     const control = new Error("BUDGET_EXHAUSTED");
@@ -286,22 +309,24 @@ describe("AnySearchPublicJobAdapter", () => {
   it("does not consume an extract claim when its hook stops or aborts before POST", async () => {
     let stop = true;
     const transport = vi.fn(async (url: RequestInfo | URL) => (url as URL).pathname === "/v1/search" ? jsonResponse(validSearch()) : jsonResponse(validExtract()));
-    const adapter = testAdapter({ transport, beforeRequest: async (context) => context.kind === "extract" && stop ? false : undefined });
+    const adapter = testAdapter({ transport, beforeRequest: async (context) => context.kind === "extract" && stop ? "blocked" as const : "proceed" as const });
     const searched = await adapter.search(searchInput());
-    if (!searched.ok || !searched.data.candidates[0]?.candidate) throw new Error("fixture candidate should be accepted");
-    await expect(adapter.extract({ candidate: searched.data.candidates[0].candidate, identity: leadId })).resolves.toMatchObject({ ok: false, error: { code: "ANYSEARCH_CANCELLED" } });
+    const candidate = mustSearchData(searched).candidates[0]?.candidate;
+    if (!candidate) throw new Error("fixture candidate should be accepted");
+    await expect(adapter.extract({ candidate, identity: leadId })).resolves.toMatchObject({ ok: false, error: { code: "ANYSEARCH_CANCELLED" } });
     expect(transport).toHaveBeenCalledTimes(1);
     stop = false;
-    await expect(adapter.extract({ candidate: searched.data.candidates[0].candidate, identity: leadId })).resolves.toMatchObject({ ok: true });
+    await expect(adapter.extract({ candidate, identity: leadId })).resolves.toMatchObject({ ok: true });
     expect(transport).toHaveBeenCalledTimes(2);
 
     const another = testAdapter({ transport });
     const anotherSearch = await another.search(searchInput({ queryId: "018f2d4e-75a1-8f64-bc1d-0123456789af", stableFingerprint: "c".repeat(64) }));
-    if (!anotherSearch.ok || !anotherSearch.data.candidates[0]?.candidate) throw new Error("second fixture candidate should be accepted");
+    const anotherCandidate = mustSearchData(anotherSearch).candidates[0]?.candidate;
+    if (!anotherCandidate) throw new Error("second fixture candidate should be accepted");
     const aborted = new AbortController();
     aborted.abort();
-    await expect(another.extract({ candidate: anotherSearch.data.candidates[0].candidate, identity: leadId, signal: aborted.signal })).resolves.toMatchObject({ ok: false, error: { code: "ANYSEARCH_CANCELLED" } });
-    await expect(another.extract({ candidate: anotherSearch.data.candidates[0].candidate, identity: leadId })).resolves.toMatchObject({ ok: true });
+    await expect(another.extract({ candidate: anotherCandidate, identity: leadId, signal: aborted.signal })).resolves.toMatchObject({ ok: false, error: { code: "ANYSEARCH_CANCELLED" } });
+    await expect(another.extract({ candidate: anotherCandidate, identity: leadId })).resolves.toMatchObject({ ok: true });
   });
 
   it.each([
@@ -320,8 +345,9 @@ describe("AnySearchPublicJobAdapter", () => {
   it("rejects malformed extract identity and invalid timeout configuration before a provider call", async () => {
     const transport = vi.fn(async () => jsonResponse(validSearch()));
     const searched = await testAdapter({ transport }).search(searchInput());
-    if (!searched.ok || !searched.data.candidates[0]?.candidate) throw new Error("fixture candidate should be accepted");
-    await expect(testAdapter({ transport }).extract({ candidate: searched.data.candidates[0].candidate, identity: "raw-user-id" })).resolves.toEqual({ ok: false, error: { code: "ANYSEARCH_POLICY_REJECTED", retryable: false, httpStatus: null } });
+    const candidate = mustSearchData(searched).candidates[0]?.candidate;
+    if (!candidate) throw new Error("fixture candidate should be accepted");
+    await expect(testAdapter({ transport }).extract({ candidate, identity: "raw-user-id" })).resolves.toEqual({ ok: false, error: { code: "ANYSEARCH_POLICY_REJECTED", retryable: false, httpStatus: null } });
     expect(() => testAdapter({ timeoutMs: 0 })).toThrow("ANYSEARCH_TIMEOUT_INVALID");
     expect(() => testAdapter({ timeoutMs: Number.POSITIVE_INFINITY })).toThrow("ANYSEARCH_TIMEOUT_INVALID");
   });
@@ -340,7 +366,7 @@ describe("AnySearchPublicJobAdapter", () => {
     let statusCancelled = false;
     const statusBody = new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array([1])); }, cancel() { statusCancelled = true; } });
     await expect(testAdapter({ transport: async (_url, request) => { init = request; return new Response(statusBody, { status: 429 }); } }).search(searchInput())).resolves.toMatchObject({ ok: false, error: { code: "ANYSEARCH_RATE_LIMITED" } });
-    expect(init?.redirect).toBe("error");
+    expect(init?.redirect).toBe("manual");
     expect(statusCancelled).toBe(true);
 
     let oversizedCancelled = false;
@@ -352,5 +378,148 @@ describe("AnySearchPublicJobAdapter", () => {
   it("rejects search results with a present non-string optional text field", async () => {
     const malformed = { code: 0, message: "ok", request_id: "r", data: { results: [{ url: "https://jobs.example.com/a?job=1", title: "x", content: 1, snippet: "ok" }] } };
     await expect(testAdapter({ transport: async () => jsonResponse(malformed) }).search(searchInput())).resolves.toEqual({ ok: false, error: { code: "ANYSEARCH_INVALID_RESPONSE", retryable: false, httpStatus: null } });
+  });
+
+  it("canonicalizes hostname aliases before URL length and candidate fingerprinting", () => {
+    const alias = preflightAnySearchCandidate({ url: "https://JOBS.EXAMPLE.COM.:443/path?job=1", allowedSiteDomains: ["EXAMPLE.COM."] });
+    const canonical = preflightAnySearchCandidate({ url: "https://jobs.example.com/path?job=1", allowedSiteDomains: ["example.com"] });
+    expect(alias).toMatchObject({ ok: true, data: { normalizedUrl: "https://jobs.example.com/path?job=1", allowedSiteDomains: ["example.com"] } });
+    expect(alias).toEqual(canonical);
+
+    const exact = `https://jobs.example.com/${"a".repeat(2_048 - "https://jobs.example.com/".length)}`;
+    const tooLong = `https://jobs.example.com/${"a".repeat(2_049 - "https://jobs.example.com/".length)}`;
+    const longerBeforeNormalization = `${exact}#${"x".repeat(20)}`;
+    expect(preflightAnySearchCandidate({ url: exact, allowedSiteDomains: [] }).ok).toBe(true);
+    expect(preflightAnySearchCandidate({ url: tooLong, allowedSiteDomains: [] }).ok).toBe(false);
+    expect(preflightAnySearchCandidate({ url: longerBeforeNormalization, allowedSiteDomains: [] })).toMatchObject({ ok: true, data: { normalizedUrl: exact } });
+  });
+
+  it.each(["_jobs.example.com", "jobs..example.com", "-jobs.example.com", "jobs-.example.com", "co.uk"])("rejects invalid or public-suffix allowed domains: %s", async (domain) => {
+    const transport = vi.fn();
+    await expect(testAdapter({ transport }).search(searchInput({ allowedSiteDomains: [domain] }))).resolves.toEqual({ ok: false, error: { code: "ANYSEARCH_POLICY_REJECTED", retryable: false, httpStatus: null } });
+    expect(preflightAnySearchCandidate({ url: "https://jobs.example.com/path?job=1", allowedSiteDomains: [domain] })).toEqual({ ok: false, error: { code: "ANYSEARCH_POLICY_REJECTED", retryable: false, httpStatus: null } });
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it("keeps replayed search stable and resolves batch duplicates by input then result ordinal", async () => {
+    const transport = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as { query: string };
+      return jsonResponse({ ...validSearch("https://jobs.example.com/shared?job=1") as object, data: { results: [
+        { url: "https://jobs.example.com/shared?job=1", title: "Shared", content: "x" },
+        { url: `https://jobs.example.com/${body.query}?job=2`, title: "Unique", snippet: "x" },
+      ] } });
+    });
+    const adapter = testAdapter({ transport });
+    const once = await adapter.search(searchInput({ kind: "general", allowedSiteDomains: [], query: "one" }));
+    const replay = await adapter.search(searchInput({ kind: "general", allowedSiteDomains: [], query: "one" }));
+    expect(replay).toEqual(once);
+
+    const batch = await adapter.searchBatch([
+      searchInput({ kind: "general", allowedSiteDomains: [], query: "first", ordinal: 1 }),
+      searchInput({ kind: "general", allowedSiteDomains: [], query: "second", ordinal: 2, queryId: "018f2d4e-75a1-8f64-bc1d-0123456789ae", stableFingerprint: "b".repeat(64) }),
+    ]);
+    expect(batch).toMatchObject([
+      { ok: true, data: { candidates: [{ policy: "accepted" }, { policy: "accepted" }] } },
+      { ok: true, data: { candidates: [{ policy: "rejected" }, { policy: "accepted" }] } },
+    ]);
+  });
+
+  it("uses explicit durable decisions and rolls back only blocked or thrown extract claims", async () => {
+    let decision: "proceed" | "already_completed" | "blocked" = "proceed";
+    const hook = vi.fn(async () => decision);
+    const transport = vi.fn(async (url: RequestInfo | URL) => (url as URL).pathname === "/v1/search" ? jsonResponse(validSearch()) : jsonResponse(validExtract()));
+    const adapter = testAdapter({ transport, beforeRequest: hook });
+    const searched = await adapter.search(searchInput());
+    if (!searched.ok || !("data" in searched) || !searched.data.candidates[0]?.candidate) throw new Error("fixture candidate should be accepted");
+    const candidate = searched.data.candidates[0].candidate;
+
+    decision = "blocked";
+    await expect(adapter.extract({ candidate, identity: leadId })).resolves.toEqual({ ok: false, error: { code: "ANYSEARCH_CANCELLED", retryable: false, httpStatus: null } });
+    decision = "proceed";
+    await expect(adapter.extract({ candidate, identity: leadId })).resolves.toMatchObject({ ok: true, data: { normalizedUrl: candidate.normalizedUrl } });
+    const hooksAfterProceed = hook.mock.calls.length;
+    await expect(adapter.extract({ candidate, identity: leadId })).resolves.toEqual({ ok: false, error: { code: "ANYSEARCH_POLICY_REJECTED", retryable: false, httpStatus: null } });
+    expect(hook).toHaveBeenCalledTimes(hooksAfterProceed);
+
+    const replayAdapter = testAdapter({ transport, beforeRequest: async (): Promise<"already_completed"> => "already_completed" });
+    await expect(replayAdapter.search(searchInput())).resolves.toMatchObject({ ok: true, replay: { operationIdentity: expect.stringMatching(/^[a-f0-9]{64}$/u) } });
+    expect(transport).toHaveBeenCalledTimes(2);
+  });
+
+  it("rolls back a throwing extract decision and consumes an authorized completed recovery without a second hook", async () => {
+    let throwExtract = true;
+    const control = new Error("CHECKPOINT_CONFLICT");
+    const transport = vi.fn(async (url: RequestInfo | URL) => (url as URL).pathname === "/v1/search" ? jsonResponse(validSearch()) : jsonResponse(validExtract()));
+    const adapter = testAdapter({ transport, beforeRequest: (input) => {
+      if (input.kind === "extract" && throwExtract) throw control;
+      return "proceed";
+    } });
+    const searched = await adapter.search(searchInput());
+    const candidate = mustSearchData(searched).candidates[0]?.candidate;
+    if (!candidate) throw new Error("fixture candidate should be accepted");
+    await expect(adapter.extract({ candidate, identity: leadId })).rejects.toBe(control);
+    throwExtract = false;
+    await expect(adapter.extract({ candidate, identity: leadId })).resolves.toMatchObject({ ok: true, data: { normalizedUrl: candidate.normalizedUrl } });
+
+    const recovered = JSON.parse(JSON.stringify(candidate));
+    const replayHook = vi.fn(async (): Promise<"already_completed"> => "already_completed");
+    const recoveredAdapter = testAdapter({
+      transport,
+      beforeRequest: replayHook,
+      authorizeRecoveredCandidate: () => true,
+    });
+    const replay = await recoveredAdapter.extract({ candidate: recovered, identity: "018f2d4e-75a1-8f64-bc1d-0123456789ad" });
+    expect(replay).toEqual({ ok: true, replay: { operationIdentity: expect.stringMatching(/^[a-f0-9]{64}$/u) } });
+    const hookCalls = replayHook.mock.calls.length;
+    await expect(recoveredAdapter.extract({ candidate: recovered, identity: "018f2d4e-75a1-8f64-bc1d-0123456789ad" })).resolves.toEqual({ ok: false, error: { code: "ANYSEARCH_POLICY_REJECTED", retryable: false, httpStatus: null } });
+    expect(replayHook).toHaveBeenCalledTimes(hookCalls);
+  });
+
+  it("treats caller identity as an opaque physical extract attempt identity", async () => {
+    let extractCalls = 0;
+    const transport = vi.fn(async (url: RequestInfo | URL) => {
+      if ((url as URL).pathname === "/v1/search") return jsonResponse(validSearch());
+      extractCalls += 1;
+      return extractCalls === 1 ? jsonResponse({ message: "temporary" }, 503) : jsonResponse(validExtract());
+    });
+    const adapter = testAdapter({ transport });
+    const searched = await adapter.search(searchInput());
+    const candidate = mustSearchData(searched).candidates[0]?.candidate;
+    if (!candidate) throw new Error("fixture candidate should be accepted");
+    await expect(adapter.extract({ candidate, identity: leadId })).resolves.toEqual({ ok: false, error: { code: "ANYSEARCH_UNAVAILABLE", retryable: true, httpStatus: 503 } });
+    await expect(adapter.extract({ candidate, identity: leadId })).resolves.toEqual({ ok: false, error: { code: "ANYSEARCH_POLICY_REJECTED", retryable: false, httpStatus: null } });
+    await expect(adapter.extract({ candidate, identity: "018f2d4e-75a1-8f64-bc1d-0123456789ad" })).resolves.toMatchObject({ ok: true, data: { normalizedUrl: candidate.normalizedUrl } });
+    expect(extractCalls).toBe(2);
+  });
+
+  it("uses manual redirect policy and never posts to a 307 destination", async () => {
+    let destinationPosts = 0;
+    const destination = createServer((_request, response) => { destinationPosts += 1; response.end(); });
+    await new Promise<void>((resolve) => destination.listen(0, "127.0.0.1", resolve));
+    const destinationPort = (destination.address() as { port: number }).port;
+    const source = createServer((_request, response) => {
+      response.writeHead(307, { location: `http://127.0.0.1:${destinationPort}/capture` });
+      response.end("untrusted redirect body");
+    });
+    await new Promise<void>((resolve) => source.listen(0, "127.0.0.1", resolve));
+    const sourcePort = (source.address() as { port: number }).port;
+    try {
+      await expect(testAdapter({ baseUrl: `http://127.0.0.1:${sourcePort}` }).search(searchInput())).resolves.toEqual({ ok: false, error: { code: "ANYSEARCH_POLICY_REJECTED", retryable: false, httpStatus: null } });
+      expect(destinationPosts).toBe(0);
+    } finally {
+      await Promise.all([new Promise<void>((resolve) => source.close(() => resolve())), new Promise<void>((resolve) => destination.close(() => resolve()))]);
+    }
+  });
+
+  it("cancels and releases the reader on JSON parse failure", async () => {
+    const reader = {
+      read: vi.fn(async () => ({ done: false, value: new TextEncoder().encode("{") })).mockResolvedValueOnce({ done: false, value: new TextEncoder().encode("{") }).mockResolvedValueOnce({ done: true, value: new Uint8Array() }),
+      cancel: vi.fn(async () => undefined),
+      releaseLock: vi.fn(),
+    };
+    const response = { status: 200, body: { getReader: () => reader } } as unknown as Response;
+    await expect(testAdapter({ transport: async () => response }).search(searchInput())).resolves.toEqual({ ok: false, error: { code: "ANYSEARCH_INVALID_RESPONSE", retryable: false, httpStatus: null } });
+    expect(reader.cancel).toHaveBeenCalledTimes(1);
+    expect(reader.releaseLock).toHaveBeenCalledTimes(1);
   });
 });

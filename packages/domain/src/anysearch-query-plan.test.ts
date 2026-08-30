@@ -128,6 +128,7 @@ describe("AnySearch query planner", () => {
 
   it("从合约允许的最大快照确定性地生成 roleFamily 优先且不超过 500 字符的查询", () => {
     const roleFamily = "r".repeat(200);
+    const maximumAllowedDomains = Array.from({ length: 20 }, (_, index) => `${index}${"d".repeat(63 - String(index).length)}.${"d".repeat(63)}.${"d".repeat(63)}.com`);
     const plan = createAnySearchQueryPlan({
       ...snapshots(),
       targetSnapshot: {
@@ -147,7 +148,7 @@ describe("AnySearch query planner", () => {
         companies: [{
           watchlistItemId: "11111111-1111-4111-8111-111111111111",
           canonicalCompanyName: "c".repeat(200),
-          allowedDomains: Array.from({ length: 20 }, (_, index) => `${index}.${"d".repeat(246)}.com`),
+          allowedDomains: maximumAllowedDomains,
         }],
       },
     });
@@ -160,7 +161,7 @@ describe("AnySearch query planner", () => {
       `site:${ANYSEARCH_PUBLIC_JOB_QUERY_PLATFORM_POLICY.platforms[index]!.allowedSiteDomains[0]}`,
     ))).toBe(true);
     expect(companyQuery.query).toContain(`${roleFamily} ${"c".repeat(200)}`);
-    expect(companyQuery.allowedSiteDomains).toEqual(Array.from({ length: 20 }, (_, index) => `${index}.${"d".repeat(246)}.com`).slice(0, 5));
+    expect(companyQuery.allowedSiteDomains).toEqual(maximumAllowedDomains.slice(0, 5));
     expect(plannedSiteTokens.every((token) => [
       ...ANYSEARCH_PUBLIC_JOB_QUERY_PLATFORM_POLICY.platforms.flatMap(({ allowedSiteDomains }) => allowedSiteDomains),
       ...companyQuery.allowedSiteDomains,
@@ -172,7 +173,7 @@ describe("AnySearch query planner", () => {
         constraints: { ...snapshots().targetSnapshot.constraints, roleFamily, seniority: "s".repeat(200), locations: Array.from({ length: 20 }, (_, index) => `${index}${"l".repeat(200 - String(index).length)}`), workModes: ["onsite", "hybrid", "remote"] as const },
       },
       profileSnapshot: { targetId, version: 1, confirmedActiveSkillNames: Array.from({ length: 10 }, (_, index) => `${index}${"k".repeat(99)}`) },
-      watchlistSnapshot: { targetId, version: 1, companies: [{ watchlistItemId: "11111111-1111-4111-8111-111111111111", canonicalCompanyName: "c".repeat(200), allowedDomains: Array.from({ length: 20 }, (_, index) => `${index}.${"d".repeat(246)}.com`) }] },
+      watchlistSnapshot: { targetId, version: 1, companies: [{ watchlistItemId: "11111111-1111-4111-8111-111111111111", canonicalCompanyName: "c".repeat(200), allowedDomains: maximumAllowedDomains }] },
     })).toEqual(plan);
   });
 

@@ -1,6 +1,15 @@
 import { z } from "zod";
 import { GreenhousePublicSourceSchema } from "./job-discovery-schedules";
 import { JobTargetConstraintsSchema } from "./job-targets";
+import { isPublicDnsHostname, SafeNormalizedPublicJobUrlSchema } from "./public-job-url-policy";
+
+export {
+  isPublicDnsHostname,
+  isPublicJobIdentityParameterName,
+  isPublicJobIdentityValue,
+  PublicJobIdentityParameterNames,
+  SafeNormalizedPublicJobUrlSchema,
+} from "./public-job-url-policy";
 
 export const LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION = "layered-public-job-discovery-v1";
 export const LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER = "layered-public";
@@ -16,19 +25,6 @@ const nonnegativeInteger = z.int().nonnegative();
 const stableFingerprint = z.string().regex(/^[a-f0-9]{64}$/u);
 const opaqueQueryId = z.uuid();
 const stableCode = z.string().regex(/^[A-Z][A-Z0-9_]{1,63}$/u);
-export const PublicJobIdentityValue = /^[A-Za-z0-9._~-]{1,128}$/u;
-export const PublicJobIdentityParameters: ReadonlySet<string> = new Set([
-  "id", "job", "jobid", "job_id", "openingid", "opening_id", "positionid", "position_id", "requisitionid", "requisition_id",
-]);
-export const SafeNormalizedPublicJobUrlSchema = z.url().max(2_048).superRefine((value, context) => {
-  const url = new URL(value);
-  const hasUnsafeAuthority = url.protocol !== "https:" || url.username !== "" || url.password !== "" || url.hash !== "";
-  const invalidQueryParameter = [...url.searchParams].some(([key, parameterValue]) => !PublicJobIdentityParameters.has(key.toLowerCase()) || !PublicJobIdentityValue.test(parameterValue));
-  if (hasUnsafeAuthority || invalidQueryParameter) {
-    context.addIssue({ code: "custom", message: "lead URLs must be normalized HTTPS URLs with only public job identity query parameters" });
-  }
-});
-
 export const PublicJobDiscoverySourceTypeSchema = z.enum([
   "company_careers", "recruitment_platform", "wechat_recruitment_h5", "public_web",
 ]);
@@ -90,7 +86,7 @@ export const LayeredPublicJobDiscoveryWatchlistSnapshotSchema = z.object({
   companies: z.array(z.object({
     watchlistItemId: z.uuid(),
     canonicalCompanyName: z.string().trim().min(1).max(200),
-    allowedDomains: z.array(z.string().trim().toLowerCase().min(1).max(253)).min(1).max(20),
+    allowedDomains: z.array(z.string().trim().toLowerCase().min(1).max(253).refine(isPublicDnsHostname, "must be a registrable public DNS hostname")).min(1).max(20),
   }).strict()).max(50).refine(
     (companies) => new Set(companies.map((company) => company.watchlistItemId)).size === companies.length,
     { message: "watchlist companies must be unique" },
@@ -103,7 +99,7 @@ export const LayeredPublicJobDiscoveryQuerySchema = z.object({
   kind: PublicJobDiscoveryQueryKindSchema,
   stableFingerprint,
   query: z.string().trim().min(1).max(500),
-  allowedSiteDomains: z.array(z.string().trim().toLowerCase().min(1).max(253)).max(5),
+  allowedSiteDomains: z.array(z.string().trim().toLowerCase().min(1).max(253).refine(isPublicDnsHostname, "must be a registrable public DNS hostname")).max(5),
   targetCompanyNames: z.array(z.string().trim().min(1).max(200)).max(5),
   resultLimit: z.literal(5),
 }).strict().superRefine((query, context) => {

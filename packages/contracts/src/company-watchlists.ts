@@ -1,25 +1,11 @@
 import { z } from "zod";
+import { isPublicDnsHostname } from "./public-job-url-policy";
 
 const version = z.int().min(0);
 const positiveInteger = z.int().min(1);
 const sensitiveQueryKeySegments = new Set([
   "token", "auth", "session", "password", "secret", "key", "code",
 ]);
-
-function isIpv4Literal(value: string): boolean {
-  const parts = value.split(".");
-  return parts.length === 4 && parts.every((part) => /^\d{1,3}$/u.test(part) && Number(part) <= 255);
-}
-
-function isPublicDnsName(value: string): boolean {
-  if (value.length > 253 || isIpv4Literal(value) || value === "localhost" || value.endsWith(".localhost")) return false;
-  const labels = value.split(".");
-  return labels.length >= 2 && labels.every((label) => (
-    label.length >= 1
-    && label.length <= 63
-    && /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/u.test(label)
-  ));
-}
 
 function isCredentialQueryKey(value: string): boolean {
   const segments = value
@@ -35,7 +21,7 @@ function isAllowedCareersUrl(value: string, allowedDomains: string[]): boolean {
     const url = new URL(value);
     if (!/^https?:$/u.test(url.protocol) || url.username || url.password) return false;
     const host = url.hostname.toLowerCase();
-    if (host.includes(":") || !isPublicDnsName(host)) return false;
+    if (host.includes(":") || !isPublicDnsHostname(host)) return false;
     if (Array.from(url.searchParams.keys()).some(isCredentialQueryKey)) return false;
     return allowedDomains.some((domain) => host === domain || host.endsWith(`.${domain}`));
   } catch {
@@ -44,7 +30,7 @@ function isAllowedCareersUrl(value: string, allowedDomains: string[]): boolean {
 }
 
 const canonicalCompanyName = z.string().trim().min(1).max(200);
-const allowedDomain = z.string().trim().toLowerCase().refine(isPublicDnsName, "must be a public DNS name");
+const allowedDomain = z.string().trim().toLowerCase().refine(isPublicDnsHostname, "must be a registrable public DNS hostname");
 const allowedDomains = z.array(allowedDomain).min(1).max(20).refine(
   (values) => new Set(values).size === values.length,
   { message: "allowed domains must be unique" },
