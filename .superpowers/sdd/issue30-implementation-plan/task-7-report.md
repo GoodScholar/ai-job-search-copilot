@@ -86,3 +86,11 @@ Fresh verification：public API focused **1/1**；internal Lead + gate focused �
 补充测试提交：`1a239c2`，直接替换 transaction seam 为 unknown DB sentinel，连同 raw/visible put、id、delete sentinel 均断言 exact error object identity；typed unavailable 仍由既有回归断言映射稳定 storage/cleanup code。
 
 Fresh verification：public/internal/gate focused **3 files / 23 tests**；gate **1 file / 14 tests**；domain full **26 files / 296 tests**；contracts **12 files / 108 tests**；source-access **2 files / 125 tests**；database **2 files / 24 tests**；contracts/domain/source-access/database typecheck 均退出 0。最后 `git diff --check b56c3f17eb4240608ef9e82657413485b1b68252..HEAD` fresh exit 0。
+
+## Fix round 3：跨 Lead recovery generation 回收
+
+实现提交：`563a59a`（`fix(domain): reclaim superseded lead evidence`）。
+
+**Red**：A Lead 在 Attribution 冲突且 typed cleanup delete unavailable 后留下自己的确定性 UUIDv8 raw/visible generation；B Lead 随后同 owner、canonical、content 成功提交不同 UUIDv8 generation 与 Attribution；A 相同输入 retry 会复用 B Version，却保留 A orphan。**Green**：每次 verify 在取得 Lead/query taxonomy 后立即确定本 Lead generation/key；若将复用另一 generation 的兼容 Version，则在当前 account lock transaction 内读取所有 owner Version references，仅删除本 Lead 未被引用的 recovery key，再建立/重放 Attribution。typed delete 失败在 Lead 仍 pending 时返回 `VERIFIED_JOB_SOURCE_CLEANUP_REQUIRED`，unknown delete 保持原对象 identity。回归同时验证 A/B UUIDv8 不同、B objects/version/attribution 完整、A retry 无 orphan、replay 零 put，以及 absence/idempotent delete 不影响 B 引用。
+
+Fresh verification：public/internal/gate focused **3 files / 24 tests**；gate **1 file / 15 tests**；domain full **26 files / 297 tests**；contracts **12 files / 108 tests**；source-access **2 files / 125 tests**；database **2 files / 24 tests**；contracts/domain/source-access/database typecheck 均退出 0。最后 `git diff --check b56c3f17eb4240608ef9e82657413485b1b68252..HEAD` fresh exit 0。
