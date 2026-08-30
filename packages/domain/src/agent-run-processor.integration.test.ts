@@ -179,6 +179,28 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(database.select().from(jobDiscoveryRunResults).where(eq(jobDiscoveryRunResults.runId, job.runId))).resolves.toEqual([]);
   });
 
+  it("v4 completed duplicate delivery 不重放 workflow、结果或 usage", async () => {
+    const job = await layeredRun();
+    let calls = 0;
+    const processor = createAgentRunProcessor({
+      db: database,
+      adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
+      layeredPublicWorkflowResolver: { resolve: () => ({ run: async ({ beforePhysicalOperation }) => {
+        calls += 1;
+        await beforePhysicalOperation({ kind: "search", identity: job.queryId });
+        return { hasTrustedSuccess: true, branchSuccess: { trusted: true, publicDiscovery: false }, sourcePostingVersionIds: [job.sourcePostingVersionId], trustedSourcePostingVersionIds: [job.sourcePostingVersionId], diagnostics: [] };
+      } }) },
+      contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("completed");
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("completed");
+    expect(calls).toBe(1);
+    await expect(Promise.all([
+      database.select().from(jobDiscoveryRunResults).where(eq(jobDiscoveryRunResults.runId, job.runId)),
+      database.select({ toolCalls: agentRuns.toolCallCount, sourceRequests: agentRuns.sourceRequestCount, resultCount: agentRuns.resultCount }).from(agentRuns).where(eq(agentRuns.id, job.runId)),
+    ])).resolves.toEqual([[expect.objectContaining({ sourcePostingVersionId: job.sourcePostingVersionId })], [{ toolCalls: 1, sourceRequests: 1, resultCount: 1 }]]);
+  });
+
   it("v4 retry 只保留诊断；后续成功不遗留 source issue 或 attention", async () => {
     const job = await layeredRun(); let retry = true;
     const processor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => retry
