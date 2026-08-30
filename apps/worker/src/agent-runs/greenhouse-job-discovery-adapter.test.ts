@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createPublicSourceClientForTest } from "@job-copilot/source-access/testing";
 import { PublicSourceAccessError } from "@job-copilot/source-access";
 import { PublicDiscoveryBatchSearchResultSchema } from "@job-copilot/contracts/agent-runs";
@@ -16,6 +16,17 @@ const source = { sourceId: "greenhouse:fictional-labs", watchlistItemId: "200000
 const scope = { kind: "company_watchlist" as const, adapter: "greenhouse" as const, adapterVersion: "greenhouse-job-board-v1" as const, watchlistVersion: 1, sources: [source] };
 
 describe("GreenhouseJobDiscoveryAdapter", () => {
+  const previousAppEnv = process.env.APP_ENV;
+
+  beforeAll(() => {
+    process.env.APP_ENV = "test";
+  });
+
+  afterAll(() => {
+    if (previousAppEnv === undefined) delete process.env.APP_ENV;
+    else process.env.APP_ENV = previousAppEnv;
+  });
+
   it("uses exactly one list GET, preserves a full scan beyond five candidates, and obtains detail fields only from the detail GET", async () => {
     const list = await fixture("list-jobs.json");
     const detail = await fixture("job-detail.json");
