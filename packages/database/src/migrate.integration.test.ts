@@ -969,6 +969,7 @@ describe("database migrations", () => {
       "job_source_posting_versions_availability_check",
       "job_opportunities_availability_check",
       "job_opportunities_owner_canonical_opportunity_fk",
+      "job_opportunities_canonical_opportunity_not_self",
     ]));
     expect(await listColumns(migratedDatabase)).toEqual(expect.arrayContaining([
       { table_name: "job_discovery_schedules", column_name: "daily_time", data_type: "character varying" },
@@ -1099,6 +1100,9 @@ describe("database migrations", () => {
         opportunity_availability: "open", opportunity_time: true, canonical_opportunity_id: null, normalized_data: {},
         source_scope: { kind: "company_watchlist", adapter: "fake" },
       });
+      await expect(legacyDatabase.execute(sql`
+        update job_opportunities set canonical_opportunity_id = ${opportunityId} where id = ${opportunityId}
+      `)).rejects.toMatchObject({ cause: { code: "23514" } });
     } finally {
       await legacyDatabase.$client.end();
       await legacyContainer.stop();
@@ -1108,7 +1112,7 @@ describe("database migrations", () => {
 
   it("keeps the 0021 snapshot aligned with source scan and immutable history columns", async () => {
     const snapshotPath = fileURLToPath(new URL("../migrations/meta/0021_snapshot.json", import.meta.url));
-    const snapshot = JSON.parse(await readFile(snapshotPath, "utf8")) as { tables: Record<string, { columns: Record<string, unknown>; indexes: Record<string, unknown>; foreignKeys: Record<string, unknown> }> };
+    const snapshot = JSON.parse(await readFile(snapshotPath, "utf8")) as { tables: Record<string, { columns: Record<string, unknown>; indexes: Record<string, unknown>; foreignKeys: Record<string, unknown>; checkConstraints: Record<string, unknown> }> };
     const postings = snapshot.tables["public.job_source_postings"];
     const opportunities = snapshot.tables["public.job_opportunities"];
     const versions = snapshot.tables["public.job_source_posting_versions"];
@@ -1117,6 +1121,7 @@ describe("database migrations", () => {
     expect(opportunities?.indexes).toHaveProperty("job_opportunities_canonical_idx");
     expect(opportunities?.indexes).toHaveProperty("job_opportunities_current_dedup_unique");
     expect(opportunities?.foreignKeys).toHaveProperty("job_opportunities_owner_canonical_opportunity_fk");
+    expect(opportunities?.checkConstraints).toHaveProperty("job_opportunities_canonical_opportunity_not_self");
     expect(versions?.columns).toHaveProperty("normalized_data");
     expect(postings?.indexes).toHaveProperty("job_source_postings_source_scan_idx");
   });

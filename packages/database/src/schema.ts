@@ -484,6 +484,7 @@ export const jobOpportunities = pgTable("job_opportunities", {
     name: "job_opportunities_owner_canonical_opportunity_fk",
   }),
   check("job_opportunities_dedup_key_format", sql`${table.dedupKey} ~ '^[0-9a-f]{64}$'`),
+  check("job_opportunities_canonical_opportunity_not_self", sql`${table.canonicalOpportunityId} is null or ${table.canonicalOpportunityId} <> ${table.id}`),
   check("job_opportunities_normalized_data_object", sql`jsonb_typeof(${table.normalizedData}) = 'object'`),
   check("job_opportunities_availability_check", sql`${table.availability} in ('open', 'closed', 'expired')`),
 ]);

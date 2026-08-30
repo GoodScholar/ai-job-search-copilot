@@ -3963,6 +3963,10 @@
           "name": "job_opportunities_dedup_key_format",
           "value": "\"job_opportunities\".\"dedup_key\" ~ '^[0-9a-f]{64}$'"
         },
+        "job_opportunities_canonical_opportunity_not_self": {
+          "name": "job_opportunities_canonical_opportunity_not_self",
+          "value": "\"job_opportunities\".\"canonical_opportunity_id\" is null or \"job_opportunities\".\"canonical_opportunity_id\" <> \"job_opportunities\".\"id\""
+        },
         "job_opportunities_normalized_data_object": {
           "name": "job_opportunities_normalized_data_object",
           "value": "jsonb_typeof(\"job_opportunities\".\"normalized_data\") = 'object'"

@@ -15,6 +15,22 @@ export function discoveryNormalizedData(detail: Discovery) {
   return { sourceId: detail.sourceId, detailId: detail.detailId, company: detail.company, title: detail.title, location: detail.location, postedAt: detail.postedAt, deadline: detail.deadline, sourceType: detail.sourceType, isOfficial: detail.isOfficial };
 }
 
+async function resolveCurrentOpportunity(db: PersistenceDb, userId: string, opportunity: { id: string; canonicalOpportunityId: string | null }) {
+  const visited = new Set<string>();
+  let current = opportunity;
+  while (current.canonicalOpportunityId) {
+    if (current.canonicalOpportunityId === current.id || visited.has(current.id)) throw new Error("AGENT_RUN_PERSIST_FAILED");
+    visited.add(current.id);
+    const [next] = await db.select({ id: jobOpportunities.id, canonicalOpportunityId: jobOpportunities.canonicalOpportunityId }).from(jobOpportunities).where(and(
+      eq(jobOpportunities.userId, userId), eq(jobOpportunities.id, current.canonicalOpportunityId),
+    ));
+    if (!next) throw new Error("AGENT_RUN_PERSIST_FAILED");
+    current = next;
+  }
+  if (visited.has(current.id)) throw new Error("AGENT_RUN_PERSIST_FAILED");
+  return current;
+}
+
 /** 仅负责机会 dedup/upsert 与来源证据链接；来源 posting/version 的生命周期由调用方维护。 */
 export async function persistJobOpportunity(db: PersistenceDb, input: {
   id: () => string; userId: string; importId: string | null; sourcePostingVersionId: string; isOfficial: boolean;
@@ -25,13 +41,7 @@ export async function persistJobOpportunity(db: PersistenceDb, input: {
   let [opportunity] = input.existingOpportunityId
     ? await db.select({ id: jobOpportunities.id, canonicalOpportunityId: jobOpportunities.canonicalOpportunityId }).from(jobOpportunities).where(and(eq(jobOpportunities.userId, input.userId), eq(jobOpportunities.id, input.existingOpportunityId)))
     : await db.select({ id: jobOpportunities.id, canonicalOpportunityId: jobOpportunities.canonicalOpportunityId }).from(jobOpportunities).where(and(eq(jobOpportunities.userId, input.userId), eq(jobOpportunities.dedupKey, dedupKey)));
-  if (opportunity?.canonicalOpportunityId) {
-    const [canonical] = await db.select({ id: jobOpportunities.id }).from(jobOpportunities).where(and(
-      eq(jobOpportunities.userId, input.userId), eq(jobOpportunities.id, opportunity.canonicalOpportunityId),
-    ));
-    if (!canonical) throw new Error("AGENT_RUN_PERSIST_FAILED");
-    opportunity = canonical;
-  }
+  if (opportunity) opportunity = await resolveCurrentOpportunity(db, input.userId, opportunity);
   if (!opportunity) {
     const [created] = await db.insert(jobOpportunities).values({ id: input.id(), userId: input.userId, importId: input.importId, sourcePostingVersionId: input.sourcePostingVersionId, dedupKey, company: input.company, title: input.title, location: input.location, postedAt: input.postedAt ? new Date(input.postedAt) : null, deadline: input.deadline ? new Date(input.deadline) : null, description: input.description, normalizedData: input.normalizedData, createdAt: input.now, updatedAt: input.now }).returning({ id: jobOpportunities.id });
     if (!created) throw new Error("AGENT_RUN_PERSIST_FAILED");

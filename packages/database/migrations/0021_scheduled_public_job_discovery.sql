@@ -54,6 +54,7 @@ SET "normalized_data" = COALESCE((
   LIMIT 1
 ), '{}'::jsonb);--> statement-breakpoint
 ALTER TABLE "job_opportunities" ADD COLUMN "canonical_opportunity_id" uuid;--> statement-breakpoint
+ALTER TABLE "job_opportunities" ADD CONSTRAINT "job_opportunities_canonical_opportunity_not_self" CHECK ("canonical_opportunity_id" is null or "canonical_opportunity_id" <> "id");--> statement-breakpoint
 ALTER TABLE "job_source_postings" ADD COLUMN "availability" varchar(16) DEFAULT 'open' NOT NULL;--> statement-breakpoint
 ALTER TABLE "job_source_postings" ADD COLUMN "availability_updated_at" timestamp with time zone DEFAULT now() NOT NULL;--> statement-breakpoint
 ALTER TABLE "job_source_postings" ADD COLUMN "source_id" varchar(2048);--> statement-breakpoint

@@ -1,6 +1,6 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import {
   agentRunEvents,
   agentRunJobResults,
@@ -249,6 +249,58 @@ describe("job discovery persistence lifecycle", () => {
     expect(results.find((result) => result.runId === aK2Run.id)?.opportunityId).toBe(canonical?.id);
     const aK1AgainRun = await persist("greenhouse:a", "a", "AI Engineer", "d");
     expect((await database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, aK1AgainRun.id)))[0]?.opportunityId).toBe(canonical?.id);
+  });
+
+  it("多跳 alias 的来源更新始终写入 current root，并在 cycle 中拒绝写入", async () => {
+    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID();
+    await database.insert(jobAccounts).values({ id: userId });
+    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: firstSeen, updatedAt: firstSeen });
+    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: firstSeen });
+    const persistence = createJobDiscoveryPersistence({ db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => later }) });
+    const fields = { company: "Fictional Labs", location: "Shanghai", postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true };
+    const persist = async (sourceId: string, detailId: string, title: string, raw: string) => {
+      const run = await claimRun(userId, targetId, later);
+      await persistence.persistSuccessfulDiscovery({
+        run, details: [{ sourceId, detailId, ...fields, title, rawPayload: { raw } }],
+        scans: [{ sourceId, observedDetailIds: [detailId], complete: true }], storedObjects: [{ sourceId, detailId, objectKey: `${raw}.json`, rawContentSha256: raw.repeat(64) }], now: later,
+      });
+      return run;
+    };
+    const aInitialRun = await persist("greenhouse:chain-a", "a", "K1", "a");
+    await persist("greenhouse:chain-b", "b", "K2", "b");
+    await persist("greenhouse:chain-c", "c", "K3", "c");
+    await persist("greenhouse:chain-d", "d", "K4", "d");
+    const initial = await database.select().from(jobOpportunities).where(eq(jobOpportunities.userId, userId));
+    const byTitle = new Map(initial.map((opportunity) => [opportunity.title, opportunity]));
+    const a = byTitle.get("K1")!; const b = byTitle.get("K2")!; const c = byTitle.get("K3")!; const d = byTitle.get("K4")!;
+    const [historicalResult] = await database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, aInitialRun.id));
+    const [historicalEvidence] = await database.select().from(jobOpportunitySources).where(and(eq(jobOpportunitySources.userId, userId), eq(jobOpportunitySources.opportunityId, a.id)));
+    await database.update(jobOpportunities).set({ canonicalOpportunityId: b.id }).where(eq(jobOpportunities.id, a.id));
+    await database.update(jobOpportunities).set({ canonicalOpportunityId: c.id }).where(eq(jobOpportunities.id, b.id));
+    await database.update(jobOpportunities).set({ canonicalOpportunityId: d.id }).where(eq(jobOpportunities.id, c.id));
+
+    const k5Run = await persist("greenhouse:chain-a", "a", "K5", "e");
+    const [k5Result] = await database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, k5Run.id));
+    const k5Evidence = await database.select().from(jobOpportunitySources).where(and(eq(jobOpportunitySources.userId, userId), eq(jobOpportunitySources.sourcePostingVersionId, k5Result!.sourcePostingVersionId)));
+    expect(k5Result?.opportunityId).toBe(d.id);
+    expect(k5Evidence.map((evidence) => evidence.opportunityId)).toEqual([d.id]);
+    expect(await database.select({ id: agentRunJobResults.id, opportunityId: agentRunJobResults.opportunityId }).from(agentRunJobResults).where(eq(agentRunJobResults.id, historicalResult!.id))).toEqual([{ id: historicalResult!.id, opportunityId: a.id }]);
+    expect(await database.select({ id: jobOpportunitySources.id, opportunityId: jobOpportunitySources.opportunityId }).from(jobOpportunitySources).where(eq(jobOpportunitySources.id, historicalEvidence!.id))).toEqual([{ id: historicalEvidence!.id, opportunityId: a.id }]);
+    await expect(database.select().from(jobOpportunities).where(and(eq(jobOpportunities.userId, userId), isNull(jobOpportunities.canonicalOpportunityId)))).resolves.toEqual([expect.objectContaining({ id: d.id })]);
+
+    await database.update(jobOpportunities).set({ canonicalOpportunityId: a.id }).where(eq(jobOpportunities.id, d.id));
+    const beforeCycle = await Promise.all([
+      database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, userId)),
+      database.select().from(jobOpportunitySources).where(eq(jobOpportunitySources.userId, userId)),
+      database.select().from(agentRunJobResults).where(eq(agentRunJobResults.userId, userId)),
+    ]);
+    await expect(persist("greenhouse:chain-a", "a", "K6", "f")).rejects.toThrow("AGENT_RUN_PERSIST_FAILED");
+    const afterCycle = await Promise.all([
+      database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, userId)),
+      database.select().from(jobOpportunitySources).where(eq(jobOpportunitySources.userId, userId)),
+      database.select().from(agentRunJobResults).where(eq(agentRunJobResults.userId, userId)),
+    ]);
+    expect(afterCycle.map((rows) => rows.map((row) => row.id).sort())).toEqual(beforeCycle.map((rows) => rows.map((row) => row.id).sort()));
   });
 
   it("官方 A 经关闭和 reopen 后撞入 B 的 K2 时保留所有历史 ID、对象引用和 evidence", async () => {
