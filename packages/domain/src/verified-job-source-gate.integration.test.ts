@@ -225,6 +225,36 @@ describe("verified public job source gate", () => {
     await expect(gate.reject({ ...rejectInput, claimToken: newToken })).resolves.toMatchObject({ state: "rejected" });
   });
 
+  it.each(["pause_requested", "cancel_requested"] as const)("checkpoint continue 后 %s 会围栏 strict claim mutation，同时保留普通 API", async (controlState) => {
+    const subject = await owner();
+    const rejectSubject = await anotherLead(subject, "https://careers.acme.com/jobs/456?job=456");
+    const repository = createJobDiscoveryLeadRepository({ db: database, id: () => crypto.randomUUID() }) as any;
+    const gate = createVerifiedJobSourceGate({ db: database, contentStore: new EvidenceStore(), id: () => crypto.randomUUID() }) as any;
+    const claimToken = crypto.randomUUID();
+    const claimedAt = new Date();
+    const claimExpiresAt = new Date(claimedAt.getTime() + 60_000);
+    await database.update(agentRuns).set({ status: "running", startedAt: claimedAt, claimToken, claimExpiresAt, activeSliceStartedAt: claimedAt }).where(eq(agentRuns.id, subject.runId));
+    const checkpoint = createAgentRunCheckpoint({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => claimedAt }), id: () => crypto.randomUUID(), clock: () => claimedAt });
+    await expect(checkpoint.check({ userId: subject.userId, runId: subject.runId, claimToken, checkpointKey: `${claimToken}:${controlState}` })).resolves.toEqual({ kind: "continue" });
+    await database.update(agentRuns).set({ controlState }).where(eq(agentRuns.id, subject.runId));
+
+    const staleUrl = "https://careers.acme.com/jobs/789?job=789";
+    await expect(repository.recordPendingForClaim({
+      userId: subject.userId, runId: subject.runId, targetId: subject.targetId, queryId: crypto.randomUUID(), queryKind: "target_company", queryFingerprint,
+      normalizedUrl: staleUrl, stableFingerprint: createHash("sha256").update(staleUrl, "utf8").digest("hex"), claimToken, now,
+    })).rejects.toMatchObject({ code: "JOB_DISCOVERY_CLAIM_STALE" });
+    await expect(gate.verifyForClaim({
+      userId: subject.userId, leadId: subject.leadId, candidate: { queryId: subject.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: page(), claimToken, now,
+    })).rejects.toMatchObject({ code: "VERIFIED_JOB_SOURCE_CLAIM_STALE" });
+    await expect(gate.rejectForClaim({ userId: subject.userId, leadId: rejectSubject.leadId, code: "JOB_PAGE_URL_INVALID", claimToken, now })).rejects.toMatchObject({ code: "VERIFIED_JOB_SOURCE_CLAIM_STALE" });
+    await expect(database.select({ state: jobDiscoveryLeads.state }).from(jobDiscoveryLeads).where(eq(jobDiscoveryLeads.id, rejectSubject.leadId))).resolves.toEqual([{ state: "pending" }]);
+    await expect(repository.recordPending({
+      userId: subject.userId, runId: subject.runId, targetId: subject.targetId, queryId: crypto.randomUUID(), queryKind: "target_company", queryFingerprint,
+      normalizedUrl: "https://careers.acme.com/jobs/999?job=999", stableFingerprint: createHash("sha256").update("https://careers.acme.com/jobs/999?job=999", "utf8").digest("hex"), now,
+    })).resolves.toMatchObject({ state: "pending" });
+    await expect(repository.recordPendingForClaim({ userId: subject.userId, runId: subject.runId, targetId: subject.targetId, queryId: crypto.randomUUID(), queryKind: "target_company", queryFingerprint, normalizedUrl: staleUrl, stableFingerprint: createHash("sha256").update(staleUrl, "utf8").digest("hex"), now })).rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_INVALID_INPUT" });
+  });
+
   it("仅由本地已验证页面建立真实来源版本，并把 AnySearch 保持为归因", async () => {
     const subject = await owner();
     const store = new EvidenceStore();

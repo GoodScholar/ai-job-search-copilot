@@ -49,9 +49,9 @@ describe("layered public job discovery workflow", () => {
         extract: async (input) => { proofs.extract = input; await input.beforeRequest(); calls.push("extract"); return { normalizedUrl: "https://careers.example.com/jobs/1" }; },
       },
       preflight: async (input) => { proofs.preflight = input; return { normalizedUrl: "https://careers.example.com/jobs/1" }; },
-      leads: { recordPending: async (input) => { proofs.pending = input; calls.push("pending"); return { leadId: "66666666-6666-8666-8666-666666666666" }; } },
+      leads: { recordPendingForClaim: async (input) => { proofs.pending = input; calls.push("pending"); return { leadId: "66666666-6666-8666-8666-666666666666" }; } },
       fetcher: { fetch: async (input) => { proofs.fetch = input; calls.push("fetch"); return { requestedUrl: "https://careers.example.com/jobs/1", finalUrl: "https://careers.example.com/jobs/1", canonicalUrl: "https://careers.example.com/jobs/1", rawHtml: "<h1>AI Engineer</h1>", visibleText: "AI Engineer", pageClassification: "job", sourceKind: "official" }; } },
-      gate: { verify: async (input) => { proofs.verify = input; calls.push("verify"); return { sourcePostingVersionId: "77777777-7777-8777-8777-777777777777" }; }, reject: async () => { calls.push("reject"); } },
+      gate: { verifyForClaim: async (input) => { proofs.verify = input; calls.push("verify"); return { sourcePostingVersionId: "77777777-7777-8777-8777-777777777777" }; }, rejectForClaim: async () => { calls.push("reject"); } },
     });
 
     const executionSpec = {
@@ -104,9 +104,9 @@ describe("layered public job discovery workflow", () => {
         extract: async () => { throw new Error("UNUSED"); },
       },
       preflight: async () => null,
-      leads: { recordPending: async () => ({ leadId: "66666666-6666-8666-8666-666666666666" }) },
+      leads: { recordPendingForClaim: async () => ({ leadId: "66666666-6666-8666-8666-666666666666" }) },
       fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
-      gate: { verify: async () => ({ sourcePostingVersionId: "77777777-7777-8777-8777-777777777777" }), reject: async () => undefined },
+      gate: { verifyForClaim: async () => ({ sourcePostingVersionId: "77777777-7777-8777-8777-777777777777" }), rejectForClaim: async () => undefined },
     });
     const executionSpec = {
       targetSnapshot: { targetId, version: 1, priority: "primary" as const, state: "active" as const, constraints: { roleFamily: "AI 工程师", seniority: null, locations: [], workModes: [], relocation: "unknown" as const, salary: null, industries: [], dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] } } },
@@ -140,9 +140,9 @@ describe("layered public job discovery workflow", () => {
         extract: async () => { throw new Error("UNUSED"); },
       },
       preflight: async () => null,
-      leads: { recordPending: async () => { throw new Error("UNUSED"); } },
+      leads: { recordPendingForClaim: async () => { throw new Error("UNUSED"); } },
       fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
-      gate: { verify: async () => { throw new Error("UNUSED"); }, reject: async () => undefined },
+      gate: { verifyForClaim: async () => { throw new Error("UNUSED"); }, rejectForClaim: async () => undefined },
     });
     const secondQueryId = "88888888-8888-8888-8888-888888888888";
     await expect(workflow.run({
@@ -170,9 +170,9 @@ describe("layered public job discovery workflow", () => {
         extract: async () => { throw new Error("UNUSED"); },
       },
       preflight: async () => null,
-      leads: { recordPending: async () => ({ leadId: "66666666-6666-8666-8666-666666666666" }) },
+      leads: { recordPendingForClaim: async () => ({ leadId: "66666666-6666-8666-8666-666666666666" }) },
       fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
-      gate: { verify: async () => ({ sourcePostingVersionId: "77777777-7777-8777-8777-777777777777" }), reject: async () => undefined },
+      gate: { verifyForClaim: async () => ({ sourcePostingVersionId: "77777777-7777-8777-8777-777777777777" }), rejectForClaim: async () => undefined },
     });
     const outcome = await workflow.run({
       userId: targetId, runId, claimToken: crypto.randomUUID(), now: new Date(), attemptCount: 1, signal: new AbortController().signal,
@@ -186,8 +186,8 @@ describe("layered public job discovery workflow", () => {
     const workflow = createLayeredPublicJobDiscoveryWorkflow({
       trustedSources: { discover: async () => ({ succeeded: false, verifiedSourcePostingVersionIds: [] }) },
       anySearch: { search: async ({ beforeRequest }) => { await beforeRequest(); return { candidates: [] }; }, extract: async () => { throw new Error("UNUSED"); } },
-      preflight: async () => null, leads: { recordPending: async () => { throw new Error("UNUSED"); } }, fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
-      gate: { verify: async () => { throw new Error("UNUSED"); }, reject: async () => undefined },
+      preflight: async () => null, leads: { recordPendingForClaim: async () => { throw new Error("UNUSED"); } }, fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
+      gate: { verifyForClaim: async () => { throw new Error("UNUSED"); }, rejectForClaim: async () => undefined },
     });
     await expect(workflow.run({ userId: targetId, runId, claimToken: crypto.randomUUID(), now: new Date(), attemptCount: 1, signal: new AbortController().signal, executionSpec: executionSpecFor([{ ordinal: 1, queryId, kind: "general", stableFingerprint: "e".repeat(64), query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }]) as never, beforePhysicalOperation: async () => undefined }))
       .resolves.toMatchObject({ branchOutcome: { trusted: "failed", publicDiscovery: "clean_zero" }, sourcePostingVersionIds: [] });
@@ -200,9 +200,9 @@ describe("layered public job discovery workflow", () => {
         search: async ({ beforeRequest }) => { await beforeRequest(); return { candidates: [{ normalizedUrl: "https://careers.example.com/jobs/1", stableFingerprint: "a".repeat(64) }] }; },
         extract: async ({ beforeRequest }) => { await beforeRequest(); return { normalizedUrl: "https://careers.example.com/jobs/other" }; },
       },
-      preflight: async ({ candidate }) => ({ normalizedUrl: candidate.normalizedUrl }), leads: { recordPending: async () => ({ leadId: "66666666-6666-8666-8666-666666666666" }) },
+      preflight: async ({ candidate }) => ({ normalizedUrl: candidate.normalizedUrl }), leads: { recordPendingForClaim: async () => ({ leadId: "66666666-6666-8666-8666-666666666666" }) },
       fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
-      gate: { verify: async () => { throw new Error("UNUSED"); }, reject: async (input) => { expect(input.code).toBe("JOB_PAGE_URL_INVALID"); } },
+      gate: { verifyForClaim: async () => { throw new Error("UNUSED"); }, rejectForClaim: async (input) => { expect(input.code).toBe("JOB_PAGE_URL_INVALID"); } },
     });
     await expect(workflow.run({ userId: targetId, runId, claimToken: crypto.randomUUID(), now: new Date(), attemptCount: 1, signal: new AbortController().signal, executionSpec: executionSpecFor([{ ordinal: 1, queryId, kind: "general", stableFingerprint: "b".repeat(64), query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }]) as never, beforePhysicalOperation: async () => undefined }))
       .resolves.toMatchObject({ branchOutcome: { trusted: "failed", publicDiscovery: "candidate_failures" }, sourcePostingVersionIds: [], diagnostics: [expect.objectContaining({ scope: "lead", code: "JOB_PAGE_URL_INVALID", retryable: false })], sourceIssues: [expect.objectContaining({ provider: "anysearch", code: "JOB_PAGE_URL_INVALID" })] });
@@ -216,9 +216,9 @@ describe("layered public job discovery workflow", () => {
         search: async ({ beforeRequest }) => { await beforeRequest(); return { candidates: ["a", "b"].map((suffix) => ({ normalizedUrl: `https://careers.example.com/jobs/${suffix}`, stableFingerprint: suffix.repeat(64) })) }; },
         extract: async ({ beforeRequest, candidate: input }) => { await beforeRequest(); return { normalizedUrl: input.normalizedUrl }; },
       },
-      preflight: async ({ candidate: input }) => ({ normalizedUrl: input.normalizedUrl }), leads: { recordPending: async () => ({ leadId: candidate++ === 0 ? "66666666-6666-8666-8666-666666666666" : "77777777-7777-8777-8777-777777777777" }) },
+      preflight: async ({ candidate: input }) => ({ normalizedUrl: input.normalizedUrl }), leads: { recordPendingForClaim: async () => ({ leadId: candidate++ === 0 ? "66666666-6666-8666-8666-666666666666" : "77777777-7777-8777-8777-777777777777" }) },
       fetcher: { fetch: async ({ candidate: input }) => { if (input.normalizedUrl.endsWith("/b")) throw { code: "JOB_PAGE_TIMEOUT" }; return { requestedUrl: input.normalizedUrl, finalUrl: input.normalizedUrl, canonicalUrl: input.normalizedUrl, rawHtml: "<h1>job</h1>", visibleText: "job", pageClassification: "job", sourceKind: "official" }; } },
-      gate: { verify: async () => ({ sourcePostingVersionId: "88888888-8888-8888-8888-888888888888" }), reject: async () => undefined },
+      gate: { verifyForClaim: async () => ({ sourcePostingVersionId: "88888888-8888-8888-8888-888888888888" }), rejectForClaim: async () => undefined },
     });
     await expect(workflow.run({ userId: targetId, runId, claimToken: crypto.randomUUID(), now: new Date(), attemptCount: 1, signal: new AbortController().signal, executionSpec: executionSpecFor([{ ordinal: 1, queryId, kind: "general", stableFingerprint: "c".repeat(64), query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }]) as never, beforePhysicalOperation: async () => undefined }))
       .resolves.toMatchObject({ branchOutcome: { trusted: "failed", publicDiscovery: "verified" }, sourcePostingVersionIds: ["88888888-8888-8888-8888-888888888888"], diagnostics: [expect.objectContaining({ code: "JOB_PAGE_TIMEOUT", retryable: true })] });
@@ -241,9 +241,9 @@ describe("layered public job discovery workflow", () => {
       preflight: async ({ candidate }) => candidate.normalizedUrl.includes("approved.acme.com") && !candidate.normalizedUrl.includes("unapproved")
         ? { normalizedUrl: "https://approved.acme.com/jobs?id=rewritten" }
         : { normalizedUrl: candidate.normalizedUrl },
-      leads: { recordPending: async ({ candidate }) => { calls.push(`pending:${candidate.normalizedUrl}`); return { leadId: "66666666-6666-8666-8666-666666666666" }; } },
+      leads: { recordPendingForClaim: async ({ candidate }) => { calls.push(`pending:${candidate.normalizedUrl}`); return { leadId: "66666666-6666-8666-8666-666666666666" }; } },
       fetcher: { fetch: async () => { calls.push("fetch"); throw new Error("UNUSED"); } },
-      gate: { verify: async () => { calls.push("verify"); throw new Error("UNUSED"); }, reject: async ({ code }) => { calls.push(`reject:${String(code)}`); } },
+      gate: { verifyForClaim: async () => { calls.push("verify"); throw new Error("UNUSED"); }, rejectForClaim: async ({ code }) => { calls.push(`reject:${String(code)}`); } },
     });
     const outcome = await workflow.run({
       userId: targetId, runId, claimToken: crypto.randomUUID(), now: new Date(), attemptCount: 1, signal: new AbortController().signal,
@@ -274,9 +274,9 @@ describe("layered public job discovery workflow", () => {
         extract: async ({ beforeRequest, candidate }) => { await beforeRequest(); return { error: { code: "ANYSEARCH_NOT_CONFIGURED", retryable: false, httpStatus: null } }; },
       },
       preflight: async ({ candidate }) => { preflightCount += 1; return { normalizedUrl: candidate.normalizedUrl }; },
-      leads: { recordPending: async () => { leadCount += 1; return { leadId: crypto.randomUUID() }; } },
+      leads: { recordPendingForClaim: async () => { leadCount += 1; return { leadId: crypto.randomUUID() }; } },
       fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
-      gate: { verify: async () => { throw new Error("UNUSED"); }, reject: async () => undefined },
+      gate: { verifyForClaim: async () => { throw new Error("UNUSED"); }, rejectForClaim: async () => undefined },
     });
     await workflow.run({ userId: targetId, runId, claimToken: crypto.randomUUID(), now: new Date(), attemptCount: 1, signal: new AbortController().signal, executionSpec: executionSpecFor(queries) as never, beforePhysicalOperation: async () => undefined });
     expect({ preflightCount, leadCount }).toEqual({ preflightCount: 10, leadCount: 10 });
