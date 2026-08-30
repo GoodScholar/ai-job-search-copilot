@@ -15,5 +15,8 @@
     "@types/node": "^20.19.43",
     "typescript": "^5.9.3",
     "vitest": "^4.1.11"
+  },
+  "dependencies": {
+    "parse5": "8.0.1"
   }
 }
