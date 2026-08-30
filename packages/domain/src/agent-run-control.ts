@@ -5,10 +5,10 @@ import {
 import {
   AGENT_RUN_BUDGET, AGENT_RUN_JOB_VERSION, AGENT_RUN_RULE_VERSION, AGENT_RUN_TOOL_ALLOWLIST, FAKE_JOB_DISCOVERY_ADAPTER,
   FAKE_JOB_DISCOVERY_ADAPTER_VERSION, FAKE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, FAKE_JOB_DISCOVERY_SOURCE_IDS,
-  FAKE_JOB_DISCOVERY_WORKFLOW_VERSION, GREENHOUSE_JOB_DISCOVERY_ADAPTER, GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
-  GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, GREENHOUSE_JOB_DISCOVERY_RULE_VERSION,
-  GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION, PUBLIC_JOB_DISCOVERY_BUDGET, ControlAgentRunCommandSchema, StartAgentRunCommandSchema,
-  PublicAgentRunSourceScopeSchema, StartAgentRunResponseSchema, type AgentRunJob, type AgentRunStartErrorCode, type ControlAgentRunResponse, type StartAgentRunCommand, type StartAgentRunResponse,
+  FAKE_JOB_DISCOVERY_WORKFLOW_VERSION, GREENHOUSE_JOB_DISCOVERY_ADAPTER,
+  GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION, GREENHOUSE_SOURCE_HEALTH_RULE_VERSION,
+  GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST, GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, PUBLIC_JOB_DISCOVERY_BUDGET, ControlAgentRunCommandSchema, StartAgentRunCommandSchema,
+  PublicSourceHealthAgentRunSourceScopeSchema, StartAgentRunResponseSchema, type AgentRunJob, type AgentRunStartErrorCode, type ControlAgentRunResponse, type StartAgentRunCommand, type StartAgentRunResponse,
 } from "@job-copilot/contracts/agent-runs";
 import { CompanyWatchlistItemSchema } from "@job-copilot/contracts/company-watchlists";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
@@ -67,10 +67,10 @@ function sourceScope(watchlist: { version: number; items: unknown } | undefined)
 function publicSourceScope(watchlist: { version: number; items: unknown } | undefined) {
   const analysis = analyzePublicJobDiscoverySources(watchlist);
   if (analysis.status !== "executable") throw new AgentRunError("AGENT_RUN_UNAVAILABLE");
-  return PublicAgentRunSourceScopeSchema.parse({
+  return PublicSourceHealthAgentRunSourceScopeSchema.parse({
     kind: "company_watchlist" as const,
     adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER,
-    adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
+    adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
     watchlistVersion: watchlist?.version ?? 0,
     sources: analysis.sources,
   });
@@ -155,11 +155,11 @@ function createAgentRunStarter(deps: CommandDependencies): AgentRunStarter {
         const runSourceScope = executionMode === "greenhouse" ? publicSourceScope(watchlist) : sourceScope(watchlist);
         const execution = executionMode === "greenhouse" ? {
           budget: PUBLIC_JOB_DISCOVERY_BUDGET,
-          workflowVersion: GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION,
-          ruleVersion: GREENHOUSE_JOB_DISCOVERY_RULE_VERSION,
+          workflowVersion: GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION,
+          ruleVersion: GREENHOUSE_SOURCE_HEALTH_RULE_VERSION,
           adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER,
-          adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
-          outputSchemaVersion: GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+          adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
+          outputSchemaVersion: GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION,
         } : {
           budget: AGENT_RUN_BUDGET,
           workflowVersion: FAKE_JOB_DISCOVERY_WORKFLOW_VERSION,
@@ -171,7 +171,7 @@ function createAgentRunStarter(deps: CommandDependencies): AgentRunStarter {
         const [created] = await transaction.insert(agentRuns).values({
           id: runId, userId: input.userId, targetId: target.id, idempotencyKey: command.idempotencyKey, targetVersion: target.version,
           targetSnapshot, sourceScope: runSourceScope, budgetSnapshot: execution.budget, workflowVersion: execution.workflowVersion,
-          ruleVersion: execution.ruleVersion, toolAllowlist: AGENT_RUN_TOOL_ALLOWLIST, modelSnapshot: null,
+          ruleVersion: execution.ruleVersion, toolAllowlist: executionMode === "greenhouse" ? GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST : AGENT_RUN_TOOL_ALLOWLIST, modelSnapshot: null,
           adapter: execution.adapter, adapterVersion: execution.adapterVersion, outputSchemaVersion: execution.outputSchemaVersion,
           status: "queued", currentStep: "queued", controlState: "none", version: 1, attemptCount: 0,
           activeDurationMs: 0, toolCallCount: 0, sourceRequestCount: 0, modelCallCount: 0, inputTokenCount: 0, outputTokenCount: 0, totalTokenCount: 0, resultCount: 0, usageComplete: true,

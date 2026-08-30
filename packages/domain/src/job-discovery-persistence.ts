@@ -308,15 +308,39 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
           }
           if (input.details.some((detail) => !observed.get(detail.sourceId)?.has(detail.detailId))) throw new Error("AGENT_RUN_PERSIST_FAILED");
         }
-        const sourceChecks = input.sourceChecks?.map((check) => JobSourceHealthCheckSchema.parse(check)) ?? [];
+        const sourceChecks = input.sourceChecks?.map((inputCheck) => {
+          const check = JobSourceHealthCheckSchema.parse(inputCheck);
+          return { ...check, reasonCodes: [...check.reasonCodes].sort() };
+        }) ?? [];
         if (sourceChecks.some((check) => check.runId !== run.id || check.targetId !== run.targetId) || new Set(sourceChecks.map((check) => check.sourceId)).size !== sourceChecks.length) throw new Error("AGENT_RUN_PERSIST_FAILED");
-        if (sourceChecks.length > 0) await transaction.insert(jobSourceHealthChecks).values(sourceChecks.map((check) => ({
+        if (sourceChecks.length > 0) {
+          const inserted = await transaction.insert(jobSourceHealthChecks).values(sourceChecks.map((check) => ({
           id: check.checkId, userId: run.userId, runId: check.runId, targetId: check.targetId, watchlistItemId: check.watchlistItemId,
           sourceId: check.sourceId, status: check.status, reasonCodes: check.reasonCodes, impactScope: check.impact.scope,
           impactAffectedCount: check.impact.affectedCount, observedPostingCount: check.observedPostingCount,
           selectedDetailCount: check.selectedDetailCount, validDetailCount: check.validDetailCount,
           requestAttemptCount: check.requestAttemptCount, checkedAt: new Date(check.checkedAt),
-        }))).onConflictDoNothing();
+          }))).onConflictDoNothing().returning({ sourceId: jobSourceHealthChecks.sourceId });
+          const insertedSourceIds = new Set<string>(inserted.map((item: { sourceId: string }) => item.sourceId));
+          for (const check of sourceChecks.filter((item) => !insertedSourceIds.has(item.sourceId))) {
+            const [existing] = await transaction.select().from(jobSourceHealthChecks).where(and(
+              eq(jobSourceHealthChecks.userId, run.userId), eq(jobSourceHealthChecks.runId, check.runId), eq(jobSourceHealthChecks.sourceId, check.sourceId),
+            ));
+            const same = existing
+              && existing.targetId === check.targetId
+              && existing.watchlistItemId === check.watchlistItemId
+              && existing.status === check.status
+              && JSON.stringify(stableJson(existing.reasonCodes)) === JSON.stringify(check.reasonCodes)
+              && existing.impactScope === check.impact.scope
+              && existing.impactAffectedCount === check.impact.affectedCount
+              && existing.observedPostingCount === check.observedPostingCount
+              && existing.selectedDetailCount === check.selectedDetailCount
+              && existing.validDetailCount === check.validDetailCount
+              && existing.requestAttemptCount === check.requestAttemptCount
+              && existing.checkedAt.toISOString() === new Date(check.checkedAt).toISOString();
+            if (!same) throw new Error("AGENT_RUN_PERSIST_FAILED");
+          }
+        }
         const cleanupObjectKeys: string[] = [];
         const opportunityIds = new Set<string>();
         const resultRows: Array<{ opportunityId: string; sourcePostingVersionId: string }> = [];

@@ -279,7 +279,8 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         const claimNow = deps.clock();
         if (remainingBudget(deps.clock, deadline) <= 0) throw new AgentRunBudgetError("active_duration");
         let [current] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId)));
-        if (!current || current.status === "completed") return { kind: "stale" as const };
+        if (!current) return { kind: "stale" as const };
+        if (current.status === "completed") return { kind: current.workflowVersion === GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION ? "completed" as const : "stale" as const };
         if (current.status === "failed") return { kind: current.terminationKind === "budget_exhausted" ? "budget_exhausted" as const : "failed" as const };
         if (current.status === "paused") return { kind: "paused" as const };
         if (current.status === "cancelled") return { kind: "cancelled" as const };
@@ -441,16 +442,17 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         const completedSource = checks.some((check) => check.status === "healthy" || check.status === "zero_valid_results" || (check.status === "parser_degraded" && check.validDetailCount > 0));
         const hasIssues = checks.some((check) => check.status === "parser_degraded" || check.status === "rate_limited" || check.status === "hard_failed");
         const terminal = completedSource ? (hasIssues ? "completed_with_source_issues" : "completed") : "source_failed";
+        let persisted: { resultCount: number; cleanupObjectKeys: string[]; completed: boolean };
         try {
-          const persisted = await runTransaction(deps, deadline, (transaction) => createJobDiscoveryPersistence({ db: deps.db, id: deps.id, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({
+          persisted = await runTransaction(deps, deadline, (transaction) => createJobDiscoveryPersistence({ db: deps.db, id: deps.id, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({
             run: { ...claimed.run, claimToken: claimed.claimToken }, details, scans: sourceStates.map((state) => ({ sourceId: state.source.sourceId, observedDetailIds: state.observedDetailIds, complete: !state.failure })),
             storedObjects: stored.map((item) => ({ sourceId: item.detail.sourceId, detailId: item.detail.detailId, objectKey: item.objectKey, rawContentSha256: item.rawContentSha256 })), sourceChecks: checks, terminal, now: deps.clock(), transaction,
           }));
-          await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), persisted.cleanupObjectKeys);
-          if (!persisted.completed) return "stale";
-          await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_after", ordinal: 1 });
-          return terminal === "source_failed" ? "failed" : "completed";
         } catch { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_PERSIST_FAILED", retryable: true, category: "source" }, deadline }); }
+        await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), persisted.cleanupObjectKeys);
+        if (!persisted.completed) return "stale";
+        await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_after", ordinal: 1 });
+        return terminal === "source_failed" ? "failed" : "completed";
       }
       const batchStart = await transition("batch_search", false); if (batchStart) return batchStart;
       let summaries: Array<{ sourceId: string; detailId: string }>;
@@ -527,8 +529,9 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
       } catch (error) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: error instanceof AgentRunBudgetError ? "AGENT_RUN_BUDGET_EXCEEDED" : "AGENT_RUN_CONTENT_STORAGE_FAILED", retryable: !(error instanceof AgentRunBudgetError), category: "source", budgetDimension: error instanceof AgentRunBudgetError ? error.budgetDimension : undefined }, deadline }); }
       const commitBefore = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_before", ordinal: 1 });
       if (commitBefore) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return commitBefore; }
+      let completed: { resultCount: number; cleanupObjectKeys: string[]; completed: boolean };
       try {
-        const completed = await runTransaction(deps, deadline, (transaction) =>
+        completed = await runTransaction(deps, deadline, (transaction) =>
           createJobDiscoveryPersistence({ db: deps.db, id: deps.id, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({
             run: { ...claimed.run, claimToken: claimed.claimToken },
             details,
@@ -538,13 +541,13 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
             transaction,
           }),
         );
-        await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), completed.cleanupObjectKeys);
-        if (!completed.completed) return "stale";
-        // A completed run has no active claim, so this final durable boundary is
-        // intentionally observational and cannot turn the committed result stale.
-        await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_after", ordinal: 1 });
-        return "completed";
       } catch { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_PERSIST_FAILED", retryable: true, category: "source" }, deadline }); }
+      await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), completed.cleanupObjectKeys);
+      if (!completed.completed) return "stale";
+      // A completed run has no active claim, so this final durable boundary is
+      // intentionally observational and cannot turn the committed result stale.
+      await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_after", ordinal: 1 });
+      return "completed";
       } finally {
         await stopHeartbeat().catch(() => undefined);
       }

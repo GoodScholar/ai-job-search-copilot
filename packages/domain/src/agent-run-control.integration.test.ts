@@ -84,8 +84,8 @@ describe("agent run controls", () => {
       trigger: { kind: "schedule", occurrenceId: crypto.randomUUID(), scheduledFor: now },
     });
 
-    expect(manual).toMatchObject({ adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v1", workflowVersion: "job-discovery-workflow-v2" });
-    expect(scheduled).toMatchObject({ adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v1", workflowVersion: "job-discovery-workflow-v2" });
+    expect(manual).toMatchObject({ adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2", workflowVersion: "job-discovery-workflow-v3", outputSchemaVersion: "job-discovery-result-v3" });
+    expect(scheduled).toMatchObject({ adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2", workflowVersion: "job-discovery-workflow-v3", outputSchemaVersion: "job-discovery-result-v3" });
   });
 
   it("将跨账户运行隐藏为 404，并将 commandId 改变动作标为幂等键冲突", async () => {

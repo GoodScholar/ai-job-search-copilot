@@ -11,6 +11,7 @@ import {
   createDatabase,
   jobAccounts,
   jobOpportunities,
+  jobSourceHealthChecks,
   jobOpportunitySources,
   jobSourcePostings,
   jobSourcePostingVersions,
@@ -598,5 +599,22 @@ describe("job discovery persistence lifecycle", () => {
     expect(Math.max(...observedStatements.map((statement) => statement.params.length))).toBeLessThanOrEqual(32);
     expect(observedStatements.some((statement) => statement.query.includes("jsonb_to_recordset"))).toBe(true);
     expect(observedStatements.some((statement) => /\bin\s*\(\s*\$\d+\s*,\s*\$\d+/.test(statement.query))).toBe(false);
+  });
+
+  it("仅接受完全相同的来源健康冲突重放，差异冲突回滚当前终态", async () => {
+    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const sourceId = "greenhouse:conflict"; const watchlistItemId = crypto.randomUUID();
+    await database.insert(jobAccounts).values({ id: userId });
+    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: firstSeen, updatedAt: firstSeen });
+    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: firstSeen });
+    const persistence = createJobDiscoveryPersistence({ db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => later }) });
+    const check = (runId: string) => ({ checkId: crypto.randomUUID(), runId, targetId, watchlistItemId, sourceId, status: "zero_valid_results" as const, reasonCodes: [], impact: { scope: "none" as const, affectedCount: null }, observedPostingCount: 0, selectedDetailCount: 0, validDetailCount: 0, requestAttemptCount: 1, checkedAt: later.toISOString() });
+    const sameRun = await claimRun(userId, targetId, later); const same = check(sameRun.id);
+    await database.insert(jobSourceHealthChecks).values({ id: same.checkId, userId, runId: same.runId, targetId, watchlistItemId, sourceId, status: same.status, reasonCodes: same.reasonCodes, impactScope: same.impact.scope, impactAffectedCount: null, observedPostingCount: 0, selectedDetailCount: 0, validDetailCount: 0, requestAttemptCount: 1, checkedAt: later });
+    await expect(persistence.persistSuccessfulDiscovery({ run: sameRun, details: [], scans: [{ sourceId, observedDetailIds: [], complete: true }], storedObjects: [], sourceChecks: [{ ...same, checkId: crypto.randomUUID() }], now: later })).resolves.toMatchObject({ completed: true });
+    await expect(database.select().from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, sameRun.id))).resolves.toHaveLength(1);
+    const differentRun = await claimRun(userId, targetId, later); const existing = check(differentRun.id);
+    await database.insert(jobSourceHealthChecks).values({ id: existing.checkId, userId, runId: existing.runId, targetId, watchlistItemId, sourceId, status: existing.status, reasonCodes: existing.reasonCodes, impactScope: existing.impact.scope, impactAffectedCount: null, observedPostingCount: 0, selectedDetailCount: 0, validDetailCount: 0, requestAttemptCount: 1, checkedAt: later });
+    await expect(persistence.persistSuccessfulDiscovery({ run: differentRun, details: [], scans: [{ sourceId, observedDetailIds: [], complete: true }], storedObjects: [], sourceChecks: [{ ...existing, checkId: crypto.randomUUID(), requestAttemptCount: 2 }], now: later })).rejects.toThrow("AGENT_RUN_PERSIST_FAILED");
+    await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, differentRun.id))).resolves.toEqual([{ status: "running" }]);
   });
 });

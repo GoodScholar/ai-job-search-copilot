@@ -1,9 +1,4 @@
 ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_user_id_id_target_id_unique" UNIQUE("user_id","id","target_id");--> statement-breakpoint
-ALTER TABLE "agent_inbox_items" DROP CONSTRAINT "agent_inbox_items_kind_check";--> statement-breakpoint
-ALTER TABLE "agent_inbox_items" ADD CONSTRAINT "agent_inbox_items_kind_check" CHECK ("agent_inbox_items"."kind" in ('run_failed', 'budget_exhausted', 'decision_required', 'source_attention'));--> statement-breakpoint
-ALTER TABLE "agent_inbox_items" DROP CONSTRAINT "agent_inbox_items_reason_check";--> statement-breakpoint
-ALTER TABLE "agent_inbox_items" ADD CONSTRAINT "agent_inbox_items_reason_check" CHECK ("agent_inbox_items"."reason_code" in ('AGENT_RUN_PAUSED', 'SOURCE_HEALTH_ATTENTION', 'AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_CONTENT_STORAGE_FAILED', 'AGENT_RUN_PERSIST_FAILED', 'AGENT_RUN_BUDGET_EXCEEDED', 'AGENT_RUN_MODEL_RETRYABLE', 'AGENT_RUN_MODEL_AUTH_FAILED', 'AGENT_RUN_MODEL_POLICY_REJECTED', 'AGENT_RUN_MODEL_INVALID_RESPONSE'));--> statement-breakpoint
-ALTER TABLE "agent_inbox_items" ADD CONSTRAINT "agent_inbox_items_kind_reason_pair_check" CHECK (("agent_inbox_items"."kind" = 'source_attention') = ("agent_inbox_items"."reason_code" = 'SOURCE_HEALTH_ATTENTION'));--> statement-breakpoint
 ALTER TABLE "agent_runs" DROP CONSTRAINT "agent_runs_termination_kind_check";--> statement-breakpoint
 ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_termination_kind_check" CHECK ("agent_runs"."termination_kind" is null or "agent_runs"."termination_kind" in ('completed', 'completed_with_source_issues', 'cancelled_by_user', 'source_failed', 'content_storage_failed', 'persistence_failed', 'budget_exhausted'));--> statement-breakpoint
 ALTER TABLE "agent_runs" DROP CONSTRAINT "agent_runs_termination_mapping_check";--> statement-breakpoint

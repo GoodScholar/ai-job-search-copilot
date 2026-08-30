@@ -1126,6 +1126,41 @@ describe("database migrations", () => {
     expect(postings?.indexes).toHaveProperty("job_source_postings_source_scan_idx");
   });
 
+  it("keeps source-attention as a post-0022 upgrade migration", async () => {
+    const journalPath = fileURLToPath(new URL("../migrations/meta/_journal.json", import.meta.url));
+    const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
+    await expect(readFile(fileURLToPath(new URL("../migrations/0023_source_attention_inbox.sql", import.meta.url)), "utf8")).resolves.toContain("source_attention");
+    expect(journal.entries.at(-1)?.tag).toBe("0023_source_attention_inbox");
+  });
+
+  it("upgrades an existing 0022 database to source-attention without losing rows", async () => {
+    const upgradeContainer = await new PostgreSqlContainer("postgres:17-alpine").start();
+    const upgradeDatabase = createDatabase(upgradeContainer.getConnectionUri());
+    const migrationsFolder = await mkdtemp(join(tmpdir(), "job-copilot-0023-"));
+    try {
+      const migrationSource = fileURLToPath(new URL("../migrations", import.meta.url));
+      await cp(migrationSource, migrationsFolder, { recursive: true });
+      await unlink(join(migrationsFolder, "0023_source_attention_inbox.sql"));
+      await unlink(join(migrationsFolder, "meta", "0023_snapshot.json"));
+      const journalPath = join(migrationsFolder, "meta", "_journal.json");
+      const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
+      await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter((entry) => entry.tag !== "0023_source_attention_inbox") }, null, 2));
+      await migrate(upgradeDatabase, { migrationsFolder });
+      const userId = "a9f4da20-e9e9-44c4-a6a5-fc2cf5b9ed93"; const targetId = "f1e7a7a6-a3e6-458e-9f53-33cdbbf2d6ea"; const runId = "833f4544-376c-4f8d-81af-16e50df78624";
+      await upgradeDatabase.execute(sql`insert into job_accounts (id) values (${userId})`);
+      await upgradeDatabase.execute(sql`insert into job_targets (id, user_id, version, priority, state) values (${targetId}, ${userId}, 1, 'primary', 'active')`);
+      await upgradeDatabase.execute(sql`insert into agent_runs (id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot, workflow_version, rule_version, adapter, adapter_version, output_schema_version, tool_allowlist, status, current_step) values (${runId}, ${userId}, ${targetId}, '2a8d1440-c1be-4c07-9f07-c839ae1b68cc', 1, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 'job-discovery-workflow-v3', 'job-discovery-source-health-rules-v1', 'greenhouse', 'greenhouse-job-board-v2', 'job-discovery-result-v3', '[]'::jsonb, 'queued', 'queued')`);
+      await upgradeDatabase.execute(sql`insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, kind, status, reason_code, budget_dimension) values ('bf553314-3619-49a7-8c20-e2ba7677e5fc', ${userId}, ${runId}, 1, 'run_failed', 'open', 'AGENT_RUN_ADAPTER_FAILED', null)`);
+      await migrate(upgradeDatabase, { migrationsFolder: migrationSource });
+      await expect(upgradeDatabase.execute(sql`select id from agent_inbox_items where id = 'bf553314-3619-49a7-8c20-e2ba7677e5fc'`)).resolves.toHaveLength(1);
+      await upgradeDatabase.execute(sql`insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, kind, status, reason_code, budget_dimension) values ('d52b17a4-3222-4f4a-9923-a0603b85e31a', ${userId}, ${runId}, 2, 'source_attention', 'open', 'SOURCE_HEALTH_ATTENTION', null)`);
+    } finally {
+      await upgradeDatabase.$client.end();
+      await upgradeContainer.stop();
+      await rm(migrationsFolder, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   it("migrates immutable owner-bound per-run source health checks with a latest lookup", async () => {
     expect(await listPublicTables(migratedDatabase)).toContain("job_source_health_checks");
     expect(await listConstraintNames(migratedDatabase)).toEqual(expect.arrayContaining([
