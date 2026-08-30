@@ -95,6 +95,15 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(Promise.all([database.select().from(jobDiscoveryDiagnostics).where(eq(jobDiscoveryDiagnostics.runId, job.runId)), database.select().from(jobDiscoveryRunResults).where(eq(jobDiscoveryRunResults.runId, job.runId)), database.select().from(jobDiscoverySourceIssues).where(eq(jobDiscoverySourceIssues.runId, job.runId))])).resolves.toEqual([[], [], []]);
   });
 
+  it("v4 budget terminal 与预算 inbox 并存 discovery attention，重放不重复", async () => {
+    const job = await layeredRun();
+    await database.update(agentRuns).set({ attemptCount: 2 }).where(eq(agentRuns.id, job.runId));
+    const processor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({ hasTrustedSuccess: false, branchSuccess: { trusted: false, publicDiscovery: false }, diagnostics: [{ scope: "provider", code: "ANYSEARCH_QUOTA_EXHAUSTED", retryable: true, affectedCount: 1 }], sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_QUOTA_EXHAUSTED", affectedCount: 1 }] }) }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: false })).resolves.toBe("budget_exhausted");
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: false })).resolves.toBe("budget_exhausted");
+    await expect(Promise.all([database.select().from(jobDiscoverySourceIssues).where(eq(jobDiscoverySourceIssues.runId, job.runId)), database.select().from(agentInboxItems).where(eq(agentInboxItems.runId, job.runId))])).resolves.toEqual([[expect.objectContaining({ code: "ANYSEARCH_QUOTA_EXHAUSTED" })], expect.arrayContaining([expect.objectContaining({ kind: "budget_exhausted" }), expect.objectContaining({ kind: "discovery_attention" })])]);
+  });
+
   it("v4 retry 只保留诊断；后续成功不遗留 source issue 或 attention", async () => {
     const job = await layeredRun(); let retry = true;
     const processor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => retry
