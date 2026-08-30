@@ -519,6 +519,17 @@ export const AgentRunDetailSchema = z.union([
       || detail.executionSpec.targetSnapshot.version !== detail.targetVersion)) {
     context.addIssue({ code: "custom", path: ["targetId"], message: "v4 run detail and execution snapshots must bind to the same target version" });
   }
+  if (detail.workflowVersion === LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION
+    && "discoveryDiagnostics" in detail
+    && detail.discoveryDiagnostics.some((diagnostic) => diagnostic.runId !== detail.runId)) {
+    context.addIssue({ code: "custom", path: ["discoveryDiagnostics"], message: "v4 discovery diagnostics must belong to the detail run" });
+  }
+  if (detail.workflowVersion === LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION
+    && detail.termination?.kind === "completed_with_source_issues"
+    && "sourceIssues" in detail
+    && detail.sourceIssues.length < 1) {
+    context.addIssue({ code: "custom", path: ["sourceIssues"], message: "v4 source-issue completion requires a source issue" });
+  }
   if (detail.workflowVersion === GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION && "sourceChecks" in detail) {
     const sources = detail.sourceScope.sources.filter((source) => typeof source !== "string");
     const sourceWatchlistItems = new Map(sources.map((source) => [source.sourceId, source.watchlistItemId]));

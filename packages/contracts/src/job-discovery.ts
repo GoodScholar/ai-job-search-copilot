@@ -15,11 +15,17 @@ const positiveInteger = z.int().min(1);
 const nonnegativeInteger = z.int().nonnegative();
 const stableFingerprint = z.string().regex(/^[a-f0-9]{64}$/u);
 const boundedIdentifier = z.string().trim().min(1).max(128);
+const opaqueQueryId = z.uuid();
 const stableCode = z.string().regex(/^[A-Z][A-Z0-9_]{1,63}$/u);
+const publicJobIdentityParameters: ReadonlySet<string> = new Set([
+  "id", "job", "jobid", "job_id", "openingid", "opening_id", "positionid", "position_id", "requisitionid", "requisition_id",
+]);
 const safeNormalizedUrl = z.url().max(2_048).superRefine((value, context) => {
   const url = new URL(value);
-  if (url.protocol !== "https:" || url.username !== "" || url.password !== "" || url.hash !== "" || url.search !== "") {
-    context.addIssue({ code: "custom", message: "lead URLs must be normalized HTTPS URLs without credentials, fragments, or query data" });
+  const hasUnsafeAuthority = url.protocol !== "https:" || url.username !== "" || url.password !== "" || url.hash !== "";
+  const invalidQueryParameter = [...url.searchParams].some(([key, parameterValue]) => !publicJobIdentityParameters.has(key.toLowerCase()) || parameterValue.length < 1 || parameterValue.length > 256);
+  if (hasUnsafeAuthority || invalidQueryParameter) {
+    context.addIssue({ code: "custom", message: "lead URLs must be normalized HTTPS URLs with only public job identity query parameters" });
   }
 });
 
@@ -38,11 +44,22 @@ export const AnySearchProviderErrorCodeSchema = z.enum([
   "ANYSEARCH_INVALID_RESPONSE",
   "ANYSEARCH_POLICY_REJECTED",
 ]);
+export const AnySearchProviderHttpStatusSchema = z.union([
+  z.literal(400), z.literal(401), z.literal(402), z.literal(403), z.literal(415), z.literal(429),
+  z.literal(500), z.literal(502), z.literal(503), z.literal(504), z.null(),
+]);
 export const AnySearchProviderErrorSchema = z.object({
   code: AnySearchProviderErrorCodeSchema,
   retryable: z.boolean(),
-  httpStatus: z.union([z.literal(402), z.literal(429)]).nullable(),
-}).strict();
+  httpStatus: AnySearchProviderHttpStatusSchema,
+}).strict().superRefine((error, context) => {
+  if (error.code === "ANYSEARCH_QUOTA_EXHAUSTED" && error.httpStatus !== 402) {
+    context.addIssue({ code: "custom", path: ["httpStatus"], message: "quota exhaustion must retain HTTP 402" });
+  }
+  if (error.code === "ANYSEARCH_RATE_LIMITED" && error.httpStatus !== 429) {
+    context.addIssue({ code: "custom", path: ["httpStatus"], message: "rate limiting must retain HTTP 429" });
+  }
+});
 
 export const LayeredPublicJobDiscoveryTargetSnapshotSchema = z.object({
   targetId: z.uuid(),
@@ -76,7 +93,7 @@ export const LayeredPublicJobDiscoveryWatchlistSnapshotSchema = z.object({
 
 export const LayeredPublicJobDiscoveryQuerySchema = z.object({
   ordinal: z.int().min(1).max(10),
-  queryId: boundedIdentifier,
+  queryId: opaqueQueryId,
   kind: PublicJobDiscoveryQueryKindSchema,
   stableFingerprint,
   query: z.string().trim().min(1).max(500),
@@ -97,9 +114,12 @@ export const LayeredPublicJobDiscoveryQuerySchema = z.object({
 
 export const LayeredPublicJobDiscoveryQueryPlanSchema = z.object({
   provider: z.literal("anysearch"),
-  queries: z.array(LayeredPublicJobDiscoveryQuerySchema).max(10).refine(
+  queries: z.array(LayeredPublicJobDiscoveryQuerySchema).min(1).max(10).refine(
     (queries) => new Set(queries.map((query) => query.queryId)).size === queries.length,
     { message: "query IDs must be unique" },
+  ).refine(
+    (queries) => new Set(queries.map((query) => query.stableFingerprint)).size === queries.length,
+    { message: "query stable fingerprints must be unique" },
   ),
   batchSize: z.literal(5),
   maxVerificationCandidates: z.literal(10),
@@ -110,7 +130,7 @@ export const LayeredPublicJobDiscoveryQueryPlanSchema = z.object({
 });
 
 export const LayeredPublicJobDiscoveryQueryAuditSchema = z.object({
-  queryId: boundedIdentifier,
+  queryId: opaqueQueryId,
   kind: PublicJobDiscoveryQueryKindSchema,
   stableFingerprint,
   leadCount: nonnegativeInteger.max(5),
@@ -130,7 +150,8 @@ const AnySearchLeadFacts = {
   provider: z.literal("anysearch"),
   normalizedUrl: safeNormalizedUrl,
   stableFingerprint,
-  queryId: boundedIdentifier,
+  queryId: opaqueQueryId,
+  queryKind: PublicJobDiscoveryQueryKindSchema,
   queryFingerprint: stableFingerprint,
   expiresAt: z.iso.datetime(),
 };
@@ -160,7 +181,7 @@ export const DiscoveryAttributionSchema = z.object({
   ownerId: z.uuid(),
   runId: z.uuid(),
   leadId: z.uuid(),
-  queryId: boundedIdentifier,
+  queryId: opaqueQueryId,
   provider: z.literal("anysearch"),
   sourcePostingVersionId: z.uuid(),
 }).strict();
@@ -176,7 +197,7 @@ export const PhysicalDiscoveryOperationSchema = z.discriminatedUnion("kind", [
   z.object({
     ...PhysicalDiscoveryOperationFacts,
     kind: z.literal("search"),
-    queryId: boundedIdentifier,
+    queryId: opaqueQueryId,
     resultCount: nonnegativeInteger.max(5),
   }).strict(),
   z.object({
@@ -203,8 +224,8 @@ export const LayeredPublicJobDiscoverySourceScopeSchema = z.object({
 }).strict();
 
 export const DiscoveryDiagnosticSchema = z.discriminatedUnion("scope", [
-  z.object({ scope: z.literal("provider"), diagnosticId: z.uuid(), runId: z.uuid(), provider: z.literal("anysearch"), code: stableCode, retryable: z.boolean(), affectedCount: nonnegativeInteger.max(10) }).strict(),
-  z.object({ scope: z.literal("query"), diagnosticId: z.uuid(), runId: z.uuid(), queryId: boundedIdentifier, kind: PublicJobDiscoveryQueryKindSchema, stableFingerprint, code: stableCode, retryable: z.boolean(), affectedCount: nonnegativeInteger.max(5) }).strict(),
+  z.object({ scope: z.literal("provider"), diagnosticId: z.uuid(), runId: z.uuid(), provider: z.literal("anysearch"), code: AnySearchProviderErrorCodeSchema, retryable: z.boolean(), affectedCount: nonnegativeInteger.max(10) }).strict(),
+  z.object({ scope: z.literal("query"), diagnosticId: z.uuid(), runId: z.uuid(), queryId: opaqueQueryId, kind: PublicJobDiscoveryQueryKindSchema, stableFingerprint, code: stableCode, retryable: z.boolean(), affectedCount: nonnegativeInteger.max(5) }).strict(),
   z.object({ scope: z.literal("lead"), diagnosticId: z.uuid(), runId: z.uuid(), leadId: z.uuid(), code: stableCode, retryable: z.boolean(), affectedCount: z.literal(1) }).strict(),
 ]);
 

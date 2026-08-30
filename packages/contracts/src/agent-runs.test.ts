@@ -655,7 +655,7 @@ describe("agent run contracts", () => {
           provider: "anysearch",
           queries: [{
             ordinal: 1,
-            queryId: "general-ai-engineer",
+            queryId: "d3b1f38c-36c3-47df-8f40-4e62bb749e7f",
             kind: "general",
             stableFingerprint: "a".repeat(64),
             query: "AI 工程师 上海",
@@ -716,7 +716,7 @@ describe("agent run contracts", () => {
         trustedSources: [],
         publicDiscovery: {
           provider: "anysearch",
-          queries: [{ ordinal: 1, queryId: "general-ai-engineer", kind: "general", stableFingerprint: "a".repeat(64), query: "AI 工程师 上海", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }],
+          queries: [{ ordinal: 1, queryId: "d3b1f38c-36c3-47df-8f40-4e62bb749e7f", kind: "general", stableFingerprint: "a".repeat(64), query: "AI 工程师 上海", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }],
           batchSize: 5,
           maxVerificationCandidates: 10,
         },
@@ -765,6 +765,18 @@ describe("agent run contracts", () => {
     };
 
     expect(AgentRunDetailSchema.parse(v4CompletedDetail)).toEqual(v4CompletedDetail);
+    expect(AgentRunDetailSchema.safeParse({
+      ...v4CompletedDetail,
+      discoveryDiagnostics: [{
+        ...v4CompletedDetail.discoveryDiagnostics[0],
+        runId: "b8c646b5-a836-46d4-a33a-3f65f1ea794f",
+      }],
+    }).success).toBe(false);
+    expect(AgentRunDetailSchema.safeParse({
+      ...v4CompletedDetail,
+      discoveryDiagnostics: [],
+      sourceIssues: [],
+    }).success).toBe(false);
     expect(AgentRunDetailSchema.safeParse({
       ...v4CompletedDetail,
       workflowVersion: FAKE_JOB_DISCOVERY_WORKFLOW_VERSION,
