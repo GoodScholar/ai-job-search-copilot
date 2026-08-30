@@ -101,11 +101,12 @@ function extractJobPage(rawHtml: string, finalUrl: URL): { visibleText: string; 
   const document = parse(rawHtml);
   const text: string[] = [];
   const h1Texts: string[][] = [];
+  const h2Texts: string[][] = [];
   let headingCount = 0;
   let h2Count = 0;
   let visibleFormCount = 0;
   let canonical: string | undefined;
-  visit(document, false, text, h1Texts, (tagName, attributes, visible) => {
+  visit(document, false, text, h1Texts, h2Texts, (tagName, attributes, visible) => {
     if (visible && (tagName === "h1" || tagName === "h2")) headingCount += 1;
     if (visible && tagName === "h2") h2Count += 1;
     if (visible && tagName === "form") visibleFormCount += 1;
@@ -116,12 +117,12 @@ function extractJobPage(rawHtml: string, finalUrl: URL): { visibleText: string; 
   const visibleText = title ? `# ${title}\n${plainText}` : plainText;
   const hasLoginText = /(登录|登陆|sign\s*in|log\s*in|login|验证身份)/iu.test(visibleText);
   const hasJobDetails = /(职责|responsibilit|任职要求|qualif|公司|company|地点|location|薪资|salary|经验|experience)/iu.test(visibleText);
-  const hasDetailEvidence = /(职责|responsibilit|任职要求|qualif|岗位要求|职位描述|job\s+description|requirements?|what\s+you\s+(?:will|['’]ll)\s+do|what\s+we\s+(?:are|['’]re)\s+looking\s+for)/iu.test(visibleText);
+  const hasDetailEvidence = h2Texts.some((parts) => isJobDetailHeading(parts.join(" ").replace(/\s+/gu, " ").trim()));
   const hasJobTitle = title !== undefined && hasJobTitleEvidence(title);
   if (/^(?:登录后查看职位|请登录后查看职位|sign\s*in\s*to\s*(?:view|see).{0,40}job)/iu.test(title ?? "")
     || (visibleFormCount > 0 && hasLoginText && !hasJobDetails && visibleText.length < 800)) throw new JobPageFetchError("JOB_PAGE_LOGIN_REQUIRED");
   if (/(职位|岗位).{0,12}(已下架|已关闭|过期)|(?:已下架|已关闭|过期).{0,12}(职位|岗位)|this\s+(?:job|position)\s+is\s+no\s+longer\s+available|(?:job|position)\s+closed/iu.test(visibleText)) throw new JobPageFetchError("JOB_PAGE_EXPIRED");
-  if ((h1Texts.length === 0 && headingCount >= 2) || (h2Count >= 2 && (!hasDetailEvidence || isListingTitle(title)))) throw new JobPageFetchError("JOB_PAGE_LISTING");
+  if ((h1Texts.length === 0 && headingCount >= 2) || (h2Count >= 2 && isListingTitle(title))) throw new JobPageFetchError("JOB_PAGE_LISTING");
   if (isNonJobPageTitle(title)) throw new JobPageFetchError("JOB_PAGE_UNRECOGNIZED");
   const jobContextSignals = [/(公司|company)/iu, /(地点|location)/iu, /(薪资|salary)/iu, /(经验|experience)/iu, /(职责|responsibilit|任职要求|qualif|负责)/iu];
   if (!title || jobContextSignals.filter((signal) => signal.test(visibleText)).length < 2 || (!hasJobTitle && !hasDetailEvidence)) throw new JobPageFetchError("JOB_PAGE_UNRECOGNIZED");
@@ -141,21 +142,25 @@ function isNonJobPageTitle(title: string | undefined): boolean {
 }
 
 function hasJobTitleEvidence(title: string): boolean {
-  return /(?:工程师|经理|总监|专员|顾问|分析师|架构师|设计师|实习生|销售代表|开发者)(?=$|[（(【\[]|\s*[-—:：|/])/u.test(title)
-    || /\b(?:scientist|engineer|developer|designer|manager|executive|director|analyst|architect|consultant|specialist|intern|officer)\b/iu.test(title);
+  return /(?:工程师|经理|总监|专员|顾问|分析师|架构师|设计师|实习生|销售代表|开发者|\b(?:scientist|engineer|developer|designer|manager|executive|director|analyst|architect|consultant|specialist|intern|officer)\b)(?:$|[（(【\[][^）)\]】]*[）)\]】]$)/iu.test(title);
 }
 
 function isListingTitle(title: string | undefined): boolean {
-  return /(?:\b(?:engineering|software\s+engineer)\s+jobs\b|\bopen\s+positions\b|全部职位|职位列表|招聘岗位)/iu.test(title ?? "");
+  return /(?:\bjobs\b|\bopen\s+positions\b|全部职位|职位列表|招聘岗位)/iu.test(title ?? "");
 }
 
-function visit(node: HtmlNode, hidden: boolean, text: string[], h1Texts: string[][], onElement: (tagName: string, attributes: Array<{ name: string; value: string }>, visible: boolean) => void, h1Index?: number): void {
+function isJobDetailHeading(heading: string): boolean {
+  return /^(?:responsibilities|qualifications|requirements|what\s+you\s+(?:will|['’]ll)\s+do|what\s+we\s+(?:are|['’]re)\s+looking\s+for|job\s+description|(?:职位|岗位)?职责|任职要求|岗位要求|职位描述)$/iu.test(heading);
+}
+
+function visit(node: HtmlNode, hidden: boolean, text: string[], h1Texts: string[][], h2Texts: string[][], onElement: (tagName: string, attributes: Array<{ name: string; value: string }>, visible: boolean) => void, h1Index?: number, h2Index?: number): void {
   if ("nodeName" in node && node.nodeName === "#text" && !hidden && "value" in node && typeof node.value === "string") {
     text.push(node.value);
     if (h1Index !== undefined) h1Texts[h1Index]?.push(node.value);
+    if (h2Index !== undefined) h2Texts[h2Index]?.push(node.value);
   }
   if (!("tagName" in node) || typeof node.tagName !== "string") {
-    for (const child of "childNodes" in node && Array.isArray(node.childNodes) ? node.childNodes : []) visit(child, hidden, text, h1Texts, onElement, h1Index);
+    for (const child of "childNodes" in node && Array.isArray(node.childNodes) ? node.childNodes : []) visit(child, hidden, text, h1Texts, h2Texts, onElement, h1Index, h2Index);
     return;
   }
   const attributes = "attrs" in node && Array.isArray(node.attrs) ? node.attrs : [];
@@ -165,7 +170,8 @@ function visit(node: HtmlNode, hidden: boolean, text: string[], h1Texts: string[
     || isVisuallyHiddenInlineStyle(style);
   onElement(node.tagName, attributes, !nextHidden);
   const nextH1Index = !nextHidden && node.tagName === "h1" ? h1Texts.push([]) - 1 : h1Index;
-  for (const child of "childNodes" in node && Array.isArray(node.childNodes) ? node.childNodes : []) visit(child, nextHidden, text, h1Texts, onElement, nextH1Index);
+  const nextH2Index = !nextHidden && node.tagName === "h2" ? h2Texts.push([]) - 1 : h2Index;
+  for (const child of "childNodes" in node && Array.isArray(node.childNodes) ? node.childNodes : []) visit(child, nextHidden, text, h1Texts, h2Texts, onElement, nextH1Index, nextH2Index);
 }
 
 function attribute(attributes: Array<{ name: string; value: string }>, name: string): string | undefined { return attributes.find((attribute) => attribute.name.toLowerCase() === name)?.value; }
