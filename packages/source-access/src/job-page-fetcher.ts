@@ -142,11 +142,17 @@ function isNonJobPageTitle(title: string | undefined): boolean {
 
 function hasJobTitleEvidence(title: string): boolean {
   return /(?:工程师|经理|总监|专员|顾问|分析师|架构师|设计师|实习生|销售代表|开发者)(?:$|[（(【\[][^）)\]】]*[）)\]】]$)/u.test(title)
-    || /\b(?:scientist|engineer|developer|designer|manager|executive|director|analyst|architect|consultant|specialist|intern|officer)\b/iu.test(title);
+    || /\b(?:scientist|engineer|developer|designer|manager|executive|director|analyst|architect|consultant|specialist|intern|officer)\b\s*$/iu.test(jobTitleMainSegment(title));
+}
+
+function jobTitleMainSegment(title: string): string {
+  const withoutBracketMetadata = title.replace(/\s*[（(【\[][^）)\]】]*[）)\]】]\s*$/u, "").trim();
+  const commaSegments = /^(.+?),\s*([^,]+)$/u.exec(withoutBracketMetadata);
+  return commaSegments && commaSegments[2].trim().split(/\s+/u).length <= 4 ? commaSegments[1].trim() : withoutBracketMetadata;
 }
 
 function isListingTitle(title: string | undefined): boolean {
-  return /(?:\bjobs(?:\s+(?:in|at)\s+.+)?\s*$|\bopen\s+positions\b|全部职位|职位列表|招聘岗位)/iu.test(title ?? "");
+  return /(?:\bjobs(?:\s+(?:in|at)\s+.+|\s*(?:[-—|:：])\s*.+)?\s*$|\bopen\s+positions\b|全部职位|职位列表|招聘岗位)/iu.test(title ?? "");
 }
 
 type JobDetailCategory = "responsibilities" | "requirements" | "candidate-profile" | "benefits";

@@ -56,7 +56,11 @@ describe("SecureJobPageFetcher public seam", () => {
         case "/software-engineer-jobs": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Software Engineer Jobs</h1><p>Company: Example Corp</p><p>Location: Shanghai</p><article><h2>Frontend Engineer</h2></article><article><h2>Backend Engineer</h2></article></main>"); return;
         case "/frontend-developer-jobs": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Frontend Developer Jobs</h1><p>Company: Example Corp</p><p>Location: Shanghai</p><article><h2>Frontend Developer</h2></article><article><h2>Frontend Lead</h2></article></main>"); return;
         case "/frontend-developer-jobs-single": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Frontend Developer Jobs</h1><p>Company: Example Corp</p><p>Location: Shanghai</p><article><h2>Frontend Developer</h2></article></main>"); return;
+        case "/frontend-developer-jobs-shanghai": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Frontend Developer Jobs — Shanghai</h1><p>Company: Example Corp</p><p>Location: Shanghai</p><article><h2>Frontend Developer</h2></article></main>"); return;
+        case "/jobs-example-corp": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Jobs | Example Corp</h1><p>Company: Example Corp</p><p>Location: Shanghai</p><article><h2>Frontend Developer</h2></article><article><h2>Backend Developer</h2></article></main>"); return;
         case "/jobs-marketplace-role": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Senior Product Manager, Jobs Marketplace</h1><p>Company: Example Corp</p><p>Location: Shanghai</p></main>"); return;
+        case "/engineering-manager-culture": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Engineering Manager Culture</h1><p>Company: Example Corp</p><p>Location: Shanghai</p></main>"); return;
+        case "/developer-community": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Developer Community</h1><p>Company: Example Corp</p><p>Location: Shanghai</p></main>"); return;
         case "/expired": response.writeHead(200, { "content-type": "text/html" }).end("<h1>该职位已下架</h1><p>岗位已关闭</p>"); return;
         case "/expired-status": response.writeHead(404).end(); return;
         case "/insufficient": response.writeHead(200, { "content-type": "text/html" }).end("<h1>欢迎</h1><p>公司：示例科技</p>"); return;
@@ -173,6 +177,8 @@ describe("SecureJobPageFetcher public seam", () => {
     ["/software-engineer-jobs", "JOB_PAGE_LISTING"],
     ["/frontend-developer-jobs", "JOB_PAGE_LISTING"],
     ["/frontend-developer-jobs-single", "JOB_PAGE_LISTING"],
+    ["/frontend-developer-jobs-shanghai", "JOB_PAGE_LISTING"],
+    ["/jobs-example-corp", "JOB_PAGE_LISTING"],
     ["/expired", "JOB_PAGE_EXPIRED"],
     ["/expired-status", "JOB_PAGE_EXPIRED"],
     ["/insufficient", "JOB_PAGE_UNRECOGNIZED"],
@@ -230,6 +236,11 @@ describe("SecureJobPageFetcher public seam", () => {
       .rejects.toMatchObject({ code: "JOB_PAGE_UNRECOGNIZED" } satisfies Pick<JobPageFetchError, "code">);
     await expect(fetcher.fetch({ url: `${origin}/product-manager-location` }))
       .resolves.toMatchObject({ pageClassification: "job" });
+  });
+
+  it.each(["/engineering-manager-culture", "/developer-community"])("英文职位词不能在标题任意位置形成岗位证据：%s", async (path) => {
+    await expect(new SecureJobPageFetcher({ testOrigin: origin }).fetch({ url: `${origin}${path}` }))
+      .rejects.toMatchObject({ code: "JOB_PAGE_UNRECOGNIZED" } satisfies Pick<JobPageFetchError, "code">);
   });
 
   it.each(["/product-requirements", "/product-roadmap", "/product-roadmap-requirements-benefits", "/hidden-detail-heading"])("正文、单类别或隐藏详情 heading 不能作为岗位详情证据：%s", async (path) => {
