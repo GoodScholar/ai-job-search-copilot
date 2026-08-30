@@ -476,7 +476,7 @@ describe("AnySearchPublicJobAdapter", () => {
     expect(await run([0, 1])).toMatchObject(await run([1, 0]));
   });
 
-  it.each(["github.io", "blogspot.com", "vercel.app", "pages.dev", "foo.invalid", "foo.test", "foo.example", "foo.onion", "home.arpa"])("rejects non-public v4 candidate and allowlist host before network: %s", async (host) => {
+  it.each(["github.io", "blogspot.com", "vercel.app", "pages.dev", "foo.invalid", "foo.test", "foo.example", "foo.onion", "home.arpa", "resolver.arpa", "ipv4only.arpa", "example.arpa", "jobs.example.arpa"])("rejects non-public v4 candidate and allowlist host before network: %s", async (host) => {
     const transport = vi.fn();
     expect(preflightAnySearchCandidate({ url: `https://${host}/job?job=1`, allowedSiteDomains: [] })).toEqual({ ok: false, error: { code: "ANYSEARCH_POLICY_REJECTED", retryable: false, httpStatus: null } });
     await expect(testAdapter({ transport }).search(searchInput({ allowedSiteDomains: [host] }))).resolves.toEqual({ ok: false, error: { code: "ANYSEARCH_POLICY_REJECTED", retryable: false, httpStatus: null } });

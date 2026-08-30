@@ -31,7 +31,7 @@ export function isLexicallyValidDnsHostname(value: string): boolean {
 }
 
 export function isPublicJobDiscoveryHostname(value: string): boolean {
-  if (!isLexicallyValidDnsHostname(value) || ["invalid", "test", "example", "onion", "home.arpa"].some((suffix) => value === suffix || value.endsWith(`.${suffix}`))) return false;
+  if (!isLexicallyValidDnsHostname(value) || ["invalid", "test", "example", "onion", "arpa"].some((suffix) => value === suffix || value.endsWith(`.${suffix}`))) return false;
   const parsed = parse(value, { allowPrivateDomains: true });
   return parsed.domain !== null && Boolean(parsed.isIcann || parsed.isPrivate);
 }

@@ -41,7 +41,7 @@ describe("AnySearch job discovery contracts", () => {
   });
 
   it("accepts only publicly registrable v4 discovery hosts while keeping private tenants distinct from roots", () => {
-    for (const rootOrReserved of ["github.io", "blogspot.com", "vercel.app", "pages.dev", "foo.invalid", "foo.test", "foo.example", "foo.onion", "home.arpa"]) {
+    for (const rootOrReserved of ["github.io", "blogspot.com", "vercel.app", "pages.dev", "foo.invalid", "foo.test", "foo.example", "foo.onion", "home.arpa", "resolver.arpa", "ipv4only.arpa", "example.arpa", "jobs.example.arpa"]) {
       expect(isPublicJobDiscoveryHostname(rootOrReserved)).toBe(false);
       expect(SafeNormalizedPublicJobUrlSchema.safeParse(`https://${rootOrReserved}/job?job=1`).success).toBe(false);
     }
@@ -50,6 +50,7 @@ describe("AnySearch job discovery contracts", () => {
       expect(SafeNormalizedPublicJobUrlSchema.safeParse(`https://${tenant}/job?job=1`).success).toBe(true);
     }
     expect(isLexicallyValidDnsHostname("jobs.example.test")).toBe(true);
+    expect(isLexicallyValidDnsHostname("jobs.example.arpa")).toBe(true);
   });
   it("keeps an AnySearch lead unverified and outside trusted-source documents", () => {
     const lead = {
