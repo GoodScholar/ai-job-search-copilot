@@ -336,6 +336,34 @@ describe("AgentRunProcessor checkpoints", () => {
     ])).resolves.toEqual([[], [expect.objectContaining({ id: job.sourcePostingVersionId })], []]);
   });
 
+  it("v4 中断持久化既有脱敏 diagnostic，重放只取最大事实且不提前投递 issue/attention", async () => {
+    const job = await layeredRun();
+    const rawProviderBody = "authorization: secret provider response body";
+    const processor = createAgentRunProcessor({
+      db: database,
+      adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
+      layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({
+        branchOutcome: { trusted: "failed" as const, publicDiscovery: "failed" as const },
+        diagnostics: [{ scope: "provider" as const, code: "ANYSEARCH_UNAVAILABLE", retryable: true, affectedCount: 1 }],
+        sourceIssues: [{ provider: "anysearch" as const, code: "ANYSEARCH_UNAVAILABLE", affectedCount: 1 }],
+        interruption: "paused" as const,
+        rawProviderBody,
+      }) }) },
+      contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("paused");
+    await database.update(agentRuns).set({ claimExpiresAt: new Date(now.getTime() - 1) }).where(eq(agentRuns.id, job.runId));
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("paused");
+    const detail = await createAgentRunQueries({ db: database }).get(job);
+    expect(detail).toMatchObject({ discoveryDiagnostics: [{ scope: "provider", code: "ANYSEARCH_UNAVAILABLE", retryable: true, affectedCount: 1 }], sourceIssues: [] });
+    expect(JSON.stringify(detail)).not.toContain(rawProviderBody);
+    await expect(Promise.all([
+      database.select().from(jobDiscoveryDiagnostics).where(eq(jobDiscoveryDiagnostics.runId, job.runId)),
+      database.select().from(jobDiscoverySourceIssues).where(eq(jobDiscoverySourceIssues.runId, job.runId)),
+      database.select().from(agentInboxItems).where(and(eq(agentInboxItems.runId, job.runId), eq(agentInboxItems.kind, "discovery_attention"))),
+    ])).resolves.toEqual([[expect.objectContaining({ code: "ANYSEARCH_UNAVAILABLE", affectedCount: 1 })], [], []]);
+  });
+
   it("v4 旧 claim 活跃时不执行，过期后新 attempt 独立计费", async () => {
     const job = await layeredRun(); let calls = 0;
     const oldToken = crypto.randomUUID();

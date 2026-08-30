@@ -25,6 +25,7 @@ import {
   type LayeredPublicJobDiscoveryWorkflow,
   type LayeredPublicJobDiscoveryWorkflowResolver,
   LayeredPublicWorkflowBranchOutcomeSchema,
+  LayeredPublicWorkflowInterruption,
   type LayeredPublicWorkflowDiagnostic,
 } from "./layered-public-job-discovery-workflow";
 
@@ -535,14 +536,19 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
             userId: job.userId, runId: job.runId, now: deps.clock(), executionSpec: layeredExecutionSpec, attemptCount: claimed.attemptCount, signal: controller.signal,
             beforePhysicalOperation: async (operation) => {
               if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(operation.identity)) throw new Error("LAYERED_PUBLIC_OPERATION_IDENTITY_INVALID");
-              if (controller.signal.aborted) throw new LayeredPublicWorkflowStop("stale");
+              if (controller.signal.aborted) throw new LayeredPublicWorkflowInterruption("stale");
               const identity = createHash("sha256").update(operation.identity).digest("hex").slice(0, 16);
               const reserve = operation.kind === "search" || operation.kind === "extract" || operation.kind === "fetch" ? { toolCalls: 1, sourceRequests: 1 } : undefined;
               const checkpointOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: `layered_${operation.kind}_${identity}`, ordinal: ++physicalOrdinal, reserve });
-              if (checkpointOutcome) { controller.abort(); throw new LayeredPublicWorkflowStop(checkpointOutcome); }
-              if (controller.signal.aborted) throw new LayeredPublicWorkflowStop("stale");
+              if (checkpointOutcome) { controller.abort(); throw new LayeredPublicWorkflowInterruption(checkpointOutcome as "paused" | "cancelled" | "budget_exhausted" | "stale"); }
+              if (controller.signal.aborted) throw new LayeredPublicWorkflowInterruption("stale");
             },
           }));
+          if (outcome.interruption) {
+            try { await persistLayeredPublicOutcome(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), deadline, diagnostics: outcome.diagnostics, sourceIssues: [], sourcePostingVersionIds: [], trustedSourcePostingVersionIds: [], trustedSourceIds: [], complete: false }); }
+            catch (error) { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline }); }
+            return outcome.interruption;
+          }
           const branchOutcome = LayeredPublicWorkflowBranchOutcomeSchema.parse(outcome.branchOutcome);
           const branchSucceeded = branchOutcome.trusted === "succeeded" || branchOutcome.publicDiscovery === "verified" || branchOutcome.publicDiscovery === "clean_zero";
           if (!branchSucceeded) {
@@ -560,6 +566,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           return persisted === "facts" ? "stale" : persisted;
         } catch (error) {
           if (error instanceof LayeredPublicWorkflowStop) return error.outcome;
+          if (error instanceof LayeredPublicWorkflowInterruption) return error.outcome;
           return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
         } finally { clearTimeout(abortAtDeadline); }
       }
