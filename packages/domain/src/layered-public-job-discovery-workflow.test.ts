@@ -9,7 +9,7 @@ import {
   LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION,
   LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION,
 } from "@job-copilot/contracts/job-discovery";
-import { createLayeredPublicJobDiscoveryWorkflow } from "./layered-public-job-discovery-workflow";
+import { createLayeredPublicJobDiscoveryWorkflow, LayeredPublicWorkflowInterruption } from "./layered-public-job-discovery-workflow";
 
 const runId = "11111111-1111-8111-8111-111111111111";
 const targetId = "22222222-2222-8222-8222-222222222222";
@@ -122,6 +122,37 @@ describe("layered public job discovery workflow", () => {
         { provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED", affectedCount: 2 },
       ],
     });
+  });
+
+  it("暂停在下一物理操作前会返回此前的脱敏 diagnostic，不泄漏 source issue", async () => {
+    let checkpointCalls = 0;
+    const workflow = createLayeredPublicJobDiscoveryWorkflow({
+      trustedSources: { discover: async () => ({ succeeded: false, verifiedSourcePostingVersionIds: [] }) },
+      anySearch: {
+        search: async ({ beforeRequest }) => { await beforeRequest(); return { error: { code: "ANYSEARCH_UNAVAILABLE", retryable: true, httpStatus: 503 } }; },
+        extract: async () => { throw new Error("UNUSED"); },
+      },
+      preflight: async () => null,
+      leads: { recordPending: async () => { throw new Error("UNUSED"); } },
+      fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
+      gate: { verify: async () => { throw new Error("UNUSED"); }, reject: async () => undefined },
+    });
+    const secondQueryId = "88888888-8888-8888-8888-888888888888";
+    await expect(workflow.run({
+      userId: targetId, runId, now: new Date(), attemptCount: 1, signal: new AbortController().signal,
+      executionSpec: executionSpecFor([
+        { ordinal: 1, queryId, kind: "general", stableFingerprint: "f".repeat(64), query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 },
+        { ordinal: 2, queryId: secondQueryId, kind: "general", stableFingerprint: "e".repeat(64), query: "AI 工程师 远程", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 },
+      ]) as never,
+      beforePhysicalOperation: async () => {
+        checkpointCalls += 1;
+        if (checkpointCalls === 2) throw new LayeredPublicWorkflowInterruption("paused");
+      },
+    })).resolves.toEqual(expect.objectContaining({
+      interruption: "paused",
+      diagnostics: [{ scope: "provider", code: "ANYSEARCH_UNAVAILABLE", retryable: true, affectedCount: 1 }],
+      sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_UNAVAILABLE", affectedCount: 1 }],
+    }));
   });
 
   it("可信来源成功但零 postings 仍是成功分支", async () => {
