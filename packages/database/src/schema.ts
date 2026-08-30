@@ -834,10 +834,10 @@ export const agentInboxItems = pgTable("agent_inbox_items", {
   index("agent_inbox_items_open_lookup_idx").on(table.userId, table.status, table.createdAt),
   foreignKey({ columns: [table.userId, table.runId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "agent_inbox_items_owner_run_fk" }),
   check("agent_inbox_items_trigger_event_positive", sql`${table.triggerEventSequence} >= 1`),
-  check("agent_inbox_items_kind_check", sql`${table.kind} in ('run_failed', 'budget_exhausted', 'decision_required', 'source_attention')`),
+  check("agent_inbox_items_kind_check", sql`${table.kind} in ('run_failed', 'budget_exhausted', 'decision_required', 'source_attention', 'discovery_attention')`),
   check("agent_inbox_items_status_check", sql`${table.status} in ('open', 'resolved')`),
-  check("agent_inbox_items_reason_check", sql`${table.reasonCode} in ('AGENT_RUN_PAUSED', 'SOURCE_HEALTH_ATTENTION', 'AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_CONTENT_STORAGE_FAILED', 'AGENT_RUN_PERSIST_FAILED', 'AGENT_RUN_BUDGET_EXCEEDED', 'AGENT_RUN_MODEL_RETRYABLE', 'AGENT_RUN_MODEL_AUTH_FAILED', 'AGENT_RUN_MODEL_POLICY_REJECTED', 'AGENT_RUN_MODEL_INVALID_RESPONSE')`),
-  check("agent_inbox_items_kind_reason_pair_check", sql`(${table.kind} = 'source_attention') = (${table.reasonCode} = 'SOURCE_HEALTH_ATTENTION')`),
+  check("agent_inbox_items_reason_check", sql`${table.reasonCode} in ('AGENT_RUN_PAUSED', 'SOURCE_HEALTH_ATTENTION', 'DISCOVERY_ATTENTION', 'AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_CONTENT_STORAGE_FAILED', 'AGENT_RUN_PERSIST_FAILED', 'AGENT_RUN_BUDGET_EXCEEDED', 'AGENT_RUN_MODEL_RETRYABLE', 'AGENT_RUN_MODEL_AUTH_FAILED', 'AGENT_RUN_MODEL_POLICY_REJECTED', 'AGENT_RUN_MODEL_INVALID_RESPONSE')`),
+  check("agent_inbox_items_kind_reason_pair_check", sql`(${table.kind} = 'source_attention') = (${table.reasonCode} = 'SOURCE_HEALTH_ATTENTION') and (${table.kind} = 'discovery_attention') = (${table.reasonCode} = 'DISCOVERY_ATTENTION')`),
   check("agent_inbox_items_dimension_check", sql`${table.budgetDimension} is null or ${table.budgetDimension} in ('active_duration', 'attempts', 'tool_calls', 'model_calls', 'tokens')`),
   check("agent_inbox_items_resolved_check", sql`(${table.status} = 'open') = (${table.resolvedAt} is null)`),
 ]);

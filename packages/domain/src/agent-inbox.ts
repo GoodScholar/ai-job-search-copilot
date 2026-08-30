@@ -31,6 +31,7 @@ function projection(item: InboxItemRow, targetId: string): AgentInboxItem {
   if (item.kind === "decision_required") return { ...common, title: "岗位发现已暂停", message: "选择继续或取消本次岗位发现。", availableActions: open ? ["resume_run", "cancel_run"] : [], targetHref: null } as AgentInboxItem;
   if (item.kind === "run_failed") return { ...common, title: "岗位发现未完成", message: "可以重新运行或标记为已处理。", availableActions: open ? ["restart_run", "dismiss"] : [], targetHref: null } as AgentInboxItem;
   if (item.kind === "source_attention") return { ...common, title: "部分来源需要关注", message: "部分岗位来源未完成检查。可查看诊断、稍后重试或停用来源。", availableActions: open ? ["dismiss"] : [], targetHref: `/profile/targets/${targetId}/watchlist#source-health` } as AgentInboxItem;
+  if (item.kind === "discovery_attention") return { ...common, title: "公开岗位发现需要关注", message: "部分公开岗位发现未完成。可查看本次运行诊断。", availableActions: open ? ["dismiss"] : [], targetHref: `/home?runId=${item.runId}#agent-run` } as AgentInboxItem;
   const messages = {
     active_duration: "本次岗位发现达到活跃时间上限。请调整目标后重试。",
     attempts: "本次岗位发现达到重试次数上限。请调整目标后重试。",
@@ -45,7 +46,7 @@ function accepts(item: InboxItemRow, action: InboxAction) {
   return (item.kind === "decision_required" && (action === "resume_run" || action === "cancel_run"))
     || (item.kind === "run_failed" && (action === "restart_run" || action === "dismiss"))
     || (item.kind === "budget_exhausted" && action === "dismiss")
-    || (item.kind === "source_attention" && action === "dismiss");
+    || ((item.kind === "source_attention" || item.kind === "discovery_attention") && action === "dismiss");
 }
 
 function snapshot(run: typeof agentRuns.$inferSelect) {

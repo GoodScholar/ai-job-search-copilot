@@ -5,11 +5,12 @@ import {
   AgentRunFailureCodeSchema,
 } from "./agent-runs";
 
-export const AgentInboxKindSchema = z.enum(["run_failed", "budget_exhausted", "decision_required", "source_attention"]);
+export const AgentInboxKindSchema = z.enum(["run_failed", "budget_exhausted", "decision_required", "source_attention", "discovery_attention"]);
 export const AgentInboxStatusSchema = z.enum(["open", "resolved"]);
 export const AgentInboxActionSchema = z.enum(["restart_run", "resume_run", "cancel_run", "dismiss"]);
-export const AgentInboxReasonCodeSchema = z.union([z.literal("AGENT_RUN_PAUSED"), z.literal("SOURCE_HEALTH_ATTENTION"), AgentRunFailureCodeSchema]);
+export const AgentInboxReasonCodeSchema = z.union([z.literal("AGENT_RUN_PAUSED"), z.literal("SOURCE_HEALTH_ATTENTION"), z.literal("DISCOVERY_ATTENTION"), AgentRunFailureCodeSchema]);
 const SourceAttentionHrefSchema = z.string().regex(/^\/profile\/targets\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/watchlist#source-health$/iu);
+const DiscoveryAttentionHrefSchema = z.string().regex(/^\/home\?runId=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}#agent-run$/iu);
 
 const budgetMessages = {
   active_duration: "本次岗位发现达到活跃时间上限。请调整目标后重试。",
@@ -48,6 +49,10 @@ export const AgentInboxItemSchema = z.object({
   if (item.kind === "source_attention") {
     if (item.reasonCode !== "SOURCE_HEALTH_ATTENTION" || item.budgetDimension !== null || item.title !== "部分来源需要关注" || item.message !== "部分岗位来源未完成检查。可查看诊断、稍后重试或停用来源。" || !SourceAttentionHrefSchema.safeParse(item.targetHref).success) issue("kind", "invalid source attention projection");
     if (isOpen && !sameActions(item.availableActions, ["dismiss"])) issue("availableActions", "invalid source attention actions");
+  }
+  if (item.kind === "discovery_attention") {
+    if (item.reasonCode !== "DISCOVERY_ATTENTION" || item.budgetDimension !== null || item.title !== "公开岗位发现需要关注" || item.message !== "部分公开岗位发现未完成。可查看本次运行诊断。" || !DiscoveryAttentionHrefSchema.safeParse(item.targetHref).success) issue("kind", "invalid discovery attention projection");
+    if (isOpen && !sameActions(item.availableActions, ["dismiss"])) issue("availableActions", "invalid discovery attention actions");
   }
 });
 

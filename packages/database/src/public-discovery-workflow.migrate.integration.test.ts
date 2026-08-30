@@ -12,4 +12,12 @@ describe("public discovery workflow migration", () => {
     expect(migrationSql).toContain('UNIQUE NULLS NOT DISTINCT("user_id","run_id","scope","provider","query_id","lead_id","code")');
     expect(migrationSql).not.toContain("job_source_health_checks");
   });
+
+  it("以独立 additive 0026 将发现关注项与 Watchlist 来源关注项隔离", async () => {
+    const migrationSql = await readFile(fileURLToPath(new URL("../migrations/0026_discovery_attention.sql", import.meta.url)), "utf8");
+
+    expect(migrationSql).toContain('discovery_attention');
+    expect(migrationSql).toContain('DISCOVERY_ATTENTION');
+    expect(migrationSql).toContain("SOURCE_HEALTH_ATTENTION");
+  });
 });
