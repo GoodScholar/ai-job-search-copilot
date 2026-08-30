@@ -24,7 +24,7 @@ import {
   type Database,
 } from "@job-copilot/database";
 import { AGENT_RUN_JOB_NAME, AGENT_RUN_QUEUE } from "@job-copilot/contracts/agent-runs";
-import { createAgentRunCommands, createAgentRunQueries, createAgentRunRecoveryQueries } from "@job-copilot/domain/agent-runs";
+import { createAgentRunCommands, createAgentRunProcessor, createAgentRunQueries, createAgentRunRecoveryQueries } from "@job-copilot/domain/agent-runs";
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
 import { createCompanyWatchlistCommands } from "@job-copilot/domain/company-watchlists";
 import { createJobDiscoverySchedules } from "@job-copilot/domain/job-discovery-schedules";
@@ -34,6 +34,7 @@ import { AGENT_RUN_CONSUMER } from "./agent-run.module.js";
 import type { AgentRunConsumer } from "./agent-run-consumer.js";
 import { agentRunQueueJobOptions } from "./agent-run-reconciler.js";
 import { AgentRunScheduler, type AgentRunScheduleFailure } from "./agent-run-scheduler.js";
+import { createJobDiscoveryAdapterResolver } from "./job-discovery-adapter-resolver.js";
 import { MinioDiscoveryContentStore } from "./minio-discovery-content-store.js";
 
 const minioImage = "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e";
@@ -559,6 +560,27 @@ describe("岗位发现 Agent Run Worker", () => {
     await expect(createAgentRunQueries({ db: database }).get({ userId, runId: cancelled.runId }))
       .resolves.toMatchObject({ status: "cancelled", results: [] });
   }, 30_000);
+
+  it("production Worker resolver 能完成精确 legacy Fake v1 的 queued 与 paused 恢复", async () => {
+    await stopWorker();
+    const queued = await createDurableQueuedRun();
+    const paused = await createDurableQueuedRun();
+    await commands().control({ userId, requestId: randomUUID(), runId: paused.runId, command: { commandId: randomUUID(), action: "pause" } });
+    const processor = createAgentRunProcessor({
+      db: database,
+      adapterResolver: createJobDiscoveryAdapterResolver({ APP_ENV: "production" }),
+      contentStore: new MinioDiscoveryContentStore(minio, minioBucket),
+      auditTrail: createAuditTrail({ db: database, clock: () => new Date() }),
+      id: randomUUID,
+      clock: () => new Date(),
+    });
+    await expect(processor.process({ version: 1, userId, runId: queued.runId })).resolves.toBe("completed");
+    await commands().control({ userId, requestId: randomUUID(), runId: paused.runId, command: { commandId: randomUUID(), action: "resume" } });
+    await expect(processor.process({ version: 1, userId, runId: paused.runId })).resolves.toBe("completed");
+    await expect(createAgentRunQueries({ db: database }).get({ userId, runId: queued.runId })).resolves.toMatchObject({
+      workflowVersion: "job-discovery-workflow-v1", adapter: "fake", adapterVersion: "fake-job-discovery-v1", outputSchemaVersion: "job-discovery-result-v1", status: "completed",
+    });
+  });
 
   it("test-only retry 场景经真实 Worker 有限重试：retry_once 成功且 retry_until_budget 终止", async () => {
     await stopWorker();

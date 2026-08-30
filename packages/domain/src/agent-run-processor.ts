@@ -38,7 +38,7 @@ export interface JobDiscoveryAdapter {
 
 /** Resolves the adapter strictly from the immutable run execution spec. */
 export interface JobDiscoveryAdapterResolver {
-  resolve(input: { runId: string; idempotencyKey: string; adapter: string; adapterVersion: string; attemptCount: number }): JobDiscoveryAdapter;
+  resolve(input: { runId: string; idempotencyKey: string; executionSpec: unknown; attemptCount: number }): JobDiscoveryAdapter;
 }
 
 const stepKeys = ["batch_search", "fetch_details", "persist_results"] as const;
@@ -327,8 +327,18 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         adapter = deps.adapterResolver.resolve({
           runId: claimed.run.id,
           idempotencyKey: claimed.run.idempotencyKey,
-          adapter: claimed.run.adapter,
-          adapterVersion: claimed.run.adapterVersion,
+          executionSpec: {
+            targetSnapshot: claimed.run.targetSnapshot,
+            sourceScope: claimed.run.sourceScope,
+            workflowVersion: claimed.run.workflowVersion,
+            ruleVersion: claimed.run.ruleVersion,
+            adapter: claimed.run.adapter,
+            adapterVersion: claimed.run.adapterVersion,
+            outputSchemaVersion: claimed.run.outputSchemaVersion,
+            toolAllowlist: claimed.run.toolAllowlist,
+            model: claimed.run.modelSnapshot,
+            budget: claimed.run.budgetSnapshot,
+          },
           attemptCount: claimed.attemptCount,
         });
       } catch (error) {

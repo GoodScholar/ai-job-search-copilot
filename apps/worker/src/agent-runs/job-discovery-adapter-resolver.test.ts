@@ -5,12 +5,6 @@ import { GreenhouseJobDiscoveryAdapter } from "./greenhouse-job-discovery-adapte
 
 const runId = "10000000-0000-4000-8000-000000000001";
 const idempotencyKey = "20000000-0000-4000-8000-000000000002";
-const metadata = {
-  runId,
-  idempotencyKey,
-  adapter: "fake",
-  adapterVersion: "fake-job-discovery-v1",
-};
 const targetSnapshot = {
   targetId: "30000000-0000-4000-8000-000000000003", version: 1, priority: "primary" as const, state: "active" as const,
   constraints: {
@@ -22,6 +16,43 @@ const batchInput = {
   targetSnapshot,
   sourceScope: { kind: "company_watchlist" as const, adapter: "fake" as const, adapterVersion: "fake-job-discovery-v1" as const, watchlistVersion: 0, sources: ["fake:aurora-careers", "fake:orbit-careers"] },
 };
+const executionSpec = {
+  targetSnapshot,
+  sourceScope: batchInput.sourceScope,
+  workflowVersion: "job-discovery-workflow-v1",
+  ruleVersion: "fake-job-discovery-rules-v1",
+  adapter: "fake",
+  adapterVersion: "fake-job-discovery-v1",
+  outputSchemaVersion: "job-discovery-result-v1",
+  toolAllowlist: ["job_discovery.search_batch", "job_discovery.get_detail"],
+  model: null,
+  budget: { maxActiveDurationMs: 60_000, maxAttempts: 3, maxToolCalls: 10, maxResults: 5, maxModelCalls: 0, maxTokens: 0 },
+} as const;
+const metadata = {
+  runId,
+  idempotencyKey,
+  adapter: "fake",
+  adapterVersion: "fake-job-discovery-v1",
+  executionSpec,
+};
+const greenhouseExecutionSpec = {
+  targetSnapshot,
+  sourceScope: {
+    kind: "company_watchlist" as const,
+    adapter: "greenhouse" as const,
+    adapterVersion: "greenhouse-job-board-v1" as const,
+    watchlistVersion: 1,
+    sources: [{ sourceId: "greenhouse:example", watchlistItemId: "40000000-0000-4000-8000-000000000004", canonicalCompanyName: "Example", careersUrl: "https://boards.greenhouse.io/example", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], boardToken: "example" }],
+  },
+  workflowVersion: "job-discovery-workflow-v2",
+  ruleVersion: "greenhouse-job-discovery-rules-v1",
+  adapter: "greenhouse",
+  adapterVersion: "greenhouse-job-board-v1",
+  outputSchemaVersion: "job-discovery-result-v2",
+  toolAllowlist: ["job_discovery.search_batch", "job_discovery.get_detail"],
+  model: null,
+  budget: { maxActiveDurationMs: 180_000, maxAttempts: 3, maxToolCalls: 60, maxResults: 5, maxModelCalls: 0, maxTokens: 0 },
+} as const;
 
 describe("JobDiscoveryAdapterResolver", () => {
   it("非测试环境携带场景配置时 fail-closed", () => {
@@ -41,13 +72,14 @@ describe("JobDiscoveryAdapterResolver", () => {
   it("local 未配置场景时返回正常 Fake，并只接受持久化 adapter 元数据", async () => {
     const resolver = createJobDiscoveryAdapterResolver({ APP_ENV: "local" });
     await expect(resolver.resolve({ ...metadata, attemptCount: 1 }).searchBatch(batchInput)).resolves.toMatchObject({ ok: true });
-    expect(() => resolver.resolve({ ...metadata, adapter: "other", attemptCount: 1 })).toThrow("AGENT_RUN_ADAPTER_UNSUPPORTED");
-    expect(() => resolver.resolve({ ...metadata, adapterVersion: "other-v1", attemptCount: 1 })).toThrow("AGENT_RUN_ADAPTER_UNSUPPORTED");
+    expect(() => resolver.resolve({ ...metadata, executionSpec: { ...executionSpec, adapter: "other" }, attemptCount: 1 } as any)).toThrow("AGENT_RUN_ADAPTER_UNSUPPORTED");
+    expect(() => resolver.resolve({ ...metadata, executionSpec: { ...executionSpec, adapterVersion: "other-v1" }, attemptCount: 1 } as any)).toThrow("AGENT_RUN_ADAPTER_UNSUPPORTED");
   });
 
-  it("production 拒绝 Fake，local 只有显式 opt-in 才解析 Greenhouse，test 始终 fail-closed", () => {
-    const greenhouse = { ...metadata, adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v1", attemptCount: 1 };
-    expect(() => createJobDiscoveryAdapterResolver({ APP_ENV: "production" }).resolve({ ...metadata, attemptCount: 1 })).toThrow("AGENT_RUN_ADAPTER_UNSUPPORTED");
+  it("production 仅解析完整精确的 legacy Fake v1 执行规格，local 只有显式 opt-in 才解析 Greenhouse，test 始终 fail-closed", async () => {
+    const greenhouse = { runId, idempotencyKey, executionSpec: greenhouseExecutionSpec, attemptCount: 1 };
+    await expect(createJobDiscoveryAdapterResolver({ APP_ENV: "production" }).resolve({ ...metadata, attemptCount: 1 }).searchBatch(batchInput)).resolves.toMatchObject({ ok: true });
+    expect(() => createJobDiscoveryAdapterResolver({ APP_ENV: "production" }).resolve({ ...metadata, executionSpec: { ...executionSpec, workflowVersion: "job-discovery-workflow-v2" }, attemptCount: 1 } as any)).toThrow("AGENT_RUN_ADAPTER_UNSUPPORTED");
     expect(() => createJobDiscoveryAdapterResolver({ APP_ENV: "local" }).resolve(greenhouse)).toThrow("AGENT_RUN_ADAPTER_UNSUPPORTED");
     expect(createJobDiscoveryAdapterResolver({ APP_ENV: "local", PUBLIC_JOB_DISCOVERY_ADAPTER: "greenhouse" }).resolve(greenhouse)).toBeInstanceOf(GreenhouseJobDiscoveryAdapter);
     expect(createJobDiscoveryAdapterResolver({ APP_ENV: "production" }).resolve(greenhouse)).toBeInstanceOf(GreenhouseJobDiscoveryAdapter);
