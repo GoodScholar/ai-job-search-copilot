@@ -289,7 +289,8 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
   sourcePostingVersionIds: readonly string[];
   trustedSourcePostingVersionIds: readonly string[];
   trustedSourceIds: readonly string[];
-}): Promise<"completed" | "stale"> {
+  complete?: boolean;
+}): Promise<"completed" | "stale" | "facts"> {
   return runTransaction(deps, input.deadline, async (transaction) => {
     await acquireAccountAdvisoryLock(transaction, input.userId);
     const [run] = await transaction.select().from(agentRuns).where(and(
@@ -322,6 +323,16 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
         target: [jobDiscoverySourceIssues.userId, jobDiscoverySourceIssues.runId, jobDiscoverySourceIssues.provider, jobDiscoverySourceIssues.code],
         set: { affectedCount: sql`least(10, ${jobDiscoverySourceIssues.affectedCount} + excluded.affected_count)` },
       });
+    }
+    if (input.complete === false) {
+      if (input.sourceIssues.length > 0) {
+        const [existing] = await transaction.select({ id: agentInboxItems.id }).from(agentInboxItems).where(and(eq(agentInboxItems.userId, input.userId), eq(agentInboxItems.runId, input.runId), eq(agentInboxItems.kind, "discovery_attention"))).limit(1);
+        if (!existing) {
+          const [latest] = await transaction.select({ sequence: agentRunEvents.sequence }).from(agentRunEvents).where(and(eq(agentRunEvents.userId, input.userId), eq(agentRunEvents.runId, input.runId))).orderBy(desc(agentRunEvents.sequence)).limit(1);
+          if (latest) await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: input.userId, runId: input.runId, triggerEventSequence: latest.sequence, kind: "discovery_attention", status: "open", reasonCode: "DISCOVERY_ATTENTION", budgetDimension: null, createdAt: input.now }).onConflictDoNothing();
+        }
+      }
+      return "facts";
     }
     const attributed = new Set((await transaction.select({ sourcePostingVersionId: jobDiscoveryAttributions.sourcePostingVersionId }).from(jobDiscoveryAttributions).where(and(eq(jobDiscoveryAttributions.userId, input.userId), eq(jobDiscoveryAttributions.runId, input.runId)))).map((row: { sourcePostingVersionId: string }) => row.sourcePostingVersionId));
     const trusted = new Set(input.trustedSourcePostingVersionIds);
@@ -507,6 +518,8 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           const branchSucceeded = outcome.branchSuccess?.trusted === true || outcome.branchSuccess?.publicDiscovery === true || outcome.hasTrustedSuccess || (outcome.sourcePostingVersionIds?.length ?? 0) > 0;
           if (!branchSucceeded) {
             const retryable = outcome.diagnostics.some((diagnostic) => diagnostic.retryable);
+            try { await persistLayeredPublicOutcome(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), deadline, diagnostics: outcome.diagnostics, sourceIssues: outcome.sourceIssues ?? [], sourcePostingVersionIds: [], trustedSourcePostingVersionIds: [], trustedSourceIds: [], complete: false }); }
+            catch (error) { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline }); }
             return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: retryable ? "AGENT_RUN_ADAPTER_RETRYABLE" : "AGENT_RUN_ADAPTER_FAILED", retryable, category: "source" }, deadline });
           }
           const batchComplete = await transition("batch_search", true); if (batchComplete) return batchComplete;
@@ -514,7 +527,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           const detailsComplete = await transition("fetch_details", true); if (detailsComplete) return detailsComplete;
           const persistStart = await transition("persist_results", false); if (persistStart) return persistStart;
           const persisted = await persistLayeredPublicOutcome(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), deadline, diagnostics: outcome.diagnostics, sourceIssues: outcome.sourceIssues ?? [], sourcePostingVersionIds: outcome.sourcePostingVersionIds ?? [], trustedSourcePostingVersionIds: outcome.trustedSourcePostingVersionIds ?? [], trustedSourceIds: layeredExecutionSpec.sourceScope.trustedSources.map(({ source }) => source.sourceId) });
-          return persisted;
+          return persisted === "facts" ? "stale" : persisted;
         } catch (error) {
           if (error instanceof LayeredPublicWorkflowStop) return error.outcome;
           return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
