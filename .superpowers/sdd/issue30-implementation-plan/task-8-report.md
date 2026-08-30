@@ -26,6 +26,20 @@
 
 历史记录说明：`151bd01 fix(domain): retain discovery attention on budget terminal` 的 Red 是在隔离父提交后补做的复现，而不是该提交之前保留下来的原始先验 Red；本报告按此事实记录，不将其包装为严格的首次 test-first 证据。后续 `418f91a` 保留了 budget 与 discovery attention 并存的回归。
 
+## 审查修复 round 1（A / B / C）
+
+本轮接受 Spec I1、Spec I3 与 Standards I1；对 Spec I2 采用 brief 允许的 checkpoint/usage 复用方案，不新增 operation ledger。每组的 Red 提交都先于对应生产 Green 提交，未改写既有历史。
+
+| 组别 | 裁决与实现 | 真实 TDD 证据 |
+| --- | --- | --- |
+| A：成功语义 | `LayeredPublicWorkflowOutcome` 改为必填严格 `branchOutcome`，删除 `hasTrustedSuccess`、可选 `branchSuccess` 与四路 OR。可信来源明确成功（可为零岗位）及 AnySearch 真零候选成功；有候选但全 extract/fetch/gate 失败会依 diagnostic retryability 重试/失败；有一个 verified 且存在部分问题仍成功。 | Red `7fa1ec8`：`layered-public-job-discovery-workflow.test.ts` 运行 **8 tests / 6 failed**；Green `806abea`：同文件 **8 passed**，`agent-run-processor.integration.test.ts` **47 passed**，domain typecheck 通过。 |
+| B：lease / deadline 围栏 | heartbeat `renew=false` 或异常会立即 abort v4 的同一 `AbortController`，deadline 也会 abort；`record_pending`、`gate_reject`、`gate_verify` 在写入前使用不 reserve 的 checkpoint 围栏，物理请求保留既有 reserve。 | Red `8b5e0a2`：工作流 focused test **8 tests / 1 failed**；Green `70d5853`：工作流 **8 passed**、processor **48 passed**、domain typecheck 通过。后续 `4ef7051` 加入 old fetch 挂起→lease takeover→heartbeat abort→旧返回零 Lead/Attribution 副作用→新 attempt completed 的 barrier 回归，并验证全链 signal identity。 |
+| C：中断前诊断 | 引入严格 typed `LayeredPublicWorkflowInterruption` 与 partial outcome；pause/cancel/budget/stale 在停止前已聚合的脱敏 diagnostics 会以 max 幂等持久化，且不提前写 source issue / `discovery_attention`。请求前 reserve 与请求返回后的无 reserve claim 围栏同时构成计费/完成边界；`NOT_CONFIGURED` 仍不调用 beforeRequest。 | Red `63f083e`：工作流 **9 tests / 1 failed**；Green `a17e110`：workflow + processor focused **2 files / 58 passed**、domain typecheck 与 diff check 通过。回归还覆盖 provider failure 后第二操作 stop、detail 可见历史 diagnostic、无 provider body 泄漏及重放幂等。 |
+
+审查结论记录：历史 Slice 的首次 test-first 证据并不完整（尤其 `151bd01` 的事实如上），不能在本报告中宣称“原 Slice 完全 test-first”。本轮 A/B/C 具备独立、不可逆的 Red→Green 提交证据；是否据此接受流程发现并关闭，仍请独立 Reviewer 判断。
+
+迁移命名审查项（Standards Minor）技术驳回：仓库全部 Drizzle migration 均采用自动生成名，`0027` 沿用该既有风格；重命名会制造与本 Issue 无关的历史噪音，故不改名。
+
 ## 提交链（`768b8c6..HEAD`，报告提交前）
 
 ```text
@@ -66,6 +80,13 @@ d461a8f test(database): lock v4 result migration constraints
 46cdccc test(domain): cover v4 run detail projections
 f84ec27 test(database): preserve legacy migration fixtures
 fddeacc test(domain): narrow v4 detail projection
+7fa1ec8 test(domain): define v4 branch outcome semantics
+806abea fix(domain): require explicit v4 branch outcome
+8b5e0a2 test(domain): require v4 claim fences before writes
+70d5853 fix(domain): abort stale v4 claims before writes
+63f083e test(domain): preserve diagnostics on v4 interruption
+a17e110 fix(domain): retain v4 diagnostics across interruption
+4ef7051 test(domain): cover v4 lease takeover barrier
 ```
 
 ## Fresh 验收
@@ -73,7 +94,7 @@ fddeacc test(domain): narrow v4 detail projection
 以下命令按包串行执行；Testcontainers 命令设置 `DOCKER_API_VERSION=1.51`：
 
 ```text
-domain:        DOCKER_API_VERSION=1.51 pnpm --filter @job-copilot/domain test      → 27 files / 318 tests passed
+domain:        DOCKER_API_VERSION=1.51 pnpm --filter @job-copilot/domain test      → 27 files / 321 tests passed
 database:      DOCKER_API_VERSION=1.51 pnpm --filter @job-copilot/database test    → 3 files / 28 tests passed
 contracts:     pnpm --filter @job-copilot/contracts test                            → 12 files / 108 tests passed
 web:           pnpm --filter web test                                                → 55 files / 289 tests passed
@@ -92,6 +113,8 @@ Drizzle: pnpm --filter @job-copilot/database exec drizzle-kit check --config=dri
 ```
 
 `git diff --check 768b8c6..HEAD` 与工作区 `git diff --check` 在报告提交前均退出 0；报告提交后会再执行一次最终检查。未 push、未创建 PR、未 merge。
+
+说明：一次 domain verbose 重复运行在发现后立即终止，不计入以上验收；以上 fresh 命令随后严格串行执行。桌面命令流对 domain/worker 在 30 秒截断后，通过进程退出确认其完成；其余命令均返回完整通过摘要。
 
 ## 后续门槛
 
