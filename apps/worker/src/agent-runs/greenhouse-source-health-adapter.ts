@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   GREENHOUSE_JOB_DISCOVERY_ADAPTER,
   GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
+  SourceHealthDetailIdSchema,
   PUBLIC_JOB_DISCOVERY_BUDGET,
   type AgentRunDetail,
   type PublicSourceHealthAgentRunSourceScope,
@@ -17,7 +18,11 @@ const ListJobSchema = z.object({
   location: z.object({ name: z.string().trim().min(1) }).passthrough(),
 }).passthrough();
 const GreenhouseSourceListSchema = z.object({
-  jobs: z.array(ListJobSchema),
+  jobs: z.array(ListJobSchema).max(500).superRefine((jobs, context) => {
+    for (const [index, job] of jobs.entries()) {
+      if (!SourceHealthDetailIdSchema.safeParse(String(job.id)).success) context.addIssue({ code: "custom", path: [index, "id"], message: "provider job ID must be a safe detail ID" });
+    }
+  }),
   meta: z.object({ total: z.number().int().nonnegative() }).passthrough(),
 }).passthrough();
 const GreenhouseSourceDetailSchema = z.object({

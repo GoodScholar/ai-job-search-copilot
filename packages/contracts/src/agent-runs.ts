@@ -527,7 +527,7 @@ const SourceHealthAdapterFailureSchema = z.object({
       : hard.includes(failure.reasonCode);
   if (!valid) context.addIssue({ code: "custom", path: ["reasonCode"], message: "source-health failure reason must match its category" });
 });
-const SourceHealthDetailIdSchema = z.string().trim().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,255}$/u);
+export const SourceHealthDetailIdSchema = z.string().trim().regex(/^[A-Za-z1-9][A-Za-z0-9_-]{0,255}$/u);
 const SourceHealthListCandidateSchema = z.object({
   sourceId: SourceHealthSourceIdSchema, detailId: SourceHealthDetailIdSchema, company: z.null(), title: z.string().trim().min(1).max(500), location: z.string().trim().min(1).max(500),
 }).strict();

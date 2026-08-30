@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PublicSourceAccessError } from "@job-copilot/source-access";
 import { createPublicSourceClientForTest } from "@job-copilot/source-access/testing";
+import { parseSourceHealthListResult } from "@job-copilot/contracts/agent-runs";
 
 import { GreenhouseSourceHealthAdapter } from "./greenhouse-source-health-adapter.js";
 
@@ -46,11 +47,30 @@ describe("GreenhouseSourceHealthAdapter", () => {
       transport: async () => ({ status: 200, headers: { "content-type": "application/json" }, body: new TextEncoder().encode(JSON.stringify(body)) }),
     });
 
-    await expect(new GreenhouseSourceHealthAdapter({ client }).listSource({ targetSnapshot: { ...targetSnapshot, constraints: { ...targetSnapshot.constraints, roleFamily: "Platform" } }, source })).resolves.toEqual({
+    const result = await new GreenhouseSourceHealthAdapter({ client }).listSource({ targetSnapshot: { ...targetSnapshot, constraints: { ...targetSnapshot.constraints, roleFamily: "Platform" } }, source });
+    expect(result).toEqual({
       ok: true,
       data: { sourceId: source.sourceId, observedDetailIds: ["701"], candidates: [{ sourceId: source.sourceId, detailId: "701", company: null, title: "Platform Engineer", location: "Beijing" }] },
       attemptCount: 1,
     });
+    expect(parseSourceHealthListResult(result, source.sourceId)).toEqual(result);
+  });
+
+  it.each(["bad/id", "0", "-1", "x".repeat(257)])("将不安全的 provider job ID %s 归类为列表 parser degradation", async (id) => {
+    const body = { jobs: [{ id, title: "Engineer", location: { name: "Beijing" } }], meta: { total: 1 } };
+    const client = createPublicSourceClientForTest({ exactHosts: ["boards-api.greenhouse.io"], testOrigin: "https://boards-api.greenhouse.io", lookup: async () => [{ address: "93.184.216.34", family: 4 }], transport: async () => ({ status: 200, headers: { "content-type": "application/json" }, body: new TextEncoder().encode(JSON.stringify(body)) }) });
+    await expect(new GreenhouseSourceHealthAdapter({ client }).listSource({ targetSnapshot, source })).resolves.toEqual({ ok: false, failure: { category: "parser_degraded", reasonCode: "SOURCE_LIST_SCHEMA_INVALID", retryable: false, attemptCount: 1 } });
+  });
+
+  it("拒绝 501 个 provider jobs，且 500 个合法 jobs 仍可通过运行时契约", async () => {
+    const jobs = Array.from({ length: 501 }, (_, index) => ({ id: String(index + 1), title: "Engineer", location: { name: "Beijing" } }));
+    const responses = [{ jobs, meta: { total: 501 } }, { jobs: jobs.slice(0, 500), meta: { total: 500 } }];
+    const client = createPublicSourceClientForTest({ exactHosts: ["boards-api.greenhouse.io"], testOrigin: "https://boards-api.greenhouse.io", lookup: async () => [{ address: "93.184.216.34", family: 4 }], transport: async () => ({ status: 200, headers: { "content-type": "application/json" }, body: new TextEncoder().encode(JSON.stringify(responses.shift())) }) });
+    const adapter = new GreenhouseSourceHealthAdapter({ client });
+    await expect(adapter.listSource({ targetSnapshot, source })).resolves.toEqual({ ok: false, failure: { category: "parser_degraded", reasonCode: "SOURCE_LIST_SCHEMA_INVALID", retryable: false, attemptCount: 1 } });
+    const result = await adapter.listSource({ targetSnapshot, source });
+    expect(result).toMatchObject({ ok: true, data: { observedDetailIds: expect.arrayContaining(["1", "500"]) } });
+    expect(parseSourceHealthListResult(result, source.sourceId)).toEqual(result);
   });
 
   it.each([
