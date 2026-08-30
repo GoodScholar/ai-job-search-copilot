@@ -485,7 +485,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         const controller = new AbortController();
         try {
           const outcome = await bounded(deps.clock, deadline, () => layeredWorkflow.run({
-            runId: job.runId, executionSpec: layeredExecutionSpec, attemptCount: claimed.attemptCount, signal: controller.signal,
+            userId: job.userId, runId: job.runId, now: deps.clock(), executionSpec: layeredExecutionSpec, attemptCount: claimed.attemptCount, signal: controller.signal,
             beforePhysicalOperation: async (operation) => {
               if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(operation.identity)) throw new Error("LAYERED_PUBLIC_OPERATION_IDENTITY_INVALID");
               const identity = createHash("sha256").update(operation.identity).digest("hex").slice(0, 16);
@@ -493,7 +493,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
               if (checkpointOutcome) { controller.abort(); throw new LayeredPublicWorkflowStop(checkpointOutcome); }
             },
           }));
-          if (!outcome.hasTrustedSuccess && (outcome.sourcePostingVersionIds?.length ?? 0) === 0) {
+          if ((outcome.hasTrustedSuccess && (outcome.trustedSourcePostingVersionIds?.length ?? 0) === 0) || (outcome.sourcePostingVersionIds?.length ?? 0) === 0) {
             const retryable = outcome.diagnostics.some((diagnostic) => diagnostic.retryable);
             return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: retryable ? "AGENT_RUN_ADAPTER_RETRYABLE" : "AGENT_RUN_ADAPTER_FAILED", retryable, category: "source" }, deadline });
           }

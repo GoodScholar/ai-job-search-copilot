@@ -60,7 +60,7 @@ describe("layered public job discovery workflow", () => {
       model: null,
       budget: PUBLIC_JOB_DISCOVERY_BUDGET,
     };
-    const result = await workflow.run({ runId, executionSpec: executionSpec as never, attemptCount: 1, beforePhysicalOperation: async ({ kind }) => { calls.push(`checkpoint:${kind}`); }, signal: new AbortController().signal });
+    const result = await workflow.run({ userId: targetId, runId, now: new Date(), executionSpec: executionSpec as never, attemptCount: 1, beforePhysicalOperation: async ({ kind }) => { calls.push(`checkpoint:${kind}`); }, signal: new AbortController().signal });
 
     expect(calls).toEqual(["trusted", "checkpoint:search", `search:${queryId}`, "pending", "checkpoint:extract", "extract", "checkpoint:fetch", "fetch", "verify"]);
     expect(result).toEqual({ hasTrustedSuccess: true, sourcePostingVersionIds: ["44444444-4444-8444-8444-444444444444", "77777777-7777-8777-8777-777777777777"], trustedSourcePostingVersionIds: ["44444444-4444-8444-8444-444444444444"], sourceIssues: [], diagnostics: [] });
@@ -86,7 +86,7 @@ describe("layered public job discovery workflow", () => {
       sourceScope: { kind: "layered_public" as const, trustedSources: [], publicDiscovery: { provider: "anysearch" as const, queries: [{ ordinal: 1, queryId, kind: "general" as const, stableFingerprint: "b".repeat(64), query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 as const }], batchSize: 5 as const, maxVerificationCandidates: 10 as const } },
       workflowVersion: LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION, ruleVersion: LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION, adapter: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER, adapterVersion: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION, outputSchemaVersion: LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, toolAllowlist: ["job_discovery.list_source", "job_discovery.search", "job_discovery.extract", "job_discovery.fetch"] as const, model: null, budget: PUBLIC_JOB_DISCOVERY_BUDGET,
     };
-    const outcome = await workflow.run({ runId, executionSpec: executionSpec as never, attemptCount: 1, beforePhysicalOperation: async () => { checkpoints += 1; }, signal: new AbortController().signal });
+    const outcome = await workflow.run({ userId: targetId, runId, now: new Date(), executionSpec: executionSpec as never, attemptCount: 1, beforePhysicalOperation: async () => { checkpoints += 1; }, signal: new AbortController().signal });
     expect({ posts, checkpoints, outcome }).toEqual({ posts: 0, checkpoints: 0, outcome: expect.objectContaining({ hasTrustedSuccess: false, diagnostics: [expect.objectContaining({ scope: "provider", code: "ANYSEARCH_NOT_CONFIGURED" })], sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED", affectedCount: 1 }] }) });
   });
 });

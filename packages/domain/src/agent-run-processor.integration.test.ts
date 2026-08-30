@@ -42,17 +42,19 @@ describe("AgentRunProcessor checkpoints", () => {
   }
 
   async function layeredRun() {
-    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const runId = crypto.randomUUID(); const queryId = crypto.randomUUID();
+    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const runId = crypto.randomUUID(); const queryId = crypto.randomUUID(); const watchlistItemId = crypto.randomUUID(); const sourcePostingId = crypto.randomUUID(); const sourcePostingVersionId = crypto.randomUUID();
     const targetSnapshot = { targetId, version: 1, priority: "primary" as const, state: "active" as const, constraints };
     const profileSnapshot = { targetId, version: 1, confirmedActiveSkillNames: [] };
     const watchlistSnapshot = { targetId, version: 0, companies: [] };
-    const sourceScope = { kind: "layered_public" as const, trustedSources: [], publicDiscovery: { provider: "anysearch" as const, batchSize: 5 as const, maxVerificationCandidates: 10 as const, queries: [{ ordinal: 1, queryId, kind: "general" as const, stableFingerprint: "a".repeat(64), query: "AI 应用工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 as const }] } };
+    const sourceScope = { kind: "layered_public" as const, trustedSources: [{ kind: "greenhouse_trusted_source" as const, source: { sourceId: "greenhouse:example", watchlistItemId, canonicalCompanyName: "Example", careersUrl: "https://boards.greenhouse.io/example", allowedDomains: ["boards-api.greenhouse.io"], boardToken: "example" } }], publicDiscovery: { provider: "anysearch" as const, batchSize: 5 as const, maxVerificationCandidates: 10 as const, queries: [{ ordinal: 1, queryId, kind: "general" as const, stableFingerprint: "a".repeat(64), query: "AI 应用工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 as const }] } };
     await database.insert(jobAccounts).values({ id: userId });
     await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: now, updatedAt: now });
     await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: now });
+    await database.insert(jobSourcePostings).values({ id: sourcePostingId, userId, sourceType: "company_careers", sourceIdentifier: "greenhouse:example:opening-1", sourceId: "greenhouse:example", sourceIdentity: { sourceId: "greenhouse:example", detailId: "opening-1" }, applicationDeadline: null, isOfficial: true, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
+    await database.insert(jobSourcePostingVersions).values({ id: sourcePostingVersionId, userId, sourcePostingId, version: 1, contentSha256: "a".repeat(64), rawContentSha256: "b".repeat(64), rawObjectReference: {}, normalizedData: {}, retrievedAt: now, availability: "open", createdAt: now });
     await database.insert(agentRuns).values({ id: runId, userId, targetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1, targetSnapshot, profileSnapshot, watchlistSnapshot, sourceScope, budgetSnapshot: PUBLIC_JOB_DISCOVERY_BUDGET, workflowVersion: LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION, ruleVersion: LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION, adapter: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER, adapterVersion: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION, outputSchemaVersion: LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, toolAllowlist: LAYERED_PUBLIC_JOB_DISCOVERY_TOOL_ALLOWLIST, modelSnapshot: null, status: "queued", currentStep: "queued", controlState: "none", version: 1, attemptCount: 0, activeDurationMs: 0, toolCallCount: 0, sourceRequestCount: 0, modelCallCount: 0, inputTokenCount: 0, outputTokenCount: 0, totalTokenCount: 0, resultCount: 0, usageComplete: false, queuedAt: now, createdAt: now, updatedAt: now });
     await database.insert(agentRunSteps).values(["batch_search", "fetch_details", "persist_results"].map((stepKey, index) => ({ id: crypto.randomUUID(), userId, runId, stepKey, ordinal: index + 1, status: "pending", attemptCount: 0 })));
-    return { userId, targetId, runId, queryId };
+    return { userId, targetId, runId, queryId, sourcePostingVersionId };
   }
 
   function resolver(adapter: JobDiscoveryAdapter): JobDiscoveryAdapterResolver { return { resolve: () => adapter }; }
@@ -75,15 +77,15 @@ describe("AgentRunProcessor checkpoints", () => {
       layeredPublicWorkflowResolver: { resolve: ({ executionSpec }) => ({ run: async ({ beforePhysicalOperation }) => {
         observedSpec = executionSpec;
         await beforePhysicalOperation({ kind: "search", identity: job.queryId });
-        return { hasTrustedSuccess: true, diagnostics: [{ scope: "provider", code: "ANYSEARCH_NOT_CONFIGURED", retryable: false, affectedCount: 1 }], sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED", affectedCount: 1 }] };
+        return { hasTrustedSuccess: true, sourcePostingVersionIds: [job.sourcePostingVersionId], trustedSourcePostingVersionIds: [job.sourcePostingVersionId], diagnostics: [{ scope: "provider", code: "ANYSEARCH_NOT_CONFIGURED", retryable: false, affectedCount: 1 }], sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED", affectedCount: 1 }, { provider: "greenhouse", code: "GREENHOUSE_DEGRADED", affectedCount: 1 }] };
       } }) },
       contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
     }).process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true });
     expect(outcome).toBe("completed");
     expect(observedSpec).toMatchObject({ workflowVersion: LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION, profileSnapshot: { targetId: job.targetId }, watchlistSnapshot: { targetId: job.targetId }, sourceScope: { publicDiscovery: { queries: [expect.objectContaining({ ordinal: 1, allowedSiteDomains: [] })] } } });
-    await expect(database.select().from(jobDiscoverySourceIssues).where(eq(jobDiscoverySourceIssues.runId, job.runId))).resolves.toEqual([expect.objectContaining({ provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED" })]);
+    await expect(database.select().from(jobDiscoverySourceIssues).where(eq(jobDiscoverySourceIssues.runId, job.runId))).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED" }), expect.objectContaining({ provider: "greenhouse", code: "GREENHOUSE_DEGRADED" })]));
     await expect(database.select().from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, job.runId))).resolves.toEqual([]);
-    await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({ status: "completed", termination: { kind: "completed_with_source_issues" }, sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED" }], usage: { toolCalls: 1, sourceRequests: 1 } });
+    await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({ status: "completed", termination: { kind: "completed_with_source_issues" }, results: [{ sourcePostingVersionId: job.sourcePostingVersionId }], sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED" }, { provider: "greenhouse", code: "GREENHOUSE_DEGRADED" }], usage: { toolCalls: 1, sourceRequests: 1 } });
   });
 
   it("来源调用后暂停会阻止后续外部调用", async () => {
