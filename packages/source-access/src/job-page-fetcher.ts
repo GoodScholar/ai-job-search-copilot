@@ -103,12 +103,10 @@ function extractJobPage(rawHtml: string, finalUrl: URL): { visibleText: string; 
   const h1Texts: string[][] = [];
   const h2Texts: string[][] = [];
   let headingCount = 0;
-  let h2Count = 0;
   let visibleFormCount = 0;
   let canonical: string | undefined;
   visit(document, false, text, h1Texts, h2Texts, (tagName, attributes, visible) => {
     if (visible && (tagName === "h1" || tagName === "h2")) headingCount += 1;
-    if (visible && tagName === "h2") h2Count += 1;
     if (visible && tagName === "form") visibleFormCount += 1;
     if (tagName === "link" && attribute(attributes, "rel")?.toLowerCase().split(/\s+/u).includes("canonical")) canonical = attribute(attributes, "href");
   });
@@ -118,6 +116,7 @@ function extractJobPage(rawHtml: string, finalUrl: URL): { visibleText: string; 
   const hasLoginText = /(登录|登陆|sign\s*in|log\s*in|login|验证身份)/iu.test(visibleText);
   const hasJobDetails = /(职责|responsibilit|任职要求|qualif|公司|company|地点|location|薪资|salary|经验|experience)/iu.test(visibleText);
   const detailCategories = new Set(h2Texts.map((parts) => jobDetailCategory(parts.join(" ").replace(/\s+/gu, " ").trim())).filter((category): category is JobDetailCategory => category !== undefined));
+  const hasDetailEvidence = detailCategories.has("responsibilities") && detailCategories.size >= 2;
   const hasJobTitle = title !== undefined && hasJobTitleEvidence(title);
   if (/^(?:登录后查看职位|请登录后查看职位|sign\s*in\s*to\s*(?:view|see).{0,40}job)/iu.test(title ?? "")
     || (visibleFormCount > 0 && hasLoginText && !hasJobDetails && visibleText.length < 800)) throw new JobPageFetchError("JOB_PAGE_LOGIN_REQUIRED");
@@ -125,7 +124,7 @@ function extractJobPage(rawHtml: string, finalUrl: URL): { visibleText: string; 
   if ((h1Texts.length === 0 && headingCount >= 2) || isListingTitle(title)) throw new JobPageFetchError("JOB_PAGE_LISTING");
   if (isNonJobPageTitle(title)) throw new JobPageFetchError("JOB_PAGE_UNRECOGNIZED");
   const jobContextSignals = [/(公司|company)/iu, /(地点|location)/iu, /(薪资|salary)/iu, /(经验|experience)/iu, /(职责|responsibilit|任职要求|qualif|负责)/iu];
-  if (!title || jobContextSignals.filter((signal) => signal.test(visibleText)).length < 2 || (!hasJobTitle && detailCategories.size < 2)) throw new JobPageFetchError("JOB_PAGE_UNRECOGNIZED");
+  if (!title || jobContextSignals.filter((signal) => signal.test(visibleText)).length < 2 || (!hasJobTitle && !hasDetailEvidence)) throw new JobPageFetchError("JOB_PAGE_UNRECOGNIZED");
   let canonicalUrl = finalUrl.toString();
   if (canonical) {
     try {
@@ -142,11 +141,12 @@ function isNonJobPageTitle(title: string | undefined): boolean {
 }
 
 function hasJobTitleEvidence(title: string): boolean {
-  return /(?:工程师|经理|总监|专员|顾问|分析师|架构师|设计师|实习生|销售代表|开发者|\b(?:scientist|engineer|developer|designer|manager|executive|director|analyst|architect|consultant|specialist|intern|officer)\b)(?:$|[（(【\[][^）)\]】]*[）)\]】]$)/iu.test(title);
+  return /(?:工程师|经理|总监|专员|顾问|分析师|架构师|设计师|实习生|销售代表|开发者)(?:$|[（(【\[][^）)\]】]*[）)\]】]$)/u.test(title)
+    || /\b(?:scientist|engineer|developer|designer|manager|executive|director|analyst|architect|consultant|specialist|intern|officer)\b/iu.test(title);
 }
 
 function isListingTitle(title: string | undefined): boolean {
-  return /(?:\bjobs\b|\bopen\s+positions\b|全部职位|职位列表|招聘岗位)/iu.test(title ?? "");
+  return /(?:\bjobs(?:\s+(?:in|at)\s+.+)?\s*$|\bopen\s+positions\b|全部职位|职位列表|招聘岗位)/iu.test(title ?? "");
 }
 
 type JobDetailCategory = "responsibilities" | "requirements" | "candidate-profile" | "benefits";
@@ -154,7 +154,7 @@ type JobDetailCategory = "responsibilities" | "requirements" | "candidate-profil
 function jobDetailCategory(heading: string): JobDetailCategory | undefined {
   const normalized = heading.replace(/\s+/gu, " ").trim().replace(/[:：]+$/u, "").trim();
   if (/^(?:(?:key|your)\s+)?responsibilit(?:y|ies)$/iu.test(normalized) || /^what\s+you(?:\s+will|['’]ll)\s+do$/iu.test(normalized) || /^(?:职位|岗位)?职责$|^职位描述$|^job\s+description$/iu.test(normalized)) return "responsibilities";
-  if (/^(?:(?:key|minimum)\s+)?(?:requirements?|qualifications?)$/iu.test(normalized) || /^(?:任职要求|岗位要求)$/u.test(normalized)) return "requirements";
+  if (/^(?:(?:key|minimum)\s+)?(?:requirements?|qualifications?)(?:\s*(?:&|and|\x2f)\s*(?:requirements?|qualifications?))*$/iu.test(normalized) || /^(?:任职要求|岗位要求)$/u.test(normalized)) return "requirements";
   if (/^what\s+we(?:\s+are|['’]re)\s+looking\s+for$|^(?:about\s+you|candidate\s+profile)$/iu.test(normalized)) return "candidate-profile";
   if (/^benefits?$/iu.test(normalized)) return "benefits";
   return undefined;

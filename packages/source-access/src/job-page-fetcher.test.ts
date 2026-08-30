@@ -56,6 +56,7 @@ describe("SecureJobPageFetcher public seam", () => {
         case "/software-engineer-jobs": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Software Engineer Jobs</h1><p>Company: Example Corp</p><p>Location: Shanghai</p><article><h2>Frontend Engineer</h2></article><article><h2>Backend Engineer</h2></article></main>"); return;
         case "/frontend-developer-jobs": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Frontend Developer Jobs</h1><p>Company: Example Corp</p><p>Location: Shanghai</p><article><h2>Frontend Developer</h2></article><article><h2>Frontend Lead</h2></article></main>"); return;
         case "/frontend-developer-jobs-single": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Frontend Developer Jobs</h1><p>Company: Example Corp</p><p>Location: Shanghai</p><article><h2>Frontend Developer</h2></article></main>"); return;
+        case "/jobs-marketplace-role": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Senior Product Manager, Jobs Marketplace</h1><p>Company: Example Corp</p><p>Location: Shanghai</p></main>"); return;
         case "/expired": response.writeHead(200, { "content-type": "text/html" }).end("<h1>该职位已下架</h1><p>岗位已关闭</p>"); return;
         case "/expired-status": response.writeHead(404).end(); return;
         case "/insufficient": response.writeHead(200, { "content-type": "text/html" }).end("<h1>欢迎</h1><p>公司：示例科技</p>"); return;
@@ -91,8 +92,10 @@ describe("SecureJobPageFetcher public seam", () => {
         case "/multi-requirements": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Senior Product Engineer</h1><p>Company: Example Corp</p><p>Location: Shanghai</p><h2>Requirements</h2><p>Five years experience.</p><h2>Benefits</h2><p>Flexible work.</p></main>"); return;
         case "/head-of-ai": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Head of AI</h1><p>Company: Example Corp</p><p>Location: Shanghai</p><h2>What you will do</h2><p>Lead AI product strategy.</p><h2>What we are looking for</h2><p>Experience building teams.</p></main>"); return;
         case "/head-of-ai-key": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Head of AI</h1><p>Company: Example Corp</p><p>Location: Shanghai</p><h2>Key Responsibilities:</h2><p>Lead AI product strategy.</p><h2>What We're Looking For：</h2><p>Experience building teams.</p></main>"); return;
+        case "/head-of-ai-combined-requirements": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Head of AI</h1><p>Company: Example Corp</p><p>Location: Shanghai</p><h2>Key Responsibilities:</h2><p>Lead AI product strategy.</p><h2>Requirements & Qualifications:</h2><p>Experience building teams.</p></main>"); return;
         case "/product-requirements": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Product Requirements</h1><p>Company: Example Corp</p><p>Location: Shanghai</p><p>These requirements describe our product roadmap.</p></main>"); return;
         case "/product-roadmap": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Product Roadmap</h1><p>Company: Example Corp</p><p>Location: Shanghai</p><h2>Requirements</h2><p>These requirements describe our product roadmap.</p></main>"); return;
+        case "/product-roadmap-requirements-benefits": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Product Roadmap</h1><p>Company: Example Corp</p><p>Location: Shanghai</p><h2>Requirements</h2><p>These requirements describe our product roadmap.</p><h2>Benefits</h2><p>Product benefits for customers.</p></main>"); return;
         case "/hidden-detail-heading": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>Head of AI</h1><p>Company: Example Corp</p><p>Location: Shanghai</p><h2 hidden>Responsibilities</h2><p>Visible generic introduction.</p></main>"); return;
         case "/engineer-culture": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>工程师文化</h1><p>公司：示例科技</p><p>地点：上海</p></main>"); return;
         case "/engineer-spaced-culture": response.writeHead(200, { "content-type": "text/html" }).end("<main><h1>工程师 文化</h1><p>公司：示例科技</p><p>地点：上海</p></main>"); return;
@@ -212,7 +215,7 @@ describe("SecureJobPageFetcher public seam", () => {
     expect(page.visibleText).toContain("后声明可见");
   });
 
-  it.each(["/multi-what", "/multi-requirements", "/head-of-ai", "/head-of-ai-key"])("具可见岗位详情 section 的多 section 岗位页不会误判为列表：%s", async (path) => {
+  it.each(["/multi-what", "/multi-requirements", "/head-of-ai", "/head-of-ai-key", "/head-of-ai-combined-requirements"])("具可见岗位详情 section 的多 section 岗位页不会误判为列表：%s", async (path) => {
     await expect(new SecureJobPageFetcher({ testOrigin: origin }).fetch({ url: `${origin}${path}` }))
       .resolves.toMatchObject({ pageClassification: "job" });
   });
@@ -229,7 +232,7 @@ describe("SecureJobPageFetcher public seam", () => {
       .resolves.toMatchObject({ pageClassification: "job" });
   });
 
-  it.each(["/product-requirements", "/product-roadmap", "/hidden-detail-heading"])("正文、单类别或隐藏详情 heading 不能作为岗位详情证据：%s", async (path) => {
+  it.each(["/product-requirements", "/product-roadmap", "/product-roadmap-requirements-benefits", "/hidden-detail-heading"])("正文、单类别或隐藏详情 heading 不能作为岗位详情证据：%s", async (path) => {
     await expect(new SecureJobPageFetcher({ testOrigin: origin }).fetch({ url: `${origin}${path}` }))
       .rejects.toMatchObject({ code: "JOB_PAGE_UNRECOGNIZED" } satisfies Pick<JobPageFetchError, "code">);
   });
@@ -269,7 +272,7 @@ describe("SecureJobPageFetcher public seam", () => {
       .rejects.toMatchObject({ code } satisfies Pick<JobPageFetchError, "code">);
   });
 
-  it.each(["/minimal-job", "/sign-in-to-apply", "/account-executive", "/about-role", "/about-role-chinese"])("保留 API verifier 的岗位详情正例：%s", async (path) => {
+  it.each(["/minimal-job", "/sign-in-to-apply", "/account-executive", "/about-role", "/about-role-chinese", "/jobs-marketplace-role"])("保留 API verifier 的岗位详情正例：%s", async (path) => {
     await expect(new SecureJobPageFetcher({ testOrigin: origin }).fetch({ url: `${origin}${path}` }))
       .resolves.toMatchObject({ pageClassification: "job" });
   });
