@@ -27,6 +27,10 @@ export type LayeredPublicWorkflowDiagnostic =
 export class LayeredPublicWorkflowInterruption extends Error {
   constructor(readonly outcome: "paused" | "cancelled" | "budget_exhausted" | "stale") { super("LAYERED_PUBLIC_WORKFLOW_INTERRUPTED"); }
 }
+const workflowInterruptionMarker = Symbol("layered-public-workflow-interruption");
+export function isLayeredPublicWorkflowInterruption(value: LayeredPublicWorkflowOutcome): value is LayeredPublicWorkflowOutcome & { interruption: "paused" | "cancelled" | "budget_exhausted" | "stale" } {
+  return value.interruption !== undefined && (value as Record<PropertyKey, unknown>)[workflowInterruptionMarker] === true;
+}
 export const LayeredPublicWorkflowBranchOutcomeSchema = z.object({
   trusted: z.enum(["succeeded", "failed"]),
   publicDiscovery: z.enum(["verified", "clean_zero", "candidate_failures", "failed"]),
@@ -133,8 +137,8 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
     }
     return result();
     } catch (error) {
-      if (error instanceof LayeredPublicWorkflowInterruption) return { ...result(), interruption: error.outcome };
-      if (error && typeof error === "object" && "code" in error && error.code === "JOB_DISCOVERY_CLAIM_STALE" || error && typeof error === "object" && "code" in error && error.code === "VERIFIED_JOB_SOURCE_CLAIM_STALE") return { ...result(), interruption: "stale" };
+      if (error instanceof LayeredPublicWorkflowInterruption) return { ...result(), interruption: error.outcome, [workflowInterruptionMarker]: true };
+      if (error && typeof error === "object" && "code" in error && (error.code === "JOB_DISCOVERY_CLAIM_STALE" || error.code === "VERIFIED_JOB_SOURCE_CLAIM_STALE")) return { ...result(), interruption: "stale", [workflowInterruptionMarker]: true };
       throw error;
     }
   } };

@@ -26,6 +26,7 @@ import {
   type LayeredPublicJobDiscoveryWorkflowResolver,
   LayeredPublicWorkflowBranchOutcomeSchema,
   LayeredPublicWorkflowInterruption,
+  isLayeredPublicWorkflowInterruption,
   type LayeredPublicWorkflowDiagnostic,
 } from "./layered-public-job-discovery-workflow";
 
@@ -544,7 +545,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
               if (controller.signal.aborted) throw new LayeredPublicWorkflowInterruption("stale");
             },
           }));
-          if (outcome.interruption) {
+          if (isLayeredPublicWorkflowInterruption(outcome)) {
             try { await persistLayeredPublicOutcome(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), deadline, diagnostics: outcome.diagnostics, sourceIssues: [], sourcePostingVersionIds: [], trustedSourcePostingVersionIds: [], trustedSourceIds: [], complete: false }); }
             catch (error) { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline }); }
             return outcome.interruption;

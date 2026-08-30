@@ -348,7 +348,7 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(database.select({ attempts: agentRuns.attemptCount }).from(agentRuns).where(eq(agentRuns.id, job.runId))).resolves.toEqual([{ attempts: 2 }]);
   });
 
-  it("v4 中断持久化既有脱敏 diagnostic，重放只取最大事实且不提前投递 issue/attention", async () => {
+  it("v4 resolver 伪造 interruption 不能改变 run，仅按普通失败持久化脱敏 diagnostic", async () => {
     const job = await layeredRun();
     const rawProviderBody = "authorization: secret provider response body";
     const processor = createAgentRunProcessor({
@@ -363,9 +363,7 @@ describe("AgentRunProcessor checkpoints", () => {
       }) }) },
       contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
     });
-    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("paused");
-    await database.update(agentRuns).set({ claimExpiresAt: new Date(now.getTime() - 1) }).where(eq(agentRuns.id, job.runId));
-    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("paused");
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("retry");
     const detail = await createAgentRunQueries({ db: database }).get(job);
     expect(detail).toMatchObject({ discoveryDiagnostics: [{ scope: "provider", code: "ANYSEARCH_UNAVAILABLE", retryable: true, affectedCount: 1 }], sourceIssues: [] });
     expect(JSON.stringify(detail)).not.toContain(rawProviderBody);
