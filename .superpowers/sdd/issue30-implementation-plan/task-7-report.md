@@ -2,7 +2,7 @@
 
 固定最终审查基线：`3a1a3940773921a1a03c3b25ea7baa378c025e83`。
 开始 HEAD：`b56c3f17eb4240608ef9e82657413485b1b68252`。
-实现提交：`04e8cfc6c419d95a0ff5f0a1b6aeb84d5f147abe`（`feat(domain): gate verified public job sources`）。
+初始实现提交：`04e8cfc6c419d95a0ff5f0a1b6aeb84d5f147abe`（`feat(domain): gate verified public job sources`）。
 
 ## 范围
 
@@ -10,7 +10,7 @@
 - 仅本地页面的 requested/final/canonical URL、raw HTML、visible text 与 `sourceKind` 可以建立 Source Posting/Version。extract 仅证明调用成功，绝不进入来源身份、raw/normalized data 或对象存储。
 - 新增版本化 taxonomy `public-job-source-taxonomy-v1`，只输出 `company_careers | recruitment_platform | wechat_recruitment_h5 | public_web`。BOSS/猎聘/智联、微信 H5 和共享 verifier 已声明的 ATS host 均为固定 policy，`isOfficial` 只来自本地 page 的 `sourceKind`。
 - 深化 Slice 5 repository：`verifyAndAttributeInTransaction` 复用同一状态转换逻辑，使 canonical dedup、version append、Lead verified 与 Attribution insert 处在一次 account advisory lock + DB transaction 内；没有提交后补 Attribution，也没有创建 Opportunity 或 AgentRunResult。
-- raw HTML/visible text 用 owner-scoped deterministic keys 分别写入；仅 store 明确返回 `created` 的对象可在 DB/Attribution 失败后补偿删除。
+- raw HTML/visible text 用 owner + 新 sourceVersionId generation + content hash 的键分别写入；仅 store 明确返回 `created` 的对象可在 DB/Attribution 失败后补偿删除。
 - 仅列出的 verifier terminal code 通过 `reject` 写 rejected Lead；timeout/cancelled/unreachable/rate-limited 返回稳定 `VERIFIED_JOB_SOURCE_RETRYABLE_FAILURE`，Lead 保持 pending。
 
 ## TDD 证据
@@ -61,3 +61,15 @@
 - ATS host policy 改由 contracts 的版本化 exact-host predicate 统一供 source-access verifier 和 gate taxonomy 使用；平台/微信保留批准的子域匹配。
 
 Fresh verification：public API focused **1/1**；internal Lead + gate focused 合计 **16/16**，后续 gate focused **8/8**；source-access **125/125**；database **24/24**；domain full **26 files / 290 tests**；contracts/domain/source-access/database typecheck 均通过。`git diff --check b56c3f17eb4240608ef9e82657413485b1b68252` fresh exit 0。
+
+## Fix round 1 补测：失败边界与完整矩阵
+
+补测提交：`249c5df`（`test(domain): cover verified gate failure boundaries`）。首次 round 1 已关闭实现层的唯一门禁、taxonomy/provenance 与 generation-key race，但报告也如实保留了验收矩阵未完全展开的缺口；本提交只增加该缺口的回归，不扩展 Slice 7 行为或产品代码。
+
+- 不使用 sleep 的 barrier 并发回归：T1 在 Attribution 主键冲突后已经回滚并进入 outer cleanup；cleanup 首次 delete 被 barrier 暂停时，T2 取得同账户锁、提交同 canonical/content 的独立 generation。随后放开 T1，断言其只删除自己的两把 key，T2 raw/visible bytes、双 SHA-256 与 Version reference 完整保留。
+- 精确预置本次可预测 generation raw/visible key，两个 put 均为 `created=false` 后强制 Attribution 冲突，断言没有 delete；delete 自身失败时仍抛原始 `JOB_DISCOVERY_LEAD_ATTRIBUTION_CONFLICT`、不提交 Posting/Version/Attribution，遗留对象没有 DB 引用。
+- owner、expiresAt 精确边界、rejected、verified 的 final URL/sourceKind/本地内容/candidate facts 冲突均保持稳定结果；相同 verified replay 仍在原 dedup 回归中断言零 put。每个 terminal/retryable code 逐项断言 Posting、Version、Attribution、Opportunity、AgentRunResult 与 object puts 为零。
+- provider title/snippet/extract/content/rawUrl sentinel 经 strict public input 拒绝后，扫描 Lead、Attribution、Posting、Version、source-health、audit 及对象 bytes 均不含 sentinel；本地 raw/visible 独立 sentinel 成功后精确读取对象，并核验 bytes、hash 和 reference。
+- taxonomy 现在表驱动覆盖 zhipin/liepin/zhaopin 及批准子域、微信 exact/批准子域、六个 ATS exact host、evil ATS subdomain、unknown target-company、general、site-constrained；另回归预置 `url_import` 同 canonical 不会被复用。
+
+本轮 focused public/internal/gate：**3 files / 21 tests passed**；gate 专项：**1 file / 12 tests passed**；domain full：**26 files / 294 tests passed**；source-access：**2 files / 125 tests passed**；database：**2 files / 24 tests passed**；contracts/domain/source-access/database typecheck 均退出 0。最后在报告更新前后均执行 `git diff --check b56c3f17eb4240608ef9e82657413485b1b68252..HEAD`，fresh exit 0。
