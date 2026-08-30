@@ -96,17 +96,25 @@ it("非时间字段的成功、网络和 CAS 消息不标记时间输入无效",
   render(<DiscoverySchedulePanel targetId={targetId} targetState="active" />);
   await screen.findByText("可每日检查 2 个岗位来源");
   const time = screen.getByLabelText("每日检查时间（北京时间 / Asia/Shanghai）");
+  const saveButton = async () => {
+    const button = await screen.findByRole("button", { name: "保存每日检查" });
+    await waitFor(() => expect(button).toBeEnabled());
+    return button;
+  };
   fetchMock.mockResolvedValueOnce(response({ schedule: { ...enabled.schedule, state: "disabled", nextRunAt: null }, sourceSupport: ready.sourceSupport }));
-  fireEvent.click(screen.getByRole("button", { name: "保存每日检查" }));
+  fireEvent.click(await saveButton());
   await screen.findByText("每日检查已停用。");
+  const afterSuccess = await saveButton();
   expect(time).toHaveAttribute("aria-invalid", "false");
   fetchMock.mockRejectedValueOnce(new Error("offline"));
-  fireEvent.click(screen.getByRole("button", { name: "保存每日检查" }));
+  fireEvent.click(afterSuccess);
   await screen.findByText("网络暂时不可用，未保存每日检查。请稍后重试。");
+  const afterNetworkFailure = await saveButton();
   expect(time).toHaveAttribute("aria-invalid", "false");
   fetchMock.mockResolvedValueOnce(response({ code: "JOB_DISCOVERY_SCHEDULE_VERSION_CONFLICT" }, 409));
-  fireEvent.click(screen.getByRole("button", { name: "保存每日检查" }));
+  fireEvent.click(afterNetworkFailure);
   await screen.findByText("每日检查已在其他位置更新，请刷新后重试。");
+  await saveButton();
   expect(time).toHaveAttribute("aria-invalid", "false");
 });
 
