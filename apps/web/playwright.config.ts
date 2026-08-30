@@ -4,9 +4,22 @@ import { fileURLToPath } from "node:url";
 const port = "3120";
 const baseURL = `http://127.0.0.1:${port}`;
 const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
+const sourceHealthOnly = process.env.E2E_SOURCE_HEALTH_ONLY === "1";
+const sourceHealthScenarios = {
+  "10000000-0000-4000-8000-000000000121": {
+    "greenhouse:e2e-health-desktop-good": "healthy",
+    "greenhouse:e2e-health-desktop-limited": "rate_limited",
+  },
+  "10000000-0000-4000-8000-000000000122": {
+    "greenhouse:e2e-health-mobile-good": "healthy",
+    "greenhouse:e2e-health-mobile-limited": "rate_limited",
+  },
+};
 
 export default defineConfig({
   testDir: "./e2e",
+  testIgnore: sourceHealthOnly ? undefined : /source-health\.spec\.ts/,
+  testMatch: sourceHealthOnly ? /source-health\.spec\.ts/ : undefined,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
   workers: 1,
@@ -30,6 +43,7 @@ export default defineConfig({
         "10000000-0000-4000-8000-000000000113": "retry_once",
         "10000000-0000-4000-8000-000000000114": "retry_until_budget",
       }),
+      ...(sourceHealthOnly ? { E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: JSON.stringify(sourceHealthScenarios) } : {}),
     },
     reuseExistingServer: false,
     gracefulShutdown: { signal: "SIGTERM", timeout: 30_000 },
