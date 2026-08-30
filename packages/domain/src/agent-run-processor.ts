@@ -533,7 +533,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         const abortAtDeadline = setTimeout(() => controller.abort(), Math.max(0, remainingBudget(deps.clock, deadline)));
         try {
           const outcome = await bounded(deps.clock, deadline, () => layeredWorkflow.run({
-            userId: job.userId, runId: job.runId, now: deps.clock(), executionSpec: layeredExecutionSpec, attemptCount: claimed.attemptCount, signal: controller.signal,
+            userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), executionSpec: layeredExecutionSpec, attemptCount: claimed.attemptCount, signal: controller.signal,
             beforePhysicalOperation: async (operation) => {
               if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(operation.identity)) throw new Error("LAYERED_PUBLIC_OPERATION_IDENTITY_INVALID");
               if (controller.signal.aborted) throw new LayeredPublicWorkflowInterruption("stale");

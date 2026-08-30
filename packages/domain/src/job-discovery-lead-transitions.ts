@@ -76,6 +76,19 @@ export function createJobDiscoveryLeadTransitions({ db, id }: { db: Database; id
       if (value.now.getTime() >= lead.expiresAt.getTime()) throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_EXPIRED");
       throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_STATE_CONFLICT");
     },
+    async rejectInTransaction(input: unknown, transaction: Transaction) {
+      const value = parseLeadInput(RejectInputSchema, input);
+      const [updated] = await transaction.update(jobDiscoveryLeads).set({ state: "rejected", rejectionCode: value.rejectionCode, updatedAt: value.now }).where(and(
+        eq(jobDiscoveryLeads.userId, value.userId), eq(jobDiscoveryLeads.id, value.leadId), eq(jobDiscoveryLeads.state, "pending"), gt(jobDiscoveryLeads.expiresAt, value.now),
+      )).returning();
+      if (updated) return leadFact(updated);
+      const [lead] = await transaction.select().from(jobDiscoveryLeads).where(and(eq(jobDiscoveryLeads.userId, value.userId), eq(jobDiscoveryLeads.id, value.leadId))).limit(1);
+      if (!lead) throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_NOT_FOUND");
+      if (lead.state === "rejected" && lead.rejectionCode === value.rejectionCode) return leadFact(lead);
+      if (lead.state === "rejected") throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_REJECTION_CONFLICT");
+      if (value.now.getTime() >= lead.expiresAt.getTime()) throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_EXPIRED");
+      throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_STATE_CONFLICT");
+    },
     async verifyAndAttributeInTransaction(input: unknown, transaction: Transaction) {
       return transitionVerify(transaction, parseLeadInput(VerifyInputSchema, input));
     },

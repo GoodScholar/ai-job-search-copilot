@@ -1,8 +1,9 @@
-import { and, eq } from "drizzle-orm";
-import { jobDiscoveryAttributions, jobDiscoveryLeads, type Database } from "@job-copilot/database";
+import { and, eq, gt } from "drizzle-orm";
+import { agentRuns, jobDiscoveryAttributions, jobDiscoveryLeads, type Database } from "@job-copilot/database";
 import { PublicJobDiscoveryQueryKindSchema, SafeNormalizedPublicJobUrlSchema } from "@job-copilot/contracts/job-discovery";
 import { z } from "zod";
 import { attributionFact, JobDiscoveryLeadError, leadFact, parseLeadInput } from "./job-discovery-lead-internal";
+import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 
 export { JobDiscoveryLeadError } from "./job-discovery-lead-internal";
 
@@ -17,6 +18,7 @@ const RecordPendingInputSchema = z.object({
   queryFingerprint: fingerprint,
   normalizedUrl: SafeNormalizedPublicJobUrlSchema,
   stableFingerprint: fingerprint,
+  claimToken: z.uuid().optional(),
   now: z.date(),
 }).strict();
 const GetLeadInputSchema = z.object({ userId: z.uuid(), leadId: z.uuid(), now: z.date() }).strict();
@@ -61,6 +63,14 @@ function projectLead(row: typeof jobDiscoveryLeads.$inferSelect, now: Date) {
 type Dependencies = { db: Database; id: () => string };
 
 export function createJobDiscoveryLeadRepository({ db, id }: Dependencies) {
+  async function assertClaim(transaction: Parameters<Parameters<Database["transaction"]>[0]>[0], input: { userId: string; runId: string; claimToken?: string; now: Date }) {
+    if (!input.claimToken) return;
+    await acquireAccountAdvisoryLock(transaction, input.userId);
+    const [run] = await transaction.select({ id: agentRuns.id }).from(agentRuns).where(and(
+      eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.claimToken), gt(agentRuns.claimExpiresAt, input.now),
+    )).limit(1);
+    if (!run) throw new JobDiscoveryLeadError("JOB_DISCOVERY_CLAIM_STALE");
+  }
   async function loadLead(userId: string, leadId: string) {
     const [lead] = await db.select().from(jobDiscoveryLeads).where(and(
       eq(jobDiscoveryLeads.userId, userId), eq(jobDiscoveryLeads.id, leadId),
@@ -80,13 +90,16 @@ export function createJobDiscoveryLeadRepository({ db, id }: Dependencies) {
       const value = parseLeadInput(RecordPendingInputSchema, input);
       const expiresAt = expiresInThirtyDays(value.now);
       try {
-        await db.insert(jobDiscoveryLeads).values({
+        await db.transaction(async (transaction) => {
+          await assertClaim(transaction, value);
+          await transaction.insert(jobDiscoveryLeads).values({
           id: id(), userId: value.userId, runId: value.runId, targetId: value.targetId,
           provider: "anysearch", queryId: value.queryId, queryKind: value.queryKind,
           queryFingerprint: value.queryFingerprint, normalizedUrl: value.normalizedUrl,
           stableFingerprint: value.stableFingerprint, expiresAt, state: "pending",
           sourcePostingVersionId: null, rejectionCode: null, createdAt: value.now, updatedAt: value.now,
-        }).onConflictDoNothing({ target: [jobDiscoveryLeads.userId, jobDiscoveryLeads.runId, jobDiscoveryLeads.provider, jobDiscoveryLeads.stableFingerprint] });
+          }).onConflictDoNothing({ target: [jobDiscoveryLeads.userId, jobDiscoveryLeads.runId, jobDiscoveryLeads.provider, jobDiscoveryLeads.stableFingerprint] });
+        });
       } catch (error) {
         const mapped = recordPendingDatabaseError(error);
         if (mapped) throw mapped;

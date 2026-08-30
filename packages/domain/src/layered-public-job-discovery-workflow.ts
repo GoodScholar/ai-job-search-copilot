@@ -4,7 +4,7 @@ import { AgentRunExecutionSpecSchema } from "@job-copilot/contracts/agent-runs";
 import { LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION, LayeredPublicJobDiscoveryQuerySchema, SafeNormalizedPublicJobUrlSchema, type AnySearchProviderError } from "@job-copilot/contracts/job-discovery";
 
 const LayeredPublicOperationKindSchema = z.enum(["search", "extract", "fetch", "record_pending", "gate_reject", "gate_verify"]);
-const RunInputSchema = z.object({ userId: z.uuid(), runId: z.uuid(), now: z.date(), executionSpec: AgentRunExecutionSpecSchema, attemptCount: z.int().min(1).max(3), beforePhysicalOperation: z.function({ input: [z.object({ kind: LayeredPublicOperationKindSchema, identity: z.uuid() }).strict()], output: z.promise(z.void()) }), signal: z.instanceof(AbortSignal) }).strict();
+const RunInputSchema = z.object({ userId: z.uuid(), runId: z.uuid(), claimToken: z.uuid().optional(), now: z.date(), executionSpec: AgentRunExecutionSpecSchema, attemptCount: z.int().min(1).max(3), beforePhysicalOperation: z.function({ input: [z.object({ kind: LayeredPublicOperationKindSchema, identity: z.uuid() }).strict()], output: z.promise(z.void()) }), signal: z.instanceof(AbortSignal) }).strict();
 const fingerprint = z.string().regex(/^[a-f0-9]{64}$/u);
 type LayeredSpec = Extract<z.infer<typeof AgentRunExecutionSpecSchema>, { workflowVersion: "layered-public-job-discovery-v1" }>;
 type Query = z.infer<typeof LayeredPublicJobDiscoveryQuerySchema>;
@@ -39,7 +39,7 @@ export type LayeredPublicWorkflowOutcome = {
   diagnostics: LayeredPublicWorkflowDiagnostic[];
   interruption?: "paused" | "cancelled" | "budget_exhausted" | "stale";
 };
-export interface LayeredPublicJobDiscoveryWorkflow { run(input: { userId: string; runId: string; now: Date; executionSpec: LayeredSpec; attemptCount: number; beforePhysicalOperation(operation: LayeredPublicPhysicalOperation): Promise<void>; signal: AbortSignal }): Promise<LayeredPublicWorkflowOutcome>; }
+export interface LayeredPublicJobDiscoveryWorkflow { run(input: { userId: string; runId: string; claimToken?: string; now: Date; executionSpec: LayeredSpec; attemptCount: number; beforePhysicalOperation(operation: LayeredPublicPhysicalOperation): Promise<void>; signal: AbortSignal }): Promise<LayeredPublicWorkflowOutcome>; }
 export interface LayeredPublicJobDiscoveryWorkflowResolver { resolve(input: { runId: string; idempotencyKey: string; executionSpec: LayeredSpec; attemptCount: number }): LayeredPublicJobDiscoveryWorkflow; }
 
 type Page = { requestedUrl: string; finalUrl: string; canonicalUrl: string; rawHtml: string; visibleText: string; pageClassification: "job"; sourceKind: "official" | "aggregator" };
@@ -64,9 +64,9 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
   trustedSources: { discover(input: { runId: string; executionSpec: LayeredSpec; signal: AbortSignal; beforeRequest(watchlistItemId: string): Promise<void> }): Promise<{ succeeded: boolean; verifiedSourcePostingVersionIds: string[]; sourceIssues?: Array<{ code: string; affectedCount: number }> }> };
   anySearch: { search(input: { runId: string; executionSpec: LayeredSpec; query: Query; signal: AbortSignal; beforeRequest(): Promise<void> }): Promise<{ candidates: Candidate[] } | { error: AnySearchProviderError }>; extract(input: { candidate: RecoveredCandidateCapability; signal: AbortSignal; beforeRequest(): Promise<void> }): Promise<{ normalizedUrl: string } | { error: AnySearchProviderError }> };
   preflight(input: { candidate: IssuedCandidateCapability }): Promise<{ normalizedUrl: string } | null>;
-  leads: { recordPending(input: { targetId: string; candidate: IssuedCandidateCapability; now: Date }): Promise<{ leadId: string }> };
+  leads: { recordPending(input: { targetId: string; candidate: IssuedCandidateCapability; claimToken?: string; now: Date }): Promise<{ leadId: string }> };
   fetcher: { fetch(input: { candidate: RecoveredCandidateCapability; signal: AbortSignal }): Promise<Page> };
-  gate: { verify(input: { candidate: RecoveredCandidateCapability; candidateFingerprint: string; extract: { normalizedUrl: string }; page: Page; now: Date }): Promise<{ sourcePostingVersionId: string }>; reject(input: { candidate: RecoveredCandidateCapability; code: RejectionCode; now: Date }): Promise<void> };
+  gate: { verify(input: { candidate: RecoveredCandidateCapability; candidateFingerprint: string; extract: { normalizedUrl: string }; page: Page; claimToken?: string; now: Date }): Promise<{ sourcePostingVersionId: string }>; reject(input: { candidate: RecoveredCandidateCapability; code: RejectionCode; claimToken?: string; now: Date }): Promise<void> };
 }): LayeredPublicJobDiscoveryWorkflow {
   return { async run(input) {
     const value = RunInputSchema.parse(input);
@@ -98,25 +98,25 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
         if (!safe || safe.normalizedUrl !== candidate.normalizedUrl || !SafeNormalizedPublicJobUrlSchema.safeParse(safe.normalizedUrl).success) { diagnostics.push({ scope: "query", queryId: query.queryId, kind: query.kind, stableFingerprint: query.stableFingerprint, code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: "ANYSEARCH_POLICY_REJECTED", affectedCount: 1 }); continue; }
         if (!matchesAllowedDomain(safe.normalizedUrl, query.allowedSiteDomains)) {
           await value.beforePhysicalOperation({ kind: "record_pending", identity: issued.queryId });
-          const pending = await deps.leads.recordPending({ targetId: spec.targetSnapshot.targetId, candidate: issued, now: value.now });
+          const pending = await deps.leads.recordPending({ targetId: spec.targetSnapshot.targetId, candidate: issued, claimToken: value.claimToken, now: value.now });
           await value.beforePhysicalOperation({ kind: "gate_reject", identity: pending.leadId });
-          await deps.gate.reject({ candidate: { ...issued, leadId: pending.leadId }, code: "POLICY_REJECTED", now: value.now });
+          await deps.gate.reject({ candidate: { ...issued, leadId: pending.leadId }, code: "POLICY_REJECTED", claimToken: value.claimToken, now: value.now });
           diagnostics.push({ scope: "query", queryId: query.queryId, kind: query.kind, stableFingerprint: query.stableFingerprint, code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: "ANYSEARCH_POLICY_REJECTED", affectedCount: 1 }); continue;
         }
         verificationCandidates += 1;
         await value.beforePhysicalOperation({ kind: "record_pending", identity: issued.queryId });
-        const pending = await deps.leads.recordPending({ targetId: spec.targetSnapshot.targetId, candidate: issued, now: value.now });
+        const pending = await deps.leads.recordPending({ targetId: spec.targetSnapshot.targetId, candidate: issued, claimToken: value.claimToken, now: value.now });
         const recovered: RecoveredCandidateCapability = { ...issued, leadId: pending.leadId };
         try {
           const extract = await deps.anySearch.extract({ candidate: recovered, signal: value.signal, beforeRequest: () => value.beforePhysicalOperation({ kind: "extract", identity: pending.leadId }) });
           if ("error" in extract) { diagnostics.push({ scope: "lead", leadId: pending.leadId, code: extract.error.code, retryable: extract.error.retryable, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: extract.error.code, affectedCount: 1 }); continue; }
-          if (extract.normalizedUrl !== safe.normalizedUrl) { await value.beforePhysicalOperation({ kind: "gate_reject", identity: pending.leadId }); await deps.gate.reject({ candidate: recovered, code: "JOB_PAGE_URL_INVALID", now: value.now }); continue; }
+          if (extract.normalizedUrl !== safe.normalizedUrl) { await value.beforePhysicalOperation({ kind: "gate_reject", identity: pending.leadId }); await deps.gate.reject({ candidate: recovered, code: "JOB_PAGE_URL_INVALID", claimToken: value.claimToken, now: value.now }); continue; }
           await value.beforePhysicalOperation({ kind: "fetch", identity: pending.leadId }); const page = await deps.fetcher.fetch({ candidate: recovered, signal: value.signal });
           await value.beforePhysicalOperation({ kind: "gate_verify", identity: pending.leadId });
-          const verified = await deps.gate.verify({ candidate: recovered, candidateFingerprint: candidateFingerprint(safe.normalizedUrl), extract, page, now: value.now }); sourcePostingVersionIds.push(verified.sourcePostingVersionId); publicVerifiedCount += 1;
+          const verified = await deps.gate.verify({ candidate: recovered, candidateFingerprint: candidateFingerprint(safe.normalizedUrl), extract, page, claimToken: value.claimToken, now: value.now }); sourcePostingVersionIds.push(verified.sourcePostingVersionId); publicVerifiedCount += 1;
         } catch (error) {
           const code = rejection(error);
-          if (code) { await value.beforePhysicalOperation({ kind: "gate_reject", identity: pending.leadId }); await deps.gate.reject({ candidate: recovered, code, now: value.now }); diagnostics.push({ scope: "lead", leadId: pending.leadId, code, retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code, affectedCount: 1 }); }
+          if (code) { await value.beforePhysicalOperation({ kind: "gate_reject", identity: pending.leadId }); await deps.gate.reject({ candidate: recovered, code, claimToken: value.claimToken, now: value.now }); diagnostics.push({ scope: "lead", leadId: pending.leadId, code, retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code, affectedCount: 1 }); }
           else {
             const retryable = retryablePageCode(error);
             if (retryable) { diagnostics.push({ scope: "lead", leadId: pending.leadId, code: retryable, retryable: true, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: retryable, affectedCount: 1 }); }
@@ -128,6 +128,7 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
     return result();
     } catch (error) {
       if (error instanceof LayeredPublicWorkflowInterruption) return { ...result(), interruption: error.outcome };
+      if (error && typeof error === "object" && "code" in error && error.code === "JOB_DISCOVERY_CLAIM_STALE" || error && typeof error === "object" && "code" in error && error.code === "VERIFIED_JOB_SOURCE_CLAIM_STALE") return { ...result(), interruption: "stale" };
       throw error;
     }
   } };

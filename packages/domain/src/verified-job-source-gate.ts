@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, gt } from "drizzle-orm";
 import {
+  agentRuns,
   jobDiscoveryLeads,
   jobSourcePostingVersions,
   jobSourcePostings,
@@ -38,10 +39,10 @@ const PageSchema = z.object({
 }).strict();
 const VerifyInputSchema = z.object({
   userId: z.uuid(), leadId: z.uuid(), candidate: CandidateSchema,
-  extract: z.object({ normalizedUrl: SafeNormalizedPublicJobUrlSchema }).strict(),
+  extract: z.object({ normalizedUrl: SafeNormalizedPublicJobUrlSchema }).strict(), claimToken: z.uuid().optional(),
   page: PageSchema, now: z.date(),
 }).strict();
-const RejectInputSchema = z.object({ userId: z.uuid(), leadId: z.uuid(), code: terminalRejectionCode, now: z.date() }).strict();
+const RejectInputSchema = z.object({ userId: z.uuid(), leadId: z.uuid(), code: terminalRejectionCode, claimToken: z.uuid().optional(), now: z.date() }).strict();
 
 export interface VerifiedJobEvidenceStore {
   put(input: { objectKey: string; bytes: Uint8Array; mediaType: "text/html" | "text/plain" }): Promise<{ created: boolean }>;
@@ -58,7 +59,8 @@ export class VerifiedJobSourceGateError extends Error {
     | "VERIFIED_JOB_SOURCE_STORAGE_FAILED"
     | "VERIFIED_JOB_SOURCE_CLEANUP_REQUIRED"
     | "VERIFIED_JOB_SOURCE_PERSIST_FAILED"
-    | "VERIFIED_JOB_SOURCE_RETRYABLE_FAILURE") {
+    | "VERIFIED_JOB_SOURCE_RETRYABLE_FAILURE"
+    | "VERIFIED_JOB_SOURCE_CLAIM_STALE") {
     super(code);
   }
 }
@@ -149,6 +151,13 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
       await cleanupUnreferencedObjects(transaction, userId, objectKeys);
     });
   }
+  async function assertClaim(transaction: Parameters<Parameters<Database["transaction"]>[0]>[0], input: { userId: string; runId: string; claimToken?: string; now: Date }) {
+    if (!input.claimToken) return;
+    const [run] = await transaction.select({ id: agentRuns.id }).from(agentRuns).where(and(
+      eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.claimToken), gt(agentRuns.claimExpiresAt, input.now),
+    )).limit(1);
+    if (!run) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_CLAIM_STALE");
+  }
 
   return {
     async verify(input: unknown) {
@@ -166,6 +175,7 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
             eq(jobDiscoveryLeads.userId, value.userId), eq(jobDiscoveryLeads.id, value.leadId),
           )).limit(1);
           if (!lead) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_NOT_FOUND");
+          await assertClaim(transaction, { userId: value.userId, runId: lead.runId, claimToken: value.claimToken, now: value.now });
           if (lead.queryId !== value.candidate.queryId || lead.normalizedUrl !== value.candidate.normalizedUrl
             || lead.stableFingerprint !== value.candidate.candidateFingerprint) {
             throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_CONFLICT");
@@ -267,8 +277,14 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
         if (retryable.success) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_RETRYABLE_FAILURE");
         throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_INVALID_INPUT");
       }
-      return transitions.reject({
-        userId: parsed.data.userId, leadId: parsed.data.leadId, rejectionCode: parsed.data.code, now: parsed.data.now,
+      return deps.db.transaction(async (transaction) => {
+        await acquireAccountAdvisoryLock(transaction, parsed.data.userId);
+        const [lead] = await transaction.select({ runId: jobDiscoveryLeads.runId }).from(jobDiscoveryLeads).where(and(eq(jobDiscoveryLeads.userId, parsed.data.userId), eq(jobDiscoveryLeads.id, parsed.data.leadId))).limit(1);
+        if (!lead) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_NOT_FOUND");
+        await assertClaim(transaction, { userId: parsed.data.userId, runId: lead.runId, claimToken: parsed.data.claimToken, now: parsed.data.now });
+        return transitions.rejectInTransaction({
+          userId: parsed.data.userId, leadId: parsed.data.leadId, rejectionCode: parsed.data.code, now: parsed.data.now,
+        }, transaction);
       });
     },
   };
