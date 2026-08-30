@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
-import { and, asc, desc, eq, lte, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, lte, or, sql } from "drizzle-orm";
 import {
-  agentInboxItems, agentRunEvents, agentRunSteps, agentRuns,
+  agentInboxItems, agentRunEvents, agentRunSteps, agentRuns, jobDiscoveryAttributions, jobDiscoveryDiagnostics, jobDiscoveryRunResults, jobDiscoverySourceIssues, jobSourcePostingVersions, jobSourcePostings,
   type Database,
 } from "@job-copilot/database";
 import {
-  AGENT_RUN_BUDGET, AGENT_RUN_JOB_VERSION, DiscoveryBatchSearchResultSchema, DiscoveryDetailResultSchema, PublicDiscoveryBatchSearchResultSchema,
+  AGENT_RUN_BUDGET, AGENT_RUN_JOB_VERSION, AgentRunExecutionSpecSchema, DiscoveryBatchSearchResultSchema, DiscoveryDetailResultSchema, PublicDiscoveryBatchSearchResultSchema,
   GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, parseSourceHealthDetailResult, parseSourceHealthListResult,
   type JobSourceHealthCheck,
   type AgentRunJob,
@@ -20,6 +20,11 @@ import { normalizeAgentRunSourceScope } from "./agent-run-source-scope";
 import { applyTransactionDeadline } from "./transaction-deadline";
 import { deriveSourceHealthTerminal, type SourceHealthTerminal } from "./source-health-terminal";
 import type { SourceHealthDiscoveryAdapter, SourceHealthDiscoveryAdapterResolver } from "./source-health-discovery-adapter";
+import {
+  type LayeredPublicJobDiscoveryWorkflow,
+  type LayeredPublicJobDiscoveryWorkflowResolver,
+  type LayeredPublicWorkflowDiagnostic,
+} from "./layered-public-job-discovery-workflow";
 
 export interface DiscoveryContentStore {
   put(input: { objectKey: string; bytes: Uint8Array; mediaType: "application/json"; runId: string }): Promise<void>;
@@ -84,6 +89,8 @@ export type AgentRunProcessorDependencies = {
   db: Database;
   adapterResolver: JobDiscoveryAdapterResolver;
   sourceHealthAdapterResolver?: SourceHealthDiscoveryAdapterResolver;
+  /** v4 的生产实现由 Slice 8 注入；这里不读取环境配置也不构造 provider client。 */
+  layeredPublicWorkflowResolver?: LayeredPublicJobDiscoveryWorkflowResolver;
   checkpoint: AgentRunCheckpoint;
   contentStore: DiscoveryContentStore;
   auditTrail: AuditTrail;
@@ -102,6 +109,9 @@ class AgentRunBudgetError extends Error {
 }
 class PublicListCheckpointStop extends Error {
   constructor(readonly outcome: ProcessorOutcome) { super("PUBLIC_LIST_CHECKPOINT_STOP"); }
+}
+class LayeredPublicWorkflowStop extends Error {
+  constructor(readonly outcome: ProcessorOutcome) { super("LAYERED_PUBLIC_WORKFLOW_STOP"); }
 }
 
 type Failure = { failureCode: FailureCode; retryable: boolean; category: "source" | "model" | "model_auth" | "model_policy" | "model_invalid"; budgetDimension?: BudgetDimension };
@@ -270,6 +280,76 @@ async function checkPoint(checkpoint: AgentRunCheckpoint, input: { userId: strin
   }
 }
 
+/** v4 终态只持久化脱敏 diagnostic facts；页面、URL、query 正文和 provider body 均留在 adapter 生命周期内。 */
+async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, input: {
+  userId: string; runId: string; claimToken: string; now: Date; deadline: Date;
+  diagnostics: readonly LayeredPublicWorkflowDiagnostic[];
+  sourceIssues: ReadonlyArray<{ provider: "anysearch" | "greenhouse"; code: string; affectedCount: number }>;
+  sourcePostingVersionIds: readonly string[];
+  trustedSourcePostingVersionIds: readonly string[];
+  trustedSourceIds: readonly string[];
+}): Promise<"completed" | "stale"> {
+  return runTransaction(deps, input.deadline, async (transaction) => {
+    await acquireAccountAdvisoryLock(transaction, input.userId);
+    const [run] = await transaction.select().from(agentRuns).where(and(
+      eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.claimToken), eq(agentRuns.controlState, "none"),
+    ));
+    if (!run) return "stale";
+    for (const diagnostic of input.diagnostics) {
+      const values = diagnostic.scope === "provider"
+        ? { id: deps.id(), userId: input.userId, runId: input.runId, scope: "provider" as const, provider: "anysearch" as const, queryId: null, queryKind: null, queryFingerprint: null, leadId: null, code: diagnostic.code, retryable: diagnostic.retryable, affectedCount: diagnostic.affectedCount, createdAt: input.now }
+        : diagnostic.scope === "query"
+          ? { id: deps.id(), userId: input.userId, runId: input.runId, scope: "query" as const, provider: "anysearch" as const, queryId: diagnostic.queryId, queryKind: diagnostic.kind, queryFingerprint: diagnostic.stableFingerprint, leadId: null, code: diagnostic.code, retryable: diagnostic.retryable, affectedCount: diagnostic.affectedCount, createdAt: input.now }
+          : { id: deps.id(), userId: input.userId, runId: input.runId, scope: "lead" as const, provider: "anysearch" as const, queryId: null, queryKind: null, queryFingerprint: null, leadId: diagnostic.leadId, code: diagnostic.code, retryable: diagnostic.retryable, affectedCount: 1, createdAt: input.now };
+      await transaction.insert(jobDiscoveryDiagnostics).values(values).onConflictDoUpdate({
+        target: [jobDiscoveryDiagnostics.userId, jobDiscoveryDiagnostics.runId, jobDiscoveryDiagnostics.scope, jobDiscoveryDiagnostics.provider, jobDiscoveryDiagnostics.queryId, jobDiscoveryDiagnostics.leadId, jobDiscoveryDiagnostics.code],
+        set: { affectedCount: sql`least(10, ${jobDiscoveryDiagnostics.affectedCount} + excluded.affected_count)` },
+      });
+    }
+    for (const issue of input.sourceIssues) {
+      await transaction.insert(jobDiscoverySourceIssues).values({ id: deps.id(), userId: input.userId, runId: input.runId, provider: issue.provider, code: issue.code, affectedCount: issue.affectedCount, createdAt: input.now }).onConflictDoUpdate({
+        target: [jobDiscoverySourceIssues.userId, jobDiscoverySourceIssues.runId, jobDiscoverySourceIssues.provider, jobDiscoverySourceIssues.code],
+        set: { affectedCount: sql`least(10, ${jobDiscoverySourceIssues.affectedCount} + excluded.affected_count)` },
+      });
+    }
+    const attributed = new Set((await transaction.select({ sourcePostingVersionId: jobDiscoveryAttributions.sourcePostingVersionId }).from(jobDiscoveryAttributions).where(and(eq(jobDiscoveryAttributions.userId, input.userId), eq(jobDiscoveryAttributions.runId, input.runId)))).map((row: { sourcePostingVersionId: string }) => row.sourcePostingVersionId));
+    const trusted = new Set(input.trustedSourcePostingVersionIds);
+    for (const sourcePostingVersionId of input.sourcePostingVersionIds) {
+      const [version] = await transaction.select({ sourceId: jobSourcePostings.sourceId }).from(jobSourcePostingVersions).innerJoin(jobSourcePostings, and(eq(jobSourcePostings.userId, jobSourcePostingVersions.userId), eq(jobSourcePostings.id, jobSourcePostingVersions.sourcePostingId))).where(and(eq(jobSourcePostingVersions.userId, input.userId), eq(jobSourcePostingVersions.id, sourcePostingVersionId))).limit(1);
+      if (!version || (!attributed.has(sourcePostingVersionId) && !(trusted.has(sourcePostingVersionId) && version.sourceId !== null && input.trustedSourceIds.includes(version.sourceId)))) throw new Error("LAYERED_PUBLIC_RESULT_PROVENANCE_INVALID");
+    }
+    for (const [index, sourcePostingVersionId] of [...new Set(input.sourcePostingVersionIds)].slice(0, 5).entries()) {
+      await transaction.insert(jobDiscoveryRunResults).values({ id: deps.id(), userId: input.userId, runId: input.runId, sourcePostingVersionId, ordinal: index + 1, createdAt: input.now }).onConflictDoNothing({ target: [jobDiscoveryRunResults.userId, jobDiscoveryRunResults.runId, jobDiscoveryRunResults.sourcePostingVersionId] });
+    }
+    const [{ resultCount }] = await transaction.select({ resultCount: count() }).from(jobDiscoveryRunResults).where(and(
+      eq(jobDiscoveryRunResults.userId, input.userId), eq(jobDiscoveryRunResults.runId, input.runId),
+    ));
+    const sourceIssues = await transaction.select({ id: jobDiscoverySourceIssues.id }).from(jobDiscoverySourceIssues).where(and(
+      eq(jobDiscoverySourceIssues.userId, input.userId), eq(jobDiscoverySourceIssues.runId, input.runId),
+    ));
+    const terminal = sourceIssues.length > 0 ? "completed_with_source_issues" as const : "completed" as const;
+    const elapsed = await settleActiveSlice(transaction, { id: deps.id, userId: input.userId, run, now: input.now });
+    const activeDurationMs = run.activeDurationMs + elapsed;
+    const version = run.version + 1;
+    await transaction.update(agentRunSteps).set({ status: "completed", completedAt: input.now, failedAt: null, failureCode: null }).where(and(
+      eq(agentRunSteps.userId, input.userId), eq(agentRunSteps.runId, input.runId), eq(agentRunSteps.status, "running"),
+    ));
+    await transaction.update(agentRuns).set({ status: "completed", currentStep: "completed", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, activeDurationMs, completedAt: input.now, failedAt: null, failureCode: null, terminationKind: terminal, terminationBudgetDimension: null, resultCount: Math.min(Number(resultCount), 5), usageComplete: true, version, updatedAt: input.now }).where(and(
+      eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.claimToken, input.claimToken), eq(agentRuns.controlState, "none"),
+    ));
+    const sequence = await appendEvent(transaction, { id: deps.id, userId: input.userId, runId: input.runId, version, eventType: "run.completed", data: { eventType: "run.completed", status: "completed", currentStep: "completed", attemptCount: run.attemptCount, resultCount: Math.min(Number(resultCount), 5) }, now: input.now });
+    await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.run_completed", occurredAt: input.now, requestId: input.runId, outcome: "success", reasonCode: "AGENT_RUN_COMPLETED", resourceType: "agent_run", resourceId: input.runId, metadata: { runId: input.runId, targetId: run.targetId, attemptCount: run.attemptCount, resultCount: Math.min(Number(resultCount), 5) } });
+    if (sourceIssues.length > 0) {
+      const [existing] = await transaction.select({ id: agentInboxItems.id }).from(agentInboxItems).where(and(eq(agentInboxItems.userId, input.userId), eq(agentInboxItems.runId, input.runId), eq(agentInboxItems.kind, "discovery_attention"))).limit(1);
+      if (!existing) {
+        const [item] = await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: input.userId, runId: input.runId, triggerEventSequence: sequence, kind: "discovery_attention", status: "open", reasonCode: "DISCOVERY_ATTENTION", budgetDimension: null, createdAt: input.now }).returning({ id: agentInboxItems.id });
+        if (item) await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.inbox_opened", occurredAt: input.now, requestId: input.runId, outcome: "success", reasonCode: "DISCOVERY_ATTENTION", resourceType: "agent_inbox_item", resourceId: item.id, metadata: { runId: input.runId, kind: "discovery_attention", reasonCode: "DISCOVERY_ATTENTION", budgetDimension: null } });
+      }
+    }
+    return "completed";
+  });
+}
+
 export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { process(job: AgentRunJob & { finalAttempt?: boolean }): Promise<ProcessorOutcome> } {
   return {
     async process(job) {
@@ -281,7 +361,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         if (remainingBudget(deps.clock, deadline) <= 0) throw new AgentRunBudgetError("active_duration");
         let [current] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId)));
         if (!current) return { kind: "stale" as const };
-        if (current.status === "completed") return { kind: current.workflowVersion === GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION ? "completed" as const : "stale" as const };
+        if (current.status === "completed") return { kind: (current.workflowVersion === GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION || current.workflowVersion === "layered-public-job-discovery-v1") ? "completed" as const : "stale" as const };
         if (current.status === "failed") return { kind: current.terminationKind === "budget_exhausted" ? "budget_exhausted" as const : "failed" as const };
         if (current.status === "paused") return { kind: "paused" as const };
         if (current.status === "cancelled") return { kind: "cancelled" as const };
@@ -330,6 +410,8 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
       if (claimOutcome) return claimOutcome;
       let adapter!: JobDiscoveryAdapter;
       let sourceHealthAdapter!: SourceHealthDiscoveryAdapter;
+      let layeredWorkflow!: LayeredPublicJobDiscoveryWorkflow;
+      let layeredExecutionSpec!: Extract<ReturnType<typeof AgentRunExecutionSpecSchema.parse>, { workflowVersion: "layered-public-job-discovery-v1" }>;
       try {
         const resolverInput = {
           runId: claimed.run.id,
@@ -344,13 +426,19 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
             outputSchemaVersion: claimed.run.outputSchemaVersion,
             toolAllowlist: claimed.run.toolAllowlist,
             model: claimed.run.modelSnapshot,
-            budget: claimed.run.budgetSnapshot,
-          },
+          budget: claimed.run.budgetSnapshot,
+        },
           attemptCount: claimed.attemptCount,
         };
         if (claimed.run.workflowVersion === GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION) {
           if (!deps.sourceHealthAdapterResolver) throw new Error("AGENT_RUN_ADAPTER_UNSUPPORTED");
           sourceHealthAdapter = deps.sourceHealthAdapterResolver.resolve(resolverInput);
+        } else if (claimed.run.workflowVersion === "layered-public-job-discovery-v1") {
+          if (!deps.layeredPublicWorkflowResolver) throw new Error("AGENT_RUN_ADAPTER_UNSUPPORTED");
+          const parsed = AgentRunExecutionSpecSchema.parse({ ...resolverInput.executionSpec, profileSnapshot: claimed.run.profileSnapshot, watchlistSnapshot: claimed.run.watchlistSnapshot });
+          if (parsed.workflowVersion !== "layered-public-job-discovery-v1") throw new Error("LAYERED_PUBLIC_WORKFLOW_SPEC_REQUIRED");
+          layeredExecutionSpec = parsed;
+          layeredWorkflow = deps.layeredPublicWorkflowResolver.resolve({ ...resolverInput, executionSpec: parsed });
         } else adapter = deps.adapterResolver.resolve(resolverInput);
       } catch (error) {
         return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
@@ -391,6 +479,35 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_after", ordinal: 1 });
         return input.terminal === "source_failed" ? "failed" : "completed";
       };
+      if (claimed.run.workflowVersion === "layered-public-job-discovery-v1") {
+        const batchStart = await transition("batch_search", false); if (batchStart) return batchStart;
+        let physicalOrdinal = 0;
+        const controller = new AbortController();
+        try {
+          const outcome = await bounded(deps.clock, deadline, () => layeredWorkflow.run({
+            runId: job.runId, executionSpec: layeredExecutionSpec, attemptCount: claimed.attemptCount, signal: controller.signal,
+            beforePhysicalOperation: async (operation) => {
+              if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(operation.identity)) throw new Error("LAYERED_PUBLIC_OPERATION_IDENTITY_INVALID");
+              const identity = createHash("sha256").update(operation.identity).digest("hex").slice(0, 16);
+              const checkpointOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: `layered_${operation.kind}_${identity}`, ordinal: ++physicalOrdinal, reserve: { toolCalls: 1, sourceRequests: 1 } });
+              if (checkpointOutcome) { controller.abort(); throw new LayeredPublicWorkflowStop(checkpointOutcome); }
+            },
+          }));
+          if (!outcome.hasTrustedSuccess && (outcome.sourcePostingVersionIds?.length ?? 0) === 0) {
+            const retryable = outcome.diagnostics.some((diagnostic) => diagnostic.retryable);
+            return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: retryable ? "AGENT_RUN_ADAPTER_RETRYABLE" : "AGENT_RUN_ADAPTER_FAILED", retryable, category: "source" }, deadline });
+          }
+          const batchComplete = await transition("batch_search", true); if (batchComplete) return batchComplete;
+          const detailsStart = await transition("fetch_details", false); if (detailsStart) return detailsStart;
+          const detailsComplete = await transition("fetch_details", true); if (detailsComplete) return detailsComplete;
+          const persistStart = await transition("persist_results", false); if (persistStart) return persistStart;
+          const persisted = await persistLayeredPublicOutcome(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), deadline, diagnostics: outcome.diagnostics, sourceIssues: outcome.sourceIssues ?? [], sourcePostingVersionIds: outcome.sourcePostingVersionIds ?? [], trustedSourcePostingVersionIds: outcome.trustedSourcePostingVersionIds ?? [], trustedSourceIds: layeredExecutionSpec.sourceScope.trustedSources.map(({ source }) => source.sourceId) });
+          return persisted;
+        } catch (error) {
+          if (error instanceof LayeredPublicWorkflowStop) return error.outcome;
+          return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
+        }
+      }
       const snapshot = claimed.run.targetSnapshot as import("@job-copilot/contracts/agent-runs").AgentRunDetail["targetSnapshot"];
       let sourceScope: import("@job-copilot/contracts/agent-runs").AgentRunDetail["sourceScope"];
       try { sourceScope = normalizeAgentRunSourceScope(claimed.run.sourceScope); }

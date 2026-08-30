@@ -719,6 +719,42 @@ export const jobDiscoveryDiagnostics = pgTable("job_discovery_diagnostics", {
   `),
 ]);
 
+/** v4 运行级问题汇总，独立于 AnySearch diagnostics 与 v3 source health。 */
+export const jobDiscoverySourceIssues = pgTable("job_discovery_source_issues", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull(),
+  runId: uuid("run_id").notNull(),
+  provider: varchar("provider", { length: 32 }).notNull(),
+  code: varchar("code", { length: 64 }).notNull(),
+  affectedCount: integer("affected_count").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_discovery_source_issues_owner_run_identity_unique").on(table.userId, table.runId, table.provider, table.code),
+  unique("job_discovery_source_issues_user_id_id_unique").on(table.userId, table.id),
+  index("job_discovery_source_issues_owner_run_idx").on(table.userId, table.runId, table.provider, table.code),
+  foreignKey({ columns: [table.userId, table.runId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "job_discovery_source_issues_owner_run_fk" }),
+  check("job_discovery_source_issues_provider_check", sql`${table.provider} in ('anysearch', 'greenhouse')`),
+  check("job_discovery_source_issues_code_check", sql`${table.code} ~ '^[A-Z][A-Z0-9_]{1,63}$'`),
+  check("job_discovery_source_issues_affected_count_check", sql`${table.affectedCount} between 0 and 10`),
+]);
+
+/** v4 不创建 Opportunity；只把已经 owner-bound 的真实 Source Version 作为运行结果摘要。 */
+export const jobDiscoveryRunResults = pgTable("job_discovery_run_results", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull(),
+  runId: uuid("run_id").notNull(),
+  sourcePostingVersionId: uuid("source_posting_version_id").notNull(),
+  ordinal: integer("ordinal").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_discovery_run_results_owner_run_ordinal_unique").on(table.userId, table.runId, table.ordinal),
+  unique("job_discovery_run_results_owner_run_version_unique").on(table.userId, table.runId, table.sourcePostingVersionId),
+  unique("job_discovery_run_results_user_id_id_unique").on(table.userId, table.id),
+  foreignKey({ columns: [table.userId, table.runId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "job_discovery_run_results_owner_run_fk" }),
+  foreignKey({ columns: [table.userId, table.sourcePostingVersionId], foreignColumns: [jobSourcePostingVersions.userId, jobSourcePostingVersions.id], name: "job_discovery_run_results_owner_version_fk" }),
+  check("job_discovery_run_results_ordinal_check", sql`${table.ordinal} between 1 and 5`),
+]);
+
 export const jobDiscoverySchedules = pgTable("job_discovery_schedules", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").notNull().references(() => jobAccounts.id),

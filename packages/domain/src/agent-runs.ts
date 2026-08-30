@@ -26,6 +26,13 @@ export type {
   SourceHealthDiscoveryAdapterResolver,
   SourceHealthListResult,
 } from "./source-health-discovery-adapter";
+export type {
+  LayeredPublicJobDiscoveryWorkflow,
+  LayeredPublicJobDiscoveryWorkflowResolver,
+  LayeredPublicPhysicalOperation,
+  LayeredPublicWorkflowDiagnostic,
+  LayeredPublicWorkflowOutcome,
+} from "./layered-public-job-discovery-workflow";
 
 type FacadeProcessorDependencies = Omit<AgentRunProcessorDependencies, "checkpoint"> & {
   checkpoint?: AgentRunCheckpoint;
