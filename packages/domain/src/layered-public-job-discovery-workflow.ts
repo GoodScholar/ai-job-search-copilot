@@ -64,6 +64,7 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
       publicDiscoverySucceeded = true;
       for (const candidate of searched.candidates.slice(0, query.resultLimit)) {
         if (!fingerprint.safeParse(candidate.stableFingerprint).success || seen.has(candidate.stableFingerprint)) continue;
+        if (verificationCandidates >= spec.sourceScope.publicDiscovery.maxVerificationCandidates) continue;
         seen.add(candidate.stableFingerprint);
         const issued: IssuedCandidateCapability = { userId: value.userId, runId: value.runId, queryId: query.queryId, queryFingerprint: query.stableFingerprint, normalizedUrl: candidate.normalizedUrl, stableFingerprint: candidate.stableFingerprint, allowedSiteDomains: query.allowedSiteDomains };
         const safe = await deps.preflight({ candidate: issued });
@@ -73,7 +74,7 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
           await deps.gate.reject({ candidate: { ...issued, leadId: pending.leadId }, code: "POLICY_REJECTED", now: value.now });
           diagnostics.push({ scope: "query", queryId: query.queryId, kind: query.kind, stableFingerprint: query.stableFingerprint, code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: "ANYSEARCH_POLICY_REJECTED", affectedCount: 1 }); continue;
         }
-        if (++verificationCandidates > spec.sourceScope.publicDiscovery.maxVerificationCandidates) break;
+        verificationCandidates += 1;
         const pending = await deps.leads.recordPending({ targetId: spec.targetSnapshot.targetId, candidate: issued, now: value.now });
         const recovered: RecoveredCandidateCapability = { ...issued, leadId: pending.leadId };
         try {

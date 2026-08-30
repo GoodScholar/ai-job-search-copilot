@@ -177,4 +177,26 @@ describe("layered public job discovery workflow", () => {
       sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_POLICY_REJECTED", affectedCount: 2 }],
     });
   });
+
+  it("达到全 run 验证上限后不再 preflight 或创建额外 Lead", async () => {
+    let preflightCount = 0;
+    let leadCount = 0;
+    const queries = [1, 2, 3].map((ordinal) => ({ ordinal, queryId: `${ordinal}${ordinal}${ordinal}${ordinal}${ordinal}${ordinal}${ordinal}${ordinal}-${ordinal}${ordinal}${ordinal}${ordinal}-8${ordinal}${ordinal}${ordinal}-8${ordinal}${ordinal}${ordinal}-${ordinal}${ordinal}${ordinal}${ordinal}${ordinal}${ordinal}${ordinal}${ordinal}${ordinal}${ordinal}${ordinal}${ordinal}`, kind: "general" as const, stableFingerprint: String(ordinal).repeat(64), query: `AI 工程师 ${ordinal}`, allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 as const }));
+    const workflow = createLayeredPublicJobDiscoveryWorkflow({
+      trustedSources: { discover: async () => ({ succeeded: false, verifiedSourcePostingVersionIds: [] }) },
+      anySearch: {
+        search: async ({ query, beforeRequest }) => {
+          await beforeRequest();
+          return { candidates: Array.from({ length: 5 }, (_, index) => ({ normalizedUrl: `https://jobs.acme.com/${query.ordinal}-${index}?id=${query.ordinal}${index}`, stableFingerprint: `${query.ordinal}${index}`.repeat(32) })) };
+        },
+        extract: async ({ beforeRequest, candidate }) => { await beforeRequest(); return { error: { code: "ANYSEARCH_NOT_CONFIGURED", retryable: false, httpStatus: null } }; },
+      },
+      preflight: async ({ candidate }) => { preflightCount += 1; return { normalizedUrl: candidate.normalizedUrl }; },
+      leads: { recordPending: async () => { leadCount += 1; return { leadId: crypto.randomUUID() }; } },
+      fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
+      gate: { verify: async () => { throw new Error("UNUSED"); }, reject: async () => undefined },
+    });
+    await workflow.run({ userId: targetId, runId, now: new Date(), attemptCount: 1, signal: new AbortController().signal, executionSpec: executionSpecFor(queries) as never, beforePhysicalOperation: async () => undefined });
+    expect({ preflightCount, leadCount }).toEqual({ preflightCount: 10, leadCount: 10 });
+  });
 });
