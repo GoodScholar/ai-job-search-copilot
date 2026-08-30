@@ -18,6 +18,7 @@ import type { AuditTrail } from "./audit-trail";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { agentRunUsageSnapshot, appendBudgetFacts, settleActiveSlice } from "./agent-run-lifecycle";
 import { discoveryNormalizedData, persistJobOpportunity } from "./job-opportunity-persistence";
+import { deriveSourceHealthTerminal } from "./source-health-terminal";
 import { GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, JobSourceHealthCheckSchema, PublicAgentRunSourceScopeSchema, PublicSourceHealthAgentRunSourceScopeSchema, type JobSourceHealthCheck } from "@job-copilot/contracts/agent-runs";
 
 export type DiscoveryDetail = {
@@ -339,9 +340,7 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
         }
         const terminal = run.workflowVersion === GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION
           ? (() => {
-              const hasCompletedSourceOrRetainedProgress = sourceChecks.some((check) => check.status === "healthy" || check.status === "zero_valid_results" || check.validDetailCount > 0);
-              const hasIssues = sourceChecks.some((check) => check.status === "parser_degraded" || check.status === "rate_limited" || check.status === "hard_failed");
-              const derived = !hasCompletedSourceOrRetainedProgress ? "source_failed" : hasIssues ? "completed_with_source_issues" : "completed";
+              const derived = deriveSourceHealthTerminal(sourceChecks);
               if (input.terminal !== undefined && input.terminal !== derived) throw new Error("AGENT_RUN_PERSIST_FAILED");
               return derived;
             })()

@@ -18,6 +18,7 @@ import { agentRunUsageSnapshot, appendBudgetFacts, settleActiveSlice, terminateB
 import type { AgentRunCheckpoint } from "./agent-run-checkpoint";
 import { normalizeAgentRunSourceScope } from "./agent-run-source-scope";
 import { applyTransactionDeadline } from "./transaction-deadline";
+import { deriveSourceHealthTerminal, type SourceHealthTerminal } from "./source-health-terminal";
 import type { SourceHealthDiscoveryAdapter, SourceHealthDiscoveryAdapterResolver } from "./source-health-discovery-adapter";
 
 export interface DiscoveryContentStore {
@@ -367,7 +368,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         if (!await stepTransition(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, stepKey, complete, attemptCount: claimed.attemptCount, deadline })) return "stale";
         return checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: `step_${stepKey}_${complete ? "complete" : "start"}`, ordinal: 1 });
       };
-      const persistDiscoveryOutcome = async (input: { details: DiscoveryDetail[]; scans: Array<{ sourceId: string; observedDetailIds: string[]; complete: boolean }>; sourceChecks?: JobSourceHealthCheck[]; terminal?: "completed" | "completed_with_source_issues" | "source_failed"; successOutcome: ProcessorOutcome }) => {
+      const persistDiscoveryOutcome = async (input: { details: DiscoveryDetail[]; scans: Array<{ sourceId: string; observedDetailIds: string[]; complete: boolean }>; sourceChecks?: JobSourceHealthCheck[]; terminal?: SourceHealthTerminal }) => {
         const stored = input.details.map((detail) => {
           const bytes = canonicalJsonBytes(detail.rawPayload); const sourceIdentifier = discoverySourceIdentifier(detail.sourceId, detail.detailId); const rawContentSha256 = createHash("sha256").update(bytes).digest("hex");
           return { detail, bytes, rawContentSha256, objectKey: `accounts/${job.userId}/agent-runs/${job.runId}/sources/${sourceIdentifier}/${claimed.claimToken}/${rawContentSha256}.json` };
@@ -387,7 +388,8 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         try { persisted = await runTransaction(deps, deadline, (transaction) => createJobDiscoveryPersistence({ db: deps.db, id: deps.id, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({ run: { ...claimed.run, claimToken: claimed.claimToken }, details: input.details, scans: input.scans, storedObjects: stored.map((item) => ({ sourceId: item.detail.sourceId, detailId: item.detail.detailId, objectKey: item.objectKey, rawContentSha256: item.rawContentSha256 })), sourceChecks: input.sourceChecks, terminal: input.terminal, now: deps.clock(), transaction })); }
         catch { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_PERSIST_FAILED", retryable: true, category: "source" }, deadline }); }
         await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), persisted.cleanupObjectKeys); if (!persisted.completed) return "stale";
-        await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_after", ordinal: 1 }); return input.successOutcome;
+        await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_after", ordinal: 1 });
+        return input.terminal === "source_failed" ? "failed" : "completed";
       };
       const snapshot = claimed.run.targetSnapshot as import("@job-copilot/contracts/agent-runs").AgentRunDetail["targetSnapshot"];
       let sourceScope: import("@job-copilot/contracts/agent-runs").AgentRunDetail["sourceScope"];
@@ -441,10 +443,8 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         const detailsComplete = await transition("fetch_details", true); if (detailsComplete) return detailsComplete;
         const persistStart = await transition("persist_results", false); if (persistStart) return persistStart;
         const detailsForPersistence = details.slice(0, claimed.run.budgetSnapshot.maxResults);
-        const hasCompletedSourceOrRetainedProgress = checks.some((check) => check.status === "healthy" || check.status === "zero_valid_results" || check.validDetailCount > 0);
-        const hasIssues = checks.some((check) => check.status === "parser_degraded" || check.status === "rate_limited" || check.status === "hard_failed");
-        const terminal = hasCompletedSourceOrRetainedProgress ? (hasIssues ? "completed_with_source_issues" : "completed") : "source_failed";
-        return persistDiscoveryOutcome({ details: detailsForPersistence, scans: sourceStates.map((state) => ({ sourceId: state.source.sourceId, observedDetailIds: state.observedDetailIds, complete: !state.failure })), sourceChecks: checks, terminal, successOutcome: terminal === "source_failed" ? "failed" : "completed" });
+        const terminal = deriveSourceHealthTerminal(checks);
+        return persistDiscoveryOutcome({ details: detailsForPersistence, scans: sourceStates.map((state) => ({ sourceId: state.source.sourceId, observedDetailIds: state.observedDetailIds, complete: !state.failure })), sourceChecks: checks, terminal });
       }
       const batchStart = await transition("batch_search", false); if (batchStart) return batchStart;
       let summaries: Array<{ sourceId: string; detailId: string }>;
@@ -494,7 +494,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
       }
       const detailsComplete = await transition("fetch_details", true); if (detailsComplete) return detailsComplete;
       const persistStart = await transition("persist_results", false); if (persistStart) return persistStart;
-      return persistDiscoveryOutcome({ details, scans, successOutcome: "completed" });
+      return persistDiscoveryOutcome({ details, scans });
       } finally {
         await stopHeartbeat().catch(() => undefined);
       }
