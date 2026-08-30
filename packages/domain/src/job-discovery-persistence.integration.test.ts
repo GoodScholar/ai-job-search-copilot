@@ -2,6 +2,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import {
+  agentInboxItems,
   agentRunEvents,
   agentRunJobResults,
   agentRunSteps,
@@ -614,7 +615,21 @@ describe("job discovery persistence lifecycle", () => {
     await expect(database.select().from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, sameRun.id))).resolves.toHaveLength(1);
     const differentRun = await claimRun(userId, targetId, later); const existing = check(differentRun.id);
     await database.insert(jobSourceHealthChecks).values({ id: existing.checkId, userId, runId: existing.runId, targetId, watchlistItemId, sourceId, status: existing.status, reasonCodes: existing.reasonCodes, impactScope: existing.impact.scope, impactAffectedCount: null, observedPostingCount: 0, selectedDetailCount: 0, validDetailCount: 0, requestAttemptCount: 1, checkedAt: later });
+    const beforeConflict = await Promise.all([
+      database.select().from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, differentRun.id)),
+      database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, differentRun.id)),
+      database.select().from(agentRunEvents).where(eq(agentRunEvents.runId, differentRun.id)),
+      database.select().from(agentInboxItems).where(eq(agentInboxItems.runId, differentRun.id)),
+      database.select().from(auditEvents).where(eq(auditEvents.resourceId, differentRun.id)),
+    ]);
     await expect(persistence.persistSuccessfulDiscovery({ run: differentRun, details: [], scans: [{ sourceId, observedDetailIds: [], complete: true }], storedObjects: [], sourceChecks: [{ ...existing, checkId: crypto.randomUUID(), requestAttemptCount: 2 }], now: later })).rejects.toThrow("AGENT_RUN_PERSIST_FAILED");
     await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, differentRun.id))).resolves.toEqual([{ status: "running" }]);
+    await expect(Promise.all([
+      database.select().from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, differentRun.id)),
+      database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, differentRun.id)),
+      database.select().from(agentRunEvents).where(eq(agentRunEvents.runId, differentRun.id)),
+      database.select().from(agentInboxItems).where(eq(agentInboxItems.runId, differentRun.id)),
+      database.select().from(auditEvents).where(eq(auditEvents.resourceId, differentRun.id)),
+    ])).resolves.toEqual(beforeConflict);
   });
 });

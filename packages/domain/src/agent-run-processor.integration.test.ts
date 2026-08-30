@@ -1,9 +1,10 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { and, eq } from "drizzle-orm";
-import { agentInboxItems, agentRunEvents, agentRunJobResults, agentRunUsageEntries, agentRuns, createDatabase, jobAccounts, jobOpportunities, jobOpportunitySources, jobSourceHealthChecks, jobSourcePostings, jobSourcePostingVersions, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
+import { and, asc, eq } from "drizzle-orm";
+import { agentInboxItems, agentRunEvents, agentRunJobResults, agentRunUsageEntries, agentRuns, auditEvents, createDatabase, jobAccounts, jobOpportunities, jobOpportunitySources, jobSourceHealthChecks, jobSourcePostings, jobSourcePostingVersions, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
 import { createAgentRunCheckpoint, createAgentRunCommands, createAgentRunProcessor, createAgentRunQueries, type AgentRunCheckpoint, type AgentRunQueue, type DiscoveryContentStore, type JobDiscoveryAdapter, type JobDiscoveryAdapterResolver } from "./agent-runs";
+import { createCompanyWatchlistCommands } from "./company-watchlists";
 import { GREENHOUSE_JOB_DISCOVERY_ADAPTER, GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION, GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, GREENHOUSE_JOB_DISCOVERY_RULE_VERSION, GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION, GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION, GREENHOUSE_SOURCE_HEALTH_RULE_VERSION, GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST, GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, PUBLIC_JOB_DISCOVERY_BUDGET } from "@job-copilot/contracts/agent-runs";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
@@ -36,7 +37,7 @@ describe("AgentRunProcessor checkpoints", () => {
     await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: now });
     const started = await createAgentRunCommands({ db: database, queue: new Queue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
       .start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
-    return { userId, runId: started.runId };
+    return { userId, targetId, runId: started.runId };
   }
 
   function resolver(adapter: JobDiscoveryAdapter): JobDiscoveryAdapterResolver { return { resolve: () => adapter }; }
@@ -154,6 +155,44 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(database.select().from(agentRunEvents).where(and(eq(agentRunEvents.runId, job.runId), eq(agentRunEvents.eventType, "run.budget_updated")))).resolves.toHaveLength(4);
   });
 
+  it("v3 提交后的 checkpoint 异常保留已引用对象，重放不重复持久化", async () => {
+    const job = await run();
+    const source = { sourceId: "greenhouse:post-commit", watchlistItemId: crypto.randomUUID(), canonicalCompanyName: "Post Commit", careersUrl: "https://boards.greenhouse.io/post-commit", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], boardToken: "post-commit" };
+    await database.update(agentRuns).set({ adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, workflowVersion: GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, ruleVersion: GREENHOUSE_SOURCE_HEALTH_RULE_VERSION, outputSchemaVersion: GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION, toolAllowlist: GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST, budgetSnapshot: PUBLIC_JOB_DISCOVERY_BUDGET, sourceScope: { kind: "company_watchlist", adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, watchlistVersion: 1, sources: [source] } }).where(eq(agentRuns.id, job.runId));
+    const sourceHealthAdapter = {
+      adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
+      listSource: async () => ({ ok: true, attemptCount: 1, data: { sourceId: source.sourceId, observedDetailIds: ["701"], candidates: [{ sourceId: source.sourceId, detailId: "701", company: null, title: "AI Engineer", location: "Shanghai" }] } }),
+      getSourceDetail: async () => ({ ok: true, attemptCount: 1, data: { sourceId: source.sourceId, detailId: "701", company: "Post Commit", title: "AI Engineer", location: "Shanghai", postedAt: "2026-08-20T00:00:00.000Z", deadline: null, sourceType: "company_careers", isOfficial: true, absoluteUrl: "https://boards.greenhouse.io/post-commit/jobs/701", rawPayload: { id: 701 } } }),
+    };
+    const durable = checkpoint();
+    const afterCommitBomb: AgentRunCheckpoint = { check: async (input) => {
+      if (input.checkpointKey.includes(":domain_commit_after:1")) throw new Error("post-commit checkpoint failed");
+      return durable.check(input);
+    } };
+    const store = new Store();
+    const deps = { db: database, adapterResolver: resolver(successAdapter()), sourceHealthAdapterResolver: { resolve: () => sourceHealthAdapter as any }, contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now } as any;
+    await expect(createAgentRunProcessor({ ...deps, checkpoint: afterCommitBomb }).process({ version: 1, ...job, finalAttempt: true })).rejects.toThrow("post-commit checkpoint failed");
+    await expect(database.select({ status: agentRuns.status, terminationKind: agentRuns.terminationKind }).from(agentRuns).where(eq(agentRuns.id, job.runId))).resolves.toEqual([{ status: "completed", terminationKind: "completed" }]);
+    await expect(database.select({ rawObjectReference: jobSourcePostingVersions.rawObjectReference }).from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, job.userId))).resolves.toEqual([{ rawObjectReference: { objectKey: store.puts[0] } }]);
+    expect(store.deletes).toEqual([]);
+    const beforeReplay = await Promise.all([
+      database.select().from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, job.runId)),
+      database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, job.runId)),
+      database.select().from(agentRunEvents).where(eq(agentRunEvents.runId, job.runId)),
+      database.select().from(agentInboxItems).where(eq(agentInboxItems.runId, job.runId)),
+      database.select().from(auditEvents).where(eq(auditEvents.resourceId, job.runId)),
+    ]);
+    await expect(createAgentRunProcessor({ ...deps }).process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("completed");
+    await expect(Promise.all([
+      database.select().from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, job.runId)),
+      database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, job.runId)),
+      database.select().from(agentRunEvents).where(eq(agentRunEvents.runId, job.runId)),
+      database.select().from(agentInboxItems).where(eq(agentInboxItems.runId, job.runId)),
+      database.select().from(auditEvents).where(eq(auditEvents.resourceId, job.runId)),
+    ])).resolves.toEqual(beforeReplay);
+    expect(store.deletes).toEqual([]);
+  });
+
   it("Public v2 每个 board 列表和每个已选详情各预占一次逻辑预算，并持久完整扫描事实", async () => {
     const job = await run();
     const sources = [
@@ -209,6 +248,27 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({ sourceChecks: expect.arrayContaining([expect.objectContaining({ status: "healthy" }), expect.objectContaining({ status: "hard_failed" })]) });
   });
 
+  it("真实 watchlist 快照排除 disabled 来源：仅 zero 仍普通完成且不创建来源关注", async () => {
+    const seed = await run();
+    const watchlists = createCompanyWatchlistCommands({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    await watchlists.addItem({ userId: seed.userId, targetId: seed.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, canonicalCompanyName: "Enabled", careersUrl: "https://boards.greenhouse.io/enabled", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null } });
+    const withDisabled = await watchlists.addItem({ userId: seed.userId, targetId: seed.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 1, canonicalCompanyName: "Disabled", careersUrl: "https://boards.greenhouse.io/disabled", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null } });
+    await watchlists.setItemState({ userId: seed.userId, targetId: seed.targetId, requestId: crypto.randomUUID(), itemId: withDisabled.items[1]!.itemId, command: { expectedVersion: 2, state: "disabled" } });
+    const started = await createAgentRunCommands({ db: database, queue: new Queue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse" }).start({ userId: seed.userId, requestId: crypto.randomUUID(), command: { targetId: seed.targetId, idempotencyKey: crypto.randomUUID() } });
+    const [frozen] = await database.select({ sourceScope: agentRuns.sourceScope }).from(agentRuns).where(eq(agentRuns.id, started.runId));
+    const [enabled] = (frozen!.sourceScope as { sources: Array<{ sourceId: string; watchlistItemId: string; canonicalCompanyName: string }> }).sources;
+    expect(frozen!.sourceScope).toMatchObject({ sources: [{ canonicalCompanyName: "Enabled" }] });
+    const sourceHealthAdapter = {
+      adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
+      listSource: async () => ({ ok: true, attemptCount: 1, data: { sourceId: enabled!.sourceId, observedDetailIds: [], candidates: [] } }),
+      getSourceDetail: async () => { throw new Error("UNUSED"); },
+    };
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(successAdapter()), sourceHealthAdapterResolver: { resolve: () => sourceHealthAdapter as any }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now } as any).process({ version: 1, userId: seed.userId, runId: started.runId, finalAttempt: true })).resolves.toBe("completed");
+    await expect(database.select({ status: agentRuns.status, terminationKind: agentRuns.terminationKind }).from(agentRuns).where(eq(agentRuns.id, started.runId))).resolves.toEqual([{ status: "completed", terminationKind: "completed" }]);
+    await expect(database.select({ sourceId: jobSourceHealthChecks.sourceId, status: jobSourceHealthChecks.status, watchlistItemId: jobSourceHealthChecks.watchlistItemId }).from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, started.runId))).resolves.toEqual([{ sourceId: enabled!.sourceId, status: "zero_valid_results", watchlistItemId: enabled!.watchlistItemId }]);
+    await expect(database.select({ kind: agentInboxItems.kind }).from(agentInboxItems).where(eq(agentInboxItems.runId, started.runId))).resolves.toEqual([]);
+  });
+
   it.each([
     [["healthy", "rate_limited"], "completed_with_source_issues", 1],
     [["healthy", "parser_degraded"], "completed_with_source_issues", 1],
@@ -222,6 +282,13 @@ describe("AgentRunProcessor checkpoints", () => {
     const job = await run();
     const sources = outcomes.map((outcome, index) => ({ sourceId: `greenhouse:truth-${index}`, watchlistItemId: crypto.randomUUID(), canonicalCompanyName: `Truth ${index}`, careersUrl: `https://boards.greenhouse.io/truth-${index}`, allowedDomains: ["boards-api.greenhouse.io"], boardToken: `truth-${index}`, outcome }));
     await database.update(agentRuns).set({ adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, workflowVersion: GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, ruleVersion: GREENHOUSE_SOURCE_HEALTH_RULE_VERSION, outputSchemaVersion: GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION, toolAllowlist: GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST, budgetSnapshot: PUBLIC_JOB_DISCOVERY_BUDGET, sourceScope: { kind: "company_watchlist", adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, watchlistVersion: 1, sources: sources.map(({ outcome: _outcome, ...source }) => source) } }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId)));
+    const historicalPostingIds = new Map<string, string>();
+    for (const [index, source] of sources.entries()) {
+      const postingId = crypto.randomUUID();
+      historicalPostingIds.set(source.sourceId, postingId);
+      await database.insert(jobSourcePostings).values({ id: postingId, userId: job.userId, sourceType: "company_careers", sourceIdentifier: `${index}`.padStart(64, "0"), sourceId: source.sourceId, sourceIdentity: { sourceId: source.sourceId, detailId: "historical" }, applicationDeadline: null, isOfficial: true, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
+      await database.insert(jobSourcePostingVersions).values({ id: crypto.randomUUID(), userId: job.userId, sourcePostingId: postingId, version: 1, contentSha256: `${index}`.padStart(64, "1"), rawContentSha256: `${index}`.padStart(64, "2"), rawObjectReference: { objectKey: `truth-${index}.json` }, retrievedAt: now, availability: "open", createdAt: now });
+    }
     const adapter = {
       adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
       listSource: async ({ source }: any) => {
@@ -241,8 +308,23 @@ describe("AgentRunProcessor checkpoints", () => {
     const outcome = await createAgentRunProcessor({ db: database, adapterResolver: resolver(successAdapter()), sourceHealthAdapterResolver: { resolve: () => adapter as any }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now } as any).process({ version: 1, ...job, finalAttempt: true });
     expect(outcome).toBe(terminationKind === "source_failed" ? "failed" : "completed");
     await expect(database.select({ terminationKind: agentRuns.terminationKind, resultCount: agentRuns.resultCount }).from(agentRuns).where(eq(agentRuns.id, job.runId))).resolves.toEqual([{ terminationKind, resultCount }]);
-    const issueCount = outcomes.filter((outcome) => outcome !== "healthy" && outcome !== "zero_valid_results").length;
-    await expect(database.select({ kind: agentInboxItems.kind }).from(agentInboxItems).where(eq(agentInboxItems.runId, job.runId))).resolves.toHaveLength(terminationKind === "source_failed" ? 2 : issueCount ? 1 : 0);
+    const healthFacts = {
+      healthy: { status: "healthy", reasonCodes: [], impactScope: "none", impactAffectedCount: null, observedPostingCount: 1, selectedDetailCount: 1, validDetailCount: 1, requestAttemptCount: 2, availability: "closed" },
+      zero_valid_results: { status: "zero_valid_results", reasonCodes: [], impactScope: "none", impactAffectedCount: null, observedPostingCount: 0, selectedDetailCount: 0, validDetailCount: 0, requestAttemptCount: 1, availability: "closed" },
+      parser_degraded: { status: "parser_degraded", reasonCodes: ["SOURCE_DETAIL_FIELDS_MISSING"], impactScope: "job_details", impactAffectedCount: 1, observedPostingCount: 1, selectedDetailCount: 1, validDetailCount: 0, requestAttemptCount: 2, availability: "open" },
+      parser_retained: { status: "parser_degraded", reasonCodes: ["SOURCE_DETAIL_FIELDS_MISSING"], impactScope: "job_details", impactAffectedCount: 1, observedPostingCount: 2, selectedDetailCount: 2, validDetailCount: 1, requestAttemptCount: 3, availability: "open" },
+      rate_limited: { status: "rate_limited", reasonCodes: ["SOURCE_RATE_LIMITED"], impactScope: "entire_source", impactAffectedCount: null, observedPostingCount: 0, selectedDetailCount: 0, validDetailCount: 0, requestAttemptCount: 2, availability: "open" },
+      hard_failed: { status: "hard_failed", reasonCodes: ["SOURCE_SERVER_ERROR"], impactScope: "entire_source", impactAffectedCount: null, observedPostingCount: 0, selectedDetailCount: 0, validDetailCount: 0, requestAttemptCount: 2, availability: "open" },
+    } as const;
+    await expect(database.select({ sourceId: jobSourceHealthChecks.sourceId, status: jobSourceHealthChecks.status, reasonCodes: jobSourceHealthChecks.reasonCodes, impactScope: jobSourceHealthChecks.impactScope, impactAffectedCount: jobSourceHealthChecks.impactAffectedCount, observedPostingCount: jobSourceHealthChecks.observedPostingCount, selectedDetailCount: jobSourceHealthChecks.selectedDetailCount, validDetailCount: jobSourceHealthChecks.validDetailCount, requestAttemptCount: jobSourceHealthChecks.requestAttemptCount }).from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, job.runId)).orderBy(asc(jobSourceHealthChecks.sourceId))).resolves.toEqual(sources.map((source) => {
+      const { availability: _availability, ...fact } = healthFacts[source.outcome];
+      return { sourceId: source.sourceId, ...fact };
+    }).sort((left, right) => left.sourceId.localeCompare(right.sourceId)));
+    const persistedAvailability = await Promise.all(sources.map(async (source) => ({ sourceId: source.sourceId, availability: (await database.select({ availability: jobSourcePostings.availability }).from(jobSourcePostings).where(eq(jobSourcePostings.id, historicalPostingIds.get(source.sourceId)!)))[0]!.availability })));
+    expect(persistedAvailability.sort((left, right) => left.sourceId.localeCompare(right.sourceId))).toEqual(sources.map((source) => ({ sourceId: source.sourceId, availability: healthFacts[source.outcome].availability })).sort((left, right) => left.sourceId.localeCompare(right.sourceId)));
+    const issueCount = outcomes.filter((sourceOutcome) => sourceOutcome !== "healthy" && sourceOutcome !== "zero_valid_results").length;
+    await expect(database.select({ kind: agentInboxItems.kind }).from(agentInboxItems).where(eq(agentInboxItems.runId, job.runId)).orderBy(asc(agentInboxItems.kind))).resolves.toEqual(terminationKind === "source_failed" ? [{ kind: "run_failed" }, { kind: "source_attention" }] : issueCount ? [{ kind: "source_attention" }] : []);
+    await expect(database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, job.runId))).resolves.toHaveLength(resultCount);
   });
 
   it("v3 runtime malformed adapter output 仍走既有全局失败而不伪造来源健康", async () => {
