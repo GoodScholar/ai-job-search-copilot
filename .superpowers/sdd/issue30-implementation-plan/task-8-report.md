@@ -150,3 +150,20 @@ Drizzle: pnpm --filter @job-copilot/database exec drizzle-kit check --config=dri
 - Green：恢复 `bounded(deps.clock, deadline, () => workflowPromise)`；v4 run input 新增 strict required `onDiagnostics(snapshot)`。官方 workflow 每次 diagnostic 改变时报告聚合、排序且不含 provider body/URL/query 的 snapshot，processor 保存最新 snapshot。`AgentRunBudgetError` 会中止 controller、先经 `failOrRetry`（checkpoint 已先终结预算时保持该终态）写出 run budget terminal，再用 fresh cleanup deadline 以 terminal-aware 方式补写最新 diagnostic；不会 await 永久 pending workflow。
 - Green 证据：processor focused **1 file / 56 tests passed**；workflow focused **1 file / 9 tests passed**；domain typecheck **exit 0**。`verified-job-source-gate.integration.test.ts` 既有矩阵覆盖普通 API 兼容、v4 仅使用 `recordPendingForClaim` / `verifyForClaim` / `rejectForClaim`，并覆盖 checkpoint 后 `pause_requested` / `cancel_requested` 对 strict claim mutation 的围栏；本轮没有改动其接口或语义。
 - Round 3 全量 domain 首次验收还暴露 public facade 回归：`job-discovery-leads.public.test.ts` 失败，因为 package export 直接暴露了内部 `recordPendingForClaim`。新增 `job-discovery-leads.public.ts` 只投影原有普通 `recordPending` / read API，claim-bound mutation 仍只供 v4 内部 seam 使用。focused public/Lead/Gate **3 files / 30 tests passed**、domain typecheck **exit 0**；该修复不改变普通 API 的行为。
+
+### Round 3 fresh acceptance
+
+最终命令均严格串行运行，完整 `tee` 输出保存在本地 `test-logs/slice7-round3-*`（该目录受 `.gitignore` 排除）。
+
+```text
+domain:        DOCKER_API_VERSION=1.51 pnpm --filter @job-copilot/domain test      → 27 files / 337 tests passed
+database:      DOCKER_API_VERSION=1.51 pnpm --filter @job-copilot/database test    → 3 files / 28 tests passed
+contracts:     pnpm --filter @job-copilot/contracts test                            → 12 files / 108 tests passed
+web:           pnpm --filter web test                                                → 55 files / 289 tests passed
+source-access: pnpm --filter @job-copilot/source-access test                         → 2 files / 125 tests passed
+worker:        pnpm --filter worker test                                              → 20 files / 256 tests passed
+
+typecheck: contracts, database, domain, source-access, worker, web                  → 均 exit 0
+```
+
+worker 首次全量运行的所有 **256 assertions** 已通过，但 `agent-run.integration.test.ts` 的 `afterAll` 在 context/queue close 时达到既有 60 秒 hook timeout（exit 1）。没有提高 timeout：检查 Round 3 `bounded` 路径后确认永久 pending promise 没有 handle、deadline timer 在 finally 清除、heartbeat 在外层 finally 停止；worker 单文件随后 **1 file / 9 tests passed**，新的严格串行 worker 全量重跑 **20 files / 256 tests passed**。因此该首次 failure 如实记录为未复现的 Testcontainers/context-close 瞬态，不将其计入通过结果。
