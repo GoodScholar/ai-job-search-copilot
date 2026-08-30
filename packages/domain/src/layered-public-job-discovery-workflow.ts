@@ -18,7 +18,7 @@ export interface LayeredPublicJobDiscoveryWorkflow { run(input: { userId: string
 export interface LayeredPublicJobDiscoveryWorkflowResolver { resolve(input: { runId: string; idempotencyKey: string; executionSpec: LayeredSpec; attemptCount: number }): LayeredPublicJobDiscoveryWorkflow; }
 
 type Page = { requestedUrl: string; finalUrl: string; canonicalUrl: string; rawHtml: string; visibleText: string; pageClassification: "job"; sourceKind: "official" | "aggregator" };
-type RejectionCode = "JOB_PAGE_URL_INVALID" | "JOB_PAGE_TARGET_REJECTED" | "JOB_PAGE_REDIRECT_INVALID" | "JOB_PAGE_LOGIN_REQUIRED" | "JOB_PAGE_LISTING" | "JOB_PAGE_EXPIRED" | "JOB_PAGE_UNRECOGNIZED" | "JOB_PAGE_RESPONSE_TOO_LARGE" | "JOB_PAGE_CONTENT_TYPE_INVALID";
+type RejectionCode = "JOB_PAGE_URL_INVALID" | "JOB_PAGE_TARGET_REJECTED" | "JOB_PAGE_REDIRECT_INVALID" | "JOB_PAGE_LOGIN_REQUIRED" | "JOB_PAGE_LISTING" | "JOB_PAGE_EXPIRED" | "JOB_PAGE_UNRECOGNIZED" | "JOB_PAGE_RESPONSE_TOO_LARGE" | "JOB_PAGE_CONTENT_TYPE_INVALID" | "POLICY_REJECTED";
 function candidateFingerprint(url: string) { return createHash("sha256").update(url).digest("hex"); }
 function matchesAllowedDomain(url: string, domains: readonly string[]) { if (domains.length === 0) return true; const host = new URL(url).hostname; return domains.some((domain) => host === domain || host.endsWith(`.${domain}`)); }
 function rejection(error: unknown): RejectionCode | null { const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : ""; return ["JOB_PAGE_URL_INVALID", "JOB_PAGE_TARGET_REJECTED", "JOB_PAGE_REDIRECT_INVALID", "JOB_PAGE_LOGIN_REQUIRED", "JOB_PAGE_LISTING", "JOB_PAGE_EXPIRED", "JOB_PAGE_UNRECOGNIZED", "JOB_PAGE_RESPONSE_TOO_LARGE", "JOB_PAGE_CONTENT_TYPE_INVALID"].includes(code) ? code as RejectionCode : null; }
@@ -36,7 +36,7 @@ function aggregateDiagnostics(items: LayeredPublicWorkflowDiagnostic[]) {
 
 /** v4 安全链路；Slice 8 只组装 provider/config，不能改变 pending → extract → fetch → gate 的顺序。 */
 export function createLayeredPublicJobDiscoveryWorkflow(deps: {
-  trustedSources: { discover(input: { runId: string; executionSpec: LayeredSpec; signal: AbortSignal; beforeRequest(watchlistItemId: string): Promise<void> }): Promise<{ verifiedSourcePostingVersionIds: string[]; sourceIssues?: Array<{ code: string; affectedCount: number }> }> };
+  trustedSources: { discover(input: { runId: string; executionSpec: LayeredSpec; signal: AbortSignal; beforeRequest(watchlistItemId: string): Promise<void> }): Promise<{ succeeded: boolean; verifiedSourcePostingVersionIds: string[]; sourceIssues?: Array<{ code: string; affectedCount: number }> }> };
   anySearch: { search(input: { runId: string; executionSpec: LayeredSpec; query: Query; signal: AbortSignal; beforeRequest(): Promise<void> }): Promise<{ candidates: Candidate[] } | { error: AnySearchProviderError }>; extract(input: { normalizedUrl: string; signal: AbortSignal; beforeRequest(): Promise<void> }): Promise<{ normalizedUrl: string } | { error: AnySearchProviderError }> };
   preflight(input: { normalizedUrl: string; query: Query }): Promise<{ normalizedUrl: string } | null>;
   leads: { recordPending(input: { userId: string; runId: string; targetId: string; query: Query; normalizedUrl: string; stableFingerprint: string; now: Date }): Promise<{ leadId: string }> };
@@ -55,7 +55,12 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
       for (const candidate of searched.candidates.slice(0, query.resultLimit)) {
         if (!fingerprint.safeParse(candidate.stableFingerprint).success || seen.has(candidate.stableFingerprint)) continue;
         seen.add(candidate.stableFingerprint); const safe = await deps.preflight({ normalizedUrl: candidate.normalizedUrl, query });
-        if (!safe || !matchesAllowedDomain(safe.normalizedUrl, query.allowedSiteDomains) || !SafeNormalizedPublicJobUrlSchema.safeParse(safe.normalizedUrl).success) { diagnostics.push({ scope: "query", queryId: query.queryId, kind: query.kind, stableFingerprint: query.stableFingerprint, code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: "ANYSEARCH_POLICY_REJECTED", affectedCount: 1 }); continue; }
+        if (!safe || safe.normalizedUrl !== candidate.normalizedUrl || !SafeNormalizedPublicJobUrlSchema.safeParse(safe.normalizedUrl).success) { diagnostics.push({ scope: "query", queryId: query.queryId, kind: query.kind, stableFingerprint: query.stableFingerprint, code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: "ANYSEARCH_POLICY_REJECTED", affectedCount: 1 }); continue; }
+        if (!matchesAllowedDomain(safe.normalizedUrl, query.allowedSiteDomains)) {
+          const pending = await deps.leads.recordPending({ userId: value.userId, runId: value.runId, targetId: spec.targetSnapshot.targetId, query, normalizedUrl: safe.normalizedUrl, stableFingerprint: candidate.stableFingerprint, now: value.now });
+          await deps.gate.reject({ userId: value.userId, leadId: pending.leadId, code: "POLICY_REJECTED", now: value.now });
+          diagnostics.push({ scope: "query", queryId: query.queryId, kind: query.kind, stableFingerprint: query.stableFingerprint, code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: "ANYSEARCH_POLICY_REJECTED", affectedCount: 1 }); continue;
+        }
         if (++verificationCandidates > spec.sourceScope.publicDiscovery.maxVerificationCandidates) break;
         const pending = await deps.leads.recordPending({ userId: value.userId, runId: value.runId, targetId: spec.targetSnapshot.targetId, query, normalizedUrl: safe.normalizedUrl, stableFingerprint: candidate.stableFingerprint, now: value.now });
         try {
@@ -75,6 +80,6 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
         }
       }
     }
-    return { hasTrustedSuccess: trusted.verifiedSourcePostingVersionIds.length > 0, branchSuccess: { trusted: trusted.verifiedSourcePostingVersionIds.length > 0, publicDiscovery: publicDiscoverySucceeded }, sourcePostingVersionIds: [...new Set(sourcePostingVersionIds)], trustedSourcePostingVersionIds: trusted.verifiedSourcePostingVersionIds, sourceIssues: aggregateSourceIssues(sourceIssues), diagnostics: aggregateDiagnostics(diagnostics) };
+    return { hasTrustedSuccess: trusted.succeeded, branchSuccess: { trusted: trusted.succeeded, publicDiscovery: publicDiscoverySucceeded }, sourcePostingVersionIds: [...new Set(sourcePostingVersionIds)], trustedSourcePostingVersionIds: trusted.verifiedSourcePostingVersionIds, sourceIssues: aggregateSourceIssues(sourceIssues), diagnostics: aggregateDiagnostics(diagnostics) };
   } };
 }
