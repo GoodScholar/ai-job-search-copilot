@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   agentRunJobResults,
   agentRuns,
+  auditEvents,
   createDatabase,
   jobAccounts,
   jobDiscoveryAttributions,
@@ -12,6 +13,7 @@ import {
   jobOpportunities,
   jobSourcePostingVersions,
   jobSourcePostings,
+  jobSourceHealthChecks,
   jobTargets,
   migrateDatabase,
   type Database,
@@ -29,6 +31,8 @@ class EvidenceStore {
   readonly puts: string[] = [];
   readonly deletes: string[] = [];
   failAtPut: number | null = null;
+  failDelete = false;
+  onDelete: ((objectKey: string) => Promise<void>) | undefined;
 
   async put(input: { objectKey: string; bytes: Uint8Array; mediaType: "text/html" | "text/plain" }): Promise<{ created: boolean }> {
     this.puts.push(input.objectKey);
@@ -40,8 +44,16 @@ class EvidenceStore {
 
   async delete(input: { objectKey: string }): Promise<void> {
     this.deletes.push(input.objectKey);
+    await this.onDelete?.(input.objectKey);
+    if (this.failDelete) throw new VerifiedJobEvidenceStoreUnavailableError();
     this.objects.delete(input.objectKey);
   }
+}
+
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((next) => { resolve = next; });
+  return { promise, resolve };
 }
 
 describe("verified public job source gate", () => {
@@ -59,7 +71,7 @@ describe("verified public job source gate", () => {
     await container?.stop();
   });
 
-  async function owner(url = normalizedUrl, queryKind: "general" | "target_company" = "target_company") {
+  async function owner(url = normalizedUrl, queryKind: "general" | "target_company" | "site_constrained" = "target_company") {
     const userId = crypto.randomUUID();
     const targetId = crypto.randomUUID();
     const runId = crypto.randomUUID();
@@ -107,15 +119,26 @@ describe("verified public job source gate", () => {
     };
   }
 
+  async function noWrites(userId: string, leadId: string, store: EvidenceStore) {
+    await expect(Promise.all([
+      database.select().from(jobSourcePostings).where(eq(jobSourcePostings.userId, userId)),
+      database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, userId)),
+      database.select().from(jobDiscoveryAttributions).where(eq(jobDiscoveryAttributions.leadId, leadId)),
+      database.select().from(jobOpportunities).where(eq(jobOpportunities.userId, userId)),
+      database.select().from(agentRunJobResults).where(eq(agentRunJobResults.userId, userId)),
+    ])).resolves.toEqual([[], [], [], [], []]);
+    expect(store.puts).toEqual([]);
+  }
+
   it("仅由本地已验证页面建立真实来源版本，并把 AnySearch 保持为归因", async () => {
     const subject = await owner();
     const store = new EvidenceStore();
     const gate = createVerifiedJobSourceGate({ db: database, contentStore: store, id: () => crypto.randomUUID() });
+    const localPage = { ...page(), rawHtml: "<main>raw-local-evidence-sentinel</main>", visibleText: "visible-local-evidence-sentinel" };
 
     const result = await gate.verify({
       userId: subject.userId, leadId: subject.leadId,
-      candidate: { queryId: subject.queryId, normalizedUrl, candidateFingerprint },
-      extract: { normalizedUrl }, page: page(), now,
+      candidate: { queryId: subject.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: localPage, now,
     });
 
     expect(result.lead).toMatchObject({ leadId: subject.leadId, state: "verified" });
@@ -125,6 +148,11 @@ describe("verified public job source gate", () => {
     expect(result.sourcePostingVersion.rawObjectReference).toEqual(expect.objectContaining({ rawHtmlObjectKey: expect.stringContaining(`/public-job-pages/`), visibleTextObjectKey: expect.stringContaining(`/public-job-pages/`) }));
     expect(JSON.stringify(result)).not.toContain("AnySearch title sentinel");
     expect(store.objects).toHaveLength(2);
+    const refs = result.sourcePostingVersion.rawObjectReference as { rawHtmlObjectKey: string; visibleTextObjectKey: string };
+    expect(store.objects.get(refs.rawHtmlObjectKey)).toEqual(new TextEncoder().encode(localPage.rawHtml));
+    expect(store.objects.get(refs.visibleTextObjectKey)).toEqual(new TextEncoder().encode(localPage.visibleText));
+    expect(createHash("sha256").update(store.objects.get(refs.rawHtmlObjectKey)!).digest("hex")).toBe(result.sourcePostingVersion.rawContentSha256);
+    expect(createHash("sha256").update(store.objects.get(refs.visibleTextObjectKey)!).digest("hex")).toBe(result.sourcePostingVersion.contentSha256);
     await expect(Promise.all([
       database.select().from(jobDiscoveryLeads).where(eq(jobDiscoveryLeads.id, subject.leadId)),
       database.select().from(jobDiscoveryAttributions).where(eq(jobDiscoveryAttributions.leadId, subject.leadId)),
@@ -148,16 +176,14 @@ describe("verified public job source gate", () => {
       "JOB_PAGE_LISTING", "JOB_PAGE_EXPIRED", "JOB_PAGE_UNRECOGNIZED", "JOB_PAGE_RESPONSE_TOO_LARGE", "JOB_PAGE_CONTENT_TYPE_INVALID",
     ] as const;
     const retryableCodes = ["JOB_PAGE_TIMEOUT", "JOB_PAGE_CANCELLED", "JOB_PAGE_UNREACHABLE", "JOB_PAGE_RATE_LIMITED"] as const;
-    const gate = createVerifiedJobSourceGate({ db: database, contentStore: new EvidenceStore(), id: () => crypto.randomUUID() });
+    const store = new EvidenceStore();
+    const gate = createVerifiedJobSourceGate({ db: database, contentStore: store, id: () => crypto.randomUUID() });
 
     for (const code of terminalCodes) {
       const subject = await owner();
       await expect(gate.reject({ userId: subject.userId, leadId: subject.leadId, code, now }))
         .resolves.toMatchObject({ state: "rejected", rejectionCode: code, sourcePostingVersionId: null });
-      await expect(Promise.all([
-        database.select().from(jobSourcePostings).where(eq(jobSourcePostings.userId, subject.userId)),
-        database.select().from(jobDiscoveryAttributions).where(eq(jobDiscoveryAttributions.leadId, subject.leadId)),
-      ])).resolves.toEqual([[], []]);
+      await noWrites(subject.userId, subject.leadId, store);
     }
     for (const code of retryableCodes) {
       const subject = await owner();
@@ -165,6 +191,7 @@ describe("verified public job source gate", () => {
         .rejects.toMatchObject({ code: "VERIFIED_JOB_SOURCE_RETRYABLE_FAILURE" });
       await expect(createJobDiscoveryLeadRepository({ db: database, id: () => crypto.randomUUID() }).getLead({ userId: subject.userId, leadId: subject.leadId, now }))
         .resolves.toMatchObject({ state: "pending" });
+      await noWrites(subject.userId, subject.leadId, store);
     }
   });
 
@@ -189,7 +216,7 @@ describe("verified public job source gate", () => {
     }
   });
 
-  it("Attribution 持久化冲突会回滚来源并仅补偿本次写入的对象", async () => {
+  it("已存在的本次代际目标 key 返回 created=false 时，Attribution 冲突不会删除它们", async () => {
     const first = await owner();
     const firstStore = new EvidenceStore();
     const firstResult = await createVerifiedJobSourceGate({ db: database, contentStore: firstStore, id: () => crypto.randomUUID() }).verify({
@@ -200,8 +227,15 @@ describe("verified public job source gate", () => {
     const secondFingerprint = createHash("sha256").update(secondUrl, "utf8").digest("hex");
     const second = await owner(secondUrl);
     const store = new EvidenceStore();
-    store.objects.set("already-referenced", new Uint8Array([1]));
-    const ids = [crypto.randomUUID(), crypto.randomUUID(), firstResult.attribution.attributionId];
+    const postingId = crypto.randomUUID();
+    const sourceVersionId = crypto.randomUUID();
+    const rawHash = createHash("sha256").update(page(secondUrl).rawHtml, "utf8").digest("hex");
+    const visibleHash = createHash("sha256").update(page(secondUrl).visibleText, "utf8").digest("hex");
+    const rawKey = `accounts/${second.userId}/public-job-pages/${sourceVersionId}/${rawHash}.html`;
+    const visibleKey = `accounts/${second.userId}/public-job-pages/${sourceVersionId}/${visibleHash}.txt`;
+    store.objects.set(rawKey, new Uint8Array([1]));
+    store.objects.set(visibleKey, new Uint8Array([2]));
+    const ids = [postingId, sourceVersionId, firstResult.attribution.attributionId];
     const gate = createVerifiedJobSourceGate({ db: database, contentStore: store, id: () => ids.shift()! });
 
     await expect(gate.verify({
@@ -209,13 +243,93 @@ describe("verified public job source gate", () => {
       candidate: { queryId: second.queryId, normalizedUrl: secondUrl, candidateFingerprint: secondFingerprint },
       extract: { normalizedUrl: secondUrl }, page: page(secondUrl), now,
     })).rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_ATTRIBUTION_CONFLICT" });
-    expect(store.objects).toEqual(new Map([["already-referenced", new Uint8Array([1])]]));
-    expect(store.deletes).toEqual(store.puts);
+    expect(store.puts).toEqual([rawKey, visibleKey]);
+    expect(store.deletes).toEqual([]);
+    expect(store.objects).toEqual(new Map([[rawKey, new Uint8Array([1])], [visibleKey, new Uint8Array([2])]]));
     await expect(Promise.all([
       database.select().from(jobSourcePostings).where(eq(jobSourcePostings.userId, second.userId)),
       database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, second.userId)),
       database.select().from(jobDiscoveryAttributions).where(eq(jobDiscoveryAttributions.leadId, second.leadId)),
     ])).resolves.toEqual([[], [], []]);
+  });
+
+  it("删除补偿失败仍保留原始已知持久化错误，并且不会提交断链 version", async () => {
+    const reserved = await owner();
+    const reservedResult = await createVerifiedJobSourceGate({ db: database, contentStore: new EvidenceStore(), id: () => crypto.randomUUID() }).verify({
+      userId: reserved.userId, leadId: reserved.leadId,
+      candidate: { queryId: reserved.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: page(), now,
+    });
+    const subjectUrl = "https://careers.acme.com/jobs/delete-failure?job=1";
+    const subject = await owner(subjectUrl);
+    const store = new EvidenceStore();
+    store.failDelete = true;
+    const ids = [crypto.randomUUID(), crypto.randomUUID(), reservedResult.attribution.attributionId];
+    const gate = createVerifiedJobSourceGate({ db: database, contentStore: store, id: () => ids.shift()! });
+
+    await expect(gate.verify({
+      userId: subject.userId, leadId: subject.leadId,
+      candidate: { queryId: subject.queryId, normalizedUrl: subjectUrl, candidateFingerprint: createHash("sha256").update(subjectUrl, "utf8").digest("hex") },
+      extract: { normalizedUrl: subjectUrl }, page: page(subjectUrl), now,
+    })).rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_ATTRIBUTION_CONFLICT" });
+
+    expect(store.deletes).toEqual(store.puts);
+    expect(store.objects.size).toBe(2);
+    await noWrites(subject.userId, subject.leadId, new EvidenceStore());
+    await expect(database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, subject.userId))).resolves.toEqual([]);
+  });
+
+  it("回滚事务只清理自己的 sourceVersion generation，不会删除随后提交版本的证据", async () => {
+    const reservation = await owner();
+    const reserved = await createVerifiedJobSourceGate({ db: database, contentStore: new EvidenceStore(), id: () => crypto.randomUUID() }).verify({
+      userId: reservation.userId, leadId: reservation.leadId,
+      candidate: { queryId: reservation.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: page(), now,
+    });
+    const first = await owner();
+    const second = await anotherLead(first);
+    const store = new EvidenceStore();
+    const cleanupStarted = deferred();
+    const allowCleanup = deferred();
+    let held = false;
+    store.onDelete = async () => {
+      if (!held) {
+        held = true;
+        cleanupStarted.resolve();
+        await allowCleanup.promise;
+      }
+    };
+    const firstPostingId = crypto.randomUUID();
+    const firstVersionId = crypto.randomUUID();
+    const secondPostingId = crypto.randomUUID();
+    const secondVersionId = crypto.randomUUID();
+    const firstGate = createVerifiedJobSourceGate({
+      db: database, contentStore: store,
+      id: (() => { const ids = [firstPostingId, firstVersionId, reserved.attribution.attributionId]; return () => ids.shift()!; })(),
+    });
+    const secondGate = createVerifiedJobSourceGate({
+      db: database, contentStore: store,
+      id: (() => { const ids = [secondPostingId, secondVersionId, crypto.randomUUID()]; return () => ids.shift()!; })(),
+    });
+    const firstAttempt = firstGate.verify({
+      userId: first.userId, leadId: first.leadId,
+      candidate: { queryId: first.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: page(), now,
+    });
+    await cleanupStarted.promise;
+    const secondResult = await secondGate.verify({
+      userId: second.userId, leadId: second.leadId,
+      candidate: { queryId: second.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: page(), now,
+    });
+    allowCleanup.resolve();
+    await expect(firstAttempt).rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_ATTRIBUTION_CONFLICT" });
+
+    const refs = secondResult.sourcePostingVersion.rawObjectReference as { rawHtmlObjectKey: string; visibleTextObjectKey: string };
+    expect(refs.rawHtmlObjectKey).not.toContain(firstVersionId);
+    expect(refs.rawHtmlObjectKey).toContain(secondVersionId);
+    expect(store.deletes).toEqual(expect.arrayContaining(store.puts.filter((key) => key.includes(firstVersionId))));
+    expect(store.deletes).not.toEqual(expect.arrayContaining([refs.rawHtmlObjectKey, refs.visibleTextObjectKey]));
+    expect(store.objects.get(refs.rawHtmlObjectKey)).toEqual(new TextEncoder().encode(page().rawHtml));
+    expect(store.objects.get(refs.visibleTextObjectKey)).toEqual(new TextEncoder().encode(page().visibleText));
+    expect(createHash("sha256").update(store.objects.get(refs.rawHtmlObjectKey)!).digest("hex")).toBe(secondResult.sourcePostingVersion.rawContentSha256);
+    expect(createHash("sha256").update(store.objects.get(refs.visibleTextObjectKey)!).digest("hex")).toBe(secondResult.sourcePostingVersion.contentSha256);
   });
 
   it("严格校验整个候选链，拒绝不匹配与 provider content 而不写入任何事实", async () => {
@@ -235,6 +349,9 @@ describe("verified public job source gate", () => {
       { ...valid, page: { ...page(), canonicalUrl: foreignUrl } },
       { ...valid, extract: { normalizedUrl, content: "provider-content-sentinel" } },
       { ...valid, title: "provider-title-sentinel" },
+      { ...valid, snippet: "provider-snippet-sentinel" },
+      { ...valid, rawUrl: "https://provider.example/provider-raw-url-sentinel" },
+      { ...valid, provider: { content: "provider-extract-sentinel" } },
     ]) {
       await expect(gate.verify(invalid)).rejects.toMatchObject({ code: "VERIFIED_JOB_SOURCE_INVALID_INPUT" });
     }
@@ -250,9 +367,80 @@ describe("verified public job source gate", () => {
       database.select().from(jobSourcePostings).where(eq(jobSourcePostings.userId, subject.userId)),
       database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, subject.userId)),
       database.select().from(jobDiscoveryAttributions).where(eq(jobDiscoveryAttributions.leadId, subject.leadId)),
+      database.select().from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.userId, subject.userId)),
+      database.select().from(auditEvents).where(eq(auditEvents.userId, subject.userId)),
     ])).resolves.toEqual([
-      expect.objectContaining({ state: "pending" }), [], [], [],
+      expect.objectContaining({ state: "pending" }), [], [], [], [], [],
     ]);
+    const allPersisted = JSON.stringify(await Promise.all([
+      database.select().from(jobDiscoveryLeads).where(eq(jobDiscoveryLeads.userId, subject.userId)),
+      database.select().from(jobDiscoveryAttributions).where(eq(jobDiscoveryAttributions.userId, subject.userId)),
+      database.select().from(jobSourcePostings).where(eq(jobSourcePostings.userId, subject.userId)),
+      database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, subject.userId)),
+      database.select().from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.userId, subject.userId)),
+      database.select().from(auditEvents).where(eq(auditEvents.userId, subject.userId)),
+      [...store.objects.entries()].map(([key, value]) => [key, new TextDecoder().decode(value)]),
+    ]));
+    for (const sentinel of ["provider-content-sentinel", "provider-title-sentinel", "provider-snippet-sentinel", "provider-raw-url-sentinel", "provider-extract-sentinel"]) {
+      expect(allPersisted).not.toContain(sentinel);
+    }
+  });
+
+  it("owner、过期与终态 Lead 的冲突不产生半写入；已验证 Lead 的本地事实必须完全一致", async () => {
+    const otherOwner = await owner();
+    const otherStore = new EvidenceStore();
+    const otherGate = createVerifiedJobSourceGate({ db: database, contentStore: otherStore, id: () => crypto.randomUUID() });
+    await expect(otherGate.verify({
+      userId: crypto.randomUUID(), leadId: otherOwner.leadId,
+      candidate: { queryId: otherOwner.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: page(), now,
+    })).rejects.toMatchObject({ code: "VERIFIED_JOB_SOURCE_LEAD_NOT_FOUND" });
+    await noWrites(otherOwner.userId, otherOwner.leadId, otherStore);
+
+    const expired = await owner();
+    const [{ expiresAt }] = await database.select({ expiresAt: jobDiscoveryLeads.expiresAt }).from(jobDiscoveryLeads).where(eq(jobDiscoveryLeads.id, expired.leadId));
+    const expiredStore = new EvidenceStore();
+    const expiredGate = createVerifiedJobSourceGate({ db: database, contentStore: expiredStore, id: () => crypto.randomUUID() });
+    await expect(expiredGate.verify({
+      userId: expired.userId, leadId: expired.leadId,
+      candidate: { queryId: expired.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: page(), now: expiresAt,
+    })).rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_EXPIRED" });
+    await noWrites(expired.userId, expired.leadId, new EvidenceStore());
+    expect(expiredStore.deletes).toEqual(expiredStore.puts);
+
+    const rejected = await owner();
+    const rejectedStore = new EvidenceStore();
+    const rejectedGate = createVerifiedJobSourceGate({ db: database, contentStore: rejectedStore, id: () => crypto.randomUUID() });
+    await rejectedGate.reject({ userId: rejected.userId, leadId: rejected.leadId, code: "JOB_PAGE_LISTING", now });
+    await expect(rejectedGate.verify({
+      userId: rejected.userId, leadId: rejected.leadId,
+      candidate: { queryId: rejected.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: page(), now,
+    })).rejects.toMatchObject({ code: "VERIFIED_JOB_SOURCE_LEAD_CONFLICT" });
+    await noWrites(rejected.userId, rejected.leadId, rejectedStore);
+
+    const verified = await owner();
+    const verifiedStore = new EvidenceStore();
+    const verifiedGate = createVerifiedJobSourceGate({ db: database, contentStore: verifiedStore, id: () => crypto.randomUUID() });
+    const input = {
+      userId: verified.userId, leadId: verified.leadId,
+      candidate: { queryId: verified.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: page(), now,
+    };
+    await verifiedGate.verify(input);
+    const putCount = verifiedStore.puts.length;
+    for (const changed of [
+      { ...input, page: { ...page(), finalUrl: "https://careers.acme.com/jobs/other?job=123" } },
+      { ...input, page: { ...page(), sourceKind: "aggregator" as const } },
+      { ...input, page: { ...page(), visibleText: "# Changed local evidence" } },
+      { ...input, candidate: { ...input.candidate, normalizedUrl: "https://careers.acme.com/jobs/other?job=123", candidateFingerprint: createHash("sha256").update("https://careers.acme.com/jobs/other?job=123", "utf8").digest("hex") }, extract: { normalizedUrl: "https://careers.acme.com/jobs/other?job=123" }, page: page("https://careers.acme.com/jobs/other?job=123") },
+    ]) {
+      await expect(verifiedGate.verify(changed)).rejects.toMatchObject({ code: "VERIFIED_JOB_SOURCE_LEAD_CONFLICT" });
+    }
+    expect(verifiedStore.puts).toHaveLength(putCount);
+    await expect(Promise.all([
+      createJobDiscoveryLeadRepository({ db: database, id: () => crypto.randomUUID() }).getLead({ userId: verified.userId, leadId: verified.leadId, now }),
+      database.select().from(jobSourcePostings).where(eq(jobSourcePostings.userId, verified.userId)),
+      database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, verified.userId)),
+      database.select().from(jobDiscoveryAttributions).where(eq(jobDiscoveryAttributions.leadId, verified.leadId)),
+    ])).resolves.toEqual([expect.objectContaining({ state: "verified" }), [expect.anything()], [expect.anything()], [expect.anything()]]);
   });
 
   it("按 canonical 与双 hash 去重来源版本，并让两个 Lead 独立归因且 replay 零写入", async () => {
@@ -308,27 +496,45 @@ describe("verified public job source gate", () => {
       .resolves.toHaveLength(2);
   });
 
-  it("采用固定 taxonomy，只由本地 canonical host 和 fetched sourceKind 派生真实来源身份", async () => {
-    const platformUrl = "https://www.zhipin.com/job/123?job=123";
-    const platformFingerprint = createHash("sha256").update(platformUrl, "utf8").digest("hex");
-    const subject = await owner(platformUrl);
+  it("同 canonical 的 url_import 预置来源不会被公开门禁复用", async () => {
+    const subject = await owner();
+    await database.insert(jobSourcePostings).values({
+      id: crypto.randomUUID(), userId: subject.userId, sourceType: "url_import", sourceIdentifier: createHash("sha256").update(normalizedUrl, "utf8").digest("hex"),
+      sourceId: normalizedUrl, sourceIdentity: { canonicalUrl: normalizedUrl, inputType: "url" }, isOfficial: true, createdAt: now, updatedAt: now,
+    });
     const result = await createVerifiedJobSourceGate({ db: database, contentStore: new EvidenceStore(), id: () => crypto.randomUUID() }).verify({
       userId: subject.userId, leadId: subject.leadId,
-      candidate: { queryId: subject.queryId, normalizedUrl: platformUrl, candidateFingerprint: platformFingerprint },
-      extract: { normalizedUrl: platformUrl }, page: { ...page(platformUrl), sourceKind: "aggregator" }, now,
+      candidate: { queryId: subject.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: page(), now,
     });
+    expect(result.sourcePosting.sourceType).toBe("company_careers");
+    await expect(database.select().from(jobSourcePostings).where(eq(jobSourcePostings.userId, subject.userId))).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceType: "url_import" }), expect.objectContaining({ id: result.sourcePosting.postingId, sourceType: "company_careers" }),
+    ]));
+  });
 
-    expect(result.sourcePosting).toMatchObject({ sourceType: "recruitment_platform", sourceId: platformUrl, isOfficial: false });
-    expect(result.sourcePosting.sourceIdentity).toEqual({ taxonomyPolicy: "public-job-source-taxonomy-v1", canonicalUrl: platformUrl, finalUrl: platformUrl });
-
-    const atsUrl = "https://job-boards.greenhouse.io/acme/jobs/456?job=456";
-    const atsFingerprint = createHash("sha256").update(atsUrl, "utf8").digest("hex");
-    const ats = await owner(atsUrl, "general");
-    const atsResult = await createVerifiedJobSourceGate({ db: database, contentStore: new EvidenceStore(), id: () => crypto.randomUUID() }).verify({
-      userId: ats.userId, leadId: ats.leadId,
-      candidate: { queryId: ats.queryId, normalizedUrl: atsUrl, candidateFingerprint: atsFingerprint },
-      extract: { normalizedUrl: atsUrl }, page: { ...page(atsUrl), sourceKind: "official" }, now,
-    });
-    expect(atsResult.sourcePosting).toMatchObject({ sourceType: "company_careers", isOfficial: true });
+  it("采用固定 taxonomy，只由本地 canonical host 和 fetched sourceKind 派生真实来源身份", async () => {
+    const cases: Array<{
+      host: string; queryKind: "general" | "target_company" | "site_constrained"; sourceKind: "official" | "aggregator";
+      sourceType: "company_careers" | "recruitment_platform" | "wechat_recruitment_h5" | "public_web"; official: boolean;
+    }> = [
+      ...["zhipin.com", "jobs.zhipin.com", "liepin.com", "campus.liepin.com", "zhaopin.com", "campus.zhaopin.com"].map((host) => ({ host, queryKind: "general" as const, sourceKind: "aggregator" as const, sourceType: "recruitment_platform" as const, official: false })),
+      ...["mp.weixin.qq.com", "jobs.mp.weixin.qq.com"].map((host) => ({ host, queryKind: "general" as const, sourceKind: "aggregator" as const, sourceType: "wechat_recruitment_h5" as const, official: false })),
+      ...["boards.greenhouse.io", "job-boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com", "apply.workable.com", "jobs.smartrecruiters.com"].map((host) => ({ host, queryKind: "general" as const, sourceKind: "official" as const, sourceType: "company_careers" as const, official: true })),
+      { host: "evil.jobs.lever.co", queryKind: "general", sourceKind: "official", sourceType: "public_web", official: true },
+      { host: "careers.unknown-careers.com", queryKind: "target_company", sourceKind: "official", sourceType: "company_careers", official: true },
+      { host: "public.unknown-careers.net", queryKind: "general", sourceKind: "aggregator", sourceType: "public_web", official: false },
+      { host: "constrained.unknown-careers.org", queryKind: "site_constrained", sourceKind: "aggregator", sourceType: "public_web", official: false },
+    ];
+    for (const item of cases) {
+      const url = `https://${item.host}/jobs/123?job=123`;
+      const subject = await owner(url, item.queryKind);
+      const result = await createVerifiedJobSourceGate({ db: database, contentStore: new EvidenceStore(), id: () => crypto.randomUUID() }).verify({
+        userId: subject.userId, leadId: subject.leadId,
+        candidate: { queryId: subject.queryId, normalizedUrl: url, candidateFingerprint: createHash("sha256").update(url, "utf8").digest("hex") },
+        extract: { normalizedUrl: url }, page: { ...page(url), sourceKind: item.sourceKind }, now,
+      });
+      expect(result.sourcePosting).toMatchObject({ sourceType: item.sourceType, sourceId: url, isOfficial: item.official });
+      expect(result.sourcePosting.sourceIdentity).toEqual({ taxonomyPolicy: "public-job-source-taxonomy-v1", canonicalUrl: url, finalUrl: url });
+    }
   });
 });
