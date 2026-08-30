@@ -248,7 +248,12 @@ async function failOrRetry(deps: AgentRunProcessorDependencies, input: { userId:
     const failureCode = budgetExhausted ? "AGENT_RUN_BUDGET_EXCEEDED" : input.failure.failureCode;
     await transaction.update(agentRunSteps).set({ status: "failed", completedAt: null, failedAt: now, failureCode }).where(and(eq(agentRunSteps.userId, input.userId), eq(agentRunSteps.runId, input.runId), eq(agentRunSteps.stepKey, run.currentStep), eq(agentRunSteps.status, "running")));
     if (budgetExhausted) {
-      await terminateBudgetRun(transaction, { id: deps.id, auditTrail: deps.auditTrail, userId: input.userId, requestId: input.runId, run, now, budgetDimension: decision.budgetDimension, activeDurationMs });
+      const sequence = await terminateBudgetRun(transaction, { id: deps.id, auditTrail: deps.auditTrail, userId: input.userId, requestId: input.runId, run, now, budgetDimension: decision.budgetDimension, activeDurationMs });
+      for (const issue of input.discoveryIssues ?? []) await transaction.insert(jobDiscoverySourceIssues).values({ id: deps.id(), userId: input.userId, runId: input.runId, provider: issue.provider, code: issue.code, affectedCount: issue.affectedCount, createdAt: now }).onConflictDoNothing();
+      if ((input.discoveryIssues?.length ?? 0) > 0) {
+        const [attention] = await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: input.userId, runId: input.runId, triggerEventSequence: sequence, kind: "discovery_attention", status: "open", reasonCode: "DISCOVERY_ATTENTION", budgetDimension: null, createdAt: now }).onConflictDoNothing().returning({ id: agentInboxItems.id });
+        if (attention) await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.inbox_opened", occurredAt: now, requestId: input.runId, outcome: "success", reasonCode: "DISCOVERY_ATTENTION", resourceType: "agent_inbox_item", resourceId: attention.id, metadata: { runId: input.runId, kind: "discovery_attention", reasonCode: "DISCOVERY_ATTENTION", budgetDimension: null } });
+      }
       return "budget_exhausted";
     }
     const terminationKind = failureCode === "AGENT_RUN_CONTENT_STORAGE_FAILED" ? "content_storage_failed" : failureCode === "AGENT_RUN_PERSIST_FAILED" ? "persistence_failed" : "source_failed";
