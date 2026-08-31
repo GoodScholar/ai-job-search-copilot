@@ -104,3 +104,17 @@ git diff --check 0ed9933..HEAD
 ```
 
 以上均通过；E2E 生成的 `apps/api/dist` 与 `apps/worker/dist` 已用精确路径清理，未进入提交。先前 Slice 8 的并发/重叠命令结果仍一律作废；本返工波次每次测试前均确认无遗留 `pnpm`、Vitest、Playwright、`tsc`、Drizzle、E2E runner 或 local-runtime 进程，并且测试命令全程单进程串行。未发现阻塞性 concern；未开始 MinIO 或普通 source-health 后续审计。
+
+## Review Fix Round 2 — 第二次复审返工闭环
+
+本节取代上一节中“duplicate-delivery Red 未单独提交”的旧证据结论。新增 Red 均先独立提交、再以单进程命令实际失败；随后才提交对应 Green。
+
+| Red → Green | 行为与结果 | 日志 |
+| --- | --- | --- |
+| `1f1bddc` → `e42fb72` | 真实 UI/队列的重复 delivery 快照要求 `runUsage`；Red 为安全布尔断言 `false`，Green 查询并比较 run usage 及 Lead/Attribution/Posting/Version/Opportunity/Result 的稳定 ID、关联与 count。重复 job 返回 `stale` 后 `toEqual` 前后完整安全快照。 | `/tmp/issue30-slice9-round2-public-snapshot-red.log`、`/tmp/issue30-slice9-round2-public-snapshot-green.log` |
+| `38f6c43` → `2904e8a` | 同 public dedup identity 的同 version replay 原会改写 Opportunity `updatedAt`（Red 1/361 failed）；Green 只在 source posting version 变化时更新 current Opportunity。该集成测试同时覆盖：同 version 仅 1 Opportunity/1 source link；同 canonical 的新 version 复用 Opportunity、更新 current version、每 version 一个 link；identity 不同分离；旧六字段哈希兼容。 | `/tmp/issue30-slice9-round2-opportunity-red.log`、`/tmp/issue30-slice9-round2-opportunity-green.log` |
+| `290e2a2` → `e772761` | v4 Red 因无 AnySearch attribution 被 provenance gate 拒绝（1/362 failed）；Green 建立已验证、owner/run/query-bound Lead 与 Attribution，证明其 source version 映射到 1 Opportunity、1 source evidence link、1 RunResult，来源身份仍为 Greenhouse 而非 AnySearch。 | `/tmp/issue30-slice9-round2-v4-mapping-red.log`、`/tmp/issue30-slice9-round2-v4-mapping-green.log` |
+
+安全证据：旧 `/tmp/issue30-slice9-canonical-dedup-red.log` 曾因 `toHaveLength` 展开 Lead（含 normalized URL），不可作为安全证据；在上述新脱敏 Red/Green 日志写入后已于本轮精确删除。新 E2E `persistedFacts` 只读稳定 ID、状态、枚举、哈希、布尔、bounded count 与 run usage；不查询 normalized URL、raw content、source identity 或 raw object reference。查询 plan 断言同样改为布尔/固定枚举；fixture durable audit 仅有固定 operation/fixture/count。`resultLimit` 现逐条精确为 `5`；实际 verification 使用 fixture 的 `extract` audit，固定为 7 且 `<= 10`，不再以 Lead 数代替。
+
+本轮最终串行命令：domain persistence **361/361**、v4 processor **362/362**；完整 E2E configured Desktop/Mobile **2/2** 加 missing-key Desktop/Mobile **2/2**，合计 **4/4**（`/tmp/issue30-slice9-round2-e2e-final-green.log`）；`pnpm typecheck` 全 workspace 通过；`git diff --check 0ed9933..HEAD` 通过。E2E 生成的 `apps/api/dist`、`apps/worker/dist` 均按精确路径清理。
