@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, gt, sql } from "drizzle-orm";
 import {
   agentRunEvents,
   agentRunJobResults,
@@ -21,6 +21,7 @@ import { discoveryNormalizedData, persistJobOpportunity } from "./job-opportunit
 import { deriveSourceHealthTerminal } from "./source-health-terminal";
 import type { SourceHealthTerminal } from "./source-health-terminal";
 import { GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, JobSourceHealthCheckSchema, PublicAgentRunSourceScopeSchema, PublicSourceHealthAgentRunSourceScopeSchema, type JobSourceHealthCheck } from "@job-copilot/contracts/agent-runs";
+import { LayeredPublicJobDiscoverySourceScopeSchema } from "@job-copilot/contracts/job-discovery";
 
 export type DiscoveryDetail = {
   sourceId: string;
@@ -278,6 +279,51 @@ async function recomputeOpportunityAvailability(db: any, input: { userId: string
 
 export function createJobDiscoveryPersistence(deps: { db: Database; id: () => string; auditTrail: AuditTrail }) {
   return {
+    /** v4 trusted wrapper only: claim-bound source/version/opportunity persistence, never run lifecycle or result facts. */
+    async persistTrustedLayeredDiscovery(input: {
+      userId: string;
+      runId: string;
+      claimToken: string;
+      sourceId: string;
+      details: DiscoveryDetail[];
+      storedObjects: StoredDiscoveryObject[];
+      now: Date;
+    }): Promise<{ sourcePostingVersionIds: string[]; cleanupObjectKeys: string[] }> {
+      return deps.db.transaction(async (transaction) => {
+        await acquireAccountAdvisoryLock(transaction, input.userId);
+        const [run] = await transaction.select().from(agentRuns).where(and(
+          eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"),
+          eq(agentRuns.controlState, "none"), eq(agentRuns.claimToken, input.claimToken), gt(agentRuns.claimExpiresAt, sql`current_timestamp`),
+        )).limit(1);
+        if (!run) return { sourcePostingVersionIds: [], cleanupObjectKeys: input.storedObjects.map((item) => item.objectKey) };
+        if (run.workflowVersion !== "layered-public-job-discovery-v1") throw new Error("AGENT_RUN_PERSIST_FAILED");
+        const sourceScope = LayeredPublicJobDiscoverySourceScopeSchema.parse(run.sourceScope);
+        if (!sourceScope.trustedSources.some(({ source }) => source.sourceId === input.sourceId)
+          || input.details.some((detail) => detail.sourceId !== input.sourceId || detail.sourceType !== "company_careers" || !detail.isOfficial)) {
+          throw new Error("AGENT_RUN_PERSIST_FAILED");
+        }
+        const storedByDetail = new Map(input.storedObjects.map((stored) => [`${stored.sourceId}:${stored.detailId}`, stored]));
+        if (storedByDetail.size !== input.details.length || input.details.some((detail) => !storedByDetail.has(`${detail.sourceId}:${detail.detailId}`))) {
+          throw new Error("AGENT_RUN_PERSIST_FAILED");
+        }
+        const sourcePostingVersionIds: string[] = [];
+        const cleanupObjectKeys: string[] = [];
+        for (const detail of input.details) {
+          const stored = storedByDetail.get(`${detail.sourceId}:${detail.detailId}`)!;
+          const source = await persistDiscoverySource(transaction, { id: deps.id, userId: input.userId, detail, stored, now: input.now });
+          if (!source.sourceVersionCreated) cleanupObjectKeys.push(stored.objectKey);
+          const existingOpportunityId = await existingOpportunityForPosting(transaction, { userId: input.userId, sourcePostingId: source.sourcePostingId });
+          await persistJobOpportunity(transaction, {
+            id: deps.id, userId: input.userId, importId: null, sourcePostingVersionId: source.sourcePostingVersionId,
+            existingOpportunityId, isOfficial: source.isOfficial, company: detail.company, title: detail.title,
+            location: detail.location, postedAt: detail.postedAt, deadline: detail.deadline, description: null,
+            normalizedData: discoveryNormalizedData(detail), now: input.now,
+          });
+          sourcePostingVersionIds.push(source.sourcePostingVersionId);
+        }
+        return { sourcePostingVersionIds: [...new Set(sourcePostingVersionIds)], cleanupObjectKeys };
+      });
+    },
     async persistSuccessfulDiscovery(input: {
       run: ClaimedAgentRun;
       details: DiscoveryDetail[];

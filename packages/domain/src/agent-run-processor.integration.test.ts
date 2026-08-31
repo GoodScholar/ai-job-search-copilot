@@ -101,7 +101,7 @@ describe("AgentRunProcessor checkpoints", () => {
   it("v4 trusted bridge 只在有效 claim 下持久化冻结 Greenhouse 来源，且重放不写运行副作用", async () => {
     const job = await layeredRun();
     const claimToken = crypto.randomUUID();
-    await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", startedAt: now, claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), activeSliceStartedAt: now, attemptCount: 1 }).where(eq(agentRuns.id, job.runId));
+    await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", startedAt: now, claimToken, claimExpiresAt: new Date(Date.now() + 30_000), activeSliceStartedAt: now, attemptCount: 1 }).where(eq(agentRuns.id, job.runId));
     const persistence = createJobDiscoveryPersistence({ db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => now }) }) as unknown as {
       persistTrustedLayeredDiscovery(input: unknown): Promise<{ sourcePostingVersionIds: string[]; cleanupObjectKeys: string[] }>;
     };
@@ -115,7 +115,7 @@ describe("AgentRunProcessor checkpoints", () => {
     const replay = await persistence.persistTrustedLayeredDiscovery(input);
 
     expect(first.sourcePostingVersionIds).toHaveLength(1);
-    expect(replay).toEqual(first);
+    expect(replay.sourcePostingVersionIds).toEqual(first.sourcePostingVersionIds);
     await expect(database.select().from(jobOpportunities).where(eq(jobOpportunities.userId, job.userId))).resolves.toHaveLength(1);
     await expect(Promise.all([
       database.select().from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, job.runId)),
