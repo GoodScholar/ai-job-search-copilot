@@ -254,8 +254,7 @@ test("版本化 Fake AnySearch 缺 key 时从普通 UI 失败且不触发 provid
   expect(facts.results).toHaveLength(0);
   expect(facts.attentions).toHaveLength(1);
   expect(await fixtureAudit()).toEqual([]);
-  const factsWithTestOnlyPlaceholder = { ...facts, testOnlyPlaceholder: fixedTestKey };
-  expect(serializedRunAndFactsContainFixedTestKey(run, factsWithTestOnlyPlaceholder)).toBe(false);
+  expect(serializedRunAndFactsContainFixedTestKey(run, facts)).toBe(false);
   await page.reload();
   const attention = page.locator(".agent-inbox-panel").getByRole("link", { name: "查看本次运行诊断" });
   await expect(attention).toHaveAttribute("href", `/home?runId=${runId}#agent-run`);
