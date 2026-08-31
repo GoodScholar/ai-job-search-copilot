@@ -59,3 +59,5 @@ Task 8: complete (commits `768b8c6..4473524`; final independent Standards and Sp
 Task 9: complete (commits `4473524..0ed9933`; final independent Standards and Spec reviews both `0/0/0`; report `task-9-report.md`).
 
 Task 10: Slice 9 Red/Green A–C 与串行验收已完成（`357e4a1..57ac9f3`；报告 `task-10-report.md`）；等待独立 Standards/Spec 审查。
+Task 10: fix round 2/5 (6 addressed, 4 open — duplicate behavior lacked committed Red; fixed site/company assertions; canonical/final identity evidence; complete-run secret assertion; commits `dc47036..49f21bb`).
+Task 10: Ruling: fix round 3 remains load-bearing and has a concrete non-guess path — dispatch a fresh `gpt-5.6-terra/high` implementer because project model authority forbids changing implementation to sol; obtain a committed behavior Red by temporarily restoring the old completed outcome, then restore stale Green. Cost if wrong: two extra audit-only commits remain in history, but production HEAD retains the approved stale semantics and the TDD evidence becomes reproducible.
