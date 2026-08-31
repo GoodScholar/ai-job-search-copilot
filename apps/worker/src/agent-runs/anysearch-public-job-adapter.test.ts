@@ -95,6 +95,20 @@ describe("AnySearchPublicJobAdapter", () => {
     expect(JSON.stringify(init?.body)).not.toMatch(/allowedSiteDomains|domain|host|target|profile|watchlist|user/i);
   });
 
+  it("每次 search 与 extract 只使用本次调用传入的 checkpoint，不与并发调用串线", async () => {
+    const transport = vi.fn(async (url: RequestInfo | URL) => jsonResponse((url as URL).pathname === "/v1/search" ? validSearch() : validExtract()));
+    const adapter = testAdapter({ transport });
+    const searchCheckpoint = vi.fn<AnySearchBeforeRequest>(async (): Promise<"proceed"> => "proceed");
+    const extractCheckpoint = vi.fn<AnySearchBeforeRequest>(async (): Promise<"proceed"> => "proceed");
+
+    const searched = await adapter.search(searchInput(), searchCheckpoint);
+    const candidate = mustSearchData(searched).candidates[0]?.candidate;
+    if (!candidate) throw new Error("fixture candidate should be accepted");
+    await expect(adapter.extract({ candidate, identity: leadId }, extractCheckpoint)).resolves.toMatchObject({ ok: true });
+    expect(searchCheckpoint.mock.calls.map(([operation]) => operation.kind)).toEqual(["search"]);
+    expect(extractCheckpoint.mock.calls.map(([operation]) => operation.kind)).toEqual(["extract"]);
+  });
+
   it("executes up to five independent searches with independent hooks, ordered partial results, and no sixth request", async () => {
     let inFlight = 0;
     let peak = 0;

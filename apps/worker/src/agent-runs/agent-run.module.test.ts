@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { PUBLIC_JOB_DISCOVERY_BUDGET } from "@job-copilot/contracts/agent-runs";
+import { LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER, LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION } from "@job-copilot/contracts/job-discovery";
 
 import { createConfiguredJobDiscoveryAdapterResolver, createConfiguredJobDiscoveryExecutionMode, createConfiguredLayeredPublicJobDiscoveryWorkflowResolver } from "./agent-run.module.js";
 
@@ -17,14 +19,47 @@ const legacyExecutionSpec = {
   model: null,
   budget: { maxActiveDurationMs: 60_000, maxAttempts: 3, maxToolCalls: 10, maxResults: 5, maxModelCalls: 0, maxTokens: 0 },
 } as const;
+const layeredExecutionSpec = {
+  targetSnapshot: legacyExecutionSpec.targetSnapshot,
+  profileSnapshot: { targetId: legacyExecutionSpec.targetSnapshot.targetId, version: 1, confirmedActiveSkillNames: [] },
+  watchlistSnapshot: { targetId: legacyExecutionSpec.targetSnapshot.targetId, version: 0, companies: [] },
+  sourceScope: { kind: "layered_public" as const, trustedSources: [], publicDiscovery: { provider: "anysearch" as const, batchSize: 5 as const, maxVerificationCandidates: 10 as const, queries: [{ ordinal: 1, queryId: "40000000-0000-4000-8000-000000000004", kind: "general" as const, stableFingerprint: "a".repeat(64), query: "工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 as const }] } },
+  workflowVersion: LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION, ruleVersion: LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION,
+  adapter: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER, adapterVersion: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION, outputSchemaVersion: LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+  toolAllowlist: ["job_discovery.list_source", "job_discovery.search", "job_discovery.extract", "job_discovery.fetch"] as const, model: null, budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+} as const;
 
 describe("AgentRunModule", () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
   it("production module 构造可解析 v4 的真实 workflow resolver，而非只 export helper", () => {
     const resolver = createConfiguredLayeredPublicJobDiscoveryWorkflowResolver({
       environment: { APP_ENV: "production", ANYSEARCH_API_KEY: "configured-key" }, db: {} as never, auditTrail: {} as never,
       contentStore: { put: async () => undefined, delete: async () => undefined }, evidenceStore: { put: async () => ({ created: true }), delete: async () => undefined }, id: () => crypto.randomUUID(),
     });
-    expect(typeof resolver.resolve).toBe("function");
+    expect(typeof resolver.resolve({ runId: "10000000-0000-4000-8000-000000000001", idempotencyKey: "20000000-0000-4000-8000-000000000002", executionSpec: layeredExecutionSpec as never, attemptCount: 1 }).run).toBe("function");
+  });
+
+  it.each([undefined, "   "])("缺少 AnySearch key 时不 checkpoint 或匿名请求，且保留 source issue: %j", async (apiKey) => {
+    const transport = vi.fn();
+    vi.stubGlobal("fetch", transport);
+    const resolver = createConfiguredLayeredPublicJobDiscoveryWorkflowResolver({
+      environment: { APP_ENV: "production", ANYSEARCH_API_KEY: apiKey }, db: {} as never, auditTrail: {} as never,
+      contentStore: { put: async () => undefined, delete: async () => undefined }, evidenceStore: { put: async () => ({ created: true }), delete: async () => undefined }, id: () => crypto.randomUUID(),
+    });
+    const result = await resolver.resolve({ runId: "10000000-0000-4000-8000-000000000001", idempotencyKey: "20000000-0000-4000-8000-000000000002", executionSpec: layeredExecutionSpec as never, attemptCount: 1 }).run({
+      userId: legacyExecutionSpec.targetSnapshot.targetId, runId: "10000000-0000-4000-8000-000000000001", claimToken: "50000000-0000-4000-8000-000000000005", now: new Date(), executionSpec: layeredExecutionSpec as never, attemptCount: 1,
+      beforePhysicalOperation: async () => { throw new Error("not a physical request"); }, onDiagnostics: () => undefined, signal: new AbortController().signal,
+    });
+    expect({ transport: transport.mock.calls.length, result }).toMatchObject({ transport: 0, result: { branchOutcome: { trusted: "failed", publicDiscovery: "failed" }, diagnostics: [{ scope: "provider", code: "ANYSEARCH_NOT_CONFIGURED", retryable: false, affectedCount: 1 }], sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED", affectedCount: 1 }] } });
+  });
+
+  it("test 环境的 resolver 拒绝 v4，保证旧 Fake 与 v3 health 路径不被抢占", () => {
+    const resolver = createConfiguredLayeredPublicJobDiscoveryWorkflowResolver({
+      environment: { APP_ENV: "test", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: "{}" }, db: {} as never, auditTrail: {} as never,
+      contentStore: { put: async () => undefined, delete: async () => undefined }, evidenceStore: { put: async () => ({ created: true }), delete: async () => undefined }, id: () => crypto.randomUUID(),
+    });
+    expect(() => resolver.resolve({ runId: "10000000-0000-4000-8000-000000000001", idempotencyKey: "20000000-0000-4000-8000-000000000002", executionSpec: layeredExecutionSpec as never, attemptCount: 1 })).toThrow("AGENT_RUN_ADAPTER_UNSUPPORTED");
   });
 
   it.each([

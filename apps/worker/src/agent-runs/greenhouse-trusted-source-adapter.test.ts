@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PublicSourceClient } from "@job-copilot/source-access";
 
 import { GreenhouseTrustedSourceAdapter } from "./greenhouse-trusted-source-adapter.js";
@@ -13,6 +13,14 @@ const targetSnapshot = {
 };
 
 describe("GreenhouseTrustedSourceAdapter", () => {
+  const previousAppEnv = process.env.APP_ENV;
+
+  beforeEach(() => { process.env.APP_ENV = "test"; });
+  afterEach(() => {
+    if (previousAppEnv === undefined) delete process.env.APP_ENV;
+    else process.env.APP_ENV = previousAppEnv;
+  });
+
   it("使用冻结来源并将同一 AbortSignal 原样传到列表与详情 PublicSourceClient 调用", async () => {
     const calls: Array<{ url: URL; signal: AbortSignal | undefined }> = [];
     const client: PublicSourceClient = {

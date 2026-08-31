@@ -107,16 +107,16 @@ export class AnySearchPublicJobAdapter {
     this.authorizeRecoveredCandidate = input.authorizeRecoveredCandidate;
   }
 
-  async search(input: unknown): Promise<AnySearchOperationResult<{ queryId: string; ordinal: number; candidates: readonly AnySearchCandidateOutcome[] }>> {
-    return this.searchInternal(input, true);
+  async search(input: unknown, beforeRequest = this.beforeRequest): Promise<AnySearchOperationResult<{ queryId: string; ordinal: number; candidates: readonly AnySearchCandidateOutcome[] }>> {
+    return this.searchInternal(input, true, beforeRequest);
   }
 
-  private async searchInternal(input: unknown, issueCandidates: boolean): Promise<AnySearchOperationResult<{ queryId: string; ordinal: number; candidates: readonly AnySearchCandidateOutcome[] }>> {
+  private async searchInternal(input: unknown, issueCandidates: boolean, beforeRequest = this.beforeRequest): Promise<AnySearchOperationResult<{ queryId: string; ordinal: number; candidates: readonly AnySearchCandidateOutcome[] }>> {
     if (!this.apiKey) return error("ANYSEARCH_NOT_CONFIGURED", false, null);
     const parsedInput = parseSearchInput(input);
     if (!parsedInput) return error("ANYSEARCH_POLICY_REJECTED", false, null);
     const requestOperationIdentity = operationIdentity("search", parsedInput.queryId);
-    const decision = await this.decide({ kind: "search", queryId: parsedInput.queryId, operationIdentity: requestOperationIdentity }, parsedInput.signal);
+    const decision = await this.decide({ kind: "search", queryId: parsedInput.queryId, operationIdentity: requestOperationIdentity }, parsedInput.signal, beforeRequest);
     if (decision !== "proceed") return this.decisionResult(decision, requestOperationIdentity);
     const response = await this.request("/v1/search", { query: parsedInput.query, max_results: 5 }, parsedInput.signal);
     if (!response.ok) return response;
@@ -163,7 +163,7 @@ export class AnySearchPublicJobAdapter {
     } : result);
   }
 
-  async extract(input: unknown): Promise<AnySearchOperationResult<{ normalizedUrl: string; content: string }>> {
+  async extract(input: unknown, beforeRequest = this.beforeRequest): Promise<AnySearchOperationResult<{ normalizedUrl: string; content: string }>> {
     if (!this.apiKey) return error("ANYSEARCH_NOT_CONFIGURED", false, null);
     const parsedInput = parseExtractInput(input);
     if (!parsedInput) return error("ANYSEARCH_POLICY_REJECTED", false, null);
@@ -178,7 +178,7 @@ export class AnySearchPublicJobAdapter {
     this.claimedExtractOperations.add(requestOperationIdentity);
     let decision: AnySearchRequestDecision;
     try {
-      decision = await this.decide({ kind: "extract", identity: parsedInput.identity, candidateFingerprint: candidate.candidateFingerprint, operationIdentity: requestOperationIdentity }, parsedInput.signal);
+      decision = await this.decide({ kind: "extract", identity: parsedInput.identity, candidateFingerprint: candidate.candidateFingerprint, operationIdentity: requestOperationIdentity }, parsedInput.signal, beforeRequest);
     } catch (cause) {
       this.claimedExtractOperations.delete(requestOperationIdentity);
       throw cause;
@@ -194,9 +194,9 @@ export class AnySearchPublicJobAdapter {
     return { ok: true, data: { normalizedUrl: checked.data.normalizedUrl, content: parsed.data.content } };
   }
 
-  private async decide(input: Parameters<AnySearchBeforeRequest>[0], signal?: AbortSignal): Promise<AnySearchRequestDecision> {
+  private async decide(input: Parameters<AnySearchBeforeRequest>[0], signal?: AbortSignal, beforeRequest = this.beforeRequest): Promise<AnySearchRequestDecision> {
     if (signal?.aborted) return "blocked";
-    const decision = this.beforeRequest ? await this.beforeRequest(input) : "proceed";
+    const decision = beforeRequest ? await beforeRequest(input) : "proceed";
     if (signal?.aborted || (decision !== "proceed" && decision !== "already_completed" && decision !== "blocked")) return "blocked";
     return decision;
   }

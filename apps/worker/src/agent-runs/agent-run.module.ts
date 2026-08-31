@@ -3,9 +3,11 @@ import { Injectable, Module, type OnModuleDestroy } from "@nestjs/common";
 import { Client as MinioClient } from "minio";
 import { createDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
-import { createAgentRunCommands, createAgentRunProcessor, createAgentRunRecoveryQueries } from "@job-copilot/domain/agent-runs";
+import { createAgentRunCommands, createAgentRunProcessor, createAgentRunRecoveryQueries, createLayeredPublicJobDiscoveryRuntime, type DiscoveryContentStore, type LayeredPublicJobDiscoveryWorkflowResolver } from "@job-copilot/domain/agent-runs";
 import { resolveJobDiscoveryExecutionMode } from "@job-copilot/domain/job-discovery-execution-mode";
 import { createJobDiscoverySchedules } from "@job-copilot/domain/job-discovery-schedules";
+import type { VerifiedJobEvidenceStore } from "@job-copilot/domain/verified-job-source-gate";
+import { SecureJobPageFetcher } from "@job-copilot/source-access";
 
 import { AgentRunConsumer } from "./agent-run-consumer.js";
 import {
@@ -20,7 +22,10 @@ import {
   type AgentRunScheduleReporter,
 } from "./agent-run-scheduler.js";
 import { createJobDiscoveryAdapterResolver, createLayeredPublicJobDiscoveryWorkflowResolver, createSourceHealthDiscoveryAdapterResolver } from "./job-discovery-adapter-resolver.js";
+import { AnySearchPublicJobAdapter, preflightAnySearchCandidate, type AnySearchCandidate, type AnySearchBeforeRequest } from "./anysearch-public-job-adapter.js";
+import { GreenhouseTrustedSourceAdapter } from "./greenhouse-trusted-source-adapter.js";
 import { MinioDiscoveryContentStore } from "./minio-discovery-content-store.js";
+import { MinioVerifiedJobEvidenceStore } from "./minio-verified-job-evidence-store.js";
 
 export const AGENT_RUN_CONSUMER = Symbol("AGENT_RUN_CONSUMER");
 export const AGENT_RUN_RECONCILER = Symbol("AGENT_RUN_RECONCILER");
@@ -29,6 +34,7 @@ export const AGENT_RUN_DATABASE = Symbol("AGENT_RUN_DATABASE");
 export const AGENT_RUN_RECOVERY_REPORTER = Symbol("AGENT_RUN_RECOVERY_REPORTER");
 export const AGENT_RUN_SCHEDULER = Symbol("AGENT_RUN_SCHEDULER");
 export const AGENT_RUN_SCHEDULE_REPORTER = Symbol("AGENT_RUN_SCHEDULE_REPORTER");
+export const AGENT_RUN_EXECUTION_MODE = Symbol("AGENT_RUN_EXECUTION_MODE");
 
 function required(
   name: "DATABASE_URL" | "REDIS_URL" | "MINIO_ENDPOINT" | "MINIO_ACCESS_KEY" | "MINIO_SECRET_KEY" | "MINIO_BUCKET",
@@ -63,9 +69,70 @@ export function createConfiguredJobDiscoveryAdapterResolver(environment: NodeJS.
   return createJobDiscoveryAdapterResolver(environment);
 }
 
-/** Worker v4 resolver 的配置入口；具体 workflow 只能由已注入的 runtime ports 构造。 */
-export function createConfiguredLayeredPublicJobDiscoveryWorkflowResolver(input: Parameters<typeof createLayeredPublicJobDiscoveryWorkflowResolver>[0]) {
-  return createLayeredPublicJobDiscoveryWorkflowResolver(input);
+/** Worker v4 resolver 的配置入口；具体 workflow 只由生产端口组装，测试与未知环境 fail-closed。 */
+export function createConfiguredLayeredPublicJobDiscoveryWorkflowResolver(input: {
+  environment?: NodeJS.ProcessEnv;
+  db: Database;
+  auditTrail: ReturnType<typeof createAuditTrail>;
+  contentStore: DiscoveryContentStore;
+  evidenceStore: VerifiedJobEvidenceStore;
+  id: () => string;
+}): LayeredPublicJobDiscoveryWorkflowResolver {
+  const environment = input.environment ?? process.env;
+  if (environment.APP_ENV !== "production" && environment.APP_ENV !== "local" && environment.APP_ENV !== "test") {
+    throw new Error("LayeredPublicJobDiscovery 环境未获允许");
+  }
+  if (environment.APP_ENV !== "production") {
+    return createLayeredPublicJobDiscoveryWorkflowResolver({ createWorkflow: () => { throw new Error("AGENT_RUN_ADAPTER_UNSUPPORTED"); } });
+  }
+  return createLayeredPublicJobDiscoveryWorkflowResolver({
+    createWorkflow: () => {
+      const anySearch = new AnySearchPublicJobAdapter({ apiKey: environment.ANYSEARCH_API_KEY });
+      const candidates = new Map<string, AnySearchCandidate>();
+      return createLayeredPublicJobDiscoveryRuntime({
+        db: input.db,
+        id: input.id,
+        auditTrail: input.auditTrail,
+        contentStore: input.contentStore,
+        evidenceStore: input.evidenceStore,
+        trustedSourceAdapter: new GreenhouseTrustedSourceAdapter(),
+        anySearch: {
+          search: async ({ query, signal, beforeRequest: checkpoint }) => {
+            const beforeRequest: AnySearchBeforeRequest = async (operation) => {
+              if (operation.kind !== "search") return "blocked" as const;
+              await checkpoint();
+              return "proceed" as const;
+            };
+            const result = await anySearch.search({ ...query, signal }, beforeRequest);
+            if (!result.ok && "error" in result) return { error: result.error };
+            if (!("data" in result)) return { candidates: [] };
+            const accepted = result.data.candidates.flatMap((outcome) => outcome.policy === "accepted" && outcome.candidate ? [outcome.candidate] : []);
+            for (const candidate of accepted) candidates.set(`${candidate.queryId}:${candidate.candidateFingerprint}`, candidate);
+            return { candidates: accepted.map((candidate) => ({ normalizedUrl: candidate.normalizedUrl, stableFingerprint: candidate.candidateFingerprint })) };
+          },
+          extract: async ({ candidate, signal, beforeRequest: checkpoint }) => {
+            const issued = candidates.get(`${candidate.queryId}:${candidate.stableFingerprint}`);
+            if (!issued) return { error: { code: "ANYSEARCH_POLICY_REJECTED", retryable: false, httpStatus: null } };
+            const beforeRequest: AnySearchBeforeRequest = async (operation) => {
+              if (operation.kind !== "extract") return "blocked" as const;
+              await checkpoint();
+              return "proceed" as const;
+            };
+            const result = await anySearch.extract({ candidate: issued, identity: candidate.leadId, signal }, beforeRequest);
+            if (!result.ok && "error" in result) return { error: result.error };
+            return "data" in result ? { normalizedUrl: result.data.normalizedUrl } : { error: { code: "ANYSEARCH_CANCELLED", retryable: false, httpStatus: null } };
+          },
+        },
+        preflight: async ({ candidate }) => {
+          const result = preflightAnySearchCandidate({ url: candidate.normalizedUrl, allowedSiteDomains: candidate.allowedSiteDomains });
+          return result.ok ? { normalizedUrl: result.data.normalizedUrl } : null;
+        },
+        fetcher: {
+          fetch: ({ candidate, signal }) => new SecureJobPageFetcher().fetch({ url: candidate.normalizedUrl, signal }),
+        },
+      });
+    },
+  });
 }
 
 @Injectable()
@@ -83,6 +150,7 @@ class AgentRunDatabase implements OnModuleDestroy {
 @Module({
   providers: [
     { provide: AGENT_RUN_DATABASE, useClass: AgentRunDatabase },
+    { provide: AGENT_RUN_EXECUTION_MODE, useFactory: () => createConfiguredJobDiscoveryExecutionMode() },
     {
       provide: AGENT_RUN_QUEUE,
       useFactory: () => new BullmqAgentRunQueue(redisUrl()),
@@ -110,6 +178,13 @@ class AgentRunDatabase implements OnModuleDestroy {
             db,
             adapterResolver: createConfiguredJobDiscoveryAdapterResolver(),
             sourceHealthAdapterResolver: createSourceHealthDiscoveryAdapterResolver(),
+            layeredPublicWorkflowResolver: createConfiguredLayeredPublicJobDiscoveryWorkflowResolver({
+              db,
+              auditTrail: createAuditTrail({ db, clock: () => new Date() }),
+              contentStore: new MinioDiscoveryContentStore(createMinioClient(), required("MINIO_BUCKET", "career-documents")),
+              evidenceStore: new MinioVerifiedJobEvidenceStore(createMinioClient(), required("MINIO_BUCKET", "career-documents")),
+              id: randomUUID,
+            }),
             contentStore: new MinioDiscoveryContentStore(createMinioClient(), required("MINIO_BUCKET", "career-documents")),
             auditTrail: createAuditTrail({ db, clock: () => new Date() }),
             id: randomUUID,
@@ -133,11 +208,12 @@ class AgentRunDatabase implements OnModuleDestroy {
     },
     {
       provide: AGENT_RUN_SCHEDULER,
-      inject: [AGENT_RUN_DATABASE, AGENT_RUN_QUEUE, AGENT_RUN_SCHEDULE_REPORTER],
+      inject: [AGENT_RUN_DATABASE, AGENT_RUN_QUEUE, AGENT_RUN_SCHEDULE_REPORTER, AGENT_RUN_EXECUTION_MODE],
       useFactory: (
         database: AgentRunDatabase,
         queue: BullmqAgentRunQueue,
         reporter: AgentRunScheduleReporter,
+        executionMode: ReturnType<typeof createConfiguredJobDiscoveryExecutionMode>,
       ) => {
         const db = database.db;
         const auditTrail = createAuditTrail({ db, clock: () => new Date() });
@@ -147,10 +223,10 @@ class AgentRunDatabase implements OnModuleDestroy {
           auditTrail,
           id: randomUUID,
           clock: () => new Date(),
-          executionMode: createConfiguredJobDiscoveryExecutionMode(),
+          executionMode,
         });
         return new AgentRunScheduler({
-          schedules: createJobDiscoverySchedules({ db, runs, auditTrail, id: randomUUID, clock: () => new Date(), executionMode: createConfiguredJobDiscoveryExecutionMode() }),
+          schedules: createJobDiscoverySchedules({ db, runs, auditTrail, id: randomUUID, clock: () => new Date(), executionMode }),
           reporter,
         });
       },
