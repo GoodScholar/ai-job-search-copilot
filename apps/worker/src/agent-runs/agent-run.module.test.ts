@@ -35,8 +35,9 @@ describe("AgentRunModule", () => {
 
   it("精确 configured phase 的恢复候选在空进程 Map 中仍只向固定 fixture origin extract", async () => {
     vi.stubEnv("APP_ENV", "test");
+    let observedFixedFixtureOrigin = false;
     const transport = vi.fn(async (input: RequestInfo | URL) => {
-      expect(new URL(String(input)).origin).toBe("http://127.0.0.1:39334");
+      observedFixedFixtureOrigin = new URL(String(input)).origin === "http://127.0.0.1:39334";
       return new Response(JSON.stringify({
         code: 0, message: "success", request_id: "fixture", data: {
           url: "https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9001",
@@ -65,6 +66,7 @@ describe("AgentRunModule", () => {
 
     expect(result).toMatchObject({ ok: true, data: { normalizedUrl } });
     expect(transport).toHaveBeenCalledTimes(1);
+    expect(observedFixedFixtureOrigin).toBe(true);
   });
 
   it("production module 构造可解析 v4 的真实 workflow resolver，而非只 export helper", () => {
