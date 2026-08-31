@@ -8,6 +8,7 @@ import { createCompanyWatchlistCommands } from "./company-watchlists";
 import { AgentRunDetailSchema, AgentRunEventSchema, GREENHOUSE_JOB_DISCOVERY_ADAPTER, GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION, GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, GREENHOUSE_JOB_DISCOVERY_RULE_VERSION, GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION, GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION, GREENHOUSE_SOURCE_HEALTH_RULE_VERSION, GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST, GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, PUBLIC_JOB_DISCOVERY_BUDGET } from "@job-copilot/contracts/agent-runs";
 import { LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER, LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_TOOL_ALLOWLIST, LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION } from "@job-copilot/contracts/job-discovery";
 import { createLayeredPublicJobDiscoveryWorkflow, LayeredPublicWorkflowInterruption } from "./layered-public-job-discovery-workflow";
+import { createLayeredPublicJobDiscoveryRuntime } from "./layered-public-job-discovery-runtime";
 import { createJobDiscoveryPersistence } from "./job-discovery-persistence";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
@@ -17,7 +18,11 @@ class Queue implements AgentRunQueue { async enqueue() {} }
 class Store implements DiscoveryContentStore {
   readonly puts: string[] = [];
   readonly deletes: string[] = [];
-  async put({ objectKey }: { objectKey: string }) { this.puts.push(objectKey); }
+  readonly payloads = new Map<string, Uint8Array>();
+  async put({ objectKey, bytes }: { objectKey: string; bytes?: Uint8Array }) {
+    this.puts.push(objectKey);
+    if (bytes) this.payloads.set(objectKey, bytes);
+  }
   async delete({ objectKey }: { objectKey: string }) { this.deletes.push(objectKey); }
 }
 
@@ -117,6 +122,62 @@ describe("AgentRunProcessor checkpoints", () => {
     expect(first.sourcePostingVersionIds).toHaveLength(1);
     expect(replay.sourcePostingVersionIds).toEqual(first.sourcePostingVersionIds);
     await expect(database.select().from(jobOpportunities).where(eq(jobOpportunities.userId, job.userId))).resolves.toHaveLength(1);
+    await expect(Promise.all([
+      database.select().from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, job.runId)),
+      database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, job.runId)),
+      database.select().from(jobDiscoveryRunResults).where(eq(jobDiscoveryRunResults.runId, job.runId)),
+      database.select().from(jobDiscoveryDiagnostics).where(eq(jobDiscoveryDiagnostics.runId, job.runId)),
+      database.select().from(jobDiscoverySourceIssues).where(eq(jobDiscoverySourceIssues.runId, job.runId)),
+      database.select().from(agentInboxItems).where(eq(agentInboxItems.runId, job.runId)),
+    ])).resolves.toEqual([[], [], [], [], [], []]);
+    await expect(database.select({ status: agentRuns.status, currentStep: agentRuns.currentStep, claimToken: agentRuns.claimToken }).from(agentRuns).where(eq(agentRuns.id, job.runId)))
+      .resolves.toEqual([{ status: "running", currentStep: "batch_search", claimToken }]);
+  });
+
+  it("v4 runtime 逐次 checkpoint 同一 signal 地包装冻结 Greenhouse，并只经 claim bridge 写入", async () => {
+    const job = await layeredRun();
+    const claimToken = crypto.randomUUID();
+    await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", startedAt: now, claimToken, claimExpiresAt: new Date(Date.now() + 30_000), activeSliceStartedAt: now, attemptCount: 1 }).where(eq(agentRuns.id, job.runId));
+    const [claimed] = await database.select().from(agentRuns).where(eq(agentRuns.id, job.runId));
+    if (!claimed) throw new Error("missing claimed run");
+    const executionSpec = {
+      targetSnapshot: claimed.targetSnapshot, profileSnapshot: claimed.profileSnapshot, watchlistSnapshot: claimed.watchlistSnapshot,
+      sourceScope: claimed.sourceScope, workflowVersion: claimed.workflowVersion, ruleVersion: claimed.ruleVersion,
+      adapter: claimed.adapter, adapterVersion: claimed.adapterVersion, outputSchemaVersion: claimed.outputSchemaVersion,
+      toolAllowlist: claimed.toolAllowlist, model: claimed.modelSnapshot, budget: claimed.budgetSnapshot,
+    };
+    const store = new Store();
+    const controller = new AbortController();
+    const requests: string[] = [];
+    const adapter = {
+      listSource: async (input: any) => {
+        expect(input.signal).toBe(controller.signal);
+        requests.push(`list:${input.source.sourceId}`);
+        return { ok: true as const, data: { sourceId: input.source.sourceId, observedDetailIds: ["opening-2"], candidates: [{ sourceId: input.source.sourceId, detailId: "opening-2" }] } };
+      },
+      getSourceDetail: async (input: any) => {
+        expect(input.signal).toBe(controller.signal);
+        requests.push(`detail:${input.source.sourceId}:${input.detailId}`);
+        return { ok: true as const, data: { sourceId: input.source.sourceId, detailId: input.detailId, company: "Example", title: "AI 应用工程师", location: "上海", postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true, rawPayload: { z: 1, a: "canonical" } } };
+      },
+    };
+    const runtime = createLayeredPublicJobDiscoveryRuntime({
+      db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => now }),
+      contentStore: store, evidenceStore: store as never, trustedSourceAdapter: adapter,
+      anySearch: { search: async () => ({ candidates: [] }), extract: async () => { throw new Error("UNUSED"); } },
+      preflight: async () => null, fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
+    } as any);
+    const first = await runtime.run({ userId: job.userId, runId: job.runId, claimToken, now, executionSpec: executionSpec as never, attemptCount: 1, beforePhysicalOperation: async ({ kind }) => { requests.push(`checkpoint:${kind}`); }, onDiagnostics: () => undefined, signal: controller.signal });
+    const replay = await runtime.run({ userId: job.userId, runId: job.runId, claimToken, now, executionSpec: executionSpec as never, attemptCount: 1, beforePhysicalOperation: async ({ kind }) => { requests.push(`checkpoint:${kind}`); }, onDiagnostics: () => undefined, signal: controller.signal });
+
+    expect(requests).toEqual([
+      "checkpoint:search", "list:greenhouse:example", "checkpoint:search", "detail:greenhouse:example:opening-2",
+      "checkpoint:search", "list:greenhouse:example", "checkpoint:search", "detail:greenhouse:example:opening-2",
+    ]);
+    expect(first).toMatchObject({ branchOutcome: { trusted: "succeeded", publicDiscovery: "clean_zero" }, trustedSourcePostingVersionIds: [expect.any(String)], sourceIssues: [] });
+    expect(replay.trustedSourcePostingVersionIds).toEqual(first.trustedSourcePostingVersionIds);
+    expect(new TextDecoder().decode(store.payloads.get(store.puts[0]!)!)).toBe('{"a":"canonical","z":1}');
+    expect(store.deletes).toEqual([store.puts[1]]);
     await expect(Promise.all([
       database.select().from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, job.runId)),
       database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, job.runId)),
