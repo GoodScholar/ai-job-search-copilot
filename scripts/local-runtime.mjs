@@ -351,8 +351,11 @@ export async function runRuntime({
       stopApplications(child, requestedSignal ?? "SIGTERM");
       await awaitChildExit();
     }
-    await fixtureServer?.close();
-    await cleanup({ config });
+    try {
+      await fixtureServer?.close();
+    } finally {
+      await cleanup({ config });
+    }
   }
 }
 
