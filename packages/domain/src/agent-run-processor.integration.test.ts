@@ -190,6 +190,60 @@ describe("AgentRunProcessor checkpoints", () => {
       .resolves.toEqual([{ status: "running", currentStep: "batch_search", claimToken }]);
   });
 
+  it("v4 trusted wrapper 聚合局部来源失败并拒绝跨来源详情身份", async () => {
+    const job = await layeredRun();
+    const claimToken = crypto.randomUUID();
+    const [row] = await database.select().from(agentRuns).where(eq(agentRuns.id, job.runId));
+    const sourceScope = structuredClone(row!.sourceScope) as any;
+    sourceScope.trustedSources.push({ kind: "greenhouse_trusted_source", source: { sourceId: "greenhouse:unavailable", watchlistItemId: crypto.randomUUID(), canonicalCompanyName: "Unavailable", careersUrl: "https://boards.greenhouse.io/unavailable", allowedDomains: ["boards-api.greenhouse.io"], boardToken: "unavailable" } });
+    await database.update(agentRuns).set({ sourceScope, status: "running", currentStep: "batch_search", startedAt: now, claimToken, claimExpiresAt: new Date(Date.now() + 30_000), activeSliceStartedAt: now, attemptCount: 1 }).where(eq(agentRuns.id, job.runId));
+    const [claimed] = await database.select().from(agentRuns).where(eq(agentRuns.id, job.runId));
+    const spec = { targetSnapshot: claimed!.targetSnapshot, profileSnapshot: claimed!.profileSnapshot, watchlistSnapshot: claimed!.watchlistSnapshot, sourceScope: claimed!.sourceScope, workflowVersion: claimed!.workflowVersion, ruleVersion: claimed!.ruleVersion, adapter: claimed!.adapter, adapterVersion: claimed!.adapterVersion, outputSchemaVersion: claimed!.outputSchemaVersion, toolAllowlist: claimed!.toolAllowlist, model: claimed!.modelSnapshot, budget: claimed!.budgetSnapshot };
+    const runtime = createLayeredPublicJobDiscoveryRuntime({
+      db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => now }), contentStore: new Store(), evidenceStore: new Store() as never,
+      trustedSourceAdapter: {
+        listSource: async ({ source, signal }: any) => source.sourceId === "greenhouse:unavailable"
+          ? { ok: false as const, error: { code: "GREENHOUSE_TIMEOUT" } }
+          : { ok: true as const, data: { sourceId: source.sourceId, observedDetailIds: ["opening-2"], candidates: [{ sourceId: source.sourceId, detailId: "opening-2" }] }, signal },
+        getSourceDetail: async ({ source, detailId, signal }: any) => ({ ok: true as const, data: { sourceId: "greenhouse:other", detailId, company: "Example", title: "AI 应用工程师", location: "上海", postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true, rawPayload: {} }, signal }),
+      },
+      anySearch: { search: async () => ({ candidates: [] }), extract: async () => { throw new Error("UNUSED"); } }, preflight: async () => null, fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
+    } as any);
+    const outcome = await runtime.run({ userId: job.userId, runId: job.runId, claimToken, now, executionSpec: spec as never, attemptCount: 1, beforePhysicalOperation: async () => undefined, onDiagnostics: () => undefined, signal: new AbortController().signal });
+
+    expect(outcome).toMatchObject({ branchOutcome: { trusted: "succeeded", publicDiscovery: "clean_zero" }, trustedSourcePostingVersionIds: [], sourceIssues: [
+      { provider: "greenhouse", code: "GREENHOUSE_DETAIL_IDENTITY_INVALID", affectedCount: 1 },
+      { provider: "greenhouse", code: "GREENHOUSE_TIMEOUT", affectedCount: 1 },
+    ] });
+    await expect(database.select().from(jobSourcePostings).where(eq(jobSourcePostings.userId, job.userId))).resolves.toHaveLength(1);
+  });
+
+  it("v4 trusted wrapper 在详情返回后 claim 被暂停时不留下来源写入或对象", async () => {
+    const job = await layeredRun();
+    const claimToken = crypto.randomUUID();
+    await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", startedAt: now, claimToken, claimExpiresAt: new Date(Date.now() + 30_000), activeSliceStartedAt: now, attemptCount: 1 }).where(eq(agentRuns.id, job.runId));
+    const [claimed] = await database.select().from(agentRuns).where(eq(agentRuns.id, job.runId));
+    const spec = { targetSnapshot: claimed!.targetSnapshot, profileSnapshot: claimed!.profileSnapshot, watchlistSnapshot: claimed!.watchlistSnapshot, sourceScope: claimed!.sourceScope, workflowVersion: claimed!.workflowVersion, ruleVersion: claimed!.ruleVersion, adapter: claimed!.adapter, adapterVersion: claimed!.adapterVersion, outputSchemaVersion: claimed!.outputSchemaVersion, toolAllowlist: claimed!.toolAllowlist, model: claimed!.modelSnapshot, budget: claimed!.budgetSnapshot };
+    const store = new Store();
+    const runtime = createLayeredPublicJobDiscoveryRuntime({
+      db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => now }), contentStore: store, evidenceStore: store as never,
+      trustedSourceAdapter: {
+        listSource: async ({ source }: any) => ({ ok: true as const, data: { sourceId: source.sourceId, observedDetailIds: ["opening-2"], candidates: [{ sourceId: source.sourceId, detailId: "opening-2" }] } }),
+        getSourceDetail: async ({ source, detailId }: any) => {
+          await database.update(agentRuns).set({ controlState: "pause_requested" }).where(eq(agentRuns.id, job.runId));
+          return { ok: true as const, data: { sourceId: source.sourceId, detailId, company: "Example", title: "AI 应用工程师", location: "上海", postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true, rawPayload: { id: detailId } } };
+        },
+      },
+      anySearch: { search: async () => ({ candidates: [] }), extract: async () => { throw new Error("UNUSED"); } }, preflight: async () => null, fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
+    });
+    const outcome = await runtime.run({ userId: job.userId, runId: job.runId, claimToken, now, executionSpec: spec as never, attemptCount: 1, beforePhysicalOperation: async () => undefined, onDiagnostics: () => undefined, signal: new AbortController().signal });
+
+    expect(outcome.interruption).toBe("stale");
+    expect(store.deletes).toEqual(store.puts);
+    await expect(database.select().from(jobSourcePostings).where(eq(jobSourcePostings.userId, job.userId))).resolves.toHaveLength(1);
+    await expect(database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, job.userId))).resolves.toHaveLength(1);
+  });
+
   it("v4 detail、latest 与 eventsAfter 只投影同 owner 的有序脱敏事实，并保持 resultCount", async () => {
     const job = await layeredRun();
     const firstExtraVersionId = await extraTrustedVersion(job, 1);

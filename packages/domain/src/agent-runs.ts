@@ -33,7 +33,7 @@ export type {
   LayeredPublicWorkflowDiagnostic,
   LayeredPublicWorkflowOutcome,
 } from "./layered-public-job-discovery-workflow";
-export { createLayeredPublicJobDiscoveryRuntime } from "./layered-public-job-discovery-runtime";
+export { createLayeredPublicJobDiscoveryRuntime, type LayeredTrustedSourceAdapter } from "./layered-public-job-discovery-runtime";
 
 type FacadeProcessorDependencies = Omit<AgentRunProcessorDependencies, "checkpoint"> & {
   checkpoint?: AgentRunCheckpoint;

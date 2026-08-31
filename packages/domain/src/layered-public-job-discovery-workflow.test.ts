@@ -10,6 +10,7 @@ import {
   LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION,
 } from "@job-copilot/contracts/job-discovery";
 import { createLayeredPublicJobDiscoveryWorkflow, LayeredPublicWorkflowInterruption } from "./layered-public-job-discovery-workflow";
+import { createLayeredPublicJobDiscoveryRuntime } from "./layered-public-job-discovery-runtime";
 
 const runId = "11111111-1111-8111-8111-111111111111";
 const targetId = "22222222-2222-8222-8222-222222222222";
@@ -26,6 +27,20 @@ function executionSpecFor(queries: Array<Record<string, unknown>>, trustedSource
 }
 
 describe("layered public job discovery workflow", () => {
+  it("factory 对空 trusted scope 不发请求且报告 failed/empty trusted branch", async () => {
+    let adapterCalls = 0;
+    const runtime = createLayeredPublicJobDiscoveryRuntime({
+      db: {} as never, id: () => "aaaaaaaa-aaaa-8aaa-8aaa-aaaaaaaaaaaa", auditTrail: {} as never,
+      contentStore: { put: async () => undefined, delete: async () => undefined }, evidenceStore: { put: async () => ({ created: true }), delete: async () => undefined },
+      trustedSourceAdapter: { listSource: async () => { adapterCalls += 1; throw new Error("UNUSED"); }, getSourceDetail: async () => { adapterCalls += 1; throw new Error("UNUSED"); } },
+      anySearch: { search: async () => ({ candidates: [] }), extract: async () => { throw new Error("UNUSED"); } },
+      preflight: async () => null, fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
+    });
+    const outcome = await runtime.run({ userId: targetId, runId, claimToken: "99999999-9999-8999-8999-999999999999", now: new Date(), executionSpec: executionSpecFor([{ ordinal: 1, queryId, kind: "general", stableFingerprint: "a".repeat(64), query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }], []) as never, attemptCount: 1, beforePhysicalOperation: async () => undefined, onDiagnostics: () => undefined, signal: new AbortController().signal });
+    expect(outcome).toMatchObject({ branchOutcome: { trusted: "failed", publicDiscovery: "clean_zero" }, trustedSourcePostingVersionIds: [] });
+    expect(adapterCalls).toBe(0);
+  });
+
   it("在同一 run 调度可信来源和 AnySearch，并仅返回脱敏事实", async () => {
     const calls: string[] = [];
     const proofs: Record<string, unknown> = {};

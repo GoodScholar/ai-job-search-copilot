@@ -295,7 +295,10 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
           eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"),
           eq(agentRuns.controlState, "none"), eq(agentRuns.claimToken, input.claimToken), gt(agentRuns.claimExpiresAt, sql`current_timestamp`),
         )).limit(1);
-        if (!run) return { sourcePostingVersionIds: [], cleanupObjectKeys: input.storedObjects.map((item) => item.objectKey) };
+        if (!run) {
+          const error = Object.assign(new Error("JOB_DISCOVERY_CLAIM_STALE"), { code: "JOB_DISCOVERY_CLAIM_STALE" });
+          throw error;
+        }
         if (run.workflowVersion !== "layered-public-job-discovery-v1") throw new Error("AGENT_RUN_PERSIST_FAILED");
         const sourceScope = LayeredPublicJobDiscoverySourceScopeSchema.parse(run.sourceScope);
         if (!sourceScope.trustedSources.some(({ source }) => source.sourceId === input.sourceId)

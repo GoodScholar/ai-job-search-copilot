@@ -65,7 +65,7 @@ function aggregateDiagnostics(items: LayeredPublicWorkflowDiagnostic[]) {
 
 /** v4 安全链路；Slice 8 只组装 provider/config，不能改变 pending → extract → fetch → gate 的顺序。 */
 export function createLayeredPublicJobDiscoveryWorkflow(deps: {
-  trustedSources: { discover(input: { runId: string; executionSpec: LayeredSpec; signal: AbortSignal; beforeRequest(watchlistItemId: string): Promise<void> }): Promise<{ succeeded: boolean; verifiedSourcePostingVersionIds: string[]; sourceIssues?: Array<{ code: string; affectedCount: number }> }> };
+  trustedSources: { discover(input: { userId: string; runId: string; claimToken: string; now: Date; executionSpec: LayeredSpec; signal: AbortSignal; beforeRequest(watchlistItemId: string): Promise<void> }): Promise<{ succeeded: boolean; verifiedSourcePostingVersionIds: string[]; sourceIssues?: Array<{ code: string; affectedCount: number }> }> };
   anySearch: { search(input: { runId: string; executionSpec: LayeredSpec; query: Query; signal: AbortSignal; beforeRequest(): Promise<void> }): Promise<{ candidates: Candidate[] } | { error: AnySearchProviderError }>; extract(input: { candidate: RecoveredCandidateCapability; signal: AbortSignal; beforeRequest(): Promise<void> }): Promise<{ normalizedUrl: string } | { error: AnySearchProviderError }> };
   preflight(input: { candidate: IssuedCandidateCapability }): Promise<{ normalizedUrl: string } | null>;
   leads: { recordPendingForClaim(input: { targetId: string; candidate: IssuedCandidateCapability; claimToken: string; now: Date }): Promise<{ leadId: string }> };
@@ -86,7 +86,7 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
       sourceIssues: aggregateSourceIssues(sourceIssues), diagnostics: aggregateDiagnostics(diagnostics),
     });
     try {
-    trusted = await deps.trustedSources.discover({ runId: value.runId, executionSpec: spec, signal: value.signal, beforeRequest: (watchlistItemId) => value.beforePhysicalOperation({ kind: "search", identity: watchlistItemId }) });
+    trusted = await deps.trustedSources.discover({ userId: value.userId, runId: value.runId, claimToken: value.claimToken, now: value.now, executionSpec: spec, signal: value.signal, beforeRequest: (watchlistItemId) => value.beforePhysicalOperation({ kind: "search", identity: watchlistItemId }) });
     sourcePostingVersionIds.push(...trusted.verifiedSourcePostingVersionIds);
     sourceIssues.push(...(trusted.sourceIssues?.map((issue) => ({ provider: "greenhouse" as const, ...issue })) ?? []));
     for (const query of spec.sourceScope.publicDiscovery.queries) {
