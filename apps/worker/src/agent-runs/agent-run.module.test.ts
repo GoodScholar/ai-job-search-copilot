@@ -61,7 +61,7 @@ describe("AgentRunModule", () => {
         candidateFingerprint: createHash("sha256").update(normalizedUrl).digest("hex"),
       },
       identity: "50000000-0000-4000-8000-000000000005",
-    }, async () => "proceed");
+    }, async () => "proceed" as const);
 
     expect(result).toMatchObject({ ok: true, data: { normalizedUrl } });
     expect(transport).toHaveBeenCalledTimes(1);
