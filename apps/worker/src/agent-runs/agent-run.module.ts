@@ -78,7 +78,7 @@ export function createConfiguredAnySearchPublicJobAdapter(input: {
 }) {
   return new AnySearchPublicJobAdapter({
     apiKey: input.apiKey,
-    ...(input.fixtureOrigin && input.apiKey?.trim() && !input.authorizeRecoveredCandidate ? { baseUrl: input.fixtureOrigin } : {}),
+    ...(input.fixtureOrigin && input.apiKey?.trim() ? { baseUrl: input.fixtureOrigin } : {}),
     ...(input.authorizeRecoveredCandidate ? { authorizeRecoveredCandidate: input.authorizeRecoveredCandidate } : {}),
   });
 }
