@@ -67,11 +67,12 @@ function aggregateDiagnostics(items: LayeredPublicWorkflowDiagnostic[]) {
   for (const item of items) { const key = item.scope === "provider" ? `p\u001f${item.code}` : item.scope === "query" ? `q\u001f${item.queryId}\u001f${item.code}` : `l\u001f${item.leadId}\u001f${item.code}`; const previous = grouped.get(key); grouped.set(key, { ...item, affectedCount: Math.min(10, (previous?.affectedCount ?? 0) + item.affectedCount) } as LayeredPublicWorkflowDiagnostic); }
   return [...grouped.values()].sort((left, right) => `${left.scope}\u001f${left.code}`.localeCompare(`${right.scope}\u001f${right.code}`));
 }
+function boundedRejectedCandidateCount(value: unknown): number { return typeof value === "number" && Number.isInteger(value) && value > 0 ? Math.min(10, value) : 0; }
 
 /** v4 安全链路；Slice 8 只组装 provider/config，不能改变 pending → extract → fetch → gate 的顺序。 */
 export function createLayeredPublicJobDiscoveryWorkflow(deps: {
   trustedSources: { discover(input: { userId: string; runId: string; claimToken: string; now: Date; executionSpec: LayeredSpec; signal: AbortSignal; beforeRequest(watchlistItemId: string): Promise<void> }): Promise<{ succeeded: boolean; verifiedSourcePostingVersionIds: string[]; sourceIssues?: Array<{ code: string; affectedCount: number }> }> };
-  anySearch: { isConfigured?(): boolean; search(input: { runId: string; executionSpec: LayeredSpec; query: Query; signal: AbortSignal; beforeRequest(): Promise<void> }): Promise<{ candidates: Candidate[] } | { error: AnySearchProviderError }>; extract(input: { candidate: RecoveredCandidateCapability; signal: AbortSignal; beforeRequest(): Promise<void>; authorizeRecoveredCandidate(input: { queryId: string; candidateFingerprint: string; identity: string; operationIdentity: string }): Promise<boolean> }): Promise<{ normalizedUrl: string } | { error: AnySearchProviderError }> };
+  anySearch: { isConfigured?(): boolean; search(input: { runId: string; executionSpec: LayeredSpec; query: Query; signal: AbortSignal; beforeRequest(): Promise<void> }): Promise<{ candidates: Candidate[]; rejectedCandidateCount?: number } | { error: AnySearchProviderError }>; extract(input: { candidate: RecoveredCandidateCapability; signal: AbortSignal; beforeRequest(): Promise<void>; authorizeRecoveredCandidate(input: { queryId: string; candidateFingerprint: string; identity: string; operationIdentity: string }): Promise<boolean> }): Promise<{ normalizedUrl: string } | { error: AnySearchProviderError }> };
   preflight(input: { candidate: IssuedCandidateCapability }): Promise<{ normalizedUrl: string } | null>;
   leads: {
     recordPendingForClaim(input: { targetId: string; queryKind: Query["kind"]; candidate: IssuedCandidateCapability; claimToken: string; now: Date }): Promise<{ leadId: string }>;
@@ -130,6 +131,11 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
       const searched = await deps.anySearch.search({ runId: value.runId, executionSpec: spec, query, signal: value.signal, beforeRequest: () => value.beforePhysicalOperation({ kind: "search", identity: query.queryId }) });
       if ("error" in searched) { recordDiagnostic({ scope: "provider", code: searched.error.code, retryable: searched.error.retryable, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: searched.error.code, affectedCount: 1 }); continue; }
       publicSearchSucceeded = true;
+      const rejectedCandidateCount = boundedRejectedCandidateCount(searched.rejectedCandidateCount);
+      if (rejectedCandidateCount > 0) {
+        recordDiagnostic({ scope: "query", queryId: query.queryId, kind: query.kind, stableFingerprint: query.stableFingerprint, code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: rejectedCandidateCount });
+        sourceIssues.push({ provider: "anysearch", code: "ANYSEARCH_POLICY_REJECTED", affectedCount: rejectedCandidateCount });
+      }
       publicCandidateCount += searched.candidates.length;
       for (const candidate of searched.candidates.slice(0, query.resultLimit)) {
         if (!fingerprint.safeParse(candidate.stableFingerprint).success || seen.has(candidate.stableFingerprint)) continue;

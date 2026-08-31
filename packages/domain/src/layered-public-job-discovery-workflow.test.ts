@@ -340,6 +340,33 @@ describe("layered public job discovery workflow", () => {
     });
   });
 
+  it("将 bridge 的词法策略拒绝聚合为有界 query diagnostic，且不创建 capability", async () => {
+    const calls: string[] = [];
+    const workflow = createLayeredPublicJobDiscoveryWorkflow({
+      trustedSources: { discover: async () => ({ succeeded: false, verifiedSourcePostingVersionIds: [] }) },
+      anySearch: {
+        search: async ({ beforeRequest }) => { calls.push("search"); await beforeRequest(); return { candidates: [], rejectedCandidateCount: 99 }; },
+        extract: async () => { calls.push("extract"); throw new Error("UNUSED"); },
+      },
+      preflight: async () => { calls.push("preflight"); return null; },
+      leads: { recordPendingForClaim: async () => { calls.push("pending"); throw new Error("UNUSED"); } },
+      fetcher: { fetch: async () => { calls.push("fetch"); throw new Error("UNUSED"); } },
+      gate: { verifyForClaim: async () => { calls.push("verify"); throw new Error("UNUSED"); }, rejectForClaim: async () => { calls.push("reject"); } },
+    });
+    const outcome = await workflow.run({
+      userId: targetId, runId, claimToken: crypto.randomUUID(), now: new Date(), attemptCount: 1, signal: new AbortController().signal,
+      executionSpec: executionSpecFor([{ ordinal: 1, queryId, kind: "target_company", stableFingerprint: "a".repeat(64), query: "AI 工程师 Acme", allowedSiteDomains: ["boards.acme.com"], targetCompanyNames: ["Acme"], resultLimit: 5 }]) as never,
+      beforePhysicalOperation: async ({ kind }) => { calls.push(`checkpoint:${kind}`); },
+      onDiagnostics: () => undefined,
+    });
+    expect(calls).toEqual(["search", "checkpoint:search"]);
+    expect(outcome).toMatchObject({
+      branchOutcome: { trusted: "failed", publicDiscovery: "clean_zero" },
+      diagnostics: [{ scope: "query", queryId, kind: "target_company", stableFingerprint: "a".repeat(64), code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: 10 }],
+      sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_POLICY_REJECTED", affectedCount: 10 }],
+    });
+  });
+
   it("达到全 run 验证上限后不再 preflight 或创建额外 Lead", async () => {
     let preflightCount = 0;
     let leadCount = 0;

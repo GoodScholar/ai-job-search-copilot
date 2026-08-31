@@ -19,7 +19,7 @@ type Failure = { ok: false; error: AnySearchProviderError };
 type Success<T> = { ok: true; data: T };
 export type AnySearchResult<T> = Success<T> | Failure;
 export type AnySearchCandidate = { readonly kind: "anysearch_public_job_candidate"; readonly normalizedUrl: string; readonly allowedSiteDomains: readonly string[]; readonly queryId: string; readonly candidateFingerprint: string };
-export type AnySearchCandidateOutcome = { readonly normalizedUrl: string | null; readonly policy: "accepted" | "rejected"; readonly candidate?: AnySearchCandidate };
+export type AnySearchCandidateOutcome = { readonly normalizedUrl: string | null; readonly policy: "accepted" | "rejected"; readonly rejectionCode?: "ANYSEARCH_POLICY_REJECTED"; readonly candidate?: AnySearchCandidate };
 export type AnySearchReplay = { readonly ok: true; readonly replay: { readonly operationIdentity: string } };
 export type AnySearchOperationResult<T> = AnySearchResult<T> | AnySearchReplay;
 export type AnySearchSearchInput = z.infer<typeof LayeredPublicJobDiscoveryQuerySchema> & { signal?: AbortSignal };
@@ -125,7 +125,7 @@ export class AnySearchPublicJobAdapter {
     const seenInResponse = new Set<string>();
     const candidates = parsed.data.map((result) => {
       const preflight = preflightAnySearchCandidate({ url: result.url, allowedSiteDomains: parsedInput.allowedSiteDomains });
-      if (!preflight.ok) return { normalizedUrl: safeNormalizedUrl(result.url), policy: "rejected" as const };
+      if (!preflight.ok) return { normalizedUrl: safeNormalizedUrl(result.url), policy: "rejected" as const, rejectionCode: "ANYSEARCH_POLICY_REJECTED" as const };
       const fingerprint = candidateFingerprint(preflight.data.normalizedUrl);
       if (seenInResponse.has(fingerprint)) return { normalizedUrl: preflight.data.normalizedUrl, policy: "rejected" as const };
       seenInResponse.add(fingerprint);

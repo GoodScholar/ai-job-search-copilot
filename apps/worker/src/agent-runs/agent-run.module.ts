@@ -130,8 +130,12 @@ export function createConfiguredLayeredPublicJobDiscoveryWorkflowResolver(input:
             if (!result.ok && "error" in result) return { error: result.error };
             if (!("data" in result)) return { candidates: [] };
             const accepted = result.data.candidates.flatMap((outcome) => outcome.policy === "accepted" && outcome.candidate ? [outcome.candidate] : []);
+            const rejectedCandidateCount = Math.min(10, result.data.candidates.filter((outcome) => outcome.rejectionCode === "ANYSEARCH_POLICY_REJECTED").length);
             for (const candidate of accepted) candidates.set(`${candidate.queryId}:${candidate.candidateFingerprint}`, candidate);
-            return { candidates: accepted.map((candidate) => ({ normalizedUrl: candidate.normalizedUrl, stableFingerprint: candidate.candidateFingerprint })) };
+            return {
+              candidates: accepted.map((candidate) => ({ normalizedUrl: candidate.normalizedUrl, stableFingerprint: candidate.candidateFingerprint })),
+              ...(rejectedCandidateCount > 0 ? { rejectedCandidateCount } : {}),
+            };
           },
           extract: async ({ candidate, signal, beforeRequest: checkpoint, authorizeRecoveredCandidate }) => {
             const issued = candidates.get(`${candidate.queryId}:${candidate.stableFingerprint}`) ?? Object.freeze({

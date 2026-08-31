@@ -55,7 +55,7 @@ function testAdapter(input: ConstructorParameters<typeof AnySearchPublicJobAdapt
   return new AnySearchPublicJobAdapter({ apiKey: secretKey, baseUrl: "https://anysearch.test", ...input });
 }
 
-type SearchData = { queryId: string; ordinal: number; candidates: readonly { normalizedUrl: string | null; policy: "accepted" | "rejected"; candidate?: AnySearchCandidate }[] };
+type SearchData = { queryId: string; ordinal: number; candidates: readonly { normalizedUrl: string | null; policy: "accepted" | "rejected"; rejectionCode?: "ANYSEARCH_POLICY_REJECTED"; candidate?: AnySearchCandidate }[] };
 function mustSearchData(result: AnySearchOperationResult<SearchData>): SearchData {
   if (!result.ok || !("data" in result)) throw new Error("fixture search should succeed");
   return result.data;
@@ -267,7 +267,7 @@ describe("AnySearchPublicJobAdapter", () => {
     const transport = vi.fn(async () => jsonResponse(validSearch("https://evil-example.com/a?job=1")));
     const adapter = testAdapter({ transport });
     const result = await adapter.search(searchInput());
-    expect(result).toMatchObject({ ok: true, data: { candidates: [{ policy: "rejected", normalizedUrl: "https://evil-example.com/a?job=1" }] } });
+    expect(result).toMatchObject({ ok: true, data: { candidates: [{ policy: "rejected", rejectionCode: "ANYSEARCH_POLICY_REJECTED", normalizedUrl: "https://evil-example.com/a?job=1" }] } });
     expect(transport).toHaveBeenCalledTimes(1);
   });
 
