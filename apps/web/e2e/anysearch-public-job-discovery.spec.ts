@@ -35,9 +35,11 @@ type PageEvidenceAudit = {
   visibleHashMatches: boolean;
   pageOnlyTextPresent: boolean;
   providerAuxiliaryTextAbsent: boolean;
+  providerLinksAbsentFromRawAndVisible: boolean;
   credentialTextAbsent: boolean;
   fixedTestKeyAbsent: boolean;
-  maliciousLinksAbsentFromVisibleText: boolean;
+  pageLinkPresentInRawHtml: boolean;
+  pageLinkAbsentFromVisibleText: boolean;
 };
 
 function unavailablePageEvidenceAudit(): PageEvidenceAudit {
@@ -47,9 +49,11 @@ function unavailablePageEvidenceAudit(): PageEvidenceAudit {
     visibleHashMatches: false,
     pageOnlyTextPresent: false,
     providerAuxiliaryTextAbsent: false,
+    providerLinksAbsentFromRawAndVisible: false,
     credentialTextAbsent: false,
     fixedTestKeyAbsent: false,
-    maliciousLinksAbsentFromVisibleText: false,
+    pageLinkPresentInRawHtml: false,
+    pageLinkAbsentFromVisibleText: false,
   };
 }
 
@@ -93,9 +97,11 @@ async function readPageEvidenceAudit(userId: string, runId: string): Promise<Pag
       visibleHashMatches: createHash("sha256").update(visible).digest("hex") === versions.rows[0]?.content_sha256,
       pageOnlyTextPresent: allStoredText.includes("VERIFIED_PAGE_ONLY_EVIDENCE"),
       providerAuxiliaryTextAbsent: !allStoredText.includes("UNTRUSTED_SEARCH_TITLE") && !allStoredText.includes("UNTRUSTED_SEARCH_SNIPPET") && !allStoredText.includes("UNTRUSTED_EXTRACT_TITLE") && !allStoredText.includes("UNTRUSTED_EXTRACT_AUXILIARY"),
+      providerLinksAbsentFromRawAndVisible: !allStoredText.includes("https://untrusted.fixture.invalid/search-link") && !allStoredText.includes("https://untrusted.fixture.invalid/extract-link"),
       credentialTextAbsent: !allStoredText.includes("username") && !allStoredText.includes("password") && !allStoredText.includes("api_key"),
       fixedTestKeyAbsent: !allStoredText.includes(fixedTestKey),
-      maliciousLinksAbsentFromVisibleText: !visibleText.includes("https://untrusted.fixture.invalid/"),
+      pageLinkPresentInRawHtml: rawText.includes("https://untrusted.fixture.invalid/page-link"),
+      pageLinkAbsentFromVisibleText: !visibleText.includes("https://untrusted.fixture.invalid/page-link"),
     };
   } catch {
     return unavailablePageEvidenceAudit();
@@ -294,8 +300,9 @@ test("版本化 Fake AnySearch 从普通 UI 运行真实 layered public 验收�
   });
   expectTrue(completedValidationChains);
   expectTrue(audit.filter((entry) => entry.fixture === "policy").map((entry) => entry.operation).every((operation) => ["preflight", "extract", "fetch"].includes(operation)) && audit.every((entry) => entry.fixture !== "unsafe"));
+  expectTrue(facts.leads.length === 7 && verificationAudits.length === 7 && facts.leads.filter((lead) => lead.state === "rejected").length === 5 && facts.attributions.length === 2 && facts.postings.length === 1 && facts.versions.length === 1);
   const evidence = await readPageEvidenceAudit(account.userId, runId);
-  expectTrue(evidence.objectCount === 2 && evidence.rawHashMatches && evidence.visibleHashMatches && evidence.pageOnlyTextPresent && evidence.providerAuxiliaryTextAbsent && evidence.credentialTextAbsent && evidence.fixedTestKeyAbsent && evidence.maliciousLinksAbsentFromVisibleText);
+  expectTrue(evidence.objectCount === 2 && evidence.rawHashMatches && evidence.visibleHashMatches && evidence.pageOnlyTextPresent && evidence.providerAuxiliaryTextAbsent && evidence.providerLinksAbsentFromRawAndVisible && evidence.credentialTextAbsent && evidence.fixedTestKeyAbsent && evidence.pageLinkPresentInRawHtml && evidence.pageLinkAbsentFromVisibleText);
   const queue = new Queue("agent-runs", { connection: { host: "127.0.0.1", port: redisPort } });
   try {
     const duplicate = await queue.add("discover-jobs", { version: 1, runId, userId: account.userId }, { jobId: `${runId}-duplicate`, attempts: 3, removeOnComplete: false, removeOnFail: true });
