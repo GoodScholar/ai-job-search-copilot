@@ -136,10 +136,10 @@ test("版本化 Fake AnySearch 从普通 UI 运行真实 layered public 验收�
     { operation: "search", fixture: "target_company" },
   ]);
   const facts = await persistedFacts(account.userId, runId);
-  expect(facts.leads.filter((lead) => lead.state === "verified")).toHaveLength(1);
+  expect(facts.leads.filter((lead) => lead.state === "verified")).toHaveLength(2);
   expect(facts.leads.filter((lead) => lead.state === "rejected").map((lead) => lead.rejection_code).sort()).toEqual(["JOB_PAGE_EXPIRED", "JOB_PAGE_LISTING", "JOB_PAGE_LOGIN_REQUIRED", "JOB_PAGE_UNRECOGNIZED", "POLICY_REJECTED"]);
   expect(facts.leads.filter((lead) => lead.state === "rejected").every((lead) => lead.source_posting_version_id === null)).toBe(true);
-  expect(facts.attributions).toHaveLength(1);
+  expect(facts.attributions).toHaveLength(2);
   expect(facts.attributions[0]).toMatchObject({ lead_id: facts.leads.find((lead) => lead.state === "verified")!.id, source_posting_version_id: facts.leads.find((lead) => lead.state === "verified")!.source_posting_version_id });
   const verifiedUrl = "https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9001";
   expect(facts.postings).toEqual([expect.objectContaining({
