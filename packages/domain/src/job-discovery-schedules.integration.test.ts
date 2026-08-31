@@ -192,6 +192,66 @@ describe("job discovery schedules", () => {
     await expect(database.select().from(auditEvents).where(eq(auditEvents.userId, owner.userId))).resolves.toSatisfy((events) => !JSON.stringify(events).includes("boards.greenhouse.io"));
   });
 
+  it("v4 无 Watchlist 的 occurrence 仍派发一个冻结五条 general/site query 的 run，重放不重复创建", async () => {
+    const owner = await target();
+    const queue = new Queue();
+    const auditTrail = createAuditTrail({ db: database, clock: () => now });
+    const runs = createAgentRunCommands({
+      db: database,
+      queue,
+      auditTrail,
+      id: () => crypto.randomUUID(),
+      clock: () => now,
+      executionMode: "layered_public",
+    });
+    const service = createJobDiscoverySchedules({
+      db: database,
+      runs,
+      auditTrail,
+      id: () => crypto.randomUUID(),
+      clock: () => now,
+      executionMode: "layered_public",
+    } as never);
+
+    const schedule = await service.set({
+      userId: owner.userId,
+      targetId: owner.targetId,
+      requestId: crypto.randomUUID(),
+      command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" },
+    });
+    await database.update(jobDiscoverySchedules)
+      .set({ nextRunAt: new Date("2026-08-27T01:30:00.000Z") })
+      .where(eq(jobDiscoverySchedules.id, schedule.scheduleId));
+    const [occurrence] = await service.materializeDue({ limit: 10 });
+    await service.dispatchPending({ limit: 10 });
+    await service.dispatchPending({ limit: 10 });
+
+    const [persisted] = await database.select().from(jobDiscoveryScheduleOccurrences)
+      .where(eq(jobDiscoveryScheduleOccurrences.id, occurrence!.occurrenceId));
+    const runsForOccurrence = await database.select().from(agentRuns)
+      .where(and(eq(agentRuns.userId, owner.userId), eq(agentRuns.idempotencyKey, occurrence!.occurrenceId)));
+
+    expect(persisted).toMatchObject({ status: "dispatched", runId: expect.any(String), skipReason: null });
+    expect(runsForOccurrence).toHaveLength(1);
+    expect(runsForOccurrence[0]).toMatchObject({
+      workflowVersion: "layered-public-job-discovery-v1",
+      adapter: "layered-public",
+      profileSnapshot: { targetId: owner.targetId },
+      watchlistSnapshot: { targetId: owner.targetId, version: 0, companies: [] },
+      sourceScope: {
+        kind: "layered_public",
+        trustedSources: [],
+        publicDiscovery: { queries: expect.arrayContaining([
+          expect.objectContaining({ kind: "general" }),
+          expect.objectContaining({ kind: "site_constrained" }),
+        ]) },
+      },
+    });
+    expect((runsForOccurrence[0]!.sourceScope as { publicDiscovery: { queries: unknown[] } }).publicDiscovery.queries)
+      .toHaveLength(5);
+    expect(queue.jobs).toEqual([{ version: 1, userId: owner.userId, runId: persisted!.runId }]);
+  });
+
   it("派发状态与绑定事务中的审计写入在审计失败时一起回滚", async () => {
     const owner = await target();
     await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/audit-rollback", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
