@@ -421,7 +421,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         if (remainingBudget(deps.clock, deadline) <= 0) throw new AgentRunBudgetError("active_duration");
         let [current] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId)));
         if (!current) return { kind: "stale" as const };
-        if (current.status === "completed") return { kind: "completed" as const };
+        if (current.status === "completed") return { kind: current.workflowVersion === GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION ? "completed" as const : "stale" as const };
         if (current.status === "failed") return { kind: current.terminationKind === "budget_exhausted" ? "budget_exhausted" as const : "failed" as const };
         if (current.status === "paused") return { kind: "paused" as const };
         if (current.status === "cancelled") return { kind: "cancelled" as const };
