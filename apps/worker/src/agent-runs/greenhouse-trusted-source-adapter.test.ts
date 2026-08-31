@@ -41,5 +41,6 @@ describe("GreenhouseTrustedSourceAdapter", () => {
       { url: new URL("https://boards-api.greenhouse.io/v1/boards/example/jobs?content=true"), signal: controller.signal },
       { url: new URL("https://boards-api.greenhouse.io/v1/boards/example/jobs/7"), signal: controller.signal },
     ]);
+    expect((client.get as ReturnType<typeof vi.fn>).mock.calls.map(([input]) => input.retry)).toEqual(["none", "none"]);
   });
 });

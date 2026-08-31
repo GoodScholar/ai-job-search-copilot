@@ -176,6 +176,7 @@ describe("AgentRunProcessor checkpoints", () => {
     ]);
     expect(first).toMatchObject({ branchOutcome: { trusted: "succeeded", publicDiscovery: "clean_zero" }, trustedSourcePostingVersionIds: [expect.any(String)], sourceIssues: [] });
     expect(replay.trustedSourcePostingVersionIds).toEqual(first.trustedSourcePostingVersionIds);
+    expect(store.puts[0]).toMatch(new RegExp(`^accounts/${job.userId}/agent-runs/${job.runId}/trusted/`));
     expect(new TextDecoder().decode(store.payloads.get(store.puts[0]!)!)).toBe('{"a":"canonical","z":1}');
     expect(store.deletes).toEqual([store.puts[1]]);
     await expect(Promise.all([

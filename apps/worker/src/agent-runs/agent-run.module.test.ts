@@ -71,6 +71,14 @@ describe("AgentRunModule", () => {
     expect(createConfiguredJobDiscoveryExecutionMode(environment)).toBe(expected);
   });
 
+  it.each([
+    { APP_ENV: "local", PUBLIC_JOB_DISCOVERY_ADAPTER: "unknown" },
+    { APP_ENV: "production", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: "{}" },
+    { APP_ENV: "local", ANYSEARCH_BASE_URL: "https://test.invalid" },
+  ])("拒绝非受控运行时配置 %o", (environment) => {
+    expect(() => createConfiguredJobDiscoveryExecutionMode(environment)).toThrow("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID");
+  });
+
   it.each(["local", "test"])("%s 环境构造按持久化元数据解析的 Fake resolver", async (appEnv) => {
     const resolver = createConfiguredJobDiscoveryAdapterResolver({ APP_ENV: appEnv });
     await expect(resolver.resolve({
