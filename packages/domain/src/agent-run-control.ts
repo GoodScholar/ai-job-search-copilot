@@ -8,14 +8,24 @@ import {
   FAKE_JOB_DISCOVERY_WORKFLOW_VERSION, GREENHOUSE_JOB_DISCOVERY_ADAPTER,
   GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION, GREENHOUSE_SOURCE_HEALTH_RULE_VERSION,
   GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST, GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, PUBLIC_JOB_DISCOVERY_BUDGET, ControlAgentRunCommandSchema, StartAgentRunCommandSchema,
-  PublicSourceHealthAgentRunSourceScopeSchema, StartAgentRunResponseSchema, type AgentRunJob, type AgentRunStartErrorCode, type ControlAgentRunResponse, type StartAgentRunCommand, type StartAgentRunResponse,
+  AgentRunExecutionSpecSchema, PublicSourceHealthAgentRunSourceScopeSchema, StartAgentRunResponseSchema, type AgentRunJob, type AgentRunStartErrorCode, type ControlAgentRunResponse, type StartAgentRunCommand, type StartAgentRunResponse,
 } from "@job-copilot/contracts/agent-runs";
+import {
+  LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER,
+  LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION,
+  LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+  LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION,
+  LAYERED_PUBLIC_JOB_DISCOVERY_TOOL_ALLOWLIST,
+  LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION,
+} from "@job-copilot/contracts/job-discovery";
 import { CompanyWatchlistItemSchema } from "@job-copilot/contracts/company-watchlists";
+import { jobProfiles, profileFactRevisions, profileFacts } from "@job-copilot/database";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import type { AuditTrail } from "./audit-trail";
 import { reduceControl } from "./agent-run-state";
 import { normalizeAgentRunSourceScope } from "./agent-run-source-scope";
 import { analyzePublicJobDiscoverySources } from "./public-job-discovery-sources";
+import { createAnySearchQueryPlan } from "./anysearch-query-plan";
 import { applyTransactionDeadline } from "./transaction-deadline";
 import type { JobDiscoveryExecutionMode } from "./job-discovery-execution-mode";
 
@@ -76,8 +86,54 @@ function publicSourceScope(watchlist: { version: number; items: unknown } | unde
   });
 }
 
+async function layeredPublicDiscoverySpec(transaction: Database, input: {
+  userId: string;
+  targetSnapshot: { targetId: string; version: number; priority: "primary" | "secondary"; state: "active"; constraints: unknown };
+  watchlist: { version: number; items: unknown } | undefined;
+}) {
+  const [profile] = await transaction.select({ id: jobProfiles.id, version: jobProfiles.version })
+    .from(jobProfiles).where(eq(jobProfiles.userId, input.userId));
+  if (!profile || profile.version < 1) throw new AgentRunError("AGENT_RUN_UNAVAILABLE");
+  const revisions = await transaction.select({ profileFactId: profileFacts.id, factType: profileFactRevisions.factType, factValue: profileFactRevisions.factValue, state: profileFactRevisions.state, revisionNumber: profileFactRevisions.revisionNumber })
+    .from(profileFacts).innerJoin(profileFactRevisions, and(eq(profileFactRevisions.userId, profileFacts.userId), eq(profileFactRevisions.profileFactId, profileFacts.id)))
+    .where(and(eq(profileFacts.userId, input.userId), eq(profileFacts.profileId, profile.id)))
+    .orderBy(desc(profileFactRevisions.revisionNumber));
+  const currentRevisions = new Map<string, typeof revisions[number]>();
+  for (const revision of revisions) if (!currentRevisions.has(revision.profileFactId)) currentRevisions.set(revision.profileFactId, revision);
+  const confirmedActiveSkillNames = [...new Set([...currentRevisions.values()]
+    .filter((revision) => revision.factType === "skill" && revision.state === "active")
+    .flatMap((revision) => {
+      const value = revision.factValue;
+      if (!value || typeof value !== "object" || Array.isArray(value) || !("name" in value) || typeof value.name !== "string") return [];
+      const name = value.name.trim();
+      return name ? [name] : [];
+    }))].sort((left, right) => left.localeCompare(right, "zh-CN")).slice(0, 10);
+  const items = input.watchlist ? CompanyWatchlistItemSchema.array().parse(input.watchlist.items) : [];
+  const enabledItems = items.filter((item) => item.state === "enabled").sort((left, right) => left.position - right.position);
+  const watchlistSnapshot = {
+    targetId: input.targetSnapshot.targetId,
+    version: input.watchlist?.version ?? 0,
+    companies: enabledItems.map((item) => ({ watchlistItemId: item.itemId, canonicalCompanyName: item.canonicalCompanyName, allowedDomains: item.allowedDomains })),
+  };
+  const trustedSources = analyzePublicJobDiscoverySources(input.watchlist).status === "executable"
+    ? analyzePublicJobDiscoverySources(input.watchlist).sources.map((source) => ({ kind: "greenhouse_trusted_source" as const, source }))
+    : [];
+  const profileSnapshot = { targetId: input.targetSnapshot.targetId, version: profile.version, confirmedActiveSkillNames };
+  return {
+    profileSnapshot,
+    watchlistSnapshot,
+    sourceScope: {
+      kind: "layered_public" as const,
+      trustedSources,
+      publicDiscovery: createAnySearchQueryPlan({ targetSnapshot: input.targetSnapshot, profileSnapshot, watchlistSnapshot }),
+    },
+  };
+}
+
 function summary(row: RunRow, reused: boolean): StartAgentRunResponse {
-  const sourceScope = normalizeAgentRunSourceScope(row.sourceScope);
+  const sourceScope = row.workflowVersion === LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION
+    ? AgentRunExecutionSpecSchema.parse({ targetSnapshot: row.targetSnapshot, profileSnapshot: row.profileSnapshot, watchlistSnapshot: row.watchlistSnapshot, sourceScope: row.sourceScope, workflowVersion: row.workflowVersion, ruleVersion: row.ruleVersion, adapter: row.adapter, adapterVersion: row.adapterVersion, outputSchemaVersion: row.outputSchemaVersion, toolAllowlist: row.toolAllowlist, model: row.modelSnapshot, budget: row.budgetSnapshot }).sourceScope
+    : normalizeAgentRunSourceScope(row.sourceScope);
   return StartAgentRunResponseSchema.parse({
     runId: row.id, targetId: row.targetId, targetVersion: row.targetVersion,
     targetSnapshot: row.targetSnapshot, sourceScope,
@@ -152,8 +208,18 @@ function createAgentRunStarter(deps: CommandDependencies): AgentRunStarter {
           eq(companyWatchlistRevisions.version, companyWatchlists.version),
         )).where(and(eq(companyWatchlists.userId, input.userId), eq(companyWatchlists.targetId, target.id)));
         const executionMode = deps.executionMode ?? "fake";
-        const runSourceScope = executionMode === "greenhouse" ? publicSourceScope(watchlist) : sourceScope(watchlist);
-        const execution = executionMode === "greenhouse" ? {
+        const layeredSpec = executionMode === "layered_public"
+          ? await layeredPublicDiscoverySpec(transaction, { userId: input.userId, targetSnapshot, watchlist })
+          : null;
+        const runSourceScope = layeredSpec?.sourceScope ?? (executionMode === "greenhouse" ? publicSourceScope(watchlist) : sourceScope(watchlist));
+        const execution = executionMode === "layered_public" ? {
+          budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+          workflowVersion: LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION,
+          ruleVersion: LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION,
+          adapter: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER,
+          adapterVersion: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION,
+          outputSchemaVersion: LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+        } : executionMode === "greenhouse" ? {
           budget: PUBLIC_JOB_DISCOVERY_BUDGET,
           workflowVersion: GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION,
           ruleVersion: GREENHOUSE_SOURCE_HEALTH_RULE_VERSION,
@@ -170,8 +236,9 @@ function createAgentRunStarter(deps: CommandDependencies): AgentRunStarter {
         };
         const [created] = await transaction.insert(agentRuns).values({
           id: runId, userId: input.userId, targetId: target.id, idempotencyKey: command.idempotencyKey, targetVersion: target.version,
-          targetSnapshot, sourceScope: runSourceScope, budgetSnapshot: execution.budget, workflowVersion: execution.workflowVersion,
-          ruleVersion: execution.ruleVersion, toolAllowlist: executionMode === "greenhouse" ? GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST : AGENT_RUN_TOOL_ALLOWLIST, modelSnapshot: null,
+          targetSnapshot, profileSnapshot: layeredSpec?.profileSnapshot ?? null, watchlistSnapshot: layeredSpec?.watchlistSnapshot ?? null,
+          sourceScope: runSourceScope, budgetSnapshot: execution.budget, workflowVersion: execution.workflowVersion,
+          ruleVersion: execution.ruleVersion, toolAllowlist: executionMode === "layered_public" ? LAYERED_PUBLIC_JOB_DISCOVERY_TOOL_ALLOWLIST : executionMode === "greenhouse" ? GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST : AGENT_RUN_TOOL_ALLOWLIST, modelSnapshot: null,
           adapter: execution.adapter, adapterVersion: execution.adapterVersion, outputSchemaVersion: execution.outputSchemaVersion,
           status: "queued", currentStep: "queued", controlState: "none", version: 1, attemptCount: 0,
           activeDurationMs: 0, toolCallCount: 0, sourceRequestCount: 0, modelCallCount: 0, inputTokenCount: 0, outputTokenCount: 0, totalTokenCount: 0, resultCount: 0, usageComplete: true,
