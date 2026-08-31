@@ -8,11 +8,14 @@ type RuntimeEnvironment = NodeJS.ProcessEnv | Partial<Record<"APP_ENV" | "PUBLIC
 export const PUBLIC_SOURCE_HEALTH_SCENARIOS = ["healthy", "zero_valid_results", "missing_field", "invalid_url", "invalid_identity", "rate_limited", "hard_failed"] as const;
 export type PublicSourceHealthScenario = typeof PUBLIC_SOURCE_HEALTH_SCENARIOS[number];
 export const FAKE_ANYSEARCH_PUBLIC_JOB_PHASE = "fake-anysearch-public-job-v1";
+export const FAKE_ANYSEARCH_PUBLIC_JOB_MISSING_KEY_PHASE = "fake-anysearch-public-job-missing-key-v1";
+const FakeAnysearchPublicJobPhaseSchema = z.enum([FAKE_ANYSEARCH_PUBLIC_JOB_PHASE, FAKE_ANYSEARCH_PUBLIC_JOB_MISSING_KEY_PHASE]);
+export type FakeAnysearchPublicJobPhase = z.infer<typeof FakeAnysearchPublicJobPhaseSchema>;
 const FakeScenarioMapSchema = z.record(z.uuid(), z.enum(["slow_checkpoint", "retry_once", "retry_until_budget"]));
 const SourceHealthScenarioMapSchema = z.record(z.uuid(), z.record(SourceHealthSourceIdSchema, z.enum(PUBLIC_SOURCE_HEALTH_SCENARIOS)));
 export type AgentRunScenarioMap = Readonly<z.infer<typeof FakeScenarioMapSchema>>;
 export type SourceHealthScenarioMap = Readonly<z.infer<typeof SourceHealthScenarioMapSchema>>;
-export type JobDiscoveryRuntimeConfig = Readonly<{ environment: "production" | "local" | "test"; executionMode: JobDiscoveryExecutionMode; agentRunScenarios: AgentRunScenarioMap; sourceHealthScenarios: SourceHealthScenarioMap; anysearchPublicJobPhase: typeof FAKE_ANYSEARCH_PUBLIC_JOB_PHASE | null }>;
+export type JobDiscoveryRuntimeConfig = Readonly<{ environment: "production" | "local" | "test"; executionMode: JobDiscoveryExecutionMode; agentRunScenarios: AgentRunScenarioMap; sourceHealthScenarios: SourceHealthScenarioMap; anysearchPublicJobPhase: FakeAnysearchPublicJobPhase | null }>;
 
 function configured(value: string | undefined): boolean { return Boolean(value?.trim()); }
 function invalid(): never { throw new Error("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID"); }
@@ -29,8 +32,11 @@ export function resolveJobDiscoveryRuntimeConfig(environment: RuntimeEnvironment
   if (appEnv === "production" && environment.PUBLIC_JOB_DISCOVERY_ADAPTER !== undefined) return invalid();
   const configuredAnysearchPublicJobPhase = environment.E2E_ANYSEARCH_PUBLIC_JOB_PHASE;
   if (appEnv !== "test" && (environment.E2E_AGENT_RUN_SCENARIOS !== undefined || environment.E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS !== undefined || configuredAnysearchPublicJobPhase !== undefined || configured(environment.ANYSEARCH_BASE_URL) || configured(environment.ANYSEARCH_PROVIDER_BASE_URL))) return invalid();
-  if (appEnv === "test" && configuredAnysearchPublicJobPhase !== undefined && configuredAnysearchPublicJobPhase !== FAKE_ANYSEARCH_PUBLIC_JOB_PHASE) return invalid();
-  const anysearchPublicJobPhase = configuredAnysearchPublicJobPhase === FAKE_ANYSEARCH_PUBLIC_JOB_PHASE ? FAKE_ANYSEARCH_PUBLIC_JOB_PHASE : null;
+  const parsedAnysearchPublicJobPhase = appEnv === "test" && configuredAnysearchPublicJobPhase !== undefined
+    ? FakeAnysearchPublicJobPhaseSchema.safeParse(configuredAnysearchPublicJobPhase)
+    : undefined;
+  if (parsedAnysearchPublicJobPhase && !parsedAnysearchPublicJobPhase.success) return invalid();
+  const anysearchPublicJobPhase = parsedAnysearchPublicJobPhase?.success ? parsedAnysearchPublicJobPhase.data : null;
   if (anysearchPublicJobPhase && (environment.E2E_AGENT_RUN_SCENARIOS !== undefined || environment.E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS !== undefined)) return invalid();
   const agentRunScenarios = appEnv === "test" ? parseScenario(environment.E2E_AGENT_RUN_SCENARIOS, FakeScenarioMapSchema) : {};
   const sourceHealthScenarios = appEnv === "test" ? parseScenario(environment.E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS, SourceHealthScenarioMapSchema) : {};

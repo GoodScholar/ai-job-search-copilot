@@ -98,6 +98,12 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
     trusted = await deps.trustedSources.discover({ userId: value.userId, runId: value.runId, claimToken: value.claimToken, now: value.now, executionSpec: spec, signal: value.signal, beforeRequest: (watchlistItemId) => value.beforePhysicalOperation({ kind: "search", identity: watchlistItemId }) });
     sourcePostingVersionIds.push(...trusted.verifiedSourcePostingVersionIds);
     sourceIssues.push(...(trusted.sourceIssues?.map((issue) => ({ provider: "greenhouse" as const, ...issue })) ?? []));
+    if (deps.anySearch.isConfigured?.() === false) {
+      const code = "ANYSEARCH_NOT_CONFIGURED";
+      recordDiagnostic({ scope: "provider", code, retryable: false, affectedCount: 1 });
+      sourceIssues.push({ provider: "anysearch", code, affectedCount: 1 });
+      return result();
+    }
     for (const query of spec.sourceScope.publicDiscovery.queries) {
       const recoveredPending = deps.anySearch.isConfigured?.() === false ? [] : await deps.leads.recoverPendingForClaim?.({ userId: value.userId, runId: value.runId, queryId: query.queryId, queryFingerprint: query.stableFingerprint, claimToken: value.claimToken, now: value.now }) ?? [];
       for (const recovered of recoveredPending) {

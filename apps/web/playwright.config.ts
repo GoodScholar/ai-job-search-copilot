@@ -5,7 +5,10 @@ const port = "3120";
 const baseURL = `http://127.0.0.1:${port}`;
 const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
 const sourceHealthOnly = process.env.E2E_SOURCE_HEALTH_ONLY === "1";
-const anysearchPublicJobPhase = process.env.E2E_ANYSEARCH_PUBLIC_JOB_PHASE === "fake-anysearch-public-job-v1";
+const anysearchPublicJobPhase = process.env.E2E_ANYSEARCH_PUBLIC_JOB_PHASE;
+const configuredAnysearchPublicJobPhase = anysearchPublicJobPhase === "fake-anysearch-public-job-v1";
+const missingKeyAnysearchPublicJobPhase = anysearchPublicJobPhase === "fake-anysearch-public-job-missing-key-v1";
+const anysearchPhase = configuredAnysearchPublicJobPhase || missingKeyAnysearchPublicJobPhase;
 const sourceHealthScenarios = {
   "10000000-0000-4000-8000-000000000121": {
     "greenhouse:e2e-health-desktop-good": "healthy",
@@ -19,8 +22,9 @@ const sourceHealthScenarios = {
 
 export default defineConfig({
   testDir: "./e2e",
-  testIgnore: anysearchPublicJobPhase || sourceHealthOnly ? undefined : /source-health\.spec\.ts|anysearch-public-job-discovery\.spec\.ts/,
-  testMatch: anysearchPublicJobPhase ? /anysearch-public-job-discovery\.spec\.ts/ : sourceHealthOnly ? /source-health\.spec\.ts/ : undefined,
+  testIgnore: anysearchPhase || sourceHealthOnly ? undefined : /source-health\.spec\.ts|anysearch-public-job-discovery\.spec\.ts/,
+  testMatch: anysearchPhase ? /anysearch-public-job-discovery\.spec\.ts/ : sourceHealthOnly ? /source-health\.spec\.ts/ : undefined,
+  grep: configuredAnysearchPublicJobPhase ? /@configured/ : missingKeyAnysearchPublicJobPhase ? /@missing-key/ : undefined,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
   workers: 1,
@@ -32,8 +36,8 @@ export default defineConfig({
     command: "node scripts/local-runtime.mjs --test",
     cwd: repositoryRoot,
     env: {
-      ...(anysearchPublicJobPhase ? {
-        E2E_ANYSEARCH_PUBLIC_JOB_PHASE: "fake-anysearch-public-job-v1",
+      ...(anysearchPhase ? {
+        E2E_ANYSEARCH_PUBLIC_JOB_PHASE: anysearchPublicJobPhase,
       } : {
         E2E_JOB_NORMALIZER_DELAY_MS: "750",
         JOB_PAGE_FETCHER_TEST_ORIGIN: "http://127.0.0.1:39333",

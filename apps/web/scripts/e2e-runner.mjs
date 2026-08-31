@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 const sourceHealthSpec = "source-health.spec.ts";
 const anysearchSpec = "anysearch-public-job-discovery.spec.ts";
 const fakeAnysearchPublicJobPhase = "fake-anysearch-public-job-v1";
+const fakeAnysearchPublicJobMissingKeyPhase = "fake-anysearch-public-job-missing-key-v1";
 const phases = ["ordinary", "source-health"];
 const require = createRequire(import.meta.url);
 const playwrightCli = require.resolve("@playwright/test/cli");
@@ -19,9 +20,9 @@ function phaseEnvironment(phase, environment) {
   delete baseEnvironment.E2E_ANYSEARCH_PUBLIC_JOB_PHASE;
   delete baseEnvironment.ANYSEARCH_BASE_URL;
   delete baseEnvironment.ANYSEARCH_PROVIDER_BASE_URL;
-  if (phase === "anysearch") {
+  if (phase === "anysearch-configured" || phase === "anysearch-missing-key") {
     for (const key of ["E2E_AGENT_RUN_SCENARIOS", "E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS", "E2E_SOURCE_HEALTH_ONLY", "JOB_PAGE_FETCHER_TEST_ORIGIN"]) delete baseEnvironment[key];
-    return { ...baseEnvironment, E2E_ANYSEARCH_PUBLIC_JOB_PHASE: fakeAnysearchPublicJobPhase };
+    return { ...baseEnvironment, E2E_ANYSEARCH_PUBLIC_JOB_PHASE: phase === "anysearch-configured" ? fakeAnysearchPublicJobPhase : fakeAnysearchPublicJobMissingKeyPhase };
   }
   delete baseEnvironment.E2E_SOURCE_HEALTH_ONLY;
   return phase === "source-health" ? { ...baseEnvironment, E2E_SOURCE_HEALTH_ONLY: "1" } : baseEnvironment;
@@ -33,7 +34,7 @@ function explicitSpecPhase(arguments_) {
   const anysearch = specs.some((spec) => spec.includes(anysearchSpec));
   const sourceHealth = specs.some((spec) => spec.includes(sourceHealthSpec));
   const ordinary = specs.some((spec) => !spec.includes(sourceHealthSpec) && !spec.includes(anysearchSpec));
-  if (anysearch && !sourceHealth && !ordinary) return ["anysearch"];
+  if (anysearch && !sourceHealth && !ordinary) return ["anysearch-configured", "anysearch-missing-key"];
   if (sourceHealth && !ordinary && !anysearch) return ["source-health"];
   if (ordinary && !sourceHealth && !anysearch) return ["ordinary"];
   return null;
