@@ -10,6 +10,20 @@ const FIXTURE_PAGE_PATHS = new Map([
   ["https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9005", "/__fixture/fake-anysearch-job-page/insufficient"],
 ]);
 const POLICY_REDIRECT_URL = "https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9006";
+const FIXTURE_BY_URL = new Map([
+  ...[...FIXTURE_PAGE_PATHS].map(([url, path]) => [url, path.split("/").at(-1)!.replace("-alias", "_alias")] as const),
+  [POLICY_REDIRECT_URL, "policy"],
+]);
+
+/** The URL remains process-local; the fixture only receives fixed audit enums. */
+export async function recordFakeAnysearchFixtureAuditOperation(origin: string, url: string, operation: "preflight" | "fetch" | "final_canonical_validated" | "gate_persisted"): Promise<void> {
+  const fixture = FIXTURE_BY_URL.get(url);
+  if (!fixture) throw new Error("FAKE_ANYSEARCH_AUDIT_OPERATION_INVALID");
+  const response = await fetch(new URL("/__fixture/fake-anysearch-operation", origin), {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ fixture, operation }),
+  });
+  if (response.status !== 204) throw new Error("FAKE_ANYSEARCH_AUDIT_UNAVAILABLE");
+}
 
 /**
  * 版本化 E2E 的唯一 page-fetch transport seam。它保留公共 HTTPS candidate，

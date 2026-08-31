@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { Client as MinioClient } from "minio";
 import type { AgentRunDetail } from "@job-copilot/contracts/agent-runs";
 import AxeBuilder from "@axe-core/playwright";
 import { Queue } from "bullmq";
@@ -11,6 +12,8 @@ const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const databaseUrl = process.env.E2E_DATABASE_URL ?? "postgresql://job_copilot:local_only_job_copilot@127.0.0.1:55420/job_copilot";
 const fixtureOrigin = process.env.E2E_ANYSEARCH_FIXTURE_ORIGIN ?? "http://127.0.0.1:39334";
 const redisPort = Number(process.env.E2E_REDIS_PORT ?? "64790");
+const minioEndpoint = process.env.E2E_MINIO_ENDPOINT ?? "http://127.0.0.1:59100";
+const minioBucket = process.env.E2E_MINIO_BUCKET ?? "career-documents";
 const testDevAuthSecret = "issue-2-e2e-dev-auth-shared-secret";
 const expectedSiteDomains = ["zhipin.com", "liepin.com", "zhaopin.com", "mp.weixin.qq.com"];
 const expectedTargetCompanyName = "Fake AnySearch Fixture";
@@ -37,8 +40,7 @@ type PageEvidenceAudit = {
   maliciousLinksAbsentFromVisibleText: boolean;
 };
 
-/** Red placeholder: the existing E2E journey has no MinIO read/projection path. */
-async function readPageEvidenceAudit(): Promise<PageEvidenceAudit> {
+function unavailablePageEvidenceAudit(): PageEvidenceAudit {
   return {
     objectCount: 0,
     rawHashMatches: false,
@@ -49,6 +51,57 @@ async function readPageEvidenceAudit(): Promise<PageEvidenceAudit> {
     fixedTestKeyAbsent: false,
     maliciousLinksAbsentFromVisibleText: false,
   };
+}
+
+async function readMinioObject(client: MinioClient, objectKey: string): Promise<Buffer> {
+  const stream = await client.getObject(minioBucket, objectKey);
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+    stream.once("end", () => resolve(Buffer.concat(chunks)));
+    stream.once("error", reject);
+  });
+}
+
+/** Reads only the real version-owned objects and returns a durable, non-sensitive projection. */
+async function readPageEvidenceAudit(userId: string, runId: string): Promise<PageEvidenceAudit> {
+  const database = new Client({ connectionString: databaseUrl });
+  try {
+    await database.connect();
+    const versions = await database.query("select raw_object_reference, raw_content_sha256, content_sha256 from job_source_posting_versions where user_id = $1 and id in (select source_posting_version_id from job_discovery_leads where user_id = $1 and run_id = $2 and state = 'verified') order by id", [userId, runId]);
+    if (versions.rows.length !== 1) return unavailablePageEvidenceAudit();
+    const reference = versions.rows[0]?.raw_object_reference;
+    if (!reference || typeof reference !== "object" || Array.isArray(reference)) return unavailablePageEvidenceAudit();
+    const rawKey = (reference as Record<string, unknown>).rawHtmlObjectKey;
+    const visibleKey = (reference as Record<string, unknown>).visibleTextObjectKey;
+    if (typeof rawKey !== "string" || typeof visibleKey !== "string") return unavailablePageEvidenceAudit();
+    const endpoint = new URL(minioEndpoint);
+    const objectStore = new MinioClient({
+      endPoint: endpoint.hostname,
+      port: Number(endpoint.port || (endpoint.protocol === "https:" ? 443 : 80)),
+      useSSL: endpoint.protocol === "https:",
+      accessKey: process.env.E2E_MINIO_ACCESS_KEY ?? "job_copilot",
+      secretKey: process.env.E2E_MINIO_SECRET_KEY ?? "local_only_job_copilot_secret",
+    });
+    const [raw, visible] = await Promise.all([readMinioObject(objectStore, rawKey), readMinioObject(objectStore, visibleKey)]);
+    const rawText = raw.toString("utf8");
+    const visibleText = visible.toString("utf8");
+    const allStoredText = rawText + visibleText;
+    return {
+      objectCount: 2,
+      rawHashMatches: createHash("sha256").update(raw).digest("hex") === versions.rows[0]?.raw_content_sha256,
+      visibleHashMatches: createHash("sha256").update(visible).digest("hex") === versions.rows[0]?.content_sha256,
+      pageOnlyTextPresent: allStoredText.includes("VERIFIED_PAGE_ONLY_EVIDENCE"),
+      providerAuxiliaryTextAbsent: !allStoredText.includes("UNTRUSTED_SEARCH_TITLE") && !allStoredText.includes("UNTRUSTED_SEARCH_SNIPPET") && !allStoredText.includes("UNTRUSTED_EXTRACT_TITLE") && !allStoredText.includes("UNTRUSTED_EXTRACT_AUXILIARY"),
+      credentialTextAbsent: !allStoredText.includes("username") && !allStoredText.includes("password") && !allStoredText.includes("api_key"),
+      fixedTestKeyAbsent: !allStoredText.includes(fixedTestKey),
+      maliciousLinksAbsentFromVisibleText: !visibleText.includes("https://untrusted.fixture.invalid/"),
+    };
+  } catch {
+    return unavailablePageEvidenceAudit();
+  } finally {
+    await database.end().catch(() => undefined);
+  }
 }
 
 async function configureAccount(request: APIRequestContext, scenario: { subject: string }): Promise<{ token: string; userId: string; targetId: string }> {
@@ -122,8 +175,8 @@ async function persistedFacts(userId: string, runId: string) {
     const [runUsage, leads, attributions, postings, versions, opportunities, results, attentions] = await Promise.all([
       client.query("select attempt_count, active_duration_ms, tool_call_count, source_request_count, model_call_count, input_token_count, output_token_count, total_token_count, result_count, usage_complete, termination_kind from agent_runs where user_id = $1 and id = $2", [userId, runId]),
       client.query("select id, query_id, query_kind, state, source_posting_version_id, rejection_code from job_discovery_leads where user_id = $1 and run_id = $2 order by id", [userId, runId]),
-      client.query("select id as attribution_id, lead_id, query_id, source_posting_version_id from job_discovery_attributions where user_id = $1 and run_id = $2 order by id", [userId, runId]),
-      client.query("select distinct p.id as posting_id, p.source_identifier, p.is_official, (p.source_identity ->> 'canonicalUrl') = $3 as canonical_matches, (p.source_identity ->> 'finalUrl') = $3 as final_matches from job_source_postings p join job_source_posting_versions v on v.source_posting_id = p.id and v.user_id = p.user_id join job_discovery_leads l on l.source_posting_version_id = v.id and l.user_id = v.user_id where l.user_id = $1 and l.run_id = $2 order by p.id", [userId, runId, expectedVerifiedCanonicalUrl]),
+      client.query("select id as attribution_id, lead_id, query_id, provider, source_posting_version_id from job_discovery_attributions where user_id = $1 and run_id = $2 order by id", [userId, runId]),
+      client.query("select distinct p.id as posting_id, p.source_type, p.source_identifier, p.is_official, (p.source_identity ->> 'canonicalUrl') = $3 as canonical_matches, (p.source_identity ->> 'finalUrl') = $3 as final_matches from job_source_postings p join job_source_posting_versions v on v.source_posting_id = p.id and v.user_id = p.user_id join job_discovery_leads l on l.source_posting_version_id = v.id and l.user_id = v.user_id where l.user_id = $1 and l.run_id = $2 order by p.id", [userId, runId, expectedVerifiedCanonicalUrl]),
       client.query("select id as version_id, raw_object_reference is not null as has_raw_object_reference, position('ignored' in normalized_data::text) = 0 as normalized_data_safe from job_source_posting_versions where user_id = $1 and id in (select source_posting_version_id from job_discovery_leads where user_id = $1 and run_id = $2 and state = 'verified') order by id", [userId, runId]),
       client.query("select id as opportunity_id, source_posting_version_id from job_opportunities where user_id = $1 and source_posting_version_id in (select source_posting_version_id from job_discovery_leads where user_id = $1 and run_id = $2) order by id", [userId, runId]),
       client.query("select id as result_id, source_posting_version_id, ordinal from job_discovery_run_results where user_id = $1 and run_id = $2 order by ordinal", [userId, runId]),
@@ -185,7 +238,7 @@ test("版本化 Fake AnySearch 从普通 UI 运行真实 layered public 验收�
     { operation: "search", fixture: "platform_unavailable", count: 0 },
     { operation: "search", fixture: "platform_duplicate", count: 1 },
     { operation: "search", fixture: "platform_duplicate", count: 1 },
-    { operation: "search", fixture: "target_company", count: 3 },
+    { operation: "search", fixture: "target_company", count: 4 },
   ]);
   const facts = await persistedFacts(account.userId, runId);
   expect(Object.hasOwn(facts, "runUsage")).toBe(true);
@@ -200,6 +253,7 @@ test("版本化 Fake AnySearch 从普通 UI 运行真实 layered public 验收�
   expect(facts.leads.filter((lead) => lead.state === "rejected").map((lead) => lead.rejection_code).sort()).toEqual(["JOB_PAGE_EXPIRED", "JOB_PAGE_LISTING", "JOB_PAGE_LOGIN_REQUIRED", "JOB_PAGE_UNRECOGNIZED", "POLICY_REJECTED"]);
   expect(facts.leads.filter((lead) => lead.state === "rejected").every((lead) => lead.source_posting_version_id === null)).toBe(true);
   expect(facts.attributions).toHaveLength(2);
+  expect(facts.attributions.every((attribution) => attribution.provider === "anysearch")).toBe(true);
   const sharedVersionId = verifiedLeads[0]!.source_posting_version_id;
   expect(verifiedLeads.every((lead) => lead.source_posting_version_id === sharedVersionId)).toBe(true);
   for (const lead of verifiedLeads) expect(facts.attributions).toContainEqual(expect.objectContaining({ lead_id: lead.id, query_id: lead.query_id, source_posting_version_id: sharedVersionId }));
@@ -207,6 +261,7 @@ test("版本化 Fake AnySearch 从普通 UI 运行真实 layered public 验收�
   expect(facts.postings.every((posting) => posting.canonical_matches === true && posting.final_matches === true)).toBe(true);
   expect(facts.postings).toEqual([expect.objectContaining({
     source_identifier: createHash("sha256").update(expectedVerifiedCanonicalUrl, "utf8").digest("hex"),
+    source_type: "company_careers",
     is_official: true,
     canonical_matches: true,
     final_matches: true,
@@ -238,7 +293,8 @@ test("版本化 Fake AnySearch 从普通 UI 运行真实 layered public 验收�
     return ["preflight", "extract", "fetch", "final_canonical_validated", "gate_persisted"].every((operation, index) => operations.indexOf(operation) > (index === 0 ? -1 : operations.indexOf(["preflight", "extract", "fetch", "final_canonical_validated", "gate_persisted"][index - 1]!)));
   });
   expectTrue(completedValidationChains);
-  const evidence = await readPageEvidenceAudit();
+  expectTrue(audit.filter((entry) => entry.fixture === "policy").map((entry) => entry.operation).every((operation) => ["preflight", "extract", "fetch"].includes(operation)) && audit.every((entry) => entry.fixture !== "unsafe"));
+  const evidence = await readPageEvidenceAudit(account.userId, runId);
   expectTrue(evidence.objectCount === 2 && evidence.rawHashMatches && evidence.visibleHashMatches && evidence.pageOnlyTextPresent && evidence.providerAuxiliaryTextAbsent && evidence.credentialTextAbsent && evidence.fixedTestKeyAbsent && evidence.maliciousLinksAbsentFromVisibleText);
   const queue = new Queue("agent-runs", { connection: { host: "127.0.0.1", port: redisPort } });
   try {

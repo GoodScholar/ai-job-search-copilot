@@ -24,7 +24,7 @@ import {
 import { createJobDiscoveryAdapterResolver, createLayeredPublicJobDiscoveryWorkflowResolver, createSourceHealthDiscoveryAdapterResolver } from "./job-discovery-adapter-resolver.js";
 import { AnySearchPublicJobAdapter, preflightAnySearchCandidate, type AnySearchCandidate, type AnySearchBeforeRequest } from "./anysearch-public-job-adapter.js";
 import { GreenhouseTrustedSourceAdapter } from "./greenhouse-trusted-source-adapter.js";
-import { createFakeAnysearchFixturePageTransport, fakeAnysearchFixtureLookup } from "./fake-anysearch-fixture-transport.js";
+import { createFakeAnysearchFixturePageTransport, fakeAnysearchFixtureLookup, recordFakeAnysearchFixtureAuditOperation } from "./fake-anysearch-fixture-transport.js";
 import { MinioDiscoveryContentStore } from "./minio-discovery-content-store.js";
 import { MinioVerifiedJobEvidenceStore } from "./minio-verified-job-evidence-store.js";
 
@@ -90,12 +90,16 @@ export function createConfiguredLayeredPublicJobDiscoveryWorkflowResolver(input:
       const configuredAnySearchKey = environment.ANYSEARCH_API_KEY?.trim();
       const anySearch = new AnySearchPublicJobAdapter({ apiKey: configuredAnySearchKey, ...(fakeAnysearch && configuredAnySearchKey ? { baseUrl: runtimeConfig.anysearchFixtureOrigin! } : {}) });
       const candidates = new Map<string, AnySearchCandidate>();
+      const audit = async (operation: "preflight" | "fetch" | "final_canonical_validated" | "gate_persisted", normalizedUrl: string) => {
+        if (fakeAnysearch) await recordFakeAnysearchFixtureAuditOperation(runtimeConfig.anysearchFixtureOrigin!, normalizedUrl, operation);
+      };
       return createLayeredPublicJobDiscoveryRuntime({
         db: input.db,
         id: input.id,
         auditTrail: input.auditTrail,
         contentStore: input.contentStore,
         evidenceStore: input.evidenceStore,
+        afterVerifiedPersistence: ({ normalizedUrl }) => audit("gate_persisted", normalizedUrl),
         trustedSourceAdapter: new GreenhouseTrustedSourceAdapter(),
         anySearch: {
           isConfigured: () => Boolean(environment.ANYSEARCH_API_KEY?.trim()),
@@ -130,14 +134,20 @@ export function createConfiguredLayeredPublicJobDiscoveryWorkflowResolver(input:
           },
         },
         preflight: async ({ candidate }) => {
+          await audit("preflight", candidate.normalizedUrl);
           const result = preflightAnySearchCandidate({ url: candidate.normalizedUrl, allowedSiteDomains: candidate.allowedSiteDomains });
           return result.ok ? { normalizedUrl: result.data.normalizedUrl } : null;
         },
         fetcher: {
-          fetch: ({ candidate, signal }) => new SecureJobPageFetcher(fakeAnysearch ? {
-            testTransport: createFakeAnysearchFixturePageTransport(runtimeConfig.anysearchFixtureOrigin!),
-            lookup: fakeAnysearchFixtureLookup,
-          } : {}).fetch({ url: candidate.normalizedUrl, signal }),
+          fetch: async ({ candidate, signal }) => {
+            await audit("fetch", candidate.normalizedUrl);
+            const page = await new SecureJobPageFetcher(fakeAnysearch ? {
+              testTransport: createFakeAnysearchFixturePageTransport(runtimeConfig.anysearchFixtureOrigin!),
+              lookup: fakeAnysearchFixtureLookup,
+            } : {}).fetch({ url: candidate.normalizedUrl, signal });
+            await audit("final_canonical_validated", candidate.normalizedUrl);
+            return page;
+          },
         },
       });
     },

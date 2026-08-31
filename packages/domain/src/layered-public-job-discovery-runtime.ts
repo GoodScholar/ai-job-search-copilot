@@ -52,6 +52,7 @@ export function createLayeredPublicJobDiscoveryRuntime(input: Omit<WorkflowDepen
   contentStore: DiscoveryContentStore;
   evidenceStore: VerifiedJobEvidenceStore;
   trustedSourceAdapter: LayeredTrustedSourceAdapter;
+  afterVerifiedPersistence?: (input: { normalizedUrl: string }) => Promise<void>;
 }) {
   const leads = createJobDiscoveryLeadRepository({ db: input.db, id: input.id });
   const gate = createVerifiedJobSourceGate({ db: input.db, contentStore: input.evidenceStore, id: input.id });
@@ -116,7 +117,7 @@ export function createLayeredPublicJobDiscoveryRuntime(input: Omit<WorkflowDepen
       return { succeeded: listedSourceCount > 0, verifiedSourcePostingVersionIds: [...new Set(verifiedSourcePostingVersionIds)], sourceIssues };
     },
   };
-  const { db: _db, id: _id, auditTrail: _auditTrail, contentStore: _contentStore, evidenceStore: _evidenceStore, trustedSourceAdapter: _trustedSourceAdapter, ...workflowDependencies } = input;
+  const { db: _db, id: _id, auditTrail: _auditTrail, contentStore: _contentStore, evidenceStore: _evidenceStore, trustedSourceAdapter: _trustedSourceAdapter, afterVerifiedPersistence: _afterVerifiedPersistence, ...workflowDependencies } = input;
   return createLayeredPublicJobDiscoveryWorkflow({
     ...workflowDependencies,
     anySearch: {
@@ -147,6 +148,7 @@ export function createLayeredPublicJobDiscoveryRuntime(input: Omit<WorkflowDepen
           candidate: { queryId: value.candidate.queryId, normalizedUrl: value.candidate.normalizedUrl, candidateFingerprint: value.candidateFingerprint },
           extract: value.extract, page: value.page, claimToken: value.claimToken, now: value.now,
         });
+        await input.afterVerifiedPersistence?.({ normalizedUrl: value.candidate.normalizedUrl });
         return { sourcePostingVersionId: verified.sourcePostingVersion.sourcePostingVersionId };
       },
       rejectForClaim: async (value) => {
