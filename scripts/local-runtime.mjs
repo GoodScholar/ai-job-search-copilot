@@ -18,6 +18,7 @@ export const testRuntime = Object.freeze({
 
 export function createRuntimeConfig({ test = false, env = process.env, anysearchPublicJobPhase = test ? env.E2E_ANYSEARCH_PUBLIC_JOB_PHASE : undefined } = {}) {
   const supportedAnysearchPhase = anysearchPublicJobPhase === fakeAnysearchPublicJobPhase || anysearchPublicJobPhase === fakeAnysearchPublicJobMissingKeyPhase;
+  if (test && anysearchPublicJobPhase !== undefined && !supportedAnysearchPhase) throw new Error("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID");
   if (test) {
     return {
       ...testRuntime,

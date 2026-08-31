@@ -20,8 +20,9 @@ function phaseEnvironment(phase, environment) {
   delete baseEnvironment.E2E_ANYSEARCH_PUBLIC_JOB_PHASE;
   delete baseEnvironment.ANYSEARCH_BASE_URL;
   delete baseEnvironment.ANYSEARCH_PROVIDER_BASE_URL;
+  for (const key of ["E2E_AGENT_RUN_SCENARIOS", "E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS", "JOB_PAGE_FETCHER_TEST_ORIGIN"]) delete baseEnvironment[key];
   if (phase === "anysearch-configured" || phase === "anysearch-missing-key") {
-    for (const key of ["E2E_AGENT_RUN_SCENARIOS", "E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS", "E2E_SOURCE_HEALTH_ONLY", "JOB_PAGE_FETCHER_TEST_ORIGIN"]) delete baseEnvironment[key];
+    delete baseEnvironment.E2E_SOURCE_HEALTH_ONLY;
     return { ...baseEnvironment, E2E_ANYSEARCH_PUBLIC_JOB_PHASE: phase === "anysearch-configured" ? fakeAnysearchPublicJobPhase : fakeAnysearchPublicJobMissingKeyPhase };
   }
   delete baseEnvironment.E2E_SOURCE_HEALTH_ONLY;

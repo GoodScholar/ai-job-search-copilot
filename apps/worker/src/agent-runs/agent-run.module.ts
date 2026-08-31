@@ -85,13 +85,10 @@ export function createConfiguredLayeredPublicJobDiscoveryWorkflowResolver(input:
   if (runtimeConfig.environment !== "production" && !fakeAnysearch) {
     return createLayeredPublicJobDiscoveryWorkflowResolver({ createWorkflow: () => { throw new Error("AGENT_RUN_ADAPTER_UNSUPPORTED"); } });
   }
-  if (fakeAnysearch && (!environment.ANYSEARCH_BASE_URL || !environment.JOB_PAGE_FETCHER_TEST_ORIGIN)) {
-    return createLayeredPublicJobDiscoveryWorkflowResolver({ createWorkflow: () => { throw new Error("AGENT_RUN_ADAPTER_UNSUPPORTED"); } });
-  }
   return createLayeredPublicJobDiscoveryWorkflowResolver({
     createWorkflow: () => {
       const configuredAnySearchKey = environment.ANYSEARCH_API_KEY?.trim();
-      const anySearch = new AnySearchPublicJobAdapter({ apiKey: configuredAnySearchKey, ...(fakeAnysearch && configuredAnySearchKey ? { baseUrl: environment.ANYSEARCH_BASE_URL } : {}) });
+      const anySearch = new AnySearchPublicJobAdapter({ apiKey: configuredAnySearchKey, ...(fakeAnysearch && configuredAnySearchKey ? { baseUrl: runtimeConfig.anysearchFixtureOrigin! } : {}) });
       const candidates = new Map<string, AnySearchCandidate>();
       return createLayeredPublicJobDiscoveryRuntime({
         db: input.db,
@@ -138,7 +135,7 @@ export function createConfiguredLayeredPublicJobDiscoveryWorkflowResolver(input:
         },
         fetcher: {
           fetch: ({ candidate, signal }) => new SecureJobPageFetcher(fakeAnysearch ? {
-            testTransport: createFakeAnysearchFixturePageTransport(environment.JOB_PAGE_FETCHER_TEST_ORIGIN!),
+            testTransport: createFakeAnysearchFixturePageTransport(runtimeConfig.anysearchFixtureOrigin!),
             lookup: fakeAnysearchFixtureLookup,
           } : {}).fetch({ url: candidate.normalizedUrl, signal }),
         },
