@@ -86,9 +86,9 @@ function publicSourceScope(watchlist: { version: number; items: unknown } | unde
   });
 }
 
-async function layeredPublicDiscoverySpec(transaction: Database, input: {
+async function layeredPublicDiscoverySpec(transaction: any, input: {
   userId: string;
-  targetSnapshot: { targetId: string; version: number; priority: "primary" | "secondary"; state: "active"; constraints: unknown };
+  targetSnapshot: { targetId: string; version: number; priority: string; state: string; constraints: unknown };
   watchlist: { version: number; items: unknown } | undefined;
 }) {
   const [profile] = await transaction.select({ id: jobProfiles.id, version: jobProfiles.version })
@@ -115,8 +115,9 @@ async function layeredPublicDiscoverySpec(transaction: Database, input: {
     version: input.watchlist?.version ?? 0,
     companies: enabledItems.map((item) => ({ watchlistItemId: item.itemId, canonicalCompanyName: item.canonicalCompanyName, allowedDomains: item.allowedDomains })),
   };
-  const trustedSources = analyzePublicJobDiscoverySources(input.watchlist).status === "executable"
-    ? analyzePublicJobDiscoverySources(input.watchlist).sources.map((source) => ({ kind: "greenhouse_trusted_source" as const, source }))
+  const trustedSourceAnalysis = analyzePublicJobDiscoverySources(input.watchlist);
+  const trustedSources = trustedSourceAnalysis.status === "executable"
+    ? trustedSourceAnalysis.sources.map((source) => ({ kind: "greenhouse_trusted_source" as const, source }))
     : [];
   const profileSnapshot = { targetId: input.targetSnapshot.targetId, version: profile.version, confirmedActiveSkillNames };
   return {

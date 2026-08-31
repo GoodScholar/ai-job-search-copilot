@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { JobDiscoveryAdapter, JobDiscoveryAdapterResolver, SourceHealthDiscoveryAdapterResolver } from "@job-copilot/domain/agent-runs";
+import type { JobDiscoveryAdapter, JobDiscoveryAdapterResolver, LayeredPublicJobDiscoveryWorkflow, LayeredPublicJobDiscoveryWorkflowResolver, SourceHealthDiscoveryAdapterResolver } from "@job-copilot/domain/agent-runs";
 import {
   AgentRunExecutionSpecSchema,
   GREENHOUSE_JOB_DISCOVERY_ADAPTER,
@@ -110,6 +110,19 @@ export function createSourceHealthDiscoveryAdapterResolver(environment: NodeJS.P
         return new GreenhouseSourceHealthAdapter();
       }
       throw new Error("AGENT_RUN_ADAPTER_UNSUPPORTED");
+    },
+  };
+}
+
+/** v4 仅接受已冻结的分层公开发现规格；生产组装由 Module 注入 provider ports。 */
+export function createLayeredPublicJobDiscoveryWorkflowResolver(input: {
+  createWorkflow(): LayeredPublicJobDiscoveryWorkflow;
+}): LayeredPublicJobDiscoveryWorkflowResolver {
+  return {
+    resolve({ executionSpec }) {
+      const parsed = AgentRunExecutionSpecSchema.safeParse(executionSpec);
+      if (!parsed.success || parsed.data.workflowVersion !== "layered-public-job-discovery-v1") throw new Error("AGENT_RUN_ADAPTER_UNSUPPORTED");
+      return input.createWorkflow();
     },
   };
 }
