@@ -149,6 +149,7 @@ test("版本化 Fake AnySearch 从普通 UI 运行真实 layered public 验收�
     { operation: "search", fixture: "target_company", count: 3 },
   ]);
   const facts = await persistedFacts(account.userId, runId);
+  expect(Object.hasOwn(facts, "runUsage")).toBe(true);
   expect(audit.filter((entry) => entry.operation === "search").every((entry) => (entry.count ?? Infinity) <= 5)).toBe(true);
   expect(facts.leads).toHaveLength(7);
   expect(facts.leads.length).toBeLessThanOrEqual(10);
