@@ -8,6 +8,7 @@ import {
   GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION,
   SourceHealthSourceIdSchema,
 } from "@job-copilot/contracts/agent-runs";
+import { validateJobDiscoveryRuntimeConfig } from "@job-copilot/domain/job-discovery-execution-mode";
 
 import { FakeJobDiscoveryAdapter } from "./fake-job-discovery-adapter.js";
 import { FAKE_PUBLIC_SOURCE_HEALTH_SCENARIOS, FakePublicSourceHealthAdapter, type FakePublicSourceHealthScenario } from "./fake-public-source-health-adapter.js";
@@ -39,9 +40,7 @@ function scenariosFrom(environment: NodeJS.ProcessEnv): FakeScenario {
   if (!configured?.trim()) return {};
   try {
     return FakeScenarioMapSchema.parse(JSON.parse(configured));
-  } catch {
-    throw new Error("E2E_AGENT_RUN_SCENARIOS 格式无效");
-  }
+  } catch { throw new Error("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID"); }
 }
 
 function sourceHealthScenariosFrom(environment: NodeJS.ProcessEnv): SourceHealthScenarioMap {
@@ -52,7 +51,7 @@ function sourceHealthScenariosFrom(environment: NodeJS.ProcessEnv): SourceHealth
   }
   if (!configured?.trim()) return {};
   try { return SourceHealthScenarioMapSchema.parse(JSON.parse(configured)); }
-  catch { throw new Error("E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS 格式无效"); }
+  catch { throw new Error("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID"); }
 }
 
 function fakeForScenario(scenario: FakeScenario[string] | undefined, attemptCount: number): JobDiscoveryAdapter {
@@ -68,10 +67,8 @@ function fakeForScenario(scenario: FakeScenario[string] | undefined, attemptCoun
 
 /** 仅根据持久化 run metadata 选择 Worker 的岗位发现 adapter。 */
 export function createJobDiscoveryAdapterResolver(environment: NodeJS.ProcessEnv = process.env): JobDiscoveryAdapterResolver {
+  validateJobDiscoveryRuntimeConfig(environment);
   const scenarios = scenariosFrom(environment);
-  if (environment.APP_ENV !== "local" && environment.APP_ENV !== "test" && environment.APP_ENV !== "production") {
-    throw new Error("JobDiscoveryAdapter 环境未获允许");
-  }
   return {
     resolve(input) {
       const executionSpec = AgentRunExecutionSpecSchema.safeParse(input.executionSpec);
@@ -92,10 +89,8 @@ export function createJobDiscoveryAdapterResolver(environment: NodeJS.ProcessEnv
 
 /** v3 受控来源检查与旧批量 adapter 解析分离，避免改变冻结 v1/v2 恢复路径。 */
 export function createSourceHealthDiscoveryAdapterResolver(environment: NodeJS.ProcessEnv = process.env): SourceHealthDiscoveryAdapterResolver {
+  validateJobDiscoveryRuntimeConfig(environment);
   const scenarios = sourceHealthScenariosFrom(environment);
-  if (environment.APP_ENV !== "local" && environment.APP_ENV !== "test" && environment.APP_ENV !== "production") {
-    throw new Error("JobDiscoveryAdapter 环境未获允许");
-  }
   return {
     resolve(input) {
       const executionSpec = AgentRunExecutionSpecSchema.safeParse(input.executionSpec);

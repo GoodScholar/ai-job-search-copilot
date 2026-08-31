@@ -113,7 +113,7 @@ describe("AgentRunModule", () => {
     "APP_ENV=%s 时 fail-closed 拒绝 Fake",
     (appEnv) => {
       expect(() => createConfiguredJobDiscoveryAdapterResolver(appEnv === undefined ? {} : { APP_ENV: appEnv }))
-        .toThrow("JobDiscoveryAdapter 环境未获允许");
+        .toThrow("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID");
     },
   );
 

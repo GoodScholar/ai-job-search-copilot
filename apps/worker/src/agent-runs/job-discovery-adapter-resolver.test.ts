@@ -76,14 +76,14 @@ describe("JobDiscoveryAdapterResolver", () => {
     expect(() => createJobDiscoveryAdapterResolver({
       APP_ENV: "production",
       E2E_AGENT_RUN_SCENARIOS: JSON.stringify({ [idempotencyKey]: "retry_once" }),
-    })).toThrow("E2E Agent Run 场景只允许测试环境");
+    })).toThrow("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID");
   });
 
   it("测试环境严格拒绝非法场景映射", () => {
     expect(() => createJobDiscoveryAdapterResolver({ APP_ENV: "test", E2E_AGENT_RUN_SCENARIOS: "{bad" }))
-      .toThrow("E2E_AGENT_RUN_SCENARIOS 格式无效");
+      .toThrow("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID");
     expect(() => createJobDiscoveryAdapterResolver({ APP_ENV: "test", E2E_AGENT_RUN_SCENARIOS: JSON.stringify({ invalid: "retry_once" }) }))
-      .toThrow("E2E_AGENT_RUN_SCENARIOS 格式无效");
+      .toThrow("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID");
   });
 
   it("local 未配置场景时返回正常 Fake，并只接受持久化 adapter 元数据", async () => {
@@ -104,7 +104,7 @@ describe("JobDiscoveryAdapterResolver", () => {
   });
 
   it("未知 APP_ENV 时拒绝启动", () => {
-    expect(() => createJobDiscoveryAdapterResolver({ APP_ENV: "staging" })).toThrow("JobDiscoveryAdapter 环境未获允许");
+    expect(() => createJobDiscoveryAdapterResolver({ APP_ENV: "staging" })).toThrow("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID");
   });
 
   it("v3 只在测试环境通过受控场景映射选择无网络 fake-public", async () => {
@@ -114,12 +114,13 @@ describe("JobDiscoveryAdapterResolver", () => {
       const resolver = createSourceHealthDiscoveryAdapterResolver({ APP_ENV: "test", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: JSON.stringify({ [idempotencyKey]: { "greenhouse:example": "rate_limited" } }) });
       const adapter = resolver.resolve({ runId, idempotencyKey, executionSpec: sourceHealthExecutionSpec, attemptCount: 1 });
       expect(adapter).toBeInstanceOf(FakePublicSourceHealthAdapter);
+      expect(createSourceHealthDiscoveryAdapterResolver({ APP_ENV: "test", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: "   " }).resolve({ runId, idempotencyKey, executionSpec: sourceHealthExecutionSpec, attemptCount: 1 })).toBeInstanceOf(FakePublicSourceHealthAdapter);
       await expect(adapter.listSource({ targetSnapshot, source: { ...sourceHealthExecutionSpec.sourceScope.sources[0]!, allowedDomains: [...sourceHealthExecutionSpec.sourceScope.sources[0]!.allowedDomains] } })).resolves.toEqual({ ok: false, failure: { category: "rate_limited", reasonCode: "SOURCE_RATE_LIMITED", retryable: true, attemptCount: 2 } });
     } finally {
       if (previous === undefined) delete process.env.APP_ENV;
       else process.env.APP_ENV = previous;
     }
-    expect(() => createSourceHealthDiscoveryAdapterResolver({ APP_ENV: "production", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: "{}" })).toThrow("E2E Public Source Health 场景只允许测试环境");
+    expect(() => createSourceHealthDiscoveryAdapterResolver({ APP_ENV: "production", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: "{}" })).toThrow("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID");
   });
 
   it("v3 场景门禁只信任注入环境，不读取进程全局环境", () => {
@@ -127,7 +128,7 @@ describe("JobDiscoveryAdapterResolver", () => {
     process.env.APP_ENV = "test";
     try {
       expect(() => createSourceHealthDiscoveryAdapterResolver({ APP_ENV: "production", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: JSON.stringify({ [idempotencyKey]: { "greenhouse:example": "healthy" } }) }))
-        .toThrow("E2E Public Source Health 场景只允许测试环境");
+        .toThrow("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID");
       expect(createSourceHealthDiscoveryAdapterResolver({ APP_ENV: "test", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: JSON.stringify({ [idempotencyKey]: { "greenhouse:example": "healthy" } }) }))
         .toBeTruthy();
     } finally {
@@ -146,7 +147,7 @@ describe("JobDiscoveryAdapterResolver", () => {
     process.env.APP_ENV = "test";
     try {
       expect(() => createSourceHealthDiscoveryAdapterResolver({ APP_ENV: "test", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: JSON.stringify({ [idempotencyKey]: { invalid: "healthy" } }) }))
-        .toThrow("E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS 格式无效");
+        .toThrow("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID");
     } finally {
       if (previous === undefined) delete process.env.APP_ENV;
       else process.env.APP_ENV = previous;
