@@ -4,7 +4,7 @@ import { Client as MinioClient } from "minio";
 import { createDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
 import { createAgentRunCommands, createAgentRunProcessor, createAgentRunRecoveryQueries, createLayeredPublicJobDiscoveryRuntime, type DiscoveryContentStore, type LayeredPublicJobDiscoveryWorkflowResolver } from "@job-copilot/domain/agent-runs";
-import { resolveJobDiscoveryExecutionMode, resolveJobDiscoveryRuntimeConfig } from "@job-copilot/domain/job-discovery-execution-mode";
+import { FAKE_ANYSEARCH_PUBLIC_JOB_PHASE, resolveJobDiscoveryExecutionMode, resolveJobDiscoveryRuntimeConfig } from "@job-copilot/domain/job-discovery-execution-mode";
 import { createJobDiscoverySchedules } from "@job-copilot/domain/job-discovery-schedules";
 import type { VerifiedJobEvidenceStore } from "@job-copilot/domain/verified-job-source-gate";
 import { SecureJobPageFetcher } from "@job-copilot/source-access";
@@ -70,6 +70,19 @@ export function createConfiguredJobDiscoveryAdapterResolver(environment: NodeJS.
   return createJobDiscoveryAdapterResolver(environment);
 }
 
+/** 恢复候选也只能复用已解析的精确 configured phase fixture base。 */
+export function createConfiguredAnySearchPublicJobAdapter(input: {
+  apiKey: string | undefined;
+  fixtureOrigin?: string;
+  authorizeRecoveredCandidate?: (value: { queryId: string; candidateFingerprint: string; identity: string; operationIdentity: string }) => Promise<boolean>;
+}) {
+  return new AnySearchPublicJobAdapter({
+    apiKey: input.apiKey,
+    ...(input.fixtureOrigin && input.apiKey?.trim() ? { baseUrl: input.fixtureOrigin } : {}),
+    ...(input.authorizeRecoveredCandidate ? { authorizeRecoveredCandidate: input.authorizeRecoveredCandidate } : {}),
+  });
+}
+
 /** Worker v4 resolver 的配置入口；具体 workflow 只由生产端口组装，测试与未知环境 fail-closed。 */
 export function createConfiguredLayeredPublicJobDiscoveryWorkflowResolver(input: {
   environment?: NodeJS.ProcessEnv;
@@ -82,13 +95,17 @@ export function createConfiguredLayeredPublicJobDiscoveryWorkflowResolver(input:
   const environment = input.environment ?? process.env;
   const runtimeConfig = resolveJobDiscoveryRuntimeConfig(environment);
   const fakeAnysearch = runtimeConfig.anysearchPublicJobPhase !== null;
+  const configuredFakeAnysearch = runtimeConfig.anysearchPublicJobPhase === FAKE_ANYSEARCH_PUBLIC_JOB_PHASE;
   if (runtimeConfig.environment !== "production" && !fakeAnysearch) {
     return createLayeredPublicJobDiscoveryWorkflowResolver({ createWorkflow: () => { throw new Error("AGENT_RUN_ADAPTER_UNSUPPORTED"); } });
   }
   return createLayeredPublicJobDiscoveryWorkflowResolver({
     createWorkflow: () => {
       const configuredAnySearchKey = environment.ANYSEARCH_API_KEY?.trim();
-      const anySearch = new AnySearchPublicJobAdapter({ apiKey: configuredAnySearchKey, ...(fakeAnysearch && configuredAnySearchKey ? { baseUrl: runtimeConfig.anysearchFixtureOrigin! } : {}) });
+      const anySearch = createConfiguredAnySearchPublicJobAdapter({
+        apiKey: configuredAnySearchKey,
+        ...(configuredFakeAnysearch ? { fixtureOrigin: runtimeConfig.anysearchFixtureOrigin! } : {}),
+      });
       const candidates = new Map<string, AnySearchCandidate>();
       const audit = async (operation: "preflight" | "fetch" | "final_canonical_validated" | "gate_persisted", normalizedUrl: string) => {
         if (fakeAnysearch) await recordFakeAnysearchFixtureAuditOperation(runtimeConfig.anysearchFixtureOrigin!, normalizedUrl, operation);
@@ -122,7 +139,11 @@ export function createConfiguredLayeredPublicJobDiscoveryWorkflowResolver(input:
               queryId: candidate.queryId, candidateFingerprint: candidate.stableFingerprint,
             });
             // 恢复候选不复用进程内 Map；每次 extract 都拥有独立的 claim-bound 授权闭包。
-            const adapter = candidates.has(`${candidate.queryId}:${candidate.stableFingerprint}`) ? anySearch : new AnySearchPublicJobAdapter({ apiKey: environment.ANYSEARCH_API_KEY, authorizeRecoveredCandidate });
+            const adapter = candidates.has(`${candidate.queryId}:${candidate.stableFingerprint}`) ? anySearch : createConfiguredAnySearchPublicJobAdapter({
+              apiKey: configuredAnySearchKey,
+              ...(configuredFakeAnysearch ? { fixtureOrigin: runtimeConfig.anysearchFixtureOrigin! } : {}),
+              authorizeRecoveredCandidate,
+            });
             const beforeRequest: AnySearchBeforeRequest = async (operation) => {
               if (operation.kind !== "extract") return "blocked" as const;
               await checkpoint();
