@@ -8,6 +8,7 @@ import { createCompanyWatchlistCommands } from "./company-watchlists";
 import { AgentRunDetailSchema, AgentRunEventSchema, GREENHOUSE_JOB_DISCOVERY_ADAPTER, GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION, GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, GREENHOUSE_JOB_DISCOVERY_RULE_VERSION, GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION, GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION, GREENHOUSE_SOURCE_HEALTH_RULE_VERSION, GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST, GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, PUBLIC_JOB_DISCOVERY_BUDGET } from "@job-copilot/contracts/agent-runs";
 import { LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER, LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_TOOL_ALLOWLIST, LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION } from "@job-copilot/contracts/job-discovery";
 import { createLayeredPublicJobDiscoveryWorkflow, LayeredPublicWorkflowInterruption } from "./layered-public-job-discovery-workflow";
+import { createJobDiscoveryPersistence } from "./job-discovery-persistence";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
 const constraints = { roleFamily: "AI 应用工程师", seniority: null, locations: [], workModes: [], relocation: "unknown" as const, salary: null, industries: [], dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] } };
@@ -95,6 +96,37 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(database.select().from(jobDiscoverySourceIssues).where(eq(jobDiscoverySourceIssues.runId, job.runId))).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED" }), expect.objectContaining({ provider: "greenhouse", code: "GREENHOUSE_DEGRADED" })]));
     await expect(database.select().from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, job.runId))).resolves.toEqual([]);
     await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({ status: "completed", termination: { kind: "completed_with_source_issues" }, results: [{ sourcePostingVersionId: job.sourcePostingVersionId }], sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED" }, { provider: "greenhouse", code: "GREENHOUSE_DEGRADED" }], usage: { toolCalls: 1, sourceRequests: 1 } });
+  });
+
+  it("v4 trusted bridge 只在有效 claim 下持久化冻结 Greenhouse 来源，且重放不写运行副作用", async () => {
+    const job = await layeredRun();
+    const claimToken = crypto.randomUUID();
+    await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", startedAt: now, claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), activeSliceStartedAt: now, attemptCount: 1 }).where(eq(agentRuns.id, job.runId));
+    const persistence = createJobDiscoveryPersistence({ db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => now }) }) as unknown as {
+      persistTrustedLayeredDiscovery(input: unknown): Promise<{ sourcePostingVersionIds: string[]; cleanupObjectKeys: string[] }>;
+    };
+    const input = {
+      userId: job.userId, runId: job.runId, claimToken, sourceId: "greenhouse:example", now,
+      details: [{ sourceId: "greenhouse:example", detailId: "opening-2", company: "Example", title: "AI 应用工程师", location: "上海", postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true, rawPayload: { id: "opening-2" } }],
+      storedObjects: [{ sourceId: "greenhouse:example", detailId: "opening-2", objectKey: "accounts/trusted/opening-2.json", rawContentSha256: "c".repeat(64) }],
+    };
+
+    const first = await persistence.persistTrustedLayeredDiscovery(input);
+    const replay = await persistence.persistTrustedLayeredDiscovery(input);
+
+    expect(first.sourcePostingVersionIds).toHaveLength(1);
+    expect(replay).toEqual(first);
+    await expect(database.select().from(jobOpportunities).where(eq(jobOpportunities.userId, job.userId))).resolves.toHaveLength(1);
+    await expect(Promise.all([
+      database.select().from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, job.runId)),
+      database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, job.runId)),
+      database.select().from(jobDiscoveryRunResults).where(eq(jobDiscoveryRunResults.runId, job.runId)),
+      database.select().from(jobDiscoveryDiagnostics).where(eq(jobDiscoveryDiagnostics.runId, job.runId)),
+      database.select().from(jobDiscoverySourceIssues).where(eq(jobDiscoverySourceIssues.runId, job.runId)),
+      database.select().from(agentInboxItems).where(eq(agentInboxItems.runId, job.runId)),
+    ])).resolves.toEqual([[], [], [], [], [], []]);
+    await expect(database.select({ status: agentRuns.status, currentStep: agentRuns.currentStep, claimToken: agentRuns.claimToken }).from(agentRuns).where(eq(agentRuns.id, job.runId)))
+      .resolves.toEqual([{ status: "running", currentStep: "batch_search", claimToken }]);
   });
 
   it("v4 detail、latest 与 eventsAfter 只投影同 owner 的有序脱敏事实，并保持 resultCount", async () => {
