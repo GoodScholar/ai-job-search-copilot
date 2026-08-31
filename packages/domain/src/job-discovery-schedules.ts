@@ -24,12 +24,13 @@ import { AgentRunError, type AgentRunStarter } from "./agent-run-control";
 import type { AuditTrail } from "./audit-trail";
 import { analyzePublicJobDiscoverySources } from "./public-job-discovery-sources";
 import { applyTransactionDeadline } from "./transaction-deadline";
+import type { JobDiscoveryExecutionMode } from "./job-discovery-execution-mode";
 
 export class JobDiscoveryScheduleError extends Error {
   constructor(public readonly code: "JOB_DISCOVERY_SCHEDULE_TARGET_NOT_FOUND" | "JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE" | "JOB_DISCOVERY_SCHEDULE_VERSION_CONFLICT" | "SOURCE_POLICY_REQUIRED" | "NO_SUPPORTED_SOURCE") { super(code); }
 }
 
-type Dependencies = { db: Database; runs: AgentRunStarter; auditTrail: AuditTrail; id: () => string; clock: () => Date };
+type Dependencies = { db: Database; runs: AgentRunStarter; auditTrail: AuditTrail; id: () => string; clock: () => Date; executionMode?: JobDiscoveryExecutionMode };
 type ScheduleRow = typeof jobDiscoverySchedules.$inferSelect;
 type OccurrenceRow = typeof jobDiscoveryScheduleOccurrences.$inferSelect;
 type ScanInput = { limit: number; deadline?: Date };
@@ -72,9 +73,11 @@ async function scheduleTarget(db: Pick<Database, "select">, userId: string, targ
   return target;
 }
 
-async function dispatchReason(db: Pick<Database, "select">, userId: string, targetId: string): Promise<"TARGET_INACTIVE" | "NO_SUPPORTED_SOURCE" | "SOURCE_POLICY_REQUIRED" | null> {
+async function dispatchReason(db: Pick<Database, "select">, userId: string, targetId: string, executionMode?: JobDiscoveryExecutionMode): Promise<"TARGET_INACTIVE" | "NO_SUPPORTED_SOURCE" | "SOURCE_POLICY_REQUIRED" | null> {
   const target = await scheduleTarget(db, userId, targetId);
   if (target.state !== "active") return "TARGET_INACTIVE";
+  // v4 总会冻结 general/site public discovery；Greenhouse 仅是可选 trusted branch。
+  if (executionMode === "layered_public") return null;
   const [watchlist] = await db.select({ items: companyWatchlistRevisions.items }).from(companyWatchlists).innerJoin(companyWatchlistRevisions, and(
     eq(companyWatchlistRevisions.userId, companyWatchlists.userId),
     eq(companyWatchlistRevisions.watchlistId, companyWatchlists.id),
@@ -133,7 +136,7 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
         const target = await scheduleTarget(transaction, input.userId, input.targetId);
         if (command.state === "enabled" && target.state !== "active") throw new JobDiscoveryScheduleError("JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE");
         if (command.state === "enabled") {
-          const reason = await dispatchReason(transaction, input.userId, input.targetId);
+          const reason = await dispatchReason(transaction, input.userId, input.targetId, deps.executionMode);
           if (reason === "SOURCE_POLICY_REQUIRED") throw new JobDiscoveryScheduleError("SOURCE_POLICY_REQUIRED");
           if (reason === "NO_SUPPORTED_SOURCE") throw new JobDiscoveryScheduleError("NO_SUPPORTED_SOURCE");
         }
@@ -223,7 +226,7 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
           }
 
           let reason: Awaited<ReturnType<typeof dispatchReason>>;
-          try { reason = await dispatchReason(transaction, occurrence.userId, occurrence.targetId); } catch (error) {
+          try { reason = await dispatchReason(transaction, occurrence.userId, occurrence.targetId, deps.executionMode); } catch (error) {
             if (!(error instanceof JobDiscoveryScheduleError)) throw error;
             reason = "TARGET_INACTIVE";
           }

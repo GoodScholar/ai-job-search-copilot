@@ -9,6 +9,7 @@ import {
   jobAccounts,
   jobDiscoveryScheduleOccurrences,
   jobDiscoverySchedules,
+  jobProfiles,
   jobTargetRevisions,
   jobTargets,
   migrateDatabase,
@@ -194,6 +195,7 @@ describe("job discovery schedules", () => {
 
   it("v4 无 Watchlist 的 occurrence 仍派发一个冻结五条 general/site query 的 run，重放不重复创建", async () => {
     const owner = await target();
+    await database.insert(jobProfiles).values({ id: crypto.randomUUID(), userId: owner.userId, version: 1, createdAt: now, updatedAt: now });
     const queue = new Queue();
     const auditTrail = createAuditTrail({ db: database, clock: () => now });
     const runs = createAgentRunCommands({
@@ -211,7 +213,7 @@ describe("job discovery schedules", () => {
       id: () => crypto.randomUUID(),
       clock: () => now,
       executionMode: "layered_public",
-    } as never);
+    });
 
     const schedule = await service.set({
       userId: owner.userId,

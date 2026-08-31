@@ -150,7 +150,7 @@ class AgentRunDatabase implements OnModuleDestroy {
           executionMode: createConfiguredJobDiscoveryExecutionMode(),
         });
         return new AgentRunScheduler({
-          schedules: createJobDiscoverySchedules({ db, runs, auditTrail, id: randomUUID, clock: () => new Date() }),
+          schedules: createJobDiscoverySchedules({ db, runs, auditTrail, id: randomUUID, clock: () => new Date(), executionMode: createConfiguredJobDiscoveryExecutionMode() }),
           reporter,
         });
       },
