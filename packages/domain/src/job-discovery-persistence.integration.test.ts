@@ -84,6 +84,45 @@ describe("job discovery persistence lifecycle", () => {
     await expect(database.select({ sourcePostingVersionId: jobOpportunities.sourcePostingVersionId }).from(jobOpportunities).where(eq(jobOpportunities.userId, userId))).resolves.toHaveLength(3);
   });
 
+  it("公开来源 identity 重放不改写机会，新 version 更新当前版本且保留有界证据", async () => {
+    const userId = crypto.randomUUID();
+    const postingId = crypto.randomUUID();
+    const firstVersionId = crypto.randomUUID();
+    const secondVersionId = crypto.randomUUID();
+    const publicIdentity = "a".repeat(64);
+    await database.insert(jobAccounts).values({ id: userId });
+    await database.insert(jobSourcePostings).values({ id: postingId, userId, sourceType: "public_web", sourceIdentifier: publicIdentity, sourceId: null, sourceIdentity: {}, isOfficial: true, availability: "open", availabilityUpdatedAt: firstSeen, createdAt: firstSeen, updatedAt: firstSeen });
+    await database.insert(jobSourcePostingVersions).values([
+      { id: firstVersionId, userId, sourcePostingId: postingId, version: 1, contentSha256: "b".repeat(64), rawContentSha256: "c".repeat(64), rawObjectReference: {}, normalizedData: {}, retrievedAt: firstSeen, availability: "open", createdAt: firstSeen },
+      { id: secondVersionId, userId, sourcePostingId: postingId, version: 2, contentSha256: "d".repeat(64), rawContentSha256: "e".repeat(64), rawObjectReference: {}, normalizedData: {}, retrievedAt: later, availability: "open", createdAt: later },
+    ]);
+    const publicInput = { id: () => crypto.randomUUID(), userId, importId: null, isOfficial: true, company: null, title: null, location: null, postedAt: null, deadline: null, description: null, normalizedData: {}, dedupIdentity: publicIdentity };
+
+    const first = await database.transaction((transaction) => persistJobOpportunity(transaction, { ...publicInput, sourcePostingVersionId: firstVersionId, now: firstSeen }));
+    await database.transaction((transaction) => persistJobOpportunity(transaction, { ...publicInput, sourcePostingVersionId: firstVersionId, now: later }));
+    await expect(database.select({ id: jobOpportunities.id, sourcePostingVersionId: jobOpportunities.sourcePostingVersionId, updatedAt: jobOpportunities.updatedAt }).from(jobOpportunities).where(eq(jobOpportunities.userId, userId))).resolves.toEqual([{ id: first.opportunityId, sourcePostingVersionId: firstVersionId, updatedAt: firstSeen }]);
+    await expect(database.select({ sourcePostingVersionId: jobOpportunitySources.sourcePostingVersionId }).from(jobOpportunitySources).where(eq(jobOpportunitySources.userId, userId))).resolves.toEqual([{ sourcePostingVersionId: firstVersionId }]);
+
+    const advanced = await database.transaction((transaction) => persistJobOpportunity(transaction, { ...publicInput, sourcePostingVersionId: secondVersionId, now: later }));
+    expect(advanced.opportunityId).toBe(first.opportunityId);
+    await expect(database.select({ sourcePostingVersionId: jobOpportunities.sourcePostingVersionId, updatedAt: jobOpportunities.updatedAt }).from(jobOpportunities).where(eq(jobOpportunities.userId, userId))).resolves.toEqual([{ sourcePostingVersionId: secondVersionId, updatedAt: later }]);
+    await expect(database.select({ sourcePostingVersionId: jobOpportunitySources.sourcePostingVersionId }).from(jobOpportunitySources).where(eq(jobOpportunitySources.userId, userId)).orderBy(asc(jobOpportunitySources.sourcePostingVersionId))).resolves.toEqual([{ sourcePostingVersionId: firstVersionId }, { sourcePostingVersionId: secondVersionId }].sort((left, right) => left.sourcePostingVersionId.localeCompare(right.sourcePostingVersionId)));
+
+    const otherPostingId = crypto.randomUUID(); const otherVersionId = crypto.randomUUID();
+    await database.insert(jobSourcePostings).values({ id: otherPostingId, userId, sourceType: "public_web", sourceIdentifier: "f".repeat(64), sourceId: null, sourceIdentity: {}, isOfficial: true, availability: "open", availabilityUpdatedAt: later, createdAt: later, updatedAt: later });
+    await database.insert(jobSourcePostingVersions).values({ id: otherVersionId, userId, sourcePostingId: otherPostingId, version: 1, contentSha256: "1".repeat(64), rawContentSha256: "2".repeat(64), rawObjectReference: {}, normalizedData: {}, retrievedAt: later, availability: "open", createdAt: later });
+    const separate = await database.transaction((transaction) => persistJobOpportunity(transaction, { ...publicInput, sourcePostingVersionId: otherVersionId, dedupIdentity: "f".repeat(64), now: later }));
+    expect(separate.opportunityId === first.opportunityId).toBe(false);
+
+    const legacyPostingId = crypto.randomUUID(); const legacyVersionId = crypto.randomUUID();
+    await database.insert(jobSourcePostings).values({ id: legacyPostingId, userId, sourceType: "company_careers", sourceIdentifier: "3".repeat(64), sourceId: null, sourceIdentity: {}, isOfficial: true, availability: "open", availabilityUpdatedAt: later, createdAt: later, updatedAt: later });
+    await database.insert(jobSourcePostingVersions).values({ id: legacyVersionId, userId, sourcePostingId: legacyPostingId, version: 1, contentSha256: "4".repeat(64), rawContentSha256: "5".repeat(64), rawObjectReference: {}, normalizedData: {}, retrievedAt: later, availability: "open", createdAt: later });
+    const legacyInput = { ...publicInput, sourcePostingVersionId: legacyVersionId, company: "Fictional", title: "AI Engineer", location: "Shanghai", dedupIdentity: undefined, now: later };
+    await database.transaction(async (transaction) => { await persistJobOpportunity(transaction, legacyInput); await persistJobOpportunity(transaction, legacyInput); });
+    const expectedLegacyKey = createHash("sha256").update(JSON.stringify(["Fictional", "AI Engineer", "Shanghai", null, null, null])).digest("hex");
+    await expect(database.select({ dedupKey: jobOpportunities.dedupKey }).from(jobOpportunities).where(and(eq(jobOpportunities.userId, userId), eq(jobOpportunities.sourcePostingVersionId, legacyVersionId)))).resolves.toEqual([{ dedupKey: expectedLegacyKey }]);
+  });
+
   it("完整空扫描关闭来源时追加生命周期版本并复用上一原始对象", async () => {
     const userId = crypto.randomUUID();
     const targetId = crypto.randomUUID();
