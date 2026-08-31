@@ -76,6 +76,9 @@ describe("AgentRunModule", () => {
     { APP_ENV: "production", PUBLIC_JOB_DISCOVERY_ADAPTER: "fake" },
     { APP_ENV: "production", PUBLIC_JOB_DISCOVERY_ADAPTER: "greenhouse" },
     { APP_ENV: "production", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: "{}" },
+    { APP_ENV: "production", E2E_AGENT_RUN_SCENARIOS: '{"sentinel":"retry_once"}' },
+    { APP_ENV: "local", E2E_AGENT_RUN_SCENARIOS: '{"sentinel":"retry_once"}' },
+    { APP_ENV: "local", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: '{"sentinel":{}}' },
     { APP_ENV: "local", ANYSEARCH_BASE_URL: "https://test.invalid" },
   ])("拒绝非受控运行时配置 %o", (environment) => {
     expect(() => createConfiguredJobDiscoveryExecutionMode(environment)).toThrow("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID");
@@ -113,4 +116,14 @@ describe("AgentRunModule", () => {
         .toThrow("JobDiscoveryAdapter 环境未获允许");
     },
   );
+
+  it.each([undefined, "", "   "])("test 下空白 health scenario 保持 Fake: %j", (scenario) => {
+    expect(createConfiguredJobDiscoveryExecutionMode({ APP_ENV: "test", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: scenario })).toBe("fake");
+  });
+
+  it("resolver 的 malformed scenario 只返回稳定脱敏常量", () => {
+    const sentinel = "malformed-sentinel-never-echo";
+    expect(() => createConfiguredJobDiscoveryAdapterResolver({ APP_ENV: "test", E2E_AGENT_RUN_SCENARIOS: `{${sentinel}` })).toThrow("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID");
+    try { createConfiguredJobDiscoveryAdapterResolver({ APP_ENV: "test", E2E_AGENT_RUN_SCENARIOS: `{${sentinel}` }); } catch (error) { expect(String(error)).not.toContain(sentinel); }
+  });
 });
