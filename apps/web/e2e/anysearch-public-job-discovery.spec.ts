@@ -25,10 +25,6 @@ function serializedRunAndFactsContainFixedTestKey(run: unknown, facts: unknown):
   return JSON.stringify({ run, facts }).includes(fixedTestKey);
 }
 
-function factsWithFixedTestKey(facts: object): object {
-  return { ...facts, safeProbe: fixedTestKey };
-}
-
 async function configureAccount(request: APIRequestContext, scenario: { subject: string }): Promise<{ token: string; userId: string; targetId: string }> {
   const session = await request.post(apiBaseUrl + "/v1/auth/dev/sessions", {
     headers: { "x-dev-auth-secret": testDevAuthSecret }, data: { subject: scenario.subject + "-" + Date.now() },
@@ -259,7 +255,7 @@ test("版本化 Fake AnySearch 缺 key 时从普通 UI 失败且不触发 provid
   expect(facts.results).toHaveLength(0);
   expect(facts.attentions).toHaveLength(1);
   expect(await fixtureAudit()).toEqual([]);
-  assertFalse(serializedRunAndFactsContainFixedTestKey(run, factsWithFixedTestKey(facts)));
+  assertFalse(serializedRunAndFactsContainFixedTestKey(run, facts));
   await page.reload();
   const attention = page.locator(".agent-inbox-panel").getByRole("link", { name: "查看本次运行诊断" });
   await expect(attention).toHaveAttribute("href", `/home?runId=${runId}#agent-run`);
