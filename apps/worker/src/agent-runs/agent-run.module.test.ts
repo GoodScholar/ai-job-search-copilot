@@ -20,7 +20,7 @@ const legacyExecutionSpec = {
 
 describe("AgentRunModule", () => {
   it.each([
-    [{ APP_ENV: "production" }, "greenhouse"],
+    [{ APP_ENV: "production" }, "layered_public"],
     [{ APP_ENV: "test", PUBLIC_JOB_DISCOVERY_ADAPTER: "greenhouse" }, "fake"],
     [{ APP_ENV: "local" }, "fake"],
     [{ APP_ENV: "local", PUBLIC_JOB_DISCOVERY_ADAPTER: "greenhouse" }, "greenhouse"],
