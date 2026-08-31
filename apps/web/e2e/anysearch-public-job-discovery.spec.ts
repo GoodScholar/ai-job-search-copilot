@@ -4,6 +4,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { Queue } from "bullmq";
 import { Client } from "pg";
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
+import { assertFalse } from "./support/assert-false";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const databaseUrl = process.env.E2E_DATABASE_URL ?? "postgresql://job_copilot:local_only_job_copilot@127.0.0.1:55420/job_copilot";
@@ -22,6 +23,10 @@ const scenarios = {
 function scenarioFor(testInfo: TestInfo) { return scenarios[testInfo.project.name as keyof typeof scenarios]; }
 function serializedRunAndFactsContainFixedTestKey(run: unknown, facts: unknown): boolean {
   return JSON.stringify({ run, facts }).includes(fixedTestKey);
+}
+
+function factsWithFixedTestKey(facts: object): object {
+  return { ...facts, safeProbe: fixedTestKey };
 }
 
 async function configureAccount(request: APIRequestContext, scenario: { subject: string }): Promise<{ token: string; userId: string; targetId: string }> {
@@ -254,7 +259,7 @@ test("版本化 Fake AnySearch 缺 key 时从普通 UI 失败且不触发 provid
   expect(facts.results).toHaveLength(0);
   expect(facts.attentions).toHaveLength(1);
   expect(await fixtureAudit()).toEqual([]);
-  expect(serializedRunAndFactsContainFixedTestKey(run, facts)).toBe(false);
+  assertFalse(serializedRunAndFactsContainFixedTestKey(run, factsWithFixedTestKey(facts)));
   await page.reload();
   const attention = page.locator(".agent-inbox-panel").getByRole("link", { name: "查看本次运行诊断" });
   await expect(attention).toHaveAttribute("href", `/home?runId=${runId}#agent-run`);
