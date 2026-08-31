@@ -66,3 +66,41 @@ git status --short
 - Fake AnySearch、provider base、page origin 与固定占位 key 只能在精确 test phase 由 local runtime 注入；local/production 的 test knob 由共享 validator 稳定脱敏地 fail closed。
 - 该 Slice 不改变生产 AnySearch/Greenhouse、URL policy、Gate、Lead/Attribution、预算或终态契约；也不启动 Task 11 全量验收。
 - 进入下一阶段前必须进行独立 Standards/Spec 审查；本报告不是审查结论。
+
+## Review Fix Round 2 — canonical dedup、Opportunity 与重复 delivery
+
+本返工以 `dc47036539fe802d5c626d548004ea0305e40b9f` 为起点，未创建 worktree、分支、PR 或远端操作；Green 实现提交为 `4481b3ab8d5eb893e60bd3cc3439d8a7fd1b3b1b`。
+
+### 严格 Red → Green 证据
+
+| 阶段 | 提交 | 串行命令与结果 | 完整日志 |
+| --- | --- | --- | --- |
+| canonical-dedup Red | `044eb1e1275702647a8e49cf6be64f0b0ef6b63c` | `DOCKER_API_VERSION=1.51 pnpm --filter web test:e2e -- anysearch-public-job-discovery.spec.ts --project="Desktop Chrome" --project="Mobile Safari"` exit 1；Desktop Chrome 与 Mobile Safari 均在真实数据库断言中得到 1 条 verified Lead，而 Red 要求 2 条。 | `/tmp/issue30-slice9-canonical-dedup-red.log` |
+| duplicate-delivery Red | 未单独提交（在上述 Red 提交之后、Green 前执行的同一垂直测试补强） | `pnpm --filter domain exec vitest run src/agent-run-processor.integration.test.ts --no-file-parallelism` exit 1；61 个测试中 1 个失败，已完成的 v4 run 的第二次 delivery 返回 `completed`，而 Red 要求 `stale`。 | `/tmp/issue30-slice9-duplicate-delivery-red.log` |
+| Green | `4481b3ab8d5eb893e60bd3cc3439d8a7fd1b3b1b` | 域集成测试 61/61 Green；完整 Fake AnySearch E2E 串行运行 configured phase（Desktop Chrome、Mobile Safari 各 1）与 missing-key phase（各 1），合计 4/4 Green。 | `/tmp/issue30-slice9-duplicate-delivery-green.log`、`/tmp/issue30-slice9-canonical-dedup-green.log` |
+
+Green 中 fixture 的 `general` 返回安全的 alias URL，`target_company` 返回安全的 canonical URL；alias 由同 host HTTP 302 指向 canonical URL。`/extract` 审计保留 alias discriminator，页面 transport 审计先记录 alias 后记录 canonical，真实 `SecureJobPageFetcher` 和 redirect policy 仍执行。两个 query-bound verified Lead 与两个 Attribution 分别保留，但共同指向一个 Source Posting、一个 Source Posting Version、一个 Opportunity 和一个 AgentRunResult。
+
+E2E 还结构性校验一条 general、四条携带 `site:zhipin.com` / `site:liepin.com` / `site:zhaopin.com` / `site:mp.weixin.qq.com` 的 site-constrained query，以及一条带完整公司 discriminator 的 target-company query；`batchSize=5`、`resultLimit=5`、`maxVerificationCandidates=10`，fixture durable audit 只记录固定 discriminator 与 bounded count。重复 BullMQ `discover-jobs` 使用同一 `runId`/`userId` 的独立 delivery，实际 return value 为 `stale`；前后全部可见持久化事实 ID/count 一致，并在随后 reload 中再次确认一个可见结果。
+
+本波次变更文件：
+
+- `apps/web/e2e/anysearch-public-job-discovery.spec.ts`
+- `apps/worker/src/agent-runs/fake-anysearch-fixture-transport.ts`
+- `packages/domain/src/agent-run-processor.ts`
+- `packages/domain/src/agent-run-processor.integration.test.ts`
+- `scripts/fake-anysearch-fixture-server.mjs`
+
+最终串行验证：
+
+```sh
+pnpm --filter domain exec vitest run src/agent-run-processor.integration.test.ts --no-file-parallelism
+DOCKER_API_VERSION=1.51 pnpm --filter web test:e2e -- anysearch-public-job-discovery.spec.ts --project="Desktop Chrome" --project="Mobile Safari"
+pnpm --filter domain typecheck
+pnpm --filter worker typecheck
+pnpm --filter web typecheck
+pnpm --filter database exec drizzle-kit check --config=drizzle.config.ts
+git diff --check 0ed9933..HEAD
+```
+
+以上均通过；E2E 生成的 `apps/api/dist` 与 `apps/worker/dist` 已用精确路径清理，未进入提交。先前 Slice 8 的并发/重叠命令结果仍一律作废；本返工波次每次测试前均确认无遗留 `pnpm`、Vitest、Playwright、`tsc`、Drizzle、E2E runner 或 local-runtime 进程，并且测试命令全程单进程串行。未发现阻塞性 concern；未开始 MinIO 或普通 source-health 后续审计。
