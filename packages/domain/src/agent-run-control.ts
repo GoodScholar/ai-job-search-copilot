@@ -237,7 +237,7 @@ function createAgentRunStarter(deps: CommandDependencies): AgentRunStarter {
         };
         const [created] = await transaction.insert(agentRuns).values({
           id: runId, userId: input.userId, targetId: target.id, idempotencyKey: command.idempotencyKey, targetVersion: target.version,
-          targetSnapshot, profileSnapshot: layeredSpec?.profileSnapshot ?? null, watchlistSnapshot: layeredSpec?.watchlistSnapshot ?? null,
+          targetSnapshot, ...(layeredSpec ? { profileSnapshot: layeredSpec.profileSnapshot, watchlistSnapshot: layeredSpec.watchlistSnapshot } : {}),
           sourceScope: runSourceScope, budgetSnapshot: execution.budget, workflowVersion: execution.workflowVersion,
           ruleVersion: execution.ruleVersion, toolAllowlist: executionMode === "layered_public" ? LAYERED_PUBLIC_JOB_DISCOVERY_TOOL_ALLOWLIST : executionMode === "greenhouse" ? GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST : AGENT_RUN_TOOL_ALLOWLIST, modelSnapshot: null,
           adapter: execution.adapter, adapterVersion: execution.adapterVersion, outputSchemaVersion: execution.outputSchemaVersion,
