@@ -4,11 +4,10 @@ import type {
 } from "@job-copilot/contracts/agent-runs";
 import { FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER, FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION } from "@job-copilot/contracts/agent-runs";
 import type { SourceHealthAdapterFailure, SourceHealthDiscoveryAdapter, SourceHealthDetailResult, SourceHealthListResult } from "@job-copilot/domain/agent-runs";
+import { PUBLIC_SOURCE_HEALTH_SCENARIOS, type PublicSourceHealthScenario } from "@job-copilot/domain/job-discovery-execution-mode";
 
-export const FAKE_PUBLIC_SOURCE_HEALTH_SCENARIOS = [
-  "healthy", "zero_valid_results", "missing_field", "invalid_url", "invalid_identity", "rate_limited", "hard_failed",
-] as const;
-export type FakePublicSourceHealthScenario = typeof FAKE_PUBLIC_SOURCE_HEALTH_SCENARIOS[number];
+export { PUBLIC_SOURCE_HEALTH_SCENARIOS as FAKE_PUBLIC_SOURCE_HEALTH_SCENARIOS };
+export type FakePublicSourceHealthScenario = PublicSourceHealthScenario;
 
 type Source = PublicSourceHealthAgentRunSourceScope["sources"][number];
 type TargetSnapshot = AgentRunDetail["targetSnapshot"];

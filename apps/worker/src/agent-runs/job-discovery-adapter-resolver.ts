@@ -1,4 +1,3 @@
-import { z } from "zod";
 import type { JobDiscoveryAdapter, JobDiscoveryAdapterResolver, LayeredPublicJobDiscoveryWorkflow, LayeredPublicJobDiscoveryWorkflowResolver, SourceHealthDiscoveryAdapterResolver } from "@job-copilot/domain/agent-runs";
 import {
   AgentRunExecutionSpecSchema,
@@ -6,12 +5,11 @@ import {
   GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
   GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
   GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION,
-  SourceHealthSourceIdSchema,
 } from "@job-copilot/contracts/agent-runs";
-import { validateJobDiscoveryRuntimeConfig } from "@job-copilot/domain/job-discovery-execution-mode";
+import { resolveJobDiscoveryRuntimeConfig, type AgentRunScenarioMap } from "@job-copilot/domain/job-discovery-execution-mode";
 
 import { FakeJobDiscoveryAdapter } from "./fake-job-discovery-adapter.js";
-import { FAKE_PUBLIC_SOURCE_HEALTH_SCENARIOS, FakePublicSourceHealthAdapter, type FakePublicSourceHealthScenario } from "./fake-public-source-health-adapter.js";
+import { FakePublicSourceHealthAdapter, type FakePublicSourceHealthScenario } from "./fake-public-source-health-adapter.js";
 import { GreenhouseJobDiscoveryAdapter } from "./greenhouse-job-discovery-adapter.js";
 import { GreenhouseSourceHealthAdapter } from "./greenhouse-source-health-adapter.js";
 
@@ -19,42 +17,7 @@ const FAKE_ADAPTER = "fake";
 const FAKE_ADAPTER_VERSION = "fake-job-discovery-v1";
 const SLOW_CHECKPOINT_DELAY_MS = 750;
 
-const FakeScenarioMapSchema = z.record(
-  z.uuid(),
-  z.enum(["slow_checkpoint", "retry_once", "retry_until_budget"]),
-);
-
-type FakeScenario = z.infer<typeof FakeScenarioMapSchema>;
-const SourceHealthScenarioMapSchema = z.record(
-  z.uuid(),
-  z.record(SourceHealthSourceIdSchema, z.enum(FAKE_PUBLIC_SOURCE_HEALTH_SCENARIOS)),
-);
-type SourceHealthScenarioMap = z.infer<typeof SourceHealthScenarioMapSchema>;
-
-function scenariosFrom(environment: NodeJS.ProcessEnv): FakeScenario {
-  const configured = environment.E2E_AGENT_RUN_SCENARIOS;
-  if (environment.APP_ENV !== "test") {
-    if (configured?.trim()) throw new Error("E2E Agent Run 场景只允许测试环境");
-    return {};
-  }
-  if (!configured?.trim()) return {};
-  try {
-    return FakeScenarioMapSchema.parse(JSON.parse(configured));
-  } catch { throw new Error("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID"); }
-}
-
-function sourceHealthScenariosFrom(environment: NodeJS.ProcessEnv): SourceHealthScenarioMap {
-  const configured = environment.E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS;
-  if (environment.APP_ENV !== "test") {
-    if (configured?.trim()) throw new Error("E2E Public Source Health 场景只允许测试环境");
-    return {};
-  }
-  if (!configured?.trim()) return {};
-  try { return SourceHealthScenarioMapSchema.parse(JSON.parse(configured)); }
-  catch { throw new Error("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID"); }
-}
-
-function fakeForScenario(scenario: FakeScenario[string] | undefined, attemptCount: number): JobDiscoveryAdapter {
+function fakeForScenario(scenario: AgentRunScenarioMap[string] | undefined, attemptCount: number): JobDiscoveryAdapter {
   if (scenario === "slow_checkpoint") return new FakeJobDiscoveryAdapter({ delayMs: SLOW_CHECKPOINT_DELAY_MS });
   if (scenario === "retry_once" && attemptCount === 1) {
     return new FakeJobDiscoveryAdapter({ failures: { searchBatch: { code: "FAKE_SCENARIO_RETRY_ONCE", retryable: true } } });
@@ -67,17 +30,16 @@ function fakeForScenario(scenario: FakeScenario[string] | undefined, attemptCoun
 
 /** 仅根据持久化 run metadata 选择 Worker 的岗位发现 adapter。 */
 export function createJobDiscoveryAdapterResolver(environment: NodeJS.ProcessEnv = process.env): JobDiscoveryAdapterResolver {
-  validateJobDiscoveryRuntimeConfig(environment);
-  const scenarios = scenariosFrom(environment);
+  const config = resolveJobDiscoveryRuntimeConfig(environment);
   return {
     resolve(input) {
       const executionSpec = AgentRunExecutionSpecSchema.safeParse(input.executionSpec);
       if (!executionSpec.success) throw new Error("AGENT_RUN_ADAPTER_UNSUPPORTED");
       if (executionSpec.data.adapter === FAKE_ADAPTER && executionSpec.data.adapterVersion === FAKE_ADAPTER_VERSION) {
-        return fakeForScenario(scenarios[input.idempotencyKey], input.attemptCount);
+        return fakeForScenario(config.agentRunScenarios[input.idempotencyKey], input.attemptCount);
       }
       if (executionSpec.data.adapter === GREENHOUSE_JOB_DISCOVERY_ADAPTER && executionSpec.data.adapterVersion === GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION) {
-        if (environment.APP_ENV === "test" || environment.APP_ENV === undefined || environment.APP_ENV === "local" && environment.PUBLIC_JOB_DISCOVERY_ADAPTER !== "greenhouse") {
+        if (config.environment === "test" || config.environment === "local" && config.executionMode !== "greenhouse") {
           throw new Error("AGENT_RUN_ADAPTER_UNSUPPORTED");
         }
         return new GreenhouseJobDiscoveryAdapter();
@@ -89,8 +51,7 @@ export function createJobDiscoveryAdapterResolver(environment: NodeJS.ProcessEnv
 
 /** v3 受控来源检查与旧批量 adapter 解析分离，避免改变冻结 v1/v2 恢复路径。 */
 export function createSourceHealthDiscoveryAdapterResolver(environment: NodeJS.ProcessEnv = process.env): SourceHealthDiscoveryAdapterResolver {
-  validateJobDiscoveryRuntimeConfig(environment);
-  const scenarios = sourceHealthScenariosFrom(environment);
+  const config = resolveJobDiscoveryRuntimeConfig(environment);
   return {
     resolve(input) {
       const executionSpec = AgentRunExecutionSpecSchema.safeParse(input.executionSpec);
@@ -100,8 +61,8 @@ export function createSourceHealthDiscoveryAdapterResolver(environment: NodeJS.P
         || executionSpec.data.adapterVersion !== GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION) {
         throw new Error("AGENT_RUN_ADAPTER_UNSUPPORTED");
       }
-      if (environment.APP_ENV === "test") return new FakePublicSourceHealthAdapter(scenarios[input.idempotencyKey] as Readonly<Record<string, FakePublicSourceHealthScenario>> | undefined);
-      if (environment.APP_ENV === "production" || (environment.APP_ENV === "local" && environment.PUBLIC_JOB_DISCOVERY_ADAPTER === "greenhouse")) {
+      if (config.environment === "test") return new FakePublicSourceHealthAdapter(config.sourceHealthScenarios[input.idempotencyKey] as Readonly<Record<string, FakePublicSourceHealthScenario>> | undefined);
+      if (config.environment === "production" || config.executionMode === "greenhouse") {
         return new GreenhouseSourceHealthAdapter();
       }
       throw new Error("AGENT_RUN_ADAPTER_UNSUPPORTED");

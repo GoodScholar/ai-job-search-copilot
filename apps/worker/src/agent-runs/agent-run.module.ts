@@ -4,7 +4,7 @@ import { Client as MinioClient } from "minio";
 import { createDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
 import { createAgentRunCommands, createAgentRunProcessor, createAgentRunRecoveryQueries, createLayeredPublicJobDiscoveryRuntime, type DiscoveryContentStore, type LayeredPublicJobDiscoveryWorkflowResolver } from "@job-copilot/domain/agent-runs";
-import { resolveJobDiscoveryExecutionMode, validateJobDiscoveryRuntimeConfig } from "@job-copilot/domain/job-discovery-execution-mode";
+import { resolveJobDiscoveryExecutionMode, resolveJobDiscoveryRuntimeConfig } from "@job-copilot/domain/job-discovery-execution-mode";
 import { createJobDiscoverySchedules } from "@job-copilot/domain/job-discovery-schedules";
 import type { VerifiedJobEvidenceStore } from "@job-copilot/domain/verified-job-source-gate";
 import { SecureJobPageFetcher } from "@job-copilot/source-access";
@@ -79,8 +79,8 @@ export function createConfiguredLayeredPublicJobDiscoveryWorkflowResolver(input:
   id: () => string;
 }): LayeredPublicJobDiscoveryWorkflowResolver {
   const environment = input.environment ?? process.env;
-  validateJobDiscoveryRuntimeConfig(environment);
-  if (environment.APP_ENV !== "production") {
+  const runtimeConfig = resolveJobDiscoveryRuntimeConfig(environment);
+  if (runtimeConfig.environment !== "production") {
     return createLayeredPublicJobDiscoveryWorkflowResolver({ createWorkflow: () => { throw new Error("AGENT_RUN_ADAPTER_UNSUPPORTED"); } });
   }
   return createLayeredPublicJobDiscoveryWorkflowResolver({
