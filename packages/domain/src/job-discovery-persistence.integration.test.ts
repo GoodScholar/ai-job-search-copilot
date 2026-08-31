@@ -598,6 +598,8 @@ describe("job discovery persistence lifecycle", () => {
     await expect(database.execute(sql`select count(*)::int as count from job_source_posting_versions where user_id = ${userId}::uuid`)).resolves.toEqual([{ count: count * 2 }]);
     await expect(database.execute(sql`select count(*)::int as count from job_opportunity_sources where user_id = ${userId}::uuid`)).resolves.toEqual([{ count: count * 2 }]);
     expect(statementCount).toBeLessThanOrEqual(35);
+    expect(observedStatements.find((statement) => statement.query.startsWith('insert into "agent_runs"'))?.query)
+      .toMatch(/\$6, default, default, \$7/u);
     expect(Math.max(...observedStatements.map((statement) => statement.params.length))).toBeLessThanOrEqual(32);
     expect(observedStatements.some((statement) => statement.query.includes("jsonb_to_recordset"))).toBe(true);
     expect(observedStatements.some((statement) => /\bin\s*\(\s*\$\d+\s*,\s*\$\d+/.test(statement.query))).toBe(false);
