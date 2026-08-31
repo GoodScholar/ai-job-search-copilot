@@ -21,7 +21,7 @@
     "./agent-runs": "./src/agent-runs.ts",
     "./anysearch-query-plan": "./src/anysearch-query-plan.ts",
     "./job-discovery-leads": "./src/job-discovery-leads.public.ts",
-    "./verified-job-source-gate": "./src/verified-job-source-gate.ts"
+    "./verified-job-source-gate": "./src/verified-job-source-gate.public.ts"
   },
   "scripts": {
     "test": "vitest run --no-file-parallelism",
