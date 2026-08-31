@@ -61,8 +61,8 @@ async function readRun(page: Page, runId: string): Promise<AgentRunDetail> {
 async function addApprovedFixtureWatchlist(page: Page): Promise<void> {
   const companyName = page.getByLabel("公司规范名称");
   await companyName.click();
-  await companyName.fill("Fake AnySearch Fixture");
-  await expect(companyName).toHaveValue("Fake AnySearch Fixture");
+  await companyName.fill("Fake AnySearch Mutation");
+  await expect(companyName).toHaveValue("Fake AnySearch Mutation");
   const careersUrl = page.getByLabel("公开招聘入口");
   await careersUrl.fill("https://boards.greenhouse.io/fake-anysearch-fixture");
   await expect(careersUrl).toHaveValue("https://boards.greenhouse.io/fake-anysearch-fixture");
