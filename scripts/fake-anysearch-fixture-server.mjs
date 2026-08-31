@@ -5,7 +5,7 @@ export const fakeAnysearchPublicJobMissingKeyPhase = "fake-anysearch-public-job-
 
 const fixtureUrls = Object.freeze({
   verified_alias: "https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9001-alias",
-  verified: "https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9001",
+  verified: "https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9001-mutation",
   expired: "https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9002",
   login: "https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9003",
   listing: "https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9004",

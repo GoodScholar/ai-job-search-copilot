@@ -172,6 +172,8 @@ test("版本化 Fake AnySearch 从普通 UI 运行真实 layered public 验收�
   const sharedVersionId = verifiedLeads[0]!.source_posting_version_id;
   expect(verifiedLeads.every((lead) => lead.source_posting_version_id === sharedVersionId)).toBe(true);
   for (const lead of verifiedLeads) expect(facts.attributions).toContainEqual(expect.objectContaining({ lead_id: lead.id, query_id: lead.query_id, source_posting_version_id: sharedVersionId }));
+  expect(facts.postings).toHaveLength(1);
+  expect(facts.postings.every((posting) => posting.canonical_matches === true && posting.final_matches === true)).toBe(true);
   expect(facts.postings).toEqual([expect.objectContaining({
     source_identifier: createHash("sha256").update(expectedVerifiedCanonicalUrl, "utf8").digest("hex"),
     is_official: true,
