@@ -340,12 +340,12 @@ describe("layered public job discovery workflow", () => {
     });
   });
 
-  it("将 bridge 的词法策略拒绝聚合为有界 query diagnostic，且不创建 capability", async () => {
+  it("将 bridge 的词法策略拒绝与同 query 策略拒绝聚合为契约内 diagnostic", async () => {
     const calls: string[] = [];
     const workflow = createLayeredPublicJobDiscoveryWorkflow({
       trustedSources: { discover: async () => ({ succeeded: false, verifiedSourcePostingVersionIds: [] }) },
       anySearch: {
-        search: async ({ beforeRequest }) => { calls.push("search"); await beforeRequest(); return { candidates: [], rejectedCandidateCount: 99 }; },
+        search: async ({ beforeRequest }) => { calls.push("search"); await beforeRequest(); return { candidates: [{ normalizedUrl: "https://boards.acme.com/jobs/1", stableFingerprint: "b".repeat(64) }], rejectedCandidateCount: 99 }; },
         extract: async () => { calls.push("extract"); throw new Error("UNUSED"); },
       },
       preflight: async () => { calls.push("preflight"); return null; },
@@ -359,10 +359,10 @@ describe("layered public job discovery workflow", () => {
       beforePhysicalOperation: async ({ kind }) => { calls.push(`checkpoint:${kind}`); },
       onDiagnostics: () => undefined,
     });
-    expect(calls).toEqual(["search", "checkpoint:search"]);
+    expect(calls).toEqual(["search", "checkpoint:search", "preflight"]);
     expect(outcome).toMatchObject({
-      branchOutcome: { trusted: "failed", publicDiscovery: "clean_zero" },
-      diagnostics: [{ scope: "query", queryId, kind: "target_company", stableFingerprint: "a".repeat(64), code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: 10 }],
+      branchOutcome: { trusted: "failed", publicDiscovery: "candidate_failures" },
+      diagnostics: [{ scope: "query", queryId, kind: "target_company", stableFingerprint: "a".repeat(64), code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: 5 }],
       sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_POLICY_REJECTED", affectedCount: 10 }],
     });
   });
