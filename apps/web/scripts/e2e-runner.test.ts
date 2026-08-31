@@ -27,6 +27,36 @@ describe("E2E runner", () => {
     expect(await selectE2EPhases(["e2e/source-health.spec.ts", "--project", "Mobile Safari"])).toEqual(["source-health"]);
   });
 
+  it("版本化 Fake AnySearch spec 只进入专用 phase，并清理其他 phase 与 transport 注入", async () => {
+    const arguments_ = ["e2e/anysearch-public-job-discovery.spec.ts", "--project", "Desktop Chrome"];
+    expect(await selectE2EPhases(arguments_)).toEqual(["anysearch"]);
+
+    const calls: RunnerCall[] = [];
+    await expect(executeE2E(arguments_, {
+      environment: {
+        ...baseEnvironment,
+        ANYSEARCH_BASE_URL: "http://untrusted.example",
+        ANYSEARCH_PROVIDER_BASE_URL: "http://untrusted.example",
+        E2E_AGENT_RUN_SCENARIOS: '{"stale":"retry_once"}',
+        E2E_ANYSEARCH_PUBLIC_JOB_PHASE: "stale",
+        E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: '{"stale":{}}',
+        E2E_SOURCE_HEALTH_ONLY: "1",
+        JOB_PAGE_FETCHER_TEST_ORIGIN: "http://untrusted.example",
+      },
+      run: async (call: RunnerCall) => { calls.push(call); return { code: 0, stdout: "" }; },
+    })).resolves.toEqual({ code: 0 });
+
+    expect(calls).toEqual([{
+      phase: "anysearch",
+      args: arguments_,
+      environment: {
+        CI: "true",
+        KEEP_ME: "yes",
+        E2E_ANYSEARCH_PUBLIC_JOB_PHASE: "fake-anysearch-public-job-v1",
+      },
+    }]);
+  });
+
   it("只剥离 pnpm 附加的一个 leading --，让普通与 source-health 聚焦参数仍是 Playwright 选项", async () => {
     expect(normalizeE2EArguments(["--", "e2e/auth-workbench.spec.ts", "--list"])).toEqual(["e2e/auth-workbench.spec.ts", "--list"]);
     expect(normalizeE2EArguments(["--", "e2e/source-health.spec.ts", "--project", "Mobile Safari"])).toEqual(["e2e/source-health.spec.ts", "--project", "Mobile Safari"]);

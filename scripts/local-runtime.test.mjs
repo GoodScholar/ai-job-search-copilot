@@ -294,6 +294,14 @@ test("Playwright delegates isolated cleanup to the local runtime", async () => {
   assert.match(config, /command: "node scripts\/local-runtime\.mjs --test"/);
 });
 
+test("Playwright config 仅将版本化 Fake AnySearch phase 交给本地测试运行时", async () => {
+  const config = await readFile(new URL("../apps/web/playwright.config.ts", import.meta.url), "utf8");
+
+  assert.match(config, /E2E_ANYSEARCH_PUBLIC_JOB_PHASE/);
+  assert.match(config, /fake-anysearch-public-job-v1/);
+  assert.match(config, /anysearch-public-job-discovery\.spec\.ts/);
+});
+
 test("starts compose and waits for healthy dependencies before applications", async () => {
   const calls = [];
   await prepareInfrastructure({
@@ -722,6 +730,40 @@ test("test runtime passes its isolated service addresses to every application", 
   assert.equal(options.env.NODE_OPTIONS, undefined);
   assert.equal(options.env.UNRELATED_VALUE, "preserved");
   assert.doesNotMatch(JSON.stringify([command, args]), /local_only_job_copilot_secret/);
+});
+
+test("版本化 Fake AnySearch phase 在取消时关闭 fixture server，再清理隔离基础设施", async () => {
+  const events = [];
+  const signalSource = new EventEmitter();
+  const child = createControlledChild();
+  let fixtureSignal;
+  const runtime = runRuntime({
+    config: createRuntimeConfig({ test: true, anysearchPublicJobPhase: "fake-anysearch-public-job-v1" }),
+    signalSource,
+    prepare: async () => events.push("prepare"),
+    migrate: async () => events.push("migrate"),
+    startFixtureServer: async ({ config, signal }) => {
+      fixtureSignal = signal;
+      assert.equal(config.anysearchPublicJobPhase, "fake-anysearch-public-job-v1");
+      events.push("fixture-start");
+      return { close: async () => events.push("fixture-close") };
+    },
+    start: () => {
+      events.push("start");
+      return child;
+    },
+    waitForReady: async () => events.push("ready"),
+    cleanup: async () => events.push("cleanup"),
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  signalSource.emit("SIGTERM");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(fixtureSignal?.aborted, true);
+  child.emit("exit", 0, null);
+
+  assert.deepEqual(await runtime, { exitCode: 143 });
+  assert.deepEqual(events, ["prepare", "migrate", "fixture-start", "start", "ready", "fixture-close", "cleanup"]);
 });
 
 test("signal waits for the controlled application child before isolated cleanup", async () => {
