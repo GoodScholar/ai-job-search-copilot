@@ -118,3 +118,15 @@ git diff --check 0ed9933..HEAD
 安全证据：旧 `/tmp/issue30-slice9-canonical-dedup-red.log` 曾因 `toHaveLength` 展开 Lead（含 normalized URL），不可作为安全证据；在上述新脱敏 Red/Green 日志写入后已于本轮精确删除。新 E2E `persistedFacts` 只读稳定 ID、状态、枚举、哈希、布尔、bounded count 与 run usage；不查询 normalized URL、raw content、source identity 或 raw object reference。查询 plan 断言同样改为布尔/固定枚举；fixture durable audit 仅有固定 operation/fixture/count。`resultLimit` 现逐条精确为 `5`；实际 verification 使用 fixture 的 `extract` audit，固定为 7 且 `<= 10`，不再以 Lead 数代替。
 
 本轮最终串行命令：domain persistence **361/361**、v4 processor **362/362**；完整 E2E configured Desktop/Mobile **2/2** 加 missing-key Desktop/Mobile **2/2**，合计 **4/4**（`/tmp/issue30-slice9-round2-e2e-final-green.log`）；`pnpm typecheck` 全 workspace 通过；`git diff --check 0ed9933..HEAD` 通过。E2E 生成的 `apps/api/dist`、`apps/worker/dist` 均按精确路径清理。
+
+## Review Fix Round 3 — 重复 delivery 行为 Red 与公开 seam 完整性
+
+本轮以 `49f21bbbbef4423558ee758e15362b04263f0d0e` 为起点。Round 2 的 `1f1bddc` 失败未到达重复 processor/queue delivery，故其“duplicate behavior Red”证据无效；本节以新的可复现 Red 取代该项证据。所有命令在启动前确认无遗留 pnpm、Vitest、Playwright、tsc、Drizzle、E2E runner 或 local-runtime 进程，并且严格单进程串行。
+
+| Red → Green | 行为与结果 | 完整日志 |
+| --- | --- | --- |
+| `3760e25cd8d3281628abdf1140880139fe813fa5` → `376c9f3f8d7038adfd918ca947a5e1c45918f7b1` | Red 临时恢复 completed run 的旧返回值；同一公开 UI→BullMQ duplicate delivery 在 Desktop Chrome 与 Mobile Safari 都安全地观察到 `Expected: "stale"`、`Received: "completed"`，各自仅在实际 duplicate return value 处失败。Green 恢复既有 v4 `stale` 语义，使用同一完整命令验证 configured 两浏览器 **2/2** 与 missing-key 两浏览器 **2/2**，合计 **4/4**。 | `/tmp/issue30-slice9-round3-duplicate-behavior-red.log`、`/tmp/issue30-slice9-round3-e2e-green.log` |
+
+公开 E2E seam 现在以独立字面量断言四个 structured site domains 恰为 `zhipin.com`、`liepin.com`、`zhaopin.com`、`mp.weixin.qq.com`，且每条匹配 query 都含对应完整 `site:` token；target company 恰一条、名称数组恰为固定单值、query 含完整固定 discriminator，并保留两条批准 Greenhouse domains、`resultLimit=5`、batch/candidate 上限和无 raw-query 持久化。SQL 只投影 `canonical_matches` 与 `final_matches` 布尔值（expected URL 参数化），不选择、返回或记录 canonical/final 原值；同时断言固定 SHA-256 source identifier 与 official flag。缺 key journey 以 `JSON.stringify({ run, facts }).includes(key) === false` 覆盖完整返回 run 和安全 persisted facts，失败只会输出布尔值。
+
+本轮最终串行验证：`pnpm --filter domain exec vitest run src/agent-run-processor.integration.test.ts --no-file-parallelism` 为 **62/62**（`/tmp/issue30-slice9-round3-agent-run-processor-green.log`）；`pnpm --filter domain typecheck`、`pnpm --filter worker typecheck`、`pnpm --filter web typecheck` 均通过（`/tmp/issue30-slice9-round3-domain-typecheck.log`、`/tmp/issue30-slice9-round3-worker-typecheck.log`、`/tmp/issue30-slice9-round3-web-typecheck.log`）；Drizzle check 输出 `Everything's fine`（`/tmp/issue30-slice9-round3-drizzle-check.log`）；`git diff --check 0ed9933..HEAD` 和工作树 diff check 均通过。E2E 生成的 `apps/api/dist`、`apps/worker/dist` 已用精确路径清理，未纳入提交。
