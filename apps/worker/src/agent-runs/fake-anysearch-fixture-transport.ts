@@ -3,7 +3,7 @@ import type { TestPublicSourceLookup, TestPublicSourceTransport } from "@job-cop
 
 const FIXTURE_PAGE_PATHS = new Map([
   ["https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9001-alias", "/__fixture/fake-anysearch-job-page/verified-alias"],
-  ["https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9001-mutation", "/__fixture/fake-anysearch-job-page/verified"],
+  ["https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9001", "/__fixture/fake-anysearch-job-page/verified"],
   ["https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9002", "/__fixture/fake-anysearch-job-page/expired"],
   ["https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9003", "/__fixture/fake-anysearch-job-page/login"],
   ["https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9004", "/__fixture/fake-anysearch-job-page/listing"],
