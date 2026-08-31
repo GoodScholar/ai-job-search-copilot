@@ -74,18 +74,22 @@ export async function persistJobOpportunity(db: PersistenceDb, input: {
       ));
       opportunity = canonical;
     }
-    await db.update(jobOpportunities).set({
-      sourcePostingVersionId: input.sourcePostingVersionId,
-      dedupKey,
-      company: input.company,
-      title: input.title,
-      location: input.location,
-      postedAt: input.postedAt ? new Date(input.postedAt) : null,
-      deadline: input.deadline ? new Date(input.deadline) : null,
-      description: input.description,
-      normalizedData: input.normalizedData,
-      updatedAt: input.now,
-    }).where(and(eq(jobOpportunities.userId, input.userId), eq(jobOpportunities.id, opportunity.id)));
+    const [current] = await db.select({ sourcePostingVersionId: jobOpportunities.sourcePostingVersionId }).from(jobOpportunities)
+      .where(and(eq(jobOpportunities.userId, input.userId), eq(jobOpportunities.id, opportunity.id)));
+    if (current?.sourcePostingVersionId !== input.sourcePostingVersionId) {
+      await db.update(jobOpportunities).set({
+        sourcePostingVersionId: input.sourcePostingVersionId,
+        dedupKey,
+        company: input.company,
+        title: input.title,
+        location: input.location,
+        postedAt: input.postedAt ? new Date(input.postedAt) : null,
+        deadline: input.deadline ? new Date(input.deadline) : null,
+        description: input.description,
+        normalizedData: input.normalizedData,
+        updatedAt: input.now,
+      }).where(and(eq(jobOpportunities.userId, input.userId), eq(jobOpportunities.id, opportunity.id)));
+    }
   }
   await db.insert(jobOpportunitySources).values({ id: input.id(), userId: input.userId, opportunityId: opportunity.id, sourcePostingVersionId: input.sourcePostingVersionId, createdAt: input.now }).onConflictDoNothing();
   return { opportunityId: opportunity.id };
