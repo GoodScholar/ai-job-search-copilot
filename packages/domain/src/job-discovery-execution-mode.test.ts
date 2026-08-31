@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { resolveJobDiscoveryRuntimeConfig } from "./job-discovery-execution-mode";
+import { fakeAnysearchPublicJobMissingKeyPhase, fakeAnysearchPublicJobPhase, isConfiguredFakeAnysearchPublicJobPhase, isFakeAnysearchPublicJobPhase } from "../../../scripts/fake-anysearch-test-phase-policy.mjs";
+import { FAKE_ANYSEARCH_PUBLIC_JOB_MISSING_KEY_PHASE, FAKE_ANYSEARCH_PUBLIC_JOB_PHASE, resolveJobDiscoveryRuntimeConfig } from "./job-discovery-execution-mode";
 
 describe("job discovery runtime config", () => {
+  it("共享测试 phase policy 与不可变 domain 枚举逐项一致", () => {
+    expect({ fakeAnysearchPublicJobPhase, fakeAnysearchPublicJobMissingKeyPhase }).toEqual({
+      fakeAnysearchPublicJobPhase: FAKE_ANYSEARCH_PUBLIC_JOB_PHASE,
+      fakeAnysearchPublicJobMissingKeyPhase: FAKE_ANYSEARCH_PUBLIC_JOB_MISSING_KEY_PHASE,
+    });
+    expect(isConfiguredFakeAnysearchPublicJobPhase(fakeAnysearchPublicJobPhase)).toBe(true);
+    expect(isConfiguredFakeAnysearchPublicJobPhase(fakeAnysearchPublicJobMissingKeyPhase)).toBe(false);
+    expect(isFakeAnysearchPublicJobPhase("fake-anysearch-public-job-v2")).toBe(false);
+  });
+
   it("在 test 一次归一化两种 scenario，并把空白视为普通 Fake", () => {
     expect(resolveJobDiscoveryRuntimeConfig({ APP_ENV: "test", E2E_AGENT_RUN_SCENARIOS: "   ", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: "" }))
       .toMatchObject({ executionMode: "fake", agentRunScenarios: {}, sourceHealthScenarios: {} });
