@@ -787,6 +787,12 @@ test("版本化 missing-key phase 保留只读 fixture endpoint，但绝不向�
   assert.equal(options.env.ANYSEARCH_API_KEY, undefined);
 });
 
+test("test runtime 对未知或空白 AnySearch phase fail closed", () => {
+  for (const phase of ["", " ", "fake-anysearch-public-job-v2"]) {
+    assert.throws(() => createRuntimeConfig({ test: true, anysearchPublicJobPhase: phase }), /JOB_DISCOVERY_RUNTIME_CONFIG_INVALID/);
+  }
+});
+
 test("signal waits for the controlled application child before isolated cleanup", async () => {
   const events = [];
   const signalSource = new EventEmitter();

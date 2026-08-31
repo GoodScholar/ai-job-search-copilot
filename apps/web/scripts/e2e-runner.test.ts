@@ -22,6 +22,26 @@ describe("E2E runner", () => {
     ]);
   });
 
+  it("ordinary 与 source-health 都清理遗留的 AnySearch phase、base、origin 和 scenario 污染", async () => {
+    const calls: RunnerCall[] = [];
+    await executeE2E([], {
+      environment: {
+        ...baseEnvironment,
+        E2E_ANYSEARCH_PUBLIC_JOB_PHASE: "fake-anysearch-public-job-v1",
+        ANYSEARCH_BASE_URL: "http://stale.invalid",
+        ANYSEARCH_PROVIDER_BASE_URL: "http://stale.invalid",
+        JOB_PAGE_FETCHER_TEST_ORIGIN: "http://stale.invalid",
+        E2E_AGENT_RUN_SCENARIOS: '{"stale":"retry_once"}',
+        E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: '{"stale":{}}',
+      },
+      run: async (call: RunnerCall) => { calls.push(call); return { code: 0, stdout: "" }; },
+    });
+    expect(calls).toEqual([
+      { phase: "ordinary", args: [], environment: { CI: "true", KEEP_ME: "yes" } },
+      { phase: "source-health", args: [], environment: { CI: "true", KEEP_ME: "yes", E2E_SOURCE_HEALTH_ONLY: "1" } },
+    ]);
+  });
+
   it("明确普通或 source-health spec 时只运行对应阶段并原样透传参数", async () => {
     expect(await selectE2EPhases(["e2e/auth-workbench.spec.ts", "--list"])).toEqual(["ordinary"]);
     expect(await selectE2EPhases(["e2e/source-health.spec.ts", "--project", "Mobile Safari"])).toEqual(["source-health"]);

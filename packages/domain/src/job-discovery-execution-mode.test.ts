@@ -31,11 +31,28 @@ describe("job discovery runtime config", () => {
     });
   });
 
+  it("只从精确 phase 派生固定 AnySearch fixture endpoint，不信任环境中的任意 base 或 page origin", () => {
+    expect(resolveJobDiscoveryRuntimeConfig({
+      APP_ENV: "test", E2E_ANYSEARCH_PUBLIC_JOB_PHASE: "fake-anysearch-public-job-v1",
+    } as NodeJS.ProcessEnv)).toMatchObject({
+      anysearchFixtureOrigin: "http://127.0.0.1:39334",
+    });
+    for (const environment of [
+      { APP_ENV: "test", E2E_ANYSEARCH_PUBLIC_JOB_PHASE: "fake-anysearch-public-job-v1", ANYSEARCH_BASE_URL: "http://127.0.0.1:39999" },
+      { APP_ENV: "test", E2E_ANYSEARCH_PUBLIC_JOB_PHASE: "fake-anysearch-public-job-v1", ANYSEARCH_PROVIDER_BASE_URL: "http://fixture.invalid" },
+      { APP_ENV: "test", E2E_ANYSEARCH_PUBLIC_JOB_PHASE: "fake-anysearch-public-job-v1", JOB_PAGE_FETCHER_TEST_ORIGIN: "http://127.0.0.1:39333" },
+      { APP_ENV: "test", ANYSEARCH_BASE_URL: "http://127.0.0.1:39334" },
+    ]) expect(() => resolveJobDiscoveryRuntimeConfig(environment as NodeJS.ProcessEnv)).toThrow("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID");
+    expect(resolveJobDiscoveryRuntimeConfig({ APP_ENV: "test", JOB_PAGE_FETCHER_TEST_ORIGIN: "http://127.0.0.1:39333" } as NodeJS.ProcessEnv).executionMode).toBe("fake");
+  });
+
   it.each([
     { APP_ENV: "test", E2E_ANYSEARCH_PUBLIC_JOB_PHASE: "" },
     { APP_ENV: "test", E2E_ANYSEARCH_PUBLIC_JOB_PHASE: "fake-anysearch-public-job-v2" },
     { APP_ENV: "local", E2E_ANYSEARCH_PUBLIC_JOB_PHASE: "fake-anysearch-public-job-v1" },
     { APP_ENV: "production", E2E_ANYSEARCH_PUBLIC_JOB_PHASE: "fake-anysearch-public-job-v1" },
+    { APP_ENV: "local", JOB_PAGE_FETCHER_TEST_ORIGIN: "http://127.0.0.1:39334" },
+    { APP_ENV: "production", ANYSEARCH_PROVIDER_BASE_URL: "http://sentinel.invalid" },
   ])("对非法或非测试 Fake AnySearch phase 稳定 fail closed", (environment) => {
     const sentinel = environment.E2E_ANYSEARCH_PUBLIC_JOB_PHASE;
     expect(() => resolveJobDiscoveryRuntimeConfig(environment as NodeJS.ProcessEnv)).toThrow("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID");
