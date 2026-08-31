@@ -766,6 +766,24 @@ test("版本化 Fake AnySearch phase 在取消时关闭 fixture server，再清�
   assert.deepEqual(events, ["prepare", "migrate", "fixture-start", "start", "ready", "fixture-close", "cleanup"]);
 });
 
+test("fixture close 失败仍清理隔离 compose 基础设施", async () => {
+  const events = [];
+  const child = createControlledChild();
+  const runtime = runRuntime({
+    config: createRuntimeConfig({ test: true, anysearchPublicJobPhase: "fake-anysearch-public-job-v1" }),
+    prepare: async () => events.push("prepare"),
+    migrate: async () => events.push("migrate"),
+    startFixtureServer: async () => ({ close: async () => { events.push("fixture-close"); throw new Error("fixture close failed"); } }),
+    start: () => child,
+    waitForReady: async () => undefined,
+    cleanup: async () => events.push("cleanup"),
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  child.emit("exit", 0, null);
+  await assert.rejects(runtime, /fixture close failed/);
+  assert.deepEqual(events, ["prepare", "migrate", "fixture-close", "cleanup"]);
+});
+
 test("版本化 missing-key phase 保留只读 fixture endpoint，但绝不向应用注入 AnySearch key", () => {
   let spawnCall;
   const runtime = createRuntimeConfig({ test: true, anysearchPublicJobPhase: "fake-anysearch-public-job-missing-key-v1" });
