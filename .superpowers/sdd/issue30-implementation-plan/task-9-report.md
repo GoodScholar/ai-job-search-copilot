@@ -10,7 +10,7 @@
 - `ab0fa0d`：进程重建后 pending Lead capability recovery Red；在 live search 变为 clean-zero 时旧实现确实错误返回 `clean_zero`。
 - 本提交：最小 Green/Refactor，包含 claim-bound recovery、严格配置、schedule/UI、retry 与 owner namespace 收紧。
 
-此前误启动的两套并发测试 PID（`83635/83658/83664` 与 `83796/83797/83819/83826`）的证据已作废；其后所有本 Slice 命令均按单进程串行运行。
+此前误启动的两套并发测试 PID（`83635/83658/83664` 与 `83796/83797/83819/83826`）以及后续两套重复 Worker full test（`93851/93872/93878` 与 `94078/94099/94107`）的证据全部作废；不以其结果作任何验收结论。其余 focused 与 domain 命令均按单进程串行运行。
 
 ## Runtime matrix
 
@@ -31,9 +31,13 @@
 
 ## 串行验证
 
-- Worker focused：22 tests。
+- Worker focused：22 tests；heartbeat 单例复现：1/1。
 - Domain workflow/schedule/processor/Lead focused：94 tests；Lead repository integration：10 tests。
 - API focused：7 tests；Web focused：16 tests；Contracts focused：3 tests。
 - Contracts/API/Domain/Worker/Web typecheck 全通过。
 
-完整包级回归、Drizzle check 与最终 diff/clean 检查在本提交后续收尾执行并记录于最终验收。
+第一次带日志全包链 `/tmp/issue30-slice8-acceptance.log` 因 Worker heartbeat Redis Testcontainers 端口绑定 10 秒超时停止：21/22 files、269 passed、1 skipped，exit 1；不增加 timeout。Docker 只读证据为 Docker Desktop 29.5.2、overlayfs、无遗留容器；单例 heartbeat 以 `DOCKER_API_VERSION=1.51` 复现通过。随后新的 Worker full 日志 `/tmp/issue30-worker-full.log` 通过 22/22 files、270/270 tests（90.19s）。
+
+后续链 `/tmp/issue30-slice8-rest-acceptance.log` 通过：API 13/13 files、138/138 tests；Web 55/55 files、289/289 tests；Database 3/3 files、28/28 tests。Drizzle `check` 为 `Everything's fine`；`git diff --check 3a1a394..HEAD` 通过。
+
+当前 Domain full `/tmp/issue30-slice8-domain.log` 稳定失败：28 files 中 27 通过、348 tests 中 347 通过。唯一失败为 `job-discovery-persistence.integration.test.ts` 的常数 SQL 参数断言（`34 > 32`）。按基线对照，在新建且随后删除的 detached worktree `3a1a394` 中运行同一 focused 命令，`/tmp/issue30-baseline-persistence.log` 为 1/1 files、39/39 tests 通过。因此这是相对固定基线的真实性能回归；未修改该无关 persistence 路径，作为 Slice 8 收尾 blocker 留待独立诊断。
