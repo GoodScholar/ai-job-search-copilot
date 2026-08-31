@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { fakeAnysearchPublicJobMissingKeyPhase, fakeAnysearchPublicJobPhase, startFakeAnysearchFixtureServer } from "./fake-anysearch-fixture-server.mjs";
+import { isConfiguredFakeAnysearchPublicJobPhase, isFakeAnysearchPublicJobPhase } from "./fake-anysearch-test-phase-policy.mjs";
+import { startFakeAnysearchFixtureServer } from "./fake-anysearch-fixture-server.mjs";
 
 export const testRuntime = Object.freeze({
   composeProject: "job-copilot-issue-2-e2e",
@@ -17,7 +18,7 @@ export const testRuntime = Object.freeze({
 });
 
 export function createRuntimeConfig({ test = false, env = process.env, anysearchPublicJobPhase = test ? env.E2E_ANYSEARCH_PUBLIC_JOB_PHASE : undefined } = {}) {
-  const supportedAnysearchPhase = anysearchPublicJobPhase === fakeAnysearchPublicJobPhase || anysearchPublicJobPhase === fakeAnysearchPublicJobMissingKeyPhase;
+  const supportedAnysearchPhase = isFakeAnysearchPublicJobPhase(anysearchPublicJobPhase);
   if (test && anysearchPublicJobPhase !== undefined && !supportedAnysearchPhase) throw new Error("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID");
   if (test) {
     return {
@@ -146,7 +147,7 @@ function applicationEnv(config, env) {
     NEXT_PUBLIC_AUTH_MODE: "dev",
     PUBLIC_SOURCE_NETWORK_MODE: config.test ? "disabled" : env.PUBLIC_SOURCE_NETWORK_MODE,
     ...(config.anysearchPublicJobPhase ? {
-      ...(config.anysearchPublicJobPhase === fakeAnysearchPublicJobPhase ? { ANYSEARCH_API_KEY: "fake-anysearch-public-job-test-key" } : {}),
+      ...(isConfiguredFakeAnysearchPublicJobPhase(config.anysearchPublicJobPhase) ? { ANYSEARCH_API_KEY: "fake-anysearch-public-job-test-key" } : {}),
       ANYSEARCH_BASE_URL: "http://127.0.0.1:" + config.anysearchFixturePort,
       ANYSEARCH_PROVIDER_BASE_URL: "http://127.0.0.1:" + config.anysearchFixturePort,
       E2E_ANYSEARCH_PUBLIC_JOB_PHASE: config.anysearchPublicJobPhase,

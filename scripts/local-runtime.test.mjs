@@ -298,7 +298,7 @@ test("Playwright config 仅将版本化 Fake AnySearch phase 交给本地测试�
   const config = await readFile(new URL("../apps/web/playwright.config.ts", import.meta.url), "utf8");
 
   assert.match(config, /E2E_ANYSEARCH_PUBLIC_JOB_PHASE/);
-  assert.match(config, /fake-anysearch-public-job-v1/);
+  assert.match(config, /fake-anysearch-test-phase-policy/);
   assert.match(config, /anysearch-public-job-discovery/);
 });
 

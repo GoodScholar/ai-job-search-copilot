@@ -1,10 +1,9 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
+import { fakeAnysearchPublicJobMissingKeyPhase, fakeAnysearchPublicJobPhase } from "../../../scripts/fake-anysearch-test-phase-policy.mjs";
 
 const sourceHealthSpec = "source-health.spec.ts";
 const anysearchSpec = "anysearch-public-job-discovery.spec.ts";
-const fakeAnysearchPublicJobPhase = "fake-anysearch-public-job-v1";
-const fakeAnysearchPublicJobMissingKeyPhase = "fake-anysearch-public-job-missing-key-v1";
 const phases = ["ordinary", "source-health"];
 const require = createRequire(import.meta.url);
 const playwrightCli = require.resolve("@playwright/test/cli");

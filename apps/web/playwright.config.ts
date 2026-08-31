@@ -1,14 +1,15 @@
 import { defineConfig, devices } from "@playwright/test";
 import { fileURLToPath } from "node:url";
+import { isConfiguredFakeAnysearchPublicJobPhase, isFakeAnysearchPublicJobPhase } from "../../scripts/fake-anysearch-test-phase-policy.mjs";
 
 const port = "3120";
 const baseURL = `http://127.0.0.1:${port}`;
 const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
 const sourceHealthOnly = process.env.E2E_SOURCE_HEALTH_ONLY === "1";
 const anysearchPublicJobPhase = process.env.E2E_ANYSEARCH_PUBLIC_JOB_PHASE;
-const configuredAnysearchPublicJobPhase = anysearchPublicJobPhase === "fake-anysearch-public-job-v1";
-const missingKeyAnysearchPublicJobPhase = anysearchPublicJobPhase === "fake-anysearch-public-job-missing-key-v1";
-const anysearchPhase = configuredAnysearchPublicJobPhase || missingKeyAnysearchPublicJobPhase;
+const configuredAnysearchPublicJobPhase = isConfiguredFakeAnysearchPublicJobPhase(anysearchPublicJobPhase);
+const anysearchPhase = isFakeAnysearchPublicJobPhase(anysearchPublicJobPhase);
+const missingKeyAnysearchPublicJobPhase = anysearchPhase && !configuredAnysearchPublicJobPhase;
 const sourceHealthScenarios = {
   "10000000-0000-4000-8000-000000000121": {
     "greenhouse:e2e-health-desktop-good": "healthy",

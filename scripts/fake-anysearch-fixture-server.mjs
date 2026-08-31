@@ -1,7 +1,5 @@
 import { createServer } from "node:http";
-
-export const fakeAnysearchPublicJobPhase = "fake-anysearch-public-job-v1";
-export const fakeAnysearchPublicJobMissingKeyPhase = "fake-anysearch-public-job-missing-key-v1";
+export { fakeAnysearchPublicJobMissingKeyPhase, fakeAnysearchPublicJobPhase } from "./fake-anysearch-test-phase-policy.mjs";
 
 const fixtureUrls = Object.freeze({
   verified_alias: "https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9001-alias",
