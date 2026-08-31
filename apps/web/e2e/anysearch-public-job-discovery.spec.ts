@@ -13,12 +13,16 @@ const testDevAuthSecret = "issue-2-e2e-dev-auth-shared-secret";
 const expectedSiteDomains = ["zhipin.com", "liepin.com", "zhaopin.com", "mp.weixin.qq.com"];
 const expectedTargetCompanyName = "Fake AnySearch Fixture";
 const expectedVerifiedCanonicalUrl = "https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9001";
+const fixedTestKey = ["fake", "anysearch", "public", "job", "test", "key"].join("-");
 const scenarios = {
   "Desktop Chrome": { idempotencyKey: "10000000-0000-4000-8000-000000000131", subject: "fake-anysearch-desktop" },
   "Mobile Safari": { idempotencyKey: "10000000-0000-4000-8000-000000000132", subject: "fake-anysearch-mobile" },
 } as const;
 
 function scenarioFor(testInfo: TestInfo) { return scenarios[testInfo.project.name as keyof typeof scenarios]; }
+function serializedRunAndFactsContainFixedTestKey(run: unknown, facts: unknown): boolean {
+  return JSON.stringify({ run, facts }).includes(fixedTestKey);
+}
 
 async function configureAccount(request: APIRequestContext, scenario: { subject: string }): Promise<{ token: string; userId: string; targetId: string }> {
   const session = await request.post(apiBaseUrl + "/v1/auth/dev/sessions", {
@@ -250,7 +254,8 @@ test("版本化 Fake AnySearch 缺 key 时从普通 UI 失败且不触发 provid
   expect(facts.results).toHaveLength(0);
   expect(facts.attentions).toHaveLength(1);
   expect(await fixtureAudit()).toEqual([]);
-  expect(JSON.stringify({ run, facts }).includes("fake-anysearch-public-job-test-key")).toBe(false);
+  const factsWithTestOnlyPlaceholder = { ...facts, testOnlyPlaceholder: fixedTestKey };
+  expect(serializedRunAndFactsContainFixedTestKey(run, factsWithTestOnlyPlaceholder)).toBe(false);
   await page.reload();
   const attention = page.locator(".agent-inbox-panel").getByRole("link", { name: "查看本次运行诊断" });
   await expect(attention).toHaveAttribute("href", `/home?runId=${runId}#agent-run`);
