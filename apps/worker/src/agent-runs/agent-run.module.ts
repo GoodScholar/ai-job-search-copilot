@@ -97,6 +97,7 @@ export function createConfiguredLayeredPublicJobDiscoveryWorkflowResolver(input:
         evidenceStore: input.evidenceStore,
         trustedSourceAdapter: new GreenhouseTrustedSourceAdapter(),
         anySearch: {
+          isConfigured: () => Boolean(environment.ANYSEARCH_API_KEY?.trim()),
           search: async ({ query, signal, beforeRequest: checkpoint }) => {
             const beforeRequest: AnySearchBeforeRequest = async (operation) => {
               if (operation.kind !== "search") return "blocked" as const;
@@ -110,15 +111,19 @@ export function createConfiguredLayeredPublicJobDiscoveryWorkflowResolver(input:
             for (const candidate of accepted) candidates.set(`${candidate.queryId}:${candidate.candidateFingerprint}`, candidate);
             return { candidates: accepted.map((candidate) => ({ normalizedUrl: candidate.normalizedUrl, stableFingerprint: candidate.candidateFingerprint })) };
           },
-          extract: async ({ candidate, signal, beforeRequest: checkpoint }) => {
-            const issued = candidates.get(`${candidate.queryId}:${candidate.stableFingerprint}`);
-            if (!issued) return { error: { code: "ANYSEARCH_POLICY_REJECTED", retryable: false, httpStatus: null } };
+          extract: async ({ candidate, signal, beforeRequest: checkpoint, authorizeRecoveredCandidate }) => {
+            const issued = candidates.get(`${candidate.queryId}:${candidate.stableFingerprint}`) ?? Object.freeze({
+              kind: "anysearch_public_job_candidate" as const, normalizedUrl: candidate.normalizedUrl, allowedSiteDomains: Object.freeze([...candidate.allowedSiteDomains]),
+              queryId: candidate.queryId, candidateFingerprint: candidate.stableFingerprint,
+            });
+            // 恢复候选不复用进程内 Map；每次 extract 都拥有独立的 claim-bound 授权闭包。
+            const adapter = candidates.has(`${candidate.queryId}:${candidate.stableFingerprint}`) ? anySearch : new AnySearchPublicJobAdapter({ apiKey: environment.ANYSEARCH_API_KEY, authorizeRecoveredCandidate });
             const beforeRequest: AnySearchBeforeRequest = async (operation) => {
               if (operation.kind !== "extract") return "blocked" as const;
               await checkpoint();
               return "proceed" as const;
             };
-            const result = await anySearch.extract({ candidate: issued, identity: candidate.leadId, signal }, beforeRequest);
+            const result = await adapter.extract({ candidate: issued, identity: candidate.leadId, signal }, beforeRequest);
             if (!result.ok && "error" in result) return { error: result.error };
             return "data" in result ? { normalizedUrl: result.data.normalizedUrl } : { error: { code: "ANYSEARCH_CANCELLED", retryable: false, httpStatus: null } };
           },

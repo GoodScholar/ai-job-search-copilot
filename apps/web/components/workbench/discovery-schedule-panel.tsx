@@ -70,7 +70,7 @@ function DiscoveryScheduleForm({ targetId, targetState, initialSchedule }: Props
           if (code === "SOURCE_POLICY_REQUIRED") setSaved((current) => ({ ...current, sourceSupport: { status: "policy_required", message: "需允许 boards-api.greenhouse.io" } }));
           if (code === "NO_SUPPORTED_SOURCE") setSaved((current) => ({ ...current, sourceSupport: { status: "unsupported" } }));
           if (code === "JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE") setTargetBlocked(true);
-          setMessage(code === "JOB_DISCOVERY_SCHEDULE_VERSION_CONFLICT" ? "每日检查已在其他位置更新，请刷新后重试。" : code === "SOURCE_POLICY_REQUIRED" ? "待接入：需允许 boards-api.greenhouse.io" : code === "JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE" ? "该求职目标已停用，不能启用每日检查。" : code === "NO_SUPPORTED_SOURCE" ? "待接入" : "每日检查暂时无法保存，请稍后重试。");
+          setMessage(code === "JOB_DISCOVERY_SCHEDULE_VERSION_CONFLICT" ? "每日检查已在其他位置更新，请刷新后重试。" : code === "SOURCE_POLICY_REQUIRED" ? "待接入：需允许 boards-api.greenhouse.io" : code === "PROFILE_UNAVAILABLE" ? "请先完善求职档案。" : code === "JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE" ? "该求职目标已停用，不能启用每日检查。" : code === "NO_SUPPORTED_SOURCE" ? "待接入" : "每日检查暂时无法保存，请稍后重试。");
           return;
         }
         const parsed = JobDiscoveryScheduleResponseSchema.safeParse(payload);

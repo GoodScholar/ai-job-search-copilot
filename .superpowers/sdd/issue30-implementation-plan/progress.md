@@ -56,4 +56,4 @@ Acceptance baseline note: Task 5a lifecycle repair received an independent 0/0/0
 
 Task 8: complete (commits `768b8c6..4473524`; final independent Standards and Spec reviews both `0/0/0`)
 
-Task 9: in progress from clean Slice 7 HEAD `4473524`; execution brief: `task-9-brief.md`
+Task 9: implementation and Round 1 fixes complete pending final serial package verification (Red `c70dfe2`, `e33db6b`, `4932852`, `ab0fa0d`; report `task-9-report.md`).

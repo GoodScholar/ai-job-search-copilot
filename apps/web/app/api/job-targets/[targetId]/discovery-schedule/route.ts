@@ -43,7 +43,7 @@ export async function PUT(request: Request, { params }: RouteContext): Promise<R
 function problemResponse(error: unknown): Response {
   const status = typeof error === "object" && error !== null && "status" in error && typeof error.status === "number" ? error.status : 502;
   const code = typeof error === "object" && error !== null && "problem" in error && typeof error.problem === "object" && error.problem !== null && "code" in error.problem && typeof error.problem.code === "string" ? error.problem.code : null;
-  const allowed = new Set(["JOB_DISCOVERY_SCHEDULE_VERSION_CONFLICT", "SOURCE_POLICY_REQUIRED", "JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE", "NO_SUPPORTED_SOURCE"]);
+  const allowed = new Set(["JOB_DISCOVERY_SCHEDULE_VERSION_CONFLICT", "SOURCE_POLICY_REQUIRED", "JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE", "NO_SUPPORTED_SOURCE", "PROFILE_UNAVAILABLE"]);
   if (status === 409 && code && allowed.has(code)) return Response.json({ code }, { status, headers: noStore });
   return emptyResponse(status === 400 || status === 401 || status === 404 ? status : 502);
 }

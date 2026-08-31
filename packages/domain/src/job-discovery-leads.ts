@@ -21,6 +21,8 @@ const RecordPendingInputSchema = z.object({
   now: z.date(),
 }).strict();
 const RecordPendingForClaimInputSchema = RecordPendingInputSchema.extend({ claimToken: z.uuid() }).strict();
+const RecoverPendingForClaimInputSchema = z.object({ userId: z.uuid(), runId: z.uuid(), queryId: z.uuid(), queryFingerprint: fingerprint, claimToken: z.uuid(), now: z.date() }).strict();
+const AuthorizeRecoveredCandidateForClaimInputSchema = z.object({ userId: z.uuid(), runId: z.uuid(), queryId: z.uuid(), candidateFingerprint: fingerprint, leadId: z.uuid(), claimToken: z.uuid(), now: z.date() }).strict();
 const GetLeadInputSchema = z.object({ userId: z.uuid(), leadId: z.uuid(), now: z.date() }).strict();
 const GetAttributionInputSchema = z.object({ userId: z.uuid(), leadId: z.uuid() }).strict();
 
@@ -115,6 +117,29 @@ export function createJobDiscoveryLeadRepository({ db, id }: Dependencies) {
   return {
     async recordPending(input: unknown) { return recordPending(input, RecordPendingInputSchema, false); },
     async recordPendingForClaim(input: unknown) { return recordPending(input, RecordPendingForClaimInputSchema, true); },
+    async recoverPendingForClaim(input: unknown) {
+      const value = parseLeadInput(RecoverPendingForClaimInputSchema, input);
+      return db.transaction(async (transaction) => {
+        await assertClaim(transaction, value);
+        const rows = await transaction.select().from(jobDiscoveryLeads).where(and(
+          eq(jobDiscoveryLeads.userId, value.userId), eq(jobDiscoveryLeads.runId, value.runId), eq(jobDiscoveryLeads.provider, "anysearch"),
+          eq(jobDiscoveryLeads.queryId, value.queryId), eq(jobDiscoveryLeads.queryFingerprint, value.queryFingerprint), eq(jobDiscoveryLeads.state, "pending"), gt(jobDiscoveryLeads.expiresAt, value.now),
+        ));
+        return rows.map((row) => ({ leadId: row.id, userId: row.userId, runId: row.runId, queryId: row.queryId, queryFingerprint: row.queryFingerprint, normalizedUrl: row.normalizedUrl, stableFingerprint: row.stableFingerprint, allowedSiteDomains: [] }));
+      });
+    },
+    async authorizeRecoveredCandidateForClaim(input: unknown) {
+      const value = parseLeadInput(AuthorizeRecoveredCandidateForClaimInputSchema, input);
+      return db.transaction(async (transaction) => {
+        await assertClaim(transaction, value);
+        const [lead] = await transaction.select({ id: jobDiscoveryLeads.id }).from(jobDiscoveryLeads).where(and(
+          eq(jobDiscoveryLeads.userId, value.userId), eq(jobDiscoveryLeads.runId, value.runId), eq(jobDiscoveryLeads.id, value.leadId),
+          eq(jobDiscoveryLeads.provider, "anysearch"), eq(jobDiscoveryLeads.queryId, value.queryId), eq(jobDiscoveryLeads.stableFingerprint, value.candidateFingerprint),
+          eq(jobDiscoveryLeads.state, "pending"), gt(jobDiscoveryLeads.expiresAt, value.now),
+        )).limit(1);
+        return Boolean(lead);
+      });
+    },
     async getLead(input: unknown) {
       const value = parseLeadInput(GetLeadInputSchema, input);
       const lead = await loadLead(value.userId, value.leadId);

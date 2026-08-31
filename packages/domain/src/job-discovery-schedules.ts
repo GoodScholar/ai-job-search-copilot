@@ -5,6 +5,7 @@ import {
   agentRuns,
   jobDiscoveryScheduleOccurrences,
   jobDiscoverySchedules,
+  jobProfiles,
   jobTargets,
   type Database,
 } from "@job-copilot/database";
@@ -27,7 +28,7 @@ import { applyTransactionDeadline } from "./transaction-deadline";
 import type { JobDiscoveryExecutionMode } from "./job-discovery-execution-mode";
 
 export class JobDiscoveryScheduleError extends Error {
-  constructor(public readonly code: "JOB_DISCOVERY_SCHEDULE_TARGET_NOT_FOUND" | "JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE" | "JOB_DISCOVERY_SCHEDULE_VERSION_CONFLICT" | "SOURCE_POLICY_REQUIRED" | "NO_SUPPORTED_SOURCE") { super(code); }
+  constructor(public readonly code: "JOB_DISCOVERY_SCHEDULE_TARGET_NOT_FOUND" | "JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE" | "JOB_DISCOVERY_SCHEDULE_VERSION_CONFLICT" | "SOURCE_POLICY_REQUIRED" | "NO_SUPPORTED_SOURCE" | "PROFILE_UNAVAILABLE") { super(code); }
 }
 
 type Dependencies = { db: Database; runs: AgentRunStarter; auditTrail: AuditTrail; id: () => string; clock: () => Date; executionMode?: JobDiscoveryExecutionMode };
@@ -73,11 +74,14 @@ async function scheduleTarget(db: Pick<Database, "select">, userId: string, targ
   return target;
 }
 
-async function dispatchReason(db: Pick<Database, "select">, userId: string, targetId: string, executionMode?: JobDiscoveryExecutionMode): Promise<"TARGET_INACTIVE" | "NO_SUPPORTED_SOURCE" | "SOURCE_POLICY_REQUIRED" | null> {
+async function dispatchReason(db: Pick<Database, "select">, userId: string, targetId: string, executionMode?: JobDiscoveryExecutionMode): Promise<"TARGET_INACTIVE" | "NO_SUPPORTED_SOURCE" | "SOURCE_POLICY_REQUIRED" | "PROFILE_UNAVAILABLE" | null> {
   const target = await scheduleTarget(db, userId, targetId);
   if (target.state !== "active") return "TARGET_INACTIVE";
   // v4 总会冻结 general/site public discovery；Greenhouse 仅是可选 trusted branch。
-  if (executionMode === "layered_public") return null;
+  if (executionMode === "layered_public") {
+    const [profile] = await db.select({ version: jobProfiles.version }).from(jobProfiles).where(eq(jobProfiles.userId, userId)).limit(1);
+    return profile && profile.version > 0 ? null : "PROFILE_UNAVAILABLE";
+  }
   const [watchlist] = await db.select({ items: companyWatchlistRevisions.items }).from(companyWatchlists).innerJoin(companyWatchlistRevisions, and(
     eq(companyWatchlistRevisions.userId, companyWatchlists.userId),
     eq(companyWatchlistRevisions.watchlistId, companyWatchlists.id),
@@ -87,13 +91,14 @@ async function dispatchReason(db: Pick<Database, "select">, userId: string, targ
   return analysis.status === "policy_required" ? "SOURCE_POLICY_REQUIRED" : analysis.status === "unsupported" ? "NO_SUPPORTED_SOURCE" : null;
 }
 
-async function sourceSupport(db: Pick<Database, "select">, userId: string, targetId: string): Promise<JobDiscoverySourceSupport> {
+async function sourceSupport(db: Pick<Database, "select">, userId: string, targetId: string, executionMode?: JobDiscoveryExecutionMode): Promise<JobDiscoverySourceSupport> {
   const [watchlist] = await db.select({ items: companyWatchlistRevisions.items }).from(companyWatchlists).innerJoin(companyWatchlistRevisions, and(
     eq(companyWatchlistRevisions.userId, companyWatchlists.userId),
     eq(companyWatchlistRevisions.watchlistId, companyWatchlists.id),
     eq(companyWatchlistRevisions.version, companyWatchlists.version),
   )).where(and(eq(companyWatchlists.userId, userId), eq(companyWatchlists.targetId, targetId)));
   const analysis = analyzePublicJobDiscoverySources(watchlist);
+  if (executionMode === "layered_public") return { status: "executable", supportedSourceCount: analysis.status === "executable" ? analysis.sources.length : 0 };
   if (analysis.status === "policy_required") return { status: "policy_required", message: "需允许 boards-api.greenhouse.io" };
   return analysis.status === "unsupported" ? { status: "unsupported" } : { status: "executable", supportedSourceCount: analysis.sources.length };
 }
@@ -126,7 +131,7 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
         throw error;
       }
       const [schedule] = await deps.db.select().from(jobDiscoverySchedules).where(and(eq(jobDiscoverySchedules.userId, input.userId), eq(jobDiscoverySchedules.targetId, input.targetId)));
-      return JobDiscoveryScheduleResponseSchema.parse({ schedule: schedule ? scheduleView(schedule) : null, sourceSupport: await sourceSupport(deps.db, input.userId, input.targetId) });
+      return JobDiscoveryScheduleResponseSchema.parse({ schedule: schedule ? scheduleView(schedule) : null, sourceSupport: await sourceSupport(deps.db, input.userId, input.targetId, deps.executionMode) });
     },
     async set(input) {
       const command = SetJobDiscoveryScheduleCommandSchema.parse(input.command);
@@ -139,6 +144,7 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
           const reason = await dispatchReason(transaction, input.userId, input.targetId, deps.executionMode);
           if (reason === "SOURCE_POLICY_REQUIRED") throw new JobDiscoveryScheduleError("SOURCE_POLICY_REQUIRED");
           if (reason === "NO_SUPPORTED_SOURCE") throw new JobDiscoveryScheduleError("NO_SUPPORTED_SOURCE");
+          if (reason === "PROFILE_UNAVAILABLE") throw new JobDiscoveryScheduleError("PROFILE_UNAVAILABLE");
         }
         const [current] = await transaction.select().from(jobDiscoverySchedules).where(and(eq(jobDiscoverySchedules.userId, input.userId), eq(jobDiscoverySchedules.targetId, input.targetId)));
         const currentVersion = current?.version ?? 0;
@@ -211,7 +217,7 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
               .where(and(eq(jobDiscoveryScheduleOccurrences.id, occurrence.id), eq(jobDiscoveryScheduleOccurrences.status, "pending"))).returning();
             if (dispatched) await appendScheduleAudit(auditTrail, { userId: dispatched.userId, requestId: deps.id(), eventType: "occurrence_dispatched", scheduleId: dispatched.scheduleId, targetId: dispatched.targetId, occurrenceId: dispatched.id, runId, scheduledFor: dispatched.scheduledFor, state: "dispatched", now });
           };
-          const skip = async (reason: "TARGET_INACTIVE" | "NO_SUPPORTED_SOURCE" | "SOURCE_POLICY_REQUIRED") => {
+          const skip = async (reason: "TARGET_INACTIVE" | "NO_SUPPORTED_SOURCE" | "SOURCE_POLICY_REQUIRED" | "PROFILE_UNAVAILABLE") => {
             const [skipped] = await transaction.update(jobDiscoveryScheduleOccurrences).set({ status: "skipped", runId: null, skipReason: reason })
               .where(and(eq(jobDiscoveryScheduleOccurrences.id, occurrence.id), eq(jobDiscoveryScheduleOccurrences.status, "pending"))).returning();
             if (skipped) await appendScheduleAudit(auditTrail, { userId: skipped.userId, requestId: deps.id(), eventType: "occurrence_skipped", scheduleId: skipped.scheduleId, targetId: skipped.targetId, occurrenceId: skipped.id, scheduledFor: skipped.scheduledFor, state: "skipped", now });

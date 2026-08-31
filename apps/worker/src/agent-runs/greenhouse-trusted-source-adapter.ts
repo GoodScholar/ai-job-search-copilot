@@ -66,7 +66,7 @@ export class GreenhouseTrustedSourceAdapter implements LayeredTrustedSourceAdapt
     const source = sourceFor(input.source);
     if (!source) return { ok: false as const, error: { code: "GREENHOUSE_SOURCE_UNSUPPORTED" } };
     let response;
-    try { response = await this.client.get({ url: apiUrl(source.boardToken), allowedDomains: [GREENHOUSE_API_HOST], accept: "application/json", maxRedirects: 0, retry: "bounded", signal: input.signal }); }
+    try { response = await this.client.get({ url: apiUrl(source.boardToken), allowedDomains: [GREENHOUSE_API_HOST], accept: "application/json", maxRedirects: 0, retry: "none", signal: input.signal }); }
     catch (error) { return { ok: false as const, error: { code: failure(error) } }; }
     const http = statusFailure(response.status);
     if (http) return { ok: false as const, error: { code: http } };
@@ -83,7 +83,7 @@ export class GreenhouseTrustedSourceAdapter implements LayeredTrustedSourceAdapt
     const source = sourceFor(input.source);
     if (!source || !this.selected.has(`${input.source.sourceId}:${input.detailId}`)) return { ok: false as const, error: { code: "GREENHOUSE_DETAIL_NOT_SELECTED" } };
     let response;
-    try { response = await this.client.get({ url: apiUrl(source.boardToken, input.detailId), allowedDomains: [GREENHOUSE_API_HOST], accept: "application/json", maxRedirects: 0, retry: "bounded", signal: input.signal }); }
+    try { response = await this.client.get({ url: apiUrl(source.boardToken, input.detailId), allowedDomains: [GREENHOUSE_API_HOST], accept: "application/json", maxRedirects: 0, retry: "none", signal: input.signal }); }
     catch (error) { return { ok: false as const, error: { code: failure(error) } }; }
     const http = statusFailure(response.status);
     if (http) return { ok: false as const, error: { code: http } };

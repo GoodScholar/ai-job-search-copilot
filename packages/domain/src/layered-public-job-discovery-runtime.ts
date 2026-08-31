@@ -27,13 +27,13 @@ function sourceIssueCode(value: string, fallback: string) {
   return /^GREENHOUSE_[A-Z0-9_]{1,100}$/u.test(value) ? value : fallback;
 }
 
-function rawObject(input: { id: () => string; runId: string; sourceId: string; detail: DiscoveryDetail }): StoredDiscoveryObject {
+function rawObject(input: { id: () => string; userId: string; runId: string; sourceId: string; detail: DiscoveryDetail }): StoredDiscoveryObject {
   const bytes = canonicalJsonBytes(input.detail.rawPayload);
   const sourceHash = createHash("sha256").update(`${input.sourceId}:${input.detail.detailId}`).digest("hex");
   return {
     sourceId: input.sourceId,
     detailId: input.detail.detailId,
-    objectKey: `agent-runs/${input.runId}/trusted/${sourceHash}-${input.id()}.json`,
+    objectKey: `accounts/${input.userId}/agent-runs/${input.runId}/trusted/${sourceHash}-${input.id()}.json`,
     rawContentSha256: createHash("sha256").update(bytes).digest("hex"),
   };
 }
@@ -97,7 +97,7 @@ export function createLayeredPublicJobDiscoveryRuntime(input: Omit<WorkflowDepen
           details.push(detail);
         }
         if (details.length === 0) continue;
-        const storedDetails = details.map((detail) => ({ detail, stored: rawObject({ id: input.id, runId, sourceId: source.sourceId, detail }) }));
+        const storedDetails = details.map((detail) => ({ detail, stored: rawObject({ id: input.id, userId, runId, sourceId: source.sourceId, detail }) }));
         const storedObjects = storedDetails.map(({ stored }) => stored);
         try {
           for (const { detail, stored } of storedDetails) {
@@ -119,6 +119,10 @@ export function createLayeredPublicJobDiscoveryRuntime(input: Omit<WorkflowDepen
   const { db: _db, id: _id, auditTrail: _auditTrail, contentStore: _contentStore, evidenceStore: _evidenceStore, trustedSourceAdapter: _trustedSourceAdapter, ...workflowDependencies } = input;
   return createLayeredPublicJobDiscoveryWorkflow({
     ...workflowDependencies,
+    anySearch: {
+      ...workflowDependencies.anySearch,
+      extract: (value) => workflowDependencies.anySearch.extract(value),
+    },
     trustedSources,
     leads,
     gate: {

@@ -104,6 +104,19 @@ describe("job discovery lead repository", () => {
     await expect(database.select().from(jobDiscoveryLeads).where(eq(jobDiscoveryLeads.runId, subject.runId))).resolves.toEqual([]);
   });
 
+  it("只枚举并授权当前 owner/run/query/claim 的 pending Lead", async () => {
+    const subject = await owner("recover"); const claimToken = crypto.randomUUID();
+    await database.update(agentRuns).set({ status: "running", startedAt: now, claimToken, claimExpiresAt: new Date(Date.now() + 60_000), activeSliceStartedAt: now }).where(eq(agentRuns.id, subject.runId));
+    const input = pendingInput(subject);
+    const created = await repository().recordPendingForClaim({ ...input, claimToken });
+    const recovered = await repository().recoverPendingForClaim({ userId: subject.userId, runId: subject.runId, queryId: input.queryId, queryFingerprint: input.queryFingerprint, claimToken, now });
+    expect(recovered).toEqual([expect.objectContaining({ leadId: created.leadId, userId: subject.userId, runId: subject.runId, queryId: input.queryId, stableFingerprint: input.stableFingerprint })]);
+    await expect(repository().authorizeRecoveredCandidateForClaim({ userId: subject.userId, runId: subject.runId, queryId: input.queryId, candidateFingerprint: input.stableFingerprint, leadId: created.leadId, claimToken, now })).resolves.toBe(true);
+    await expect(repository().authorizeRecoveredCandidateForClaim({ userId: subject.userId, runId: subject.runId, queryId: crypto.randomUUID(), candidateFingerprint: input.stableFingerprint, leadId: created.leadId, claimToken, now })).resolves.toBe(false);
+    await expect(repository().authorizeRecoveredCandidateForClaim({ userId: subject.userId, runId: subject.runId, queryId: input.queryId, candidateFingerprint: "c".repeat(64), leadId: created.leadId, claimToken, now })).resolves.toBe(false);
+    await expect(repository().authorizeRecoveredCandidateForClaim({ userId: crypto.randomUUID(), runId: subject.runId, queryId: input.queryId, candidateFingerprint: input.stableFingerprint, leadId: created.leadId, claimToken, now })).rejects.toMatchObject({ code: "JOB_DISCOVERY_CLAIM_STALE" });
+  });
+
   it("拒绝敏感 URL 与未知输入字段，不持久化 AnySearch 内容", async () => {
     const subject = await owner("privacy");
     const secret = "secret-token-sentinel";

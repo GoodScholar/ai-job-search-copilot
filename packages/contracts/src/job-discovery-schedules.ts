@@ -32,7 +32,7 @@ export const SetJobDiscoveryScheduleCommandSchema = z.object({
 
 /** 计划页面只需要来源是否可以执行，绝不返回来源 URL 或授权域名。 */
 export const JobDiscoverySourceSupportSchema = z.discriminatedUnion("status", [
-  z.object({ status: z.literal("executable"), supportedSourceCount: positiveInteger }).strict(),
+  z.object({ status: z.literal("executable"), supportedSourceCount: nonnegativeInteger }).strict(),
   z.object({ status: z.literal("unsupported") }).strict(),
   z.object({ status: z.literal("policy_required"), message: z.literal("需允许 boards-api.greenhouse.io") }).strict(),
 ]);
@@ -49,7 +49,7 @@ export const JobDiscoveryScheduleOccurrenceSchema = z.object({
   scheduledFor: z.iso.datetime(),
   status: z.enum(["pending", "dispatched", "skipped"]),
   runId: z.uuid().nullable(),
-  skipReason: z.enum(["TARGET_INACTIVE", "NO_SUPPORTED_SOURCE", "SOURCE_POLICY_REQUIRED"]).nullable(),
+  skipReason: z.enum(["TARGET_INACTIVE", "NO_SUPPORTED_SOURCE", "SOURCE_POLICY_REQUIRED", "PROFILE_UNAVAILABLE"]).nullable(),
 }).strict().superRefine((occurrence, context) => {
   const validOutcome = (occurrence.status === "pending" && occurrence.runId === null && occurrence.skipReason === null)
     || (occurrence.status === "dispatched" && occurrence.runId !== null && occurrence.skipReason === null)

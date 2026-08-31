@@ -80,8 +80,13 @@ describe("layered public job discovery workflow", () => {
 
   it("factory 对空 trusted scope 不发请求且报告 failed/empty trusted branch", async () => {
     let adapterCalls = 0;
+    let selectCount = 0;
+    const transaction = { execute: async () => undefined, select: () => ({ from: () => ({ where: () => {
+      const rows = selectCount++ === 0 ? [{ id: runId }] : [];
+      return Object.assign(Promise.resolve(rows), { limit: async () => rows });
+    } }) }) };
     const runtime = createLayeredPublicJobDiscoveryRuntime({
-      db: {} as never, id: () => "aaaaaaaa-aaaa-8aaa-8aaa-aaaaaaaaaaaa", auditTrail: {} as never,
+      db: { transaction: async (callback: (value: never) => unknown) => callback(transaction as never) } as never, id: () => "aaaaaaaa-aaaa-8aaa-8aaa-aaaaaaaaaaaa", auditTrail: {} as never,
       contentStore: { put: async () => undefined, delete: async () => undefined }, evidenceStore: { put: async () => ({ created: true }), delete: async () => undefined },
       trustedSourceAdapter: { listSource: async () => { adapterCalls += 1; throw new Error("UNUSED"); }, getSourceDetail: async () => { adapterCalls += 1; throw new Error("UNUSED"); } },
       anySearch: { search: async () => ({ candidates: [] }), extract: async () => { throw new Error("UNUSED"); } },
