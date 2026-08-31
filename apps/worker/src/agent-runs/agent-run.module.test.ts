@@ -73,6 +73,8 @@ describe("AgentRunModule", () => {
 
   it.each([
     { APP_ENV: "local", PUBLIC_JOB_DISCOVERY_ADAPTER: "unknown" },
+    { APP_ENV: "production", PUBLIC_JOB_DISCOVERY_ADAPTER: "fake" },
+    { APP_ENV: "production", PUBLIC_JOB_DISCOVERY_ADAPTER: "greenhouse" },
     { APP_ENV: "production", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: "{}" },
     { APP_ENV: "local", ANYSEARCH_BASE_URL: "https://test.invalid" },
   ])("拒绝非受控运行时配置 %o", (environment) => {

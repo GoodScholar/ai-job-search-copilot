@@ -254,6 +254,22 @@ describe("job discovery schedules", () => {
     expect(queue.jobs).toEqual([{ version: 1, userId: owner.userId, runId: persisted!.runId }]);
   });
 
+  it("v4 无 Watchlist 仍向 UI 报告可启用，而缺失 profile 时拒绝启用并允许补全后重试", async () => {
+    const owner = await target();
+    const queue = new Queue();
+    const auditTrail = createAuditTrail({ db: database, clock: () => now });
+    const service = createJobDiscoverySchedules({
+      db: database,
+      runs: createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public" }),
+      auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public",
+    });
+    await expect(service.get(owner)).resolves.toMatchObject({ sourceSupport: { status: "executable", supportedSourceCount: 0 } });
+    await expect(service.set({ userId: owner.userId, targetId: owner.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } }))
+      .rejects.toMatchObject({ code: "PROFILE_UNAVAILABLE" });
+    await database.insert(jobProfiles).values({ id: crypto.randomUUID(), userId: owner.userId, version: 1, createdAt: now, updatedAt: now });
+    await expect(service.set({ userId: owner.userId, targetId: owner.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } })).resolves.toMatchObject({ state: "enabled" });
+  });
+
   it("派发状态与绑定事务中的审计写入在审计失败时一起回滚", async () => {
     const owner = await target();
     await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/audit-rollback", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
