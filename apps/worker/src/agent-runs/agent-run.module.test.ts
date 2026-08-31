@@ -1,8 +1,9 @@
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PUBLIC_JOB_DISCOVERY_BUDGET } from "@job-copilot/contracts/agent-runs";
 import { LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER, LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION } from "@job-copilot/contracts/job-discovery";
 
-import { createConfiguredJobDiscoveryAdapterResolver, createConfiguredJobDiscoveryExecutionMode, createConfiguredLayeredPublicJobDiscoveryWorkflowResolver } from "./agent-run.module.js";
+import { createConfiguredAnySearchPublicJobAdapter, createConfiguredJobDiscoveryAdapterResolver, createConfiguredJobDiscoveryExecutionMode, createConfiguredLayeredPublicJobDiscoveryWorkflowResolver } from "./agent-run.module.js";
 
 const legacyExecutionSpec = {
   targetSnapshot: {
@@ -30,7 +31,41 @@ const layeredExecutionSpec = {
 } as const;
 
 describe("AgentRunModule", () => {
-  afterEach(() => { vi.unstubAllGlobals(); });
+  afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+
+  it("精确 configured phase 的恢复候选在空进程 Map 中仍只向固定 fixture origin extract", async () => {
+    vi.stubEnv("APP_ENV", "test");
+    const transport = vi.fn(async (input: RequestInfo | URL) => {
+      expect(new URL(String(input)).origin).toBe("http://127.0.0.1:39334");
+      return new Response(JSON.stringify({
+        code: 0, message: "success", request_id: "fixture", data: {
+          url: "https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9001",
+          title: "fixture", content: "fixture",
+        },
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", transport);
+    const normalizedUrl = "https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9001";
+    const adapter = createConfiguredAnySearchPublicJobAdapter({
+      apiKey: "configured-test-key",
+      fixtureOrigin: "http://127.0.0.1:39334",
+      authorizeRecoveredCandidate: async () => true,
+    });
+
+    const result = await adapter.extract({
+      candidate: {
+        kind: "anysearch_public_job_candidate",
+        normalizedUrl,
+        allowedSiteDomains: [],
+        queryId: "40000000-0000-4000-8000-000000000004",
+        candidateFingerprint: createHash("sha256").update(normalizedUrl).digest("hex"),
+      },
+      identity: "50000000-0000-4000-8000-000000000005",
+    }, async () => "proceed");
+
+    expect(result).toMatchObject({ ok: true, data: { normalizedUrl } });
+    expect(transport).toHaveBeenCalledTimes(1);
+  });
 
   it("production module 构造可解析 v4 的真实 workflow resolver，而非只 export helper", () => {
     const resolver = createConfiguredLayeredPublicJobDiscoveryWorkflowResolver({
