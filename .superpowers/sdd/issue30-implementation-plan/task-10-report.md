@@ -64,7 +64,7 @@ git status --short
 ## 已知边界
 
 - Fake AnySearch、provider base、page origin 与固定占位 key 只能在精确 test phase 由 local runtime 注入；local/production 的 test knob 由共享 validator 稳定脱敏地 fail closed。
-- 该 Slice 不改变生产 AnySearch/Greenhouse、URL policy、Gate、Lead/Attribution、预算或终态契约；也不启动 Task 11 全量验收。
+- 除最初 Fake AnySearch 运行时组装外，本 Slice 的 review-driven 生产语义已经包含：canonical 跨 query 的 Lead/Attribution 去重处理、已完成 v4 duplicate delivery 返回 `stale`、以及同 version 的公开 Opportunity replay 不更新其快照。Task 10 后续 audit/MinIO 变更仅在精确 Fake AnySearch test phase 启用审计与只读证据投影，不改变生产 AnySearch/Greenhouse、URL policy、Gate、预算或终态契约；也不启动 Task 11 全量验收。
 - 进入下一阶段前必须进行独立 Standards/Spec 审查；本报告不是审查结论。
 
 ## Review Fix Round 2 — canonical dedup、Opportunity 与重复 delivery
@@ -155,3 +155,22 @@ Round 4 的 query/canonical Red→Green 和相关回归仍保留；secret-exclus
 Red 完整日志的禁词扫描覆盖完整固定占位片段、候选页面域、`normalized_url`、`source_identity`、`raw query`、`/home`、`runId`、`#agent-run` 与 `href`。扫描先显式排除匹配 `^[0-9]+:\\[WebServer\\]` 的 14 条本地 WebServer 路由/启动基础设施日志；它们不是页面或候选链接。其余扫描结果为 **0 行**（`/tmp/issue30-slice9-round5-secret-red-safety-scan.log`）。
 
 Green 严格单进程串行运行 configured Desktop/Mobile **2/2**（`/tmp/issue30-slice9-round5-secret-exclusion-green-configured.log`）与 missing-key Desktop/Mobile **2/2**（`/tmp/issue30-slice9-round5-secret-exclusion-green-missing-key.log`），合计 **4/4**。missing-key Green 的前两次尝试均在 Playwright 断言前被 Docker `55420` 端口短暂占用阻断；无测试执行结果被采纳，端口释放后从零重跑通过。旧 Round 4 safe Red 日志已精确移入废纸篓，不影响其余有效 query/canonical/duplicate Red 日志。
+
+## Task 10 / Slice 9 — Chain Audit、真实 MinIO 证据与 phase 回归
+
+本轮以 `8e7af1bbd50107c05c6c19a07af86cdd23fd63a3` 为起点。提交的 Red 为 `008418a`，Green 为 `d68fe7e`；没有创建 worktree、分支、PR、push 或 merge。
+
+| 阶段 | 串行命令与结果 | 完整日志 |
+| --- | --- | --- |
+| Red | `DOCKER_API_VERSION=1.51 pnpm --filter web test:e2e -- anysearch-public-job-discovery.spec.ts --project="Desktop Chrome" --project="Mobile Safari"` exit 1。Desktop Chrome 与 Mobile Safari 都在中性 `expectTrue` helper 各自独立得到两次 `Expected: true` / `Received: false`：一项为尚无 `preflight → extract → fetch → final_canonical_validated → gate_persisted` 证据，另一项为尚无 MinIO page-only 投影；后者没有被前者遮蔽。 | `/tmp/issue30-slice9-task10-audit-minio-red.log` |
+| Green | 同一命令从零运行；runner 先选 exact configured phase，再选 exact missing-key phase。configured Desktop/Mobile **2/2**、missing-key Desktop/Mobile **2/2**，合计 **4/4**。 | `/tmp/issue30-slice9-task10-audit-minio-green-rerun.log` |
+| ordinary phase | `DOCKER_API_VERSION=1.51 pnpm --filter web test:e2e -- scheduled-job-discovery.spec.ts --project="Desktop Chrome" --project="Mobile Safari"`；ordinary 只选 Fake v1，未选 AnySearch spec，Desktop/Mobile **2/2**。 | `/tmp/issue30-slice9-task10-ordinary-phase.log` |
+| source-health phase | `DOCKER_API_VERSION=1.51 pnpm --filter web test:e2e -- source-health.spec.ts --project="Desktop Chrome" --project="Mobile Safari"`；source-health 只选固定 v3，未选 AnySearch spec，Desktop/Mobile **2/2**。 | `/tmp/issue30-slice9-task10-source-health-phase.log` |
+
+Green 仅在精确 Fake AnySearch phase 以固定 `operation`/`fixture` 枚举写入本地 fixture audit，任何 URL、query、用户事实、provider 文本、凭据或 source identity 都不越过该 seam。两条实际 verified candidate 的有序审计均为 `preflight → extract → fetch → final_canonical_validated → gate_persisted`；因此 `/extract` 在本地 `SecureJobPageFetcher` 前，且 Gate 成功返回（真实事务完成）后才记录持久化。页面/提取中的链接不会创建额外 provider 或 page request；policy redirect 仅记录到 `preflight`、`extract`、`fetch`，没有 final validation/gate-persisted，unsafe fixture 仅在 provider 的已有 lexical preflight 被拒绝，不会获得 extract/page/audit capability。普通、source-health、configured 和 missing-key phase 的选择仍由 versioned runner/config 分开管理。
+
+Node-side E2E 现在只读查询 verified Source Posting Version 的 `raw_object_reference` 以定位其两件真实 MinIO 对象，然后仅返回安全布尔/计数/哈希投影：对象数恰为 2，raw/visible hash 均对应 Version；只存在于本地已抓取 verified 页面中的固定文本存在；provider search title/snippet、extract auxiliary text、`username`/`password`/`api_key`、固定 test key 以及可见文本中的恶意链接均不存在。raw/visible content 和 object key/reference 从不写入失败输出或 durable audit。SQL 另证明官方 Source Posting 的 `company_careers` 身份、两条 AnySearch Attribution，以及页面 Version/Opportunity/RunResult 的既有关联；AnySearch 未成为 source identity。
+
+本轮相关聚焦验证均在每条命令前确认无遗留 pnpm、Vitest、Playwright、tsc、Drizzle、E2E runner 或 local-runtime 进程，且未并发：`pnpm --filter domain exec vitest run src/layered-public-job-discovery-workflow.test.ts --no-file-parallelism` **11/11**，`pnpm --filter worker exec vitest run src/agent-runs/agent-run.module.test.ts --no-file-parallelism` **36/36**，`pnpm --filter web exec vitest run scripts/e2e-runner.test.ts --no-file-parallelism` **10/10**，以及 domain/worker/web typecheck 与 Drizzle check（`Everything's fine`）均通过。
+
+`/tmp/issue30-slice9-task10-audit-minio-green.log` 不作为验证证据：首次 Green 因 test-only audit fixture map 漏掉已存在 policy redirect 的固定枚举而使两个 configured run 失败；已在无重叠进程后以最小 map 修复并从零重跑上述 rerun。所有先前报告中明确标为 invalid、overlapped 或端口冲突的运行仍一律不作为证据。
