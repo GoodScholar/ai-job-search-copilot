@@ -27,6 +27,57 @@ function executionSpecFor(queries: Array<Record<string, unknown>>, trustedSource
 }
 
 describe("layered public job discovery workflow", () => {
+  it("进程重建后从同一 run 的 pending Lead 恢复 capability，即使新的 search 已经 clean-zero", async () => {
+    const pending = {
+      leadId: "66666666-6666-8666-8666-666666666666", userId: targetId, runId, queryId,
+      queryFingerprint: "b".repeat(64), normalizedUrl: "https://careers.example.com/jobs/1",
+      stableFingerprint: "a".repeat(64), allowedSiteDomains: [],
+    };
+    let pendingPersisted = false;
+    const firstProcess = createLayeredPublicJobDiscoveryWorkflow({
+      trustedSources: { discover: async () => ({ succeeded: false, verifiedSourcePostingVersionIds: [] }) },
+      anySearch: {
+        search: async ({ beforeRequest }) => { await beforeRequest(); return { candidates: [{ normalizedUrl: pending.normalizedUrl, stableFingerprint: pending.stableFingerprint }] }; },
+        extract: async ({ beforeRequest }) => { await beforeRequest(); throw new Error("UNUSED"); },
+      },
+      preflight: async ({ candidate }) => ({ normalizedUrl: candidate.normalizedUrl }),
+      leads: { recordPendingForClaim: async () => { pendingPersisted = true; return { leadId: pending.leadId }; } },
+      fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
+      gate: { verifyForClaim: async () => { throw new Error("UNUSED"); }, rejectForClaim: async () => undefined },
+    });
+    await expect(firstProcess.run({
+      userId: targetId, runId, claimToken: "99999999-9999-8999-8999-999999999999", now: new Date(), attemptCount: 1,
+      executionSpec: executionSpecFor([{ ordinal: 1, queryId, kind: "general", stableFingerprint: pending.queryFingerprint, query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }]) as never,
+      beforePhysicalOperation: async ({ kind }) => { if (kind === "extract") throw new LayeredPublicWorkflowInterruption("paused"); }, onDiagnostics: () => undefined, signal: new AbortController().signal,
+    })).resolves.toMatchObject({ interruption: "paused" });
+    expect(pendingPersisted).toBe(true);
+
+    const calls: string[] = [];
+    const rebuiltProcess = createLayeredPublicJobDiscoveryWorkflow({
+      trustedSources: { discover: async () => ({ succeeded: false, verifiedSourcePostingVersionIds: [] }) },
+      anySearch: {
+        search: async ({ beforeRequest }) => { await beforeRequest(); return { candidates: [] }; },
+        extract: async ({ candidate, beforeRequest }) => { calls.push(`extract:${candidate.leadId}`); await beforeRequest(); return { normalizedUrl: candidate.normalizedUrl }; },
+      },
+      preflight: async () => { throw new Error("recovered lead must not depend on a fresh search preflight"); },
+      leads: {
+        recordPendingForClaim: async () => { throw new Error("recovered lead must not be inserted again"); },
+        recoverPendingForClaim: async (input: unknown) => {
+          expect(input).toMatchObject({ userId: targetId, runId, queryId, claimToken: "aaaaaaaa-aaaa-8aaa-8aaa-aaaaaaaaaaaa" });
+          return [pending];
+        },
+      },
+      fetcher: { fetch: async ({ candidate }) => { calls.push(`fetch:${candidate.leadId}`); return { requestedUrl: candidate.normalizedUrl, finalUrl: candidate.normalizedUrl, canonicalUrl: candidate.normalizedUrl, rawHtml: "<h1>job</h1>", visibleText: "job", pageClassification: "job", sourceKind: "official" }; } },
+      gate: { verifyForClaim: async ({ candidate }) => { calls.push(`verify:${candidate.leadId}`); return { sourcePostingVersionId: "77777777-7777-8777-8777-777777777777" }; }, rejectForClaim: async () => undefined },
+    });
+    await expect(rebuiltProcess.run({
+      userId: targetId, runId, claimToken: "aaaaaaaa-aaaa-8aaa-8aaa-aaaaaaaaaaaa", now: new Date(), attemptCount: 2,
+      executionSpec: executionSpecFor([{ ordinal: 1, queryId, kind: "general", stableFingerprint: pending.queryFingerprint, query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }]) as never,
+      beforePhysicalOperation: async () => undefined, onDiagnostics: () => undefined, signal: new AbortController().signal,
+    })).resolves.toMatchObject({ branchOutcome: { trusted: "failed", publicDiscovery: "verified" }, sourcePostingVersionIds: ["77777777-7777-8777-8777-777777777777"] });
+    expect(calls).toEqual([`extract:${pending.leadId}`, `fetch:${pending.leadId}`, `verify:${pending.leadId}`]);
+  });
+
   it("factory 对空 trusted scope 不发请求且报告 failed/empty trusted branch", async () => {
     let adapterCalls = 0;
     const runtime = createLayeredPublicJobDiscoveryRuntime({
