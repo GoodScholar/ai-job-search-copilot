@@ -56,4 +56,4 @@ Acceptance baseline note: Task 5a lifecycle repair received an independent 0/0/0
 
 Task 8: complete (commits `768b8c6..4473524`; final independent Standards and Spec reviews both `0/0/0`)
 
-Task 9: review Round 2 fixes in progress; pending Round 3 independent review (report `task-9-report.md`).
+Task 9: review Round 3 fixes complete; pending Round 4 final review (report `task-9-report.md`).

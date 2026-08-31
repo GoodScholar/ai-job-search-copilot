@@ -17,6 +17,7 @@
 | `e33db6b`/`4932852`/`ab0fa0d` → `6c368e2` | Worker/API/domain focused 串行：strict config、retry none、owner object key、schedule/profile 及进程重建 pending Lead recovery 均为真实 Red；重建后旧实现返回 `clean_zero`。 |
 | `5cf376f` → `0fab034` | `DOCKER_API_VERSION=1.51 pnpm --filter domain exec vitest run src/job-discovery-persistence.integration.test.ts --no-file-parallelism`：legacy insert 显式绑定两个 v4 `null` snapshot，SQL 参数为 34 而非 32。 |
 | `91cf491` → `ae872e7` | API/Worker module focused 串行：production/local 未拒绝 legacy E2E scenario，test 空白 health scenario 错选 greenhouse，malformed scenario 未返回稳定脱敏常量。 |
+| `30f8a77` → `96224fc` | `pnpm --filter api exec vitest run src/agent-runs/agent-runs.module.test.ts --no-file-parallelism`：7 个 malformed/非法 E2E scenario 未被 API shared validator 拒绝；`pnpm --filter worker exec vitest run src/agent-runs/agent-run.module.test.ts src/agent-runs/job-discovery-adapter-resolver.test.ts --no-file-parallelism`：14 个 legacy/v3/v4 入口只解析各自 raw env，未共同拒绝另一 scenario map。 |
 
 此前误启动的两套并发测试 PID（`83635/83658/83664` 与 `83796/83797/83819/83826`）以及后续两套重复 Worker full test（`93851/93872/93878` 与 `94078/94099/94107`）的证据全部作废；不以其结果作任何验收结论。其余 focused 与 domain 命令均按单进程串行运行。
 
@@ -39,10 +40,11 @@
 
 ## 串行验证
 
-- Worker focused：22 tests；heartbeat 单例复现：1/1。
-- Domain workflow/schedule/processor/Lead focused：94 tests；Lead repository integration：10 tests。
-- API focused：7 tests；Web focused：16 tests；Contracts focused：3 tests。
+- 早期 Slice focused 证据（旧阶段，非 Round 2 最终计数）：Worker 22 tests；API 7 tests；heartbeat 单例复现 1/1；Domain workflow/schedule/processor/Lead 94 tests、Lead repository integration 10 tests；Web 16 tests、Contracts 3 tests。
+- Round 2 最终 focused 证据：API module 15/15；Worker module + resolver 40/40；Domain 12/12。
+- Round 3：`pnpm --filter domain exec vitest run src/job-discovery-execution-mode.test.ts --no-file-parallelism` 为 1/1；`pnpm --filter api exec vitest run src/agent-runs/agent-runs.module.test.ts --no-file-parallelism` 为 22/22；`pnpm --filter worker exec vitest run src/agent-runs/agent-run.module.test.ts src/agent-runs/job-discovery-adapter-resolver.test.ts --no-file-parallelism` 为 54/54。
 - 已执行 typecheck：`pnpm --filter contracts typecheck`、`pnpm --filter database typecheck`、`pnpm --filter domain typecheck`、`pnpm --filter source-access typecheck`、`pnpm --filter api typecheck`、`pnpm --filter worker typecheck`、`pnpm --filter web typecheck`；均通过。
+- Round 3 相关 typecheck 严格串行命令：`pnpm --filter contracts typecheck && pnpm --filter domain typecheck && pnpm --filter source-access typecheck && pnpm --filter api typecheck && pnpm --filter worker typecheck`；均通过。`git diff --check` 亦通过。
 
 第一次带日志全包链 `/tmp/issue30-slice8-acceptance.log` 因 Worker heartbeat Redis Testcontainers 端口绑定 10 秒超时停止：21/22 files、269 passed、1 skipped，exit 1；不增加 timeout。Docker 只读证据为 Docker Desktop 29.5.2、overlayfs、无遗留容器；单例 heartbeat 以 `DOCKER_API_VERSION=1.51` 复现通过。随后新的 Worker full 日志 `/tmp/issue30-worker-full.log` 通过 22/22 files、270/270 tests（90.19s）。
 
