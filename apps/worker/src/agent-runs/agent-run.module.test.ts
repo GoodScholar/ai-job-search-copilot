@@ -19,8 +19,12 @@ const legacyExecutionSpec = {
 } as const;
 
 describe("AgentRunModule", () => {
-  it("production module 提供 v4 workflow resolver", () => {
-    expect(typeof createConfiguredLayeredPublicJobDiscoveryWorkflowResolver).toBe("function");
+  it("production module 构造可解析 v4 的真实 workflow resolver，而非只 export helper", () => {
+    const resolver = createConfiguredLayeredPublicJobDiscoveryWorkflowResolver({
+      environment: { APP_ENV: "production", ANYSEARCH_API_KEY: "configured-key" }, db: {} as never, auditTrail: {} as never,
+      contentStore: { put: async () => undefined, delete: async () => undefined }, evidenceStore: { put: async () => ({ created: true }), delete: async () => undefined }, id: () => crypto.randomUUID(),
+    });
+    expect(typeof resolver.resolve).toBe("function");
   });
 
   it.each([
