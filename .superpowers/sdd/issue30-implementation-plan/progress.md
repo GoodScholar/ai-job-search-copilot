@@ -58,4 +58,4 @@ Task 8: complete (commits `768b8c6..4473524`; final independent Standards and Sp
 
 Task 9: complete (commits `4473524..0ed9933`; final independent Standards and Spec reviews both `0/0/0`; report `task-9-report.md`).
 
-Task 10: brief frozen; pending Slice 9 Red A (`task-10-brief.md`).
+Task 10: Slice 9 Red/Green A–C 与串行验收已完成（`357e4a1..57ac9f3`；报告 `task-10-report.md`）；等待独立 Standards/Spec 审查。
