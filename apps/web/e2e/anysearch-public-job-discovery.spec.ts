@@ -235,7 +235,7 @@ test("版本化 Fake AnySearch 从普通 UI 运行真实 layered public 验收�
   expect(targetCompany?.targetCompanyNames).toEqual([expectedTargetCompanyName]);
   expect(Boolean(targetCompany?.query.includes(expectedTargetCompanyName))).toBe(true);
   const lexicalUnsafeDiagnostics = run.discoveryDiagnostics
-    .filter((diagnostic) => diagnostic.scope === "query" && diagnostic.queryId === targetCompany?.queryId && diagnostic.code === "ANYSEARCH_POLICY_REJECTED")
+    .filter((diagnostic): diagnostic is Extract<(typeof run.discoveryDiagnostics)[number], { scope: "query" }> => diagnostic.scope === "query" && diagnostic.queryId === targetCompany?.queryId && diagnostic.code === "ANYSEARCH_POLICY_REJECTED")
     .map(({ scope, queryId, kind, stableFingerprint, code, retryable, affectedCount }) => ({ scope, queryId, kind, stableFingerprint, code, retryable, affectedCount }));
   expect(lexicalUnsafeDiagnostics).toEqual([{
     scope: "query",

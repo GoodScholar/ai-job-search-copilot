@@ -70,3 +70,4 @@ Task 10: fix round 5/5（最后的缺 key mutation Red 页面链接泄漏已修�
 Task 10: audit/MinIO/phase regressions complete（`008418a..d68fe7e`；chain audit、page-only MinIO projection、ordinary/source-health Desktop+Mobile 回归均已记录；报告 `task-10-report.md`）。
 Task 10: full-slice review fix round 1 complete（recovered fixed-base Red/Green `46f7510..7f2a61f`，shared phase-policy Red/Green `32e15ec..bb9b423`，minimal lockfile `1857a02`，direct ruling E2E clarification `a86515f`；报告 `task-10-report.md`）。
 Task 10: recovered-base behavior evidence correction（`46f7510..7f2a61f` 仅 structural seam，committed mutation Red/Green `7190212..2bf3209` 以受控 extract transport 证明旧回退与 fixed-origin Green；报告 `task-10-report.md`）。
+Task 10: full-slice review fix round 2 complete（独立审查 Standards `0/0/0`、Spec `0/1/0` 的唯一 lexical-unsafe provider diagnostic 问题；committed Red/Green `0101e65..1440394`，Adapter→Worker→workflow 仅传递有界拒绝计数并记录 query diagnostic；报告 `task-10-report.md`）。
