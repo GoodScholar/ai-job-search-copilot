@@ -1,7 +1,7 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { agentInboxItems, agentRunControlCommands, agentRunEvents, agentRunUsageEntries, agentRuns, auditEvents, createDatabase, jobAccounts, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
+import { agentInboxItems, agentRunControlCommands, agentRunEvents, agentRunUsageEntries, agentRuns, auditEvents, createDatabase, jobAccounts, jobProfiles, jobTargetRevisions, jobTargets, migrateDatabase, profileFactRevisions, profileFacts, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
 import { AgentRunControlError, createAgentRunCheckpoint, createAgentRunCommands, type AgentRunQueue } from "./agent-runs";
 import { createCompanyWatchlistCommands } from "./company-watchlists";
@@ -51,6 +51,19 @@ describe("agent run controls", () => {
     });
   }
 
+  async function addConfirmedSkills(userId: string, names: string[]) {
+    const profileId = crypto.randomUUID();
+    await database.insert(jobProfiles).values({ id: profileId, userId, version: 3, createdAt: now, updatedAt: now });
+    for (const name of names) {
+      const profileFactId = crypto.randomUUID();
+      await database.insert(profileFacts).values({ id: profileFactId, userId, profileId, factType: "skill", createdAt: now });
+      await database.insert(profileFactRevisions).values({
+        id: crypto.randomUUID(), userId, profileFactId, revisionNumber: 1, factType: "skill", factValue: { name },
+        state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 3, createdAt: now,
+      });
+    }
+  }
+
   function checkpoints(at = now) {
     return createAgentRunCheckpoint({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => at }), id: () => crypto.randomUUID(), clock: () => at });
   }
@@ -86,6 +99,40 @@ describe("agent run controls", () => {
 
     expect(manual).toMatchObject({ adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2", workflowVersion: "job-discovery-workflow-v3", outputSchemaVersion: "job-discovery-result-v3" });
     expect(scheduled).toMatchObject({ adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2", workflowVersion: "job-discovery-workflow-v3", outputSchemaVersion: "job-discovery-result-v3" });
+  });
+
+  it("v4 手动与计划触发冻结等价的无 Watchlist 分层公开发现规格", async () => {
+    const { userId, targetId } = await activeTarget();
+    await addConfirmedSkills(userId, ["TypeScript", "React"]);
+    const runtimeCommands = createAgentRunCommands({
+      db: database, queue: new MemoryQueue(), auditTrail: createAuditTrail({ db: database, clock: () => now }),
+      id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public",
+    });
+
+    const manual = await runtimeCommands.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const scheduled = await runtimeCommands.start({
+      userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() },
+      trigger: { kind: "schedule", occurrenceId: crypto.randomUUID(), scheduledFor: now },
+    });
+
+    expect(manual).toMatchObject({ adapter: "layered-public", workflowVersion: "layered-public-job-discovery-v1", outputSchemaVersion: "job-discovery-result-v4" });
+    expect(scheduled).toMatchObject({ adapter: "layered-public", workflowVersion: "layered-public-job-discovery-v1", outputSchemaVersion: "job-discovery-result-v4" });
+    const runs = await database.select({ id: agentRuns.id, profileSnapshot: agentRuns.profileSnapshot, watchlistSnapshot: agentRuns.watchlistSnapshot, sourceScope: agentRuns.sourceScope })
+      .from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.targetId, targetId)));
+    expect(runs).toHaveLength(2);
+    for (const run of runs) {
+      expect(run).toMatchObject({
+        profileSnapshot: { targetId, version: 3, confirmedActiveSkillNames: ["React", "TypeScript"] },
+        watchlistSnapshot: { targetId, version: 0, companies: [] },
+        sourceScope: {
+          kind: "layered_public",
+          trustedSources: [],
+          publicDiscovery: { queries: expect.arrayContaining([expect.objectContaining({ kind: "general" }), expect.objectContaining({ kind: "site_constrained" })]) },
+        },
+      });
+    }
+    expect((runs[0]!.sourceScope as { publicDiscovery: { queries: unknown[] } }).publicDiscovery.queries).toHaveLength(5);
+    expect((runs[1]!.sourceScope as { publicDiscovery: { queries: unknown[] } }).publicDiscovery.queries).toHaveLength(5);
   });
 
   it("将跨账户运行隐藏为 404，并将 commandId 改变动作标为幂等键冲突", async () => {
