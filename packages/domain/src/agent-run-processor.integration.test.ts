@@ -439,7 +439,7 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(database.select().from(jobDiscoveryRunResults).where(eq(jobDiscoveryRunResults.runId, job.runId))).resolves.toEqual([]);
   });
 
-  it("v4 completed duplicate delivery 不重放 workflow、结果或 usage", async () => {
+  it("v4 completed duplicate delivery 返回 stale，且不重放 workflow、结果或 usage", async () => {
     const job = await layeredRun();
     let calls = 0;
     const processor = createAgentRunProcessor({
@@ -453,7 +453,7 @@ describe("AgentRunProcessor checkpoints", () => {
       contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
     });
     await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("completed");
-    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("completed");
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("stale");
     expect(calls).toBe(1);
     await expect(Promise.all([
       database.select().from(jobDiscoveryRunResults).where(eq(jobDiscoveryRunResults.runId, job.runId)),

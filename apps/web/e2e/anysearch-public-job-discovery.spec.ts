@@ -1,12 +1,14 @@
 import { createHash } from "node:crypto";
 import type { AgentRunDetail } from "@job-copilot/contracts/agent-runs";
 import AxeBuilder from "@axe-core/playwright";
+import { Queue } from "bullmq";
 import { Client } from "pg";
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const databaseUrl = process.env.E2E_DATABASE_URL ?? "postgresql://job_copilot:local_only_job_copilot@127.0.0.1:55420/job_copilot";
 const fixtureOrigin = process.env.E2E_ANYSEARCH_FIXTURE_ORIGIN ?? "http://127.0.0.1:39334";
+const redisPort = Number(process.env.E2E_REDIS_PORT ?? "64790");
 const testDevAuthSecret = "issue-2-e2e-dev-auth-shared-secret";
 const scenarios = {
   "Desktop Chrome": { idempotencyKey: "10000000-0000-4000-8000-000000000131", subject: "fake-anysearch-desktop" },
@@ -68,7 +70,7 @@ async function addApprovedFixtureWatchlist(page: Page): Promise<void> {
   await expect(page.getByRole("status")).toHaveText("目标公司已添加。");
 }
 
-async function fixtureAudit(): Promise<Array<{ operation: string; fixture?: string }>> {
+async function fixtureAudit(): Promise<Array<{ operation: string; fixture?: string; count?: number }>> {
   const response = await fetch(fixtureOrigin + "/__fixture/fake-anysearch-audit");
   expect(response.status).toBe(200);
   return (await response.json() as { operations: Array<{ operation: string; fixture?: string }> }).operations;
@@ -86,7 +88,7 @@ async function persistedFacts(userId: string, runId: string) {
     const [leads, attributions, postings, versions, opportunities, results, attentions] = await Promise.all([
       client.query("select id, query_id, query_kind, state, normalized_url, source_posting_version_id, rejection_code from job_discovery_leads where user_id = $1 and run_id = $2 order by normalized_url", [userId, runId]),
       client.query("select lead_id, query_id, source_posting_version_id from job_discovery_attributions where user_id = $1 and run_id = $2", [userId, runId]),
-      client.query("select p.source_id, p.source_identifier, p.source_identity, p.is_official from job_source_postings p join job_source_posting_versions v on v.source_posting_id = p.id and v.user_id = p.user_id join job_discovery_leads l on l.source_posting_version_id = v.id and l.user_id = v.user_id where l.user_id = $1 and l.run_id = $2", [userId, runId]),
+      client.query("select distinct p.source_id, p.source_identifier, p.source_identity, p.is_official from job_source_postings p join job_source_posting_versions v on v.source_posting_id = p.id and v.user_id = p.user_id join job_discovery_leads l on l.source_posting_version_id = v.id and l.user_id = v.user_id where l.user_id = $1 and l.run_id = $2", [userId, runId]),
       client.query("select raw_object_reference::text as raw_object_reference, normalized_data::text as normalized_data from job_source_posting_versions where user_id = $1 and id in (select source_posting_version_id from job_discovery_leads where user_id = $1 and run_id = $2 and state = 'verified')", [userId, runId]),
       client.query("select id from job_opportunities where user_id = $1 and source_posting_version_id in (select source_posting_version_id from job_discovery_leads where user_id = $1 and run_id = $2)", [userId, runId]),
       client.query("select source_posting_version_id, ordinal from job_discovery_run_results where user_id = $1 and run_id = $2 order by ordinal", [userId, runId]),
@@ -119,28 +121,46 @@ test("版本化 Fake AnySearch 从普通 UI 运行真实 layered public 验收�
   expect(run.executionSpec).toMatchObject({ workflowVersion: "layered-public-job-discovery-v1", adapter: "layered-public" });
   if (!("sourceIssues" in run)) throw new Error("LAYERED_PUBLIC_RUN_REQUIRED");
   const queries = "publicDiscovery" in run.executionSpec.sourceScope ? run.executionSpec.sourceScope.publicDiscovery.queries : [];
-  expect(queries.map((query) => query.kind)).toEqual(expect.arrayContaining(["general", "site_constrained", "target_company"]));
+  const publicDiscovery = "publicDiscovery" in run.executionSpec.sourceScope ? run.executionSpec.sourceScope.publicDiscovery : null;
+  expect(publicDiscovery).toMatchObject({ batchSize: 5, maxVerificationCandidates: 10 });
+  expect(queries.filter((query) => query.kind === "general")).toHaveLength(1);
   expect(queries).toHaveLength(6);
+  const sites = queries.filter((query) => query.kind === "site_constrained");
+  expect(sites).toHaveLength(4);
+  for (const domain of ["zhipin.com", "liepin.com", "zhaopin.com", "mp.weixin.qq.com"]) {
+    const site = sites.find((query) => query.allowedSiteDomains.length === 1 && query.allowedSiteDomains[0] === domain);
+    expect(site).toBeDefined();
+    expect(site?.query).toContain(`site:${domain}`);
+  }
   expect(queries.every((query) => query.resultLimit <= 5)).toBe(true);
-  expect(queries.find((query) => query.kind === "target_company")?.allowedSiteDomains).toEqual(["boards.greenhouse.io", "boards-api.greenhouse.io"]);
+  const targetCompany = queries.find((query) => query.kind === "target_company");
+  expect(targetCompany).toMatchObject({ allowedSiteDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], targetCompanyNames: ["Fake AnySearch Fixture"] });
+  expect(targetCompany?.query).toContain("Fake AnySearch Fixture");
   expect(run.termination?.kind).toBe("completed_with_source_issues");
   expect(run.results).toHaveLength(1);
   expect(run.sourceIssues.filter((issue) => issue.code === "ANYSEARCH_RATE_LIMITED")).toEqual([{ provider: "anysearch", code: "ANYSEARCH_RATE_LIMITED", affectedCount: 1 }]);
   const audit = await fixtureAudit();
   expect(audit.filter((entry) => entry.operation === "search")).toEqual([
-    { operation: "search", fixture: "general" },
-    { operation: "search", fixture: "platform_rate_limited" },
-    { operation: "search", fixture: "platform_unavailable" },
-    { operation: "search", fixture: "platform_duplicate" },
-    { operation: "search", fixture: "platform_duplicate" },
-    { operation: "search", fixture: "target_company" },
+    { operation: "search", fixture: "general", count: 5 },
+    { operation: "search", fixture: "platform_rate_limited", count: 0 },
+    { operation: "search", fixture: "platform_unavailable", count: 0 },
+    { operation: "search", fixture: "platform_duplicate", count: 1 },
+    { operation: "search", fixture: "platform_duplicate", count: 1 },
+    { operation: "search", fixture: "target_company", count: 3 },
   ]);
   const facts = await persistedFacts(account.userId, runId);
-  expect(facts.leads.filter((lead) => lead.state === "verified")).toHaveLength(2);
+  expect(audit.filter((entry) => entry.operation === "search").every((entry) => (entry.count ?? Infinity) <= 5)).toBe(true);
+  expect(facts.leads).toHaveLength(7);
+  expect(facts.leads.length).toBeLessThanOrEqual(10);
+  const verifiedLeads = facts.leads.filter((lead) => lead.state === "verified");
+  expect(verifiedLeads).toHaveLength(2);
+  expect(verifiedLeads.map((lead) => lead.query_kind).sort()).toEqual(["general", "target_company"]);
   expect(facts.leads.filter((lead) => lead.state === "rejected").map((lead) => lead.rejection_code).sort()).toEqual(["JOB_PAGE_EXPIRED", "JOB_PAGE_LISTING", "JOB_PAGE_LOGIN_REQUIRED", "JOB_PAGE_UNRECOGNIZED", "POLICY_REJECTED"]);
   expect(facts.leads.filter((lead) => lead.state === "rejected").every((lead) => lead.source_posting_version_id === null)).toBe(true);
   expect(facts.attributions).toHaveLength(2);
-  expect(facts.attributions[0]).toMatchObject({ lead_id: facts.leads.find((lead) => lead.state === "verified")!.id, source_posting_version_id: facts.leads.find((lead) => lead.state === "verified")!.source_posting_version_id });
+  const sharedVersionId = verifiedLeads[0]!.source_posting_version_id;
+  expect(verifiedLeads.every((lead) => lead.source_posting_version_id === sharedVersionId)).toBe(true);
+  for (const lead of verifiedLeads) expect(facts.attributions).toContainEqual({ lead_id: lead.id, query_id: lead.query_id, source_posting_version_id: sharedVersionId });
   const verifiedUrl = "https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9001";
   expect(facts.postings).toEqual([expect.objectContaining({
     source_id: verifiedUrl,
@@ -152,20 +172,33 @@ test("版本化 Fake AnySearch 从普通 UI 运行真实 layered public 验收�
   expect(facts.versions[0]?.raw_object_reference).toContain(`accounts/${account.userId}/public-job-pages/`);
   expect(JSON.stringify(facts.versions)).not.toContain("ignored");
   expect(facts.opportunities).toHaveLength(1);
-  expect(facts.results).toEqual([{ source_posting_version_id: facts.leads.find((lead) => lead.state === "verified")!.source_posting_version_id, ordinal: 1 }]);
+  expect(facts.results).toEqual([{ source_posting_version_id: sharedVersionId, ordinal: 1 }]);
   expect(facts.attentions).toHaveLength(1);
   expect(audit.map((entry) => entry.operation)).toEqual(expect.arrayContaining(["search", "extract", "page"]));
-  for (const fixture of ["verified", "expired", "login", "listing", "insufficient"]) {
+  for (const fixture of ["verified_alias", "expired", "login", "listing", "insufficient"]) {
     const extractedAt = audit.findIndex((entry) => entry.operation === "extract" && entry.fixture === fixture);
     const pagedAt = audit.findIndex((entry) => entry.operation === "page" && entry.fixture === fixture);
     expect(extractedAt).toBeGreaterThan(-1);
     expect(pagedAt).toBeGreaterThan(extractedAt);
   }
+  const aliasPageAt = audit.findIndex((entry) => entry.operation === "page" && entry.fixture === "verified_alias");
+  const canonicalPageAt = audit.findIndex((entry) => entry.operation === "page" && entry.fixture === "verified");
+  expect(audit.findIndex((entry) => entry.operation === "extract" && entry.fixture === "verified")).toBeGreaterThan(-1);
+  expect(canonicalPageAt).toBeGreaterThan(aliasPageAt);
   const policyExtractedAt = audit.findIndex((entry) => entry.operation === "extract" && entry.fixture === "policy");
   const targetSearchAt = audit.findIndex((entry) => entry.operation === "search" && entry.fixture === "target_company");
   expect(policyExtractedAt).toBeGreaterThan(targetSearchAt);
   expect(audit.some((entry) => entry.operation === "page" && entry.fixture === "policy")).toBe(false);
-  expect(audit.filter((entry) => entry.operation === "page").every((entry) => ["verified", "expired", "login", "listing", "insufficient"].includes(entry.fixture ?? ""))).toBe(true);
+  expect(audit.filter((entry) => entry.operation === "page").every((entry) => ["verified_alias", "verified", "expired", "login", "listing", "insufficient"].includes(entry.fixture ?? ""))).toBe(true);
+  const queue = new Queue("agent-runs", { connection: { host: "127.0.0.1", port: redisPort } });
+  try {
+    const duplicate = await queue.add("discover-jobs", { version: 1, runId, userId: account.userId }, { jobId: `${runId}-duplicate`, attempts: 3, removeOnComplete: false, removeOnFail: true });
+    await expect.poll(async () => (await queue.getJob(duplicate.id!))?.returnvalue, { timeout: 15_000 }).toBe("stale");
+    await duplicate.remove();
+  } finally {
+    await queue.close();
+  }
+  expect(await persistedFacts(account.userId, runId)).toEqual(facts);
   await page.reload();
   await expect(page.locator(".agent-run-panel [role=status]")).toContainText("岗位发现部分完成");
   await expect(page.locator(".agent-run-results li")).toHaveCount(1);

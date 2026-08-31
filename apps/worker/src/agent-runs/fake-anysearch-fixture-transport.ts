@@ -2,6 +2,7 @@ import { request } from "node:http";
 import type { TestPublicSourceLookup, TestPublicSourceTransport } from "@job-copilot/source-access/testing";
 
 const FIXTURE_PAGE_PATHS = new Map([
+  ["https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9001-alias", "/__fixture/fake-anysearch-job-page/verified-alias"],
   ["https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9001", "/__fixture/fake-anysearch-job-page/verified"],
   ["https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9002", "/__fixture/fake-anysearch-job-page/expired"],
   ["https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9003", "/__fixture/fake-anysearch-job-page/login"],
