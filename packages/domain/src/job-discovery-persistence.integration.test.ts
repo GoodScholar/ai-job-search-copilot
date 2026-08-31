@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
@@ -24,6 +25,7 @@ import {
 import { createAuditTrail } from "./audit-trail";
 import { createAgentRunCommands, type AgentRunQueue } from "./agent-run-control";
 import { createJobDiscoveryPersistence, discoverySourceIdentifier } from "./job-discovery-persistence";
+import { persistJobOpportunity } from "./job-opportunity-persistence";
 import { GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION } from "@job-copilot/contracts/agent-runs";
 
 const firstSeen = new Date("2026-08-30T00:00:00.000Z");
@@ -59,6 +61,28 @@ describe("job discovery persistence lifecycle", () => {
       .where(and(eq(agentRunSteps.userId, userId), eq(agentRunSteps.runId, started.runId), eq(agentRunSteps.stepKey, "persist_results")));
     return { ...run, claimToken };
   }
+
+  it("旧机会键保持六字段哈希，v4 无展示字段时才按来源身份分隔", async () => {
+    const userId = crypto.randomUUID();
+    await database.insert(jobAccounts).values({ id: userId });
+    const version = async (ordinal: number) => {
+      const postingId = crypto.randomUUID(); const versionId = crypto.randomUUID();
+      await database.insert(jobSourcePostings).values({ id: postingId, userId, sourceType: "company_careers", sourceIdentifier: `${ordinal}`.repeat(64), sourceId: `fixture:${ordinal}`, sourceIdentity: {}, isOfficial: true, availability: "open", availabilityUpdatedAt: firstSeen, createdAt: firstSeen, updatedAt: firstSeen });
+      await database.insert(jobSourcePostingVersions).values({ id: versionId, userId, sourcePostingId: postingId, version: 1, contentSha256: `${ordinal}`.repeat(64), rawContentSha256: `${ordinal + 3}`.repeat(64), rawObjectReference: {}, normalizedData: {}, retrievedAt: firstSeen, availability: "open", createdAt: firstSeen });
+      return versionId;
+    };
+    const legacyVersionId = await version(1);
+    const legacy = { id: () => crypto.randomUUID(), userId, importId: null, sourcePostingVersionId: legacyVersionId, isOfficial: true, company: "Fictional", title: "AI Engineer", location: "Shanghai", postedAt: null, deadline: null, description: null, normalizedData: {}, now: firstSeen };
+    await database.transaction(async (transaction) => { await persistJobOpportunity(transaction, legacy); await persistJobOpportunity(transaction, legacy); });
+    const expectedLegacyKey = createHash("sha256").update(JSON.stringify(["Fictional", "AI Engineer", "Shanghai", null, null, null])).digest("hex");
+    await expect(database.select({ dedupKey: jobOpportunities.dedupKey }).from(jobOpportunities).where(eq(jobOpportunities.userId, userId))).resolves.toEqual([{ dedupKey: expectedLegacyKey }]);
+    const firstPublicVersionId = await version(2); const secondPublicVersionId = await version(3);
+    await database.transaction(async (transaction) => {
+      await persistJobOpportunity(transaction, { ...legacy, sourcePostingVersionId: firstPublicVersionId, company: null, title: null, location: null, dedupIdentity: "public-source-v1:a" });
+      await persistJobOpportunity(transaction, { ...legacy, sourcePostingVersionId: secondPublicVersionId, company: null, title: null, location: null, dedupIdentity: "public-source-v1:b" });
+    });
+    await expect(database.select({ sourcePostingVersionId: jobOpportunities.sourcePostingVersionId }).from(jobOpportunities).where(eq(jobOpportunities.userId, userId))).resolves.toHaveLength(3);
+  });
 
   it("完整空扫描关闭来源时追加生命周期版本并复用上一原始对象", async () => {
     const userId = crypto.randomUUID();

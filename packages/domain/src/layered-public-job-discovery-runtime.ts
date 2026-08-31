@@ -124,7 +124,22 @@ export function createLayeredPublicJobDiscoveryRuntime(input: Omit<WorkflowDepen
       extract: (value) => workflowDependencies.anySearch.extract(value),
     },
     trustedSources,
-    leads,
+    leads: {
+      recordPendingForClaim: ({ targetId, queryKind, candidate, claimToken, now }) => leads.recordPendingForClaim({
+        userId: candidate.userId,
+        runId: candidate.runId,
+        targetId,
+        queryId: candidate.queryId,
+        queryKind,
+        queryFingerprint: candidate.queryFingerprint,
+        normalizedUrl: candidate.normalizedUrl,
+        stableFingerprint: candidate.stableFingerprint,
+        claimToken,
+        now,
+      }),
+      recoverPendingForClaim: (value) => leads.recoverPendingForClaim(value),
+      authorizeRecoveredCandidateForClaim: (value) => leads.authorizeRecoveredCandidateForClaim(value),
+    },
     gate: {
       verifyForClaim: async (value) => {
         const verified = await gate.verifyForClaim({

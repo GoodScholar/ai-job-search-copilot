@@ -50,7 +50,12 @@ type Page = { requestedUrl: string; finalUrl: string; canonicalUrl: string; rawH
 type RejectionCode = "JOB_PAGE_URL_INVALID" | "JOB_PAGE_TARGET_REJECTED" | "JOB_PAGE_REDIRECT_INVALID" | "JOB_PAGE_LOGIN_REQUIRED" | "JOB_PAGE_LISTING" | "JOB_PAGE_EXPIRED" | "JOB_PAGE_UNRECOGNIZED" | "JOB_PAGE_RESPONSE_TOO_LARGE" | "JOB_PAGE_CONTENT_TYPE_INVALID" | "POLICY_REJECTED";
 function candidateFingerprint(url: string) { return createHash("sha256").update(url).digest("hex"); }
 function matchesAllowedDomain(url: string, domains: readonly string[]) { if (domains.length === 0) return true; const host = new URL(url).hostname; return domains.some((domain) => host === domain || host.endsWith(`.${domain}`)); }
-function rejection(error: unknown): RejectionCode | null { const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : ""; return ["JOB_PAGE_URL_INVALID", "JOB_PAGE_TARGET_REJECTED", "JOB_PAGE_REDIRECT_INVALID", "JOB_PAGE_LOGIN_REQUIRED", "JOB_PAGE_LISTING", "JOB_PAGE_EXPIRED", "JOB_PAGE_UNRECOGNIZED", "JOB_PAGE_RESPONSE_TOO_LARGE", "JOB_PAGE_CONTENT_TYPE_INVALID"].includes(code) ? code as RejectionCode : null; }
+function rejection(error: unknown): RejectionCode | null {
+  const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "";
+  // 已签发候选的跨 host redirect 是来源 authority 违规；对 Lead 以通用 policy 终态脱敏。
+  if (code === "JOB_PAGE_REDIRECT_INVALID") return "POLICY_REJECTED";
+  return ["JOB_PAGE_URL_INVALID", "JOB_PAGE_TARGET_REJECTED", "JOB_PAGE_LOGIN_REQUIRED", "JOB_PAGE_LISTING", "JOB_PAGE_EXPIRED", "JOB_PAGE_UNRECOGNIZED", "JOB_PAGE_RESPONSE_TOO_LARGE", "JOB_PAGE_CONTENT_TYPE_INVALID"].includes(code) ? code as RejectionCode : null;
+}
 function retryablePageCode(error: unknown): "JOB_PAGE_TIMEOUT" | "JOB_PAGE_CANCELLED" | "JOB_PAGE_UNREACHABLE" | "JOB_PAGE_RATE_LIMITED" | null { const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : ""; return ["JOB_PAGE_TIMEOUT", "JOB_PAGE_CANCELLED", "JOB_PAGE_UNREACHABLE", "JOB_PAGE_RATE_LIMITED"].includes(code) ? code as "JOB_PAGE_TIMEOUT" | "JOB_PAGE_CANCELLED" | "JOB_PAGE_UNREACHABLE" | "JOB_PAGE_RATE_LIMITED" : null; }
 function aggregateSourceIssues(items: Array<{ provider: "anysearch" | "greenhouse"; code: string; affectedCount: number }>) {
   const grouped = new Map<string, { provider: "anysearch" | "greenhouse"; code: string; affectedCount: number }>();
@@ -69,7 +74,7 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
   anySearch: { isConfigured?(): boolean; search(input: { runId: string; executionSpec: LayeredSpec; query: Query; signal: AbortSignal; beforeRequest(): Promise<void> }): Promise<{ candidates: Candidate[] } | { error: AnySearchProviderError }>; extract(input: { candidate: RecoveredCandidateCapability; signal: AbortSignal; beforeRequest(): Promise<void>; authorizeRecoveredCandidate(input: { queryId: string; candidateFingerprint: string; identity: string; operationIdentity: string }): Promise<boolean> }): Promise<{ normalizedUrl: string } | { error: AnySearchProviderError }> };
   preflight(input: { candidate: IssuedCandidateCapability }): Promise<{ normalizedUrl: string } | null>;
   leads: {
-    recordPendingForClaim(input: { targetId: string; candidate: IssuedCandidateCapability; claimToken: string; now: Date }): Promise<{ leadId: string }>;
+    recordPendingForClaim(input: { targetId: string; queryKind: Query["kind"]; candidate: IssuedCandidateCapability; claimToken: string; now: Date }): Promise<{ leadId: string }>;
     recoverPendingForClaim?(input: { userId: string; runId: string; queryId: string; queryFingerprint: string; claimToken: string; now: Date }): Promise<Array<RecoveredCandidateCapability>>;
     authorizeRecoveredCandidateForClaim?(input: { userId: string; runId: string; queryId: string; candidateFingerprint: string; leadId: string; claimToken: string; now: Date }): Promise<boolean>;
   };
@@ -129,14 +134,14 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
         if (!safe || safe.normalizedUrl !== candidate.normalizedUrl || !SafeNormalizedPublicJobUrlSchema.safeParse(safe.normalizedUrl).success) { recordDiagnostic({ scope: "query", queryId: query.queryId, kind: query.kind, stableFingerprint: query.stableFingerprint, code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: "ANYSEARCH_POLICY_REJECTED", affectedCount: 1 }); continue; }
         if (!matchesAllowedDomain(safe.normalizedUrl, query.allowedSiteDomains)) {
           await value.beforePhysicalOperation({ kind: "record_pending", identity: issued.queryId });
-          const pending = await deps.leads.recordPendingForClaim({ targetId: spec.targetSnapshot.targetId, candidate: issued, claimToken: value.claimToken, now: value.now });
+          const pending = await deps.leads.recordPendingForClaim({ targetId: spec.targetSnapshot.targetId, queryKind: query.kind, candidate: issued, claimToken: value.claimToken, now: value.now });
           await value.beforePhysicalOperation({ kind: "gate_reject", identity: pending.leadId });
           await deps.gate.rejectForClaim({ candidate: { ...issued, leadId: pending.leadId }, code: "POLICY_REJECTED", claimToken: value.claimToken, now: value.now });
           recordDiagnostic({ scope: "query", queryId: query.queryId, kind: query.kind, stableFingerprint: query.stableFingerprint, code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: "ANYSEARCH_POLICY_REJECTED", affectedCount: 1 }); continue;
         }
         verificationCandidates += 1;
         await value.beforePhysicalOperation({ kind: "record_pending", identity: issued.queryId });
-        const pending = await deps.leads.recordPendingForClaim({ targetId: spec.targetSnapshot.targetId, candidate: issued, claimToken: value.claimToken, now: value.now });
+        const pending = await deps.leads.recordPendingForClaim({ targetId: spec.targetSnapshot.targetId, queryKind: query.kind, candidate: issued, claimToken: value.claimToken, now: value.now });
         const recovered: RecoveredCandidateCapability = { ...issued, leadId: pending.leadId };
         try {
           const extract = await deps.anySearch.extract({ candidate: recovered, signal: value.signal, beforeRequest: () => value.beforePhysicalOperation({ kind: "extract", identity: pending.leadId }), authorizeRecoveredCandidate: (authorization) => deps.leads.authorizeRecoveredCandidateForClaim?.({ userId: recovered.userId, runId: recovered.runId, queryId: authorization.queryId, candidateFingerprint: authorization.candidateFingerprint, leadId: authorization.identity, claimToken: value.claimToken, now: value.now }) ?? Promise.resolve(false) });

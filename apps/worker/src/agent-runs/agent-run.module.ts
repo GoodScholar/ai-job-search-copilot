@@ -24,6 +24,7 @@ import {
 import { createJobDiscoveryAdapterResolver, createLayeredPublicJobDiscoveryWorkflowResolver, createSourceHealthDiscoveryAdapterResolver } from "./job-discovery-adapter-resolver.js";
 import { AnySearchPublicJobAdapter, preflightAnySearchCandidate, type AnySearchCandidate, type AnySearchBeforeRequest } from "./anysearch-public-job-adapter.js";
 import { GreenhouseTrustedSourceAdapter } from "./greenhouse-trusted-source-adapter.js";
+import { createFakeAnysearchFixturePageTransport, fakeAnysearchFixtureLookup } from "./fake-anysearch-fixture-transport.js";
 import { MinioDiscoveryContentStore } from "./minio-discovery-content-store.js";
 import { MinioVerifiedJobEvidenceStore } from "./minio-verified-job-evidence-store.js";
 
@@ -135,7 +136,10 @@ export function createConfiguredLayeredPublicJobDiscoveryWorkflowResolver(input:
           return result.ok ? { normalizedUrl: result.data.normalizedUrl } : null;
         },
         fetcher: {
-          fetch: ({ candidate, signal }) => new SecureJobPageFetcher(fakeAnysearch ? { testOrigin: environment.JOB_PAGE_FETCHER_TEST_ORIGIN } : {}).fetch({ url: candidate.normalizedUrl, signal }),
+          fetch: ({ candidate, signal }) => new SecureJobPageFetcher(fakeAnysearch ? {
+            testTransport: createFakeAnysearchFixturePageTransport(environment.JOB_PAGE_FETCHER_TEST_ORIGIN!),
+            lookup: fakeAnysearchFixtureLookup,
+          } : {}).fetch({ url: candidate.normalizedUrl, signal }),
         },
       });
     },

@@ -1,6 +1,6 @@
 import { parse, type DefaultTreeAdapterMap } from "parse5";
 import { isOfficialPublicJobAtsHost } from "@job-copilot/contracts/job-discovery";
-import { PublicSourceAccessError, createInternalPublicSourceClient } from "./internal.js";
+import { PublicSourceAccessError, createInternalPublicSourceClient, type InternalPublicSourceClientConfig } from "./internal.js";
 import { createPublicSourceClientForTest } from "./testing.js";
 
 export const JOB_PAGE_MAX_BYTES = 2 * 1024 * 1024;
@@ -41,14 +41,25 @@ export interface JobPageFetcher {
 type HtmlNode = DefaultTreeAdapterMap["node"];
 
 export class SecureJobPageFetcher implements JobPageFetcher {
-  constructor(private readonly config: { appEnv?: string; testOrigin?: string; connectTimeoutMs?: number; totalTimeoutMs?: number; lookup?: (hostname: string) => Promise<Array<{ address: string; family: number }>> } = {}) {}
+  constructor(private readonly config: {
+    appEnv?: string;
+    testOrigin?: string;
+    connectTimeoutMs?: number;
+    totalTimeoutMs?: number;
+    lookup?: InternalPublicSourceClientConfig["lookup"];
+    /** 仅 test runtime 的受控页面 fixture 可注入；生产路径永不读取。 */
+    testTransport?: InternalPublicSourceClientConfig["transport"];
+  } = {}) {}
 
   async fetch({ url, signal }: { url: string; signal?: AbortSignal }): Promise<FetchedJobPage> {
     const requested = this.parseUrl(url, "JOB_PAGE_URL_INVALID");
+    // 自定义 transport 已是经 APP_ENV=test 守卫的精确 fixture capability；不能同时把其连接 origin 误作候选 URL 的 test origin。
+    const testOrigin = this.config.testTransport ? undefined : this.config.testOrigin ?? process.env.JOB_PAGE_FETCHER_TEST_ORIGIN;
     const client = process.env.APP_ENV === "test"
       ? createPublicSourceClientForTest({
-        exactHosts: [requested.hostname], testOrigin: this.config.testOrigin ?? process.env.JOB_PAGE_FETCHER_TEST_ORIGIN,
-        connectTimeoutMs: this.config.connectTimeoutMs, totalTimeoutMs: this.config.totalTimeoutMs, lookup: this.config.lookup,
+        exactHosts: [requested.hostname], testOrigin,
+        connectTimeoutMs: this.config.connectTimeoutMs, totalTimeoutMs: this.config.totalTimeoutMs,
+        lookup: this.config.lookup, transport: this.config.testTransport,
       })
       : createInternalPublicSourceClient({ exactHosts: [requested.hostname] });
     let response: { status: number; headers: Readonly<Record<string, string>>; body: Uint8Array; finalUrl: URL; attemptCount: number };
@@ -63,7 +74,7 @@ export class SecureJobPageFetcher implements JobPageFetcher {
     const extracted = extractJobPage(rawHtml, finalUrl);
     return {
       requestedUrl: requested.toString(), finalUrl: finalUrl.toString(), canonicalUrl: extracted.canonicalUrl,
-      rawHtml, visibleText: extracted.visibleText, pageClassification: "job", sourceKind: sourceKind(finalUrl, this.config.testOrigin ?? process.env.JOB_PAGE_FETCHER_TEST_ORIGIN),
+      rawHtml, visibleText: extracted.visibleText, pageClassification: "job", sourceKind: sourceKind(finalUrl, testOrigin),
     };
   }
 

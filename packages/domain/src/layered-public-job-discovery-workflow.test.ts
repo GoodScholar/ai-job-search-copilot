@@ -154,7 +154,7 @@ describe("layered public job discovery workflow", () => {
     expect(result).toEqual({ branchOutcome: { trusted: "succeeded", publicDiscovery: "verified" }, sourcePostingVersionIds: ["44444444-4444-8444-8444-444444444444", "77777777-7777-8777-8777-777777777777"], trustedSourcePostingVersionIds: ["44444444-4444-8444-8444-444444444444"], sourceIssues: [], diagnostics: [] });
     const capability = { userId: targetId, runId, queryId, queryFingerprint: "b".repeat(64), normalizedUrl: "https://careers.example.com/jobs/1", stableFingerprint: "a".repeat(64), allowedSiteDomains: [] };
     expect(proofs.preflight).toMatchObject({ candidate: capability });
-    expect(proofs.pending).toMatchObject({ candidate: capability, claimToken });
+    expect(proofs.pending).toMatchObject({ queryKind: "general", candidate: capability, claimToken });
     expect(proofs.extract).toMatchObject({ candidate: { ...capability, leadId: "66666666-6666-8666-8666-666666666666" } });
     expect(proofs.fetch).toMatchObject({ candidate: { ...capability, leadId: "66666666-6666-8666-8666-666666666666" } });
     expect(proofs.verify).toMatchObject({ candidate: { ...capability, leadId: "66666666-6666-8666-8666-666666666666" }, claimToken });

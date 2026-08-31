@@ -6,8 +6,12 @@ type Discovery = { sourceId: string; detailId: string; company: string | null; t
 type PersistenceDb = any;
 
 function sha256(value: string): string { return createHash("sha256").update(value, "utf8").digest("hex"); }
-function opportunityKey(input: { company: string | null; title: string | null; location: string | null; postedAt: string | null; deadline: string | null; description: string | null }) {
-  return sha256(JSON.stringify([input.company, input.title, input.location, input.postedAt, input.deadline, input.description === null ? null : sha256(input.description)]));
+function opportunityKey(input: { company: string | null; title: string | null; location: string | null; postedAt: string | null; deadline: string | null; description: string | null; dedupIdentity?: string }) {
+  const legacy = [input.company, input.title, input.location, input.postedAt, input.deadline, input.description === null ? null : sha256(input.description)];
+  // 未传入时必须保持既有 six-field key，避免 v1-v3/import 幂等键发生迁移。
+  return input.dedupIdentity === undefined
+    ? sha256(JSON.stringify(legacy))
+    : sha256(JSON.stringify(["public-job-opportunity-v1", ...legacy, input.dedupIdentity]));
 }
 
 /** 发现结果的可展示规范化字段；原始对象与对象存储路径不进入业务数据。 */
@@ -45,6 +49,8 @@ export async function persistJobOpportunity(db: PersistenceDb, input: {
   id: () => string; userId: string; importId: string | null; sourcePostingVersionId: string; isOfficial: boolean;
   existingOpportunityId?: string;
   company: string | null; title: string | null; location: string | null; postedAt: string | null; deadline: string | null; description: string | null; normalizedData: Record<string, unknown>; now: Date;
+  /** 已验证来源可提供不可逆身份摘要，避免缺少可展示字段的公开页面相互合并。 */
+  dedupIdentity?: string;
 }): Promise<{ opportunityId: string }> {
   const dedupKey = opportunityKey(input);
   let [opportunity] = input.existingOpportunityId

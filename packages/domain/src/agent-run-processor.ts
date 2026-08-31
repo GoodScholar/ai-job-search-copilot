@@ -14,6 +14,7 @@ import { AnySearchProviderErrorCodeSchema } from "@job-copilot/contracts/job-dis
 import type { AuditTrail } from "./audit-trail";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { createJobDiscoveryPersistence, discoverySourceIdentifier, type DiscoveryDetail } from "./job-discovery-persistence";
+import { persistJobOpportunity } from "./job-opportunity-persistence";
 import { decideRetry } from "./agent-run-state";
 import { agentRunUsageSnapshot, appendBudgetFacts, settleActiveSlice, terminateBudgetRun, type BudgetDimension } from "./agent-run-lifecycle";
 import type { AgentRunCheckpoint } from "./agent-run-checkpoint";
@@ -355,13 +356,20 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
     const attributed = new Set((await transaction.select({ sourcePostingVersionId: jobDiscoveryAttributions.sourcePostingVersionId }).from(jobDiscoveryAttributions).where(and(eq(jobDiscoveryAttributions.userId, input.userId), eq(jobDiscoveryAttributions.runId, input.runId)))).map((row: { sourcePostingVersionId: string }) => row.sourcePostingVersionId));
     const trusted = new Set(input.trustedSourcePostingVersionIds);
     for (const sourcePostingVersionId of input.sourcePostingVersionIds) {
-      const [version] = await transaction.select({ sourceId: jobSourcePostings.sourceId, sourceType: jobSourcePostings.sourceType, isOfficial: jobSourcePostings.isOfficial }).from(jobSourcePostingVersions).innerJoin(jobSourcePostings, and(eq(jobSourcePostings.userId, jobSourcePostingVersions.userId), eq(jobSourcePostings.id, jobSourcePostingVersions.sourcePostingId))).where(and(eq(jobSourcePostingVersions.userId, input.userId), eq(jobSourcePostingVersions.id, sourcePostingVersionId))).limit(1);
+      const [version] = await transaction.select({ sourceId: jobSourcePostings.sourceId, sourceIdentifier: jobSourcePostings.sourceIdentifier, sourceType: jobSourcePostings.sourceType, isOfficial: jobSourcePostings.isOfficial }).from(jobSourcePostingVersions).innerJoin(jobSourcePostings, and(eq(jobSourcePostings.userId, jobSourcePostingVersions.userId), eq(jobSourcePostings.id, jobSourcePostingVersions.sourcePostingId))).where(and(eq(jobSourcePostingVersions.userId, input.userId), eq(jobSourcePostingVersions.id, sourcePostingVersionId))).limit(1);
       const trustedVersion = trusted.has(sourcePostingVersionId)
         && version?.sourceId !== null
         && input.trustedSourceIds.includes(version?.sourceId ?? "")
         && version?.sourceType === "company_careers"
         && version.isOfficial;
       if (!version || (!attributed.has(sourcePostingVersionId) && !trustedVersion)) throw new Error("LAYERED_PUBLIC_RESULT_PROVENANCE_INVALID");
+      if (attributed.has(sourcePostingVersionId)) {
+        await persistJobOpportunity(transaction, {
+          id: deps.id, userId: input.userId, importId: null, sourcePostingVersionId, isOfficial: version.isOfficial,
+          company: null, title: null, location: null, postedAt: null, deadline: null, description: null, normalizedData: {},
+          dedupIdentity: version.sourceIdentifier, now: input.now,
+        });
+      }
     }
     const existingResults: Array<{ ordinal: number; sourcePostingVersionId: string }> = await transaction.select({ ordinal: jobDiscoveryRunResults.ordinal, sourcePostingVersionId: jobDiscoveryRunResults.sourcePostingVersionId })
       .from(jobDiscoveryRunResults).where(and(eq(jobDiscoveryRunResults.userId, input.userId), eq(jobDiscoveryRunResults.runId, input.runId))).orderBy(asc(jobDiscoveryRunResults.ordinal));

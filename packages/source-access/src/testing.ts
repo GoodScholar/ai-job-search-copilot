@@ -1,6 +1,8 @@
 import { PublicSourceAccessError, createInternalPublicSourceClient, type InternalPublicSourceClientConfig } from "./internal.js";
 
 type TestingOverrides = Omit<InternalPublicSourceClientConfig, "exactHosts" | "appEnv">;
+export type TestPublicSourceTransport = NonNullable<InternalPublicSourceClientConfig["transport"]>;
+export type TestPublicSourceLookup = NonNullable<InternalPublicSourceClientConfig["lookup"]>;
 export type TestPublicSourceClient = ReturnType<typeof createInternalPublicSourceClient> & { hostPermitCountForTest(): number };
 
 /** Test-only construction seam. HTTP test origins work only under the real APP_ENV=test. */

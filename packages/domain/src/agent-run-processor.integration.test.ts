@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, asc, eq } from "drizzle-orm";
@@ -189,6 +190,51 @@ describe("AgentRunProcessor checkpoints", () => {
     ])).resolves.toEqual([[], [], [], [], [], []]);
     await expect(database.select({ status: agentRuns.status, currentStep: agentRuns.currentStep, claimToken: agentRuns.claimToken }).from(agentRuns).where(eq(agentRuns.id, job.runId)))
       .resolves.toEqual([{ status: "running", currentStep: "batch_search", claimToken }]);
+  });
+
+  it("v4 runtime 将候选 capability 展平为 owner/run/query-bound Lead 事实并保留 queryKind", async () => {
+    const job = await layeredRun();
+    const claimToken = crypto.randomUUID();
+    await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", startedAt: now, claimToken, claimExpiresAt: new Date(Date.now() + 30_000), activeSliceStartedAt: now, attemptCount: 1 }).where(eq(agentRuns.id, job.runId));
+    const [claimed] = await database.select().from(agentRuns).where(eq(agentRuns.id, job.runId));
+    if (!claimed) throw new Error("missing claimed run");
+    const executionSpec = {
+      targetSnapshot: claimed.targetSnapshot, profileSnapshot: claimed.profileSnapshot, watchlistSnapshot: claimed.watchlistSnapshot,
+      sourceScope: claimed.sourceScope, workflowVersion: claimed.workflowVersion, ruleVersion: claimed.ruleVersion,
+      adapter: claimed.adapter, adapterVersion: claimed.adapterVersion, outputSchemaVersion: claimed.outputSchemaVersion,
+      toolAllowlist: claimed.toolAllowlist, model: claimed.modelSnapshot, budget: claimed.budgetSnapshot,
+    };
+    const candidateUrl = "https://boards.greenhouse.io/example/jobs/9001";
+    const candidate = { normalizedUrl: candidateUrl, stableFingerprint: createHash("sha256").update(candidateUrl).digest("hex") };
+    const evidenceStore = { put: async () => ({ created: true }), delete: async () => undefined };
+    const runtime = createLayeredPublicJobDiscoveryRuntime({
+      db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => now }),
+      contentStore: new Store(), evidenceStore,
+      trustedSourceAdapter: {
+        listSource: async () => ({ ok: false as const, error: { code: "GREENHOUSE_UNAVAILABLE" } }),
+        getSourceDetail: async () => { throw new Error("UNUSED"); },
+      },
+      anySearch: {
+        isConfigured: () => true,
+        search: async ({ beforeRequest }) => { await beforeRequest(); return { candidates: [candidate] }; },
+        extract: async ({ candidate: recovered, beforeRequest }) => { await beforeRequest(); return { normalizedUrl: recovered.normalizedUrl }; },
+      },
+      preflight: async ({ candidate: issued }) => ({ normalizedUrl: issued.normalizedUrl }),
+      fetcher: {
+        fetch: async ({ candidate: recovered }) => ({
+          requestedUrl: recovered.normalizedUrl, finalUrl: recovered.normalizedUrl, canonicalUrl: recovered.normalizedUrl,
+          rawHtml: "<main><h1>AI 应用工程师</h1><p>职责：构建产品</p><p>要求：TypeScript</p></main>",
+          visibleText: "AI 应用工程师\n职责：构建产品\n要求：TypeScript", pageClassification: "job" as const, sourceKind: "official" as const,
+        }),
+      },
+    });
+
+    const outcome = await runtime.run({ userId: job.userId, runId: job.runId, claimToken, now, executionSpec: executionSpec as never, attemptCount: 1, beforePhysicalOperation: async () => undefined, onDiagnostics: () => undefined, signal: new AbortController().signal });
+
+    expect(outcome).toMatchObject({ branchOutcome: { trusted: "failed", publicDiscovery: "verified" }, sourcePostingVersionIds: [expect.any(String)] });
+    const [lead] = await database.select().from(jobDiscoveryLeads).where(and(eq(jobDiscoveryLeads.userId, job.userId), eq(jobDiscoveryLeads.runId, job.runId)));
+    expect(lead).toMatchObject({ targetId: job.targetId, queryId: job.queryId, queryKind: "general", queryFingerprint: "a".repeat(64), normalizedUrl: candidate.normalizedUrl, stableFingerprint: candidate.stableFingerprint, state: "verified" });
+    await expect(database.select().from(jobDiscoveryAttributions).where(and(eq(jobDiscoveryAttributions.userId, job.userId), eq(jobDiscoveryAttributions.runId, job.runId), eq(jobDiscoveryAttributions.queryId, job.queryId), eq(jobDiscoveryAttributions.leadId, lead!.id)))).resolves.toHaveLength(1);
   });
 
   it("v4 trusted wrapper 聚合局部来源失败并拒绝跨来源详情身份", async () => {
