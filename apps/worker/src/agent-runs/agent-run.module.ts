@@ -19,7 +19,7 @@ import {
   type AgentRunScheduleFailure,
   type AgentRunScheduleReporter,
 } from "./agent-run-scheduler.js";
-import { createJobDiscoveryAdapterResolver, createSourceHealthDiscoveryAdapterResolver } from "./job-discovery-adapter-resolver.js";
+import { createJobDiscoveryAdapterResolver, createLayeredPublicJobDiscoveryWorkflowResolver, createSourceHealthDiscoveryAdapterResolver } from "./job-discovery-adapter-resolver.js";
 import { MinioDiscoveryContentStore } from "./minio-discovery-content-store.js";
 
 export const AGENT_RUN_CONSUMER = Symbol("AGENT_RUN_CONSUMER");
@@ -61,6 +61,11 @@ export function createConfiguredJobDiscoveryExecutionMode(environment: NodeJS.Pr
 
 export function createConfiguredJobDiscoveryAdapterResolver(environment: NodeJS.ProcessEnv = process.env) {
   return createJobDiscoveryAdapterResolver(environment);
+}
+
+/** Worker v4 resolver 的配置入口；具体 workflow 只能由已注入的 runtime ports 构造。 */
+export function createConfiguredLayeredPublicJobDiscoveryWorkflowResolver(input: Parameters<typeof createLayeredPublicJobDiscoveryWorkflowResolver>[0]) {
+  return createLayeredPublicJobDiscoveryWorkflowResolver(input);
 }
 
 @Injectable()
