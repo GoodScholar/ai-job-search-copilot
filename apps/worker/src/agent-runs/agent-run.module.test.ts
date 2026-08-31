@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createConfiguredJobDiscoveryAdapterResolver, createConfiguredJobDiscoveryExecutionMode } from "./agent-run.module.js";
+import { createConfiguredJobDiscoveryAdapterResolver, createConfiguredJobDiscoveryExecutionMode, createConfiguredLayeredPublicJobDiscoveryWorkflowResolver } from "./agent-run.module.js";
 
 const legacyExecutionSpec = {
   targetSnapshot: {
@@ -19,6 +19,10 @@ const legacyExecutionSpec = {
 } as const;
 
 describe("AgentRunModule", () => {
+  it("production module 提供 v4 workflow resolver", () => {
+    expect(typeof createConfiguredLayeredPublicJobDiscoveryWorkflowResolver).toBe("function");
+  });
+
   it.each([
     [{ APP_ENV: "production" }, "layered_public"],
     [{ APP_ENV: "test", PUBLIC_JOB_DISCOVERY_ADAPTER: "greenhouse" }, "fake"],
