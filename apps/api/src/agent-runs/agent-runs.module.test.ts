@@ -33,4 +33,18 @@ describe("AgentRunsModule", () => {
   it.each([undefined, "", "   "])("test 下空白 health scenario 保持 Fake: %j", (scenario) => {
     expect(createConfiguredJobDiscoveryExecutionMode({ APP_ENV: "test", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: scenario })).toBe("fake");
   });
+
+  it.each([
+    { E2E_AGENT_RUN_SCENARIOS: "{" },
+    { E2E_AGENT_RUN_SCENARIOS: '{"not-a-uuid":"retry_once"}' },
+    { E2E_AGENT_RUN_SCENARIOS: '{"11111111-1111-4111-8111-111111111111":"unknown"}' },
+    { E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: "{" },
+    { E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: '{"not-a-uuid":{"greenhouse:example":"healthy"}}' },
+    { E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: '{"11111111-1111-4111-8111-111111111111":{"invalid-source":"healthy"}}' },
+    { E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: '{"11111111-1111-4111-8111-111111111111":{"greenhouse:example":"unknown"}}' },
+  ])("test 入口也拒绝两种 scenario 的非法值且不泄露内容: %o", (scenario) => {
+    const sentinel = JSON.stringify(scenario);
+    expect(() => createConfiguredJobDiscoveryExecutionMode({ APP_ENV: "test", ...scenario })).toThrow("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID");
+    try { createConfiguredJobDiscoveryExecutionMode({ APP_ENV: "test", ...scenario }); } catch (error) { expect(String(error)).not.toContain(sentinel); }
+  });
 });

@@ -126,4 +126,20 @@ describe("AgentRunModule", () => {
     expect(() => createConfiguredJobDiscoveryAdapterResolver({ APP_ENV: "test", E2E_AGENT_RUN_SCENARIOS: `{${sentinel}` })).toThrow("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID");
     try { createConfiguredJobDiscoveryAdapterResolver({ APP_ENV: "test", E2E_AGENT_RUN_SCENARIOS: `{${sentinel}` }); } catch (error) { expect(String(error)).not.toContain(sentinel); }
   });
+
+  it.each([
+    { E2E_AGENT_RUN_SCENARIOS: "{" },
+    { E2E_AGENT_RUN_SCENARIOS: '{"not-a-uuid":"retry_once"}' },
+    { E2E_AGENT_RUN_SCENARIOS: '{"11111111-1111-4111-8111-111111111111":"unknown"}' },
+    { E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: "{" },
+    { E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: '{"not-a-uuid":{"greenhouse:example":"healthy"}}' },
+    { E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: '{"11111111-1111-4111-8111-111111111111":{"invalid-source":"healthy"}}' },
+    { E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: '{"11111111-1111-4111-8111-111111111111":{"greenhouse:example":"unknown"}}' },
+  ])("configured v4 resolver 与 API 同样拒绝两种非法 scenario: %o", (scenario) => {
+    const create = () => createConfiguredLayeredPublicJobDiscoveryWorkflowResolver({
+      environment: { APP_ENV: "test", ...scenario }, db: {} as never, auditTrail: {} as never,
+      contentStore: { put: async () => undefined, delete: async () => undefined }, evidenceStore: { put: async () => ({ created: true }), delete: async () => undefined }, id: () => crypto.randomUUID(),
+    });
+    expect(create).toThrow("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID");
+  });
 });

@@ -86,6 +86,20 @@ describe("JobDiscoveryAdapterResolver", () => {
       .toThrow("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID");
   });
 
+  it.each([
+    { E2E_AGENT_RUN_SCENARIOS: "{" },
+    { E2E_AGENT_RUN_SCENARIOS: '{"not-a-uuid":"retry_once"}' },
+    { E2E_AGENT_RUN_SCENARIOS: '{"11111111-1111-4111-8111-111111111111":"unknown"}' },
+    { E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: "{" },
+    { E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: '{"not-a-uuid":{"greenhouse:example":"healthy"}}' },
+    { E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: '{"11111111-1111-4111-8111-111111111111":{"invalid-source":"healthy"}}' },
+    { E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: '{"11111111-1111-4111-8111-111111111111":{"greenhouse:example":"unknown"}}' },
+  ])("legacy 与 v3 resolver 都拒绝任一非法 scenario: %o", (scenario) => {
+    const environment = { APP_ENV: "test" as const, ...scenario };
+    expect(() => createJobDiscoveryAdapterResolver(environment)).toThrow("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID");
+    expect(() => createSourceHealthDiscoveryAdapterResolver(environment)).toThrow("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID");
+  });
+
   it("local 未配置场景时返回正常 Fake，并只接受持久化 adapter 元数据", async () => {
     const resolver = createJobDiscoveryAdapterResolver({ APP_ENV: "local" });
     await expect(resolver.resolve({ ...metadata, attemptCount: 1 }).searchBatch(batchInput)).resolves.toMatchObject({ ok: true });
