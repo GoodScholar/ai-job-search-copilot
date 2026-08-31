@@ -54,6 +54,23 @@ describe("AgentRunModule", () => {
     expect({ transport: transport.mock.calls.length, result }).toMatchObject({ transport: 0, result: { branchOutcome: { trusted: "failed", publicDiscovery: "failed" }, diagnostics: [{ scope: "provider", code: "ANYSEARCH_NOT_CONFIGURED", retryable: false, affectedCount: 1 }], sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED", affectedCount: 1 }] } });
   });
 
+  it("missing-key test phase 仍组装 v4，但在任何 checkpoint 或 transport 前聚合 NOT_CONFIGURED", async () => {
+    const transport = vi.fn();
+    vi.stubGlobal("fetch", transport);
+    const resolver = createConfiguredLayeredPublicJobDiscoveryWorkflowResolver({
+      environment: {
+        APP_ENV: "test", E2E_ANYSEARCH_PUBLIC_JOB_PHASE: "fake-anysearch-public-job-missing-key-v1",
+        ANYSEARCH_BASE_URL: "http://127.0.0.1:39334", JOB_PAGE_FETCHER_TEST_ORIGIN: "http://127.0.0.1:39334",
+      }, db: {} as never, auditTrail: {} as never,
+      contentStore: { put: async () => undefined, delete: async () => undefined }, evidenceStore: { put: async () => ({ created: true }), delete: async () => undefined }, id: () => crypto.randomUUID(),
+    });
+    const result = await resolver.resolve({ runId: "10000000-0000-4000-8000-000000000001", idempotencyKey: "20000000-0000-4000-8000-000000000002", executionSpec: layeredExecutionSpec as never, attemptCount: 1 }).run({
+      userId: legacyExecutionSpec.targetSnapshot.targetId, runId: "10000000-0000-4000-8000-000000000001", claimToken: "50000000-0000-4000-8000-000000000005", now: new Date(), executionSpec: layeredExecutionSpec as never, attemptCount: 1,
+      beforePhysicalOperation: async () => { throw new Error("not a physical request"); }, onDiagnostics: () => undefined, signal: new AbortController().signal,
+    });
+    expect({ transport: transport.mock.calls.length, result }).toMatchObject({ transport: 0, result: { branchOutcome: { trusted: "failed", publicDiscovery: "failed" }, sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED", affectedCount: 1 }] } });
+  });
+
   it("test 环境的 resolver 拒绝 v4，保证旧 Fake 与 v3 health 路径不被抢占", () => {
     const resolver = createConfiguredLayeredPublicJobDiscoveryWorkflowResolver({
       environment: { APP_ENV: "test", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: "{}" }, db: {} as never, auditTrail: {} as never,

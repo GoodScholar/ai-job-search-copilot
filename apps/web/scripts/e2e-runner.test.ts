@@ -27,9 +27,9 @@ describe("E2E runner", () => {
     expect(await selectE2EPhases(["e2e/source-health.spec.ts", "--project", "Mobile Safari"])).toEqual(["source-health"]);
   });
 
-  it("版本化 Fake AnySearch spec 只进入专用 phase，并清理其他 phase 与 transport 注入", async () => {
+  it("版本化 Fake AnySearch spec 依次进入 configured 与 missing-key phase，并清理其他 phase 与 transport 注入", async () => {
     const arguments_ = ["e2e/anysearch-public-job-discovery.spec.ts", "--project", "Desktop Chrome"];
-    expect(await selectE2EPhases(arguments_)).toEqual(["anysearch"]);
+    expect(await selectE2EPhases(arguments_)).toEqual(["anysearch-configured", "anysearch-missing-key"]);
 
     const calls: RunnerCall[] = [];
     await expect(executeE2E(arguments_, {
@@ -46,15 +46,26 @@ describe("E2E runner", () => {
       run: async (call: RunnerCall) => { calls.push(call); return { code: 0, stdout: "" }; },
     })).resolves.toEqual({ code: 0 });
 
-    expect(calls).toEqual([{
-      phase: "anysearch",
-      args: arguments_,
-      environment: {
-        CI: "true",
-        KEEP_ME: "yes",
-        E2E_ANYSEARCH_PUBLIC_JOB_PHASE: "fake-anysearch-public-job-v1",
+    expect(calls).toEqual([
+      {
+        phase: "anysearch-configured",
+        args: arguments_,
+        environment: {
+          CI: "true",
+          KEEP_ME: "yes",
+          E2E_ANYSEARCH_PUBLIC_JOB_PHASE: "fake-anysearch-public-job-v1",
+        },
       },
-    }]);
+      {
+        phase: "anysearch-missing-key",
+        args: arguments_,
+        environment: {
+          CI: "true",
+          KEEP_ME: "yes",
+          E2E_ANYSEARCH_PUBLIC_JOB_PHASE: "fake-anysearch-public-job-missing-key-v1",
+        },
+      },
+    ]);
   });
 
   it("只剥离 pnpm 附加的一个 leading --，让普通与 source-health 聚焦参数仍是 Playwright 选项", async () => {

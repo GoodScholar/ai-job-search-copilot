@@ -766,6 +766,27 @@ test("版本化 Fake AnySearch phase 在取消时关闭 fixture server，再清�
   assert.deepEqual(events, ["prepare", "migrate", "fixture-start", "start", "ready", "fixture-close", "cleanup"]);
 });
 
+test("版本化 missing-key phase 保留只读 fixture endpoint，但绝不向应用注入 AnySearch key", () => {
+  let spawnCall;
+  const runtime = createRuntimeConfig({ test: true, anysearchPublicJobPhase: "fake-anysearch-public-job-missing-key-v1" });
+
+  startApplications({
+    config: runtime,
+    env: { ANYSEARCH_API_KEY: "caller-key-must-not-survive" },
+    spawnProcess: (...args) => {
+      spawnCall = args;
+      return {};
+    },
+  });
+
+  const [, , options] = spawnCall;
+  assert.equal(runtime.anysearchPublicJobPhase, "fake-anysearch-public-job-missing-key-v1");
+  assert.equal(options.env.E2E_ANYSEARCH_PUBLIC_JOB_PHASE, "fake-anysearch-public-job-missing-key-v1");
+  assert.equal(options.env.ANYSEARCH_BASE_URL, "http://127.0.0.1:39334");
+  assert.equal(options.env.JOB_PAGE_FETCHER_TEST_ORIGIN, "http://127.0.0.1:39334");
+  assert.equal(options.env.ANYSEARCH_API_KEY, undefined);
+});
+
 test("signal waits for the controlled application child before isolated cleanup", async () => {
   const events = [];
   const signalSource = new EventEmitter();

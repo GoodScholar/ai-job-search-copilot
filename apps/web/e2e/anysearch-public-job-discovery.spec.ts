@@ -98,7 +98,7 @@ async function persistedFacts(userId: string, runId: string) {
   }
 }
 
-test("版本化 Fake AnySearch 从普通 UI 运行真实 layered public 验收链", async ({ page, request }, testInfo) => {
+test("版本化 Fake AnySearch 从普通 UI 运行真实 layered public 验收链 @configured", async ({ page, request }, testInfo) => {
   test.setTimeout(90_000);
   const scenario = scenarioFor(testInfo);
   const account = await configureAccount(request, scenario);
@@ -176,4 +176,37 @@ test("版本化 Fake AnySearch 从普通 UI 运行真实 layered public 验收�
   expect(await controls.evaluateAll((elements) => elements.every((element) => element.getBoundingClientRect().height >= 44))).toBe(true);
   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+});
+
+test("版本化 Fake AnySearch 缺 key 时从普通 UI 失败且不触发 provider transport @missing-key", async ({ page, request }, testInfo) => {
+  test.setTimeout(90_000);
+  const scenario = scenarioFor(testInfo);
+  const account = await configureAccount(request, { subject: "fake-anysearch-missing-key-" + scenario.subject });
+  await resetFixture();
+  await page.context().addCookies([{ name: "job_copilot_session", value: account.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
+  await installIdempotencyKey(page, testInfo.project.name === "Desktop Chrome" ? "10000000-0000-4000-8000-000000000141" : "10000000-0000-4000-8000-000000000142");
+  await page.goto("/home");
+  const started = page.waitForResponse((response) => response.url().endsWith("/api/agent-runs") && response.request().method() === "POST");
+  const start = page.getByRole("button", { name: "发现岗位" });
+  if (testInfo.project.name === "Mobile Safari") await start.tap(); else await start.click();
+  const runId = ((await (await started).json()) as { runId: string }).runId;
+
+  await expect.poll(async () => (await readRun(page, runId)).status, { timeout: 75_000 }).toBe("failed");
+  const run = await readRun(page, runId);
+  if (!("sourceIssues" in run)) throw new Error("LAYERED_PUBLIC_RUN_REQUIRED");
+  expect(run.sourceIssues.filter((issue) => issue.code === "ANYSEARCH_NOT_CONFIGURED")).toEqual([{ provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED", affectedCount: 1 }]);
+  expect(run.results).toHaveLength(0);
+  const facts = await persistedFacts(account.userId, runId);
+  expect(facts.leads).toHaveLength(0);
+  expect(facts.attributions).toHaveLength(0);
+  expect(facts.postings).toHaveLength(0);
+  expect(facts.versions).toHaveLength(0);
+  expect(facts.opportunities).toHaveLength(0);
+  expect(facts.results).toHaveLength(0);
+  expect(facts.attentions).toHaveLength(1);
+  expect(await fixtureAudit()).toEqual([]);
+  expect(JSON.stringify({ run, facts })).not.toContain("fake-anysearch-public-job-test-key");
+  await page.reload();
+  const attention = page.locator(".agent-inbox-panel").getByRole("link", { name: "查看本次运行诊断" });
+  await expect(attention).toHaveAttribute("href", `/home?runId=${runId}#agent-run`);
 });

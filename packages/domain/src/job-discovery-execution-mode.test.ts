@@ -21,6 +21,16 @@ describe("job discovery runtime config", () => {
     });
   });
 
+  it("test 的版本化 missing-key phase 同样选择 layered public，且不退回普通 Fake", () => {
+    expect(resolveJobDiscoveryRuntimeConfig({
+      APP_ENV: "test",
+      E2E_ANYSEARCH_PUBLIC_JOB_PHASE: "fake-anysearch-public-job-missing-key-v1",
+    } as NodeJS.ProcessEnv)).toMatchObject({
+      executionMode: "layered_public",
+      anysearchPublicJobPhase: "fake-anysearch-public-job-missing-key-v1",
+    });
+  });
+
   it.each([
     { APP_ENV: "test", E2E_ANYSEARCH_PUBLIC_JOB_PHASE: "" },
     { APP_ENV: "test", E2E_ANYSEARCH_PUBLIC_JOB_PHASE: "fake-anysearch-public-job-v2" },
