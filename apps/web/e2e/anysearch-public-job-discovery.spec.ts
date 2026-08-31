@@ -234,6 +234,18 @@ test("版本化 Fake AnySearch 从普通 UI 运行真实 layered public 验收�
   expect(targetCompany?.allowedSiteDomains).toEqual(["boards.greenhouse.io", "boards-api.greenhouse.io"]);
   expect(targetCompany?.targetCompanyNames).toEqual([expectedTargetCompanyName]);
   expect(Boolean(targetCompany?.query.includes(expectedTargetCompanyName))).toBe(true);
+  const lexicalUnsafeDiagnostics = run.discoveryDiagnostics
+    .filter((diagnostic) => diagnostic.scope === "query" && diagnostic.code === "ANYSEARCH_POLICY_REJECTED")
+    .map(({ scope, queryId, kind, stableFingerprint, code, retryable, affectedCount }) => ({ scope, queryId, kind, stableFingerprint, code, retryable, affectedCount }));
+  expect(lexicalUnsafeDiagnostics).toEqual([{
+    scope: "query",
+    queryId: targetCompany?.queryId,
+    kind: "target_company",
+    stableFingerprint: targetCompany?.stableFingerprint,
+    code: "ANYSEARCH_POLICY_REJECTED",
+    retryable: false,
+    affectedCount: 1,
+  }]);
   expect(run.termination?.kind).toBe("completed_with_source_issues");
   expect(run.results).toHaveLength(1);
   expect(run.sourceIssues.filter((issue) => issue.code === "ANYSEARCH_RATE_LIMITED")).toEqual([{ provider: "anysearch", code: "ANYSEARCH_RATE_LIMITED", affectedCount: 1 }]);
