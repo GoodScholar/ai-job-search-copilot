@@ -167,3 +167,10 @@ typecheck: contracts, database, domain, source-access, worker, web              
 ```
 
 worker 首次全量运行的所有 **256 assertions** 已通过，但 `agent-run.integration.test.ts` 的 `afterAll` 在 context/queue close 时达到既有 60 秒 hook timeout（exit 1）。没有提高 timeout：检查 Round 3 `bounded` 路径后确认永久 pending promise 没有 handle、deadline timer 在 finally 清除、heartbeat 在外层 finally 停止；worker 单文件随后 **1 file / 9 tests passed**，新的严格串行 worker 全量重跑 **20 files / 256 tests passed**。因此该首次 failure 如实记录为未复现的 Testcontainers/context-close 瞬态，不将其计入通过结果。
+
+## 审查修复 round 4：收窄 Gate 包级公开 seam
+
+- Standards 唯一 Minor 成立：`@job-copilot/domain/verified-job-source-gate` 直接导出内部工厂，普通包消费者可取得 `verifyForClaim` / `rejectForClaim`，扩大了 claim-bound mutation 的可见范围。
+- Red `6c70cc9`：新增包级 public seam 测试；现状返回 keys 为 `reject/rejectForClaim/verify/verifyForClaim`，相对批准的普通兼容 `reject/verify` 产生 **1 file / 1 test failed**。
+- Green `4254f59`：新增 `verified-job-source-gate.public.ts` facade，保留普通 `verify/reject`、`VerifiedJobSourceGateError`、`VerifiedJobEvidenceStoreUnavailableError` 与 `VerifiedJobEvidenceStore` 类型；package export 指向 facade。内部 `layered-public-job-discovery-workflow` 继续直接使用内部严格 `verifyForClaim/rejectForClaim` seam，行为不变。
+- 聚焦验收：`DOCKER_API_VERSION=1.51 pnpm --filter @job-copilot/domain exec vitest run src/verified-job-source-gate.public.test.ts src/verified-job-source-gate.integration.test.ts src/job-discovery-leads.public.test.ts src/job-discovery-leads.integration.test.ts src/layered-public-job-discovery-workflow.test.ts src/agent-run-processor.integration.test.ts --no-file-parallelism` → **6 files / 96 tests passed**；domain typecheck 与 `git diff --check` 均 exit 0。
