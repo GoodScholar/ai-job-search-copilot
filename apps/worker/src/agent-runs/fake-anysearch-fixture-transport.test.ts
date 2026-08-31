@@ -15,7 +15,7 @@ describe("Fake AnySearch fixture page transport", () => {
     if (!address || typeof address === "string") throw new Error("FIXTURE_SERVER_ADDRESS_REQUIRED");
     const transport = createFakeAnysearchFixturePageTransport(`http://127.0.0.1:${address.port}`);
     const settled = await Promise.race([
-      transport({ url: new URL("https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9001"), accept: "text/html", timeoutMs: 1_000 }).then(() => "fulfilled", () => "rejected"),
+      transport({ url: new URL("https://boards.greenhouse.io/fake-anysearch-fixture/jobs/9001"), target: { address: "93.184.216.34", family: 4 }, accept: "text/html", timeoutMs: 1_000 }).then(() => "fulfilled", () => "rejected"),
       new Promise<"pending">((resolve) => setTimeout(() => resolve("pending"), 100)),
     ]);
     await new Promise<void>((resolve) => server.close(() => resolve()));

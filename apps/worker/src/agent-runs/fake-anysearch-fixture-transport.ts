@@ -26,20 +26,33 @@ export function createFakeAnysearchFixturePageTransport(origin: string): TestPub
     if (!path || accept !== "text/html") throw new Error("FAKE_ANYSEARCH_FIXTURE_TARGET_REJECTED");
     const fixtureUrl = new URL(path, fixtureOrigin);
     return new Promise((resolve, reject) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout>;
+      const abort = () => client.destroy(new Error("aborted"));
+      const settle = (callback: () => void) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", abort);
+        callback();
+      };
       const client = request(fixtureUrl, { method: "GET", headers: { accept } }, (response) => {
         const chunks: Buffer[] = [];
         response.on("data", (chunk: Buffer) => chunks.push(chunk));
-        response.on("end", () => resolve({
+        response.once("end", () => settle(() => resolve({
           status: response.statusCode ?? 500,
           headers: Object.fromEntries(Object.entries(response.headers).flatMap(([key, value]) => typeof value === "string" ? [[key, value]] : [])),
           body: new Uint8Array(Buffer.concat(chunks)),
-        }));
+        })));
+        response.once("aborted", () => settle(() => reject(new Error("fixture transport aborted"))));
+        response.once("error", () => settle(() => reject(new Error("fixture transport failed"))));
+        response.once("close", () => {
+          if (!response.complete) settle(() => reject(new Error("fixture transport closed")));
+        });
       });
-      const timer = setTimeout(() => client.destroy(new Error("timeout")), timeoutMs);
-      const abort = () => client.destroy(new Error("aborted"));
-      const finish = (callback: () => void) => () => { clearTimeout(timer); signal?.removeEventListener("abort", abort); callback(); };
-      client.once("error", finish(() => reject(new Error("fixture transport failed"))));
-      client.once("close", finish(() => undefined));
+      timer = setTimeout(() => client.destroy(new Error("timeout")), timeoutMs);
+      client.once("error", () => settle(() => reject(new Error("fixture transport failed"))));
+      client.once("close", () => settle(() => reject(new Error("fixture transport closed"))));
       signal?.addEventListener("abort", abort, { once: true });
       if (signal?.aborted) abort(); else client.end();
     });
