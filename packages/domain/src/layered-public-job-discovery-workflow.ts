@@ -48,6 +48,9 @@ export interface LayeredPublicJobDiscoveryWorkflowResolver { resolve(input: { ru
 
 type Page = { requestedUrl: string; finalUrl: string; canonicalUrl: string; rawHtml: string; visibleText: string; pageClassification: "job"; sourceKind: "official" | "aggregator" };
 type RejectionCode = "JOB_PAGE_URL_INVALID" | "JOB_PAGE_TARGET_REJECTED" | "JOB_PAGE_REDIRECT_INVALID" | "JOB_PAGE_LOGIN_REQUIRED" | "JOB_PAGE_LISTING" | "JOB_PAGE_EXPIRED" | "JOB_PAGE_UNRECOGNIZED" | "JOB_PAGE_RESPONSE_TOO_LARGE" | "JOB_PAGE_CONTENT_TYPE_INVALID" | "POLICY_REJECTED";
+const MAX_PROVIDER_DIAGNOSTIC_AFFECTED_COUNT = 10;
+const MAX_QUERY_DIAGNOSTIC_AFFECTED_COUNT = 5;
+const MAX_SOURCE_ISSUE_AFFECTED_COUNT = 10;
 function candidateFingerprint(url: string) { return createHash("sha256").update(url).digest("hex"); }
 function matchesAllowedDomain(url: string, domains: readonly string[]) { if (domains.length === 0) return true; const host = new URL(url).hostname; return domains.some((domain) => host === domain || host.endsWith(`.${domain}`)); }
 function rejection(error: unknown): RejectionCode | null {
@@ -59,15 +62,20 @@ function rejection(error: unknown): RejectionCode | null {
 function retryablePageCode(error: unknown): "JOB_PAGE_TIMEOUT" | "JOB_PAGE_CANCELLED" | "JOB_PAGE_UNREACHABLE" | "JOB_PAGE_RATE_LIMITED" | null { const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : ""; return ["JOB_PAGE_TIMEOUT", "JOB_PAGE_CANCELLED", "JOB_PAGE_UNREACHABLE", "JOB_PAGE_RATE_LIMITED"].includes(code) ? code as "JOB_PAGE_TIMEOUT" | "JOB_PAGE_CANCELLED" | "JOB_PAGE_UNREACHABLE" | "JOB_PAGE_RATE_LIMITED" : null; }
 function aggregateSourceIssues(items: Array<{ provider: "anysearch" | "greenhouse"; code: string; affectedCount: number }>) {
   const grouped = new Map<string, { provider: "anysearch" | "greenhouse"; code: string; affectedCount: number }>();
-  for (const item of items) { const key = `${item.provider}\u001f${item.code}`; const previous = grouped.get(key); grouped.set(key, { ...item, affectedCount: Math.min(10, (previous?.affectedCount ?? 0) + item.affectedCount) }); }
+  for (const item of items) { const key = `${item.provider}\u001f${item.code}`; const previous = grouped.get(key); grouped.set(key, { ...item, affectedCount: Math.min(MAX_SOURCE_ISSUE_AFFECTED_COUNT, (previous?.affectedCount ?? 0) + item.affectedCount) }); }
   return [...grouped.values()].sort((left, right) => left.provider.localeCompare(right.provider) || left.code.localeCompare(right.code));
 }
 function aggregateDiagnostics(items: LayeredPublicWorkflowDiagnostic[]) {
   const grouped = new Map<string, LayeredPublicWorkflowDiagnostic>();
-  for (const item of items) { const key = item.scope === "provider" ? `p\u001f${item.code}` : item.scope === "query" ? `q\u001f${item.queryId}\u001f${item.code}` : `l\u001f${item.leadId}\u001f${item.code}`; const previous = grouped.get(key); grouped.set(key, { ...item, affectedCount: Math.min(10, (previous?.affectedCount ?? 0) + item.affectedCount) } as LayeredPublicWorkflowDiagnostic); }
+  for (const item of items) {
+    const key = item.scope === "provider" ? `p\u001f${item.code}` : item.scope === "query" ? `q\u001f${item.queryId}\u001f${item.code}` : `l\u001f${item.leadId}\u001f${item.code}`;
+    const previous = grouped.get(key);
+    const maxAffectedCount = item.scope === "provider" ? MAX_PROVIDER_DIAGNOSTIC_AFFECTED_COUNT : item.scope === "query" ? MAX_QUERY_DIAGNOSTIC_AFFECTED_COUNT : 1;
+    grouped.set(key, { ...item, affectedCount: Math.min(maxAffectedCount, (previous?.affectedCount ?? 0) + item.affectedCount) } as LayeredPublicWorkflowDiagnostic);
+  }
   return [...grouped.values()].sort((left, right) => `${left.scope}\u001f${left.code}`.localeCompare(`${right.scope}\u001f${right.code}`));
 }
-function boundedRejectedCandidateCount(value: unknown): number { return typeof value === "number" && Number.isInteger(value) && value > 0 ? Math.min(10, value) : 0; }
+function boundedRejectedCandidateCount(value: unknown): number { return typeof value === "number" && Number.isInteger(value) && value > 0 ? Math.min(MAX_QUERY_DIAGNOSTIC_AFFECTED_COUNT, value) : 0; }
 
 /** v4 安全链路；Slice 8 只组装 provider/config，不能改变 pending → extract → fetch → gate 的顺序。 */
 export function createLayeredPublicJobDiscoveryWorkflow(deps: {

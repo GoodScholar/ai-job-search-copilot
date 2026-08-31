@@ -36,6 +36,7 @@ export const AGENT_RUN_RECOVERY_REPORTER = Symbol("AGENT_RUN_RECOVERY_REPORTER")
 export const AGENT_RUN_SCHEDULER = Symbol("AGENT_RUN_SCHEDULER");
 export const AGENT_RUN_SCHEDULE_REPORTER = Symbol("AGENT_RUN_SCHEDULE_REPORTER");
 export const AGENT_RUN_EXECUTION_MODE = Symbol("AGENT_RUN_EXECUTION_MODE");
+const MAX_QUERY_POLICY_REJECTED_CANDIDATES = 5;
 
 function required(
   name: "DATABASE_URL" | "REDIS_URL" | "MINIO_ENDPOINT" | "MINIO_ACCESS_KEY" | "MINIO_SECRET_KEY" | "MINIO_BUCKET",
@@ -130,7 +131,7 @@ export function createConfiguredLayeredPublicJobDiscoveryWorkflowResolver(input:
             if (!result.ok && "error" in result) return { error: result.error };
             if (!("data" in result)) return { candidates: [] };
             const accepted = result.data.candidates.flatMap((outcome) => outcome.policy === "accepted" && outcome.candidate ? [outcome.candidate] : []);
-            const rejectedCandidateCount = Math.min(10, result.data.candidates.filter((outcome) => outcome.rejectionCode === "ANYSEARCH_POLICY_REJECTED").length);
+            const rejectedCandidateCount = Math.min(MAX_QUERY_POLICY_REJECTED_CANDIDATES, result.data.candidates.filter((outcome) => outcome.rejectionCode === "ANYSEARCH_POLICY_REJECTED").length);
             for (const candidate of accepted) candidates.set(`${candidate.queryId}:${candidate.candidateFingerprint}`, candidate);
             return {
               candidates: accepted.map((candidate) => ({ normalizedUrl: candidate.normalizedUrl, stableFingerprint: candidate.candidateFingerprint })),

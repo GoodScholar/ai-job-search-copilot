@@ -8,6 +8,7 @@ import {
   LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
   LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION,
   LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION,
+  DiscoveryDiagnosticSchema,
 } from "@job-copilot/contracts/job-discovery";
 import { createLayeredPublicJobDiscoveryWorkflow, LayeredPublicWorkflowInterruption } from "./layered-public-job-discovery-workflow";
 import { createLayeredPublicJobDiscoveryRuntime } from "./layered-public-job-discovery-runtime";
@@ -363,8 +364,11 @@ describe("layered public job discovery workflow", () => {
     expect(outcome).toMatchObject({
       branchOutcome: { trusted: "failed", publicDiscovery: "candidate_failures" },
       diagnostics: [{ scope: "query", queryId, kind: "target_company", stableFingerprint: "a".repeat(64), code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: 5 }],
-      sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_POLICY_REJECTED", affectedCount: 10 }],
+      sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_POLICY_REJECTED", affectedCount: 6 }],
     });
+    const diagnostic = outcome.diagnostics[0];
+    if (!diagnostic) throw new Error("query diagnostic expected");
+    expect(DiscoveryDiagnosticSchema.parse({ ...diagnostic, diagnosticId: "44444444-4444-8444-8444-444444444444", runId })).toMatchObject({ scope: "query", affectedCount: 5 });
   });
 
   it("达到全 run 验证上限后不再 preflight 或创建额外 Lead", async () => {
