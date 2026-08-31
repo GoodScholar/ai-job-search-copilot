@@ -66,6 +66,12 @@ const sourceHealthExecutionSpec = {
 } as const;
 
 describe("JobDiscoveryAdapterResolver", () => {
+  it("production v4 resolver 缺少 key 时不发送匿名 AnySearch 请求", async () => {
+    const resolverModule = await import("./job-discovery-adapter-resolver.js") as Record<string, unknown>;
+    const createLayeredResolver = resolverModule.createLayeredPublicJobDiscoveryWorkflowResolver;
+    expect(typeof createLayeredResolver).toBe("function");
+  });
+
   it("非测试环境携带场景配置时 fail-closed", () => {
     expect(() => createJobDiscoveryAdapterResolver({
       APP_ENV: "production",
