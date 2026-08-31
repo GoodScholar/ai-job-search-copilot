@@ -46,6 +46,25 @@
    list/detail、AnySearch search/extract 与 local fetch 仍分别 reserve/checkpoint；本地拒绝、缺 key和 replay
    不伪造物理请求。不得在 resolver 内增加隐藏 retry、batch 计费折算或进程内 capability 恢复。
 
+### Greenhouse v4 wrapper seam 裁决
+
+现有 Greenhouse port 只返回 list/detail，旧 persistence 又绑定 v1-v3 processor 终态，不能直接拼接。Slice 8
+获准做以下 additive 抽取；这是已批准 v4 wrapper 的实现 seam，不是旧契约改写：
+
+1. 新增一个 domain-owned v4 runtime factory，内部组装 claim-bound Lead repository 与 Verified Gate；Worker 只
+   注入 provider/source-access/content-store ports，不直接获得或公开 `recordPendingForClaim`、
+   `verifyForClaim`、`rejectForClaim`。
+2. 从既有 trusted persistence 抽出窄的 claim-bound bridge：只持久化真实 Greenhouse Source Posting/Version 和
+   既有 trusted Opportunity 语义，并返回 owner/run-bound Source Posting Version IDs。它必须在同一 account-lock
+   transaction 校验 v4 run、claim token、DB current time、`controlState=none` 与 frozen trusted source；replay
+   幂等并返回重复对象清理键。
+3. 该 bridge **不得**终结 Agent Run、推进旧 step、写 `agent_run_job_results` 或 v4 run results、写
+   `job_source_health_checks`、写 diagnostic/source issue/attention。v4 results 与终态仍只由 Slice 7
+   `persistLayeredPublicOutcome` 持久化。
+4. v4 trusted wrapper 可适配既有逐来源 Greenhouse list/detail port；每个真实 list/detail 调用前调用 workflow
+   的 `beforeRequest`，局部失败只转换为脱敏 Greenhouse source issue。旧 v1-v3 adapter class、输入输出、resolver
+   与 processor 分支保持原样。
+
 ## 终态与 schedule 验收语义
 
 1. v4 run 即使无 Watchlist 也可入队并执行 general/site discovery；v3 `greenhouse` mode 仍可因无受支持
