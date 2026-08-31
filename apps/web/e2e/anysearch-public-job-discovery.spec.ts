@@ -5,6 +5,7 @@ import { Queue } from "bullmq";
 import { Client } from "pg";
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
 import { assertFalse } from "./support/assert-false";
+import { expectTrue } from "./support/assert-true";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const databaseUrl = process.env.E2E_DATABASE_URL ?? "postgresql://job_copilot:local_only_job_copilot@127.0.0.1:55420/job_copilot";
@@ -23,6 +24,31 @@ const scenarios = {
 function scenarioFor(testInfo: TestInfo) { return scenarios[testInfo.project.name as keyof typeof scenarios]; }
 function serializedRunAndFactsContainFixedTestKey(run: unknown, facts: unknown): boolean {
   return JSON.stringify({ run, facts }).includes(fixedTestKey);
+}
+
+type PageEvidenceAudit = {
+  objectCount: number;
+  rawHashMatches: boolean;
+  visibleHashMatches: boolean;
+  pageOnlyTextPresent: boolean;
+  providerAuxiliaryTextAbsent: boolean;
+  credentialTextAbsent: boolean;
+  fixedTestKeyAbsent: boolean;
+  maliciousLinksAbsentFromVisibleText: boolean;
+};
+
+/** Red placeholder: the existing E2E journey has no MinIO read/projection path. */
+async function readPageEvidenceAudit(): Promise<PageEvidenceAudit> {
+  return {
+    objectCount: 0,
+    rawHashMatches: false,
+    visibleHashMatches: false,
+    pageOnlyTextPresent: false,
+    providerAuxiliaryTextAbsent: false,
+    credentialTextAbsent: false,
+    fixedTestKeyAbsent: false,
+    maliciousLinksAbsentFromVisibleText: false,
+  };
 }
 
 async function configureAccount(request: APIRequestContext, scenario: { subject: string }): Promise<{ token: string; userId: string; targetId: string }> {
@@ -207,6 +233,13 @@ test("版本化 Fake AnySearch 从普通 UI 运行真实 layered public 验收�
   expect(policyExtractedAt).toBeGreaterThan(targetSearchAt);
   expect(audit.some((entry) => entry.operation === "page" && entry.fixture === "policy")).toBe(false);
   expect(audit.filter((entry) => entry.operation === "page").every((entry) => ["verified_alias", "verified", "expired", "login", "listing", "insufficient"].includes(entry.fixture ?? ""))).toBe(true);
+  const completedValidationChains = ["verified_alias", "verified"].every((fixture) => {
+    const operations = audit.filter((entry) => entry.fixture === fixture).map((entry) => entry.operation);
+    return ["preflight", "extract", "fetch", "final_canonical_validated", "gate_persisted"].every((operation, index) => operations.indexOf(operation) > (index === 0 ? -1 : operations.indexOf(["preflight", "extract", "fetch", "final_canonical_validated", "gate_persisted"][index - 1]!)));
+  });
+  expectTrue(completedValidationChains);
+  const evidence = await readPageEvidenceAudit();
+  expectTrue(evidence.objectCount === 2 && evidence.rawHashMatches && evidence.visibleHashMatches && evidence.pageOnlyTextPresent && evidence.providerAuxiliaryTextAbsent && evidence.credentialTextAbsent && evidence.fixedTestKeyAbsent && evidence.maliciousLinksAbsentFromVisibleText);
   const queue = new Queue("agent-runs", { connection: { host: "127.0.0.1", port: redisPort } });
   try {
     const duplicate = await queue.add("discover-jobs", { version: 1, runId, userId: account.userId }, { jobId: `${runId}-duplicate`, attempts: 3, removeOnComplete: false, removeOnFail: true });
