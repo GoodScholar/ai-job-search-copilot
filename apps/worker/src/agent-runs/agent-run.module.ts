@@ -4,7 +4,7 @@ import { Client as MinioClient } from "minio";
 import { createDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
 import { createAgentRunCommands, createAgentRunProcessor, createAgentRunRecoveryQueries, createLayeredPublicJobDiscoveryRuntime, type DiscoveryContentStore, type LayeredPublicJobDiscoveryWorkflowResolver } from "@job-copilot/domain/agent-runs";
-import { resolveJobDiscoveryExecutionMode, resolveJobDiscoveryRuntimeConfig } from "@job-copilot/domain/job-discovery-execution-mode";
+import { FAKE_ANYSEARCH_PUBLIC_JOB_PHASE, resolveJobDiscoveryExecutionMode, resolveJobDiscoveryRuntimeConfig } from "@job-copilot/domain/job-discovery-execution-mode";
 import { createJobDiscoverySchedules } from "@job-copilot/domain/job-discovery-schedules";
 import type { VerifiedJobEvidenceStore } from "@job-copilot/domain/verified-job-source-gate";
 import { SecureJobPageFetcher } from "@job-copilot/source-access";
@@ -80,12 +80,16 @@ export function createConfiguredLayeredPublicJobDiscoveryWorkflowResolver(input:
 }): LayeredPublicJobDiscoveryWorkflowResolver {
   const environment = input.environment ?? process.env;
   const runtimeConfig = resolveJobDiscoveryRuntimeConfig(environment);
-  if (runtimeConfig.environment !== "production") {
+  const fakeAnysearch = runtimeConfig.anysearchPublicJobPhase === FAKE_ANYSEARCH_PUBLIC_JOB_PHASE;
+  if (runtimeConfig.environment !== "production" && !fakeAnysearch) {
+    return createLayeredPublicJobDiscoveryWorkflowResolver({ createWorkflow: () => { throw new Error("AGENT_RUN_ADAPTER_UNSUPPORTED"); } });
+  }
+  if (fakeAnysearch && (!environment.ANYSEARCH_BASE_URL || !environment.JOB_PAGE_FETCHER_TEST_ORIGIN)) {
     return createLayeredPublicJobDiscoveryWorkflowResolver({ createWorkflow: () => { throw new Error("AGENT_RUN_ADAPTER_UNSUPPORTED"); } });
   }
   return createLayeredPublicJobDiscoveryWorkflowResolver({
     createWorkflow: () => {
-      const anySearch = new AnySearchPublicJobAdapter({ apiKey: environment.ANYSEARCH_API_KEY });
+      const anySearch = new AnySearchPublicJobAdapter({ apiKey: environment.ANYSEARCH_API_KEY, ...(fakeAnysearch ? { baseUrl: environment.ANYSEARCH_BASE_URL } : {}) });
       const candidates = new Map<string, AnySearchCandidate>();
       return createLayeredPublicJobDiscoveryRuntime({
         db: input.db,
@@ -131,7 +135,7 @@ export function createConfiguredLayeredPublicJobDiscoveryWorkflowResolver(input:
           return result.ok ? { normalizedUrl: result.data.normalizedUrl } : null;
         },
         fetcher: {
-          fetch: ({ candidate, signal }) => new SecureJobPageFetcher().fetch({ url: candidate.normalizedUrl, signal }),
+          fetch: ({ candidate, signal }) => new SecureJobPageFetcher(fakeAnysearch ? { testOrigin: environment.JOB_PAGE_FETCHER_TEST_ORIGIN } : {}).fetch({ url: candidate.normalizedUrl, signal }),
         },
       });
     },

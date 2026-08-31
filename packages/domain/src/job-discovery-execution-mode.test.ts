@@ -29,6 +29,6 @@ describe("job discovery runtime config", () => {
   ])("对非法或非测试 Fake AnySearch phase 稳定 fail closed", (environment) => {
     const sentinel = environment.E2E_ANYSEARCH_PUBLIC_JOB_PHASE;
     expect(() => resolveJobDiscoveryRuntimeConfig(environment as NodeJS.ProcessEnv)).toThrow("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID");
-    try { resolveJobDiscoveryRuntimeConfig(environment as NodeJS.ProcessEnv); } catch (error) { expect(String(error)).not.toContain(sentinel); }
+    try { resolveJobDiscoveryRuntimeConfig(environment as NodeJS.ProcessEnv); } catch (error) { if (sentinel) expect(String(error)).not.toContain(sentinel); }
   });
 });

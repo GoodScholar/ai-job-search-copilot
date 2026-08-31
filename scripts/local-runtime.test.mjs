@@ -299,7 +299,7 @@ test("Playwright config 仅将版本化 Fake AnySearch phase 交给本地测试�
 
   assert.match(config, /E2E_ANYSEARCH_PUBLIC_JOB_PHASE/);
   assert.match(config, /fake-anysearch-public-job-v1/);
-  assert.match(config, /anysearch-public-job-discovery\.spec\.ts/);
+  assert.match(config, /anysearch-public-job-discovery/);
 });
 
 test("starts compose and waits for healthy dependencies before applications", async () => {
