@@ -104,6 +104,28 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({ status: "completed", termination: { kind: "completed_with_source_issues" }, results: [{ sourcePostingVersionId: job.sourcePostingVersionId }], sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED" }, { provider: "greenhouse", code: "GREENHOUSE_DEGRADED" }], usage: { toolCalls: 1, sourceRequests: 1 } });
   });
 
+  it("v4 已验证 AnySearch Lead 只通过来源版本映射 Opportunity 与 RunResult", async () => {
+    const job = await layeredRun();
+    const processor = createAgentRunProcessor({
+      db: database,
+      adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
+      layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({ branchOutcome: { trusted: "succeeded", publicDiscovery: "verified" }, sourcePostingVersionIds: [job.sourcePostingVersionId], trustedSourcePostingVersionIds: [], diagnostics: [] }) }) },
+      contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("completed");
+    await expect(Promise.all([
+      database.select({ opportunityId: jobOpportunities.id, sourcePostingVersionId: jobOpportunities.sourcePostingVersionId }).from(jobOpportunities).where(eq(jobOpportunities.userId, job.userId)),
+      database.select({ sourcePostingVersionId: jobOpportunitySources.sourcePostingVersionId }).from(jobOpportunitySources).where(eq(jobOpportunitySources.userId, job.userId)),
+      database.select({ sourcePostingVersionId: jobDiscoveryRunResults.sourcePostingVersionId }).from(jobDiscoveryRunResults).where(eq(jobDiscoveryRunResults.userId, job.userId)),
+      database.select({ sourceId: jobSourcePostings.sourceId }).from(jobSourcePostings).where(eq(jobSourcePostings.userId, job.userId)),
+    ])).resolves.toEqual([
+      [expect.objectContaining({ sourcePostingVersionId: job.sourcePostingVersionId })],
+      [{ sourcePostingVersionId: job.sourcePostingVersionId }],
+      [{ sourcePostingVersionId: job.sourcePostingVersionId }],
+      [{ sourceId: "greenhouse:example" }],
+    ]);
+  });
+
   it("v4 trusted bridge 只在有效 claim 下持久化冻结 Greenhouse 来源，且重放不写运行副作用", async () => {
     const job = await layeredRun();
     const claimToken = crypto.randomUUID();
