@@ -7,8 +7,8 @@ SET "verified_final_url" = CASE
   WHEN jsonb_typeof(posting."source_identity" -> 'finalUrls') = 'array'
     AND jsonb_array_length(posting."source_identity" -> 'finalUrls') <= 1
     THEN posting."source_identity" ->> 'finalUrl'
-  WHEN posting."source_identity" ? 'observedFinalUrls' THEN NULL
-  WHEN posting."source_identity" ? 'finalUrls' THEN NULL
+  WHEN posting."source_identity" ? 'observedFinalUrls' THEN posting."source_identity" ->> 'finalUrl'
+  WHEN posting."source_identity" ? 'finalUrls' THEN posting."source_identity" ->> 'finalUrl'
   ELSE posting."source_identity" ->> 'finalUrl'
 END
 FROM "job_discovery_attributions" AS attribution
