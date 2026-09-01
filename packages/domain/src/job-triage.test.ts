@@ -161,6 +161,43 @@ describe("job triage gates", () => {
     expect(technical.candidateEvidence.every((item) => requiredSkills.includes(item.value))).toBe(true);
   });
 
+  it.each([21, 100])("keeps all %i unmatched required skills in scoring while projecting one bounded deterministic gap", (skillCount) => {
+    const input = allPassInput();
+    const requiredSkills = Array.from({ length: skillCount }, (_, index) => `缺失技能${index + 1}`);
+    input.job.qualifications.requiredSkills = { value: requiredSkills, evidence: { field: "requiredSkills", path: "必备技能", value: requiredSkills.join("、") } };
+    const result = evaluateJobTriage(input);
+    expect(result.dimensionScores?.technical).toMatchObject({
+      score: 50,
+      missing: [{ kind: "profile_skills", count: skillCount, examples: requiredSkills.slice(0, 20) }],
+    });
+    expect(result.dimensionScores?.technical.missing).toHaveLength(1);
+    expect(result.confidenceBasisPoints).toBe(0);
+  });
+
+  it("将合法最大目标列表和岗位标题摘要为可读、稳定且有界的证据", () => {
+    const input = allPassInput();
+    const values = (prefix: string) => Array.from({ length: 20 }, (_, index) => `${prefix}${index + 1}${"甲".repeat(195)}`);
+    const locations = values("地点");
+    const industries = values("行业");
+    input.target.constraints.locations = locations;
+    input.target.constraints.industries = industries;
+    input.job.location = locations[0];
+    input.job.title = `frontend ${"x".repeat(19_991)}`;
+    input.job.qualifications.industry = { value: industries[0], evidence: { field: "industry", path: "行业", value: industries[0] } };
+
+    const result = evaluateJobTriage(input);
+    expect(result.gateResults.location.candidateEvidence?.value).toHaveLength(256);
+    expect(result.dimensionScores?.targetAlignment.candidateEvidence.find((item) => item.kind === "target_constraint" && item.path === "industries")?.value).toHaveLength(256);
+    expect(result.dimensionScores?.targetAlignment.jobEvidence.find((item) => item.field === "title")?.value).toHaveLength(512);
+    expect(evaluateJobTriage(input).dimensionScores).toEqual(result.dimensionScores);
+
+    input.target.constraints.dealBreakers.excludedCompanies = values("公司");
+    input.job.company = input.target.constraints.dealBreakers.excludedCompanies[0];
+    const dealBreaker = evaluateJobTriage(input).gateResults.deal_breakers;
+    expect(dealBreaker.candidateEvidence?.value).toHaveLength(256);
+    expect(dealBreaker.candidateEvidence?.value).not.toContain("targetId");
+  });
+
   it("scores only an all-pass, non-expired opportunity and makes closing soon win score ties", () => {
     const result = evaluateJobTriage(allPassInput());
     expect(result).toMatchObject({ overallVerdict: "pass", deadlineStatus: "valid", threshold: 60, dimensionScores: { technical: { score: expect.any(Number), reasonCode: expect.any(String) }, experience: { score: 50, reasonCode: "EXPERIENCE_EVIDENCE_MISSING_NEUTRAL" }, targetAlignment: { score: expect.any(Number), reasonCode: expect.any(String) } } });
@@ -173,7 +210,7 @@ describe("job triage gates", () => {
     const input = allPassInput();
     input.job.qualifications.requiredSkills = { value: ["TypeScript"], evidence: { field: "requiredSkills", path: "技能", value: "TypeScript" } };
     const scored = evaluateJobTriage(input);
-    expect(scored.dimensionScores?.technical).toMatchObject({ score: 50, missing: ["profile.skills:TypeScript"] });
+    expect(scored.dimensionScores?.technical).toMatchObject({ score: 50, missing: [{ kind: "profile_skills", count: 1, examples: ["TypeScript"] }] });
     expect(scored.confidenceBasisPoints).toBeLessThan(10_000);
     const dateOnly = allPassInput();
     dateOnly.job.deadline = "2026-09-08";

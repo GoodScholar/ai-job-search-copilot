@@ -2,78 +2,64 @@
 
 ## 基线、提交链与范围
 
-- 固定基线：`b297dbaf8e61433f038e8a433dfab429f1f88aae`。
-- 最终提交链包含：`905accb`（确定性 triage 工作流）、`b17d826`（首轮审查修复）、`c2002bc`（证据审查修复）、`8cf388f`（R1 九 gate 矩阵）、`0536bb3`（证据上下文加固）以及本 closeout 提交。
-- 最终 diff 限于 Issue #12 的 contracts、database migration/schema、domain、worker Fake normalizer、API、Web、端到端/集成测试与本报告；没有 push、PR、merge、关闭 Issue 或启动下一 Issue。
-- 本报告替换旧接续草稿；不保留“未完成”“BLOCKED”或下一动作结论。
+- 固定基线：`b297dbaf8e61433f038e8a433dfab429f1f88aae`；本轮开始 HEAD：`9ec1f505880313c33438b8215e2ddb95ba2270bf`。
+- 本 Issue 提交链：`905accb`（确定性 triage 工作流）、`b17d826`（首轮审查修复）、`c2002bc`（证据审查修复）、`8cf388f`（R1 九 gate 矩阵）、`0536bb3`（证据上下文加固）、`9ec1f50`（首轮 closeout）和本次 closeout 提交。
+- 本次 diff 仅涉及 triage contracts/domain 及其 domain、persistence、HTTP API、Web 回归测试和本报告；未 push、PR、merge、关闭 Issue 或启动下一 Issue。
 
-## 设计裁决
+## 最终设计裁决
 
-1. 九 gate 固定为 `location`、`work_mode`、`relocation`、`salary`、`seniority`、`education`、`language`、`work_eligibility`、`deal_breakers`；总体 verdict 仅由这些 gate 聚合。
-2. 只有现有结构化模型能同时给出岗位侧明确要求与候选/目标侧明确反证时，gate 才能 `fail`，且结果必须同时保存 `jobEvidence` 与 `candidateEvidence`。
-3. 学历、语言等级、工作资格的不同事实不能安全地推出否定结论：没有层级/互斥解析器时一律 `unknown`，不伪造 hard fail。语言逐项验证全部岗位要求。
-4. 目标的 `salary: null` 与 `seniority: null` 是 contracts 明确表达的“无此限制”，不是缺失证据；因此保持 `SALARY_MINIMUM_NOT_SET` / `SENIORITY_NOT_RESTRICTED` 的 `pass`。可比较但币种/周期不一致的薪资，或 `relocation: unknown`，才是 `unknown`。UTC 日期时间除正则外还必须 round-trip，拒绝日期滚动。
-5. 公司、行业、雇佣类型红线均有结构化 hard-fail 路径；`dealBreakers.other` 没有可比较的岗位字段，故保守为 `unknown`。
+1. `EvidenceGapSchema` 是 contracts 导出的共享判别联合体，domain 直接使用 `EvidenceGap`，不再以私有模板字符串表达缺口。
+2. 技能缺口以 `{ kind: "profile_skills", count, examples }` 对外投影：`count` 保留全部 1–100 条缺口，`examples` 最多 20 条且顺序稳定。技术分数仍由所有 required skills 计算；置信度以 `count` 扣减，绝不以截断后的数组长度扣减。
+3. `JOB_TRIAGE_MAX_EVIDENCE_ITEMS = 20`、岗位证据值 512、候选/目标证据值 256 均由 contracts 定义并由 domain 复用。统一摘要是确定性的前缀加 `…`，保留原有 ID、version、field、path 追溯字段；UI 只显示 label/value，不显示内部 path、reason code 或 UUID。
+4. 最大输入按冻结 contracts 构造：required skills 单项最长 128、最多 100，但其原始 evidence.value 最多 512；持久化 100 条回归使用 4 字符技能名（连同分隔符 499 字符），因此是合法输入。岗位 title 则以精确 20,000 字符测试。
+5. 九 gate 保持既有保守语义：仅结构化、双侧可证明冲突才 `fail`；学历、语言等级、工作资格和 `dealBreakers.other` 缺乏否定模型时仍为 `unknown`。
 
-## AC 实现映射
+## 本轮 AC/实现映射
 
-| AC | 实现与证据 |
+| 项目 | 实现与回归 |
 | --- | --- |
-| AC-01 | `packages/domain/src/job-triage.ts` 产出九 gate、三态 verdict 与 pending；R1 `job-triage.test.ts` 的表驱动矩阵逐项覆盖 pass、岗位侧缺失、候选侧不足及可表达 fail。 |
-| AC-02 | 仅全 gate pass 且未过期时计算粗排；DB `job_triage_versions_score_verdict_check` 禁止 fail/unknown/expired 携带评分。 |
-| AC-03 | hard fail 均由岗位与目标/画像双侧最小证据支撑；target ID/version/value 精确保留，语言引用实际命中事实；真实持久化、API 与 Web 读取为 owner-bound。 |
-| AC-04 | 缺失/无效截止日期独立为 pending；UTC 七天边界、过去、exact-now 以及 `2026-02-31T00:00:00Z`/`2026-09-01T24:00:00Z` 均有回归覆盖。 |
-| AC-05 | `job_triage_versions` 以输入版本和规则版本幂等；advisory lock 并发复用，同一画像版本变化创建新的不可变版本。 |
-| AC-06 | `sequence`（0029）提供稳定 latest/rank 次序；closing-soon 在分数相同下优先。 |
-| AC-07 | Nest controller/module 提供 POST、latest 与指定版本 GET；API 集成覆盖认证、输入、owner、inactive/empty profile 与复用。 |
-| AC-08 | Web action、同源 no-store BFF、triage panel 与导入完成视图已接通；真实 Desktop Chrome、Mobile Safari 都覆盖 hard fail、unknown、pass 与刷新。 |
-| AC-09 | Fake normalizer 只接受显式标签并保留最小 provenance；无效日期保存为 `null`+invalid provenance；审计写入严格 allowlist，不保存岗位/画像原文。 |
-| AC-10 | 0028/0029 与三类历史升级夹具均在完整 migration focused suite 通过；根级测试、typecheck、lint、build、双端 E2E 均以本报告列出的新鲜串行命令通过。 |
+| A：100 技能缺口 | contracts/schema、domain、PostgreSQL persistence 和真实 HTTP 都覆盖 21、100 条全部未匹配 skills；断言技术分数 50、置信度 0、`count` 为全量、公开 `missing` 有界且 schema parse 成功。 |
+| B：最大证据字段 | domain/persistence 覆盖 20 个最大 locations、industries、excludedCompanies 和 20,000 字符 title；岗位/目标证据分别严格为 512/256。HTTP serializer 与 Web component 回归确认稳定可读返回且不暴露内部字段。 |
+| C：共享契约 | contracts 导出 `EvidenceGapSchema`、`EvidenceGap` 和统一上限常量；domain 导入并用于 projection、candidate evidence slice 与置信度计数。 |
+| 原 Issue 资格规则 | R1 表驱动矩阵仍覆盖九 gate 的 pass、缺岗位/候选证据的 unknown、可表达 hard fail 的双侧证据，以及学历/语言/工作资格的保守 unknown。 |
 
-## TDD 证据
+## TDD RED→GREEN
 
-早期切片的已落地 RED→GREEN 记录：contracts qualification（模块/strict schema）、数据库 0028 triage versions、worker Fake normalizer、domain gate/ranking、持久化命令/查询、API triage 路由、Web client/BFF/action/panel 均先以对应模块缺失、契约拒绝或行为断言失败建立 RED，再以最小实现转绿。
-
-R1 的新增表驱动矩阵先在现有 15 个领域测试基础上写入 42 个场景并运行：首次 RED 为 2 个断言（salary 与 seniority 目标为 `null` 时返回 pass）。根因核验显示 `JobTargetConstraintsSchema` 将这两个字段声明为 nullable，用于显式“不设限制”；持久化集成夹具也依赖此语义。因此没有保留临时生产代码改动，而是：
-
-- 薪资“不足”用已结构化但币种不一致的目标下限验证 `unknown`；
-- 资历 `null` 在矩阵中显式记录为“明确不限制”，回归断言 `pass`；
-- 学历、语言等级、工作资格不同事实继续断言 `unknown`，明确记录不具备可安全 fail 的模型。
-
-最终 R1 GREEN：`pnpm --filter @job-copilot/domain exec vitest run src/job-triage.test.ts src/job-triage-persistence.integration.test.ts --no-file-parallelism`，exit 0，46/46；`pnpm --filter @job-copilot/domain typecheck`，exit 0。
-
-Closeout RED→GREEN：新增严格 deadline 回归后，`2026-02-31T00:00:00Z` 先被 JS `Date` 自动滚动并错误得到 `expired`；根因是 domain 仅检查了正则和 `NaN`。最小修复为对 `toISOString()` 的秒级 round-trip 比较，GREEN 后两种滚动日期均为 `invalid`，past/exact-now 均为 `expired` 且无评分。另新增 21 和 100 条 confirmed skill facts：`requiredSkills` 契约上限为 100，而评分 `candidateEvidence` 契约上限为 20；聚合以全部相关事实计算分数，但只持久化/返回最多 20 条相关证据。真实 persistence projection 与 HTTP Zod serializer 分别验证此上限和稳定响应。
+- RED：新的 contracts 回归传入结构化 `missing` 时被旧字符串数组拒绝，且 `EvidenceGapSchema` 不存在；domain 21/100 未匹配 skills 原本会生成 21/100 条 `missing`，超过 20 条响应上限。
+- GREEN：以共享结构化 gap 取代字符串、在 domain 聚合全部缺口并仅投影前 20 示例；`evidenceGapCount` 使用 full `count` 计算置信度。
+- RED：最大 locations/industries/deal-breakers 拼接和 title 直接复制可突破 256/512；domain 回归断言失败。
+- GREEN：统一 `summarizeEvidence` 被岗位直接字段、qualification evidence、目标约束和 profile facts 复用，保持原追溯元数据不变。
+- 持久化 RED 调试中，首次 100 条长中文技能和重复中文 title 实际超出冻结输入 contracts（evidence 512、title 20,000），因此修正测试数据为合法最大构造；不是生产实现缺陷。最终 persistence/HTTP 均 schema parse。
 
 ## 两轮审查发现与修复映射
 
-- 首轮审查：统一 gate keys；语言逐项验证；公司/行业/雇佣类型 hard fail 要求双侧证据；date-only deadline 判 invalid；粗排缺失证据保持中性；稳定 comparator 和 `sequence`；target 切换重读；UI 脱敏、44px 与双端可访问性。
-- 复审：Fake normalizer 只接受 UTC `Z` instant 并规范化；候选证据保存受限 label/value 摘要和目标版本；页面不展示 UUID/path/reason code；技能逐项 100/50 聚合；目标对齐仅在三组完整匹配时为 100。
-- R1：将此前零散的领域断言收敛为九 gate 明确矩阵，并修正了测试对 nullable “不限制”语义的错误预期；没有扩大生产实现范围。
-- Closeout：补齐技能证据 21/100 上限、真实 language/target evidence、严格 deadline、worker invalid provenance、Web 条件展示和 API serializer 回归。
+- 第一轮：统一 gate、语言逐项验证、双侧 hard fail 证据、date-only 无效、稳定排序/sequence、target 切换、UI 脱敏与双端可访问性。
+- 第二轮：Fake normalizer UTC round-trip、候选/目标最小证据、页面不展示 UUID/path/reason code、技能 100/50 聚合、完整目标对齐条件。
+- 本轮 REWORK：补齐“全部未匹配 required skills 使公开 `missing` 超过 contracts 上限”及“合法最大文本使 evidence.value 越界”两个规格缺口，以共享 contracts 类型和唯一摘要函数完成最小修复。
 
 ## 新鲜串行验收
 
-所有下列命令在开始前确认没有残留 `pnpm`、Vitest、Playwright、Next 或 Nest 测试进程；未与 Supervisor 或其他测试重叠。
+开始前和结束后均确认无残留 `pnpm`、Vitest、Playwright、Next 或 Nest 进程；以下命令未与 Supervisor 或彼此重叠。
 
-| 命令 | 结果 |
+| 命令 | exit / 用例 |
 | --- | --- |
-| `pnpm --filter @job-copilot/contracts exec vitest run src/job-imports.test.ts src/job-triage.test.ts --no-file-parallelism` | exit 0，7/7 |
-| `pnpm --filter worker exec vitest run src/job-imports/fake-job-posting-normalizer.test.ts --no-file-parallelism` | exit 0，7/7 |
-| `pnpm --filter @job-copilot/domain exec vitest run src/job-triage.test.ts src/job-triage-persistence.integration.test.ts --no-file-parallelism` | exit 0，51/51 |
-| `pnpm --filter @job-copilot/database exec vitest run src/migrate.integration.test.ts src/job-discovery-leads.migrate.integration.test.ts src/public-discovery-workflow.migrate.integration.test.ts --no-file-parallelism` | exit 0，30/30 |
-| `pnpm --filter api exec vitest run src/api.integration.test.ts --no-file-parallelism` | exit 0，45/45 |
-| Web triage panel/BFF/action 四个测试文件 | exit 0，11/11 |
-| `pnpm --filter web test:e2e -- e2e/job-triage.spec.ts --project='Desktop Chrome'` | exit 0，1/1，真实本地 runtime |
-| `pnpm --filter web test:e2e -- e2e/job-triage.spec.ts --project='Mobile Safari'` | exit 0，1/1，真实本地 runtime |
-| `pnpm test` | exit 0；runtime 40、contracts 112、database 30、source-access 125、web 298、domain 423、API 310、worker 301 |
-| `pnpm typecheck` | exit 0 |
-| `pnpm lint` | exit 0 |
-| `pnpm build` | exit 0 |
+| `pnpm --filter @job-copilot/contracts exec vitest run src/job-imports.test.ts src/job-triage.test.ts --reporter=verbose` | 0，8/8 |
+| `pnpm --filter worker exec vitest run src/job-imports/fake-job-posting-normalizer.test.ts --reporter=verbose` | 0，7/7 |
+| `pnpm --filter @job-copilot/domain exec vitest run src/job-imports.test.ts src/job-imports.integration.test.ts src/job-triage.test.ts src/job-triage-persistence.integration.test.ts --reporter=dot` | 0，77/77 |
+| `pnpm --filter @job-copilot/database exec vitest run src/migrate.integration.test.ts src/job-discovery-leads.migrate.integration.test.ts src/public-discovery-workflow.migrate.integration.test.ts --reporter=dot` | 0，30/30（含 0028/0029 与历史升级 fixture） |
+| `pnpm --filter api exec vitest run src/api.integration.test.ts --reporter=dot` | 0，48/48 |
+| `pnpm --filter web exec vitest run components/workbench/job-triage-panel.test.tsx 'app/(workbench)/jobs/import/actions.test.ts' 'app/(workbench)/jobs/import/page.test.tsx' 'app/api/job-opportunities/[opportunityId]/triage-versions/route.test.ts' lib/server/job-triage.test.ts --reporter=dot` | 0，14/14 |
+| Desktop Chrome Playwright（真实本地 runtime） | 0，1/1 |
+| Mobile Safari Playwright（真实本地 runtime） | 0，1/1 |
+| `pnpm test`（从零、单进程会话） | 0；runtime 40、contracts 113、database 30、source-access 125、web 299、domain 429、worker 316、API 301 |
+| `pnpm typecheck` | 0 |
+| `pnpm lint` | 0 |
+| `pnpm build` | 0 |
 
-build 后确认 `apps/api/dist/` 与 `apps/worker/dist/` 均未跟踪，仅为本次生成物，已移出工作树；随后 `git diff --check b297dbaf8e61433f038e8a433dfab429f1f88aae..HEAD` 为 exit 0，且未发现残留测试进程。
+build 后先以 `git status --short` 确认只有未跟踪的 `apps/api/dist/`、`apps/worker/dist/`，随后精确移出工作树。`git diff --check b297dbaf8e61433f038e8a433dfab429f1f88aae..HEAD` 与最终工作树 diff 检查均应为 0。
 
-## 测试并发事故说明与残余风险
+## 测试并发事故与残余风险
 
-历史上曾在一次根级 `pnpm test` 尚运行时误启动重叠 domain 诊断命令；该两项结果已废弃，未作为本报告任何验收依据。另一次根级运行的控制台在进程完成前被截断，也已废弃。上表的第二次根级 `pnpm test` 通过保留会话取得完整精确 exit 0，是唯一根级验收依据。
+历史上曾有重叠测试和一次控制台截断的根级运行；两者均已废弃，未作为本报告验收依据。本报告仅采用上述本轮串行命令，其中根级 `pnpm test` 由可续接会话取得完整 exit 0。
 
-残余风险：学历、语言等级、工作资格与 `dealBreakers.other` 仍没有可证明的否定/层级模型，因此产品故意返回 `unknown` 而不是 `fail`；若未来需要 hard fail，必须先扩展结构化契约和领域规则，并以新的 RED→GREEN 测试证明。技能评分可使用最多 100 条岗位 required skills 和 confirmed profile skill facts，但审计/API 证据按 contracts 故意截断至 20 条，避免响应膨胀。
+残余风险是产品刻意的保守边界：学历、语言等级、工作资格和自由文本其他红线没有可证明的反证/层级模型，故返回 `unknown` 而非猜测 `fail`。未来若需要 hard fail，必须先扩展结构化 contracts 和新 RED→GREEN 回归。

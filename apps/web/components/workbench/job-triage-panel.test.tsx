@@ -30,3 +30,12 @@ it("选择活动求职目标并展示真实目标条件后通过服务端 action
   expect(screen.queryByText("求职目标条件：已设置")).toBeNull();
   expect(mocks.createJobTriageAction).toHaveBeenCalledWith(unknown.opportunityId, target.targetId);
 });
+
+it("只展示可读的证据摘要，不泄露内部追溯字段", () => {
+  const created = { ...unknown, overallVerdict: "fail" as const, gateResults: { ...unknown.gateResults, location: { verdict: "fail" as const, reasonCode: "LOCATION_CONFLICT", jobEvidence: { sourcePostingVersionId: "c4d4a7c1-9a17-4a8c-8b36-0f815d042e9a", field: "location", path: "normalized.location", value: `上海${"甲".repeat(253)}…` }, candidateEvidence: { kind: "target_constraint" as const, targetId: target.targetId, version: target.version, path: "constraints.locations", label: "求职目标条件", value: `北京${"乙".repeat(253)}…` } } } };
+  render(<JobTriagePanel opportunityId={unknown.opportunityId} targets={[target]} initialVersion={created} />);
+  expect(screen.getByText(`岗位证据：上海${"甲".repeat(253)}…`)).toBeInTheDocument();
+  expect(screen.getByText(`求职目标条件：北京${"乙".repeat(253)}…`)).toBeInTheDocument();
+  expect(screen.queryByText("normalized.location")).toBeNull();
+  expect(screen.queryByText(target.targetId)).toBeNull();
+});

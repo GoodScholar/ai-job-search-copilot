@@ -12,6 +12,7 @@ import { createAuditTrail } from "@job-copilot/domain/audit-trail";
 import { createCompanyWatchlistCommands } from "@job-copilot/domain/company-watchlists";
 import { createJobDiscoverySchedules } from "@job-copilot/domain/job-discovery-schedules";
 import { JobTriageError } from "@job-copilot/domain/job-triage-persistence";
+import { JobTriageVersionSchema } from "@job-copilot/contracts/job-triage";
 import { AppModule } from "./app.module.js";
 import { configureApiApplication } from "./configure-api-application.js";
 import { DATABASE } from "./config/runtime-config.module.js";
@@ -46,15 +47,17 @@ describe("authenticated workbench HTTP API", () => {
   const inactiveTriageTargetId = "90000000-0000-4000-8000-000000000003";
   const emptyProfileTriageTargetId = "90000000-0000-4000-8000-000000000004";
   let triageCandidateEvidenceCount = 0;
+  let triageMissingSkillCount = 0;
+  let triageEvidenceValues: { job: string; candidate: string } | null = null;
   const triageResponse = (targetId: string) => ({
-    triageVersionId, opportunityId: triageOpportunityId, targetId, overallVerdict: triageCandidateEvidenceCount ? "pass" as const : "unknown" as const,
+    triageVersionId, opportunityId: triageOpportunityId, targetId, overallVerdict: triageCandidateEvidenceCount || triageMissingSkillCount || triageEvidenceValues ? "pass" as const : "unknown" as const,
     gateResults: Object.fromEntries(["location", "work_mode", "relocation", "salary", "seniority", "education", "language", "work_eligibility", "deal_breakers"].map((gate) => [gate, { verdict: "unknown", reasonCode: "JOB_EVIDENCE_MISSING", jobEvidence: null, candidateEvidence: null }])),
-    pendingItems: triageCandidateEvidenceCount ? [] : [{ gate: "language", reasonCode: "JOB_EVIDENCE_MISSING", message: "需要补充岗位或画像证据" }], deadlineStatus: triageCandidateEvidenceCount ? "valid" as const : "missing" as const,
-    confidenceBasisPoints: 8_400, dimensionScores: triageCandidateEvidenceCount ? {
-      technical: { score: 100, reasonCode: "REQUIRED_SKILLS_COMPARED", jobEvidence: [{ sourcePostingVersionId: triageVersionId, field: "requiredSkills", path: "必备技能", value: "相关技能" }], candidateEvidence: Array.from({ length: triageCandidateEvidenceCount }, (_, index) => ({ kind: "profile_fact" as const, factId: `90000000-0000-4000-8000-${String(100 + index).padStart(12, "0")}`, revisionId: `90000000-0000-4000-8000-${String(200 + index).padStart(12, "0")}`, label: "已确认画像", value: `相关技能${index + 1}` })), missing: [] },
-      experience: { score: 50, reasonCode: "EXPERIENCE_EVIDENCE_MISSING_NEUTRAL", jobEvidence: [], candidateEvidence: [], missing: ["profile.experience"] },
-      targetAlignment: { score: 50, reasonCode: "TARGET_ALIGNMENT_EVIDENCE_MISSING_NEUTRAL", jobEvidence: [], candidateEvidence: [], missing: ["target.alignment"] },
-    } : null, overallScore: triageCandidateEvidenceCount ? 65 : null, threshold: triageCandidateEvidenceCount ? 60 : null, sequence: 1, createdAt: "2026-09-01T00:00:00.000Z",
+    pendingItems: triageCandidateEvidenceCount || triageMissingSkillCount || triageEvidenceValues ? [] : [{ gate: "language", reasonCode: "JOB_EVIDENCE_MISSING", message: "需要补充岗位或画像证据" }], deadlineStatus: triageCandidateEvidenceCount || triageMissingSkillCount || triageEvidenceValues ? "valid" as const : "missing" as const,
+    confidenceBasisPoints: triageMissingSkillCount ? 0 : 8_400, dimensionScores: triageCandidateEvidenceCount || triageMissingSkillCount || triageEvidenceValues ? {
+      technical: triageMissingSkillCount ? { score: 50, reasonCode: "REQUIRED_SKILLS_EVIDENCE_MISSING_NEUTRAL", jobEvidence: [{ sourcePostingVersionId: triageVersionId, field: "requiredSkills", path: "必备技能", value: triageEvidenceValues?.job ?? "相关技能" }], candidateEvidence: [], missing: [{ kind: "profile_skills" as const, count: triageMissingSkillCount, examples: Array.from({ length: Math.min(triageMissingSkillCount, 20) }, (_, index) => `缺失技能${index + 1}`) }] } : { score: 100, reasonCode: "REQUIRED_SKILLS_COMPARED", jobEvidence: [{ sourcePostingVersionId: triageVersionId, field: "requiredSkills", path: "必备技能", value: triageEvidenceValues?.job ?? "相关技能" }], candidateEvidence: Array.from({ length: triageCandidateEvidenceCount }, (_, index) => ({ kind: "profile_fact" as const, factId: `90000000-0000-4000-8000-${String(100 + index).padStart(12, "0")}`, revisionId: `90000000-0000-4000-8000-${String(200 + index).padStart(12, "0")}`, label: "已确认画像", value: triageEvidenceValues?.candidate ?? `相关技能${index + 1}` })), missing: [] },
+      experience: { score: 50, reasonCode: "EXPERIENCE_EVIDENCE_MISSING_NEUTRAL", jobEvidence: [], candidateEvidence: [], missing: [{ kind: "profile_experience" as const }] },
+      targetAlignment: { score: 50, reasonCode: "TARGET_ALIGNMENT_EVIDENCE_MISSING_NEUTRAL", jobEvidence: [], candidateEvidence: [], missing: [{ kind: "target_alignment" as const }] },
+    } : null, overallScore: triageCandidateEvidenceCount || triageMissingSkillCount || triageEvidenceValues ? 65 : null, threshold: triageCandidateEvidenceCount || triageMissingSkillCount || triageEvidenceValues ? 60 : null, sequence: 1, createdAt: "2026-09-01T00:00:00.000Z",
   });
   const triageCommands = {
     async create(input: { opportunityId: string; command: { targetId: string } }) {
@@ -317,6 +320,34 @@ describe("authenticated workbench HTTP API", () => {
     expect(response.statusCode).toBe(201);
     expect(response.json().dimensionScores.technical.candidateEvidence).toHaveLength(20);
     expect(response.json().dimensionScores.technical.candidateEvidence.map((item: { value: string }) => item.value)).toEqual(Array.from({ length: 20 }, (_, index) => `相关技能${index + 1}`));
+  });
+
+  it.each([21, 100])("通过真实 HTTP Zod 序列化保留 %i 条未匹配技能的全量计数并限制公开投影", async (skillCount) => {
+    triageMissingSkillCount = skillCount;
+    const session = await createSession(app, `job-triage-missing-skills-${skillCount}`);
+    const response = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-opportunities/${triageOpportunityId}/triage-versions`, headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: { targetId: triageVersionId },
+    });
+    triageMissingSkillCount = 0;
+    expect(response.statusCode).toBe(201);
+    const parsed = JobTriageVersionSchema.parse(response.json());
+    expect(parsed.confidenceBasisPoints).toBe(0);
+    expect(parsed.dimensionScores?.technical).toMatchObject({ score: 50, missing: [{ kind: "profile_skills", count: skillCount, examples: Array.from({ length: 20 }, (_, index) => `缺失技能${index + 1}`) }] });
+  });
+
+  it("通过真实 HTTP Zod 序列化返回截断后的岗位和候选证据", async () => {
+    triageEvidenceValues = { job: `岗位${"甲".repeat(510)}`, candidate: `目标${"乙".repeat(254)}` };
+    triageCandidateEvidenceCount = 1;
+    const session = await createSession(app, "job-triage-evidence-summary");
+    const response = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-opportunities/${triageOpportunityId}/triage-versions`, headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: { targetId: triageVersionId },
+    });
+    triageEvidenceValues = null;
+    triageCandidateEvidenceCount = 0;
+    expect(response.statusCode).toBe(201);
+    const parsed = JobTriageVersionSchema.parse(response.json());
+    expect(parsed.dimensionScores?.technical.jobEvidence[0]?.value).toHaveLength(512);
+    expect(parsed.dimensionScores?.technical.candidateEvidence[0]?.value).toHaveLength(256);
   });
 
   it("通过真实 HTTP 序列化器拒绝残缺的职业事实冲突解决响应", async () => {
