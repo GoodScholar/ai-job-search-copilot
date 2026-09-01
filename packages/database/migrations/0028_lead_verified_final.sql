@@ -7,8 +7,8 @@ SET "verified_final_url" = CASE
   WHEN jsonb_typeof(posting."source_identity" -> 'finalUrls') = 'array'
     AND jsonb_array_length(posting."source_identity" -> 'finalUrls') <= 1
     THEN posting."source_identity" ->> 'finalUrl'
-  WHEN posting."source_identity" ? 'observedFinalUrls' THEN posting."source_identity" ->> 'finalUrl'
-  WHEN posting."source_identity" ? 'finalUrls' THEN posting."source_identity" ->> 'finalUrl'
+  WHEN posting."source_identity" ? 'observedFinalUrls' THEN NULL
+  WHEN posting."source_identity" ? 'finalUrls' THEN NULL
   ELSE posting."source_identity" ->> 'finalUrl'
 END
 FROM "job_discovery_attributions" AS attribution
@@ -34,6 +34,21 @@ DO $$ BEGIN
 END $$;--> statement-breakpoint
 ALTER TABLE "job_discovery_leads" ADD CONSTRAINT "job_discovery_leads_verified_final_url_length_check" CHECK ("job_discovery_leads"."verified_final_url" is null or length("job_discovery_leads"."verified_final_url") between 1 and 2048);--> statement-breakpoint
 ALTER TABLE "job_discovery_leads" ADD CONSTRAINT "job_discovery_leads_verified_final_url_safe_check" CHECK ("job_discovery_leads"."verified_final_url" is null or ("job_discovery_leads"."verified_final_url" ~* '^https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+(?:\:[1-9][0-9]{0,4})?(?:/[^?#]*)?(?:\?(?:(?:id|job|jobid|job_id|openingid|opening_id|positionid|position_id|requisitionid|requisition_id)=[A-Za-z0-9._~-]{1,128}(?:&(?:id|job|jobid|job_id|openingid|opening_id|positionid|position_id|requisitionid|requisition_id)=[A-Za-z0-9._~-]{1,128})*)?)?$' and "job_discovery_leads"."verified_final_url" !~* '^https://(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?::|/|\?|$)'));--> statement-breakpoint
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM "job_source_postings" AS posting
+    INNER JOIN "job_source_posting_versions" AS version
+      ON version."user_id" = posting."user_id" AND version."source_posting_id" = posting."id"
+    INNER JOIN "job_discovery_attributions" AS attribution
+      ON attribution."user_id" = version."user_id" AND attribution."source_posting_version_id" = version."id"
+    INNER JOIN "job_discovery_leads" AS lead
+      ON lead."user_id" = attribution."user_id" AND lead."id" = attribution."lead_id" AND lead."state" = 'verified'
+    WHERE posting."source_identity" ->> 'canonicalUrl' IS NULL
+      OR posting."source_identity" ->> 'canonicalUrl' !~* '^https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+(?:\:[1-9][0-9]{0,4})?(?:/[^?#]*)?(?:\?(?:(?:id|job|jobid|job_id|openingid|opening_id|positionid|position_id|requisitionid|requisition_id)=[A-Za-z0-9._~-]{1,128}(?:&(?:id|job|jobid|job_id|openingid|opening_id|positionid|position_id|requisitionid|requisition_id)=[A-Za-z0-9._~-]{1,128})*)?)?$'
+      OR posting."source_identity" ->> 'canonicalUrl' ~* '^https://(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?::|/|\?|$)'
+  ) THEN RAISE EXCEPTION 'verified posting canonical fact missing'; END IF;
+END $$;--> statement-breakpoint
 UPDATE "job_source_postings" AS posting
 SET "source_identity" = rebuilt."identity"
 FROM (
