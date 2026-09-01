@@ -153,7 +153,7 @@ describe("public discovery workflow migration", () => {
       const finals = await database.execute(sql`select id, verified_final_url from job_discovery_leads where id in (${leadId}, ${secondLeadId}) order by id`) as unknown as Array<{ id: string; verified_final_url: string }>;
       assertTrue(finals.length === 2 && finals.some((row) => row.id === leadId && row.verified_final_url === finalA) && finals.some((row) => row.id === secondLeadId && row.verified_final_url === finalB));
       const [rewrittenPosting] = await database.execute(sql`select source_identity from job_source_postings where id = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'`) as unknown as Array<{ source_identity: Record<string, unknown> }>;
-      assertTrue(Boolean(rewrittenPosting) && !("observedFinalUrls" in rewrittenPosting.source_identity) && Array.isArray(rewrittenPosting.source_identity.finalUrls) && rewrittenPosting.source_identity.finalUrls.length === 2);
+      assertTrue(Boolean(rewrittenPosting) && ["taxonomyPolicy", "canonicalUrl", "finalUrl", "finalUrls"].every((key) => key in rewrittenPosting.source_identity) && Object.keys(rewrittenPosting.source_identity).length === 4 && Array.isArray(rewrittenPosting.source_identity.finalUrls) && rewrittenPosting.source_identity.finalUrls.length === 2);
       const unsafeFinals = [
         "http://careers.acme.com/openings/a?job=one",
         "https://user@careers.acme.com/openings/a?job=one",

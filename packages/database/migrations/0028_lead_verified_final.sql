@@ -56,7 +56,8 @@ FROM (
     'taxonomyPolicy', 'public-job-source-taxonomy-v1',
     'canonicalUrl', posting_inner."source_identity" ->> 'canonicalUrl',
     'finalUrl', min(lead."verified_final_url"),
-    'finalUrls', jsonb_agg(DISTINCT lead."verified_final_url" ORDER BY lead."verified_final_url")
+    'finalUrls', jsonb_agg(DISTINCT lead."verified_final_url" ORDER BY lead."verified_final_url"),
+    'observedFinalUrls', posting_inner."source_identity" -> 'observedFinalUrls'
   ) AS "identity"
   FROM "job_source_postings" AS posting_inner
   INNER JOIN "job_source_posting_versions" AS version_inner
