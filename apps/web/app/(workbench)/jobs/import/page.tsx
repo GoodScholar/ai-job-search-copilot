@@ -1,13 +1,14 @@
 import { JobImportView } from "@/components/workbench/job-import-view";
 import { getJobImports } from "@/lib/server/job-imports";
+import { getJobTargets } from "@/lib/server/job-targets";
 import { unstable_rethrow } from "next/navigation";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = { title: "导入岗位 | AI Job Search Copilot" };
 
 export default async function JobImportPage() {
-  const importsResult = await Promise.allSettled([getJobImports()]);
-  const imports = importsResult[0];
+  const [importsResult, targetsResult] = await Promise.allSettled([getJobImports(), getJobTargets()]);
+  const imports = importsResult;
   if (imports.status === "rejected") {
     unstable_rethrow(imports.reason);
     return (
@@ -22,5 +23,6 @@ export default async function JobImportPage() {
     );
   }
 
-  return <JobImportView initialImports={imports.value.imports} />;
+  if (targetsResult.status === "rejected") unstable_rethrow(targetsResult.reason);
+  return <JobImportView initialImports={imports.value.imports} initialTargets={targetsResult.status === "fulfilled" ? targetsResult.value.targets : []} />;
 }

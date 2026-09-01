@@ -58,6 +58,11 @@ const CompletedJobImportMetadataSchema = z.object({
 const FailedJobImportMetadataSchema = z.object({
   importId: z.uuid(), inputType: JobImportInputTypeSchema, attemptCount: z.int().min(1), failureCode: JobImportFailureCodeSchema,
 }).strict();
+const CreatedJobTriageMetadataSchema = z.object({
+  triageVersionId: z.uuid(), opportunityId: z.uuid(), sourcePostingVersionId: z.uuid(), profileId: z.uuid(), profileVersion: z.int().min(1),
+  targetId: z.uuid(), targetVersion: z.int().min(1), qualificationRuleVersion: z.string().min(1).max(64), coarseRuleVersion: z.string().min(1).max(64),
+  overallVerdict: z.enum(["pass", "fail", "unknown"]), deadlineStatus: z.enum(["expired", "closing_soon", "valid", "missing", "invalid"]),
+}).strict();
 const QueuedAgentRunMetadataSchema = z.object({ runId: z.uuid(), targetId: z.uuid(), targetVersion: z.int().min(1), workflowVersion: z.string().min(1), adapterVersion: z.string().min(1) }).strict();
 const CompletedAgentRunMetadataSchema = z.object({ runId: z.uuid(), targetId: z.uuid(), attemptCount: z.int().min(1), resultCount: z.int().min(0) }).strict();
 const FailedAgentRunMetadataSchema = z.object({ runId: z.uuid(), targetId: z.uuid(), attemptCount: z.int().min(1), failureCode: AgentRunFailureCodeSchema }).strict();
@@ -209,6 +214,11 @@ const AuditEventInputSchema = z.discriminatedUnion("eventType", [
     userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("job.import_failed"), occurredAt: z.date().optional(),
     requestId: z.uuid(), outcome: z.literal("failure"), reasonCode: JobImportFailureCodeSchema,
     resourceType: z.literal("job_import"), resourceId: z.uuid(), metadata: FailedJobImportMetadataSchema,
+  }).strict(),
+  z.object({
+    userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("job.triage_created"), occurredAt: z.date().optional(),
+    requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.literal("JOB_TRIAGE_CREATED"),
+    resourceType: z.literal("job_triage_version"), resourceId: z.uuid(), metadata: CreatedJobTriageMetadataSchema,
   }).strict(),
   z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("agent.run_queued"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.literal("AGENT_RUN_QUEUED"), resourceType: z.literal("agent_run"), resourceId: z.uuid(), metadata: QueuedAgentRunMetadataSchema }).strict(),
   z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("agent.run_completed"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.literal("AGENT_RUN_COMPLETED"), resourceType: z.literal("agent_run"), resourceId: z.uuid(), metadata: CompletedAgentRunMetadataSchema }).strict(),

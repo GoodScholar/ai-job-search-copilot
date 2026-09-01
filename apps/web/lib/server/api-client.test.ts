@@ -8,6 +8,7 @@ import type {
   StartAgentRunResponse,
 } from "@job-copilot/contracts/agent-runs";
 import type { AgentInboxActionResponse, AgentInboxItem } from "@job-copilot/contracts/agent-inbox";
+import type { JobTriageVersion } from "@job-copilot/contracts/job-triage";
 
 vi.mock("server-only", () => ({}));
 
@@ -165,6 +166,12 @@ const inboxItem: AgentInboxItem = {
 };
 
 const inboxActionResponse: AgentInboxActionResponse = { applied: true, item: inboxItem, run: controlResponse.run };
+const triageVersion: JobTriageVersion = {
+  triageVersionId: "e4d4a7c1-9a17-4a8c-8b36-0f815d042e9a", opportunityId: "f4d4a7c1-9a17-4a8c-8b36-0f815d042e9a", targetId,
+  overallVerdict: "unknown", deadlineStatus: "missing", confidenceBasisPoints: 8400, dimensionScores: null, overallScore: null, threshold: null,
+  gateResults: Object.fromEntries(["location", "work_mode", "relocation", "salary", "seniority", "education", "language", "work_eligibility", "deal_breakers"].map((gate) => [gate, { verdict: "unknown", reasonCode: "JOB_EVIDENCE_MISSING", jobEvidence: null, candidateEvidence: null }])) as JobTriageVersion["gateResults"],
+  pendingItems: [{ gate: "location", reasonCode: "JOB_EVIDENCE_MISSING", message: "需要补充岗位或画像证据" }], createdAt: "2026-09-01T00:00:00.000Z",
+};
 
 it("starts a dev session with an opaque request id and parses the shared response", async () => {
   const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
@@ -218,6 +225,21 @@ it("reads the authenticated empty workbench through the shared DTO", async () =>
   expect(url).toBe("http://127.0.0.1:3021/v1/workbench/home");
   expect(init).toMatchObject({ method: "GET" });
   expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${sessionToken}`);
+});
+
+it("creates and reloads a triage version through owner-bound API paths", async () => {
+  const fetchImpl = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response(JSON.stringify(triageVersion), { status: 201 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(triageVersion), { status: 200 }));
+  const api = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+
+  await expect(api.createJobTriageVersion(sessionToken, triageVersion.opportunityId, { targetId })).resolves.toEqual(triageVersion);
+  await expect(api.getLatestJobTriageVersion(sessionToken, triageVersion.opportunityId)).resolves.toEqual(triageVersion);
+  expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+    `http://127.0.0.1:3021/v1/job-opportunities/${triageVersion.opportunityId}/triage-versions`,
+    `http://127.0.0.1:3021/v1/job-opportunities/${triageVersion.opportunityId}/triage-versions/latest`,
+  ]);
+  expect(JSON.parse(String(fetchImpl.mock.calls[0]?.[1]?.body))).toEqual({ targetId });
 });
 
 it("reads only the trusted profile snapshot through the shared DTO", async () => {

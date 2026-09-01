@@ -12,13 +12,14 @@ import { WorkbenchModule } from "./workbench/workbench.module.js";
 import { ProfileReviewModule } from "./profile-review/profile-review.module.js";
 import { JobTargetsModule } from "./job-targets/job-targets.module.js";
 import { JobImportsModule } from "./job-imports/job-imports.module.js";
+import { JobTriageModule } from "./job-triage/job-triage.module.js";
 import { AgentRunsModule } from "./agent-runs/agent-runs.module.js";
 import { AgentInboxModule } from "./agent-inbox/agent-inbox.module.js";
 import { CompanyWatchlistsModule } from "./company-watchlists/company-watchlists.module.js";
 import { JobDiscoverySchedulesModule } from "./job-discovery-schedules/job-discovery-schedules.module.js";
 
 @Module({
-  imports: [RuntimeConfigModule, AuthModule, HealthModule, WorkbenchModule, CareerImportModule, ProfileReviewModule, JobTargetsModule, CompanyWatchlistsModule, JobDiscoverySchedulesModule, JobImportsModule, AgentRunsModule, AgentInboxModule],
+  imports: [RuntimeConfigModule, AuthModule, HealthModule, WorkbenchModule, CareerImportModule, ProfileReviewModule, JobTargetsModule, CompanyWatchlistsModule, JobDiscoverySchedulesModule, JobImportsModule, JobTriageModule, AgentRunsModule, AgentInboxModule],
   controllers: [AccountsController],
   providers: [
     RequestIdHook,

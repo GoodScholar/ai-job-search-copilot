@@ -50,6 +50,12 @@ import {
   type JobImportDetail,
   type JobImportList,
 } from "@job-copilot/contracts/job-imports";
+import {
+  CreateJobTriageVersionCommandSchema,
+  JobTriageVersionSchema,
+  type CreateJobTriageVersionCommand,
+  type JobTriageVersion,
+} from "@job-copilot/contracts/job-triage";
 import { WorkbenchHomeSchema, type WorkbenchHome } from "@job-copilot/contracts/workbench";
 import {
   AgentRunDetailSchema,
@@ -497,6 +503,29 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
         throw new ApiClientError("invalid_response", "API 返回了无效岗位原文", response.status);
       }
       return response.text();
+    },
+
+    async createJobTriageVersion(sessionToken: string, opportunityId: string, command: CreateJobTriageVersionCommand): Promise<JobTriageVersion> {
+      const requestBody = CreateJobTriageVersionCommandSchema.parse(command);
+      const response = await request(`/v1/job-opportunities/${opportunityId}/triage-versions`, {
+        method: "POST", headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" }, body: JSON.stringify(requestBody),
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法评估岗位", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, JobTriageVersionSchema);
+    },
+
+    async getLatestJobTriageVersion(sessionToken: string, opportunityId: string): Promise<JobTriageVersion> {
+      const response = await request(`/v1/job-opportunities/${opportunityId}/triage-versions/latest`, {
+        method: "GET", headers: { authorization: `Bearer ${sessionToken}` }, cache: "no-store",
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法读取岗位评估", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, JobTriageVersionSchema);
     },
 
     async startAgentRun(sessionToken: string, command: StartAgentRunCommand): Promise<StartAgentRunResponse> {

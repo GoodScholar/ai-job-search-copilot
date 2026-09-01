@@ -7,6 +7,34 @@ export const JOB_IMPORT_CLAIM_LEASE_MS = 30_000;
 
 const filename = z.string().trim().min(1).max(255).regex(/\.md$/i);
 const nullableJobField = z.string().trim().min(1).max(20_000).nullable();
+const qualificationEvidence = z.object({
+  field: z.string().trim().min(1).max(64),
+  path: z.string().trim().min(1).max(256),
+  value: z.string().trim().min(1).max(512),
+}).strict();
+const evidenced = <T extends z.ZodType>(schema: T) => z.object({ value: schema, evidence: qualificationEvidence }).strict();
+const nullableEvidenced = <T extends z.ZodType>(schema: T) => evidenced(schema).nullable();
+
+export const JobQualificationEvidenceSchema = qualificationEvidence;
+export const JobQualificationsSchema = z.object({
+  workMode: nullableEvidenced(z.enum(["onsite", "hybrid", "remote"])),
+  relocationRequired: nullableEvidenced(z.boolean()),
+  salary: nullableEvidenced(z.object({
+    minimum: z.int().nonnegative().nullable(), maximum: z.int().nonnegative().nullable(),
+    currency: z.string().regex(/^[A-Z]{3}$/), period: z.enum(["month", "year"]),
+  }).strict().refine(({ minimum, maximum }) => minimum === null || maximum === null || minimum <= maximum)),
+  seniority: nullableEvidenced(z.string().trim().min(1).max(128)),
+  education: nullableEvidenced(z.string().trim().min(1).max(256)),
+  languages: nullableEvidenced(z.array(z.object({ name: z.string().trim().min(1).max(128), level: z.string().trim().min(1).max(128).nullable() }).strict()).min(1).max(20)),
+  workEligibility: nullableEvidenced(z.string().trim().min(1).max(256)),
+  industry: nullableEvidenced(z.string().trim().min(1).max(256)),
+  employmentType: nullableEvidenced(z.enum(["direct", "outsourcing", "dispatch", "headhunter"])),
+  requiredSkills: nullableEvidenced(z.array(z.string().trim().min(1).max(128)).min(1).max(100)),
+}).strict();
+const missingQualifications = {
+  workMode: null, relocationRequired: null, salary: null, seniority: null, education: null,
+  languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: null,
+};
 const jobPageUrl = z.string().trim().min(1).max(2_048).refine((value) => {
   try {
     const url = new URL(value);
@@ -105,7 +133,12 @@ export const JobNormalizerOutputSchema = z.object({
   location: nullableJobField,
   postedAt: z.iso.datetime().nullable(),
   deadline: z.iso.datetime().nullable(),
+  deadlineProvenance: z.object({
+    field: z.literal("deadline"), path: z.string().trim().min(1).max(256), value: z.string().trim().min(1).max(512),
+    status: z.literal("invalid"),
+  }).strict().nullable().optional().default(null),
   description: nullableJobField,
+  qualifications: JobQualificationsSchema.optional().default(missingQualifications),
 }).strict();
 
 export type CreateJobImportCommand = z.infer<typeof CreateJobImportCommandSchema>;
@@ -117,3 +150,4 @@ export type JobImportList = z.infer<typeof JobImportListSchema>;
 export type JobImportDetail = z.infer<typeof JobImportDetailSchema>;
 export type JobImportJob = z.infer<typeof JobImportJobSchema>;
 export type JobNormalizerOutput = z.infer<typeof JobNormalizerOutputSchema>;
+export type JobQualifications = z.infer<typeof JobQualificationsSchema>;

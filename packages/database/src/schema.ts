@@ -511,6 +511,56 @@ export const jobOpportunitySources = pgTable("job_opportunity_sources", {
   }),
 ]);
 
+/**
+ * 一次确定性资格门槛与粗排的不可变快照。岗位、画像、目标或任一规则版本
+ * 改变时必须新建记录；失败、未知及过期岗位不允许携带评分。
+ */
+export const jobTriageVersions = pgTable("job_triage_versions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  opportunityId: uuid("opportunity_id").notNull().references(() => jobOpportunities.id),
+  sourcePostingVersionId: uuid("source_posting_version_id").notNull().references(() => jobSourcePostingVersions.id),
+  profileId: uuid("profile_id").notNull().references(() => jobProfiles.id),
+  profileVersion: integer("profile_version").notNull(),
+  targetId: uuid("target_id").notNull().references(() => jobTargets.id),
+  targetVersion: integer("target_version").notNull(),
+  qualificationRuleVersion: varchar("qualification_rule_version", { length: 64 }).notNull(),
+  coarseRuleVersion: varchar("coarse_rule_version", { length: 64 }).notNull(),
+  overallVerdict: varchar("overall_verdict", { length: 16 }).notNull(),
+  gateResults: jsonb("gate_results").notNull(),
+  pendingItems: jsonb("pending_items").notNull(),
+  deadlineStatus: varchar("deadline_status", { length: 16 }).notNull(),
+  confidenceBasisPoints: integer("confidence_basis_points").notNull(),
+  dimensionScores: jsonb("dimension_scores"),
+  overallScore: integer("overall_score"),
+  threshold: integer("threshold"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_triage_versions_input_rule_unique").on(
+    table.userId, table.opportunityId, table.sourcePostingVersionId, table.profileId, table.profileVersion,
+    table.targetId, table.targetVersion, table.qualificationRuleVersion, table.coarseRuleVersion,
+  ),
+  unique("job_triage_versions_user_id_id_unique").on(table.userId, table.id),
+  index("job_triage_versions_owner_opportunity_created_idx").on(table.userId, table.opportunityId, table.createdAt, table.id),
+  foreignKey({ columns: [table.userId, table.opportunityId], foreignColumns: [jobOpportunities.userId, jobOpportunities.id], name: "job_triage_versions_owner_opportunity_fk" }),
+  foreignKey({ columns: [table.userId, table.sourcePostingVersionId], foreignColumns: [jobSourcePostingVersions.userId, jobSourcePostingVersions.id], name: "job_triage_versions_owner_source_version_fk" }),
+  foreignKey({ columns: [table.userId, table.profileId], foreignColumns: [jobProfiles.userId, jobProfiles.id], name: "job_triage_versions_owner_profile_fk" }),
+  foreignKey({ columns: [table.userId, table.targetId], foreignColumns: [jobTargets.userId, jobTargets.id], name: "job_triage_versions_owner_target_fk" }),
+  check("job_triage_versions_profile_version_positive", sql`${table.profileVersion} >= 1`),
+  check("job_triage_versions_target_version_positive", sql`${table.targetVersion} >= 1`),
+  check("job_triage_versions_rule_versions_nonempty", sql`length(${table.qualificationRuleVersion}) between 1 and 64 and length(${table.coarseRuleVersion}) between 1 and 64`),
+  check("job_triage_versions_verdict_check", sql`${table.overallVerdict} in ('pass', 'fail', 'unknown')`),
+  check("job_triage_versions_gate_results_object", sql`jsonb_typeof(${table.gateResults}) = 'object'`),
+  check("job_triage_versions_pending_items_array", sql`jsonb_typeof(${table.pendingItems}) = 'array'`),
+  check("job_triage_versions_deadline_status_check", sql`${table.deadlineStatus} in ('expired', 'closing_soon', 'valid', 'missing', 'invalid')`),
+  check("job_triage_versions_confidence_range", sql`${table.confidenceBasisPoints} between 0 and 10000`),
+  check("job_triage_versions_dimension_scores_object", sql`${table.dimensionScores} is null or jsonb_typeof(${table.dimensionScores}) = 'object'`),
+  check("job_triage_versions_score_range", sql`(${table.overallScore} is null or ${table.overallScore} between 0 and 100) and (${table.threshold} is null or ${table.threshold} between 0 and 100)`),
+  check("job_triage_versions_score_verdict_check", sql`
+    ((${table.overallVerdict} = 'pass' and ${table.deadlineStatus} <> 'expired') = (${table.dimensionScores} is not null and ${table.overallScore} is not null and ${table.threshold} is not null))
+  `),
+]);
+
 export const agentRuns = pgTable("agent_runs", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").notNull().references(() => jobAccounts.id),

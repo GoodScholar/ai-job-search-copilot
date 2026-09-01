@@ -11,6 +11,7 @@ import { createAgentRunCommands, type AgentRunQueue } from "@job-copilot/domain/
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
 import { createCompanyWatchlistCommands } from "@job-copilot/domain/company-watchlists";
 import { createJobDiscoverySchedules } from "@job-copilot/domain/job-discovery-schedules";
+import { JobTriageError } from "@job-copilot/domain/job-triage-persistence";
 import { AppModule } from "./app.module.js";
 import { configureApiApplication } from "./configure-api-application.js";
 import { DATABASE } from "./config/runtime-config.module.js";
@@ -20,6 +21,7 @@ import { JobPageFetchError, type JobPageFetcher } from "./job-imports/job-page-f
 import { createMinimalDocx } from "./career-import/minimal-docx.test-support.js";
 import { CAREER_FACT_CONFLICT_REVIEW_COMMANDS, PROFILE_REVIEW_COMMANDS, type ProfileReviewCommands } from "./profile-review/profile-review.tokens.js";
 import { AGENT_RUN_QUEUE_PORT } from "./agent-runs/agent-runs.tokens.js";
+import { JOB_TRIAGE_COMMANDS, JOB_TRIAGE_QUERIES } from "./job-triage/job-triage.tokens.js";
 import { z } from "zod";
 
 const testSecret = "test-dev-auth-shared-secret-must-be-at-least-32-characters";
@@ -39,6 +41,28 @@ describe("authenticated workbench HTTP API", () => {
   let app: NestFastifyApplication;
   let container: StartedPostgreSqlContainer;
   let database: Database;
+  const triageVersionId = "90000000-0000-4000-8000-000000000001";
+  const triageOpportunityId = "90000000-0000-4000-8000-000000000002";
+  const inactiveTriageTargetId = "90000000-0000-4000-8000-000000000003";
+  const emptyProfileTriageTargetId = "90000000-0000-4000-8000-000000000004";
+  const triageResponse = (targetId: string) => ({
+    triageVersionId, opportunityId: triageOpportunityId, targetId, overallVerdict: "unknown" as const,
+    gateResults: Object.fromEntries(["location", "work_mode", "relocation", "salary", "seniority", "education", "language", "work_eligibility", "deal_breakers"].map((gate) => [gate, { verdict: "unknown", reasonCode: "JOB_EVIDENCE_MISSING", jobEvidence: null, candidateEvidence: null }])),
+    pendingItems: [{ gate: "language", reasonCode: "JOB_EVIDENCE_MISSING", message: "需要补充岗位或画像证据" }], deadlineStatus: "missing" as const,
+    confidenceBasisPoints: 8_400, dimensionScores: null, overallScore: null, threshold: null, createdAt: "2026-09-01T00:00:00.000Z",
+  });
+  const triageCommands = {
+    async create(input: { opportunityId: string; command: { targetId: string } }) {
+      if (input.opportunityId !== triageOpportunityId) throw new JobTriageError("JOB_TRIAGE_OPPORTUNITY_NOT_FOUND");
+      if (input.command.targetId === inactiveTriageTargetId) throw new JobTriageError("JOB_TRIAGE_TARGET_INACTIVE");
+      if (input.command.targetId === emptyProfileTriageTargetId) throw new JobTriageError("JOB_TRIAGE_PROFILE_EMPTY");
+      return { ...triageResponse(input.command.targetId), reused: true };
+    },
+  };
+  const triageQueries = {
+    async getLatest(input: { opportunityId: string }) { return input.opportunityId === triageOpportunityId ? triageResponse("90000000-0000-4000-8000-000000000005") : null; },
+    async get(input: { opportunityId: string; triageVersionId: string }) { return input.opportunityId === triageOpportunityId && input.triageVersionId === triageVersionId ? triageResponse("90000000-0000-4000-8000-000000000005") : null; },
+  };
   let conflictResolutionResponse: unknown = undefined;
   const conflictReviewCommands = {
     resolve: async () => conflictResolutionResponse,
@@ -142,6 +166,8 @@ describe("authenticated workbench HTTP API", () => {
       .overrideProvider(JOB_PAGE_FETCHER).useValue(jobPageFetcher)
       .overrideProvider(AGENT_RUN_QUEUE_PORT).useValue(agentRunQueue)
       .overrideProvider(CAREER_FACT_CONFLICT_REVIEW_COMMANDS).useValue(conflictReviewCommands)
+      .overrideProvider(JOB_TRIAGE_COMMANDS).useValue(triageCommands)
+      .overrideProvider(JOB_TRIAGE_QUERIES).useValue(triageQueries)
       .compile();
     app = module.createNestApplication<NestFastifyApplication>(new FastifyAdapter({ loggerInstance: testLogger as never }));
     await configureApiApplication(app);
@@ -234,6 +260,46 @@ describe("authenticated workbench HTTP API", () => {
       message: "请求无效",
       requestId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
     });
+  });
+
+  it("authenticates and strictly validates immutable job triage routes", async () => {
+    const unauthenticated = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-opportunities/${triageOpportunityId}/triage-versions`, payload: { targetId: triageVersionId },
+    });
+    expect(unauthenticated.statusCode).toBe(401);
+
+    const session = await createSession(app, "job-triage-http");
+    const malformed = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-opportunities/${triageOpportunityId}/triage-versions`, headers: { ...bearer(session.sessionToken), "content-type": "application/json" },
+      payload: { targetId: triageVersionId, extra: "not allowed" },
+    });
+    expect(malformed.statusCode).toBe(400);
+
+    const missing = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: "/v1/job-opportunities/90000000-0000-4000-8000-000000000099/triage-versions", headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: { targetId: triageVersionId },
+    });
+    expect(missing.statusCode).toBe(404);
+    const inactive = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-opportunities/${triageOpportunityId}/triage-versions`, headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: { targetId: inactiveTriageTargetId },
+    });
+    expect(inactive.statusCode).toBe(409);
+    const emptyProfile = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-opportunities/${triageOpportunityId}/triage-versions`, headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: { targetId: emptyProfileTriageTargetId },
+    });
+    expect(emptyProfile.statusCode).toBe(409);
+
+    const created = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-opportunities/${triageOpportunityId}/triage-versions`, headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: { targetId: triageVersionId },
+    });
+    const replay = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-opportunities/${triageOpportunityId}/triage-versions`, headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: { targetId: triageVersionId },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(replay.json().triageVersionId).toBe(created.json().triageVersionId);
+    const latest = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/job-opportunities/${triageOpportunityId}/triage-versions/latest`, headers: bearer(session.sessionToken) });
+    const exact = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/job-opportunities/${triageOpportunityId}/triage-versions/${triageVersionId}`, headers: bearer(session.sessionToken) });
+    expect(latest.statusCode).toBe(200);
+    expect(exact.statusCode).toBe(200);
   });
 
   it("通过真实 HTTP 序列化器拒绝残缺的职业事实冲突解决响应", async () => {

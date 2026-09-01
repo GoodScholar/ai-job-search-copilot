@@ -2,15 +2,16 @@ import { afterEach, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   createJobImport: vi.fn(),
+  createJobTriageVersion: vi.fn(),
   readSessionToken: vi.fn(),
   redirect: vi.fn((location: string) => { throw new Error(`redirect:${location}`); }),
 }));
 
-vi.mock("@/lib/server/api-client", () => ({ api: { createJobImport: mocks.createJobImport } }));
+vi.mock("@/lib/server/api-client", () => ({ api: { createJobImport: mocks.createJobImport, createJobTriageVersion: mocks.createJobTriageVersion } }));
 vi.mock("@/lib/server/session-cookie", () => ({ readSessionToken: mocks.readSessionToken }));
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 
-import { createJobImportAction } from "./actions";
+import { createJobImportAction, createJobTriageAction } from "./actions";
 
 afterEach(() => vi.clearAllMocks());
 
@@ -73,4 +74,16 @@ it("将未受信任的 API 错误码映射为固定中文提示", async () => {
   await expect(createJobImportAction(initialState, formData)).resolves.toEqual({
     ok: false, code: "JOB_IMPORT_UNAVAILABLE", message: "岗位导入暂时不可用，请稍后重试。",
   });
+});
+
+it("评估 action 严格转发目标并隐藏 API 错误细节", async () => {
+  const opportunityId = "b0d2bfbf-7e40-49fc-86c8-3a15d7ad4f98";
+  const targetId = "c0d2bfbf-7e40-49fc-86c8-3a15d7ad4f98";
+  mocks.readSessionToken.mockResolvedValue("a".repeat(43));
+  mocks.createJobTriageVersion.mockResolvedValue({ triageVersionId: "d0d2bfbf-7e40-49fc-86c8-3a15d7ad4f98" });
+  await expect(createJobTriageAction(opportunityId, targetId)).resolves.toMatchObject({ ok: true });
+  expect(mocks.createJobTriageVersion).toHaveBeenCalledWith("a".repeat(43), opportunityId, { targetId });
+
+  mocks.createJobTriageVersion.mockRejectedValue(new Error("internal api secret"));
+  await expect(createJobTriageAction(opportunityId, targetId)).resolves.toEqual({ ok: false, message: "岗位评估暂时不可用，请稍后重试。" });
 });

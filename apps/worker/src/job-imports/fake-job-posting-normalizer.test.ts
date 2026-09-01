@@ -11,6 +11,11 @@ describe("FakeJobPostingNormalizer", () => {
       "地点：上海",
       "发布时间：2026-08-01T09:00:00.000Z",
       "截止日期：2026-08-31T09:00:00.000Z",
+      "工作方式：远程",
+      "是否需要搬迁：否",
+      "薪资：CNY 30000-45000/month",
+      "雇佣类型：直接雇佣",
+      "必备技能：TypeScript, React",
       "## 职位描述",
       "负责 Web 平台。  ",
       "- 与产品团队协作",
@@ -29,7 +34,16 @@ describe("FakeJobPostingNormalizer", () => {
       location: "上海",
       postedAt: "2026-08-01T09:00:00.000Z",
       deadline: "2026-08-31T09:00:00.000Z",
+      deadlineProvenance: null,
       description: "负责 Web 平台。  \n- 与产品团队协作",
+      qualifications: {
+        workMode: { value: "remote", evidence: { field: "workMode", path: "工作方式", value: "远程" } },
+        relocationRequired: { value: false, evidence: { field: "relocationRequired", path: "是否需要搬迁", value: "否" } },
+        salary: { value: { minimum: 30000, maximum: 45000, currency: "CNY", period: "month" }, evidence: { field: "salary", path: "薪资", value: "CNY 30000-45000/month" } },
+        seniority: null, education: null, languages: null, workEligibility: null, industry: null,
+        employmentType: { value: "direct", evidence: { field: "employmentType", path: "雇佣类型", value: "直接雇佣" } },
+        requiredSkills: { value: ["TypeScript", "React"], evidence: { field: "requiredSkills", path: "必备技能", value: "TypeScript, React" } },
+      },
     });
   });
 
@@ -45,7 +59,13 @@ describe("FakeJobPostingNormalizer", () => {
       location: null,
       postedAt: null,
       deadline: null,
+      deadlineProvenance: null,
       description: null,
+      qualifications: {
+        workMode: null, relocationRequired: null, salary: null,
+        seniority: { value: "P8", evidence: { field: "seniority", path: "级别", value: "P8" } }, education: null,
+        languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: null,
+      },
     });
   });
 
@@ -54,7 +74,10 @@ describe("FakeJobPostingNormalizer", () => {
       await new FakeJobPostingNormalizer().normalize("发布时间：2026-99-99T09:00:00.000Z\n截止日期：2026-08-01T09:00:00Z"),
     );
 
-    expect(output).toMatchObject({ postedAt: null, deadline: null });
+    expect(output).toMatchObject({
+      postedAt: null, deadline: null,
+      deadlineProvenance: { field: "deadline", path: "截止日期", value: "2026-08-01T09:00:00Z", status: "invalid" },
+    });
   });
 
   it("默认把 failure fixture 当作普通未知正文", async () => {

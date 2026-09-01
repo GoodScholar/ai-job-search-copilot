@@ -4,6 +4,10 @@ import {
   CreateJobImportCommandSchema,
   type CreateJobImportResponse,
 } from "@job-copilot/contracts/job-imports";
+import {
+  CreateJobTriageVersionCommandSchema,
+  type JobTriageVersion,
+} from "@job-copilot/contracts/job-triage";
 import { redirect } from "next/navigation";
 import { api } from "@/lib/server/api-client";
 import { readSessionToken } from "@/lib/server/session-cookie";
@@ -11,6 +15,10 @@ import { readSessionToken } from "@/lib/server/session-cookie";
 export type JobImportActionState =
   | { ok: false; code: string; message: string }
   | { ok: true; import: CreateJobImportResponse & { reused: boolean } };
+
+export type JobTriageActionState =
+  | { ok: false; message: string }
+  | { ok: true; triage: JobTriageVersion };
 
 const failureMessages: Record<string, string> = {
   JOB_IMPORT_CONTENT_INVALID: "岗位描述不能为空且不能超过 512 KiB。",
@@ -68,5 +76,20 @@ export async function createJobImportAction(
       : null;
     const code = safeFailureCode(rawCode);
     return { ok: false, code, message: failureMessages[code] };
+  }
+}
+
+export async function createJobTriageAction(
+  opportunityId: string,
+  targetId: string,
+): Promise<JobTriageActionState> {
+  const sessionToken = await readSessionToken();
+  if (!sessionToken) redirect("/login?returnTo=%2Fjobs%2Fimport");
+  const command = CreateJobTriageVersionCommandSchema.safeParse({ targetId });
+  if (!command.success) return { ok: false, message: "求职目标无效，请刷新页面后重试。" };
+  try {
+    return { ok: true, triage: await api.createJobTriageVersion(sessionToken, opportunityId, command.data) };
+  } catch {
+    return { ok: false, message: "岗位评估暂时不可用，请稍后重试。" };
   }
 }

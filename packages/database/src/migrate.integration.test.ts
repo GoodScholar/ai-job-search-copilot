@@ -553,6 +553,23 @@ describe("database migrations", () => {
     ]));
   });
 
+  it("migrates immutable owner-bound job triage versions with score invariants", async () => {
+    expect(await listPublicTables(migratedDatabase)).toContain("job_triage_versions");
+    expect(await listConstraintNames(migratedDatabase)).toEqual(expect.arrayContaining([
+      "job_triage_versions_input_rule_unique",
+      "job_triage_versions_owner_opportunity_fk",
+      "job_triage_versions_owner_profile_fk",
+      "job_triage_versions_owner_target_fk",
+      "job_triage_versions_score_verdict_check",
+    ]));
+    expect(await listColumns(migratedDatabase)).toEqual(expect.arrayContaining([
+      { table_name: "job_triage_versions", column_name: "gate_results", data_type: "jsonb" },
+      { table_name: "job_triage_versions", column_name: "pending_items", data_type: "jsonb" },
+      { table_name: "job_triage_versions", column_name: "deadline_status", data_type: "character varying" },
+      { table_name: "job_triage_versions", column_name: "overall_score", data_type: "integer" },
+    ]));
+  });
+
   it("migrates durable account-owned agent runs without requiring an import", async () => {
     expect(await listPublicTables(migratedDatabase)).toEqual(expect.arrayContaining([
       "agent_runs", "agent_run_steps", "agent_run_events", "agent_run_job_results",
@@ -1147,16 +1164,18 @@ describe("database migrations", () => {
         unlink(join(migrationsFolder, "0025_layered_public_discovery_workflow.sql")),
         unlink(join(migrationsFolder, "0026_discovery_attention.sql")),
         unlink(join(migrationsFolder, "0027_massive_purple_man.sql")),
+        unlink(join(migrationsFolder, "0028_job_triage_versions.sql")),
         unlink(join(migrationsFolder, "meta", "0023_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0024_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0025_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0026_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0027_snapshot.json")),
+        unlink(join(migrationsFolder, "meta", "0028_snapshot.json")),
       ]);
       const journalPath = join(migrationsFolder, "meta", "_journal.json");
       const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
       await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter((entry) => ![
-        "0023_source_attention_inbox", "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man",
+        "0023_source_attention_inbox", "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_job_triage_versions",
       ].includes(entry.tag)) }, null, 2));
       await migrate(upgradeDatabase, { migrationsFolder });
       const userId = "a9f4da20-e9e9-44c4-a6a5-fc2cf5b9ed93"; const targetId = "f1e7a7a6-a3e6-458e-9f53-33cdbbf2d6ea"; const runId = "833f4544-376c-4f8d-81af-16e50df78624";
