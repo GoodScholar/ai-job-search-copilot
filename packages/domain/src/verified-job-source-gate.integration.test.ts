@@ -269,7 +269,7 @@ describe("verified public job source gate", () => {
     expect(result.lead).toMatchObject({ leadId: subject.leadId, state: "verified" });
     expect(result.attribution).toMatchObject({ leadId: subject.leadId, provider: "anysearch", queryId: subject.queryId });
     expect(result.sourcePosting).toMatchObject({ sourceIdentifier: createHash("sha256").update(normalizedUrl, "utf8").digest("hex"), sourceId: normalizedUrl, sourceType: "company_careers", isOfficial: true });
-    expect(result.sourcePosting.sourceIdentity).toEqual({ taxonomyPolicy: "public-job-source-taxonomy-v1", canonicalUrl: normalizedUrl, finalUrl: normalizedUrl });
+    expect(result.sourcePosting.sourceIdentity).toEqual({ taxonomyPolicy: "public-job-source-taxonomy-v1", canonicalUrl: normalizedUrl, finalUrl: normalizedUrl, observedFinalUrls: { [normalizedUrl]: normalizedUrl } });
     expect(result.sourcePostingVersion.rawObjectReference).toEqual(expect.objectContaining({ rawHtmlObjectKey: expect.stringContaining(`/public-job-pages/`), visibleTextObjectKey: expect.stringContaining(`/public-job-pages/`) }));
     expect(JSON.stringify(result)).not.toContain("AnySearch title sentinel");
     expect(store.objects).toHaveLength(2);
@@ -762,18 +762,31 @@ describe("verified public job source gate", () => {
     const second = await anotherLead(first, aliasUrl);
     const store = new EvidenceStore();
     const gate = createVerifiedJobSourceGate({ db: database, contentStore: store, id: () => crypto.randomUUID() });
-    await gate.verify({
+    const firstResult = await gate.verify({
       userId: first.userId, leadId: first.leadId,
       candidate: { queryId: first.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: page(), now,
     });
 
-    const aliasAccepted = await gate.verify({
+    const aliasResult = await gate.verify({
       userId: second.userId, leadId: second.leadId,
       candidate: { queryId: second.queryId, normalizedUrl: aliasUrl, candidateFingerprint: createHash("sha256").update(aliasUrl, "utf8").digest("hex") },
       extract: { normalizedUrl: aliasUrl }, page: { ...page(aliasUrl), canonicalUrl: normalizedUrl }, now,
-    }).then(() => true, () => false);
+    });
 
-    expect(aliasAccepted).toBe(true);
+    expect(aliasResult.sourcePosting.postingId).toBe(firstResult.sourcePosting.postingId);
+    expect(aliasResult.sourcePostingVersion.sourcePostingVersionId).toBe(firstResult.sourcePostingVersion.sourcePostingVersionId);
+    await expect(Promise.all([
+      database.select().from(jobSourcePostings).where(eq(jobSourcePostings.userId, first.userId)),
+      database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, first.userId)),
+      database.select().from(jobDiscoveryAttributions).where(eq(jobDiscoveryAttributions.userId, first.userId)),
+    ])).resolves.toEqual([
+      [expect.objectContaining({ id: firstResult.sourcePosting.postingId })],
+      [expect.objectContaining({ id: firstResult.sourcePostingVersion.sourcePostingVersionId, version: 1 })],
+      expect.arrayContaining([
+        expect.objectContaining({ leadId: first.leadId }),
+        expect.objectContaining({ leadId: second.leadId }),
+      ]),
+    ]);
   });
 
   it("任一真实页面 hash 改变会追加版本，而不会创建第二个 canonical posting", async () => {
@@ -836,7 +849,7 @@ describe("verified public job source gate", () => {
         extract: { normalizedUrl: url }, page: { ...page(url), sourceKind: item.sourceKind }, now,
       });
       expect(result.sourcePosting).toMatchObject({ sourceType: item.sourceType, sourceId: url, isOfficial: item.official });
-      expect(result.sourcePosting.sourceIdentity).toEqual({ taxonomyPolicy: "public-job-source-taxonomy-v1", canonicalUrl: url, finalUrl: url });
+      expect(result.sourcePosting.sourceIdentity).toEqual({ taxonomyPolicy: "public-job-source-taxonomy-v1", canonicalUrl: url, finalUrl: url, observedFinalUrls: { [url]: url } });
     }
   });
 });
