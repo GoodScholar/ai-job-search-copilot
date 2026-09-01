@@ -9,6 +9,7 @@ import {
   type AnySearchBeforeRequest,
   type AnySearchOperationResult,
 } from "./anysearch-public-job-adapter.js";
+import { assertConfiguredCredential } from "../test-safe-assertions.js";
 
 const secretKey = "test-anysearch-key-must-not-leak";
 const queryId = "018f2d4e-75a1-8f64-bc1d-0123456789ab";
@@ -54,10 +55,6 @@ function validExtract(url = "https://jobs.example.com/opening?jobId=abc-123"): u
 function testAdapter(input: ConstructorParameters<typeof AnySearchPublicJobAdapter>[0] = {}) {
   return new AnySearchPublicJobAdapter({ apiKey: secretKey, baseUrl: "https://anysearch.test", ...input });
 }
-function authorizationMatches(value: unknown, configuredKey: string): boolean {
-  return value === ["Bearer", configuredKey].join(" ");
-}
-
 type SearchData = { queryId: string; ordinal: number; candidates: readonly { normalizedUrl: string | null; policy: "accepted" | "rejected"; rejectionCode?: "ANYSEARCH_POLICY_REJECTED"; candidate?: AnySearchCandidate }[] };
 function mustSearchData(result: AnySearchOperationResult<SearchData>): SearchData {
   if (!result.ok || !("data" in result)) throw new Error("fixture search should succeed");
@@ -94,7 +91,7 @@ describe("AnySearchPublicJobAdapter", () => {
     expect(String(url)).toBe("https://anysearch.test/v1/search");
     expect(init?.method).toBe("POST");
     const authorization = (init?.headers as Record<string, unknown> | undefined)?.authorization;
-    expect(authorizationMatches(authorization, secretKey)).toBe(true);
+    assertConfiguredCredential(authorization, secretKey);
     expect(init?.headers).toMatchObject({ "content-type": "application/json" });
     expect(JSON.parse(String(init?.body))).toEqual({ query: "高级前端工程师 site:example.com", max_results: 5 });
     expect(JSON.stringify(init?.body)).not.toMatch(/allowedSiteDomains|domain|host|target|profile|watchlist|user/i);
