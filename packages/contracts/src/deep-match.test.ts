@@ -32,6 +32,16 @@ describe("FakeDeepMatchAdapter", () => {
     expect(() => DeepMatchAssessmentSchema.parse(result[0])).not.toThrow();
   });
 
+  it("returns the exclusion score only for the explicit CI quality fixture", async () => {
+    const adapter = new FakeDeepMatchAdapter();
+    const result = await adapter.assess({ candidates: [{
+      opportunityId: ids.opportunityId, sourcePostingVersionId: ids.sourcePostingVersionId,
+      jobEvidence: [{ id: "job:quality", value: "MATCH_QUALITY_INSUFFICIENT" }],
+      profileEvidence: [{ id: "profile:typescript", profileFactRevisionId: ids.profileFactRevisionId, value: "TypeScript" }],
+    }] }, modelCall());
+    expect(result[0]).toMatchObject({ overallScore: 50 });
+  });
+
   it("rejects model output whose citation is absent from the supplied evidence closure", () => {
     const invalid = DeepMatchAssessmentSchema.parse({
       opportunityId: ids.opportunityId,

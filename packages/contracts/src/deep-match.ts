@@ -66,6 +66,8 @@ export class DeepMatchAdapterError extends Error {
 }
 
 export const FAKE_DEEP_MATCH_TOKEN_USAGE = { inputTokens: 32, outputTokens: 48 } as const;
+/** Deterministic CI fixture only; no model or network is involved. */
+export const FAKE_DEEP_MATCH_QUALITY_INSUFFICIENT_MARKER = "MATCH_QUALITY_INSUFFICIENT";
 export type DeepMatchAdapterCall = {
   signal: AbortSignal;
   usageKey: string;
@@ -104,12 +106,13 @@ export class FakeDeepMatchAdapter implements DeepMatchAdapter {
     if (call.signal.aborted) throw new DeepMatchAdapterError("retryable");
     const parsed = DeepMatchAdapterInputSchema.parse(input);
     return parsed.candidates.map((candidate) => {
+      const score = candidate.jobEvidence.some((evidence) => evidence.value.includes(FAKE_DEEP_MATCH_QUALITY_INSUFFICIENT_MARKER)) ? 50 : 80;
       const assessment = DeepMatchAssessmentSchema.parse({
         opportunityId: candidate.opportunityId,
-        overallScore: 80,
+        overallScore: score,
         dimensions: DEEP_MATCH_DIMENSIONS.map((dimension) => ({
           dimension,
-          score: 80,
+          score,
           judgment: "evidence_backed_inference",
           jobEvidenceIds: [candidate.jobEvidence[0]!.id],
           profileEvidenceIds: [candidate.profileEvidence[0]!.id],

@@ -12,6 +12,7 @@ import { RECOMMENDATION_RUN_STARTER, type RecommendationRunStarter } from "./rec
 class RecommendationListDto extends createZodDto(RecommendationListSchema) {}
 class RecommendationTargetQueryDto extends createZodDto(z.object({ targetId: z.uuid() }).strict()) {}
 class StartRecommendationReevaluationDto extends createZodDto(z.object({ targetId: z.uuid(), opportunityId: z.uuid(), idempotencyKey: z.uuid() }).strict()) {}
+class StartRecommendationTargetRunDto extends createZodDto(z.object({ targetId: z.uuid(), idempotencyKey: z.uuid() }).strict()) {}
 
 @Controller("v1/recommendations")
 @UseGuards(SessionGuard)
@@ -37,5 +38,10 @@ export class RecommendationsController {
   @Post("runs")
   async reevaluate(@Req() request: FastifyRequest, @Body() body: StartRecommendationReevaluationDto) {
     return this.starter.start({ userId: request.authenticatedAccount!.userId, targetId: body.targetId, opportunityId: body.opportunityId, idempotencyKey: body.idempotencyKey, trigger: "manual" });
+  }
+
+  @Post("runs/batch")
+  async refreshTarget(@Req() request: FastifyRequest, @Body() body: StartRecommendationTargetRunDto) {
+    return this.starter.start({ userId: request.authenticatedAccount!.userId, targetId: body.targetId, idempotencyKey: body.idempotencyKey, trigger: "automatic" });
   }
 }

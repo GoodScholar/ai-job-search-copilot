@@ -45,7 +45,7 @@ export function createDeepMatchQueries(deps: { db: Database }) {
           .where(and(eq(profileFacts.userId, input.userId), eq(profileFacts.profileId, triage.profileId), eq(profileFactRevisions.profileVersion, triage.profileVersion)));
         const profileEvidence = revisions.filter((revision) => revision.state === "active").map((revision) => ({ id: `profile:${revision.revisionId}`, profileFactRevisionId: revision.revisionId, value: JSON.stringify(revision.factValue).slice(0, 256) })).slice(0, 20);
         if (!profileEvidence.length) return null;
-        const versionEvidence = JSON.stringify(sourceVersion.normalizedData).slice(0, 512);
+        const versionEvidence = JSON.stringify({ title: opportunity.title, company: opportunity.company, normalized: sourceVersion.normalizedData }).slice(0, 512);
         return {
           opportunityId: opportunity.id, sourcePostingVersionId: triage.sourcePostingVersionId, triageVersionId: triage.id, profileId: triage.profileId, profileVersion: triage.profileVersion, targetVersion: triage.targetVersion, overallScore: triage.overallScore!,
           jobEvidence: [{ id: `job:${triage.sourcePostingVersionId}`, value: versionEvidence || "岗位信息" }], profileEvidence,
@@ -69,7 +69,7 @@ export function createDeepMatchQueries(deps: { db: Database }) {
           const profileRevisions = await deps.db.select({ id: profileFactRevisions.id, value: profileFactRevisions.factValue }).from(profileFacts)
             .innerJoin(profileFactRevisions, and(eq(profileFactRevisions.userId, profileFacts.userId), eq(profileFactRevisions.profileFactId, profileFacts.id)))
             .where(and(eq(profileFacts.userId, input.userId), eq(profileFacts.profileId, match.profileId), eq(profileFactRevisions.profileVersion, match.profileVersion), eq(profileFactRevisions.state, "active")));
-          const jobValue = JSON.stringify(sourceVersion.normalizedData).slice(0, 512) || "岗位信息";
+          const jobValue = JSON.stringify({ title: opportunity.title, company: opportunity.company, normalized: sourceVersion.normalizedData }).slice(0, 512) || "岗位信息";
           return { matchVersionId: match.id, opportunityId: opportunity.id, company: opportunity.company, title: opportunity.title, location: opportunity.location, displayBand: match.displayBand, highlighted: item.highlighted, ordinal: item.ordinal,
             jobEvidence: [{ id: `job:${match.sourcePostingVersionId}`, value: jobValue }],
             profileEvidence: profileRevisions.filter((revision) => citedProfileEvidence.has(`profile:${revision.id}`)).map((revision) => ({ id: `profile:${revision.id}`, value: JSON.stringify(revision.value).slice(0, 256) })),
