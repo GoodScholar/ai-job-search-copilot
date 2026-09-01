@@ -756,6 +756,26 @@ describe("verified public job source gate", () => {
     ]);
   });
 
+  it("canonical 相同的同源别名不因观察到的 final 身份冲突", async () => {
+    const aliasUrl = "https://careers.acme.com/jobs/123?job=alternate";
+    const first = await owner();
+    const second = await anotherLead(first, aliasUrl);
+    const store = new EvidenceStore();
+    const gate = createVerifiedJobSourceGate({ db: database, contentStore: store, id: () => crypto.randomUUID() });
+    await gate.verify({
+      userId: first.userId, leadId: first.leadId,
+      candidate: { queryId: first.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: page(), now,
+    });
+
+    const aliasAccepted = await gate.verify({
+      userId: second.userId, leadId: second.leadId,
+      candidate: { queryId: second.queryId, normalizedUrl: aliasUrl, candidateFingerprint: createHash("sha256").update(aliasUrl, "utf8").digest("hex") },
+      extract: { normalizedUrl: aliasUrl }, page: { ...page(aliasUrl), canonicalUrl: normalizedUrl }, now,
+    }).then(() => true, () => false);
+
+    expect(aliasAccepted).toBe(true);
+  });
+
   it("任一真实页面 hash 改变会追加版本，而不会创建第二个 canonical posting", async () => {
     const first = await owner();
     const second = await anotherLead(first);
