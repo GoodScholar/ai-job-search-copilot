@@ -228,7 +228,7 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
           )).limit(1);
           if (foundPosting) {
             if (foundPosting.sourceId !== value.page.canonicalUrl || !isCanonicalSourceIdentity(foundPosting.sourceIdentity, value.page.canonicalUrl) || foundPosting.isOfficial !== expectedOfficial
-              || lead.state === "verified" && !publicSourceIdentity(foundPosting.sourceIdentity)?.finalUrls.includes(value.page.finalUrl)) {
+              || lead.state === "verified" && lead.verifiedFinalUrl !== value.page.finalUrl) {
               throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_CONFLICT");
             }
             const sourceIdentity = sourceIdentityForFinal(foundPosting.sourceIdentity, value.page.canonicalUrl, value.page.finalUrl);
@@ -288,7 +288,7 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
             if (!createdVersion) throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_PERSIST_FAILED");
             version = createdVersion;
           }
-          const verified = await transitions.verifyAndAttributeInTransaction({ userId: value.userId, leadId: value.leadId, sourcePostingVersionId: version.id, now: value.now }, transaction);
+          const verified = await transitions.verifyAndAttributeInTransaction({ userId: value.userId, leadId: value.leadId, sourcePostingVersionId: version.id, verifiedFinalUrl: value.page.finalUrl, now: value.now }, transaction);
           return {
             ...verified,
             sourcePosting: { postingId: posting.id, sourceType: posting.sourceType, sourceIdentifier: posting.sourceIdentifier, sourceId: posting.sourceId, sourceIdentity: posting.sourceIdentity, isOfficial: posting.isOfficial },

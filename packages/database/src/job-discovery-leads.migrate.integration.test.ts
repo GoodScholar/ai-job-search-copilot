@@ -152,24 +152,24 @@ describe("job discovery lead migrations", () => {
     `)).rejects.toMatchObject({ cause: { code: "23514" } });
 
     await database.execute(sql`
-      update job_discovery_leads set state = 'verified', source_posting_version_id = ${versionId}, updated_at = now() where id = ${leadId}
+      update job_discovery_leads set state = 'verified', source_posting_version_id = ${versionId}, verified_final_url = 'https://jobs.example.com/opening?job=123', updated_at = now() where id = ${leadId}
     `);
     await database.execute(sql`
       insert into job_discovery_leads (
         id, user_id, run_id, target_id, provider, query_id, query_kind, query_fingerprint,
-        normalized_url, stable_fingerprint, expires_at, state, source_posting_version_id, rejection_code, created_at, updated_at
+        normalized_url, stable_fingerprint, expires_at, state, source_posting_version_id, verified_final_url, rejection_code, created_at, updated_at
       ) values (
         '18181818-1818-4181-8181-181818181819', ${ownerId}, ${runId}, ${targetId}, 'anysearch', ${queryId}, 'general', ${queryFingerprint},
-        'https://jobs.example.com/opening?id=131', ${"7".repeat(64)}, now() + interval '30 days', 'verified', ${versionId}, null, now(), now()
+        'https://jobs.example.com/opening?id=131', ${"7".repeat(64)}, now() + interval '30 days', 'verified', ${versionId}, 'https://jobs.example.com/opening?job=123', null, now(), now()
       )
     `);
     await database.execute(sql`
       insert into job_discovery_leads (
         id, user_id, run_id, target_id, provider, query_id, query_kind, query_fingerprint,
-        normalized_url, stable_fingerprint, expires_at, state, source_posting_version_id, rejection_code, created_at, updated_at
+        normalized_url, stable_fingerprint, expires_at, state, source_posting_version_id, verified_final_url, rejection_code, created_at, updated_at
       ) values (
         '19191919-1919-4191-8191-191919191919', ${ownerId}, ${runId}, ${targetId}, 'anysearch', ${queryId}, 'general', ${queryFingerprint},
-        'https://jobs.example.com/opening?id=128', ${"1".repeat(64)}, now() + interval '30 days', 'verified', ${versionId}, null, now(), now()
+        'https://jobs.example.com/opening?id=128', ${"1".repeat(64)}, now() + interval '30 days', 'verified', ${versionId}, 'https://jobs.example.com/opening?job=123', null, now(), now()
       )
     `);
     await database.execute(sql`
@@ -210,15 +210,17 @@ describe("job discovery lead migrations", () => {
         unlink(join(migrationsFolder, "0025_layered_public_discovery_workflow.sql")),
         unlink(join(migrationsFolder, "0026_discovery_attention.sql")),
         unlink(join(migrationsFolder, "0027_massive_purple_man.sql")),
+        unlink(join(migrationsFolder, "0028_lead_verified_final.sql")),
         unlink(join(migrationsFolder, "meta", "0024_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0025_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0026_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0027_snapshot.json")),
+        unlink(join(migrationsFolder, "meta", "0028_snapshot.json")),
       ]);
       const journalPath = join(migrationsFolder, "meta", "_journal.json");
       const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
       journal.entries = journal.entries.filter((entry) => ![
-        "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man",
+        "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_lead_verified_final",
       ].includes(entry.tag));
       await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
       await migrate(legacyDatabase, { migrationsFolder });

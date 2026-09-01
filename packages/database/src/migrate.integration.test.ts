@@ -1147,16 +1147,18 @@ describe("database migrations", () => {
         unlink(join(migrationsFolder, "0025_layered_public_discovery_workflow.sql")),
         unlink(join(migrationsFolder, "0026_discovery_attention.sql")),
         unlink(join(migrationsFolder, "0027_massive_purple_man.sql")),
+        unlink(join(migrationsFolder, "0028_lead_verified_final.sql")),
         unlink(join(migrationsFolder, "meta", "0023_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0024_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0025_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0026_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0027_snapshot.json")),
+        unlink(join(migrationsFolder, "meta", "0028_snapshot.json")),
       ]);
       const journalPath = join(migrationsFolder, "meta", "_journal.json");
       const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
       await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter((entry) => ![
-        "0023_source_attention_inbox", "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man",
+        "0023_source_attention_inbox", "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_lead_verified_final",
       ].includes(entry.tag)) }, null, 2));
       await migrate(upgradeDatabase, { migrationsFolder });
       const userId = "a9f4da20-e9e9-44c4-a6a5-fc2cf5b9ed93"; const targetId = "f1e7a7a6-a3e6-458e-9f53-33cdbbf2d6ea"; const runId = "833f4544-376c-4f8d-81af-16e50df78624";

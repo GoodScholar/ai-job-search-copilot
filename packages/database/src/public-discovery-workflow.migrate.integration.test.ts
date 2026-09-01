@@ -54,6 +54,13 @@ describe("public discovery workflow migration", () => {
     expect(migrationSql).toContain('ordinal" between 1 and 5');
   });
 
+  it("以 additive 0028 将 verified Lead 绑定到 owner-bound final fact", async () => {
+    const migrationSql = await readFile(fileURLToPath(new URL("../migrations/0028_lead_verified_final.sql", import.meta.url)), "utf8");
+    expect(migrationSql).toContain('ADD COLUMN "verified_final_url"');
+    expect(migrationSql).toContain('UPDATE "job_discovery_leads" AS lead');
+    expect(migrationSql).toContain('verified lead final fact missing');
+  });
+
   it("从真实 0024 升级后保留旧事实，并以 PostgreSQL 约束 v4 diagnostics、attention、source issue 与 result", async () => {
     const container = await new PostgreSqlContainer("postgres:17-alpine").start();
     const database = createDatabase(container.getConnectionUri());
@@ -77,13 +84,15 @@ describe("public discovery workflow migration", () => {
         unlink(join(migrationsFolder, "0025_layered_public_discovery_workflow.sql")),
         unlink(join(migrationsFolder, "0026_discovery_attention.sql")),
         unlink(join(migrationsFolder, "0027_massive_purple_man.sql")),
+        unlink(join(migrationsFolder, "0028_lead_verified_final.sql")),
         unlink(join(migrationsFolder, "meta", "0025_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0026_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0027_snapshot.json")),
+        unlink(join(migrationsFolder, "meta", "0028_snapshot.json")),
       ]);
       const journalPath = join(migrationsFolder, "meta", "_journal.json");
       const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
-      journal.entries = journal.entries.filter(({ tag }) => !["0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man"].includes(tag));
+      journal.entries = journal.entries.filter(({ tag }) => !["0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_lead_verified_final"].includes(tag));
       await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
       await migrate(database, { migrationsFolder });
 
@@ -96,7 +105,7 @@ describe("public discovery workflow migration", () => {
       await insertRun(database, { userId: otherOwnerId, targetId: otherTargetId, runId: otherRunId, idempotencyKey: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" });
       await database.execute(sql`
         insert into job_source_postings (id, user_id, source_type, source_identifier, source_identity)
-        values ('dddddddd-dddd-4ddd-8ddd-dddddddddddd', ${ownerId}, 'official', 'source', '{}'::jsonb),
+        values ('dddddddd-dddd-4ddd-8ddd-dddddddddddd', ${ownerId}, 'official', 'source', '{"finalUrl":"https://jobs.example.com/opening?job=123"}'::jsonb),
                ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', ${otherOwnerId}, 'official', 'other-source', '{}'::jsonb)
       `);
       await database.execute(sql`
@@ -114,14 +123,21 @@ describe("public discovery workflow migration", () => {
         )
       `);
       await database.execute(sql`
+        update job_discovery_leads set state = 'verified', source_posting_version_id = ${versionId} where id = ${leadId}
+      `);
+      await database.execute(sql`
+        insert into job_discovery_attributions (id, user_id, run_id, lead_id, query_id, provider, source_posting_version_id)
+        values ('abababab-abab-4aba-8aba-abababababab', ${ownerId}, ${runId}, ${leadId}, ${queryId}, 'anysearch', ${versionId})
+      `);
+      await database.execute(sql`
         insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, kind, status, reason_code, budget_dimension)
         values ('12121212-1212-4121-8121-121212121212', ${ownerId}, ${runId}, 1, 'source_attention', 'open', 'SOURCE_HEALTH_ATTENTION', null)
       `);
 
       await migrateDatabase(database);
 
-      await expect(database.execute(sql`select id, normalized_url from job_discovery_leads where id = ${leadId}`)).resolves.toEqual([
-        { id: leadId, normalized_url: "https://jobs.example.com/opening?id=123" },
+      await expect(database.execute(sql`select id, normalized_url, verified_final_url from job_discovery_leads where id = ${leadId}`)).resolves.toEqual([
+        { id: leadId, normalized_url: "https://jobs.example.com/opening?id=123", verified_final_url: "https://jobs.example.com/opening?job=123" },
       ]);
       await expect(database.execute(sql`select kind, reason_code from agent_inbox_items where id = '12121212-1212-4121-8121-121212121212'`)).resolves.toEqual([
         { kind: "source_attention", reason_code: "SOURCE_HEALTH_ATTENTION" },
@@ -243,11 +259,11 @@ describe("public discovery workflow migration", () => {
         values ('42424242-4242-4424-8424-424242424242', ${ownerId}, ${runId}, ${versionId}, 2)
       `)).rejects.toMatchObject({ cause: { code: "23505" } });
 
-      const snapshots = await Promise.all(["0024", "0025", "0026", "0027"].map(async (number) => JSON.parse(await readFile(fileURLToPath(new URL(`../migrations/meta/${number}_snapshot.json`, import.meta.url)), "utf8")) as { id: string; prevId: string }));
+      const snapshots = await Promise.all(["0024", "0025", "0026", "0027", "0028"].map(async (number) => JSON.parse(await readFile(fileURLToPath(new URL(`../migrations/meta/${number}_snapshot.json`, import.meta.url)), "utf8")) as { id: string; prevId: string }));
       const currentJournal = JSON.parse(await readFile(fileURLToPath(new URL("../migrations/meta/_journal.json", import.meta.url)), "utf8")) as { entries: Array<{ tag: string }> };
       expect(snapshots.slice(1).map((snapshot) => snapshot.prevId)).toEqual(snapshots.slice(0, -1).map((snapshot) => snapshot.id));
-      expect(currentJournal.entries.slice(-4).map(({ tag }) => tag)).toEqual([
-        "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man",
+      expect(currentJournal.entries.slice(-5).map(({ tag }) => tag)).toEqual([
+        "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_lead_verified_final",
       ]);
     } finally {
       await database.$client.end();

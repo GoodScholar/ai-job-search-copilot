@@ -628,6 +628,7 @@ export const jobDiscoveryLeads = pgTable("job_discovery_leads", {
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   state: varchar("state", { length: 16 }).notNull().default("pending"),
   sourcePostingVersionId: uuid("source_posting_version_id"),
+  verifiedFinalUrl: varchar("verified_final_url", { length: 2_048 }),
   rejectionCode: varchar("rejection_code", { length: 64 }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -651,13 +652,14 @@ export const jobDiscoveryLeads = pgTable("job_discovery_leads", {
   check("job_discovery_leads_query_fingerprint_format", sql`${table.queryFingerprint} ~ '^[0-9a-f]{64}$'`),
   check("job_discovery_leads_stable_fingerprint_format", sql`${table.stableFingerprint} ~ '^[0-9a-f]{64}$'`),
   check("job_discovery_leads_url_length_check", sql`length(${table.normalizedUrl}) between 1 and 2048`),
+  check("job_discovery_leads_verified_final_url_length_check", sql`${table.verifiedFinalUrl} is null or length(${table.verifiedFinalUrl}) between 1 and 2048`),
   check("job_discovery_leads_ttl_check", sql`${table.expiresAt} = ${table.createdAt} + interval '30 days'`),
   check("job_discovery_leads_state_check", sql`${table.state} in ('pending', 'verified', 'rejected')`),
   check("job_discovery_leads_rejection_code_check", sql`${table.rejectionCode} is null or ${table.rejectionCode} ~ '^[A-Z][A-Z0-9_]{1,63}$'`),
   check("job_discovery_leads_outcome_check", sql`
-    (${table.state} = 'pending' and ${table.sourcePostingVersionId} is null and ${table.rejectionCode} is null)
-    or (${table.state} = 'verified' and ${table.sourcePostingVersionId} is not null and ${table.rejectionCode} is null)
-    or (${table.state} = 'rejected' and ${table.sourcePostingVersionId} is null and ${table.rejectionCode} is not null)
+    (${table.state} = 'pending' and ${table.sourcePostingVersionId} is null and ${table.verifiedFinalUrl} is null and ${table.rejectionCode} is null)
+    or (${table.state} = 'verified' and ${table.sourcePostingVersionId} is not null and ${table.verifiedFinalUrl} is not null and ${table.rejectionCode} is null)
+    or (${table.state} = 'rejected' and ${table.sourcePostingVersionId} is null and ${table.verifiedFinalUrl} is null and ${table.rejectionCode} is not null)
   `),
 ]);
 

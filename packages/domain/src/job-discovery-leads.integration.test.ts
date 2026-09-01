@@ -21,6 +21,7 @@ import { createJobDiscoveryLeadTransitions } from "./job-discovery-lead-transiti
 const now = new Date("2026-08-30T12:00:00.000Z");
 const fingerprint = "a".repeat(64);
 const queryFingerprint = "b".repeat(64);
+const verifiedFinalUrl = "https://jobs.example.com/opening?job=123";
 
 describe("job discovery lead repository", () => {
   let container: StartedPostgreSqlContainer;
@@ -169,7 +170,7 @@ describe("job discovery lead repository", () => {
     expect(first).toMatchObject({ state: "rejected", sourcePostingVersionId: null, rejectionCode: "POLICY_REJECTED" });
     await expect(repository().reject({ userId: subject.userId, leadId: created.leadId, rejectionCode: "UNSAFE_URL", now }))
       .rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_REJECTION_CONFLICT" } satisfies Partial<JobDiscoveryLeadError>);
-    await expect(repository().verifyAndAttribute({ userId: subject.userId, leadId: created.leadId, sourcePostingVersionId: subject.versionId, now }))
+    await expect(repository().verifyAndAttribute({ userId: subject.userId, leadId: created.leadId, sourcePostingVersionId: subject.versionId, verifiedFinalUrl, now }))
       .rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_STATE_CONFLICT" } satisfies Partial<JobDiscoveryLeadError>);
   });
 
@@ -182,8 +183,8 @@ describe("job discovery lead repository", () => {
       database.select().from(agentRunJobResults).where(eq(agentRunJobResults.userId, subject.userId)),
     ]);
     const [first, retry] = await Promise.all([
-      repository().verifyAndAttribute({ userId: subject.userId, leadId: created.leadId, sourcePostingVersionId: subject.versionId, now }),
-      repository().verifyAndAttribute({ userId: subject.userId, leadId: created.leadId, sourcePostingVersionId: subject.versionId, now }),
+      repository().verifyAndAttribute({ userId: subject.userId, leadId: created.leadId, sourcePostingVersionId: subject.versionId, verifiedFinalUrl, now }),
+      repository().verifyAndAttribute({ userId: subject.userId, leadId: created.leadId, sourcePostingVersionId: subject.versionId, verifiedFinalUrl, now }),
     ]);
 
     expect(retry).toEqual(first);
@@ -206,9 +207,9 @@ describe("job discovery lead repository", () => {
     await expect(repository().getLead({ userId: other.userId, leadId: created.leadId, now })).resolves.toBeNull();
     await expect(repository().reject({ userId: other.userId, leadId: created.leadId, rejectionCode: "POLICY_REJECTED", now }))
       .rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_NOT_FOUND" } satisfies Partial<JobDiscoveryLeadError>);
-    await expect(repository().verifyAndAttribute({ userId: subject.userId, leadId: created.leadId, sourcePostingVersionId: other.versionId, now }))
+    await expect(repository().verifyAndAttribute({ userId: subject.userId, leadId: created.leadId, sourcePostingVersionId: other.versionId, verifiedFinalUrl, now }))
       .rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_VERSION_NOT_FOUND" } satisfies Partial<JobDiscoveryLeadError>);
-    await expect(repository().verifyAndAttribute({ userId: other.userId, leadId: created.leadId, sourcePostingVersionId: other.versionId, now }))
+    await expect(repository().verifyAndAttribute({ userId: other.userId, leadId: created.leadId, sourcePostingVersionId: other.versionId, verifiedFinalUrl, now }))
       .rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_NOT_FOUND" } satisfies Partial<JobDiscoveryLeadError>);
     await expect(database.select().from(jobDiscoveryLeads).where(eq(jobDiscoveryLeads.id, created.leadId)))
       .resolves.toEqual([expect.objectContaining({ state: "pending", sourcePostingVersionId: null, rejectionCode: null })]);
@@ -224,7 +225,7 @@ describe("job discovery lead repository", () => {
     expect(second).toEqual(first);
     await expect(repository().reject({ userId: subject.userId, leadId: first.leadId, rejectionCode: "POLICY_REJECTED", now: new Date("2026-09-29T12:00:00.000Z") }))
       .rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_EXPIRED" } satisfies Partial<JobDiscoveryLeadError>);
-    await expect(repository().verifyAndAttribute({ userId: subject.userId, leadId: first.leadId, sourcePostingVersionId: subject.versionId, now: new Date("2026-09-29T12:00:00.000Z") }))
+    await expect(repository().verifyAndAttribute({ userId: subject.userId, leadId: first.leadId, sourcePostingVersionId: subject.versionId, verifiedFinalUrl, now: new Date("2026-09-29T12:00:00.000Z") }))
       .rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_EXPIRED" } satisfies Partial<JobDiscoveryLeadError>);
     await expect(database.select().from(jobDiscoveryLeads).where(eq(jobDiscoveryLeads.id, first.leadId))).resolves.toEqual([expect.objectContaining({ state: "pending" })]);
   });

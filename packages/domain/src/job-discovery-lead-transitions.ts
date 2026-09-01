@@ -1,11 +1,12 @@
 import { and, eq, gt } from "drizzle-orm";
 import { jobDiscoveryAttributions, jobDiscoveryLeads, jobSourcePostingVersions, type Database } from "@job-copilot/database";
+import { SafeNormalizedPublicJobUrlSchema } from "@job-copilot/contracts/job-discovery";
 import { z } from "zod";
 import { attributionFact, JobDiscoveryLeadError, leadFact, parseLeadInput } from "./job-discovery-lead-internal";
 
 const rejectionCode = z.string().regex(/^[A-Z][A-Z0-9_]{1,63}$/u);
 const RejectInputSchema = z.object({ userId: z.uuid(), leadId: z.uuid(), rejectionCode, now: z.date() }).strict();
-const VerifyInputSchema = z.object({ userId: z.uuid(), leadId: z.uuid(), sourcePostingVersionId: z.uuid(), now: z.date() }).strict();
+const VerifyInputSchema = z.object({ userId: z.uuid(), leadId: z.uuid(), sourcePostingVersionId: z.uuid(), verifiedFinalUrl: SafeNormalizedPublicJobUrlSchema, now: z.date() }).strict();
 type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
 function attributionInsertError(error: unknown): JobDiscoveryLeadError | null {
@@ -24,7 +25,7 @@ export function createJobDiscoveryLeadTransitions({ db, id }: { db: Database; id
     )).limit(1);
     if (!version) throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_VERSION_NOT_FOUND");
     const [updated] = await transaction.update(jobDiscoveryLeads).set({
-      state: "verified", sourcePostingVersionId: input.sourcePostingVersionId, updatedAt: input.now,
+      state: "verified", sourcePostingVersionId: input.sourcePostingVersionId, verifiedFinalUrl: input.verifiedFinalUrl, updatedAt: input.now,
     }).where(and(
       eq(jobDiscoveryLeads.userId, input.userId), eq(jobDiscoveryLeads.id, input.leadId),
       eq(jobDiscoveryLeads.state, "pending"), gt(jobDiscoveryLeads.expiresAt, input.now),
@@ -35,7 +36,7 @@ export function createJobDiscoveryLeadTransitions({ db, id }: { db: Database; id
     if (!lead) throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_NOT_FOUND");
     if (input.now.getTime() >= lead.expiresAt.getTime() && lead.state === "pending") throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_EXPIRED");
     if (lead.state === "rejected" || lead.state === "pending") throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_STATE_CONFLICT");
-    if (lead.sourcePostingVersionId !== input.sourcePostingVersionId) throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_ATTRIBUTION_CONFLICT");
+    if (lead.sourcePostingVersionId !== input.sourcePostingVersionId || lead.verifiedFinalUrl !== input.verifiedFinalUrl) throw new JobDiscoveryLeadError("JOB_DISCOVERY_LEAD_ATTRIBUTION_CONFLICT");
     try {
       await transaction.insert(jobDiscoveryAttributions).values({
         id: id(), userId: input.userId, runId: lead.runId, leadId: lead.id, queryId: lead.queryId,
