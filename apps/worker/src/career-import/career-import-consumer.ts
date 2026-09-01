@@ -2,22 +2,9 @@ import { Worker } from "bullmq";
 import Redis from "ioredis";
 import { CAREER_IMPORT_QUEUE, CareerImportJobSchema } from "@job-copilot/contracts/career-import";
 import type { createCareerImportProcessor } from "@job-copilot/domain/career-imports";
+import { closeWithinDeadline } from "../close-within-deadline.js";
 
 type CareerImportProcessor = ReturnType<typeof createCareerImportProcessor>;
-const CLOSE_TIMEOUT_MS = 5_000;
-
-async function closeWithinDeadline(operation: Promise<unknown>): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([
-      operation,
-      new Promise<void>((_, reject) => { timer = setTimeout(() => reject(new Error("career import close deadline")), CLOSE_TIMEOUT_MS); }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
 export class CareerImportConsumer {
   private readonly redis: Redis;
   private readonly worker: Worker;
@@ -39,12 +26,12 @@ export class CareerImportConsumer {
 
   private async closeResources(): Promise<void> {
     try {
-      await closeWithinDeadline(this.worker.close());
+      await closeWithinDeadline(this.worker.close(), "career import close deadline");
     } catch {
       // Redis fallback below releases the remaining live connection.
     }
     try {
-      if (this.redis.status !== "end") await closeWithinDeadline(this.redis.quit());
+      if (this.redis.status !== "end") await closeWithinDeadline(this.redis.quit(), "career import close deadline");
     } catch {
       // Disconnect below is the non-blocking final fallback.
     } finally {
