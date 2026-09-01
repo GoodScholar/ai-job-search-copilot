@@ -421,6 +421,9 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
     const elapsed = await settleActiveSlice(transaction, { id: deps.id, userId: input.userId, run, now: input.now });
     const activeDurationMs = run.activeDurationMs + elapsed;
     const version = run.version + 1;
+    // The durable child is part of the discovery completion transaction. Queue delivery
+    // remains deliberately best-effort and is performed only after commit.
+    await ensureDeepMatchRunInTransaction({ transaction, id: deps.id, clock: deps.clock, userId: input.userId, targetId: run.targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(run.id), trigger: "automatic" });
     await transaction.update(agentRunSteps).set({ status: "completed", completedAt: input.now, failedAt: null, failureCode: null }).where(and(
       eq(agentRunSteps.userId, input.userId), eq(agentRunSteps.runId, input.runId), eq(agentRunSteps.status, "running"),
     ));
@@ -678,6 +681,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           const detailsComplete = await transition("fetch_details", true); if (detailsComplete) return detailsComplete;
           const persistStart = await transition("persist_results", false); if (persistStart) return persistStart;
           const persisted = await persistLayeredPublicOutcome(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), deadline, diagnostics: outcome.diagnostics, sourceIssues: outcome.sourceIssues ?? [], sourcePostingVersionIds: outcome.sourcePostingVersionIds ?? [], trustedSourcePostingVersionIds: outcome.trustedSourcePostingVersionIds ?? [], trustedSourceIds: layeredExecutionSpec.sourceScope.trustedSources.map(({ source }) => source.sourceId) });
+          if (persisted === "completed") await triggerDeepMatchAfterDiscovery({ db: deps.db, id: deps.id, clock: deps.clock, queue: deps.matchingQueue, userId: job.userId, targetId: claimed.run.targetId, discoveryRunId: job.runId });
           return persisted === "facts" ? "stale" : persisted;
         } catch (error) {
           const heartbeatControl = await persistHeartbeatControl(latestDiagnostics);
