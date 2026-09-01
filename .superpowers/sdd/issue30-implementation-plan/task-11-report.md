@@ -87,3 +87,24 @@ Round 4 safe evidence:
 Accepted red scans report `forbidden=0`; failed assertions expose only a boolean/count. Migration-focused application coverage is 15/15; the final combined migration run is 39/39; Gate plus Lead coverage is 34/34. Database and Domain typechecks passed, and static Drizzle reported `Everything's fine`.
 
 Invalid attempt: the first outer non-object JSON fixture was rejected by a pre-0028 object constraint before the migration began, so it was not migration evidence. Its raw log was deleted, and the accepted table uses a non-scalar value inside an otherwise valid historical object. Temporary unfiltered Testcontainers logs were also removed; only the listed safe logs remain. No product/API projection changed: the internal final fact stays absent from public Lead output.
+
+## Final Review Fix Round 5
+
+Repository history confirms that the fixed baseline contains neither `0024`, `0027`, nor `0028`; the only local ref is the detached review chain and no tag or published branch contains these migrations. The reviewer description called `0027` the Lead-table creation point, but the actual creation point is `0024`. Therefore this round changes only the unreleased Issue #30 chain by putting the final field and state/length constraints into `0024`, removing `0028` and its snapshot/journal entry. No fixed-baseline migration was rewritten.
+
+| Finding | Red → Green | Actual behavior evidence |
+| --- | --- | --- |
+| Fresh-chain final fact | `247e35f` → `96f11df` | A temporary fresh chain with `0028` omitted lacked the final column and failed only a neutral boolean assertion. Green creates it directly in the original unreleased Lead-table migration. |
+| One URL-policy authority | same Green | The database regex constraint and all recovery parsing are gone. Runtime keeps the shared contract schema and Gate validation in the verify-and-attribute transaction. Contract coverage includes port zero, an ICANN Unicode host and a percent-decoded identity value. |
+| Requested/final/canonical origin | existing Gate seam rerun | The Gate integration's full chain test rejects a foreign requested, final or canonical URL before facts are written; it remains transaction-bound and does not rely on a database URL regex. |
+| Recovery fixture duplication | same Green | Removed the obsolete recovery/application fixtures and retained compact additive migration checks plus the fresh-chain application seam. |
+
+Round 4's `0028` recovery implementation and logs are SUPERSEDED, not accepted final-schema evidence, because the entire migration was unreleased and removed. The Lead-bound runtime fact, replay behavior, owner-bound FK, length/state constraints, and public Lead projection remain covered; no legacy database recovery path exists in the final chain.
+
+Round 5 safe evidence:
+
+- `/tmp/issue30-task11-r5-fresh-chain-red.log`, `/tmp/issue30-task11-r5-migration-green.log`
+- `/tmp/issue30-task11-r5-database-migrations.log`, `/tmp/issue30-task11-r5-contracts-url-policy-final.log`, `/tmp/issue30-task11-r5-gate-leads.log`
+- `/tmp/issue30-task11-r5-database-typecheck.log`, `/tmp/issue30-task11-r5-contracts-typecheck.log`, `/tmp/issue30-task11-r5-domain-typecheck.log`, `/tmp/issue30-task11-r5-drizzle-check.log`
+
+Counts: database migration/application 28/28; contracts URL policy 8/8; Gate plus Lead 34/34. Database, Contracts and Domain typechecks passed; static Drizzle reported `Everything's fine`. The Red scan reported `forbidden=0`. No invalid test attempt in this round.
