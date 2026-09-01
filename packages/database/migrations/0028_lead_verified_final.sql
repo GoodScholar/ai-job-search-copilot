@@ -27,10 +27,13 @@ DO $$ BEGIN
       AND (
         "verified_final_url" IS NULL
         OR length("verified_final_url") NOT BETWEEN 1 AND 2048
+        OR "verified_final_url" !~* '^https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+(?:\:[1-9][0-9]{0,4})?(?:/[^?#]*)?(?:\?(?:(?:id|job|jobid|job_id|openingid|opening_id|positionid|position_id|requisitionid|requisition_id)=[A-Za-z0-9._~-]{1,128}(?:&(?:id|job|jobid|job_id|openingid|opening_id|positionid|position_id|requisitionid|requisition_id)=[A-Za-z0-9._~-]{1,128})*)?)?$'
+        OR "verified_final_url" ~* '^https://(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?::|/|\?|$)'
       )
   ) THEN RAISE EXCEPTION 'verified lead final fact missing'; END IF;
 END $$;--> statement-breakpoint
 ALTER TABLE "job_discovery_leads" ADD CONSTRAINT "job_discovery_leads_verified_final_url_length_check" CHECK ("job_discovery_leads"."verified_final_url" is null or length("job_discovery_leads"."verified_final_url") between 1 and 2048);--> statement-breakpoint
+ALTER TABLE "job_discovery_leads" ADD CONSTRAINT "job_discovery_leads_verified_final_url_safe_check" CHECK ("job_discovery_leads"."verified_final_url" is null or ("job_discovery_leads"."verified_final_url" ~* '^https://[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+(?:\:[1-9][0-9]{0,4})?(?:/[^?#]*)?(?:\?(?:(?:id|job|jobid|job_id|openingid|opening_id|positionid|position_id|requisitionid|requisition_id)=[A-Za-z0-9._~-]{1,128}(?:&(?:id|job|jobid|job_id|openingid|opening_id|positionid|position_id|requisitionid|requisition_id)=[A-Za-z0-9._~-]{1,128})*)?)?$' and "job_discovery_leads"."verified_final_url" !~* '^https://(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?::|/|\?|$)'));--> statement-breakpoint
 DO $$ BEGIN
   IF EXISTS (
     SELECT 1
