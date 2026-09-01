@@ -61,18 +61,20 @@ export async function persistJobOpportunity(db: PersistenceDb, input: {
     const [created] = await db.insert(jobOpportunities).values({ id: input.id(), userId: input.userId, importId: input.importId, sourcePostingVersionId: input.sourcePostingVersionId, dedupKey, company: input.company, title: input.title, location: input.location, postedAt: input.postedAt ? new Date(input.postedAt) : null, deadline: input.deadline ? new Date(input.deadline) : null, description: input.description, normalizedData: input.normalizedData, createdAt: input.now, updatedAt: input.now }).returning({ id: jobOpportunities.id });
     if (!created) throw new Error("AGENT_RUN_PERSIST_FAILED");
     opportunity = created;
-  } else if (input.isOfficial) {
+  } else {
     // An earlier official source may already have advanced this normalized
     // identity. Attach the new source version to that canonical opportunity
     // instead of attempting a conflicting dedup-key update.
-    const [canonical] = await db.select({ id: jobOpportunities.id }).from(jobOpportunities).where(and(
-      eq(jobOpportunities.userId, input.userId), eq(jobOpportunities.dedupKey, dedupKey), isNull(jobOpportunities.canonicalOpportunityId),
-    ));
-    if (canonical && canonical.id !== opportunity.id) {
-      await db.update(jobOpportunities).set({ canonicalOpportunityId: canonical.id, updatedAt: input.now }).where(and(
-        eq(jobOpportunities.userId, input.userId), eq(jobOpportunities.id, opportunity.id), isNull(jobOpportunities.canonicalOpportunityId),
+    if (input.isOfficial) {
+      const [canonical] = await db.select({ id: jobOpportunities.id }).from(jobOpportunities).where(and(
+        eq(jobOpportunities.userId, input.userId), eq(jobOpportunities.dedupKey, dedupKey), isNull(jobOpportunities.canonicalOpportunityId),
       ));
-      opportunity = canonical;
+      if (canonical && canonical.id !== opportunity.id) {
+        await db.update(jobOpportunities).set({ canonicalOpportunityId: canonical.id, updatedAt: input.now }).where(and(
+          eq(jobOpportunities.userId, input.userId), eq(jobOpportunities.id, opportunity.id), isNull(jobOpportunities.canonicalOpportunityId),
+        ));
+        opportunity = canonical;
+      }
     }
     const [current] = await db.select({ sourcePostingVersionId: jobOpportunities.sourcePostingVersionId }).from(jobOpportunities)
       .where(and(eq(jobOpportunities.userId, input.userId), eq(jobOpportunities.id, opportunity.id)));
