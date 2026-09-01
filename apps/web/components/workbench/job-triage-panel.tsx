@@ -1,7 +1,7 @@
 "use client";
 
 import type { JobTarget } from "@job-copilot/contracts/job-targets";
-import { JobTriageVersionSchema, type JobTriageVersion } from "@job-copilot/contracts/job-triage";
+import { JOB_TRIAGE_GATES, JobTriageVersionSchema, type JobTriageVersion } from "@job-copilot/contracts/job-triage";
 import { useEffect, useState } from "react";
 import { createJobTriageAction } from "@/app/(workbench)/jobs/import/actions";
 
@@ -11,20 +11,20 @@ const gateText = { location: "地点", work_mode: "工作方式", relocation: "�
 
 export function JobTriagePanel({ opportunityId, targets, initialVersion }: { opportunityId: string; targets: JobTarget[]; initialVersion: JobTriageVersion | null }) {
   const activeTargets = targets.filter((target) => target.state === "active");
-  const [targetId, setTargetId] = useState(activeTargets[0]?.targetId ?? "");
+  const [targetId, setTargetId] = useState(initialVersion?.targetId ?? activeTargets[0]?.targetId ?? "");
   const [version, setVersion] = useState(initialVersion);
   const [message, setMessage] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
   useEffect(() => {
-    if (initialVersion || !activeTargets.length) return;
+    if (!targetId) return;
     let cancelled = false;
-    void fetch(`/api/job-opportunities/${opportunityId}/triage-versions`, { signal: AbortSignal.timeout(10_000) })
+    void fetch(`/api/job-opportunities/${opportunityId}/triage-versions?targetId=${encodeURIComponent(targetId)}`, { signal: AbortSignal.timeout(10_000) })
       .then(async (response) => response.ok ? JobTriageVersionSchema.safeParse(await response.json()) : null)
-      .then((parsed) => { if (!cancelled && parsed?.success) setVersion(parsed.data); })
+      .then((parsed) => { if (!cancelled) setVersion(parsed?.success ? parsed.data : null); })
       .catch(() => undefined);
     return () => { cancelled = true; };
-  }, [activeTargets.length, initialVersion, opportunityId]);
+  }, [opportunityId, targetId]);
 
   async function evaluate() {
     if (!targetId) return;
@@ -44,7 +44,7 @@ export function JobTriagePanel({ opportunityId, targets, initialVersion }: { opp
     <h2 id="job-triage-title">资格门槛与粗排</h2>
     {activeTargets.length ? <div>
       <label htmlFor={`triage-target-${opportunityId}`}>用于评估的求职目标</label>
-      <select id={`triage-target-${opportunityId}`} onChange={(event) => setTargetId(event.target.value)} value={targetId}>
+      <select id={`triage-target-${opportunityId}`} onChange={(event) => { setVersion(null); setTargetId(event.target.value); }} value={targetId}>
         {activeTargets.map((target) => <option key={target.targetId} value={target.targetId}>{target.constraints.roleFamily}</option>)}
       </select>
       <button className="workbench-touch-target" disabled={pending} onClick={() => void evaluate()} type="button">{pending ? "正在评估" : "开始资格与粗排"}</button>
@@ -52,11 +52,11 @@ export function JobTriagePanel({ opportunityId, targets, initialVersion }: { opp
     {message && <p role="status">{message}</p>}
     {version && <div aria-live="polite" className="job-triage-results">
       <p><strong>{verdictText[version.overallVerdict]}</strong> · {deadlineText[version.deadlineStatus]} · 置信度 {Math.round(version.confidenceBasisPoints / 100)}%</p>
-      <ul>{Object.entries(version.gateResults).map(([gate, result]) => <li key={gate}><strong>{gateText[gate as keyof typeof gateText]}</strong>：{verdictText[result.verdict]}（{result.reasonCode}）
-        <ul>{result.jobEvidence && <li>岗位证据：{result.jobEvidence.path}（{result.jobEvidence.value}）</li>}{result.candidateEvidence && <li>画像或目标证据：{result.candidateEvidence.kind === "target_constraint" ? result.candidateEvidence.path : result.candidateEvidence.factId}</li>}</ul>
-      </li>)}</ul>
+      <ul>{JOB_TRIAGE_GATES.map((gate) => { const result = version.gateResults[gate]; return <li key={gate}><strong>{gateText[gate]}</strong>：{verdictText[result.verdict]}
+        <ul>{result.jobEvidence && <li>岗位证据：{result.jobEvidence.value}</li>}{result.candidateEvidence && <li>画像或目标证据：{result.candidateEvidence.kind === "target_constraint" ? "已设置的求职目标条件" : "已确认的画像事实"}</li>}</ul>
+      </li>; })}</ul>
       {version.pendingItems.length > 0 && <ul aria-label="待补充事项">{version.pendingItems.map((item) => <li key={`${item.gate}-${item.reasonCode}`}>{item.message}</li>)}</ul>}
-      {version.overallVerdict === "pass" && version.dimensionScores && <div><h3>粗排总分：{version.overallScore}/{version.threshold}</h3><p>仅用于进入后续候选或低于粗排阈值，不代表正式匹配。</p><ul><li>技术：{version.dimensionScores.technical.score}（{version.dimensionScores.technical.reasonCode}）</li><li>经验：{version.dimensionScores.experience.score}（{version.dimensionScores.experience.reasonCode}）</li><li>目标对齐：{version.dimensionScores.targetAlignment.score}（{version.dimensionScores.targetAlignment.reasonCode}）</li></ul></div>}
+      {version.overallVerdict === "pass" && version.dimensionScores && <div><h3>粗排总分：{version.overallScore}/{version.threshold}</h3><p>仅用于进入后续候选或低于粗排阈值，不代表正式匹配。</p><ul><li>技术：{version.dimensionScores.technical.score}{version.dimensionScores.technical.missing.length ? "（证据待补充，按中性分计算）" : ""}</li><li>经验：{version.dimensionScores.experience.score}{version.dimensionScores.experience.missing.length ? "（证据待补充，按中性分计算）" : ""}</li><li>目标对齐：{version.dimensionScores.targetAlignment.score}{version.dimensionScores.targetAlignment.missing.length ? "（证据待补充，按中性分计算）" : ""}</li></ul></div>}
     </div>}
   </section>;
 }

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpStatus, Inject, Param, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, HttpStatus, Inject, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { ApiBadRequestResponse, ApiBearerAuth, ApiConflictResponse, ApiNotFoundResponse, ApiUnauthorizedResponse } from "@nestjs/swagger";
 import { CreateJobTriageVersionCommandSchema, JobTriageVersionSchema } from "@job-copilot/contracts/job-triage";
 import { JobTriageError } from "@job-copilot/domain/job-triage-persistence";
@@ -15,6 +15,7 @@ class JobTriageVersionDto extends createZodDto(JobTriageVersionSchema) {}
 class CreateJobTriageVersionCommandDto extends createZodDto(CreateJobTriageVersionCommandSchema) {}
 class OpportunityPathDto extends createZodDto(z.object({ opportunityId: z.uuid() }).strict()) {}
 class VersionPathDto extends createZodDto(z.object({ opportunityId: z.uuid(), triageVersionId: z.uuid() }).strict()) {}
+class LatestQueryDto extends createZodDto(z.object({ targetId: z.uuid() }).strict()) {}
 
 function triageProblem(error: unknown): never {
   if (!(error instanceof JobTriageError)) throw error;
@@ -49,8 +50,8 @@ export class JobTriageController {
   @Get("latest")
   @ZodResponse({ type: JobTriageVersionDto, status: HttpStatus.OK })
   @ApiNotFoundResponse({ type: ApiProblem })
-  getLatest(@Req() request: FastifyRequest, @Param() params: OpportunityPathDto) {
-    return this.requireVersion(this.queries.getLatest({ userId: request.authenticatedAccount!.userId, opportunityId: params.opportunityId }));
+  getLatest(@Req() request: FastifyRequest, @Param() params: OpportunityPathDto, @Query() query: LatestQueryDto) {
+    return this.requireVersion(this.queries.getLatest({ userId: request.authenticatedAccount!.userId, opportunityId: params.opportunityId, targetId: query.targetId }));
   }
 
   @Get(":triageVersionId")

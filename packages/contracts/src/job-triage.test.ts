@@ -23,13 +23,14 @@ describe("job triage contracts", () => {
       },
       pendingItems: [], deadlineStatus: "valid", confidenceBasisPoints: 10000,
       dimensionScores: {
-        technical: { score: 50, reasonCode: "REQUIRED_SKILLS_MISSING_NEUTRAL" },
-        experience: { score: 50, reasonCode: "EXPERIENCE_EVIDENCE_MISSING_NEUTRAL" },
-        targetAlignment: { score: 50, reasonCode: "TARGET_ALIGNMENT_EVIDENCE_MISSING_NEUTRAL" },
+        technical: { score: 50, reasonCode: "REQUIRED_SKILLS_MISSING_NEUTRAL", jobEvidence: [], candidateEvidence: [], missing: ["job.requirements"] },
+        experience: { score: 50, reasonCode: "EXPERIENCE_EVIDENCE_MISSING_NEUTRAL", jobEvidence: [], candidateEvidence: [], missing: ["profile.experience"] },
+        targetAlignment: { score: 50, reasonCode: "TARGET_ALIGNMENT_EVIDENCE_MISSING_NEUTRAL", jobEvidence: [], candidateEvidence: [], missing: ["target.alignment"] },
       },
-      overallScore: 50, threshold: 60, createdAt: "2026-09-01T00:00:00.000Z",
+      overallScore: 50, threshold: 60, sequence: 1, createdAt: "2026-09-01T00:00:00.000Z",
     });
-    expect(version.dimensionScores?.experience).toEqual({ score: 50, reasonCode: "EXPERIENCE_EVIDENCE_MISSING_NEUTRAL" });
+    expect(version.dimensionScores?.experience).toMatchObject({ score: 50, missing: ["profile.experience"] });
     expect(() => JobTriageVersionSchema.parse({ ...version, sourceProse: "不得记录" })).toThrow();
+    expect(() => JobTriageVersionSchema.parse({ ...version, gateResults: { ...version.gateResults, location: { ...passedLocation, reasonCode: "UNRECOGNIZED_REASON" } } })).toThrow();
   });
 });

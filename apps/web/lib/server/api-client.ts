@@ -517,8 +517,8 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
       return parseSuccess(response, JobTriageVersionSchema);
     },
 
-    async getLatestJobTriageVersion(sessionToken: string, opportunityId: string): Promise<JobTriageVersion> {
-      const response = await request(`/v1/job-opportunities/${opportunityId}/triage-versions/latest`, {
+    async getLatestJobTriageVersion(sessionToken: string, opportunityId: string, targetId: string): Promise<JobTriageVersion> {
+      const response = await request(`/v1/job-opportunities/${opportunityId}/triage-versions/latest?targetId=${encodeURIComponent(targetId)}`, {
         method: "GET", headers: { authorization: `Bearer ${sessionToken}` }, cache: "no-store",
       });
       if (!response.ok) {

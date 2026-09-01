@@ -24,7 +24,7 @@ function projection(row: TriageRow): JobTriageVersion {
     triageVersionId: row.id, opportunityId: row.opportunityId, targetId: row.targetId,
     overallVerdict: row.overallVerdict, gateResults: row.gateResults, pendingItems: row.pendingItems,
     deadlineStatus: row.deadlineStatus, confidenceBasisPoints: row.confidenceBasisPoints,
-    dimensionScores: row.dimensionScores, overallScore: row.overallScore, threshold: row.threshold,
+    dimensionScores: row.dimensionScores, overallScore: row.overallScore, threshold: row.threshold, sequence: row.sequence,
     createdAt: row.createdAt.toISOString(),
   });
 }
@@ -101,13 +101,15 @@ export function createJobTriageCommands(deps: { db: Database; auditTrail: AuditT
           job: { company: opportunity.company, title: opportunity.title, location: opportunity.location, deadline: opportunity.deadline?.toISOString() ?? normalized.deadline, deadlineProvenance: normalized.deadlineProvenance, qualifications: normalized.qualifications },
           facts,
         });
+        const previous = await transaction.select({ sequence: jobTriageVersions.sequence }).from(jobTriageVersions)
+          .where(and(eq(jobTriageVersions.userId, input.userId), eq(jobTriageVersions.opportunityId, opportunity.id))).orderBy(desc(jobTriageVersions.sequence)).limit(1);
         const [created] = await transaction.insert(jobTriageVersions).values({
           id: deps.id(), userId: input.userId, opportunityId: opportunity.id, sourcePostingVersionId: opportunity.sourcePostingVersionId,
           profileId: profile.id, profileVersion: profile.version, targetId: target.id, targetVersion: target.version,
           qualificationRuleVersion: QUALIFICATION_RULE_VERSION, coarseRuleVersion: COARSE_RULE_VERSION,
           overallVerdict: triage.overallVerdict, gateResults: triage.gateResults, pendingItems: triage.pendingItems,
           deadlineStatus: triage.deadlineStatus, confidenceBasisPoints: triage.confidenceBasisPoints,
-          dimensionScores: triage.dimensionScores, overallScore: triage.overallScore, threshold: triage.threshold, createdAt: deps.clock(),
+          dimensionScores: triage.dimensionScores, overallScore: triage.overallScore, threshold: triage.threshold, sequence: (previous[0]?.sequence ?? 0) + 1, createdAt: deps.clock(),
         }).returning();
         if (!created) throw new Error("JOB_TRIAGE_PERSIST_FAILED");
         await deps.auditTrail.bind(transaction).append({
@@ -122,13 +124,13 @@ export function createJobTriageCommands(deps: { db: Database; auditTrail: AuditT
 }
 
 export function createJobTriageQueries(deps: { db: Database }): {
-  getLatest(input: { userId: string; opportunityId: string }): Promise<JobTriageVersion | null>;
+  getLatest(input: { userId: string; opportunityId: string; targetId: string }): Promise<JobTriageVersion | null>;
   get(input: { userId: string; opportunityId: string; triageVersionId: string }): Promise<JobTriageVersion | null>;
 } {
   return {
     async getLatest(input) {
-      const [row] = await deps.db.select().from(jobTriageVersions).where(and(eq(jobTriageVersions.userId, input.userId), eq(jobTriageVersions.opportunityId, input.opportunityId)))
-        .orderBy(desc(jobTriageVersions.createdAt), desc(jobTriageVersions.id)).limit(1);
+      const [row] = await deps.db.select().from(jobTriageVersions).where(and(eq(jobTriageVersions.userId, input.userId), eq(jobTriageVersions.opportunityId, input.opportunityId), eq(jobTriageVersions.targetId, input.targetId)))
+        .orderBy(desc(jobTriageVersions.sequence)).limit(1);
       return row ? projection(row) : null;
     },
     async get(input) {

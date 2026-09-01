@@ -142,3 +142,12 @@
 ### 提交前复验
 
 - Mobile overflow CSS 修复后，再次串行执行 `pnpm typecheck && pnpm lint && pnpm build && git diff --check`：exit 0。随后仅移除了本次 build 生成的 API/Worker `dist` 文件；工作树保留的均为 Issue #12 源码、测试、迁移及本报告。
+
+### Supervisor 第 1 轮 REWORK 修复
+
+- S1/S5：九 gate 改为共享 gate keys；语言逐项验证，结构化公司/行业/雇佣类型红线均要求双方明确证据；date-only deadline 判为 invalid，仅接收 UTC instant。
+- S2/T1：缺失技能、经验、目标对齐均保持中性 50，记录 job/profile evidence、missing 元数据并扣减 confidence；明确对比才给非中性分。
+- S3/S6：新增稳定粗排 comparator；`job_triage_versions.sequence`（0029 升级迁移，含既有行回填）作为固定时钟下的单调 latest 顺序，latest 按 target 读取。
+- S4/T2：target 切换清空并按 target 重新读取；UI 仅显示中文状态及最小可读证据值，不显示 reasonCode、字段路径或 UUID。
+- S7：target select 固定 44px，Playwright Desktop/Mobile 直接测量该 select；并继续覆盖 axe、overflow、刷新持久化。
+- 关键 RED 回归、迁移 23/23、root `pnpm test`（第二次完整串行，exit 0）、typecheck/lint/build/diff 与双端 Playwright 均完成。第一次 root run 的 worker afterAll 清理超时未作为验收依据；确认无残留后单独重跑 worker 26/299 exit 0，再执行第二次根级完整成功运行。

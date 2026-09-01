@@ -79,14 +79,16 @@ describe("public discovery workflow migration", () => {
         unlink(join(migrationsFolder, "0026_discovery_attention.sql")),
         unlink(join(migrationsFolder, "0027_massive_purple_man.sql")),
         unlink(join(migrationsFolder, "0028_job_triage_versions.sql")),
+        unlink(join(migrationsFolder, "0029_heavy_devos.sql")),
         unlink(join(migrationsFolder, "meta", "0025_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0026_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0027_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0028_snapshot.json")),
+        unlink(join(migrationsFolder, "meta", "0029_snapshot.json")),
       ]);
       const journalPath = join(migrationsFolder, "meta", "_journal.json");
       const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
-      journal.entries = journal.entries.filter(({ tag }) => !["0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_job_triage_versions"].includes(tag));
+      journal.entries = journal.entries.filter(({ tag }) => !["0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_job_triage_versions", "0029_heavy_devos"].includes(tag));
       await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
       await migrate(database, { migrationsFolder });
 
@@ -258,11 +260,11 @@ describe("public discovery workflow migration", () => {
       } catch { repeatedVersionRejected = true; }
       assertTrue(repeatedVersionRejected);
 
-      const snapshots = await Promise.all(["0024", "0025", "0026", "0027", "0028"].map(async (number) => JSON.parse(await readFile(fileURLToPath(new URL(`../migrations/meta/${number}_snapshot.json`, import.meta.url)), "utf8")) as { id: string; prevId: string }));
+      const snapshots = await Promise.all(["0024", "0025", "0026", "0027", "0028", "0029"].map(async (number) => JSON.parse(await readFile(fileURLToPath(new URL(`../migrations/meta/${number}_snapshot.json`, import.meta.url)), "utf8")) as { id: string; prevId: string }));
       const currentJournal = JSON.parse(await readFile(fileURLToPath(new URL("../migrations/meta/_journal.json", import.meta.url)), "utf8")) as { entries: Array<{ tag: string }> };
       expect(snapshots.slice(1).map((snapshot) => snapshot.prevId)).toEqual(snapshots.slice(0, -1).map((snapshot) => snapshot.id));
-      expect(currentJournal.entries.slice(-5).map(({ tag }) => tag)).toEqual([
-        "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_job_triage_versions",
+      expect(currentJournal.entries.slice(-6).map(({ tag }) => tag)).toEqual([
+        "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_job_triage_versions", "0029_heavy_devos",
       ]);
     } finally {
       await database.$client.end();

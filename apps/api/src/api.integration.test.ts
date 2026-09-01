@@ -49,7 +49,7 @@ describe("authenticated workbench HTTP API", () => {
     triageVersionId, opportunityId: triageOpportunityId, targetId, overallVerdict: "unknown" as const,
     gateResults: Object.fromEntries(["location", "work_mode", "relocation", "salary", "seniority", "education", "language", "work_eligibility", "deal_breakers"].map((gate) => [gate, { verdict: "unknown", reasonCode: "JOB_EVIDENCE_MISSING", jobEvidence: null, candidateEvidence: null }])),
     pendingItems: [{ gate: "language", reasonCode: "JOB_EVIDENCE_MISSING", message: "需要补充岗位或画像证据" }], deadlineStatus: "missing" as const,
-    confidenceBasisPoints: 8_400, dimensionScores: null, overallScore: null, threshold: null, createdAt: "2026-09-01T00:00:00.000Z",
+    confidenceBasisPoints: 8_400, dimensionScores: null, overallScore: null, threshold: null, sequence: 1, createdAt: "2026-09-01T00:00:00.000Z",
   });
   const triageCommands = {
     async create(input: { opportunityId: string; command: { targetId: string } }) {
@@ -60,7 +60,7 @@ describe("authenticated workbench HTTP API", () => {
     },
   };
   const triageQueries = {
-    async getLatest(input: { opportunityId: string }) { return input.opportunityId === triageOpportunityId ? triageResponse("90000000-0000-4000-8000-000000000005") : null; },
+    async getLatest(input: { opportunityId: string; targetId: string }) { return input.opportunityId === triageOpportunityId ? triageResponse(input.targetId) : null; },
     async get(input: { opportunityId: string; triageVersionId: string }) { return input.opportunityId === triageOpportunityId && input.triageVersionId === triageVersionId ? triageResponse("90000000-0000-4000-8000-000000000005") : null; },
   };
   let conflictResolutionResponse: unknown = undefined;
@@ -296,7 +296,7 @@ describe("authenticated workbench HTTP API", () => {
     });
     expect(created.statusCode).toBe(201);
     expect(replay.json().triageVersionId).toBe(created.json().triageVersionId);
-    const latest = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/job-opportunities/${triageOpportunityId}/triage-versions/latest`, headers: bearer(session.sessionToken) });
+    const latest = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/job-opportunities/${triageOpportunityId}/triage-versions/latest?targetId=${triageVersionId}`, headers: bearer(session.sessionToken) });
     const exact = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/job-opportunities/${triageOpportunityId}/triage-versions/${triageVersionId}`, headers: bearer(session.sessionToken) });
     expect(latest.statusCode).toBe(200);
     expect(exact.statusCode).toBe(200);

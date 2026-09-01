@@ -1016,6 +1016,7 @@ body {
 .job-import-tabs button[aria-selected="true"], .job-import-recent-list button[aria-pressed="true"] { color: var(--emerald-strong); font-weight: 700; }
 .job-import-panel textarea, .job-import-panel input[type="file"] { background: var(--surface); border: 1px solid var(--rule); color: var(--ink); font: inherit; max-width: 100%; width: 100%; }
 .job-import-panel select { max-width: 100%; }
+.job-import-panel select { box-sizing: border-box; height: 2.75rem; min-height: 2.75rem; }
 .job-triage-results, .job-triage-results li { min-width: 0; overflow-wrap: anywhere; }
 .job-import-workbench, .job-import-columns { min-width: 0; }
 .job-import-panel textarea { min-height: 12rem; padding: 0.75rem; resize: vertical; }

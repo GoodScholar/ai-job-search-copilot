@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { JobTargetConstraints } from "@job-copilot/contracts/job-targets";
-import { evaluateJobTriage } from "./job-triage";
+import { compareJobTriageRank, evaluateJobTriage } from "./job-triage";
 
 const sourcePostingVersionId = "00000000-0000-4000-8000-000000000001";
 const target = {
@@ -139,5 +139,32 @@ describe("job triage gates", () => {
         targetAlignment: { score: expect.any(Number), reasonCode: expect.any(String) },
       },
     });
+  });
+
+  it("requires every stated language and evaluates structured company deal breakers", () => {
+    const input = allPassInput();
+    input.job.qualifications.languages = { value: [{ name: "英语", level: "C1" }, { name: "日语", level: "N2" }], evidence: { field: "languages", path: "语言", value: "英语 C1；日语 N2" } };
+    expect(evaluateJobTriage(input).gateResults.language).toMatchObject({ verdict: "unknown", reasonCode: "CANDIDATE_EVIDENCE_MISSING" });
+
+    const excluded = allPassInput();
+    excluded.target.constraints.dealBreakers.excludedCompanies = ["示例"];
+    expect(evaluateJobTriage(excluded).gateResults.deal_breakers).toMatchObject({ verdict: "fail", reasonCode: "DEAL_BREAKER_COMPANY_CONFLICT", jobEvidence: expect.any(Object), candidateEvidence: expect.any(Object) });
+  });
+
+  it("uses neutral coarse scores with missing evidence and rejects date-only deadlines", () => {
+    const input = allPassInput();
+    input.job.qualifications.requiredSkills = { value: ["TypeScript"], evidence: { field: "requiredSkills", path: "技能", value: "TypeScript" } };
+    const scored = evaluateJobTriage(input);
+    expect(scored.dimensionScores?.technical).toMatchObject({ score: 50, missing: ["profile.skills"] });
+    expect(scored.confidenceBasisPoints).toBeLessThan(10_000);
+    const dateOnly = allPassInput(); dateOnly.job.deadline = "2026-09-08";
+    expect(evaluateJobTriage(dateOnly).deadlineStatus).toBe("invalid");
+  });
+
+  it("orders score ties by closing-soon status and then a stable immutable key", () => {
+    const valid = { opportunityId: "b", sequence: 2, overallScore: 60, deadlineStatus: "valid" as const };
+    const closing = { opportunityId: "a", sequence: 1, overallScore: 60, deadlineStatus: "closing_soon" as const };
+    expect([valid, closing].sort(compareJobTriageRank)).toEqual([closing, valid]);
+    expect(compareJobTriageRank({ ...valid, opportunityId: "a", sequence: 2 }, { ...valid, opportunityId: "a", sequence: 1 })).toBe(1);
   });
 });

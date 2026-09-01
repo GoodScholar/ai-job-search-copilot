@@ -9,10 +9,11 @@ vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 import { getLatestJobTriageVersion } from "./job-triage";
 
 const opportunityId = "f4d4a7c1-9a17-4a8c-8b36-0f815d042e9a";
+const targetId = "4f8c6eb3-2b92-4d91-aad4-959b7d4cd7a3";
 
 it("uses the HttpOnly session to load the persisted latest triage version", async () => {
   mocks.readSessionToken.mockResolvedValue("a".repeat(43));
   mocks.getLatestJobTriageVersion.mockResolvedValue({ triageVersionId: "e4d4a7c1-9a17-4a8c-8b36-0f815d042e9a" });
-  await expect(getLatestJobTriageVersion(opportunityId)).resolves.toEqual({ triageVersionId: "e4d4a7c1-9a17-4a8c-8b36-0f815d042e9a" });
-  expect(mocks.getLatestJobTriageVersion).toHaveBeenCalledWith("a".repeat(43), opportunityId);
+  await expect(getLatestJobTriageVersion(opportunityId, targetId)).resolves.toEqual({ triageVersionId: "e4d4a7c1-9a17-4a8c-8b36-0f815d042e9a" });
+  expect(mocks.getLatestJobTriageVersion).toHaveBeenCalledWith("a".repeat(43), opportunityId, targetId);
 });

@@ -30,8 +30,8 @@ it("需要会话、严格验证目标并以 no-store 代理 triage 创建", asyn
 it("以 no-store 读取所有者的持久化最新版本", async () => {
   mocks.readSessionToken.mockResolvedValue("a".repeat(43));
   mocks.getLatestJobTriageVersion.mockResolvedValue({ triageVersionId: "e4d4a7c1-9a17-4a8c-8b36-0f815d042e9a" });
-  const response = await GET(new Request("http://localhost"), { params: Promise.resolve({ opportunityId }) });
+  const response = await GET(new Request(`http://localhost?targetId=${targetId}`), { params: Promise.resolve({ opportunityId }) });
   expect(response.status).toBe(200);
   expect(response.headers.get("cache-control")).toBe("no-store");
-  expect(mocks.getLatestJobTriageVersion).toHaveBeenCalledWith("a".repeat(43), opportunityId);
+  expect(mocks.getLatestJobTriageVersion).toHaveBeenCalledWith("a".repeat(43), opportunityId, targetId);
 });

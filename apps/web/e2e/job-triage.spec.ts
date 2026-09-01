@@ -69,8 +69,11 @@ test("真实运行时持久化 hard fail、unknown 与 pass 三条岗位评估�
   await page.reload();
   await expect(page.getByText("符合资格门槛", { exact: true }).first()).toBeVisible();
   await expect(page.getByText(/粗排总分/)).toBeVisible();
+  await expect(page.locator(".job-triage-results")).not.toContainText(/JOB_|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
   const controls = page.locator(".job-import-workbench .workbench-touch-target");
   expect(await controls.evaluateAll((items) => items.every((item) => item.getBoundingClientRect().height >= 44))).toBe(true);
+  const targetSelect = page.getByLabel("用于评估的求职目标").last();
+  expect((await targetSelect.boundingBox())?.height).toBeGreaterThanOrEqual(44);
   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });

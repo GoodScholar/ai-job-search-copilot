@@ -534,6 +534,7 @@ export const jobTriageVersions = pgTable("job_triage_versions", {
   dimensionScores: jsonb("dimension_scores"),
   overallScore: integer("overall_score"),
   threshold: integer("threshold"),
+  sequence: integer("sequence").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   unique("job_triage_versions_input_rule_unique").on(
@@ -541,7 +542,8 @@ export const jobTriageVersions = pgTable("job_triage_versions", {
     table.targetId, table.targetVersion, table.qualificationRuleVersion, table.coarseRuleVersion,
   ),
   unique("job_triage_versions_user_id_id_unique").on(table.userId, table.id),
-  index("job_triage_versions_owner_opportunity_created_idx").on(table.userId, table.opportunityId, table.createdAt, table.id),
+  unique("job_triage_versions_owner_opportunity_sequence_unique").on(table.userId, table.opportunityId, table.sequence),
+  index("job_triage_versions_owner_opportunity_created_idx").on(table.userId, table.opportunityId, table.sequence),
   foreignKey({ columns: [table.userId, table.opportunityId], foreignColumns: [jobOpportunities.userId, jobOpportunities.id], name: "job_triage_versions_owner_opportunity_fk" }),
   foreignKey({ columns: [table.userId, table.sourcePostingVersionId], foreignColumns: [jobSourcePostingVersions.userId, jobSourcePostingVersions.id], name: "job_triage_versions_owner_source_version_fk" }),
   foreignKey({ columns: [table.userId, table.profileId], foreignColumns: [jobProfiles.userId, jobProfiles.id], name: "job_triage_versions_owner_profile_fk" }),

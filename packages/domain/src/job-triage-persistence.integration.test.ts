@@ -72,7 +72,7 @@ describe("job triage persistence", () => {
     await expect(auditTrail.query({ userId })).resolves.toEqual(expect.arrayContaining([
       expect.objectContaining({ eventType: "job.triage_created", resourceId: first.triageVersionId, metadata: expect.objectContaining({ opportunityId, targetId }) }),
     ]));
-    await expect(createJobTriageQueries({ db: database }).getLatest({ userId, opportunityId })).resolves.toMatchObject({ triageVersionId: first.triageVersionId });
+    await expect(createJobTriageQueries({ db: database }).getLatest({ userId, opportunityId, targetId })).resolves.toMatchObject({ triageVersionId: first.triageVersionId });
   });
 
   it("creates a new immutable version when the confirmed profile revision changes and serializes concurrent reuse", async () => {
@@ -90,7 +90,7 @@ describe("job triage persistence", () => {
     expect(revised).toMatchObject({ reused: false });
     expect(revised.triageVersionId).not.toBe(first.triageVersionId);
     await expect(createJobTriageQueries({ db: database }).get({ userId, opportunityId, triageVersionId: revised.triageVersionId })).resolves.toMatchObject({ triageVersionId: revised.triageVersionId });
-    await expect(createJobTriageQueries({ db: database }).getLatest({ userId: crypto.randomUUID(), opportunityId })).resolves.toBeNull();
+    await expect(createJobTriageQueries({ db: database }).getLatest({ userId: crypto.randomUUID(), opportunityId, targetId })).resolves.toBeNull();
   });
 
   it("rejects inactive targets and an empty confirmed profile before creating a version", async () => {
@@ -102,5 +102,20 @@ describe("job triage persistence", () => {
     await database.update(jobTargets).set({ state: "active", updatedAt: now }).where(eq(jobTargets.id, targetId));
     await database.update(profileFactRevisions).set({ state: "removed" }).where(eq(profileFactRevisions.userId, userId));
     await expect(commands.create({ userId, requestId: crypto.randomUUID(), opportunityId, command: { targetId } })).rejects.toMatchObject({ code: "JOB_TRIAGE_PROFILE_EMPTY" });
+  });
+
+  it("returns latest snapshots only for the requested active target with a monotonic sequence", async () => {
+    const { userId, targetId, opportunityId } = await fixture();
+    const secondTargetId = crypto.randomUUID();
+    await database.insert(jobTargets).values({ id: secondTargetId, userId, version: 1, priority: "secondary", state: "active", activeSlot: 1, createdAt: now, updatedAt: now });
+    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId: secondTargetId, version: 1, priority: "secondary", state: "active", createdAt: now,
+      constraints: { roleFamily: "frontend", seniority: "senior", locations: ["上海"], workModes: ["remote"], relocation: "not_willing", salary: null, industries: [], dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] } },
+    });
+    const commands = createJobTriageCommands({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    const first = await commands.create({ userId, requestId: crypto.randomUUID(), opportunityId, command: { targetId } });
+    const second = await commands.create({ userId, requestId: crypto.randomUUID(), opportunityId, command: { targetId: secondTargetId } });
+    const queries = createJobTriageQueries({ db: database });
+    await expect(queries.getLatest({ userId, opportunityId, targetId })).resolves.toMatchObject({ triageVersionId: first.triageVersionId, targetId, sequence: 1 });
+    await expect(queries.getLatest({ userId, opportunityId, targetId: secondTargetId })).resolves.toMatchObject({ triageVersionId: second.triageVersionId, targetId: secondTargetId, sequence: 2 });
   });
 });
