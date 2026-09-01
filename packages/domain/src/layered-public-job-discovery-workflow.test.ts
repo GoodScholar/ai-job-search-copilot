@@ -84,7 +84,7 @@ describe("layered public job discovery workflow", () => {
     let selectCount = 0;
     const transaction = { execute: async () => undefined, select: () => ({ from: () => ({ where: () => {
       const rows = selectCount++ === 0 ? [{ id: runId }] : [];
-      return Object.assign(Promise.resolve(rows), { limit: async () => rows });
+      return Object.assign(Promise.resolve(rows), { limit: async () => rows, orderBy: async () => rows });
     } }) }) };
     const runtime = createLayeredPublicJobDiscoveryRuntime({
       db: { transaction: async (callback: (value: never) => unknown) => callback(transaction as never) } as never, id: () => "aaaaaaaa-aaaa-8aaa-8aaa-aaaaaaaaaaaa", auditTrail: {} as never,
