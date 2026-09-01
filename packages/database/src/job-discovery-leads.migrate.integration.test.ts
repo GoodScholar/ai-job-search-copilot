@@ -211,17 +211,15 @@ describe("job discovery lead migrations", () => {
         unlink(join(migrationsFolder, "0025_layered_public_discovery_workflow.sql")),
         unlink(join(migrationsFolder, "0026_discovery_attention.sql")),
         unlink(join(migrationsFolder, "0027_massive_purple_man.sql")),
-        unlink(join(migrationsFolder, "0028_lead_verified_final.sql")),
         unlink(join(migrationsFolder, "meta", "0024_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0025_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0026_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0027_snapshot.json")),
-        unlink(join(migrationsFolder, "meta", "0028_snapshot.json")),
       ]);
       const journalPath = join(migrationsFolder, "meta", "_journal.json");
       const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
       journal.entries = journal.entries.filter((entry) => ![
-        "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_lead_verified_final",
+        "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man",
       ].includes(entry.tag));
       await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
       await migrate(legacyDatabase, { migrationsFolder });
@@ -237,19 +235,13 @@ describe("job discovery lead migrations", () => {
     }
   });
 
-  it("在不含 0028 的 fresh chain 中创建 verified final 状态", async () => {
+  it("在 fresh chain 中创建 verified final 状态", async () => {
     const freshContainer = await new PostgreSqlContainer("postgres:17-alpine").start();
     const freshDatabase = createDatabase(freshContainer.getConnectionUri());
     const migrationsFolder = await mkdtemp(join(tmpdir(), "job-copilot-fresh-chain-"));
     try {
       const migrationSource = fileURLToPath(new URL("../migrations", import.meta.url));
       await cp(migrationSource, migrationsFolder, { recursive: true });
-      await unlink(join(migrationsFolder, "0028_lead_verified_final.sql"));
-      await unlink(join(migrationsFolder, "meta", "0028_snapshot.json"));
-      const journalPath = join(migrationsFolder, "meta", "_journal.json");
-      const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
-      journal.entries = journal.entries.filter(({ tag }) => tag !== "0028_lead_verified_final");
-      await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
       await migrate(freshDatabase, { migrationsFolder });
       const columns = await freshDatabase.execute(sql`select column_name from information_schema.columns where table_schema = 'public' and table_name = 'job_discovery_leads' and column_name = 'verified_final_url'`) as unknown as Array<{ column_name: string }>;
       assertTrue(columns.length === 1);

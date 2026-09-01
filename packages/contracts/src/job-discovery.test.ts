@@ -26,6 +26,9 @@ describe("AnySearch job discovery contracts", () => {
     expect(isPublicJobIdentityParameterName("jobId")).toBe(true);
     expect(isPublicJobIdentityParameterName("token")).toBe(false);
     expect(SafeNormalizedPublicJobUrlSchema.safeParse("https://jobs.example.com/opening?jobId=opening-123_A").success).toBe(true);
+    expect(SafeNormalizedPublicJobUrlSchema.safeParse("https://jobs.example.com:0/opening?job=opening-123_A").success).toBe(true);
+    expect(SafeNormalizedPublicJobUrlSchema.safeParse("https://bücher.de/opening?job=opening-123_A").success).toBe(true);
+    expect(SafeNormalizedPublicJobUrlSchema.safeParse("https://jobs.example.com/opening?job=opening%2D123_A").success).toBe(true);
     expect(SafeNormalizedPublicJobUrlSchema.safeParse("https://jobs.example.com/opening?token=secret").success).toBe(false);
   });
 

@@ -107,7 +107,7 @@ describe("AgentRunProcessor checkpoints", () => {
   it("v4 已验证 AnySearch Lead 只通过来源版本映射 Opportunity 与 RunResult", async () => {
     const job = await layeredRun();
     const leadId = crypto.randomUUID();
-    await database.insert(jobDiscoveryLeads).values({ id: leadId, userId: job.userId, runId: job.runId, targetId: job.targetId, provider: "anysearch", queryId: job.queryId, queryKind: "general", queryFingerprint: "a".repeat(64), normalizedUrl: "https://fixture.invalid/opaque", stableFingerprint: "b".repeat(64), expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000), state: "verified", sourcePostingVersionId: job.sourcePostingVersionId, rejectionCode: null, createdAt: now, updatedAt: now });
+    await database.insert(jobDiscoveryLeads).values({ id: leadId, userId: job.userId, runId: job.runId, targetId: job.targetId, provider: "anysearch", queryId: job.queryId, queryKind: "general", queryFingerprint: "a".repeat(64), normalizedUrl: "https://fixture.invalid/opaque", stableFingerprint: "b".repeat(64), expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000), state: "verified", sourcePostingVersionId: job.sourcePostingVersionId, verifiedFinalUrl: "https://fixture.invalid/opaque", rejectionCode: null, createdAt: now, updatedAt: now });
     await database.insert(jobDiscoveryAttributions).values({ id: crypto.randomUUID(), userId: job.userId, runId: job.runId, leadId, queryId: job.queryId, provider: "anysearch", sourcePostingVersionId: job.sourcePostingVersionId, createdAt: now });
     const processor = createAgentRunProcessor({
       db: database,

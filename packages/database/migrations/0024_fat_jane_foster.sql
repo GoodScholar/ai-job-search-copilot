@@ -26,6 +26,7 @@ CREATE TABLE "job_discovery_leads" (
 	"expires_at" timestamp with time zone NOT NULL,
 	"state" varchar(16) DEFAULT 'pending' NOT NULL,
 	"source_posting_version_id" uuid,
+	"verified_final_url" varchar(2048),
 	"rejection_code" varchar(64),
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
@@ -37,13 +38,14 @@ CREATE TABLE "job_discovery_leads" (
 	CONSTRAINT "job_discovery_leads_query_fingerprint_format" CHECK ("job_discovery_leads"."query_fingerprint" ~ '^[0-9a-f]{64}$'),
 	CONSTRAINT "job_discovery_leads_stable_fingerprint_format" CHECK ("job_discovery_leads"."stable_fingerprint" ~ '^[0-9a-f]{64}$'),
 	CONSTRAINT "job_discovery_leads_url_length_check" CHECK (length("job_discovery_leads"."normalized_url") between 1 and 2048),
+	CONSTRAINT "job_discovery_leads_verified_final_url_length_check" CHECK ("job_discovery_leads"."verified_final_url" is null or length("job_discovery_leads"."verified_final_url") between 1 and 2048),
 	CONSTRAINT "job_discovery_leads_ttl_check" CHECK ("job_discovery_leads"."expires_at" = "job_discovery_leads"."created_at" + interval '30 days'),
 	CONSTRAINT "job_discovery_leads_state_check" CHECK ("job_discovery_leads"."state" in ('pending', 'verified', 'rejected')),
 	CONSTRAINT "job_discovery_leads_rejection_code_check" CHECK ("job_discovery_leads"."rejection_code" is null or "job_discovery_leads"."rejection_code" ~ '^[A-Z][A-Z0-9_]{1,63}$'),
 	CONSTRAINT "job_discovery_leads_outcome_check" CHECK (
-    ("job_discovery_leads"."state" = 'pending' and "job_discovery_leads"."source_posting_version_id" is null and "job_discovery_leads"."rejection_code" is null)
-    or ("job_discovery_leads"."state" = 'verified' and "job_discovery_leads"."source_posting_version_id" is not null and "job_discovery_leads"."rejection_code" is null)
-    or ("job_discovery_leads"."state" = 'rejected' and "job_discovery_leads"."source_posting_version_id" is null and "job_discovery_leads"."rejection_code" is not null)
+    ("job_discovery_leads"."state" = 'pending' and "job_discovery_leads"."source_posting_version_id" is null and "job_discovery_leads"."verified_final_url" is null and "job_discovery_leads"."rejection_code" is null)
+    or ("job_discovery_leads"."state" = 'verified' and "job_discovery_leads"."source_posting_version_id" is not null and "job_discovery_leads"."verified_final_url" is not null and "job_discovery_leads"."rejection_code" is null)
+    or ("job_discovery_leads"."state" = 'rejected' and "job_discovery_leads"."source_posting_version_id" is null and "job_discovery_leads"."verified_final_url" is null and "job_discovery_leads"."rejection_code" is not null)
   )
 );
 --> statement-breakpoint

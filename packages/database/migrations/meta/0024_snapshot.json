@@ -3367,6 +3367,12 @@
           "primaryKey": false,
           "notNull": false
         },
+        "verified_final_url": {
+          "name": "verified_final_url",
+          "type": "varchar(2048)",
+          "primaryKey": false,
+          "notNull": false
+        },
         "rejection_code": {
           "name": "rejection_code",
           "type": "varchar(64)",
@@ -3518,6 +3524,10 @@
           "name": "job_discovery_leads_url_length_check",
           "value": "length(\"job_discovery_leads\".\"normalized_url\") between 1 and 2048"
         },
+        "job_discovery_leads_verified_final_url_length_check": {
+          "name": "job_discovery_leads_verified_final_url_length_check",
+          "value": "\"job_discovery_leads\".\"verified_final_url\" is null or length(\"job_discovery_leads\".\"verified_final_url\") between 1 and 2048"
+        },
         "job_discovery_leads_ttl_check": {
           "name": "job_discovery_leads_ttl_check",
           "value": "\"job_discovery_leads\".\"expires_at\" = \"job_discovery_leads\".\"created_at\" + interval '30 days'"
@@ -3532,7 +3542,7 @@
         },
         "job_discovery_leads_outcome_check": {
           "name": "job_discovery_leads_outcome_check",
-          "value": "\n    (\"job_discovery_leads\".\"state\" = 'pending' and \"job_discovery_leads\".\"source_posting_version_id\" is null and \"job_discovery_leads\".\"rejection_code\" is null)\n    or (\"job_discovery_leads\".\"state\" = 'verified' and \"job_discovery_leads\".\"source_posting_version_id\" is not null and \"job_discovery_leads\".\"rejection_code\" is null)\n    or (\"job_discovery_leads\".\"state\" = 'rejected' and \"job_discovery_leads\".\"source_posting_version_id\" is null and \"job_discovery_leads\".\"rejection_code\" is not null)\n  "
+          "value": "\n    (\"job_discovery_leads\".\"state\" = 'pending' and \"job_discovery_leads\".\"source_posting_version_id\" is null and \"job_discovery_leads\".\"verified_final_url\" is null and \"job_discovery_leads\".\"rejection_code\" is null)\n    or (\"job_discovery_leads\".\"state\" = 'verified' and \"job_discovery_leads\".\"source_posting_version_id\" is not null and \"job_discovery_leads\".\"verified_final_url\" is not null and \"job_discovery_leads\".\"rejection_code\" is null)\n    or (\"job_discovery_leads\".\"state\" = 'rejected' and \"job_discovery_leads\".\"source_posting_version_id\" is null and \"job_discovery_leads\".\"verified_final_url\" is null and \"job_discovery_leads\".\"rejection_code\" is not null)\n  "
         }
       },
       "isRLSEnabled": false
