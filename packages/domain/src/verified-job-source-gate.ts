@@ -125,27 +125,27 @@ function stableJson(value: unknown): unknown {
 }
 function sameJson(left: unknown, right: unknown): boolean { return JSON.stringify(stableJson(left)) === JSON.stringify(stableJson(right)); }
 
-type PublicSourceIdentity = { taxonomyPolicy: string; canonicalUrl: string; finalUrl: string; observedFinalUrls: Record<string, string> };
+type PublicSourceIdentity = { taxonomyPolicy: string; canonicalUrl: string; finalUrl: string; finalUrls: string[] };
 function publicSourceIdentity(value: unknown): PublicSourceIdentity | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const identity = value as Record<string, unknown>;
-  if (typeof identity.taxonomyPolicy !== "string" || typeof identity.canonicalUrl !== "string" || typeof identity.finalUrl !== "string" || identity.observedFinalUrls !== undefined && (typeof identity.observedFinalUrls !== "object" || identity.observedFinalUrls === null || Array.isArray(identity.observedFinalUrls))) return undefined;
-  const observedFinalUrls = Object.entries((identity.observedFinalUrls ?? {}) as Record<string, unknown>);
-  if (observedFinalUrls.some(([, finalUrl]) => typeof finalUrl !== "string")) return undefined;
-  return { taxonomyPolicy: identity.taxonomyPolicy, canonicalUrl: identity.canonicalUrl, finalUrl: identity.finalUrl, observedFinalUrls: Object.fromEntries(observedFinalUrls) as Record<string, string> };
+  if (typeof identity.taxonomyPolicy !== "string" || typeof identity.canonicalUrl !== "string" || typeof identity.finalUrl !== "string" || identity.finalUrls !== undefined && (!Array.isArray(identity.finalUrls) || identity.finalUrls.some((finalUrl) => typeof finalUrl !== "string"))) return undefined;
+  const legacyFinalUrls = identity.observedFinalUrls && typeof identity.observedFinalUrls === "object" && !Array.isArray(identity.observedFinalUrls)
+    ? Object.values(identity.observedFinalUrls as Record<string, unknown>).filter((finalUrl): finalUrl is string => typeof finalUrl === "string")
+    : [];
+  return { taxonomyPolicy: identity.taxonomyPolicy, canonicalUrl: identity.canonicalUrl, finalUrl: identity.finalUrl, finalUrls: [...new Set([identity.finalUrl, ...(identity.finalUrls as string[] | undefined ?? []), ...legacyFinalUrls])].sort() };
 }
 function isCanonicalSourceIdentity(value: unknown, canonicalUrl: string): boolean {
   const identity = publicSourceIdentity(value);
   return identity?.taxonomyPolicy === TAXONOMY_POLICY && identity.canonicalUrl === canonicalUrl;
 }
-function observedFinalUrl(value: unknown, candidateUrl: string): string | undefined { return publicSourceIdentity(value)?.observedFinalUrls[candidateUrl]; }
-function sourceIdentityForCandidate(value: unknown, candidateUrl: string, canonicalUrl: string, finalUrl: string): PublicSourceIdentity {
+function sourceIdentityForFinal(value: unknown, canonicalUrl: string, finalUrl: string): PublicSourceIdentity {
   const existing = publicSourceIdentity(value);
   return {
     taxonomyPolicy: TAXONOMY_POLICY,
     canonicalUrl,
     finalUrl: existing?.finalUrl ?? finalUrl,
-    observedFinalUrls: { ...(existing?.observedFinalUrls ?? {}), [candidateUrl]: finalUrl },
+    finalUrls: [...new Set([...(existing?.finalUrls ?? []), finalUrl])].sort(),
   };
 }
 
@@ -212,7 +212,7 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
             throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_CONFLICT");
           }
           const expectedSourceType = sourceType(value.page, lead.queryKind as z.infer<typeof PublicJobDiscoveryQueryKindSchema>);
-          const expectedSourceIdentity = sourceIdentityForCandidate(undefined, value.candidate.normalizedUrl, value.page.canonicalUrl, value.page.finalUrl);
+          const expectedSourceIdentity = sourceIdentityForFinal(undefined, value.page.canonicalUrl, value.page.finalUrl);
           const expectedOfficial = value.page.sourceKind === "official";
           const sourceVersionId = deterministicSourceVersionId({
             userId: value.userId, leadId: value.leadId, sourceType: expectedSourceType, canonicalUrl: value.page.canonicalUrl,
@@ -227,12 +227,11 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
             eq(jobSourcePostings.userId, value.userId), eq(jobSourcePostings.sourceType, expectedSourceType), eq(jobSourcePostings.sourceIdentifier, sourceIdentifier),
           )).limit(1);
           if (foundPosting) {
-            const storedFinalUrl = observedFinalUrl(foundPosting.sourceIdentity, value.candidate.normalizedUrl);
             if (foundPosting.sourceId !== value.page.canonicalUrl || !isCanonicalSourceIdentity(foundPosting.sourceIdentity, value.page.canonicalUrl) || foundPosting.isOfficial !== expectedOfficial
-              || storedFinalUrl !== undefined && storedFinalUrl !== value.page.finalUrl) {
+              || lead.state === "verified" && !publicSourceIdentity(foundPosting.sourceIdentity)?.finalUrls.includes(value.page.finalUrl)) {
               throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_CONFLICT");
             }
-            const sourceIdentity = sourceIdentityForCandidate(foundPosting.sourceIdentity, value.candidate.normalizedUrl, value.page.canonicalUrl, value.page.finalUrl);
+            const sourceIdentity = sourceIdentityForFinal(foundPosting.sourceIdentity, value.page.canonicalUrl, value.page.finalUrl);
             if (!sameJson(foundPosting.sourceIdentity, sourceIdentity)) await transaction.update(jobSourcePostings).set({ sourceIdentity, updatedAt: value.now }).where(and(eq(jobSourcePostings.userId, value.userId), eq(jobSourcePostings.id, foundPosting.id)));
             posting = { ...foundPosting, sourceIdentity };
           } else {

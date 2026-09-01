@@ -269,7 +269,7 @@ describe("verified public job source gate", () => {
     expect(result.lead).toMatchObject({ leadId: subject.leadId, state: "verified" });
     expect(result.attribution).toMatchObject({ leadId: subject.leadId, provider: "anysearch", queryId: subject.queryId });
     expect(result.sourcePosting).toMatchObject({ sourceIdentifier: createHash("sha256").update(normalizedUrl, "utf8").digest("hex"), sourceId: normalizedUrl, sourceType: "company_careers", isOfficial: true });
-    expect(result.sourcePosting.sourceIdentity).toEqual({ taxonomyPolicy: "public-job-source-taxonomy-v1", canonicalUrl: normalizedUrl, finalUrl: normalizedUrl, observedFinalUrls: { [normalizedUrl]: normalizedUrl } });
+    expect(result.sourcePosting.sourceIdentity).toEqual({ taxonomyPolicy: "public-job-source-taxonomy-v1", canonicalUrl: normalizedUrl, finalUrl: normalizedUrl, finalUrls: [normalizedUrl] });
     expect(result.sourcePostingVersion.rawObjectReference).toEqual(expect.objectContaining({ rawHtmlObjectKey: expect.stringContaining(`/public-job-pages/`), visibleTextObjectKey: expect.stringContaining(`/public-job-pages/`) }));
     expect(JSON.stringify(result)).not.toContain("AnySearch title sentinel");
     expect(store.objects).toHaveLength(2);
@@ -770,7 +770,7 @@ describe("verified public job source gate", () => {
     const aliasResult = await gate.verify({
       userId: second.userId, leadId: second.leadId,
       candidate: { queryId: second.queryId, normalizedUrl: aliasUrl, candidateFingerprint: createHash("sha256").update(aliasUrl, "utf8").digest("hex") },
-      extract: { normalizedUrl: aliasUrl }, page: { ...page(aliasUrl), canonicalUrl: normalizedUrl }, now,
+      extract: { normalizedUrl: aliasUrl }, page: { ...page(aliasUrl), finalUrl: normalizedUrl, canonicalUrl: normalizedUrl }, now,
     });
 
     expect(aliasResult.sourcePosting.postingId).toBe(firstResult.sourcePosting.postingId);
@@ -850,7 +850,7 @@ describe("verified public job source gate", () => {
         extract: { normalizedUrl: url }, page: { ...page(url), sourceKind: item.sourceKind }, now,
       });
       expect(result.sourcePosting).toMatchObject({ sourceType: item.sourceType, sourceId: url, isOfficial: item.official });
-      expect(result.sourcePosting.sourceIdentity).toEqual({ taxonomyPolicy: "public-job-source-taxonomy-v1", canonicalUrl: url, finalUrl: url, observedFinalUrls: { [url]: url } });
+      expect(result.sourcePosting.sourceIdentity).toEqual({ taxonomyPolicy: "public-job-source-taxonomy-v1", canonicalUrl: url, finalUrl: url, finalUrls: [url] });
     }
   });
 });
