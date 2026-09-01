@@ -158,7 +158,7 @@ async function addApprovedFixtureWatchlist(page: Page): Promise<void> {
   const careersUrl = page.getByLabel("公开招聘入口");
   const approvedEntry = "https://boards.greenhouse.io/fake-anysearch-fixture";
   await careersUrl.fill(approvedEntry);
-  await expect(careersUrl).toHaveValue(approvedEntry);
+  expectTrue(await valueMatches(careersUrl, approvedEntry));
   const allowedDomains = page.getByLabel("允许域");
   await allowedDomains.fill("boards.greenhouse.io, boards-api.greenhouse.io");
   await expect(allowedDomains).toHaveValue("boards.greenhouse.io, boards-api.greenhouse.io");
