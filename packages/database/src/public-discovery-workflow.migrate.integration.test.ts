@@ -349,6 +349,8 @@ describe("public discovery workflow migration", () => {
     ["fragment", "https://careers.acme.com/openings/a?job=one#fragment"],
     ["sensitive_token", "https://careers.acme.com/openings/a?token=secret"],
     ["sensitive_session", "https://careers.acme.com/openings/a?job=one&session=active"],
+    ["reserved_suffix", "https://careers.example/openings/a?job=one"],
+    ["local_suffix", "https://careers.localhost/openings/a?job=one"],
     ["non_scalar_json", { malformed: "value" }],
   ] as const)("0028 对 %s 的历史 final 值 fail closed", async (_kind, final) => {
     const container = await new PostgreSqlContainer("postgres:17-alpine").start();
