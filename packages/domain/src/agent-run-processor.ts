@@ -5,18 +5,20 @@ import {
   type Database,
 } from "@job-copilot/database";
 import {
-  AGENT_RUN_BUDGET, AGENT_RUN_JOB_VERSION, AgentRunExecutionSpecSchema, DiscoveryBatchSearchResultSchema, DiscoveryDetailResultSchema, PublicDiscoveryBatchSearchResultSchema,
+  AGENT_RUN_BUDGET, AGENT_RUN_JOB_VERSION, AgentRunExecutionSpecSchema, DeepMatchAgentRunSourceScopeSchema, DiscoveryBatchSearchResultSchema, DiscoveryDetailResultSchema, PublicDiscoveryBatchSearchResultSchema,
   GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, parseSourceHealthDetailResult, parseSourceHealthListResult,
   type JobSourceHealthCheck,
   type AgentRunJob,
 } from "@job-copilot/contracts/agent-runs";
 import { AnySearchProviderErrorCodeSchema } from "@job-copilot/contracts/job-discovery";
+import { DeepMatchAdapterError, FAKE_DEEP_MATCH_TOKEN_USAGE, type DeepMatchAdapter } from "@job-copilot/contracts/deep-match";
 import type { AuditTrail } from "./audit-trail";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { createJobDiscoveryPersistence, discoverySourceIdentifier, type DiscoveryDetail } from "./job-discovery-persistence";
 import { persistJobOpportunity } from "./job-opportunity-persistence";
-import { triggerDeepMatchAfterDiscovery } from "./deep-match-agent-runs";
+import { deepMatchDiscoveryIdempotencyKey, ensureDeepMatchRunInTransaction, triggerDeepMatchAfterDiscovery } from "./deep-match-agent-runs";
 import type { DeepMatchRunQueue } from "./deep-match-agent-runs";
+import { createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
 import { decideRetry } from "./agent-run-state";
 import { agentRunUsageSnapshot, appendBudgetFacts, settleActiveSlice, terminateBudgetRun, type BudgetDimension } from "./agent-run-lifecycle";
 import type { AgentRunCheckpoint } from "./agent-run-checkpoint";
@@ -57,7 +59,11 @@ export interface JobDiscoveryAdapterResolver {
   resolve(input: { runId: string; idempotencyKey: string; executionSpec: unknown; attemptCount: number }): JobDiscoveryAdapter;
 }
 
-const stepKeys = ["batch_search", "fetch_details", "persist_results"] as const;
+const stepKeys = ["batch_search", "fetch_details", "persist_results", "select_candidates", "assess_matches", "create_recommendations"] as const;
+
+function initialStepForWorkflow(workflowVersion: string): typeof stepKeys[number] {
+  return workflowVersion === "deep-match-v1" ? "select_candidates" : "batch_search";
+}
 
 function jsonValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(jsonValue);
@@ -109,6 +115,7 @@ export type AgentRunProcessorDependencies = {
   heartbeatRenew?: (input: { userId: string; runId: string; claimToken: string; deadline: Date }) => Promise<boolean | "paused" | "cancelled">;
   /** Matching runs share the existing queue; a persisted queued row remains the recovery authority. */
   matchingQueue?: DeepMatchRunQueue;
+  deepMatchAdapter?: DeepMatchAdapter;
 };
 type FailureCode = "AGENT_RUN_ADAPTER_RETRYABLE" | "AGENT_RUN_ADAPTER_FAILED" | "AGENT_RUN_CONTENT_STORAGE_FAILED" | "AGENT_RUN_PERSIST_FAILED" | "AGENT_RUN_BUDGET_EXCEEDED";
 type NonBudgetFailureCode = Exclude<FailureCode, "AGENT_RUN_BUDGET_EXCEEDED">;
@@ -145,6 +152,12 @@ async function runTransaction<T>(deps: AgentRunProcessorDependencies, deadline: 
 
 function adapterFailure(error: unknown): Failure {
   if (error instanceof AgentRunBudgetError) return { failureCode: "AGENT_RUN_BUDGET_EXCEEDED", retryable: false, category: "source", budgetDimension: error.budgetDimension };
+  if (error instanceof DeepMatchAdapterError) {
+    if (error.category === "retryable") return { failureCode: "AGENT_RUN_ADAPTER_RETRYABLE", retryable: true, category: "model" };
+    if (error.category === "auth") return { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "model_auth" };
+    if (error.category === "policy") return { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "model_policy" };
+    return { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "model_invalid" };
+  }
   if (error instanceof Error && error.name === "ZodError") return { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "source" };
   return { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "source" };
 }
@@ -295,7 +308,7 @@ async function failOrRetry(deps: AgentRunProcessorDependencies, input: { userId:
 
 type ProcessorOutcome = "completed" | "retry" | "paused" | "cancelled" | "budget_exhausted" | "failed" | "stale";
 
-async function checkPoint(checkpoint: AgentRunCheckpoint, input: { userId: string; runId: string; claimToken: string; operation: string; ordinal: number; reserve?: { toolCalls?: number; sourceRequests?: number; modelCalls?: number } }): Promise<ProcessorOutcome | null> {
+async function checkPoint(checkpoint: AgentRunCheckpoint, input: { userId: string; runId: string; claimToken: string; operation: string; ordinal: number; reserve?: { toolCalls?: number; sourceRequests?: number; modelCalls?: number; inputTokens?: number; outputTokens?: number; budgetTokens?: number } }): Promise<ProcessorOutcome | null> {
   const decision = await checkpoint.check({
     userId: input.userId,
     runId: input.runId,
@@ -465,15 +478,16 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           return { kind: "budget_exhausted" as const };
         }
         const claimToken = deps.id();
+        const initialStep = initialStepForWorkflow(current.workflowVersion);
         const attemptCount = current.attemptCount + 1;
         const version = current.version + 1;
-        const [run] = await transaction.update(agentRuns).set({ status: "running", currentStep: "batch_search", claimToken, claimExpiresAt: new Date(claimNow.getTime() + 30_000), activeSliceStartedAt: claimNow, activeDurationMs: current.activeDurationMs, attemptCount, startedAt: claimNow, completedAt: null, failedAt: null, failureCode: null, version, updatedAt: claimNow }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), or(eq(agentRuns.status, "queued"), and(eq(agentRuns.status, "running"), lte(agentRuns.claimExpiresAt, claimNow))))).returning();
+        const [run] = await transaction.update(agentRuns).set({ status: "running", currentStep: initialStep, claimToken, claimExpiresAt: new Date(claimNow.getTime() + 30_000), activeSliceStartedAt: claimNow, activeDurationMs: current.activeDurationMs, attemptCount, startedAt: claimNow, completedAt: null, failedAt: null, failureCode: null, version, updatedAt: claimNow }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), or(eq(agentRuns.status, "queued"), and(eq(agentRuns.status, "running"), lte(agentRuns.claimExpiresAt, claimNow))))).returning();
         if (!run) return { kind: "stale" as const };
-        await appendEvent(transaction, { id: deps.id, userId: job.userId, runId: job.runId, version, eventType: "run.started", data: { eventType: "run.started", status: "running", currentStep: "batch_search", attemptCount }, now: claimNow });
+        await appendEvent(transaction, { id: deps.id, userId: job.userId, runId: job.runId, version, eventType: "run.started", data: { eventType: "run.started", status: "running", currentStep: initialStep, attemptCount }, now: claimNow });
         const usageVersion = version + 1;
         await transaction.update(agentRuns).set({ version: usageVersion, updatedAt: claimNow }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.claimToken, claimToken)));
         const claimedRun = { ...run, version: usageVersion };
-        await appendBudgetFacts(transaction, { id: deps.id, auditTrail: deps.auditTrail, userId: job.userId, requestId: job.runId, runId: job.runId, version: usageVersion, currentStep: "batch_search", usage: agentRunUsageSnapshot(claimedRun), consumed: { activeDurationMs: 0, toolCalls: 0, sourceRequests: 0, modelCalls: 0 }, now: claimNow });
+        await appendBudgetFacts(transaction, { id: deps.id, auditTrail: deps.auditTrail, userId: job.userId, requestId: job.runId, runId: job.runId, version: usageVersion, currentStep: initialStep, usage: agentRunUsageSnapshot(claimedRun), consumed: { activeDurationMs: 0, toolCalls: 0, sourceRequests: 0, modelCalls: 0 }, now: claimNow });
         return { kind: "claimed" as const, run: claimedRun, claimToken, attemptCount };
       });
       if (claimed.kind === "pending_control") {
@@ -516,17 +530,18 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           if (parsed.workflowVersion !== "layered-public-job-discovery-v1") throw new Error("LAYERED_PUBLIC_WORKFLOW_SPEC_REQUIRED");
           layeredExecutionSpec = parsed;
           layeredWorkflow = deps.layeredPublicWorkflowResolver.resolve({ ...resolverInput, executionSpec: parsed });
-        } else adapter = deps.adapterResolver.resolve(resolverInput);
+        } else if (claimed.run.workflowVersion !== "deep-match-v1") adapter = deps.adapterResolver.resolve(resolverInput);
       } catch (error) {
         return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
       }
+      const modelController = claimed.run.workflowVersion === "deep-match-v1" ? new AbortController() : undefined;
       const layeredController = claimed.run.workflowVersion === "layered-public-job-discovery-v1" ? new AbortController() : undefined;
       let trustedStop: "paused" | "cancelled" | "budget_exhausted" | "stale" | undefined;
       let heartbeatControl: "paused" | "cancelled" | undefined;
       const stopHeartbeat = startClaimHeartbeat(deps, {
         userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, deadline,
-        onLeaseLost: () => layeredController?.abort(),
-        onControl: (outcome) => { heartbeatControl = outcome; trustedStop = outcome; layeredController?.abort(); },
+        onLeaseLost: () => { layeredController?.abort(); modelController?.abort(); },
+        onControl: (outcome) => { heartbeatControl = outcome; trustedStop = outcome; layeredController?.abort(); modelController?.abort(); },
       });
       try {
       const adapterCall = async <T>(operation: string, ordinal: number, call: () => Promise<T>): Promise<{ value?: T; outcome?: ProcessorOutcome }> => {
@@ -540,6 +555,47 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         if (!await stepTransition(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, stepKey, complete, attemptCount: claimed.attemptCount, deadline })) return "stale";
         return checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: `step_${stepKey}_${complete ? "complete" : "start"}`, ordinal: 1 });
       };
+      const completeMatching = async (resultCount: number): Promise<ProcessorOutcome> => runTransaction(deps, deadline, async (transaction) => {
+        await acquireAccountAdvisoryLock(transaction, job.userId);
+        const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, claimed.claimToken), eq(agentRuns.controlState, "none")));
+        if (!run) return "stale";
+        const now = deps.clock();
+        const activeDurationMs = run.activeDurationMs + await settleActiveSlice(transaction, { id: deps.id, userId: job.userId, run, now });
+        const version = run.version + 1;
+        await transaction.update(agentRuns).set({ status: "completed", currentStep: "completed", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, activeDurationMs, completedAt: now, failedAt: null, failureCode: null, terminationKind: "completed", terminationBudgetDimension: null, resultCount: Math.min(resultCount, 10), usageComplete: true, version, updatedAt: now }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.claimToken, claimed.claimToken)));
+        await appendEvent(transaction, { id: deps.id, userId: job.userId, runId: job.runId, version, eventType: "run.completed", data: { eventType: "run.completed", status: "completed", currentStep: "completed", attemptCount: run.attemptCount, resultCount: Math.min(resultCount, 10) }, now });
+        await deps.auditTrail.bind(transaction).append({ userId: job.userId, actorUserId: job.userId, eventType: "agent.run_completed", occurredAt: now, requestId: job.runId, outcome: "success", reasonCode: "AGENT_RUN_COMPLETED", resourceType: "agent_run", resourceId: job.runId, metadata: { runId: job.runId, targetId: run.targetId, attemptCount: run.attemptCount, resultCount: Math.min(resultCount, 10) } });
+        return "completed";
+      });
+      if (claimed.run.workflowVersion === "deep-match-v1") {
+        try {
+          const selectStarted = await transition("select_candidates", false); if (selectStarted) return selectStarted;
+          const scope = DeepMatchAgentRunSourceScopeSchema.parse(claimed.run.sourceScope);
+          const candidates = await createDeepMatchQueries({ db: deps.db }).selectCandidates({ userId: job.userId, targetId: claimed.run.targetId, ...(scope.opportunityId ? { opportunityId: scope.opportunityId } : {}) });
+          const selectCompleted = await transition("select_candidates", true); if (selectCompleted) return selectCompleted;
+          const assessStarted = await transition("assess_matches", false); if (assessStarted) return assessStarted;
+          const commands = createDeepMatchCommands({ db: deps.db, id: deps.id, clock: deps.clock, adapter: deps.deepMatchAdapter });
+          const matchVersionIds: string[] = [];
+          for (const [index, candidate] of candidates.entries()) {
+            const checkpointOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "deep_match_model_input", ordinal: index + 1, reserve: { modelCalls: 1, inputTokens: FAKE_DEEP_MATCH_TOKEN_USAGE.inputTokens, budgetTokens: FAKE_DEEP_MATCH_TOKEN_USAGE.inputTokens + FAKE_DEEP_MATCH_TOKEN_USAGE.outputTokens } });
+            if (checkpointOutcome) return checkpointOutcome;
+            matchVersionIds.push((await commands.createMatch({ userId: job.userId, targetId: claimed.run.targetId, candidate, modelCall: {
+              signal: modelController!.signal,
+              usageKey: `${claimed.claimToken}:deep_match_model:${index + 1}`,
+              budget: { maxTokens: (claimed.run.budgetSnapshot as { maxTokens: number }).maxTokens, reservedInputTokens: FAKE_DEEP_MATCH_TOKEN_USAGE.inputTokens, reservedOutputTokens: FAKE_DEEP_MATCH_TOKEN_USAGE.outputTokens },
+            } })).matchVersionId);
+            const outputCheckpointOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "deep_match_model_output", ordinal: index + 1, reserve: { outputTokens: FAKE_DEEP_MATCH_TOKEN_USAGE.outputTokens } });
+            if (outputCheckpointOutcome) return outputCheckpointOutcome;
+          }
+          const assessCompleted = await transition("assess_matches", true); if (assessCompleted) return assessCompleted;
+          const listStarted = await transition("create_recommendations", false); if (listStarted) return listStarted;
+          const list = await commands.createDailyList({ userId: job.userId, targetId: claimed.run.targetId, matchVersionIds });
+          const listCompleted = await transition("create_recommendations", true); if (listCompleted) return listCompleted;
+          return completeMatching(list.items.length);
+        } catch (error) {
+          return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
+        }
+      }
       const persistDiscoveryOutcome = async (input: { details: DiscoveryDetail[]; scans: Array<{ sourceId: string; observedDetailIds: string[]; complete: boolean }>; sourceChecks?: JobSourceHealthCheck[]; terminal?: SourceHealthTerminal }) => {
         const stored = input.details.map((detail) => {
           const bytes = canonicalJsonBytes(detail.rawPayload); const sourceIdentifier = discoverySourceIdentifier(detail.sourceId, detail.detailId); const rawContentSha256 = createHash("sha256").update(bytes).digest("hex");
@@ -557,7 +613,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         const commitBefore = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_before", ordinal: 1 });
         if (commitBefore) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return commitBefore; }
         let persisted: { cleanupObjectKeys: string[]; completed: boolean };
-        try { persisted = await runTransaction(deps, deadline, (transaction) => createJobDiscoveryPersistence({ db: deps.db, id: deps.id, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({ run: { ...claimed.run, claimToken: claimed.claimToken }, details: input.details, scans: input.scans, storedObjects: stored.map((item) => ({ sourceId: item.detail.sourceId, detailId: item.detail.detailId, objectKey: item.objectKey, rawContentSha256: item.rawContentSha256 })), sourceChecks: input.sourceChecks, terminal: input.terminal, now: deps.clock(), transaction })); }
+        try { persisted = await runTransaction(deps, deadline, (transaction) => createJobDiscoveryPersistence({ db: deps.db, id: deps.id, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({ run: { ...claimed.run, claimToken: claimed.claimToken }, details: input.details, scans: input.scans, storedObjects: stored.map((item) => ({ sourceId: item.detail.sourceId, detailId: item.detail.detailId, objectKey: item.objectKey, rawContentSha256: item.rawContentSha256 })), sourceChecks: input.sourceChecks, terminal: input.terminal, now: deps.clock(), transaction, afterCompleted: async ({ transaction: completedTransaction, userId, targetId, discoveryRunId }) => { await ensureDeepMatchRunInTransaction({ transaction: completedTransaction, id: deps.id, clock: deps.clock, userId, targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(discoveryRunId), trigger: "automatic" }); } })); }
         catch { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_PERSIST_FAILED", retryable: true, category: "source" }, deadline }); }
         await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), persisted.cleanupObjectKeys); if (!persisted.completed) return "stale";
         // PostgreSQL queued state is authoritative; the shared queue wakes it immediately and reconciler repairs delivery failures.
@@ -642,8 +698,11 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         } finally { clearTimeout(abortAtDeadline); }
       }
       const snapshot = claimed.run.targetSnapshot as import("@job-copilot/contracts/agent-runs").AgentRunDetail["targetSnapshot"];
-      let sourceScope: import("@job-copilot/contracts/agent-runs").AgentRunDetail["sourceScope"];
-      try { sourceScope = normalizeAgentRunSourceScope(claimed.run.sourceScope); }
+      // The deep-match branch above returns before discovery-only source scopes are read.
+      let sourceScope: import("@job-copilot/contracts/agent-runs").AgentRunSourceScope
+        | import("@job-copilot/contracts/agent-runs").PublicAgentRunSourceScope
+        | import("@job-copilot/contracts/agent-runs").PublicSourceHealthAgentRunSourceScope;
+      try { sourceScope = normalizeAgentRunSourceScope(claimed.run.sourceScope) as typeof sourceScope; }
       catch (error) { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline }); }
       if (claimed.run.workflowVersion === GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION) {
         const v3Scope = sourceScope as import("@job-copilot/contracts/agent-runs").PublicSourceHealthAgentRunSourceScope;
@@ -738,7 +797,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           detail = DiscoveryDetailResultSchema.parse(called.value);
         } catch (error) { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline }); }
         if (!detail.ok) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: detail.error.retryable ? "AGENT_RUN_ADAPTER_RETRYABLE" : "AGENT_RUN_ADAPTER_FAILED", retryable: detail.error.retryable, category: "source" }, deadline });
-        const allowed = sourceScope.adapter === "fake" ? sourceScope.sources.includes(detail.data.sourceId) : sourceScope.sources.some((source) => source.sourceId === detail.data.sourceId);
+        const allowed = sourceScope.adapter === "fake" ? sourceScope.sources.includes(detail.data.sourceId) : sourceScope.sources.some((source: { sourceId: string }) => source.sourceId === detail.data.sourceId);
         if (detail.data.sourceId !== result.sourceId || detail.data.detailId !== result.detailId || !allowed) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "source" }, deadline });
         details.push(detail.data);
       }

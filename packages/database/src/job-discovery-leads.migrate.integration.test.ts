@@ -215,6 +215,8 @@ describe("job discovery lead migrations", () => {
         unlink(join(migrationsFolder, "0029_heavy_devos.sql")),
         unlink(join(migrationsFolder, "0030_deep_match_recommendations.sql")),
         unlink(join(migrationsFolder, "0031_deep_match_agent_runs.sql")),
+        unlink(join(migrationsFolder, "0032_recommendation_highlight_limit.sql")),
+        unlink(join(migrationsFolder, "0033_deep_match_usage_entries.sql")),
         unlink(join(migrationsFolder, "meta", "0024_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0025_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0026_snapshot.json")),
@@ -225,7 +227,7 @@ describe("job discovery lead migrations", () => {
       const journalPath = join(migrationsFolder, "meta", "_journal.json");
       const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
       journal.entries = journal.entries.filter((entry) => ![
-        "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_job_triage_versions", "0029_heavy_devos", "0030_deep_match_recommendations", "0031_deep_match_agent_runs",
+        "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_job_triage_versions", "0029_heavy_devos", "0030_deep_match_recommendations", "0031_deep_match_agent_runs", "0032_recommendation_highlight_limit", "0033_deep_match_usage_entries",
       ].includes(entry.tag));
       await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
       await migrate(legacyDatabase, { migrationsFolder });
@@ -239,7 +241,7 @@ describe("job discovery lead migrations", () => {
       await legacyContainer.stop();
       await rm(migrationsFolder, { recursive: true, force: true });
     }
-  });
+  }, 60_000);
 
   it("在 fresh chain 中创建 verified final 状态", async () => {
     const freshContainer = await new PostgreSqlContainer("postgres:17-alpine").start();

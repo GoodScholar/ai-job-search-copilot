@@ -10,8 +10,8 @@ import { RECOMMENDATION_QUERIES, type RecommendationQueries } from "./recommenda
 import { RECOMMENDATION_RUN_STARTER, type RecommendationRunStarter } from "./recommendations.tokens.js";
 
 class RecommendationListDto extends createZodDto(RecommendationListSchema) {}
-class QueryDto extends createZodDto(z.object({ targetId: z.uuid() }).strict()) {}
-class StartDto extends createZodDto(z.object({ targetId: z.uuid(), idempotencyKey: z.uuid() }).strict()) {}
+class RecommendationTargetQueryDto extends createZodDto(z.object({ targetId: z.uuid() }).strict()) {}
+class StartRecommendationReevaluationDto extends createZodDto(z.object({ targetId: z.uuid(), opportunityId: z.uuid(), idempotencyKey: z.uuid() }).strict()) {}
 
 @Controller("v1/recommendations")
 @UseGuards(SessionGuard)
@@ -23,19 +23,19 @@ export class RecommendationsController {
   @ZodResponse({ type: RecommendationListDto })
   @ApiUnauthorizedResponse()
   @ApiNotFoundResponse()
-  async latest(@Req() request: FastifyRequest, @Query() query: QueryDto) {
+  async latest(@Req() request: FastifyRequest, @Query() query: RecommendationTargetQueryDto) {
     const list = await this.queries.getLatestList({ userId: request.authenticatedAccount!.userId, targetId: query.targetId });
     if (!list) throw new ApiException("RECOMMENDATION_LIST_NOT_FOUND", 404, "推荐清单不存在");
     return RecommendationListSchema.parse(list);
   }
 
   @Get("history")
-  async history(@Req() request: FastifyRequest, @Query() query: QueryDto) {
+  async history(@Req() request: FastifyRequest, @Query() query: RecommendationTargetQueryDto) {
     return RecommendationListHistorySchema.parse(await this.queries.getListHistory({ userId: request.authenticatedAccount!.userId, targetId: query.targetId }));
   }
 
   @Post("runs")
-  async reevaluate(@Req() request: FastifyRequest, @Body() body: StartDto) {
-    return this.starter.start({ userId: request.authenticatedAccount!.userId, targetId: body.targetId, idempotencyKey: body.idempotencyKey, trigger: "manual" });
+  async reevaluate(@Req() request: FastifyRequest, @Body() body: StartRecommendationReevaluationDto) {
+    return this.starter.start({ userId: request.authenticatedAccount!.userId, targetId: body.targetId, opportunityId: body.opportunityId, idempotencyKey: body.idempotencyKey, trigger: "manual" });
   }
 }

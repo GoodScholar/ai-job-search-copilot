@@ -5,6 +5,7 @@ import { agentInboxItems, agentRunControlCommands, agentRunEvents, agentRunUsage
 import { createAuditTrail } from "./audit-trail";
 import { AgentRunControlError, createAgentRunCheckpoint, createAgentRunCommands, type AgentRunQueue } from "./agent-runs";
 import { createCompanyWatchlistCommands } from "./company-watchlists";
+import { createDeepMatchRunStarter } from "./deep-match-agent-runs";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
 const constraints = {
@@ -251,6 +252,53 @@ describe("agent run controls", () => {
     await database.update(agentRuns).set({ status: "running", controlState: "none", claimToken: secondToken, claimExpiresAt: new Date(resumedAt.getTime() + 30_000), activeSliceStartedAt: resumedAt, startedAt: now }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)));
     await expect(checkpoints(new Date(resumedAt.getTime() + 100)).check({ userId, runId: run.runId, claimToken: secondToken, checkpointKey: `${secondToken}:model`, reserve: { modelCalls: 1 } })).resolves.toMatchObject({ kind: "budget_exhausted", budgetDimension: "model_calls" });
     await expect(database.select({ activeDurationMs: agentRuns.activeDurationMs, modelCallCount: agentRuns.modelCallCount }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)))).resolves.toEqual([{ activeDurationMs: 200, modelCallCount: 0 }]);
+  });
+
+  it("模型调用先原子记入 input，严格输出后才以独立稳定键记入 output", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await createDeepMatchRunStarter({
+      db: database,
+      queue: new MemoryQueue(),
+      id: () => crypto.randomUUID(),
+      clock: () => now,
+    }).start({
+      userId,
+      targetId,
+      opportunityId: crypto.randomUUID(),
+      idempotencyKey: crypto.randomUUID(),
+      trigger: "manual",
+    });
+    const claimToken = crypto.randomUUID();
+    await database.update(agentRuns).set({
+      status: "running", currentStep: "assess_matches", attemptCount: 1, startedAt: now,
+      claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), activeSliceStartedAt: now,
+    }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)));
+
+    const inputKey = `${claimToken}:deep_match_model_input:1`;
+    await expect(checkpoints(new Date(now.getTime() + 100)).check({
+      userId, runId: run.runId, claimToken, checkpointKey: inputKey,
+      reserve: { modelCalls: 1, inputTokens: 32, budgetTokens: 80 },
+    })).resolves.toEqual({ kind: "continue" });
+    await expect(database.select({ category: agentRunUsageEntries.category, amount: agentRunUsageEntries.amount })
+      .from(agentRunUsageEntries).where(and(eq(agentRunUsageEntries.runId, run.runId), eq(agentRunUsageEntries.usageKey, inputKey))))
+      .resolves.toEqual(expect.arrayContaining([{ category: "model_call", amount: 1 }, { category: "input_tokens", amount: 32 }]));
+    await expect(database.select({ input: agentRuns.inputTokenCount, output: agentRuns.outputTokenCount, total: agentRuns.totalTokenCount })
+      .from(agentRuns).where(eq(agentRuns.id, run.runId))).resolves.toEqual([{ input: 32, output: 0, total: 32 }]);
+
+    const outputKey = `${claimToken}:deep_match_model_output:1`;
+    await expect(checkpoints(new Date(now.getTime() + 200)).check({
+      userId, runId: run.runId, claimToken, checkpointKey: outputKey,
+      reserve: { outputTokens: 48 },
+    })).resolves.toEqual({ kind: "continue" });
+    await expect(checkpoints(new Date(now.getTime() + 200)).check({
+      userId, runId: run.runId, claimToken, checkpointKey: outputKey,
+      reserve: { outputTokens: 48 },
+    })).resolves.toEqual({ kind: "continue" });
+    await expect(database.select({ category: agentRunUsageEntries.category, amount: agentRunUsageEntries.amount })
+      .from(agentRunUsageEntries).where(and(eq(agentRunUsageEntries.runId, run.runId), eq(agentRunUsageEntries.usageKey, outputKey))))
+      .resolves.toEqual([{ category: "output_tokens", amount: 48 }]);
+    await expect(database.select({ input: agentRuns.inputTokenCount, output: agentRuns.outputTokenCount, total: agentRuns.totalTokenCount })
+      .from(agentRuns).where(eq(agentRuns.id, run.runId))).resolves.toEqual([{ input: 32, output: 48, total: 80 }]);
   });
 
   it("重复 checkpoint key 仍执行控制，且 reserve 形状必须与首次一致", async () => {

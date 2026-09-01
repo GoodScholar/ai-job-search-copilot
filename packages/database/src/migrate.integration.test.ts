@@ -1168,6 +1168,8 @@ describe("database migrations", () => {
         unlink(join(migrationsFolder, "0029_heavy_devos.sql")),
         unlink(join(migrationsFolder, "0030_deep_match_recommendations.sql")),
         unlink(join(migrationsFolder, "0031_deep_match_agent_runs.sql")),
+        unlink(join(migrationsFolder, "0032_recommendation_highlight_limit.sql")),
+        unlink(join(migrationsFolder, "0033_deep_match_usage_entries.sql")),
         unlink(join(migrationsFolder, "meta", "0023_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0024_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0025_snapshot.json")),
@@ -1179,7 +1181,7 @@ describe("database migrations", () => {
       const journalPath = join(migrationsFolder, "meta", "_journal.json");
       const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
       await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter((entry) => ![
-        "0023_source_attention_inbox", "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_job_triage_versions", "0029_heavy_devos", "0030_deep_match_recommendations", "0031_deep_match_agent_runs",
+        "0023_source_attention_inbox", "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_job_triage_versions", "0029_heavy_devos", "0030_deep_match_recommendations", "0031_deep_match_agent_runs", "0032_recommendation_highlight_limit", "0033_deep_match_usage_entries",
       ].includes(entry.tag)) }, null, 2));
       await migrate(upgradeDatabase, { migrationsFolder });
       const userId = "a9f4da20-e9e9-44c4-a6a5-fc2cf5b9ed93"; const targetId = "f1e7a7a6-a3e6-458e-9f53-33cdbbf2d6ea"; const runId = "833f4544-376c-4f8d-81af-16e50df78624";

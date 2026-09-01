@@ -1,13 +1,16 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  createDatabase, jobAccounts, jobOpportunities, jobProfiles, jobSourcePostingVersions, jobSourcePostings,
+  agentRuns, createDatabase, jobAccounts, jobOpportunities, jobProfiles, jobSourcePostingVersions, jobSourcePostings,
   jobTargetRevisions, jobTargets, jobTriageVersions, migrateDatabase, profileFactRevisions, profileFacts, type Database,
 } from "@job-copilot/database";
+import { and, eq } from "drizzle-orm";
+import { createDeepMatchRunStarter } from "./deep-match-agent-runs";
 import { createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
 
 const now = new Date("2026-09-01T02:00:00.000Z");
 const hash = "a".repeat(64);
+const modelCall = () => ({ signal: new AbortController().signal, usageKey: "test-model-call", budget: { maxTokens: 20_000, reservedInputTokens: 32, reservedOutputTokens: 48 } });
 
 describe("deep match persistence", () => {
   let container: StartedPostgreSqlContainer;
@@ -66,12 +69,26 @@ describe("deep match persistence", () => {
     expect(selected.some((candidate) => candidate.opportunityId === other.opportunityId)).toBe(false);
   });
 
+  it("persists exactly one recoverable matching child run when queue delivery fails and retries delivery on duplicate trigger", async () => {
+    const input = await fixture();
+    const queue = { calls: 0, fail: true, async enqueue() { this.calls += 1; if (this.fail) throw new Error("QUEUE_DOWN"); } };
+    const starter = createDeepMatchRunStarter({ db, queue, id: () => crypto.randomUUID(), clock: () => now });
+    const key = crypto.randomUUID();
+    const first = await starter.start({ userId: input.userId, targetId: input.targetId, idempotencyKey: key, trigger: "automatic" });
+    queue.fail = false;
+    const second = await starter.start({ userId: input.userId, targetId: input.targetId, idempotencyKey: key, trigger: "automatic" });
+    expect(first).toMatchObject({ reused: false });
+    expect(second).toMatchObject({ runId: first.runId, reused: true });
+    expect(queue.calls).toBe(2);
+    await expect(db.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.idempotencyKey, key)))).resolves.toHaveLength(1);
+  });
+
   it("creates a new immutable match version and a new same-day recommendation-list sequence on every rerun", async () => {
     const input = await fixture();
     const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now });
     const candidate = (await createDeepMatchQueries({ db }).selectCandidates({ userId: input.userId, targetId: input.targetId }))[0]!;
-    const first = await commands.createMatch({ userId: input.userId, targetId: input.targetId, candidate });
-    const second = await commands.createMatch({ userId: input.userId, targetId: input.targetId, candidate });
+    const first = await commands.createMatch({ userId: input.userId, targetId: input.targetId, candidate, modelCall: modelCall() });
+    const second = await commands.createMatch({ userId: input.userId, targetId: input.targetId, candidate, modelCall: modelCall() });
     const firstList = await commands.createDailyList({ userId: input.userId, targetId: input.targetId, matchVersionIds: [first.matchVersionId] });
     const secondList = await commands.createDailyList({ userId: input.userId, targetId: input.targetId, matchVersionIds: [second.matchVersionId] });
 

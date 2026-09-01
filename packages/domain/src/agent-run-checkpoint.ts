@@ -4,7 +4,17 @@ import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import type { AuditTrail } from "./audit-trail";
 import { agentRunUsageSnapshot, appendBudgetFacts, settleActiveSlice, terminateBudgetRun, type BudgetDimension } from "./agent-run-lifecycle";
 
-type Reserve = { toolCalls?: number; sourceRequests?: number; modelCalls?: number };
+type Reserve = {
+  toolCalls?: number;
+  sourceRequests?: number;
+  modelCalls?: number;
+  /** 实际在模型调用前消耗的输入 token。 */
+  inputTokens?: number;
+  /** 仅在严格输出验证通过后消耗的输出 token。 */
+  outputTokens?: number;
+  /** 调用前的总 token 可用性预检，不写入 usage 聚合。 */
+  budgetTokens?: number;
+};
 export type AgentRunCheckpointDecision =
   | { kind: "continue" }
   | { kind: "paused" }
@@ -38,6 +48,7 @@ function exhausted(run: typeof agentRuns.$inferSelect, reserve: Reserve, activeD
   if (run.activeDurationMs + activeDurationMs >= budget.maxActiveDurationMs) return "active_duration";
   if (run.toolCallCount + amount(reserve.toolCalls) > budget.maxToolCalls) return "tool_calls";
   if (run.modelCallCount + amount(reserve.modelCalls) > budget.maxModelCalls) return "model_calls";
+  if (run.totalTokenCount + amount(reserve.budgetTokens ?? (amount(reserve.inputTokens) + amount(reserve.outputTokens))) > budget.maxTokens) return "tokens";
   return null;
 }
 
@@ -46,7 +57,9 @@ async function writeUsage(transaction: any, input: { id: () => string; userId: s
     amount(input.reserve.toolCalls) > 0 ? { category: "tool_call", amount: amount(input.reserve.toolCalls) } : null,
     amount(input.reserve.sourceRequests) > 0 ? { category: "source_request", amount: amount(input.reserve.sourceRequests) } : null,
     amount(input.reserve.modelCalls) > 0 ? { category: "model_call", amount: amount(input.reserve.modelCalls) } : null,
-  ].filter((entry): entry is { category: "tool_call" | "source_request" | "model_call"; amount: number } => entry !== null);
+    amount(input.reserve.inputTokens) > 0 ? { category: "input_tokens", amount: amount(input.reserve.inputTokens) } : null,
+    amount(input.reserve.outputTokens) > 0 ? { category: "output_tokens", amount: amount(input.reserve.outputTokens) } : null,
+  ].filter((entry): entry is { category: "tool_call" | "source_request" | "model_call" | "input_tokens" | "output_tokens"; amount: number } => entry !== null);
   for (const entry of entries) await transaction.insert(agentRunUsageEntries).values({ id: input.id(), userId: input.userId, runId: input.runId, usageKey: input.checkpointKey, category: entry.category, amount: entry.amount, attemptCount: input.attemptCount, createdAt: input.now }).onConflictDoNothing();
   return entries;
 }
@@ -56,7 +69,9 @@ function sameReserve(entries: Array<{ category: string; amount: number }>, reser
   return actual.get("tool_call") === ((reserve.toolCalls ?? 0) || undefined)
     && actual.get("source_request") === ((reserve.sourceRequests ?? 0) || undefined)
     && actual.get("model_call") === ((reserve.modelCalls ?? 0) || undefined)
-    && actual.size === [reserve.toolCalls, reserve.sourceRequests, reserve.modelCalls].filter((value) => (value ?? 0) > 0).length;
+    && actual.get("input_tokens") === ((reserve.inputTokens ?? 0) || undefined)
+    && actual.get("output_tokens") === ((reserve.outputTokens ?? 0) || undefined)
+    && actual.size === [reserve.toolCalls, reserve.sourceRequests, reserve.modelCalls, reserve.inputTokens, reserve.outputTokens].filter((value) => (value ?? 0) > 0).length;
 }
 
 export function createAgentRunCheckpoint(deps: Dependencies): AgentRunCheckpoint {
@@ -77,7 +92,9 @@ export function createAgentRunCheckpoint(deps: Dependencies): AgentRunCheckpoint
         const dimension = exhausted({ ...run, activeDurationMs }, reserve, 0);
         const chargedReserve = run.controlState === "none" && dimension === null && prior.length === 0 ? reserve : {};
         const usageEntries = prior.length === 0 ? await writeUsage(transaction, { id: deps.id, userId: input.userId, runId: input.runId, checkpointKey: input.checkpointKey, attemptCount: run.attemptCount, reserve: chargedReserve, now }) : [];
-        const usageUpdate = { activeDurationMs, toolCallCount: run.toolCallCount + amount(chargedReserve.toolCalls), sourceRequestCount: run.sourceRequestCount + amount(chargedReserve.sourceRequests), modelCallCount: run.modelCallCount + amount(chargedReserve.modelCalls), activeSliceStartedAt: now, updatedAt: now };
+        const inputTokens = amount(chargedReserve.inputTokens);
+        const outputTokens = amount(chargedReserve.outputTokens);
+        const usageUpdate = { activeDurationMs, toolCallCount: run.toolCallCount + amount(chargedReserve.toolCalls), sourceRequestCount: run.sourceRequestCount + amount(chargedReserve.sourceRequests), modelCallCount: run.modelCallCount + amount(chargedReserve.modelCalls), inputTokenCount: run.inputTokenCount + inputTokens, outputTokenCount: run.outputTokenCount + outputTokens, totalTokenCount: run.totalTokenCount + inputTokens + outputTokens, activeSliceStartedAt: now, updatedAt: now };
         const usageChanged = elapsed > 0 || usageEntries.length > 0;
         const usageVersion = usageChanged ? run.version + 1 : run.version;
         const usage = agentRunUsageSnapshot(run, usageUpdate);

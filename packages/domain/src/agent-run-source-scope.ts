@@ -2,6 +2,7 @@ import {
   AgentRunSourceScopeSchema,
   PublicAgentRunSourceScopeSchema,
   PublicSourceHealthAgentRunSourceScopeSchema,
+  DeepMatchAgentRunSourceScopeSchema,
   FAKE_JOB_DISCOVERY_ADAPTER,
   FAKE_JOB_DISCOVERY_ADAPTER_VERSION,
   FAKE_JOB_DISCOVERY_SOURCE_IDS,
@@ -30,5 +31,7 @@ export function normalizeAgentRunSourceScope(value: unknown) {
   const fake = AgentRunSourceScopeSchema.safeParse(value);
   if (fake.success) return fake.data;
   const publicV2 = PublicAgentRunSourceScopeSchema.safeParse(value);
-  return publicV2.success ? publicV2.data : PublicSourceHealthAgentRunSourceScopeSchema.parse(value);
+  if (publicV2.success) return publicV2.data;
+  const deepMatch = DeepMatchAgentRunSourceScopeSchema.safeParse(value);
+  return deepMatch.success ? deepMatch.data : PublicSourceHealthAgentRunSourceScopeSchema.parse(value);
 }

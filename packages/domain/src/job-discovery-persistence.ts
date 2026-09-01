@@ -337,6 +337,8 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
       now: Date;
       /** Processor-only seam: caller has already started the bounded account transaction. */
       transaction?: any;
+      /** Runs in the same PostgreSQL transaction, after successful discovery becomes terminal. */
+      afterCompleted?: (input: { transaction: any; userId: string; targetId: string; discoveryRunId: string }) => Promise<void>;
     }): Promise<{ resultCount: number; cleanupObjectKeys: string[]; completed: boolean }> {
       const objectBySource = new Map(input.storedObjects.map((item) => [`${item.sourceId}:${item.detailId}`, item]));
       const persist = async (transaction: any) => {
@@ -495,6 +497,7 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
           const [item] = await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: run.userId, runId: run.id, triggerEventSequence: terminalSequence, kind: "run_failed", status: "open", reasonCode: "AGENT_RUN_ADAPTER_FAILED", budgetDimension: null, createdAt: input.now }).onConflictDoNothing().returning({ id: agentInboxItems.id });
           if (item) await deps.auditTrail.bind(transaction).append({ userId: run.userId, actorUserId: run.userId, eventType: "agent.inbox_opened", occurredAt: input.now, requestId: run.id, outcome: "success", reasonCode: "AGENT_RUN_ADAPTER_FAILED", resourceType: "agent_inbox_item", resourceId: item.id, metadata: { runId: run.id, kind: "run_failed", reasonCode: "AGENT_RUN_ADAPTER_FAILED", budgetDimension: null } });
         }
+        if (!failed) await input.afterCompleted?.({ transaction, userId: run.userId, targetId: run.targetId, discoveryRunId: run.id });
         return { resultCount, cleanupObjectKeys, completed: true };
       };
       return input.transaction

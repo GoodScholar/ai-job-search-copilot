@@ -12,12 +12,12 @@ async function appendEvent(transaction: any, input: { id: () => string; userId: 
   return sequence;
 }
 
-export function agentRunUsageSnapshot(run: typeof agentRuns.$inferSelect, input: Partial<{ activeDurationMs: number; toolCallCount: number; sourceRequestCount: number; modelCallCount: number; resultCount: number }> = {}) {
+export function agentRunUsageSnapshot(run: typeof agentRuns.$inferSelect, input: Partial<{ activeDurationMs: number; toolCallCount: number; sourceRequestCount: number; modelCallCount: number; inputTokenCount: number; outputTokenCount: number; totalTokenCount: number; resultCount: number }> = {}) {
   return {
     activeDurationMs: input.activeDurationMs ?? run.activeDurationMs, attempts: run.attemptCount,
     toolCalls: input.toolCallCount ?? run.toolCallCount, sourceRequests: input.sourceRequestCount ?? run.sourceRequestCount,
-    modelCalls: input.modelCallCount ?? run.modelCallCount, inputTokens: run.inputTokenCount, outputTokens: run.outputTokenCount,
-    totalTokens: run.totalTokenCount, results: input.resultCount ?? run.resultCount, complete: run.usageComplete,
+    modelCalls: input.modelCallCount ?? run.modelCallCount, inputTokens: input.inputTokenCount ?? run.inputTokenCount, outputTokens: input.outputTokenCount ?? run.outputTokenCount,
+    totalTokens: input.totalTokenCount ?? run.totalTokenCount, results: input.resultCount ?? run.resultCount, complete: run.usageComplete,
   };
 }
 

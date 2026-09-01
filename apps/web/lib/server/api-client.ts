@@ -169,11 +169,11 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
   }
 
   return {
-    async startDeepMatchRun(sessionToken: string, targetId: string, idempotencyKey: string): Promise<{ runId: string; reused: boolean }> {
+    async startDeepMatchRun(sessionToken: string, targetId: string, opportunityId: string, idempotencyKey: string): Promise<{ runId: string; reused: boolean }> {
       const response = await request("/v1/recommendations/runs", {
         method: "POST",
         headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" },
-        body: JSON.stringify({ targetId, idempotencyKey }),
+        body: JSON.stringify({ targetId, opportunityId, idempotencyKey }),
       });
       if (!response.ok) {
         const problem = await readProblem(response);

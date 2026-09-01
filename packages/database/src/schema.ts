@@ -909,7 +909,7 @@ export const agentRunUsageEntries = pgTable("agent_run_usage_entries", {
   check("agent_run_usage_entries_category_check", sql`${table.category} in ('active_duration', 'tool_call', 'source_request', 'model_call', 'input_tokens', 'output_tokens', 'result')`),
   check("agent_run_usage_entries_amount_positive", sql`${table.amount} >= 1`),
   check("agent_run_usage_entries_attempt_nonnegative", sql`${table.attemptCount} >= 0`),
-  check("agent_run_usage_entries_step_check", sql`${table.stepKey} is null or ${table.stepKey} in ('batch_search', 'fetch_details', 'persist_results')`),
+  check("agent_run_usage_entries_step_check", sql`${table.stepKey} is null or ${table.stepKey} in ('batch_search', 'fetch_details', 'persist_results', 'select_candidates', 'assess_matches', 'create_recommendations')`),
 ]);
 
 export const agentInboxItems = pgTable("agent_inbox_items", {

@@ -12,6 +12,7 @@ const ids = {
   sourcePostingVersionId: "00000000-0000-4000-8000-000000000002",
   profileFactRevisionId: "00000000-0000-4000-8000-000000000003",
 };
+const modelCall = () => ({ signal: new AbortController().signal, usageKey: "test-model-call", budget: { maxTokens: 20_000, reservedInputTokens: 32, reservedOutputTokens: 48 } });
 
 describe("FakeDeepMatchAdapter", () => {
   it("produces all six dimensions with closed job and confirmed-profile evidence", async () => {
@@ -23,7 +24,7 @@ describe("FakeDeepMatchAdapter", () => {
         jobEvidence: [{ id: "job:skills", value: "TypeScript" }],
         profileEvidence: [{ id: "profile:typescript", profileFactRevisionId: ids.profileFactRevisionId, value: "TypeScript" }],
       }],
-    });
+    }, modelCall());
 
     expect(result).toHaveLength(1);
     expect(result[0]?.dimensions.map((dimension) => dimension.dimension)).toEqual(DEEP_MATCH_DIMENSIONS);
@@ -58,6 +59,6 @@ describe("FakeDeepMatchAdapter", () => {
       jobEvidence: [{ id: "job:skills", value: "TypeScript" }],
       profileEvidence: [{ id: "profile:typescript", profileFactRevisionId: ids.profileFactRevisionId, value: "TypeScript" }],
     };
-    await expect(adapter.assess({ candidates: Array.from({ length: DEEP_MATCH_MAX_CANDIDATES + 1 }, () => candidate) })).rejects.toThrow("expected array");
+    await expect(adapter.assess({ candidates: Array.from({ length: DEEP_MATCH_MAX_CANDIDATES + 1 }, () => candidate) }, modelCall())).rejects.toThrow("expected array");
   });
 });

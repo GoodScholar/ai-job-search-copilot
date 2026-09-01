@@ -35,6 +35,9 @@ const stepLabels = {
   batch_search: "搜索岗位来源",
   fetch_details: "读取岗位详情",
   persist_results: "保存岗位结果",
+  select_candidates: "选择匹配候选",
+  assess_matches: "评估岗位匹配",
+  create_recommendations: "生成推荐清单",
 } as const;
 
 const sourceLabels: Record<string, string> = {
@@ -384,7 +387,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
             <div><dt>匹配规则版本</dt><dd>{run.executionSpec.ruleVersion}</dd></div>
             <div><dt>岗位来源连接版本</dt><dd>{run.executionSpec.adapter}/{run.executionSpec.adapterVersion}</dd></div>
             <div><dt>结果格式版本</dt><dd>{run.executionSpec.outputSchemaVersion}</dd></div>
-            <div><dt>来源范围</dt><dd>{"trustedSources" in run.executionSpec.sourceScope ? `${run.executionSpec.sourceScope.trustedSources.length} 个可信来源，${run.executionSpec.sourceScope.publicDiscovery.queries.length} 个公开发现查询` : `${run.executionSpec.sourceScope.sources.length} 个固定来源`}</dd></div>
+            <div><dt>来源范围</dt><dd>{run.executionSpec.sourceScope.kind === "deep_match" ? (run.executionSpec.sourceScope.opportunityId ? "单岗位重新评估" : "发现后的候选岗位") : "trustedSources" in run.executionSpec.sourceScope ? `${run.executionSpec.sourceScope.trustedSources.length} 个可信来源，${run.executionSpec.sourceScope.publicDiscovery.queries.length} 个公开发现查询` : `${run.executionSpec.sourceScope.sources.length} 个固定来源`}</dd></div>
             <div><dt>允许的操作范围</dt><dd>{run.executionSpec.toolAllowlist.join("、")}</dd></div>
             <div><dt>模型</dt><dd>本流程未使用模型</dd></div>
           </dl>

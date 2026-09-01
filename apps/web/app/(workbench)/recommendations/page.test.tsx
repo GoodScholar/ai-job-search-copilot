@@ -24,13 +24,17 @@ describe("RecommendationsPage", () => {
     mocks.getJobTargets.mockResolvedValue({ targets: [{ targetId: "00000000-0000-4000-8000-000000000001", state: "active" }] });
     mocks.getLatestRecommendations.mockResolvedValue({
       recommendationListId: "10000000-0000-4000-8000-000000000001", targetId: "00000000-0000-4000-8000-000000000001", localDate: "2026-09-01", sequence: 2, createdAt: "2026-09-01T00:00:00.000Z",
-      items: [{ matchVersionId: "20000000-0000-4000-8000-000000000001", opportunityId: "30000000-0000-4000-8000-000000000001", company: "示例科技", title: "前端工程师", location: "上海", displayBand: "highly_matched", highlighted: true, ordinal: 1, assessment: { opportunityId: "30000000-0000-4000-8000-000000000001", overallScore: 80, dimensions: ["skills", "experience", "project_depth", "career_direction", "location_logistics", "qualification_risk"].map((dimension) => ({ dimension, score: 80, judgment: "evidence_backed_inference", jobEvidenceIds: ["job:1"], profileEvidenceIds: ["profile:1"], summary: dimension === "skills" ? "岗位要求与已确认技能相符。" : "证据支持的推断。" })) } }],
+      exclusions: [{ opportunityId: "30000000-0000-4000-8000-000000000099", reasonCode: "MATCH_QUALITY_INSUFFICIENT" }],
+      items: [{ matchVersionId: "20000000-0000-4000-8000-000000000001", opportunityId: "30000000-0000-4000-8000-000000000001", company: "示例科技", title: "前端工程师", location: "上海", displayBand: "highly_matched", highlighted: true, ordinal: 1, jobEvidence: [{ id: "job:1", value: "岗位要求 TypeScript" }], profileEvidence: [{ id: "profile:1", value: "已确认 TypeScript 经历" }], assessment: { opportunityId: "30000000-0000-4000-8000-000000000001", overallScore: 80, dimensions: ["skills", "experience", "project_depth", "career_direction", "location_logistics", "qualification_risk"].map((dimension) => ({ dimension, score: 80, judgment: "evidence_backed_inference", jobEvidenceIds: ["job:1"], profileEvidenceIds: ["profile:1"], summary: dimension === "skills" ? "岗位要求与已确认技能相符。" : "证据支持的推断。" })) } }],
     });
 
     render(await RecommendationsPage());
     expect(screen.getByText("高度匹配")).toBeInTheDocument();
     expect(screen.getByText(/岗位要求与已确认技能相符/u)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "重新评估此目标" })).toBeInTheDocument();
+    expect(screen.getByText(/岗位证据：岗位要求 TypeScript/u)).toBeInTheDocument();
+    expect(screen.getByText(/画像证据：已确认 TypeScript 经历/u)).toBeInTheDocument();
+    expect(screen.getByText(/因匹配质量不足而排除 1 项岗位/u)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重新评估此岗位" })).toBeInTheDocument();
     expect(screen.getByLabelText("推荐清单版本")).toHaveTextContent("清单版本 2");
     expect(screen.getByText("历史版本")).toBeInTheDocument();
     expect(screen.queryByText("总体分数")).not.toBeInTheDocument();

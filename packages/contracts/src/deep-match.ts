@@ -57,11 +57,26 @@ export type DeepMatchCandidate = z.infer<typeof DeepMatchCandidateSchema>;
 export const DeepMatchAdapterInputSchema = z.object({ candidates: z.array(DeepMatchCandidateSchema).max(DEEP_MATCH_MAX_CANDIDATES) }).strict();
 export type DeepMatchAdapterInput = z.infer<typeof DeepMatchAdapterInputSchema>;
 
+export const DeepMatchAdapterFailureCategorySchema = z.enum(["retryable", "auth", "policy", "invalid_output"]);
+export type DeepMatchAdapterFailureCategory = z.infer<typeof DeepMatchAdapterFailureCategorySchema>;
+
+/** #35 的生产适配器必须使用同一稳定分类，不能把 provider 文本泄露到运行状态。 */
+export class DeepMatchAdapterError extends Error {
+  constructor(readonly category: DeepMatchAdapterFailureCategory) { super(`DEEP_MATCH_${category.toUpperCase()}`); }
+}
+
+export const FAKE_DEEP_MATCH_TOKEN_USAGE = { inputTokens: 32, outputTokens: 48 } as const;
+export type DeepMatchAdapterCall = {
+  signal: AbortSignal;
+  usageKey: string;
+  budget: { maxTokens: number; reservedInputTokens: number; reservedOutputTokens: number };
+};
+
 export interface DeepMatchAdapter {
   readonly adapter: string;
   readonly adapterVersion: string;
   readonly model: string;
-  assess(input: DeepMatchAdapterInput): Promise<DeepMatchAssessment[]>;
+  assess(input: DeepMatchAdapterInput, call: DeepMatchAdapterCall): Promise<DeepMatchAssessment[]>;
 }
 
 /** Reject responses that cite untrusted or out-of-scope inputs before persistence. */
@@ -85,7 +100,8 @@ export class FakeDeepMatchAdapter implements DeepMatchAdapter {
   readonly adapterVersion = FAKE_DEEP_MATCH_ADAPTER_VERSION;
   readonly model = "fake-deep-match-model-v1";
 
-  async assess(input: DeepMatchAdapterInput): Promise<DeepMatchAssessment[]> {
+  async assess(input: DeepMatchAdapterInput, call: DeepMatchAdapterCall): Promise<DeepMatchAssessment[]> {
+    if (call.signal.aborted) throw new DeepMatchAdapterError("retryable");
     const parsed = DeepMatchAdapterInputSchema.parse(input);
     return parsed.candidates.map((candidate) => {
       const assessment = DeepMatchAssessmentSchema.parse({

@@ -206,9 +206,9 @@ export const AgentRunControlStateSchema = z.enum(["none", "pause_requested", "ca
 export const AgentRunControlActionSchema = z.enum(["pause", "resume", "cancel"]);
 export const AgentRunBudgetDimensionSchema = z.enum(["active_duration", "attempts", "tool_calls", "model_calls", "tokens"]);
 export const AgentRunCurrentStepSchema = z.enum([
-  "queued", "batch_search", "fetch_details", "persist_results", "completed", "failed", "cancelled",
+  "queued", "batch_search", "fetch_details", "persist_results", "select_candidates", "assess_matches", "create_recommendations", "completed", "failed", "cancelled",
 ]);
-export const AgentRunStepKeySchema = z.enum(["batch_search", "fetch_details", "persist_results"]);
+export const AgentRunStepKeySchema = z.enum(["batch_search", "fetch_details", "persist_results", "select_candidates", "assess_matches", "create_recommendations"]);
 export const AgentRunStepStatusSchema = z.enum(["pending", "running", "completed", "failed"]);
 export const AgentRunFailureCodeSchema = z.enum([
   "AGENT_RUN_ADAPTER_RETRYABLE",
@@ -296,7 +296,12 @@ export const DeepMatchAgentRunBudgetSchema = z.object({
   maxActiveDurationMs: z.literal(180_000), maxAttempts: z.literal(3), maxToolCalls: z.literal(0),
   maxResults: z.literal(10), maxModelCalls: z.literal(10), maxTokens: z.literal(20_000),
 }).strict();
-export const DeepMatchAgentRunSourceScopeSchema = z.object({ kind: z.literal("deep_match"), trigger: z.enum(["automatic", "manual"]) }).strict();
+export const DeepMatchAgentRunSourceScopeSchema = z.object({ kind: z.literal("deep_match"), trigger: z.enum(["automatic", "manual"]), opportunityId: z.uuid().nullable() }).strict().superRefine((scope, context) => {
+  if (scope.trigger === "manual" && scope.opportunityId === null) context.addIssue({ code: "custom", path: ["opportunityId"], message: "manual matching must bind one opportunity" });
+  if (scope.trigger === "automatic" && scope.opportunityId !== null) context.addIssue({ code: "custom", path: ["opportunityId"], message: "automatic matching evaluates discovery candidates" });
+});
+export type AgentRunSourceScope = z.infer<typeof AgentRunSourceScopeSchema>;
+export type DeepMatchAgentRunSourceScope = z.infer<typeof DeepMatchAgentRunSourceScopeSchema>;
 export const DeepMatchAgentRunExecutionSpecSchema = z.object({
   targetSnapshot: AgentRunTargetSnapshotSchema, sourceScope: DeepMatchAgentRunSourceScopeSchema,
   workflowVersion: z.literal(DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION), ruleVersion: z.literal("deep-match-rules-v1"),
@@ -377,9 +382,6 @@ export const AgentRunUsageSchema = z.object({
   if (usage.totalTokens !== usage.inputTokens + usage.outputTokens) {
     context.addIssue({ code: "custom", path: ["totalTokens"], message: "total tokens must equal input plus output" });
   }
-  if (usage.modelCalls !== 0 || usage.inputTokens !== 0 || usage.outputTokens !== 0 || usage.totalTokens !== 0) {
-    context.addIssue({ code: "custom", path: ["modelCalls"], message: "fake runs do not use models" });
-  }
 });
 
 export const AgentRunTerminationSchema = z.discriminatedUnion("kind", [
@@ -423,7 +425,7 @@ export const AgentRunStepSchema = z.object({
 
 export const AgentRunEventDataSchema = z.discriminatedUnion("eventType", [
   z.object({ eventType: z.literal("run.queued"), status: z.literal("queued"), currentStep: z.literal("queued"), attemptCount: nonnegativeInteger }).strict(),
-  z.object({ eventType: z.literal("run.started"), status: z.literal("running"), currentStep: z.literal("batch_search"), attemptCount: positiveInteger }).strict(),
+  z.object({ eventType: z.literal("run.started"), status: z.literal("running"), currentStep: AgentRunStepKeySchema, attemptCount: positiveInteger }).strict(),
   z.object({ eventType: z.literal("step.started"), status: z.literal("running"), currentStep: AgentRunStepKeySchema, stepKey: AgentRunStepKeySchema, attemptCount: positiveInteger }).strict(),
   z.object({ eventType: z.literal("step.completed"), status: z.literal("running"), currentStep: AgentRunStepKeySchema, stepKey: AgentRunStepKeySchema, attemptCount: positiveInteger }).strict(),
   z.object({ eventType: z.literal("run.retry_scheduled"), status: z.literal("queued"), currentStep: AgentRunStepKeySchema, attemptCount: positiveInteger, failureCode: AgentRunFailureCodeSchema }).strict(),
@@ -491,7 +493,11 @@ const LayeredPublicAgentRunSummarySchema = z.object({
   outputSchemaVersion: z.literal(LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION),
   budget: PublicAgentRunBudgetSchema,
 }).strict();
-export const AgentRunSummarySchema = z.union([FakeAgentRunSummarySchema, PublicAgentRunSummarySchema, PublicSourceHealthAgentRunSummarySchema, LayeredPublicAgentRunSummarySchema]).superRefine((summary, context) => {
+const DeepMatchAgentRunSummarySchema = z.object({
+  ...AgentRunSummaryFields, sourceScope: DeepMatchAgentRunSourceScopeSchema, workflowVersion: z.literal(DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION),
+  adapter: z.literal("fake-deep-match"), adapterVersion: z.literal("fake-deep-match-v1"), outputSchemaVersion: z.literal("deep-match-result-v1"), budget: DeepMatchAgentRunBudgetSchema,
+}).strict();
+export const AgentRunSummarySchema = z.union([FakeAgentRunSummarySchema, PublicAgentRunSummarySchema, PublicSourceHealthAgentRunSummarySchema, LayeredPublicAgentRunSummarySchema, DeepMatchAgentRunSummarySchema]).superRefine((summary, context) => {
   if ((summary.status === "cancelled") !== (summary.currentStep === "cancelled")) {
     context.addIssue({ code: "custom", path: ["currentStep"], message: "cancelled status and step must pair" });
   }
@@ -513,6 +519,7 @@ export const AgentRunDetailSchema = z.union([
     discoveryDiagnostics: z.array(DiscoveryDiagnosticSchema).max(50),
     sourceIssues: z.array(DiscoverySourceIssueSummarySchema).max(10),
   }).strict(),
+  DeepMatchAgentRunSummarySchema.extend({ ...AgentRunDetailFields, executionSpec: DeepMatchAgentRunExecutionSpecSchema, results: z.array(AgentRunResultSchema).max(0) }).strict(),
 ]).superRefine((detail, context) => {
   const terminal = detail.status === "completed" || detail.status === "failed" || detail.status === "cancelled";
   if (!terminal && detail.termination !== null) context.addIssue({ code: "custom", path: ["termination"], message: "nonterminal runs have no termination" });
@@ -571,6 +578,7 @@ export const StartAgentRunResponseSchema = z.union([
   PublicAgentRunSummarySchema.extend({ reused: z.boolean() }).strict(),
   PublicSourceHealthAgentRunSummarySchema.extend({ reused: z.boolean() }).strict(),
   LayeredPublicAgentRunSummarySchema.extend({ reused: z.boolean() }).strict(),
+  DeepMatchAgentRunSummarySchema.extend({ reused: z.boolean() }).strict(),
 ]);
 export const LatestAgentRunResponseSchema = z.object({ run: AgentRunDetailSchema.nullable() }).strict();
 

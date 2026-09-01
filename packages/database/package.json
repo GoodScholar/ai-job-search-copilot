@@ -8,7 +8,7 @@
   },
   "scripts": {
     "db:migrate": "drizzle-kit migrate --config=drizzle.config.ts",
-    "test": "vitest run",
+    "test": "vitest run --no-file-parallelism",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
