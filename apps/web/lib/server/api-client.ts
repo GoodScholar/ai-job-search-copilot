@@ -88,6 +88,7 @@ import {
   type AgentInboxActionResponse,
 } from "@job-copilot/contracts/agent-inbox";
 import { z } from "zod";
+import { RecommendationListHistorySchema, RecommendationListSchema, type RecommendationList, type RecommendationListHistory } from "@job-copilot/contracts/recommendations";
 
 type ApiClientConfig = {
   apiInternalUrl: string;
@@ -168,6 +169,28 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
   }
 
   return {
+    async startDeepMatchRun(sessionToken: string, targetId: string, idempotencyKey: string): Promise<{ runId: string; reused: boolean }> {
+      const response = await request("/v1/recommendations/runs", {
+        method: "POST",
+        headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" },
+        body: JSON.stringify({ targetId, idempotencyKey }),
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法开始重新评估", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, z.object({ runId: z.uuid(), reused: z.boolean() }).strict());
+    },
+    async getLatestRecommendations(sessionToken: string, targetId: string): Promise<RecommendationList> {
+      const response = await request(`/v1/recommendations/latest?targetId=${encodeURIComponent(targetId)}`, { method: "GET", headers: { authorization: `Bearer ${sessionToken}` } });
+      if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法读取推荐清单", response.status, problem ?? undefined); }
+      return parseSuccess(response, RecommendationListSchema);
+    },
+    async getRecommendationHistory(sessionToken: string, targetId: string): Promise<RecommendationListHistory> {
+      const response = await request(`/v1/recommendations/history?targetId=${encodeURIComponent(targetId)}`, { method: "GET", headers: { authorization: `Bearer ${sessionToken}` } });
+      if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法读取推荐历史", response.status, problem ?? undefined); }
+      return parseSuccess(response, RecommendationListHistorySchema);
+    },
     async startDevSession(input: StartDevSessionRequest): Promise<z.infer<typeof StartDevSessionResponseSchema>> {
       const requestBody = StartDevSessionRequestSchema.parse(input);
       if (!devAuthSharedSecret) {

@@ -17,7 +17,7 @@ it("marks only real workbench controls as 44px touch targets", () => {
   expect(screen.getByRole("link", { name: "首页" })).toHaveClass("workbench-touch-target");
   expect(screen.getByRole("link", { name: "画像" })).toHaveClass("workbench-touch-target");
   expect(screen.getByRole("button", { name: "退出" })).toHaveClass("workbench-touch-target");
-  expect(screen.queryByRole("link", { name: "推荐" })).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "推荐" })).toHaveClass("workbench-touch-target");
   expect(screen.queryByRole("link", { name: "投递" })).not.toBeInTheDocument();
   expect(screen.getByRole("link", { name: "首页" })).toHaveAttribute("aria-current", "page");
   expect(screen.getByRole("link", { name: "画像" })).not.toHaveAttribute("aria-current");

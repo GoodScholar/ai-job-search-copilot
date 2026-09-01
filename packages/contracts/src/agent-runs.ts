@@ -57,6 +57,11 @@ export const PUBLIC_JOB_DISCOVERY_BUDGET = {
   maxModelCalls: 0,
   maxTokens: 0,
 } as const;
+export const DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION = "deep-match-v1";
+export const DEEP_MATCH_AGENT_RUN_STEPS = ["select_candidates", "assess_matches", "create_recommendations"] as const;
+export const DEEP_MATCH_AGENT_RUN_BUDGET = {
+  maxActiveDurationMs: 180_000, maxAttempts: 3, maxToolCalls: 0, maxResults: 10, maxModelCalls: 10, maxTokens: 20_000,
+} as const;
 
 const positiveInteger = z.int().min(1);
 const nonnegativeInteger = z.int().nonnegative();
@@ -287,6 +292,18 @@ const PublicAgentRunBudgetSchema = z.object({
   maxResults: z.literal(5), maxModelCalls: z.literal(0), maxTokens: z.literal(0),
 }).strict();
 
+export const DeepMatchAgentRunBudgetSchema = z.object({
+  maxActiveDurationMs: z.literal(180_000), maxAttempts: z.literal(3), maxToolCalls: z.literal(0),
+  maxResults: z.literal(10), maxModelCalls: z.literal(10), maxTokens: z.literal(20_000),
+}).strict();
+export const DeepMatchAgentRunSourceScopeSchema = z.object({ kind: z.literal("deep_match"), trigger: z.enum(["automatic", "manual"]) }).strict();
+export const DeepMatchAgentRunExecutionSpecSchema = z.object({
+  targetSnapshot: AgentRunTargetSnapshotSchema, sourceScope: DeepMatchAgentRunSourceScopeSchema,
+  workflowVersion: z.literal(DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION), ruleVersion: z.literal("deep-match-rules-v1"),
+  adapter: z.literal("fake-deep-match"), adapterVersion: z.literal("fake-deep-match-v1"), outputSchemaVersion: z.literal("deep-match-result-v1"),
+  toolAllowlist: z.tuple([]), model: z.object({ provider: z.literal("fake"), model: z.literal("fake-deep-match-model-v1") }).strict(), budget: DeepMatchAgentRunBudgetSchema,
+}).strict();
+
 const PublicAgentRunExecutionSpecSchema = z.object({
   targetSnapshot: AgentRunTargetSnapshotSchema,
   sourceScope: PublicAgentRunSourceScopeSchema,
@@ -342,6 +359,7 @@ export const AgentRunExecutionSpecSchema = z.union([
   PublicAgentRunExecutionSpecSchema,
   PublicSourceHealthAgentRunExecutionSpecSchema,
   LayeredPublicAgentRunExecutionSpecSchema,
+  DeepMatchAgentRunExecutionSpecSchema,
 ]);
 
 export const AgentRunUsageSchema = z.object({

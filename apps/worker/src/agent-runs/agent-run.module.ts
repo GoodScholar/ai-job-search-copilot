@@ -214,8 +214,8 @@ class AgentRunDatabase implements OnModuleDestroy {
     },
     {
       provide: AGENT_RUN_CONSUMER,
-      inject: [AGENT_RUN_DATABASE],
-      useFactory: (database: AgentRunDatabase) => {
+      inject: [AGENT_RUN_DATABASE, AGENT_RUN_QUEUE],
+      useFactory: (database: AgentRunDatabase, queue: BullmqAgentRunQueue) => {
         const db = database.db;
         return new AgentRunConsumer({
           redisUrl: redisUrl(),
@@ -232,6 +232,7 @@ class AgentRunDatabase implements OnModuleDestroy {
             }),
             contentStore: new MinioDiscoveryContentStore(createMinioClient(), required("MINIO_BUCKET", "career-documents")),
             auditTrail: createAuditTrail({ db, clock: () => new Date() }),
+            matchingQueue: queue,
             id: randomUUID,
             clock: () => new Date(),
           }),

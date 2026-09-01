@@ -11,6 +11,8 @@
     "./company-watchlists": "./src/company-watchlists.ts",
     "./job-imports": "./src/job-imports.ts",
     "./job-triage": "./src/job-triage.ts",
+    "./deep-match": "./src/deep-match.ts",
+    "./recommendations": "./src/recommendations.ts",
     "./job-discovery-schedules": "./src/job-discovery-schedules.ts",
     "./job-discovery": "./src/job-discovery.ts",
     "./agent-runs": "./src/agent-runs.ts",

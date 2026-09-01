@@ -1,7 +1,9 @@
-import type { Database } from "@job-copilot/database";
+import { agentRuns, type Database } from "@job-copilot/database";
+import { and, eq } from "drizzle-orm";
 import type { AuditTrail } from "./audit-trail";
 import { createAgentRunCheckpoint, type AgentRunCheckpoint } from "./agent-run-checkpoint";
 import { createAgentRunProcessor as createDomainAgentRunProcessor, type AgentRunProcessorDependencies, type DiscoveryContentStore, type JobDiscoveryAdapter, type JobDiscoveryAdapterResolver } from "./agent-run-processor";
+import { createDeepMatchRunProcessor } from "./deep-match-agent-runs";
 
 /** Agent run public facade. Execution stays in `agent-run-processor`. */
 export {
@@ -41,5 +43,12 @@ type FacadeProcessorDependencies = Omit<AgentRunProcessorDependencies, "checkpoi
 
 export function createAgentRunProcessor(deps: FacadeProcessorDependencies) {
   const checkpoint = deps.checkpoint ?? createAgentRunCheckpoint({ db: deps.db as Database, auditTrail: deps.auditTrail as AuditTrail, id: deps.id, clock: deps.clock });
-  return createDomainAgentRunProcessor({ ...deps, checkpoint });
+  const discovery = createDomainAgentRunProcessor({ ...deps, checkpoint });
+  const matching = createDeepMatchRunProcessor({ db: deps.db as Database, id: deps.id, clock: deps.clock });
+  return {
+    async process(job: import("@job-copilot/contracts/agent-runs").AgentRunJob & { finalAttempt?: boolean }) {
+      const [run] = await (deps.db as Database).select({ workflowVersion: agentRuns.workflowVersion }).from(agentRuns).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId)));
+      return run?.workflowVersion === "deep-match-v1" ? matching.process(job) : discovery.process(job);
+    },
+  };
 }

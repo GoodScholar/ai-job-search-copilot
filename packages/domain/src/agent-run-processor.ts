@@ -15,6 +15,8 @@ import type { AuditTrail } from "./audit-trail";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { createJobDiscoveryPersistence, discoverySourceIdentifier, type DiscoveryDetail } from "./job-discovery-persistence";
 import { persistJobOpportunity } from "./job-opportunity-persistence";
+import { triggerDeepMatchAfterDiscovery } from "./deep-match-agent-runs";
+import type { DeepMatchRunQueue } from "./deep-match-agent-runs";
 import { decideRetry } from "./agent-run-state";
 import { agentRunUsageSnapshot, appendBudgetFacts, settleActiveSlice, terminateBudgetRun, type BudgetDimension } from "./agent-run-lifecycle";
 import type { AgentRunCheckpoint } from "./agent-run-checkpoint";
@@ -105,6 +107,8 @@ export type AgentRunProcessorDependencies = {
   heartbeatIntervalMs?: number;
   heartbeatStopTimeoutMs?: number;
   heartbeatRenew?: (input: { userId: string; runId: string; claimToken: string; deadline: Date }) => Promise<boolean | "paused" | "cancelled">;
+  /** Matching runs share the existing queue; a persisted queued row remains the recovery authority. */
+  matchingQueue?: DeepMatchRunQueue;
 };
 type FailureCode = "AGENT_RUN_ADAPTER_RETRYABLE" | "AGENT_RUN_ADAPTER_FAILED" | "AGENT_RUN_CONTENT_STORAGE_FAILED" | "AGENT_RUN_PERSIST_FAILED" | "AGENT_RUN_BUDGET_EXCEEDED";
 type NonBudgetFailureCode = Exclude<FailureCode, "AGENT_RUN_BUDGET_EXCEEDED">;
@@ -556,6 +560,8 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         try { persisted = await runTransaction(deps, deadline, (transaction) => createJobDiscoveryPersistence({ db: deps.db, id: deps.id, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({ run: { ...claimed.run, claimToken: claimed.claimToken }, details: input.details, scans: input.scans, storedObjects: stored.map((item) => ({ sourceId: item.detail.sourceId, detailId: item.detail.detailId, objectKey: item.objectKey, rawContentSha256: item.rawContentSha256 })), sourceChecks: input.sourceChecks, terminal: input.terminal, now: deps.clock(), transaction })); }
         catch { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_PERSIST_FAILED", retryable: true, category: "source" }, deadline }); }
         await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), persisted.cleanupObjectKeys); if (!persisted.completed) return "stale";
+        // PostgreSQL queued state is authoritative; the shared queue wakes it immediately and reconciler repairs delivery failures.
+        await triggerDeepMatchAfterDiscovery({ db: deps.db, id: deps.id, clock: deps.clock, queue: deps.matchingQueue, userId: job.userId, targetId: claimed.run.targetId, discoveryRunId: job.runId });
         await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_after", ordinal: 1 });
         return input.terminal === "source_failed" ? "failed" : "completed";
       };
