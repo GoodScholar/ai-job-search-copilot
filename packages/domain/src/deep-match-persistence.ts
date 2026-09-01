@@ -98,6 +98,7 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
         jobEvidenceIds: input.candidate.jobEvidence.map((item) => item.id),
         profileEvidenceIds: input.candidate.profileEvidence.map((item) => item.id),
       });
+      if (assessment.opportunityId !== input.candidate.opportunityId) throw new Error("DEEP_MATCH_OPPORTUNITY_IDENTITY_INVALID");
       return deps.db.transaction(async (transaction) => {
         await acquireAccountAdvisoryLock(transaction, input.userId);
         if (input.fence) {

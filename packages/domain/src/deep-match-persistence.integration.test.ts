@@ -5,6 +5,7 @@ import {
   jobTargetRevisions, jobTargets, jobTriageVersions, migrateDatabase, profileFactRevisions, profileFacts, type Database,
 } from "@job-copilot/database";
 import { and, eq } from "drizzle-orm";
+import { DEEP_MATCH_DIMENSIONS } from "@job-copilot/contracts/deep-match";
 import { createDeepMatchRunStarter } from "./deep-match-agent-runs";
 import { DeepMatchClaimLostError, createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
 
@@ -100,15 +101,25 @@ describe("deep match persistence", () => {
 
   it.each(["pause_requested", "cancel_requested"] as const)("refuses match and list writes after %s between model and persistence", async (controlState) => {
     const input = await fixture();
-    const run = await createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: crypto.randomUUID, clock: () => now })
+    const run = await createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now })
       .start({ userId: input.userId, targetId: input.targetId, idempotencyKey: crypto.randomUUID(), trigger: "automatic" });
     const claimToken = crypto.randomUUID();
-    await db.update(agentRuns).set({ status: "running", claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), controlState }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, run.runId)));
+    await db.update(agentRuns).set({ status: "running", currentStep: "assess_matches", attemptCount: 1, startedAt: now, activeSliceStartedAt: now, claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), controlState }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, run.runId)));
     const commands = createDeepMatchCommands({ db, id: crypto.randomUUID, clock: () => now });
     const candidate = (await createDeepMatchQueries({ db }).selectCandidates({ userId: input.userId, targetId: input.targetId }))[0]!;
     await expect(commands.createMatch({ userId: input.userId, targetId: input.targetId, candidate, modelCall: modelCall(), fence: { runId: run.runId, claimToken } })).rejects.toBeInstanceOf(DeepMatchClaimLostError);
     await expect(commands.createDailyList({ userId: input.userId, targetId: input.targetId, matchVersionIds: [], fence: { runId: run.runId, claimToken } })).rejects.toBeInstanceOf(DeepMatchClaimLostError);
     await expect(db.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, input.userId))).resolves.toHaveLength(0);
     await expect(db.select().from(recommendationLists).where(eq(recommendationLists.userId, input.userId))).resolves.toHaveLength(0);
+  });
+
+  it("rejects an adapter assessment for a different opportunity before persistence", async () => {
+    const input = await fixture();
+    const candidate = (await createDeepMatchQueries({ db }).selectCandidates({ userId: input.userId, targetId: input.targetId }))[0]!;
+    const commands = createDeepMatchCommands({ db, id: crypto.randomUUID, clock: () => now, adapter: {
+      adapter: "test", adapterVersion: "v1", model: "test",
+      async assess() { return [{ opportunityId: crypto.randomUUID(), overallScore: 80, dimensions: DEEP_MATCH_DIMENSIONS.map((dimension) => ({ dimension, score: 80, judgment: "evidence_backed_inference" as const, jobEvidenceIds: [candidate.jobEvidence[0]!.id], profileEvidenceIds: [candidate.profileEvidence[0]!.id], summary: "wrong identity" })) }]; },
+    } });
+    await expect(commands.createMatch({ userId: input.userId, targetId: input.targetId, candidate, modelCall: modelCall() })).rejects.toThrow("DEEP_MATCH_OPPORTUNITY_IDENTITY_INVALID");
   });
 });
