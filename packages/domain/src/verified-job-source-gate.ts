@@ -227,7 +227,8 @@ export function createVerifiedJobSourceGate(deps: { db: Database; contentStore: 
             eq(jobSourcePostings.userId, value.userId), eq(jobSourcePostings.sourceType, expectedSourceType), eq(jobSourcePostings.sourceIdentifier, sourceIdentifier),
           )).limit(1);
           if (foundPosting) {
-            if (foundPosting.sourceId !== value.page.canonicalUrl || !isCanonicalSourceIdentity(foundPosting.sourceIdentity, value.page.canonicalUrl) || foundPosting.isOfficial !== expectedOfficial) {
+            if (foundPosting.sourceId !== value.page.canonicalUrl || !isCanonicalSourceIdentity(foundPosting.sourceIdentity, value.page.canonicalUrl) || foundPosting.isOfficial !== expectedOfficial
+              || lead.state === "verified" && !publicSourceIdentity(foundPosting.sourceIdentity)?.finalUrls.includes(value.page.finalUrl)) {
               throw new VerifiedJobSourceGateError("VERIFIED_JOB_SOURCE_LEAD_CONFLICT");
             }
             const sourceIdentity = sourceIdentityForFinal(foundPosting.sourceIdentity, value.page.canonicalUrl, value.page.finalUrl);
