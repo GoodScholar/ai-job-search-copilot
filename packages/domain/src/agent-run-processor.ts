@@ -104,7 +104,7 @@ export type AgentRunProcessorDependencies = {
   cleanupTimeoutMs?: number;
   heartbeatIntervalMs?: number;
   heartbeatStopTimeoutMs?: number;
-  heartbeatRenew?: (input: { userId: string; runId: string; claimToken: string; deadline: Date }) => Promise<boolean>;
+  heartbeatRenew?: (input: { userId: string; runId: string; claimToken: string; deadline: Date }) => Promise<boolean | "paused" | "cancelled">;
 };
 type FailureCode = "AGENT_RUN_ADAPTER_RETRYABLE" | "AGENT_RUN_ADAPTER_FAILED" | "AGENT_RUN_CONTENT_STORAGE_FAILED" | "AGENT_RUN_PERSIST_FAILED" | "AGENT_RUN_BUDGET_EXCEEDED";
 type NonBudgetFailureCode = Exclude<FailureCode, "AGENT_RUN_BUDGET_EXCEEDED">;
@@ -145,31 +145,44 @@ function adapterFailure(error: unknown): Failure {
   return { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "source" };
 }
 
-async function renewClaim(deps: AgentRunProcessorDependencies, input: { userId: string; runId: string; claimToken: string; deadline: Date }): Promise<boolean> {
-  const [renewed] = await runTransaction<Array<{ id: string }>>(deps, input.deadline, async (transaction) => {
+async function renewClaim(deps: AgentRunProcessorDependencies, input: { userId: string; runId: string; claimToken: string; deadline: Date }): Promise<boolean | "paused" | "cancelled"> {
+  const [renewed] = await runTransaction<Array<{ outcome: boolean | "paused" | "cancelled" }>>(deps, input.deadline, async (transaction) => {
     await acquireAccountAdvisoryLock(transaction, input.userId);
     const now = deps.clock();
     if (remainingBudget(deps.clock, input.deadline) <= 0) throw new AgentRunBudgetError("active_duration");
-    const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.controlState, "none"), eq(agentRuns.claimToken, input.claimToken)));
+    const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.claimToken)));
     if (!run) return [];
+    if (run.controlState === "pause_requested") return [{ outcome: "paused" }];
+    if (run.controlState === "cancel_requested") return [{ outcome: "cancelled" }];
     const elapsed = await settleActiveSlice(transaction, { id: deps.id, userId: input.userId, run, now });
     const activeDurationMs = run.activeDurationMs + elapsed;
     const version = elapsed > 0 ? run.version + 1 : run.version;
     const updated = await transaction.update(agentRuns).set({ claimExpiresAt: new Date(now.getTime() + 30_000), activeDurationMs, activeSliceStartedAt: now, version, updatedAt: now })
       .where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.controlState, "none"), eq(agentRuns.claimToken, input.claimToken))).returning({ id: agentRuns.id });
-    if (updated[0] && elapsed > 0) await appendBudgetFacts(transaction, { id: deps.id, auditTrail: deps.auditTrail, userId: input.userId, requestId: input.runId, runId: input.runId, version, currentStep: run.currentStep, usage: agentRunUsageSnapshot(run, { activeDurationMs }), consumed: { activeDurationMs: elapsed, toolCalls: 0, sourceRequests: 0, modelCalls: 0 }, now });
-    return updated;
+    if (updated[0]) {
+      if (elapsed > 0) await appendBudgetFacts(transaction, { id: deps.id, auditTrail: deps.auditTrail, userId: input.userId, requestId: input.runId, runId: input.runId, version, currentStep: run.currentStep, usage: agentRunUsageSnapshot(run, { activeDurationMs }), consumed: { activeDurationMs: elapsed, toolCalls: 0, sourceRequests: 0, modelCalls: 0 }, now });
+      return [{ outcome: true }];
+    }
+    const [afterFailedRenewal] = await transaction.select({ controlState: agentRuns.controlState }).from(agentRuns).where(and(
+      eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.claimToken),
+    ));
+    if (afterFailedRenewal?.controlState === "pause_requested") return [{ outcome: "paused" }];
+    if (afterFailedRenewal?.controlState === "cancel_requested") return [{ outcome: "cancelled" }];
+    return [{ outcome: false }];
   });
-  return Boolean(renewed);
+  return renewed?.outcome ?? false;
 }
 
-function startClaimHeartbeat(deps: AgentRunProcessorDependencies, input: { userId: string; runId: string; claimToken: string; deadline: Date; onLeaseLost?(): void }) {
+function startClaimHeartbeat(deps: AgentRunProcessorDependencies, input: { userId: string; runId: string; claimToken: string; deadline: Date; onLeaseLost?(): void; onControl?(outcome: "paused" | "cancelled"): void }) {
   let stopped = false;
   let inFlight: Promise<void> | undefined;
   const tick = () => {
     if (stopped || inFlight) return;
     const renew = deps.heartbeatRenew ?? ((renewInput) => renewClaim(deps, renewInput));
-    inFlight = renew(input).then((renewed) => { if (!renewed) input.onLeaseLost?.(); }, () => { input.onLeaseLost?.(); }).finally(() => { inFlight = undefined; });
+    inFlight = renew(input).then((renewed) => {
+      if (renewed === "paused" || renewed === "cancelled") input.onControl?.(renewed);
+      else if (!renewed) input.onLeaseLost?.();
+    }, () => { input.onLeaseLost?.(); }).finally(() => { inFlight = undefined; });
   };
   tick();
   const interval = setInterval(tick, deps.heartbeatIntervalMs ?? 15_000);
@@ -504,7 +517,13 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
       }
       const layeredController = claimed.run.workflowVersion === "layered-public-job-discovery-v1" ? new AbortController() : undefined;
-      const stopHeartbeat = startClaimHeartbeat(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, deadline, onLeaseLost: () => layeredController?.abort() });
+      let trustedStop: "paused" | "cancelled" | "budget_exhausted" | "stale" | undefined;
+      let heartbeatControl: "paused" | "cancelled" | undefined;
+      const stopHeartbeat = startClaimHeartbeat(deps, {
+        userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, deadline,
+        onLeaseLost: () => layeredController?.abort(),
+        onControl: (outcome) => { heartbeatControl = outcome; trustedStop = outcome; layeredController?.abort(); },
+      });
       try {
       const adapterCall = async <T>(operation: string, ordinal: number, call: () => Promise<T>): Promise<{ value?: T; outcome?: ProcessorOutcome }> => {
         const before = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation, ordinal, reserve: { toolCalls: 1, sourceRequests: 1 } });
@@ -543,11 +562,24 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
       if (claimed.run.workflowVersion === "layered-public-job-discovery-v1") {
         const batchStart = await transition("batch_search", false); if (batchStart) return batchStart;
         let physicalOrdinal = 0;
-        let trustedStop: "paused" | "cancelled" | "budget_exhausted" | "stale" | undefined;
         let budgetTerminatedByCheckpoint = false;
         let latestDiagnostics: readonly LayeredPublicWorkflowDiagnostic[] = [];
         const controller = layeredController!;
         const abortAtDeadline = setTimeout(() => { trustedStop = "budget_exhausted"; controller.abort(); }, Math.max(0, remainingBudget(deps.clock, deadline)));
+        const persistHeartbeatControl = async (diagnostics: readonly LayeredPublicWorkflowDiagnostic[]): Promise<ProcessorOutcome | undefined> => {
+          if (heartbeatControl !== "paused" && heartbeatControl !== "cancelled") return undefined;
+          const control = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "heartbeat_control", ordinal: ++physicalOrdinal });
+          if (control !== heartbeatControl) return control ?? "stale";
+          try {
+            await persistLayeredPublicOutcome(deps, {
+              userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), deadline,
+              diagnostics, sourceIssues: [], sourcePostingVersionIds: [], trustedSourcePostingVersionIds: [], trustedSourceIds: [], complete: false, interrupted: heartbeatControl,
+            });
+          } catch (error) {
+            return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
+          }
+          return heartbeatControl;
+        };
         try {
           const workflowPromise = layeredWorkflow.run({
             userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), executionSpec: layeredExecutionSpec, attemptCount: claimed.attemptCount, signal: controller.signal,
@@ -563,6 +595,8 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
             },
           });
           const outcome = await bounded(deps.clock, deadline, () => workflowPromise);
+          const heartbeatControl = await persistHeartbeatControl(outcome.diagnostics);
+          if (heartbeatControl) return heartbeatControl;
           if (isLayeredPublicWorkflowInterruption(outcome) && trustedStop === outcome.interruption) {
             try { await persistLayeredPublicOutcome(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), deadline: trustedStop === "budget_exhausted" ? cleanupDeadline(deps) : deadline, diagnostics: outcome.diagnostics, sourceIssues: [], sourcePostingVersionIds: [], trustedSourcePostingVersionIds: [], trustedSourceIds: [], complete: false, interrupted: trustedStop }); }
             catch (error) { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline }); }
@@ -584,6 +618,8 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           const persisted = await persistLayeredPublicOutcome(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), deadline, diagnostics: outcome.diagnostics, sourceIssues: outcome.sourceIssues ?? [], sourcePostingVersionIds: outcome.sourcePostingVersionIds ?? [], trustedSourcePostingVersionIds: outcome.trustedSourcePostingVersionIds ?? [], trustedSourceIds: layeredExecutionSpec.sourceScope.trustedSources.map(({ source }) => source.sourceId) });
           return persisted === "facts" ? "stale" : persisted;
         } catch (error) {
+          const heartbeatControl = await persistHeartbeatControl(latestDiagnostics);
+          if (heartbeatControl) return heartbeatControl;
           if (error instanceof AgentRunBudgetError) {
             trustedStop = "budget_exhausted";
             controller.abort();
