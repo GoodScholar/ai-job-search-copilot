@@ -22,6 +22,7 @@ import { createAuditTrail } from "./audit-trail";
 import { createAgentRunCheckpoint } from "./agent-runs";
 import { createJobDiscoveryLeadRepository } from "./job-discovery-leads";
 import { createVerifiedJobSourceGate, VerifiedJobEvidenceStoreUnavailableError, VerifiedJobSourceGateError } from "./verified-job-source-gate";
+import { assertTrue } from "./test-safe-assertions";
 
 const now = new Date("2026-08-30T12:00:00.000Z");
 const normalizedUrl = "https://careers.acme.com/jobs/123?job=123";
@@ -829,6 +830,35 @@ describe("verified public job source gate", () => {
     });
     expect(secondResult.sourcePosting.postingId).toBe(firstResult.sourcePosting.postingId);
     expect(secondResult.sourcePostingVersion.sourcePostingVersionId).toBe(firstResult.sourcePostingVersion.sourcePostingVersionId);
+  });
+
+  it("每个已验证 Lead 只接受其自身的真实 final replay", async () => {
+    const finalB = "https://careers.acme.com/jobs/123?job=final-b";
+    const first = await owner();
+    const second = await anotherLead(first);
+    const store = new EvidenceStore();
+    const gate = createVerifiedJobSourceGate({ db: database, contentStore: store, id: () => crypto.randomUUID() });
+    const firstInput = {
+      userId: first.userId, leadId: first.leadId,
+      candidate: { queryId: first.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: page(), now,
+    };
+    const secondInput = {
+      userId: second.userId, leadId: second.leadId,
+      candidate: { queryId: second.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: { ...page(), finalUrl: finalB }, now,
+    };
+    const firstResult = await gate.verify(firstInput);
+    const secondResult = await gate.verify(secondInput);
+    const putsBeforeConflict = store.puts.length;
+    let conflicted = false;
+    try {
+      await gate.verify({ ...firstInput, page: { ...page(), finalUrl: finalB } });
+    } catch (error) {
+      conflicted = error instanceof VerifiedJobSourceGateError && error.code === "VERIFIED_JOB_SOURCE_LEAD_CONFLICT";
+    }
+    assertTrue(conflicted);
+    expect(store.puts.length === putsBeforeConflict).toBe(true);
+    await expect(gate.verify(firstInput)).resolves.toMatchObject({ sourcePostingVersion: { sourcePostingVersionId: firstResult.sourcePostingVersion.sourcePostingVersionId } });
+    await expect(gate.verify(secondInput)).resolves.toMatchObject({ sourcePostingVersion: { sourcePostingVersionId: secondResult.sourcePostingVersion.sourcePostingVersionId } });
   });
 
   it("任一真实页面 hash 改变会追加版本，而不会创建第二个 canonical posting", async () => {
