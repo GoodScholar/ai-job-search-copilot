@@ -34,6 +34,7 @@ Every command was preceded by a no-residual-process check and run as the sole co
 
 - `/tmp/issue30-final-rerun-05b-migration-chain.log` is INVALID: its literal journal scan matched unrelated text despite no index `28`. The precise index check in `05c` is authoritative.
 - `/tmp/issue30-final-rerun-11-integrity.log` is INVALID: a broad all-diff value pattern also counted removed text and test-only fixtures. The additions-only audit in `15` is authoritative. Its safe classification evidence is in `12` through `14`; none prints a candidate value.
+- `/tmp/issue30-final-rerun-16-post-report-integrity.log` is INVALID as a command record: its reported status, live-secret count, and residual-process count were clean, but `pipefail` propagated the expected no-match exit status from the residual-process filter. The corrected final post-report check follows this documentation correction.
 
 ## Remaining gate
 
