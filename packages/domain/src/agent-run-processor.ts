@@ -150,13 +150,13 @@ async function renewClaim(deps: AgentRunProcessorDependencies, input: { userId: 
     await acquireAccountAdvisoryLock(transaction, input.userId);
     const now = deps.clock();
     if (remainingBudget(deps.clock, input.deadline) <= 0) throw new AgentRunBudgetError("active_duration");
-    const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.claimToken)));
+    const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.controlState, "none"), eq(agentRuns.claimToken, input.claimToken)));
     if (!run) return [];
     const elapsed = await settleActiveSlice(transaction, { id: deps.id, userId: input.userId, run, now });
     const activeDurationMs = run.activeDurationMs + elapsed;
     const version = elapsed > 0 ? run.version + 1 : run.version;
     const updated = await transaction.update(agentRuns).set({ claimExpiresAt: new Date(now.getTime() + 30_000), activeDurationMs, activeSliceStartedAt: now, version, updatedAt: now })
-      .where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.claimToken))).returning({ id: agentRuns.id });
+      .where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.controlState, "none"), eq(agentRuns.claimToken, input.claimToken))).returning({ id: agentRuns.id });
     if (updated[0] && elapsed > 0) await appendBudgetFacts(transaction, { id: deps.id, auditTrail: deps.auditTrail, userId: input.userId, requestId: input.runId, runId: input.runId, version, currentStep: run.currentStep, usage: agentRunUsageSnapshot(run, { activeDurationMs }), consumed: { activeDurationMs: elapsed, toolCalls: 0, sourceRequests: 0, modelCalls: 0 }, now });
     return updated;
   });
