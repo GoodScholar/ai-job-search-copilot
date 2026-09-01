@@ -26,6 +26,7 @@ const scenarios = {
 
 function scenarioFor(testInfo: TestInfo) { return scenarios[testInfo.project.name as keyof typeof scenarios]; }
 async function routeMatches(link: Locator, value: string): Promise<boolean> { return await link.getAttribute("href") === `/home?runId=${value}#agent-run`; }
+async function valueMatches(field: Locator, expected: string): Promise<boolean> { return await field.inputValue() === expected; }
 function serializedRunAndFactsContainFixedTestKey(run: unknown, facts: unknown): boolean {
   return JSON.stringify({ run, facts }).includes(fixedTestKey);
 }
@@ -155,8 +156,9 @@ async function addApprovedFixtureWatchlist(page: Page): Promise<void> {
   await companyName.fill("Fake AnySearch Fixture");
   await expect(companyName).toHaveValue("Fake AnySearch Fixture");
   const careersUrl = page.getByLabel("公开招聘入口");
-  await careersUrl.fill("https://boards.greenhouse.io/fake-anysearch-fixture");
-  await expect(careersUrl).toHaveValue("https://boards.greenhouse.io/fake-anysearch-fixture");
+  const approvedEntry = "https://boards.greenhouse.io/fake-anysearch-fixture";
+  await careersUrl.fill(approvedEntry);
+  await expect(careersUrl).toHaveValue(approvedEntry);
   const allowedDomains = page.getByLabel("允许域");
   await allowedDomains.fill("boards.greenhouse.io, boards-api.greenhouse.io");
   await expect(allowedDomains).toHaveValue("boards.greenhouse.io, boards-api.greenhouse.io");
