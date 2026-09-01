@@ -48,7 +48,7 @@ Review Round 2 counts: Standards `0C/2I/0M`; Spec `0C/1I/0M`.
 | Finding | Red → Green | Actual behavior evidence |
 | --- | --- | --- |
 | Authorization failure-frame safety | `b37c618` → `5b7254f` | 完整 header 等值与 expect 迁入无 query/URL/key/token/header 实值的 helper；同长度错误 credential 令 helper boolean 失败，Red scan 为 `forbidden=0`。 |
-| Lead-bound fetched final fact | `2599ad9` → `d64bf38` | A final A、B final B 可复用同 Posting/Version；A replay B 的 stable conflict boolean 在 Red 为 false、Green 为 true，A/A 与 B/B replay 保持幂等。`0028` 以 owner-bound Attribution→Version→Posting joins 回填 `verified_final_url`，无 final 的 verified row fail closed。 |
+| Lead-bound fetched final fact | `2599ad9` → `d64bf38`，projection regression `f562bc8` | A final A、B final B 可复用同 Posting/Version；A replay B 的 stable conflict boolean 在 Red 为 false、Green 为 true，A/A 与 B/B replay 保持幂等。`0028` 以 owner-bound Attribution→Version→Posting joins 回填 `verified_final_url`，无 final 的 verified row fail closed；public lead projection 保持不含该内部字段。 |
 
 The Round 2 files `/tmp/issue30-task11-r2-auth-red.log` and `/tmp/issue30-task11-r2-final-replay-red.log` were deleted after review because their failure frames exposed forbidden context. They are INVALID/SUPERSEDED and are not evidence.
 
