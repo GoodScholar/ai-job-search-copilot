@@ -186,6 +186,20 @@ describe("AnySearchPublicJobAdapter", () => {
     expect(transport).toHaveBeenCalledTimes(2);
   });
 
+  it("rejects an extract response whose provider URL does not identify the issued candidate", async () => {
+    const transport = vi.fn(async (url: RequestInfo | URL) => jsonResponse((url as URL).pathname === "/v1/search" ? validSearch() : validExtract("https://jobs.example.com/opening?jobId=other-456")));
+    const adapter = testAdapter({ transport });
+    const searched = await adapter.search(searchInput());
+    const candidate = mustSearchData(searched).candidates[0]?.candidate;
+    if (!candidate) throw new Error("fixture candidate should be accepted");
+
+    const result = await adapter.extract({ candidate, identity: leadId });
+
+    expect("error" in result).toBe(true);
+    expect("error" in result && result.error.code === "ANYSEARCH_POLICY_REJECTED").toBe(true);
+    expect(transport).toHaveBeenCalledTimes(2);
+  });
+
   it.each([
     ["invalid json", new Response("{", { status: 200 })],
     ["wrong envelope", jsonResponse({ code: 1, message: "ok", request_id: "r", data: {} })],
