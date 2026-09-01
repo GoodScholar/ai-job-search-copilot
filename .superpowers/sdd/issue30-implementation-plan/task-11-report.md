@@ -60,3 +60,28 @@ Round 3 safe evidence:
 - `/tmp/issue30-task11-r3-database-typecheck.log`, `/tmp/issue30-task11-r3-domain-typecheck.log`, `/tmp/issue30-task11-r3-worker-typecheck.log`, `/tmp/issue30-task11-r3-adapter-focused.log`, `/tmp/issue30-task11-r3-drizzle-check.log`
 
 Counts: Gate plus Lead repository 34/34; migration-focused 7/7; migration application 22/22; Adapter/source-safety 92/92. Database, Domain, and Worker typechecks passed; static Drizzle reported `Everything's fine`. Source identity remains taxonomy/canonical/verified-final-only and remains free of candidate aliases; public lead facts continue to omit `verified_final_url`.
+
+## Final Review Fix Round 4
+
+This round fixes only `0028_lead_verified_final` historical recovery. The old identity could map each requested alias to a different fetched final while its scalar final held only the first value. Recovery now follows the owner-bound Attribution → Version → Posting join and uses the verified Lead's own legacy alias lookup; a missing mapping or a multi-final legacy shape without a unique mapping fails closed.
+
+| Finding | Red → Green | Actual behavior evidence |
+| --- | --- | --- |
+| Per-Lead legacy final recovery | `7ac7cd3` → `1b6bc89` | Two verified Leads sharing one Posting/Version recover their own final facts rather than both receiving the scalar first value. The migrated identity retains the verified final set only. |
+| Recovered-final safety | `1b6bc89` → `7e264fd`; application pair `139500b` → `651f56d` | The accepted table-driven migration application test rejects non-HTTPS, userinfo, fragment, sensitive query names and non-scalar JSON values. Recovery accepts only the approved canonical public-URL shape; the matching table constraint prevents independent later writes. |
+| Missing/ambiguous history | `7b69d7b` → `f906fd9` | A missing alias mapping and an ambiguous multi-final legacy shape mutate to an unsafe scalar fallback and fail safe boolean; Green restores null recovery and migration failure. |
+| Legacy alias-map removal | `a5e4b31` → `cc2e473` | A mutation retaining the legacy map fails the exact four-key identity projection; Green writes only taxonomy policy, canonical URL, scalar stable final and stable final set. |
+
+Round 4 safe evidence:
+
+- `/tmp/issue30-task11-r4-migration-red.log`, `/tmp/issue30-task11-r4-migration-green.log`
+- `/tmp/issue30-task11-r4-migration-safety-red.log`, `/tmp/issue30-task11-r4-migration-safety-red-scan.log`
+- `/tmp/issue30-task11-r4-failclosed-red.log`, `/tmp/issue30-task11-r4-failclosed-green.log`
+- `/tmp/issue30-task11-r4-unsafe-application-red.log`, `/tmp/issue30-task11-r4-unsafe-application-green.log`
+- `/tmp/issue30-task11-r4-identity-rewrite-red.log`, `/tmp/issue30-task11-r4-identity-rewrite-green.log`
+- `/tmp/issue30-task11-r4-final-database-migrations.log`, `/tmp/issue30-task11-r4-final-gate-leads.log`
+- `/tmp/issue30-task11-r4-final-database-typecheck.log`, `/tmp/issue30-task11-r4-final-domain-typecheck.log`, `/tmp/issue30-task11-r4-final-drizzle-check.log`
+
+Accepted red scans report `forbidden=0`; failed assertions expose only a boolean/count. Migration-focused application coverage is 13/13; the final combined migration run is 37/37; Gate plus Lead coverage is 34/34. Database and Domain typechecks passed, and static Drizzle reported `Everything's fine`.
+
+Invalid attempt: the first outer non-object JSON fixture was rejected by a pre-0028 object constraint before the migration began, so it was not migration evidence. Its raw log was deleted, and the accepted table uses a non-scalar value inside an otherwise valid historical object. Temporary unfiltered Testcontainers logs were also removed; only the listed safe logs remain. No product/API projection changed: the internal final fact stays absent from public Lead output.
