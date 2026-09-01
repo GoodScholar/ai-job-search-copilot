@@ -1,4 +1,4 @@
-import { and, desc, eq, gt } from "drizzle-orm";
+import { and, desc, eq, gt, lte } from "drizzle-orm";
 import {
   agentRuns, jobMatchVersions, jobOpportunities, jobSourcePostingVersions, jobTriageVersions, profileFactRevisions, profileFacts,
   recommendationExclusions, recommendationListItems, recommendationLists, type Database,
@@ -41,10 +41,15 @@ export function createDeepMatchQueries(deps: { db: Database }) {
       const eligible = [...latest.values()].filter(({ triage, opportunity }) => (input.opportunityId === undefined || opportunity.id === input.opportunityId) && triage.sourcePostingVersionId === opportunity.sourcePostingVersionId && triage.overallVerdict === "pass" && triage.deadlineStatus !== "expired" && triage.overallScore !== null && triage.threshold !== null && triage.overallScore >= triage.threshold && opportunity.availability === "open")
         .sort((left, right) => right.triage.overallScore! - left.triage.overallScore! || left.triage.opportunityId.localeCompare(right.triage.opportunityId)).slice(0, 10);
       return (await Promise.all(eligible.map(async ({ triage, opportunity, sourceVersion }) => {
-        const revisions = await deps.db.select({ factId: profileFacts.id, revisionId: profileFactRevisions.id, factValue: profileFactRevisions.factValue, state: profileFactRevisions.state })
+        const revisions = await deps.db.select({ factId: profileFacts.id, revisionId: profileFactRevisions.id, factValue: profileFactRevisions.factValue, state: profileFactRevisions.state, profileVersion: profileFactRevisions.profileVersion, revisionNumber: profileFactRevisions.revisionNumber })
           .from(profileFacts).innerJoin(profileFactRevisions, and(eq(profileFactRevisions.userId, profileFacts.userId), eq(profileFactRevisions.profileFactId, profileFacts.id)))
-          .where(and(eq(profileFacts.userId, input.userId), eq(profileFacts.profileId, triage.profileId), eq(profileFactRevisions.profileVersion, triage.profileVersion)));
-        const profileEvidence = revisions.filter((revision) => revision.state === "active").map((revision) => ({ id: `profile:${revision.revisionId}`, profileFactRevisionId: revision.revisionId, value: JSON.stringify(revision.factValue).slice(0, 256) })).slice(0, 20);
+          .where(and(eq(profileFacts.userId, input.userId), eq(profileFacts.profileId, triage.profileId), lte(profileFactRevisions.profileVersion, triage.profileVersion)));
+        const snapshot = new Map<string, typeof revisions[number]>();
+        for (const revision of revisions) {
+          const previous = snapshot.get(revision.factId);
+          if (!previous || revision.profileVersion > previous.profileVersion || (revision.profileVersion === previous.profileVersion && revision.revisionNumber > previous.revisionNumber)) snapshot.set(revision.factId, revision);
+        }
+        const profileEvidence = [...snapshot.values()].filter((revision) => revision.state === "active").map((revision) => ({ id: `profile:${revision.revisionId}`, profileFactRevisionId: revision.revisionId, value: JSON.stringify(revision.factValue).slice(0, 256) })).slice(0, 20);
         if (!profileEvidence.length) return null;
         const versionEvidence = JSON.stringify({ title: opportunity.title, company: opportunity.company, normalized: sourceVersion.normalizedData }).slice(0, 512);
         return {
