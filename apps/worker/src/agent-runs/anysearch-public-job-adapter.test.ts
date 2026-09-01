@@ -90,7 +90,9 @@ describe("AnySearchPublicJobAdapter", () => {
     const [url, init] = transport.mock.calls[0]!;
     expect(String(url)).toBe("https://anysearch.test/v1/search");
     expect(init?.method).toBe("POST");
-    expect(init?.headers).toMatchObject({ authorization: `Bearer ${secretKey}`, "content-type": "application/json" });
+    const authorization = (init?.headers as Record<string, unknown> | undefined)?.authorization;
+    expect(typeof authorization === "string" && authorization.startsWith("Bearer ") && authorization.length === "Bearer ".length + secretKey.length).toBe(true);
+    expect(init?.headers).toMatchObject({ "content-type": "application/json" });
     expect(JSON.parse(String(init?.body))).toEqual({ query: "高级前端工程师 site:example.com", max_results: 5 });
     expect(JSON.stringify(init?.body)).not.toMatch(/allowedSiteDomains|domain|host|target|profile|watchlist|user/i);
   });

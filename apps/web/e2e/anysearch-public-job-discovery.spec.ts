@@ -4,7 +4,7 @@ import type { AgentRunDetail } from "@job-copilot/contracts/agent-runs";
 import AxeBuilder from "@axe-core/playwright";
 import { Queue } from "bullmq";
 import { Client } from "pg";
-import { expect, test, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { assertFalse } from "./support/assert-false";
 import { expectTrue } from "./support/assert-true";
 
@@ -25,6 +25,7 @@ const scenarios = {
 } as const;
 
 function scenarioFor(testInfo: TestInfo) { return scenarios[testInfo.project.name as keyof typeof scenarios]; }
+async function routeMatches(link: Locator, value: string): Promise<boolean> { return await link.getAttribute("href") === `/home?runId=${value}#agent-run`; }
 function serializedRunAndFactsContainFixedTestKey(run: unknown, facts: unknown): boolean {
   return JSON.stringify({ run, facts }).includes(fixedTestKey);
 }
@@ -328,7 +329,7 @@ test("版本化 Fake AnySearch 从普通 UI 运行真实 layered public 验收�
   await expect(page.locator(".agent-run-panel [role=status]")).toContainText("岗位发现部分完成");
   await expect(page.locator(".agent-run-results li")).toHaveCount(1);
   const attention = page.locator(".agent-inbox-panel").getByRole("link", { name: "查看本次运行诊断" });
-  await expect(attention).toHaveAttribute("href", `/home?runId=${runId}#agent-run`);
+  expectTrue(await routeMatches(attention, runId));
   const controls = page.locator(".agent-run-panel .workbench-touch-target, .agent-inbox-panel .workbench-touch-target");
   expect(await controls.count()).toBeGreaterThan(0);
   expect(await controls.evaluateAll((elements) => elements.every((element) => element.getBoundingClientRect().height >= 44))).toBe(true);
@@ -366,5 +367,5 @@ test("版本化 Fake AnySearch 缺 key 时从普通 UI 失败且不触发 provid
   assertFalse(serializedRunAndFactsContainFixedTestKey(run, facts));
   await page.reload();
   const attention = page.locator(".agent-inbox-panel").getByRole("link", { name: "查看本次运行诊断" });
-  await expect(attention).toHaveAttribute("href", `/home?runId=${runId}#agent-run`);
+  expectTrue(await routeMatches(attention, runId));
 });
