@@ -18,7 +18,7 @@ import { createJobDiscoveryPersistence, discoverySourceIdentifier, type Discover
 import { persistJobOpportunity } from "./job-opportunity-persistence";
 import { deepMatchDiscoveryIdempotencyKey, ensureDeepMatchRunInTransaction, triggerDeepMatchAfterDiscovery } from "./deep-match-agent-runs";
 import type { DeepMatchRunQueue } from "./deep-match-agent-runs";
-import { createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
+import { DeepMatchClaimLostError, createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
 import { decideRetry } from "./agent-run-state";
 import { agentRunUsageSnapshot, appendBudgetFacts, settleActiveSlice, terminateBudgetRun, type BudgetDimension } from "./agent-run-lifecycle";
 import type { AgentRunCheckpoint } from "./agent-run-checkpoint";
@@ -582,7 +582,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           for (const [index, candidate] of candidates.entries()) {
             const checkpointOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "deep_match_model_input", ordinal: index + 1, reserve: { modelCalls: 1, inputTokens: FAKE_DEEP_MATCH_TOKEN_USAGE.inputTokens, budgetTokens: FAKE_DEEP_MATCH_TOKEN_USAGE.inputTokens + FAKE_DEEP_MATCH_TOKEN_USAGE.outputTokens } });
             if (checkpointOutcome) return checkpointOutcome;
-            matchVersionIds.push((await commands.createMatch({ userId: job.userId, targetId: claimed.run.targetId, candidate, modelCall: {
+            matchVersionIds.push((await commands.createMatch({ userId: job.userId, targetId: claimed.run.targetId, candidate, fence: { runId: job.runId, claimToken: claimed.claimToken }, modelCall: {
               signal: modelController!.signal,
               usageKey: `${claimed.claimToken}:deep_match_model:${index + 1}`,
               budget: { maxTokens: (claimed.run.budgetSnapshot as { maxTokens: number }).maxTokens, reservedInputTokens: FAKE_DEEP_MATCH_TOKEN_USAGE.inputTokens, reservedOutputTokens: FAKE_DEEP_MATCH_TOKEN_USAGE.outputTokens },
@@ -592,10 +592,11 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           }
           const assessCompleted = await transition("assess_matches", true); if (assessCompleted) return assessCompleted;
           const listStarted = await transition("create_recommendations", false); if (listStarted) return listStarted;
-          const list = await commands.createDailyList({ userId: job.userId, targetId: claimed.run.targetId, matchVersionIds });
+          const list = await commands.createDailyList({ userId: job.userId, targetId: claimed.run.targetId, matchVersionIds, fence: { runId: job.runId, claimToken: claimed.claimToken } });
           const listCompleted = await transition("create_recommendations", true); if (listCompleted) return listCompleted;
           return completeMatching(list.items.length);
         } catch (error) {
+          if (error instanceof DeepMatchClaimLostError) return "stale";
           return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
         }
       }

@@ -1,6 +1,6 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, gt } from "drizzle-orm";
 import {
-  jobMatchVersions, jobOpportunities, jobSourcePostingVersions, jobTriageVersions, profileFactRevisions, profileFacts,
+  agentRuns, jobMatchVersions, jobOpportunities, jobSourcePostingVersions, jobTriageVersions, profileFactRevisions, profileFacts,
   recommendationExclusions, recommendationListItems, recommendationLists, type Database,
 } from "@job-copilot/database";
 import {
@@ -10,6 +10,7 @@ import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 
 export const DEEP_MATCH_RULE_VERSION = "deep-match-rules-v1";
 export const DEEP_MATCH_PROMPT_VERSION = "deep-match-prompt-v1";
+export class DeepMatchClaimLostError extends Error { constructor() { super("DEEP_MATCH_CLAIM_LOST"); } }
 
 export type SelectedDeepMatchCandidate = DeepMatchCandidate & {
   triageVersionId: string; profileId: string; profileVersion: number; targetVersion: number; overallScore: number;
@@ -87,7 +88,7 @@ export function createDeepMatchQueries(deps: { db: Database }) {
 export function createDeepMatchCommands(deps: { db: Database; id: () => string; clock: () => Date; adapter?: DeepMatchAdapter }) {
   const adapter = deps.adapter ?? new FakeDeepMatchAdapter();
   return {
-    async createMatch(input: { userId: string; targetId: string; candidate: SelectedDeepMatchCandidate; modelCall: DeepMatchAdapterCall }) {
+    async createMatch(input: { userId: string; targetId: string; candidate: SelectedDeepMatchCandidate; modelCall: DeepMatchAdapterCall; fence?: { runId: string; claimToken: string } }) {
       const [rawAssessment] = await adapter.assess({ candidates: [{
         opportunityId: input.candidate.opportunityId, sourcePostingVersionId: input.candidate.sourcePostingVersionId,
         jobEvidence: input.candidate.jobEvidence, profileEvidence: input.candidate.profileEvidence,
@@ -99,6 +100,10 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
       });
       return deps.db.transaction(async (transaction) => {
         await acquireAccountAdvisoryLock(transaction, input.userId);
+        if (input.fence) {
+          const [run] = await transaction.select({ id: agentRuns.id }).from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.fence.runId), eq(agentRuns.claimToken, input.fence.claimToken), eq(agentRuns.status, "running"), eq(agentRuns.controlState, "none"), gt(agentRuns.claimExpiresAt, deps.clock()))).limit(1);
+          if (!run) throw new DeepMatchClaimLostError();
+        }
         const [previous] = await transaction.select({ sequence: jobMatchVersions.sequence }).from(jobMatchVersions)
           .where(and(eq(jobMatchVersions.userId, input.userId), eq(jobMatchVersions.opportunityId, input.candidate.opportunityId))).orderBy(desc(jobMatchVersions.sequence)).limit(1);
         const [created] = await transaction.insert(jobMatchVersions).values({
@@ -111,10 +116,14 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
         return { matchVersionId: created.id, sequence: created.sequence, overallScore: created.overallScore, displayBand: created.displayBand };
       });
     },
-    async createDailyList(input: { userId: string; targetId: string; matchVersionIds: readonly string[] }) {
+    async createDailyList(input: { userId: string; targetId: string; matchVersionIds: readonly string[]; fence?: { runId: string; claimToken: string } }) {
       if (input.matchVersionIds.length > 10) throw new Error("DEEP_MATCH_LIST_LIMIT");
       return deps.db.transaction(async (transaction) => {
         await acquireAccountAdvisoryLock(transaction, input.userId);
+        if (input.fence) {
+          const [run] = await transaction.select({ id: agentRuns.id }).from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.fence.runId), eq(agentRuns.claimToken, input.fence.claimToken), eq(agentRuns.status, "running"), eq(agentRuns.controlState, "none"), gt(agentRuns.claimExpiresAt, deps.clock()))).limit(1);
+          if (!run) throw new DeepMatchClaimLostError();
+        }
         const localDate = shanghaiDate(deps.clock());
         const [previous] = await transaction.select({ sequence: recommendationLists.sequence }).from(recommendationLists).where(and(eq(recommendationLists.userId, input.userId), eq(recommendationLists.targetId, input.targetId), eq(recommendationLists.localDate, localDate))).orderBy(desc(recommendationLists.sequence)).limit(1);
         const [list] = await transaction.insert(recommendationLists).values({ id: deps.id(), userId: input.userId, targetId: input.targetId, localDate, sequence: (previous?.sequence ?? 0) + 1, createdAt: deps.clock() }).returning();
