@@ -8,7 +8,6 @@ import {
   type AgentRunJob,
 } from "@job-copilot/contracts/agent-runs";
 import type { createAgentRunProcessor } from "@job-copilot/domain/agent-runs";
-import { closeWithinDeadline } from "../close-within-deadline.js";
 
 type AgentRunProcessor = ReturnType<typeof createAgentRunProcessor>;
 type AgentRunOutcome = Awaited<ReturnType<AgentRunProcessor["process"]>>;
