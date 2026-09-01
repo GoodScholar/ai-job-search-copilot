@@ -114,13 +114,19 @@ describe("job discovery persistence lifecycle", () => {
     const separate = await database.transaction((transaction) => persistJobOpportunity(transaction, { ...publicInput, sourcePostingVersionId: otherVersionId, dedupIdentity: "f".repeat(64), now: later }));
     expect(separate.opportunityId === first.opportunityId).toBe(false);
 
-    const legacyPostingId = crypto.randomUUID(); const legacyVersionId = crypto.randomUUID();
+    const legacyPostingId = crypto.randomUUID(); const legacyVersionId = crypto.randomUUID(); const legacySecondVersionId = crypto.randomUUID();
     await database.insert(jobSourcePostings).values({ id: legacyPostingId, userId, sourceType: "company_careers", sourceIdentifier: "3".repeat(64), sourceId: null, sourceIdentity: {}, isOfficial: true, availability: "open", availabilityUpdatedAt: later, createdAt: later, updatedAt: later });
-    await database.insert(jobSourcePostingVersions).values({ id: legacyVersionId, userId, sourcePostingId: legacyPostingId, version: 1, contentSha256: "4".repeat(64), rawContentSha256: "5".repeat(64), rawObjectReference: {}, normalizedData: {}, retrievedAt: later, availability: "open", createdAt: later });
+    await database.insert(jobSourcePostingVersions).values([
+      { id: legacyVersionId, userId, sourcePostingId: legacyPostingId, version: 1, contentSha256: "4".repeat(64), rawContentSha256: "5".repeat(64), rawObjectReference: {}, normalizedData: {}, retrievedAt: later, availability: "open", createdAt: later },
+      { id: legacySecondVersionId, userId, sourcePostingId: legacyPostingId, version: 2, contentSha256: "6".repeat(64), rawContentSha256: "7".repeat(64), rawObjectReference: {}, normalizedData: {}, retrievedAt: new Date(later.getTime() + 1), availability: "open", createdAt: new Date(later.getTime() + 1) },
+    ]);
     const legacyInput = { ...publicInput, sourcePostingVersionId: legacyVersionId, company: "Fictional", title: "AI Engineer", location: "Shanghai", dedupIdentity: undefined, now: later };
     await database.transaction(async (transaction) => { await persistJobOpportunity(transaction, legacyInput); await persistJobOpportunity(transaction, legacyInput); });
     const expectedLegacyKey = createHash("sha256").update(JSON.stringify(["Fictional", "AI Engineer", "Shanghai", null, null, null])).digest("hex");
     await expect(database.select({ dedupKey: jobOpportunities.dedupKey }).from(jobOpportunities).where(and(eq(jobOpportunities.userId, userId), eq(jobOpportunities.sourcePostingVersionId, legacyVersionId)))).resolves.toEqual([{ dedupKey: expectedLegacyKey }]);
+    await database.transaction((transaction) => persistJobOpportunity(transaction, { ...legacyInput, sourcePostingVersionId: legacySecondVersionId, now: new Date(later.getTime() + 1) }));
+    await expect(database.select({ sourcePostingVersionId: jobOpportunities.sourcePostingVersionId, updatedAt: jobOpportunities.updatedAt }).from(jobOpportunities).where(and(eq(jobOpportunities.userId, userId), eq(jobOpportunities.dedupKey, expectedLegacyKey)))).resolves.toEqual([{ sourcePostingVersionId: legacyVersionId, updatedAt: later }]);
+    await expect(database.select({ sourcePostingVersionId: jobOpportunitySources.sourcePostingVersionId }).from(jobOpportunitySources).where(and(eq(jobOpportunitySources.userId, userId), eq(jobOpportunitySources.sourcePostingVersionId, legacySecondVersionId)))).resolves.toEqual([{ sourcePostingVersionId: legacySecondVersionId }]);
   });
 
   it("完整空扫描关闭来源时追加生命周期版本并复用上一原始对象", async () => {
