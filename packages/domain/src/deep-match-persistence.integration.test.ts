@@ -1,12 +1,12 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  agentRuns, createDatabase, jobAccounts, jobOpportunities, jobProfiles, jobSourcePostingVersions, jobSourcePostings,
+  agentRuns, createDatabase, jobAccounts, jobMatchVersions, jobOpportunities, jobProfiles, jobSourcePostingVersions, jobSourcePostings, recommendationLists,
   jobTargetRevisions, jobTargets, jobTriageVersions, migrateDatabase, profileFactRevisions, profileFacts, type Database,
 } from "@job-copilot/database";
 import { and, eq } from "drizzle-orm";
 import { createDeepMatchRunStarter } from "./deep-match-agent-runs";
-import { createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
+import { DeepMatchClaimLostError, createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
 
 const now = new Date("2026-09-01T02:00:00.000Z");
 const hash = "a".repeat(64);
@@ -96,5 +96,19 @@ describe("deep match persistence", () => {
     expect(second.matchVersionId).not.toBe(first.matchVersionId);
     expect(firstList).toMatchObject({ sequence: 1, items: [expect.objectContaining({ highlighted: true })] });
     expect(secondList).toMatchObject({ sequence: 2, items: [expect.objectContaining({ matchVersionId: second.matchVersionId })] });
+  });
+
+  it.each(["pause_requested", "cancel_requested"] as const)("refuses match and list writes after %s between model and persistence", async (controlState) => {
+    const input = await fixture();
+    const run = await createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: crypto.randomUUID, clock: () => now })
+      .start({ userId: input.userId, targetId: input.targetId, idempotencyKey: crypto.randomUUID(), trigger: "automatic" });
+    const claimToken = crypto.randomUUID();
+    await db.update(agentRuns).set({ status: "running", claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), controlState }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, run.runId)));
+    const commands = createDeepMatchCommands({ db, id: crypto.randomUUID, clock: () => now });
+    const candidate = (await createDeepMatchQueries({ db }).selectCandidates({ userId: input.userId, targetId: input.targetId }))[0]!;
+    await expect(commands.createMatch({ userId: input.userId, targetId: input.targetId, candidate, modelCall: modelCall(), fence: { runId: run.runId, claimToken } })).rejects.toBeInstanceOf(DeepMatchClaimLostError);
+    await expect(commands.createDailyList({ userId: input.userId, targetId: input.targetId, matchVersionIds: [], fence: { runId: run.runId, claimToken } })).rejects.toBeInstanceOf(DeepMatchClaimLostError);
+    await expect(db.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, input.userId))).resolves.toHaveLength(0);
+    await expect(db.select().from(recommendationLists).where(eq(recommendationLists.userId, input.userId))).resolves.toHaveLength(0);
   });
 });
