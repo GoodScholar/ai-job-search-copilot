@@ -154,6 +154,20 @@ describe("public discovery workflow migration", () => {
       assertTrue(finals.length === 2 && finals.some((row) => row.id === leadId && row.verified_final_url === finalA) && finals.some((row) => row.id === secondLeadId && row.verified_final_url === finalB));
       const [rewrittenPosting] = await database.execute(sql`select source_identity from job_source_postings where id = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'`) as unknown as Array<{ source_identity: Record<string, unknown> }>;
       assertTrue(Boolean(rewrittenPosting) && !("observedFinalUrls" in rewrittenPosting.source_identity) && Array.isArray(rewrittenPosting.source_identity.finalUrls) && rewrittenPosting.source_identity.finalUrls.length === 2);
+      const unsafeFinals = [
+        "http://careers.acme.com/openings/a?job=one",
+        "https://user@careers.acme.com/openings/a?job=one",
+        "https://careers.acme.com/openings/a?job=one#fragment",
+        "https://careers.acme.com/openings/a?token=secret",
+        "https://careers.acme.com/openings/a?job=one&session=active",
+        "not-json",
+      ];
+      let rejected = 0;
+      for (const unsafe of unsafeFinals) {
+        try { await database.execute(sql`update job_discovery_leads set verified_final_url = ${unsafe} where id = ${leadId}`); }
+        catch { rejected += 1; }
+      }
+      assertTrue(rejected === unsafeFinals.length);
       await expect(database.execute(sql`select kind, reason_code from agent_inbox_items where id = '12121212-1212-4121-8121-121212121212'`)).resolves.toEqual([
         { kind: "source_attention", reason_code: "SOURCE_HEALTH_ATTENTION" },
       ]);
