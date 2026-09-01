@@ -115,7 +115,7 @@ Round 5 accidentally removed the pre-`0028` migration application test. Restored
 
 | Finding | Evidence |
 | --- | --- |
-| Restored application coverage | `134cfa3` restores the real PostgreSQL seam; only two constraint assertions are projected through neutral booleans so mutation failures do not expose fixture context. |
+| Restored application coverage | `134cfa3` restores the real PostgreSQL seam; three neutral assertions cover two constraint types (one ordinal-range assertion and two version-uniqueness assertions), so mutation failures do not expose fixture context. |
 | Mutation sensitivity | An uncommitted mutation removes the `0027` owner/run/version uniqueness constraint. The focused application test then fails the neutral boolean assertion with `forbidden=0`; the mutation was restored before the Green run and is not in history. |
 
 Round 6 logs:
