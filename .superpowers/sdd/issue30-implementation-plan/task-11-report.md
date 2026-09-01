@@ -22,17 +22,17 @@ Review counts for this round: Standards `0C/1I/0M`; Spec `0C/4I/0M`.
 
 | Finding | Red → Green | Actual behavior evidence |
 | --- | --- | --- |
-| Authorization 精确性 | `ebbfc41` → `31937eb` | 同长度错误 token 令中性 boolean 断言失败；Green 以隔离 helper 精确比较完整 Bearer 值，Adapter/source-safety 92/92。 |
+| Authorization 精确性 | `ebbfc41` → `31937eb`（Red INVALID/SUPERSEDED） | 该 Green 保留为回归基础；旧 Red 的失败 frame 含 query，已由 Round 3 的安全 pair 替代。 |
 | Gate source identity 无 candidate alias | `3d84dac` → `a4f71da` | 同源 candidate alias 与真实 final 分离时，旧 identity 包含 alias 的 boolean 失败；Green 仅写 taxonomy、canonical 和稳定排序真实 final 集合，并兼容读取旧 observed map。 |
-| 同 Lead conflicting final replay | `d1f4db3` → `fda38e0` | 去除 verified-Lead final 围栏后，冲突 boolean 为 false；Green 拒绝该 replay，而另一 pending Lead 可以复用同 Posting/Version 归因。 |
+| 同 Lead conflicting final replay | `d1f4db3` → `fda38e0`（Red INVALID/SUPERSEDED） | Posting 级 final 集合不能区分 A→B→A 后的 Lead replay；该旧证据已由 Round 3 的 Lead-bound fact pair 替代。 |
 | Opportunity legacy 兼容 | `04c4a67` → `bdaf9dc` | legacy nonofficial 的新来源版本错误改写 current pointer/updatedAt；Green 仅允许 official 或带 `dedupIdentity` 的公开来源更新 current，source link 仍写入。 |
 | Heartbeat 控制终态 | `5dd4b24` → `8e88e5f` | pause/cancel 请求后，取消型 provider outcome 与 stale interruption 都先错误落为 failed；Green 在 renewal 的 select/update 竞态后回读控制状态，复用同一 AbortSignal，并以 checkpoint 确认后持久化 paused/cancelled。 |
 
 Round 2 safe logs:
 
-- `/tmp/issue30-task11-r2-auth-red.log`, `/tmp/issue30-task11-r2-auth-green.log`
+- `/tmp/issue30-task11-r2-auth-green.log`（旧 Red 已删除且不作证据）
 - `/tmp/issue30-task11-r2-source-identity-red.log`, `/tmp/issue30-task11-r2-source-identity-green.log`
-- `/tmp/issue30-task11-r2-final-replay-red.log`, `/tmp/issue30-task11-r2-final-replay-green.log`
+- `/tmp/issue30-task11-r2-final-replay-green.log`（旧 Red 已删除且不作证据）
 - `/tmp/issue30-task11-r2-legacy-opportunity-red.log`, `/tmp/issue30-task11-r2-legacy-opportunity-green.log`
 - `/tmp/issue30-task11-r2-heartbeat-control-red.log`, `/tmp/issue30-task11-r2-heartbeat-control-green.log`
 - `/tmp/issue30-task11-r2-adapter-focused.log`, `/tmp/issue30-task11-r2-domain-typecheck.log`, `/tmp/issue30-task11-r2-worker-typecheck.log`, `/tmp/issue30-task11-r2-drizzle-check.log`
@@ -40,3 +40,23 @@ Round 2 safe logs:
 Focused totals: Gate 22/22; Opportunity lifecycle 41/41; Processor 66/66; Adapter plus source-safety 92/92. Domain and Worker typechecks passed; static Drizzle check reported `Everything's fine`. Fresh configured/missing-key Desktop/Mobile 4/4 evidence is the accepted Round 1 run and was intentionally not duplicated because this round changes no browser-visible path.
 
 Invalid attempts: an initial source-identity Green shell wrapper assigned zsh's read-only `status`, so it did not execute a test; it was immediately rerun with a different variable. The first source-identity Green attempt also exposed an invalid fixture whose requested/final relation violated Gate input validation; it was corrected before the accepted Green run. No invalid attempt is used as evidence. The historical two `db:migrate` commands remain INVALID; this round used only the required static Drizzle check.
+
+## Final Review Fix Round 3
+
+Review Round 2 counts: Standards `0C/2I/0M`; Spec `0C/1I/0M`.
+
+| Finding | Red → Green | Actual behavior evidence |
+| --- | --- | --- |
+| Authorization failure-frame safety | `b37c618` → `5b7254f` | 完整 header 等值与 expect 迁入无 query/URL/key/token/header 实值的 helper；同长度错误 credential 令 helper boolean 失败，Red scan 为 `forbidden=0`。 |
+| Lead-bound fetched final fact | `2599ad9` → `d64bf38` | A final A、B final B 可复用同 Posting/Version；A replay B 的 stable conflict boolean 在 Red 为 false、Green 为 true，A/A 与 B/B replay 保持幂等。`0028` 以 owner-bound Attribution→Version→Posting joins 回填 `verified_final_url`，无 final 的 verified row fail closed。 |
+
+The Round 2 files `/tmp/issue30-task11-r2-auth-red.log` and `/tmp/issue30-task11-r2-final-replay-red.log` were deleted after review because their failure frames exposed forbidden context. They are INVALID/SUPERSEDED and are not evidence.
+
+Round 3 safe evidence:
+
+- `/tmp/issue30-task11-r3-auth-red.log`, `/tmp/issue30-task11-r3-auth-red-scan.log`, `/tmp/issue30-task11-r3-auth-green.log`
+- `/tmp/issue30-task11-r3-lead-final-red.log`, `/tmp/issue30-task11-r3-lead-final-red-scan.log`, `/tmp/issue30-task11-r3-lead-final-green.log`
+- `/tmp/issue30-task11-r3-domain-focused.log`, `/tmp/issue30-task11-r3-migration-focused.log`, `/tmp/issue30-task11-r3-migrate-application.log`
+- `/tmp/issue30-task11-r3-database-typecheck.log`, `/tmp/issue30-task11-r3-domain-typecheck.log`, `/tmp/issue30-task11-r3-worker-typecheck.log`, `/tmp/issue30-task11-r3-adapter-focused.log`, `/tmp/issue30-task11-r3-drizzle-check.log`
+
+Counts: Gate plus Lead repository 34/34; migration-focused 7/7; migration application 22/22; Adapter/source-safety 92/92. Database, Domain, and Worker typechecks passed; static Drizzle reported `Everything's fine`. Source identity remains taxonomy/canonical/verified-final-only and remains free of candidate aliases; public lead facts continue to omit `verified_final_url`.
