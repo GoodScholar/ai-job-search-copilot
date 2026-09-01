@@ -775,6 +775,7 @@ describe("verified public job source gate", () => {
 
     expect(aliasResult.sourcePosting.postingId).toBe(firstResult.sourcePosting.postingId);
     expect(aliasResult.sourcePostingVersion.sourcePostingVersionId).toBe(firstResult.sourcePostingVersion.sourcePostingVersionId);
+    expect(JSON.stringify(aliasResult.sourcePosting.sourceIdentity).includes(aliasUrl)).toBe(false);
     await expect(Promise.all([
       database.select().from(jobSourcePostings).where(eq(jobSourcePostings.userId, first.userId)),
       database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, first.userId)),
