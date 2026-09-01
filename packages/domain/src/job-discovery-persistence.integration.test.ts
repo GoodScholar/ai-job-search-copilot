@@ -84,7 +84,7 @@ describe("job discovery persistence lifecycle", () => {
     await expect(database.select({ sourcePostingVersionId: jobOpportunities.sourcePostingVersionId }).from(jobOpportunities).where(eq(jobOpportunities.userId, userId))).resolves.toHaveLength(3);
   });
 
-  it("公开来源 identity 重放不改写机会，新 version 更新当前版本且保留有界证据", async () => {
+  it("聚合公开来源 identity 重放不改写机会，新 version 更新当前版本且保留有界证据", async () => {
     const userId = crypto.randomUUID();
     const postingId = crypto.randomUUID();
     const firstVersionId = crypto.randomUUID();
@@ -96,7 +96,7 @@ describe("job discovery persistence lifecycle", () => {
       { id: firstVersionId, userId, sourcePostingId: postingId, version: 1, contentSha256: "b".repeat(64), rawContentSha256: "c".repeat(64), rawObjectReference: {}, normalizedData: {}, retrievedAt: firstSeen, availability: "open", createdAt: firstSeen },
       { id: secondVersionId, userId, sourcePostingId: postingId, version: 2, contentSha256: "d".repeat(64), rawContentSha256: "e".repeat(64), rawObjectReference: {}, normalizedData: {}, retrievedAt: later, availability: "open", createdAt: later },
     ]);
-    const publicInput = { id: () => crypto.randomUUID(), userId, importId: null, isOfficial: true, company: null, title: null, location: null, postedAt: null, deadline: null, description: null, normalizedData: {}, dedupIdentity: publicIdentity };
+    const publicInput = { id: () => crypto.randomUUID(), userId, importId: null, isOfficial: false, company: null, title: null, location: null, postedAt: null, deadline: null, description: null, normalizedData: {}, dedupIdentity: publicIdentity };
 
     const first = await database.transaction((transaction) => persistJobOpportunity(transaction, { ...publicInput, sourcePostingVersionId: firstVersionId, now: firstSeen }));
     await database.transaction((transaction) => persistJobOpportunity(transaction, { ...publicInput, sourcePostingVersionId: firstVersionId, now: later }));
