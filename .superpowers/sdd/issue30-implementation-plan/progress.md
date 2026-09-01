@@ -81,3 +81,5 @@ Task 11: Final Review Fix Round 6 complete (`134cfa3`); restores the mistakenly 
 ## Task 11 — Final Review Fix Round 7 (docs correction)
 
 - Corrected the Task 11 report’s migration-application evidence count: three neutral assertions cover two constraint types (one ordinal-range and two version-uniqueness assertions). No implementation or test changes; no tests rerun.
+
+Task 12: final acceptance rerun passed from `bc29187` after an initial root-test diagnostic failure exposed a stale test-only query-builder substitute; scoped review of that test repair is Standards `0/0/0`, Spec `0/0/0`. Fresh serial root/runtime/package tests, typecheck, lint, build, Drizzle static, migration-chain verification, AnySearch configured+missing-key `4/4`, ordinary `2/2`, source-health `2/2`, diff and safe additions-only secret audit all passed. The first root log and two overbroad auxiliary probes are INVALID and excluded; GitHub close remains pending. Report `task-12-report.md`.
