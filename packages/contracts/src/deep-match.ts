@@ -28,6 +28,10 @@ export const DeepMatchAssessmentSchema = z.object({
     profileEvidenceIds: z.array(evidenceId).max(20),
     summary: z.string().trim().min(1).max(500),
   }).strict()).length(DEEP_MATCH_DIMENSIONS.length),
+  evidenceSnapshot: z.object({
+    jobEvidence: z.array(z.object({ id: evidenceId, value: z.string().trim().min(1).max(512) }).strict()).max(20),
+    profileEvidence: z.array(z.object({ id: evidenceId, value: z.string().trim().min(1).max(256) }).strict()).max(20),
+  }).strict().optional(),
 }).strict().superRefine((assessment, context) => {
   const dimensions = assessment.dimensions.map((item) => item.dimension);
   if (new Set(dimensions).size !== DEEP_MATCH_DIMENSIONS.length) {
@@ -49,8 +53,8 @@ export type DeepMatchAssessment = z.infer<typeof DeepMatchAssessmentSchema>;
 export const DeepMatchCandidateSchema = z.object({
   opportunityId: z.uuid(),
   sourcePostingVersionId: z.uuid(),
-  jobEvidence: z.array(z.object({ id: evidenceId, value: z.string().trim().min(1).max(512) }).strict()).min(1).max(20),
-  profileEvidence: z.array(z.object({ id: evidenceId, profileFactRevisionId: z.uuid(), value: z.string().trim().min(1).max(256) }).strict()).min(1).max(20),
+  jobEvidence: z.array(z.object({ id: evidenceId, value: z.string().trim().min(1).max(512), dimensions: z.array(assessmentDimension).min(1).max(DEEP_MATCH_DIMENSIONS.length) }).strict()).min(1).max(20),
+  profileEvidence: z.array(z.object({ id: evidenceId, profileFactRevisionId: z.uuid(), value: z.string().trim().min(1).max(256), dimensions: z.array(assessmentDimension).min(1).max(DEEP_MATCH_DIMENSIONS.length) }).strict()).min(1).max(20),
 }).strict();
 export type DeepMatchCandidate = z.infer<typeof DeepMatchCandidateSchema>;
 
@@ -67,7 +71,6 @@ export class DeepMatchAdapterError extends Error {
 
 export const FAKE_DEEP_MATCH_TOKEN_USAGE = { inputTokens: 32, outputTokens: 48 } as const;
 /** Deterministic CI fixture only; no model or network is involved. */
-export const FAKE_DEEP_MATCH_QUALITY_INSUFFICIENT_MARKER = "MATCH_QUALITY_INSUFFICIENT";
 export type DeepMatchAdapterCall = {
   signal: AbortSignal;
   usageKey: string;
@@ -92,6 +95,8 @@ export interface DeepMatchAdapter {
   readonly adapter: string;
   readonly adapterVersion: string;
   readonly model: string;
+  /** Frozen execution-spec reservation before an invocation; actual usage is returned by assess. */
+  readonly reservedUsage: Pick<DeepMatchAdapterUsage, "inputTokens" | "outputTokens">;
   assess(input: DeepMatchAdapterInput, call: DeepMatchAdapterCall): Promise<DeepMatchAdapterResult>;
 }
 
@@ -115,6 +120,7 @@ export class FakeDeepMatchAdapter implements DeepMatchAdapter {
   readonly adapter = FAKE_DEEP_MATCH_ADAPTER;
   readonly adapterVersion = FAKE_DEEP_MATCH_ADAPTER_VERSION;
   readonly model = "fake-deep-match-model-v1";
+  readonly reservedUsage = FAKE_DEEP_MATCH_TOKEN_USAGE;
 
   async assess(input: DeepMatchAdapterInput, call: DeepMatchAdapterCall): Promise<DeepMatchAdapterResult> {
     if (call.signal.aborted) throw new DeepMatchAdapterError("retryable");
@@ -125,14 +131,12 @@ export class FakeDeepMatchAdapter implements DeepMatchAdapter {
       const assessment = DeepMatchAssessmentSchema.parse({
         opportunityId: candidate.opportunityId,
         overallScore: score,
-        dimensions: DEEP_MATCH_DIMENSIONS.map((dimension) => ({
-          dimension,
-          score,
-          judgment: "evidence_backed_inference",
-          jobEvidenceIds: [candidate.jobEvidence[0]!.id],
-          profileEvidenceIds: [candidate.profileEvidence[0]!.id],
-          summary: "基于岗位要求与已确认画像事实的匹配推断。",
-        })),
+        dimensions: DEEP_MATCH_DIMENSIONS.map((dimension) => {
+          const job = candidate.jobEvidence.find((item) => item.dimensions.includes(dimension));
+          const profile = candidate.profileEvidence.find((item) => item.dimensions.includes(dimension));
+          if (!job || !profile) return { dimension, score: 0, judgment: "insufficient_evidence" as const, jobEvidenceIds: [], profileEvidenceIds: [], summary: "缺少该维度双方可核验的证据，未作匹配推断。" };
+          return { dimension, score, judgment: "evidence_backed_inference" as const, jobEvidenceIds: [job.id], profileEvidenceIds: [profile.id], summary: "基于该维度的岗位要求与已确认画像事实的匹配推断。" };
+        }),
       });
       return validateDeepMatchEvidenceClosure(assessment, {
         jobEvidenceIds: candidate.jobEvidence.map((item) => item.id),

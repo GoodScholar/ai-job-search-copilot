@@ -21,8 +21,8 @@ describe("FakeDeepMatchAdapter", () => {
       candidates: [{
         opportunityId: ids.opportunityId,
         sourcePostingVersionId: ids.sourcePostingVersionId,
-        jobEvidence: [{ id: "job:skills", value: "TypeScript" }],
-        profileEvidence: [{ id: "profile:typescript", profileFactRevisionId: ids.profileFactRevisionId, value: "TypeScript" }],
+        jobEvidence: [{ id: "job:skills", value: "TypeScript", dimensions: [...DEEP_MATCH_DIMENSIONS] }],
+        profileEvidence: [{ id: "profile:typescript", profileFactRevisionId: ids.profileFactRevisionId, value: "TypeScript", dimensions: [...DEEP_MATCH_DIMENSIONS] }],
       }],
     }, modelCall());
 
@@ -37,8 +37,8 @@ describe("FakeDeepMatchAdapter", () => {
     const adapter = new FakeDeepMatchAdapter();
     const result = await adapter.assess({ candidates: [{
       opportunityId: ids.opportunityId, sourcePostingVersionId: ids.sourcePostingVersionId,
-      jobEvidence: [{ id: "job:quality", value: "普通岗位描述" }],
-      profileEvidence: [{ id: "profile:typescript", profileFactRevisionId: ids.profileFactRevisionId, value: "TypeScript" }],
+      jobEvidence: [{ id: "job:quality", value: "普通岗位描述", dimensions: [...DEEP_MATCH_DIMENSIONS] }],
+      profileEvidence: [{ id: "profile:typescript", profileFactRevisionId: ids.profileFactRevisionId, value: "TypeScript", dimensions: [...DEEP_MATCH_DIMENSIONS] }],
     }] }, { ...modelCall(), fixture: { qualityInsufficientOpportunityIds: [ids.opportunityId] } });
     expect(result.assessments[0]).toMatchObject({ overallScore: 50 });
   });
@@ -47,8 +47,8 @@ describe("FakeDeepMatchAdapter", () => {
     const adapter = new FakeDeepMatchAdapter();
     const result = await adapter.assess({ candidates: [{
       opportunityId: ids.opportunityId, sourcePostingVersionId: ids.sourcePostingVersionId,
-      jobEvidence: [{ id: "job:ordinary", value: "MATCH_QUALITY_INSUFFICIENT" }],
-      profileEvidence: [{ id: "profile:typescript", profileFactRevisionId: ids.profileFactRevisionId, value: "TypeScript" }],
+      jobEvidence: [{ id: "job:ordinary", value: "MATCH_QUALITY_INSUFFICIENT", dimensions: [...DEEP_MATCH_DIMENSIONS] }],
+      profileEvidence: [{ id: "profile:typescript", profileFactRevisionId: ids.profileFactRevisionId, value: "TypeScript", dimensions: [...DEEP_MATCH_DIMENSIONS] }],
     }] }, modelCall());
     expect(result.assessments[0]?.overallScore).toBe(80);
   });
@@ -77,8 +77,8 @@ describe("FakeDeepMatchAdapter", () => {
     const candidate = {
       opportunityId: ids.opportunityId,
       sourcePostingVersionId: ids.sourcePostingVersionId,
-      jobEvidence: [{ id: "job:skills", value: "TypeScript" }],
-      profileEvidence: [{ id: "profile:typescript", profileFactRevisionId: ids.profileFactRevisionId, value: "TypeScript" }],
+      jobEvidence: [{ id: "job:skills", value: "TypeScript", dimensions: [...DEEP_MATCH_DIMENSIONS] },],
+      profileEvidence: [{ id: "profile:typescript", profileFactRevisionId: ids.profileFactRevisionId, value: "TypeScript", dimensions: [...DEEP_MATCH_DIMENSIONS] }],
     };
     await expect(adapter.assess({ candidates: Array.from({ length: DEEP_MATCH_MAX_CANDIDATES + 1 }, () => candidate) }, modelCall())).rejects.toThrow("expected array");
   });

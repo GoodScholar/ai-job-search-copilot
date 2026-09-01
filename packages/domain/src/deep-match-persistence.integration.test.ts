@@ -2,7 +2,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   agentRuns, createDatabase, jobAccounts, jobMatchVersions, jobOpportunities, jobProfiles, jobSourcePostingVersions, jobSourcePostings, recommendationLists,
-  jobTargetRevisions, jobTargets, jobTriageVersions, migrateDatabase, profileFactRevisions, profileFacts, type Database,
+  jobTargetRevisions, jobTargets, jobTriageVersions, migrateDatabase, profileFactRevisions, profileFacts, recommendationExclusions, type Database,
 } from "@job-copilot/database";
 import { and, eq } from "drizzle-orm";
 import { DEEP_MATCH_DIMENSIONS } from "@job-copilot/contracts/deep-match";
@@ -63,11 +63,16 @@ describe("deep match persistence", () => {
     await fixture({ owner, verdict: "fail" });
     const other = await fixture({ score: 99 });
 
-    const selected = await createDeepMatchQueries({ db }).selectCandidates({ userId: eligible.userId, targetId: eligible.targetId });
+    const selected = await createDeepMatchQueries({ db }).selectCandidateSelection({ userId: eligible.userId, targetId: eligible.targetId });
 
-    expect(selected).toHaveLength(1);
-    expect(selected[0]).toMatchObject({ opportunityId: eligible.opportunityId, sourcePostingVersionId: eligible.sourcePostingVersionId, overallScore: 90 });
-    expect(selected.some((candidate) => candidate.opportunityId === other.opportunityId)).toBe(false);
+    expect(selected.candidates).toHaveLength(1);
+    expect(selected.candidates[0]).toMatchObject({ opportunityId: eligible.opportunityId, sourcePostingVersionId: eligible.sourcePostingVersionId, overallScore: 90 });
+    expect(selected.candidates.some((candidate) => candidate.opportunityId === other.opportunityId)).toBe(false);
+    expect(selected.exclusions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ reasonCode: "SCORE_BELOW_THRESHOLD" }),
+      expect.objectContaining({ reasonCode: "DEADLINE_EXPIRED" }),
+      expect.objectContaining({ reasonCode: "TRIAGE_NOT_PASS" }),
+    ]));
   });
 
   it("persists exactly one recoverable matching child run when queue delivery fails and retries delivery on duplicate trigger", async () => {
@@ -100,6 +105,25 @@ describe("deep match persistence", () => {
     expect(secondList).toMatchObject({ sequence: 2, items: [expect.objectContaining({ matchVersionId: second.matchVersionId })] });
   });
 
+  it("freezes triage and quality exclusions plus both evidence sides into the historical list", async () => {
+    const eligible = await fixture({ score: 90 });
+    const owner = { userId: eligible.userId, profileId: eligible.profileId, targetId: eligible.targetId };
+    await fixture({ owner, verdict: "fail" });
+    const query = createDeepMatchQueries({ db });
+    const selection = await query.selectCandidateSelection({ userId: eligible.userId, targetId: eligible.targetId });
+    const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now });
+    const match = await commands.createMatch({ userId: eligible.userId, targetId: eligible.targetId, candidate: selection.candidates[0]!, modelCall: modelCall() });
+    const list = await commands.createDailyList({ userId: eligible.userId, targetId: eligible.targetId, matchVersionIds: [match.matchVersionId], selectionExclusions: selection.exclusions });
+    await db.update(jobOpportunities).set({ title: "已变更岗位标题", description: "已变更岗位描述" }).where(and(eq(jobOpportunities.userId, eligible.userId), eq(jobOpportunities.id, eligible.opportunityId)));
+
+    const historical = await query.getLatestList({ userId: eligible.userId, targetId: eligible.targetId });
+    expect(historical?.recommendationListId).toBe(list.recommendationListId);
+    expect(historical?.items[0]?.jobEvidence.map((evidence) => evidence.value).join(" ")).toContain("需要 TypeScript");
+    expect(historical?.items[0]?.profileEvidence.map((evidence) => evidence.value).join(" ")).toContain("TypeScript");
+    expect(historical?.exclusions).toEqual(expect.arrayContaining([expect.objectContaining({ reasonCode: "TRIAGE_NOT_PASS" })]));
+    await expect(db.select().from(recommendationExclusions).where(eq(recommendationExclusions.recommendationListId, list.recommendationListId))).resolves.toHaveLength(1);
+  });
+
   it.each(["pause_requested", "cancel_requested"] as const)("refuses match and list writes after %s between model and persistence", async (controlState) => {
     const input = await fixture();
     const run = await createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now })
@@ -118,7 +142,7 @@ describe("deep match persistence", () => {
     const input = await fixture();
     const candidate = (await createDeepMatchQueries({ db }).selectCandidates({ userId: input.userId, targetId: input.targetId }))[0]!;
     const commands = createDeepMatchCommands({ db, id: crypto.randomUUID, clock: () => now, adapter: {
-      adapter: "test", adapterVersion: "v1", model: "test",
+      adapter: "test", adapterVersion: "v1", model: "test", reservedUsage: { inputTokens: 1, outputTokens: 1 },
       async assess() { return { assessments: [{ opportunityId: crypto.randomUUID(), overallScore: 80, dimensions: DEEP_MATCH_DIMENSIONS.map((dimension) => ({ dimension, score: 80, judgment: "evidence_backed_inference" as const, jobEvidenceIds: [candidate.jobEvidence[0]!.id], profileEvidenceIds: [candidate.profileEvidence[0]!.id], summary: "wrong identity" })) }], usage: { inputTokens: 1, outputTokens: 1, latencyMs: 1 } }; },
     } });
     await expect(commands.createMatch({ userId: input.userId, targetId: input.targetId, candidate, modelCall: modelCall() })).rejects.toThrow("DEEP_MATCH_OPPORTUNITY_IDENTITY_INVALID");

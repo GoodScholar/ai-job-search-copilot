@@ -56,10 +56,45 @@ async function importAndTriage(request: APIRequestContext, account: Account, tit
   return opportunity!;
 }
 
-async function runForTarget(request: APIRequestContext, account: Account, idempotencyKey: string): Promise<string> {
-  const response = await request.post(`${apiBaseUrl}/v1/recommendations/runs/batch`, { headers: { authorization: `Bearer ${account.token}` }, data: { targetId: account.targetId, idempotencyKey } });
+async function runDiscovery(request: APIRequestContext, account: Account, idempotencyKey: string): Promise<string> {
+  const response = await request.post(`${apiBaseUrl}/v1/agent-runs`, { headers: { authorization: `Bearer ${account.token}` }, data: { targetId: account.targetId, idempotencyKey } });
   expect(response.status()).toBe(201);
   return (await response.json() as { runId: string }).runId;
+}
+
+async function installQualityFixture(userId: string, targetId: string, opportunityId: string) {
+  const client = new Client({ connectionString: databaseUrl });
+  await client.connect();
+  try {
+    await client.query(`create or replace function e2e_deep_match_fixture() returns trigger language plpgsql as $$
+      begin
+        if new.user_id = '${userId}'::uuid and new.target_id = '${targetId}'::uuid and new.workflow_version = 'deep-match-v1' then
+          update agent_runs set source_scope = jsonb_set(new.source_scope, '{testFixture}', jsonb_build_object('qualityInsufficientOpportunityIds', jsonb_build_array('${opportunityId}'::text))) where id = new.id;
+        end if;
+        return new;
+      end;
+    $$; create trigger e2e_deep_match_fixture_trigger after insert on agent_runs for each row execute function e2e_deep_match_fixture();`);
+  } finally { await client.end(); }
+}
+
+async function removeQualityFixture() {
+  const client = new Client({ connectionString: databaseUrl });
+  await client.connect();
+  try { await client.query("drop trigger if exists e2e_deep_match_fixture_trigger on agent_runs; drop function if exists e2e_deep_match_fixture()"); } finally { await client.end(); }
+}
+
+async function automaticMatchRun(userId: string, discoveryRunId: string): Promise<string> {
+  const client = new Client({ connectionString: databaseUrl });
+  await client.connect();
+  try {
+    let runId: string | undefined;
+    await expect.poll(async () => {
+      const result = await client.query("select id from agent_runs where user_id = $1 and workflow_version = 'deep-match-v1' and source_scope ->> 'discoveryRunId' = $2 order by created_at desc limit 1", [userId, discoveryRunId]);
+      runId = result.rows[0]?.id as string | undefined;
+      return runId ?? null;
+    }, { timeout: 30_000 }).not.toBeNull();
+    return runId!;
+  } finally { await client.end(); }
 }
 
 async function waitForRun(page: Page, runId: string): Promise<void> {
@@ -91,19 +126,23 @@ test("显式 Fake matching 真实链路交付双方证据、质量排除与单�
   test.setTimeout(90_000);
   const account = await createAccount(request, info);
   const recommended = await importAndTriage(request, account, "正式推荐 TypeScript 工程师");
-  await importAndTriage(request, account, "MATCH_QUALITY_INSUFFICIENT 低质量夹具岗位");
+  const excluded = await importAndTriage(request, account, "低质量专用夹具岗位");
   await page.context().addCookies([{ name: "job_copilot_session", value: account.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
-  const initialRunId = await runForTarget(request, account, scenarioFor(info).batchKey);
+  await installQualityFixture(account.userId, account.targetId, excluded.opportunityId);
+  const discoveryRunId = await runDiscovery(request, account, scenarioFor(info).batchKey);
   await page.goto("/recommendations");
+  await waitForRun(page, discoveryRunId);
+  const initialRunId = await automaticMatchRun(account.userId, discoveryRunId);
   await waitForRun(page, initialRunId);
+  await removeQualityFixture();
   await page.reload();
   await expect(page.getByRole("heading", { name: "推荐清单" })).toBeVisible();
   await expect(page.getByRole("list", { name: "推荐岗位" })).toContainText("正式推荐 TypeScript 工程师");
-  await expect(page.getByText("因匹配质量不足而排除 1 项岗位")).toBeVisible();
+  await expect(page.getByText("稳定排除 1 项岗位：MATCH_QUALITY_INSUFFICIENT")).toBeVisible();
   await page.getByText("查看证据与判断").click();
-  await expect(page.getByText("岗位证据：")).toContainText("正式推荐 TypeScript 工程师");
-  await expect(page.getByText("画像证据：")).toContainText("TypeScript");
-  await expect(page.getByText("证据支持的推断")).toHaveCount(6);
+  await expect(page.getByRole("list", { name: "推荐岗位" }).getByText(/^岗位证据：/u)).toContainText("正式推荐 TypeScript 工程师");
+  await expect(page.getByRole("list", { name: "推荐岗位" }).getByText(/^画像证据：/u)).toContainText("本科");
+  await expect(page.getByText(/证据支持的推断|证据不足/u)).toHaveCount(6);
   await expect(page.locator("main")).not.toContainText(/(?:评分|score|\d+%)/i);
   const before = await matchSnapshot(account.userId, account.targetId);
   const listsBefore = await listSnapshot(account.userId, account.targetId);
@@ -126,13 +165,17 @@ test("显式 Fake matching 真实链路交付双方证据、质量排除与单�
 test("显式 Fake matching 的质量不足候选可生成零推荐清单", async ({ page, request }, info) => {
   test.setTimeout(60_000);
   const account = await createAccount(request, info);
-  await importAndTriage(request, account, "MATCH_QUALITY_INSUFFICIENT 零推荐夹具岗位");
+  const excluded = await importAndTriage(request, account, "零推荐专用夹具岗位");
   await page.context().addCookies([{ name: "job_copilot_session", value: account.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
-  const runId = await runForTarget(request, account, crypto.randomUUID());
+  await installQualityFixture(account.userId, account.targetId, excluded.opportunityId);
+  const discoveryRunId = await runDiscovery(request, account, crypto.randomUUID());
   await page.goto("/recommendations");
+  await waitForRun(page, discoveryRunId);
+  const runId = await automaticMatchRun(account.userId, discoveryRunId);
   await waitForRun(page, runId);
+  await removeQualityFixture();
   await page.reload();
-  await expect(page.getByText("因匹配质量不足而排除 1 项岗位")).toBeVisible();
+  await expect(page.getByText("稳定排除 1 项岗位：MATCH_QUALITY_INSUFFICIENT")).toBeVisible();
   await expect(page.getByRole("list", { name: "推荐岗位" }).locator("li")).toHaveCount(0);
   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);

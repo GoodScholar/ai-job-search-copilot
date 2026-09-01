@@ -11,7 +11,7 @@ import {
   type AgentRunJob,
 } from "@job-copilot/contracts/agent-runs";
 import { AnySearchProviderErrorCodeSchema } from "@job-copilot/contracts/job-discovery";
-import { DeepMatchAdapterError, FAKE_DEEP_MATCH_TOKEN_USAGE, type DeepMatchAdapter } from "@job-copilot/contracts/deep-match";
+import { DeepMatchAdapterError, FakeDeepMatchAdapter, type DeepMatchAdapter } from "@job-copilot/contracts/deep-match";
 import type { AuditTrail } from "./audit-trail";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { createJobDiscoveryPersistence, discoverySourceIdentifier, type DiscoveryDetail } from "./job-discovery-persistence";
@@ -117,7 +117,7 @@ export type AgentRunProcessorDependencies = {
   matchingQueue?: DeepMatchRunQueue;
   deepMatchAdapter?: DeepMatchAdapter;
 };
-type FailureCode = "AGENT_RUN_ADAPTER_RETRYABLE" | "AGENT_RUN_ADAPTER_FAILED" | "AGENT_RUN_CONTENT_STORAGE_FAILED" | "AGENT_RUN_PERSIST_FAILED" | "AGENT_RUN_BUDGET_EXCEEDED";
+type FailureCode = "AGENT_RUN_ADAPTER_RETRYABLE" | "AGENT_RUN_ADAPTER_FAILED" | "AGENT_RUN_CONTENT_STORAGE_FAILED" | "AGENT_RUN_PERSIST_FAILED" | "AGENT_RUN_BUDGET_EXCEEDED" | "AGENT_RUN_MODEL_RETRYABLE" | "AGENT_RUN_MODEL_AUTH_FAILED" | "AGENT_RUN_MODEL_POLICY_REJECTED" | "AGENT_RUN_MODEL_INVALID_RESPONSE";
 type NonBudgetFailureCode = Exclude<FailureCode, "AGENT_RUN_BUDGET_EXCEEDED">;
 const CLEANUP_TIMEOUT_MS = 1_000;
 class AgentRunBudgetError extends Error {
@@ -153,10 +153,10 @@ async function runTransaction<T>(deps: AgentRunProcessorDependencies, deadline: 
 function adapterFailure(error: unknown): Failure {
   if (error instanceof AgentRunBudgetError) return { failureCode: "AGENT_RUN_BUDGET_EXCEEDED", retryable: false, category: "source", budgetDimension: error.budgetDimension };
   if (error instanceof DeepMatchAdapterError) {
-    if (error.category === "retryable") return { failureCode: "AGENT_RUN_ADAPTER_RETRYABLE", retryable: true, category: "model" };
-    if (error.category === "auth") return { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "model_auth" };
-    if (error.category === "policy") return { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "model_policy" };
-    return { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "model_invalid" };
+    if (error.category === "retryable") return { failureCode: "AGENT_RUN_MODEL_RETRYABLE", retryable: true, category: "model" };
+    if (error.category === "auth") return { failureCode: "AGENT_RUN_MODEL_AUTH_FAILED", retryable: false, category: "model_auth" };
+    if (error.category === "policy") return { failureCode: "AGENT_RUN_MODEL_POLICY_REJECTED", retryable: false, category: "model_policy" };
+    return { failureCode: "AGENT_RUN_MODEL_INVALID_RESPONSE", retryable: false, category: "model_invalid" };
   }
   if (error instanceof Error && error.name === "ZodError") return { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "source" };
   return { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "source" };
@@ -574,25 +574,29 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         try {
           const selectStarted = await transition("select_candidates", false); if (selectStarted) return selectStarted;
           const scope = DeepMatchAgentRunSourceScopeSchema.parse(claimed.run.sourceScope);
-          const candidates = await createDeepMatchQueries({ db: deps.db }).selectCandidates({ userId: job.userId, targetId: claimed.run.targetId, ...(scope.opportunityId ? { opportunityId: scope.opportunityId } : {}) });
+          const selection = await createDeepMatchQueries({ db: deps.db }).selectCandidateSelection({ userId: job.userId, targetId: claimed.run.targetId, ...(scope.opportunityId ? { opportunityId: scope.opportunityId } : {}) });
+          const candidates = selection.candidates;
           const selectCompleted = await transition("select_candidates", true); if (selectCompleted) return selectCompleted;
           const assessStarted = await transition("assess_matches", false); if (assessStarted) return assessStarted;
-          const commands = createDeepMatchCommands({ db: deps.db, id: deps.id, clock: deps.clock, adapter: deps.deepMatchAdapter });
+          const deepMatchAdapter = deps.deepMatchAdapter ?? new FakeDeepMatchAdapter();
+          const commands = createDeepMatchCommands({ db: deps.db, id: deps.id, clock: deps.clock, adapter: deepMatchAdapter });
           const matchVersionIds: string[] = [];
           for (const [index, candidate] of candidates.entries()) {
-            const checkpointOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "deep_match_model_input", ordinal: index + 1, reserve: { modelCalls: 1, inputTokens: FAKE_DEEP_MATCH_TOKEN_USAGE.inputTokens, budgetTokens: FAKE_DEEP_MATCH_TOKEN_USAGE.inputTokens + FAKE_DEEP_MATCH_TOKEN_USAGE.outputTokens } });
+            const checkpointOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "deep_match_model_input", ordinal: index + 1, reserve: { modelCalls: 1, inputTokens: deepMatchAdapter.reservedUsage.inputTokens, budgetTokens: deepMatchAdapter.reservedUsage.inputTokens + deepMatchAdapter.reservedUsage.outputTokens } });
             if (checkpointOutcome) return checkpointOutcome;
-            matchVersionIds.push((await commands.createMatch({ userId: job.userId, targetId: claimed.run.targetId, candidate, fence: { runId: job.runId, claimToken: claimed.claimToken }, modelCall: {
+            const created = await commands.createMatch({ userId: job.userId, targetId: claimed.run.targetId, candidate, fence: { runId: job.runId, claimToken: claimed.claimToken }, modelCall: {
               signal: modelController!.signal,
               usageKey: `${claimed.claimToken}:deep_match_model:${index + 1}`,
-              budget: { maxTokens: (claimed.run.budgetSnapshot as { maxTokens: number }).maxTokens, reservedInputTokens: FAKE_DEEP_MATCH_TOKEN_USAGE.inputTokens, reservedOutputTokens: FAKE_DEEP_MATCH_TOKEN_USAGE.outputTokens },
-            } })).matchVersionId);
-            const outputCheckpointOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "deep_match_model_output", ordinal: index + 1, reserve: { outputTokens: FAKE_DEEP_MATCH_TOKEN_USAGE.outputTokens } });
+              budget: { maxTokens: (claimed.run.budgetSnapshot as { maxTokens: number }).maxTokens, reservedInputTokens: deepMatchAdapter.reservedUsage.inputTokens, reservedOutputTokens: deepMatchAdapter.reservedUsage.outputTokens },
+              ...(scope.testFixture ? { fixture: scope.testFixture } : {}),
+            } });
+            matchVersionIds.push(created.matchVersionId);
+            const outputCheckpointOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "deep_match_model_output", ordinal: index + 1, reserve: { outputTokens: created.usage.outputTokens } });
             if (outputCheckpointOutcome) return outputCheckpointOutcome;
           }
           const assessCompleted = await transition("assess_matches", true); if (assessCompleted) return assessCompleted;
           const listStarted = await transition("create_recommendations", false); if (listStarted) return listStarted;
-          const list = await commands.createDailyList({ userId: job.userId, targetId: claimed.run.targetId, matchVersionIds, fence: { runId: job.runId, claimToken: claimed.claimToken } });
+          const list = await commands.createDailyList({ userId: job.userId, targetId: claimed.run.targetId, matchVersionIds, selectionExclusions: selection.exclusions, fence: { runId: job.runId, claimToken: claimed.claimToken } });
           const listCompleted = await transition("create_recommendations", true); if (listCompleted) return listCompleted;
           return completeMatching(list.items.length);
         } catch (error) {
