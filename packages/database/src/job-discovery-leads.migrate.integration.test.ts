@@ -8,6 +8,7 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDatabase, type Database } from "./client";
 import { migrateDatabase } from "./migrate";
+import { assertTrue } from "./test-safe-assertions";
 
 const fingerprint = "a".repeat(64);
 const queryFingerprint = "b".repeat(64);
@@ -235,4 +236,27 @@ describe("job discovery lead migrations", () => {
       await rm(migrationsFolder, { recursive: true, force: true });
     }
   });
+
+  it("在不含 0028 的 fresh chain 中创建 verified final 状态", async () => {
+    const freshContainer = await new PostgreSqlContainer("postgres:17-alpine").start();
+    const freshDatabase = createDatabase(freshContainer.getConnectionUri());
+    const migrationsFolder = await mkdtemp(join(tmpdir(), "job-copilot-fresh-chain-"));
+    try {
+      const migrationSource = fileURLToPath(new URL("../migrations", import.meta.url));
+      await cp(migrationSource, migrationsFolder, { recursive: true });
+      await unlink(join(migrationsFolder, "0028_lead_verified_final.sql"));
+      await unlink(join(migrationsFolder, "meta", "0028_snapshot.json"));
+      const journalPath = join(migrationsFolder, "meta", "_journal.json");
+      const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
+      journal.entries = journal.entries.filter(({ tag }) => tag !== "0028_lead_verified_final");
+      await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
+      await migrate(freshDatabase, { migrationsFolder });
+      const columns = await freshDatabase.execute(sql`select column_name from information_schema.columns where table_schema = 'public' and table_name = 'job_discovery_leads' and column_name = 'verified_final_url'`) as unknown as Array<{ column_name: string }>;
+      assertTrue(columns.length === 1);
+    } finally {
+      await freshDatabase.$client.end();
+      await freshContainer.stop();
+      await rm(migrationsFolder, { recursive: true, force: true });
+    }
+  }, 60_000);
 });
