@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, sql } from "drizzle-orm";
+import { and, asc, eq, gt, sql } from "drizzle-orm";
 import { agentRuns, jobDiscoveryAttributions, jobDiscoveryLeads, type Database } from "@job-copilot/database";
 import { PublicJobDiscoveryQueryKindSchema, SafeNormalizedPublicJobUrlSchema } from "@job-copilot/contracts/job-discovery";
 import { z } from "zod";
@@ -124,7 +124,7 @@ export function createJobDiscoveryLeadRepository({ db, id }: Dependencies) {
         const rows = await transaction.select().from(jobDiscoveryLeads).where(and(
           eq(jobDiscoveryLeads.userId, value.userId), eq(jobDiscoveryLeads.runId, value.runId), eq(jobDiscoveryLeads.provider, "anysearch"),
           eq(jobDiscoveryLeads.queryId, value.queryId), eq(jobDiscoveryLeads.queryFingerprint, value.queryFingerprint), eq(jobDiscoveryLeads.state, "pending"), gt(jobDiscoveryLeads.expiresAt, value.now),
-        )).orderBy(desc(jobDiscoveryLeads.createdAt), desc(jobDiscoveryLeads.id));
+        )).orderBy(asc(jobDiscoveryLeads.createdAt), asc(jobDiscoveryLeads.id));
         return rows.map((row) => ({ leadId: row.id, userId: row.userId, runId: row.runId, queryId: row.queryId, queryFingerprint: row.queryFingerprint, normalizedUrl: row.normalizedUrl, stableFingerprint: row.stableFingerprint, allowedSiteDomains: [] }));
       });
     },
