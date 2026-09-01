@@ -43,12 +43,11 @@ export type JobTriageResult = {
   threshold: number | null;
 };
 
-type DimensionScore = { score: number; reasonCode: JobTriageReasonCode; jobEvidence: JobEvidence[]; candidateEvidence: CandidateEvidence[]; missing: Array<"job.requirements" | "profile.skills" | "profile.experience" | "target.alignment"> };
+type EvidenceGap = "job.requirements" | `profile.skills:${string}` | "profile.experience" | "target.alignment";
+type DimensionScore = { score: number; reasonCode: JobTriageReasonCode; jobEvidence: JobEvidence[]; candidateEvidence: CandidateEvidence[]; missing: EvidenceGap[] };
 const gateNames = JOB_TRIAGE_GATES;
 const normalized = (value: string) => value.trim().toLocaleLowerCase("en-US");
 const evidence = (sourcePostingVersionId: string, field: string, input: { evidence: { path: string; value: string } }): JobEvidence => ({ sourcePostingVersionId, field, path: input.evidence.path, value: input.evidence.value });
-let activeTargetEvidence: { targetId: string; version: number } | null = null;
-const targetEvidence = (path: string, value = "已设置") : TargetEvidence => ({ kind: "target_constraint", targetId: activeTargetEvidence?.targetId ?? "00000000-0000-4000-8000-000000000000", version: activeTargetEvidence?.version ?? 1, path, label: "求职目标条件", value });
 const unknown = (reasonCode: JobTriageReasonCode, jobEvidence: JobEvidence | null = null): GateResult => ({ verdict: "unknown", reasonCode, jobEvidence, candidateEvidence: null });
 const pass = (reasonCode: JobTriageReasonCode, jobEvidence: JobEvidence | null = null, candidateEvidence: CandidateEvidence | null = null): GateResult => ({ verdict: "pass", reasonCode, jobEvidence, candidateEvidence });
 const fail = (reasonCode: JobTriageReasonCode, jobEvidence: JobEvidence, candidateEvidence: CandidateEvidence): GateResult => ({ verdict: "fail", reasonCode, jobEvidence, candidateEvidence });
@@ -71,48 +70,48 @@ function deadlineStatus(deadline: string | null | undefined, now: Date, invalidP
 }
 
 export function evaluateJobTriage(input: {
-  sourcePostingVersionId: string; now: Date; target: { targetId?: string; version?: number; constraints: JobTargetConstraints };
+  sourcePostingVersionId: string; now: Date; target: { targetId: string; version: number; constraints: JobTargetConstraints };
   job: { company: string | null; location: string | null; title?: string | null; deadline: string | null; deadlineProvenance?: unknown; qualifications: QualificationInput };
   facts: Fact[];
 }): JobTriageResult {
   const q = input.job.qualifications;
   const t = input.target.constraints;
-  activeTargetEvidence = input.target.targetId && input.target.version ? { targetId: input.target.targetId, version: input.target.version } : null;
+  const targetEvidence = (path: string, value: string): TargetEvidence => ({ kind: "target_constraint", targetId: input.target.targetId, version: input.target.version, path, label: "求职目标条件", value });
   const results = {} as Record<Gate, GateResult>;
 
   const mode = q.workMode;
   if (!mode) results.work_mode = unknown("JOB_EVIDENCE_MISSING");
   else if (!t.workModes.length) results.work_mode = unknown("TARGET_CONSTRAINT_MISSING", evidence(input.sourcePostingVersionId, "workMode", mode));
-  else if (!t.workModes.includes(mode.value)) results.work_mode = fail("WORK_MODE_CONFLICT", evidence(input.sourcePostingVersionId, "workMode", mode), targetEvidence("workModes"));
-  else results.work_mode = pass("WORK_MODE_ALLOWED", evidence(input.sourcePostingVersionId, "workMode", mode), targetEvidence("workModes"));
+  else if (!t.workModes.includes(mode.value)) results.work_mode = fail("WORK_MODE_CONFLICT", evidence(input.sourcePostingVersionId, "workMode", mode), targetEvidence("workModes", t.workModes.join("、")));
+  else results.work_mode = pass("WORK_MODE_ALLOWED", evidence(input.sourcePostingVersionId, "workMode", mode), targetEvidence("workModes", t.workModes.join("、")));
 
   if (mode?.value === "remote") results.location = pass("REMOTE_LOCATION_COMPATIBLE", evidence(input.sourcePostingVersionId, "workMode", mode));
   else if (!input.job.location) results.location = unknown("JOB_EVIDENCE_MISSING");
   else if (!t.locations.length) results.location = unknown("TARGET_CONSTRAINT_MISSING");
-  else if (t.locations.some((location) => normalized(location) === normalized(input.job.location!))) results.location = pass("LOCATION_ALLOWED", { sourcePostingVersionId: input.sourcePostingVersionId, field: "location", path: "location", value: input.job.location }, targetEvidence("locations"));
-  else if (t.relocation === "not_willing") results.location = fail("LOCATION_CONFLICT", { sourcePostingVersionId: input.sourcePostingVersionId, field: "location", path: "location", value: input.job.location }, targetEvidence("locations"));
+  else if (t.locations.some((location) => normalized(location) === normalized(input.job.location!))) results.location = pass("LOCATION_ALLOWED", { sourcePostingVersionId: input.sourcePostingVersionId, field: "location", path: "location", value: input.job.location }, targetEvidence("locations", t.locations.join("、")));
+  else if (t.relocation === "not_willing") results.location = fail("LOCATION_CONFLICT", { sourcePostingVersionId: input.sourcePostingVersionId, field: "location", path: "location", value: input.job.location }, targetEvidence("locations", t.locations.join("、")));
   else results.location = unknown("RELOCATION_CONFIRMATION_REQUIRED", { sourcePostingVersionId: input.sourcePostingVersionId, field: "location", path: "location", value: input.job.location });
 
   const relocation = q.relocationRequired;
   if (!relocation) results.relocation = unknown("JOB_EVIDENCE_MISSING");
   else if (!relocation.value) results.relocation = pass("RELOCATION_NOT_REQUIRED", evidence(input.sourcePostingVersionId, "relocationRequired", relocation));
-  else if (t.relocation === "willing") results.relocation = pass("RELOCATION_WILLING", evidence(input.sourcePostingVersionId, "relocationRequired", relocation), targetEvidence("relocation"));
-  else if (t.relocation === "not_willing") results.relocation = fail("RELOCATION_CONFLICT", evidence(input.sourcePostingVersionId, "relocationRequired", relocation), targetEvidence("relocation"));
+  else if (t.relocation === "willing") results.relocation = pass("RELOCATION_WILLING", evidence(input.sourcePostingVersionId, "relocationRequired", relocation), targetEvidence("relocation", t.relocation));
+  else if (t.relocation === "not_willing") results.relocation = fail("RELOCATION_CONFLICT", evidence(input.sourcePostingVersionId, "relocationRequired", relocation), targetEvidence("relocation", t.relocation));
   else results.relocation = unknown("RELOCATION_CONFIRMATION_REQUIRED", evidence(input.sourcePostingVersionId, "relocationRequired", relocation));
 
   const salary = q.salary;
   if (!t.salary?.minimum) results.salary = pass("SALARY_MINIMUM_NOT_SET");
   else if (!salary || salary.value.minimum === null && salary.value.maximum === null) results.salary = unknown("JOB_EVIDENCE_MISSING");
   else if (salary.value.currency !== t.salary.currency || salary.value.period !== t.salary.period) results.salary = unknown("SALARY_NOT_COMPARABLE", evidence(input.sourcePostingVersionId, "salary", salary));
-  else if (salary.value.maximum !== null && salary.value.maximum < t.salary.minimum) results.salary = fail("SALARY_BELOW_MINIMUM", evidence(input.sourcePostingVersionId, "salary", salary), targetEvidence("salary.minimum"));
-  else if ((salary.value.minimum ?? salary.value.maximum ?? 0) >= t.salary.minimum) results.salary = pass("SALARY_COVERS_MINIMUM", evidence(input.sourcePostingVersionId, "salary", salary), targetEvidence("salary.minimum"));
+  else if (salary.value.maximum !== null && salary.value.maximum < t.salary.minimum) results.salary = fail("SALARY_BELOW_MINIMUM", evidence(input.sourcePostingVersionId, "salary", salary), targetEvidence("salary.minimum", String(t.salary.minimum)));
+  else if ((salary.value.minimum ?? salary.value.maximum ?? 0) >= t.salary.minimum) results.salary = pass("SALARY_COVERS_MINIMUM", evidence(input.sourcePostingVersionId, "salary", salary), targetEvidence("salary.minimum", String(t.salary.minimum)));
   else results.salary = unknown("SALARY_RANGE_INSUFFICIENT", evidence(input.sourcePostingVersionId, "salary", salary));
 
   const seniority = q.seniority;
   if (!t.seniority) results.seniority = pass("SENIORITY_NOT_RESTRICTED");
   else if (!seniority) results.seniority = unknown("JOB_EVIDENCE_MISSING");
-  else if (normalized(seniority.value) === normalized(t.seniority)) results.seniority = pass("SENIORITY_MATCH", evidence(input.sourcePostingVersionId, "seniority", seniority), targetEvidence("seniority"));
-  else results.seniority = fail("SENIORITY_CONFLICT", evidence(input.sourcePostingVersionId, "seniority", seniority), targetEvidence("seniority"));
+  else if (normalized(seniority.value) === normalized(t.seniority)) results.seniority = pass("SENIORITY_MATCH", evidence(input.sourcePostingVersionId, "seniority", seniority), targetEvidence("seniority", t.seniority));
+  else results.seniority = fail("SENIORITY_CONFLICT", evidence(input.sourcePostingVersionId, "seniority", seniority), targetEvidence("seniority", t.seniority));
 
   for (const [gate, field, type] of [["education", "education", "education"], ["work_eligibility", "workEligibility", "work_eligibility"]] as const) {
     const requirement = q[field];
@@ -132,9 +131,10 @@ export function evaluateJobTriage(input: {
   if (!languages) results.language = unknown("JOB_EVIDENCE_MISSING");
   else {
     const languageFacts = activeFacts(input.facts).filter((fact) => fact.factType === "language");
-    const missing = languages.value.find((requirement) => !languageFacts.some((fact) => normalized(fact.factValue.name ?? "") === normalized(requirement.name) && (!requirement.level || fact.factValue.level === requirement.level)));
+    const matchingFacts = languages.value.map((requirement) => languageFacts.find((fact) => normalized(fact.factValue.name ?? "") === normalized(requirement.name) && (!requirement.level || fact.factValue.level === requirement.level)));
+    const missing = languages.value.find((_requirement, index) => !matchingFacts[index]);
     const named = missing && languageFacts.find((fact) => normalized(fact.factValue.name ?? "") === normalized(missing.name));
-    results.language = !missing ? pass("LANGUAGE_MATCH", evidence(input.sourcePostingVersionId, "languages", languages), factEvidence(languageFacts[0]!))
+    results.language = !missing ? pass("LANGUAGE_MATCH", evidence(input.sourcePostingVersionId, "languages", languages), factEvidence(matchingFacts[0]!))
       : named && missing.level ? unknown("CANDIDATE_LEVEL_INSUFFICIENT", evidence(input.sourcePostingVersionId, "languages", languages))
         : unknown("CANDIDATE_EVIDENCE_MISSING", evidence(input.sourcePostingVersionId, "languages", languages));
   }
@@ -145,12 +145,12 @@ export function evaluateJobTriage(input: {
   const industryConflict = q.industry && t.dealBreakers.excludedIndustries.some((industry) => normalized(industry) === normalized(q.industry!.value));
   const employmentConflict = deal && ((deal.value === "outsourcing" && t.dealBreakers.excludeOutsourcing) || (deal.value === "dispatch" && t.dealBreakers.excludeDispatch) || (deal.value === "headhunter" && t.dealBreakers.excludeHeadhunter));
   if (!breakerEnabled) results.deal_breakers = pass("DEAL_BREAKERS_NOT_ENABLED");
-  else if (companyConflict) results.deal_breakers = fail("DEAL_BREAKER_COMPANY_CONFLICT", { sourcePostingVersionId: input.sourcePostingVersionId, field: "company", path: "company", value: input.job.company! }, targetEvidence("dealBreakers.excludedCompanies"));
-  else if (industryConflict) results.deal_breakers = fail("DEAL_BREAKER_INDUSTRY_CONFLICT", evidence(input.sourcePostingVersionId, "industry", q.industry!), targetEvidence("dealBreakers.excludedIndustries"));
-  else if (employmentConflict) results.deal_breakers = fail("DEAL_BREAKER_MATCH", evidence(input.sourcePostingVersionId, "employmentType", deal!), targetEvidence("dealBreakers"));
+  else if (companyConflict) results.deal_breakers = fail("DEAL_BREAKER_COMPANY_CONFLICT", { sourcePostingVersionId: input.sourcePostingVersionId, field: "company", path: "company", value: input.job.company! }, targetEvidence("dealBreakers.excludedCompanies", t.dealBreakers.excludedCompanies.join("、")));
+  else if (industryConflict) results.deal_breakers = fail("DEAL_BREAKER_INDUSTRY_CONFLICT", evidence(input.sourcePostingVersionId, "industry", q.industry!), targetEvidence("dealBreakers.excludedIndustries", t.dealBreakers.excludedIndustries.join("、")));
+  else if (employmentConflict) results.deal_breakers = fail("DEAL_BREAKER_MATCH", evidence(input.sourcePostingVersionId, "employmentType", deal!), targetEvidence("dealBreakers", deal!.value));
   else if (t.dealBreakers.other.length) results.deal_breakers = unknown("JOB_EVIDENCE_MISSING");
   else if ((t.dealBreakers.excludedCompanies.length && !input.job.company) || (t.dealBreakers.excludedIndustries.length && !q.industry) || ((t.dealBreakers.excludeOutsourcing || t.dealBreakers.excludeDispatch || t.dealBreakers.excludeHeadhunter) && !deal)) results.deal_breakers = unknown("JOB_EVIDENCE_MISSING");
-  else results.deal_breakers = pass("DEAL_BREAKER_NOT_MATCHED", deal ? evidence(input.sourcePostingVersionId, "employmentType", deal) : null, targetEvidence("dealBreakers"));
+  else results.deal_breakers = pass("DEAL_BREAKER_NOT_MATCHED", deal ? evidence(input.sourcePostingVersionId, "employmentType", deal) : null, targetEvidence("dealBreakers", "未命中"));
 
   const verdict: Verdict = gateNames.some((gate) => results[gate].verdict === "fail") ? "fail" : gateNames.some((gate) => results[gate].verdict === "unknown") ? "unknown" : "pass";
   const status = deadlineStatus(input.job.deadline, input.now, input.job.deadlineProvenance);
@@ -163,8 +163,8 @@ export function evaluateJobTriage(input: {
   const technical: DimensionScore = !skills
     ? { score: 50, reasonCode: "REQUIRED_SKILLS_MISSING_NEUTRAL", jobEvidence: [], candidateEvidence: [], missing: ["job.requirements"] }
     : !skillFacts.length
-      ? { score: 50, reasonCode: "REQUIRED_SKILLS_EVIDENCE_MISSING_NEUTRAL", jobEvidence: [evidence(input.sourcePostingVersionId, "requiredSkills", q.requiredSkills!)], candidateEvidence: [], missing: ["profile.skills"] }
-      : { score: Math.round(skills.reduce((total, skill) => total + (skillFacts.includes(normalized(skill)) ? 100 : 50), 0) / skills.length), reasonCode: "REQUIRED_SKILLS_COMPARED", jobEvidence: [evidence(input.sourcePostingVersionId, "requiredSkills", q.requiredSkills!)], candidateEvidence: activeFacts(input.facts).filter((fact) => fact.factType === "skill").map(factEvidence), missing: skills.filter((skill) => !skillFacts.includes(normalized(skill))).map((skill) => `profile.skills:${skill}` as never) };
+      ? { score: 50, reasonCode: "REQUIRED_SKILLS_EVIDENCE_MISSING_NEUTRAL", jobEvidence: [evidence(input.sourcePostingVersionId, "requiredSkills", q.requiredSkills!)], candidateEvidence: [], missing: skills.map((skill): EvidenceGap => `profile.skills:${skill}`) }
+      : { score: Math.round(skills.reduce((total, skill) => total + (skillFacts.includes(normalized(skill)) ? 100 : 50), 0) / skills.length), reasonCode: "REQUIRED_SKILLS_COMPARED", jobEvidence: [evidence(input.sourcePostingVersionId, "requiredSkills", q.requiredSkills!)], candidateEvidence: activeFacts(input.facts).filter((fact) => fact.factType === "skill" && skills.some((skill) => normalized(skill) === normalized(fact.factValue.name ?? ""))).map(factEvidence).slice(0, 20), missing: skills.filter((skill) => !skillFacts.includes(normalized(skill))).map((skill): EvidenceGap => `profile.skills:${skill}`) };
   // 当前画像事实模型尚未提供可比较的年限字段；缺失时保持中性，不能伪造经验结论。
   const experience: DimensionScore = { score: 50, reasonCode: "EXPERIENCE_EVIDENCE_MISSING_NEUTRAL", jobEvidence: [], candidateEvidence: [], missing: ["profile.experience"] };
   const alignmentJob = [q.seniority && evidence(input.sourcePostingVersionId, "seniority", q.seniority), q.industry && evidence(input.sourcePostingVersionId, "industry", q.industry), input.job.title && { sourcePostingVersionId: input.sourcePostingVersionId, field: "title", path: "title", value: input.job.title }].filter(Boolean) as JobEvidence[];

@@ -143,5 +143,7 @@ function parseQualification(field: Exclude<Field, "company" | "location" | "post
 function validIsoDateTime(value: string): string | null {
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/u.test(value)) return null;
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+  if (Number.isNaN(date.getTime())) return null;
+  const normalized = date.toISOString();
+  return normalized.slice(0, 19) === value.slice(0, 19) ? normalized : null;
 }

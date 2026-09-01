@@ -74,3 +74,5 @@ build 后确认 `apps/api/dist/` 与 `apps/worker/dist/` 均未跟踪，仅为�
 历史上曾在一次根级 `pnpm test` 尚运行时误启动重叠 domain 诊断命令；该两项结果已废弃，未作为本报告任何验收依据。另一次根级运行的控制台在进程完成前被截断，也已废弃。上表的第二次根级 `pnpm test` 通过保留会话取得完整精确 exit 0，是唯一根级验收依据。
 
 残余风险：学历、语言等级、工作资格与 `dealBreakers.other` 仍没有可证明的否定/层级模型，因此产品故意返回 `unknown` 而不是 `fail`；若未来需要 hard fail，必须先扩展结构化契约和领域规则，并以新的 RED→GREEN 测试证明。
+
+最终复审补充：target evidence 改为 evaluate 内显式必填 target ID/version，移除模块级可变状态与零 UUID fallback；语言引用真实命中事实；技能证据只保留相关 confirmed facts；Fake normalizer 拒绝日期滚动。focused domain 42/42、contracts 112/112、typecheck、lint、diff-check 均 exit 0。

@@ -8,17 +8,18 @@ type TriageInput = Parameters<typeof evaluateJobTriage>[0];
 type Mutate = (input: TriageInput) => void;
 
 const target = {
+  targetId: "00000000-0000-4000-8000-000000000002", version: 1,
   constraints: {
     roleFamily: "frontend", seniority: "senior", locations: ["上海"], workModes: ["onsite"],
     relocation: "willing" as const, salary: { minimum: 30_000, maximum: null, currency: "CNY", period: "month" }, industries: [],
     dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] },
   },
-} satisfies { constraints: JobTargetConstraints };
+} satisfies { targetId: string; version: number; constraints: JobTargetConstraints };
 
 function allPassInput(): TriageInput {
   return {
     sourcePostingVersionId, now: new Date("2026-09-01T00:00:00.000Z"),
-    target: { constraints: { ...target.constraints, locations: [...target.constraints.locations], workModes: [...target.constraints.workModes], salary: { ...target.constraints.salary! }, dealBreakers: { ...target.constraints.dealBreakers } } },
+    target: { targetId: "00000000-0000-4000-8000-000000000002", version: 1, constraints: { ...target.constraints, locations: [...target.constraints.locations], workModes: [...target.constraints.workModes], salary: { ...target.constraints.salary! }, dealBreakers: { ...target.constraints.dealBreakers } } },
     job: { company: "示例", title: "frontend engineer", location: "上海", deadline: "2026-09-12T00:00:00.000Z", qualifications: {
       workMode: { value: "onsite", evidence: { field: "workMode", path: "工作方式", value: "现场" } },
       relocationRequired: { value: true, evidence: { field: "relocationRequired", path: "是否需要搬迁", value: "是" } },
@@ -137,7 +138,7 @@ describe("job triage gates", () => {
     const input = allPassInput();
     input.job.qualifications.requiredSkills = { value: ["TypeScript"], evidence: { field: "requiredSkills", path: "技能", value: "TypeScript" } };
     const scored = evaluateJobTriage(input);
-    expect(scored.dimensionScores?.technical).toMatchObject({ score: 50, missing: ["profile.skills"] });
+    expect(scored.dimensionScores?.technical).toMatchObject({ score: 50, missing: ["profile.skills:TypeScript"] });
     expect(scored.confidenceBasisPoints).toBeLessThan(10_000);
     const dateOnly = allPassInput();
     dateOnly.job.deadline = "2026-09-08";
