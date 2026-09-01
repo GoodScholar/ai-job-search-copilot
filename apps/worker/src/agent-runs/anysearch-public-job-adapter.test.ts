@@ -303,7 +303,8 @@ describe("AnySearchPublicJobAdapter", () => {
   });
 
   it("rejects an unapproved serialized recovery but accepts explicit opaque recovery authorization", async () => {
-    const transport = vi.fn(async (url: RequestInfo | URL) => (url as URL).pathname === "/v1/search" ? jsonResponse(validSearch("https://jobs.example.com/opening?position_id=two&jobId=one")) : jsonResponse(validExtract()));
+    const recoveredFixtureUrl = "https://jobs.example.com/opening?position_id=two&jobId=one";
+    const transport = vi.fn(async (url: RequestInfo | URL) => (url as URL).pathname === "/v1/search" ? jsonResponse(validSearch(recoveredFixtureUrl)) : jsonResponse(validExtract(recoveredFixtureUrl)));
     const first = testAdapter({ transport });
     const fromFirst = await first.search(searchInput());
     const initialCandidate = mustSearchData(fromFirst).candidates[0]?.candidate;

@@ -191,6 +191,8 @@ export class AnySearchPublicJobAdapter {
     if (!response.ok) return response;
     const parsed = parseExtract(response.data);
     if (!parsed.ok) return parsed;
+    const extracted = preflightAnySearchCandidate({ url: parsed.data.url, allowedSiteDomains: candidate.allowedSiteDomains });
+    if (!extracted.ok || extracted.data.normalizedUrl !== candidate.normalizedUrl) return error("ANYSEARCH_POLICY_REJECTED", false, null);
     return { ok: true, data: { normalizedUrl: checked.data.normalizedUrl, content: parsed.data.content } };
   }
 
@@ -276,10 +278,10 @@ function parseSearch(value: unknown): AnySearchResult<Array<{ url: string }>> {
   }
   return { ok: true, data: results };
 }
-function parseExtract(value: unknown): AnySearchResult<{ content: string }> {
+function parseExtract(value: unknown): AnySearchResult<{ url: string; content: string }> {
   const envelope = parseEnvelope(value);
   if (!envelope || typeof envelope.data.url !== "string" || typeof envelope.data.title !== "string" || typeof envelope.data.content !== "string") return error("ANYSEARCH_INVALID_RESPONSE", false, null);
-  return { ok: true, data: { content: envelope.data.content } };
+  return { ok: true, data: { url: envelope.data.url, content: envelope.data.content } };
 }
 function parseEnvelope(value: unknown): { data: Record<string, unknown> } | undefined { return isRecord(value) && value.code === 0 && typeof value.message === "string" && typeof value.request_id === "string" && isRecord(value.data) ? { data: value.data } : undefined; }
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value); }
