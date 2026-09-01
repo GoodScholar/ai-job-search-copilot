@@ -117,6 +117,22 @@ describe("job discovery lead repository", () => {
     await expect(repository().authorizeRecoveredCandidateForClaim({ userId: crypto.randomUUID(), runId: subject.runId, queryId: input.queryId, candidateFingerprint: input.stableFingerprint, leadId: created.leadId, claimToken, now })).rejects.toMatchObject({ code: "JOB_DISCOVERY_CLAIM_STALE" });
   });
 
+  it("按创建时间和 Lead 身份稳定恢复同一 query 的 pending 候选", async () => {
+    const subject = await owner("recover-order"); const claimToken = crypto.randomUUID(); const queryId = crypto.randomUUID();
+    await database.update(agentRuns).set({ status: "running", startedAt: now, claimToken, claimExpiresAt: new Date(Date.now() + 60_000), activeSliceStartedAt: now }).where(eq(agentRuns.id, subject.runId));
+    const ids = ["018f2d4e-75a1-8f64-bc1d-0123456789af", "018f2d4e-75a1-8f64-bc1d-0123456789aa"];
+    const stableFingerprints = ["c".repeat(64), "d".repeat(64)];
+    for (const index of [0, 1]) await repository(() => ids[index]!).recordPendingForClaim({
+      ...pendingInput({ ...subject, queryId, stableFingerprint: stableFingerprints[index] }),
+      normalizedUrl: `https://jobs.example.com/opening?id=${index + 1}`,
+      now: index === 0 ? new Date(now.getTime() + 1_000) : now,
+      claimToken,
+    });
+
+    const recovered = await repository().recoverPendingForClaim({ userId: subject.userId, runId: subject.runId, queryId, queryFingerprint, claimToken, now });
+    expect(recovered.map((candidate) => candidate.leadId)).toEqual([ids[1], ids[0]]);
+  });
+
   it("拒绝敏感 URL 与未知输入字段，不持久化 AnySearch 内容", async () => {
     const subject = await owner("privacy");
     const secret = "secret-token-sentinel";
