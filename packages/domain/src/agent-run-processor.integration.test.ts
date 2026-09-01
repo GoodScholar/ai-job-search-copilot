@@ -602,6 +602,39 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(database.select({ status: agentRuns.status, controlState: agentRuns.controlState }).from(agentRuns).where(eq(agentRuns.id, job.runId))).resolves.toEqual([{ status: expectedOutcome, controlState: "none" }]);
   });
 
+  it.each([
+    ["pause_requested", "paused", "cancelled_outcome"],
+    ["cancel_requested", "cancelled", "stale_interruption"],
+  ] as const)("v4 heartbeat 的 %s 在不利 adapter 返回后仍保留 %s", async (controlState, expectedOutcome, adapterReturn) => {
+    const job = await layeredRun();
+    let reachedPhysicalCall!: () => void;
+    const physicalCallStarted = new Promise<void>((resolve) => { reachedPhysicalCall = resolve; });
+    let signal: AbortSignal | undefined;
+    let physicalCalls = 0;
+    const processor = createAgentRunProcessor({
+      db: database, heartbeatIntervalMs: 1,
+      adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
+      layeredPublicWorkflowResolver: { resolve: () => ({ run: async ({ signal: receivedSignal, beforePhysicalOperation }) => {
+        signal = receivedSignal;
+        await beforePhysicalOperation({ kind: "search", identity: job.queryId });
+        physicalCalls += 1;
+        reachedPhysicalCall();
+        await new Promise<void>((resolve) => receivedSignal.addEventListener("abort", () => resolve(), { once: true }));
+        if (adapterReturn === "stale_interruption") throw new LayeredPublicWorkflowInterruption("stale");
+        return { branchOutcome: { trusted: "failed" as const, publicDiscovery: "failed" as const }, diagnostics: [{ scope: "provider" as const, code: "ANYSEARCH_CANCELLED", retryable: false, affectedCount: 1 }] };
+      } }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+
+    const processing = processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true });
+    await physicalCallStarted;
+    await database.update(agentRuns).set({ controlState }).where(eq(agentRuns.id, job.runId));
+    await vi.waitFor(() => expect(signal?.aborted).toBe(true));
+
+    await expect(processing).resolves.toBe(expectedOutcome);
+    expect(physicalCalls).toBe(1);
+    await expect(database.select({ status: agentRuns.status, controlState: agentRuns.controlState, claimToken: agentRuns.claimToken }).from(agentRuns).where(eq(agentRuns.id, job.runId))).resolves.toEqual([{ status: expectedOutcome, controlState: "none", claimToken: null }]);
+  });
+
   it("v4 resolver 伪造 interruption 不能改变 run，仅按普通失败持久化脱敏 diagnostic", async () => {
     const job = await layeredRun();
     const rawProviderBody = "authorization: secret provider response body";
