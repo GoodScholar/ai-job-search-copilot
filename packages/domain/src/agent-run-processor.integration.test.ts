@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { and, asc, eq } from "drizzle-orm";
 import { agentInboxItems, agentRunEvents, agentRunJobResults, agentRunSteps, agentRunUsageEntries, agentRuns, auditEvents, createDatabase, jobAccounts, jobDiscoveryAttributions, jobDiscoveryDiagnostics, jobDiscoveryLeads, jobDiscoveryRunResults, jobDiscoverySourceIssues, jobOpportunities, jobOpportunitySources, jobSourceHealthChecks, jobSourcePostings, jobSourcePostingVersions, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
@@ -566,6 +566,40 @@ describe("AgentRunProcessor checkpoints", () => {
       database.select().from(jobDiscoveryAttributions).where(eq(jobDiscoveryAttributions.runId, job.runId)),
     ])).resolves.toEqual([[], [expect.objectContaining({ id: job.sourcePostingVersionId })], []]);
     await expect(database.select({ attempts: agentRuns.attemptCount }).from(agentRuns).where(eq(agentRuns.id, job.runId))).resolves.toEqual([{ attempts: 2 }]);
+  });
+
+  it.each([
+    ["pause_requested", "paused"],
+    ["cancel_requested", "cancelled"],
+  ] as const)("v4 heartbeat 在 %s 后立即中止在途物理调用并保留 %s 终态", async (controlState, expectedOutcome) => {
+    const job = await layeredRun();
+    let reachedPhysicalCall!: () => void;
+    const physicalCallStarted = new Promise<void>((resolve) => { reachedPhysicalCall = resolve; });
+    let signal: AbortSignal | undefined;
+    let physicalCalls = 0;
+    const processor = createAgentRunProcessor({
+      db: database,
+      heartbeatIntervalMs: 1,
+      adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
+      layeredPublicWorkflowResolver: { resolve: () => ({ run: async ({ signal: receivedSignal, beforePhysicalOperation }) => {
+        signal = receivedSignal;
+        await beforePhysicalOperation({ kind: "search", identity: job.queryId });
+        physicalCalls += 1;
+        reachedPhysicalCall();
+        await new Promise<void>((resolve) => receivedSignal.addEventListener("abort", () => resolve(), { once: true }));
+        return { branchOutcome: { trusted: "succeeded" as const, publicDiscovery: "clean_zero" as const }, diagnostics: [] };
+      } }) },
+      contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+
+    const processing = processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true });
+    await physicalCallStarted;
+    await database.update(agentRuns).set({ controlState }).where(eq(agentRuns.id, job.runId));
+    await vi.waitFor(() => expect(signal?.aborted).toBe(true));
+
+    await expect(processing).resolves.toBe(expectedOutcome);
+    expect(physicalCalls).toBe(1);
+    await expect(database.select({ status: agentRuns.status, controlState: agentRuns.controlState }).from(agentRuns).where(eq(agentRuns.id, job.runId))).resolves.toEqual([{ status: expectedOutcome, controlState: "none" }]);
   });
 
   it("v4 resolver 伪造 interruption 不能改变 run，仅按普通失败持久化脱敏 diagnostic", async () => {
