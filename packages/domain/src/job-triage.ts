@@ -21,8 +21,8 @@ export function compareJobTriageRank(
 type Gate = JobTriageGate;
 type Verdict = "pass" | "fail" | "unknown";
 type JobEvidence = { sourcePostingVersionId: string; field: string; path: string; value: string };
-type TargetEvidence = { kind: "target_constraint"; targetId?: string; version?: number; path: string };
-type FactEvidence = { kind: "profile_fact"; factId: string; revisionId: string };
+type TargetEvidence = { kind: "target_constraint"; targetId: string; version: number; path: string; label: string; value: string };
+type FactEvidence = { kind: "profile_fact"; factId: string; revisionId: string; label: string; value: string };
 type CandidateEvidence = TargetEvidence | FactEvidence;
 type GateResult = { verdict: Verdict; reasonCode: JobTriageReasonCode; jobEvidence: JobEvidence | null; candidateEvidence: CandidateEvidence | null };
 type Fact = { factId: string; revisionId: string; factType: string; factValue: { name?: string; summary?: string; level?: string }; state?: "active" | "removed" };
@@ -47,7 +47,8 @@ type DimensionScore = { score: number; reasonCode: JobTriageReasonCode; jobEvide
 const gateNames = JOB_TRIAGE_GATES;
 const normalized = (value: string) => value.trim().toLocaleLowerCase("en-US");
 const evidence = (sourcePostingVersionId: string, field: string, input: { evidence: { path: string; value: string } }): JobEvidence => ({ sourcePostingVersionId, field, path: input.evidence.path, value: input.evidence.value });
-const targetEvidence = (path: string): TargetEvidence => ({ kind: "target_constraint", path });
+let activeTargetEvidence: { targetId: string; version: number } | null = null;
+const targetEvidence = (path: string, value = "已设置") : TargetEvidence => ({ kind: "target_constraint", targetId: activeTargetEvidence?.targetId ?? "00000000-0000-4000-8000-000000000000", version: activeTargetEvidence?.version ?? 1, path, label: "求职目标条件", value });
 const unknown = (reasonCode: JobTriageReasonCode, jobEvidence: JobEvidence | null = null): GateResult => ({ verdict: "unknown", reasonCode, jobEvidence, candidateEvidence: null });
 const pass = (reasonCode: JobTriageReasonCode, jobEvidence: JobEvidence | null = null, candidateEvidence: CandidateEvidence | null = null): GateResult => ({ verdict: "pass", reasonCode, jobEvidence, candidateEvidence });
 const fail = (reasonCode: JobTriageReasonCode, jobEvidence: JobEvidence, candidateEvidence: CandidateEvidence): GateResult => ({ verdict: "fail", reasonCode, jobEvidence, candidateEvidence });
@@ -57,7 +58,7 @@ function findFact(facts: Fact[], type: string, expected: string): Fact | undefin
   const candidate = normalized(expected);
   return activeFacts(facts).find((fact) => fact.factType === type && [fact.factValue.name, fact.factValue.summary].some((value) => value && normalized(value) === candidate));
 }
-function factEvidence(fact: Fact): FactEvidence { return { kind: "profile_fact", factId: fact.factId, revisionId: fact.revisionId }; }
+function factEvidence(fact: Fact): FactEvidence { return { kind: "profile_fact", factId: fact.factId, revisionId: fact.revisionId, label: "已确认画像", value: fact.factValue.name ?? fact.factValue.summary ?? "已确认" }; }
 
 function deadlineStatus(deadline: string | null | undefined, now: Date, invalidProvenance?: unknown): JobTriageResult["deadlineStatus"] {
   if (invalidProvenance) return "invalid";
@@ -76,6 +77,7 @@ export function evaluateJobTriage(input: {
 }): JobTriageResult {
   const q = input.job.qualifications;
   const t = input.target.constraints;
+  activeTargetEvidence = input.target.targetId && input.target.version ? { targetId: input.target.targetId, version: input.target.version } : null;
   const results = {} as Record<Gate, GateResult>;
 
   const mode = q.workMode;
@@ -162,17 +164,15 @@ export function evaluateJobTriage(input: {
     ? { score: 50, reasonCode: "REQUIRED_SKILLS_MISSING_NEUTRAL", jobEvidence: [], candidateEvidence: [], missing: ["job.requirements"] }
     : !skillFacts.length
       ? { score: 50, reasonCode: "REQUIRED_SKILLS_EVIDENCE_MISSING_NEUTRAL", jobEvidence: [evidence(input.sourcePostingVersionId, "requiredSkills", q.requiredSkills!)], candidateEvidence: [], missing: ["profile.skills"] }
-      : { score: Math.round(100 * skills.filter((skill) => skillFacts.includes(normalized(skill))).length / skills.length), reasonCode: "REQUIRED_SKILLS_COMPARED", jobEvidence: [evidence(input.sourcePostingVersionId, "requiredSkills", q.requiredSkills!)], candidateEvidence: activeFacts(input.facts).filter((fact) => fact.factType === "skill").map(factEvidence), missing: [] };
+      : { score: Math.round(skills.reduce((total, skill) => total + (skillFacts.includes(normalized(skill)) ? 100 : 50), 0) / skills.length), reasonCode: "REQUIRED_SKILLS_COMPARED", jobEvidence: [evidence(input.sourcePostingVersionId, "requiredSkills", q.requiredSkills!)], candidateEvidence: activeFacts(input.facts).filter((fact) => fact.factType === "skill").map(factEvidence), missing: skills.filter((skill) => !skillFacts.includes(normalized(skill))).map((skill) => `profile.skills:${skill}` as never) };
   // 当前画像事实模型尚未提供可比较的年限字段；缺失时保持中性，不能伪造经验结论。
   const experience: DimensionScore = { score: 50, reasonCode: "EXPERIENCE_EVIDENCE_MISSING_NEUTRAL", jobEvidence: [], candidateEvidence: [], missing: ["profile.experience"] };
-  const alignmentSignals = [
-    q.seniority ? "SENIORITY_REQUIREMENT_PRESENT" : null,
-    q.industry && t.industries.some((industry) => normalized(industry) === normalized(q.industry!.value)) ? "INDUSTRY_TARGET_MATCH" : null,
-    input.job.title && normalized(input.job.title).includes(normalized(t.roleFamily)) ? "ROLE_FAMILY_TITLE_MATCH" : null,
-  ].filter(Boolean);
-  const targetAlignment: DimensionScore = alignmentSignals.length === 3
-    ? { score: 100, reasonCode: "TARGET_ALIGNMENT_EVIDENCE_INCOMPLETE_NEUTRAL", jobEvidence: [], candidateEvidence: [], missing: [] }
-    : { score: 50, reasonCode: alignmentSignals.length ? "TARGET_ALIGNMENT_EVIDENCE_INCOMPLETE_NEUTRAL" : "TARGET_ALIGNMENT_EVIDENCE_MISSING_NEUTRAL", jobEvidence: [], candidateEvidence: [], missing: ["target.alignment"] };
+  const alignmentJob = [q.seniority && evidence(input.sourcePostingVersionId, "seniority", q.seniority), q.industry && evidence(input.sourcePostingVersionId, "industry", q.industry), input.job.title && { sourcePostingVersionId: input.sourcePostingVersionId, field: "title", path: "title", value: input.job.title }].filter(Boolean) as JobEvidence[];
+  const alignmentTarget = [t.seniority && targetEvidence("seniority", t.seniority), t.industries.length && targetEvidence("industries", t.industries.join("、")), t.roleFamily && targetEvidence("roleFamily", t.roleFamily)].filter(Boolean) as TargetEvidence[];
+  const completeAlignment = alignmentJob.length === 3 && alignmentTarget.length === 3 && q.seniority?.value === t.seniority && q.industry && t.industries.some((industry) => normalized(industry) === normalized(q.industry!.value)) && input.job.title && normalized(input.job.title).includes(normalized(t.roleFamily));
+  const targetAlignment: DimensionScore = completeAlignment
+    ? { score: 100, reasonCode: "TARGET_ALIGNMENT_CONFIRMED", jobEvidence: alignmentJob, candidateEvidence: alignmentTarget, missing: [] }
+    : { score: 50, reasonCode: alignmentJob.length || alignmentTarget.length ? "TARGET_ALIGNMENT_EVIDENCE_INCOMPLETE_NEUTRAL" : "TARGET_ALIGNMENT_EVIDENCE_MISSING_NEUTRAL", jobEvidence: alignmentJob, candidateEvidence: alignmentTarget, missing: ["target.alignment"] };
   confidenceBasisPoints = Math.max(0, confidenceBasisPoints - [technical, experience, targetAlignment].reduce((total, dimension) => total + dimension.missing.length * 500, 0));
   const overallScore = Math.round(technical.score * .35 + experience.score * .25 + targetAlignment.score * .4);
   return { overallVerdict: verdict, gateResults: results, pendingItems, deadlineStatus: status, confidenceBasisPoints, dimensionScores: { technical, experience, targetAlignment }, overallScore, threshold: COARSE_THRESHOLD };

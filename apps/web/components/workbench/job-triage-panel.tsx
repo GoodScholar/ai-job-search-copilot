@@ -53,7 +53,7 @@ export function JobTriagePanel({ opportunityId, targets, initialVersion }: { opp
     {version && <div aria-live="polite" className="job-triage-results">
       <p><strong>{verdictText[version.overallVerdict]}</strong> · {deadlineText[version.deadlineStatus]} · 置信度 {Math.round(version.confidenceBasisPoints / 100)}%</p>
       <ul>{JOB_TRIAGE_GATES.map((gate) => { const result = version.gateResults[gate]; return <li key={gate}><strong>{gateText[gate]}</strong>：{verdictText[result.verdict]}
-        <ul>{result.jobEvidence && <li>岗位证据：{result.jobEvidence.value}</li>}{result.candidateEvidence && <li>画像或目标证据：{result.candidateEvidence.kind === "target_constraint" ? "已设置的求职目标条件" : "已确认的画像事实"}</li>}</ul>
+        <ul>{result.jobEvidence && <li>岗位证据：{result.jobEvidence.value}</li>}{result.candidateEvidence && <li>{result.candidateEvidence.label}：{result.candidateEvidence.value}</li>}</ul>
       </li>; })}</ul>
       {version.pendingItems.length > 0 && <ul aria-label="待补充事项">{version.pendingItems.map((item) => <li key={`${item.gate}-${item.reasonCode}`}>{item.message}</li>)}</ul>}
       {version.overallVerdict === "pass" && version.dimensionScores && <div><h3>粗排总分：{version.overallScore}/{version.threshold}</h3><p>仅用于进入后续候选或低于粗排阈值，不代表正式匹配。</p><ul><li>技术：{version.dimensionScores.technical.score}{version.dimensionScores.technical.missing.length ? "（证据待补充，按中性分计算）" : ""}</li><li>经验：{version.dimensionScores.experience.score}{version.dimensionScores.experience.missing.length ? "（证据待补充，按中性分计算）" : ""}</li><li>目标对齐：{version.dimensionScores.targetAlignment.score}{version.dimensionScores.targetAlignment.missing.length ? "（证据待补充，按中性分计算）" : ""}</li></ul></div>}

@@ -75,8 +75,7 @@ describe("FakeJobPostingNormalizer", () => {
     );
 
     expect(output).toMatchObject({
-      postedAt: null, deadline: null,
-      deadlineProvenance: { field: "deadline", path: "截止日期", value: "2026-08-01T09:00:00Z", status: "invalid" },
+      postedAt: null, deadline: "2026-08-01T09:00:00.000Z", deadlineProvenance: null,
     });
   });
 

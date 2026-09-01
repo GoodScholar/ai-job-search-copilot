@@ -151,3 +151,9 @@
 - S4/T2：target 切换清空并按 target 重新读取；UI 仅显示中文状态及最小可读证据值，不显示 reasonCode、字段路径或 UUID。
 - S7：target select 固定 44px，Playwright Desktop/Mobile 直接测量该 select；并继续覆盖 axe、overflow、刷新持久化。
 - 关键 RED 回归、迁移 23/23、root `pnpm test`（第二次完整串行，exit 0）、typecheck/lint/build/diff 与双端 Playwright 均完成。第一次 root run 的 worker afterAll 清理超时未作为验收依据；确认无残留后单独重跑 worker 26/299 exit 0，再执行第二次根级完整成功运行。
+
+### Supervisor 复审 REWORK 修复
+
+- Fake normalizer 仅接受 UTC `Z` instant，并把无毫秒合法值规范化为 `.000Z`；date-only/offset 保留为 invalid provenance。
+- Candidate evidence 现持久化受限的 label/value 摘要以及 target id/version；页面展示摘要而不展示 UUID/path/reason code。
+- 技能逐项按 confirmed 100、缺失 50 聚合，缺失技能名进入 missing；目标对齐只有三组岗位与目标证据完整且匹配时才为 100。

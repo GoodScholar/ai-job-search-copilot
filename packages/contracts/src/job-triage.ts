@@ -12,7 +12,7 @@ export const JobTriageReasonCodeSchema = z.enum([
   "WORK_MODE_ALLOWED", "WORK_MODE_CONFLICT", "REMOTE_LOCATION_COMPATIBLE", "LOCATION_ALLOWED", "LOCATION_CONFLICT", "RELOCATION_CONFIRMATION_REQUIRED", "RELOCATION_CONFLICT", "RELOCATION_NOT_REQUIRED", "RELOCATION_WILLING",
   "SALARY_MINIMUM_NOT_SET", "SALARY_NOT_COMPARABLE", "SALARY_BELOW_MINIMUM", "SALARY_COVERS_MINIMUM", "SALARY_RANGE_INSUFFICIENT", "SENIORITY_NOT_RESTRICTED", "SENIORITY_MATCH", "SENIORITY_CONFLICT",
   "EDUCATION_MATCH", "WORK_ELIGIBILITY_MATCH", "LANGUAGE_MATCH", "LANGUAGE_CONFLICT", "DEAL_BREAKERS_NOT_ENABLED", "DEAL_BREAKER_NOT_MATCHED", "DEAL_BREAKER_MATCH", "DEAL_BREAKER_COMPANY_CONFLICT", "DEAL_BREAKER_INDUSTRY_CONFLICT", "DEAL_BREAKER_OTHER_CONFLICT",
-  "DEADLINE_MISSING", "DEADLINE_INVALID", "REQUIRED_SKILLS_COMPARED", "REQUIRED_SKILLS_MISSING_NEUTRAL", "REQUIRED_SKILLS_EVIDENCE_MISSING_NEUTRAL", "EXPERIENCE_EVIDENCE_MISSING_NEUTRAL", "TARGET_ALIGNMENT_EVIDENCE_MISSING_NEUTRAL", "TARGET_ALIGNMENT_EVIDENCE_INCOMPLETE_NEUTRAL",
+  "DEADLINE_MISSING", "DEADLINE_INVALID", "REQUIRED_SKILLS_COMPARED", "REQUIRED_SKILLS_MISSING_NEUTRAL", "REQUIRED_SKILLS_EVIDENCE_MISSING_NEUTRAL", "EXPERIENCE_EVIDENCE_MISSING_NEUTRAL", "TARGET_ALIGNMENT_CONFIRMED", "TARGET_ALIGNMENT_EVIDENCE_MISSING_NEUTRAL", "TARGET_ALIGNMENT_EVIDENCE_INCOMPLETE_NEUTRAL",
 ]).or(z.string().regex(/^(EDUCATION|WORK_ELIGIBILITY)_MATCH$/));
 
 const jobEvidence = z.object({
@@ -20,8 +20,8 @@ const jobEvidence = z.object({
   path: z.string().trim().min(1).max(256), value: z.string().trim().min(1).max(512),
 }).strict();
 const candidateEvidence = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("target_constraint"), path: z.string().trim().min(1).max(256) }).strict(),
-  z.object({ kind: z.literal("profile_fact"), factId: z.uuid(), revisionId: z.uuid() }).strict(),
+  z.object({ kind: z.literal("target_constraint"), targetId: z.uuid(), version: z.int().min(1), path: z.string().trim().min(1).max(256), label: z.string().trim().min(1).max(64), value: z.string().trim().min(1).max(256) }).strict(),
+  z.object({ kind: z.literal("profile_fact"), factId: z.uuid(), revisionId: z.uuid(), label: z.string().trim().min(1).max(64), value: z.string().trim().min(1).max(256) }).strict(),
 ]);
 const gateResult = z.object({
   verdict, reasonCode: JobTriageReasonCodeSchema, jobEvidence: jobEvidence.nullable(), candidateEvidence: candidateEvidence.nullable(),
@@ -29,7 +29,7 @@ const gateResult = z.object({
 
 const dimensionScore = z.object({
   score: z.int().min(0).max(100), reasonCode: JobTriageReasonCodeSchema,
-  jobEvidence: z.array(jobEvidence).max(20), candidateEvidence: z.array(candidateEvidence).max(20), missing: z.array(z.enum(["job.requirements", "profile.skills", "profile.experience", "target.alignment"])).max(4),
+  jobEvidence: z.array(jobEvidence).max(20), candidateEvidence: z.array(candidateEvidence).max(20), missing: z.array(z.string().trim().min(1).max(128)).max(20),
 }).strict();
 
 export const CreateJobTriageVersionCommandSchema = z.object({ targetId: z.uuid() }).strict();

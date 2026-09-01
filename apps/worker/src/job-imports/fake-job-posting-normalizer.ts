@@ -141,12 +141,7 @@ function parseQualification(field: Exclude<Field, "company" | "location" | "post
 }
 
 function validIsoDateTime(value: string): string | null {
-  if (/^\d{4}-\d{2}-\d{2}$/u.test(value)) {
-    const iso = `${value}T00:00:00.000Z`;
-    const date = new Date(iso);
-    return Number.isNaN(date.getTime()) || date.toISOString() !== iso ? null : iso;
-  }
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value)) return null;
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/u.test(value)) return null;
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) || date.toISOString() !== value ? null : value;
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }

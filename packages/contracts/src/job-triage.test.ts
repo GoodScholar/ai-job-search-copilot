@@ -10,7 +10,7 @@ describe("job triage contracts", () => {
   });
 
   it("exposes evidence references and scored-dimension explanations without source prose", () => {
-    const passedLocation = { verdict: "pass" as const, reasonCode: "LOCATION_ALLOWED", jobEvidence: { sourcePostingVersionId: "00000000-0000-4000-8000-000000000004", field: "location", path: "location", value: "上海" }, candidateEvidence: { kind: "target_constraint" as const, path: "locations" } };
+    const passedLocation = { verdict: "pass" as const, reasonCode: "LOCATION_ALLOWED", jobEvidence: { sourcePostingVersionId: "00000000-0000-4000-8000-000000000004", field: "location", path: "location", value: "上海" }, candidateEvidence: { kind: "target_constraint" as const, targetId: "00000000-0000-4000-8000-000000000001", version: 1, path: "locations", label: "求职目标条件", value: "上海" } };
     const version = JobTriageVersionSchema.parse({
       triageVersionId: "00000000-0000-4000-8000-000000000002",
       opportunityId: "00000000-0000-4000-8000-000000000003",
