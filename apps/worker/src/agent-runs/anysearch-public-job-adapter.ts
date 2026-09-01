@@ -217,7 +217,7 @@ export class AnySearchPublicJobAdapter {
     try {
       let response: Response;
       try {
-        response = await abortable(this.fetch(new URL(path, this.baseUrl), { method: "POST", headers: { authorization: "Bearer " + "x".repeat(this.apiKey.length), "content-type": "application/json" }, body: JSON.stringify(body), redirect: "manual", signal: controller.signal }), controller.signal);
+        response = await abortable(this.fetch(new URL(path, this.baseUrl), { method: "POST", headers: { authorization: "Bearer " + this.apiKey, "content-type": "application/json" }, body: JSON.stringify(body), redirect: "manual", signal: controller.signal }), controller.signal);
       } catch {
         if (signal?.aborted) return error("ANYSEARCH_CANCELLED", false, null);
         if (timeout) return error("ANYSEARCH_TIMEOUT", true, null);
