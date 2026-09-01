@@ -26,7 +26,7 @@ describe("job triage persistence", () => {
     await container?.stop();
   });
 
-  async function fixture() {
+  async function fixture(options: { requiredSkills?: string[]; skillNames?: string[] } = {}) {
     const userId = crypto.randomUUID();
     const profileId = crypto.randomUUID();
     const targetId = crypto.randomUUID();
@@ -40,17 +40,24 @@ describe("job triage persistence", () => {
       id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", createdAt: now,
       constraints: { roleFamily: "frontend", seniority: "senior", locations: ["上海"], workModes: ["remote"], relocation: "not_willing", salary: null, industries: [], dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] } },
     });
-    for (const [factType, factValue] of [["education", { summary: "本科" }], ["language", { name: "英语", level: "C1" }], ["work_eligibility", { summary: "中国工作许可" }], ["skill", { name: "TypeScript" }]] as const) {
+    const skillNames = options.skillNames ?? ["TypeScript"];
+    const requiredSkills = options.requiredSkills ?? skillNames;
+    for (const [factType, factValue] of [["education", { summary: "本科" }], ["language", { name: "英语", level: "C1" }], ["work_eligibility", { summary: "中国工作许可" }]] as const) {
       const factId = crypto.randomUUID();
       await database.insert(profileFacts).values({ id: factId, userId, profileId, factType, createdAt: now });
       await database.insert(profileFactRevisions).values({ id: crypto.randomUUID(), userId, profileFactId: factId, revisionNumber: 1, factType, factValue, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1, createdAt: now });
+    }
+    for (const name of skillNames) {
+      const factId = crypto.randomUUID();
+      await database.insert(profileFacts).values({ id: factId, userId, profileId, factType: "skill", createdAt: now });
+      await database.insert(profileFactRevisions).values({ id: crypto.randomUUID(), userId, profileFactId: factId, revisionNumber: 1, factType: "skill", factValue: { name }, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1, createdAt: now });
     }
     await database.insert(jobSourcePostings).values({ id: sourcePostingId, userId, sourceType: "user_import", sourceIdentifier: hash, sourceIdentity: { contentFingerprint: hash }, isOfficial: false, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
     const normalizedData = {
       normalizerVersion: "fake-job-normalizer-v2", company: "示例科技", title: "frontend engineer", location: "上海", postedAt: null, deadline: "2026-09-12T00:00:00.000Z", deadlineProvenance: null, description: null,
       qualifications: {
         workMode: { value: "remote", evidence: { field: "workMode", path: "工作方式", value: "远程" } }, relocationRequired: { value: false, evidence: { field: "relocationRequired", path: "是否需要搬迁", value: "否" } }, salary: null,
-        seniority: { value: "senior", evidence: { field: "seniority", path: "级别", value: "senior" } }, education: { value: "本科", evidence: { field: "education", path: "学历", value: "本科" } }, languages: { value: [{ name: "英语", level: "C1" }], evidence: { field: "languages", path: "语言", value: "英语(C1)" } }, workEligibility: { value: "中国工作许可", evidence: { field: "workEligibility", path: "工作资格", value: "中国工作许可" } }, industry: null, employmentType: null, requiredSkills: { value: ["TypeScript"], evidence: { field: "requiredSkills", path: "必备技能", value: "TypeScript" } },
+        seniority: { value: "senior", evidence: { field: "seniority", path: "级别", value: "senior" } }, education: { value: "本科", evidence: { field: "education", path: "学历", value: "本科" } }, languages: { value: [{ name: "英语", level: "C1" }], evidence: { field: "languages", path: "语言", value: "英语(C1)" } }, workEligibility: { value: "中国工作许可", evidence: { field: "workEligibility", path: "工作资格", value: "中国工作许可" } }, industry: null, employmentType: null, requiredSkills: { value: requiredSkills, evidence: { field: "requiredSkills", path: "必备技能", value: requiredSkills.join("、") } },
       },
     };
     // 导入 worker 将完整规范化结果写入 current opportunity；source version 的
@@ -91,6 +98,21 @@ describe("job triage persistence", () => {
     expect(revised.triageVersionId).not.toBe(first.triageVersionId);
     await expect(createJobTriageQueries({ db: database }).get({ userId, opportunityId, triageVersionId: revised.triageVersionId })).resolves.toMatchObject({ triageVersionId: revised.triageVersionId });
     await expect(createJobTriageQueries({ db: database }).getLatest({ userId: crypto.randomUUID(), opportunityId, targetId })).resolves.toBeNull();
+  });
+
+  it.each([21, 100])("projects only twenty relevant skill facts from %i valid confirmed skill facts", async (skillFactCount) => {
+    const requiredSkills = Array.from({ length: 21 }, (_, index) => `相关技能${index + 1}`);
+    const skillNames = Array.from({ length: skillFactCount }, (_, index) => index < requiredSkills.length ? requiredSkills[index] : `无关技能${index + 1}`);
+    const { userId, targetId, opportunityId } = await fixture({ requiredSkills, skillNames });
+    const commands = createJobTriageCommands({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    const created = await commands.create({ userId, requestId: crypto.randomUUID(), opportunityId, command: { targetId } });
+    const persisted = await createJobTriageQueries({ db: database }).get({ userId, opportunityId, triageVersionId: created.triageVersionId });
+    const evidence = created.dimensionScores!.technical.candidateEvidence;
+    expect(created.dimensionScores!.technical).toMatchObject({ score: 100, missing: [] });
+    expect(evidence).toHaveLength(20);
+    expect(evidence.map((item) => item.value)).toEqual(requiredSkills.slice(0, 20));
+    expect(evidence.every((item) => requiredSkills.includes(item.value))).toBe(true);
+    expect(persisted?.dimensionScores?.technical.candidateEvidence).toEqual(evidence);
   });
 
   it("rejects inactive targets and an empty confirmed profile before creating a version", async () => {

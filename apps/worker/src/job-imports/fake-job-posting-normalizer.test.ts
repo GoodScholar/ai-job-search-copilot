@@ -79,6 +79,11 @@ describe("FakeJobPostingNormalizer", () => {
     });
   });
 
+  it.each(["2026-02-31T00:00:00Z", "2026-09-01T24:00:00Z"])("拒绝不会 round-trip 的截止日期 %s", async (deadline) => {
+    const output = JobNormalizerOutputSchema.parse(await new FakeJobPostingNormalizer().normalize(`截止日期：${deadline}`));
+    expect(output).toMatchObject({ deadline: null, deadlineProvenance: { field: "deadline", path: "截止日期", value: deadline, status: "invalid" } });
+  });
+
   it("默认把 failure fixture 当作普通未知正文", async () => {
     const output = JobNormalizerOutputSchema.parse(await new FakeJobPostingNormalizer().normalize(
       "<!-- job-copilot:fake-normalizer-invalid -->",

@@ -6,6 +6,7 @@ import { compareJobTriageRank, evaluateJobTriage } from "./job-triage";
 const sourcePostingVersionId = "00000000-0000-4000-8000-000000000001";
 type TriageInput = Parameters<typeof evaluateJobTriage>[0];
 type Mutate = (input: TriageInput) => void;
+const uuid = (suffix: number) => `00000000-0000-4000-8000-${String(suffix).padStart(12, "0")}`;
 
 const target = {
   targetId: "00000000-0000-4000-8000-000000000002", version: 1,
@@ -124,6 +125,40 @@ describe("job triage gates", () => {
     const valid = allPassInput();
     valid.job.deadline = "2026-09-08T00:00:00.001Z";
     expect(evaluateJobTriage(valid).deadlineStatus).toBe("valid");
+    for (const value of ["2026-02-31T00:00:00Z", "2026-09-01T24:00:00Z"]) {
+      const malformed = allPassInput();
+      malformed.job.deadline = value;
+      expect(evaluateJobTriage(malformed)).toMatchObject({ deadlineStatus: "invalid", overallScore: expect.any(Number) });
+    }
+    for (const value of ["2026-08-31T23:59:59.999Z", "2026-09-01T00:00:00.000Z"]) {
+      const expired = allPassInput();
+      expired.job.deadline = value;
+      expect(evaluateJobTriage(expired)).toMatchObject({ deadlineStatus: "expired", overallScore: null, dimensionScores: null });
+    }
+  });
+
+  it("uses the matching language fact after non-matching facts and preserves exact target evidence", () => {
+    const input = allPassInput();
+    input.target.targetId = uuid(200);
+    input.target.version = 7;
+    input.facts.splice(1, 0, { factId: uuid(201), revisionId: uuid(202), factType: "language", factValue: { name: "法语", level: "C1" } });
+    const result = evaluateJobTriage(input);
+    expect(result.gateResults.language.candidateEvidence).toEqual({ kind: "profile_fact", factId: "00000000-0000-4000-8000-000000000012", revisionId: "00000000-0000-4000-8000-000000000013", label: "已确认画像", value: "英语" });
+    expect(result.gateResults.location.candidateEvidence).toEqual({ kind: "target_constraint", targetId: uuid(200), version: 7, path: "locations", label: "求职目标条件", value: "上海" });
+  });
+
+  it.each([21, 100])("aggregates %i valid skill facts but projects at most twenty required-skill facts", (factCount) => {
+    const input = allPassInput();
+    const requiredSkills = Array.from({ length: 21 }, (_, index) => `技能${index + 1}`);
+    input.job.qualifications.requiredSkills = { value: requiredSkills, evidence: { field: "requiredSkills", path: "必备技能", value: requiredSkills.join("、") } };
+    input.facts.push(...Array.from({ length: factCount }, (_, index) => ({
+      factId: uuid(300 + index * 2), revisionId: uuid(301 + index * 2), factType: "skill", factValue: { name: index < requiredSkills.length ? requiredSkills[index] : `无关技能${index + 1}` },
+    })));
+    const technical = evaluateJobTriage(input).dimensionScores!.technical;
+    expect(technical).toMatchObject({ score: 100, missing: [] });
+    expect(technical.candidateEvidence).toHaveLength(20);
+    expect(technical.candidateEvidence.map((item) => item.value)).toEqual(requiredSkills.slice(0, 20));
+    expect(technical.candidateEvidence.every((item) => requiredSkills.includes(item.value))).toBe(true);
   });
 
   it("scores only an all-pass, non-expired opportunity and makes closing soon win score ties", () => {

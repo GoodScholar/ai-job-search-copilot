@@ -18,13 +18,15 @@ it("以文字和结构展示 unknown/pending，不把它当作通过或显示评
   expect(screen.queryByText("粗排总分")).toBeNull();
 });
 
-it("选择活动求职目标并通过服务端 action 重新评估", async () => {
+it("选择活动求职目标并展示真实目标条件后通过服务端 action 重新评估", async () => {
   const user = userEvent.setup();
-  const created = { ...unknown, overallVerdict: "fail" as const, gateResults: { ...unknown.gateResults, location: { verdict: "fail" as const, reasonCode: "LOCATION_CONFLICT", jobEvidence: { sourcePostingVersionId: "c4d4a7c1-9a17-4a8c-8b36-0f815d042e9a", field: "location", path: "地点", value: "上海" }, candidateEvidence: { kind: "target_constraint" as const, path: "locations" } } } };
+  const created = { ...unknown, overallVerdict: "fail" as const, gateResults: { ...unknown.gateResults, location: { verdict: "fail" as const, reasonCode: "LOCATION_CONFLICT", jobEvidence: { sourcePostingVersionId: "c4d4a7c1-9a17-4a8c-8b36-0f815d042e9a", field: "location", path: "地点", value: "上海" }, candidateEvidence: { kind: "target_constraint" as const, targetId: target.targetId, version: target.version, path: "locations", label: "求职目标条件", value: "北京、上海" } } } };
   vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(null, { status: 404 }));
   mocks.createJobTriageAction.mockResolvedValue({ ok: true, triage: created });
   render(<JobTriagePanel opportunityId={unknown.opportunityId} targets={[target]} initialVersion={null} />);
   await user.click(screen.getByRole("button", { name: "开始资格与粗排" }));
   await waitFor(() => expect(screen.getByText("不符合资格门槛")).toBeInTheDocument());
+  expect(screen.getByText("求职目标条件：北京、上海")).toBeInTheDocument();
+  expect(screen.queryByText("求职目标条件：已设置")).toBeNull();
   expect(mocks.createJobTriageAction).toHaveBeenCalledWith(unknown.opportunityId, target.targetId);
 });

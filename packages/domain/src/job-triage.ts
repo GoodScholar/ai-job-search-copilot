@@ -65,6 +65,7 @@ function deadlineStatus(deadline: string | null | undefined, now: Date, invalidP
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/u.test(deadline)) return "invalid";
   const date = new Date(deadline);
   if (Number.isNaN(date.getTime())) return "invalid";
+  if (date.toISOString().slice(0, 19) !== deadline.slice(0, 19)) return "invalid";
   if (date.getTime() <= now.getTime()) return "expired";
   return date.getTime() <= now.getTime() + 7 * 24 * 60 * 60 * 1000 ? "closing_soon" : "valid";
 }
