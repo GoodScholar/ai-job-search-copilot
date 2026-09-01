@@ -8,6 +8,7 @@ import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { describe, expect, it } from "vitest";
 import { createDatabase, type Database } from "./client";
 import { migrateDatabase } from "./migrate";
+import { assertTrue } from "./test-safe-assertions";
 
 const fingerprint = "a".repeat(64);
 const queryFingerprint = "b".repeat(64);
@@ -76,6 +77,12 @@ describe("public discovery workflow migration", () => {
     const otherVersionId = "88888888-8888-4888-8888-888888888888";
     const queryId = "99999999-9999-4999-8999-999999999999";
     const leadId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const secondLeadId = "abababab-abab-4aba-8aba-abababababab";
+    const candidateA = "https://careers.acme.com/jobs/a?job=one";
+    const candidateB = "https://careers.acme.com/jobs/b?job=two";
+    const finalA = "https://careers.acme.com/openings/a?job=one";
+    const finalB = "https://careers.acme.com/openings/b?job=two";
+    const canonical = "https://careers.acme.com/openings/shared?job=shared";
 
     try {
       const migrationSource = fileURLToPath(new URL("../migrations", import.meta.url));
@@ -105,7 +112,7 @@ describe("public discovery workflow migration", () => {
       await insertRun(database, { userId: otherOwnerId, targetId: otherTargetId, runId: otherRunId, idempotencyKey: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" });
       await database.execute(sql`
         insert into job_source_postings (id, user_id, source_type, source_identifier, source_identity)
-        values ('dddddddd-dddd-4ddd-8ddd-dddddddddddd', ${ownerId}, 'official', 'source', '{"finalUrl":"https://jobs.example.com/opening?job=123"}'::jsonb),
+        values ('dddddddd-dddd-4ddd-8ddd-dddddddddddd', ${ownerId}, 'official', 'source', ${JSON.stringify({ taxonomyPolicy: "public-job-source-taxonomy-v1", canonicalUrl: canonical, finalUrl: finalA, observedFinalUrls: { [candidateA]: finalA, [candidateB]: finalB } })}::jsonb),
                ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', ${otherOwnerId}, 'official', 'other-source', '{}'::jsonb)
       `);
       await database.execute(sql`
@@ -119,15 +126,22 @@ describe("public discovery workflow migration", () => {
           normalized_url, stable_fingerprint, expires_at, state, source_posting_version_id, rejection_code, created_at, updated_at
         ) values (
           ${leadId}, ${ownerId}, ${runId}, ${targetId}, 'anysearch', ${queryId}, 'general', ${queryFingerprint},
-          'https://jobs.example.com/opening?id=123', ${fingerprint}, now() + interval '30 days', 'pending', null, null, now(), now()
+          ${candidateA}, ${fingerprint}, now() + interval '30 days', 'pending', null, null, now(), now()
+        ), (
+          ${secondLeadId}, ${ownerId}, ${runId}, ${targetId}, 'anysearch', ${queryId}, 'general', ${queryFingerprint},
+          ${candidateB}, ${"c".repeat(64)}, now() + interval '30 days', 'pending', null, null, now(), now()
         )
       `);
       await database.execute(sql`
         update job_discovery_leads set state = 'verified', source_posting_version_id = ${versionId} where id = ${leadId}
       `);
       await database.execute(sql`
+        update job_discovery_leads set state = 'verified', source_posting_version_id = ${versionId} where id = ${secondLeadId}
+      `);
+      await database.execute(sql`
         insert into job_discovery_attributions (id, user_id, run_id, lead_id, query_id, provider, source_posting_version_id)
-        values ('abababab-abab-4aba-8aba-abababababab', ${ownerId}, ${runId}, ${leadId}, ${queryId}, 'anysearch', ${versionId})
+        values ('acacacac-acac-4aca-8aca-acacacacacac', ${ownerId}, ${runId}, ${leadId}, ${queryId}, 'anysearch', ${versionId}),
+               ('adadadad-adad-4ada-8ada-adadadadadad', ${ownerId}, ${runId}, ${secondLeadId}, ${queryId}, 'anysearch', ${versionId})
       `);
       await database.execute(sql`
         insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, kind, status, reason_code, budget_dimension)
@@ -136,9 +150,10 @@ describe("public discovery workflow migration", () => {
 
       await migrateDatabase(database);
 
-      await expect(database.execute(sql`select id, normalized_url, verified_final_url from job_discovery_leads where id = ${leadId}`)).resolves.toEqual([
-        { id: leadId, normalized_url: "https://jobs.example.com/opening?id=123", verified_final_url: "https://jobs.example.com/opening?job=123" },
-      ]);
+      const finals = await database.execute(sql`select id, verified_final_url from job_discovery_leads where id in (${leadId}, ${secondLeadId}) order by id`) as unknown as Array<{ id: string; verified_final_url: string }>;
+      assertTrue(finals.length === 2 && finals.some((row) => row.id === leadId && row.verified_final_url === finalA) && finals.some((row) => row.id === secondLeadId && row.verified_final_url === finalB));
+      const [rewrittenPosting] = await database.execute(sql`select source_identity from job_source_postings where id = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'`) as unknown as Array<{ source_identity: Record<string, unknown> }>;
+      assertTrue(Boolean(rewrittenPosting) && !("observedFinalUrls" in rewrittenPosting.source_identity) && Array.isArray(rewrittenPosting.source_identity.finalUrls) && rewrittenPosting.source_identity.finalUrls.length === 2);
       await expect(database.execute(sql`select kind, reason_code from agent_inbox_items where id = '12121212-1212-4121-8121-121212121212'`)).resolves.toEqual([
         { kind: "source_attention", reason_code: "SOURCE_HEALTH_ATTENTION" },
       ]);
