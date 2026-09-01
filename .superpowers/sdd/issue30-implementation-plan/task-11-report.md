@@ -71,6 +71,7 @@ This round fixes only `0028_lead_verified_final` historical recovery. The old id
 | Recovered-final safety | `1b6bc89` → `7e264fd`; application pair `139500b` → `651f56d` | The accepted table-driven migration application test rejects non-HTTPS, userinfo, fragment, sensitive query names and non-scalar JSON values. Recovery accepts only the approved canonical public-URL shape; the matching table constraint prevents independent later writes. |
 | Missing/ambiguous history | `7b69d7b` → `f906fd9` | A missing alias mapping and an ambiguous multi-final legacy shape mutate to an unsafe scalar fallback and fail safe boolean; Green restores null recovery and migration failure. |
 | Legacy alias-map removal | `a5e4b31` → `cc2e473` | A mutation retaining the legacy map fails the exact four-key identity projection; Green writes only taxonomy policy, canonical URL, scalar stable final and stable final set. |
+| Public-host parity | `c1294cf` → `ab4bff8` | Reserved suffix and local-only host recovery initially passed the migration check; Green aligns schema, snapshot and migration rejection with the runtime public-host policy. |
 
 Round 4 safe evidence:
 
@@ -79,9 +80,10 @@ Round 4 safe evidence:
 - `/tmp/issue30-task11-r4-failclosed-red.log`, `/tmp/issue30-task11-r4-failclosed-green.log`
 - `/tmp/issue30-task11-r4-unsafe-application-red.log`, `/tmp/issue30-task11-r4-unsafe-application-green.log`
 - `/tmp/issue30-task11-r4-identity-rewrite-red.log`, `/tmp/issue30-task11-r4-identity-rewrite-green.log`
-- `/tmp/issue30-task11-r4-final-database-migrations.log`, `/tmp/issue30-task11-r4-final-gate-leads.log`
-- `/tmp/issue30-task11-r4-final-database-typecheck.log`, `/tmp/issue30-task11-r4-final-domain-typecheck.log`, `/tmp/issue30-task11-r4-final-drizzle-check.log`
+- `/tmp/issue30-task11-r4-host-policy-red.log`, `/tmp/issue30-task11-r4-host-policy-green.log`
+- `/tmp/issue30-task11-r4-final2-database-migrations.log`, `/tmp/issue30-task11-r4-final2-gate-leads.log`
+- `/tmp/issue30-task11-r4-final2-database-typecheck.log`, `/tmp/issue30-task11-r4-final2-domain-typecheck.log`, `/tmp/issue30-task11-r4-final2-drizzle-check.log`
 
-Accepted red scans report `forbidden=0`; failed assertions expose only a boolean/count. Migration-focused application coverage is 13/13; the final combined migration run is 37/37; Gate plus Lead coverage is 34/34. Database and Domain typechecks passed, and static Drizzle reported `Everything's fine`.
+Accepted red scans report `forbidden=0`; failed assertions expose only a boolean/count. Migration-focused application coverage is 15/15; the final combined migration run is 39/39; Gate plus Lead coverage is 34/34. Database and Domain typechecks passed, and static Drizzle reported `Everything's fine`.
 
 Invalid attempt: the first outer non-object JSON fixture was rejected by a pre-0028 object constraint before the migration began, so it was not migration evidence. Its raw log was deleted, and the accepted table uses a non-scalar value inside an otherwise valid historical object. Temporary unfiltered Testcontainers logs were also removed; only the listed safe logs remain. No product/API projection changed: the internal final fact stays absent from public Lead output.
