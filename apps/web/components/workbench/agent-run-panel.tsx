@@ -44,6 +44,10 @@ const sourceLabels: Record<string, string> = {
   company_careers: "公司招聘官网",
 };
 
+function isDeepMatchRun(run: AgentRunDetail | null | undefined): boolean {
+  return run?.workflowVersion === "deep-match-v1";
+}
+
 const failureMessages: Record<NonNullable<AgentRunDetail["failureCode"]>, string> = {
   AGENT_RUN_ADAPTER_RETRYABLE: "岗位来源暂时不可用，请稍后重新发起发现。",
   AGENT_RUN_ADAPTER_FAILED: "岗位来源返回的数据无法验证，请更换求职目标后重新发起。",
@@ -64,33 +68,35 @@ function detailTimeline(run: AgentRunDetail | null): TimelineEvent[] {
   return run?.events.map(({ sequence, runVersion, eventType, data }) => ({ sequence, runVersion, eventType, data })) ?? [];
 }
 
-function timelineLabel(event: TimelineEvent): string {
+function timelineLabel(event: TimelineEvent, matching = false): string {
   switch (event.data.eventType) {
     case "run.queued": return "已排队";
-    case "run.started": return "开始发现岗位";
+    case "run.started": return matching ? "开始评估岗位匹配" : "开始发现岗位";
     case "step.started": return `正在${stepLabels[event.data.stepKey]}`;
     case "step.completed": return `已${stepLabels[event.data.stepKey]}`;
     case "run.retry_scheduled": return "正在重新尝试";
-    case "run.completed": return "岗位发现完成";
-    case "run.failed": return "岗位发现未完成";
+    case "run.completed": return matching ? "岗位匹配完成" : "岗位发现完成";
+    case "run.failed": return matching ? "岗位匹配未完成" : "岗位发现未完成";
     case "run.pause_requested": return "等待安全暂停";
-    case "run.paused": return "岗位发现已暂停";
-    case "run.resume_requested": return "正在继续岗位发现";
-    case "run.resumed": return "岗位发现已重新排队";
+    case "run.paused": return matching ? "岗位匹配已暂停" : "岗位发现已暂停";
+    case "run.resume_requested": return matching ? "正在继续岗位匹配" : "正在继续岗位发现";
+    case "run.resumed": return matching ? "岗位匹配已重新排队" : "岗位发现已重新排队";
     case "run.cancel_requested": return "等待安全取消";
-    case "run.cancelled": return "岗位发现已取消";
+    case "run.cancelled": return matching ? "岗位匹配已取消" : "岗位发现已取消";
     case "run.budget_updated": return "预算使用已更新";
   }
 }
 
 function runStatusLabel(run: AgentRunDetail | null): string {
+  const matching = isDeepMatchRun(run);
+  const noun = matching ? "岗位匹配" : "岗位发现";
   if (!run) return "尚未开始岗位发现";
-  if (run.status === "queued") return "岗位发现已排队";
-  if (run.status === "running") return `岗位发现进行中：${run.currentStep in stepLabels ? stepLabels[run.currentStep as keyof typeof stepLabels] : "准备中"}`;
-  if (run.status === "paused") return "岗位发现已暂停";
-  if (run.status === "cancelled") return "岗位发现已取消";
-  if (run.status === "completed" && run.termination?.kind === "completed_with_source_issues") return "岗位发现部分完成";
-  if (run.status === "completed") return `岗位发现完成，共保存 ${run.results.length} 个岗位机会`;
+  if (run.status === "queued") return `${noun}已排队`;
+  if (run.status === "running") return `${noun}进行中：${run.currentStep in stepLabels ? stepLabels[run.currentStep as keyof typeof stepLabels] : "准备中"}`;
+  if (run.status === "paused") return `${noun}已暂停`;
+  if (run.status === "cancelled") return `${noun}已取消`;
+  if (run.status === "completed" && run.termination?.kind === "completed_with_source_issues") return `${noun}部分完成`;
+  if (run.status === "completed") return matching ? `岗位匹配完成，已生成 ${run.results.length} 项推荐` : `岗位发现完成，共保存 ${run.results.length} 个岗位机会`;
   return failureMessages[run.failureCode ?? "AGENT_RUN_PERSIST_FAILED"];
 }
 
@@ -389,7 +395,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
             <div><dt>结果格式版本</dt><dd>{run.executionSpec.outputSchemaVersion}</dd></div>
             <div><dt>来源范围</dt><dd>{run.executionSpec.sourceScope.kind === "deep_match" ? (run.executionSpec.sourceScope.opportunityId ? "单岗位重新评估" : "发现后的候选岗位") : "trustedSources" in run.executionSpec.sourceScope ? `${run.executionSpec.sourceScope.trustedSources.length} 个可信来源，${run.executionSpec.sourceScope.publicDiscovery.queries.length} 个公开发现查询` : `${run.executionSpec.sourceScope.sources.length} 个固定来源`}</dd></div>
             <div><dt>允许的操作范围</dt><dd>{run.executionSpec.toolAllowlist.join("、")}</dd></div>
-            <div><dt>模型</dt><dd>本流程未使用模型</dd></div>
+            <div><dt>模型</dt><dd>{isDeepMatchRun(run) && run.executionSpec.model ? `${run.executionSpec.model.provider} · ${run.executionSpec.model.model}` : "本流程未使用模型"}</dd></div>
           </dl>
         </section>
         <section aria-labelledby="agent-run-budget-title" className="agent-run-budget">
@@ -427,7 +433,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
         <ol aria-label="岗位发现运行时间线" className="agent-run-timeline">
           {timeline.map((event) => <li data-state={event.eventType.startsWith("run.") ? event.data.status : event.eventType.endsWith("completed") ? "completed" : "running"} key={event.sequence}>
             <span aria-hidden="true">{String(event.sequence).padStart(2, "0")}</span>
-            <p>{timelineLabel(event)}</p>
+            <p>{timelineLabel(event, isDeepMatchRun(run))}</p>
           </li>)}
         </ol>
       ) : null}

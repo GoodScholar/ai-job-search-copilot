@@ -31,13 +31,13 @@ const triageRejectedOpportunityId = "00000000-0000-4000-8000-000000000012";
 
 export async function runDeepMatchEvaluation(adapter: DeepMatchAdapter) {
   const parsedCandidates = candidates.map((candidate) => DeepMatchCandidateSchema.parse(candidate));
-  const assessments = await adapter.assess({ candidates: parsedCandidates }, {
+  const result = await adapter.assess({ candidates: parsedCandidates }, {
     signal: new AbortController().signal,
     usageKey: `${DEEP_MATCH_EVALUATION_VERSION}:${DEEP_MATCH_OUTPUT_SCHEMA_VERSION}`,
     budget: { maxTokens: 80 * parsedCandidates.length, reservedInputTokens: FAKE_DEEP_MATCH_TOKEN_USAGE.inputTokens, reservedOutputTokens: FAKE_DEEP_MATCH_TOKEN_USAGE.outputTokens },
   });
-  if (FAKE_DEEP_MATCH_TOKEN_USAGE.inputTokens + FAKE_DEEP_MATCH_TOKEN_USAGE.outputTokens > 80) throw new Error("DEEP_MATCH_EVALUATION_TOKEN_CEILING");
-  const accepted = assessments.map((assessment) => {
+  if (result.usage.inputTokens + result.usage.outputTokens > 80 || result.usage.latencyMs > 5_000) throw new Error("DEEP_MATCH_EVALUATION_RESOURCE_CEILING");
+  const accepted = result.assessments.map((assessment) => {
     const candidate = parsedCandidates.find((item) => item.opportunityId === assessment.opportunityId);
     if (!candidate) throw new Error("DEEP_MATCH_EVALUATION_UNEXPECTED_OPPORTUNITY");
     const parsed = DeepMatchAssessmentSchema.parse(assessment);

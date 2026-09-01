@@ -72,13 +72,27 @@ export type DeepMatchAdapterCall = {
   signal: AbortSignal;
   usageKey: string;
   budget: { maxTokens: number; reservedInputTokens: number; reservedOutputTokens: number };
+  /** Test-only fixture data is passed through the adapter seam, never job text. */
+  fixture?: { qualityInsufficientOpportunityIds?: readonly string[] };
 };
+
+export const DeepMatchAdapterUsageSchema = z.object({
+  inputTokens: z.int().min(0),
+  outputTokens: z.int().min(0),
+  latencyMs: z.int().min(0),
+}).strict();
+export type DeepMatchAdapterUsage = z.infer<typeof DeepMatchAdapterUsageSchema>;
+export const DeepMatchAdapterResultSchema = z.object({
+  assessments: z.array(DeepMatchAssessmentSchema),
+  usage: DeepMatchAdapterUsageSchema,
+}).strict();
+export type DeepMatchAdapterResult = z.infer<typeof DeepMatchAdapterResultSchema>;
 
 export interface DeepMatchAdapter {
   readonly adapter: string;
   readonly adapterVersion: string;
   readonly model: string;
-  assess(input: DeepMatchAdapterInput, call: DeepMatchAdapterCall): Promise<DeepMatchAssessment[]>;
+  assess(input: DeepMatchAdapterInput, call: DeepMatchAdapterCall): Promise<DeepMatchAdapterResult>;
 }
 
 /** Reject responses that cite untrusted or out-of-scope inputs before persistence. */
@@ -102,11 +116,12 @@ export class FakeDeepMatchAdapter implements DeepMatchAdapter {
   readonly adapterVersion = FAKE_DEEP_MATCH_ADAPTER_VERSION;
   readonly model = "fake-deep-match-model-v1";
 
-  async assess(input: DeepMatchAdapterInput, call: DeepMatchAdapterCall): Promise<DeepMatchAssessment[]> {
+  async assess(input: DeepMatchAdapterInput, call: DeepMatchAdapterCall): Promise<DeepMatchAdapterResult> {
     if (call.signal.aborted) throw new DeepMatchAdapterError("retryable");
     const parsed = DeepMatchAdapterInputSchema.parse(input);
-    return parsed.candidates.map((candidate) => {
-      const score = candidate.jobEvidence.some((evidence) => evidence.value.includes(FAKE_DEEP_MATCH_QUALITY_INSUFFICIENT_MARKER)) ? 50 : 80;
+    const insufficient = new Set(call.fixture?.qualityInsufficientOpportunityIds ?? []);
+    const assessments = parsed.candidates.map((candidate) => {
+      const score = insufficient.has(candidate.opportunityId) ? 50 : 80;
       const assessment = DeepMatchAssessmentSchema.parse({
         opportunityId: candidate.opportunityId,
         overallScore: score,
@@ -124,5 +139,6 @@ export class FakeDeepMatchAdapter implements DeepMatchAdapter {
         profileEvidenceIds: candidate.profileEvidence.map((item) => item.id),
       });
     });
+    return { assessments, usage: { ...FAKE_DEEP_MATCH_TOKEN_USAGE, latencyMs: 0 } };
   }
 }

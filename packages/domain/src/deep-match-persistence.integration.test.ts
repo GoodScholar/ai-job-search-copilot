@@ -75,9 +75,10 @@ describe("deep match persistence", () => {
     const queue = { calls: 0, fail: true, async enqueue() { this.calls += 1; if (this.fail) throw new Error("QUEUE_DOWN"); } };
     const starter = createDeepMatchRunStarter({ db, queue, id: () => crypto.randomUUID(), clock: () => now });
     const key = crypto.randomUUID();
-    const first = await starter.start({ userId: input.userId, targetId: input.targetId, idempotencyKey: key, trigger: "automatic" });
+    const discoveryRunId = crypto.randomUUID();
+    const first = await starter.start({ userId: input.userId, targetId: input.targetId, idempotencyKey: key, trigger: "automatic", discoveryRunId });
     queue.fail = false;
-    const second = await starter.start({ userId: input.userId, targetId: input.targetId, idempotencyKey: key, trigger: "automatic" });
+    const second = await starter.start({ userId: input.userId, targetId: input.targetId, idempotencyKey: key, trigger: "automatic", discoveryRunId });
     expect(first).toMatchObject({ reused: false });
     expect(second).toMatchObject({ runId: first.runId, reused: true });
     expect(queue.calls).toBe(2);
@@ -102,7 +103,7 @@ describe("deep match persistence", () => {
   it.each(["pause_requested", "cancel_requested"] as const)("refuses match and list writes after %s between model and persistence", async (controlState) => {
     const input = await fixture();
     const run = await createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now })
-      .start({ userId: input.userId, targetId: input.targetId, idempotencyKey: crypto.randomUUID(), trigger: "automatic" });
+      .start({ userId: input.userId, targetId: input.targetId, idempotencyKey: crypto.randomUUID(), trigger: "automatic", discoveryRunId: crypto.randomUUID() });
     const claimToken = crypto.randomUUID();
     await db.update(agentRuns).set({ status: "running", currentStep: "assess_matches", attemptCount: 1, startedAt: now, activeSliceStartedAt: now, claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), controlState }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, run.runId)));
     const commands = createDeepMatchCommands({ db, id: crypto.randomUUID, clock: () => now });
@@ -118,7 +119,7 @@ describe("deep match persistence", () => {
     const candidate = (await createDeepMatchQueries({ db }).selectCandidates({ userId: input.userId, targetId: input.targetId }))[0]!;
     const commands = createDeepMatchCommands({ db, id: crypto.randomUUID, clock: () => now, adapter: {
       adapter: "test", adapterVersion: "v1", model: "test",
-      async assess() { return [{ opportunityId: crypto.randomUUID(), overallScore: 80, dimensions: DEEP_MATCH_DIMENSIONS.map((dimension) => ({ dimension, score: 80, judgment: "evidence_backed_inference" as const, jobEvidenceIds: [candidate.jobEvidence[0]!.id], profileEvidenceIds: [candidate.profileEvidence[0]!.id], summary: "wrong identity" })) }]; },
+      async assess() { return { assessments: [{ opportunityId: crypto.randomUUID(), overallScore: 80, dimensions: DEEP_MATCH_DIMENSIONS.map((dimension) => ({ dimension, score: 80, judgment: "evidence_backed_inference" as const, jobEvidenceIds: [candidate.jobEvidence[0]!.id], profileEvidenceIds: [candidate.profileEvidence[0]!.id], summary: "wrong identity" })) }], usage: { inputTokens: 1, outputTokens: 1, latencyMs: 1 } }; },
     } });
     await expect(commands.createMatch({ userId: input.userId, targetId: input.targetId, candidate, modelCall: modelCall() })).rejects.toThrow("DEEP_MATCH_OPPORTUNITY_IDENTITY_INVALID");
   });

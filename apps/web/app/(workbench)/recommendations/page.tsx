@@ -20,7 +20,7 @@ export default async function RecommendationsPage() {
         {!list ? <><h2>暂无可处理的推荐</h2><p>完成岗位发现和资格筛选后，这里会显示高度匹配、值得尝试或谨慎考虑的岗位。</p></> : <>
           <p aria-label="推荐清单版本">清单版本 {list.sequence} · {list.localDate}</p>
           {list.exclusions.length > 0 && <p>因匹配质量不足而排除 {list.exclusions.filter((item) => item.reasonCode === "MATCH_QUALITY_INSUFFICIENT").length} 项岗位</p>}
-          <details><summary>历史版本</summary><ol>{history.map((version) => <li key={version.recommendationListId}>清单版本 {version.sequence} · {version.localDate}</li>)}</ol></details>
+          <details><summary>历史版本</summary><ol>{history.map((version) => <li key={version.recommendationListId}><details><summary>清单版本 {version.sequence} · {version.localDate}</summary>{version.items.length === 0 ? <p>该版本没有可推荐岗位。</p> : <ol>{version.items.map((item) => <li key={item.matchVersionId}><strong>{item.title ?? "岗位机会"}</strong><p>岗位证据：{item.jobEvidence.map((evidence) => evidence.value).join("；")}</p><p>画像证据：{item.profileEvidence.map((evidence) => evidence.value).join("；")}</p></li>)}</ol>}{version.exclusions.length > 0 ? <p>稳定排除：{version.exclusions.map((item) => item.reasonCode).join("、")}</p> : null}</details></li>)}</ol></details>
           <ol aria-label="推荐岗位">
             {list.items.map((item) => {
               const assessment = DeepMatchAssessmentSchema.safeParse(item.assessment).data;

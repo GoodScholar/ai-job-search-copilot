@@ -188,6 +188,24 @@ it("显示冻结的执行规格、模型说明和预算账本", () => {
   expect(screen.getByText("允许的操作范围")).toBeVisible();
 });
 
+it("对深度匹配运行使用匹配文案和冻结模型，而不是岗位发现文案", () => {
+  const matching = {
+    ...detail("completed"), workflowVersion: "deep-match-v1", currentStep: "completed",
+    executionSpec: {
+      ...detail("completed").executionSpec,
+      workflowVersion: "deep-match-v1", sourceScope: { kind: "deep_match", trigger: "automatic", opportunityId: null, discoveryRunId: "00000000-0000-4000-8000-000000000009" },
+      adapter: "fake-deep-match", adapterVersion: "fake-deep-match-v1", outputSchemaVersion: "deep-match-result-v1",
+      model: { provider: "fake", model: "fake-deep-match-model-v1" }, toolAllowlist: [],
+      budget: { maxActiveDurationMs: 180_000, maxAttempts: 3, maxToolCalls: 0, maxResults: 10, maxModelCalls: 10, maxTokens: 20_000 },
+    },
+  } as AgentRunDetail;
+  render(<AgentRunPanel initialRun={matching} targets={[target()]} />);
+
+  expect(screen.getByRole("status")).toHaveTextContent("岗位匹配完成");
+  expect(screen.getByText("fake · fake-deep-match-model-v1")).toBeVisible();
+  expect(screen.getByRole("list", { name: "岗位发现运行时间线" })).toHaveTextContent("开始评估岗位匹配");
+});
+
 it("历史消费明细不完整时只展示预算上限", () => {
   const legacy = { ...detail(), usage: { ...detail().usage, complete: false } };
   render(<AgentRunPanel initialRun={legacy} targets={[target()]} />);

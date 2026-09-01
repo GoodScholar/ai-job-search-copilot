@@ -296,9 +296,11 @@ export const DeepMatchAgentRunBudgetSchema = z.object({
   maxActiveDurationMs: z.literal(180_000), maxAttempts: z.literal(3), maxToolCalls: z.literal(0),
   maxResults: z.literal(10), maxModelCalls: z.literal(10), maxTokens: z.literal(20_000),
 }).strict();
-export const DeepMatchAgentRunSourceScopeSchema = z.object({ kind: z.literal("deep_match"), trigger: z.enum(["automatic", "manual"]), opportunityId: z.uuid().nullable() }).strict().superRefine((scope, context) => {
+export const DeepMatchAgentRunSourceScopeSchema = z.object({ kind: z.literal("deep_match"), trigger: z.enum(["automatic", "manual"]), opportunityId: z.uuid().nullable(), discoveryRunId: z.uuid().nullable() }).strict().superRefine((scope, context) => {
   if (scope.trigger === "manual" && scope.opportunityId === null) context.addIssue({ code: "custom", path: ["opportunityId"], message: "manual matching must bind one opportunity" });
   if (scope.trigger === "automatic" && scope.opportunityId !== null) context.addIssue({ code: "custom", path: ["opportunityId"], message: "automatic matching evaluates discovery candidates" });
+  if (scope.trigger === "automatic" && scope.discoveryRunId === null) context.addIssue({ code: "custom", path: ["discoveryRunId"], message: "automatic matching must bind its completed discovery run" });
+  if (scope.trigger === "manual" && scope.discoveryRunId !== null) context.addIssue({ code: "custom", path: ["discoveryRunId"], message: "manual matching does not claim discovery provenance" });
 });
 export type AgentRunSourceScope = z.infer<typeof AgentRunSourceScopeSchema>;
 export type DeepMatchAgentRunSourceScope = z.infer<typeof DeepMatchAgentRunSourceScopeSchema>;

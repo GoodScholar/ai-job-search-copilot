@@ -26,20 +26,31 @@ describe("FakeDeepMatchAdapter", () => {
       }],
     }, modelCall());
 
-    expect(result).toHaveLength(1);
-    expect(result[0]?.dimensions.map((dimension) => dimension.dimension)).toEqual(DEEP_MATCH_DIMENSIONS);
-    expect(result[0]?.dimensions.every((dimension) => dimension.judgment === "evidence_backed_inference")).toBe(true);
-    expect(() => DeepMatchAssessmentSchema.parse(result[0])).not.toThrow();
+    expect(result.assessments).toHaveLength(1);
+    expect(result.usage).toEqual({ inputTokens: 32, outputTokens: 48, latencyMs: 0 });
+    expect(result.assessments[0]?.dimensions.map((dimension) => dimension.dimension)).toEqual(DEEP_MATCH_DIMENSIONS);
+    expect(result.assessments[0]?.dimensions.every((dimension) => dimension.judgment === "evidence_backed_inference")).toBe(true);
+    expect(() => DeepMatchAssessmentSchema.parse(result.assessments[0])).not.toThrow();
   });
 
   it("returns the exclusion score only for the explicit CI quality fixture", async () => {
     const adapter = new FakeDeepMatchAdapter();
     const result = await adapter.assess({ candidates: [{
       opportunityId: ids.opportunityId, sourcePostingVersionId: ids.sourcePostingVersionId,
-      jobEvidence: [{ id: "job:quality", value: "MATCH_QUALITY_INSUFFICIENT" }],
+      jobEvidence: [{ id: "job:quality", value: "普通岗位描述" }],
+      profileEvidence: [{ id: "profile:typescript", profileFactRevisionId: ids.profileFactRevisionId, value: "TypeScript" }],
+    }] }, { ...modelCall(), fixture: { qualityInsufficientOpportunityIds: [ids.opportunityId] } });
+    expect(result.assessments[0]).toMatchObject({ overallScore: 50 });
+  });
+
+  it("does not interpret ordinary job text as a test control signal", async () => {
+    const adapter = new FakeDeepMatchAdapter();
+    const result = await adapter.assess({ candidates: [{
+      opportunityId: ids.opportunityId, sourcePostingVersionId: ids.sourcePostingVersionId,
+      jobEvidence: [{ id: "job:ordinary", value: "MATCH_QUALITY_INSUFFICIENT" }],
       profileEvidence: [{ id: "profile:typescript", profileFactRevisionId: ids.profileFactRevisionId, value: "TypeScript" }],
     }] }, modelCall());
-    expect(result[0]).toMatchObject({ overallScore: 50 });
+    expect(result.assessments[0]?.overallScore).toBe(80);
   });
 
   it("rejects model output whose citation is absent from the supplied evidence closure", () => {

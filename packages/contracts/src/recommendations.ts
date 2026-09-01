@@ -11,8 +11,7 @@ export const RecommendationItemSchema = z.object({
 export const RecommendationListSchema = z.object({
   recommendationListId: z.uuid(), targetId: z.uuid(), localDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u), sequence: z.int().min(1), createdAt: z.iso.datetime(), exclusions: z.array(RecommendationExclusionSchema).max(10), items: z.array(RecommendationItemSchema).max(10),
 }).strict();
-export const RecommendationListHistorySchema = z.array(z.object({
-  recommendationListId: z.uuid(), targetId: z.uuid(), localDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u), sequence: z.int().min(1), createdAt: z.iso.datetime(),
-}).strict());
+/** Historical versions carry the same frozen details as the latest list. */
+export const RecommendationListHistorySchema = z.array(RecommendationListSchema);
 export type RecommendationList = z.infer<typeof RecommendationListSchema>;
 export type RecommendationListHistory = z.infer<typeof RecommendationListHistorySchema>;

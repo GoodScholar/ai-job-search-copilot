@@ -21,7 +21,7 @@ describe("deep matching agent run execution spec", () => {
     expect(DeepMatchAgentRunExecutionSpecSchema.parse({
       workflowVersion: DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION,
       targetSnapshot: { targetId: "00000000-0000-4000-8000-000000000001", version: 1, priority: "primary", state: "active", constraints: { roleFamily: "frontend", seniority: "senior", locations: [], workModes: [], relocation: "unknown", salary: null, industries: [], dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] } } },
-      sourceScope: { kind: "deep_match", trigger: "manual", opportunityId: "00000000-0000-4000-8000-000000000002" },
+      sourceScope: { kind: "deep_match", trigger: "manual", opportunityId: "00000000-0000-4000-8000-000000000002", discoveryRunId: null },
       ruleVersion: "deep-match-rules-v1", adapter: "fake-deep-match", adapterVersion: "fake-deep-match-v1", outputSchemaVersion: "deep-match-result-v1", toolAllowlist: [],
       model: { provider: "fake", model: "fake-deep-match-model-v1" }, budget: DEEP_MATCH_AGENT_RUN_BUDGET,
     })).toMatchObject({ workflowVersion: DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION });
@@ -31,7 +31,7 @@ describe("deep matching agent run execution spec", () => {
     expect(() => DeepMatchAgentRunExecutionSpecSchema.parse({
       workflowVersion: DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION,
       targetSnapshot: { targetId: "00000000-0000-4000-8000-000000000001", version: 1, priority: "primary", state: "active", constraints: { roleFamily: "frontend", seniority: "senior", locations: [], workModes: [], relocation: "unknown", salary: null, industries: [], dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] } } },
-      sourceScope: { kind: "deep_match", trigger: "manual", opportunityId: null }, ruleVersion: "deep-match-rules-v1", adapter: "fake-deep-match", adapterVersion: "fake-deep-match-v1", outputSchemaVersion: "deep-match-result-v1", toolAllowlist: [], model: { provider: "fake", model: "fake-deep-match-model-v1" }, budget: DEEP_MATCH_AGENT_RUN_BUDGET,
+      sourceScope: { kind: "deep_match", trigger: "manual", opportunityId: null, discoveryRunId: null }, ruleVersion: "deep-match-rules-v1", adapter: "fake-deep-match", adapterVersion: "fake-deep-match-v1", outputSchemaVersion: "deep-match-result-v1", toolAllowlist: [], model: { provider: "fake", model: "fake-deep-match-model-v1" }, budget: DEEP_MATCH_AGENT_RUN_BUDGET,
     })).toThrow();
   });
 });
