@@ -189,6 +189,7 @@ describe("job discovery lead repository", () => {
 
     expect(retry).toEqual(first);
     expect(first).toMatchObject({ lead: { state: "verified", sourcePostingVersionId: subject.versionId, rejectionCode: null }, attribution: expect.objectContaining({ ownerId: subject.userId, runId: subject.runId, leadId: created.leadId, provider: "anysearch", sourcePostingVersionId: subject.versionId }) });
+    expect(Object.hasOwn(first.lead, "verifiedFinalUrl")).toBe(false);
     await expect(database.select().from(jobDiscoveryAttributions).where(and(eq(jobDiscoveryAttributions.userId, subject.userId), eq(jobDiscoveryAttributions.leadId, created.leadId))))
       .resolves.toHaveLength(1);
     await expect(repository().getAttribution({ userId: subject.userId, leadId: created.leadId })).resolves.toEqual(first.attribution);
