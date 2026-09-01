@@ -342,4 +342,51 @@ describe("public discovery workflow migration", () => {
       await rm(migrationsFolder, { recursive: true, force: true });
     }
   }, 60_000);
+
+  it.each([
+    ["non_https", "http://careers.acme.com/openings/a?job=one"],
+    ["userinfo", "https://user@careers.acme.com/openings/a?job=one"],
+    ["fragment", "https://careers.acme.com/openings/a?job=one#fragment"],
+    ["sensitive_token", "https://careers.acme.com/openings/a?token=secret"],
+    ["sensitive_session", "https://careers.acme.com/openings/a?job=one&session=active"],
+    ["non_scalar_json", { malformed: "value" }],
+  ] as const)("0028 对 %s 的历史 final 值 fail closed", async (_kind, final) => {
+    const container = await new PostgreSqlContainer("postgres:17-alpine").start();
+    const database = createDatabase(container.getConnectionUri());
+    const migrationsFolder = await mkdtemp(join(tmpdir(), "job-copilot-0028-unsafe-"));
+    const userId = "11111111-1111-4111-8111-111111111111";
+    const targetId = "33333333-3333-4333-8333-333333333333";
+    const runId = "55555555-5555-4555-8555-555555555555";
+    const queryId = "99999999-9999-4999-8999-999999999999";
+    const leadId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const versionId = "77777777-7777-4777-8777-777777777777";
+    const candidate = "https://careers.acme.com/jobs/a?job=one";
+    const canonical = "https://careers.acme.com/openings/a?job=one";
+    try {
+      const migrationSource = fileURLToPath(new URL("../migrations", import.meta.url));
+      await cp(migrationSource, migrationsFolder, { recursive: true });
+      await Promise.all(["0025_layered_public_discovery_workflow.sql", "0026_discovery_attention.sql", "0027_massive_purple_man.sql", "0028_lead_verified_final.sql"].map((file) => unlink(join(migrationsFolder, file))));
+      await Promise.all(["0025_snapshot.json", "0026_snapshot.json", "0027_snapshot.json", "0028_snapshot.json"].map((file) => unlink(join(migrationsFolder, "meta", file))));
+      const journalPath = join(migrationsFolder, "meta", "_journal.json");
+      const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
+      journal.entries = journal.entries.filter(({ tag }) => !["0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_lead_verified_final"].includes(tag));
+      await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
+      await migrate(database, { migrationsFolder });
+      await database.execute(sql`insert into job_accounts (id) values (${userId})`);
+      await database.execute(sql`insert into job_targets (id, user_id, version, priority, state) values (${targetId}, ${userId}, 1, 'primary', 'active')`);
+      await insertRun(database, { userId, targetId, runId, idempotencyKey: "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb" });
+      const identity = { taxonomyPolicy: "public-job-source-taxonomy-v1", canonicalUrl: canonical, finalUrl: final, observedFinalUrls: { [candidate]: final } };
+      await database.execute(sql`insert into job_source_postings (id, user_id, source_type, source_identifier, source_identity) values ('dddddddd-dddd-4ddd-8ddd-dddddddddddd', ${userId}, 'official', 'source', ${JSON.stringify(identity)}::jsonb)`);
+      await database.execute(sql`insert into job_source_posting_versions (id, user_id, source_posting_id, version, content_sha256, raw_content_sha256, raw_object_reference, retrieved_at) values (${versionId}, ${userId}, 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', 1, ${fingerprint}, ${fingerprint}, '{}'::jsonb, now())`);
+      await database.execute(sql`insert into job_discovery_leads (id, user_id, run_id, target_id, provider, query_id, query_kind, query_fingerprint, normalized_url, stable_fingerprint, expires_at, state, source_posting_version_id, rejection_code, created_at, updated_at) values (${leadId}, ${userId}, ${runId}, ${targetId}, 'anysearch', ${queryId}, 'general', ${queryFingerprint}, ${candidate}, ${fingerprint}, now() + interval '30 days', 'verified', ${versionId}, null, now(), now())`);
+      await database.execute(sql`insert into job_discovery_attributions (id, user_id, run_id, lead_id, query_id, provider, source_posting_version_id) values ('abababab-abab-4aba-8aba-abababababab', ${userId}, ${runId}, ${leadId}, ${queryId}, 'anysearch', ${versionId})`);
+      let failed = false;
+      try { await migrateDatabase(database); } catch { failed = true; }
+      assertTrue(failed);
+    } finally {
+      await database.$client.end();
+      await container.stop();
+      await rm(migrationsFolder, { recursive: true, force: true });
+    }
+  }, 60_000);
 });
