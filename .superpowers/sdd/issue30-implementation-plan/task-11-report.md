@@ -97,7 +97,7 @@ Repository history confirms that the fixed baseline contains neither `0024`, `00
 | Fresh-chain final fact | `247e35f` → `96f11df` | A temporary fresh chain with `0028` omitted lacked the final column and failed only a neutral boolean assertion. Green creates it directly in the original unreleased Lead-table migration. |
 | One URL-policy authority | same Green | The database regex constraint and all recovery parsing are gone. Runtime keeps the shared contract schema and Gate validation in the verify-and-attribute transaction. Contract coverage includes port zero, an ICANN Unicode host and a percent-decoded identity value. |
 | Requested/final/canonical origin | existing Gate seam rerun | The Gate integration's full chain test rejects a foreign requested, final or canonical URL before facts are written; it remains transaction-bound and does not rely on a database URL regex. |
-| Recovery fixture duplication | same Green | Removed the obsolete recovery/application fixtures and retained compact additive migration checks plus the fresh-chain application seam. |
+| Recovery fixture duplication | same Green | Removed only obsolete `0028` recovery fixtures; the real `0024`→`0025`→`0026`→`0027` PostgreSQL application seam remains required coverage. |
 
 Round 4's `0028` recovery implementation and logs are SUPERSEDED, not accepted final-schema evidence, because the entire migration was unreleased and removed. The Lead-bound runtime fact, replay behavior, owner-bound FK, length/state constraints, and public Lead projection remain covered; no legacy database recovery path exists in the final chain.
 
@@ -108,3 +108,19 @@ Round 5 safe evidence:
 - `/tmp/issue30-task11-r5-database-typecheck.log`, `/tmp/issue30-task11-r5-contracts-typecheck.log`, `/tmp/issue30-task11-r5-domain-typecheck.log`, `/tmp/issue30-task11-r5-drizzle-check.log`
 
 Counts: database migration/application 28/28; contracts URL policy 8/8; Gate plus Lead 34/34. Database, Contracts and Domain typechecks passed; static Drizzle reported `Everything's fine`. The Red scan reported `forbidden=0`. No invalid test attempt in this round.
+
+## Final Review Fix Round 6
+
+Round 5 accidentally removed the pre-`0028` migration application test. Restored it from `622aa628` and retained its `0024`→`0025`→`0026`→`0027` application seam: old-fact preservation, all diagnostics scopes, owner/FK/check/unique constraints, attention pairing, source issues, run-result identity/ordinal constraints, and snapshot/journal continuity. The final fresh `0024` Lead schema needs no recovery adaptation because the preserved fixture is pending.
+
+| Finding | Evidence |
+| --- | --- |
+| Restored application coverage | `134cfa3` restores the real PostgreSQL seam; only two constraint assertions are projected through neutral booleans so mutation failures do not expose fixture context. |
+| Mutation sensitivity | An uncommitted mutation removes the `0027` owner/run/version uniqueness constraint. The focused application test then fails the neutral boolean assertion with `forbidden=0`; the mutation was restored before the Green run and is not in history. |
+
+Round 6 logs:
+
+- `/tmp/issue30-task11-r6-application-mutation-red.log`, `/tmp/issue30-task11-r6-application-green.log`
+- `/tmp/issue30-task11-r6-database-migrations.log`, `/tmp/issue30-task11-r6-database-typecheck.log`, `/tmp/issue30-task11-r6-drizzle-check.log`, `/tmp/issue30-task11-r6-gate-leads.log`
+
+Counts: restored application focused 4/4; database migration suite 29/29; Gate plus Lead 34/34; Database typecheck passed; static Drizzle reported `Everything's fine`. An earlier ordinal-bound mutation did not produce accepted focused failure evidence, was reverted immediately, and its raw log was deleted. It is not used as evidence.
