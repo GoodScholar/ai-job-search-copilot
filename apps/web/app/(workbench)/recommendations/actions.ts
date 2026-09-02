@@ -14,3 +14,16 @@ export async function requestRecommendationReevaluationAction(targetId: string, 
   await api.startDeepMatchRun(sessionToken, targetId, opportunityId, idempotencyKey);
   revalidatePath("/recommendations");
 }
+
+export async function recordRecommendationDecisionAction(listId: string, itemId: string, formData: FormData): Promise<void> {
+  const sessionToken = await readSessionToken();
+  if (!sessionToken) redirect("/login?returnTo=%2Frecommendations");
+  const decision = String(formData.get("decision") ?? "");
+  const idempotencyKey = String(formData.get("idempotencyKey") ?? "");
+  const expectedVersion = Number(formData.get("expectedVersion") ?? "");
+  const reason = String(formData.get("reason") ?? "").trim();
+  const note = String(formData.get("note") ?? "").trim();
+  const command = decision === "ignored" ? { decision, idempotencyKey, expectedVersion, ...(reason ? { reason } : {}), ...(note ? { note } : {}) } : { decision, idempotencyKey, expectedVersion };
+  await api.recordRecommendationDecision(sessionToken, listId, itemId, command as never);
+  revalidatePath("/recommendations");
+}

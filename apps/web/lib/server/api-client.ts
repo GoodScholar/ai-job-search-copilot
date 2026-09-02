@@ -88,7 +88,7 @@ import {
   type AgentInboxActionResponse,
 } from "@job-copilot/contracts/agent-inbox";
 import { z } from "zod";
-import { RecommendationExclusionPageSchema, RecommendationListHistoryPageSchema, RecommendationListSchema, type RecommendationExclusionPage, type RecommendationList, type RecommendationListHistoryPage } from "@job-copilot/contracts/recommendations";
+import { RecommendationDecisionCommandSchema, RecommendationExclusionPageSchema, RecommendationListHistoryPageSchema, RecommendationListSchema, type RecommendationDecisionCommand, type RecommendationExclusionPage, type RecommendationList, type RecommendationListHistoryPage } from "@job-copilot/contracts/recommendations";
 
 type ApiClientConfig = {
   apiInternalUrl: string;
@@ -169,6 +169,11 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
   }
 
   return {
+    async recordRecommendationDecision(sessionToken: string, listId: string, itemId: string, command: RecommendationDecisionCommand) {
+      const response = await request(`/v1/recommendations/lists/${encodeURIComponent(listId)}/items/${encodeURIComponent(itemId)}/decisions`, { method: "POST", headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" }, body: JSON.stringify(RecommendationDecisionCommandSchema.parse(command)) });
+      if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法记录推荐决策", response.status, problem ?? undefined); }
+      return parseSuccess(response, z.object({ decision: z.object({ status: z.enum(["saved", "ignored"]), version: z.int() }).strict(), proposal: z.object({ proposalId: z.uuid() }).nullable() }).strict());
+    },
     async startDeepMatchRun(sessionToken: string, targetId: string, opportunityId: string, idempotencyKey: string): Promise<{ runId: string; reused: boolean }> {
       const response = await request("/v1/recommendations/runs", {
         method: "POST",

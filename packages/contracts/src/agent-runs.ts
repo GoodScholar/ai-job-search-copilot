@@ -297,6 +297,7 @@ export const DeepMatchAgentRunBudgetSchema = z.object({
   maxResults: z.literal(10), maxModelCalls: z.literal(10), maxTokens: z.literal(20_000),
 }).strict();
 export const DeepMatchAgentRunSourceScopeSchema = z.object({ kind: z.literal("deep_match"), trigger: z.enum(["automatic", "manual"]), opportunityId: z.uuid().nullable(), discoveryRunId: z.uuid().nullable(),
+  recommendationRuleConfig: z.object({ minimumOverallScore: z.int().min(0).max(100), minimumEvidenceDimensions: z.int().min(0).max(6), requiredEvidenceDimensions: z.array(z.string().min(1).max(64)).max(6), excludedOpportunityIds: z.array(z.uuid()).max(100) }).strict().default({ minimumOverallScore: 60, minimumEvidenceDimensions: 2, requiredEvidenceDimensions: [], excludedOpportunityIds: [] }),
   /** The child is claimable only after its candidates and exclusions are durably frozen. */
   initialized: z.literal(true),
   selectionExclusions: z.array(z.object({ opportunityId: z.uuid(), reasonCode: z.enum(["TRIAGE_NOT_PASS", "DEADLINE_EXPIRED", "SCORE_BELOW_THRESHOLD", "CANDIDATE_LIMIT", "MATCH_QUALITY_INSUFFICIENT"]) }).strict()),
@@ -310,7 +311,7 @@ export type AgentRunSourceScope = z.infer<typeof AgentRunSourceScopeSchema>;
 export type DeepMatchAgentRunSourceScope = z.infer<typeof DeepMatchAgentRunSourceScopeSchema>;
 export const DeepMatchAgentRunExecutionSpecSchema = z.object({
   targetSnapshot: AgentRunTargetSnapshotSchema, sourceScope: DeepMatchAgentRunSourceScopeSchema,
-  workflowVersion: z.literal(DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION), ruleVersion: z.literal("deep-match-rules-v1"),
+  workflowVersion: z.literal(DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION), ruleVersion: z.string().min(1).max(64),
   adapter: z.literal("fake-deep-match"), adapterVersion: z.literal("fake-deep-match-v1"), outputSchemaVersion: z.literal("deep-match-result-v1"),
   toolAllowlist: z.tuple([]), model: z.object({ provider: z.literal("fake"), model: z.literal("fake-deep-match-model-v1") }).strict(), budget: DeepMatchAgentRunBudgetSchema,
 }).strict();

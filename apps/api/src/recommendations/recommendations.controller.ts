@@ -1,12 +1,12 @@
 import { Body, Controller, Get, HttpStatus, Inject, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { ApiBearerAuth, ApiNotFoundResponse, ApiUnauthorizedResponse } from "@nestjs/swagger";
-import { RecommendationExclusionPageSchema, RecommendationListHistoryPageSchema, RecommendationListSchema } from "@job-copilot/contracts/recommendations";
+import { CalibrationProposalResolutionCommandSchema, CalibrationProposalRevisionCommandSchema, RecommendationDecisionCommandSchema, RecommendationExclusionPageSchema, RecommendationListHistoryPageSchema, RecommendationListSchema } from "@job-copilot/contracts/recommendations";
 import type { FastifyRequest } from "fastify";
 import { createZodDto, ZodResponse } from "nestjs-zod";
 import { z } from "zod";
 import { SessionGuard } from "../auth/session.guard.js";
 import { ApiException } from "../common/api-problem.filter.js";
-import { RECOMMENDATION_QUERIES, type RecommendationQueries } from "./recommendations.tokens.js";
+import { RECOMMENDATION_FEEDBACK_COMMANDS, RECOMMENDATION_FEEDBACK_QUERIES, RECOMMENDATION_QUERIES, type RecommendationFeedbackCommands, type RecommendationFeedbackQueries, type RecommendationQueries } from "./recommendations.tokens.js";
 import { RECOMMENDATION_RUN_STARTER, type RecommendationRunStarter } from "./recommendations.tokens.js";
 
 class RecommendationListDto extends createZodDto(RecommendationListSchema) {}
@@ -15,12 +15,15 @@ class RecommendationCursorQueryDto extends createZodDto(z.object({ targetId: z.u
 class RecommendationListExclusionsQueryDto extends createZodDto(z.object({ targetId: z.uuid(), cursor: z.uuid().optional(), limit: z.coerce.number().int().min(1).max(100).default(25) }).strict()) {}
 class RecommendationListIdParamDto extends createZodDto(z.object({ recommendationListId: z.uuid() }).strict()) {}
 class StartRecommendationReevaluationDto extends createZodDto(z.object({ targetId: z.uuid(), opportunityId: z.uuid(), idempotencyKey: z.uuid() }).strict()) {}
+class CalibrationProposalRevisionDto extends createZodDto(CalibrationProposalRevisionCommandSchema) {}
+class CalibrationProposalResolutionDto extends createZodDto(CalibrationProposalResolutionCommandSchema) {}
+class CalibrationProposalIdParamDto extends createZodDto(z.object({ id: z.uuid() }).strict()) {}
 
 @Controller("v1/recommendations")
 @UseGuards(SessionGuard)
 @ApiBearerAuth("bearerAuth")
 export class RecommendationsController {
-  constructor(@Inject(RECOMMENDATION_QUERIES) private readonly queries: RecommendationQueries, @Inject(RECOMMENDATION_RUN_STARTER) private readonly starter: RecommendationRunStarter) {}
+  constructor(@Inject(RECOMMENDATION_QUERIES) private readonly queries: RecommendationQueries, @Inject(RECOMMENDATION_RUN_STARTER) private readonly starter: RecommendationRunStarter, @Inject(RECOMMENDATION_FEEDBACK_COMMANDS) private readonly feedback: RecommendationFeedbackCommands, @Inject(RECOMMENDATION_FEEDBACK_QUERIES) private readonly feedbackQueries: RecommendationFeedbackQueries) {}
 
   @Get("latest")
   @ZodResponse({ type: RecommendationListDto })
@@ -47,4 +50,37 @@ export class RecommendationsController {
     return this.starter.start({ userId: request.authenticatedAccount!.userId, targetId: body.targetId, opportunityId: body.opportunityId, idempotencyKey: body.idempotencyKey, trigger: "manual" });
   }
 
+  @Post("lists/:listId/items/:itemId/decisions")
+  async recordDecision(@Req() request: FastifyRequest, @Param() params: { listId: string; itemId: string }, @Body() body: unknown) {
+    const parsed = z.object({ listId: z.uuid(), itemId: z.uuid() }).strict().safeParse(params);
+    if (!parsed.success) throw new ApiException("INVALID_REQUEST", HttpStatus.BAD_REQUEST, "请求无效");
+    try {
+      return await this.feedback.recordDecision({ userId: request.authenticatedAccount!.userId, recommendationListId: parsed.data.listId, recommendationListItemId: parsed.data.itemId, command: RecommendationDecisionCommandSchema.parse(body) });
+    } catch (error) { throw feedbackException(error); }
+  }
+
+  @Get("calibration-proposals")
+  async calibrationProposals(@Req() request: FastifyRequest, @Query() query: RecommendationTargetQueryDto) {
+    return this.feedbackQueries.listCalibrationProposals({ userId: request.authenticatedAccount!.userId, targetId: query.targetId });
+  }
+
+  @Post("calibration-proposals/:id/revisions")
+  async reviseProposal(@Req() request: FastifyRequest, @Param() params: CalibrationProposalIdParamDto, @Body() body: CalibrationProposalRevisionDto) {
+    try { return await this.feedback.reviseCalibrationProposal({ userId: request.authenticatedAccount!.userId, proposalId: params.id, command: body }); }
+    catch (error) { throw feedbackException(error); }
+  }
+
+  @Post("calibration-proposals/:id/resolutions")
+  async resolveProposal(@Req() request: FastifyRequest, @Param() params: CalibrationProposalIdParamDto, @Body() body: CalibrationProposalResolutionDto) {
+    try { return await this.feedback.resolveCalibrationProposal({ userId: request.authenticatedAccount!.userId, proposalId: params.id, command: body }); }
+    catch (error) { throw feedbackException(error); }
+  }
+
+}
+
+function feedbackException(error: unknown): ApiException {
+  const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "INTERNAL_ERROR";
+  if (code === "VERSION_CONFLICT" || code === "IDEMPOTENCY_CONFLICT") return new ApiException(code, HttpStatus.CONFLICT, "请求与当前状态冲突");
+  if (code === "RECOMMENDATION_ITEM_NOT_FOUND" || code === "PROPOSAL_NOT_FOUND") return new ApiException(code, HttpStatus.NOT_FOUND, "资源不存在");
+  return new ApiException(code, HttpStatus.INTERNAL_SERVER_ERROR, "推荐反馈暂时不可用");
 }

@@ -608,7 +608,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           const assessCompleted = await transition("assess_matches", true); if (assessCompleted) return assessCompleted;
           const listStarted = await transition("create_recommendations", false); if (listStarted) return listStarted;
           const listCompleted = await transition("create_recommendations", true); if (listCompleted) return listCompleted;
-          await commands.publishStagedRun({ userId: job.userId, targetId: claimed.run.targetId, runId: job.runId, selectionExclusions: scope.selectionExclusions, fence: { claimToken: claimed.claimToken }, onPublished: async (transaction, { resultCount }) => {
+          await commands.publishStagedRun({ userId: job.userId, targetId: claimed.run.targetId, runId: job.runId, selectionExclusions: scope.selectionExclusions, ruleConfig: scope.recommendationRuleConfig, fence: { claimToken: claimed.claimToken }, onPublished: async (transaction, { resultCount }) => {
             const now = deps.clock();
             const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, claimed.claimToken), eq(agentRuns.controlState, "none"), gt(agentRuns.claimExpiresAt, now))).limit(1);
             if (!run) throw new DeepMatchClaimLostError();

@@ -18,6 +18,7 @@
     "./job-triage": "./src/job-triage.ts",
     "./job-triage-persistence": "./src/job-triage-persistence.ts",
     "./recommendation-queries": "./src/recommendation-queries.ts",
+    "./recommendation-feedback": "./src/recommendation-feedback.ts",
     "./deep-match-agent-runs": "./src/deep-match-agent-runs.ts",
     "./job-discovery-schedules": "./src/job-discovery-schedules.ts",
     "./public-job-discovery-sources": "./src/public-job-discovery-sources.ts",

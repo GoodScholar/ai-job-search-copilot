@@ -1,6 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { createHash } from "node:crypto";
-import { agentRunEvents, agentRunSteps, agentRuns, deepMatchRunCandidates, jobTargets, jobTargetRevisions, type Database } from "@job-copilot/database";
+import { agentRunEvents, agentRunSteps, agentRuns, deepMatchRunCandidates, jobTargets, jobTargetRevisions, recommendationRuleVersions, type Database } from "@job-copilot/database";
 import { DEEP_MATCH_AGENT_RUN_BUDGET, DEEP_MATCH_AGENT_RUN_STEPS, DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION, type AgentRunJob } from "@job-copilot/contracts/agent-runs";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { createDeepMatchQueries } from "./deep-match-persistence";
@@ -15,14 +15,16 @@ export async function ensureDeepMatchRunInTransaction(input: { transaction: any;
   if (!target || target.state !== "active") throw new Error("DEEP_MATCH_TARGET_UNAVAILABLE");
   if (input.trigger === "manual" && !input.opportunityId) throw new Error("DEEP_MATCH_OPPORTUNITY_REQUIRED");
   if (input.trigger === "automatic" && !input.discoveryRunId) throw new Error("DEEP_MATCH_DISCOVERY_PROVENANCE_REQUIRED");
+  const [latestRule] = await input.transaction.select({ version: recommendationRuleVersions.version, config: recommendationRuleVersions.config }).from(recommendationRuleVersions).where(and(eq(recommendationRuleVersions.userId, input.userId), eq(recommendationRuleVersions.targetId, input.targetId))).orderBy(desc(recommendationRuleVersions.version)).limit(1);
+  const recommendationRuleConfig = latestRule?.config ?? { minimumOverallScore: 60, minimumEvidenceDimensions: 2, requiredEvidenceDimensions: [], excludedOpportunityIds: [] };
   // This query runs on the same transaction as the child insertion.  A queued child can
   // therefore never exist without a complete candidate/exclusion snapshot, including a
   // legitimate empty selection.
   const selection = await createDeepMatchQueries({ db: input.transaction }).selectCandidateSelection({
-    userId: input.userId, targetId: input.targetId, targetVersion: target.version, ...(input.opportunityId ? { opportunityId: input.opportunityId } : {}),
+    userId: input.userId, targetId: input.targetId, targetVersion: target.version, ruleConfig: recommendationRuleConfig as any, ...(input.opportunityId ? { opportunityId: input.opportunityId } : {}),
   });
   const now = input.clock(); const id = input.id();
-  const [run] = await input.transaction.insert(agentRuns).values({ id, userId: input.userId, targetId: target.id, idempotencyKey: input.idempotencyKey, targetVersion: target.version, targetSnapshot: { targetId: target.id, version: target.version, priority: target.priority, state: target.state, constraints: target.constraints }, profileSnapshot: null, watchlistSnapshot: null, sourceScope: { kind: "deep_match", trigger: input.trigger, opportunityId: input.opportunityId ?? null, discoveryRunId: input.discoveryRunId ?? null, initialized: true, selectionExclusions: selection.exclusions }, budgetSnapshot: DEEP_MATCH_AGENT_RUN_BUDGET, workflowVersion: DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION, ruleVersion: "deep-match-rules-v1", adapter: "fake-deep-match", adapterVersion: "fake-deep-match-v1", outputSchemaVersion: "deep-match-result-v1", toolAllowlist: [], modelSnapshot: { provider: "fake", model: "fake-deep-match-model-v1" }, status: "queued", currentStep: "queued", controlState: "none", version: 1, attemptCount: 0, activeDurationMs: 0, toolCallCount: 0, sourceRequestCount: 0, modelCallCount: 0, inputTokenCount: 0, outputTokenCount: 0, totalTokenCount: 0, resultCount: 0, usageComplete: false, queuedAt: now, createdAt: now, updatedAt: now }).returning();
+  const [run] = await input.transaction.insert(agentRuns).values({ id, userId: input.userId, targetId: target.id, idempotencyKey: input.idempotencyKey, targetVersion: target.version, targetSnapshot: { targetId: target.id, version: target.version, priority: target.priority, state: target.state, constraints: target.constraints }, profileSnapshot: null, watchlistSnapshot: null, sourceScope: { kind: "deep_match", trigger: input.trigger, opportunityId: input.opportunityId ?? null, discoveryRunId: input.discoveryRunId ?? null, recommendationRuleConfig, initialized: true, selectionExclusions: selection.exclusions }, budgetSnapshot: DEEP_MATCH_AGENT_RUN_BUDGET, workflowVersion: DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION, ruleVersion: latestRule ? `recommendation-rule-v${latestRule.version}` : "deep-match-rules-v1", adapter: "fake-deep-match", adapterVersion: "fake-deep-match-v1", outputSchemaVersion: "deep-match-result-v1", toolAllowlist: [], modelSnapshot: { provider: "fake", model: "fake-deep-match-model-v1" }, status: "queued", currentStep: "queued", controlState: "none", version: 1, attemptCount: 0, activeDurationMs: 0, toolCallCount: 0, sourceRequestCount: 0, modelCallCount: 0, inputTokenCount: 0, outputTokenCount: 0, totalTokenCount: 0, resultCount: 0, usageComplete: false, queuedAt: now, createdAt: now, updatedAt: now }).returning();
   if (!run) throw new Error("DEEP_MATCH_RUN_PERSIST_FAILED");
   if (selection.candidates.length) await input.transaction.insert(deepMatchRunCandidates).values(selection.candidates.map((candidate, index) => ({
     id: input.id(), userId: input.userId, runId: id, opportunityId: candidate.opportunityId, sourcePostingVersionId: candidate.sourcePostingVersionId,

@@ -1,7 +1,8 @@
 import { getJobTargets } from "@/lib/server/job-targets";
 import { getLatestRecommendations, getRecommendationHistoryPage } from "@/lib/server/recommendations";
 import { DeepMatchAssessmentSchema } from "@job-copilot/contracts/deep-match";
-import { requestRecommendationReevaluationAction } from "./actions";
+import { recordRecommendationDecisionAction, requestRecommendationReevaluationAction } from "./actions";
+import { RecommendationDecision } from "./recommendation-decision";
 import { ReevaluationForm } from "./reevaluate-button";
 import { RecommendationHistory } from "./recommendation-history";
 import { LatestExclusions } from "./latest-exclusions";
@@ -26,7 +27,7 @@ export default async function RecommendationsPage() {
           <ol aria-label="推荐岗位">
             {list.items.map((item) => {
               const assessment = DeepMatchAssessmentSchema.safeParse(item.assessment).data;
-              return <li key={item.matchVersionId}><h2>{item.title ?? "岗位机会"}</h2><p>{item.company ?? "来源待确认"} · {item.location ?? "地点待确认"} · <strong>{formatBand(item.displayBand)}</strong></p>{item.highlighted ? <p><strong>今日优先处理</strong></p> : null}<ReevaluationForm action={requestRecommendationReevaluationAction.bind(null, target!.targetId, item.opportunityId)} /><details><summary className="workbench-touch-target">查看证据与判断</summary><p>匹配版本：{item.matchVersionId}</p><p>岗位证据：{formatEvidence(item.jobEvidence)}</p><p>画像证据：{formatProfileEvidence(item.profileEvidence)}</p>{assessment?.dimensions.map((dimension) => <p key={dimension.dimension}><strong>{formatDimensionLabel(dimension)}</strong>：{formatDimensionDetail(dimension)}</p>)}</details></li>;
+              return <li key={item.matchVersionId}><h2>{item.title ?? "岗位机会"}</h2><p>{item.company ?? "来源待确认"} · {item.location ?? "地点待确认"} · <strong>{formatBand(item.displayBand)}</strong></p>{item.highlighted ? <p><strong>今日优先处理</strong></p> : null}<RecommendationDecision item={item} action={recordRecommendationDecisionAction.bind(null, list.recommendationListId, item.recommendationListItemId ?? "")} /><ReevaluationForm action={requestRecommendationReevaluationAction.bind(null, target!.targetId, item.opportunityId)} /><details><summary className="workbench-touch-target">查看证据与判断</summary><p>匹配版本：{item.matchVersionId}</p><p>岗位证据：{formatEvidence(item.jobEvidence)}</p><p>画像证据：{formatProfileEvidence(item.profileEvidence)}</p>{assessment?.dimensions.map((dimension) => <p key={dimension.dimension}><strong>{formatDimensionLabel(dimension)}</strong>：{formatDimensionDetail(dimension)}</p>)}</details></li>;
             })}
           </ol>
         </>}

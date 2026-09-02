@@ -3,7 +3,7 @@ import { beforeEach, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ getJobTargets: vi.fn(), getLatestRecommendations: vi.fn(), getRecommendationHistoryPage: vi.fn() }));
 vi.mock("@/lib/server/job-targets", () => ({ getJobTargets: mocks.getJobTargets }));
 vi.mock("@/lib/server/recommendations", () => ({ getLatestRecommendations: mocks.getLatestRecommendations, getRecommendationHistoryPage: mocks.getRecommendationHistoryPage }));
-vi.mock("./actions", () => ({ requestRecommendationReevaluationAction: vi.fn() }));
+vi.mock("./actions", () => ({ requestRecommendationReevaluationAction: vi.fn(), recordRecommendationDecisionAction: vi.fn() }));
 import RecommendationsPage from "./page";
 
 describe("RecommendationsPage", () => {
