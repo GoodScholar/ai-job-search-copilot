@@ -51,8 +51,9 @@ describe("deep match persistence", () => {
     await db.insert(jobOpportunities).values({ id: opportunityId, userId, importId: null, sourcePostingVersionId, canonicalOpportunityId: null, dedupKey: sourceHash, company: "示例科技", title: "前端工程师", location: "上海", postedAt: null, deadline: new Date("2026-09-20T00:00:00.000Z"), description: "需要 TypeScript", normalizedData: { qualifications: { requiredSkills: { value: ["TypeScript"], evidence: { field: "requiredSkills", path: "技能", value: "TypeScript" } } } }, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
     const verdict = input.verdict ?? "pass";
     const scored = verdict === "pass" && (input.deadlineStatus ?? "valid") !== "expired";
-    await db.insert(jobTriageVersions).values({ id: crypto.randomUUID(), userId, opportunityId, sourcePostingVersionId, profileId, profileVersion: 1, targetId, targetVersion: 1, qualificationRuleVersion: "q1", coarseRuleVersion: "c1", overallVerdict: verdict, gateResults: {}, pendingItems: [], deadlineStatus: input.deadlineStatus ?? "valid", confidenceBasisPoints: 10_000, dimensionScores: scored ? {} : null, overallScore: scored ? (input.score ?? 80) : null, threshold: scored ? 70 : null, sequence: 1, createdAt: now });
-    return { userId, profileId, targetId, opportunityId, sourcePostingVersionId, factRevisionId };
+    const triageVersionId = crypto.randomUUID();
+    await db.insert(jobTriageVersions).values({ id: triageVersionId, userId, opportunityId, sourcePostingVersionId, profileId, profileVersion: 1, targetId, targetVersion: 1, qualificationRuleVersion: "q1", coarseRuleVersion: "c1", overallVerdict: verdict, gateResults: {}, pendingItems: [], deadlineStatus: input.deadlineStatus ?? "valid", confidenceBasisPoints: 10_000, dimensionScores: scored ? {} : null, overallScore: scored ? (input.score ?? 80) : null, threshold: scored ? 70 : null, sequence: 1, createdAt: now });
+    return { userId, profileId, targetId, opportunityId, sourcePostingVersionId, triageVersionId, factRevisionId };
   }
 
   it("selects only owner-bound latest passing, valid and above-threshold triage candidates in stable score order", async () => {
@@ -252,14 +253,24 @@ describe("deep match persistence", () => {
     await expect(commands.createMatch({ userId: input.userId, targetId: input.targetId, candidate, modelCall: modelCall() })).rejects.toThrow("DEEP_MATCH_OPPORTUNITY_IDENTITY_INVALID");
   });
 
-  it("rejects every source/triage/profile/target tuple mismatch before a direct match can persist", async () => {
+  it("rejects every candidate tuple/source/triage/profile/target/version mismatch before a direct match can persist", async () => {
     const input = await fixture();
     const owner = { userId: input.userId, profileId: input.profileId, targetId: input.targetId };
     const other = await fixture({ owner });
     const candidate = (await createDeepMatchQueries({ db }).selectCandidates({ userId: input.userId, targetId: input.targetId, opportunityId: input.opportunityId }))[0]!;
     const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now });
 
-    await expect(commands.createMatch({ userId: input.userId, targetId: input.targetId, candidate: { ...candidate, sourcePostingVersionId: other.sourcePostingVersionId }, modelCall: modelCall() })).rejects.toThrow("DEEP_MATCH_TUPLE_INVALID");
+    const foreign = await fixture();
+    const invalidCandidates = [
+      { ...candidate, opportunityId: other.opportunityId },
+      { ...candidate, sourcePostingVersionId: other.sourcePostingVersionId },
+      { ...candidate, triageVersionId: other.triageVersionId },
+      { ...candidate, profileId: foreign.profileId },
+      { ...candidate, profileVersion: candidate.profileVersion + 1 },
+      { ...candidate, targetVersion: candidate.targetVersion + 1 },
+    ];
+    for (const invalid of invalidCandidates) await expect(commands.createMatch({ userId: input.userId, targetId: input.targetId, candidate: invalid, modelCall: modelCall() })).rejects.toThrow("DEEP_MATCH_TUPLE_INVALID");
+    await expect(commands.createMatch({ userId: input.userId, targetId: foreign.targetId, candidate, modelCall: modelCall() })).rejects.toThrow("DEEP_MATCH_TUPLE_INVALID");
     await expect(db.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, input.userId))).resolves.toHaveLength(0);
   });
 
