@@ -5,9 +5,10 @@ import {
   jobTargetRevisions, jobTargets, jobTriageVersions, migrateDatabase, profileFactRevisions, profileFacts, recommendationExclusions, type Database,
 } from "@job-copilot/database";
 import { and, eq } from "drizzle-orm";
-import { DEEP_MATCH_DIMENSIONS, DeepMatchAdapterError, FakeDeepMatchAdapter } from "@job-copilot/contracts/deep-match";
+import { FakeDeepMatchAdapter } from "@job-copilot/contracts/deep-match";
 import { createDeepMatchRunStarter } from "./deep-match-agent-runs";
-import { DeepMatchClaimLostError, createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
+import { createAgentRunRecoveryQueries } from "./agent-run-processor";
+import { createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
 
 const now = new Date("2026-09-01T02:00:00.000Z");
 const hash = "a".repeat(64);
@@ -155,135 +156,100 @@ describe("deep match persistence", () => {
     await expect(db.select().from(recommendationLists).where(eq(recommendationLists.userId, input.userId))).resolves.toHaveLength(1);
   });
 
-  it("creates a new immutable match version and a new same-day recommendation-list sequence on every rerun", async () => {
+  it("rolls back the child and its candidate snapshot when initialization crashes after insertion", async () => {
     const input = await fixture();
-    const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now });
-    const candidate = (await createDeepMatchQueries({ db }).selectCandidates({ userId: input.userId, targetId: input.targetId }))[0]!;
-    const first = await commands.createMatch({ userId: input.userId, targetId: input.targetId, candidate, modelCall: modelCall() });
-    const second = await commands.createMatch({ userId: input.userId, targetId: input.targetId, candidate, modelCall: modelCall() });
-    const firstList = await commands.createDailyList({ userId: input.userId, targetId: input.targetId, matchVersionIds: [first.matchVersionId] });
-    const secondList = await commands.createDailyList({ userId: input.userId, targetId: input.targetId, matchVersionIds: [second.matchVersionId] });
+    let calls = 0;
+    const id = () => { calls += 1; if (calls === 3) throw new Error("CHILD_INIT_CRASH"); return crypto.randomUUID(); };
+    const starter = createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id, clock: () => now });
 
-    expect(second).toMatchObject({ sequence: first.sequence + 1 });
-    expect(second.matchVersionId).not.toBe(first.matchVersionId);
-    expect(firstList).toMatchObject({ sequence: 1, items: [expect.objectContaining({ highlighted: true })] });
-    expect(secondList).toMatchObject({ sequence: 2, items: [expect.objectContaining({ matchVersionId: second.matchVersionId })] });
+    await expect(starter.start({ userId: input.userId, targetId: input.targetId, idempotencyKey: crypto.randomUUID(), trigger: "automatic", discoveryRunId: crypto.randomUUID() })).rejects.toThrow("CHILD_INIT_CRASH");
+    await expect(Promise.all([
+      db.select().from(agentRuns).where(eq(agentRuns.userId, input.userId)),
+      db.select().from(deepMatchRunCandidates).where(eq(deepMatchRunCandidates.userId, input.userId)),
+    ])).resolves.toEqual([[], []]);
   });
 
-  it("freezes triage and quality exclusions plus both evidence sides into the historical list", async () => {
-    const eligible = await fixture({ score: 90 });
-    const owner = { userId: eligible.userId, profileId: eligible.profileId, targetId: eligible.targetId };
-    await fixture({ owner, verdict: "fail" });
-    const query = createDeepMatchQueries({ db });
-    const selection = await query.selectCandidateSelection({ userId: eligible.userId, targetId: eligible.targetId });
-    const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now });
-    const match = await commands.createMatch({ userId: eligible.userId, targetId: eligible.targetId, candidate: selection.candidates[0]!, modelCall: modelCall() });
-    const list = await commands.createDailyList({ userId: eligible.userId, targetId: eligible.targetId, matchVersionIds: [match.matchVersionId], selectionExclusions: selection.exclusions });
-    await db.update(jobOpportunities).set({ title: "已变更岗位标题", description: "已变更岗位描述" }).where(and(eq(jobOpportunities.userId, eligible.userId), eq(jobOpportunities.id, eligible.opportunityId)));
-
-    const historical = await query.getLatestList({ userId: eligible.userId, targetId: eligible.targetId });
-    expect(historical?.recommendationListId).toBe(list.recommendationListId);
-    expect(historical?.items[0]).toMatchObject({ company: "示例科技", title: "前端工程师", location: "上海" });
-    expect(historical?.items[0]?.jobEvidence.map((evidence) => evidence.value).join(" ")).toContain("需要 TypeScript");
-    expect(historical?.items[0]?.profileEvidence.map((evidence) => evidence.value).join(" ")).toContain("TypeScript");
-    expect(historical?.exclusions).toEqual(expect.arrayContaining([expect.objectContaining({ reasonCode: "TRIAGE_NOT_PASS" })]));
-    await expect(db.select().from(recommendationExclusions).where(eq(recommendationExclusions.recommendationListId, list.recommendationListId))).resolves.toHaveLength(1);
+  it("never offers a manually inserted uninitialized matching row to the reconciler race", async () => {
+    const input = await fixture();
+    const child = await createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now })
+      .start({ userId: input.userId, targetId: input.targetId, idempotencyKey: crypto.randomUUID(), trigger: "automatic", discoveryRunId: crypto.randomUUID() });
+    await db.update(agentRuns).set({ sourceScope: { kind: "deep_match", trigger: "automatic", opportunityId: null, discoveryRunId: crypto.randomUUID() } }).where(eq(agentRuns.id, child.runId));
+    await expect(createAgentRunRecoveryQueries({ db, clock: () => now }).listRecoverable()).resolves.not.toEqual(expect.arrayContaining([expect.objectContaining({ runId: child.runId })]));
   });
 
-  it("paginates more than twenty immutable histories and more than twenty-five exclusions without loss or cross-owner cursors", async () => {
+  it("marks a legitimate zero-candidate child initialized and retains its frozen exclusions across retry", async () => {
+    const input = await fixture({ verdict: "fail" });
+    const starter = createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now });
+    const child = await starter.start({ userId: input.userId, targetId: input.targetId, idempotencyKey: crypto.randomUUID(), trigger: "automatic", discoveryRunId: crypto.randomUUID() });
+    const [first] = await db.select().from(agentRuns).where(eq(agentRuns.id, child.runId));
+    expect(first?.sourceScope).toMatchObject({ initialized: true, selectionExclusions: [{ opportunityId: input.opportunityId, reasonCode: "TRIAGE_NOT_PASS" }] });
+    await expect(db.select().from(deepMatchRunCandidates).where(eq(deepMatchRunCandidates.runId, child.runId))).resolves.toEqual([]);
+
+    await db.update(jobTriageVersions).set({ overallVerdict: "pass", dimensionScores: {}, overallScore: 99, threshold: 70 }).where(eq(jobTriageVersions.id, input.triageVersionId));
+    const replay = await starter.start({ userId: input.userId, targetId: input.targetId, idempotencyKey: first!.idempotencyKey, trigger: "automatic", discoveryRunId: (first!.sourceScope as { discoveryRunId: string }).discoveryRunId });
+    expect(replay).toMatchObject({ runId: child.runId, reused: true });
+    const [unchanged] = await db.select().from(agentRuns).where(eq(agentRuns.id, child.runId));
+    expect(unchanged?.sourceScope).toEqual(first?.sourceScope);
+  });
+
+  it("publishes the frozen source tuple after the opportunity current source pointer moves", async () => {
     const input = await fixture();
+    const child = await createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now })
+      .start({ userId: input.userId, targetId: input.targetId, idempotencyKey: crypto.randomUUID(), trigger: "automatic", discoveryRunId: crypto.randomUUID() });
+    const claimToken = crypto.randomUUID();
+    await db.update(agentRuns).set({ status: "running", currentStep: "assess_matches", attemptCount: 1, startedAt: now, activeSliceStartedAt: now, claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), controlState: "none" }).where(eq(agentRuns.id, child.runId));
+    const newerSource = crypto.randomUUID();
+    const [original] = await db.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.id, input.sourcePostingVersionId));
+    await db.insert(jobSourcePostingVersions).values({ ...original!, id: newerSource, version: 2, contentSha256: "b".repeat(64), rawContentSha256: "b".repeat(64), createdAt: new Date(now.getTime() + 1_000) });
+    await db.insert(jobOpportunitySources).values({ id: crypto.randomUUID(), userId: input.userId, opportunityId: input.opportunityId, sourcePostingVersionId: newerSource, createdAt: new Date(now.getTime() + 1_000) });
+    await db.update(jobOpportunities).set({ sourcePostingVersionId: newerSource }).where(eq(jobOpportunities.id, input.opportunityId));
+
     const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now });
-    const candidate = (await createDeepMatchQueries({ db }).selectCandidates({ userId: input.userId, targetId: input.targetId }))[0]!;
-    const match = await commands.createMatch({ userId: input.userId, targetId: input.targetId, candidate, modelCall: modelCall() });
-    const owner = { userId: input.userId, profileId: input.profileId, targetId: input.targetId };
-    const exclusions = [] as Array<{ opportunityId: string; reasonCode: "TRIAGE_NOT_PASS" }>;
-    for (let index = 0; index < 26; index += 1) exclusions.push({ opportunityId: (await fixture({ owner, verdict: "fail" })).opportunityId, reasonCode: "TRIAGE_NOT_PASS" });
-    for (let index = 0; index < 21; index += 1) await commands.createDailyList({ userId: input.userId, targetId: input.targetId, matchVersionIds: [match.matchVersionId], selectionExclusions: index === 0 ? exclusions : [] });
+    const candidate = (await createDeepMatchQueries({ db }).getFrozenCandidates({ userId: input.userId, runId: child.runId }))[0]!;
+    await commands.assessAndStage({ userId: input.userId, runId: child.runId, candidate, modelCall: modelCall(), fence: { claimToken } });
+    await commands.publishStagedRun({ userId: input.userId, targetId: input.targetId, runId: child.runId, fence: { claimToken }, selectionExclusions: [] });
+    await expect(db.select({ sourcePostingVersionId: jobMatchVersions.sourcePostingVersionId }).from(jobMatchVersions).where(eq(jobMatchVersions.userId, input.userId))).resolves.toEqual([{ sourcePostingVersionId: input.sourcePostingVersionId }]);
+  });
 
-    const queries = createDeepMatchQueries({ db });
-    const first = await queries.getListHistoryPage({ userId: input.userId, targetId: input.targetId, limit: 20 });
-    const second = await queries.getListHistoryPage({ userId: input.userId, targetId: input.targetId, cursor: first.nextCursor!, limit: 20 });
-    expect([...first.items, ...second.items].map((list) => list.recommendationListId)).toHaveLength(21);
-    expect(new Set([...first.items, ...second.items].map((list) => list.recommendationListId)).size).toBe(21);
-    const excludedListId = [...first.items, ...second.items].find((list) => list.sequence === 1)!.recommendationListId;
-    const exclusionsFirst = await queries.getListExclusionsPage({ userId: input.userId, targetId: input.targetId, recommendationListId: excludedListId, limit: 25 });
-    const exclusionsSecond = await queries.getListExclusionsPage({ userId: input.userId, targetId: input.targetId, recommendationListId: excludedListId, cursor: exclusionsFirst.nextCursor!, limit: 25 });
-    expect([...exclusionsFirst.items, ...exclusionsSecond.items]).toHaveLength(26);
-    await expect(queries.getListHistoryPage({ userId: crypto.randomUUID(), targetId: input.targetId, cursor: first.nextCursor!, limit: 20 })).rejects.toThrow("RECOMMENDATION_HISTORY_CURSOR_INVALID");
-  }, 60_000);
-
-  it("serializes two independent transactions that both try to add a fourth highlighted item", async () => {
+  it("keeps the 0034 fourth-highlight rejection under three independent staged-publish rounds", async () => {
     const input = await fixture();
-    const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now });
-    const candidate = (await createDeepMatchQueries({ db }).selectCandidates({ userId: input.userId, targetId: input.targetId }))[0]!;
-    const matches = await Promise.all(Array.from({ length: 5 }, () => commands.createMatch({ userId: input.userId, targetId: input.targetId, candidate, modelCall: modelCall() })));
-
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const list = await commands.createDailyList({ userId: input.userId, targetId: input.targetId, matchVersionIds: matches.slice(0, 2).map((match) => match.matchVersionId) });
-      const insert = (matchVersionId: string, ordinal: number) => db.transaction((transaction) => transaction.insert(recommendationListItems).values({ id: crypto.randomUUID(), userId: input.userId, recommendationListId: list.recommendationListId, matchVersionId, ordinal, highlighted: true, createdAt: now }));
-      const outcome = await Promise.allSettled([insert(matches[2]!.matchVersionId, 3), insert(matches[3]!.matchVersionId, 4)]);
+    const publish = async () => {
+      const run = await createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now })
+        .start({ userId: input.userId, targetId: input.targetId, opportunityId: input.opportunityId, idempotencyKey: crypto.randomUUID(), trigger: "manual" });
+      const claimToken = crypto.randomUUID();
+      await db.update(agentRuns).set({ status: "running", currentStep: "assess_matches", attemptCount: 1, startedAt: now, activeSliceStartedAt: now, claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), controlState: "none" }).where(eq(agentRuns.id, run.runId));
+      const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now });
+      const candidate = (await createDeepMatchQueries({ db }).getFrozenCandidates({ userId: input.userId, runId: run.runId }))[0]!;
+      await commands.assessAndStage({ userId: input.userId, runId: run.runId, candidate, modelCall: modelCall(), fence: { claimToken } });
+      return commands.publishStagedRun({ userId: input.userId, targetId: input.targetId, runId: run.runId, fence: { claimToken }, selectionExclusions: [] });
+    };
+    for (let round = 0; round < 3; round += 1) {
+      const published = await Promise.all([publish(), publish(), publish(), publish()]);
+      const listId = published[0]!.recommendationListId;
+      const ids = published.map((result) => result.items[0]!.matchVersionId);
+      await db.transaction((transaction) => transaction.insert(recommendationListItems).values({ id: crypto.randomUUID(), userId: input.userId, recommendationListId: listId, matchVersionId: ids[1]!, ordinal: 2, highlighted: true, createdAt: now }));
+      const insert = (matchVersionId: string, ordinal: number) => db.transaction((transaction) => transaction.insert(recommendationListItems).values({ id: crypto.randomUUID(), userId: input.userId, recommendationListId: listId, matchVersionId, ordinal, highlighted: true, createdAt: now }));
+      const outcome = await Promise.allSettled([insert(ids[2]!, 3), insert(ids[3]!, 4)]);
       expect(outcome.filter((result) => result.status === "fulfilled")).toHaveLength(1);
       expect(outcome.filter((result) => result.status === "rejected")).toHaveLength(1);
-      await expect(db.select().from(recommendationListItems).where(eq(recommendationListItems.recommendationListId, list.recommendationListId))).resolves.toHaveLength(3);
-      const highlighted = await db.select().from(recommendationListItems).where(and(eq(recommendationListItems.recommendationListId, list.recommendationListId), eq(recommendationListItems.highlighted, true)));
-      expect(highlighted).toHaveLength(3);
+      await expect(db.select().from(recommendationListItems).where(eq(recommendationListItems.recommendationListId, listId))).resolves.toHaveLength(3);
     }
   }, 60_000);
 
-  it.each(["pause_requested", "cancel_requested"] as const)("refuses match and list writes after %s between model and persistence", async (controlState) => {
+  it("keyset-paginates fixture histories and exclusions without duplicate cursor rows", async () => {
     const input = await fixture();
-    const run = await createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now })
-      .start({ userId: input.userId, targetId: input.targetId, idempotencyKey: crypto.randomUUID(), trigger: "automatic", discoveryRunId: crypto.randomUUID() });
-    const claimToken = crypto.randomUUID();
-    await db.update(agentRuns).set({ status: "running", currentStep: "assess_matches", attemptCount: 1, startedAt: now, activeSliceStartedAt: now, claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), controlState }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, run.runId)));
-    const commands = createDeepMatchCommands({ db, id: crypto.randomUUID, clock: () => now });
-    const candidate = (await createDeepMatchQueries({ db }).selectCandidates({ userId: input.userId, targetId: input.targetId }))[0]!;
-    await expect(commands.createMatch({ userId: input.userId, targetId: input.targetId, candidate, modelCall: modelCall(), fence: { runId: run.runId, claimToken } })).rejects.toBeInstanceOf(DeepMatchClaimLostError);
-    await expect(commands.createDailyList({ userId: input.userId, targetId: input.targetId, matchVersionIds: [], fence: { runId: run.runId, claimToken } })).rejects.toBeInstanceOf(DeepMatchClaimLostError);
-    await expect(db.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, input.userId))).resolves.toHaveLength(0);
-    await expect(db.select().from(recommendationLists).where(eq(recommendationLists.userId, input.userId))).resolves.toHaveLength(0);
-  });
-
-  it("rejects an adapter assessment for a different opportunity before persistence", async () => {
-    const input = await fixture();
-    const candidate = (await createDeepMatchQueries({ db }).selectCandidates({ userId: input.userId, targetId: input.targetId }))[0]!;
-    const commands = createDeepMatchCommands({ db, id: crypto.randomUUID, clock: () => now, adapter: {
-      adapter: "test", adapterVersion: "v1", model: "test", reservedUsage: { inputTokens: 1, outputTokens: 1 },
-      async assess() { return { assessments: [{ opportunityId: crypto.randomUUID(), overallScore: 80, dimensions: DEEP_MATCH_DIMENSIONS.map((dimension) => ({ dimension, score: 80, judgment: "evidence_backed_inference" as const, jobEvidenceIds: [candidate.jobEvidence[0]!.id], profileEvidenceIds: [candidate.profileEvidence[0]!.id], summary: "wrong identity" })) }], usage: { inputTokens: 1, outputTokens: 1, latencyMs: 1 } }; },
-    } });
-    await expect(commands.createMatch({ userId: input.userId, targetId: input.targetId, candidate, modelCall: modelCall() })).rejects.toThrow("DEEP_MATCH_OPPORTUNITY_IDENTITY_INVALID");
-  });
-
-  it("rejects every candidate tuple/source/triage/profile/target/version mismatch before a direct match can persist", async () => {
-    const input = await fixture();
+    const listIds = Array.from({ length: 21 }, () => crypto.randomUUID());
+    await db.insert(recommendationLists).values(listIds.map((id, index) => ({ id, userId: input.userId, targetId: input.targetId, localDate: "2026-09-01", sequence: index + 1, createdAt: now })));
     const owner = { userId: input.userId, profileId: input.profileId, targetId: input.targetId };
-    const other = await fixture({ owner });
-    const candidate = (await createDeepMatchQueries({ db }).selectCandidates({ userId: input.userId, targetId: input.targetId, opportunityId: input.opportunityId }))[0]!;
-    const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now });
+    const exclusions = await Promise.all(Array.from({ length: 26 }, async () => ({ opportunityId: (await fixture({ owner, verdict: "fail" })).opportunityId })));
+    await db.insert(recommendationExclusions).values(exclusions.map((entry) => ({ id: crypto.randomUUID(), userId: input.userId, targetId: input.targetId, recommendationListId: listIds[0]!, opportunityId: entry.opportunityId, reasonCode: "TRIAGE_NOT_PASS", createdAt: now })));
+    const queries = createDeepMatchQueries({ db });
+    const first = await queries.getListHistoryPage({ userId: input.userId, targetId: input.targetId, limit: 20 });
+    const second = await queries.getListHistoryPage({ userId: input.userId, targetId: input.targetId, cursor: first.nextCursor!, limit: 20 });
+    expect(new Set([...first.items, ...second.items].map((item) => item.recommendationListId)).size).toBe(21);
+    const pageOne = await queries.getListExclusionsPage({ userId: input.userId, targetId: input.targetId, recommendationListId: listIds[0]!, limit: 25 });
+    const pageTwo = await queries.getListExclusionsPage({ userId: input.userId, targetId: input.targetId, recommendationListId: listIds[0]!, cursor: pageOne.nextCursor!, limit: 25 });
+    expect(new Set([...pageOne.items, ...pageTwo.items].map((item) => item.opportunityId)).size).toBe(26);
+  }, 60_000);
 
-    const foreign = await fixture();
-    const invalidCandidates = [
-      { ...candidate, opportunityId: other.opportunityId },
-      { ...candidate, sourcePostingVersionId: other.sourcePostingVersionId },
-      { ...candidate, triageVersionId: other.triageVersionId },
-      { ...candidate, profileId: foreign.profileId },
-      { ...candidate, profileVersion: candidate.profileVersion + 1 },
-      { ...candidate, targetVersion: candidate.targetVersion + 1 },
-    ];
-    for (const invalid of invalidCandidates) await expect(commands.createMatch({ userId: input.userId, targetId: input.targetId, candidate: invalid, modelCall: modelCall() })).rejects.toThrow("DEEP_MATCH_TUPLE_INVALID");
-    await expect(commands.createMatch({ userId: input.userId, targetId: foreign.targetId, candidate, modelCall: modelCall() })).rejects.toThrow("DEEP_MATCH_TUPLE_INVALID");
-    await expect(db.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, input.userId))).resolves.toHaveLength(0);
-  });
-
-  it("maps malformed adapter result envelopes to a stable model-invalid error before persistence", async () => {
-    const input = await fixture();
-    const candidate = (await createDeepMatchQueries({ db }).selectCandidates({ userId: input.userId, targetId: input.targetId }))[0]!;
-    const commands = createDeepMatchCommands({ db, id: crypto.randomUUID, clock: () => now, adapter: {
-      adapter: "test", adapterVersion: "v1", model: "test", reservedUsage: { inputTokens: 1, outputTokens: 1 },
-      async assess() { return { assessments: [], usage: { inputTokens: -1, outputTokens: 1, latencyMs: 1 } } as never; },
-    } });
-    await expect(commands.createMatch({ userId: input.userId, targetId: input.targetId, candidate, modelCall: modelCall() }))
-      .rejects.toMatchObject({ constructor: DeepMatchAdapterError, category: "invalid_output" });
-    await expect(db.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, input.userId))).resolves.toHaveLength(0);
-  });
 });

@@ -191,11 +191,12 @@ async function renewClaim(deps: AgentRunProcessorDependencies, input: { userId: 
   return renewed?.outcome ?? false;
 }
 
-function startClaimHeartbeat(deps: AgentRunProcessorDependencies, input: { userId: string; runId: string; claimToken: string; deadline: Date; onLeaseLost?(): void; onControl?(outcome: "paused" | "cancelled"): void }) {
+function startClaimHeartbeat(deps: AgentRunProcessorDependencies, input: { userId: string; runId: string; claimToken: string; deadline: Date; onLeaseLost?(): void; onControl?(outcome: "paused" | "cancelled"): void; onDeadline?(): void }) {
   let stopped = false;
   let inFlight: Promise<void> | undefined;
   const tick = () => {
     if (stopped || inFlight) return;
+    if (deps.clock().getTime() >= input.deadline.getTime()) { input.onDeadline?.(); return; }
     const renew = deps.heartbeatRenew ?? ((renewInput) => renewClaim(deps, renewInput));
     inFlight = renew(input).then((renewed) => {
       if (renewed === "paused" || renewed === "cancelled") input.onControl?.(renewed);
@@ -547,6 +548,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, deadline,
         onLeaseLost: () => { trustedStop = "stale"; layeredController?.abort(); modelController?.abort(); },
         onControl: (outcome) => { heartbeatControl = outcome; trustedStop = outcome; layeredController?.abort(); modelController?.abort(); },
+        onDeadline: () => { trustedStop = "budget_exhausted"; layeredController?.abort(); modelController?.abort(); },
       });
       try {
       const adapterCall = async <T>(operation: string, ordinal: number, call: () => Promise<T>): Promise<{ value?: T; outcome?: ProcessorOutcome }> => {
@@ -609,7 +611,10 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           // signal itself is not an adapter failure: re-read the authoritative fenced state
           // so pause/cancel/budget/claim-loss retain their lifecycle semantics.
           if (modelController?.signal.aborted || trustedStop) {
-            const stopped = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "deep_match_model_aborted", ordinal: 1 });
+            const stopped = await checkPoint(checkpoint, {
+              userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "deep_match_model_aborted", ordinal: 1,
+              ...(trustedStop === "budget_exhausted" ? { reserve: { budgetTokens: Number((claimed.run.budgetSnapshot as { maxTokens: number }).maxTokens) + 1 } } : {}),
+            });
             return stopped ?? trustedStop ?? "stale";
           }
           if (error instanceof DeepMatchClaimLostError) return "stale";

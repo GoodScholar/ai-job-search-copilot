@@ -198,6 +198,52 @@ describe("AgentRunProcessor checkpoints", () => {
     ])).resolves.toEqual([[], []]);
   });
 
+  it.each([
+    ["pause", "paused", "run.paused", "agent.run_paused"],
+    ["cancel", "cancelled", "run.cancelled", "agent.run_cancelled"],
+    ["deadline", "budget_exhausted", "run.failed", "agent.run_budget_exhausted"],
+    ["claim-loss", "stale", null, null],
+  ] as const)("maps a blocking matching adapter %s interruption through the authoritative lifecycle", async (mode, expected, eventType, auditType) => {
+    const job = await deepMatchRun();
+    let instant = now; let releaseStarted!: () => void;
+    const started = new Promise<void>((resolve) => { releaseStarted = resolve; });
+    const fake = new FakeDeepMatchAdapter();
+    const adapter = { ...fake, async assess(_input: Parameters<FakeDeepMatchAdapter["assess"]>[0], call: Parameters<FakeDeepMatchAdapter["assess"]>[1]) {
+      releaseStarted();
+      await new Promise<void>((resolve) => {
+        if (call.signal.aborted) return resolve();
+        call.signal.addEventListener("abort", () => resolve(), { once: true });
+      });
+      throw new DeepMatchAdapterError("retryable");
+    } };
+    const processor = createAgentRunProcessor({
+      db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: adapter,
+      checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => instant }), id: () => crypto.randomUUID(), clock: () => instant,
+      heartbeatIntervalMs: 1,
+      heartbeatRenew: async () => {
+        await started;
+        if (mode === "pause") { await database.update(agentRuns).set({ controlState: "pause_requested" }).where(eq(agentRuns.id, job.runId)); return "paused"; }
+        if (mode === "cancel") { await database.update(agentRuns).set({ controlState: "cancel_requested" }).where(eq(agentRuns.id, job.runId)); return "cancelled"; }
+        if (mode === "claim-loss") { await database.update(agentRuns).set({ claimToken: crypto.randomUUID() }).where(eq(agentRuns.id, job.runId)); return false; }
+        await database.update(agentRuns).set({ claimExpiresAt: new Date(now.getTime() + 360_000) }).where(eq(agentRuns.id, job.runId));
+        instant = new Date(now.getTime() + 180_001);
+        return true;
+      },
+    });
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe(expected);
+    await expect(Promise.all([
+      database.select({ status: agentRuns.status, failureCode: agentRuns.failureCode, terminationKind: agentRuns.terminationKind }).from(agentRuns).where(eq(agentRuns.id, job.runId)),
+      database.select({ eventType: agentRunEvents.eventType }).from(agentRunEvents).where(eq(agentRunEvents.runId, job.runId)),
+      database.select({ eventType: auditEvents.eventType }).from(auditEvents).where(eq(auditEvents.resourceId, job.runId)),
+      database.select().from(recommendationLists).where(eq(recommendationLists.userId, job.userId)),
+    ])).resolves.toEqual([
+      [expect.objectContaining({ status: expected === "stale" ? "running" : expected === "budget_exhausted" ? "failed" : expected })],
+      eventType ? expect.arrayContaining([expect.objectContaining({ eventType })]) : expect.not.arrayContaining([expect.objectContaining({ eventType: "run.failed" })]),
+      auditType ? expect.arrayContaining([expect.objectContaining({ eventType: auditType })]) : expect.not.arrayContaining([expect.objectContaining({ eventType: "agent.run_failed" })]),
+      [],
+    ]);
+  });
+
   it("v4 processor 严格恢复完整 spec、调度物理操作并独立持久化运行问题", async () => {
     const job = await layeredRun(); let observedSpec: unknown;
     const outcome = await createAgentRunProcessor({
