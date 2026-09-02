@@ -10,9 +10,13 @@ function SubmitButton({ pending }: { pending: boolean }) {
 /** A single user intent owns one stable key until the server action settles. */
 export function ReevaluationForm({ action }: { action: (formData: FormData) => void | Promise<void> }) {
   const [initialKey] = useState(() => crypto.randomUUID());
-  const [state, formAction, pending] = useActionState(async (current: { key: string }, formData: FormData) => {
-    await action(formData);
-    return { key: crypto.randomUUID() };
-  }, { key: initialKey });
-  return <form action={formAction}><input name="idempotencyKey" type="hidden" value={state.key} /><SubmitButton pending={pending} /></form>;
+  const [state, formAction, pending] = useActionState(async (current: { key: string; failed: boolean }, formData: FormData) => {
+    try {
+      await action(formData);
+      return { key: crypto.randomUUID(), failed: false };
+    } catch {
+      return { ...current, failed: true };
+    }
+  }, { key: initialKey, failed: false });
+  return <form action={formAction}><input name="idempotencyKey" type="hidden" value={state.key} />{state.failed ? <p role="alert">重新评估未启动，请重试。</p> : null}<SubmitButton pending={pending} /></form>;
 }

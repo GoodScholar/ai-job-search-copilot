@@ -249,14 +249,17 @@ describe("deep match persistence", () => {
     await db.insert(recommendationLists).values(listIds.map((id, index) => ({ id, userId: input.userId, targetId: input.targetId, localDate: "2026-09-01", sequence: index + 1, createdAt: now })));
     const owner = { userId: input.userId, profileId: input.profileId, targetId: input.targetId };
     const exclusions = await Promise.all(Array.from({ length: 26 }, async () => ({ opportunityId: (await fixture({ owner, verdict: "fail" })).opportunityId })));
-    await db.insert(recommendationExclusions).values(exclusions.map((entry) => ({ id: crypto.randomUUID(), userId: input.userId, targetId: input.targetId, recommendationListId: listIds[0]!, opportunityId: entry.opportunityId, reasonCode: "TRIAGE_NOT_PASS", createdAt: now })));
+    await db.insert(recommendationExclusions).values(exclusions.map((entry) => ({ id: crypto.randomUUID(), userId: input.userId, targetId: input.targetId, recommendationListId: listIds[20]!, opportunityId: entry.opportunityId, reasonCode: "TRIAGE_NOT_PASS", createdAt: now })));
     const queries = createDeepMatchQueries({ db });
     const first = await queries.getListHistoryPage({ userId: input.userId, targetId: input.targetId, limit: 20 });
     const second = await queries.getListHistoryPage({ userId: input.userId, targetId: input.targetId, cursor: first.nextCursor!, limit: 20 });
     expect(new Set([...first.items, ...second.items].map((item) => item.recommendationListId)).size).toBe(21);
-    const pageOne = await queries.getListExclusionsPage({ userId: input.userId, targetId: input.targetId, recommendationListId: listIds[0]!, limit: 25 });
-    const pageTwo = await queries.getListExclusionsPage({ userId: input.userId, targetId: input.targetId, recommendationListId: listIds[0]!, cursor: pageOne.nextCursor!, limit: 25 });
+    const pageOne = await queries.getListExclusionsPage({ userId: input.userId, targetId: input.targetId, recommendationListId: listIds[20]!, limit: 25 });
+    const pageTwo = await queries.getListExclusionsPage({ userId: input.userId, targetId: input.targetId, recommendationListId: listIds[20]!, cursor: pageOne.nextCursor!, limit: 25 });
     expect(new Set([...pageOne.items, ...pageTwo.items].map((item) => item.opportunityId)).size).toBe(26);
+    const latest = await queries.getLatestList({ userId: input.userId, targetId: input.targetId });
+    expect(latest).toMatchObject({ recommendationListId: listIds[20], exclusionsNextCursor: expect.any(String) });
+    expect(latest?.exclusions).toHaveLength(25);
   }, 60_000);
 
 });
