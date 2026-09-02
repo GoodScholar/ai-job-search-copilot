@@ -32,6 +32,11 @@ export const DeepMatchAssessmentSchema = z.object({
     jobEvidence: z.array(z.object({ id: evidenceId, value: z.string().trim().min(1).max(512) }).strict()).max(20),
     profileEvidence: z.array(z.object({ id: evidenceId, value: z.string().trim().min(1).max(256) }).strict()).max(20),
   }).strict().optional(),
+  opportunitySnapshot: z.object({
+    company: z.string().nullable(),
+    title: z.string().nullable(),
+    location: z.string().nullable(),
+  }).strict().optional(),
 }).strict().superRefine((assessment, context) => {
   const dimensions = assessment.dimensions.map((item) => item.dimension);
   if (new Set(dimensions).size !== DEEP_MATCH_DIMENSIONS.length) {

@@ -14,6 +14,7 @@ export class DeepMatchClaimLostError extends Error { constructor() { super("DEEP
 
 export type SelectedDeepMatchCandidate = DeepMatchCandidate & {
   triageVersionId: string; profileId: string; profileVersion: number; targetVersion: number; overallScore: number;
+  opportunitySnapshot: { company: string | null; title: string | null; location: string | null };
 };
 export type RecommendationExclusionReason = "TRIAGE_NOT_PASS" | "DEADLINE_EXPIRED" | "SCORE_BELOW_THRESHOLD" | "CANDIDATE_LIMIT" | "MATCH_QUALITY_INSUFFICIENT";
 export type CandidateSelection = { candidates: SelectedDeepMatchCandidate[]; exclusions: Array<{ opportunityId: string; reasonCode: Exclude<RecommendationExclusionReason, "MATCH_QUALITY_INSUFFICIENT"> }> };
@@ -55,7 +56,7 @@ export function createDeepMatchQueries(deps: { db: Database }) {
       items: items.map(({ item, match, opportunity }) => {
         const assessment = DeepMatchAssessmentSchema.parse(match.assessment);
         const citedProfileEvidence = new Set(assessment.dimensions.flatMap((dimension) => dimension.profileEvidenceIds));
-        return { matchVersionId: match.id, opportunityId: opportunity.id, company: opportunity.company, title: opportunity.title, location: opportunity.location, displayBand: match.displayBand, highlighted: item.highlighted, ordinal: item.ordinal,
+        return { matchVersionId: match.id, opportunityId: opportunity.id, company: assessment.opportunitySnapshot?.company ?? opportunity.company, title: assessment.opportunitySnapshot?.title ?? opportunity.title, location: assessment.opportunitySnapshot?.location ?? opportunity.location, displayBand: match.displayBand, highlighted: item.highlighted, ordinal: item.ordinal,
           jobEvidence: (assessment.evidenceSnapshot?.jobEvidence ?? []).map(({ id, value }) => ({ id, value })),
           profileEvidence: (assessment.evidenceSnapshot?.profileEvidence ?? []).filter((evidence) => citedProfileEvidence.has(evidence.id)).map(({ id, value }) => ({ id, value })),
           assessment: match.assessment,
@@ -101,7 +102,7 @@ export function createDeepMatchQueries(deps: { db: Database }) {
         ] as Array<{ value: string; dimensions: DeepMatchCandidate["jobEvidence"][number]["dimensions"] }>;
         const jobEvidence: DeepMatchCandidate["jobEvidence"] = rawJobEvidence.filter((evidence) => evidence.value.length > 0).map((evidence, index) => ({ id: `job:${triage.sourcePostingVersionId}:${index + 1}`, ...evidence }));
         return {
-          opportunityId: opportunity.id, sourcePostingVersionId: triage.sourcePostingVersionId, triageVersionId: triage.id, profileId: triage.profileId, profileVersion: triage.profileVersion, targetVersion: triage.targetVersion, overallScore: triage.overallScore!,
+          opportunityId: opportunity.id, sourcePostingVersionId: triage.sourcePostingVersionId, triageVersionId: triage.id, profileId: triage.profileId, profileVersion: triage.profileVersion, targetVersion: triage.targetVersion, overallScore: triage.overallScore!, opportunitySnapshot: { company: opportunity.company, title: opportunity.title, location: opportunity.location },
           jobEvidence: jobEvidence.length ? jobEvidence : [{ id: `job:${triage.sourcePostingVersionId}:1`, value: "岗位信息", dimensions: ["skills"] }], profileEvidence,
         } satisfies SelectedDeepMatchCandidate;
       }))).flatMap((candidate): SelectedDeepMatchCandidate[] => candidate ? [candidate] : []);
@@ -148,7 +149,7 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
       const assessment = { ...validatedAssessment, evidenceSnapshot: {
         jobEvidence: input.candidate.jobEvidence.map(({ id, value }) => ({ id, value })),
         profileEvidence: input.candidate.profileEvidence.map(({ id, value }) => ({ id, value })),
-      } };
+      }, opportunitySnapshot: input.candidate.opportunitySnapshot };
       return deps.db.transaction(async (transaction) => {
         await acquireAccountAdvisoryLock(transaction, input.userId);
         if (input.fence) {

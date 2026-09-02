@@ -128,6 +128,7 @@ describe("deep match persistence", () => {
 
     const historical = await query.getLatestList({ userId: eligible.userId, targetId: eligible.targetId });
     expect(historical?.recommendationListId).toBe(list.recommendationListId);
+    expect(historical?.items[0]).toMatchObject({ company: "示例科技", title: "前端工程师", location: "上海" });
     expect(historical?.items[0]?.jobEvidence.map((evidence) => evidence.value).join(" ")).toContain("需要 TypeScript");
     expect(historical?.items[0]?.profileEvidence.map((evidence) => evidence.value).join(" ")).toContain("TypeScript");
     expect(historical?.exclusions).toEqual(expect.arrayContaining([expect.objectContaining({ reasonCode: "TRIAGE_NOT_PASS" })]));
