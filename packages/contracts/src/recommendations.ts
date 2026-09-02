@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { DeepMatchAssessmentSchema } from "./deep-match";
+import { DeepMatchAssessmentSchema, DeepMatchDimensionSchema } from "./deep-match";
 
 export const RecommendationBandSchema = z.enum(["highly_matched", "worth_trying", "consider_carefully"]);
 export const RecommendationDecisionStatusSchema = z.enum(["pending", "saved", "ignored"]);
@@ -12,7 +12,7 @@ export const RecommendationDecisionCommandSchema = z.discriminatedUnion("decisio
 export const CalibrationStrategySchema = z.enum(["require_related_evidence", "raise_quality_bar", "exclude_evidence_opportunities"]);
 export const RecommendationRuleConfigSchema = z.object({
   minimumOverallScore: z.int().min(0).max(100), minimumEvidenceDimensions: z.int().min(0).max(6),
-  requiredEvidenceDimensions: z.array(z.string().min(1).max(64)).max(6), excludedOpportunityIds: z.array(z.uuid()).max(100),
+  requiredEvidenceDimensions: z.array(DeepMatchDimensionSchema).max(6), excludedOpportunityIds: z.array(z.uuid()).max(100),
 }).strict().superRefine((value, context) => {
   if (new Set(value.requiredEvidenceDimensions).size !== value.requiredEvidenceDimensions.length) context.addIssue({ code: "custom", path: ["requiredEvidenceDimensions"], message: "维度不可重复" });
   if (new Set(value.excludedOpportunityIds).size !== value.excludedOpportunityIds.length) context.addIssue({ code: "custom", path: ["excludedOpportunityIds"], message: "岗位不可重复" });

@@ -101,13 +101,24 @@ describe("recommendation feedback persistence", () => {
     for (const item of data.items) await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: { decision: "ignored", reason: "EXPIRED", expectedVersion: 0, idempotencyKey: crypto.randomUUID() } });
     const [proposal] = await createRecommendationFeedbackQueries({ db }).listCalibrationProposals({ userId: data.userId, targetId: data.targetId });
     const config = proposal!.revision.ruleConfig as { excludedOpportunityIds: string[] };
-    expect(config.excludedOpportunityIds).toEqual([data.items[2]!.opportunityId]);
+    expect(config.excludedOpportunityIds.slice().sort()).toEqual(data.items.map((item) => item.opportunityId).sort());
     expect(config.excludedOpportunityIds).not.toContain(data.items[2]!.matchId);
     await service.resolveCalibrationProposal({ userId: data.userId, proposalId: proposal!.proposalId, command: { action: "approved", expectedVersion: 1, idempotencyKey: crypto.randomUUID() } });
     const started = await createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now }).start({ userId: data.userId, targetId: data.targetId, idempotencyKey: crypto.randomUUID(), trigger: "automatic", discoveryRunId: crypto.randomUUID() });
     const [run] = await db.select({ ruleVersion: agentRuns.ruleVersion, sourceScope: agentRuns.sourceScope }).from(agentRuns).where(and(eq(agentRuns.userId, data.userId), eq(agentRuns.id, started.runId)));
-    expect(run).toMatchObject({ ruleVersion: "recommendation-rule-v1", sourceScope: { recommendationRuleConfig: { excludedOpportunityIds: [data.items[2]!.opportunityId] } } });
+    expect(run).toMatchObject({ ruleVersion: "recommendation-rule-v1" });
+    expect((run!.sourceScope as { recommendationRuleConfig: { excludedOpportunityIds: string[] } }).recommendationRuleConfig.excludedOpportunityIds.slice().sort()).toEqual(data.items.map((item) => item.opportunityId).sort());
     await expect(db.select().from(recommendationListItems).where(eq(recommendationListItems.recommendationListId, data.listId))).resolves.toHaveLength(3);
     await expect(db.select().from(jobMatchVersions).where(eq(jobMatchVersions.id, data.items[2]!.matchId))).resolves.toHaveLength(1);
+  });
+
+  it("只把每个推荐项最高版本的事件作为当前状态，并将幂等键绑定到该项", async () => {
+    const data = await fixture(4); const service = commands(); const key = crypto.randomUUID();
+    await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: data.items[0]!.itemId, command: { decision: "ignored", reason: "LOCATION", expectedVersion: 0, idempotencyKey: key } });
+    await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: data.items[0]!.itemId, command: { decision: "saved", expectedVersion: 1, idempotencyKey: crypto.randomUUID() } });
+    for (const item of data.items.slice(1, 3)) await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: { decision: "ignored", reason: "LOCATION", expectedVersion: 0, idempotencyKey: crypto.randomUUID() } });
+    await expect(service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: data.items[0]!.itemId, command: { decision: "ignored", reason: "SALARY", expectedVersion: 2, idempotencyKey: crypto.randomUUID() } })).resolves.toMatchObject({ decision: { version: 3 } });
+    await expect(service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: data.items[3]!.itemId, command: { decision: "ignored", reason: "LOCATION", expectedVersion: 1, idempotencyKey: key } })).rejects.toThrow("IDEMPOTENCY_CONFLICT");
+    await expect(createRecommendationFeedbackQueries({ db }).listCalibrationProposals({ userId: data.userId, targetId: data.targetId })).resolves.toHaveLength(0);
   });
 });

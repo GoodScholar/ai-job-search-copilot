@@ -286,9 +286,12 @@ test("推荐决策与拒绝校准建议保持规则和目标不变", async ({ pa
   }
   await page.reload();
   await expect(page.getByRole("heading", { name: "校准建议" })).toBeVisible();
-  await expect(page.getByText(/基于 3 条忽略反馈/u)).toBeVisible();
+  await expect(page.getByText(/基于 3 条同类忽略反馈/u)).toBeVisible();
+  const proposalBefore = await (async () => { const client = new Client({ connectionString: databaseUrl }); await client.connect(); try { return (await client.query("select id, status, version from calibration_proposals where user_id = $1 order by created_at desc limit 1", [account.userId])).rows[0] as { id: string; status: string; version: number }; } finally { await client.end(); } })();
+  expect(proposalBefore.status).toBe("pending");
   const reject = page.getByRole("button", { name: "拒绝建议" });
   if (info.project.name === "Desktop Chrome") { await reject.focus(); await page.keyboard.press("Enter"); } else await reject.tap();
+  await expect.poll(async () => { const client = new Client({ connectionString: databaseUrl }); await client.connect(); try { return (await client.query("select status, version, resolution_idempotency_key from calibration_proposals where id = $1", [proposalBefore.id])).rows[0]; } finally { await client.end(); } }).toMatchObject({ status: "rejected", version: proposalBefore.version + 1 });
   await expect.poll(async () => { const client = new Client({ connectionString: databaseUrl }); await client.connect(); try { const result = await client.query("select (select count(*) from recommendation_rule_versions where user_id = $1) as rules, (select version from job_targets where id = $2) as target_version", [account.userId, account.targetId]); return result.rows[0]; } finally { await client.end(); } }).toEqual({ rules: "0", target_version: before });
   const controls = page.locator("main .workbench-touch-target");
   expect(await controls.evaluateAll((items) => items.every((item) => Number.parseFloat(getComputedStyle(item).minHeight) >= 44))).toBe(true);

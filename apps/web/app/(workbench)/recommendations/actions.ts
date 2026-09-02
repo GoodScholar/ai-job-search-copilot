@@ -30,7 +30,8 @@ export async function recordRecommendationDecisionAction(listId: string, itemId:
 
 export async function reviseCalibrationProposalAction(proposalId: string, formData: FormData): Promise<void> {
   const session = await readSessionToken(); if (!session) redirect("/login?returnTo=%2Frecommendations");
-  await api.reviseCalibrationProposal(session, proposalId, { strategy: String(formData.get("strategy")), idempotencyKey: String(formData.get("idempotencyKey")), expectedVersion: Number(formData.get("expectedVersion")), ruleConfig: { minimumOverallScore: Number(formData.get("minimumOverallScore")), minimumEvidenceDimensions: Number(formData.get("minimumEvidenceDimensions")), requiredEvidenceDimensions: [], excludedOpportunityIds: [] }, impactPreview: { sampleSize: Number(formData.get("sampleSize")), estimatedAffectedCount: Number(formData.get("estimatedAffectedCount")), ruleDiff: {} } } as never);
+  const current = JSON.parse(String(formData.get("currentRuleConfig") ?? "{}")) as { requiredEvidenceDimensions: string[]; excludedOpportunityIds: string[] };
+  await api.reviseCalibrationProposal(session, proposalId, { strategy: String(formData.get("strategy")), idempotencyKey: String(formData.get("idempotencyKey")), expectedVersion: Number(formData.get("expectedVersion")), ruleConfig: { minimumOverallScore: Number(formData.get("minimumOverallScore")), minimumEvidenceDimensions: Number(formData.get("minimumEvidenceDimensions")), requiredEvidenceDimensions: current.requiredEvidenceDimensions, excludedOpportunityIds: current.excludedOpportunityIds }, impactPreview: { sampleSize: Number(formData.get("sampleSize")), estimatedAffectedCount: Number(formData.get("estimatedAffectedCount")), ruleDiff: {} } } as never);
   revalidatePath("/recommendations");
 }
 

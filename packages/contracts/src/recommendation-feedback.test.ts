@@ -3,6 +3,7 @@ import {
   CalibrationProposalRevisionCommandSchema,
   RecommendationDecisionCommandSchema,
   RecommendationDecisionSchema,
+  RecommendationRuleConfigSchema,
 } from "./recommendations";
 
 describe("推荐反馈契约", () => {
@@ -46,5 +47,10 @@ describe("推荐反馈契约", () => {
 
   it("推荐决策投影保持投递状态之外的独立状态", () => {
     expect(RecommendationDecisionSchema.parse({ status: "pending", version: 0 })).toEqual({ status: "pending", version: 0 });
+  });
+
+  it("规则配置只接受共享的六个深度匹配维度", () => {
+    expect(RecommendationRuleConfigSchema.safeParse({ minimumOverallScore: 60, minimumEvidenceDimensions: 2, requiredEvidenceDimensions: ["skills"], excludedOpportunityIds: [] }).success).toBe(true);
+    expect(RecommendationRuleConfigSchema.safeParse({ minimumOverallScore: 60, minimumEvidenceDimensions: 2, requiredEvidenceDimensions: ["unknown_dimension"], excludedOpportunityIds: [] }).success).toBe(false);
   });
 });

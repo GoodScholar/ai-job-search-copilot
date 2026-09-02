@@ -8,13 +8,14 @@ export const DEEP_MATCH_DIMENSIONS = [
   "location_logistics",
   "qualification_risk",
 ] as const;
+export const DeepMatchDimensionSchema = z.enum(DEEP_MATCH_DIMENSIONS);
 export const DEEP_MATCH_MAX_CANDIDATES = 10;
 export const DEEP_MATCH_OUTPUT_SCHEMA_VERSION = "deep-match-result-v1";
 export const FAKE_DEEP_MATCH_ADAPTER = "fake-deep-match";
 export const FAKE_DEEP_MATCH_ADAPTER_VERSION = "fake-deep-match-v1";
 
 const evidenceId = z.string().trim().min(1).max(128);
-const assessmentDimension = z.enum(DEEP_MATCH_DIMENSIONS);
+const assessmentDimension = DeepMatchDimensionSchema;
 const judgment = z.enum(["evidence_backed_inference", "insufficient_evidence"]);
 const evidenceDimensions = z.array(assessmentDimension).min(1).max(DEEP_MATCH_DIMENSIONS.length);
 const profileEvidenceBase = z.object({ id: evidenceId, value: z.string().trim().min(1).max(256), dimensions: evidenceDimensions }).strict();

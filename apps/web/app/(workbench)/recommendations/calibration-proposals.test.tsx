@@ -7,8 +7,8 @@ const proposal = { proposalId: "00000000-0000-4000-8000-000000000001", targetId:
 it("展示校准证据、规则差异、影响预览与可访问的成功状态", async () => {
   const revise = vi.fn().mockResolvedValue(undefined); const resolve = vi.fn().mockResolvedValue(undefined);
   render(<CalibrationProposals proposals={[proposal]} reviseAction={revise} resolveAction={resolve} />);
-  expect(screen.getByText("基于 3 条忽略反馈的建议")).toBeInTheDocument();
-  expect(screen.getByText(/预计影响 2 \/ 3 项/u)).toBeInTheDocument(); expect(screen.getByText(/minimumOverallScore/u)).toBeInTheDocument();
+  expect(screen.getByText("基于 3 条同类忽略反馈的建议")).toBeInTheDocument();
+  expect(screen.getByText(/预计会影响 2 \/ 3 个样本/u)).toBeInTheDocument(); expect(screen.getByText(/最低匹配分：60 → 75/u)).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "修改建议" }));
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("校准建议已修改。"));
   expect(revise).toHaveBeenCalledOnce();
