@@ -1018,6 +1018,28 @@ export const agentRunJobResults = pgTable("agent_run_job_results", {
   check("agent_run_job_results_ordinal_positive", sql`${table.ordinal} >= 1`),
 ]);
 
+/** Matching-only durable staging; discovery results intentionally retain their evidence-tuple FK. */
+export const deepMatchRunCandidates = pgTable("deep_match_run_candidates", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  runId: uuid("run_id").notNull().references(() => agentRuns.id),
+  opportunityId: uuid("opportunity_id").notNull().references(() => jobOpportunities.id),
+  sourcePostingVersionId: uuid("source_posting_version_id").notNull().references(() => jobSourcePostingVersions.id),
+  ordinal: integer("ordinal").notNull(),
+  candidateSnapshot: jsonb("candidate_snapshot").notNull(),
+  assessment: jsonb("assessment"),
+  adapterUsage: jsonb("adapter_usage"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("deep_match_run_candidates_run_opportunity_unique").on(table.runId, table.opportunityId),
+  unique("deep_match_run_candidates_run_ordinal_unique").on(table.runId, table.ordinal),
+  foreignKey({ columns: [table.userId, table.runId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "deep_match_run_candidates_owner_run_fk" }),
+  foreignKey({ columns: [table.userId, table.opportunityId], foreignColumns: [jobOpportunities.userId, jobOpportunities.id], name: "deep_match_run_candidates_owner_opportunity_fk" }),
+  foreignKey({ columns: [table.userId, table.sourcePostingVersionId], foreignColumns: [jobSourcePostingVersions.userId, jobSourcePostingVersions.id], name: "deep_match_run_candidates_owner_source_version_fk" }),
+  check("deep_match_run_candidates_ordinal_range", sql`${table.ordinal} between 1 and 10`),
+  check("deep_match_run_candidates_snapshot_object", sql`jsonb_typeof(${table.candidateSnapshot}) = 'object'`),
+]);
+
 export const jobSourceHealthChecks = pgTable("job_source_health_checks", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").notNull().references(() => jobAccounts.id),

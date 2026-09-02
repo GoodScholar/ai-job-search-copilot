@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { agentRunEvents, agentRunSteps, agentRuns, jobTargets, jobTargetRevisions, type Database } from "@job-copilot/database";
 import { DEEP_MATCH_AGENT_RUN_BUDGET, DEEP_MATCH_AGENT_RUN_STEPS, DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION, type AgentRunJob } from "@job-copilot/contracts/agent-runs";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
+import { createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
 
 export type DeepMatchRunQueue = { enqueue(job: AgentRunJob): Promise<void> };
 
@@ -40,6 +41,12 @@ export function createDeepMatchRunStarter(deps: { db: Database; queue: DeepMatch
       const run = await deps.db.transaction(async (tx) => {
         return ensureDeepMatchRunInTransaction({ transaction: tx, id: deps.id, clock: deps.clock, ...input });
       });
+      if (!run.reused) {
+        const selection = await createDeepMatchQueries({ db: deps.db }).selectCandidateSelection({
+          userId: input.userId, targetId: input.targetId, ...(input.opportunityId ? { opportunityId: input.opportunityId } : {}),
+        });
+        await createDeepMatchCommands({ db: deps.db, id: deps.id, clock: deps.clock }).freezeCandidates({ userId: input.userId, runId: run.run.id, candidates: selection.candidates });
+      }
       if (run.run.status === "queued") { try { await deps.queue.enqueue({ version: 1, runId: run.run.id, userId: input.userId }); } catch { /* reconciler reads the persisted queued row */ } }
       return { runId: run.run.id, reused: run.reused };
     },

@@ -574,29 +574,28 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         try {
           const selectStarted = await transition("select_candidates", false); if (selectStarted) return selectStarted;
           const scope = DeepMatchAgentRunSourceScopeSchema.parse(claimed.run.sourceScope);
-          const selection = await createDeepMatchQueries({ db: deps.db }).selectCandidateSelection({ userId: job.userId, targetId: claimed.run.targetId, ...(scope.opportunityId ? { opportunityId: scope.opportunityId } : {}) });
-          const candidates = selection.candidates;
+          const matchingQueries = createDeepMatchQueries({ db: deps.db });
+          const selection = await matchingQueries.selectCandidateSelection({ userId: job.userId, targetId: claimed.run.targetId, ...(scope.opportunityId ? { opportunityId: scope.opportunityId } : {}) });
+          const candidates = await matchingQueries.getFrozenCandidates({ userId: job.userId, runId: job.runId });
           const selectCompleted = await transition("select_candidates", true); if (selectCompleted) return selectCompleted;
           const assessStarted = await transition("assess_matches", false); if (assessStarted) return assessStarted;
           const deepMatchAdapter = deps.deepMatchAdapter ?? new FakeDeepMatchAdapter();
           const commands = createDeepMatchCommands({ db: deps.db, id: deps.id, clock: deps.clock, adapter: deepMatchAdapter });
-          const matchVersionIds: string[] = [];
           for (const [index, candidate] of candidates.entries()) {
             const checkpointOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "deep_match_model_input", ordinal: index + 1, reserve: { modelCalls: 1, inputTokens: deepMatchAdapter.reservedUsage.inputTokens, budgetTokens: deepMatchAdapter.reservedUsage.inputTokens + deepMatchAdapter.reservedUsage.outputTokens } });
             if (checkpointOutcome) return checkpointOutcome;
-            const created = await commands.createMatch({ userId: job.userId, targetId: claimed.run.targetId, candidate, fence: { runId: job.runId, claimToken: claimed.claimToken }, modelCall: {
+            const staged = await commands.assessAndStage({ userId: job.userId, runId: job.runId, candidate, fence: { claimToken: claimed.claimToken }, modelCall: {
               signal: modelController!.signal,
               usageKey: `${claimed.claimToken}:deep_match_model:${index + 1}`,
               budget: { maxTokens: (claimed.run.budgetSnapshot as { maxTokens: number }).maxTokens, reservedInputTokens: deepMatchAdapter.reservedUsage.inputTokens, reservedOutputTokens: deepMatchAdapter.reservedUsage.outputTokens },
               ...(scope.testFixture ? { fixture: scope.testFixture } : {}),
             } });
-            matchVersionIds.push(created.matchVersionId);
-            const outputCheckpointOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "deep_match_model_output", ordinal: index + 1, reserve: { outputTokens: created.usage.outputTokens } });
+            const outputCheckpointOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "deep_match_model_output", ordinal: index + 1, reserve: staged.reused ? {} : { outputTokens: staged.usage.outputTokens } });
             if (outputCheckpointOutcome) return outputCheckpointOutcome;
           }
           const assessCompleted = await transition("assess_matches", true); if (assessCompleted) return assessCompleted;
           const listStarted = await transition("create_recommendations", false); if (listStarted) return listStarted;
-          const list = await commands.createDailyList({ userId: job.userId, targetId: claimed.run.targetId, matchVersionIds, selectionExclusions: selection.exclusions, fence: { runId: job.runId, claimToken: claimed.claimToken } });
+          const list = await commands.publishStagedRun({ userId: job.userId, targetId: claimed.run.targetId, runId: job.runId, selectionExclusions: selection.exclusions, fence: { claimToken: claimed.claimToken } });
           const listCompleted = await transition("create_recommendations", true); if (listCompleted) return listCompleted;
           return completeMatching(list.items.length);
         } catch (error) {

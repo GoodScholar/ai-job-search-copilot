@@ -1,7 +1,7 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  agentRuns, createDatabase, jobAccounts, jobMatchVersions, jobOpportunities, jobProfiles, jobSourcePostingVersions, jobSourcePostings, recommendationLists,
+  agentRuns, createDatabase, deepMatchRunCandidates, jobAccounts, jobMatchVersions, jobOpportunities, jobProfiles, jobSourcePostingVersions, jobSourcePostings, recommendationLists,
   jobTargetRevisions, jobTargets, jobTriageVersions, migrateDatabase, profileFactRevisions, profileFacts, recommendationExclusions, type Database,
 } from "@job-copilot/database";
 import { and, eq } from "drizzle-orm";
@@ -98,6 +98,36 @@ describe("deep match persistence", () => {
     expect(second).toMatchObject({ runId: first.runId, reused: true });
     expect(queue.calls).toBe(2);
     await expect(db.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.idempotencyKey, key)))).resolves.toHaveLength(1);
+  });
+
+  it("freezes the complete candidate tuple once for a matching run", async () => {
+    const input = await fixture();
+    const starter = createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now });
+    const run = await starter.start({ userId: input.userId, targetId: input.targetId, idempotencyKey: crypto.randomUUID(), trigger: "manual", opportunityId: input.opportunityId });
+    const candidates = await createDeepMatchQueries({ db }).selectCandidates({ userId: input.userId, targetId: input.targetId, opportunityId: input.opportunityId });
+    const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now });
+
+    await (commands as any).freezeCandidates({ userId: input.userId, runId: run.runId, candidates });
+
+    await expect(db.select({ opportunityId: deepMatchRunCandidates.opportunityId, candidateSnapshot: deepMatchRunCandidates.candidateSnapshot })
+      .from(deepMatchRunCandidates).where(eq(deepMatchRunCandidates.runId, run.runId))).resolves.toEqual([
+      expect.objectContaining({ opportunityId: input.opportunityId, candidateSnapshot: expect.objectContaining({ opportunityId: input.opportunityId }) }),
+    ]);
+  });
+
+  it("does not publish a partial matching run when a staged candidate is missing its assessment", async () => {
+    const input = await fixture();
+    const run = await createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now })
+      .start({ userId: input.userId, targetId: input.targetId, idempotencyKey: crypto.randomUUID(), trigger: "manual", opportunityId: input.opportunityId });
+    const claimToken = crypto.randomUUID();
+    await db.update(agentRuns).set({ status: "running", currentStep: "assess_matches", attemptCount: 1, startedAt: now, activeSliceStartedAt: now, claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), controlState: "none" })
+      .where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, run.runId)));
+    const commands = createDeepMatchCommands({ db, id: crypto.randomUUID, clock: () => now });
+
+    await expect((commands as any).publishStagedRun({ userId: input.userId, targetId: input.targetId, runId: run.runId, fence: { claimToken }, selectionExclusions: [] }))
+      .rejects.toThrow("DEEP_MATCH_STAGE_INCOMPLETE");
+    await expect(db.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, input.userId))).resolves.toHaveLength(0);
+    await expect(db.select().from(recommendationLists).where(eq(recommendationLists.userId, input.userId))).resolves.toHaveLength(0);
   });
 
   it("creates a new immutable match version and a new same-day recommendation-list sequence on every rerun", async () => {
