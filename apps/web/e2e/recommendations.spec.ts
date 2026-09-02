@@ -22,6 +22,7 @@ async function createAccount(request: APIRequestContext, info: TestInfo): Promis
   const facts = [
     { factType: "education", factValue: { summary: "本科" } }, { factType: "language", factValue: { name: "英语", level: "C1" } },
     { factType: "work_eligibility", factValue: { summary: "中国工作许可" } }, { factType: "skill", factValue: { name: "TypeScript" } },
+    { factType: "experience", factValue: { summary: "前端工程实践经验" } }, { factType: "project", factValue: { summary: "可验证的交付项目" } },
   ];
   for (const [expectedVersion, fact] of facts.entries()) {
     const response = await request.post(`${apiBaseUrl}/v1/profile/facts`, { headers: { authorization: `Bearer ${body.sessionToken}` }, data: { expectedVersion, ...fact } });
@@ -152,7 +153,7 @@ test("显式 Fake matching 真实链路交付双方证据、质量排除与单�
   await expect(page.getByText("稳定排除 1 项岗位：MATCH_QUALITY_INSUFFICIENT")).toBeVisible();
   await page.getByText("查看证据与判断").click();
   await expect(page.getByRole("list", { name: "推荐岗位" }).getByText(/^岗位证据：/u)).toContainText("正式推荐 TypeScript 工程师");
-  await expect(page.getByRole("list", { name: "推荐岗位" }).getByText(/^画像证据：/u)).toContainText("本科");
+  await expect(page.getByRole("list", { name: "推荐岗位" }).getByText(/^画像证据：/u)).toContainText("已确认的岗位方向：frontend");
   await expect(page.getByText(/证据支持的推断|证据不足/u)).toHaveCount(6);
   await expect(page.locator("main")).not.toContainText(/(?:评分|score|\d+%)/i);
   const before = await matchSnapshot(account.userId, account.targetId);
@@ -171,7 +172,7 @@ test("显式 Fake matching 真实链路交付双方证据、质量排除与单�
   await page.locator("summary").filter({ hasText: "清单版本 1" }).click();
   const historicalVersion = page.locator("summary").filter({ hasText: "清单版本 1" }).locator("..");
   await expect(historicalVersion.locator("p").filter({ hasText: "岗位证据：" })).toContainText("正式推荐 TypeScript 工程师");
-  await expect(historicalVersion.locator("p").filter({ hasText: "画像证据：" })).toContainText("本科");
+  await expect(historicalVersion.locator("p").filter({ hasText: "画像证据：" })).toContainText("已确认的岗位方向：frontend");
   const controls = page.locator(".workbench-touch-target");
   expect(await controls.evaluateAll((items) => items.every((item) => item.getBoundingClientRect().height >= 44))).toBe(true);
   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);

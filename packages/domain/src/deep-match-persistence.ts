@@ -27,9 +27,11 @@ function profileDimensions(factType: string): DeepMatchCandidate["profileEvidenc
   return [];
 }
 
-function displayBand(score: number): "highly_matched" | "worth_trying" | "consider_carefully" {
-  if (score >= 80) return "highly_matched";
-  if (score >= 60) return "worth_trying";
+function displayBand(assessment: { overallScore: number; dimensions: Array<{ judgment: string }> }): "highly_matched" | "worth_trying" | "consider_carefully" {
+  // A deterministic CI ordering fixture may provide a score, but it cannot fabricate the
+  // six-sided evidence needed for the user-facing high-match label.
+  if (assessment.overallScore >= 80 && assessment.dimensions.filter((dimension) => dimension.judgment === "evidence_backed_inference").length === 6) return "highly_matched";
+  if (assessment.overallScore >= 60) return "worth_trying";
   return "consider_carefully";
 }
 
@@ -100,7 +102,12 @@ export function createDeepMatchQueries(deps: { db: Database }) {
         if (locationFact) profileEvidence.push({ id: `target:${targetRevisionId}:location`, profileFactRevisionId: targetRevisionId, value: `已确认的地点/工作方式约束：${locationFact}`, dimensions: ["location_logistics"] });
         profileEvidence.splice(20);
         if (!profileEvidence.length) return null;
-        const normalized = sourceVersion.normalizedData as Record<string, unknown>;
+        // Both records are immutable, source-backed snapshots from the imported posting.
+        // Prefer the posting-version payload; old imports can only contribute their
+        // opportunity normalization when it is non-empty (never an `{}` fallback).
+        const sourceNormalized = sourceVersion.normalizedData as Record<string, unknown>;
+        const opportunityNormalized = opportunity.normalizedData as Record<string, unknown>;
+        const normalized = Object.keys(sourceNormalized).length > 0 ? sourceNormalized : opportunityNormalized;
         const normalizedText = Object.keys(normalized).length > 0 ? JSON.stringify(normalized).slice(0, 512) : "";
         const rawJobEvidence = [
           ...(normalizedText ? [{ value: normalizedText, dimensions: ["skills", "qualification_risk"] }] : []),
@@ -246,7 +253,7 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
             id: deps.id(), userId: input.userId, opportunityId: candidate.opportunityId, sourcePostingVersionId: candidate.sourcePostingVersionId, triageVersionId: candidate.triageVersionId,
             profileId: candidate.profileId, profileVersion: candidate.profileVersion, targetId: input.targetId, targetVersion: candidate.targetVersion,
             ruleVersion: DEEP_MATCH_RULE_VERSION, promptVersion: DEEP_MATCH_PROMPT_VERSION, adapter: adapter.adapter, adapterVersion: adapter.adapterVersion, model: adapter.model, outputSchemaVersion: DEEP_MATCH_OUTPUT_SCHEMA_VERSION,
-            overallScore: assessment.overallScore, displayBand: displayBand(assessment.overallScore), assessment, sequence: (previous?.sequence ?? 0) + 1, createdAt: deps.clock(),
+            overallScore: assessment.overallScore, displayBand: displayBand(assessment), assessment, sequence: (previous?.sequence ?? 0) + 1, createdAt: deps.clock(),
           }).returning();
           if (!match) throw new Error("DEEP_MATCH_PERSIST_FAILED");
           matches.push({ id: match.id, opportunityId: match.opportunityId, overallScore: match.overallScore, displayBand: match.displayBand as ReturnType<typeof displayBand> });
@@ -299,7 +306,7 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
           id: deps.id(), userId: input.userId, opportunityId: input.candidate.opportunityId, sourcePostingVersionId: input.candidate.sourcePostingVersionId, triageVersionId: input.candidate.triageVersionId,
           profileId: input.candidate.profileId, profileVersion: input.candidate.profileVersion, targetId: input.targetId, targetVersion: input.candidate.targetVersion,
           ruleVersion: DEEP_MATCH_RULE_VERSION, promptVersion: DEEP_MATCH_PROMPT_VERSION, adapter: adapter.adapter, adapterVersion: adapter.adapterVersion, model: adapter.model, outputSchemaVersion: DEEP_MATCH_OUTPUT_SCHEMA_VERSION,
-          overallScore: assessment.overallScore, displayBand: displayBand(assessment.overallScore), assessment, sequence: (previous?.sequence ?? 0) + 1, createdAt: deps.clock(),
+          overallScore: assessment.overallScore, displayBand: displayBand(assessment), assessment, sequence: (previous?.sequence ?? 0) + 1, createdAt: deps.clock(),
         }).returning();
         if (!created) throw new Error("DEEP_MATCH_PERSIST_FAILED");
         return { matchVersionId: created.id, sequence: created.sequence, overallScore: created.overallScore, displayBand: created.displayBand, usage: result.usage };
