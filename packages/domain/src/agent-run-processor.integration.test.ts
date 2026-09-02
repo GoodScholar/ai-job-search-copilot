@@ -13,6 +13,7 @@ import { createLayeredPublicJobDiscoveryRuntime } from "./layered-public-job-dis
 import { createJobDiscoveryPersistence } from "./job-discovery-persistence";
 import { createDeepMatchRunStarter } from "./deep-match-agent-runs";
 import { DeepMatchAdapterError, FakeDeepMatchAdapter } from "@job-copilot/contracts/deep-match";
+import { createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
 const constraints = { roleFamily: "AI 应用工程师", seniority: null, locations: [], workModes: [], relocation: "unknown" as const, salary: null, industries: [], dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] } };
@@ -160,6 +161,27 @@ describe("AgentRunProcessor checkpoints", () => {
       .resolves.toEqual([{ modelCalls: 2, inputTokens: 20, outputTokens: 28, totalTokens: 48 }]);
     await expect(database.select({ adapterUsage: deepMatchRunCandidates.adapterUsage }).from(deepMatchRunCandidates).where(eq(deepMatchRunCandidates.runId, job.runId)).orderBy(deepMatchRunCandidates.ordinal))
       .resolves.toEqual([{ adapterUsage: { inputTokens: 7, outputTokens: 11, latencyMs: 19 } }, { adapterUsage: { inputTokens: 13, outputTokens: 17, latencyMs: 23 } }]);
+  });
+
+  it("publishes fully staged candidates at the token ceiling without another adapter call, while an unstaged run exhausts before calling", async () => {
+    const stagedJob = await deepMatchRun();
+    const seed = new FakeDeepMatchAdapter();
+    const commands = createDeepMatchCommands({ db: database, id: () => crypto.randomUUID(), clock: () => now, adapter: seed });
+    for (const candidate of await createDeepMatchQueries({ db: database }).getFrozenCandidates({ userId: stagedJob.userId, runId: stagedJob.runId })) {
+      const value = await commands.invokeAndValidate({ userId: stagedJob.userId, runId: stagedJob.runId, candidate, modelCall: { signal: new AbortController().signal, usageKey: crypto.randomUUID(), budget: { maxTokens: 20_000, reservedInputTokens: 32, reservedOutputTokens: 48 } } });
+      await commands.stageValidatedAssessment({ userId: stagedJob.userId, runId: stagedJob.runId, candidate, assessment: value.assessment, usage: value.usage });
+    }
+    await database.update(agentRuns).set({ totalTokenCount: 19_999, inputTokenCount: 19_999 }).where(eq(agentRuns.id, stagedJob.runId));
+    let stagedCalls = 0;
+    const noCall = { ...seed, assess: async () => { stagedCalls += 1; throw new Error("ADAPTER_MUST_NOT_RUN"); } };
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: noCall, checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).process({ version: 1, userId: stagedJob.userId, runId: stagedJob.runId, finalAttempt: true })).resolves.toBe("completed");
+    expect(stagedCalls).toBe(0);
+
+    const unstagedJob = await deepMatchRun(); let unstagedCalls = 0;
+    await database.update(agentRuns).set({ totalTokenCount: 19_999, inputTokenCount: 19_999 }).where(eq(agentRuns.id, unstagedJob.runId));
+    const counting = { ...seed, assess: async () => { unstagedCalls += 1; return seed.assess as never; } };
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: counting, checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).process({ version: 1, userId: unstagedJob.userId, runId: unstagedJob.runId, finalAttempt: true })).resolves.toBe("budget_exhausted");
+    expect(unstagedCalls).toBe(0);
   });
 
   it.each([
