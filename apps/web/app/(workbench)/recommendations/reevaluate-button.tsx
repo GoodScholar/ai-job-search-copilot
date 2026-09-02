@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useState } from "react";
 import { useFormStatus } from "react-dom";
 import { Button } from "@/components/ui/button";
 
@@ -11,6 +11,6 @@ function SubmitButton() {
 
 /** A single user intent owns one stable key until the server action settles. */
 export function ReevaluationForm({ action }: { action: (formData: FormData) => void | Promise<void> }) {
-  const idempotencyKey = useRef(crypto.randomUUID());
-  return <form action={action}><input name="idempotencyKey" type="hidden" value={idempotencyKey.current} /><SubmitButton /></form>;
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
+  return <form action={action}><input name="idempotencyKey" type="hidden" value={idempotencyKey} /><SubmitButton /></form>;
 }
