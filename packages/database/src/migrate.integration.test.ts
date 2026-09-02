@@ -627,6 +627,13 @@ describe("database migrations", () => {
       )
     `);
     await expect(migratedDatabase.execute(sql`
+      insert into agent_run_steps (id, user_id, run_id, step_key, ordinal, status, started_at, failed_at, failure_code)
+      values (
+        'a1f6f5c8-4b1d-4a22-a3f7-5c8d9e0f1a2b', ${firstAccountId}, ${runId}, 'assess_matches', 2,
+        'failed', now(), now(), 'AGENT_RUN_MODEL_INVALID_RESPONSE'
+      )
+    `)).resolves.toBeDefined();
+    await expect(migratedDatabase.execute(sql`
       insert into agent_runs (
         id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot,
         workflow_version, rule_version, adapter, adapter_version, output_schema_version, tool_allowlist, status, current_step
@@ -1171,6 +1178,7 @@ describe("database migrations", () => {
         unlink(join(migrationsFolder, "0032_recommendation_highlight_limit.sql")),
         unlink(join(migrationsFolder, "0033_deep_match_usage_entries.sql")),
         unlink(join(migrationsFolder, "0034_recommendation_highlight_limit_lock.sql")),
+        unlink(join(migrationsFolder, "0035_agent_run_step_model_failures.sql")),
         unlink(join(migrationsFolder, "meta", "0023_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0024_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0025_snapshot.json")),
@@ -1182,7 +1190,7 @@ describe("database migrations", () => {
       const journalPath = join(migrationsFolder, "meta", "_journal.json");
       const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
       await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter((entry) => ![
-        "0023_source_attention_inbox", "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_job_triage_versions", "0029_heavy_devos", "0030_deep_match_recommendations", "0031_deep_match_agent_runs", "0032_recommendation_highlight_limit", "0033_deep_match_usage_entries", "0034_recommendation_highlight_limit_lock",
+        "0023_source_attention_inbox", "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_job_triage_versions", "0029_heavy_devos", "0030_deep_match_recommendations", "0031_deep_match_agent_runs", "0032_recommendation_highlight_limit", "0033_deep_match_usage_entries", "0034_recommendation_highlight_limit_lock", "0035_agent_run_step_model_failures",
       ].includes(entry.tag)) }, null, 2));
       await migrate(upgradeDatabase, { migrationsFolder });
       const userId = "a9f4da20-e9e9-44c4-a6a5-fc2cf5b9ed93"; const targetId = "f1e7a7a6-a3e6-458e-9f53-33cdbbf2d6ea"; const runId = "833f4544-376c-4f8d-81af-16e50df78624";

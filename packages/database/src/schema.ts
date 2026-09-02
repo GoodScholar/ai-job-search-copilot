@@ -967,7 +967,7 @@ export const agentRunSteps = pgTable("agent_run_steps", {
   check("agent_run_steps_ordinal_check", sql`${table.ordinal} between 1 and 3`),
   check("agent_run_steps_status_check", sql`${table.status} in ('pending', 'running', 'completed', 'failed')`),
   check("agent_run_steps_attempt_count_nonnegative", sql`${table.attemptCount} >= 0`),
-  check("agent_run_steps_failure_code_check", sql`${table.failureCode} is null or ${table.failureCode} in ('AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_CONTENT_STORAGE_FAILED', 'AGENT_RUN_PERSIST_FAILED', 'AGENT_RUN_BUDGET_EXCEEDED')`),
+  check("agent_run_steps_failure_code_check", sql`${table.failureCode} is null or ${table.failureCode} in ('AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_CONTENT_STORAGE_FAILED', 'AGENT_RUN_PERSIST_FAILED', 'AGENT_RUN_BUDGET_EXCEEDED', 'AGENT_RUN_MODEL_RETRYABLE', 'AGENT_RUN_MODEL_AUTH_FAILED', 'AGENT_RUN_MODEL_POLICY_REJECTED', 'AGENT_RUN_MODEL_INVALID_RESPONSE')`),
   check("agent_run_steps_timestamp_state_check", sql`
     (${table.status} = 'pending' and ${table.startedAt} is null and ${table.completedAt} is null and ${table.failedAt} is null)
     or (${table.status} = 'running' and ${table.startedAt} is not null and ${table.completedAt} is null and ${table.failedAt} is null)
