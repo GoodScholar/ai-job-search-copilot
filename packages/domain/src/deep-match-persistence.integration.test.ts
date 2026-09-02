@@ -75,6 +75,16 @@ describe("deep match persistence", () => {
     ]));
   });
 
+  it("retains every selection exclusion instead of silently truncating the historical decision set", async () => {
+    const eligible = await fixture({ score: 90 });
+    const owner = { userId: eligible.userId, profileId: eligible.profileId, targetId: eligible.targetId };
+    for (let index = 0; index < 11; index += 1) await fixture({ owner, verdict: "fail" });
+
+    const selected = await createDeepMatchQueries({ db }).selectCandidateSelection({ userId: eligible.userId, targetId: eligible.targetId });
+
+    expect(selected.exclusions.filter((item) => item.reasonCode === "TRIAGE_NOT_PASS")).toHaveLength(11);
+  });
+
   it("persists exactly one recoverable matching child run when queue delivery fails and retries delivery on duplicate trigger", async () => {
     const input = await fixture();
     const queue = { calls: 0, fail: true, async enqueue() { this.calls += 1; if (this.fail) throw new Error("QUEUE_DOWN"); } };

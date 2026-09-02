@@ -105,7 +105,7 @@ export function createDeepMatchQueries(deps: { db: Database }) {
           jobEvidence: jobEvidence.length ? jobEvidence : [{ id: `job:${triage.sourcePostingVersionId}:1`, value: "岗位信息", dimensions: ["skills"] }], profileEvidence,
         } satisfies SelectedDeepMatchCandidate;
       }))).flatMap((candidate): SelectedDeepMatchCandidate[] => candidate ? [candidate] : []);
-      return { candidates, exclusions: exclusions.slice(0, 10) };
+      return { candidates, exclusions };
     };
   return {
     selectCandidateSelection,
@@ -190,7 +190,7 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
         const exclusions = [
           ...excluded.map((matchVersionId) => ({ opportunityId: byId.get(matchVersionId)!.opportunityId, reasonCode: "MATCH_QUALITY_INSUFFICIENT" as const })),
           ...(input.selectionExclusions ?? []),
-        ].slice(0, 10);
+        ];
         if (exclusions.length) await transaction.insert(recommendationExclusions).values(exclusions.map((exclusion) => ({
           id: deps.id(), userId: input.userId, targetId: input.targetId, opportunityId: exclusion.opportunityId,
           recommendationListId: list.id, reasonCode: exclusion.reasonCode, createdAt: deps.clock(),
