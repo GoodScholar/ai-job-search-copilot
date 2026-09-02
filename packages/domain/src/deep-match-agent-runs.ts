@@ -41,7 +41,11 @@ export function createDeepMatchRunStarter(deps: { db: Database; queue: DeepMatch
       const run = await deps.db.transaction(async (tx) => {
         return ensureDeepMatchRunInTransaction({ transaction: tx, id: deps.id, clock: deps.clock, ...input });
       });
-      if (!run.reused) {
+      // Automatic children are inserted in the discovery completion transaction and then
+      // arrive here as an idempotent reuse.  Freeze once whenever the durable snapshot is
+      // absent; otherwise an automatic run would later read mutable current candidates.
+      const frozen = await createDeepMatchQueries({ db: deps.db }).getFrozenCandidates({ userId: input.userId, runId: run.run.id });
+      if (frozen.length === 0) {
         const selection = await createDeepMatchQueries({ db: deps.db }).selectCandidateSelection({
           userId: input.userId, targetId: input.targetId, ...(input.opportunityId ? { opportunityId: input.opportunityId } : {}),
         });

@@ -5,7 +5,7 @@ import {
   jobTargetRevisions, jobTargets, jobTriageVersions, migrateDatabase, profileFactRevisions, profileFacts, recommendationExclusions, type Database,
 } from "@job-copilot/database";
 import { and, eq } from "drizzle-orm";
-import { DEEP_MATCH_DIMENSIONS, DeepMatchAdapterError } from "@job-copilot/contracts/deep-match";
+import { DEEP_MATCH_DIMENSIONS, DeepMatchAdapterError, FakeDeepMatchAdapter } from "@job-copilot/contracts/deep-match";
 import { createDeepMatchRunStarter } from "./deep-match-agent-runs";
 import { DeepMatchClaimLostError, createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
 
@@ -98,6 +98,7 @@ describe("deep match persistence", () => {
     expect(second).toMatchObject({ runId: first.runId, reused: true });
     expect(queue.calls).toBe(2);
     await expect(db.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.idempotencyKey, key)))).resolves.toHaveLength(1);
+    await expect(db.select().from(deepMatchRunCandidates).where(and(eq(deepMatchRunCandidates.userId, input.userId), eq(deepMatchRunCandidates.runId, first.runId)))).resolves.toHaveLength(1);
   });
 
   it("freezes the complete candidate tuple once for a matching run", async () => {
@@ -128,6 +129,28 @@ describe("deep match persistence", () => {
       .rejects.toThrow("DEEP_MATCH_STAGE_INCOMPLETE");
     await expect(db.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, input.userId))).resolves.toHaveLength(0);
     await expect(db.select().from(recommendationLists).where(eq(recommendationLists.userId, input.userId))).resolves.toHaveLength(0);
+  });
+
+  it("reuses the first staged candidate result without a second model call before one atomic publish", async () => {
+    const input = await fixture();
+    const run = await createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now })
+      .start({ userId: input.userId, targetId: input.targetId, idempotencyKey: crypto.randomUUID(), trigger: "manual", opportunityId: input.opportunityId });
+    const claimToken = crypto.randomUUID();
+    await db.update(agentRuns).set({ status: "running", currentStep: "assess_matches", attemptCount: 1, startedAt: now, activeSliceStartedAt: now, claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), controlState: "none" })
+      .where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, run.runId)));
+    const fake = new FakeDeepMatchAdapter(); let calls = 0;
+    const adapter = { ...fake, assess: async (...args: Parameters<FakeDeepMatchAdapter["assess"]>) => { calls += 1; return fake.assess(...args); } };
+    const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now, adapter });
+    const candidate = (await createDeepMatchQueries({ db }).getFrozenCandidates({ userId: input.userId, runId: run.runId }))[0]!;
+    const first = await commands.assessAndStage({ userId: input.userId, runId: run.runId, candidate, modelCall: modelCall(), fence: { claimToken } });
+    const restored = await commands.assessAndStage({ userId: input.userId, runId: run.runId, candidate, modelCall: modelCall(), fence: { claimToken } });
+
+    expect(first.reused).toBe(false); expect(restored.reused).toBe(true); expect(calls).toBe(1);
+    await expect(db.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, input.userId))).resolves.toHaveLength(0);
+    await expect(db.select().from(recommendationLists).where(eq(recommendationLists.userId, input.userId))).resolves.toHaveLength(0);
+    await commands.publishStagedRun({ userId: input.userId, targetId: input.targetId, runId: run.runId, fence: { claimToken }, selectionExclusions: [] });
+    await expect(db.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, input.userId))).resolves.toHaveLength(1);
+    await expect(db.select().from(recommendationLists).where(eq(recommendationLists.userId, input.userId))).resolves.toHaveLength(1);
   });
 
   it("creates a new immutable match version and a new same-day recommendation-list sequence on every rerun", async () => {
