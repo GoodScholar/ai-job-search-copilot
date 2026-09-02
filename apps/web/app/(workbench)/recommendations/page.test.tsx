@@ -38,7 +38,7 @@ describe("RecommendationsPage", () => {
     expect(screen.getByText(/岗位要求与已确认技能相符/u)).toBeInTheDocument();
     expect(screen.getByText(/岗位证据：岗位要求 TypeScript/u)).toBeInTheDocument();
     expect(screen.getByText(/画像证据：已确认 TypeScript 经历/u)).toBeInTheDocument();
-    expect(screen.getByText(/稳定排除 1 项岗位：MATCH_QUALITY_INSUFFICIENT/u)).toBeInTheDocument();
+    expect(screen.getByText(/稳定排除 1 项岗位：匹配证据不足/u)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重新评估此岗位" })).toBeInTheDocument();
     expect(screen.getByLabelText("推荐清单版本")).toHaveTextContent("清单版本 2");
     expect(screen.getByText("历史版本")).toBeInTheDocument();

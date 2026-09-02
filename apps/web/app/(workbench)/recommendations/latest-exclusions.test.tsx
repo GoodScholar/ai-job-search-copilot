@@ -21,3 +21,11 @@ it("按 cursor 合并下一页 latest exclusions 并移除已耗尽的加载控�
   expect(screen.queryByRole("button", { name: "加载更多稳定排除" })).not.toBeInTheDocument();
   expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("cursor=00000000-0000-4000-8000-000000000099"), { cache: "no-store" });
 });
+
+it("RSC 刷新为另一份清单时重置 exclusions 与 cursor", async () => {
+  const replacement = { ...list, recommendationListId: "00000000-0000-4000-8000-000000000003", exclusions: [exclusions[0]!], exclusionsNextCursor: null };
+  const { rerender } = render(<LatestExclusions targetId={targetId} list={list} />);
+  rerender(<LatestExclusions targetId={targetId} list={replacement} />);
+  await waitFor(() => expect(screen.getByText("稳定排除 1 项岗位：匹配证据不足")).toBeInTheDocument());
+  expect(screen.queryByRole("button", { name: "加载更多稳定排除" })).not.toBeInTheDocument();
+});
