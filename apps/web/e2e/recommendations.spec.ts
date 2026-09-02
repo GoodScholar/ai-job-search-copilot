@@ -166,6 +166,13 @@ test("显式 Fake matching 真实链路交付双方证据、质量排除与单�
   const listsAfter = await listSnapshot(account.userId, account.targetId);
   expect(listsAfter.slice(0, listsBefore.length)).toEqual(listsBefore);
   expect(listsAfter).toHaveLength(listsBefore.length + 1);
+  const keyAfterFirstSuccess = await reevaluate.evaluate((button) => (button.closest("form")?.elements.namedItem("idempotencyKey") as HTMLInputElement).value);
+  if (info.project.name === "Desktop Chrome") { await reevaluate.focus(); await page.keyboard.press("Enter"); } else await reevaluate.tap();
+  await expect.poll(async () => (await matchSnapshot(account.userId, account.targetId)).filter((match) => match.opportunityId === recommended.opportunityId).length, { timeout: 30_000 }).toBe(3);
+  const keyAfterSecondSuccess = await reevaluate.evaluate((button) => (button.closest("form")?.elements.namedItem("idempotencyKey") as HTMLInputElement).value);
+  expect(keyAfterSecondSuccess).not.toBe(keyAfterFirstSuccess);
+  const listsAfterSecondSuccess = await listSnapshot(account.userId, account.targetId);
+  expect(listsAfterSecondSuccess).toHaveLength(listsBefore.length + 2);
   await page.reload();
   await expect(page.getByText("历史版本")).toBeVisible();
   await page.getByText("历史版本", { exact: true }).click();
