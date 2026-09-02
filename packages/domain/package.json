@@ -18,7 +18,6 @@
     "./job-triage": "./src/job-triage.ts",
     "./job-triage-persistence": "./src/job-triage-persistence.ts",
     "./deep-match-persistence": "./src/deep-match-persistence.ts",
-    "./deep-match-workflow": "./src/deep-match-workflow.ts",
     "./deep-match-agent-runs": "./src/deep-match-agent-runs.ts",
     "./job-discovery-schedules": "./src/job-discovery-schedules.ts",
     "./public-job-discovery-sources": "./src/public-job-discovery-sources.ts",

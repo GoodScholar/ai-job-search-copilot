@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, asc, count, desc, eq, lte, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, lte, or, sql } from "drizzle-orm";
 import {
   agentInboxItems, agentRunEvents, agentRunSteps, agentRuns, jobDiscoveryAttributions, jobDiscoveryDiagnostics, jobDiscoveryLeads, jobDiscoveryRunResults, jobDiscoverySourceIssues, jobSourcePostingVersions, jobSourcePostings,
   type Database,
@@ -560,9 +560,9 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
       };
       const completeMatching = async (resultCount: number): Promise<ProcessorOutcome> => runTransaction(deps, deadline, async (transaction) => {
         await acquireAccountAdvisoryLock(transaction, job.userId);
-        const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, claimed.claimToken), eq(agentRuns.controlState, "none")));
-        if (!run) return "stale";
         const now = deps.clock();
+        const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, claimed.claimToken), eq(agentRuns.controlState, "none"), gt(agentRuns.claimExpiresAt, now)));
+        if (!run) return "stale";
         const activeDurationMs = run.activeDurationMs + await settleActiveSlice(transaction, { id: deps.id, userId: job.userId, run, now });
         const version = run.version + 1;
         await transaction.update(agentRuns).set({ status: "completed", currentStep: "completed", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, activeDurationMs, completedAt: now, failedAt: null, failureCode: null, terminationKind: "completed", terminationBudgetDimension: null, resultCount: Math.min(resultCount, 10), usageComplete: true, version, updatedAt: now }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.claimToken, claimed.claimToken)));
