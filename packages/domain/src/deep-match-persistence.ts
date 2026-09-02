@@ -7,6 +7,7 @@ import {
   DEEP_MATCH_OUTPUT_SCHEMA_VERSION, DeepMatchAdapterError, DeepMatchAdapterInputSchema, DeepMatchAdapterResultSchema, DeepMatchAssessmentSchema, DeepMatchCandidateSchema, FakeDeepMatchAdapter, acceptsDeepMatchAssessment, isDeepMatchTriageEligible, validateDeepMatchEvidenceClosure, type DeepMatchAdapter, type DeepMatchAdapterCall, type DeepMatchCandidate,
 } from "@job-copilot/contracts/deep-match";
 import { JobQualificationsSchema } from "@job-copilot/contracts/job-imports";
+import { JobTargetConstraintsSchema } from "@job-copilot/contracts/job-targets";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 
 export const DEEP_MATCH_RULE_VERSION = "deep-match-rules-v1";
@@ -156,10 +157,13 @@ export function createDeepMatchQueries(deps: { db: Database }) {
           const dimensions = profileDimensions(revision.factType);
           return dimensions.length ? [{ id: `profile:${revision.revisionId}`, kind: "profile_fact" as const, profileFactRevisionId: revision.revisionId, value: JSON.stringify(revision.factValue).slice(0, 256), dimensions }] : [];
         });
-        const constraints = targetConstraints as { roleFamily?: string; locations?: string[]; workModes?: string[]; relocation?: string };
-        if (constraints.roleFamily?.trim()) profileEvidence.push({ id: `target:${targetRevisionId}:career`, kind: "target_revision", targetRevisionId, value: `已确认的岗位方向：${constraints.roleFamily}`, dimensions: ["career_direction"] });
-        const locationFact = [...(constraints.locations ?? []), ...(constraints.workModes ?? []), constraints.relocation && constraints.relocation !== "unknown" ? constraints.relocation : ""].filter(Boolean).join("、");
-        if (locationFact) profileEvidence.push({ id: `target:${targetRevisionId}:location`, kind: "target_revision", targetRevisionId, value: `已确认的地点/工作方式约束：${locationFact}`, dimensions: ["location_logistics"] });
+        const targetConstraintsResult = JobTargetConstraintsSchema.safeParse(targetConstraints);
+        if (!targetConstraintsResult.success) return null;
+        const constraints = targetConstraintsResult.data;
+        const roleFact = boundedEvidenceText("已确认的岗位方向：", [constraints.roleFamily ?? ""], 256);
+        if (roleFact) profileEvidence.push({ id: `target:${targetRevisionId}:career`, kind: "target_revision", targetRevisionId, value: roleFact, dimensions: ["career_direction"] });
+        const locationFact = boundedEvidenceText("已确认的地点/工作方式约束：", [...constraints.workModes, constraints.relocation !== "unknown" ? constraints.relocation : "", ...constraints.locations], 256);
+        if (locationFact) profileEvidence.push({ id: `target:${targetRevisionId}:location`, kind: "target_revision", targetRevisionId, value: locationFact, dimensions: ["location_logistics"] });
         // Reserve one stable slot for every available semantic dimension before filling
         // the remaining bounded context.  A long skills list must not erase project,
         // experience, qualification or frozen target constraints.

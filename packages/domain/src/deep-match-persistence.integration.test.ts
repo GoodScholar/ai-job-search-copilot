@@ -7,6 +7,7 @@ import {
 } from "@job-copilot/database";
 import { and, eq, sql } from "drizzle-orm";
 import { DeepMatchCandidateSchema, FakeDeepMatchAdapter } from "@job-copilot/contracts/deep-match";
+import { JobTargetConstraintsSchema } from "@job-copilot/contracts/job-targets";
 import { createDeepMatchRunStarter } from "./deep-match-agent-runs";
 import { createAgentRunRecoveryQueries } from "./agent-run-processor";
 import { createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
@@ -142,6 +143,45 @@ describe("deep match persistence", () => {
     }
     expect(candidate!.jobEvidence.find((evidence) => evidence.provenance?.field === "title")?.provenance?.originalValue).toBe(longTitle.slice(0, 512));
     expect(candidate!.jobEvidence.find((evidence) => evidence.provenance?.field === "location")?.provenance?.originalValue).toBe(longLocation.slice(0, 512));
+  });
+
+  it("keeps a contract-valid maximum target snapshot selectable, freezable and historically reproducible", async () => {
+    const input = await fixture();
+    const roleFamily = "岗".repeat(200);
+    const locations = Array.from({ length: 20 }, (_, index) => `${index}`.padEnd(200, "地"));
+    const constraints = JobTargetConstraintsSchema.parse({
+      roleFamily, seniority: null, locations, workModes: ["onsite", "hybrid", "remote"], relocation: "conditional", salary: null, industries: [],
+      dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] },
+    });
+    await db.update(jobTargetRevisions).set({ constraints }).where(and(eq(jobTargetRevisions.userId, input.userId), eq(jobTargetRevisions.targetId, input.targetId), eq(jobTargetRevisions.version, 1)));
+
+    const queries = createDeepMatchQueries({ db });
+    const selection = await queries.selectCandidateSelection({ userId: input.userId, targetId: input.targetId, targetVersion: 1 });
+    const [selected] = selection.candidates;
+
+    expect(selection.exclusions).toEqual([]);
+    expect(DeepMatchCandidateSchema.parse({ opportunityId: selected!.opportunityId, sourcePostingVersionId: selected!.sourcePostingVersionId, jobEvidence: selected!.jobEvidence, profileEvidence: selected!.profileEvidence })).toEqual(expect.objectContaining({ opportunityId: input.opportunityId }));
+    const targetEvidence = selected!.profileEvidence.filter((evidence) => evidence.kind === "target_revision");
+    expect(targetEvidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: expect.stringContaining(":career"), targetRevisionId: expect.any(String), value: `已确认的岗位方向：${roleFamily}`, dimensions: ["career_direction"] }),
+      expect.objectContaining({ id: expect.stringContaining(":location"), targetRevisionId: expect.any(String), value: `已确认的地点/工作方式约束：onsite、hybrid、remote、conditional、${locations[0]}、${locations[1]!.slice(0, 8)}`, dimensions: ["location_logistics"] }),
+    ]));
+    expect(targetEvidence.every((evidence) => evidence.targetRevisionId === targetEvidence[0]!.targetRevisionId && evidence.value.length <= 256)).toBe(true);
+
+    const run = await createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now })
+      .start({ userId: input.userId, targetId: input.targetId, opportunityId: input.opportunityId, idempotencyKey: crypto.randomUUID(), trigger: "manual" });
+    const claimToken = crypto.randomUUID();
+    await db.update(agentRuns).set({ status: "running", currentStep: "assess_matches", attemptCount: 1, startedAt: now, activeSliceStartedAt: now, claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), controlState: "none" }).where(eq(agentRuns.id, run.runId));
+    const frozen = (await queries.getFrozenCandidates({ userId: input.userId, runId: run.runId }))[0]!;
+    const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now, adapter: new FakeDeepMatchAdapter() });
+    const staged = await commands.invokeAndValidate({ userId: input.userId, runId: run.runId, candidate: frozen, modelCall: modelCall() });
+    await commands.stageValidatedAssessment({ userId: input.userId, runId: run.runId, claimToken, candidate: frozen, assessment: staged.assessment, usage: staged.usage });
+    await commands.publishStagedRun({ userId: input.userId, targetId: input.targetId, runId: run.runId, fence: { claimToken }, selectionExclusions: [] });
+    const beforeTargetChange = await queries.getLatestList({ userId: input.userId, targetId: input.targetId });
+    await db.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId: input.userId, targetId: input.targetId, version: 2, priority: "primary", state: "active", constraints: { ...constraints, roleFamily: "后端工程师" }, createdAt: new Date(now.getTime() + 1_000) });
+    await db.update(jobTargets).set({ version: 2 }).where(eq(jobTargets.id, input.targetId));
+    const afterTargetChange = await queries.getLatestList({ userId: input.userId, targetId: input.targetId });
+    expect(afterTargetChange?.items[0]?.profileEvidence).toEqual(beforeTargetChange?.items[0]?.profileEvidence);
   });
 
   it("stably excludes a candidate that cannot satisfy the adapter input contract", async () => {
