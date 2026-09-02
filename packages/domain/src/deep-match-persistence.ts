@@ -126,9 +126,6 @@ export function createDeepMatchQueries(deps: { db: Database }) {
     };
   return {
     selectCandidateSelection,
-    async selectCandidates(input: { userId: string; targetId: string; targetVersion?: number; opportunityId?: string }): Promise<SelectedDeepMatchCandidate[]> {
-      return (await selectCandidateSelection(input)).candidates;
-    },
     async getLatestList(input: { userId: string; targetId: string }) { return readList(input); },
     async getFrozenCandidates(input: { userId: string; runId: string }): Promise<SelectedDeepMatchCandidate[]> {
       const rows = await deps.db.select({ candidateSnapshot: deepMatchRunCandidates.candidateSnapshot }).from(deepMatchRunCandidates)
@@ -180,18 +177,6 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
     if (!bound) throw new Error("DEEP_MATCH_TUPLE_INVALID");
   };
   return {
-    async freezeCandidates(input: { userId: string; runId: string; candidates: readonly SelectedDeepMatchCandidate[] }) {
-      return deps.db.transaction(async (transaction) => {
-        await acquireAccountAdvisoryLock(transaction, input.userId);
-        for (const [index, candidate] of input.candidates.entries()) {
-          await transaction.insert(deepMatchRunCandidates).values({
-            id: deps.id(), userId: input.userId, runId: input.runId, opportunityId: candidate.opportunityId,
-            sourcePostingVersionId: candidate.sourcePostingVersionId, ordinal: index + 1, candidateSnapshot: candidate, createdAt: deps.clock(),
-          }).onConflictDoNothing();
-        }
-        return transaction.select().from(deepMatchRunCandidates).where(and(eq(deepMatchRunCandidates.userId, input.userId), eq(deepMatchRunCandidates.runId, input.runId))).orderBy(deepMatchRunCandidates.ordinal);
-      });
-    },
     async stageAssessment(input: { userId: string; runId: string; opportunityId: string; assessment: unknown; usage: unknown; fence: { claimToken: string } }) {
       return deps.db.transaction(async (transaction) => {
         await acquireAccountAdvisoryLock(transaction, input.userId);

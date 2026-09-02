@@ -579,12 +579,17 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
             // durable usage.  Actual input/output usage is settled below under a run+candidate key.
             const checkpointOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "deep_match_model_preflight", ordinal: index + 1, reserve: { budgetTokens: deepMatchAdapter.reservedUsage.inputTokens + deepMatchAdapter.reservedUsage.outputTokens } });
             if (checkpointOutcome) return checkpointOutcome;
-            const staged = await commands.assessAndStage({ userId: job.userId, runId: job.runId, candidate, fence: { claimToken: claimed.claimToken }, modelCall: {
+            const abortBoundary = new Promise<never>((_, reject) => {
+              const abort = () => reject(new DeepMatchAdapterError("retryable"));
+              if (modelController!.signal.aborted) abort();
+              else modelController!.signal.addEventListener("abort", abort, { once: true });
+            });
+            const staged = await Promise.race([commands.assessAndStage({ userId: job.userId, runId: job.runId, candidate, fence: { claimToken: claimed.claimToken }, modelCall: {
               signal: modelController!.signal,
               usageKey: `deep_match_model:${candidate.opportunityId}`,
               budget: { maxTokens: (claimed.run.budgetSnapshot as { maxTokens: number }).maxTokens, reservedInputTokens: deepMatchAdapter.reservedUsage.inputTokens, reservedOutputTokens: deepMatchAdapter.reservedUsage.outputTokens },
               ...(scope.testFixture ? { fixture: scope.testFixture } : {}),
-            } });
+            } }), abortBoundary]);
             const outputCheckpointOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "deep_match_model_usage", ordinal: index + 1, checkpointKey: `deep_match_model:${candidate.opportunityId}`, reserve: {
               modelCalls: 1, inputTokens: staged.usage.inputTokens, outputTokens: staged.usage.outputTokens,
               settleActual: true,

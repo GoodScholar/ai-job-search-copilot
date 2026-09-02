@@ -114,20 +114,6 @@ describe("deep match persistence", () => {
     await expect(db.select().from(deepMatchRunCandidates).where(and(eq(deepMatchRunCandidates.userId, input.userId), eq(deepMatchRunCandidates.runId, first.runId)))).resolves.toHaveLength(1);
   });
 
-  it("freezes the complete candidate tuple once for a matching run", async () => {
-    const input = await fixture();
-    const starter = createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now });
-    const run = await starter.start({ userId: input.userId, targetId: input.targetId, idempotencyKey: crypto.randomUUID(), trigger: "manual", opportunityId: input.opportunityId });
-    const candidates = await createDeepMatchQueries({ db }).selectCandidates({ userId: input.userId, targetId: input.targetId, opportunityId: input.opportunityId });
-    const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now });
-
-    await (commands as any).freezeCandidates({ userId: input.userId, runId: run.runId, candidates });
-
-    await expect(db.select({ opportunityId: deepMatchRunCandidates.opportunityId, candidateSnapshot: deepMatchRunCandidates.candidateSnapshot })
-      .from(deepMatchRunCandidates).where(eq(deepMatchRunCandidates.runId, run.runId))).resolves.toEqual([
-      expect.objectContaining({ opportunityId: input.opportunityId, candidateSnapshot: expect.objectContaining({ opportunityId: input.opportunityId }) }),
-    ]);
-  });
 
   it("does not publish a partial matching run when a staged candidate is missing its assessment", async () => {
     const input = await fixture();
