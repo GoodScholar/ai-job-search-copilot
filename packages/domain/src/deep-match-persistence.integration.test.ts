@@ -1,7 +1,7 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  agentRuns, createDatabase, deepMatchRunCandidates, jobAccounts, jobMatchVersions, jobOpportunities, jobProfiles, jobSourcePostingVersions, jobSourcePostings, recommendationLists,
+  agentRuns, createDatabase, deepMatchRunCandidates, jobAccounts, jobMatchVersions, jobOpportunities, jobProfiles, jobSourcePostingVersions, jobSourcePostings, recommendationListItems, recommendationLists,
   jobTargetRevisions, jobTargets, jobTriageVersions, migrateDatabase, profileFactRevisions, profileFacts, recommendationExclusions, type Database,
 } from "@job-copilot/database";
 import { and, eq } from "drizzle-orm";
@@ -123,7 +123,7 @@ describe("deep match persistence", () => {
     const claimToken = crypto.randomUUID();
     await db.update(agentRuns).set({ status: "running", currentStep: "assess_matches", attemptCount: 1, startedAt: now, activeSliceStartedAt: now, claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), controlState: "none" })
       .where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, run.runId)));
-    const commands = createDeepMatchCommands({ db, id: crypto.randomUUID, clock: () => now });
+    const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now });
 
     await expect((commands as any).publishStagedRun({ userId: input.userId, targetId: input.targetId, runId: run.runId, fence: { claimToken }, selectionExclusions: [] }))
       .rejects.toThrow("DEEP_MATCH_STAGE_INCOMPLETE");
@@ -188,6 +188,46 @@ describe("deep match persistence", () => {
     await expect(db.select().from(recommendationExclusions).where(eq(recommendationExclusions.recommendationListId, list.recommendationListId))).resolves.toHaveLength(1);
   });
 
+  it("paginates more than twenty immutable histories and more than twenty-five exclusions without loss or cross-owner cursors", async () => {
+    const input = await fixture();
+    const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now });
+    const candidate = (await createDeepMatchQueries({ db }).selectCandidates({ userId: input.userId, targetId: input.targetId }))[0]!;
+    const match = await commands.createMatch({ userId: input.userId, targetId: input.targetId, candidate, modelCall: modelCall() });
+    const owner = { userId: input.userId, profileId: input.profileId, targetId: input.targetId };
+    const exclusions = [] as Array<{ opportunityId: string; reasonCode: "TRIAGE_NOT_PASS" }>;
+    for (let index = 0; index < 26; index += 1) exclusions.push({ opportunityId: (await fixture({ owner, verdict: "fail" })).opportunityId, reasonCode: "TRIAGE_NOT_PASS" });
+    for (let index = 0; index < 21; index += 1) await commands.createDailyList({ userId: input.userId, targetId: input.targetId, matchVersionIds: [match.matchVersionId], selectionExclusions: index === 0 ? exclusions : [] });
+
+    const queries = createDeepMatchQueries({ db });
+    const first = await queries.getListHistoryPage({ userId: input.userId, targetId: input.targetId, limit: 20 });
+    const second = await queries.getListHistoryPage({ userId: input.userId, targetId: input.targetId, cursor: first.nextCursor!, limit: 20 });
+    expect([...first.items, ...second.items].map((list) => list.recommendationListId)).toHaveLength(21);
+    expect(new Set([...first.items, ...second.items].map((list) => list.recommendationListId)).size).toBe(21);
+    const excludedListId = [...first.items, ...second.items].find((list) => list.sequence === 1)!.recommendationListId;
+    const exclusionsFirst = await queries.getListExclusionsPage({ userId: input.userId, targetId: input.targetId, recommendationListId: excludedListId, limit: 25 });
+    const exclusionsSecond = await queries.getListExclusionsPage({ userId: input.userId, targetId: input.targetId, recommendationListId: excludedListId, cursor: exclusionsFirst.nextCursor!, limit: 25 });
+    expect([...exclusionsFirst.items, ...exclusionsSecond.items]).toHaveLength(26);
+    await expect(queries.getListHistoryPage({ userId: crypto.randomUUID(), targetId: input.targetId, cursor: first.nextCursor!, limit: 20 })).rejects.toThrow("RECOMMENDATION_HISTORY_CURSOR_INVALID");
+  }, 60_000);
+
+  it("serializes two independent transactions that both try to add a fourth highlighted item", async () => {
+    const input = await fixture();
+    const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now });
+    const candidate = (await createDeepMatchQueries({ db }).selectCandidates({ userId: input.userId, targetId: input.targetId }))[0]!;
+    const matches = await Promise.all(Array.from({ length: 5 }, () => commands.createMatch({ userId: input.userId, targetId: input.targetId, candidate, modelCall: modelCall() })));
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const list = await commands.createDailyList({ userId: input.userId, targetId: input.targetId, matchVersionIds: matches.slice(0, 2).map((match) => match.matchVersionId) });
+      const insert = (matchVersionId: string, ordinal: number) => db.transaction((transaction) => transaction.insert(recommendationListItems).values({ id: crypto.randomUUID(), userId: input.userId, recommendationListId: list.recommendationListId, matchVersionId, ordinal, highlighted: true, createdAt: now }));
+      const outcome = await Promise.allSettled([insert(matches[2]!.matchVersionId, 3), insert(matches[3]!.matchVersionId, 4)]);
+      expect(outcome.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      expect(outcome.filter((result) => result.status === "rejected")).toHaveLength(1);
+      await expect(db.select().from(recommendationListItems).where(eq(recommendationListItems.recommendationListId, list.recommendationListId))).resolves.toHaveLength(3);
+      const highlighted = await db.select().from(recommendationListItems).where(and(eq(recommendationListItems.recommendationListId, list.recommendationListId), eq(recommendationListItems.highlighted, true)));
+      expect(highlighted).toHaveLength(3);
+    }
+  }, 60_000);
+
   it.each(["pause_requested", "cancel_requested"] as const)("refuses match and list writes after %s between model and persistence", async (controlState) => {
     const input = await fixture();
     const run = await createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now })
@@ -210,6 +250,17 @@ describe("deep match persistence", () => {
       async assess() { return { assessments: [{ opportunityId: crypto.randomUUID(), overallScore: 80, dimensions: DEEP_MATCH_DIMENSIONS.map((dimension) => ({ dimension, score: 80, judgment: "evidence_backed_inference" as const, jobEvidenceIds: [candidate.jobEvidence[0]!.id], profileEvidenceIds: [candidate.profileEvidence[0]!.id], summary: "wrong identity" })) }], usage: { inputTokens: 1, outputTokens: 1, latencyMs: 1 } }; },
     } });
     await expect(commands.createMatch({ userId: input.userId, targetId: input.targetId, candidate, modelCall: modelCall() })).rejects.toThrow("DEEP_MATCH_OPPORTUNITY_IDENTITY_INVALID");
+  });
+
+  it("rejects every source/triage/profile/target tuple mismatch before a direct match can persist", async () => {
+    const input = await fixture();
+    const owner = { userId: input.userId, profileId: input.profileId, targetId: input.targetId };
+    const other = await fixture({ owner });
+    const candidate = (await createDeepMatchQueries({ db }).selectCandidates({ userId: input.userId, targetId: input.targetId, opportunityId: input.opportunityId }))[0]!;
+    const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now });
+
+    await expect(commands.createMatch({ userId: input.userId, targetId: input.targetId, candidate: { ...candidate, sourcePostingVersionId: other.sourcePostingVersionId }, modelCall: modelCall() })).rejects.toThrow("DEEP_MATCH_TUPLE_INVALID");
+    await expect(db.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, input.userId))).resolves.toHaveLength(0);
   });
 
   it("maps malformed adapter result envelopes to a stable model-invalid error before persistence", async () => {

@@ -81,7 +81,7 @@ export type DeepMatchAdapterCall = {
   usageKey: string;
   budget: { maxTokens: number; reservedInputTokens: number; reservedOutputTokens: number };
   /** Test-only fixture data is passed through the adapter seam, never job text. */
-  fixture?: { qualityInsufficientOpportunityIds?: readonly string[] };
+  fixture?: { qualityInsufficientOpportunityIds?: readonly string[]; overallScoresByOpportunityId?: Readonly<Record<string, number>> };
 };
 
 export const DeepMatchAdapterUsageSchema = z.object({
@@ -138,10 +138,11 @@ export class FakeDeepMatchAdapter implements DeepMatchAdapter {
       // visible as a cautious result or quality exclusion; it must never be promoted by a
       // fabricated aggregate score.
       const score = insufficient.has(candidate.opportunityId) ? 30
-        : evidenceBackedDimensions === DEEP_MATCH_DIMENSIONS.length ? 80
-          : evidenceBackedDimensions >= 4 ? 65
-            : evidenceBackedDimensions >= 2 ? 50
-              : 50;
+        : call.fixture?.overallScoresByOpportunityId?.[candidate.opportunityId]
+          ?? (evidenceBackedDimensions === DEEP_MATCH_DIMENSIONS.length ? 80
+            : evidenceBackedDimensions >= 4 ? 65
+              : evidenceBackedDimensions >= 2 ? 50
+                : 50);
       const assessment = DeepMatchAssessmentSchema.parse({
         opportunityId: candidate.opportunityId,
         overallScore: score,

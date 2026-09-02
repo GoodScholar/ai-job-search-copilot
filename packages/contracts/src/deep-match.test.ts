@@ -43,6 +43,16 @@ describe("FakeDeepMatchAdapter", () => {
     expect(result.assessments[0]).toMatchObject({ overallScore: 30 });
   });
 
+  it("allows an explicit CI-only score fixture to exercise stable deep-match ordering", async () => {
+    const adapter = new FakeDeepMatchAdapter();
+    const result = await adapter.assess({ candidates: [{
+      opportunityId: ids.opportunityId, sourcePostingVersionId: ids.sourcePostingVersionId,
+      jobEvidence: [{ id: "job:ordering", value: "普通岗位描述", dimensions: [...DEEP_MATCH_DIMENSIONS] }],
+      profileEvidence: [{ id: "profile:typescript", profileFactRevisionId: ids.profileFactRevisionId, value: "TypeScript", dimensions: [...DEEP_MATCH_DIMENSIONS] }],
+    }] }, { ...modelCall(), fixture: { overallScoresByOpportunityId: { [ids.opportunityId]: 99 } } });
+    expect(result.assessments[0]).toMatchObject({ overallScore: 99 });
+  });
+
   it("does not interpret ordinary job text as a test control signal", async () => {
     const adapter = new FakeDeepMatchAdapter();
     const result = await adapter.assess({ candidates: [{

@@ -13,5 +13,16 @@ export const RecommendationListSchema = z.object({
 }).strict();
 /** Historical versions carry the same frozen details as the latest list. */
 export const RecommendationListHistorySchema = z.array(RecommendationListSchema);
+/** Cursor values are immutable list/exclusion ids and are always scoped by the owning query. */
+export const RecommendationListHistoryPageSchema = z.object({
+  items: z.array(RecommendationListSchema),
+  nextCursor: z.uuid().nullable(),
+}).strict();
+export const RecommendationExclusionPageSchema = z.object({
+  items: z.array(RecommendationExclusionSchema),
+  nextCursor: z.uuid().nullable(),
+}).strict();
 export type RecommendationList = z.infer<typeof RecommendationListSchema>;
 export type RecommendationListHistory = z.infer<typeof RecommendationListHistorySchema>;
+export type RecommendationListHistoryPage = z.infer<typeof RecommendationListHistoryPageSchema>;
+export type RecommendationExclusionPage = z.infer<typeof RecommendationExclusionPageSchema>;

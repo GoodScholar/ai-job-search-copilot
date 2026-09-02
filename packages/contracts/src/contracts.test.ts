@@ -4,7 +4,7 @@ import { StartDevSessionRequestSchema } from "./auth";
 import { ReadinessDependenciesSchema, RuntimeNotReadyProblemSchema, WorkerHeartbeatSchema } from "./runtime";
 import { WorkbenchHomeSchema } from "./workbench";
 import { parseFreshWorkerHeartbeat } from "./runtime";
-import { RecommendationListSchema } from "./recommendations";
+import { RecommendationExclusionPageSchema, RecommendationListHistoryPageSchema, RecommendationListSchema } from "./recommendations";
 
 describe("shared contracts", () => {
   it("retains every exclusion in a historical recommendation", () => {
@@ -13,6 +13,15 @@ describe("shared contracts", () => {
       exclusions: Array.from({ length: 11 }, (_, index) => ({ opportunityId: `10000000-0000-4000-8000-${String(index + 10).padStart(12, "0")}`, reasonCode: "TRIAGE_NOT_PASS" })),
     });
     expect(list.exclusions).toHaveLength(11);
+  });
+
+  it("defines opaque cursors for complete recommendation history and exclusions", () => {
+    const item = RecommendationListSchema.parse({
+      recommendationListId: "10000000-0000-4000-8000-000000000001", targetId: "00000000-0000-4000-8000-000000000001", localDate: "2026-09-01", sequence: 1, createdAt: "2026-09-01T00:00:00.000Z", exclusions: [], items: [],
+    });
+
+    expect(RecommendationListHistoryPageSchema.parse({ items: [item], nextCursor: item.recommendationListId })).toMatchObject({ nextCursor: item.recommendationListId });
+    expect(RecommendationExclusionPageSchema.parse({ items: [{ opportunityId: "30000000-0000-4000-8000-000000000001", reasonCode: "TRIAGE_NOT_PASS" }], nextCursor: null })).toMatchObject({ nextCursor: null });
   });
 
   it("rejects error payloads without a request id", () => {

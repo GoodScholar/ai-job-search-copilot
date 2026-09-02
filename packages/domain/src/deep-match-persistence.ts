@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNull, lte } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull, lte } from "drizzle-orm";
 import {
   deepMatchRunCandidates, agentRuns, jobMatchVersions, jobOpportunities, jobSourcePostingVersions, jobTriageVersions, profileFactRevisions, profileFacts,
   recommendationExclusions, recommendationListItems, recommendationLists, type Database,
@@ -51,7 +51,7 @@ export function createDeepMatchQueries(deps: { db: Database }) {
       .innerJoin(jobOpportunities, and(eq(jobOpportunities.userId, jobMatchVersions.userId), eq(jobOpportunities.id, jobMatchVersions.opportunityId)))
       .where(and(eq(recommendationListItems.userId, input.userId), eq(recommendationListItems.recommendationListId, list.id))).orderBy(recommendationListItems.ordinal);
     const exclusions = await deps.db.select({ opportunityId: recommendationExclusions.opportunityId, reasonCode: recommendationExclusions.reasonCode }).from(recommendationExclusions)
-      .where(and(eq(recommendationExclusions.userId, input.userId), eq(recommendationExclusions.recommendationListId, list.id)));
+      .where(and(eq(recommendationExclusions.userId, input.userId), eq(recommendationExclusions.recommendationListId, list.id))).orderBy(asc(recommendationExclusions.createdAt), asc(recommendationExclusions.id));
     return { recommendationListId: list.id, targetId: list.targetId, localDate: list.localDate, sequence: list.sequence, createdAt: list.createdAt.toISOString(), exclusions,
       items: items.map(({ item, match, opportunity }) => {
         const assessment = DeepMatchAssessmentSchema.parse(match.assessment);
@@ -119,6 +119,28 @@ export function createDeepMatchQueries(deps: { db: Database }) {
         .where(and(eq(deepMatchRunCandidates.userId, input.userId), eq(deepMatchRunCandidates.runId, input.runId))).orderBy(deepMatchRunCandidates.ordinal);
       return rows.map((row) => row.candidateSnapshot as SelectedDeepMatchCandidate);
     },
+    async getListHistoryPage(input: { userId: string; targetId: string; cursor?: string | null; limit: number }) {
+      const lists = await deps.db.select().from(recommendationLists).where(and(eq(recommendationLists.userId, input.userId), eq(recommendationLists.targetId, input.targetId))).orderBy(desc(recommendationLists.createdAt), desc(recommendationLists.sequence), desc(recommendationLists.id));
+      const start = input.cursor ? lists.findIndex((list) => list.id === input.cursor) : -1;
+      if (input.cursor && start < 0) throw new Error("RECOMMENDATION_HISTORY_CURSOR_INVALID");
+      const page = lists.slice(start + 1, start + 1 + input.limit);
+      const items = await Promise.all(page.map(async (list) => {
+        const details = await readList({ userId: input.userId, targetId: input.targetId, recommendationListId: list.id });
+        if (!details) throw new Error("RECOMMENDATION_HISTORY_VERSION_NOT_FOUND");
+        return details;
+      }));
+      return { items, nextCursor: start + 1 + input.limit < lists.length ? page.at(-1)?.id ?? null : null };
+    },
+    async getListExclusionsPage(input: { userId: string; targetId: string; recommendationListId: string; cursor?: string | null; limit: number }) {
+      const [list] = await deps.db.select({ id: recommendationLists.id }).from(recommendationLists).where(and(eq(recommendationLists.userId, input.userId), eq(recommendationLists.targetId, input.targetId), eq(recommendationLists.id, input.recommendationListId))).limit(1);
+      if (!list) throw new Error("RECOMMENDATION_LIST_NOT_FOUND");
+      const exclusions = await deps.db.select({ id: recommendationExclusions.id, opportunityId: recommendationExclusions.opportunityId, reasonCode: recommendationExclusions.reasonCode }).from(recommendationExclusions)
+        .where(and(eq(recommendationExclusions.userId, input.userId), eq(recommendationExclusions.recommendationListId, list.id))).orderBy(asc(recommendationExclusions.createdAt), asc(recommendationExclusions.id));
+      const start = input.cursor ? exclusions.findIndex((exclusion) => exclusion.id === input.cursor) : -1;
+      if (input.cursor && start < 0) throw new Error("RECOMMENDATION_EXCLUSION_CURSOR_INVALID");
+      const page = exclusions.slice(start + 1, start + 1 + input.limit);
+      return { items: page.map(({ opportunityId, reasonCode }) => ({ opportunityId, reasonCode })), nextCursor: start + 1 + input.limit < exclusions.length ? page.at(-1)?.id ?? null : null };
+    },
     async getListHistory(input: { userId: string; targetId: string }) {
       // Recommendation history is an immutable record, not a "recent activity" feed.  Never
       // truncate it silently: callers can render or explicitly paginate the complete result.
@@ -134,6 +156,19 @@ export function createDeepMatchQueries(deps: { db: Database }) {
 
 export function createDeepMatchCommands(deps: { db: Database; id: () => string; clock: () => Date; adapter?: DeepMatchAdapter }) {
   const adapter = deps.adapter ?? new FakeDeepMatchAdapter();
+  const assertCandidateTuple = async (transaction: any, input: { userId: string; targetId: string; candidate: SelectedDeepMatchCandidate }) => {
+    const candidate = input.candidate;
+    if (candidate.targetVersion === undefined || candidate.profileVersion === undefined || !candidate.triageVersionId || !candidate.sourcePostingVersionId) throw new Error("DEEP_MATCH_TUPLE_INVALID");
+    const [bound] = await transaction.select({ id: jobTriageVersions.id }).from(jobTriageVersions)
+      .innerJoin(jobOpportunities, and(eq(jobOpportunities.userId, jobTriageVersions.userId), eq(jobOpportunities.id, jobTriageVersions.opportunityId)))
+      .where(and(
+        eq(jobTriageVersions.userId, input.userId), eq(jobTriageVersions.id, candidate.triageVersionId), eq(jobTriageVersions.opportunityId, candidate.opportunityId),
+        eq(jobTriageVersions.sourcePostingVersionId, candidate.sourcePostingVersionId), eq(jobTriageVersions.profileId, candidate.profileId),
+        eq(jobTriageVersions.profileVersion, candidate.profileVersion), eq(jobTriageVersions.targetId, input.targetId), eq(jobTriageVersions.targetVersion, candidate.targetVersion),
+        eq(jobOpportunities.sourcePostingVersionId, candidate.sourcePostingVersionId),
+      )).limit(1);
+    if (!bound) throw new Error("DEEP_MATCH_TUPLE_INVALID");
+  };
   return {
     async freezeCandidates(input: { userId: string; runId: string; candidates: readonly SelectedDeepMatchCandidate[] }) {
       return deps.db.transaction(async (transaction) => {
@@ -199,13 +234,7 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
         const matches: Array<{ id: string; opportunityId: string; overallScore: number; displayBand: ReturnType<typeof displayBand> }> = [];
         for (const entry of completed) {
           const candidate = entry.candidate;
-          if (candidate.targetVersion === undefined || candidate.profileVersion === undefined || candidate.triageVersionId.length === 0 || candidate.sourcePostingVersionId.length === 0) throw new Error("DEEP_MATCH_TUPLE_INVALID");
-          const [triage] = await transaction.select().from(jobTriageVersions).where(and(
-            eq(jobTriageVersions.userId, input.userId), eq(jobTriageVersions.id, candidate.triageVersionId), eq(jobTriageVersions.opportunityId, candidate.opportunityId),
-            eq(jobTriageVersions.sourcePostingVersionId, candidate.sourcePostingVersionId), eq(jobTriageVersions.profileId, candidate.profileId),
-            eq(jobTriageVersions.profileVersion, candidate.profileVersion), eq(jobTriageVersions.targetId, input.targetId), eq(jobTriageVersions.targetVersion, candidate.targetVersion),
-          )).limit(1);
-          if (!triage) throw new Error("DEEP_MATCH_TUPLE_INVALID");
+          await assertCandidateTuple(transaction, { userId: input.userId, targetId: input.targetId, candidate });
           const [previous] = await transaction.select({ sequence: jobMatchVersions.sequence }).from(jobMatchVersions).where(and(eq(jobMatchVersions.userId, input.userId), eq(jobMatchVersions.opportunityId, candidate.opportunityId))).orderBy(desc(jobMatchVersions.sequence)).limit(1);
           const assessment = { ...entry.assessment, evidenceSnapshot: entry.assessment.evidenceSnapshot ?? { jobEvidence: candidate.jobEvidence.map(({ id, value }) => ({ id, value })), profileEvidence: candidate.profileEvidence.map(({ id, value }) => ({ id, value })) }, opportunitySnapshot: entry.assessment.opportunitySnapshot ?? candidate.opportunitySnapshot };
           const [match] = await transaction.insert(jobMatchVersions).values({
@@ -261,6 +290,7 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
           const [run] = await transaction.select({ id: agentRuns.id }).from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.fence.runId), eq(agentRuns.claimToken, input.fence.claimToken), eq(agentRuns.status, "running"), eq(agentRuns.controlState, "none"), gt(agentRuns.claimExpiresAt, deps.clock()))).limit(1);
           if (!run) throw new DeepMatchClaimLostError();
         }
+        await assertCandidateTuple(transaction, { userId: input.userId, targetId: input.targetId, candidate: input.candidate });
         const [previous] = await transaction.select({ sequence: jobMatchVersions.sequence }).from(jobMatchVersions)
           .where(and(eq(jobMatchVersions.userId, input.userId), eq(jobMatchVersions.opportunityId, input.candidate.opportunityId))).orderBy(desc(jobMatchVersions.sequence)).limit(1);
         const [created] = await transaction.insert(jobMatchVersions).values({
