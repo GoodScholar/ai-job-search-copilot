@@ -170,7 +170,7 @@ test("显式 Fake matching 真实链路交付双方证据、质量排除与单�
   await page.reload();
   await expect(page.getByRole("heading", { name: "推荐清单" })).toBeVisible();
   await expect(page.getByRole("list", { name: "推荐岗位" })).toContainText("正式推荐 TypeScript 工程师");
-  await expect(page.getByText("稳定排除 1 项岗位：MATCH_QUALITY_INSUFFICIENT")).toBeVisible();
+  await expect(page.getByText("稳定排除 1 项岗位：匹配证据不足")).toBeVisible();
   await page.getByText("查看证据与判断").click();
   await expect(page.getByRole("list", { name: "推荐岗位" }).getByText(/^岗位证据：/u)).toContainText("正式推荐 TypeScript 工程师");
   await expect(page.getByRole("list", { name: "推荐岗位" }).getByText(/^画像证据：/u)).toContainText("已确认的岗位方向：frontend");
@@ -232,7 +232,7 @@ test("显式 Fake matching 的质量不足候选可生成零推荐清单", async
   await waitForRun(page, runId);
   await removeQualityFixture();
   await page.reload();
-  await expect(page.getByText("稳定排除 1 项岗位：MATCH_QUALITY_INSUFFICIENT")).toBeVisible();
+  await expect(page.getByText("稳定排除 1 项岗位：匹配证据不足")).toBeVisible();
   await expect(page.getByRole("list", { name: "推荐岗位" }).locator("li")).toHaveCount(0);
   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
