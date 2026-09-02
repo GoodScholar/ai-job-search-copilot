@@ -142,7 +142,7 @@ describe("deep match persistence", () => {
     await expect(db.select().from(recommendationLists).where(eq(recommendationLists.userId, input.userId))).resolves.toHaveLength(0);
   });
 
-  it.each(["another opportunity", "a forged frozen snapshot"] as const)("atomically rejects a staged assessment for %s", async (mutation) => {
+  it.each(["another opportunity", "a forged frozen snapshot", "a swapped profile revision", "a swapped target revision"] as const)("atomically rejects a staged assessment for %s", async (mutation) => {
     const input = await fixture();
     const run = await createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now })
       .start({ userId: input.userId, targetId: input.targetId, idempotencyKey: crypto.randomUUID(), trigger: "manual", opportunityId: input.opportunityId });
@@ -153,7 +153,11 @@ describe("deep match persistence", () => {
     const staged = await commands.invokeAndValidate({ userId: input.userId, runId: run.runId, candidate, modelCall: modelCall() });
     const assessment = mutation === "another opportunity"
       ? { ...staged.assessment, opportunityId: crypto.randomUUID() }
-      : { ...staged.assessment, evidenceSnapshot: { ...staged.assessment.evidenceSnapshot!, jobEvidence: [{ ...staged.assessment.evidenceSnapshot!.jobEvidence[0]!, value: "伪造的岗位证据" }] } };
+      : mutation === "a forged frozen snapshot"
+        ? { ...staged.assessment, evidenceSnapshot: { ...staged.assessment.evidenceSnapshot!, jobEvidence: [{ ...staged.assessment.evidenceSnapshot!.jobEvidence[0]!, value: "伪造的岗位证据" }] } }
+        : mutation === "a swapped profile revision"
+          ? { ...staged.assessment, evidenceSnapshot: { ...staged.assessment.evidenceSnapshot!, profileEvidence: staged.assessment.evidenceSnapshot!.profileEvidence.map((evidence) => evidence.kind === "profile_fact" ? { ...evidence, profileFactRevisionId: crypto.randomUUID() } : evidence) } }
+          : { ...staged.assessment, evidenceSnapshot: { ...staged.assessment.evidenceSnapshot!, profileEvidence: staged.assessment.evidenceSnapshot!.profileEvidence.map((evidence) => evidence.kind === "target_revision" ? { ...evidence, targetRevisionId: crypto.randomUUID() } : evidence) } };
     await db.update(deepMatchRunCandidates).set({ assessment, adapterUsage: staged.usage }).where(and(eq(deepMatchRunCandidates.runId, run.runId), eq(deepMatchRunCandidates.opportunityId, candidate.opportunityId)));
 
     await expect(commands.publishStagedRun({ userId: input.userId, targetId: input.targetId, runId: run.runId, fence: { claimToken }, selectionExclusions: [] })).rejects.toThrow("DEEP_MATCH_STAGED_CANDIDATE_INVALID");
