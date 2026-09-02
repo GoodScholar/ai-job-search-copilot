@@ -198,6 +198,21 @@ describe("AgentRunProcessor checkpoints", () => {
     ])).resolves.toEqual([[], []]);
   });
 
+  it.each([["pause", "paused"], ["cancel", "cancelled"], ["deadline", "budget_exhausted"], ["claim", "stale"]] as const)("hard-bounds a non-cooperative adapter on %s", async (mode, expected) => {
+    const job = await deepMatchRun(); let entered!: () => void; const started = new Promise<void>((resolve) => { entered = resolve; }); let instant = now;
+    const fake = new FakeDeepMatchAdapter();
+    const adapter = { ...fake, async assess() { entered(); return new Promise<never>(() => undefined); } };
+    const processor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: adapter, checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => instant }), id: () => crypto.randomUUID(), clock: () => instant, heartbeatIntervalMs: 1, heartbeatRenew: async () => {
+      await started;
+      if (mode === "pause") { await database.update(agentRuns).set({ controlState: "pause_requested" }).where(eq(agentRuns.id, job.runId)); return "paused"; }
+      if (mode === "cancel") { await database.update(agentRuns).set({ controlState: "cancel_requested" }).where(eq(agentRuns.id, job.runId)); return "cancelled"; }
+      if (mode === "claim") { await database.update(agentRuns).set({ claimToken: crypto.randomUUID() }).where(eq(agentRuns.id, job.runId)); return false; }
+      await database.update(agentRuns).set({ claimExpiresAt: new Date(now.getTime() + 360_000) }).where(eq(agentRuns.id, job.runId)); instant = new Date(now.getTime() + 180_001); return true;
+    } });
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe(expected);
+    await expect(database.select().from(recommendationLists).where(eq(recommendationLists.userId, job.userId))).resolves.toEqual([]);
+  });
+
   it.each([["pause_requested", "paused"], ["cancel_requested", "cancelled"]] as const)("settles one actual model usage before post-call %s transition", async (controlState, expected) => {
     const job = await deepMatchRun(); const fake = new FakeDeepMatchAdapter(); let injected = false;
     const adapter = { ...fake, async assess(input: Parameters<FakeDeepMatchAdapter["assess"]>[0], call: Parameters<FakeDeepMatchAdapter["assess"]>[1]) {
