@@ -6,6 +6,7 @@ import {
 import {
   DEEP_MATCH_OUTPUT_SCHEMA_VERSION, DeepMatchAdapterError, DeepMatchAdapterInputSchema, DeepMatchAdapterResultSchema, DeepMatchAssessmentSchema, FakeDeepMatchAdapter, acceptsDeepMatchAssessment, isDeepMatchTriageEligible, validateDeepMatchEvidenceClosure, type DeepMatchAdapter, type DeepMatchAdapterCall, type DeepMatchCandidate,
 } from "@job-copilot/contracts/deep-match";
+import { JobQualificationsSchema } from "@job-copilot/contracts/job-imports";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 
 export const DEEP_MATCH_RULE_VERSION = "deep-match-rules-v1";
@@ -33,6 +34,32 @@ function displayBand(assessment: { overallScore: number; dimensions: Array<{ jud
   if (assessment.overallScore >= 80 && assessment.dimensions.filter((dimension) => dimension.judgment === "evidence_backed_inference").length === 6) return "highly_matched";
   if (assessment.overallScore >= 60) return "worth_trying";
   return "consider_carefully";
+}
+
+function assertStagedAssessment(candidate: SelectedDeepMatchCandidate, assessment: ReturnType<typeof DeepMatchAssessmentSchema.parse>) {
+  if (assessment.opportunityId !== candidate.opportunityId) throw new Error("DEEP_MATCH_STAGED_CANDIDATE_INVALID");
+  validateDeepMatchEvidenceClosure(assessment, {
+    jobEvidence: candidate.jobEvidence,
+    profileEvidence: candidate.profileEvidence,
+  });
+  const expectedEvidenceSnapshot = {
+    jobEvidence: candidate.jobEvidence.map(({ id, value }) => ({ id, value })),
+    profileEvidence: candidate.profileEvidence.map((evidence) => evidence.kind === "profile_fact"
+      ? { id: evidence.id, value: evidence.value, kind: evidence.kind, profileFactRevisionId: evidence.profileFactRevisionId }
+      : { id: evidence.id, value: evidence.value, kind: evidence.kind, targetRevisionId: evidence.targetRevisionId }),
+  };
+  const sameEvidence = (actual: typeof assessment.evidenceSnapshot, expected: typeof expectedEvidenceSnapshot) => actual !== undefined
+    && actual.jobEvidence.length === expected.jobEvidence.length
+    && actual.profileEvidence.length === expected.profileEvidence.length
+    && actual.jobEvidence.every((item, index) => item.id === expected.jobEvidence[index]?.id && item.value === expected.jobEvidence[index]?.value)
+    && actual.profileEvidence.every((item, index) => item.id === expected.profileEvidence[index]?.id && item.value === expected.profileEvidence[index]?.value);
+  const sameOpportunity = assessment.opportunitySnapshot !== undefined
+    && assessment.opportunitySnapshot.company === candidate.opportunitySnapshot.company
+    && assessment.opportunitySnapshot.title === candidate.opportunitySnapshot.title
+    && assessment.opportunitySnapshot.location === candidate.opportunitySnapshot.location;
+  if (!sameEvidence(assessment.evidenceSnapshot, expectedEvidenceSnapshot) || !sameOpportunity) {
+    throw new Error("DEEP_MATCH_STAGED_CANDIDATE_INVALID");
+  }
 }
 
 function shanghaiDate(date: Date): string {
@@ -63,7 +90,7 @@ export function createDeepMatchQueries(deps: { db: Database }) {
         const citedProfileEvidence = new Set(assessment.dimensions.flatMap((dimension) => dimension.profileEvidenceIds));
         return { matchVersionId: match.id, opportunityId: opportunity.id, company: assessment.opportunitySnapshot?.company ?? opportunity.company, title: assessment.opportunitySnapshot?.title ?? opportunity.title, location: assessment.opportunitySnapshot?.location ?? opportunity.location, displayBand: match.displayBand, highlighted: item.highlighted, ordinal: item.ordinal,
           jobEvidence: (assessment.evidenceSnapshot?.jobEvidence ?? []).filter((evidence) => citedJobEvidence.has(evidence.id)).map(({ id, value }) => ({ id, value })),
-          profileEvidence: (assessment.evidenceSnapshot?.profileEvidence ?? []).filter((evidence) => citedProfileEvidence.has(evidence.id)).map(({ id, value }) => ({ id, value })),
+          profileEvidence: (assessment.evidenceSnapshot?.profileEvidence ?? []).filter((evidence) => citedProfileEvidence.has(evidence.id)),
           assessment: match.assessment,
         };
       }) };
@@ -73,8 +100,8 @@ export function createDeepMatchQueries(deps: { db: Database }) {
         .from(jobTriageVersions).innerJoin(jobOpportunities, and(eq(jobOpportunities.userId, jobTriageVersions.userId), eq(jobOpportunities.id, jobTriageVersions.opportunityId)))
         .innerJoin(jobSourcePostingVersions, and(eq(jobSourcePostingVersions.userId, jobTriageVersions.userId), eq(jobSourcePostingVersions.id, jobTriageVersions.sourcePostingVersionId)))
         .innerJoin(jobTargetRevisions, and(eq(jobTargetRevisions.userId, jobTriageVersions.userId), eq(jobTargetRevisions.targetId, jobTriageVersions.targetId), eq(jobTargetRevisions.version, jobTriageVersions.targetVersion)))
-        .where(and(eq(jobTriageVersions.userId, input.userId), eq(jobTriageVersions.targetId, input.targetId), eq(jobTriageVersions.targetVersion, input.targetVersion)))
-        .orderBy(desc(jobTriageVersions.sequence));
+        .where(and(eq(jobTriageVersions.userId, input.userId), eq(jobTriageVersions.targetId, input.targetId)))
+        .orderBy(desc(jobTriageVersions.sequence), asc(jobTriageVersions.opportunityId), asc(jobTriageVersions.id));
       const latest = new Map<string, typeof triageRows[number]>();
       for (const row of triageRows) if (!latest.has(row.triage.opportunityId)) latest.set(row.triage.opportunityId, row);
       const scoped = [...latest.values()].filter(({ opportunity }) => input.opportunityId === undefined || opportunity.id === input.opportunityId);
@@ -98,16 +125,24 @@ export function createDeepMatchQueries(deps: { db: Database }) {
         }
         const profileEvidence: DeepMatchCandidate["profileEvidence"] = [...snapshot.values()].filter((revision) => revision.state === "active").flatMap((revision) => {
           const dimensions = profileDimensions(revision.factType);
-          return dimensions.length ? [{ id: `profile:${revision.revisionId}`, profileFactRevisionId: revision.revisionId, value: JSON.stringify(revision.factValue).slice(0, 256), dimensions }] : [];
+          return dimensions.length ? [{ id: `profile:${revision.revisionId}`, kind: "profile_fact" as const, profileFactRevisionId: revision.revisionId, value: JSON.stringify(revision.factValue).slice(0, 256), dimensions }] : [];
         });
         const constraints = targetConstraints as { roleFamily?: string; locations?: string[]; workModes?: string[]; relocation?: string };
-        if (constraints.roleFamily?.trim()) profileEvidence.push({ id: `target:${targetRevisionId}:career`, profileFactRevisionId: targetRevisionId, value: `已确认的岗位方向：${constraints.roleFamily}`, dimensions: ["career_direction"] });
+        if (constraints.roleFamily?.trim()) profileEvidence.push({ id: `target:${targetRevisionId}:career`, kind: "target_revision", targetRevisionId, value: `已确认的岗位方向：${constraints.roleFamily}`, dimensions: ["career_direction"] });
         const locationFact = [...(constraints.locations ?? []), ...(constraints.workModes ?? []), constraints.relocation && constraints.relocation !== "unknown" ? constraints.relocation : ""].filter(Boolean).join("、");
-        if (locationFact) profileEvidence.push({ id: `target:${targetRevisionId}:location`, profileFactRevisionId: targetRevisionId, value: `已确认的地点/工作方式约束：${locationFact}`, dimensions: ["location_logistics"] });
-        // Preserve the two frozen target constraints even for profiles with many facts.
-        const targetEvidence = profileEvidence.filter((evidence) => evidence.id.startsWith("target:"));
-        const factualEvidence = profileEvidence.filter((evidence) => !evidence.id.startsWith("target:")).slice(0, 20 - targetEvidence.length);
-        profileEvidence.splice(0, profileEvidence.length, ...factualEvidence, ...targetEvidence);
+        if (locationFact) profileEvidence.push({ id: `target:${targetRevisionId}:location`, kind: "target_revision", targetRevisionId, value: `已确认的地点/工作方式约束：${locationFact}`, dimensions: ["location_logistics"] });
+        // Reserve one stable slot for every available semantic dimension before filling
+        // the remaining bounded context.  A long skills list must not erase project,
+        // experience, qualification or frozen target constraints.
+        const byDimension = [...profileEvidence].sort((left, right) => left.id.localeCompare(right.id));
+        const quota = new Set<string>();
+        const selectedProfileEvidence: DeepMatchCandidate["profileEvidence"] = [];
+        for (const dimension of ["skills", "experience", "project_depth", "career_direction", "location_logistics", "qualification_risk"] as const) {
+          const evidence = byDimension.find((item) => item.dimensions.includes(dimension));
+          if (evidence && !quota.has(evidence.id)) { quota.add(evidence.id); selectedProfileEvidence.push(evidence); }
+        }
+        for (const evidence of byDimension) if (selectedProfileEvidence.length < 20 && !quota.has(evidence.id)) { quota.add(evidence.id); selectedProfileEvidence.push(evidence); }
+        profileEvidence.splice(0, profileEvidence.length, ...selectedProfileEvidence);
         if (!profileEvidence.length) return null;
         // Both records are immutable, source-backed snapshots from the imported posting.
         // Prefer the posting-version payload; old imports can only contribute their
@@ -115,12 +150,18 @@ export function createDeepMatchQueries(deps: { db: Database }) {
         const sourceNormalized = sourceVersion.normalizedData as Record<string, unknown>;
         const opportunityNormalized = opportunity.normalizedData as Record<string, unknown>;
         const normalized = Object.keys(sourceNormalized).length > 0 ? sourceNormalized : opportunityNormalized;
-        const requiredSkills = (normalized.qualifications as { requiredSkills?: unknown } | undefined)?.requiredSkills;
-        const qualifications = Array.isArray(requiredSkills) ? requiredSkills.filter((value): value is string => typeof value === "string" && value.trim().length > 0).join("、") : "";
+        const qualifications = JobQualificationsSchema.safeParse((normalized as { qualifications?: unknown }).qualifications).data;
+        const requiredSkills = qualifications?.requiredSkills?.value ?? [];
+        const requiredSkillsEvidence = qualifications?.requiredSkills ? `岗位明确要求：${requiredSkills.join("、")}` : "";
+        const qualificationFields = [qualifications?.seniority, qualifications?.education, qualifications?.languages, qualifications?.workEligibility]
+          .flatMap((item) => item ? [typeof item.value === "string" ? item.value : item.value.map((language) => `${language.name}${language.level ? `（${language.level}）` : ""}`).join("、")] : []);
+        const qualificationEvidence = qualificationFields.length ? `岗位资格要求：${qualificationFields.join("；")}` : "";
+        const locationRequirements = [opportunity.location, qualifications?.workMode?.value, qualifications?.relocationRequired?.value === true ? "需要异地到岗" : qualifications?.relocationRequired?.value === false ? "不要求异地到岗" : null].filter((value): value is string => Boolean(value)).join("、");
         const rawJobEvidence = [
-          ...(qualifications ? [{ value: `岗位明确要求：${qualifications}`, dimensions: ["skills", "qualification_risk"] }] : []),
+          ...(requiredSkillsEvidence ? [{ value: requiredSkillsEvidence, dimensions: ["skills"] }] : []),
+          ...(qualificationEvidence ? [{ value: qualificationEvidence, dimensions: ["qualification_risk"] }] : []),
           ...(opportunity.title ? [{ value: opportunity.title, dimensions: ["career_direction"] }] : []),
-          ...(opportunity.location ? [{ value: opportunity.location, dimensions: ["location_logistics"] }] : []),
+          ...(locationRequirements ? [{ value: locationRequirements, dimensions: ["location_logistics"] }] : []),
           ...(opportunity.description ? [{ value: opportunity.description.slice(0, 512), dimensions: ["experience"] }] : []),
         ] as Array<{ value: string; dimensions: DeepMatchCandidate["jobEvidence"][number]["dimensions"] }>;
         const jobEvidence: DeepMatchCandidate["jobEvidence"] = rawJobEvidence.filter((evidence) => evidence.value.length > 0).map((evidence, index) => ({ id: `job:${triage.sourcePostingVersionId}:${index + 1}`, ...evidence }));
@@ -137,7 +178,7 @@ export function createDeepMatchQueries(deps: { db: Database }) {
         else if (candidates.length < 10) candidates.push(candidate);
         else exclusions.push({ opportunityId, reasonCode: "CANDIDATE_LIMIT" });
       }
-      return { candidates, exclusions };
+      return { candidates, exclusions: exclusions.sort((left, right) => left.opportunityId.localeCompare(right.opportunityId) || left.reasonCode.localeCompare(right.reasonCode)) };
     };
   return {
     selectCandidateSelection,
@@ -196,6 +237,18 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
         eq(jobTriageVersions.profileVersion, candidate.profileVersion), eq(jobTriageVersions.targetId, input.targetId), eq(jobTriageVersions.targetVersion, candidate.targetVersion),
       )).limit(1);
     if (!bound) throw new Error("DEEP_MATCH_TUPLE_INVALID");
+    for (const evidence of candidate.profileEvidence) {
+      if (evidence.kind === "profile_fact") {
+        const [profileRevision] = await transaction.select({ id: profileFactRevisions.id }).from(profileFactRevisions)
+          .innerJoin(profileFacts, and(eq(profileFacts.userId, profileFactRevisions.userId), eq(profileFacts.id, profileFactRevisions.profileFactId)))
+          .where(and(eq(profileFactRevisions.userId, input.userId), eq(profileFactRevisions.id, evidence.profileFactRevisionId), eq(profileFacts.profileId, candidate.profileId), lte(profileFactRevisions.profileVersion, candidate.profileVersion))).limit(1);
+        if (!profileRevision) throw new Error("DEEP_MATCH_TUPLE_INVALID");
+      } else {
+        const [targetRevision] = await transaction.select({ id: jobTargetRevisions.id }).from(jobTargetRevisions)
+          .where(and(eq(jobTargetRevisions.userId, input.userId), eq(jobTargetRevisions.id, evidence.targetRevisionId), eq(jobTargetRevisions.targetId, input.targetId), eq(jobTargetRevisions.version, candidate.targetVersion))).limit(1);
+        if (!targetRevision) throw new Error("DEEP_MATCH_TUPLE_INVALID");
+      }
+    }
   };
   return {
     async stageValidatedAssessment(input: { userId: string; runId: string; candidate: SelectedDeepMatchCandidate; assessment: ReturnType<typeof DeepMatchAssessmentSchema.parse>; usage: ReturnType<typeof DeepMatchAdapterResultSchema.parse>["usage"] }) {
@@ -205,6 +258,10 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
         // to the immutable candidate snapshot even if pause/cancel/claim handoff lands in
         // the narrow post-call window.  Only `publishStagedRun` can make it visible, and
         // that path remains lifecycle-fenced.
+        const [frozen] = await transaction.select({ candidateSnapshot: deepMatchRunCandidates.candidateSnapshot }).from(deepMatchRunCandidates)
+          .where(and(eq(deepMatchRunCandidates.userId, input.userId), eq(deepMatchRunCandidates.runId, input.runId), eq(deepMatchRunCandidates.opportunityId, input.candidate.opportunityId))).limit(1);
+        if (!frozen || JSON.stringify(frozen.candidateSnapshot) !== JSON.stringify(input.candidate)) throw new Error("DEEP_MATCH_STAGED_CANDIDATE_INVALID");
+        assertStagedAssessment(input.candidate, input.assessment);
         const [row] = await transaction.update(deepMatchRunCandidates).set({ assessment: input.assessment, adapterUsage: input.usage })
           .where(and(eq(deepMatchRunCandidates.userId, input.userId), eq(deepMatchRunCandidates.runId, input.runId), eq(deepMatchRunCandidates.opportunityId, input.candidate.opportunityId), isNull(deepMatchRunCandidates.assessment))).returning();
         if (row) return row;
@@ -229,13 +286,13 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
         result = DeepMatchAdapterResultSchema.parse(await adapter.assess(strictInput, input.modelCall));
         const rawAssessment = result.assessments[0];
         if (!rawAssessment || result.assessments.length !== 1) throw new DeepMatchAdapterError("invalid_output");
-        validated = validateDeepMatchEvidenceClosure(DeepMatchAssessmentSchema.parse(rawAssessment), { jobEvidenceIds: input.candidate.jobEvidence.map((item) => item.id), profileEvidenceIds: input.candidate.profileEvidence.map((item) => item.id) });
+        validated = validateDeepMatchEvidenceClosure(DeepMatchAssessmentSchema.parse(rawAssessment), { jobEvidence: input.candidate.jobEvidence, profileEvidence: input.candidate.profileEvidence });
         if (validated.opportunityId !== input.candidate.opportunityId) throw new DeepMatchAdapterError("invalid_output");
       } catch (error) {
         if (error instanceof DeepMatchAdapterError) throw error;
         throw new DeepMatchAdapterError("invalid_output");
       }
-      const assessment = { ...validated, evidenceSnapshot: { jobEvidence: input.candidate.jobEvidence.map(({ id, value }) => ({ id, value })), profileEvidence: input.candidate.profileEvidence.map(({ id, value }) => ({ id, value })) }, opportunitySnapshot: input.candidate.opportunitySnapshot };
+      const assessment = { ...validated, evidenceSnapshot: { jobEvidence: input.candidate.jobEvidence.map(({ id, value }) => ({ id, value })), profileEvidence: input.candidate.profileEvidence.map((evidence) => evidence.kind === "profile_fact" ? { id: evidence.id, value: evidence.value, kind: evidence.kind, profileFactRevisionId: evidence.profileFactRevisionId } : { id: evidence.id, value: evidence.value, kind: evidence.kind, targetRevisionId: evidence.targetRevisionId }) }, opportunitySnapshot: input.candidate.opportunitySnapshot };
       return { assessment, usage: result.usage, reused: false };
     },
     /** Publishes a fully staged matching run in one fenced transaction.  Staging is private;
@@ -250,14 +307,19 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
         if (!run) throw new DeepMatchClaimLostError();
         const staged = await transaction.select().from(deepMatchRunCandidates).where(and(eq(deepMatchRunCandidates.userId, input.userId), eq(deepMatchRunCandidates.runId, input.runId))).orderBy(deepMatchRunCandidates.ordinal);
         if (staged.some((row) => row.assessment === null || row.adapterUsage === null)) throw new Error("DEEP_MATCH_STAGE_INCOMPLETE");
-        const completed = staged.map((row) => ({ candidate: row.candidateSnapshot as SelectedDeepMatchCandidate, assessment: DeepMatchAssessmentSchema.parse(row.assessment) }))
+        const completed = staged.map((row) => {
+          const candidate = row.candidateSnapshot as SelectedDeepMatchCandidate;
+          const assessment = DeepMatchAssessmentSchema.parse(row.assessment);
+          assertStagedAssessment(candidate, assessment);
+          return { candidate, assessment };
+        })
           .sort((left, right) => right.assessment.overallScore - left.assessment.overallScore || left.candidate.opportunityId.localeCompare(right.candidate.opportunityId));
         const matches: Array<{ id: string; opportunityId: string; overallScore: number; displayBand: ReturnType<typeof displayBand> }> = [];
         for (const entry of completed) {
           const candidate = entry.candidate;
           await assertCandidateTuple(transaction, { userId: input.userId, targetId: input.targetId, candidate });
           const [previous] = await transaction.select({ sequence: jobMatchVersions.sequence }).from(jobMatchVersions).where(and(eq(jobMatchVersions.userId, input.userId), eq(jobMatchVersions.opportunityId, candidate.opportunityId))).orderBy(desc(jobMatchVersions.sequence)).limit(1);
-          const assessment = { ...entry.assessment, evidenceSnapshot: entry.assessment.evidenceSnapshot ?? { jobEvidence: candidate.jobEvidence.map(({ id, value }) => ({ id, value })), profileEvidence: candidate.profileEvidence.map(({ id, value }) => ({ id, value })) }, opportunitySnapshot: entry.assessment.opportunitySnapshot ?? candidate.opportunitySnapshot };
+          const assessment = { ...entry.assessment, evidenceSnapshot: entry.assessment.evidenceSnapshot ?? { jobEvidence: candidate.jobEvidence.map(({ id, value }) => ({ id, value })), profileEvidence: candidate.profileEvidence.map((evidence) => evidence.kind === "profile_fact" ? { id: evidence.id, value: evidence.value, kind: evidence.kind, profileFactRevisionId: evidence.profileFactRevisionId } : { id: evidence.id, value: evidence.value, kind: evidence.kind, targetRevisionId: evidence.targetRevisionId }) }, opportunitySnapshot: entry.assessment.opportunitySnapshot ?? candidate.opportunitySnapshot };
           const [match] = await transaction.insert(jobMatchVersions).values({
             id: deps.id(), userId: input.userId, opportunityId: candidate.opportunityId, sourcePostingVersionId: candidate.sourcePostingVersionId, triageVersionId: candidate.triageVersionId,
             profileId: candidate.profileId, profileVersion: candidate.profileVersion, targetId: input.targetId, targetVersion: candidate.targetVersion,

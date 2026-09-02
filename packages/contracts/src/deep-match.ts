@@ -16,6 +16,15 @@ export const FAKE_DEEP_MATCH_ADAPTER_VERSION = "fake-deep-match-v1";
 const evidenceId = z.string().trim().min(1).max(128);
 const assessmentDimension = z.enum(DEEP_MATCH_DIMENSIONS);
 const judgment = z.enum(["evidence_backed_inference", "insufficient_evidence"]);
+const evidenceDimensions = z.array(assessmentDimension).min(1).max(DEEP_MATCH_DIMENSIONS.length);
+const profileEvidenceBase = z.object({ id: evidenceId, value: z.string().trim().min(1).max(256), dimensions: evidenceDimensions }).strict();
+const ProfileFactEvidenceSchema = profileEvidenceBase.extend({ kind: z.literal("profile_fact"), profileFactRevisionId: z.uuid() }).strict();
+const TargetRevisionEvidenceSchema = profileEvidenceBase.extend({ kind: z.literal("target_revision"), targetRevisionId: z.uuid() }).strict();
+const ProfileEvidenceSchema = z.discriminatedUnion("kind", [ProfileFactEvidenceSchema, TargetRevisionEvidenceSchema]);
+const ProfileEvidenceSnapshotSchema = z.discriminatedUnion("kind", [
+  z.object({ id: evidenceId, value: z.string().trim().min(1).max(256), kind: z.literal("profile_fact"), profileFactRevisionId: z.uuid() }).strict(),
+  z.object({ id: evidenceId, value: z.string().trim().min(1).max(256), kind: z.literal("target_revision"), targetRevisionId: z.uuid() }).strict(),
+]);
 
 export const DeepMatchAssessmentSchema = z.object({
   opportunityId: z.uuid(),
@@ -30,7 +39,7 @@ export const DeepMatchAssessmentSchema = z.object({
   }).strict()).length(DEEP_MATCH_DIMENSIONS.length),
   evidenceSnapshot: z.object({
     jobEvidence: z.array(z.object({ id: evidenceId, value: z.string().trim().min(1).max(512) }).strict()).max(20),
-    profileEvidence: z.array(z.object({ id: evidenceId, value: z.string().trim().min(1).max(256) }).strict()).max(20),
+    profileEvidence: z.array(ProfileEvidenceSnapshotSchema).max(20),
   }).strict().optional(),
   opportunitySnapshot: z.object({
     company: z.string().nullable(),
@@ -89,7 +98,7 @@ export const DeepMatchCandidateSchema = z.object({
   opportunityId: z.uuid(),
   sourcePostingVersionId: z.uuid(),
   jobEvidence: z.array(z.object({ id: evidenceId, value: z.string().trim().min(1).max(512), dimensions: z.array(assessmentDimension).min(1).max(DEEP_MATCH_DIMENSIONS.length) }).strict()).min(1).max(20),
-  profileEvidence: z.array(z.object({ id: evidenceId, profileFactRevisionId: z.uuid(), value: z.string().trim().min(1).max(256), dimensions: z.array(assessmentDimension).min(1).max(DEEP_MATCH_DIMENSIONS.length) }).strict()).min(1).max(20),
+  profileEvidence: z.array(ProfileEvidenceSchema).min(1).max(20),
 }).strict();
 export type DeepMatchCandidate = z.infer<typeof DeepMatchCandidateSchema>;
 
@@ -138,13 +147,13 @@ export interface DeepMatchAdapter {
 /** Reject responses that cite untrusted or out-of-scope inputs before persistence. */
 export function validateDeepMatchEvidenceClosure(
   assessment: DeepMatchAssessment,
-  available: { jobEvidenceIds: readonly string[]; profileEvidenceIds: readonly string[] },
+  available: { jobEvidence: ReadonlyArray<{ id: string; dimensions: readonly DeepMatchAssessment["dimensions"][number]["dimension"][] }>; profileEvidence: ReadonlyArray<{ id: string; dimensions: readonly DeepMatchAssessment["dimensions"][number]["dimension"][] }> },
 ): DeepMatchAssessment {
-  const job = new Set(available.jobEvidenceIds);
-  const profile = new Set(available.profileEvidenceIds);
+  const job = new Map(available.jobEvidence.map((item) => [item.id, new Set(item.dimensions)]));
+  const profile = new Map(available.profileEvidence.map((item) => [item.id, new Set(item.dimensions)]));
   for (const dimension of assessment.dimensions) {
-    if (dimension.jobEvidenceIds.some((id) => !job.has(id)) || dimension.profileEvidenceIds.some((id) => !profile.has(id))) {
-      throw new Error("model citation is outside the evidence closure");
+    if (dimension.jobEvidenceIds.some((id) => !job.get(id)?.has(dimension.dimension)) || dimension.profileEvidenceIds.some((id) => !profile.get(id)?.has(dimension.dimension)) ) {
+      throw new Error("model citation is outside the dimension evidence closure");
     }
   }
   return assessment;
@@ -184,8 +193,8 @@ export class FakeDeepMatchAdapter implements DeepMatchAdapter {
         }),
       });
       return validateDeepMatchEvidenceClosure(assessment, {
-        jobEvidenceIds: candidate.jobEvidence.map((item) => item.id),
-        profileEvidenceIds: candidate.profileEvidence.map((item) => item.id),
+        jobEvidence: candidate.jobEvidence,
+        profileEvidence: candidate.profileEvidence,
       });
     });
     return { assessments, usage: { ...FAKE_DEEP_MATCH_TOKEN_USAGE, latencyMs: 0 } };

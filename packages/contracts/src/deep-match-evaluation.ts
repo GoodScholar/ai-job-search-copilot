@@ -25,13 +25,13 @@ const candidates: readonly DeepMatchCandidate[] = [
     opportunityId: "00000000-0000-4000-8000-000000000010",
     sourcePostingVersionId: "00000000-0000-4000-8000-000000000110",
     jobEvidence: DEEP_MATCH_DIMENSIONS.map((dimension) => ({ id: `job:typescript:${dimension}`, value: `岗位在${dimension}维度有明确要求`, dimensions: [dimension] })),
-    profileEvidence: DEEP_MATCH_DIMENSIONS.map((dimension) => ({ id: `profile:typescript:${dimension}`, profileFactRevisionId: "00000000-0000-4000-8000-000000000210", value: `已确认${dimension}画像证据`, dimensions: [dimension] })),
+    profileEvidence: DEEP_MATCH_DIMENSIONS.map((dimension) => ({ id: `profile:typescript:${dimension}`, kind: "profile_fact" as const, profileFactRevisionId: "00000000-0000-4000-8000-000000000210", value: `已确认${dimension}画像证据`, dimensions: [dimension] })),
   },
   {
     opportunityId: "00000000-0000-4000-8000-000000000011",
     sourcePostingVersionId: "00000000-0000-4000-8000-000000000111",
     jobEvidence: DEEP_MATCH_DIMENSIONS.map((dimension) => ({ id: `job:react:${dimension}`, value: `岗位在${dimension}维度有明确要求`, dimensions: [dimension] })),
-    profileEvidence: DEEP_MATCH_DIMENSIONS.map((dimension) => ({ id: `profile:react:${dimension}`, profileFactRevisionId: "00000000-0000-4000-8000-000000000211", value: `已确认${dimension}画像证据`, dimensions: [dimension] })),
+    profileEvidence: DEEP_MATCH_DIMENSIONS.map((dimension) => ({ id: `profile:react:${dimension}`, kind: "profile_fact" as const, profileFactRevisionId: "00000000-0000-4000-8000-000000000211", value: `已确认${dimension}画像证据`, dimensions: [dimension] })),
   },
 ];
 const eligibleTriage: Omit<DeepMatchTriageEligibility, "sourcePostingVersionId" | "expectedSourcePostingVersionId"> = { targetVersion: 1, expectedTargetVersion: 1, overallVerdict: "pass", deadlineStatus: "valid", availability: "open", overallScore: 80, threshold: 70 };
@@ -68,8 +68,8 @@ export async function runDeepMatchEvaluation(adapter: DeepMatchAdapter, options:
     if (!candidate) throw new Error("DEEP_MATCH_EVALUATION_UNEXPECTED_OPPORTUNITY");
     const parsed = DeepMatchAssessmentSchema.parse(assessment);
     validateDeepMatchEvidenceClosure(parsed, {
-      jobEvidenceIds: candidate.jobEvidence.map((item) => item.id),
-      profileEvidenceIds: candidate.profileEvidence.map((item) => item.id),
+      jobEvidence: candidate.jobEvidence,
+      profileEvidence: candidate.profileEvidence,
     });
     if (parsed.dimensions.length !== DEEP_MATCH_DIMENSIONS.length) throw new Error("DEEP_MATCH_EVALUATION_DIMENSIONS");
     return parsed;

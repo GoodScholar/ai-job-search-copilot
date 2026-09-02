@@ -48,7 +48,7 @@ describe("deep match persistence", () => {
       await db.insert(profileFactRevisions).values({ id: factRevisionId, userId, profileFactId: factId, revisionNumber: 1, factType: "skill", factValue: { name: "TypeScript" }, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1, createdAt: now });
     }
     await db.insert(jobSourcePostings).values({ id: sourcePostingId, userId, sourceType: "user_import", sourceIdentifier: sourceHash, sourceIdentity: { hash: sourceHash }, isOfficial: false, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
-    await db.insert(jobSourcePostingVersions).values({ id: sourcePostingVersionId, userId, sourcePostingId, version: 1, contentSha256: sourceHash, rawContentSha256: sourceHash, rawObjectReference: { key: "safe" }, normalizedData: { qualifications: { requiredSkills: ["TypeScript"] } }, retrievedAt: now, availability: "open", createdAt: now });
+    await db.insert(jobSourcePostingVersions).values({ id: sourcePostingVersionId, userId, sourcePostingId, version: 1, contentSha256: sourceHash, rawContentSha256: sourceHash, rawObjectReference: { key: "safe" }, normalizedData: { qualifications: { workMode: null, relocationRequired: null, salary: null, seniority: null, education: null, languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: { value: ["TypeScript"], evidence: { field: "requiredSkills", path: "技能", value: "TypeScript" } } } }, retrievedAt: now, availability: "open", createdAt: now });
     await db.insert(jobOpportunities).values({ id: opportunityId, userId, importId: null, sourcePostingVersionId, canonicalOpportunityId: null, dedupKey: sourceHash, company: "示例科技", title: "前端工程师", location: "上海", postedAt: null, deadline: new Date("2026-09-20T00:00:00.000Z"), description: "需要 TypeScript", normalizedData: { qualifications: { requiredSkills: { value: ["TypeScript"], evidence: { field: "requiredSkills", path: "技能", value: "TypeScript" } } } }, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
     await db.insert(jobOpportunitySources).values({ id: crypto.randomUUID(), userId, opportunityId, sourcePostingVersionId, createdAt: now });
     const verdict = input.verdict ?? "pass";
@@ -86,6 +86,7 @@ describe("deep match persistence", () => {
       .start({ userId: input.userId, targetId: input.targetId, idempotencyKey: crypto.randomUUID(), trigger: "automatic", discoveryRunId: crypto.randomUUID() });
     await expect(db.select().from(deepMatchRunCandidates).where(eq(deepMatchRunCandidates.runId, started.runId))).resolves.toEqual([]);
     await expect(db.select({ targetVersion: agentRuns.targetVersion }).from(agentRuns).where(eq(agentRuns.id, started.runId))).resolves.toEqual([{ targetVersion: 2 }]);
+    await expect(db.select({ sourceScope: agentRuns.sourceScope }).from(agentRuns).where(eq(agentRuns.id, started.runId))).resolves.toEqual([expect.objectContaining({ sourceScope: expect.objectContaining({ selectionExclusions: [{ opportunityId: input.opportunityId, reasonCode: "TRIAGE_NOT_PASS" }] }) })]);
   });
 
   it("retains every selection exclusion instead of silently truncating the historical decision set", async () => {
@@ -139,6 +140,27 @@ describe("deep match persistence", () => {
       .rejects.toThrow("DEEP_MATCH_STAGE_INCOMPLETE");
     await expect(db.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, input.userId))).resolves.toHaveLength(0);
     await expect(db.select().from(recommendationLists).where(eq(recommendationLists.userId, input.userId))).resolves.toHaveLength(0);
+  });
+
+  it.each(["another opportunity", "a forged frozen snapshot"] as const)("atomically rejects a staged assessment for %s", async (mutation) => {
+    const input = await fixture();
+    const run = await createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now })
+      .start({ userId: input.userId, targetId: input.targetId, idempotencyKey: crypto.randomUUID(), trigger: "manual", opportunityId: input.opportunityId });
+    const claimToken = crypto.randomUUID();
+    await db.update(agentRuns).set({ status: "running", currentStep: "assess_matches", attemptCount: 1, startedAt: now, activeSliceStartedAt: now, claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), controlState: "none" }).where(eq(agentRuns.id, run.runId));
+    const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now });
+    const candidate = (await createDeepMatchQueries({ db }).getFrozenCandidates({ userId: input.userId, runId: run.runId }))[0]!;
+    const staged = await commands.invokeAndValidate({ userId: input.userId, runId: run.runId, candidate, modelCall: modelCall() });
+    const assessment = mutation === "another opportunity"
+      ? { ...staged.assessment, opportunityId: crypto.randomUUID() }
+      : { ...staged.assessment, evidenceSnapshot: { ...staged.assessment.evidenceSnapshot!, jobEvidence: [{ ...staged.assessment.evidenceSnapshot!.jobEvidence[0]!, value: "伪造的岗位证据" }] } };
+    await db.update(deepMatchRunCandidates).set({ assessment, adapterUsage: staged.usage }).where(and(eq(deepMatchRunCandidates.runId, run.runId), eq(deepMatchRunCandidates.opportunityId, candidate.opportunityId)));
+
+    await expect(commands.publishStagedRun({ userId: input.userId, targetId: input.targetId, runId: run.runId, fence: { claimToken }, selectionExclusions: [] })).rejects.toThrow("DEEP_MATCH_STAGED_CANDIDATE_INVALID");
+    await expect(Promise.all([
+      db.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, input.userId)),
+      db.select().from(recommendationLists).where(eq(recommendationLists.userId, input.userId)),
+    ])).resolves.toEqual([[], []]);
   });
 
   it("reuses the first staged candidate result without a second model call before one atomic publish", async () => {
