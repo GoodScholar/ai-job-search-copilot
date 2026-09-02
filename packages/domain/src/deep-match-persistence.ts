@@ -42,7 +42,7 @@ function shanghaiDate(date: Date): string {
 }
 
 export function createDeepMatchQueries(deps: { db: Database }) {
-  const readList = async (input: { userId: string; targetId: string; recommendationListId?: string }) => {
+  const readList = async (input: { userId: string; targetId: string; recommendationListId?: string; includeExclusions?: boolean }) => {
     const [list] = await deps.db.select().from(recommendationLists).where(and(
       eq(recommendationLists.userId, input.userId), eq(recommendationLists.targetId, input.targetId),
       ...(input.recommendationListId ? [eq(recommendationLists.id, input.recommendationListId)] : []),
@@ -52,7 +52,7 @@ export function createDeepMatchQueries(deps: { db: Database }) {
       .innerJoin(jobMatchVersions, and(eq(jobMatchVersions.userId, recommendationListItems.userId), eq(jobMatchVersions.id, recommendationListItems.matchVersionId)))
       .innerJoin(jobOpportunities, and(eq(jobOpportunities.userId, jobMatchVersions.userId), eq(jobOpportunities.id, jobMatchVersions.opportunityId)))
       .where(and(eq(recommendationListItems.userId, input.userId), eq(recommendationListItems.recommendationListId, list.id))).orderBy(recommendationListItems.ordinal);
-    const exclusions = await deps.db.select({ opportunityId: recommendationExclusions.opportunityId, reasonCode: recommendationExclusions.reasonCode }).from(recommendationExclusions)
+    const exclusions = input.includeExclusions === false ? [] : await deps.db.select({ opportunityId: recommendationExclusions.opportunityId, reasonCode: recommendationExclusions.reasonCode }).from(recommendationExclusions)
       .where(and(eq(recommendationExclusions.userId, input.userId), eq(recommendationExclusions.recommendationListId, list.id))).orderBy(asc(recommendationExclusions.createdAt), asc(recommendationExclusions.id));
     return { recommendationListId: list.id, targetId: list.targetId, localDate: list.localDate, sequence: list.sequence, createdAt: list.createdAt.toISOString(), exclusions,
       items: items.map(({ item, match, opportunity }) => {
@@ -143,7 +143,7 @@ export function createDeepMatchQueries(deps: { db: Database }) {
       )).orderBy(desc(recommendationLists.createdAt), desc(recommendationLists.sequence), desc(recommendationLists.id)).limit(input.limit + 1);
       const page = lists.slice(0, input.limit);
       const items = await Promise.all(page.map(async (list) => {
-        const details = await readList({ userId: input.userId, targetId: input.targetId, recommendationListId: list.id });
+        const details = await readList({ userId: input.userId, targetId: input.targetId, recommendationListId: list.id, includeExclusions: false });
         if (!details) throw new Error("RECOMMENDATION_HISTORY_VERSION_NOT_FOUND");
         return details;
       }));

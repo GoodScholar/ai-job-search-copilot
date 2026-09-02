@@ -560,18 +560,6 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         if (!await stepTransition(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, stepKey, complete, attemptCount: claimed.attemptCount, deadline })) return "stale";
         return checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: `step_${stepKey}_${complete ? "complete" : "start"}`, ordinal: 1 });
       };
-      const completeMatching = async (resultCount: number): Promise<ProcessorOutcome> => runTransaction(deps, deadline, async (transaction) => {
-        await acquireAccountAdvisoryLock(transaction, job.userId);
-        const now = deps.clock();
-        const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, claimed.claimToken), eq(agentRuns.controlState, "none"), gt(agentRuns.claimExpiresAt, now)));
-        if (!run) return "stale";
-        const activeDurationMs = run.activeDurationMs + await settleActiveSlice(transaction, { id: deps.id, userId: job.userId, run, now });
-        const version = run.version + 1;
-        await transaction.update(agentRuns).set({ status: "completed", currentStep: "completed", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, activeDurationMs, completedAt: now, failedAt: null, failureCode: null, terminationKind: "completed", terminationBudgetDimension: null, resultCount: Math.min(resultCount, 10), usageComplete: true, version, updatedAt: now }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.claimToken, claimed.claimToken)));
-        await appendEvent(transaction, { id: deps.id, userId: job.userId, runId: job.runId, version, eventType: "run.completed", data: { eventType: "run.completed", status: "completed", currentStep: "completed", attemptCount: run.attemptCount, resultCount: Math.min(resultCount, 10) }, now });
-        await deps.auditTrail.bind(transaction).append({ userId: job.userId, actorUserId: job.userId, eventType: "agent.run_completed", occurredAt: now, requestId: job.runId, outcome: "success", reasonCode: "AGENT_RUN_COMPLETED", resourceType: "agent_run", resourceId: job.runId, metadata: { runId: job.runId, targetId: run.targetId, attemptCount: run.attemptCount, resultCount: Math.min(resultCount, 10) } });
-        return "completed";
-      });
       if (claimed.run.workflowVersion === "deep-match-v1") {
         try {
           const selectStarted = await transition("select_candidates", false); if (selectStarted) return selectStarted;

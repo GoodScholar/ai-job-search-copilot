@@ -88,7 +88,7 @@ import {
   type AgentInboxActionResponse,
 } from "@job-copilot/contracts/agent-inbox";
 import { z } from "zod";
-import { RecommendationExclusionPageSchema, RecommendationListHistoryPageSchema, RecommendationListSchema, type RecommendationExclusionPage, type RecommendationList, type RecommendationListHistory, type RecommendationListHistoryPage } from "@job-copilot/contracts/recommendations";
+import { RecommendationExclusionPageSchema, RecommendationListHistoryPageSchema, RecommendationListSchema, type RecommendationExclusionPage, type RecommendationList, type RecommendationListHistoryPage } from "@job-copilot/contracts/recommendations";
 
 type ApiClientConfig = {
   apiInternalUrl: string;
@@ -197,25 +197,6 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
       const response = await request(`/v1/recommendations/lists/${encodeURIComponent(recommendationListId)}/exclusions?targetId=${encodeURIComponent(targetId)}&limit=25${cursorQuery}`, { method: "GET", headers: { authorization: `Bearer ${sessionToken}` } });
       if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法读取稳定排除", response.status, problem ?? undefined); }
       return parseSuccess(response, RecommendationExclusionPageSchema);
-    },
-    async getRecommendationHistory(sessionToken: string, targetId: string): Promise<RecommendationListHistory> {
-      const history: RecommendationListHistory = [];
-      let cursor: string | null = null;
-      do {
-        const page = await this.getRecommendationHistoryPage(sessionToken, targetId, cursor ?? undefined);
-        for (const list of page.items) {
-          const exclusions = [] as RecommendationExclusionPage["items"];
-          let exclusionCursor: string | null = null;
-          do {
-            const exclusionPage = await this.getRecommendationExclusionsPage(sessionToken, targetId, list.recommendationListId, exclusionCursor ?? undefined);
-            exclusions.push(...exclusionPage.items);
-            exclusionCursor = exclusionPage.nextCursor;
-          } while (exclusionCursor);
-          history.push({ ...list, exclusions });
-        }
-        cursor = page.nextCursor;
-      } while (cursor);
-      return history;
     },
     async startDevSession(input: StartDevSessionRequest): Promise<z.infer<typeof StartDevSessionResponseSchema>> {
       const requestBody = StartDevSessionRequestSchema.parse(input);

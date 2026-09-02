@@ -1,8 +1,9 @@
 import { getJobTargets } from "@/lib/server/job-targets";
-import { getLatestRecommendations, getRecommendationHistory } from "@/lib/server/recommendations";
+import { getLatestRecommendations, getRecommendationHistoryPage } from "@/lib/server/recommendations";
 import { DeepMatchAssessmentSchema } from "@job-copilot/contracts/deep-match";
 import { requestRecommendationReevaluationAction } from "./actions";
 import { ReevaluationForm } from "./reevaluate-button";
+import { RecommendationHistory } from "./recommendation-history";
 
 const bandText = { highly_matched: "高度匹配", worth_trying: "值得尝试", consider_carefully: "谨慎考虑" } as const;
 
@@ -10,7 +11,7 @@ export default async function RecommendationsPage() {
   const targets = await getJobTargets();
   const target = targets.targets.find((item) => item.state === "active");
   const list = target ? await getLatestRecommendations(target.targetId) : null;
-  const history = target ? await getRecommendationHistory(target.targetId) : [];
+  const history = target ? await getRecommendationHistoryPage(target.targetId) : { items: [], nextCursor: null };
   return (
     <main className="container workbench-page" id="main-content">
       <section aria-labelledby="recommendations-title" className="job-import-panel">
@@ -20,7 +21,7 @@ export default async function RecommendationsPage() {
         {!list ? <><h2>暂无可处理的推荐</h2><p>完成岗位发现和资格筛选后，这里会显示高度匹配、值得尝试或谨慎考虑的岗位。</p></> : <>
           <p aria-label="推荐清单版本">清单版本 {list.sequence} · {list.localDate}</p>
           {list.exclusions.length > 0 && <p>稳定排除 {list.exclusions.length} 项岗位：{list.exclusions.map((item) => item.reasonCode).join("、")}</p>}
-          <details><summary>历史版本</summary><ol>{history.map((version) => <li key={version.recommendationListId}><details><summary>清单版本 {version.sequence} · {version.localDate}</summary>{version.items.length === 0 ? <p>该版本没有可推荐岗位。</p> : <ol>{version.items.map((item) => <li key={item.matchVersionId}><strong>{item.title ?? "岗位机会"}</strong><p>岗位证据：{item.jobEvidence.map((evidence) => evidence.value).join("；")}</p><p>画像证据：{item.profileEvidence.map((evidence) => evidence.value).join("；")}</p></li>)}</ol>}{version.exclusions.length > 0 ? <p>稳定排除：{version.exclusions.map((item) => item.reasonCode).join("、")}</p> : null}</details></li>)}</ol></details>
+          <RecommendationHistory targetId={target!.targetId} initialPage={history} />
           <ol aria-label="推荐岗位">
             {list.items.map((item) => {
               const assessment = DeepMatchAssessmentSchema.safeParse(item.assessment).data;

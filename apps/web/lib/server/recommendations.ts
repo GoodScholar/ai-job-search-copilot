@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { RecommendationList, RecommendationListHistory } from "@job-copilot/contracts/recommendations";
+import type { RecommendationList, RecommendationListHistoryPage } from "@job-copilot/contracts/recommendations";
 import { api } from "@/lib/server/api-client";
 import { readSessionToken } from "@/lib/server/session-cookie";
 
@@ -13,8 +13,8 @@ export async function getLatestRecommendations(targetId: string): Promise<Recomm
   }
 }
 
-export async function getRecommendationHistory(targetId: string): Promise<RecommendationListHistory> {
+export async function getRecommendationHistoryPage(targetId: string): Promise<RecommendationListHistoryPage> {
   const session = await readSessionToken();
-  if (!session) return [];
-  return api.getRecommendationHistory(session, targetId);
+  if (!session) return { items: [], nextCursor: null };
+  return api.getRecommendationHistoryPage(session, targetId);
 }
