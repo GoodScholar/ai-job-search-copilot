@@ -809,6 +809,8 @@ summary.workbench-touch-target:focus-visible,
   display: inline-flex;
   font-size: 0.9rem;
   min-height: 2.75rem;
+  padding-inline: 0.5rem;
+  min-height: 2.75rem;
   text-decoration: none;
 }
 

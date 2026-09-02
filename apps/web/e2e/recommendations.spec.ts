@@ -209,11 +209,15 @@ test("显式 Fake matching 真实链路交付双方证据、质量排除与单�
   if (info.project.name === "Desktop Chrome") await loadHistory.click(); else await loadHistory.tap();
   await expect.poll(() => page.locator("summary").filter({ hasText: "清单版本" }).count()).toBeGreaterThan(20);
   const historicalSummary = page.locator("summary").filter({ hasText: "清单版本 1" }).first();
-  await historicalSummary.click();
+  await historicalSummary.focus();
+  await expect(historicalSummary).toBeFocused();
+  await page.keyboard.press("Enter");
   const historicalVersion = historicalSummary.locator("..");
   await expect(historicalVersion.locator("p").filter({ hasText: "岗位证据：" })).toContainText("正式推荐 TypeScript 工程师");
   await expect(historicalVersion.locator("p").filter({ hasText: "画像证据：" })).toContainText("已确认的岗位方向：frontend");
-  const controls = page.locator(".workbench-touch-target");
+  await expect(historicalVersion).toContainText(/高度匹配|值得尝试|谨慎考虑/u);
+  for (const label of ["技能", "经验", "项目深度", "岗位方向", "地点与工作方式", "资格风险"]) await expect(historicalVersion.getByText(label, { exact: true }).first()).toBeVisible();
+  const controls = page.locator("button, summary, a[href]");
   expect(await controls.evaluateAll((items) => items.every((item) => item.getBoundingClientRect().height >= 44))).toBe(true);
   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
