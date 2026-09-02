@@ -163,6 +163,88 @@ describe("AgentRunProcessor checkpoints", () => {
       .resolves.toEqual([{ adapterUsage: { inputTokens: 7, outputTokens: 11, latencyMs: 19 } }, { adapterUsage: { inputTokens: 13, outputTokens: 17, latencyMs: 23 } }]);
   });
 
+  it("claim handoff keeps a late model result as immutable accounting while only the replacement output publishes", async () => {
+    const job = await deepMatchRun();
+    let instant = now;
+    let oldEntered!: () => void;
+    let releaseOld!: () => void;
+    const oldStarted = new Promise<void>((resolve) => { oldEntered = resolve; });
+    const oldReleased = new Promise<void>((resolve) => { releaseOld = resolve; });
+    const oldFake = new FakeDeepMatchAdapter();
+    const oldAdapter = {
+      ...oldFake,
+      async assess(input: Parameters<FakeDeepMatchAdapter["assess"]>[0], call: Parameters<FakeDeepMatchAdapter["assess"]>[1]) {
+        oldEntered();
+        await oldReleased;
+        const result = await oldFake.assess(input, { ...call, fixture: { overallScoresByOpportunityId: { [job.opportunityIds[0]!]: 41 } } });
+        return { ...result, usage: { inputTokens: 5, outputTokens: 7, latencyMs: 11 } };
+      },
+    };
+    const replacementFake = new FakeDeepMatchAdapter();
+    const replacementAdapter = {
+      ...replacementFake,
+      async assess(input: Parameters<FakeDeepMatchAdapter["assess"]>[0], call: Parameters<FakeDeepMatchAdapter["assess"]>[1]) {
+        const opportunityId = input.candidates[0]!.opportunityId;
+        const result = await replacementFake.assess(input, { ...call, fixture: { overallScoresByOpportunityId: { [opportunityId]: opportunityId === job.opportunityIds[0] ? 81 : 82 } } });
+        return { ...result, usage: { inputTokens: 13, outputTokens: 17, latencyMs: 23 } };
+      },
+    };
+    const makeProcessor = (deepMatchAdapter: typeof oldAdapter) => createAgentRunProcessor({
+      db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter,
+      checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => instant }), id: () => crypto.randomUUID(), clock: () => instant,
+    });
+
+    const old = makeProcessor(oldAdapter).process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true });
+    await oldStarted;
+    instant = new Date(now.getTime() + 30_001);
+    await expect(makeProcessor(replacementAdapter).process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("completed");
+
+    const [beforeLateResult] = await database.select({ status: agentRuns.status, attemptCount: agentRuns.attemptCount, modelCallCount: agentRuns.modelCallCount, inputTokenCount: agentRuns.inputTokenCount, outputTokenCount: agentRuns.outputTokenCount, totalTokenCount: agentRuns.totalTokenCount })
+      .from(agentRuns).where(eq(agentRuns.id, job.runId));
+    const eventsBeforeLateResult = await database.select({ eventType: agentRunEvents.eventType }).from(agentRunEvents).where(eq(agentRunEvents.runId, job.runId));
+    const auditsBeforeLateResult = await database.select({ eventType: auditEvents.eventType }).from(auditEvents).where(eq(auditEvents.resourceId, job.runId));
+
+    releaseOld();
+    await expect(old).resolves.toBe("stale");
+
+    const [runAfterLateResult, candidatesAfterLateResult, matchesAfterLateResult, listsAfterLateResult, listItemsAfterLateResult, usageAfterLateResult, eventsAfterLateResult, auditsAfterLateResult] = await Promise.all([
+      database.select({ status: agentRuns.status, attemptCount: agentRuns.attemptCount, modelCallCount: agentRuns.modelCallCount, inputTokenCount: agentRuns.inputTokenCount, outputTokenCount: agentRuns.outputTokenCount, totalTokenCount: agentRuns.totalTokenCount }).from(agentRuns).where(eq(agentRuns.id, job.runId)),
+      database.select({ opportunityId: deepMatchRunCandidates.opportunityId, assessment: deepMatchRunCandidates.assessment, adapterUsage: deepMatchRunCandidates.adapterUsage }).from(deepMatchRunCandidates).where(eq(deepMatchRunCandidates.runId, job.runId)).orderBy(deepMatchRunCandidates.ordinal),
+      database.select({ assessment: jobMatchVersions.assessment }).from(jobMatchVersions).where(eq(jobMatchVersions.userId, job.userId)).orderBy(jobMatchVersions.createdAt),
+      database.select().from(recommendationLists).where(eq(recommendationLists.userId, job.userId)),
+      database.select().from(recommendationListItems).where(eq(recommendationListItems.userId, job.userId)),
+      database.select({ usageKey: agentRunUsageEntries.usageKey, category: agentRunUsageEntries.category, amount: agentRunUsageEntries.amount, attemptCount: agentRunUsageEntries.attemptCount }).from(agentRunUsageEntries).where(eq(agentRunUsageEntries.runId, job.runId)).orderBy(agentRunUsageEntries.usageKey, agentRunUsageEntries.category),
+      database.select({ eventType: agentRunEvents.eventType }).from(agentRunEvents).where(eq(agentRunEvents.runId, job.runId)),
+      database.select({ eventType: auditEvents.eventType }).from(auditEvents).where(eq(auditEvents.resourceId, job.runId)),
+    ]);
+    expect(runAfterLateResult).toEqual([beforeLateResult]);
+    expect(candidatesAfterLateResult).toEqual([
+      { opportunityId: job.opportunityIds[0], assessment: expect.objectContaining({ overallScore: 81 }), adapterUsage: { inputTokens: 13, outputTokens: 17, latencyMs: 23 } },
+      { opportunityId: job.opportunityIds[1], assessment: expect.objectContaining({ overallScore: 82 }), adapterUsage: { inputTokens: 13, outputTokens: 17, latencyMs: 23 } },
+    ]);
+    expect(matchesAfterLateResult.map(({ assessment }) => (assessment as { overallScore: number }).overallScore).sort()).toEqual([81, 82]);
+    expect(listsAfterLateResult).toHaveLength(1);
+    expect(listItemsAfterLateResult).toHaveLength(2);
+    const modelUsageAfterLateResult = usageAfterLateResult.filter(({ category }) => category !== "active_duration");
+    expect(modelUsageAfterLateResult).toHaveLength(9);
+    expect(modelUsageAfterLateResult).toEqual(expect.arrayContaining([
+        { usageKey: `deep_match_model:${job.opportunityIds[0]}:attempt:1`, category: "input_tokens", amount: 5, attemptCount: 1 },
+        { usageKey: `deep_match_model:${job.opportunityIds[0]}:attempt:1`, category: "model_call", amount: 1, attemptCount: 1 },
+        { usageKey: `deep_match_model:${job.opportunityIds[0]}:attempt:1`, category: "output_tokens", amount: 7, attemptCount: 1 },
+        { usageKey: `deep_match_model:${job.opportunityIds[0]}:attempt:2`, category: "input_tokens", amount: 13, attemptCount: 2 },
+        { usageKey: `deep_match_model:${job.opportunityIds[0]}:attempt:2`, category: "model_call", amount: 1, attemptCount: 2 },
+        { usageKey: `deep_match_model:${job.opportunityIds[0]}:attempt:2`, category: "output_tokens", amount: 17, attemptCount: 2 },
+        { usageKey: `deep_match_model:${job.opportunityIds[1]}:attempt:2`, category: "input_tokens", amount: 13, attemptCount: 2 },
+        { usageKey: `deep_match_model:${job.opportunityIds[1]}:attempt:2`, category: "model_call", amount: 1, attemptCount: 2 },
+        { usageKey: `deep_match_model:${job.opportunityIds[1]}:attempt:2`, category: "output_tokens", amount: 17, attemptCount: 2 },
+    ]));
+    expect(eventsAfterLateResult).toEqual(eventsBeforeLateResult);
+    expect(auditsAfterLateResult).toEqual(auditsBeforeLateResult);
+    expect(beforeLateResult).toEqual({ status: "completed", attemptCount: 2, modelCallCount: 2, inputTokenCount: 26, outputTokenCount: 34, totalTokenCount: 60 });
+    expect(eventsBeforeLateResult.filter(({ eventType }) => eventType === "run.completed")).toHaveLength(1);
+    expect(auditsBeforeLateResult.filter(({ eventType }) => eventType === "agent.run_completed")).toHaveLength(1);
+  });
+
   it("publishes fully staged candidates at the token ceiling without another adapter call, while an unstaged run exhausts before calling", async () => {
     const stagedJob = await deepMatchRun();
     const seed = new FakeDeepMatchAdapter();

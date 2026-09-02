@@ -91,14 +91,14 @@ export function createAgentRunCheckpoint(deps: Dependencies): AgentRunCheckpoint
         // already taken over.  Ordinary preflight/checkpoints remain claim-fenced; only
         // `settleActual` may record this immutable, run+candidate-keyed cost first.
         const ownsClaim = Boolean(run && run.claimToken === input.claimToken);
-        if (!run || run.status !== "running" || !run.claimExpiresAt || ((!ownsClaim || (expired && run.controlState === "none")) && !reserve.settleActual)) return { kind: "stale" };
+        if (!run || (!reserve.settleActual && (run.status !== "running" || !run.claimExpiresAt || !ownsClaim || (expired && run.controlState === "none")))) return { kind: "stale" };
         const prior = await transaction.select({ category: agentRunUsageEntries.category, amount: agentRunUsageEntries.amount }).from(agentRunUsageEntries)
           .where(and(eq(agentRunUsageEntries.runId, input.runId), eq(agentRunUsageEntries.usageKey, input.checkpointKey)));
         if (run.controlState === "none" && prior.length > 0 && !sameReserve(prior, reserve)) throw new AgentRunCheckpointError("AGENT_RUN_CHECKPOINT_CONFLICT");
         // A stale invocation may leave an immutable cost fact, but it may not settle the
         // replacement claimant's active slice or mutate its aggregate counters.
         const mayMutateRun = ownsClaim;
-        const elapsed = mayMutateRun && (run.controlState !== "none" || prior.length === 0) ? await settleActiveSlice(transaction, { id: deps.id, userId: input.userId, run, now, until: expired ? run.claimExpiresAt : undefined }) : 0;
+        const elapsed = mayMutateRun && (run.controlState !== "none" || prior.length === 0) ? await settleActiveSlice(transaction, { id: deps.id, userId: input.userId, run, now, until: expired ? run.claimExpiresAt ?? undefined : undefined }) : 0;
         const activeDurationMs = run.activeDurationMs + elapsed;
         const preflightDimension = exhausted({ ...run, activeDurationMs }, reserve, 0);
         // A post-call settlement is an accounting fact, not a reservation.  Never discard
