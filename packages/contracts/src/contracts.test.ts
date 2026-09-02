@@ -4,8 +4,17 @@ import { StartDevSessionRequestSchema } from "./auth";
 import { ReadinessDependenciesSchema, RuntimeNotReadyProblemSchema, WorkerHeartbeatSchema } from "./runtime";
 import { WorkbenchHomeSchema } from "./workbench";
 import { parseFreshWorkerHeartbeat } from "./runtime";
+import { RecommendationListSchema } from "./recommendations";
 
 describe("shared contracts", () => {
+  it("retains every exclusion in a historical recommendation", () => {
+    const list = RecommendationListSchema.parse({
+      recommendationListId: "10000000-0000-4000-8000-000000000001", targetId: "10000000-0000-4000-8000-000000000002", localDate: "2026-09-01", sequence: 1, createdAt: "2026-09-01T00:00:00.000Z", items: [],
+      exclusions: Array.from({ length: 11 }, (_, index) => ({ opportunityId: `10000000-0000-4000-8000-${String(index + 10).padStart(12, "0")}`, reasonCode: "TRIAGE_NOT_PASS" })),
+    });
+    expect(list.exclusions).toHaveLength(11);
+  });
+
   it("rejects error payloads without a request id", () => {
     expect(ApiProblemSchema.safeParse({ code: "AUTH_REQUIRED", message: "请先登录" }).success)
       .toBe(false);
