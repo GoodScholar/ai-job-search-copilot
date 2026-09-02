@@ -6,7 +6,7 @@ import {
   jobTargetRevisions, jobTargets, jobTriageVersions, migrateDatabase, profileFactRevisions, profileFacts, recommendationExclusions, type Database,
 } from "@job-copilot/database";
 import { and, eq, sql } from "drizzle-orm";
-import { FakeDeepMatchAdapter } from "@job-copilot/contracts/deep-match";
+import { DeepMatchCandidateSchema, FakeDeepMatchAdapter } from "@job-copilot/contracts/deep-match";
 import { createDeepMatchRunStarter } from "./deep-match-agent-runs";
 import { createAgentRunRecoveryQueries } from "./agent-run-processor";
 import { createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
@@ -90,12 +90,12 @@ describe("deep match persistence", () => {
     await db.update(jobSourcePostingVersions).set({ normalizedData: { qualifications: {
       workMode: { value: "remote", evidence: { field: "workMode", path: "工作方式", value: "允许远程协作" } },
       relocationRequired: { value: false, evidence: { field: "relocationRequired", path: "搬迁要求", value: "无需搬迁" } },
-      salary: null,
+      salary: { value: { minimum: 30_000, maximum: 50_000, currency: "CNY", period: "month" }, evidence: { field: "salary", path: "薪资范围", value: "月薪 3-5 万" } },
       seniority: { value: "senior", evidence: { field: "seniority", path: "岗位级别", value: "资深" } },
       education: { value: "bachelor", evidence: { field: "education", path: "学历要求", value: "本科及以上" } },
       languages: { value: [{ name: "English", level: "C1" }], evidence: { field: "languages", path: "语言能力", value: "英语可工作沟通" } },
       workEligibility: { value: "authorized", evidence: { field: "workEligibility", path: "工作资格", value: "可在中国合法工作" } },
-      industry: null, employmentType: null, requiredSkills: { value: ["TypeScript"], evidence: { field: "requiredSkills", path: "技能", value: "TS" } },
+      industry: { value: "互联网", evidence: { field: "industry", path: "所属行业", value: "互联网服务" } }, employmentType: { value: "direct", evidence: { field: "employmentType", path: "用工形式", value: "正式直聘" } }, requiredSkills: { value: ["TypeScript"], evidence: { field: "requiredSkills", path: "技能", value: "TS" } },
     } } }).where(eq(jobSourcePostingVersions.id, input.sourcePostingVersionId));
     const [candidate] = (await createDeepMatchQueries({ db }).selectCandidateSelection({ userId: input.userId, targetId: input.targetId, targetVersion: 1 })).candidates;
     expect(candidate!.jobEvidence.map(({ provenance }) => provenance)).toEqual(expect.arrayContaining([
@@ -105,7 +105,54 @@ describe("deep match persistence", () => {
       { sourcePostingVersionId: input.sourcePostingVersionId, field: "workEligibility", path: "工作资格", originalValue: "可在中国合法工作", normalizedValue: "authorized" },
       { sourcePostingVersionId: input.sourcePostingVersionId, field: "workMode", path: "工作方式", originalValue: "允许远程协作", normalizedValue: "remote" },
       { sourcePostingVersionId: input.sourcePostingVersionId, field: "relocationRequired", path: "搬迁要求", originalValue: "无需搬迁", normalizedValue: "false" },
+      { sourcePostingVersionId: input.sourcePostingVersionId, field: "salary", path: "薪资范围", originalValue: "月薪 3-5 万", normalizedValue: "{\"minimum\":30000,\"maximum\":50000,\"currency\":\"CNY\",\"period\":\"month\"}" },
+      { sourcePostingVersionId: input.sourcePostingVersionId, field: "industry", path: "所属行业", originalValue: "互联网服务", normalizedValue: "互联网" },
+      { sourcePostingVersionId: input.sourcePostingVersionId, field: "employmentType", path: "用工形式", originalValue: "正式直聘", normalizedValue: "direct" },
     ]));
+  });
+
+  it("bounds every frozen job evidence field before the candidate reaches the adapter", async () => {
+    const input = await fixture();
+    const longTitle = "职".repeat(20_000);
+    const longLocation = "地".repeat(20_000);
+    const skills = Array.from({ length: 100 }, (_, index) => `技能${index}`.padEnd(128, "甲"));
+    const languages = Array.from({ length: 20 }, (_, index) => ({ name: `语言${index}`.padEnd(128, "乙"), level: "C1" }));
+    await db.update(jobSourcePostingVersions).set({ normalizedData: { qualifications: {
+      workMode: null, relocationRequired: null, salary: null, seniority: null, education: null,
+      languages: { value: languages, evidence: { field: "languages", path: "语言能力", value: "语言要求" } },
+      workEligibility: null, industry: null, employmentType: null,
+      requiredSkills: { value: skills, evidence: { field: "requiredSkills", path: "技能", value: "技能要求" } },
+    } } }).where(eq(jobSourcePostingVersions.id, input.sourcePostingVersionId));
+    await db.update(jobOpportunities).set({ title: longTitle, location: longLocation, description: longTitle }).where(eq(jobOpportunities.id, input.opportunityId));
+
+    const selection = await createDeepMatchQueries({ db }).selectCandidateSelection({ userId: input.userId, targetId: input.targetId, targetVersion: 1 });
+    const [candidate] = selection.candidates;
+
+    expect(candidate).toBeDefined();
+    expect(DeepMatchCandidateSchema.parse({
+      opportunityId: candidate!.opportunityId,
+      sourcePostingVersionId: candidate!.sourcePostingVersionId,
+      jobEvidence: candidate!.jobEvidence,
+      profileEvidence: candidate!.profileEvidence,
+    })).toEqual(expect.objectContaining({ opportunityId: input.opportunityId }));
+    for (const evidence of candidate!.jobEvidence) {
+      expect(evidence.value.length).toBeLessThanOrEqual(512);
+      expect(evidence.provenance?.originalValue.length).toBeLessThanOrEqual(512);
+      expect(evidence.provenance?.normalizedValue.length).toBeLessThanOrEqual(512);
+    }
+    expect(candidate!.jobEvidence.find((evidence) => evidence.provenance?.field === "title")?.provenance?.originalValue).toBe(longTitle.slice(0, 512));
+    expect(candidate!.jobEvidence.find((evidence) => evidence.provenance?.field === "location")?.provenance?.originalValue).toBe(longLocation.slice(0, 512));
+  });
+
+  it("stably excludes a candidate that cannot satisfy the adapter input contract", async () => {
+    const input = await fixture();
+    await db.update(jobTargetRevisions).set({ constraints: {
+      roleFamily: "岗".repeat(20_000), seniority: null, locations: [], workModes: [], relocation: "unknown", salary: null, industries: [],
+      dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] },
+    } }).where(and(eq(jobTargetRevisions.userId, input.userId), eq(jobTargetRevisions.targetId, input.targetId), eq(jobTargetRevisions.version, 1)));
+
+    await expect(createDeepMatchQueries({ db }).selectCandidateSelection({ userId: input.userId, targetId: input.targetId, targetVersion: 1 }))
+      .resolves.toEqual({ candidates: [], exclusions: [{ opportunityId: input.opportunityId, reasonCode: "MATCH_QUALITY_INSUFFICIENT" }] });
   });
 
   it("does not mix an old target-version triage into a newly frozen matching run", async () => {
