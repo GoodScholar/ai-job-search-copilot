@@ -16,14 +16,14 @@ const candidates: readonly DeepMatchCandidate[] = [
   {
     opportunityId: "00000000-0000-4000-8000-000000000010",
     sourcePostingVersionId: "00000000-0000-4000-8000-000000000110",
-    jobEvidence: [{ id: "job:typescript", value: "岗位明确要求 TypeScript", dimensions: ["skills"] }],
-    profileEvidence: [{ id: "profile:typescript", profileFactRevisionId: "00000000-0000-4000-8000-000000000210", value: "已确认 TypeScript 经历", dimensions: ["skills"] }],
+    jobEvidence: DEEP_MATCH_DIMENSIONS.map((dimension) => ({ id: `job:typescript:${dimension}`, value: `岗位在${dimension}维度有明确要求`, dimensions: [dimension] })),
+    profileEvidence: DEEP_MATCH_DIMENSIONS.map((dimension) => ({ id: `profile:typescript:${dimension}`, profileFactRevisionId: "00000000-0000-4000-8000-000000000210", value: `已确认${dimension}画像证据`, dimensions: [dimension] })),
   },
   {
     opportunityId: "00000000-0000-4000-8000-000000000011",
     sourcePostingVersionId: "00000000-0000-4000-8000-000000000111",
-    jobEvidence: [{ id: "job:react", value: "岗位明确要求 React", dimensions: ["skills"] }],
-    profileEvidence: [{ id: "profile:react", profileFactRevisionId: "00000000-0000-4000-8000-000000000211", value: "已确认 React 经历", dimensions: ["skills"] }],
+    jobEvidence: DEEP_MATCH_DIMENSIONS.map((dimension) => ({ id: `job:react:${dimension}`, value: `岗位在${dimension}维度有明确要求`, dimensions: [dimension] })),
+    profileEvidence: DEEP_MATCH_DIMENSIONS.map((dimension) => ({ id: `profile:react:${dimension}`, profileFactRevisionId: "00000000-0000-4000-8000-000000000211", value: `已确认${dimension}画像证据`, dimensions: [dimension] })),
   },
 ];
 

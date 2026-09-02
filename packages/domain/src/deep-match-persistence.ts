@@ -290,7 +290,7 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
         if (input.matchVersionIds.some((id) => !byId.has(id))) throw new Error("RECOMMENDATION_MATCH_NOT_FOUND");
         const acceptedMatchVersionIds = input.matchVersionIds.filter((matchVersionId) => {
           const match = byId.get(matchVersionId)!;
-          return match.overallScore >= 60;
+          return match.overallScore >= 40;
         });
         const excluded = input.matchVersionIds.filter((matchVersionId) => !acceptedMatchVersionIds.includes(matchVersionId));
         const exclusions = [

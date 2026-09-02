@@ -132,7 +132,16 @@ export class FakeDeepMatchAdapter implements DeepMatchAdapter {
     const parsed = DeepMatchAdapterInputSchema.parse(input);
     const insufficient = new Set(call.fixture?.qualityInsufficientOpportunityIds ?? []);
     const assessments = parsed.candidates.map((candidate) => {
-      const score = insufficient.has(candidate.opportunityId) ? 50 : 80;
+      const evidenceBackedDimensions = DEEP_MATCH_DIMENSIONS.filter((dimension) => candidate.jobEvidence.some((item) => item.dimensions.includes(dimension))
+        && candidate.profileEvidence.some((item) => item.dimensions.includes(dimension))).length;
+      // A high band requires comprehensive two-sided evidence.  Sparse evidence remains
+      // visible as a cautious result or quality exclusion; it must never be promoted by a
+      // fabricated aggregate score.
+      const score = insufficient.has(candidate.opportunityId) ? 30
+        : evidenceBackedDimensions === DEEP_MATCH_DIMENSIONS.length ? 80
+          : evidenceBackedDimensions >= 4 ? 65
+            : evidenceBackedDimensions >= 2 ? 50
+              : 50;
       const assessment = DeepMatchAssessmentSchema.parse({
         opportunityId: candidate.opportunityId,
         overallScore: score,

@@ -40,7 +40,7 @@ describe("FakeDeepMatchAdapter", () => {
       jobEvidence: [{ id: "job:quality", value: "普通岗位描述", dimensions: [...DEEP_MATCH_DIMENSIONS] }],
       profileEvidence: [{ id: "profile:typescript", profileFactRevisionId: ids.profileFactRevisionId, value: "TypeScript", dimensions: [...DEEP_MATCH_DIMENSIONS] }],
     }] }, { ...modelCall(), fixture: { qualityInsufficientOpportunityIds: [ids.opportunityId] } });
-    expect(result.assessments[0]).toMatchObject({ overallScore: 50 });
+    expect(result.assessments[0]).toMatchObject({ overallScore: 30 });
   });
 
   it("does not interpret ordinary job text as a test control signal", async () => {
@@ -51,6 +51,18 @@ describe("FakeDeepMatchAdapter", () => {
       profileEvidence: [{ id: "profile:typescript", profileFactRevisionId: ids.profileFactRevisionId, value: "TypeScript", dimensions: [...DEEP_MATCH_DIMENSIONS] }],
     }] }, modelCall());
     expect(result.assessments[0]?.overallScore).toBe(80);
+  });
+
+  it("does not label a candidate highly matched when most dimensions lack evidence on either side", async () => {
+    const adapter = new FakeDeepMatchAdapter();
+    const result = await adapter.assess({ candidates: [{
+      opportunityId: ids.opportunityId, sourcePostingVersionId: ids.sourcePostingVersionId,
+      jobEvidence: [{ id: "job:skills", value: "TypeScript", dimensions: ["skills"] }],
+      profileEvidence: [{ id: "profile:typescript", profileFactRevisionId: ids.profileFactRevisionId, value: "TypeScript", dimensions: ["skills"] }],
+    }] }, modelCall());
+
+    expect(result.assessments[0]).toMatchObject({ overallScore: 50 });
+    expect(result.assessments[0]?.dimensions.filter((dimension) => dimension.judgment === "insufficient_evidence")).toHaveLength(5);
   });
 
   it("rejects model output whose citation is absent from the supplied evidence closure", () => {
