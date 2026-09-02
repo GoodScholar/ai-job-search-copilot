@@ -36,6 +36,8 @@ describe("RecommendationsPage", () => {
     expect(screen.getByText("高度匹配")).toBeInTheDocument();
     expect(screen.getByText("今日优先处理")).toBeInTheDocument();
     expect(screen.getByText(/岗位要求与已确认技能相符/u)).toBeInTheDocument();
+    expect(screen.getAllByText("技能").length).toBeGreaterThan(1);
+    expect(screen.getAllByText("资格风险").length).toBeGreaterThan(1);
     expect(screen.getByText(/岗位证据：岗位要求 TypeScript/u)).toBeInTheDocument();
     expect(screen.getByText(/画像证据：已确认 TypeScript 经历/u)).toBeInTheDocument();
     expect(screen.getByText(/稳定排除 1 项岗位：匹配证据不足/u)).toBeInTheDocument();
