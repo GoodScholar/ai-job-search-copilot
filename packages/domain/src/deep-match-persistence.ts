@@ -67,19 +67,19 @@ export function createDeepMatchQueries(deps: { db: Database }) {
         };
       }) };
   };
-  const selectCandidateSelection = async (input: { userId: string; targetId: string; targetVersion?: number; opportunityId?: string }): Promise<CandidateSelection> => {
+  const selectCandidateSelection = async (input: { userId: string; targetId: string; targetVersion: number; opportunityId?: string }): Promise<CandidateSelection> => {
       const triageRows = await deps.db.select({ triage: jobTriageVersions, opportunity: jobOpportunities, sourceVersion: jobSourcePostingVersions, targetRevisionId: jobTargetRevisions.id, targetConstraints: jobTargetRevisions.constraints })
         .from(jobTriageVersions).innerJoin(jobOpportunities, and(eq(jobOpportunities.userId, jobTriageVersions.userId), eq(jobOpportunities.id, jobTriageVersions.opportunityId)))
         .innerJoin(jobSourcePostingVersions, and(eq(jobSourcePostingVersions.userId, jobTriageVersions.userId), eq(jobSourcePostingVersions.id, jobTriageVersions.sourcePostingVersionId)))
         .innerJoin(jobTargetRevisions, and(eq(jobTargetRevisions.userId, jobTriageVersions.userId), eq(jobTargetRevisions.targetId, jobTriageVersions.targetId), eq(jobTargetRevisions.version, jobTriageVersions.targetVersion)))
-        .where(and(eq(jobTriageVersions.userId, input.userId), eq(jobTriageVersions.targetId, input.targetId), ...(input.targetVersion === undefined ? [] : [eq(jobTriageVersions.targetVersion, input.targetVersion)])))
+        .where(and(eq(jobTriageVersions.userId, input.userId), eq(jobTriageVersions.targetId, input.targetId), eq(jobTriageVersions.targetVersion, input.targetVersion)))
         .orderBy(desc(jobTriageVersions.sequence));
       const latest = new Map<string, typeof triageRows[number]>();
       for (const row of triageRows) if (!latest.has(row.triage.opportunityId)) latest.set(row.triage.opportunityId, row);
       const scoped = [...latest.values()].filter(({ opportunity }) => input.opportunityId === undefined || opportunity.id === input.opportunityId);
       const exclusions: CandidateSelection["exclusions"] = [];
       const eligible = scoped.filter(({ triage, opportunity }) => {
-        const eligibleByPolicy = isDeepMatchTriageEligible({ sourcePostingVersionId: triage.sourcePostingVersionId, expectedSourcePostingVersionId: opportunity.sourcePostingVersionId, targetVersion: triage.targetVersion, expectedTargetVersion: input.targetVersion ?? triage.targetVersion, overallVerdict: triage.overallVerdict, deadlineStatus: triage.deadlineStatus, availability: opportunity.availability, overallScore: triage.overallScore, threshold: triage.threshold });
+        const eligibleByPolicy = isDeepMatchTriageEligible({ sourcePostingVersionId: triage.sourcePostingVersionId, expectedSourcePostingVersionId: opportunity.sourcePostingVersionId, targetVersion: triage.targetVersion, expectedTargetVersion: input.targetVersion, overallVerdict: triage.overallVerdict, deadlineStatus: triage.deadlineStatus, availability: opportunity.availability, overallScore: triage.overallScore, threshold: triage.threshold });
         if (eligibleByPolicy) return true;
         if (triage.sourcePostingVersionId !== opportunity.sourcePostingVersionId || triage.overallVerdict !== "pass" || opportunity.availability !== "open") { exclusions.push({ opportunityId: opportunity.id, reasonCode: "TRIAGE_NOT_PASS" }); return false; }
         if (triage.deadlineStatus === "expired") { exclusions.push({ opportunityId: opportunity.id, reasonCode: "DEADLINE_EXPIRED" }); return false; }

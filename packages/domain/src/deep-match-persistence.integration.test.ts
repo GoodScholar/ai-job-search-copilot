@@ -66,7 +66,7 @@ describe("deep match persistence", () => {
     await fixture({ owner, verdict: "fail" });
     const other = await fixture({ score: 99 });
 
-    const selected = await createDeepMatchQueries({ db }).selectCandidateSelection({ userId: eligible.userId, targetId: eligible.targetId });
+    const selected = await createDeepMatchQueries({ db }).selectCandidateSelection({ userId: eligible.userId, targetId: eligible.targetId, targetVersion: 1 });
 
     expect(selected.candidates).toHaveLength(1);
     expect(selected.candidates[0]).toMatchObject({ opportunityId: eligible.opportunityId, sourcePostingVersionId: eligible.sourcePostingVersionId, overallScore: 90 });
@@ -93,7 +93,7 @@ describe("deep match persistence", () => {
     const owner = { userId: eligible.userId, profileId: eligible.profileId, targetId: eligible.targetId };
     for (let index = 0; index < 11; index += 1) await fixture({ owner, verdict: "fail" });
 
-    const selected = await createDeepMatchQueries({ db }).selectCandidateSelection({ userId: eligible.userId, targetId: eligible.targetId });
+    const selected = await createDeepMatchQueries({ db }).selectCandidateSelection({ userId: eligible.userId, targetId: eligible.targetId, targetVersion: 1 });
 
     expect(selected.exclusions.filter((item) => item.reasonCode === "TRIAGE_NOT_PASS")).toHaveLength(11);
   });
@@ -104,7 +104,7 @@ describe("deep match persistence", () => {
     const second = await fixture({ owner, score: 80 });
     await db.update(jobSourcePostingVersions).set({ normalizedData: {} }).where(eq(jobSourcePostingVersions.id, first.sourcePostingVersionId));
     await db.update(jobOpportunities).set({ title: null, location: null, description: null, normalizedData: {} }).where(eq(jobOpportunities.id, first.opportunityId));
-    const selected = await createDeepMatchQueries({ db }).selectCandidateSelection({ userId: first.userId, targetId: first.targetId });
+    const selected = await createDeepMatchQueries({ db }).selectCandidateSelection({ userId: first.userId, targetId: first.targetId, targetVersion: 1 });
     expect(selected.candidates.map((candidate) => candidate.opportunityId)).toEqual([second.opportunityId]);
     expect(selected.exclusions).toContainEqual({ opportunityId: first.opportunityId, reasonCode: "MATCH_QUALITY_INSUFFICIENT" });
   });
