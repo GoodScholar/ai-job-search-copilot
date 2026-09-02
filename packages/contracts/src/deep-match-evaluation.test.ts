@@ -7,9 +7,9 @@ describe("deep-match-rules-v1 versioned evaluation gate", () => {
     const report = await runDeepMatchEvaluation(new FakeDeepMatchAdapter());
     expect(report).toEqual({
       evaluationVersion: DEEP_MATCH_EVALUATION_VERSION,
-      cases: 2,
+      cases: 10,
       acceptedOpportunityIds: ["00000000-0000-4000-8000-000000000010"],
-      rejectedOpportunityIds: ["00000000-0000-4000-8000-000000000011", "00000000-0000-4000-8000-000000000012"],
+      rejectedOpportunityIds: ["00000000-0000-4000-8000-000000000011", "00000000-0000-4000-8000-000000000020", "00000000-0000-4000-8000-000000000021", "00000000-0000-4000-8000-000000000022", "00000000-0000-4000-8000-000000000023", "00000000-0000-4000-8000-000000000024", "00000000-0000-4000-8000-000000000025", "00000000-0000-4000-8000-000000000026", "00000000-0000-4000-8000-000000000027"],
     });
   });
 
@@ -34,6 +34,20 @@ describe("deep-match-rules-v1 versioned evaluation gate", () => {
     const controller = new AbortController();
     controller.abort();
     await expect(runDeepMatchEvaluation(new FakeDeepMatchAdapter(), { signal: controller.signal })).rejects.toThrow("DEEP_MATCH_EVALUATION_CANCELLED");
+  });
+
+  it("中途取消不等待不合作 adapter", async () => {
+    const controller = new AbortController();
+    const adapter = { ...adapterIdentity(new FakeDeepMatchAdapter()), assess: async () => new Promise<never>(() => undefined) };
+    const evaluation = runDeepMatchEvaluation(adapter, { signal: controller.signal });
+    controller.abort();
+    await expect(evaluation).rejects.toThrow("DEEP_MATCH_EVALUATION_CANCELLED");
+  });
+
+  it.each([[-1, 1], [80, 1]])("调用前拒绝非法 reservation %i/%i", async (inputTokens, outputTokens) => {
+    const base = new FakeDeepMatchAdapter();
+    const adapter = { ...adapterIdentity(base), reservedUsage: { inputTokens, outputTokens }, assess: base.assess.bind(base) };
+    await expect(runDeepMatchEvaluation(adapter)).rejects.toThrow("DEEP_MATCH_EVALUATION_RESERVATION");
   });
 
   it.each([

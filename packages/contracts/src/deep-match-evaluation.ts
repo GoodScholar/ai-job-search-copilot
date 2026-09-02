@@ -35,9 +35,22 @@ const candidates: readonly DeepMatchCandidate[] = [
   },
 ];
 const eligibleTriage: Omit<DeepMatchTriageEligibility, "sourcePostingVersionId" | "expectedSourcePostingVersionId"> = { targetVersion: 1, expectedTargetVersion: 1, overallVerdict: "pass", deadlineStatus: "valid", availability: "open", overallScore: 80, threshold: 70 };
+const ineligibleMutations: readonly Partial<DeepMatchTriageEligibility>[] = [
+  { sourcePostingVersionId: "00000000-0000-4000-8000-000000000999" },
+  { targetVersion: 2 },
+  { overallVerdict: "fail" },
+  { deadlineStatus: "expired" },
+  { availability: "closed" },
+  { overallScore: null },
+  { threshold: null },
+  { overallScore: 69 },
+];
 const evaluationCases: readonly { candidate: DeepMatchCandidate; triage: DeepMatchTriageEligibility }[] = [
   ...candidates.map((candidate) => ({ candidate, triage: { ...eligibleTriage, sourcePostingVersionId: candidate.sourcePostingVersionId, expectedSourcePostingVersionId: candidate.sourcePostingVersionId } })),
-  { candidate: { ...candidates[0]!, opportunityId: "00000000-0000-4000-8000-000000000012", sourcePostingVersionId: "00000000-0000-4000-8000-000000000112" }, triage: { ...eligibleTriage, sourcePostingVersionId: "00000000-0000-4000-8000-000000000112", expectedSourcePostingVersionId: "00000000-0000-4000-8000-000000000112", overallVerdict: "fail" } },
+  ...ineligibleMutations.map((mutation, index) => {
+    const sourcePostingVersionId = `00000000-0000-4000-8000-0000000001${String(20 + index).padStart(2, "0")}`;
+    return { candidate: { ...candidates[0]!, opportunityId: `00000000-0000-4000-8000-0000000000${String(20 + index).padStart(2, "0")}`, sourcePostingVersionId }, triage: { ...eligibleTriage, sourcePostingVersionId, expectedSourcePostingVersionId: sourcePostingVersionId, ...mutation } };
+  }),
 ];
 const qualityRejectedOpportunityId = candidates[1]!.opportunityId;
 
@@ -47,15 +60,25 @@ export async function runDeepMatchEvaluation(adapter: DeepMatchAdapter, options:
   const eligibleCases = evaluationCases.filter((item) => isDeepMatchTriageEligible(item.triage));
   const parsedCandidates = eligibleCases.map(({ candidate }) => DeepMatchCandidateSchema.parse(candidate));
   const strictInput = DeepMatchAdapterInputSchema.parse({ candidates: parsedCandidates });
+  let reservation;
+  try { reservation = DeepMatchAdapterResultSchema.shape.usage.parse({ ...adapter.reservedUsage, latencyMs: 0 }); }
+  catch { throw new Error("DEEP_MATCH_EVALUATION_RESERVATION_INVALID"); }
+  if (reservation.inputTokens + reservation.outputTokens > 80) throw new Error("DEEP_MATCH_EVALUATION_RESERVATION_BUDGET");
   let rawResult: unknown;
   try {
-    rawResult = await adapter.assess(strictInput, {
-      signal: options.signal ?? new AbortController().signal,
+    const signal = options.signal ?? new AbortController().signal;
+    const cancellation = new Promise<never>((_, reject) => {
+      const abort = () => reject(new Error("DEEP_MATCH_EVALUATION_CANCELLED"));
+      if (signal.aborted) abort(); else signal.addEventListener("abort", abort, { once: true });
+    });
+    rawResult = await Promise.race([adapter.assess(strictInput, {
+      signal,
       usageKey: `${DEEP_MATCH_EVALUATION_VERSION}:${DEEP_MATCH_OUTPUT_SCHEMA_VERSION}`,
       budget: { maxTokens: 80 * parsedCandidates.length, reservedInputTokens: adapter.reservedUsage.inputTokens, reservedOutputTokens: adapter.reservedUsage.outputTokens },
       fixture: { qualityInsufficientOpportunityIds: [qualityRejectedOpportunityId] },
-    });
+    }), cancellation]);
   } catch (error) {
+    if (error instanceof Error && error.message === "DEEP_MATCH_EVALUATION_CANCELLED") throw error;
     if (error instanceof DeepMatchAdapterError) throw new Error(`DEEP_MATCH_EVALUATION_ADAPTER_${error.category.toUpperCase()}`);
     throw new Error("DEEP_MATCH_EVALUATION_ADAPTER_FAILURE");
   }
@@ -80,7 +103,7 @@ export async function runDeepMatchEvaluation(adapter: DeepMatchAdapter, options:
   if (accepted.map((item) => item.opportunityId).join(",") !== candidates[0]!.opportunityId || rejected.map((item) => item.opportunityId).join(",") !== qualityRejectedOpportunityId) throw new Error("DEEP_MATCH_EVALUATION_RANKING_OR_REJECTION");
   return {
     evaluationVersion: DEEP_MATCH_EVALUATION_VERSION,
-    cases: candidates.length,
+    cases: evaluationCases.length,
     acceptedOpportunityIds: accepted.map((item) => item.opportunityId),
     rejectedOpportunityIds: [...rejected.map((item) => item.opportunityId), ...evaluationCases.filter((item) => !isDeepMatchTriageEligible(item.triage)).map((item) => item.candidate.opportunityId)],
   };
