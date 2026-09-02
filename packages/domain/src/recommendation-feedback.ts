@@ -105,9 +105,11 @@ export function createRecommendationFeedbackCommands(deps: { db: Database; id: (
     const command = CalibrationProposalResolutionCommandSchema.parse(input.command);
     return deps.db.transaction(async (tx) => {
       await acquireAccountAdvisoryLock(tx, input.userId);
+      const digest = summary({ kind: "resolveCalibrationProposal", proposalId: input.proposalId, command });
+      const [priorResolution] = await tx.select().from(calibrationProposals).where(and(eq(calibrationProposals.userId, input.userId), eq(calibrationProposals.resolutionIdempotencyKey, command.idempotencyKey))).limit(1);
+      if (priorResolution && (priorResolution.id !== input.proposalId || priorResolution.resolutionCommandSummary !== digest)) throw new RecommendationFeedbackError("IDEMPOTENCY_CONFLICT");
       const [proposal] = await tx.select().from(calibrationProposals).where(and(eq(calibrationProposals.userId, input.userId), eq(calibrationProposals.id, input.proposalId))).limit(1);
       if (!proposal) throw new RecommendationFeedbackError("PROPOSAL_NOT_FOUND");
-      const digest = summary({ kind: "resolveCalibrationProposal", proposalId: input.proposalId, command });
       if (proposal.resolutionIdempotencyKey) {
         if (proposal.resolutionIdempotencyKey !== command.idempotencyKey || proposal.resolutionCommandSummary !== digest) throw new RecommendationFeedbackError("IDEMPOTENCY_CONFLICT");
         const [existingRule] = proposal.status === "approved" ? await tx.select({ version: recommendationRuleVersions.version }).from(recommendationRuleVersions).where(and(eq(recommendationRuleVersions.userId, input.userId), eq(recommendationRuleVersions.proposalId, proposal.id))).limit(1) : [];

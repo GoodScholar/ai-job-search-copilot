@@ -81,15 +81,18 @@ describe("recommendation feedback persistence", () => {
   });
 
   it("revision/resolve 均 CAS 幂等，批准恰好创建一个规则版本且拒绝不改变目标", async () => {
-    const data = await fixture(); const service = commands();
-    for (const item of data.items) await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: { decision: "ignored", reason: "SALARY", expectedVersion: 0, idempotencyKey: crypto.randomUUID() } });
-    const [proposal] = await createRecommendationFeedbackQueries({ db }).listCalibrationProposals({ userId: data.userId, targetId: data.targetId });
+    const data = await fixture(6); const service = commands();
+    for (const item of data.items.slice(0, 3)) await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: { decision: "ignored", reason: "SALARY", expectedVersion: 0, idempotencyKey: crypto.randomUUID() } });
+    for (const item of data.items.slice(3)) await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: { decision: "ignored", reason: "LOCATION", expectedVersion: 0, idempotencyKey: crypto.randomUUID() } });
+    const proposals = await createRecommendationFeedbackQueries({ db }).listCalibrationProposals({ userId: data.userId, targetId: data.targetId });
+    const proposal = proposals.find((item) => item.revision.strategy === "raise_quality_bar"); const secondProposal = proposals.find((item) => item.proposalId !== proposal!.proposalId);
     const revisionCommand = { expectedVersion: 1, idempotencyKey: crypto.randomUUID(), strategy: "raise_quality_bar" as const, ruleConfig: { minimumOverallScore: 80, minimumEvidenceDimensions: 2, requiredEvidenceDimensions: [], excludedOpportunityIds: [] }, impactPreview: { sampleSize: 3, estimatedAffectedCount: 2, ruleDiff: { minimumOverallScore: { from: 60, to: 80 } } } };
     const revision = await service.reviseCalibrationProposal({ userId: data.userId, proposalId: proposal!.proposalId, command: revisionCommand });
     await expect(service.reviseCalibrationProposal({ userId: data.userId, proposalId: proposal!.proposalId, command: revisionCommand })).resolves.toMatchObject({ id: revision!.id, revisionNumber: 2 });
     const resolution = { action: "approved" as const, expectedVersion: 2, idempotencyKey: crypto.randomUUID() };
     await expect(service.resolveCalibrationProposal({ userId: data.userId, proposalId: proposal!.proposalId, command: resolution })).resolves.toMatchObject({ status: "approved", ruleVersion: "recommendation-rule-v1" });
     await expect(service.resolveCalibrationProposal({ userId: data.userId, proposalId: proposal!.proposalId, command: resolution })).resolves.toMatchObject({ status: "approved", ruleVersion: "recommendation-rule-v1" });
+    await expect(service.resolveCalibrationProposal({ userId: data.userId, proposalId: secondProposal!.proposalId, command: { action: "rejected", expectedVersion: 1, idempotencyKey: resolution.idempotencyKey } })).rejects.toThrow("IDEMPOTENCY_CONFLICT");
     await expect(db.select().from(recommendationRuleVersions).where(eq(recommendationRuleVersions.proposalId, proposal!.proposalId))).resolves.toHaveLength(1);
     await expect(db.select({ version: jobTargets.version }).from(jobTargets).where(eq(jobTargets.id, data.targetId))).resolves.toEqual([{ version: 1 }]);
     await expect(db.execute(sql`update calibration_proposal_revisions set strategy = 'require_related_evidence' where id = ${revision!.id}`)).rejects.toBeDefined();
