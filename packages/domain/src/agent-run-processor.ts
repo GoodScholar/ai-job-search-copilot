@@ -602,9 +602,8 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
             } });
             // A replacement claimant may account the old invocation as an immutable fact,
             // but may not adopt or stage its result without an explicit current-claim fence.
-            if (outputCheckpointOutcome === "stale") return outputCheckpointOutcome;
-            if (!staged.reused) await commands.stageValidatedAssessment({ userId: job.userId, runId: job.runId, candidate, assessment: staged.assessment, usage: staged.usage });
             if (outputCheckpointOutcome) return outputCheckpointOutcome;
+            if (!staged.reused) await commands.stageValidatedAssessment({ userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, candidate, assessment: staged.assessment, usage: staged.usage });
           }
           const assessCompleted = await transition("assess_matches", true); if (assessCompleted) return assessCompleted;
           const listStarted = await transition("create_recommendations", false); if (listStarted) return listStarted;
@@ -632,7 +631,9 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
             });
             return stopped ?? trustedStop ?? "stale";
           }
-          if (error instanceof DeepMatchClaimLostError) return "stale";
+          if (error instanceof DeepMatchClaimLostError) {
+            return await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "deep_match_stage_fence", ordinal: 1 }) ?? "stale";
+          }
           return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
         }
       }

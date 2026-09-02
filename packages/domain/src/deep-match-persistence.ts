@@ -166,18 +166,22 @@ export function createDeepMatchQueries(deps: { db: Database }) {
         const qualifications = JobQualificationsSchema.safeParse((normalized as { qualifications?: unknown }).qualifications).data;
         const requiredSkills = qualifications?.requiredSkills?.value ?? [];
         const requiredSkillsEvidence = qualifications?.requiredSkills ? `岗位明确要求：${requiredSkills.join("、")}` : "";
-        const qualificationFields = [qualifications?.seniority, qualifications?.education, qualifications?.languages, qualifications?.workEligibility]
-          .flatMap((item) => item ? [typeof item.value === "string" ? item.value : item.value.map((language) => `${language.name}${language.level ? `（${language.level}）` : ""}`).join("、")] : []);
-        const qualificationEvidence = qualificationFields.length ? `岗位资格要求：${qualificationFields.join("；")}` : "";
-        const locationRequirements = [opportunity.location, qualifications?.workMode?.value, qualifications?.relocationRequired?.value === true ? "需要异地到岗" : qualifications?.relocationRequired?.value === false ? "不要求异地到岗" : null].filter((value): value is string => Boolean(value)).join("、");
+        const qualificationValue = (value: NonNullable<typeof qualifications>["seniority"] | NonNullable<typeof qualifications>["education"] | NonNullable<typeof qualifications>["languages"] | NonNullable<typeof qualifications>["workEligibility"]) => value === null ? null : typeof value.value === "string" ? value.value : value.value.map((language) => `${language.name}${language.level ? `（${language.level}）` : ""}`).join("、");
         const sourceEvidence = (field: string, path: string, originalValue: string, normalizedValue: string) => ({ sourcePostingVersionId: triage.sourcePostingVersionId, field, path, originalValue, normalizedValue });
-        const rawJobEvidence = [
-          ...(requiredSkillsEvidence ? [{ value: requiredSkillsEvidence, dimensions: ["skills"] as const, provenance: sourceEvidence(qualifications!.requiredSkills!.evidence.field, qualifications!.requiredSkills!.evidence.path, qualifications!.requiredSkills!.evidence.value, requiredSkills.join("、")) }] : []),
-          ...(qualificationEvidence ? [{ value: qualificationEvidence, dimensions: ["qualification_risk"] as const, provenance: sourceEvidence("qualifications", "qualifications", qualificationFields.join("；"), qualificationFields.join("；")) }] : []),
-          ...(opportunity.title ? [{ value: opportunity.title, dimensions: ["career_direction"] as const, provenance: sourceEvidence("title", "title", opportunity.title, opportunity.title) }] : []),
-          ...(locationRequirements ? [{ value: locationRequirements, dimensions: ["location_logistics"] as const, provenance: sourceEvidence("location", "location", opportunity.location ?? locationRequirements, locationRequirements) }] : []),
-          ...(opportunity.description ? [{ value: opportunity.description.slice(0, 512), dimensions: ["experience"] as const, provenance: sourceEvidence("description", "description", opportunity.description.slice(0, 512), opportunity.description.slice(0, 512)) }] : []),
-        ] as unknown as Array<{ value: string; dimensions: DeepMatchCandidate["jobEvidence"][number]["dimensions"]; provenance: { sourcePostingVersionId: string; field: string; path: string; originalValue: string; normalizedValue: string } }>;
+        const jobEvidenceItem = (value: string, dimensions: DeepMatchCandidate["jobEvidence"][number]["dimensions"], provenance: ReturnType<typeof sourceEvidence>) => ({ value, dimensions, provenance });
+        const rawJobEvidence: Array<Omit<DeepMatchCandidate["jobEvidence"][number], "id">> = [
+          ...(requiredSkillsEvidence ? [jobEvidenceItem(requiredSkillsEvidence, ["skills"], sourceEvidence(qualifications!.requiredSkills!.evidence.field, qualifications!.requiredSkills!.evidence.path, qualifications!.requiredSkills!.evidence.value, requiredSkills.join("、")))] : []),
+          ...([qualifications?.seniority, qualifications?.education, qualifications?.languages, qualifications?.workEligibility].flatMap((item) => {
+            if (!item) return [];
+            const value = qualificationValue(item);
+            return value ? [jobEvidenceItem(`岗位资格要求：${value}`, ["qualification_risk"], sourceEvidence(item.evidence.field, item.evidence.path, item.evidence.value, value))] : [];
+          })),
+          ...(qualifications?.workMode ? [jobEvidenceItem(`工作方式：${qualifications.workMode.value}`, ["location_logistics"], sourceEvidence(qualifications.workMode.evidence.field, qualifications.workMode.evidence.path, qualifications.workMode.evidence.value, qualifications.workMode.value))] : []),
+          ...(qualifications?.relocationRequired ? [jobEvidenceItem(qualifications.relocationRequired.value ? "需要异地到岗" : "不要求异地到岗", ["location_logistics"], sourceEvidence(qualifications.relocationRequired.evidence.field, qualifications.relocationRequired.evidence.path, qualifications.relocationRequired.evidence.value, String(qualifications.relocationRequired.value)))] : []),
+          ...(opportunity.title ? [jobEvidenceItem(opportunity.title, ["career_direction"], sourceEvidence("title", "title", opportunity.title, opportunity.title))] : []),
+          ...(opportunity.location ? [jobEvidenceItem(opportunity.location, ["location_logistics"], sourceEvidence("location", "location", opportunity.location, opportunity.location))] : []),
+          ...(opportunity.description ? [jobEvidenceItem(opportunity.description.slice(0, 512), ["experience"], sourceEvidence("description", "description", opportunity.description.slice(0, 512), opportunity.description.slice(0, 512)))] : []),
+        ];
         const jobEvidence: DeepMatchCandidate["jobEvidence"] = rawJobEvidence.filter((evidence) => evidence.value.length > 0).map((evidence, index) => ({ id: `job:${triage.sourcePostingVersionId}:${index + 1}`, ...evidence }));
         if (!jobEvidence.length) return null;
         return {
@@ -270,13 +274,14 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
     }
   };
   return {
-    async stageValidatedAssessment(input: { userId: string; runId: string; candidate: SelectedDeepMatchCandidate; assessment: ReturnType<typeof DeepMatchAssessmentSchema.parse>; usage: ReturnType<typeof DeepMatchAdapterResultSchema.parse>["usage"] }) {
+    async stageValidatedAssessment(input: { userId: string; runId: string; claimToken: string; candidate: SelectedDeepMatchCandidate; assessment: ReturnType<typeof DeepMatchAssessmentSchema.parse>; usage: ReturnType<typeof DeepMatchAdapterResultSchema.parse>["usage"] }) {
       return deps.db.transaction(async (transaction) => {
         await acquireAccountAdvisoryLock(transaction, input.userId);
-        // This CAS is deliberately private: a returned, strictly validated result belongs
-        // to the immutable candidate snapshot even if pause/cancel/claim handoff lands in
-        // the narrow post-call window.  Only `publishStagedRun` can make it visible, and
-        // that path remains lifecycle-fenced.
+        const [run] = await transaction.select({ id: agentRuns.id }).from(agentRuns).where(and(
+          eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"),
+          eq(agentRuns.claimToken, input.claimToken), eq(agentRuns.controlState, "none"), gt(agentRuns.claimExpiresAt, deps.clock()),
+        )).limit(1);
+        if (!run) throw new DeepMatchClaimLostError();
         const [frozen] = await transaction.select({ candidateSnapshot: deepMatchRunCandidates.candidateSnapshot }).from(deepMatchRunCandidates)
           .where(and(eq(deepMatchRunCandidates.userId, input.userId), eq(deepMatchRunCandidates.runId, input.runId), eq(deepMatchRunCandidates.opportunityId, input.candidate.opportunityId))).limit(1);
         if (!frozen || JSON.stringify(frozen.candidateSnapshot) !== JSON.stringify(input.candidate)) throw new Error("DEEP_MATCH_STAGED_CANDIDATE_INVALID");

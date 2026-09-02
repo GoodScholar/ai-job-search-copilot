@@ -29,7 +29,7 @@ describe("RecommendationsPage", () => {
     });
     mocks.getRecommendationHistoryPage.mockResolvedValue({ items: [{
       recommendationListId: "10000000-0000-4000-8000-000000000000", targetId: "00000000-0000-4000-8000-000000000001", localDate: "2026-08-31", sequence: 1, createdAt: "2026-08-31T00:00:00.000Z", exclusions: [],
-      items: [{ matchVersionId: "20000000-0000-4000-8000-000000000000", opportunityId: "30000000-0000-4000-8000-000000000000", company: "历史公司", title: "历史岗位", location: "上海", displayBand: "worth_trying", highlighted: true, ordinal: 1, jobEvidence: [{ id: "job:old", value: "历史岗位证据" }], profileEvidence: [{ id: "profile:old", value: "历史画像证据" }], assessment: { opportunityId: "30000000-0000-4000-8000-000000000000", overallScore: 70, dimensions: ["skills", "experience", "project_depth", "career_direction", "location_logistics", "qualification_risk"].map((dimension) => ({ dimension, score: 70, judgment: "evidence_backed_inference", jobEvidenceIds: ["job:old"], profileEvidenceIds: ["profile:old"], summary: "历史证据支持的推断。" })) } }],
+      items: [{ matchVersionId: "20000000-0000-4000-8000-000000000000", opportunityId: "30000000-0000-4000-8000-000000000000", company: "历史公司", title: "历史岗位", location: "上海", displayBand: "worth_trying", highlighted: true, ordinal: 1, jobEvidence: [{ id: "job:old", value: "历史岗位证据", provenance: { sourcePostingVersionId: "40000000-0000-4000-8000-000000000000", field: "seniority", path: "岗位级别", originalValue: "资深工程师", normalizedValue: "senior" } }], profileEvidence: [{ id: "profile:old", value: "历史画像证据" }], assessment: { opportunityId: "30000000-0000-4000-8000-000000000000", overallScore: 70, dimensions: ["skills", "experience", "project_depth", "career_direction", "location_logistics", "qualification_risk"].map((dimension) => ({ dimension, score: 70, judgment: "evidence_backed_inference", jobEvidenceIds: ["job:old"], profileEvidenceIds: ["profile:old"], summary: "历史证据支持的推断。" })) } }],
     }], nextCursor: null });
 
     render(await RecommendationsPage());
@@ -45,7 +45,7 @@ describe("RecommendationsPage", () => {
     expect(screen.getByLabelText("推荐清单版本")).toHaveTextContent("清单版本 2");
     expect(screen.getByText("历史版本")).toBeInTheDocument();
     expect(screen.getByText("历史岗位")).toBeInTheDocument();
-    expect(screen.getByText(/历史岗位证据/u)).toBeInTheDocument();
+    expect(screen.getByText(/岗位证据：岗位级别：资深工程师/u)).toBeInTheDocument();
     expect(screen.queryByText("总体分数")).not.toBeInTheDocument();
   });
 });

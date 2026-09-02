@@ -115,7 +115,7 @@ body {
 }
 
 :focus-visible {
-  outline: 2px solid var(--emerald);
+  outline: 2px solid var(--ring);
   outline-offset: 2px;
   box-shadow: 0 0 0 4px var(--ground);
 }
@@ -791,7 +791,7 @@ summary.workbench-touch-target {
 
 summary.workbench-touch-target:focus-visible,
 .workbench-touch-target:focus-visible {
-  outline: 3px solid var(--accent);
+  outline: 3px solid var(--ring);
   outline-offset: 2px;
 }
 

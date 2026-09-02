@@ -1,6 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { Client } from "pg";
-import { expect, test, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Locator, type Page, type TestInfo } from "@playwright/test";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const databaseUrl = process.env.E2E_DATABASE_URL ?? "postgresql://job_copilot:local_only_job_copilot@127.0.0.1:55420/job_copilot";
@@ -124,6 +124,24 @@ async function listSnapshot(userId: string, targetId: string) {
   } finally { await client.end(); }
 }
 
+async function tabTo(page: Page, locator: Locator) {
+  for (let index = 0; index < 120; index += 1) {
+    await page.keyboard.press("Tab");
+    if (await locator.evaluate((element) => document.activeElement === element)) return;
+  }
+  throw new Error("KEYBOARD_TARGET_NOT_REACHABLE");
+}
+
+async function expectVisibleKeyboardFocus(locator: Locator) {
+  await expect(locator).toBeFocused();
+  await expect(locator.evaluate((element) => {
+    const style = getComputedStyle(element);
+    const visibleOutline = style.outlineStyle !== "none" && Number.parseFloat(style.outlineWidth) > 0 && style.outlineColor !== "transparent";
+    const visibleShadow = style.boxShadow !== "none" && style.boxShadow !== "transparent";
+    return visibleOutline || visibleShadow;
+  })).resolves.toBe(true);
+}
+
 async function seedPaginatedRecommendationFixtures(userId: string, targetId: string, latestListId: string) {
   const client = new Client({ connectionString: databaseUrl });
   await client.connect();
@@ -219,6 +237,18 @@ test("显式 Fake matching 真实链路交付双方证据、质量排除与单�
   for (const label of ["技能", "经验", "项目深度", "岗位方向", "地点与工作方式", "资格风险"]) await expect(historicalVersion.getByText(label, { exact: true }).first()).toBeVisible();
   const controls = page.locator("main button, main summary, main a[href]");
   expect(await controls.evaluateAll((items) => items.every((item) => item.getBoundingClientRect().height >= 44))).toBe(true);
+  const keyboardLink = page.locator("a[href='/home']").first();
+  await keyboardLink.focus();
+  await expectVisibleKeyboardFocus(keyboardLink);
+  const keyboardSummary = page.getByText("查看证据与判断", { exact: true });
+  await tabTo(page, keyboardSummary);
+  await expectVisibleKeyboardFocus(keyboardSummary);
+  await page.keyboard.press("Enter");
+  await expect(keyboardSummary.locator("xpath=.." )).toHaveAttribute("open", "");
+  const keyboardButton = page.getByRole("button", { name: "查看稳定排除" }).first();
+  await keyboardButton.focus();
+  await expectVisibleKeyboardFocus(keyboardButton);
+  await page.keyboard.press("Enter");
   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });

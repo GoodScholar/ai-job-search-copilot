@@ -85,6 +85,29 @@ describe("deep match persistence", () => {
     ]));
   });
 
+  it("freezes every structured qualification with its source-version evidence and normalized value", async () => {
+    const input = await fixture();
+    await db.update(jobSourcePostingVersions).set({ normalizedData: { qualifications: {
+      workMode: { value: "remote", evidence: { field: "workMode", path: "工作方式", value: "允许远程协作" } },
+      relocationRequired: { value: false, evidence: { field: "relocationRequired", path: "搬迁要求", value: "无需搬迁" } },
+      salary: null,
+      seniority: { value: "senior", evidence: { field: "seniority", path: "岗位级别", value: "资深" } },
+      education: { value: "bachelor", evidence: { field: "education", path: "学历要求", value: "本科及以上" } },
+      languages: { value: [{ name: "English", level: "C1" }], evidence: { field: "languages", path: "语言能力", value: "英语可工作沟通" } },
+      workEligibility: { value: "authorized", evidence: { field: "workEligibility", path: "工作资格", value: "可在中国合法工作" } },
+      industry: null, employmentType: null, requiredSkills: { value: ["TypeScript"], evidence: { field: "requiredSkills", path: "技能", value: "TS" } },
+    } } }).where(eq(jobSourcePostingVersions.id, input.sourcePostingVersionId));
+    const [candidate] = (await createDeepMatchQueries({ db }).selectCandidateSelection({ userId: input.userId, targetId: input.targetId, targetVersion: 1 })).candidates;
+    expect(candidate!.jobEvidence.map(({ provenance }) => provenance)).toEqual(expect.arrayContaining([
+      { sourcePostingVersionId: input.sourcePostingVersionId, field: "seniority", path: "岗位级别", originalValue: "资深", normalizedValue: "senior" },
+      { sourcePostingVersionId: input.sourcePostingVersionId, field: "education", path: "学历要求", originalValue: "本科及以上", normalizedValue: "bachelor" },
+      { sourcePostingVersionId: input.sourcePostingVersionId, field: "languages", path: "语言能力", originalValue: "英语可工作沟通", normalizedValue: "English（C1）" },
+      { sourcePostingVersionId: input.sourcePostingVersionId, field: "workEligibility", path: "工作资格", originalValue: "可在中国合法工作", normalizedValue: "authorized" },
+      { sourcePostingVersionId: input.sourcePostingVersionId, field: "workMode", path: "工作方式", originalValue: "允许远程协作", normalizedValue: "remote" },
+      { sourcePostingVersionId: input.sourcePostingVersionId, field: "relocationRequired", path: "搬迁要求", originalValue: "无需搬迁", normalizedValue: "false" },
+    ]));
+  });
+
   it("does not mix an old target-version triage into a newly frozen matching run", async () => {
     const input = await fixture();
     await db.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId: input.userId, targetId: input.targetId, version: 2, priority: "primary", state: "active", constraints: { roleFamily: "backend", seniority: null, locations: [], workModes: [], relocation: "unknown", salary: null, industries: [], dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] } }, createdAt: now });
@@ -186,7 +209,7 @@ describe("deep match persistence", () => {
     const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now, adapter });
     const candidate = (await createDeepMatchQueries({ db }).getFrozenCandidates({ userId: input.userId, runId: run.runId }))[0]!;
     const first = await commands.invokeAndValidate({ userId: input.userId, runId: run.runId, candidate, modelCall: modelCall() });
-    await commands.stageValidatedAssessment({ userId: input.userId, runId: run.runId, candidate, assessment: first.assessment, usage: first.usage });
+    await commands.stageValidatedAssessment({ userId: input.userId, runId: run.runId, claimToken, candidate, assessment: first.assessment, usage: first.usage });
     const restored = await commands.invokeAndValidate({ userId: input.userId, runId: run.runId, candidate, modelCall: modelCall() });
 
     expect(first.reused).toBe(false); expect(restored.reused).toBe(true); expect(calls).toBe(1);
@@ -248,7 +271,7 @@ describe("deep match persistence", () => {
     const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now });
     const candidate = (await createDeepMatchQueries({ db }).getFrozenCandidates({ userId: input.userId, runId: child.runId }))[0]!;
     const staged = await commands.invokeAndValidate({ userId: input.userId, runId: child.runId, candidate, modelCall: modelCall() });
-    await commands.stageValidatedAssessment({ userId: input.userId, runId: child.runId, candidate, assessment: staged.assessment, usage: staged.usage });
+    await commands.stageValidatedAssessment({ userId: input.userId, runId: child.runId, claimToken, candidate, assessment: staged.assessment, usage: staged.usage });
     await commands.publishStagedRun({ userId: input.userId, targetId: input.targetId, runId: child.runId, fence: { claimToken }, selectionExclusions: [] });
     await expect(db.select({ sourcePostingVersionId: jobMatchVersions.sourcePostingVersionId }).from(jobMatchVersions).where(eq(jobMatchVersions.userId, input.userId))).resolves.toEqual([{ sourcePostingVersionId: input.sourcePostingVersionId }]);
   });
@@ -263,7 +286,7 @@ describe("deep match persistence", () => {
       const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now });
       const candidate = (await createDeepMatchQueries({ db }).getFrozenCandidates({ userId: input.userId, runId: run.runId }))[0]!;
       const staged = await commands.invokeAndValidate({ userId: input.userId, runId: run.runId, candidate, modelCall: modelCall() });
-      await commands.stageValidatedAssessment({ userId: input.userId, runId: run.runId, candidate, assessment: staged.assessment, usage: staged.usage });
+      await commands.stageValidatedAssessment({ userId: input.userId, runId: run.runId, claimToken, candidate, assessment: staged.assessment, usage: staged.usage });
       return commands.publishStagedRun({ userId: input.userId, targetId: input.targetId, runId: run.runId, fence: { claimToken }, selectionExclusions: [] });
     };
     for (let round = 0; round < 3; round += 1) {
