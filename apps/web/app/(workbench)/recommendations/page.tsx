@@ -4,6 +4,7 @@ import { DeepMatchAssessmentSchema } from "@job-copilot/contracts/deep-match";
 import { requestRecommendationReevaluationAction } from "./actions";
 import { ReevaluationForm } from "./reevaluate-button";
 import { RecommendationHistory } from "./recommendation-history";
+import { LatestExclusions } from "./latest-exclusions";
 
 const bandText = { highly_matched: "高度匹配", worth_trying: "值得尝试", consider_carefully: "谨慎考虑" } as const;
 
@@ -20,7 +21,7 @@ export default async function RecommendationsPage() {
         <p>系统会从通过资格门槛的岗位中整理少量推荐，并保留每项判断的岗位与画像证据。</p>
         {!list ? <><h2>暂无可处理的推荐</h2><p>完成岗位发现和资格筛选后，这里会显示高度匹配、值得尝试或谨慎考虑的岗位。</p></> : <>
           <p aria-label="推荐清单版本">清单版本 {list.sequence} · {list.localDate}</p>
-          {list.exclusions.length > 0 && <p>稳定排除 {list.exclusions.length} 项岗位：{list.exclusions.map((item) => item.reasonCode).join("、")}</p>}
+          <LatestExclusions targetId={target!.targetId} list={list} />
           <RecommendationHistory targetId={target!.targetId} initialPage={history} />
           <ol aria-label="推荐岗位">
             {list.items.map((item) => {

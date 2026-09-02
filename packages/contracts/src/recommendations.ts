@@ -9,7 +9,7 @@ export const RecommendationItemSchema = z.object({
   displayBand: RecommendationBandSchema, highlighted: z.boolean(), ordinal: z.int().min(1).max(10), jobEvidence: z.array(RecommendationEvidenceSchema).max(20), profileEvidence: z.array(RecommendationEvidenceSchema).max(20), assessment: DeepMatchAssessmentSchema,
 }).strict();
 export const RecommendationListSchema = z.object({
-  recommendationListId: z.uuid(), targetId: z.uuid(), localDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u), sequence: z.int().min(1), createdAt: z.iso.datetime(), exclusions: z.array(RecommendationExclusionSchema), items: z.array(RecommendationItemSchema).max(10),
+  recommendationListId: z.uuid(), targetId: z.uuid(), localDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/u), sequence: z.int().min(1), createdAt: z.iso.datetime(), exclusions: z.array(RecommendationExclusionSchema), exclusionsNextCursor: z.uuid().nullable().optional(), items: z.array(RecommendationItemSchema).max(10),
 }).strict();
 /** Historical versions carry the same frozen details as the latest list. */
 export const RecommendationListHistorySchema = z.array(RecommendationListSchema);

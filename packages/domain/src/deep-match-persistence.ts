@@ -42,7 +42,7 @@ function shanghaiDate(date: Date): string {
 }
 
 export function createDeepMatchQueries(deps: { db: Database }) {
-  const readList = async (input: { userId: string; targetId: string; recommendationListId?: string; includeExclusions?: boolean }) => {
+  const readList = async (input: { userId: string; targetId: string; recommendationListId?: string; includeExclusions?: boolean; exclusionLimit?: number }) => {
     const [list] = await deps.db.select().from(recommendationLists).where(and(
       eq(recommendationLists.userId, input.userId), eq(recommendationLists.targetId, input.targetId),
       ...(input.recommendationListId ? [eq(recommendationLists.id, input.recommendationListId)] : []),
@@ -52,9 +52,11 @@ export function createDeepMatchQueries(deps: { db: Database }) {
       .innerJoin(jobMatchVersions, and(eq(jobMatchVersions.userId, recommendationListItems.userId), eq(jobMatchVersions.id, recommendationListItems.matchVersionId)))
       .innerJoin(jobOpportunities, and(eq(jobOpportunities.userId, jobMatchVersions.userId), eq(jobOpportunities.id, jobMatchVersions.opportunityId)))
       .where(and(eq(recommendationListItems.userId, input.userId), eq(recommendationListItems.recommendationListId, list.id))).orderBy(recommendationListItems.ordinal);
-    const exclusions = input.includeExclusions === false ? [] : await deps.db.select({ opportunityId: recommendationExclusions.opportunityId, reasonCode: recommendationExclusions.reasonCode }).from(recommendationExclusions)
-      .where(and(eq(recommendationExclusions.userId, input.userId), eq(recommendationExclusions.recommendationListId, list.id))).orderBy(asc(recommendationExclusions.createdAt), asc(recommendationExclusions.id));
-    return { recommendationListId: list.id, targetId: list.targetId, localDate: list.localDate, sequence: list.sequence, createdAt: list.createdAt.toISOString(), exclusions,
+    const exclusionRows = input.includeExclusions === false ? [] : await deps.db.select({ id: recommendationExclusions.id, opportunityId: recommendationExclusions.opportunityId, reasonCode: recommendationExclusions.reasonCode }).from(recommendationExclusions)
+      .where(and(eq(recommendationExclusions.userId, input.userId), eq(recommendationExclusions.recommendationListId, list.id))).orderBy(asc(recommendationExclusions.createdAt), asc(recommendationExclusions.id)).limit((input.exclusionLimit ?? Number.MAX_SAFE_INTEGER) + 1);
+    const exclusions = input.exclusionLimit ? exclusionRows.slice(0, input.exclusionLimit).map(({ opportunityId, reasonCode }) => ({ opportunityId, reasonCode })) : exclusionRows.map(({ opportunityId, reasonCode }) => ({ opportunityId, reasonCode }));
+    const exclusionsNextCursor = input.exclusionLimit && exclusionRows.length > input.exclusionLimit ? exclusionRows[input.exclusionLimit - 1]!.id : null;
+    return { recommendationListId: list.id, targetId: list.targetId, localDate: list.localDate, sequence: list.sequence, createdAt: list.createdAt.toISOString(), exclusions, ...(input.exclusionLimit ? { exclusionsNextCursor } : {}),
       items: items.map(({ item, match, opportunity }) => {
         const assessment = DeepMatchAssessmentSchema.parse(match.assessment);
         const citedProfileEvidence = new Set(assessment.dimensions.flatMap((dimension) => dimension.profileEvidenceIds));
@@ -136,7 +138,7 @@ export function createDeepMatchQueries(deps: { db: Database }) {
     };
   return {
     selectCandidateSelection,
-    async getLatestList(input: { userId: string; targetId: string }) { return readList(input); },
+    async getLatestList(input: { userId: string; targetId: string }) { return readList({ ...input, exclusionLimit: 25 }); },
     async getFrozenCandidates(input: { userId: string; runId: string }): Promise<SelectedDeepMatchCandidate[]> {
       const rows = await deps.db.select({ candidateSnapshot: deepMatchRunCandidates.candidateSnapshot }).from(deepMatchRunCandidates)
         .where(and(eq(deepMatchRunCandidates.userId, input.userId), eq(deepMatchRunCandidates.runId, input.runId))).orderBy(deepMatchRunCandidates.ordinal);
