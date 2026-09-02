@@ -38,7 +38,7 @@ async function createAccount(request: APIRequestContext, info: TestInfo): Promis
 }
 
 async function importAndTriage(request: APIRequestContext, account: Account, title: string): Promise<ImportedOpportunity> {
-  const content = [`# ${title}`, "公司：真实 Fake 推荐夹具", "地点：上海", "截止日期：2027-09-12T00:00:00.000Z", "工作方式：远程", "是否需要搬迁：否", "学历：本科", "语言：英语(C1)", "工作资格：中国工作许可", "必备技能：TypeScript"].join("\n");
+  const content = [`# ${title}`, "公司：真实 Fake 推荐夹具", "地点：上海", "截止日期：2027-09-12T00:00:00.000Z", "工作方式：远程", "是否需要搬迁：否", "薪资：CNY 30000-45000/month", "学历：本科", "语言：英语(C1)", "工作资格：中国工作许可", "行业：人工智能", "雇佣类型：直接雇佣", "必备技能：TypeScript"].join("\n");
   const created = await request.post(`${apiBaseUrl}/v1/job-imports`, { headers: { authorization: `Bearer ${account.token}` }, data: { inputType: "pasted_text", content } });
   expect(created.status()).toBe(202);
   const { importId } = await created.json() as { importId: string };
@@ -190,7 +190,7 @@ test("显式 Fake matching 真实链路交付双方证据、质量排除与单�
   await expect(page.getByRole("list", { name: "推荐岗位" })).toContainText("正式推荐 TypeScript 工程师");
   await expect(page.getByText("稳定排除 1 项岗位：匹配证据不足")).toBeVisible();
   await page.getByText("查看证据与判断").click();
-  await expect(page.getByRole("list", { name: "推荐岗位" }).getByText(/^岗位证据：/u)).toContainText("正式推荐 TypeScript 工程师");
+  await expect(page.getByRole("list", { name: "推荐岗位" }).getByText(/^岗位证据：/u)).toContainText("行业：人工智能");
   await expect(page.getByRole("list", { name: "推荐岗位" }).getByText(/^画像证据：/u)).toContainText("已确认的岗位方向：frontend");
   await expect(page.getByRole("list", { name: "推荐岗位" }).locator("details > p > strong")).toHaveCount(6);
   await expect(page.locator("main")).not.toContainText(/(?:评分|score|\d+%)/i);
@@ -231,7 +231,7 @@ test("显式 Fake matching 真实链路交付双方证据、质量排除与单�
   await expect(historicalSummary).toBeFocused();
   await page.keyboard.press("Enter");
   const historicalVersion = historicalSummary.locator("..");
-  await expect(historicalVersion.locator("p").filter({ hasText: "岗位证据：" })).toContainText("正式推荐 TypeScript 工程师");
+  await expect(historicalVersion.locator("p").filter({ hasText: "岗位证据：" })).toContainText("行业：人工智能");
   await expect(historicalVersion.locator("p").filter({ hasText: "画像证据：" })).toContainText("已确认的岗位方向：frontend");
   await expect(historicalVersion).toContainText(/高度匹配|值得尝试|谨慎考虑/u);
   for (const label of ["技能", "经验", "项目深度", "岗位方向", "地点与工作方式", "资格风险"]) await expect(historicalVersion.getByText(label, { exact: true }).first()).toBeVisible();
