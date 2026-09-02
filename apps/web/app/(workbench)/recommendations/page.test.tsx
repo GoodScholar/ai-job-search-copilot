@@ -25,7 +25,7 @@ describe("RecommendationsPage", () => {
     mocks.getLatestRecommendations.mockResolvedValue({
       recommendationListId: "10000000-0000-4000-8000-000000000001", targetId: "00000000-0000-4000-8000-000000000001", localDate: "2026-09-01", sequence: 2, createdAt: "2026-09-01T00:00:00.000Z",
       exclusions: [{ opportunityId: "30000000-0000-4000-8000-000000000099", reasonCode: "MATCH_QUALITY_INSUFFICIENT" }],
-      items: [{ matchVersionId: "20000000-0000-4000-8000-000000000001", opportunityId: "30000000-0000-4000-8000-000000000001", company: "示例科技", title: "前端工程师", location: "上海", displayBand: "highly_matched", highlighted: true, ordinal: 1, jobEvidence: [{ id: "job:1", value: "岗位要求 TypeScript" }], profileEvidence: [{ id: "profile:1", value: "已确认 TypeScript 经历" }], assessment: { opportunityId: "30000000-0000-4000-8000-000000000001", overallScore: 80, dimensions: ["skills", "experience", "project_depth", "career_direction", "location_logistics", "qualification_risk"].map((dimension) => ({ dimension, score: 80, judgment: "evidence_backed_inference", jobEvidenceIds: ["job:1"], profileEvidenceIds: ["profile:1"], summary: dimension === "skills" ? "岗位要求与已确认技能相符。" : "证据支持的推断。" })) } }],
+      items: [{ matchVersionId: "20000000-0000-4000-8000-000000000001", opportunityId: "30000000-0000-4000-8000-000000000001", company: "示例科技", title: "前端工程师", location: "上海", displayBand: "highly_matched", highlighted: true, ordinal: 1, jobEvidence: [{ id: "job:1", value: "岗位要求 TypeScript", provenance: { sourcePostingVersionId: "40000000-0000-4000-8000-000000000001", field: "workMode", path: "工作方式", originalValue: "远程办公", normalizedValue: "remote" } }], profileEvidence: [{ id: "profile:1", value: "已确认 TypeScript 经历" }], assessment: { opportunityId: "30000000-0000-4000-8000-000000000001", overallScore: 80, dimensions: ["skills", "experience", "project_depth", "career_direction", "location_logistics", "qualification_risk"].map((dimension) => ({ dimension, score: 80, judgment: "evidence_backed_inference", jobEvidenceIds: ["job:1"], profileEvidenceIds: ["profile:1"], summary: dimension === "skills" ? "岗位要求与已确认技能相符。" : "证据支持的推断。" })) } }],
     });
     mocks.getRecommendationHistoryPage.mockResolvedValue({ items: [{
       recommendationListId: "10000000-0000-4000-8000-000000000000", targetId: "00000000-0000-4000-8000-000000000001", localDate: "2026-08-31", sequence: 1, createdAt: "2026-08-31T00:00:00.000Z", exclusions: [],
@@ -38,7 +38,7 @@ describe("RecommendationsPage", () => {
     expect(screen.getByText(/岗位要求与已确认技能相符/u)).toBeInTheDocument();
     expect(screen.getAllByText("技能").length).toBeGreaterThan(1);
     expect(screen.getAllByText("资格风险").length).toBeGreaterThan(1);
-    expect(screen.getByText(/岗位证据：岗位要求 TypeScript/u)).toBeInTheDocument();
+    expect(screen.getByText(/岗位证据：工作方式：远程办公/u)).toBeInTheDocument();
     expect(screen.getByText(/画像证据：已确认 TypeScript 经历/u)).toBeInTheDocument();
     expect(screen.getByText(/稳定排除 1 项岗位：匹配证据不足/u)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重新评估此岗位" })).toBeInTheDocument();
