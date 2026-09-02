@@ -3,6 +3,8 @@ import {
   DEEP_MATCH_DIMENSIONS,
   FAKE_DEEP_MATCH_TOKEN_USAGE,
   DeepMatchAssessmentSchema,
+  DeepMatchAdapterInputSchema,
+  DeepMatchAdapterResultSchema,
   DeepMatchCandidateSchema,
   acceptsDeepMatchAssessment,
   validateDeepMatchEvidenceClosure,
@@ -34,13 +36,15 @@ const evaluationCases: readonly { candidate: DeepMatchCandidate; triageEligible:
 const qualityRejectedOpportunityId = candidates[1]!.opportunityId;
 
 export async function runDeepMatchEvaluation(adapter: DeepMatchAdapter) {
-  const parsedCandidates = candidates.map((candidate) => DeepMatchCandidateSchema.parse(candidate));
-  const result = await adapter.assess({ candidates: parsedCandidates }, {
+  const eligibleCases = evaluationCases.filter((item) => item.triageEligible);
+  const parsedCandidates = eligibleCases.map(({ candidate }) => DeepMatchCandidateSchema.parse(candidate));
+  const strictInput = DeepMatchAdapterInputSchema.parse({ candidates: parsedCandidates });
+  const result = DeepMatchAdapterResultSchema.parse(await adapter.assess(strictInput, {
     signal: new AbortController().signal,
     usageKey: `${DEEP_MATCH_EVALUATION_VERSION}:${DEEP_MATCH_OUTPUT_SCHEMA_VERSION}`,
     budget: { maxTokens: 80 * parsedCandidates.length, reservedInputTokens: adapter.reservedUsage.inputTokens, reservedOutputTokens: adapter.reservedUsage.outputTokens },
     fixture: { qualityInsufficientOpportunityIds: [qualityRejectedOpportunityId] },
-  });
+  }));
   if (result.usage.inputTokens + result.usage.outputTokens > 80 || result.usage.latencyMs > 5_000) throw new Error("DEEP_MATCH_EVALUATION_RESOURCE_CEILING");
   const assessed = result.assessments.map((assessment) => {
     const candidate = parsedCandidates.find((item) => item.opportunityId === assessment.opportunityId);
