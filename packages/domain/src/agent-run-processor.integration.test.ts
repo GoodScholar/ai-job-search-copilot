@@ -147,12 +147,12 @@ describe("AgentRunProcessor checkpoints", () => {
     ])).resolves.toEqual([
       [expect.any(Object), expect.any(Object)], [expect.any(Object)], [expect.any(Object), expect.any(Object)],
       expect.arrayContaining([
-        { category: "model_call", amount: 1, usageKey: `deep_match_model:${job.opportunityIds[0]}` },
-        { category: "input_tokens", amount: 7, usageKey: `deep_match_model:${job.opportunityIds[0]}` },
-        { category: "output_tokens", amount: 11, usageKey: `deep_match_model:${job.opportunityIds[0]}` },
-        { category: "model_call", amount: 1, usageKey: `deep_match_model:${job.opportunityIds[1]}` },
-        { category: "input_tokens", amount: 13, usageKey: `deep_match_model:${job.opportunityIds[1]}` },
-        { category: "output_tokens", amount: 17, usageKey: `deep_match_model:${job.opportunityIds[1]}` },
+        { category: "model_call", amount: 1, usageKey: `deep_match_model:${job.opportunityIds[0]}:attempt:1` },
+        { category: "input_tokens", amount: 7, usageKey: `deep_match_model:${job.opportunityIds[0]}:attempt:1` },
+        { category: "output_tokens", amount: 11, usageKey: `deep_match_model:${job.opportunityIds[0]}:attempt:1` },
+        { category: "model_call", amount: 1, usageKey: `deep_match_model:${job.opportunityIds[1]}:attempt:2` },
+        { category: "input_tokens", amount: 13, usageKey: `deep_match_model:${job.opportunityIds[1]}:attempt:2` },
+        { category: "output_tokens", amount: 17, usageKey: `deep_match_model:${job.opportunityIds[1]}:attempt:2` },
       ]),
       expect.arrayContaining([{ eventType: "run.completed" }]), expect.arrayContaining([{ eventType: "agent.run_completed" }]),
     ]);
@@ -176,7 +176,7 @@ describe("AgentRunProcessor checkpoints", () => {
     const durable = checkpoint(); let interrupted = false;
     const controlled: AgentRunCheckpoint = { check: async (input) => {
       const result = await durable.check(input);
-      if (!interrupted && input.checkpointKey === `deep_match_model:${job.opportunityIds[0]}` && result.kind === "continue") {
+      if (!interrupted && input.checkpointKey.startsWith(`deep_match_model:${job.opportunityIds[0]}:`) && result.kind === "continue") {
         interrupted = true;
         if (mode === "pause") await database.update(agentRuns).set({ controlState: "pause_requested" }).where(eq(agentRuns.id, job.runId));
         if (mode === "cancel") await database.update(agentRuns).set({ controlState: "cancel_requested" }).where(eq(agentRuns.id, job.runId));
@@ -254,7 +254,7 @@ describe("AgentRunProcessor checkpoints", () => {
       database.select({ category: agentRunUsageEntries.category, amount: agentRunUsageEntries.amount }).from(agentRunUsageEntries).where(eq(agentRunUsageEntries.runId, job.runId)),
       database.select({ assessment: deepMatchRunCandidates.assessment }).from(deepMatchRunCandidates).where(and(eq(deepMatchRunCandidates.runId, job.runId), eq(deepMatchRunCandidates.opportunityId, job.opportunityIds[0]!))),
       database.select().from(recommendationLists).where(eq(recommendationLists.userId, job.userId)),
-    ])).resolves.toEqual([expect.arrayContaining([{ category: "model_call", amount: 1 }, { category: "input_tokens", amount: 7 }, { category: "output_tokens", amount: 11 }]), [expect.objectContaining({ assessment: expect.any(Object) })], []]);
+    ])).resolves.toEqual([expect.arrayContaining([{ category: "model_call", amount: 1 }, { category: "input_tokens", amount: 7 }, { category: "output_tokens", amount: 11 }]), interruption === "claim replacement" ? [expect.objectContaining({ assessment: null })] : [expect.objectContaining({ assessment: expect.any(Object) })], []]);
   });
 
   it.each([

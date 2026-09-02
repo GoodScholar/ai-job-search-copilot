@@ -785,6 +785,16 @@ body {
   padding-inline: 0.75rem;
 }
 
+summary.workbench-touch-target {
+  cursor: pointer;
+}
+
+summary.workbench-touch-target:focus-visible,
+.workbench-touch-target:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .workbench-nav {
   align-items: center;
   display: flex;

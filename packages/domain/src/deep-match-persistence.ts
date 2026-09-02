@@ -43,7 +43,7 @@ function assertStagedAssessment(candidate: SelectedDeepMatchCandidate, assessmen
     profileEvidence: candidate.profileEvidence,
   });
   const expectedEvidenceSnapshot = {
-    jobEvidence: candidate.jobEvidence.map(({ id, value }) => ({ id, value })),
+    jobEvidence: candidate.jobEvidence.map(({ id, value, provenance }) => ({ id, value, ...(provenance ? { provenance } : {}) })),
     profileEvidence: candidate.profileEvidence.map((evidence) => evidence.kind === "profile_fact"
       ? { id: evidence.id, value: evidence.value, kind: evidence.kind, profileFactRevisionId: evidence.profileFactRevisionId }
       : { id: evidence.id, value: evidence.value, kind: evidence.kind, targetRevisionId: evidence.targetRevisionId }),
@@ -51,8 +51,21 @@ function assertStagedAssessment(candidate: SelectedDeepMatchCandidate, assessmen
   const sameEvidence = (actual: typeof assessment.evidenceSnapshot, expected: typeof expectedEvidenceSnapshot) => actual !== undefined
     && actual.jobEvidence.length === expected.jobEvidence.length
     && actual.profileEvidence.length === expected.profileEvidence.length
-    && actual.jobEvidence.every((item, index) => item.id === expected.jobEvidence[index]?.id && item.value === expected.jobEvidence[index]?.value)
-    && actual.profileEvidence.every((item, index) => item.id === expected.profileEvidence[index]?.id && item.value === expected.profileEvidence[index]?.value);
+    && actual.jobEvidence.every((item, index) => {
+      const expectedItem = expected.jobEvidence[index];
+      if (!expectedItem || item.id !== expectedItem.id || item.value !== expectedItem.value) return false;
+      if (!item.provenance || !expectedItem.provenance) return item.provenance === expectedItem.provenance;
+      return item.provenance.sourcePostingVersionId === expectedItem.provenance.sourcePostingVersionId
+        && item.provenance.field === expectedItem.provenance.field && item.provenance.path === expectedItem.provenance.path
+        && item.provenance.originalValue === expectedItem.provenance.originalValue && item.provenance.normalizedValue === expectedItem.provenance.normalizedValue;
+    })
+    && actual.profileEvidence.every((item, index) => {
+      const expectedItem = expected.profileEvidence[index];
+      if (!expectedItem || item.id !== expectedItem.id || item.value !== expectedItem.value || item.kind !== expectedItem.kind) return false;
+      return item.kind === "profile_fact"
+        ? expectedItem.kind === "profile_fact" && item.profileFactRevisionId === expectedItem.profileFactRevisionId
+        : expectedItem.kind === "target_revision" && item.targetRevisionId === expectedItem.targetRevisionId;
+    });
   const sameOpportunity = assessment.opportunitySnapshot !== undefined
     && assessment.opportunitySnapshot.company === candidate.opportunitySnapshot.company
     && assessment.opportunitySnapshot.title === candidate.opportunitySnapshot.title
@@ -89,7 +102,7 @@ export function createDeepMatchQueries(deps: { db: Database }) {
         const citedJobEvidence = new Set(assessment.dimensions.flatMap((dimension) => dimension.jobEvidenceIds));
         const citedProfileEvidence = new Set(assessment.dimensions.flatMap((dimension) => dimension.profileEvidenceIds));
         return { matchVersionId: match.id, opportunityId: opportunity.id, company: assessment.opportunitySnapshot?.company ?? opportunity.company, title: assessment.opportunitySnapshot?.title ?? opportunity.title, location: assessment.opportunitySnapshot?.location ?? opportunity.location, displayBand: match.displayBand, highlighted: item.highlighted, ordinal: item.ordinal,
-          jobEvidence: (assessment.evidenceSnapshot?.jobEvidence ?? []).filter((evidence) => citedJobEvidence.has(evidence.id)).map(({ id, value }) => ({ id, value })),
+          jobEvidence: (assessment.evidenceSnapshot?.jobEvidence ?? []).filter((evidence) => citedJobEvidence.has(evidence.id)).map(({ id, value, provenance }) => ({ id, value, ...(provenance ? { provenance } : {}) })),
           profileEvidence: (assessment.evidenceSnapshot?.profileEvidence ?? []).filter((evidence) => citedProfileEvidence.has(evidence.id)),
           assessment: match.assessment,
         };
@@ -157,13 +170,14 @@ export function createDeepMatchQueries(deps: { db: Database }) {
           .flatMap((item) => item ? [typeof item.value === "string" ? item.value : item.value.map((language) => `${language.name}${language.level ? `（${language.level}）` : ""}`).join("、")] : []);
         const qualificationEvidence = qualificationFields.length ? `岗位资格要求：${qualificationFields.join("；")}` : "";
         const locationRequirements = [opportunity.location, qualifications?.workMode?.value, qualifications?.relocationRequired?.value === true ? "需要异地到岗" : qualifications?.relocationRequired?.value === false ? "不要求异地到岗" : null].filter((value): value is string => Boolean(value)).join("、");
+        const sourceEvidence = (field: string, path: string, originalValue: string, normalizedValue: string) => ({ sourcePostingVersionId: triage.sourcePostingVersionId, field, path, originalValue, normalizedValue });
         const rawJobEvidence = [
-          ...(requiredSkillsEvidence ? [{ value: requiredSkillsEvidence, dimensions: ["skills"] }] : []),
-          ...(qualificationEvidence ? [{ value: qualificationEvidence, dimensions: ["qualification_risk"] }] : []),
-          ...(opportunity.title ? [{ value: opportunity.title, dimensions: ["career_direction"] }] : []),
-          ...(locationRequirements ? [{ value: locationRequirements, dimensions: ["location_logistics"] }] : []),
-          ...(opportunity.description ? [{ value: opportunity.description.slice(0, 512), dimensions: ["experience"] }] : []),
-        ] as Array<{ value: string; dimensions: DeepMatchCandidate["jobEvidence"][number]["dimensions"] }>;
+          ...(requiredSkillsEvidence ? [{ value: requiredSkillsEvidence, dimensions: ["skills"] as const, provenance: sourceEvidence(qualifications!.requiredSkills!.evidence.field, qualifications!.requiredSkills!.evidence.path, qualifications!.requiredSkills!.evidence.value, requiredSkills.join("、")) }] : []),
+          ...(qualificationEvidence ? [{ value: qualificationEvidence, dimensions: ["qualification_risk"] as const, provenance: sourceEvidence("qualifications", "qualifications", qualificationFields.join("；"), qualificationFields.join("；")) }] : []),
+          ...(opportunity.title ? [{ value: opportunity.title, dimensions: ["career_direction"] as const, provenance: sourceEvidence("title", "title", opportunity.title, opportunity.title) }] : []),
+          ...(locationRequirements ? [{ value: locationRequirements, dimensions: ["location_logistics"] as const, provenance: sourceEvidence("location", "location", opportunity.location ?? locationRequirements, locationRequirements) }] : []),
+          ...(opportunity.description ? [{ value: opportunity.description.slice(0, 512), dimensions: ["experience"] as const, provenance: sourceEvidence("description", "description", opportunity.description.slice(0, 512), opportunity.description.slice(0, 512)) }] : []),
+        ] as unknown as Array<{ value: string; dimensions: DeepMatchCandidate["jobEvidence"][number]["dimensions"]; provenance: { sourcePostingVersionId: string; field: string; path: string; originalValue: string; normalizedValue: string } }>;
         const jobEvidence: DeepMatchCandidate["jobEvidence"] = rawJobEvidence.filter((evidence) => evidence.value.length > 0).map((evidence, index) => ({ id: `job:${triage.sourcePostingVersionId}:${index + 1}`, ...evidence }));
         if (!jobEvidence.length) return null;
         return {
@@ -187,6 +201,11 @@ export function createDeepMatchQueries(deps: { db: Database }) {
       const rows = await deps.db.select({ candidateSnapshot: deepMatchRunCandidates.candidateSnapshot }).from(deepMatchRunCandidates)
         .where(and(eq(deepMatchRunCandidates.userId, input.userId), eq(deepMatchRunCandidates.runId, input.runId))).orderBy(deepMatchRunCandidates.ordinal);
       return rows.map((row) => row.candidateSnapshot as SelectedDeepMatchCandidate);
+    },
+    async hasStagedCandidate(input: { userId: string; runId: string; opportunityId: string }) {
+      const [row] = await deps.db.select({ assessment: deepMatchRunCandidates.assessment, adapterUsage: deepMatchRunCandidates.adapterUsage }).from(deepMatchRunCandidates)
+        .where(and(eq(deepMatchRunCandidates.userId, input.userId), eq(deepMatchRunCandidates.runId, input.runId), eq(deepMatchRunCandidates.opportunityId, input.opportunityId))).limit(1);
+      return row?.assessment !== null && row?.assessment !== undefined && row.adapterUsage !== null && row.adapterUsage !== undefined;
     },
     async getListHistoryPage(input: { userId: string; targetId: string; cursor?: string | null; limit: number }) {
       const [cursor] = input.cursor ? await deps.db.select().from(recommendationLists).where(and(eq(recommendationLists.userId, input.userId), eq(recommendationLists.targetId, input.targetId), eq(recommendationLists.id, input.cursor))).limit(1) : [];
@@ -292,7 +311,7 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
         if (error instanceof DeepMatchAdapterError) throw error;
         throw new DeepMatchAdapterError("invalid_output");
       }
-      const assessment = { ...validated, evidenceSnapshot: { jobEvidence: input.candidate.jobEvidence.map(({ id, value }) => ({ id, value })), profileEvidence: input.candidate.profileEvidence.map((evidence) => evidence.kind === "profile_fact" ? { id: evidence.id, value: evidence.value, kind: evidence.kind, profileFactRevisionId: evidence.profileFactRevisionId } : { id: evidence.id, value: evidence.value, kind: evidence.kind, targetRevisionId: evidence.targetRevisionId }) }, opportunitySnapshot: input.candidate.opportunitySnapshot };
+      const assessment = { ...validated, evidenceSnapshot: { jobEvidence: input.candidate.jobEvidence.map(({ id, value, provenance }) => ({ id, value, ...(provenance ? { provenance } : {}) })), profileEvidence: input.candidate.profileEvidence.map((evidence) => evidence.kind === "profile_fact" ? { id: evidence.id, value: evidence.value, kind: evidence.kind, profileFactRevisionId: evidence.profileFactRevisionId } : { id: evidence.id, value: evidence.value, kind: evidence.kind, targetRevisionId: evidence.targetRevisionId }) }, opportunitySnapshot: input.candidate.opportunitySnapshot };
       return { assessment, usage: result.usage, reused: false };
     },
     /** Publishes a fully staged matching run in one fenced transaction.  Staging is private;
@@ -319,7 +338,7 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
           const candidate = entry.candidate;
           await assertCandidateTuple(transaction, { userId: input.userId, targetId: input.targetId, candidate });
           const [previous] = await transaction.select({ sequence: jobMatchVersions.sequence }).from(jobMatchVersions).where(and(eq(jobMatchVersions.userId, input.userId), eq(jobMatchVersions.opportunityId, candidate.opportunityId))).orderBy(desc(jobMatchVersions.sequence)).limit(1);
-          const assessment = { ...entry.assessment, evidenceSnapshot: entry.assessment.evidenceSnapshot ?? { jobEvidence: candidate.jobEvidence.map(({ id, value }) => ({ id, value })), profileEvidence: candidate.profileEvidence.map((evidence) => evidence.kind === "profile_fact" ? { id: evidence.id, value: evidence.value, kind: evidence.kind, profileFactRevisionId: evidence.profileFactRevisionId } : { id: evidence.id, value: evidence.value, kind: evidence.kind, targetRevisionId: evidence.targetRevisionId }) }, opportunitySnapshot: entry.assessment.opportunitySnapshot ?? candidate.opportunitySnapshot };
+          const assessment = { ...entry.assessment, evidenceSnapshot: entry.assessment.evidenceSnapshot ?? { jobEvidence: candidate.jobEvidence.map(({ id, value, provenance }) => ({ id, value, ...(provenance ? { provenance } : {}) })), profileEvidence: candidate.profileEvidence.map((evidence) => evidence.kind === "profile_fact" ? { id: evidence.id, value: evidence.value, kind: evidence.kind, profileFactRevisionId: evidence.profileFactRevisionId } : { id: evidence.id, value: evidence.value, kind: evidence.kind, targetRevisionId: evidence.targetRevisionId }) }, opportunitySnapshot: entry.assessment.opportunitySnapshot ?? candidate.opportunitySnapshot };
           const [match] = await transaction.insert(jobMatchVersions).values({
             id: deps.id(), userId: input.userId, opportunityId: candidate.opportunityId, sourcePostingVersionId: candidate.sourcePostingVersionId, triageVersionId: candidate.triageVersionId,
             profileId: candidate.profileId, profileVersion: candidate.profileVersion, targetId: input.targetId, targetVersion: candidate.targetVersion,

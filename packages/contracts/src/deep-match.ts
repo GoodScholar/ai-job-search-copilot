@@ -25,6 +25,11 @@ const ProfileEvidenceSnapshotSchema = z.discriminatedUnion("kind", [
   z.object({ id: evidenceId, value: z.string().trim().min(1).max(256), kind: z.literal("profile_fact"), profileFactRevisionId: z.uuid() }).strict(),
   z.object({ id: evidenceId, value: z.string().trim().min(1).max(256), kind: z.literal("target_revision"), targetRevisionId: z.uuid() }).strict(),
 ]);
+const JobEvidenceProvenanceSchema = z.object({
+  sourcePostingVersionId: z.uuid(), field: z.string().trim().min(1).max(64), path: z.string().trim().min(1).max(256),
+  originalValue: z.string().trim().min(1).max(512), normalizedValue: z.string().trim().min(1).max(512),
+}).strict();
+const JobEvidenceSnapshotSchema = z.object({ id: evidenceId, value: z.string().trim().min(1).max(512), provenance: JobEvidenceProvenanceSchema.optional() }).strict();
 
 export const DeepMatchAssessmentSchema = z.object({
   opportunityId: z.uuid(),
@@ -38,7 +43,7 @@ export const DeepMatchAssessmentSchema = z.object({
     summary: z.string().trim().min(1).max(500),
   }).strict()).length(DEEP_MATCH_DIMENSIONS.length),
   evidenceSnapshot: z.object({
-    jobEvidence: z.array(z.object({ id: evidenceId, value: z.string().trim().min(1).max(512) }).strict()).max(20),
+    jobEvidence: z.array(JobEvidenceSnapshotSchema).max(20),
     profileEvidence: z.array(ProfileEvidenceSnapshotSchema).max(20),
   }).strict().optional(),
   opportunitySnapshot: z.object({
@@ -97,7 +102,7 @@ export function isDeepMatchTriageEligible(input: DeepMatchTriageEligibility): bo
 export const DeepMatchCandidateSchema = z.object({
   opportunityId: z.uuid(),
   sourcePostingVersionId: z.uuid(),
-  jobEvidence: z.array(z.object({ id: evidenceId, value: z.string().trim().min(1).max(512), dimensions: z.array(assessmentDimension).min(1).max(DEEP_MATCH_DIMENSIONS.length) }).strict()).min(1).max(20),
+  jobEvidence: z.array(JobEvidenceSnapshotSchema.extend({ dimensions: z.array(assessmentDimension).min(1).max(DEEP_MATCH_DIMENSIONS.length) })).min(1).max(20),
   profileEvidence: z.array(ProfileEvidenceSchema).min(1).max(20),
 }).strict();
 export type DeepMatchCandidate = z.infer<typeof DeepMatchCandidateSchema>;

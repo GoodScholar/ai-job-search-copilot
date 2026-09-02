@@ -16,6 +16,8 @@ type Reserve = {
   budgetTokens?: number;
   /** 调用已返回：必须先幂等结算真实消耗，再据更新后的账本终止预算。 */
   settleActual?: boolean;
+  /** Frozen at invocation time.  A late response must never be attributed to a replacement claim. */
+  invocationAttemptCount?: number;
 };
 export type AgentRunCheckpointDecision =
   | { kind: "continue" }
@@ -93,7 +95,10 @@ export function createAgentRunCheckpoint(deps: Dependencies): AgentRunCheckpoint
         const prior = await transaction.select({ category: agentRunUsageEntries.category, amount: agentRunUsageEntries.amount }).from(agentRunUsageEntries)
           .where(and(eq(agentRunUsageEntries.runId, input.runId), eq(agentRunUsageEntries.usageKey, input.checkpointKey)));
         if (run.controlState === "none" && prior.length > 0 && !sameReserve(prior, reserve)) throw new AgentRunCheckpointError("AGENT_RUN_CHECKPOINT_CONFLICT");
-        const elapsed = run.controlState !== "none" || prior.length === 0 ? await settleActiveSlice(transaction, { id: deps.id, userId: input.userId, run, now, until: expired ? run.claimExpiresAt : undefined }) : 0;
+        // A stale invocation may leave an immutable cost fact, but it may not settle the
+        // replacement claimant's active slice or mutate its aggregate counters.
+        const mayMutateRun = ownsClaim;
+        const elapsed = mayMutateRun && (run.controlState !== "none" || prior.length === 0) ? await settleActiveSlice(transaction, { id: deps.id, userId: input.userId, run, now, until: expired ? run.claimExpiresAt : undefined }) : 0;
         const activeDurationMs = run.activeDurationMs + elapsed;
         const preflightDimension = exhausted({ ...run, activeDurationMs }, reserve, 0);
         // A post-call settlement is an accounting fact, not a reservation.  Never discard
@@ -101,14 +106,14 @@ export function createAgentRunCheckpoint(deps: Dependencies): AgentRunCheckpoint
         // A completed model call is an immutable accounting fact even if a control request
         // lands between the response and this checkpoint.  Record it once, then transition.
         const chargedReserve = prior.length === 0 && (reserve.settleActual || (run.controlState === "none" && preflightDimension === null)) ? reserve : {};
-        const usageEntries = prior.length === 0 ? await writeUsage(transaction, { id: deps.id, userId: input.userId, runId: input.runId, checkpointKey: input.checkpointKey, attemptCount: run.attemptCount, reserve: chargedReserve, now }) : [];
+        const usageEntries = prior.length === 0 ? await writeUsage(transaction, { id: deps.id, userId: input.userId, runId: input.runId, checkpointKey: input.checkpointKey, attemptCount: reserve.invocationAttemptCount ?? run.attemptCount, reserve: chargedReserve, now }) : [];
         const inputTokens = amount(chargedReserve.inputTokens);
         const outputTokens = amount(chargedReserve.outputTokens);
         const usageUpdate = { activeDurationMs, toolCallCount: run.toolCallCount + amount(chargedReserve.toolCalls), sourceRequestCount: run.sourceRequestCount + amount(chargedReserve.sourceRequests), modelCallCount: run.modelCallCount + amount(chargedReserve.modelCalls), inputTokenCount: run.inputTokenCount + inputTokens, outputTokenCount: run.outputTokenCount + outputTokens, totalTokenCount: run.totalTokenCount + inputTokens + outputTokens, activeSliceStartedAt: now, updatedAt: now };
         const usageChanged = elapsed > 0 || usageEntries.length > 0;
         const usageVersion = usageChanged ? run.version + 1 : run.version;
         const usage = agentRunUsageSnapshot(run, usageUpdate);
-        if (usageChanged) {
+        if (usageChanged && mayMutateRun) {
           await transaction.update(agentRuns).set({ ...usageUpdate, version: usageVersion }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId)));
           await appendBudgetFacts(transaction, { id: deps.id, auditTrail: deps.auditTrail, userId: input.userId, requestId: input.runId, runId: input.runId, version: usageVersion, currentStep: run.currentStep, usage, consumed: { activeDurationMs: elapsed, toolCalls: amount(chargedReserve.toolCalls), sourceRequests: amount(chargedReserve.sourceRequests), modelCalls: amount(chargedReserve.modelCalls) }, now });
         }

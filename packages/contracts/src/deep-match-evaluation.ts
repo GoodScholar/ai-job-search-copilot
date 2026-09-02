@@ -19,6 +19,7 @@ import {
 
 /** 评分、提示词、adapter 或输出 schema 变更都必须更新此版本并通过本门禁。 */
 export const DEEP_MATCH_EVALUATION_VERSION = "deep-match-eval-v1";
+const EVALUATION_TOKEN_CEILING = 80;
 
 const candidates: readonly DeepMatchCandidate[] = [
   {
@@ -63,7 +64,7 @@ export async function runDeepMatchEvaluation(adapter: DeepMatchAdapter, options:
   let reservation;
   try { reservation = DeepMatchAdapterResultSchema.shape.usage.parse({ ...adapter.reservedUsage, latencyMs: 0 }); }
   catch { throw new Error("DEEP_MATCH_EVALUATION_RESERVATION_INVALID"); }
-  if (reservation.inputTokens + reservation.outputTokens > 80) throw new Error("DEEP_MATCH_EVALUATION_RESERVATION_BUDGET");
+  if (reservation.inputTokens + reservation.outputTokens > EVALUATION_TOKEN_CEILING) throw new Error("DEEP_MATCH_EVALUATION_RESERVATION_BUDGET");
   let rawResult: unknown;
   try {
     const signal = options.signal ?? new AbortController().signal;
@@ -74,7 +75,7 @@ export async function runDeepMatchEvaluation(adapter: DeepMatchAdapter, options:
     rawResult = await Promise.race([adapter.assess(strictInput, {
       signal,
       usageKey: `${DEEP_MATCH_EVALUATION_VERSION}:${DEEP_MATCH_OUTPUT_SCHEMA_VERSION}`,
-      budget: { maxTokens: 80 * parsedCandidates.length, reservedInputTokens: adapter.reservedUsage.inputTokens, reservedOutputTokens: adapter.reservedUsage.outputTokens },
+      budget: { maxTokens: EVALUATION_TOKEN_CEILING, reservedInputTokens: adapter.reservedUsage.inputTokens, reservedOutputTokens: adapter.reservedUsage.outputTokens },
       fixture: { qualityInsufficientOpportunityIds: [qualityRejectedOpportunityId] },
     }), cancellation]);
   } catch (error) {
@@ -85,7 +86,7 @@ export async function runDeepMatchEvaluation(adapter: DeepMatchAdapter, options:
   let result;
   try { result = DeepMatchAdapterResultSchema.parse(rawResult); }
   catch { throw new Error("DEEP_MATCH_EVALUATION_INVALID_OUTPUT"); }
-  if (result.usage.inputTokens + result.usage.outputTokens > 80 || result.usage.latencyMs > 5_000) throw new Error("DEEP_MATCH_EVALUATION_RESOURCE_CEILING");
+  if (result.usage.inputTokens + result.usage.outputTokens > EVALUATION_TOKEN_CEILING || result.usage.latencyMs > 5_000) throw new Error("DEEP_MATCH_EVALUATION_RESOURCE_CEILING");
   const assessed = result.assessments.map((assessment) => {
     const candidate = parsedCandidates.find((item) => item.opportunityId === assessment.opportunityId);
     if (!candidate) throw new Error("DEEP_MATCH_EVALUATION_UNEXPECTED_OPPORTUNITY");

@@ -13,6 +13,17 @@ describe("deep-match-rules-v1 versioned evaluation gate", () => {
     });
   });
 
+  it("passes the same 80-token ceiling to the adapter that reservation and actual usage enforce", async () => {
+    const base = new FakeDeepMatchAdapter();
+    let maxTokens: number | undefined;
+    const adapter = { ...adapterIdentity(base), assess: async (...args: Parameters<DeepMatchAdapter["assess"]>) => {
+      maxTokens = args[1].budget.maxTokens;
+      return base.assess(...args);
+    } };
+    await expect(runDeepMatchEvaluation(adapter)).resolves.toBeDefined();
+    expect(maxTokens).toBe(80);
+  });
+
   it.each([
     ["编造岗位证据", async (base: FakeDeepMatchAdapter) => ({ ...adapterIdentity(base), assess: async (...args: Parameters<DeepMatchAdapter["assess"]>) => {
       const result = await base.assess(...args);

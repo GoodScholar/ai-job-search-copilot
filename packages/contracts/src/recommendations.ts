@@ -2,7 +2,7 @@ import { z } from "zod";
 import { DeepMatchAssessmentSchema } from "./deep-match";
 
 export const RecommendationBandSchema = z.enum(["highly_matched", "worth_trying", "consider_carefully"]);
-const RecommendationJobEvidenceSchema = z.object({ id: z.string().min(1), value: z.string().min(1) }).strict();
+const RecommendationJobEvidenceSchema = z.object({ id: z.string().min(1), value: z.string().min(1), provenance: z.object({ sourcePostingVersionId: z.uuid(), field: z.string().min(1), path: z.string().min(1), originalValue: z.string().min(1), normalizedValue: z.string().min(1) }).strict().optional() }).strict();
 const RecommendationProfileEvidenceSchema = z.discriminatedUnion("kind", [
   z.object({ id: z.string().min(1), value: z.string().min(1), kind: z.literal("profile_fact"), profileFactRevisionId: z.uuid() }).strict(),
   z.object({ id: z.string().min(1), value: z.string().min(1), kind: z.literal("target_revision"), targetRevisionId: z.uuid() }).strict(),
