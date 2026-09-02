@@ -90,7 +90,8 @@ export function createAgentRunRecoveryQueries(deps: { db: Database; clock: () =>
         const now = deps.clock();
         if (remainingBudget(deps.clock, deadline) <= 0) throw new AgentRunBudgetError("active_duration");
         return transaction.select({ runId: agentRuns.id, userId: agentRuns.userId }).from(agentRuns)
-          .where(or(eq(agentRuns.status, "queued"), and(eq(agentRuns.status, "running"), lte(agentRuns.claimExpiresAt, now))))
+          .where(and(or(eq(agentRuns.status, "queued"), and(eq(agentRuns.status, "running"), lte(agentRuns.claimExpiresAt, now))),
+            or(sql`${agentRuns.workflowVersion} <> 'deep-match-v1'`, sql`${agentRuns.sourceScope} ->> 'initialized' = 'true'`)))
           .orderBy(asc(agentRuns.queuedAt), asc(agentRuns.id)).limit(deps.batchSize ?? 100);
       }) as Promise<Array<{ runId: string; userId: string }>>);
       return rows.map((row) => ({ version: AGENT_RUN_JOB_VERSION, runId: row.runId, userId: row.userId }));
@@ -308,7 +309,7 @@ async function failOrRetry(deps: AgentRunProcessorDependencies, input: { userId:
 
 type ProcessorOutcome = "completed" | "retry" | "paused" | "cancelled" | "budget_exhausted" | "failed" | "stale";
 
-async function checkPoint(checkpoint: AgentRunCheckpoint, input: { userId: string; runId: string; claimToken: string; operation: string; ordinal: number; checkpointKey?: string; reserve?: { toolCalls?: number; sourceRequests?: number; modelCalls?: number; inputTokens?: number; outputTokens?: number; budgetTokens?: number } }): Promise<ProcessorOutcome | null> {
+async function checkPoint(checkpoint: AgentRunCheckpoint, input: { userId: string; runId: string; claimToken: string; operation: string; ordinal: number; checkpointKey?: string; reserve?: { toolCalls?: number; sourceRequests?: number; modelCalls?: number; inputTokens?: number; outputTokens?: number; budgetTokens?: number; settleActual?: boolean } }): Promise<ProcessorOutcome | null> {
   const decision = await checkpoint.check({
     userId: input.userId,
     runId: input.runId,
@@ -484,7 +485,8 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         const initialStep = initialStepForWorkflow(current.workflowVersion);
         const attemptCount = current.attemptCount + 1;
         const version = current.version + 1;
-        const [run] = await transaction.update(agentRuns).set({ status: "running", currentStep: initialStep, claimToken, claimExpiresAt: new Date(claimNow.getTime() + 30_000), activeSliceStartedAt: claimNow, activeDurationMs: current.activeDurationMs, attemptCount, startedAt: claimNow, completedAt: null, failedAt: null, failureCode: null, version, updatedAt: claimNow }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), or(eq(agentRuns.status, "queued"), and(eq(agentRuns.status, "running"), lte(agentRuns.claimExpiresAt, claimNow))))).returning();
+        const [run] = await transaction.update(agentRuns).set({ status: "running", currentStep: initialStep, claimToken, claimExpiresAt: new Date(claimNow.getTime() + 30_000), activeSliceStartedAt: claimNow, activeDurationMs: current.activeDurationMs, attemptCount, startedAt: claimNow, completedAt: null, failedAt: null, failureCode: null, version, updatedAt: claimNow }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), or(eq(agentRuns.status, "queued"), and(eq(agentRuns.status, "running"), lte(agentRuns.claimExpiresAt, claimNow))),
+          or(sql`${agentRuns.workflowVersion} <> 'deep-match-v1'`, sql`${agentRuns.sourceScope} ->> 'initialized' = 'true'`))).returning();
         if (!run) return { kind: "stale" as const };
         await appendEvent(transaction, { id: deps.id, userId: job.userId, runId: job.runId, version, eventType: "run.started", data: { eventType: "run.started", status: "running", currentStep: initialStep, attemptCount }, now: claimNow });
         const usageVersion = version + 1;
@@ -543,7 +545,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
       let heartbeatControl: "paused" | "cancelled" | undefined;
       const stopHeartbeat = startClaimHeartbeat(deps, {
         userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, deadline,
-        onLeaseLost: () => { layeredController?.abort(); modelController?.abort(); },
+        onLeaseLost: () => { trustedStop = "stale"; layeredController?.abort(); modelController?.abort(); },
         onControl: (outcome) => { heartbeatControl = outcome; trustedStop = outcome; layeredController?.abort(); modelController?.abort(); },
       });
       try {
@@ -574,12 +576,13 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         try {
           const selectStarted = await transition("select_candidates", false); if (selectStarted) return selectStarted;
           const scope = DeepMatchAgentRunSourceScopeSchema.parse(claimed.run.sourceScope);
-          const matchingQueries = createDeepMatchQueries({ db: deps.db });
-          const selection = await matchingQueries.selectCandidateSelection({ userId: job.userId, targetId: claimed.run.targetId, ...(scope.opportunityId ? { opportunityId: scope.opportunityId } : {}) });
-          const candidates = await matchingQueries.getFrozenCandidates({ userId: job.userId, runId: job.runId });
+          const candidates = await createDeepMatchQueries({ db: deps.db }).getFrozenCandidates({ userId: job.userId, runId: job.runId });
           const selectCompleted = await transition("select_candidates", true); if (selectCompleted) return selectCompleted;
           const assessStarted = await transition("assess_matches", false); if (assessStarted) return assessStarted;
           const deepMatchAdapter = deps.deepMatchAdapter ?? new FakeDeepMatchAdapter();
+          if (deepMatchAdapter.adapter !== claimed.run.adapter || deepMatchAdapter.adapterVersion !== claimed.run.adapterVersion || deepMatchAdapter.model !== (claimed.run.modelSnapshot as { model?: string } | null)?.model || claimed.run.outputSchemaVersion !== "deep-match-result-v1") {
+            throw new DeepMatchAdapterError("invalid_output");
+          }
           const commands = createDeepMatchCommands({ db: deps.db, id: deps.id, clock: deps.clock, adapter: deepMatchAdapter });
           for (const [index, candidate] of candidates.entries()) {
             // Preflight guards the frozen execution reservation without turning an estimate into
@@ -594,13 +597,14 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
             } });
             const outputCheckpointOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "deep_match_model_usage", ordinal: index + 1, checkpointKey: `deep_match_model:${candidate.opportunityId}`, reserve: {
               modelCalls: 1, inputTokens: staged.usage.inputTokens, outputTokens: staged.usage.outputTokens,
+              settleActual: true,
             } });
             if (outputCheckpointOutcome) return outputCheckpointOutcome;
           }
           const assessCompleted = await transition("assess_matches", true); if (assessCompleted) return assessCompleted;
           const listStarted = await transition("create_recommendations", false); if (listStarted) return listStarted;
           const listCompleted = await transition("create_recommendations", true); if (listCompleted) return listCompleted;
-          await commands.publishStagedRun({ userId: job.userId, targetId: claimed.run.targetId, runId: job.runId, selectionExclusions: selection.exclusions, fence: { claimToken: claimed.claimToken }, onPublished: async (transaction, { resultCount }) => {
+          await commands.publishStagedRun({ userId: job.userId, targetId: claimed.run.targetId, runId: job.runId, selectionExclusions: scope.selectionExclusions, fence: { claimToken: claimed.claimToken }, onPublished: async (transaction, { resultCount }) => {
             const now = deps.clock();
             const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, claimed.claimToken), eq(agentRuns.controlState, "none"), gt(agentRuns.claimExpiresAt, now))).limit(1);
             if (!run) throw new DeepMatchClaimLostError();
@@ -613,6 +617,13 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           } });
           return "completed";
         } catch (error) {
+          // An in-flight adapter can observe AbortSignal before its promise settles.  The
+          // signal itself is not an adapter failure: re-read the authoritative fenced state
+          // so pause/cancel/budget/claim-loss retain their lifecycle semantics.
+          if (modelController?.signal.aborted || trustedStop) {
+            const stopped = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "deep_match_model_aborted", ordinal: 1 });
+            return stopped ?? trustedStop ?? "stale";
+          }
           if (error instanceof DeepMatchClaimLostError) return "stale";
           return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
         }

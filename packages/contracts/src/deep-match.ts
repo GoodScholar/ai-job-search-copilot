@@ -138,9 +138,9 @@ export class FakeDeepMatchAdapter implements DeepMatchAdapter {
       // visible as a cautious result or quality exclusion; it must never be promoted by a
       // fabricated aggregate score.
       const score = insufficient.has(candidate.opportunityId) ? 30
-        : call.fixture?.overallScoresByOpportunityId?.[candidate.opportunityId]
-          ?? (evidenceBackedDimensions === DEEP_MATCH_DIMENSIONS.length ? 80
-            : evidenceBackedDimensions >= 4 ? 65
+        : evidenceBackedDimensions === DEEP_MATCH_DIMENSIONS.length
+          ? (call.fixture?.overallScoresByOpportunityId?.[candidate.opportunityId] ?? 80)
+          : (evidenceBackedDimensions >= 4 ? 65
               : evidenceBackedDimensions >= 2 ? 50
                 : 50);
       const assessment = DeepMatchAssessmentSchema.parse({

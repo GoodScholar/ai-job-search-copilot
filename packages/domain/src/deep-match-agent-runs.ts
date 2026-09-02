@@ -1,9 +1,9 @@
 import { and, eq } from "drizzle-orm";
 import { createHash } from "node:crypto";
-import { agentRunEvents, agentRunSteps, agentRuns, jobTargets, jobTargetRevisions, type Database } from "@job-copilot/database";
+import { agentRunEvents, agentRunSteps, agentRuns, deepMatchRunCandidates, jobTargets, jobTargetRevisions, type Database } from "@job-copilot/database";
 import { DEEP_MATCH_AGENT_RUN_BUDGET, DEEP_MATCH_AGENT_RUN_STEPS, DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION, type AgentRunJob } from "@job-copilot/contracts/agent-runs";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
-import { createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
+import { createDeepMatchQueries } from "./deep-match-persistence";
 
 export type DeepMatchRunQueue = { enqueue(job: AgentRunJob): Promise<void> };
 
@@ -15,9 +15,19 @@ export async function ensureDeepMatchRunInTransaction(input: { transaction: any;
   if (!target || target.state !== "active") throw new Error("DEEP_MATCH_TARGET_UNAVAILABLE");
   if (input.trigger === "manual" && !input.opportunityId) throw new Error("DEEP_MATCH_OPPORTUNITY_REQUIRED");
   if (input.trigger === "automatic" && !input.discoveryRunId) throw new Error("DEEP_MATCH_DISCOVERY_PROVENANCE_REQUIRED");
+  // This query runs on the same transaction as the child insertion.  A queued child can
+  // therefore never exist without a complete candidate/exclusion snapshot, including a
+  // legitimate empty selection.
+  const selection = await createDeepMatchQueries({ db: input.transaction }).selectCandidateSelection({
+    userId: input.userId, targetId: input.targetId, ...(input.opportunityId ? { opportunityId: input.opportunityId } : {}),
+  });
   const now = input.clock(); const id = input.id();
-  const [run] = await input.transaction.insert(agentRuns).values({ id, userId: input.userId, targetId: target.id, idempotencyKey: input.idempotencyKey, targetVersion: target.version, targetSnapshot: { targetId: target.id, version: target.version, priority: target.priority, state: target.state, constraints: target.constraints }, profileSnapshot: null, watchlistSnapshot: null, sourceScope: { kind: "deep_match", trigger: input.trigger, opportunityId: input.opportunityId ?? null, discoveryRunId: input.discoveryRunId ?? null }, budgetSnapshot: DEEP_MATCH_AGENT_RUN_BUDGET, workflowVersion: DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION, ruleVersion: "deep-match-rules-v1", adapter: "fake-deep-match", adapterVersion: "fake-deep-match-v1", outputSchemaVersion: "deep-match-result-v1", toolAllowlist: [], modelSnapshot: { provider: "fake", model: "fake-deep-match-model-v1" }, status: "queued", currentStep: "queued", controlState: "none", version: 1, attemptCount: 0, activeDurationMs: 0, toolCallCount: 0, sourceRequestCount: 0, modelCallCount: 0, inputTokenCount: 0, outputTokenCount: 0, totalTokenCount: 0, resultCount: 0, usageComplete: false, queuedAt: now, createdAt: now, updatedAt: now }).returning();
+  const [run] = await input.transaction.insert(agentRuns).values({ id, userId: input.userId, targetId: target.id, idempotencyKey: input.idempotencyKey, targetVersion: target.version, targetSnapshot: { targetId: target.id, version: target.version, priority: target.priority, state: target.state, constraints: target.constraints }, profileSnapshot: null, watchlistSnapshot: null, sourceScope: { kind: "deep_match", trigger: input.trigger, opportunityId: input.opportunityId ?? null, discoveryRunId: input.discoveryRunId ?? null, initialized: true, selectionExclusions: selection.exclusions }, budgetSnapshot: DEEP_MATCH_AGENT_RUN_BUDGET, workflowVersion: DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION, ruleVersion: "deep-match-rules-v1", adapter: "fake-deep-match", adapterVersion: "fake-deep-match-v1", outputSchemaVersion: "deep-match-result-v1", toolAllowlist: [], modelSnapshot: { provider: "fake", model: "fake-deep-match-model-v1" }, status: "queued", currentStep: "queued", controlState: "none", version: 1, attemptCount: 0, activeDurationMs: 0, toolCallCount: 0, sourceRequestCount: 0, modelCallCount: 0, inputTokenCount: 0, outputTokenCount: 0, totalTokenCount: 0, resultCount: 0, usageComplete: false, queuedAt: now, createdAt: now, updatedAt: now }).returning();
   if (!run) throw new Error("DEEP_MATCH_RUN_PERSIST_FAILED");
+  if (selection.candidates.length) await input.transaction.insert(deepMatchRunCandidates).values(selection.candidates.map((candidate, index) => ({
+    id: input.id(), userId: input.userId, runId: id, opportunityId: candidate.opportunityId, sourcePostingVersionId: candidate.sourcePostingVersionId,
+    ordinal: index + 1, candidateSnapshot: candidate, createdAt: now,
+  })));
   await input.transaction.insert(agentRunSteps).values(DEEP_MATCH_AGENT_RUN_STEPS.map((stepKey, index) => ({ id: input.id(), userId: input.userId, runId: id, stepKey, ordinal: index + 1, status: "pending", attemptCount: 0 })));
   await input.transaction.insert(agentRunEvents).values({ id: input.id(), userId: input.userId, runId: id, sequence: 1, runVersion: 1, eventType: "run.queued", data: { eventType: "run.queued", status: "queued", currentStep: "queued", attemptCount: 0 }, createdAt: now });
   return { run, reused: false };
@@ -41,16 +51,6 @@ export function createDeepMatchRunStarter(deps: { db: Database; queue: DeepMatch
       const run = await deps.db.transaction(async (tx) => {
         return ensureDeepMatchRunInTransaction({ transaction: tx, id: deps.id, clock: deps.clock, ...input });
       });
-      // Automatic children are inserted in the discovery completion transaction and then
-      // arrive here as an idempotent reuse.  Freeze once whenever the durable snapshot is
-      // absent; otherwise an automatic run would later read mutable current candidates.
-      const frozen = await createDeepMatchQueries({ db: deps.db }).getFrozenCandidates({ userId: input.userId, runId: run.run.id });
-      if (frozen.length === 0) {
-        const selection = await createDeepMatchQueries({ db: deps.db }).selectCandidateSelection({
-          userId: input.userId, targetId: input.targetId, ...(input.opportunityId ? { opportunityId: input.opportunityId } : {}),
-        });
-        await createDeepMatchCommands({ db: deps.db, id: deps.id, clock: deps.clock }).freezeCandidates({ userId: input.userId, runId: run.run.id, candidates: selection.candidates });
-      }
       if (run.run.status === "queued") { try { await deps.queue.enqueue({ version: 1, runId: run.run.id, userId: input.userId }); } catch { /* reconciler reads the persisted queued row */ } }
       return { runId: run.run.id, reused: run.reused };
     },

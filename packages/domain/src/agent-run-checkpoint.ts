@@ -14,6 +14,8 @@ type Reserve = {
   outputTokens?: number;
   /** 调用前的总 token 可用性预检，不写入 usage 聚合。 */
   budgetTokens?: number;
+  /** 调用已返回：必须先幂等结算真实消耗，再据更新后的账本终止预算。 */
+  settleActual?: boolean;
 };
 export type AgentRunCheckpointDecision =
   | { kind: "continue" }
@@ -89,8 +91,10 @@ export function createAgentRunCheckpoint(deps: Dependencies): AgentRunCheckpoint
         if (run.controlState === "none" && prior.length > 0 && !sameReserve(prior, reserve)) throw new AgentRunCheckpointError("AGENT_RUN_CHECKPOINT_CONFLICT");
         const elapsed = run.controlState !== "none" || prior.length === 0 ? await settleActiveSlice(transaction, { id: deps.id, userId: input.userId, run, now, until: expired ? run.claimExpiresAt : undefined }) : 0;
         const activeDurationMs = run.activeDurationMs + elapsed;
-        const dimension = exhausted({ ...run, activeDurationMs }, reserve, 0);
-        const chargedReserve = run.controlState === "none" && dimension === null && prior.length === 0 ? reserve : {};
+        const preflightDimension = exhausted({ ...run, activeDurationMs }, reserve, 0);
+        // A post-call settlement is an accounting fact, not a reservation.  Never discard
+        // an already incurred model call merely because it pushes the budget over its limit.
+        const chargedReserve = run.controlState === "none" && prior.length === 0 && (reserve.settleActual || preflightDimension === null) ? reserve : {};
         const usageEntries = prior.length === 0 ? await writeUsage(transaction, { id: deps.id, userId: input.userId, runId: input.runId, checkpointKey: input.checkpointKey, attemptCount: run.attemptCount, reserve: chargedReserve, now }) : [];
         const inputTokens = amount(chargedReserve.inputTokens);
         const outputTokens = amount(chargedReserve.outputTokens);
@@ -118,6 +122,9 @@ export function createAgentRunCheckpoint(deps: Dependencies): AgentRunCheckpoint
           if (item) await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.inbox_opened", occurredAt: now, requestId: input.runId, outcome: "success", reasonCode: "AGENT_RUN_PAUSED", resourceType: "agent_inbox_item", resourceId: item.id, metadata: { runId: input.runId, kind: "decision_required", reasonCode: "AGENT_RUN_PAUSED", budgetDimension: null } });
           return { kind: "paused" };
         }
+        const dimension = reserve.settleActual
+          ? exhausted({ ...run, ...usageUpdate }, {}, 0)
+          : preflightDimension;
         if (dimension) {
           await terminateBudgetRun(transaction, { id: deps.id, auditTrail: deps.auditTrail, userId: input.userId, requestId: input.runId, run: { ...run, ...usageUpdate, version: usageVersion }, now, budgetDimension: dimension, activeDurationMs });
           return { kind: "budget_exhausted", budgetDimension: dimension };

@@ -1,10 +1,10 @@
-import { and, asc, desc, eq, gt, isNull, lte } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull, lt, lte, or } from "drizzle-orm";
 import {
-  deepMatchRunCandidates, agentRuns, jobMatchVersions, jobOpportunities, jobSourcePostingVersions, jobTriageVersions, profileFactRevisions, profileFacts,
+  deepMatchRunCandidates, agentRuns, jobMatchVersions, jobOpportunities, jobOpportunitySources, jobSourcePostingVersions, jobTargetRevisions, jobTriageVersions, profileFactRevisions, profileFacts,
   recommendationExclusions, recommendationListItems, recommendationLists, type Database,
 } from "@job-copilot/database";
 import {
-  DEEP_MATCH_OUTPUT_SCHEMA_VERSION, DeepMatchAdapterError, DeepMatchAdapterResultSchema, DeepMatchAssessmentSchema, FakeDeepMatchAdapter, validateDeepMatchEvidenceClosure, type DeepMatchAdapter, type DeepMatchAdapterCall, type DeepMatchCandidate,
+  DEEP_MATCH_OUTPUT_SCHEMA_VERSION, DeepMatchAdapterError, DeepMatchAdapterInputSchema, DeepMatchAdapterResultSchema, DeepMatchAssessmentSchema, FakeDeepMatchAdapter, validateDeepMatchEvidenceClosure, type DeepMatchAdapter, type DeepMatchAdapterCall, type DeepMatchCandidate,
 } from "@job-copilot/contracts/deep-match";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 
@@ -64,9 +64,10 @@ export function createDeepMatchQueries(deps: { db: Database }) {
       }) };
   };
   const selectCandidateSelection = async (input: { userId: string; targetId: string; opportunityId?: string }): Promise<CandidateSelection> => {
-      const triageRows = await deps.db.select({ triage: jobTriageVersions, opportunity: jobOpportunities, sourceVersion: jobSourcePostingVersions })
+      const triageRows = await deps.db.select({ triage: jobTriageVersions, opportunity: jobOpportunities, sourceVersion: jobSourcePostingVersions, targetRevisionId: jobTargetRevisions.id, targetConstraints: jobTargetRevisions.constraints })
         .from(jobTriageVersions).innerJoin(jobOpportunities, and(eq(jobOpportunities.userId, jobTriageVersions.userId), eq(jobOpportunities.id, jobTriageVersions.opportunityId)))
         .innerJoin(jobSourcePostingVersions, and(eq(jobSourcePostingVersions.userId, jobTriageVersions.userId), eq(jobSourcePostingVersions.id, jobTriageVersions.sourcePostingVersionId)))
+        .innerJoin(jobTargetRevisions, and(eq(jobTargetRevisions.userId, jobTriageVersions.userId), eq(jobTargetRevisions.targetId, jobTriageVersions.targetId), eq(jobTargetRevisions.version, jobTriageVersions.targetVersion)))
         .where(and(eq(jobTriageVersions.userId, input.userId), eq(jobTriageVersions.targetId, input.targetId)))
         .orderBy(desc(jobTriageVersions.sequence));
       const latest = new Map<string, typeof triageRows[number]>();
@@ -80,7 +81,7 @@ export function createDeepMatchQueries(deps: { db: Database }) {
         return true;
       }).sort((left, right) => right.triage.overallScore! - left.triage.overallScore! || left.triage.opportunityId.localeCompare(right.triage.opportunityId));
       eligible.slice(10).forEach(({ opportunity }) => exclusions.push({ opportunityId: opportunity.id, reasonCode: "CANDIDATE_LIMIT" }));
-      const candidates = (await Promise.all(eligible.slice(0, 10).map(async ({ triage, opportunity, sourceVersion }) => {
+      const candidates = (await Promise.all(eligible.slice(0, 10).map(async ({ triage, opportunity, sourceVersion, targetRevisionId, targetConstraints }) => {
         const revisions = await deps.db.select({ factId: profileFacts.id, revisionId: profileFactRevisions.id, factType: profileFactRevisions.factType, factValue: profileFactRevisions.factValue, state: profileFactRevisions.state, profileVersion: profileFactRevisions.profileVersion, revisionNumber: profileFactRevisions.revisionNumber })
           .from(profileFacts).innerJoin(profileFactRevisions, and(eq(profileFactRevisions.userId, profileFacts.userId), eq(profileFactRevisions.profileFactId, profileFacts.id)))
           .where(and(eq(profileFacts.userId, input.userId), eq(profileFacts.profileId, triage.profileId), lte(profileFactRevisions.profileVersion, triage.profileVersion)));
@@ -92,18 +93,26 @@ export function createDeepMatchQueries(deps: { db: Database }) {
         const profileEvidence: DeepMatchCandidate["profileEvidence"] = [...snapshot.values()].filter((revision) => revision.state === "active").flatMap((revision) => {
           const dimensions = profileDimensions(revision.factType);
           return dimensions.length ? [{ id: `profile:${revision.revisionId}`, profileFactRevisionId: revision.revisionId, value: JSON.stringify(revision.factValue).slice(0, 256), dimensions }] : [];
-        }).slice(0, 20);
+        });
+        const constraints = targetConstraints as { roleFamily?: string; locations?: string[]; workModes?: string[]; relocation?: string };
+        if (constraints.roleFamily?.trim()) profileEvidence.push({ id: `target:${targetRevisionId}:career`, profileFactRevisionId: targetRevisionId, value: `已确认的岗位方向：${constraints.roleFamily}`, dimensions: ["career_direction"] });
+        const locationFact = [...(constraints.locations ?? []), ...(constraints.workModes ?? []), constraints.relocation && constraints.relocation !== "unknown" ? constraints.relocation : ""].filter(Boolean).join("、");
+        if (locationFact) profileEvidence.push({ id: `target:${targetRevisionId}:location`, profileFactRevisionId: targetRevisionId, value: `已确认的地点/工作方式约束：${locationFact}`, dimensions: ["location_logistics"] });
+        profileEvidence.splice(20);
         if (!profileEvidence.length) return null;
+        const normalized = sourceVersion.normalizedData as Record<string, unknown>;
+        const normalizedText = Object.keys(normalized).length > 0 ? JSON.stringify(normalized).slice(0, 512) : "";
         const rawJobEvidence = [
-          { value: JSON.stringify(sourceVersion.normalizedData).slice(0, 512), dimensions: ["skills", "qualification_risk"] },
+          ...(normalizedText ? [{ value: normalizedText, dimensions: ["skills", "qualification_risk"] }] : []),
           ...(opportunity.title ? [{ value: opportunity.title, dimensions: ["career_direction"] }] : []),
           ...(opportunity.location ? [{ value: opportunity.location, dimensions: ["location_logistics"] }] : []),
           ...(opportunity.description ? [{ value: opportunity.description.slice(0, 512), dimensions: ["experience", "project_depth"] }] : []),
         ] as Array<{ value: string; dimensions: DeepMatchCandidate["jobEvidence"][number]["dimensions"] }>;
         const jobEvidence: DeepMatchCandidate["jobEvidence"] = rawJobEvidence.filter((evidence) => evidence.value.length > 0).map((evidence, index) => ({ id: `job:${triage.sourcePostingVersionId}:${index + 1}`, ...evidence }));
+        if (!jobEvidence.length) return null;
         return {
           opportunityId: opportunity.id, sourcePostingVersionId: triage.sourcePostingVersionId, triageVersionId: triage.id, profileId: triage.profileId, profileVersion: triage.profileVersion, targetVersion: triage.targetVersion, overallScore: triage.overallScore!, opportunitySnapshot: { company: opportunity.company, title: opportunity.title, location: opportunity.location },
-          jobEvidence: jobEvidence.length ? jobEvidence : [{ id: `job:${triage.sourcePostingVersionId}:1`, value: "岗位信息", dimensions: ["skills"] }], profileEvidence,
+          jobEvidence, profileEvidence,
         } satisfies SelectedDeepMatchCandidate;
       }))).flatMap((candidate): SelectedDeepMatchCandidate[] => candidate ? [candidate] : []);
       return { candidates, exclusions };
@@ -120,36 +129,31 @@ export function createDeepMatchQueries(deps: { db: Database }) {
       return rows.map((row) => row.candidateSnapshot as SelectedDeepMatchCandidate);
     },
     async getListHistoryPage(input: { userId: string; targetId: string; cursor?: string | null; limit: number }) {
-      const lists = await deps.db.select().from(recommendationLists).where(and(eq(recommendationLists.userId, input.userId), eq(recommendationLists.targetId, input.targetId))).orderBy(desc(recommendationLists.createdAt), desc(recommendationLists.sequence), desc(recommendationLists.id));
-      const start = input.cursor ? lists.findIndex((list) => list.id === input.cursor) : -1;
-      if (input.cursor && start < 0) throw new Error("RECOMMENDATION_HISTORY_CURSOR_INVALID");
-      const page = lists.slice(start + 1, start + 1 + input.limit);
+      const [cursor] = input.cursor ? await deps.db.select().from(recommendationLists).where(and(eq(recommendationLists.userId, input.userId), eq(recommendationLists.targetId, input.targetId), eq(recommendationLists.id, input.cursor))).limit(1) : [];
+      if (input.cursor && !cursor) throw new Error("RECOMMENDATION_HISTORY_CURSOR_INVALID");
+      const lists = await deps.db.select().from(recommendationLists).where(and(eq(recommendationLists.userId, input.userId), eq(recommendationLists.targetId, input.targetId),
+        ...(cursor ? [or(lt(recommendationLists.createdAt, cursor.createdAt), and(eq(recommendationLists.createdAt, cursor.createdAt), or(lt(recommendationLists.sequence, cursor.sequence), and(eq(recommendationLists.sequence, cursor.sequence), lt(recommendationLists.id, cursor.id)))))] : []),
+      )).orderBy(desc(recommendationLists.createdAt), desc(recommendationLists.sequence), desc(recommendationLists.id)).limit(input.limit + 1);
+      const page = lists.slice(0, input.limit);
       const items = await Promise.all(page.map(async (list) => {
         const details = await readList({ userId: input.userId, targetId: input.targetId, recommendationListId: list.id });
         if (!details) throw new Error("RECOMMENDATION_HISTORY_VERSION_NOT_FOUND");
         return details;
       }));
-      return { items, nextCursor: start + 1 + input.limit < lists.length ? page.at(-1)?.id ?? null : null };
+      return { items, nextCursor: lists.length > input.limit ? page.at(-1)?.id ?? null : null };
     },
     async getListExclusionsPage(input: { userId: string; targetId: string; recommendationListId: string; cursor?: string | null; limit: number }) {
       const [list] = await deps.db.select({ id: recommendationLists.id }).from(recommendationLists).where(and(eq(recommendationLists.userId, input.userId), eq(recommendationLists.targetId, input.targetId), eq(recommendationLists.id, input.recommendationListId))).limit(1);
       if (!list) throw new Error("RECOMMENDATION_LIST_NOT_FOUND");
+      const [cursor] = input.cursor ? await deps.db.select({ id: recommendationExclusions.id, createdAt: recommendationExclusions.createdAt }).from(recommendationExclusions)
+        .where(and(eq(recommendationExclusions.userId, input.userId), eq(recommendationExclusions.recommendationListId, list.id), eq(recommendationExclusions.id, input.cursor))).limit(1) : [];
+      if (input.cursor && !cursor) throw new Error("RECOMMENDATION_EXCLUSION_CURSOR_INVALID");
       const exclusions = await deps.db.select({ id: recommendationExclusions.id, opportunityId: recommendationExclusions.opportunityId, reasonCode: recommendationExclusions.reasonCode }).from(recommendationExclusions)
-        .where(and(eq(recommendationExclusions.userId, input.userId), eq(recommendationExclusions.recommendationListId, list.id))).orderBy(asc(recommendationExclusions.createdAt), asc(recommendationExclusions.id));
-      const start = input.cursor ? exclusions.findIndex((exclusion) => exclusion.id === input.cursor) : -1;
-      if (input.cursor && start < 0) throw new Error("RECOMMENDATION_EXCLUSION_CURSOR_INVALID");
-      const page = exclusions.slice(start + 1, start + 1 + input.limit);
-      return { items: page.map(({ opportunityId, reasonCode }) => ({ opportunityId, reasonCode })), nextCursor: start + 1 + input.limit < exclusions.length ? page.at(-1)?.id ?? null : null };
-    },
-    async getListHistory(input: { userId: string; targetId: string }) {
-      // Recommendation history is an immutable record, not a "recent activity" feed.  Never
-      // truncate it silently: callers can render or explicitly paginate the complete result.
-      const lists = await deps.db.select().from(recommendationLists).where(and(eq(recommendationLists.userId, input.userId), eq(recommendationLists.targetId, input.targetId))).orderBy(desc(recommendationLists.createdAt), desc(recommendationLists.sequence));
-      return Promise.all(lists.map(async (list) => {
-        const details = await readList({ userId: input.userId, targetId: input.targetId, recommendationListId: list.id });
-        if (!details) throw new Error("RECOMMENDATION_HISTORY_VERSION_NOT_FOUND");
-        return details;
-      }));
+        .where(and(eq(recommendationExclusions.userId, input.userId), eq(recommendationExclusions.recommendationListId, list.id),
+          ...(cursor ? [or(gt(recommendationExclusions.createdAt, cursor.createdAt), and(eq(recommendationExclusions.createdAt, cursor.createdAt), gt(recommendationExclusions.id, cursor.id)))] : []),
+        )).orderBy(asc(recommendationExclusions.createdAt), asc(recommendationExclusions.id)).limit(input.limit + 1);
+      const page = exclusions.slice(0, input.limit);
+      return { items: page.map(({ opportunityId, reasonCode }) => ({ opportunityId, reasonCode })), nextCursor: exclusions.length > input.limit ? page.at(-1)?.id ?? null : null };
     },
   };
 }
@@ -160,12 +164,11 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
     const candidate = input.candidate;
     if (candidate.targetVersion === undefined || candidate.profileVersion === undefined || !candidate.triageVersionId || !candidate.sourcePostingVersionId) throw new Error("DEEP_MATCH_TUPLE_INVALID");
     const [bound] = await transaction.select({ id: jobTriageVersions.id }).from(jobTriageVersions)
-      .innerJoin(jobOpportunities, and(eq(jobOpportunities.userId, jobTriageVersions.userId), eq(jobOpportunities.id, jobTriageVersions.opportunityId)))
+      .innerJoin(jobOpportunitySources, and(eq(jobOpportunitySources.userId, jobTriageVersions.userId), eq(jobOpportunitySources.opportunityId, jobTriageVersions.opportunityId), eq(jobOpportunitySources.sourcePostingVersionId, jobTriageVersions.sourcePostingVersionId)))
       .where(and(
         eq(jobTriageVersions.userId, input.userId), eq(jobTriageVersions.id, candidate.triageVersionId), eq(jobTriageVersions.opportunityId, candidate.opportunityId),
         eq(jobTriageVersions.sourcePostingVersionId, candidate.sourcePostingVersionId), eq(jobTriageVersions.profileId, candidate.profileId),
         eq(jobTriageVersions.profileVersion, candidate.profileVersion), eq(jobTriageVersions.targetId, input.targetId), eq(jobTriageVersions.targetVersion, candidate.targetVersion),
-        eq(jobOpportunities.sourcePostingVersionId, candidate.sourcePostingVersionId),
       )).limit(1);
     if (!bound) throw new Error("DEEP_MATCH_TUPLE_INVALID");
   };
@@ -203,16 +206,18 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
         return { assessment: parsed.assessments[0]!, usage: parsed.usage, reused: true };
       }
       let result: ReturnType<typeof DeepMatchAdapterResultSchema.parse>;
+      let validated: ReturnType<typeof DeepMatchAssessmentSchema.parse>;
       try {
-        result = DeepMatchAdapterResultSchema.parse(await adapter.assess({ candidates: [{ opportunityId: input.candidate.opportunityId, sourcePostingVersionId: input.candidate.sourcePostingVersionId, jobEvidence: input.candidate.jobEvidence, profileEvidence: input.candidate.profileEvidence }] }, input.modelCall));
+        const strictInput = DeepMatchAdapterInputSchema.parse({ candidates: [{ opportunityId: input.candidate.opportunityId, sourcePostingVersionId: input.candidate.sourcePostingVersionId, jobEvidence: input.candidate.jobEvidence, profileEvidence: input.candidate.profileEvidence }] });
+        result = DeepMatchAdapterResultSchema.parse(await adapter.assess(strictInput, input.modelCall));
+        const rawAssessment = result.assessments[0];
+        if (!rawAssessment || result.assessments.length !== 1) throw new DeepMatchAdapterError("invalid_output");
+        validated = validateDeepMatchEvidenceClosure(DeepMatchAssessmentSchema.parse(rawAssessment), { jobEvidenceIds: input.candidate.jobEvidence.map((item) => item.id), profileEvidenceIds: input.candidate.profileEvidence.map((item) => item.id) });
+        if (validated.opportunityId !== input.candidate.opportunityId) throw new DeepMatchAdapterError("invalid_output");
       } catch (error) {
         if (error instanceof DeepMatchAdapterError) throw error;
         throw new DeepMatchAdapterError("invalid_output");
       }
-      const rawAssessment = result.assessments[0];
-      if (!rawAssessment || result.assessments.length !== 1) throw new DeepMatchAdapterError("invalid_output");
-      const validated = validateDeepMatchEvidenceClosure(DeepMatchAssessmentSchema.parse(rawAssessment), { jobEvidenceIds: input.candidate.jobEvidence.map((item) => item.id), profileEvidenceIds: input.candidate.profileEvidence.map((item) => item.id) });
-      if (validated.opportunityId !== input.candidate.opportunityId) throw new DeepMatchAdapterError("invalid_output");
       const assessment = { ...validated, evidenceSnapshot: { jobEvidence: input.candidate.jobEvidence.map(({ id, value }) => ({ id, value })), profileEvidence: input.candidate.profileEvidence.map(({ id, value }) => ({ id, value })) }, opportunitySnapshot: input.candidate.opportunitySnapshot };
       await this.stageAssessment({ userId: input.userId, runId: input.runId, opportunityId: input.candidate.opportunityId, assessment, usage: result.usage, fence: input.fence });
       return { assessment, usage: result.usage, reused: false };

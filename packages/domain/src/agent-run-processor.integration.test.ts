@@ -65,8 +65,9 @@ describe("AgentRunProcessor checkpoints", () => {
       const sourcePostingId = crypto.randomUUID(); const sourcePostingVersionId = crypto.randomUUID(); const opportunityId = crypto.randomUUID(); const sourceHash = `${index}`.repeat(64);
       opportunityIds.push(opportunityId);
       await database.insert(jobSourcePostings).values({ id: sourcePostingId, userId, sourceType: "user_import", sourceIdentifier: sourceHash, sourceIdentity: { hash: sourceHash }, isOfficial: false, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
-      await database.insert(jobSourcePostingVersions).values({ id: sourcePostingVersionId, userId, sourcePostingId, version: 1, contentSha256: sourceHash, rawContentSha256: sourceHash, rawObjectReference: {}, normalizedData: {}, retrievedAt: now, availability: "open", createdAt: now });
+      await database.insert(jobSourcePostingVersions).values({ id: sourcePostingVersionId, userId, sourcePostingId, version: 1, contentSha256: sourceHash, rawContentSha256: sourceHash, rawObjectReference: {}, normalizedData: { qualifications: { requiredSkills: ["TypeScript"] } }, retrievedAt: now, availability: "open", createdAt: now });
       await database.insert(jobOpportunities).values({ id: opportunityId, userId, importId: null, sourcePostingVersionId, canonicalOpportunityId: null, dedupKey: sourceHash, company: "示例科技", title: `前端工程师 ${index}`, location: "上海", postedAt: null, deadline: new Date("2026-09-20T00:00:00.000Z"), description: "需要 TypeScript", normalizedData: {}, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
+      await database.insert(jobOpportunitySources).values({ id: crypto.randomUUID(), userId, opportunityId, sourcePostingVersionId, createdAt: now });
       await database.insert(jobTriageVersions).values({ id: crypto.randomUUID(), userId, opportunityId, sourcePostingVersionId, profileId, profileVersion: 1, targetId, targetVersion: 1, qualificationRuleVersion: "q1", coarseRuleVersion: "c1", overallVerdict: "pass", gateResults: {}, pendingItems: [], deadlineStatus: "valid", confidenceBasisPoints: 10_000, dimensionScores: {}, overallScore: 90 - index, threshold: 70, sequence: 1, createdAt: now });
     }
     const started = await createDeepMatchRunStarter({ db: database, queue: new Queue(), id: () => crypto.randomUUID(), clock: () => now })
@@ -144,7 +145,7 @@ describe("AgentRunProcessor checkpoints", () => {
       database.select({ eventType: agentRunEvents.eventType }).from(agentRunEvents).where(eq(agentRunEvents.runId, job.runId)),
       database.select({ eventType: auditEvents.eventType }).from(auditEvents).where(eq(auditEvents.resourceId, job.runId)),
     ])).resolves.toEqual([
-      [expect.any(Object), expect.any(Object)], [expect.any(Object)], [],
+      [expect.any(Object), expect.any(Object)], [expect.any(Object)], [expect.any(Object), expect.any(Object)],
       expect.arrayContaining([
         { category: "model_call", amount: 1, usageKey: `deep_match_model:${job.opportunityIds[0]}` },
         { category: "input_tokens", amount: 7, usageKey: `deep_match_model:${job.opportunityIds[0]}` },

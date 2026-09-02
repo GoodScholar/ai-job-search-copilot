@@ -374,9 +374,9 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
           }} value={selectedTargetId}>
             {activeTargets.map((target) => <option key={target.targetId} value={target.targetId}>{target.constraints.roleFamily} · {target.priority === "primary" ? "主目标" : "次目标"}</option>)}
           </select>
-          <Button className="agent-run-start workbench-touch-target" disabled={isStarting || runIsUnfinished} onClick={startRun} size="lg" type="button">
-            {isStarting ? "正在启动…" : runIsUnfinished ? `${runNoun}中…` : isDeepMatchRun(run) ? "开始岗位匹配" : "发现岗位"}
-          </Button>
+          {isDeepMatchRun(run) ? <p className="agent-run-start-note">岗位匹配会在岗位发现完成后自动开始；如需重新评估，请在推荐清单中选择具体岗位。</p> : <Button className="agent-run-start workbench-touch-target" disabled={isStarting || runIsUnfinished} onClick={startRun} size="lg" type="button">
+            {isStarting ? "正在启动…" : runIsUnfinished ? `${runNoun}中…` : "发现岗位"}
+          </Button>}
         </div>
       </div>
       {showDiscoverySchedule && selectedTarget ? <DiscoverySchedulePanel key={selectedTarget.targetId} targetId={selectedTarget.targetId} targetState={selectedTarget.state} /> : null}
