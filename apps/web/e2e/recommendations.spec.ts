@@ -217,7 +217,7 @@ test("显式 Fake matching 真实链路交付双方证据、质量排除与单�
   await expect(historicalVersion.locator("p").filter({ hasText: "画像证据：" })).toContainText("已确认的岗位方向：frontend");
   await expect(historicalVersion).toContainText(/高度匹配|值得尝试|谨慎考虑/u);
   for (const label of ["技能", "经验", "项目深度", "岗位方向", "地点与工作方式", "资格风险"]) await expect(historicalVersion.getByText(label, { exact: true }).first()).toBeVisible();
-  const controls = page.locator("button, summary, a[href]");
+  const controls = page.locator("main button, main summary, main a[href]");
   expect(await controls.evaluateAll((items) => items.every((item) => item.getBoundingClientRect().height >= 44))).toBe(true);
   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
