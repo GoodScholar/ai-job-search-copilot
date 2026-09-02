@@ -7,9 +7,14 @@ import {
   DeepMatchAdapterResultSchema,
   DeepMatchCandidateSchema,
   acceptsDeepMatchAssessment,
+  DeepMatchAdapterError,
+  FAKE_DEEP_MATCH_ADAPTER,
+  FAKE_DEEP_MATCH_ADAPTER_VERSION,
+  isDeepMatchTriageEligible,
   validateDeepMatchEvidenceClosure,
   type DeepMatchAdapter,
   type DeepMatchCandidate,
+  type DeepMatchTriageEligibility,
 } from "./deep-match";
 
 /** 评分、提示词、adapter 或输出 schema 变更都必须更新此版本并通过本门禁。 */
@@ -29,22 +34,34 @@ const candidates: readonly DeepMatchCandidate[] = [
     profileEvidence: DEEP_MATCH_DIMENSIONS.map((dimension) => ({ id: `profile:react:${dimension}`, profileFactRevisionId: "00000000-0000-4000-8000-000000000211", value: `已确认${dimension}画像证据`, dimensions: [dimension] })),
   },
 ];
-const evaluationCases: readonly { candidate: DeepMatchCandidate; triageEligible: boolean }[] = [
-  ...candidates.map((candidate) => ({ candidate, triageEligible: true })),
-  { candidate: { ...candidates[0]!, opportunityId: "00000000-0000-4000-8000-000000000012", sourcePostingVersionId: "00000000-0000-4000-8000-000000000112" }, triageEligible: false },
+const eligibleTriage: Omit<DeepMatchTriageEligibility, "sourcePostingVersionId" | "expectedSourcePostingVersionId"> = { targetVersion: 1, expectedTargetVersion: 1, overallVerdict: "pass", deadlineStatus: "valid", availability: "open", overallScore: 80, threshold: 70 };
+const evaluationCases: readonly { candidate: DeepMatchCandidate; triage: DeepMatchTriageEligibility }[] = [
+  ...candidates.map((candidate) => ({ candidate, triage: { ...eligibleTriage, sourcePostingVersionId: candidate.sourcePostingVersionId, expectedSourcePostingVersionId: candidate.sourcePostingVersionId } })),
+  { candidate: { ...candidates[0]!, opportunityId: "00000000-0000-4000-8000-000000000012", sourcePostingVersionId: "00000000-0000-4000-8000-000000000112" }, triage: { ...eligibleTriage, sourcePostingVersionId: "00000000-0000-4000-8000-000000000112", expectedSourcePostingVersionId: "00000000-0000-4000-8000-000000000112", overallVerdict: "fail" } },
 ];
 const qualityRejectedOpportunityId = candidates[1]!.opportunityId;
 
-export async function runDeepMatchEvaluation(adapter: DeepMatchAdapter) {
-  const eligibleCases = evaluationCases.filter((item) => item.triageEligible);
+export async function runDeepMatchEvaluation(adapter: DeepMatchAdapter, options: { signal?: AbortSignal } = {}) {
+  if (options.signal?.aborted) throw new Error("DEEP_MATCH_EVALUATION_CANCELLED");
+  if (adapter.adapter !== FAKE_DEEP_MATCH_ADAPTER || adapter.adapterVersion !== FAKE_DEEP_MATCH_ADAPTER_VERSION || adapter.model !== "fake-deep-match-model-v1") throw new Error("DEEP_MATCH_EVALUATION_ADAPTER_IDENTITY");
+  const eligibleCases = evaluationCases.filter((item) => isDeepMatchTriageEligible(item.triage));
   const parsedCandidates = eligibleCases.map(({ candidate }) => DeepMatchCandidateSchema.parse(candidate));
   const strictInput = DeepMatchAdapterInputSchema.parse({ candidates: parsedCandidates });
-  const result = DeepMatchAdapterResultSchema.parse(await adapter.assess(strictInput, {
-    signal: new AbortController().signal,
-    usageKey: `${DEEP_MATCH_EVALUATION_VERSION}:${DEEP_MATCH_OUTPUT_SCHEMA_VERSION}`,
-    budget: { maxTokens: 80 * parsedCandidates.length, reservedInputTokens: adapter.reservedUsage.inputTokens, reservedOutputTokens: adapter.reservedUsage.outputTokens },
-    fixture: { qualityInsufficientOpportunityIds: [qualityRejectedOpportunityId] },
-  }));
+  let rawResult: unknown;
+  try {
+    rawResult = await adapter.assess(strictInput, {
+      signal: options.signal ?? new AbortController().signal,
+      usageKey: `${DEEP_MATCH_EVALUATION_VERSION}:${DEEP_MATCH_OUTPUT_SCHEMA_VERSION}`,
+      budget: { maxTokens: 80 * parsedCandidates.length, reservedInputTokens: adapter.reservedUsage.inputTokens, reservedOutputTokens: adapter.reservedUsage.outputTokens },
+      fixture: { qualityInsufficientOpportunityIds: [qualityRejectedOpportunityId] },
+    });
+  } catch (error) {
+    if (error instanceof DeepMatchAdapterError) throw new Error(`DEEP_MATCH_EVALUATION_ADAPTER_${error.category.toUpperCase()}`);
+    throw new Error("DEEP_MATCH_EVALUATION_ADAPTER_FAILURE");
+  }
+  let result;
+  try { result = DeepMatchAdapterResultSchema.parse(rawResult); }
+  catch { throw new Error("DEEP_MATCH_EVALUATION_INVALID_OUTPUT"); }
   if (result.usage.inputTokens + result.usage.outputTokens > 80 || result.usage.latencyMs > 5_000) throw new Error("DEEP_MATCH_EVALUATION_RESOURCE_CEILING");
   const assessed = result.assessments.map((assessment) => {
     const candidate = parsedCandidates.find((item) => item.opportunityId === assessment.opportunityId);
@@ -65,6 +82,6 @@ export async function runDeepMatchEvaluation(adapter: DeepMatchAdapter) {
     evaluationVersion: DEEP_MATCH_EVALUATION_VERSION,
     cases: candidates.length,
     acceptedOpportunityIds: accepted.map((item) => item.opportunityId),
-    rejectedOpportunityIds: [...rejected.map((item) => item.opportunityId), ...evaluationCases.filter((item) => !item.triageEligible).map((item) => item.candidate.opportunityId)],
+    rejectedOpportunityIds: [...rejected.map((item) => item.opportunityId), ...evaluationCases.filter((item) => !isDeepMatchTriageEligible(item.triage)).map((item) => item.candidate.opportunityId)],
   };
 }

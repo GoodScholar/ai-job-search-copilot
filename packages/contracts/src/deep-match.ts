@@ -61,6 +61,30 @@ export function acceptsDeepMatchAssessment(assessment: DeepMatchAssessment): boo
     && assessment.dimensions.filter((dimension) => dimension.judgment === "evidence_backed_inference").length >= 2;
 }
 
+/** Shared coarse-triage gate used before a candidate may enter deep matching. */
+export type DeepMatchTriageEligibility = {
+  sourcePostingVersionId: string;
+  expectedSourcePostingVersionId: string;
+  targetVersion: number;
+  expectedTargetVersion: number;
+  overallVerdict: string;
+  deadlineStatus: string;
+  availability: string;
+  overallScore: number | null;
+  threshold: number | null;
+};
+
+export function isDeepMatchTriageEligible(input: DeepMatchTriageEligibility): boolean {
+  return input.sourcePostingVersionId === input.expectedSourcePostingVersionId
+    && input.targetVersion === input.expectedTargetVersion
+    && input.overallVerdict === "pass"
+    && input.deadlineStatus !== "expired"
+    && input.availability === "open"
+    && input.overallScore !== null
+    && input.threshold !== null
+    && input.overallScore >= input.threshold;
+}
+
 export const DeepMatchCandidateSchema = z.object({
   opportunityId: z.uuid(),
   sourcePostingVersionId: z.uuid(),
