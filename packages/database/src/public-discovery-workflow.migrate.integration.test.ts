@@ -90,6 +90,7 @@ describe("public discovery workflow migration", () => {
         unlink(join(migrationsFolder, "0037_deep_match_run_staging.sql")),
         unlink(join(migrationsFolder, "0038_recommendation_feedback_calibration.sql")),
         unlink(join(migrationsFolder, "0039_boring_sleepwalker.sql")),
+        unlink(join(migrationsFolder, "0040_loud_northstar.sql")),
         unlink(join(migrationsFolder, "meta", "0025_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0026_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0027_snapshot.json")),
@@ -97,10 +98,11 @@ describe("public discovery workflow migration", () => {
         unlink(join(migrationsFolder, "meta", "0029_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0038_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0039_snapshot.json")),
+        unlink(join(migrationsFolder, "meta", "0040_snapshot.json")),
       ]);
       const journalPath = join(migrationsFolder, "meta", "_journal.json");
       const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
-      journal.entries = journal.entries.filter(({ tag }) => !["0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_job_triage_versions", "0029_heavy_devos", "0030_deep_match_recommendations", "0031_deep_match_agent_runs", "0032_recommendation_highlight_limit", "0033_deep_match_usage_entries", "0034_recommendation_highlight_limit_lock", "0035_agent_run_step_model_failures", "0036_recommendation_exclusion_list_ownership", "0037_deep_match_run_staging", "0038_recommendation_feedback_calibration", "0039_boring_sleepwalker"].includes(tag));
+      journal.entries = journal.entries.filter(({ tag }) => !["0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_job_triage_versions", "0029_heavy_devos", "0030_deep_match_recommendations", "0031_deep_match_agent_runs", "0032_recommendation_highlight_limit", "0033_deep_match_usage_entries", "0034_recommendation_highlight_limit_lock", "0035_agent_run_step_model_failures", "0036_recommendation_exclusion_list_ownership", "0037_deep_match_run_staging", "0038_recommendation_feedback_calibration", "0039_boring_sleepwalker", "0040_loud_northstar"].includes(tag));
       await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
       await migrate(database, { migrationsFolder });
 

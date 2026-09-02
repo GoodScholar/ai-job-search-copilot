@@ -6,6 +6,7 @@ import {
 import {
   DEEP_MATCH_OUTPUT_SCHEMA_VERSION, DeepMatchAdapterError, DeepMatchAdapterInputSchema, DeepMatchAdapterResultSchema, DeepMatchAssessmentSchema, DeepMatchCandidateSchema, FakeDeepMatchAdapter, acceptsDeepMatchAssessment, isDeepMatchTriageEligible, validateDeepMatchEvidenceClosure, type DeepMatchAdapter, type DeepMatchAdapterCall, type DeepMatchCandidate,
 } from "@job-copilot/contracts/deep-match";
+import { acceptsRecommendationRule, RecommendationRuleConfigSchema } from "@job-copilot/contracts/recommendations";
 import { JobQualificationsSchema } from "@job-copilot/contracts/job-imports";
 import { JobTargetConstraintsSchema } from "@job-copilot/contracts/job-targets";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
@@ -357,7 +358,7 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
     },
     /** Publishes a fully staged matching run in one fenced transaction.  Staging is private;
      * no match version or recommendation list becomes visible before every candidate is ready. */
-    async publishStagedRun(input: { userId: string; targetId: string; runId: string; fence: { claimToken: string }; selectionExclusions: readonly { opportunityId: string; reasonCode: RecommendationExclusionReason }[]; ruleConfig?: { minimumOverallScore: number; minimumEvidenceDimensions: number; requiredEvidenceDimensions: string[] }; onPublished?: (transaction: any, result: { resultCount: number }) => Promise<void> }) {
+    async publishStagedRun(input: { userId: string; targetId: string; runId: string; fence: { claimToken: string }; selectionExclusions: readonly { opportunityId: string; reasonCode: RecommendationExclusionReason }[]; ruleConfig?: { minimumOverallScore: number; minimumEvidenceDimensions: number; requiredEvidenceDimensions: string[]; excludedOpportunityIds: string[] }; onPublished?: (transaction: any, result: { resultCount: number }) => Promise<void> }) {
       return deps.db.transaction(async (transaction) => {
         await acquireAccountAdvisoryLock(transaction, input.userId);
         const [run] = await transaction.select({ id: agentRuns.id, ruleVersion: agentRuns.ruleVersion }).from(agentRuns).where(and(
@@ -395,9 +396,8 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
         if (!list) throw new Error("RECOMMENDATION_LIST_PERSIST_FAILED");
         const accepted = matches.filter((match) => {
           const assessment = completed.find((entry) => entry.candidate.opportunityId === match.opportunityId)!.assessment;
-          const evidenceCount = assessment.dimensions.filter((dimension) => dimension.judgment === "evidence_backed_inference").length;
           const config = input.ruleConfig;
-          return acceptsDeepMatchAssessment(assessment) && (!config || (assessment.overallScore >= config.minimumOverallScore && evidenceCount >= config.minimumEvidenceDimensions && config.requiredEvidenceDimensions.every((dimension) => assessment.dimensions.some((item) => item.dimension === dimension && item.judgment === "evidence_backed_inference"))));
+          return config ? acceptsRecommendationRule(assessment, RecommendationRuleConfigSchema.parse(config)) : acceptsDeepMatchAssessment(assessment);
         });
         const exclusions = [...input.selectionExclusions, ...matches.filter((match) => !accepted.some((item) => item.id === match.id)).map((match) => ({ opportunityId: match.opportunityId, reasonCode: "MATCH_QUALITY_INSUFFICIENT" as const }))];
         if (exclusions.length) await transaction.insert(recommendationExclusions).values(exclusions.map((exclusion) => ({ id: deps.id(), userId: input.userId, targetId: input.targetId, opportunityId: exclusion.opportunityId, recommendationListId: list.id, reasonCode: exclusion.reasonCode, createdAt: deps.clock() })));

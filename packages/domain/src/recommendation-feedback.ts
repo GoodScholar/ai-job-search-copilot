@@ -1,16 +1,17 @@
 import { createHash } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
-import type { CalibrationProposalResolutionCommand, CalibrationProposalRevisionCommand, RecommendationDecisionCommand } from "@job-copilot/contracts/recommendations";
-import { CalibrationProposalResolutionCommandSchema, CalibrationProposalRevisionCommandSchema, RecommendationDecisionCommandSchema, RecommendationRuleConfigSchema } from "@job-copilot/contracts/recommendations";
+import type { CalibrationProposalResolutionCommand, CalibrationProposalRevisionCommand, RecommendationDecisionCommand, RecommendationRuleConfig } from "@job-copilot/contracts/recommendations";
+import { acceptsRecommendationRule, CalibrationProposalResolutionCommandSchema, CalibrationProposalRevisionCommandSchema, RecommendationDecisionCommandSchema, RecommendationRuleConfigSchema } from "@job-copilot/contracts/recommendations";
+import { DeepMatchAssessmentSchema } from "@job-copilot/contracts/deep-match";
 import {
-  calibrationProposalEvidence, calibrationProposalRevisions, calibrationProposals, recommendationDecisionEvents,
+  calibrationProposalEvidence, calibrationProposalRevisions, calibrationProposals, recommendationDecisionEvents, recommendationDecisionResponses,
   recommendationListItems, recommendationLists, recommendationRuleVersions, jobMatchVersions, type Database,
 } from "@job-copilot/database";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import type { AuditTrail } from "./audit-trail";
 
 type DecisionResult = { decision: { status: "saved" | "ignored"; version: number }; proposal: { proposalId: string } | null };
-type RuleConfig = { minimumOverallScore: number; minimumEvidenceDimensions: number; requiredEvidenceDimensions: string[]; excludedOpportunityIds: string[] };
+type RuleConfig = RecommendationRuleConfig;
 const defaultConfig: RuleConfig = { minimumOverallScore: 0, minimumEvidenceDimensions: 0, requiredEvidenceDimensions: [], excludedOpportunityIds: [] };
 
 function summary(value: unknown): string { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
@@ -18,19 +19,26 @@ const reasonDimension = { ROLE_DIRECTION: "career_direction", LOCATION: "locatio
 function ruleDiff(from: RuleConfig, to: RuleConfig) {
   return Object.fromEntries((Object.keys(to) as Array<keyof RuleConfig>).flatMap((key) => JSON.stringify(from[key]) === JSON.stringify(to[key]) ? [] : [[key, { from: from[key], to: to[key] }]]));
 }
-function proposedRule(reason: string, current: RuleConfig, candidates: Array<{ opportunityId: string; overallScore: number }>) {
+type CalibrationSample = { opportunityId: string; overallScore: number; assessment: Parameters<typeof acceptsRecommendationRule>[0] };
+function acceptsRuleSnapshot(assessment: unknown, config: RuleConfig): boolean {
+  const parsed = DeepMatchAssessmentSchema.safeParse(assessment);
+  return parsed.success && acceptsRecommendationRule(parsed.data, config);
+}
+function proposedRule(reason: string, current: RuleConfig, candidates: CalibrationSample[], selectedStrategy?: "require_related_evidence" | "raise_quality_bar" | "exclude_evidence_opportunities") {
   const next = { ...current, requiredEvidenceDimensions: [...current.requiredEvidenceDimensions], excludedOpportunityIds: [...current.excludedOpportunityIds] };
-  let strategy: "require_related_evidence" | "raise_quality_bar" | "exclude_evidence_opportunities" = "require_related_evidence";
-  if (reason === "EXPIRED" || reason === "ALREADY_HANDLED") { strategy = "exclude_evidence_opportunities"; next.excludedOpportunityIds = [...new Set([...next.excludedOpportunityIds, ...candidates.map((item) => item.opportunityId)])]; }
-  else {
+  const strategy = selectedStrategy ?? (reason === "EXPIRED" || reason === "ALREADY_HANDLED" ? "exclude_evidence_opportunities" : reason === "SALARY" || reason === "MISMATCH" ? "raise_quality_bar" : "require_related_evidence");
+  if (strategy === "exclude_evidence_opportunities") next.excludedOpportunityIds = [...new Set([...next.excludedOpportunityIds, ...candidates.map((item) => item.opportunityId)])];
+  if (strategy === "require_related_evidence") {
     const dimension = reasonDimension[reason as keyof typeof reasonDimension];
     if (dimension) next.requiredEvidenceDimensions = [...new Set([...next.requiredEvidenceDimensions, dimension])];
+  }
+  if (strategy === "raise_quality_bar") {
     const threshold = Math.min(100, Math.max(...candidates.map((item) => item.overallScore)) + 1);
     next.minimumOverallScore = Math.max(next.minimumOverallScore, threshold);
-    if (reason === "SALARY" || reason === "MISMATCH") strategy = "raise_quality_bar";
   }
   const diff = ruleDiff(current, next);
-  return Object.keys(diff).length ? { strategy, ruleConfig: next, impactPreview: { sampleSize: candidates.length, estimatedAffectedCount: candidates.filter((item) => item.overallScore < next.minimumOverallScore || next.excludedOpportunityIds.includes(item.opportunityId)).length, ruleDiff: diff } } : null;
+  const parsed = RecommendationRuleConfigSchema.parse(next);
+  return Object.keys(diff).length ? { strategy, ruleConfig: parsed, impactPreview: { sampleSize: candidates.length, estimatedAffectedCount: candidates.filter((item) => acceptsRuleSnapshot(item.assessment, current) && !acceptsRuleSnapshot(item.assessment, parsed)).length, ruleDiff: diff } } : null;
 }
 
 /** Immutable recommendation feedback and review-gated calibration boundary. */
@@ -44,8 +52,8 @@ export function createRecommendationFeedbackCommands(deps: { db: Database; id: (
       const commandSummary = summary({ kind: "recordDecision", recommendationListId: input.recommendationListId, recommendationListItemId: input.recommendationListItemId, payload });
       if (existing) {
         if (existing.commandSummary !== commandSummary) throw new RecommendationFeedbackError("IDEMPOTENCY_CONFLICT");
-        const [replayed] = await tx.select({ proposalId: calibrationProposalEvidence.proposalId }).from(calibrationProposalEvidence).where(and(eq(calibrationProposalEvidence.userId, input.userId), eq(calibrationProposalEvidence.decisionEventId, existing.id))).limit(1);
-        return { decision: { status: existing.decision as "saved" | "ignored", version: existing.version }, proposal: replayed ? { proposalId: replayed.proposalId } : null };
+        const [replayed] = await tx.select({ proposalId: recommendationDecisionResponses.proposalId }).from(recommendationDecisionResponses).where(and(eq(recommendationDecisionResponses.userId, input.userId), eq(recommendationDecisionResponses.decisionEventId, existing.id))).limit(1);
+        return { decision: { status: existing.decision as "saved" | "ignored", version: existing.version }, proposal: replayed?.proposalId ? { proposalId: replayed.proposalId } : null };
       }
       const [bound] = await tx.select({ itemId: recommendationListItems.id, listId: recommendationLists.id, targetId: recommendationLists.targetId, matchId: jobMatchVersions.id, opportunityId: jobMatchVersions.opportunityId }).from(recommendationListItems)
         .innerJoin(recommendationLists, and(eq(recommendationLists.userId, recommendationListItems.userId), eq(recommendationLists.id, recommendationListItems.recommendationListId)))
@@ -66,9 +74,9 @@ export function createRecommendationFeedbackCommands(deps: { db: Database; id: (
         for (const item of events) if (!currentByItem.has(item.recommendationListItemId)) currentByItem.set(item.recommendationListItemId, item);
         const candidates = [...currentByItem.values()].filter((item) => item.decision === "ignored" && item.reason === payload.reason && !used.has(item.id)).slice(0, 3);
         if (candidates.length === 3) {
-          const candidateMatches = await tx.select({ id: jobMatchVersions.id, opportunityId: jobMatchVersions.opportunityId, overallScore: jobMatchVersions.overallScore }).from(jobMatchVersions).where(eq(jobMatchVersions.userId, input.userId));
+          const candidateMatches = await tx.select({ id: jobMatchVersions.id, opportunityId: jobMatchVersions.opportunityId, overallScore: jobMatchVersions.overallScore, assessment: jobMatchVersions.assessment }).from(jobMatchVersions).where(eq(jobMatchVersions.userId, input.userId));
           const matchById = new Map(candidateMatches.map((item) => [item.id, item]));
-          const samples = candidates.map((item) => matchById.get(item.matchVersionId)!).filter(Boolean);
+          const samples = candidates.map((item) => matchById.get(item.matchVersionId)!).filter(Boolean).map((item) => ({ ...item, assessment: item.assessment as CalibrationSample["assessment"] }));
           const [latestRule] = await tx.select({ config: recommendationRuleVersions.config }).from(recommendationRuleVersions).where(and(eq(recommendationRuleVersions.userId, input.userId), eq(recommendationRuleVersions.targetId, bound.targetId))).orderBy(desc(recommendationRuleVersions.version)).limit(1);
           const strategy = proposedRule(payload.reason, RecommendationRuleConfigSchema.parse(latestRule?.config ?? defaultConfig), samples);
           if (!strategy) return { decision: { status: command.decision, version: currentVersion + 1 }, proposal: null };
@@ -80,6 +88,7 @@ export function createRecommendationFeedbackCommands(deps: { db: Database; id: (
           proposal = { proposalId: created.id };
         }
       }
+      await tx.insert(recommendationDecisionResponses).values({ id: deps.id(), userId: input.userId, decisionEventId: event.id, proposalId: proposal?.proposalId ?? null, createdAt: deps.clock() });
       return { decision: { status: command.decision, version: currentVersion + 1 }, proposal };
     });
   }
@@ -93,8 +102,15 @@ export function createRecommendationFeedbackCommands(deps: { db: Database; id: (
       const [proposal] = await tx.select().from(calibrationProposals).where(and(eq(calibrationProposals.userId, input.userId), eq(calibrationProposals.id, input.proposalId), eq(calibrationProposals.status, "pending"))).limit(1);
       if (!proposal) throw new RecommendationFeedbackError("PROPOSAL_NOT_FOUND");
       if (proposal.version !== command.expectedVersion) throw new RecommendationFeedbackError("VERSION_CONFLICT");
-      const [latest] = await tx.select({ revisionNumber: calibrationProposalRevisions.revisionNumber }).from(calibrationProposalRevisions).where(and(eq(calibrationProposalRevisions.userId, input.userId), eq(calibrationProposalRevisions.proposalId, proposal.id))).orderBy(desc(calibrationProposalRevisions.revisionNumber)).limit(1);
-      const [revision] = await tx.insert(calibrationProposalRevisions).values({ id: deps.id(), userId: input.userId, proposalId: proposal.id, revisionNumber: (latest?.revisionNumber ?? 0) + 1, strategy: command.strategy, ruleConfig: command.ruleConfig, impactPreview: command.impactPreview, idempotencyKey: command.idempotencyKey, commandSummary: digest, createdAt: deps.clock() }).returning();
+      const [latest] = await tx.select().from(calibrationProposalRevisions).where(and(eq(calibrationProposalRevisions.userId, input.userId), eq(calibrationProposalRevisions.proposalId, proposal.id))).orderBy(desc(calibrationProposalRevisions.revisionNumber)).limit(1);
+      if (!latest) throw new RecommendationFeedbackError("PROPOSAL_REVISION_NOT_FOUND");
+      const evidenceMatches = await tx.select({ opportunityId: jobMatchVersions.opportunityId, overallScore: jobMatchVersions.overallScore, assessment: jobMatchVersions.assessment }).from(calibrationProposalEvidence)
+        .innerJoin(recommendationDecisionEvents, and(eq(recommendationDecisionEvents.userId, calibrationProposalEvidence.userId), eq(recommendationDecisionEvents.id, calibrationProposalEvidence.decisionEventId)))
+        .innerJoin(jobMatchVersions, and(eq(jobMatchVersions.userId, recommendationDecisionEvents.userId), eq(jobMatchVersions.id, recommendationDecisionEvents.matchVersionId)))
+        .where(and(eq(calibrationProposalEvidence.userId, input.userId), eq(calibrationProposalEvidence.proposalId, proposal.id)));
+      const derived = proposedRule(proposal.reason, RecommendationRuleConfigSchema.parse(latest.ruleConfig), evidenceMatches.map((item) => ({ ...item, assessment: item.assessment as CalibrationSample["assessment"] })), command.strategy);
+      if (!derived) throw new RecommendationFeedbackError("PROPOSAL_NO_EFFECT");
+      const [revision] = await tx.insert(calibrationProposalRevisions).values({ id: deps.id(), userId: input.userId, proposalId: proposal.id, revisionNumber: latest.revisionNumber + 1, strategy: derived.strategy, ruleConfig: derived.ruleConfig, impactPreview: derived.impactPreview, idempotencyKey: command.idempotencyKey, commandSummary: digest, createdAt: deps.clock() }).returning();
       await tx.update(calibrationProposals).set({ version: proposal.version + 1, updatedAt: deps.clock() }).where(and(eq(calibrationProposals.userId, input.userId), eq(calibrationProposals.id, proposal.id), eq(calibrationProposals.version, proposal.version)));
       await deps.auditTrail?.bind(tx).append({ userId: input.userId, actorUserId: input.userId, eventType: "recommendation.calibration_proposal", occurredAt: deps.clock(), requestId: command.idempotencyKey, outcome: "success", reasonCode: "CALIBRATION_PROPOSAL_REVISED", resourceType: "calibration_proposal", resourceId: proposal.id, metadata: { proposalId: proposal.id, targetId: proposal.targetId, action: "revised", version: proposal.version + 1, evidenceCount: 0 } });
       return revision;
@@ -142,12 +158,12 @@ export function createRecommendationFeedbackQueries(deps: { db: Database }) {
         const [revision] = await deps.db.select().from(calibrationProposalRevisions).where(and(eq(calibrationProposalRevisions.userId, input.userId), eq(calibrationProposalRevisions.proposalId, proposal.id))).orderBy(desc(calibrationProposalRevisions.revisionNumber)).limit(1);
         const evidence = await deps.db.select({ id: calibrationProposalEvidence.id }).from(calibrationProposalEvidence).where(and(eq(calibrationProposalEvidence.userId, input.userId), eq(calibrationProposalEvidence.proposalId, proposal.id)));
         if (!revision) throw new RecommendationFeedbackError("PROPOSAL_REVISION_NOT_FOUND");
-        return { proposalId: proposal.id, targetId: proposal.targetId, status: proposal.status, version: proposal.version, evidenceCount: evidence.length, revision: { revisionId: revision.id, revisionNumber: revision.revisionNumber, strategy: revision.strategy, ruleConfig: revision.ruleConfig, impactPreview: revision.impactPreview } };
+        return { proposalId: proposal.id, targetId: proposal.targetId, reason: proposal.reason, status: proposal.status, version: proposal.version, evidenceCount: evidence.length, revision: { revisionId: revision.id, revisionNumber: revision.revisionNumber, strategy: revision.strategy, ruleConfig: revision.ruleConfig, impactPreview: revision.impactPreview } };
       }));
     },
   };
 }
 
 export class RecommendationFeedbackError extends Error {
-  constructor(readonly code: "IDEMPOTENCY_CONFLICT" | "VERSION_CONFLICT" | "RECOMMENDATION_ITEM_NOT_FOUND" | "DECISION_PERSIST_FAILED" | "PROPOSAL_PERSIST_FAILED" | "PROPOSAL_NOT_FOUND" | "PROPOSAL_REVISION_NOT_FOUND") { super(code); }
+  constructor(readonly code: "IDEMPOTENCY_CONFLICT" | "VERSION_CONFLICT" | "RECOMMENDATION_ITEM_NOT_FOUND" | "DECISION_PERSIST_FAILED" | "PROPOSAL_PERSIST_FAILED" | "PROPOSAL_NOT_FOUND" | "PROPOSAL_REVISION_NOT_FOUND" | "PROPOSAL_NO_EFFECT") { super(code); }
 }

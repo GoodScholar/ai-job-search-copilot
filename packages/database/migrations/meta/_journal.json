@@ -281,6 +281,13 @@
       "when": 1788360933191,
       "tag": "0039_boring_sleepwalker",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1788363510001,
+      "tag": "0040_loud_northstar",
+      "breakpoints": true
     }
   ]
 }

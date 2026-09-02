@@ -286,7 +286,7 @@ test("推荐决策与拒绝校准建议保持规则和目标不变", async ({ pa
   }
   await page.reload();
   await expect(page.getByRole("heading", { name: "校准建议" })).toBeVisible();
-  await expect(page.getByText(/基于 3 条同类忽略反馈/u)).toBeVisible();
+  await expect(page.getByText(/因“地点或工作方式不合适”产生的建议/u)).toBeVisible();
   const proposalBefore = await (async () => { const client = new Client({ connectionString: databaseUrl }); await client.connect(); try { return (await client.query("select id, status, version from calibration_proposals where user_id = $1 order by created_at desc limit 1", [account.userId])).rows[0] as { id: string; status: string; version: number }; } finally { await client.end(); } })();
   expect(proposalBefore.status).toBe("pending");
   const reject = page.getByRole("button", { name: "拒绝建议" });

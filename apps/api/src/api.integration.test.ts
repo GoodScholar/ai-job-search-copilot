@@ -303,7 +303,7 @@ describe("authenticated workbench HTTP API", () => {
     const before = feedbackWrites;
     const created = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/recommendations/lists/${feedbackListId}/items/${feedbackItemId}/decisions`, headers, payload: { decision: "saved", expectedVersion: 0, idempotencyKey: key } });
     const replay = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/recommendations/lists/${feedbackListId}/items/${feedbackItemId}/decisions`, headers, payload: { decision: "saved", expectedVersion: 0, idempotencyKey: key } });
-    expect(created.statusCode).toBe(201); expect(replay.statusCode).toBe(201); expect(feedbackWrites).toBe(before + 1);
+    expect(created.statusCode).toBe(201); expect(replay.statusCode).toBe(201); expect(created.json()).toEqual(replay.json()); expect(feedbackWrites).toBe(before + 1);
     const conflict = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/recommendations/lists/${feedbackListId}/items/${feedbackItemId}/decisions`, headers, payload: { decision: "ignored", reason: "LOCATION", expectedVersion: 0, idempotencyKey: key } });
     const stale = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/recommendations/lists/${feedbackListId}/items/${feedbackItemId}/decisions`, headers, payload: { decision: "saved", expectedVersion: 1, idempotencyKey: randomUUID() } });
     expect(conflict.statusCode).toBe(409); expect(stale.statusCode).toBe(409);

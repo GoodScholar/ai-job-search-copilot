@@ -5,6 +5,7 @@ import {
   RecommendationDecisionSchema,
   RecommendationRuleConfigSchema,
 } from "./recommendations";
+import { DeepMatchAgentRunSourceScopeSchema } from "./agent-runs";
 
 describe("推荐反馈契约", () => {
   it("收藏只接受决策、幂等键和乐观版本", () => {
@@ -32,11 +33,9 @@ describe("推荐反馈契约", () => {
     expect(RecommendationDecisionCommandSchema.safeParse({ decision: "ignored", reason: "APPLICATION_STATUS", idempotencyKey: "00000000-0000-4000-8000-000000000001", expectedVersion: 0 }).success).toBe(false);
   });
 
-  it("校准修订严格限制规则策略与影响预览", () => {
+  it("校准修订只允许服务端可重算的策略意图", () => {
     expect(CalibrationProposalRevisionCommandSchema.safeParse({
       strategy: "raise_quality_bar", idempotencyKey: "00000000-0000-4000-8000-000000000002", expectedVersion: 1,
-      ruleConfig: { minimumOverallScore: 75, minimumEvidenceDimensions: 3, requiredEvidenceDimensions: [], excludedOpportunityIds: [] },
-      impactPreview: { sampleSize: 12, estimatedAffectedCount: 3, ruleDiff: { minimumOverallScore: { from: 60, to: 75 } } },
     }).success).toBe(true);
     expect(CalibrationProposalRevisionCommandSchema.safeParse({
       strategy: "raise_quality_bar", idempotencyKey: "00000000-0000-4000-8000-000000000002", expectedVersion: 1,
@@ -52,5 +51,8 @@ describe("推荐反馈契约", () => {
   it("规则配置只接受共享的六个深度匹配维度", () => {
     expect(RecommendationRuleConfigSchema.safeParse({ minimumOverallScore: 60, minimumEvidenceDimensions: 2, requiredEvidenceDimensions: ["skills"], excludedOpportunityIds: [] }).success).toBe(true);
     expect(RecommendationRuleConfigSchema.safeParse({ minimumOverallScore: 60, minimumEvidenceDimensions: 2, requiredEvidenceDimensions: ["unknown_dimension"], excludedOpportunityIds: [] }).success).toBe(false);
+    expect(RecommendationRuleConfigSchema.safeParse({ minimumOverallScore: 60, minimumEvidenceDimensions: 2, requiredEvidenceDimensions: ["skills", "skills"], excludedOpportunityIds: [] }).success).toBe(false);
+    expect(RecommendationRuleConfigSchema.safeParse({ minimumOverallScore: 60, minimumEvidenceDimensions: 2, requiredEvidenceDimensions: [], excludedOpportunityIds: ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000001"] }).success).toBe(false);
+    expect(DeepMatchAgentRunSourceScopeSchema.safeParse({ kind: "deep_match", trigger: "manual", opportunityId: "00000000-0000-4000-8000-000000000001", discoveryRunId: null, initialized: true, selectionExclusions: [], recommendationRuleConfig: { minimumOverallScore: 60, minimumEvidenceDimensions: 2, requiredEvidenceDimensions: ["skills", "skills"], excludedOpportunityIds: [] } }).success).toBe(false);
   });
 });

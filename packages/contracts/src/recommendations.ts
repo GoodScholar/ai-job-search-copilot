@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { DeepMatchAssessmentSchema, DeepMatchDimensionSchema } from "./deep-match";
+import { acceptsDeepMatchAssessment, DeepMatchAssessmentSchema, DeepMatchDimensionSchema, type DeepMatchAssessment } from "./deep-match";
 
 export const RecommendationBandSchema = z.enum(["highly_matched", "worth_trying", "consider_carefully"]);
 export const RecommendationDecisionStatusSchema = z.enum(["pending", "saved", "ignored"]);
@@ -17,10 +17,22 @@ export const RecommendationRuleConfigSchema = z.object({
   if (new Set(value.requiredEvidenceDimensions).size !== value.requiredEvidenceDimensions.length) context.addIssue({ code: "custom", path: ["requiredEvidenceDimensions"], message: "维度不可重复" });
   if (new Set(value.excludedOpportunityIds).size !== value.excludedOpportunityIds.length) context.addIssue({ code: "custom", path: ["excludedOpportunityIds"], message: "岗位不可重复" });
 });
-export const CalibrationImpactPreviewSchema = z.object({ sampleSize: z.int().nonnegative(), estimatedAffectedCount: z.int().nonnegative(), ruleDiff: z.record(z.string().min(1).max(64), z.object({ from: z.unknown(), to: z.unknown() }).strict()) }).strict();
-export const CalibrationProposalRevisionCommandSchema = z.object({ strategy: CalibrationStrategySchema, ruleConfig: RecommendationRuleConfigSchema, impactPreview: CalibrationImpactPreviewSchema, idempotencyKey: z.uuid(), expectedVersion: z.int().positive() }).strict();
+const RuleDiffValueSchema = z.union([z.int().min(0).max(100), z.array(DeepMatchDimensionSchema).max(6), z.array(z.uuid()).max(100)]);
+export const CalibrationImpactPreviewSchema = z.object({ sampleSize: z.int().nonnegative(), estimatedAffectedCount: z.int().nonnegative(), ruleDiff: z.partialRecord(z.enum(["minimumOverallScore", "minimumEvidenceDimensions", "requiredEvidenceDimensions", "excludedOpportunityIds"]), z.object({ from: RuleDiffValueSchema, to: RuleDiffValueSchema }).strict()) }).strict();
+/** Revision accepts only a user-selected strategy; config and preview are server-derived. */
+export const CalibrationProposalRevisionCommandSchema = z.object({ strategy: CalibrationStrategySchema, idempotencyKey: z.uuid(), expectedVersion: z.int().positive() }).strict();
 export const CalibrationProposalResolutionCommandSchema = z.object({ action: z.enum(["approved", "rejected"]), idempotencyKey: z.uuid(), expectedVersion: z.int().positive() }).strict();
-export const CalibrationProposalSchema = z.object({ proposalId: z.uuid(), targetId: z.uuid(), status: z.enum(["pending", "approved", "rejected"]), version: z.int().positive(), evidenceCount: z.int().positive(), revision: z.object({ revisionId: z.uuid(), revisionNumber: z.int().positive(), strategy: CalibrationStrategySchema, ruleConfig: RecommendationRuleConfigSchema, impactPreview: CalibrationImpactPreviewSchema }).strict() }).strict();
+export const CalibrationProposalSchema = z.object({ proposalId: z.uuid(), targetId: z.uuid(), reason: RecommendationIgnoreReasonSchema, status: z.enum(["pending", "approved", "rejected"]), version: z.int().positive(), evidenceCount: z.int().positive(), revision: z.object({ revisionId: z.uuid(), revisionNumber: z.int().positive(), strategy: CalibrationStrategySchema, ruleConfig: RecommendationRuleConfigSchema, impactPreview: CalibrationImpactPreviewSchema }).strict() }).strict();
+
+/** Single acceptance predicate used for previews and staged deep-match publication. */
+export function acceptsRecommendationRule(assessment: DeepMatchAssessment, config: z.infer<typeof RecommendationRuleConfigSchema>): boolean {
+  const evidenceBacked = assessment.dimensions.filter((dimension) => dimension.judgment === "evidence_backed_inference");
+  return acceptsDeepMatchAssessment(assessment)
+    && assessment.overallScore >= config.minimumOverallScore
+    && evidenceBacked.length >= config.minimumEvidenceDimensions
+    && config.requiredEvidenceDimensions.every((dimension) => evidenceBacked.some((item) => item.dimension === dimension))
+    && !config.excludedOpportunityIds.includes(assessment.opportunityId);
+}
 const RecommendationJobEvidenceSchema = z.object({ id: z.string().min(1), value: z.string().min(1), provenance: z.object({ sourcePostingVersionId: z.uuid(), field: z.string().min(1), path: z.string().min(1), originalValue: z.string().min(1), normalizedValue: z.string().min(1) }).strict().optional() }).strict();
 const RecommendationProfileEvidenceSchema = z.discriminatedUnion("kind", [
   z.object({ id: z.string().min(1), value: z.string().min(1), kind: z.literal("profile_fact"), profileFactRevisionId: z.uuid() }).strict(),
@@ -52,6 +64,7 @@ export type RecommendationListHistory = z.infer<typeof RecommendationListHistory
 export type RecommendationListHistoryPage = z.infer<typeof RecommendationListHistoryPageSchema>;
 export type RecommendationExclusionPage = z.infer<typeof RecommendationExclusionPageSchema>;
 export type RecommendationDecisionCommand = z.infer<typeof RecommendationDecisionCommandSchema>;
+export type RecommendationRuleConfig = z.infer<typeof RecommendationRuleConfigSchema>;
 export type CalibrationProposalRevisionCommand = z.infer<typeof CalibrationProposalRevisionCommandSchema>;
 export type CalibrationProposalResolutionCommand = z.infer<typeof CalibrationProposalResolutionCommandSchema>;
 export type CalibrationProposal = z.infer<typeof CalibrationProposalSchema>;

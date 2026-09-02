@@ -9,7 +9,7 @@ import {
 import { createAuditTrail } from "./audit-trail";
 import { createDeepMatchRunStarter } from "./deep-match-agent-runs";
 import { createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
-import { FakeDeepMatchAdapter } from "@job-copilot/contracts/deep-match";
+import { DEEP_MATCH_DIMENSIONS, FakeDeepMatchAdapter } from "@job-copilot/contracts/deep-match";
 import { createRecommendationFeedbackCommands, createRecommendationFeedbackQueries } from "./recommendation-feedback";
 
 const now = new Date("2026-09-02T00:00:00.000Z");
@@ -42,11 +42,11 @@ describe("recommendation feedback persistence", () => {
       const sourcePostingId = crypto.randomUUID(); const sourcePostingVersionId = crypto.randomUUID(); const opportunityId = crypto.randomUUID(); const triageId = crypto.randomUUID(); const matchId = crypto.randomUUID(); const itemId = crypto.randomUUID();
       const hash = `${index}`.padStart(64, "a");
       await db.insert(jobSourcePostings).values({ id: sourcePostingId, userId, sourceType: "user_import", sourceIdentifier: hash, sourceIdentity: { hash }, isOfficial: false, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
-      await db.insert(jobSourcePostingVersions).values({ id: sourcePostingVersionId, userId, sourcePostingId, version: 1, contentSha256: hash, rawContentSha256: hash, rawObjectReference: { key: "redacted" }, normalizedData: {}, retrievedAt: now, availability: "open", createdAt: now });
+      await db.insert(jobSourcePostingVersions).values({ id: sourcePostingVersionId, userId, sourcePostingId, version: 1, contentSha256: hash, rawContentSha256: hash, rawObjectReference: { key: "redacted" }, normalizedData: { qualifications: { workMode: null, relocationRequired: null, salary: null, seniority: null, education: null, languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: { value: ["TypeScript"], evidence: { field: "requiredSkills", path: "技能", value: "TypeScript" } } } }, retrievedAt: now, availability: "open", createdAt: now });
       await db.insert(jobOpportunities).values({ id: opportunityId, userId, importId: null, sourcePostingVersionId, canonicalOpportunityId: null, dedupKey: hash, company: "示例公司", title: `岗位 ${index}`, location: "上海", postedAt: null, deadline: null, description: null, normalizedData: {}, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
       await db.insert(jobOpportunitySources).values({ id: crypto.randomUUID(), userId, opportunityId, sourcePostingVersionId, createdAt: now });
       await db.insert(jobTriageVersions).values({ id: triageId, userId, opportunityId, sourcePostingVersionId, profileId, profileVersion: 1, targetId, targetVersion: 1, qualificationRuleVersion: "q1", coarseRuleVersion: "c1", overallVerdict: "pass", gateResults: {}, pendingItems: [], deadlineStatus: "valid", confidenceBasisPoints: 10_000, dimensionScores: {}, overallScore: 90, threshold: 70, sequence: 1, createdAt: now });
-      await db.insert(jobMatchVersions).values({ id: matchId, userId, opportunityId, sourcePostingVersionId, triageVersionId: triageId, profileId, profileVersion: 1, targetId, targetVersion: 1, ruleVersion: "recommendation-rule-v0", promptVersion: "p1", adapter: "fake", adapterVersion: "1", model: "fake", outputSchemaVersion: "1", overallScore: 90, displayBand: "highly_matched", assessment: {}, sequence: 1, createdAt: now });
+      await db.insert(jobMatchVersions).values({ id: matchId, userId, opportunityId, sourcePostingVersionId, triageVersionId: triageId, profileId, profileVersion: 1, targetId, targetVersion: 1, ruleVersion: "recommendation-rule-v0", promptVersion: "p1", adapter: "fake", adapterVersion: "1", model: "fake", outputSchemaVersion: "1", overallScore: 90, displayBand: "highly_matched", assessment: { opportunityId, overallScore: 90, dimensions: DEEP_MATCH_DIMENSIONS.map((dimension) => dimension === "skills" || dimension === "career_direction" ? { dimension, score: 90, judgment: "evidence_backed_inference", jobEvidenceIds: ["job"], profileEvidenceIds: ["profile"], summary: "有双方证据支持" } : { dimension, score: 50, judgment: "insufficient_evidence", jobEvidenceIds: [], profileEvidenceIds: [], summary: "证据不足" }) }, sequence: 1, createdAt: now });
       await db.insert(recommendationListItems).values({ id: itemId, userId, recommendationListId: listId, matchVersionId: matchId, ordinal: index + 1, highlighted: false, createdAt: now });
       items.push({ itemId, matchId, opportunityId });
     }
@@ -57,12 +57,19 @@ describe("recommendation feedback persistence", () => {
     return createRecommendationFeedbackCommands({ db, id: () => crypto.randomUUID(), clock: () => now, auditTrail: createAuditTrail({ db, clock: () => now }) });
   }
 
+  const acceptableAssessment = (candidate: Awaited<ReturnType<ReturnType<typeof createDeepMatchQueries>["getFrozenCandidates"]>>[number]) => ({
+    opportunityId: candidate.opportunityId, overallScore: 90,
+    dimensions: DEEP_MATCH_DIMENSIONS.map((dimension) => dimension === "skills" || dimension === "career_direction" ? { dimension, score: 90, judgment: "evidence_backed_inference" as const, jobEvidenceIds: [candidate.jobEvidence.find((item) => item.dimensions.includes(dimension))!.id], profileEvidenceIds: [candidate.profileEvidence.find((item) => item.dimensions.includes(dimension))!.id], summary: "有双方证据支持" } : { dimension, score: 50, judgment: "insufficient_evidence" as const, jobEvidenceIds: [], profileEvidenceIds: [], summary: "证据不足" }),
+    evidenceSnapshot: { jobEvidence: candidate.jobEvidence.map(({ id, value, provenance }) => ({ id, value, ...(provenance ? { provenance } : {}) })), profileEvidence: candidate.profileEvidence.map((evidence) => evidence.kind === "profile_fact" ? { id: evidence.id, value: evidence.value, kind: evidence.kind, profileFactRevisionId: evidence.profileFactRevisionId } : { id: evidence.id, value: evidence.value, kind: evidence.kind, targetRevisionId: evidence.targetRevisionId }) },
+    opportunitySnapshot: candidate.opportunitySnapshot,
+  });
+
   it("以 owner-bound 不可变事件记录全部反馈边界，并在三条当前忽略时只创建一次建议", async () => {
     const data = await fixture(8); const service = commands();
     await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: data.items[0]!.itemId, command: { decision: "ignored", expectedVersion: 0, idempotencyKey: crypto.randomUUID(), note: "x".repeat(500) } });
     for (const item of data.items.slice(1, 4)) await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: { decision: "ignored", reason: "LOCATION", expectedVersion: 0, idempotencyKey: crypto.randomUUID() } });
     const proposals = await createRecommendationFeedbackQueries({ db }).listCalibrationProposals({ userId: data.userId, targetId: data.targetId });
-    expect(proposals).toHaveLength(1); expect(proposals[0]).toMatchObject({ evidenceCount: 3, revision: { revisionNumber: 1, strategy: "require_related_evidence" } });
+    expect(proposals).toHaveLength(1); expect(proposals[0]).toMatchObject({ evidenceCount: 3, revision: { revisionNumber: 1, strategy: "require_related_evidence", impactPreview: { estimatedAffectedCount: 3 } } });
     const decisionEvents = await db.select().from(recommendationDecisionEvents).where(eq(recommendationDecisionEvents.userId, data.userId));
     expect(decisionEvents).toHaveLength(4); const noReason = decisionEvents.find((event) => event.reason === null)!; expect(noReason.note).toHaveLength(500);
     expect(decisionEvents.filter((event) => event.reason === "LOCATION").map((event) => event.recommendationListItemId).sort()).toEqual(data.items.slice(1, 4).map((item) => item.itemId).sort());
@@ -91,7 +98,7 @@ describe("recommendation feedback persistence", () => {
     for (const item of data.items.slice(3)) await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: { decision: "ignored", reason: "LOCATION", expectedVersion: 0, idempotencyKey: crypto.randomUUID() } });
     const proposals = await createRecommendationFeedbackQueries({ db }).listCalibrationProposals({ userId: data.userId, targetId: data.targetId });
     const proposal = proposals.find((item) => item.revision.strategy === "raise_quality_bar"); const secondProposal = proposals.find((item) => item.proposalId !== proposal!.proposalId);
-    const revisionCommand = { expectedVersion: 1, idempotencyKey: crypto.randomUUID(), strategy: "raise_quality_bar" as const, ruleConfig: { minimumOverallScore: 80, minimumEvidenceDimensions: 2, requiredEvidenceDimensions: [], excludedOpportunityIds: [] }, impactPreview: { sampleSize: 3, estimatedAffectedCount: 2, ruleDiff: { minimumOverallScore: { from: 60, to: 80 } } } };
+    const revisionCommand = { expectedVersion: 1, idempotencyKey: crypto.randomUUID(), strategy: "exclude_evidence_opportunities" as const };
     const revision = await service.reviseCalibrationProposal({ userId: data.userId, proposalId: proposal!.proposalId, command: revisionCommand });
     await expect(service.reviseCalibrationProposal({ userId: data.userId, proposalId: proposal!.proposalId, command: revisionCommand })).resolves.toMatchObject({ id: revision!.id, revisionNumber: 2 });
     const resolution = { action: "approved" as const, expectedVersion: 2, idempotencyKey: crypto.randomUUID() };
@@ -125,9 +132,7 @@ describe("recommendation feedback persistence", () => {
     const staged = await deepMatch.invokeAndValidate({ userId: data.userId, runId: started.runId, candidate: candidate!, modelCall: { signal: new AbortController().signal, usageKey: "feedback-publish", budget: { maxTokens: 20_000, reservedInputTokens: 32, reservedOutputTokens: 48 } } });
     await deepMatch.stageValidatedAssessment({ userId: data.userId, runId: started.runId, claimToken, candidate: candidate!, assessment: staged.assessment, usage: staged.usage });
     const published = await deepMatch.publishStagedRun({ userId: data.userId, targetId: data.targetId, runId: started.runId, fence: { claimToken }, selectionExclusions: sourceScope.selectionExclusions, ruleConfig: sourceScope.recommendationRuleConfig });
-    // Fake adapter deliberately returns a non-recommendable assessment here; publication still
-    // persists the one non-excluded match under the frozen approved rule.
-    expect(published.items).toHaveLength(0);
+    expect(published.items).toHaveLength(1);
     await expect(db.select().from(recommendationListItems).where(eq(recommendationListItems.recommendationListId, data.listId))).resolves.toHaveLength(4);
     await expect(db.select({ id: jobMatchVersions.id, ruleVersion: jobMatchVersions.ruleVersion }).from(jobMatchVersions).where(and(eq(jobMatchVersions.userId, data.userId), eq(jobMatchVersions.opportunityId, data.items[3]!.opportunityId)))).resolves.toEqual(expect.arrayContaining([{ id: data.items[3]!.matchId, ruleVersion: "recommendation-rule-v0" }, expect.objectContaining({ ruleVersion: "recommendation-rule-v1" })]));
     await expect(db.select({ id: jobMatchVersions.id }).from(jobMatchVersions).where(eq(jobMatchVersions.userId, data.userId))).resolves.toEqual(expect.arrayContaining(historicalMatchIds.map((id) => ({ id }))));
@@ -141,5 +146,38 @@ describe("recommendation feedback persistence", () => {
     await expect(service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: data.items[0]!.itemId, command: { decision: "ignored", reason: "SALARY", expectedVersion: 2, idempotencyKey: crypto.randomUUID() } })).resolves.toMatchObject({ decision: { version: 3 } });
     await expect(service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: data.items[3]!.itemId, command: { decision: "ignored", reason: "LOCATION", expectedVersion: 1, idempotencyKey: key } })).rejects.toThrow("IDEMPOTENCY_CONFLICT");
     await expect(createRecommendationFeedbackQueries({ db }).listCalibrationProposals({ userId: data.userId, targetId: data.targetId })).resolves.toHaveLength(0);
+  });
+
+  it("决策重放精确返回首次响应，而不被后续 evidence 改写", async () => {
+    const data = await fixture(); const service = commands();
+    const commandsByItem = data.items.map(() => ({ decision: "ignored" as const, reason: "LOCATION" as const, expectedVersion: 0, idempotencyKey: crypto.randomUUID() }));
+    const first = [] as Awaited<ReturnType<typeof service.recordDecision>>[];
+    for (const [index, item] of data.items.entries()) first.push(await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: commandsByItem[index]! }));
+    expect(first.map((result) => result.proposal)).toEqual([null, null, expect.objectContaining({ proposalId: expect.any(String) })]);
+    for (const [index, item] of data.items.entries()) await expect(service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: commandsByItem[index]! })).resolves.toEqual(first[index]);
+  });
+
+  it("同一 assessment 在批准规则前可发布，在冻结的质量规则后被排除", async () => {
+    const data = await fixture(4); const starter = createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now });
+    const publish = async (runId: string, ruleConfig?: { minimumOverallScore: number; minimumEvidenceDimensions: number; requiredEvidenceDimensions: string[]; excludedOpportunityIds: string[] }) => {
+      const claimToken = crypto.randomUUID(); await db.update(agentRuns).set({ status: "running", currentStep: "assess_matches", attemptCount: 1, startedAt: now, activeSliceStartedAt: now, claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), controlState: "none" }).where(eq(agentRuns.id, runId));
+      const [candidate] = await createDeepMatchQueries({ db }).getFrozenCandidates({ userId: data.userId, runId }); const deepMatch = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now });
+      const assessment = acceptableAssessment(candidate!); await deepMatch.stageValidatedAssessment({ userId: data.userId, runId, claimToken, candidate: candidate!, assessment, usage: { inputTokens: 32, outputTokens: 48, latencyMs: 1 } });
+      return deepMatch.publishStagedRun({ userId: data.userId, targetId: data.targetId, runId, fence: { claimToken }, selectionExclusions: [], ...(ruleConfig ? { ruleConfig } : {}) });
+    };
+    const before = await starter.start({ userId: data.userId, targetId: data.targetId, opportunityId: data.items[3]!.opportunityId, idempotencyKey: crypto.randomUUID(), trigger: "manual" });
+    const baseline = await publish(before.runId); expect(baseline.items).toHaveLength(1);
+    const baselineListId = baseline.recommendationListId; const baselineMatchIds = (await db.select({ id: jobMatchVersions.id }).from(jobMatchVersions).where(eq(jobMatchVersions.userId, data.userId))).map((row) => row.id);
+    const feedback = commands(); for (const item of data.items.slice(0, 3)) await feedback.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: { decision: "ignored", reason: "SALARY", expectedVersion: 0, idempotencyKey: crypto.randomUUID() } });
+    const [proposal] = await createRecommendationFeedbackQueries({ db }).listCalibrationProposals({ userId: data.userId, targetId: data.targetId });
+    await feedback.resolveCalibrationProposal({ userId: data.userId, proposalId: proposal!.proposalId, command: { action: "approved", expectedVersion: 1, idempotencyKey: crypto.randomUUID() } });
+    const after = await starter.start({ userId: data.userId, targetId: data.targetId, opportunityId: data.items[3]!.opportunityId, idempotencyKey: crypto.randomUUID(), trigger: "manual" });
+    const [frozen] = await db.select({ ruleVersion: agentRuns.ruleVersion, sourceScope: agentRuns.sourceScope }).from(agentRuns).where(eq(agentRuns.id, after.runId));
+    const config = (frozen!.sourceScope as { recommendationRuleConfig: { minimumOverallScore: number; minimumEvidenceDimensions: number; requiredEvidenceDimensions: string[]; excludedOpportunityIds: string[] } }).recommendationRuleConfig;
+    expect(frozen!.ruleVersion).toBe("recommendation-rule-v1"); expect(config.minimumOverallScore).toBe(91);
+    await expect(publish(after.runId, config)).resolves.toMatchObject({ items: [] });
+    await expect(db.select().from(recommendationListItems).where(eq(recommendationListItems.recommendationListId, baselineListId))).resolves.toHaveLength(1);
+    await expect(db.select({ id: jobMatchVersions.id }).from(jobMatchVersions).where(eq(jobMatchVersions.userId, data.userId))).resolves.toEqual(expect.arrayContaining(baselineMatchIds.map((id) => ({ id }))));
+    await expect(db.select({ ruleVersion: jobMatchVersions.ruleVersion }).from(jobMatchVersions).where(and(eq(jobMatchVersions.userId, data.userId), eq(jobMatchVersions.opportunityId, data.items[3]!.opportunityId)))).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ ruleVersion: "recommendation-rule-v1" })]));
   });
 });
