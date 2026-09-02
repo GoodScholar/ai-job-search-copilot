@@ -59,9 +59,10 @@ export function createDeepMatchQueries(deps: { db: Database }) {
     return { recommendationListId: list.id, targetId: list.targetId, localDate: list.localDate, sequence: list.sequence, createdAt: list.createdAt.toISOString(), exclusions, ...(input.exclusionLimit ? { exclusionsNextCursor } : {}),
       items: items.map(({ item, match, opportunity }) => {
         const assessment = DeepMatchAssessmentSchema.parse(match.assessment);
+        const citedJobEvidence = new Set(assessment.dimensions.flatMap((dimension) => dimension.jobEvidenceIds));
         const citedProfileEvidence = new Set(assessment.dimensions.flatMap((dimension) => dimension.profileEvidenceIds));
         return { matchVersionId: match.id, opportunityId: opportunity.id, company: assessment.opportunitySnapshot?.company ?? opportunity.company, title: assessment.opportunitySnapshot?.title ?? opportunity.title, location: assessment.opportunitySnapshot?.location ?? opportunity.location, displayBand: match.displayBand, highlighted: item.highlighted, ordinal: item.ordinal,
-          jobEvidence: (assessment.evidenceSnapshot?.jobEvidence ?? []).map(({ id, value }) => ({ id, value })),
+          jobEvidence: (assessment.evidenceSnapshot?.jobEvidence ?? []).filter((evidence) => citedJobEvidence.has(evidence.id)).map(({ id, value }) => ({ id, value })),
           profileEvidence: (assessment.evidenceSnapshot?.profileEvidence ?? []).filter((evidence) => citedProfileEvidence.has(evidence.id)).map(({ id, value }) => ({ id, value })),
           assessment: match.assessment,
         };
