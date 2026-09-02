@@ -3,11 +3,13 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
 import {
   agentRuns, calibrationProposalEvidence, calibrationProposalRevisions, calibrationProposals, createDatabase, jobAccounts, jobMatchVersions, jobOpportunities, jobOpportunitySources,
-  jobProfiles, jobSourcePostingVersions, jobSourcePostings, jobTargets, jobTargetRevisions, jobTriageVersions, migrateDatabase, recommendationDecisionEvents, recommendationListItems,
+  jobProfiles, jobSourcePostingVersions, jobSourcePostings, jobTargets, jobTargetRevisions, jobTriageVersions, migrateDatabase, profileFactRevisions, profileFacts, recommendationDecisionEvents, recommendationListItems,
   recommendationLists, recommendationRuleVersions, type Database,
 } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
 import { createDeepMatchRunStarter } from "./deep-match-agent-runs";
+import { createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
+import { FakeDeepMatchAdapter } from "@job-copilot/contracts/deep-match";
 import { createRecommendationFeedbackCommands, createRecommendationFeedbackQueries } from "./recommendation-feedback";
 
 const now = new Date("2026-09-02T00:00:00.000Z");
@@ -29,6 +31,9 @@ describe("recommendation feedback persistence", () => {
     const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const profileId = crypto.randomUUID(); const listId = crypto.randomUUID();
     await db.insert(jobAccounts).values({ id: userId });
     await db.insert(jobProfiles).values({ id: profileId, userId, version: 1, createdAt: now, updatedAt: now });
+    const factId = crypto.randomUUID();
+    await db.insert(profileFacts).values({ id: factId, userId, profileId, factType: "skill", createdAt: now });
+    await db.insert(profileFactRevisions).values({ id: crypto.randomUUID(), userId, profileFactId: factId, revisionNumber: 1, factType: "skill", factValue: { name: "TypeScript" }, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1, createdAt: now });
     await db.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: now, updatedAt: now });
     await db.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: now });
     await db.insert(recommendationLists).values({ id: listId, userId, targetId, localDate: "2026-09-02", sequence: 1, createdAt: now });
@@ -99,20 +104,33 @@ describe("recommendation feedback persistence", () => {
     await expect(db.execute(sql`delete from recommendation_rule_versions where proposal_id = ${proposal!.proposalId}`)).rejects.toBeDefined();
   });
 
-  it("过期反馈把 opportunityId 冻结到规则，并让未来 run 使用该规则而不回写历史", async () => {
-    const data = await fixture(); const service = commands();
-    for (const item of data.items) await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: { decision: "ignored", reason: "EXPIRED", expectedVersion: 0, idempotencyKey: crypto.randomUUID() } });
+  it("过期反馈把 opportunityId 冻结到规则，未来 run 实际发布且不回写历史", async () => {
+    const data = await fixture(4); const service = commands(); const historicalMatchIds = data.items.map((item) => item.matchId);
+    for (const item of data.items.slice(0, 3)) await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: { decision: "ignored", reason: "EXPIRED", expectedVersion: 0, idempotencyKey: crypto.randomUUID() } });
     const [proposal] = await createRecommendationFeedbackQueries({ db }).listCalibrationProposals({ userId: data.userId, targetId: data.targetId });
     const config = proposal!.revision.ruleConfig as { excludedOpportunityIds: string[] };
-    expect(config.excludedOpportunityIds.slice().sort()).toEqual(data.items.map((item) => item.opportunityId).sort());
+    expect(config.excludedOpportunityIds.slice().sort()).toEqual(data.items.slice(0, 3).map((item) => item.opportunityId).sort());
     expect(config.excludedOpportunityIds).not.toContain(data.items[2]!.matchId);
     await service.resolveCalibrationProposal({ userId: data.userId, proposalId: proposal!.proposalId, command: { action: "approved", expectedVersion: 1, idempotencyKey: crypto.randomUUID() } });
     const started = await createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now }).start({ userId: data.userId, targetId: data.targetId, idempotencyKey: crypto.randomUUID(), trigger: "automatic", discoveryRunId: crypto.randomUUID() });
     const [run] = await db.select({ ruleVersion: agentRuns.ruleVersion, sourceScope: agentRuns.sourceScope }).from(agentRuns).where(and(eq(agentRuns.userId, data.userId), eq(agentRuns.id, started.runId)));
     expect(run).toMatchObject({ ruleVersion: "recommendation-rule-v1" });
-    expect((run!.sourceScope as { recommendationRuleConfig: { excludedOpportunityIds: string[] } }).recommendationRuleConfig.excludedOpportunityIds.slice().sort()).toEqual(data.items.map((item) => item.opportunityId).sort());
-    await expect(db.select().from(recommendationListItems).where(eq(recommendationListItems.recommendationListId, data.listId))).resolves.toHaveLength(3);
-    await expect(db.select().from(jobMatchVersions).where(eq(jobMatchVersions.id, data.items[2]!.matchId))).resolves.toHaveLength(1);
+    const sourceScope = run!.sourceScope as { recommendationRuleConfig: { minimumOverallScore: number; minimumEvidenceDimensions: number; requiredEvidenceDimensions: string[]; excludedOpportunityIds: string[] }; selectionExclusions: [] };
+    expect(sourceScope.recommendationRuleConfig.excludedOpportunityIds.slice().sort()).toEqual(data.items.slice(0, 3).map((item) => item.opportunityId).sort());
+    const claimToken = crypto.randomUUID();
+    await db.update(agentRuns).set({ status: "running", currentStep: "assess_matches", attemptCount: 1, startedAt: now, activeSliceStartedAt: now, claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), controlState: "none" }).where(eq(agentRuns.id, started.runId));
+    const [candidate] = await createDeepMatchQueries({ db }).getFrozenCandidates({ userId: data.userId, runId: started.runId });
+    expect(candidate?.opportunityId).toBe(data.items[3]!.opportunityId);
+    const deepMatch = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now, adapter: new FakeDeepMatchAdapter() });
+    const staged = await deepMatch.invokeAndValidate({ userId: data.userId, runId: started.runId, candidate: candidate!, modelCall: { signal: new AbortController().signal, usageKey: "feedback-publish", budget: { maxTokens: 20_000, reservedInputTokens: 32, reservedOutputTokens: 48 } } });
+    await deepMatch.stageValidatedAssessment({ userId: data.userId, runId: started.runId, claimToken, candidate: candidate!, assessment: staged.assessment, usage: staged.usage });
+    const published = await deepMatch.publishStagedRun({ userId: data.userId, targetId: data.targetId, runId: started.runId, fence: { claimToken }, selectionExclusions: sourceScope.selectionExclusions, ruleConfig: sourceScope.recommendationRuleConfig });
+    // Fake adapter deliberately returns a non-recommendable assessment here; publication still
+    // persists the one non-excluded match under the frozen approved rule.
+    expect(published.items).toHaveLength(0);
+    await expect(db.select().from(recommendationListItems).where(eq(recommendationListItems.recommendationListId, data.listId))).resolves.toHaveLength(4);
+    await expect(db.select({ id: jobMatchVersions.id, ruleVersion: jobMatchVersions.ruleVersion }).from(jobMatchVersions).where(and(eq(jobMatchVersions.userId, data.userId), eq(jobMatchVersions.opportunityId, data.items[3]!.opportunityId)))).resolves.toEqual(expect.arrayContaining([{ id: data.items[3]!.matchId, ruleVersion: "recommendation-rule-v0" }, expect.objectContaining({ ruleVersion: "recommendation-rule-v1" })]));
+    await expect(db.select({ id: jobMatchVersions.id }).from(jobMatchVersions).where(eq(jobMatchVersions.userId, data.userId))).resolves.toEqual(expect.arrayContaining(historicalMatchIds.map((id) => ({ id }))));
   });
 
   it("只把每个推荐项最高版本的事件作为当前状态，并将幂等键绑定到该项", async () => {
