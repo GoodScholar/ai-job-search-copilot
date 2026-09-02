@@ -951,6 +951,7 @@ body {
 .agent-run-controls { border-bottom: 1px solid var(--rule); padding-block: 1.25rem; }
 .agent-run-controls > label { color: var(--muted); display: block; font-size: 0.82rem; font-weight: 700; margin-bottom: 0.5rem; }
 .agent-run-controls > div { display: grid; gap: 0.75rem; grid-template-columns: minmax(0, 1fr) auto; }
+.agent-run-start-note { min-width: 0; overflow-wrap: anywhere; }
 .agent-run-controls select { background: var(--surface); border: 1px solid var(--rule); border-radius: 0.4rem; color: var(--ink); font: inherit; height: 2.75rem; min-width: 0; padding: 0.5rem 0.65rem; width: 100%; }
 .agent-run-start { background: var(--emerald); border: 1px solid var(--emerald); border-radius: 0.4rem; color: var(--surface); cursor: pointer; font: inherit; font-weight: 700; padding-inline: 1.25rem; }
 .agent-run-start:disabled { cursor: not-allowed; opacity: 0.62; }
@@ -1008,6 +1009,7 @@ body {
 .agent-inbox-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 1rem; }
 .job-import-workbench { display: grid; gap: 1.5rem; }
 .job-import-panel { background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--shadow-paper); min-width: 0; padding: clamp(1.25rem, 4vw, 2rem); }
+.job-import-panel li, .job-import-panel p { min-width: 0; overflow-wrap: anywhere; }
 .job-import-panel h2 { font-size: 1.35rem; letter-spacing: -0.025em; margin: 0 0 1rem; }
 .job-import-panel label, .job-import-panel p { color: var(--muted); line-height: 1.6; }
 .job-import-panel label { display: block; font-size: 0.9rem; font-weight: 700; margin-bottom: 0.5rem; }
