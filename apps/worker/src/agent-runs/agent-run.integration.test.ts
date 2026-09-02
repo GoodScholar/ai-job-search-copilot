@@ -136,13 +136,32 @@ describe("岗位发现 Agent Run Worker", () => {
   }, 120_000);
 
   afterAll(async () => {
-    await context?.close();
-    await queue?.close();
-    if (queueRedis && queueRedis.status !== "end") await queueRedis.quit();
-    await database?.$client.end();
-    await minioContainer?.stop();
-    await redisContainer?.stop();
-    await postgres?.stop();
+    const databaseStatus = async () => {
+      try {
+        const rows = await database.execute(sql<{ state: string; waitEventType: string | null; waitEvent: string | null; query: string }>`
+          select state, wait_event_type as "waitEventType", wait_event as "waitEvent", query
+          from pg_stat_activity
+          where datname = current_database() and pid <> pg_backend_pid()
+          order by pid
+        `);
+        return { connections: rows.map(({ state, waitEventType, waitEvent, query }) => ({ state, waitEventType, waitEvent, query: (typeof query === "string" ? query : String(query)).slice(0, 120) })) };
+      } catch (error) {
+        return { connectionError: error instanceof Error ? error.message : String(error) };
+      }
+    };
+    const boundary = async (name: string, action: () => Promise<unknown>, status: () => unknown | Promise<unknown>) => {
+      const startedAt = Date.now();
+      console.info(`[worker teardown] ${name}:start`, await status());
+      await action();
+      console.info(`[worker teardown] ${name}:done`, { elapsedMs: Date.now() - startedAt, status: await status() });
+    };
+    await boundary("context.close", () => Promise.resolve(context?.close()), () => ({ created: Boolean(context) }));
+    await boundary("queue.close", () => Promise.resolve(queue?.close()), () => ({ created: Boolean(queue), redisStatus: queueRedis?.status ?? "missing" }));
+    await boundary("redis.quit", () => Promise.resolve(queueRedis && queueRedis.status !== "end" ? queueRedis.quit() : undefined), () => ({ status: queueRedis?.status ?? "missing" }));
+    await boundary("database.close", () => Promise.resolve(database?.$client.end({ timeout: 5 })), databaseStatus);
+    await boundary("minio.stop", () => Promise.resolve(minioContainer?.stop()), () => ({ created: Boolean(minioContainer) }));
+    await boundary("redis.stop", () => Promise.resolve(redisContainer?.stop()), () => ({ created: Boolean(redisContainer) }));
+    await boundary("postgres.stop", () => Promise.resolve(postgres?.stop()), () => ({ created: Boolean(postgres) }));
     for (const [key, value] of Object.entries(originalEnvironment ?? {})) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
