@@ -1,7 +1,8 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { RecommendationExclusionPageSchema, RecommendationListHistoryPageSchema, type RecommendationList, type RecommendationListHistoryPage } from "@job-copilot/contracts/recommendations";
+import { exclusionReasonText } from "./exclusion-reasons";
 
 type ExclusionState = { items: RecommendationList["exclusions"]; nextCursor: string | null };
 const bandText = { highly_matched: "高度匹配", worth_trying: "值得尝试", consider_carefully: "谨慎考虑" } as const;
@@ -16,16 +17,27 @@ export function RecommendationHistory({ targetId, initialPage }: { targetId: str
   const [items, setItems] = useState(initialPage.items);
   const [nextCursor, setNextCursor] = useState(initialPage.nextCursor);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [exclusions, setExclusions] = useState<Record<string, ExclusionState>>({});
   const pendingRequests = useRef(new Set<string>());
+  const historyPending = useRef(false);
+  const identity = `${targetId}:${initialPage.items.map((item) => item.recommendationListId).join(",")}:${initialPage.nextCursor ?? ""}`;
+  useEffect(() => {
+    historyPending.current = false;
+    pendingRequests.current.clear();
+    setItems(initialPage.items); setNextCursor(initialPage.nextCursor); setExclusions({}); setLoadingHistory(false); setError(null);
+  }, [identity, initialPage]);
   const loadHistory = async () => {
-    if (!nextCursor || loadingHistory) return;
+    if (!nextCursor || historyPending.current) return;
+    historyPending.current = true;
     setLoadingHistory(true);
+    setError(null);
     try {
       const page = RecommendationListHistoryPageSchema.parse(await responseJson(await fetch(`/api/recommendations/history?targetId=${encodeURIComponent(targetId)}&cursor=${encodeURIComponent(nextCursor)}`, { cache: "no-store" })));
-      setItems((current) => [...current, ...page.items]);
+      setItems((current) => [...new Map([...current, ...page.items].map((item) => [item.recommendationListId, item])).values()]);
       setNextCursor(page.nextCursor);
-    } finally { setLoadingHistory(false); }
+    } catch { setError("历史版本加载失败，请重试。"); }
+    finally { historyPending.current = false; setLoadingHistory(false); }
   };
   const loadExclusions = async (listId: string, cursor?: string) => {
     const requestKey = `${listId}:${cursor ?? "first"}`;
@@ -39,10 +51,11 @@ export function RecommendationHistory({ targetId, initialPage }: { targetId: str
       for (const item of page.items) byIdentity.set(`${item.opportunityId}:${item.reasonCode}`, item);
       return { ...current, [listId]: { items: [...byIdentity.values()], nextCursor: page.nextCursor } };
     });
-    } finally { pendingRequests.current.delete(requestKey); }
+    } catch { setError("稳定排除加载失败，请重试。"); }
+    finally { pendingRequests.current.delete(requestKey); }
   };
   return <details><summary>历史版本</summary><ol>{items.map((version) => {
     const exclusion = exclusions[version.recommendationListId];
-    return <li key={version.recommendationListId}><details><summary>清单版本 {version.sequence} · {version.localDate}</summary>{version.items.length === 0 ? <p>该版本没有可推荐岗位。</p> : <ol>{version.items.map((item) => <li key={item.matchVersionId}><strong>{item.title ?? "岗位机会"}</strong><p>{bandText[item.displayBand]}</p><p>岗位证据：{item.jobEvidence.map((evidence) => evidence.value).join("；")}</p><p>画像证据：{item.profileEvidence.map((evidence) => evidence.value).join("；")}</p>{item.assessment.dimensions.map((dimension) => <p key={dimension.dimension}><strong>{dimensionText[dimension.dimension]}</strong>：{dimension.judgment === "evidence_backed_inference" ? "证据支持的推断" : "证据不足"}；{dimension.summary}</p>)}</li>)}</ol>} {!exclusion ? <button className="workbench-touch-target" type="button" onClick={() => void loadExclusions(version.recommendationListId)}>查看稳定排除</button> : <>{exclusion.items.length > 0 ? <p>稳定排除：{exclusion.items.map((item) => item.reasonCode).join("、")}</p> : <p>没有稳定排除岗位。</p>}{exclusion.nextCursor ? <button className="workbench-touch-target" type="button" onClick={() => void loadExclusions(version.recommendationListId, exclusion.nextCursor ?? undefined)}>加载更多稳定排除</button> : null}</>}</details></li>;
-  })}</ol>{nextCursor ? <button className="workbench-touch-target" type="button" disabled={loadingHistory} onClick={() => void loadHistory()}>{loadingHistory ? "加载中" : "加载更多历史版本"}</button> : null}</details>;
+    return <li key={version.recommendationListId}><details><summary>清单版本 {version.sequence} · {version.localDate}</summary>{version.items.length === 0 ? <p>该版本没有可推荐岗位。</p> : <ol>{version.items.map((item) => <li key={item.matchVersionId}><strong>{item.title ?? "岗位机会"}</strong><p>{bandText[item.displayBand]}</p><p>岗位证据：{item.jobEvidence.map((evidence) => evidence.value).join("；")}</p><p>画像证据：{item.profileEvidence.map((evidence) => evidence.value).join("；")}</p>{item.assessment.dimensions.map((dimension) => <p key={dimension.dimension}><strong>{dimensionText[dimension.dimension]}</strong>：{dimension.judgment === "evidence_backed_inference" ? "证据支持的推断" : "证据不足"}；{dimension.summary}</p>)}</li>)}</ol>} {!exclusion ? <button className="workbench-touch-target" type="button" onClick={() => void loadExclusions(version.recommendationListId)}>查看稳定排除</button> : <>{exclusion.items.length > 0 ? <p>稳定排除：{exclusion.items.map((item) => exclusionReasonText[item.reasonCode]).join("、")}</p> : <p>没有稳定排除岗位。</p>}{exclusion.nextCursor ? <button className="workbench-touch-target" type="button" onClick={() => void loadExclusions(version.recommendationListId, exclusion.nextCursor ?? undefined)}>加载更多稳定排除</button> : null}</>}</details></li>;
+  })}</ol>{error ? <p role="alert">{error}</p> : null}{nextCursor ? <button className="workbench-touch-target" type="button" disabled={loadingHistory} onClick={() => void loadHistory()}>{loadingHistory ? "加载中" : "加载更多历史版本"}</button> : null}</details>;
 }
