@@ -152,8 +152,9 @@ describe("deep match persistence", () => {
     const adapter = { ...fake, assess: async (...args: Parameters<FakeDeepMatchAdapter["assess"]>) => { calls += 1; return fake.assess(...args); } };
     const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now, adapter });
     const candidate = (await createDeepMatchQueries({ db }).getFrozenCandidates({ userId: input.userId, runId: run.runId }))[0]!;
-    const first = await commands.assessAndStage({ userId: input.userId, runId: run.runId, candidate, modelCall: modelCall(), fence: { claimToken } });
-    const restored = await commands.assessAndStage({ userId: input.userId, runId: run.runId, candidate, modelCall: modelCall(), fence: { claimToken } });
+    const first = await commands.invokeAndValidate({ userId: input.userId, runId: run.runId, candidate, modelCall: modelCall() });
+    await commands.stageValidatedAssessment({ userId: input.userId, runId: run.runId, candidate, assessment: first.assessment, usage: first.usage });
+    const restored = await commands.invokeAndValidate({ userId: input.userId, runId: run.runId, candidate, modelCall: modelCall() });
 
     expect(first.reused).toBe(false); expect(restored.reused).toBe(true); expect(calls).toBe(1);
     await expect(db.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, input.userId))).resolves.toHaveLength(0);
@@ -213,7 +214,8 @@ describe("deep match persistence", () => {
 
     const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now });
     const candidate = (await createDeepMatchQueries({ db }).getFrozenCandidates({ userId: input.userId, runId: child.runId }))[0]!;
-    await commands.assessAndStage({ userId: input.userId, runId: child.runId, candidate, modelCall: modelCall(), fence: { claimToken } });
+    const staged = await commands.invokeAndValidate({ userId: input.userId, runId: child.runId, candidate, modelCall: modelCall() });
+    await commands.stageValidatedAssessment({ userId: input.userId, runId: child.runId, candidate, assessment: staged.assessment, usage: staged.usage });
     await commands.publishStagedRun({ userId: input.userId, targetId: input.targetId, runId: child.runId, fence: { claimToken }, selectionExclusions: [] });
     await expect(db.select({ sourcePostingVersionId: jobMatchVersions.sourcePostingVersionId }).from(jobMatchVersions).where(eq(jobMatchVersions.userId, input.userId))).resolves.toEqual([{ sourcePostingVersionId: input.sourcePostingVersionId }]);
   });
@@ -227,7 +229,8 @@ describe("deep match persistence", () => {
       await db.update(agentRuns).set({ status: "running", currentStep: "assess_matches", attemptCount: 1, startedAt: now, activeSliceStartedAt: now, claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), controlState: "none" }).where(eq(agentRuns.id, run.runId));
       const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now });
       const candidate = (await createDeepMatchQueries({ db }).getFrozenCandidates({ userId: input.userId, runId: run.runId }))[0]!;
-      await commands.assessAndStage({ userId: input.userId, runId: run.runId, candidate, modelCall: modelCall(), fence: { claimToken } });
+      const staged = await commands.invokeAndValidate({ userId: input.userId, runId: run.runId, candidate, modelCall: modelCall() });
+      await commands.stageValidatedAssessment({ userId: input.userId, runId: run.runId, candidate, assessment: staged.assessment, usage: staged.usage });
       return commands.publishStagedRun({ userId: input.userId, targetId: input.targetId, runId: run.runId, fence: { claimToken }, selectionExclusions: [] });
     };
     for (let round = 0; round < 3; round += 1) {

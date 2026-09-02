@@ -82,10 +82,14 @@ export function createAgentRunCheckpoint(deps: Dependencies): AgentRunCheckpoint
       const reserve = input.reserve ?? {};
       return deps.db.transaction(async (transaction) => {
         await acquireAccountAdvisoryLock(transaction, input.userId);
-        const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.claimToken, input.claimToken)));
+        const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId)));
         const now = deps.clock();
         const expired = Boolean(run?.claimExpiresAt && run.claimExpiresAt <= now);
-        if (!run || run.status !== "running" || !run.claimExpiresAt || (expired && run.controlState === "none")) return { kind: "stale" };
+        // A returned model response is an accounting fact even when a new claimant has
+        // already taken over.  Ordinary preflight/checkpoints remain claim-fenced; only
+        // `settleActual` may record this immutable, run+candidate-keyed cost first.
+        const ownsClaim = Boolean(run && run.claimToken === input.claimToken);
+        if (!run || run.status !== "running" || !run.claimExpiresAt || ((!ownsClaim || (expired && run.controlState === "none")) && !reserve.settleActual)) return { kind: "stale" };
         const prior = await transaction.select({ category: agentRunUsageEntries.category, amount: agentRunUsageEntries.amount }).from(agentRunUsageEntries)
           .where(and(eq(agentRunUsageEntries.runId, input.runId), eq(agentRunUsageEntries.usageKey, input.checkpointKey)));
         if (run.controlState === "none" && prior.length > 0 && !sameReserve(prior, reserve)) throw new AgentRunCheckpointError("AGENT_RUN_CHECKPOINT_CONFLICT");
@@ -108,6 +112,7 @@ export function createAgentRunCheckpoint(deps: Dependencies): AgentRunCheckpoint
           await transaction.update(agentRuns).set({ ...usageUpdate, version: usageVersion }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId)));
           await appendBudgetFacts(transaction, { id: deps.id, auditTrail: deps.auditTrail, userId: input.userId, requestId: input.runId, runId: input.runId, version: usageVersion, currentStep: run.currentStep, usage, consumed: { activeDurationMs: elapsed, toolCalls: amount(chargedReserve.toolCalls), sourceRequests: amount(chargedReserve.sourceRequests), modelCalls: amount(chargedReserve.modelCalls) }, now });
         }
+        if (!ownsClaim || (expired && run.controlState === "none")) return { kind: "stale" };
         if (run.controlState === "cancel_requested") {
           const version = usageVersion + 1;
           await transaction.update(agentRuns).set({ ...usageUpdate, status: "cancelled", currentStep: "cancelled", controlState: "none", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, cancelledAt: now, terminationKind: "cancelled_by_user", terminationBudgetDimension: null, failureCode: null, usageComplete: run.usageComplete, version }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId)));

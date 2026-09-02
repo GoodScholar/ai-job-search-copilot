@@ -584,7 +584,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
               if (modelController!.signal.aborted) abort();
               else modelController!.signal.addEventListener("abort", abort, { once: true });
             });
-            const staged = await Promise.race([commands.assessAndStage({ userId: job.userId, runId: job.runId, candidate, fence: { claimToken: claimed.claimToken }, modelCall: {
+            const staged = await Promise.race([commands.invokeAndValidate({ userId: job.userId, runId: job.runId, candidate, modelCall: {
               signal: modelController!.signal,
               usageKey: `deep_match_model:${candidate.opportunityId}`,
               budget: { maxTokens: (claimed.run.budgetSnapshot as { maxTokens: number }).maxTokens, reservedInputTokens: deepMatchAdapter.reservedUsage.inputTokens, reservedOutputTokens: deepMatchAdapter.reservedUsage.outputTokens },
@@ -594,6 +594,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
               modelCalls: 1, inputTokens: staged.usage.inputTokens, outputTokens: staged.usage.outputTokens,
               settleActual: true,
             } });
+            await commands.stageValidatedAssessment({ userId: job.userId, runId: job.runId, candidate, assessment: staged.assessment, usage: staged.usage });
             if (outputCheckpointOutcome) return outputCheckpointOutcome;
           }
           const assessCompleted = await transition("assess_matches", true); if (assessCompleted) return assessCompleted;

@@ -234,6 +234,30 @@ describe("AgentRunProcessor checkpoints", () => {
   });
 
   it.each([
+    ["pause_requested", "paused"],
+    ["cancel_requested", "cancelled"],
+    ["claim replacement", "stale"],
+  ] as const)("settles and privately stages a returned model result when %s lands before staging", async (interruption, expected) => {
+    const job = await deepMatchRun(); const fake = new FakeDeepMatchAdapter(); let calls = 0;
+    const adapter = { ...fake, async assess(input: Parameters<FakeDeepMatchAdapter["assess"]>[0], call: Parameters<FakeDeepMatchAdapter["assess"]>[1]) {
+      const result = await fake.assess(input, call); calls += 1;
+      if (calls === 1) {
+        if (interruption === "claim replacement") await database.update(agentRuns).set({ claimToken: crypto.randomUUID(), claimExpiresAt: new Date(now.getTime() + 30_000) }).where(eq(agentRuns.id, job.runId));
+        else await database.update(agentRuns).set({ controlState: interruption }).where(eq(agentRuns.id, job.runId));
+      }
+      return { ...result, usage: { inputTokens: 7, outputTokens: 11, latencyMs: 1 } };
+    } };
+    const processor = () => createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: adapter, checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+
+    await expect(processor().process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe(expected);
+    await expect(Promise.all([
+      database.select({ category: agentRunUsageEntries.category, amount: agentRunUsageEntries.amount }).from(agentRunUsageEntries).where(eq(agentRunUsageEntries.runId, job.runId)),
+      database.select({ assessment: deepMatchRunCandidates.assessment }).from(deepMatchRunCandidates).where(and(eq(deepMatchRunCandidates.runId, job.runId), eq(deepMatchRunCandidates.opportunityId, job.opportunityIds[0]!))),
+      database.select().from(recommendationLists).where(eq(recommendationLists.userId, job.userId)),
+    ])).resolves.toEqual([expect.arrayContaining([{ category: "model_call", amount: 1 }, { category: "input_tokens", amount: 7 }, { category: "output_tokens", amount: 11 }]), [expect.objectContaining({ assessment: expect.any(Object) })], []]);
+  });
+
+  it.each([
     ["pause", "paused", "run.paused", "agent.run_paused"],
     ["cancel", "cancelled", "run.cancelled", "agent.run_cancelled"],
     ["deadline", "budget_exhausted", "run.failed", "agent.run_budget_exhausted"],

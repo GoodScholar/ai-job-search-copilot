@@ -198,20 +198,24 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
     if (!bound) throw new Error("DEEP_MATCH_TUPLE_INVALID");
   };
   return {
-    async stageAssessment(input: { userId: string; runId: string; opportunityId: string; assessment: unknown; usage: unknown; fence: { claimToken: string } }) {
+    async stageValidatedAssessment(input: { userId: string; runId: string; candidate: SelectedDeepMatchCandidate; assessment: ReturnType<typeof DeepMatchAssessmentSchema.parse>; usage: ReturnType<typeof DeepMatchAdapterResultSchema.parse>["usage"] }) {
       return deps.db.transaction(async (transaction) => {
         await acquireAccountAdvisoryLock(transaction, input.userId);
-        const [run] = await transaction.select({ id: agentRuns.id }).from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.fence.claimToken), gt(agentRuns.claimExpiresAt, deps.clock()), eq(agentRuns.controlState, "none")));
-        if (!run) throw new DeepMatchClaimLostError();
+        // This CAS is deliberately private: a returned, strictly validated result belongs
+        // to the immutable candidate snapshot even if pause/cancel/claim handoff lands in
+        // the narrow post-call window.  Only `publishStagedRun` can make it visible, and
+        // that path remains lifecycle-fenced.
         const [row] = await transaction.update(deepMatchRunCandidates).set({ assessment: input.assessment, adapterUsage: input.usage })
-          .where(and(eq(deepMatchRunCandidates.userId, input.userId), eq(deepMatchRunCandidates.runId, input.runId), eq(deepMatchRunCandidates.opportunityId, input.opportunityId), isNull(deepMatchRunCandidates.assessment))).returning();
+          .where(and(eq(deepMatchRunCandidates.userId, input.userId), eq(deepMatchRunCandidates.runId, input.runId), eq(deepMatchRunCandidates.opportunityId, input.candidate.opportunityId), isNull(deepMatchRunCandidates.assessment))).returning();
         if (row) return row;
-        const [existing] = await transaction.select().from(deepMatchRunCandidates).where(and(eq(deepMatchRunCandidates.userId, input.userId), eq(deepMatchRunCandidates.runId, input.runId), eq(deepMatchRunCandidates.opportunityId, input.opportunityId)));
+        const [existing] = await transaction.select().from(deepMatchRunCandidates).where(and(eq(deepMatchRunCandidates.userId, input.userId), eq(deepMatchRunCandidates.runId, input.runId), eq(deepMatchRunCandidates.opportunityId, input.candidate.opportunityId)));
         if (!existing?.assessment || !existing.adapterUsage) throw new Error("DEEP_MATCH_STAGE_MISSING");
+        const existingAssessment = DeepMatchAssessmentSchema.parse(existing.assessment);
+        if (existingAssessment.opportunityId !== input.candidate.opportunityId) throw new Error("DEEP_MATCH_STAGE_CONFLICT");
         return existing;
       });
     },
-    async assessAndStage(input: { userId: string; runId: string; candidate: SelectedDeepMatchCandidate; modelCall: DeepMatchAdapterCall; fence: { claimToken: string } }) {
+    async invokeAndValidate(input: { userId: string; runId: string; candidate: SelectedDeepMatchCandidate; modelCall: DeepMatchAdapterCall }) {
       const [existing] = await deps.db.select({ assessment: deepMatchRunCandidates.assessment, adapterUsage: deepMatchRunCandidates.adapterUsage })
         .from(deepMatchRunCandidates).where(and(eq(deepMatchRunCandidates.userId, input.userId), eq(deepMatchRunCandidates.runId, input.runId), eq(deepMatchRunCandidates.opportunityId, input.candidate.opportunityId))).limit(1);
       if (existing?.assessment && existing.adapterUsage) {
@@ -232,7 +236,6 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
         throw new DeepMatchAdapterError("invalid_output");
       }
       const assessment = { ...validated, evidenceSnapshot: { jobEvidence: input.candidate.jobEvidence.map(({ id, value }) => ({ id, value })), profileEvidence: input.candidate.profileEvidence.map(({ id, value }) => ({ id, value })) }, opportunitySnapshot: input.candidate.opportunitySnapshot };
-      await this.stageAssessment({ userId: input.userId, runId: input.runId, opportunityId: input.candidate.opportunityId, assessment, usage: result.usage, fence: input.fence });
       return { assessment, usage: result.usage, reused: false };
     },
     /** Publishes a fully staged matching run in one fenced transaction.  Staging is private;
