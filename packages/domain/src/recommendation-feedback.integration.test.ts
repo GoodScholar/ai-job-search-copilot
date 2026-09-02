@@ -53,7 +53,7 @@ describe("recommendation feedback persistence", () => {
   }
 
   it("以 owner-bound 不可变事件记录全部反馈边界，并在三条当前忽略时只创建一次建议", async () => {
-    const data = await fixture(5); const service = commands();
+    const data = await fixture(8); const service = commands();
     await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: data.items[0]!.itemId, command: { decision: "ignored", expectedVersion: 0, idempotencyKey: crypto.randomUUID(), note: "x".repeat(500) } });
     for (const item of data.items.slice(1, 4)) await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: { decision: "ignored", reason: "LOCATION", expectedVersion: 0, idempotencyKey: crypto.randomUUID() } });
     const proposals = await createRecommendationFeedbackQueries({ db }).listCalibrationProposals({ userId: data.userId, targetId: data.targetId });
@@ -65,6 +65,13 @@ describe("recommendation feedback persistence", () => {
     await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: data.items[4]!.itemId, command: replay });
     await expect(service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: data.items[4]!.itemId, command: replay })).resolves.toMatchObject({ decision: { status: "saved", version: 1 } });
     await expect(service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: data.items[4]!.itemId, command: { ...replay, decision: "ignored" } as never })).rejects.toThrow("IDEMPOTENCY_CONFLICT");
+    for (const [item, expectedVersion] of [[data.items[4]!, 1], [data.items[5]!, 0], [data.items[6]!, 0]] as const) await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: { decision: "ignored", reason: "LOCATION", expectedVersion, idempotencyKey: crypto.randomUUID() } });
+    const allProposals = await createRecommendationFeedbackQueries({ db }).listCalibrationProposals({ userId: data.userId, targetId: data.targetId });
+    expect(allProposals).toHaveLength(2);
+    const evidence = await db.select().from(calibrationProposalEvidence).where(eq(calibrationProposalEvidence.userId, data.userId));
+    expect(new Set(evidence.map((item) => item.decisionEventId)).size).toBe(6);
+    const concurrent = await Promise.allSettled(["a", "b"].map(() => service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: data.items[7]!.itemId, command: { decision: "saved", expectedVersion: 0, idempotencyKey: crypto.randomUUID() } })));
+    expect(concurrent.filter((item) => item.status === "fulfilled")).toHaveLength(1); expect(concurrent.filter((item) => item.status === "rejected")).toHaveLength(1);
     const secondUser = crypto.randomUUID(); await db.insert(jobAccounts).values({ id: secondUser });
     await expect(service.recordDecision({ userId: secondUser, recommendationListId: data.listId, recommendationListItemId: data.items[0]!.itemId, command: { decision: "saved", expectedVersion: 0, idempotencyKey: crypto.randomUUID() } })).rejects.toThrow("RECOMMENDATION_ITEM_NOT_FOUND");
     await expect(db.execute(sql`update recommendation_decision_events set decision = 'saved' where user_id = ${data.userId}`)).rejects.toBeDefined();
