@@ -124,6 +124,26 @@ async function listSnapshot(userId: string, targetId: string) {
   } finally { await client.end(); }
 }
 
+async function seedPaginatedRecommendationFixtures(userId: string, targetId: string, latestListId: string) {
+  const client = new Client({ connectionString: databaseUrl });
+  await client.connect();
+  try {
+    await client.query(`insert into recommendation_lists (id, user_id, target_id, local_date, sequence, created_at)
+      select gen_random_uuid(), $1, $2, to_char(date '2026-08-01' - item, 'YYYY-MM-DD'), 1, now() - (item * interval '1 day')
+      from generate_series(1, 21) as item`, [userId, targetId]);
+    await client.query(`with source as (
+        select source_posting_version_id, company, location, normalized_data from job_opportunities where user_id = $1 limit 1
+      ), opportunities as (
+        insert into job_opportunities (id, user_id, import_id, source_posting_version_id, canonical_opportunity_id, dedup_key, company, title, location, posted_at, deadline, description, normalized_data, availability, availability_updated_at, created_at, updated_at)
+        select gen_random_uuid(), $1, null, source.source_posting_version_id, null, repeat(md5(item::text), 2), source.company, '分页排除夹具 ' || item, source.location, null, null, null, source.normalized_data, 'open', now(), now(), now()
+        from source cross join generate_series(1, 26) as item
+        returning id
+      )
+      insert into recommendation_exclusions (id, user_id, target_id, opportunity_id, recommendation_list_id, reason_code, created_at)
+      select gen_random_uuid(), $1, $2, id, $3, 'MATCH_QUALITY_INSUFFICIENT', now() from opportunities`, [userId, targetId, latestListId]);
+  } finally { await client.end(); }
+}
+
 async function setCoarseScores(userId: string, targetId: string, opportunities: ImportedOpportunity[]) {
   const client = new Client({ connectionString: databaseUrl });
   await client.connect();
@@ -154,7 +174,7 @@ test("显式 Fake matching 真实链路交付双方证据、质量排除与单�
   await page.getByText("查看证据与判断").click();
   await expect(page.getByRole("list", { name: "推荐岗位" }).getByText(/^岗位证据：/u)).toContainText("正式推荐 TypeScript 工程师");
   await expect(page.getByRole("list", { name: "推荐岗位" }).getByText(/^画像证据：/u)).toContainText("已确认的岗位方向：frontend");
-  await expect(page.getByText(/证据支持的推断|证据不足/u)).toHaveCount(6);
+  await expect(page.getByRole("list", { name: "推荐岗位" }).locator("details > p > strong")).toHaveCount(6);
   await expect(page.locator("main")).not.toContainText(/(?:评分|score|\d+%)/i);
   const before = await matchSnapshot(account.userId, account.targetId);
   const listsBefore = await listSnapshot(account.userId, account.targetId);
@@ -173,9 +193,19 @@ test("显式 Fake matching 真实链路交付双方证据、质量排除与单�
   expect(keyAfterSecondSuccess).not.toBe(keyAfterFirstSuccess);
   const listsAfterSecondSuccess = await listSnapshot(account.userId, account.targetId);
   expect(listsAfterSecondSuccess).toHaveLength(listsBefore.length + 2);
+  await seedPaginatedRecommendationFixtures(account.userId, account.targetId, listsAfterSecondSuccess.at(-1)!.id);
   await page.reload();
+  await expect(page.getByText(/稳定排除 25 项岗位/u)).toBeVisible();
+  const loadLatestExclusions = page.getByRole("button", { name: "加载更多稳定排除" }).first();
+  const exclusionResponse = page.waitForResponse((response) => response.url().includes("/api/recommendations/lists/") && response.url().includes("/exclusions?") && response.status() === 200);
+  if (info.project.name === "Desktop Chrome") await loadLatestExclusions.click(); else await loadLatestExclusions.tap();
+  await expect((await exclusionResponse).json()).resolves.toMatchObject({ items: [expect.any(Object)], nextCursor: null });
+  await expect(page.getByText(/稳定排除 26 项岗位/u)).toBeVisible();
   await expect(page.getByText("历史版本")).toBeVisible();
   await page.getByText("历史版本", { exact: true }).click();
+  const loadHistory = page.getByRole("button", { name: "加载更多历史版本" });
+  if (info.project.name === "Desktop Chrome") await loadHistory.click(); else await loadHistory.tap();
+  await expect.poll(() => page.locator("summary").filter({ hasText: "清单版本" }).count()).toBeGreaterThan(20);
   await page.locator("summary").filter({ hasText: "清单版本 1" }).click();
   const historicalVersion = page.locator("summary").filter({ hasText: "清单版本 1" }).locator("..");
   await expect(historicalVersion.locator("p").filter({ hasText: "岗位证据：" })).toContainText("正式推荐 TypeScript 工程师");

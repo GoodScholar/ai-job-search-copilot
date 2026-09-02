@@ -260,6 +260,7 @@ describe("deep match persistence", () => {
     const latest = await queries.getLatestList({ userId: input.userId, targetId: input.targetId });
     expect(latest).toMatchObject({ recommendationListId: listIds[20], exclusionsNextCursor: expect.any(String) });
     expect(latest?.exclusions).toHaveLength(25);
+    await expect(queries.getListExclusionsPage({ userId: input.userId, targetId: input.targetId, recommendationListId: listIds[20]!, cursor: latest!.exclusionsNextCursor!, limit: 25 })).resolves.toMatchObject({ items: [expect.any(Object)], nextCursor: null });
   }, 60_000);
 
 });
