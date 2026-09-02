@@ -242,7 +242,7 @@ describe("AgentRunProcessor checkpoints", () => {
     const adapter = { ...fake, async assess(input: Parameters<FakeDeepMatchAdapter["assess"]>[0], call: Parameters<FakeDeepMatchAdapter["assess"]>[1]) {
       const result = await fake.assess(input, call); calls += 1;
       if (calls === 1) {
-        if (interruption === "claim replacement") await database.update(agentRuns).set({ claimToken: crypto.randomUUID(), claimExpiresAt: new Date(now.getTime() + 30_000) }).where(eq(agentRuns.id, job.runId));
+        if (interruption === "claim replacement") await database.update(agentRuns).set({ claimToken: crypto.randomUUID(), claimExpiresAt: new Date(now.getTime() + 30_000), attemptCount: 2, activeSliceStartedAt: new Date(now.getTime() + 5_000) }).where(eq(agentRuns.id, job.runId));
         else await database.update(agentRuns).set({ controlState: interruption }).where(eq(agentRuns.id, job.runId));
       }
       return { ...result, usage: { inputTokens: 7, outputTokens: 11, latencyMs: 1 } };
@@ -255,6 +255,8 @@ describe("AgentRunProcessor checkpoints", () => {
       database.select({ assessment: deepMatchRunCandidates.assessment }).from(deepMatchRunCandidates).where(and(eq(deepMatchRunCandidates.runId, job.runId), eq(deepMatchRunCandidates.opportunityId, job.opportunityIds[0]!))),
       database.select().from(recommendationLists).where(eq(recommendationLists.userId, job.userId)),
     ])).resolves.toEqual([expect.arrayContaining([{ category: "model_call", amount: 1 }, { category: "input_tokens", amount: 7 }, { category: "output_tokens", amount: 11 }]), interruption === "claim replacement" ? [expect.objectContaining({ assessment: null })] : [expect.objectContaining({ assessment: expect.any(Object) })], []]);
+    if (interruption === "claim replacement") await expect(database.select({ attemptCount: agentRuns.attemptCount, activeSliceStartedAt: agentRuns.activeSliceStartedAt, modelCallCount: agentRuns.modelCallCount }).from(agentRuns).where(eq(agentRuns.id, job.runId)))
+      .resolves.toEqual([{ attemptCount: 2, activeSliceStartedAt: new Date(now.getTime() + 5_000), modelCallCount: 0 }]);
   });
 
   it.each([
