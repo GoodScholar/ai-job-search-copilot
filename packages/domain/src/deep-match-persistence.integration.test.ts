@@ -1,4 +1,5 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
+import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   agentRuns, createDatabase, deepMatchRunCandidates, jobAccounts, jobMatchVersions, jobOpportunities, jobOpportunitySources, jobProfiles, jobSourcePostingVersions, jobSourcePostings, recommendationListItems, recommendationLists,
@@ -27,6 +28,12 @@ describe("deep match persistence", () => {
   afterAll(async () => {
     await db?.$client.end();
     await container?.stop();
+  });
+
+  it("does not export the private staging command to package consumers", async () => {
+    const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8")) as { exports: Record<string, string> };
+    expect(manifest.exports["./deep-match-persistence"]).toBeUndefined();
+    expect(manifest.exports["./recommendation-queries"]).toBeDefined();
   });
 
   async function fixture(input: { score?: number; verdict?: "pass" | "fail"; deadlineStatus?: "valid" | "expired"; owner?: { userId: string; profileId: string; targetId: string } } = {}) {
