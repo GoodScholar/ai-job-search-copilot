@@ -5,7 +5,7 @@ import {
   jobTargetRevisions, jobTargets, jobTriageVersions, migrateDatabase, profileFactRevisions, profileFacts, recommendationExclusions, type Database,
 } from "@job-copilot/database";
 import { and, eq } from "drizzle-orm";
-import { DEEP_MATCH_DIMENSIONS } from "@job-copilot/contracts/deep-match";
+import { DEEP_MATCH_DIMENSIONS, DeepMatchAdapterError } from "@job-copilot/contracts/deep-match";
 import { createDeepMatchRunStarter } from "./deep-match-agent-runs";
 import { DeepMatchClaimLostError, createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
 
@@ -146,5 +146,17 @@ describe("deep match persistence", () => {
       async assess() { return { assessments: [{ opportunityId: crypto.randomUUID(), overallScore: 80, dimensions: DEEP_MATCH_DIMENSIONS.map((dimension) => ({ dimension, score: 80, judgment: "evidence_backed_inference" as const, jobEvidenceIds: [candidate.jobEvidence[0]!.id], profileEvidenceIds: [candidate.profileEvidence[0]!.id], summary: "wrong identity" })) }], usage: { inputTokens: 1, outputTokens: 1, latencyMs: 1 } }; },
     } });
     await expect(commands.createMatch({ userId: input.userId, targetId: input.targetId, candidate, modelCall: modelCall() })).rejects.toThrow("DEEP_MATCH_OPPORTUNITY_IDENTITY_INVALID");
+  });
+
+  it("maps malformed adapter result envelopes to a stable model-invalid error before persistence", async () => {
+    const input = await fixture();
+    const candidate = (await createDeepMatchQueries({ db }).selectCandidates({ userId: input.userId, targetId: input.targetId }))[0]!;
+    const commands = createDeepMatchCommands({ db, id: crypto.randomUUID, clock: () => now, adapter: {
+      adapter: "test", adapterVersion: "v1", model: "test", reservedUsage: { inputTokens: 1, outputTokens: 1 },
+      async assess() { return { assessments: [], usage: { inputTokens: -1, outputTokens: 1, latencyMs: 1 } } as never; },
+    } });
+    await expect(commands.createMatch({ userId: input.userId, targetId: input.targetId, candidate, modelCall: modelCall() }))
+      .rejects.toMatchObject({ constructor: DeepMatchAdapterError, category: "invalid_output" });
+    await expect(db.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, input.userId))).resolves.toHaveLength(0);
   });
 });

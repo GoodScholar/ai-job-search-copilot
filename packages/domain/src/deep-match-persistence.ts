@@ -4,7 +4,7 @@ import {
   recommendationExclusions, recommendationListItems, recommendationLists, type Database,
 } from "@job-copilot/database";
 import {
-  DEEP_MATCH_OUTPUT_SCHEMA_VERSION, DeepMatchAssessmentSchema, FakeDeepMatchAdapter, validateDeepMatchEvidenceClosure, type DeepMatchAdapter, type DeepMatchAdapterCall, type DeepMatchCandidate,
+  DEEP_MATCH_OUTPUT_SCHEMA_VERSION, DeepMatchAdapterError, DeepMatchAdapterResultSchema, DeepMatchAssessmentSchema, FakeDeepMatchAdapter, validateDeepMatchEvidenceClosure, type DeepMatchAdapter, type DeepMatchAdapterCall, type DeepMatchCandidate,
 } from "@job-copilot/contracts/deep-match";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 
@@ -128,10 +128,16 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
   const adapter = deps.adapter ?? new FakeDeepMatchAdapter();
   return {
     async createMatch(input: { userId: string; targetId: string; candidate: SelectedDeepMatchCandidate; modelCall: DeepMatchAdapterCall; fence?: { runId: string; claimToken: string } }) {
-      const result = await adapter.assess({ candidates: [{
+      const rawResult = await adapter.assess({ candidates: [{
         opportunityId: input.candidate.opportunityId, sourcePostingVersionId: input.candidate.sourcePostingVersionId,
         jobEvidence: input.candidate.jobEvidence, profileEvidence: input.candidate.profileEvidence,
       }] }, input.modelCall);
+      let result: ReturnType<typeof DeepMatchAdapterResultSchema.parse>;
+      try {
+        result = DeepMatchAdapterResultSchema.parse(rawResult);
+      } catch {
+        throw new DeepMatchAdapterError("invalid_output");
+      }
       const [rawAssessment] = result.assessments;
       if (!rawAssessment) throw new Error("DEEP_MATCH_EMPTY_OUTPUT");
       const validatedAssessment = validateDeepMatchEvidenceClosure(DeepMatchAssessmentSchema.parse(rawAssessment), {
