@@ -78,6 +78,16 @@ describe("deep match persistence", () => {
     ]));
   });
 
+  it("does not mix an old target-version triage into a newly frozen matching run", async () => {
+    const input = await fixture();
+    await db.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId: input.userId, targetId: input.targetId, version: 2, priority: "primary", state: "active", constraints: { roleFamily: "backend", seniority: null, locations: [], workModes: [], relocation: "unknown", salary: null, industries: [], dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] } }, createdAt: now });
+    await db.update(jobTargets).set({ version: 2 }).where(eq(jobTargets.id, input.targetId));
+    const started = await createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now })
+      .start({ userId: input.userId, targetId: input.targetId, idempotencyKey: crypto.randomUUID(), trigger: "automatic", discoveryRunId: crypto.randomUUID() });
+    await expect(db.select().from(deepMatchRunCandidates).where(eq(deepMatchRunCandidates.runId, started.runId))).resolves.toEqual([]);
+    await expect(db.select({ targetVersion: agentRuns.targetVersion }).from(agentRuns).where(eq(agentRuns.id, started.runId))).resolves.toEqual([{ targetVersion: 2 }]);
+  });
+
   it("retains every selection exclusion instead of silently truncating the historical decision set", async () => {
     const eligible = await fixture({ score: 90 });
     const owner = { userId: eligible.userId, profileId: eligible.profileId, targetId: eligible.targetId };

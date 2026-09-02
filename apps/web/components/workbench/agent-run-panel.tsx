@@ -97,7 +97,8 @@ function runStatusLabel(run: AgentRunDetail | null): string {
   if (run.status === "cancelled") return `${noun}已取消`;
   if (run.status === "completed" && run.termination?.kind === "completed_with_source_issues") return `${noun}部分完成`;
   if (run.status === "completed") return matching ? `岗位匹配完成，已生成 ${run.usage.results} 项推荐` : `岗位发现完成，共保存 ${run.results.length} 个岗位机会`;
-  return failureMessages[run.failureCode ?? "AGENT_RUN_PERSIST_FAILED"];
+  const failure = failureMessages[run.failureCode ?? "AGENT_RUN_PERSIST_FAILED"];
+  return matching ? failure.replaceAll("发现", "岗位匹配").replaceAll("求职目标", "匹配条件") : failure;
 }
 
 function currentStepLabel(step: AgentRunDetail["currentStep"]): string {

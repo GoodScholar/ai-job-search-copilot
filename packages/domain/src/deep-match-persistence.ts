@@ -65,12 +65,12 @@ export function createDeepMatchQueries(deps: { db: Database }) {
         };
       }) };
   };
-  const selectCandidateSelection = async (input: { userId: string; targetId: string; opportunityId?: string }): Promise<CandidateSelection> => {
+  const selectCandidateSelection = async (input: { userId: string; targetId: string; targetVersion?: number; opportunityId?: string }): Promise<CandidateSelection> => {
       const triageRows = await deps.db.select({ triage: jobTriageVersions, opportunity: jobOpportunities, sourceVersion: jobSourcePostingVersions, targetRevisionId: jobTargetRevisions.id, targetConstraints: jobTargetRevisions.constraints })
         .from(jobTriageVersions).innerJoin(jobOpportunities, and(eq(jobOpportunities.userId, jobTriageVersions.userId), eq(jobOpportunities.id, jobTriageVersions.opportunityId)))
         .innerJoin(jobSourcePostingVersions, and(eq(jobSourcePostingVersions.userId, jobTriageVersions.userId), eq(jobSourcePostingVersions.id, jobTriageVersions.sourcePostingVersionId)))
         .innerJoin(jobTargetRevisions, and(eq(jobTargetRevisions.userId, jobTriageVersions.userId), eq(jobTargetRevisions.targetId, jobTriageVersions.targetId), eq(jobTargetRevisions.version, jobTriageVersions.targetVersion)))
-        .where(and(eq(jobTriageVersions.userId, input.userId), eq(jobTriageVersions.targetId, input.targetId)))
+        .where(and(eq(jobTriageVersions.userId, input.userId), eq(jobTriageVersions.targetId, input.targetId), ...(input.targetVersion === undefined ? [] : [eq(jobTriageVersions.targetVersion, input.targetVersion)])))
         .orderBy(desc(jobTriageVersions.sequence));
       const latest = new Map<string, typeof triageRows[number]>();
       for (const row of triageRows) if (!latest.has(row.triage.opportunityId)) latest.set(row.triage.opportunityId, row);
@@ -126,7 +126,7 @@ export function createDeepMatchQueries(deps: { db: Database }) {
     };
   return {
     selectCandidateSelection,
-    async selectCandidates(input: { userId: string; targetId: string; opportunityId?: string }): Promise<SelectedDeepMatchCandidate[]> {
+    async selectCandidates(input: { userId: string; targetId: string; targetVersion?: number; opportunityId?: string }): Promise<SelectedDeepMatchCandidate[]> {
       return (await selectCandidateSelection(input)).candidates;
     },
     async getLatestList(input: { userId: string; targetId: string }) { return readList(input); },
