@@ -100,7 +100,10 @@ export function createDeepMatchQueries(deps: { db: Database }) {
         if (constraints.roleFamily?.trim()) profileEvidence.push({ id: `target:${targetRevisionId}:career`, profileFactRevisionId: targetRevisionId, value: `已确认的岗位方向：${constraints.roleFamily}`, dimensions: ["career_direction"] });
         const locationFact = [...(constraints.locations ?? []), ...(constraints.workModes ?? []), constraints.relocation && constraints.relocation !== "unknown" ? constraints.relocation : ""].filter(Boolean).join("、");
         if (locationFact) profileEvidence.push({ id: `target:${targetRevisionId}:location`, profileFactRevisionId: targetRevisionId, value: `已确认的地点/工作方式约束：${locationFact}`, dimensions: ["location_logistics"] });
-        profileEvidence.splice(20);
+        // Preserve the two frozen target constraints even for profiles with many facts.
+        const targetEvidence = profileEvidence.filter((evidence) => evidence.id.startsWith("target:"));
+        const factualEvidence = profileEvidence.filter((evidence) => !evidence.id.startsWith("target:")).slice(0, 20 - targetEvidence.length);
+        profileEvidence.splice(0, profileEvidence.length, ...factualEvidence, ...targetEvidence);
         if (!profileEvidence.length) return null;
         // Both records are immutable, source-backed snapshots from the imported posting.
         // Prefer the posting-version payload; old imports can only contribute their
@@ -108,12 +111,13 @@ export function createDeepMatchQueries(deps: { db: Database }) {
         const sourceNormalized = sourceVersion.normalizedData as Record<string, unknown>;
         const opportunityNormalized = opportunity.normalizedData as Record<string, unknown>;
         const normalized = Object.keys(sourceNormalized).length > 0 ? sourceNormalized : opportunityNormalized;
-        const normalizedText = Object.keys(normalized).length > 0 ? JSON.stringify(normalized).slice(0, 512) : "";
+        const requiredSkills = (normalized.qualifications as { requiredSkills?: unknown } | undefined)?.requiredSkills;
+        const qualifications = Array.isArray(requiredSkills) ? requiredSkills.filter((value): value is string => typeof value === "string" && value.trim().length > 0).join("、") : "";
         const rawJobEvidence = [
-          ...(normalizedText ? [{ value: normalizedText, dimensions: ["skills", "qualification_risk"] }] : []),
+          ...(qualifications ? [{ value: `岗位明确要求：${qualifications}`, dimensions: ["skills", "qualification_risk"] }] : []),
           ...(opportunity.title ? [{ value: opportunity.title, dimensions: ["career_direction"] }] : []),
           ...(opportunity.location ? [{ value: opportunity.location, dimensions: ["location_logistics"] }] : []),
-          ...(opportunity.description ? [{ value: opportunity.description.slice(0, 512), dimensions: ["experience", "project_depth"] }] : []),
+          ...(opportunity.description ? [{ value: opportunity.description.slice(0, 512), dimensions: ["experience"] }] : []),
         ] as Array<{ value: string; dimensions: DeepMatchCandidate["jobEvidence"][number]["dimensions"] }>;
         const jobEvidence: DeepMatchCandidate["jobEvidence"] = rawJobEvidence.filter((evidence) => evidence.value.length > 0).map((evidence, index) => ({ id: `job:${triage.sourcePostingVersionId}:${index + 1}`, ...evidence }));
         if (!jobEvidence.length) return null;
