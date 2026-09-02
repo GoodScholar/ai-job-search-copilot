@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { and, asc, eq } from "drizzle-orm";
-import { agentInboxItems, agentRunEvents, agentRunJobResults, agentRunSteps, agentRunUsageEntries, agentRuns, auditEvents, createDatabase, jobAccounts, jobDiscoveryAttributions, jobDiscoveryDiagnostics, jobDiscoveryLeads, jobDiscoveryRunResults, jobDiscoverySourceIssues, jobOpportunities, jobOpportunitySources, jobSourceHealthChecks, jobSourcePostings, jobSourcePostingVersions, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
+import { agentInboxItems, agentRunEvents, agentRunJobResults, agentRunSteps, agentRunUsageEntries, agentRuns, auditEvents, createDatabase, deepMatchRunCandidates, jobAccounts, jobDiscoveryAttributions, jobDiscoveryDiagnostics, jobDiscoveryLeads, jobDiscoveryRunResults, jobDiscoverySourceIssues, jobMatchVersions, jobOpportunities, jobOpportunitySources, jobProfiles, jobSourceHealthChecks, jobSourcePostings, jobSourcePostingVersions, jobTargetRevisions, jobTargets, jobTriageVersions, migrateDatabase, profileFactRevisions, profileFacts, recommendationListItems, recommendationLists, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
 import { createAgentRunCheckpoint, createAgentRunCommands, createAgentRunProcessor, createAgentRunQueries, type AgentRunCheckpoint, type AgentRunQueue, type DiscoveryContentStore, type JobDiscoveryAdapter, type JobDiscoveryAdapterResolver } from "./agent-runs";
 import { createCompanyWatchlistCommands } from "./company-watchlists";
@@ -11,6 +11,8 @@ import { LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER, LAYERED_PUBLIC_JOB_DISCOVERY_ADAP
 import { createLayeredPublicJobDiscoveryWorkflow, LayeredPublicWorkflowInterruption } from "./layered-public-job-discovery-workflow";
 import { createLayeredPublicJobDiscoveryRuntime } from "./layered-public-job-discovery-runtime";
 import { createJobDiscoveryPersistence } from "./job-discovery-persistence";
+import { createDeepMatchRunStarter } from "./deep-match-agent-runs";
+import { DeepMatchAdapterError, FakeDeepMatchAdapter } from "@job-copilot/contracts/deep-match";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
 const constraints = { roleFamily: "AI 应用工程师", seniority: null, locations: [], workModes: [], relocation: "unknown" as const, salary: null, industries: [], dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] } };
@@ -49,6 +51,29 @@ describe("AgentRunProcessor checkpoints", () => {
     return { userId, targetId, runId: started.runId };
   }
 
+  async function deepMatchRun() {
+    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const profileId = crypto.randomUUID();
+    await database.insert(jobAccounts).values({ id: userId });
+    await database.insert(jobProfiles).values({ id: profileId, userId, version: 1, createdAt: now, updatedAt: now });
+    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: now, updatedAt: now });
+    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: now });
+    const profileFactId = crypto.randomUUID();
+    await database.insert(profileFacts).values({ id: profileFactId, userId, profileId, factType: "skill", createdAt: now });
+    await database.insert(profileFactRevisions).values({ id: crypto.randomUUID(), userId, profileFactId, revisionNumber: 1, factType: "skill", factValue: { name: "TypeScript" }, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1, createdAt: now });
+    const opportunityIds: string[] = [];
+    for (const index of [1, 2]) {
+      const sourcePostingId = crypto.randomUUID(); const sourcePostingVersionId = crypto.randomUUID(); const opportunityId = crypto.randomUUID(); const sourceHash = `${index}`.repeat(64);
+      opportunityIds.push(opportunityId);
+      await database.insert(jobSourcePostings).values({ id: sourcePostingId, userId, sourceType: "user_import", sourceIdentifier: sourceHash, sourceIdentity: { hash: sourceHash }, isOfficial: false, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
+      await database.insert(jobSourcePostingVersions).values({ id: sourcePostingVersionId, userId, sourcePostingId, version: 1, contentSha256: sourceHash, rawContentSha256: sourceHash, rawObjectReference: {}, normalizedData: {}, retrievedAt: now, availability: "open", createdAt: now });
+      await database.insert(jobOpportunities).values({ id: opportunityId, userId, importId: null, sourcePostingVersionId, canonicalOpportunityId: null, dedupKey: sourceHash, company: "示例科技", title: `前端工程师 ${index}`, location: "上海", postedAt: null, deadline: new Date("2026-09-20T00:00:00.000Z"), description: "需要 TypeScript", normalizedData: {}, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
+      await database.insert(jobTriageVersions).values({ id: crypto.randomUUID(), userId, opportunityId, sourcePostingVersionId, profileId, profileVersion: 1, targetId, targetVersion: 1, qualificationRuleVersion: "q1", coarseRuleVersion: "c1", overallVerdict: "pass", gateResults: {}, pendingItems: [], deadlineStatus: "valid", confidenceBasisPoints: 10_000, dimensionScores: {}, overallScore: 90 - index, threshold: 70, sequence: 1, createdAt: now });
+    }
+    const started = await createDeepMatchRunStarter({ db: database, queue: new Queue(), id: () => crypto.randomUUID(), clock: () => now })
+      .start({ userId, targetId, idempotencyKey: crypto.randomUUID(), trigger: "automatic", discoveryRunId: crypto.randomUUID() });
+    return { userId, targetId, runId: started.runId, opportunityIds };
+  }
+
   async function layeredRun() {
     const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const runId = crypto.randomUUID(); const queryId = crypto.randomUUID(); const watchlistItemId = crypto.randomUUID(); const sourcePostingId = crypto.randomUUID(); const sourcePostingVersionId = crypto.randomUUID();
     const targetSnapshot = { targetId, version: 1, priority: "primary" as const, state: "active" as const, constraints };
@@ -85,6 +110,92 @@ describe("AgentRunProcessor checkpoints", () => {
       getDetail: async () => { calls.detail += 1; return { ok: true, data: { ...summary, sourceType: "company_careers", isOfficial: true, rawPayload: { source: "aurora" } } }; },
     };
   }
+
+  it("matching recovery reuses staged frozen candidates and settles actual usage exactly once per candidate", async () => {
+    const job = await deepMatchRun();
+    const calls = new Map<string, number>();
+    const fake = new FakeDeepMatchAdapter();
+    const adapter = {
+      ...fake,
+      reservedUsage: { inputTokens: 999, outputTokens: 999 },
+      async assess(input: Parameters<FakeDeepMatchAdapter["assess"]>[0], call: Parameters<FakeDeepMatchAdapter["assess"]>[1]) {
+        const opportunityId = input.candidates[0]!.opportunityId;
+        calls.set(opportunityId, (calls.get(opportunityId) ?? 0) + 1);
+        if (opportunityId === job.opportunityIds[1] && calls.get(opportunityId) === 1) throw new DeepMatchAdapterError("retryable");
+        const result = await fake.assess(input, call);
+        return { ...result, usage: { inputTokens: opportunityId === job.opportunityIds[0] ? 7 : 13, outputTokens: opportunityId === job.opportunityIds[0] ? 11 : 17, latencyMs: opportunityId === job.opportunityIds[0] ? 19 : 23 } };
+      },
+    };
+    const processor = () => createAgentRunProcessor({
+      db: database, adapterResolver: { resolve: () => { throw new Error("deep-match must not resolve discovery adapter"); } }, deepMatchAdapter: adapter,
+      checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+
+    await expect(processor().process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: false })).resolves.toBe("retry");
+    await expect(database.select().from(recommendationLists).where(eq(recommendationLists.userId, job.userId))).resolves.toHaveLength(0);
+    await expect(processor().process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("completed");
+
+    expect(calls).toEqual(new Map([[job.opportunityIds[0]!, 1], [job.opportunityIds[1]!, 2]]));
+    await expect(Promise.all([
+      database.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, job.userId)),
+      database.select().from(recommendationLists).where(eq(recommendationLists.userId, job.userId)),
+      database.select().from(recommendationListItems).where(eq(recommendationListItems.userId, job.userId)),
+      database.select({ category: agentRunUsageEntries.category, amount: agentRunUsageEntries.amount, usageKey: agentRunUsageEntries.usageKey }).from(agentRunUsageEntries).where(eq(agentRunUsageEntries.runId, job.runId)),
+      database.select({ eventType: agentRunEvents.eventType }).from(agentRunEvents).where(eq(agentRunEvents.runId, job.runId)),
+      database.select({ eventType: auditEvents.eventType }).from(auditEvents).where(eq(auditEvents.resourceId, job.runId)),
+    ])).resolves.toEqual([
+      [expect.any(Object), expect.any(Object)], [expect.any(Object)], [],
+      expect.arrayContaining([
+        { category: "model_call", amount: 1, usageKey: `deep_match_model:${job.opportunityIds[0]}` },
+        { category: "input_tokens", amount: 7, usageKey: `deep_match_model:${job.opportunityIds[0]}` },
+        { category: "output_tokens", amount: 11, usageKey: `deep_match_model:${job.opportunityIds[0]}` },
+        { category: "model_call", amount: 1, usageKey: `deep_match_model:${job.opportunityIds[1]}` },
+        { category: "input_tokens", amount: 13, usageKey: `deep_match_model:${job.opportunityIds[1]}` },
+        { category: "output_tokens", amount: 17, usageKey: `deep_match_model:${job.opportunityIds[1]}` },
+      ]),
+      expect.arrayContaining([{ eventType: "run.completed" }]), expect.arrayContaining([{ eventType: "agent.run_completed" }]),
+    ]);
+    await expect(database.select({ modelCalls: agentRuns.modelCallCount, inputTokens: agentRuns.inputTokenCount, outputTokens: agentRuns.outputTokenCount, totalTokens: agentRuns.totalTokenCount }).from(agentRuns).where(eq(agentRuns.id, job.runId)))
+      .resolves.toEqual([{ modelCalls: 2, inputTokens: 20, outputTokens: 28, totalTokens: 48 }]);
+    await expect(database.select({ adapterUsage: deepMatchRunCandidates.adapterUsage }).from(deepMatchRunCandidates).where(eq(deepMatchRunCandidates.runId, job.runId)).orderBy(deepMatchRunCandidates.ordinal))
+      .resolves.toEqual([{ adapterUsage: { inputTokens: 7, outputTokens: 11, latencyMs: 19 } }, { adapterUsage: { inputTokens: 13, outputTokens: 17, latencyMs: 23 } }]);
+  });
+
+  it.each([
+    ["pause", "paused"], ["cancel", "cancelled"], ["budget", "budget_exhausted"], ["claim loss", "stale"],
+  ] as const)("matching stops before the second frozen candidate on %s", async (mode, expected) => {
+    const job = await deepMatchRun(); const calls: string[] = []; const fake = new FakeDeepMatchAdapter();
+    const adapter = {
+      ...fake,
+      async assess(input: Parameters<FakeDeepMatchAdapter["assess"]>[0], call: Parameters<FakeDeepMatchAdapter["assess"]>[1]) {
+        const opportunityId = input.candidates[0]!.opportunityId; calls.push(opportunityId);
+        return fake.assess(input, call);
+      },
+    };
+    const durable = checkpoint(); let interrupted = false;
+    const controlled: AgentRunCheckpoint = { check: async (input) => {
+      const result = await durable.check(input);
+      if (!interrupted && input.checkpointKey === `deep_match_model:${job.opportunityIds[0]}` && result.kind === "continue") {
+        interrupted = true;
+        if (mode === "pause") await database.update(agentRuns).set({ controlState: "pause_requested" }).where(eq(agentRuns.id, job.runId));
+        if (mode === "cancel") await database.update(agentRuns).set({ controlState: "cancel_requested" }).where(eq(agentRuns.id, job.runId));
+        if (mode === "budget") await database.update(agentRuns).set({ totalTokenCount: 19_950, inputTokenCount: 19_902 }).where(eq(agentRuns.id, job.runId));
+        if (mode === "claim loss") await database.update(agentRuns).set({ claimToken: crypto.randomUUID(), claimExpiresAt: new Date(now.getTime() + 30_000) }).where(eq(agentRuns.id, job.runId));
+      }
+      return result;
+    } };
+    const outcome = await createAgentRunProcessor({
+      db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: adapter,
+      checkpoint: controlled, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    }).process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true });
+
+    expect(outcome).toBe(expected);
+    expect(calls).toEqual([job.opportunityIds[0]]);
+    await expect(Promise.all([
+      database.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, job.userId)),
+      database.select().from(recommendationLists).where(eq(recommendationLists.userId, job.userId)),
+    ])).resolves.toEqual([[], []]);
+  });
 
   it("v4 processor 严格恢复完整 spec、调度物理操作并独立持久化运行问题", async () => {
     const job = await layeredRun(); let observedSpec: unknown;

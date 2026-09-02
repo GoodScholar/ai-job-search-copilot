@@ -308,12 +308,12 @@ async function failOrRetry(deps: AgentRunProcessorDependencies, input: { userId:
 
 type ProcessorOutcome = "completed" | "retry" | "paused" | "cancelled" | "budget_exhausted" | "failed" | "stale";
 
-async function checkPoint(checkpoint: AgentRunCheckpoint, input: { userId: string; runId: string; claimToken: string; operation: string; ordinal: number; reserve?: { toolCalls?: number; sourceRequests?: number; modelCalls?: number; inputTokens?: number; outputTokens?: number; budgetTokens?: number } }): Promise<ProcessorOutcome | null> {
+async function checkPoint(checkpoint: AgentRunCheckpoint, input: { userId: string; runId: string; claimToken: string; operation: string; ordinal: number; checkpointKey?: string; reserve?: { toolCalls?: number; sourceRequests?: number; modelCalls?: number; inputTokens?: number; outputTokens?: number; budgetTokens?: number } }): Promise<ProcessorOutcome | null> {
   const decision = await checkpoint.check({
     userId: input.userId,
     runId: input.runId,
     claimToken: input.claimToken,
-    checkpointKey: `${input.claimToken}:${input.operation}:${input.ordinal}`,
+    checkpointKey: input.checkpointKey ?? `${input.claimToken}:${input.operation}:${input.ordinal}`,
     reserve: input.reserve,
   });
   switch (decision.kind) {
@@ -582,15 +582,19 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           const deepMatchAdapter = deps.deepMatchAdapter ?? new FakeDeepMatchAdapter();
           const commands = createDeepMatchCommands({ db: deps.db, id: deps.id, clock: deps.clock, adapter: deepMatchAdapter });
           for (const [index, candidate] of candidates.entries()) {
-            const checkpointOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "deep_match_model_input", ordinal: index + 1, reserve: { modelCalls: 1, inputTokens: deepMatchAdapter.reservedUsage.inputTokens, budgetTokens: deepMatchAdapter.reservedUsage.inputTokens + deepMatchAdapter.reservedUsage.outputTokens } });
+            // Preflight guards the frozen execution reservation without turning an estimate into
+            // durable usage.  Actual input/output usage is settled below under a run+candidate key.
+            const checkpointOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "deep_match_model_preflight", ordinal: index + 1, reserve: { budgetTokens: deepMatchAdapter.reservedUsage.inputTokens + deepMatchAdapter.reservedUsage.outputTokens } });
             if (checkpointOutcome) return checkpointOutcome;
             const staged = await commands.assessAndStage({ userId: job.userId, runId: job.runId, candidate, fence: { claimToken: claimed.claimToken }, modelCall: {
               signal: modelController!.signal,
-              usageKey: `${claimed.claimToken}:deep_match_model:${index + 1}`,
+              usageKey: `deep_match_model:${candidate.opportunityId}`,
               budget: { maxTokens: (claimed.run.budgetSnapshot as { maxTokens: number }).maxTokens, reservedInputTokens: deepMatchAdapter.reservedUsage.inputTokens, reservedOutputTokens: deepMatchAdapter.reservedUsage.outputTokens },
               ...(scope.testFixture ? { fixture: scope.testFixture } : {}),
             } });
-            const outputCheckpointOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "deep_match_model_output", ordinal: index + 1, reserve: staged.reused ? {} : { outputTokens: staged.usage.outputTokens } });
+            const outputCheckpointOutcome = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "deep_match_model_usage", ordinal: index + 1, checkpointKey: `deep_match_model:${candidate.opportunityId}`, reserve: {
+              modelCalls: 1, inputTokens: staged.usage.inputTokens, outputTokens: staged.usage.outputTokens,
+            } });
             if (outputCheckpointOutcome) return outputCheckpointOutcome;
           }
           const assessCompleted = await transition("assess_matches", true); if (assessCompleted) return assessCompleted;
