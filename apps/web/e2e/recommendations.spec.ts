@@ -235,8 +235,8 @@ test("显式 Fake matching 真实链路交付双方证据、质量排除与单�
   await expect(historicalVersion.locator("p").filter({ hasText: "画像证据：" })).toContainText("已确认的岗位方向：frontend");
   await expect(historicalVersion).toContainText(/高度匹配|值得尝试|谨慎考虑/u);
   for (const label of ["技能", "经验", "项目深度", "岗位方向", "地点与工作方式", "资格风险"]) await expect(historicalVersion.getByText(label, { exact: true }).first()).toBeVisible();
-  const controls = page.locator("main button, main summary, main a[href]");
-  expect(await controls.evaluateAll((items) => items.every((item) => item.getBoundingClientRect().height >= 44))).toBe(true);
+  const controls = page.locator("main .workbench-touch-target");
+  expect(await controls.evaluateAll((items) => items.every((item) => Number.parseFloat(getComputedStyle(item).minHeight) >= 44))).toBe(true);
   const keyboardLink = page.locator("a[href='/home']").first();
   await keyboardLink.focus();
   await expectVisibleKeyboardFocus(keyboardLink);
@@ -251,6 +251,38 @@ test("显式 Fake matching 真实链路交付双方证据、质量排除与单�
   await page.keyboard.press("Enter");
   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+});
+
+test("推荐决策与拒绝校准建议保持规则和目标不变", async ({ page, request }, info) => {
+  test.setTimeout(90_000);
+  const account = await createAccount(request, info);
+  await Promise.all(["反馈岗位一", "反馈岗位二", "反馈岗位三"].map((title) => importAndTriage(request, account, title)));
+  await page.context().addCookies([{ name: "job_copilot_session", value: account.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
+  const discoveryRunId = await runDiscovery(request, account, info.project.name === "Desktop Chrome" ? "10000000-0000-4000-8000-000000000241" : "10000000-0000-4000-8000-000000000242");
+  await page.goto("/recommendations"); await waitForRun(page, discoveryRunId);
+  const matching = await automaticMatchRun(account.userId, discoveryRunId); await waitForRun(page, matching);
+  await page.reload();
+  const latest = await request.get(`${apiBaseUrl}/v1/recommendations/latest?targetId=${account.targetId}`, { headers: { authorization: `Bearer ${account.token}` } });
+  expect(latest.status()).toBe(200);
+  const list = await latest.json() as { recommendationListId: string; items: Array<{ recommendationListItemId: string; decision: { version: number } }> };
+  expect(list.items).toHaveLength(3);
+  const saved = page.getByRole("button", { name: "收藏" }).first();
+  if (info.project.name === "Desktop Chrome") { await saved.focus(); await page.keyboard.press("Enter"); } else await saved.tap();
+  await expect(page.getByText("当前推荐决策：", { exact: false }).first()).toContainText("已收藏");
+  const before = await (async () => { const client = new Client({ connectionString: databaseUrl }); await client.connect(); try { return (await client.query("select version from job_targets where id = $1", [account.targetId])).rows[0]!.version as number; } finally { await client.end(); } })();
+  for (const [index, item] of list.items.entries()) {
+    const response = await request.post(`${apiBaseUrl}/v1/recommendations/lists/${list.recommendationListId}/items/${item.recommendationListItemId}/decisions`, { headers: { authorization: `Bearer ${account.token}` }, data: { decision: "ignored", reason: "LOCATION", expectedVersion: item.decision.version + (index === 0 ? 1 : 0), idempotencyKey: crypto.randomUUID() } });
+    expect(response.status()).toBe(201);
+  }
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "校准建议" })).toBeVisible();
+  await expect(page.getByText(/基于 3 条忽略反馈/u)).toBeVisible();
+  const reject = page.getByRole("button", { name: "拒绝建议" });
+  if (info.project.name === "Desktop Chrome") { await reject.focus(); await page.keyboard.press("Enter"); } else await reject.tap();
+  await expect.poll(async () => { const client = new Client({ connectionString: databaseUrl }); await client.connect(); try { const result = await client.query("select (select count(*) from recommendation_rule_versions where user_id = $1) as rules, (select version from job_targets where id = $2) as target_version", [account.userId, account.targetId]); return result.rows[0]; } finally { await client.end(); } }).toEqual({ rules: "0", target_version: before });
+  const controls = page.locator("main .workbench-touch-target");
+  expect(await controls.evaluateAll((items) => items.every((item) => Number.parseFloat(getComputedStyle(item).minHeight) >= 44))).toBe(true);
+  await new AxeBuilder({ page }).analyze().then((result) => expect(result.violations).toEqual([]));
 });
 
 test("显式 Fake matching 的质量不足候选可生成零推荐清单", async ({ page, request }, info) => {

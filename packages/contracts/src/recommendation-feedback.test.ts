@@ -25,6 +25,10 @@ describe("推荐反馈契约", () => {
     expect(RecommendationDecisionCommandSchema.safeParse({
       decision: "ignored", reason: "LOCATION", note: "x".repeat(501), idempotencyKey: "00000000-0000-4000-8000-000000000001", expectedVersion: 0,
     }).success).toBe(false);
+    for (const reason of ["ROLE_DIRECTION", "LOCATION", "SALARY", "COMPANY", "INDUSTRY", "SENIORITY", "MISMATCH", "EXPIRED", "ALREADY_HANDLED"]) {
+      expect(RecommendationDecisionCommandSchema.safeParse({ decision: "ignored", reason, note: "x".repeat(500), idempotencyKey: "00000000-0000-4000-8000-000000000001", expectedVersion: 0 }).success).toBe(true);
+    }
+    expect(RecommendationDecisionCommandSchema.safeParse({ decision: "ignored", reason: "APPLICATION_STATUS", idempotencyKey: "00000000-0000-4000-8000-000000000001", expectedVersion: 0 }).success).toBe(false);
   });
 
   it("校准修订严格限制规则策略与影响预览", () => {

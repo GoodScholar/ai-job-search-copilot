@@ -22,8 +22,9 @@ CREATE INDEX "recommendation_decision_events_current_idx" ON "recommendation_dec
 CREATE TABLE "calibration_proposals" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL, "user_id" uuid NOT NULL, "target_id" uuid NOT NULL,
   "reason" varchar(32) NOT NULL, "status" varchar(16) DEFAULT 'pending' NOT NULL, "version" integer DEFAULT 1 NOT NULL,
-  "resolved_at" timestamp with time zone, "created_at" timestamp with time zone DEFAULT now() NOT NULL, "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+  "resolved_at" timestamp with time zone, "resolution_idempotency_key" uuid, "resolution_command_summary" varchar(64), "created_at" timestamp with time zone DEFAULT now() NOT NULL, "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
   CONSTRAINT "calibration_proposals_user_id_id_unique" UNIQUE("user_id", "id"),
+  CONSTRAINT "calibration_proposals_user_resolution_key_unique" UNIQUE("user_id", "resolution_idempotency_key"),
   CONSTRAINT "calibration_proposals_status_check" CHECK ("status" in ('pending', 'approved', 'rejected')),
   CONSTRAINT "calibration_proposals_version_positive" CHECK ("version" >= 1),
   CONSTRAINT "calibration_proposals_owner_target_fk" FOREIGN KEY ("user_id", "target_id") REFERENCES "job_targets"("user_id", "id")
@@ -67,4 +68,5 @@ CREATE TABLE "recommendation_rule_versions" (
 CREATE FUNCTION "prevent_recommendation_feedback_mutation"() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'immutable recommendation feedback'; END; $$;--> statement-breakpoint
 CREATE TRIGGER "recommendation_decision_events_immutable" BEFORE UPDATE OR DELETE ON "recommendation_decision_events" FOR EACH ROW EXECUTE FUNCTION "prevent_recommendation_feedback_mutation"();--> statement-breakpoint
 CREATE TRIGGER "calibration_proposal_revisions_immutable" BEFORE UPDATE OR DELETE ON "calibration_proposal_revisions" FOR EACH ROW EXECUTE FUNCTION "prevent_recommendation_feedback_mutation"();--> statement-breakpoint
+CREATE TRIGGER "calibration_proposal_evidence_immutable" BEFORE UPDATE OR DELETE ON "calibration_proposal_evidence" FOR EACH ROW EXECUTE FUNCTION "prevent_recommendation_feedback_mutation"();--> statement-breakpoint
 CREATE TRIGGER "recommendation_rule_versions_immutable" BEFORE UPDATE OR DELETE ON "recommendation_rule_versions" FOR EACH ROW EXECUTE FUNCTION "prevent_recommendation_feedback_mutation"();

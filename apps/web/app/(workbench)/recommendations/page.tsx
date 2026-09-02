@@ -1,8 +1,9 @@
 import { getJobTargets } from "@/lib/server/job-targets";
-import { getLatestRecommendations, getRecommendationHistoryPage } from "@/lib/server/recommendations";
+import { getCalibrationProposals, getLatestRecommendations, getRecommendationHistoryPage } from "@/lib/server/recommendations";
 import { DeepMatchAssessmentSchema } from "@job-copilot/contracts/deep-match";
-import { recordRecommendationDecisionAction, requestRecommendationReevaluationAction } from "./actions";
+import { recordRecommendationDecisionAction, requestRecommendationReevaluationAction, resolveCalibrationProposalAction, reviseCalibrationProposalAction } from "./actions";
 import { RecommendationDecision } from "./recommendation-decision";
+import { CalibrationProposals } from "./calibration-proposals";
 import { ReevaluationForm } from "./reevaluate-button";
 import { RecommendationHistory } from "./recommendation-history";
 import { LatestExclusions } from "./latest-exclusions";
@@ -14,6 +15,7 @@ export default async function RecommendationsPage() {
   const target = targets.targets.find((item) => item.state === "active");
   const list = target ? await getLatestRecommendations(target.targetId) : null;
   const history = target ? await getRecommendationHistoryPage(target.targetId) : { items: [], nextCursor: null };
+  const proposals = target ? await getCalibrationProposals(target.targetId) : [];
   return (
     <main className="container workbench-page" id="main-content">
       <section aria-labelledby="recommendations-title" className="job-import-panel">
@@ -24,6 +26,7 @@ export default async function RecommendationsPage() {
           <p aria-label="推荐清单版本">清单版本 {list.sequence} · {list.localDate}</p>
           <LatestExclusions key={list.recommendationListId} targetId={target!.targetId} list={list} />
           <RecommendationHistory key={`${target!.targetId}:${history.items.map((item) => item.recommendationListId).join(",")}:${history.nextCursor ?? ""}`} targetId={target!.targetId} initialPage={history} />
+          <CalibrationProposals proposals={proposals} reviseAction={reviseCalibrationProposalAction} resolveAction={resolveCalibrationProposalAction} />
           <ol aria-label="推荐岗位">
             {list.items.map((item) => {
               const assessment = DeepMatchAssessmentSchema.safeParse(item.assessment).data;

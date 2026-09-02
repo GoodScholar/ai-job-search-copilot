@@ -2078,6 +2078,18 @@
           "primaryKey": false,
           "notNull": false
         },
+        "resolution_idempotency_key": {
+          "name": "resolution_idempotency_key",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "resolution_command_summary": {
+          "name": "resolution_command_summary",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "timestamp with time zone",
@@ -2179,6 +2191,14 @@
           "columns": [
             "user_id",
             "id"
+          ]
+        },
+        "calibration_proposals_user_resolution_key_unique": {
+          "name": "calibration_proposals_user_resolution_key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "user_id",
+            "resolution_idempotency_key"
           ]
         }
       },

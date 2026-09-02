@@ -297,7 +297,7 @@ export const DeepMatchAgentRunBudgetSchema = z.object({
   maxResults: z.literal(10), maxModelCalls: z.literal(10), maxTokens: z.literal(20_000),
 }).strict();
 export const DeepMatchAgentRunSourceScopeSchema = z.object({ kind: z.literal("deep_match"), trigger: z.enum(["automatic", "manual"]), opportunityId: z.uuid().nullable(), discoveryRunId: z.uuid().nullable(),
-  recommendationRuleConfig: z.object({ minimumOverallScore: z.int().min(0).max(100), minimumEvidenceDimensions: z.int().min(0).max(6), requiredEvidenceDimensions: z.array(z.string().min(1).max(64)).max(6), excludedOpportunityIds: z.array(z.uuid()).max(100) }).strict().default({ minimumOverallScore: 60, minimumEvidenceDimensions: 2, requiredEvidenceDimensions: [], excludedOpportunityIds: [] }),
+  recommendationRuleConfig: z.object({ minimumOverallScore: z.int().min(0).max(100), minimumEvidenceDimensions: z.int().min(0).max(6), requiredEvidenceDimensions: z.array(z.string().min(1).max(64)).max(6), excludedOpportunityIds: z.array(z.uuid()).max(100) }).strict().default({ minimumOverallScore: 0, minimumEvidenceDimensions: 0, requiredEvidenceDimensions: [], excludedOpportunityIds: [] }),
   /** The child is claimable only after its candidates and exclusions are durably frozen. */
   initialized: z.literal(true),
   selectionExclusions: z.array(z.object({ opportunityId: z.uuid(), reasonCode: z.enum(["TRIAGE_NOT_PASS", "DEADLINE_EXPIRED", "SCORE_BELOW_THRESHOLD", "CANDIDATE_LIMIT", "MATCH_QUALITY_INSUFFICIENT"]) }).strict()),

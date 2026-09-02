@@ -54,3 +54,4 @@ export type RecommendationExclusionPage = z.infer<typeof RecommendationExclusion
 export type RecommendationDecisionCommand = z.infer<typeof RecommendationDecisionCommandSchema>;
 export type CalibrationProposalRevisionCommand = z.infer<typeof CalibrationProposalRevisionCommandSchema>;
 export type CalibrationProposalResolutionCommand = z.infer<typeof CalibrationProposalResolutionCommandSchema>;
+export type CalibrationProposal = z.infer<typeof CalibrationProposalSchema>;

@@ -23,6 +23,7 @@ import { createMinimalDocx } from "./career-import/minimal-docx.test-support.js"
 import { CAREER_FACT_CONFLICT_REVIEW_COMMANDS, PROFILE_REVIEW_COMMANDS, type ProfileReviewCommands } from "./profile-review/profile-review.tokens.js";
 import { AGENT_RUN_QUEUE_PORT } from "./agent-runs/agent-runs.tokens.js";
 import { JOB_TRIAGE_COMMANDS, JOB_TRIAGE_QUERIES } from "./job-triage/job-triage.tokens.js";
+import { RECOMMENDATION_FEEDBACK_COMMANDS, RECOMMENDATION_FEEDBACK_QUERIES } from "./recommendations/recommendations.tokens.js";
 import { z } from "zod";
 
 const testSecret = "test-dev-auth-shared-secret-must-be-at-least-32-characters";
@@ -72,6 +73,23 @@ describe("authenticated workbench HTTP API", () => {
     async get(input: { opportunityId: string; triageVersionId: string }) { return input.opportunityId === triageOpportunityId && input.triageVersionId === triageVersionId ? triageResponse("90000000-0000-4000-8000-000000000005") : null; },
   };
   let conflictResolutionResponse: unknown = undefined;
+  const feedbackListId = "70000000-0000-4000-8000-000000000001";
+  const feedbackItemId = "70000000-0000-4000-8000-000000000002";
+  const feedbackIdempotency = new Map<string, string>();
+  let feedbackWrites = 0;
+  const feedbackCommands = {
+    async recordDecision(input: { recommendationListId: string; recommendationListItemId: string; command: { idempotencyKey: string; expectedVersion: number; decision: string } }) {
+      if (input.recommendationListId !== feedbackListId || input.recommendationListItemId !== feedbackItemId) throw { code: "RECOMMENDATION_ITEM_NOT_FOUND" };
+      if (input.command.expectedVersion !== 0) throw { code: "VERSION_CONFLICT" };
+      const body = JSON.stringify(input.command); const previous = feedbackIdempotency.get(input.command.idempotencyKey);
+      if (previous && previous !== body) throw { code: "IDEMPOTENCY_CONFLICT" };
+      if (!previous) { feedbackIdempotency.set(input.command.idempotencyKey, body); feedbackWrites += 1; }
+      return { decision: { status: input.command.decision, version: 1 }, proposal: null };
+    },
+    async reviseCalibrationProposal() { throw { code: "PROPOSAL_NOT_FOUND" }; },
+    async resolveCalibrationProposal() { throw { code: "PROPOSAL_NOT_FOUND" }; },
+  };
+  const feedbackQueries = { async listCalibrationProposals() { return []; } };
   const conflictReviewCommands = {
     resolve: async () => conflictResolutionResponse,
   };
@@ -176,6 +194,8 @@ describe("authenticated workbench HTTP API", () => {
       .overrideProvider(CAREER_FACT_CONFLICT_REVIEW_COMMANDS).useValue(conflictReviewCommands)
       .overrideProvider(JOB_TRIAGE_COMMANDS).useValue(triageCommands)
       .overrideProvider(JOB_TRIAGE_QUERIES).useValue(triageQueries)
+      .overrideProvider(RECOMMENDATION_FEEDBACK_COMMANDS).useValue(feedbackCommands)
+      .overrideProvider(RECOMMENDATION_FEEDBACK_QUERIES).useValue(feedbackQueries)
       .compile();
     app = module.createNestApplication<NestFastifyApplication>(new FastifyAdapter({ loggerInstance: testLogger as never }));
     await configureApiApplication(app);
@@ -268,6 +288,25 @@ describe("authenticated workbench HTTP API", () => {
       message: "请求无效",
       requestId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
     });
+  });
+
+  it("通过真实 HTTP 严格验证、隔离并映射推荐决策的幂等与 CAS 错误", async () => {
+    const key = "70000000-0000-4000-8000-000000000003";
+    const unauthenticated = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/recommendations/lists/${feedbackListId}/items/${feedbackItemId}/decisions`, payload: { decision: "saved", expectedVersion: 0, idempotencyKey: key } });
+    expect(unauthenticated.statusCode).toBe(401);
+    const session = await createSession(app, "recommendation-feedback-http");
+    const headers = { ...bearer(session.sessionToken), "content-type": "application/json" };
+    const malformed = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/recommendations/lists/${feedbackListId}/items/${feedbackItemId}/decisions`, headers, payload: { decision: "saved", expectedVersion: 0, idempotencyKey: key, applicationStatus: "submitted" } });
+    expect(malformed.statusCode).toBe(400);
+    const ownerBoundMissing = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/recommendations/lists/70000000-0000-4000-8000-000000000004/items/${feedbackItemId}/decisions`, headers, payload: { decision: "saved", expectedVersion: 0, idempotencyKey: randomUUID() } });
+    expect(ownerBoundMissing.statusCode).toBe(404);
+    const before = feedbackWrites;
+    const created = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/recommendations/lists/${feedbackListId}/items/${feedbackItemId}/decisions`, headers, payload: { decision: "saved", expectedVersion: 0, idempotencyKey: key } });
+    const replay = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/recommendations/lists/${feedbackListId}/items/${feedbackItemId}/decisions`, headers, payload: { decision: "saved", expectedVersion: 0, idempotencyKey: key } });
+    expect(created.statusCode).toBe(201); expect(replay.statusCode).toBe(201); expect(feedbackWrites).toBe(before + 1);
+    const conflict = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/recommendations/lists/${feedbackListId}/items/${feedbackItemId}/decisions`, headers, payload: { decision: "ignored", reason: "LOCATION", expectedVersion: 0, idempotencyKey: key } });
+    const stale = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/recommendations/lists/${feedbackListId}/items/${feedbackItemId}/decisions`, headers, payload: { decision: "saved", expectedVersion: 1, idempotencyKey: randomUUID() } });
+    expect(conflict.statusCode).toBe(409); expect(stale.statusCode).toBe(409);
   });
 
   it("authenticates and strictly validates immutable job triage routes", async () => {

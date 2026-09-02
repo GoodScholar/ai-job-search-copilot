@@ -16,7 +16,7 @@ export async function ensureDeepMatchRunInTransaction(input: { transaction: any;
   if (input.trigger === "manual" && !input.opportunityId) throw new Error("DEEP_MATCH_OPPORTUNITY_REQUIRED");
   if (input.trigger === "automatic" && !input.discoveryRunId) throw new Error("DEEP_MATCH_DISCOVERY_PROVENANCE_REQUIRED");
   const [latestRule] = await input.transaction.select({ version: recommendationRuleVersions.version, config: recommendationRuleVersions.config }).from(recommendationRuleVersions).where(and(eq(recommendationRuleVersions.userId, input.userId), eq(recommendationRuleVersions.targetId, input.targetId))).orderBy(desc(recommendationRuleVersions.version)).limit(1);
-  const recommendationRuleConfig = latestRule?.config ?? { minimumOverallScore: 60, minimumEvidenceDimensions: 2, requiredEvidenceDimensions: [], excludedOpportunityIds: [] };
+  const recommendationRuleConfig = latestRule?.config ?? { minimumOverallScore: 0, minimumEvidenceDimensions: 0, requiredEvidenceDimensions: [], excludedOpportunityIds: [] };
   // This query runs on the same transaction as the child insertion.  A queued child can
   // therefore never exist without a complete candidate/exclusion snapshot, including a
   // legitimate empty selection.

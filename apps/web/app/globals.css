@@ -787,6 +787,8 @@ body {
 
 summary.workbench-touch-target {
   cursor: pointer;
+  display: flex;
+  min-height: 2.75rem;
 }
 
 summary.workbench-touch-target:focus-visible,

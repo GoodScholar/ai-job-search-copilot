@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { RecommendationList, RecommendationListHistoryPage } from "@job-copilot/contracts/recommendations";
+import type { CalibrationProposal, RecommendationList, RecommendationListHistoryPage } from "@job-copilot/contracts/recommendations";
 import { api } from "@/lib/server/api-client";
 import { readSessionToken } from "@/lib/server/session-cookie";
 
@@ -17,4 +17,10 @@ export async function getRecommendationHistoryPage(targetId: string): Promise<Re
   const session = await readSessionToken();
   if (!session) return { items: [], nextCursor: null };
   return api.getRecommendationHistoryPage(session, targetId);
+}
+
+export async function getCalibrationProposals(targetId: string): Promise<CalibrationProposal[]> {
+  const session = await readSessionToken();
+  if (!session) return [];
+  return api.getCalibrationProposals(session, targetId);
 }

@@ -1,16 +1,17 @@
 import { createHash } from "node:crypto";
 import { and, asc, desc, eq } from "drizzle-orm";
 import type { CalibrationProposalResolutionCommand, CalibrationProposalRevisionCommand, RecommendationDecisionCommand } from "@job-copilot/contracts/recommendations";
-import { CalibrationProposalRevisionCommandSchema, RecommendationDecisionCommandSchema, RecommendationRuleConfigSchema } from "@job-copilot/contracts/recommendations";
+import { CalibrationProposalResolutionCommandSchema, CalibrationProposalRevisionCommandSchema, RecommendationDecisionCommandSchema, RecommendationRuleConfigSchema } from "@job-copilot/contracts/recommendations";
 import {
   calibrationProposalEvidence, calibrationProposalRevisions, calibrationProposals, recommendationDecisionEvents,
   recommendationListItems, recommendationLists, recommendationRuleVersions, jobMatchVersions, type Database,
 } from "@job-copilot/database";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
+import type { AuditTrail } from "./audit-trail";
 
 type DecisionResult = { decision: { status: "saved" | "ignored"; version: number }; proposal: { proposalId: string } | null };
 type TransactionOverride = (tx: any, input: Record<string, unknown>) => Promise<DecisionResult>;
-const defaultConfig = { minimumOverallScore: 60, minimumEvidenceDimensions: 2, requiredEvidenceDimensions: [], excludedOpportunityIds: [] };
+const defaultConfig = { minimumOverallScore: 0, minimumEvidenceDimensions: 0, requiredEvidenceDimensions: [], excludedOpportunityIds: [] };
 
 function summary(value: unknown): string { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
 function defaultStrategy(reason: string, opportunityId: string) {
@@ -19,7 +20,7 @@ function defaultStrategy(reason: string, opportunityId: string) {
 }
 
 /** Immutable recommendation feedback and review-gated calibration boundary. */
-export function createRecommendationFeedbackCommands(deps: { db: Database; id: () => string; clock: () => Date; transaction?: TransactionOverride }) {
+export function createRecommendationFeedbackCommands(deps: { db: Database; id: () => string; clock: () => Date; auditTrail?: AuditTrail; transaction?: TransactionOverride }) {
   async function recordDecision(input: { userId: string; recommendationListId: string; recommendationListItemId: string; command: RecommendationDecisionCommand }): Promise<DecisionResult> {
     const command = RecommendationDecisionCommandSchema.parse(input.command);
     const payload = { ...command, reason: command.decision === "ignored" ? command.reason ?? null : null, note: command.decision === "ignored" ? command.note ?? null : null };
@@ -32,7 +33,7 @@ export function createRecommendationFeedbackCommands(deps: { db: Database; id: (
         if (existing.commandSummary !== commandSummary) throw new RecommendationFeedbackError("IDEMPOTENCY_CONFLICT");
         return { decision: { status: existing.decision as "saved" | "ignored", version: existing.version }, proposal: null };
       }
-      const [bound] = await tx.select({ itemId: recommendationListItems.id, listId: recommendationLists.id, targetId: recommendationLists.targetId, matchId: jobMatchVersions.id }).from(recommendationListItems)
+      const [bound] = await tx.select({ itemId: recommendationListItems.id, listId: recommendationLists.id, targetId: recommendationLists.targetId, matchId: jobMatchVersions.id, opportunityId: jobMatchVersions.opportunityId }).from(recommendationListItems)
         .innerJoin(recommendationLists, and(eq(recommendationLists.userId, recommendationListItems.userId), eq(recommendationLists.id, recommendationListItems.recommendationListId)))
         .innerJoin(jobMatchVersions, and(eq(jobMatchVersions.userId, recommendationListItems.userId), eq(jobMatchVersions.id, recommendationListItems.matchVersionId)))
         .where(and(eq(recommendationListItems.userId, input.userId), eq(recommendationListItems.id, input.recommendationListItemId), eq(recommendationListItems.recommendationListId, input.recommendationListId))).limit(1);
@@ -42,6 +43,7 @@ export function createRecommendationFeedbackCommands(deps: { db: Database; id: (
       if (currentVersion !== command.expectedVersion) throw new RecommendationFeedbackError("VERSION_CONFLICT");
       const [event] = await tx.insert(recommendationDecisionEvents).values({ id: deps.id(), userId: input.userId, targetId: bound.targetId, recommendationListId: input.recommendationListId, recommendationListItemId: input.recommendationListItemId, matchVersionId: bound.matchId, decision: command.decision, reason: payload.reason, note: payload.note, idempotencyKey: command.idempotencyKey, commandSummary, expectedVersion: currentVersion, version: currentVersion + 1, createdAt: deps.clock() }).returning();
       if (!event) throw new RecommendationFeedbackError("DECISION_PERSIST_FAILED");
+      await deps.auditTrail?.bind(tx).append({ userId: input.userId, actorUserId: input.userId, eventType: "recommendation.decision_recorded", occurredAt: deps.clock(), requestId: command.idempotencyKey, outcome: "success", reasonCode: command.decision === "saved" ? "RECOMMENDATION_SAVED" : "RECOMMENDATION_IGNORED", resourceType: "recommendation_list_item", resourceId: input.recommendationListItemId, metadata: { recommendationListId: input.recommendationListId, recommendationListItemId: input.recommendationListItemId, matchVersionId: bound.matchId, action: command.decision, reason: payload.reason, version: event.version } });
       let proposal: { proposalId: string } | null = null;
       if (command.decision === "ignored" && payload.reason) {
         const events = await tx.select().from(recommendationDecisionEvents).where(and(eq(recommendationDecisionEvents.userId, input.userId), eq(recommendationDecisionEvents.targetId, bound.targetId), eq(recommendationDecisionEvents.reason, payload.reason))).orderBy(desc(recommendationDecisionEvents.createdAt), desc(recommendationDecisionEvents.id));
@@ -52,9 +54,10 @@ export function createRecommendationFeedbackCommands(deps: { db: Database; id: (
         if (candidates.length === 3) {
           const [created] = await tx.insert(calibrationProposals).values({ id: deps.id(), userId: input.userId, targetId: bound.targetId, reason: payload.reason, status: "pending", version: 1, createdAt: deps.clock(), updatedAt: deps.clock() }).returning();
           if (!created) throw new RecommendationFeedbackError("PROPOSAL_PERSIST_FAILED");
-          const strategy = defaultStrategy(payload.reason, event.matchVersionId);
+          const strategy = defaultStrategy(payload.reason, bound.opportunityId);
           await tx.insert(calibrationProposalRevisions).values({ id: deps.id(), userId: input.userId, proposalId: created.id, revisionNumber: 1, strategy: strategy.strategy, ruleConfig: strategy.ruleConfig, impactPreview: { sampleSize: 3, estimatedAffectedCount: 0, ruleDiff: {} }, idempotencyKey: deps.id(), commandSummary: summary(strategy), createdAt: deps.clock() });
           await tx.insert(calibrationProposalEvidence).values(candidates.map((item) => ({ id: deps.id(), userId: input.userId, proposalId: created.id, decisionEventId: item.id, createdAt: deps.clock() })));
+          await deps.auditTrail?.bind(tx).append({ userId: input.userId, actorUserId: input.userId, eventType: "recommendation.calibration_proposal", occurredAt: deps.clock(), requestId: event.id, outcome: "success", reasonCode: "CALIBRATION_PROPOSAL_CREATED", resourceType: "calibration_proposal", resourceId: created.id, metadata: { proposalId: created.id, targetId: bound.targetId, action: "created", version: 1, evidenceCount: candidates.length } });
           proposal = { proposalId: created.id };
         }
       }
@@ -66,35 +69,44 @@ export function createRecommendationFeedbackCommands(deps: { db: Database; id: (
     const command = CalibrationProposalRevisionCommandSchema.parse(input.command);
     return deps.db.transaction(async (tx) => {
       await acquireAccountAdvisoryLock(tx, input.userId);
+      const digest = summary(command); const [existing] = await tx.select().from(calibrationProposalRevisions).where(and(eq(calibrationProposalRevisions.userId, input.userId), eq(calibrationProposalRevisions.idempotencyKey, command.idempotencyKey))).limit(1);
+      if (existing) { if (existing.commandSummary !== digest) throw new RecommendationFeedbackError("IDEMPOTENCY_CONFLICT"); return existing; }
       const [proposal] = await tx.select().from(calibrationProposals).where(and(eq(calibrationProposals.userId, input.userId), eq(calibrationProposals.id, input.proposalId), eq(calibrationProposals.status, "pending"))).limit(1);
       if (!proposal) throw new RecommendationFeedbackError("PROPOSAL_NOT_FOUND");
       if (proposal.version !== command.expectedVersion) throw new RecommendationFeedbackError("VERSION_CONFLICT");
-      const digest = summary(command); const [existing] = await tx.select().from(calibrationProposalRevisions).where(and(eq(calibrationProposalRevisions.userId, input.userId), eq(calibrationProposalRevisions.idempotencyKey, command.idempotencyKey))).limit(1);
-      if (existing) { if (existing.commandSummary !== digest) throw new RecommendationFeedbackError("IDEMPOTENCY_CONFLICT"); return existing; }
       const [latest] = await tx.select({ revisionNumber: calibrationProposalRevisions.revisionNumber }).from(calibrationProposalRevisions).where(and(eq(calibrationProposalRevisions.userId, input.userId), eq(calibrationProposalRevisions.proposalId, proposal.id))).orderBy(desc(calibrationProposalRevisions.revisionNumber)).limit(1);
       const [revision] = await tx.insert(calibrationProposalRevisions).values({ id: deps.id(), userId: input.userId, proposalId: proposal.id, revisionNumber: (latest?.revisionNumber ?? 0) + 1, strategy: command.strategy, ruleConfig: command.ruleConfig, impactPreview: command.impactPreview, idempotencyKey: command.idempotencyKey, commandSummary: digest, createdAt: deps.clock() }).returning();
       await tx.update(calibrationProposals).set({ version: proposal.version + 1, updatedAt: deps.clock() }).where(and(eq(calibrationProposals.userId, input.userId), eq(calibrationProposals.id, proposal.id), eq(calibrationProposals.version, proposal.version)));
+      await deps.auditTrail?.bind(tx).append({ userId: input.userId, actorUserId: input.userId, eventType: "recommendation.calibration_proposal", occurredAt: deps.clock(), requestId: command.idempotencyKey, outcome: "success", reasonCode: "CALIBRATION_PROPOSAL_REVISED", resourceType: "calibration_proposal", resourceId: proposal.id, metadata: { proposalId: proposal.id, targetId: proposal.targetId, action: "revised", version: proposal.version + 1, evidenceCount: 0 } });
       return revision;
     });
   }
 
   async function resolveCalibrationProposal(input: { userId: string; proposalId: string; command: CalibrationProposalResolutionCommand }) {
+    const command = CalibrationProposalResolutionCommandSchema.parse(input.command);
     return deps.db.transaction(async (tx) => {
       await acquireAccountAdvisoryLock(tx, input.userId);
-      const [proposal] = await tx.select().from(calibrationProposals).where(and(eq(calibrationProposals.userId, input.userId), eq(calibrationProposals.id, input.proposalId), eq(calibrationProposals.status, "pending"))).limit(1);
+      const [proposal] = await tx.select().from(calibrationProposals).where(and(eq(calibrationProposals.userId, input.userId), eq(calibrationProposals.id, input.proposalId))).limit(1);
       if (!proposal) throw new RecommendationFeedbackError("PROPOSAL_NOT_FOUND");
-      if (proposal.version !== input.command.expectedVersion) throw new RecommendationFeedbackError("VERSION_CONFLICT");
+      const digest = summary(command);
+      if (proposal.resolutionIdempotencyKey) {
+        if (proposal.resolutionIdempotencyKey !== command.idempotencyKey || proposal.resolutionCommandSummary !== digest) throw new RecommendationFeedbackError("IDEMPOTENCY_CONFLICT");
+        const [existingRule] = proposal.status === "approved" ? await tx.select({ version: recommendationRuleVersions.version }).from(recommendationRuleVersions).where(and(eq(recommendationRuleVersions.userId, input.userId), eq(recommendationRuleVersions.proposalId, proposal.id))).limit(1) : [];
+        return { proposalId: proposal.id, status: proposal.status, ruleVersion: existingRule ? `recommendation-rule-v${existingRule.version}` : null };
+      }
+      if (proposal.status !== "pending" || proposal.version !== command.expectedVersion) throw new RecommendationFeedbackError("VERSION_CONFLICT");
       const [revision] = await tx.select().from(calibrationProposalRevisions).where(and(eq(calibrationProposalRevisions.userId, input.userId), eq(calibrationProposalRevisions.proposalId, proposal.id))).orderBy(desc(calibrationProposalRevisions.revisionNumber)).limit(1);
       if (!revision) throw new RecommendationFeedbackError("PROPOSAL_REVISION_NOT_FOUND");
       let ruleVersion: string | null = null;
-      if (input.command.action === "approved") {
+      if (command.action === "approved") {
         const [previous] = await tx.select({ version: recommendationRuleVersions.version }).from(recommendationRuleVersions).where(and(eq(recommendationRuleVersions.userId, input.userId), eq(recommendationRuleVersions.targetId, proposal.targetId))).orderBy(desc(recommendationRuleVersions.version)).limit(1);
         const version = (previous?.version ?? 0) + 1;
         await tx.insert(recommendationRuleVersions).values({ id: deps.id(), userId: input.userId, targetId: proposal.targetId, proposalId: proposal.id, proposalRevisionId: revision.id, version, config: RecommendationRuleConfigSchema.parse(revision.ruleConfig), createdAt: deps.clock() });
         ruleVersion = `recommendation-rule-v${version}`;
       }
-      const [updated] = await tx.update(calibrationProposals).set({ status: input.command.action, version: proposal.version + 1, resolvedAt: deps.clock(), updatedAt: deps.clock() }).where(and(eq(calibrationProposals.userId, input.userId), eq(calibrationProposals.id, proposal.id), eq(calibrationProposals.version, proposal.version))).returning();
+      const [updated] = await tx.update(calibrationProposals).set({ status: command.action, version: proposal.version + 1, resolvedAt: deps.clock(), resolutionIdempotencyKey: command.idempotencyKey, resolutionCommandSummary: digest, updatedAt: deps.clock() }).where(and(eq(calibrationProposals.userId, input.userId), eq(calibrationProposals.id, proposal.id), eq(calibrationProposals.version, proposal.version))).returning();
       if (!updated) throw new RecommendationFeedbackError("VERSION_CONFLICT");
+      await deps.auditTrail?.bind(tx).append({ userId: input.userId, actorUserId: input.userId, eventType: "recommendation.calibration_proposal", occurredAt: deps.clock(), requestId: command.idempotencyKey, outcome: "success", reasonCode: command.action === "approved" ? "CALIBRATION_PROPOSAL_APPROVED" : "CALIBRATION_PROPOSAL_REJECTED", resourceType: "calibration_proposal", resourceId: proposal.id, metadata: { proposalId: proposal.id, targetId: proposal.targetId, action: command.action, version: updated.version, evidenceCount: 0 } });
       return { proposalId: proposal.id, status: updated.status, ruleVersion };
     });
   }

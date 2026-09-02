@@ -27,3 +27,15 @@ export async function recordRecommendationDecisionAction(listId: string, itemId:
   await api.recordRecommendationDecision(sessionToken, listId, itemId, command as never);
   revalidatePath("/recommendations");
 }
+
+export async function reviseCalibrationProposalAction(proposalId: string, formData: FormData): Promise<void> {
+  const session = await readSessionToken(); if (!session) redirect("/login?returnTo=%2Frecommendations");
+  await api.reviseCalibrationProposal(session, proposalId, { strategy: String(formData.get("strategy")), idempotencyKey: String(formData.get("idempotencyKey")), expectedVersion: Number(formData.get("expectedVersion")), ruleConfig: { minimumOverallScore: Number(formData.get("minimumOverallScore")), minimumEvidenceDimensions: Number(formData.get("minimumEvidenceDimensions")), requiredEvidenceDimensions: [], excludedOpportunityIds: [] }, impactPreview: { sampleSize: Number(formData.get("sampleSize")), estimatedAffectedCount: Number(formData.get("estimatedAffectedCount")), ruleDiff: {} } } as never);
+  revalidatePath("/recommendations");
+}
+
+export async function resolveCalibrationProposalAction(proposalId: string, formData: FormData): Promise<void> {
+  const session = await readSessionToken(); if (!session) redirect("/login?returnTo=%2Frecommendations");
+  await api.resolveCalibrationProposal(session, proposalId, { action: String(formData.get("action")), idempotencyKey: String(formData.get("idempotencyKey")), expectedVersion: Number(formData.get("expectedVersion")) } as never);
+  revalidatePath("/recommendations");
+}
