@@ -302,7 +302,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
     const commandId = commandIds.current[action] ?? crypto.randomUUID();
     commandIds.current[action] = commandId;
     setPendingControls((current) => ({ ...current, [action]: true }));
-    setMessage(action === "pause" ? "等待安全暂停" : action === "cancel" ? "等待安全取消" : "正在继续岗位发现");
+    setMessage(action === "pause" ? "等待安全暂停" : action === "cancel" ? "等待安全取消" : `正在继续${runNoun}`);
     try {
       const response = await fetch(`/api/agent-runs/${run.runId}/controls`, {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ commandId, action }),
@@ -335,7 +335,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
           return;
         }
       }
-      setMessage(parsed.data.run.status === "paused" ? "岗位发现已暂停" : parsed.data.run.status === "cancelled" ? "岗位发现已取消" : action === "pause" ? "等待安全暂停" : action === "cancel" ? "等待安全取消" : "正在继续岗位发现");
+      setMessage(parsed.data.run.status === "paused" ? `${runNoun}已暂停` : parsed.data.run.status === "cancelled" ? `${runNoun}已取消` : action === "pause" ? "等待安全暂停" : action === "cancel" ? "等待安全取消" : `正在继续${runNoun}`);
     } catch {
       if (mountedRef.current) setMessage(`${action === "pause" ? "暂停" : action === "resume" ? "继续" : "取消"}请求暂时无法提交，请稍后重试。`);
     } finally {
@@ -375,7 +375,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
             {activeTargets.map((target) => <option key={target.targetId} value={target.targetId}>{target.constraints.roleFamily} · {target.priority === "primary" ? "主目标" : "次目标"}</option>)}
           </select>
           <Button className="agent-run-start workbench-touch-target" disabled={isStarting || runIsUnfinished} onClick={startRun} size="lg" type="button">
-            {isStarting ? "正在启动…" : runIsUnfinished ? "发现中…" : "发现岗位"}
+            {isStarting ? "正在启动…" : runIsUnfinished ? `${runNoun}中…` : isDeepMatchRun(run) ? "开始岗位匹配" : "发现岗位"}
           </Button>
         </div>
       </div>
@@ -439,7 +439,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
         </ol>
       ) : null}
 
-      {run?.status === "completed" && run.results.length > 0 ? (
+      {!isDeepMatchRun(run) && run?.status === "completed" && run.results.length > 0 ? (
         <div className="agent-run-results">
           <h3>本次发现的岗位</h3>
           <ol>

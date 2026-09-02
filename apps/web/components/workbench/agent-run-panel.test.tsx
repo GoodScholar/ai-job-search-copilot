@@ -191,6 +191,7 @@ it("显示冻结的执行规格、模型说明和预算账本", () => {
 it("对深度匹配运行使用匹配文案和冻结模型，而不是岗位发现文案", () => {
   const matching = {
     ...detail("completed"), workflowVersion: "deep-match-v1", currentStep: "completed",
+    usage: { ...detail("completed").usage, results: 7 },
     executionSpec: {
       ...detail("completed").executionSpec,
       workflowVersion: "deep-match-v1", sourceScope: { kind: "deep_match", trigger: "automatic", opportunityId: null, discoveryRunId: "00000000-0000-4000-8000-000000000009" },
@@ -202,6 +203,12 @@ it("对深度匹配运行使用匹配文案和冻结模型，而不是岗位发�
   render(<AgentRunPanel initialRun={matching} targets={[target()]} />);
 
   expect(screen.getByRole("status")).toHaveTextContent("岗位匹配完成");
+  expect(screen.getByRole("status")).toHaveTextContent("已生成 7 项推荐");
+  expect(screen.getByRole("heading", { name: "评估候选岗位匹配" })).toBeVisible();
+  expect(screen.getByLabelText("用于岗位匹配的求职目标")).toBeVisible();
+  expect(screen.getByRole("button", { name: "开始岗位匹配" })).toBeEnabled();
+  expect(screen.getByLabelText("本次岗位匹配执行规格")).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "本次发现的岗位" })).not.toBeInTheDocument();
   expect(screen.getByText("fake · fake-deep-match-model-v1")).toBeVisible();
   expect(screen.getByRole("list", { name: "岗位匹配运行时间线" })).toHaveTextContent("开始评估岗位匹配");
 });

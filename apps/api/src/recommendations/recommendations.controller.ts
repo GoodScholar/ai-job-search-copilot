@@ -1,6 +1,6 @@
-import { Body, Controller, Get, HttpStatus, Inject, Post, Query, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, HttpStatus, Inject, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { ApiBearerAuth, ApiNotFoundResponse, ApiUnauthorizedResponse } from "@nestjs/swagger";
-import { RecommendationListHistorySchema, RecommendationListSchema } from "@job-copilot/contracts/recommendations";
+import { RecommendationExclusionPageSchema, RecommendationListHistoryPageSchema, RecommendationListSchema } from "@job-copilot/contracts/recommendations";
 import type { FastifyRequest } from "fastify";
 import { createZodDto, ZodResponse } from "nestjs-zod";
 import { z } from "zod";
@@ -11,6 +11,9 @@ import { RECOMMENDATION_RUN_STARTER, type RecommendationRunStarter } from "./rec
 
 class RecommendationListDto extends createZodDto(RecommendationListSchema) {}
 class RecommendationTargetQueryDto extends createZodDto(z.object({ targetId: z.uuid() }).strict()) {}
+class RecommendationCursorQueryDto extends createZodDto(z.object({ targetId: z.uuid(), cursor: z.uuid().optional(), limit: z.coerce.number().int().min(1).max(100).default(20) }).strict()) {}
+class RecommendationListExclusionsQueryDto extends createZodDto(z.object({ targetId: z.uuid(), cursor: z.uuid().optional(), limit: z.coerce.number().int().min(1).max(100).default(25) }).strict()) {}
+class RecommendationListIdParamDto extends createZodDto(z.object({ recommendationListId: z.uuid() }).strict()) {}
 class StartRecommendationReevaluationDto extends createZodDto(z.object({ targetId: z.uuid(), opportunityId: z.uuid(), idempotencyKey: z.uuid() }).strict()) {}
 
 @Controller("v1/recommendations")
@@ -30,8 +33,13 @@ export class RecommendationsController {
   }
 
   @Get("history")
-  async history(@Req() request: FastifyRequest, @Query() query: RecommendationTargetQueryDto) {
-    return RecommendationListHistorySchema.parse(await this.queries.getListHistory({ userId: request.authenticatedAccount!.userId, targetId: query.targetId }));
+  async history(@Req() request: FastifyRequest, @Query() query: RecommendationCursorQueryDto) {
+    return RecommendationListHistoryPageSchema.parse(await this.queries.getListHistoryPage({ userId: request.authenticatedAccount!.userId, targetId: query.targetId, cursor: query.cursor, limit: query.limit }));
+  }
+
+  @Get("lists/:recommendationListId/exclusions")
+  async exclusions(@Req() request: FastifyRequest, @Param() params: RecommendationListIdParamDto, @Query() query: RecommendationListExclusionsQueryDto) {
+    return RecommendationExclusionPageSchema.parse(await this.queries.getListExclusionsPage({ userId: request.authenticatedAccount!.userId, targetId: query.targetId, recommendationListId: params.recommendationListId, cursor: query.cursor, limit: query.limit }));
   }
 
   @Post("runs")

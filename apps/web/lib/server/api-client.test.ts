@@ -691,3 +691,27 @@ it("通过 bearer 读取并严格验证来源健康概览", async () => {
   fetchImpl.mockResolvedValueOnce(new Response(JSON.stringify({ targetId, watchlistVersion: 0, sources: [], leaked: true }), { status: 200 }));
   await expect(client.getSourceHealth(sessionToken, targetId)).rejects.toMatchObject({ kind: "invalid_response" });
 });
+
+it("串行读取所有推荐历史与稳定排除 cursor，供 UI 无损呈现", async () => {
+  const firstListId = "10000000-0000-4000-8000-000000000001";
+  const secondListId = "10000000-0000-4000-8000-000000000002";
+  const exclusionCursor = "20000000-0000-4000-8000-000000000001";
+  const historyItem = (recommendationListId: string, sequence: number) => ({ recommendationListId, targetId, localDate: "2026-09-01", sequence, createdAt: "2026-09-01T00:00:00.000Z", items: [], exclusions: [] });
+  const exclusion = (id: string) => ({ opportunityId: id, reasonCode: "TRIAGE_NOT_PASS" });
+  const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.includes("/history?") && !url.includes("cursor=")) return Response.json({ items: [historyItem(firstListId, 2)], nextCursor: firstListId });
+    if (url.includes(`cursor=${firstListId}`)) return Response.json({ items: [historyItem(secondListId, 1)], nextCursor: null });
+    if (url.includes(`/lists/${firstListId}/exclusions`) && !url.includes("cursor=")) return Response.json({ items: [exclusion("30000000-0000-4000-8000-000000000001")], nextCursor: exclusionCursor });
+    if (url.includes(`cursor=${exclusionCursor}`)) return Response.json({ items: [exclusion("30000000-0000-4000-8000-000000000002")], nextCursor: null });
+    if (url.includes(`/lists/${secondListId}/exclusions`)) return Response.json({ items: [], nextCursor: null });
+    throw new Error(`unexpected request ${url}`);
+  });
+  const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+
+  await expect(client.getRecommendationHistory(sessionToken, targetId)).resolves.toEqual([
+    expect.objectContaining({ recommendationListId: firstListId, exclusions: [exclusion("30000000-0000-4000-8000-000000000001"), exclusion("30000000-0000-4000-8000-000000000002")] }),
+    expect.objectContaining({ recommendationListId: secondListId, exclusions: [] }),
+  ]);
+  expect(fetchImpl).toHaveBeenCalledTimes(5);
+});
