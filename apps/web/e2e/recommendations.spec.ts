@@ -62,14 +62,15 @@ async function runDiscovery(request: APIRequestContext, account: Account, idempo
   return (await response.json() as { runId: string }).runId;
 }
 
-async function installQualityFixture(userId: string, targetId: string, opportunityId: string) {
+async function installMatchingFixture(userId: string, targetId: string, fixture: { qualityInsufficientOpportunityIds?: string[]; overallScoresByOpportunityId?: Record<string, number> }) {
   const client = new Client({ connectionString: databaseUrl });
   await client.connect();
   try {
+    const fixtureJson = JSON.stringify(fixture).replaceAll("'", "''");
     await client.query(`create or replace function e2e_deep_match_fixture() returns trigger language plpgsql as $$
       begin
         if new.user_id = '${userId}'::uuid and new.target_id = '${targetId}'::uuid and new.workflow_version = 'deep-match-v1' then
-          update agent_runs set source_scope = jsonb_set(new.source_scope, '{testFixture}', jsonb_build_object('qualityInsufficientOpportunityIds', jsonb_build_array('${opportunityId}'::text))) where id = new.id;
+          update agent_runs set source_scope = jsonb_set(new.source_scope, '{testFixture}', '${fixtureJson}'::jsonb) where id = new.id;
         end if;
         return new;
       end;
@@ -122,13 +123,23 @@ async function listSnapshot(userId: string, targetId: string) {
   } finally { await client.end(); }
 }
 
+async function setCoarseScores(userId: string, targetId: string, opportunities: ImportedOpportunity[]) {
+  const client = new Client({ connectionString: databaseUrl });
+  await client.connect();
+  try {
+    for (const [index, opportunity] of opportunities.entries()) {
+      await client.query("update job_triage_versions set overall_score = $1 where user_id = $2 and target_id = $3 and opportunity_id = $4", [100 - index, userId, targetId, opportunity.opportunityId]);
+    }
+  } finally { await client.end(); }
+}
+
 test("显式 Fake matching 真实链路交付双方证据、质量排除与单岗位重评历史", async ({ page, request }, info) => {
   test.setTimeout(90_000);
   const account = await createAccount(request, info);
   const recommended = await importAndTriage(request, account, "正式推荐 TypeScript 工程师");
   const excluded = await importAndTriage(request, account, "低质量专用夹具岗位");
   await page.context().addCookies([{ name: "job_copilot_session", value: account.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
-  await installQualityFixture(account.userId, account.targetId, excluded.opportunityId);
+  await installMatchingFixture(account.userId, account.targetId, { qualityInsufficientOpportunityIds: [excluded.opportunityId] });
   const discoveryRunId = await runDiscovery(request, account, scenarioFor(info).batchKey);
   await page.goto("/recommendations");
   await waitForRun(page, discoveryRunId);
@@ -156,6 +167,11 @@ test("显式 Fake matching 真实链路交付双方证据、质量排除与单�
   expect(listsAfter).toHaveLength(listsBefore.length + 1);
   await page.reload();
   await expect(page.getByText("历史版本")).toBeVisible();
+  await page.getByText("历史版本", { exact: true }).click();
+  await page.locator("summary").filter({ hasText: "清单版本 1" }).click();
+  const historicalVersion = page.locator("summary").filter({ hasText: "清单版本 1" }).locator("..");
+  await expect(historicalVersion.locator("p").filter({ hasText: "岗位证据：" })).toContainText("正式推荐 TypeScript 工程师");
+  await expect(historicalVersion.locator("p").filter({ hasText: "画像证据：" })).toContainText("本科");
   const controls = page.locator(".workbench-touch-target");
   expect(await controls.evaluateAll((items) => items.every((item) => item.getBoundingClientRect().height >= 44))).toBe(true);
   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
@@ -167,7 +183,7 @@ test("显式 Fake matching 的质量不足候选可生成零推荐清单", async
   const account = await createAccount(request, info);
   const excluded = await importAndTriage(request, account, "零推荐专用夹具岗位");
   await page.context().addCookies([{ name: "job_copilot_session", value: account.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
-  await installQualityFixture(account.userId, account.targetId, excluded.opportunityId);
+  await installMatchingFixture(account.userId, account.targetId, { qualityInsufficientOpportunityIds: [excluded.opportunityId] });
   const discoveryRunId = await runDiscovery(request, account, crypto.randomUUID());
   await page.goto("/recommendations");
   await waitForRun(page, discoveryRunId);
@@ -179,4 +195,35 @@ test("显式 Fake matching 的质量不足候选可生成零推荐清单", async
   await expect(page.getByRole("list", { name: "推荐岗位" }).locator("li")).toHaveCount(0);
   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+});
+
+test("真实 discovery 自动 child 以深评稳定重排十项并标出正确 Top3 与 matching 面板", async ({ page, request }, info) => {
+  test.setTimeout(120_000);
+  const account = await createAccount(request, info);
+  const opportunities: ImportedOpportunity[] = [];
+  for (let index = 0; index < 10; index += 1) opportunities.push(await importAndTriage(request, account, `深评排序候选 ${String(index + 1).padStart(2, "0")}`));
+  await setCoarseScores(account.userId, account.targetId, opportunities);
+  await page.context().addCookies([{ name: "job_copilot_session", value: account.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
+  await installMatchingFixture(account.userId, account.targetId, { overallScoresByOpportunityId: Object.fromEntries(opportunities.map((opportunity, index) => [opportunity.opportunityId, 81 + index])) });
+  const discoveryRunId = await runDiscovery(request, account, crypto.randomUUID());
+  await page.goto("/recommendations");
+  await waitForRun(page, discoveryRunId);
+  const runId = await automaticMatchRun(account.userId, discoveryRunId);
+  await waitForRun(page, runId);
+  await removeQualityFixture();
+
+  await page.goto(`/home?runId=${runId}#agent-run`);
+  await expect(page.getByRole("heading", { name: "评估候选岗位匹配" })).toBeVisible();
+  await expect(page.getByLabel("用于岗位匹配的求职目标")).toBeVisible();
+  await expect(page.getByRole("status")).toContainText("已生成 10 项推荐");
+  await expect(page.getByRole("list", { name: "岗位匹配运行时间线" })).toContainText("岗位匹配完成");
+
+  await page.goto("/recommendations");
+  const recommendations = page.getByRole("list", { name: "推荐岗位" });
+  await expect(recommendations.locator(":scope > li")).toHaveCount(10);
+  const titles = await recommendations.locator("h2").allTextContents();
+  expect(titles).toEqual(Array.from({ length: 10 }, (_, index) => `深评排序候选 ${String(10 - index).padStart(2, "0")}`));
+  await expect(page.getByText("今日优先处理")).toHaveCount(3);
+  expect((await recommendations.locator(":scope > li").evaluateAll((items) => items.slice(0, 3).every((item) => item.textContent?.includes("今日优先处理")))).valueOf()).toBe(true);
+  await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
 });
