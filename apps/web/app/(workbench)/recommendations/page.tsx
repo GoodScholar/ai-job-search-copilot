@@ -22,8 +22,8 @@ export default async function RecommendationsPage() {
         <p>系统会从通过资格门槛的岗位中整理少量推荐，并保留每项判断的岗位与画像证据。</p>
         {!list ? <><h2>暂无可处理的推荐</h2><p>完成岗位发现和资格筛选后，这里会显示高度匹配、值得尝试或谨慎考虑的岗位。</p></> : <>
           <p aria-label="推荐清单版本">清单版本 {list.sequence} · {list.localDate}</p>
-          <LatestExclusions targetId={target!.targetId} list={list} />
-          <RecommendationHistory targetId={target!.targetId} initialPage={history} />
+          <LatestExclusions key={list.recommendationListId} targetId={target!.targetId} list={list} />
+          <RecommendationHistory key={`${target!.targetId}:${history.items.map((item) => item.recommendationListId).join(",")}:${history.nextCursor ?? ""}`} targetId={target!.targetId} initialPage={history} />
           <ol aria-label="推荐岗位">
             {list.items.map((item) => {
               const assessment = DeepMatchAssessmentSchema.safeParse(item.assessment).data;

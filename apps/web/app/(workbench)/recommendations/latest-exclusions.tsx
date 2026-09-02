@@ -1,22 +1,19 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { RecommendationExclusionPageSchema, type RecommendationList } from "@job-copilot/contracts/recommendations";
 import { exclusionReasonText } from "./exclusion-reasons";
 
 export function LatestExclusions({ targetId, list }: { targetId: string; list: RecommendationList }) {
+  return <LatestExclusionsState key={list.recommendationListId} targetId={targetId} list={list} />;
+}
+
+function LatestExclusionsState({ targetId, list }: { targetId: string; list: RecommendationList }) {
   const [items, setItems] = useState(list.exclusions);
   const [cursor, setCursor] = useState(list.exclusionsNextCursor ?? null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const pending = useRef(false);
-  useEffect(() => {
-    pending.current = false;
-    setItems(list.exclusions);
-    setCursor(list.exclusionsNextCursor ?? null);
-    setLoading(false);
-    setError(null);
-  }, [list.recommendationListId, list.exclusions, list.exclusionsNextCursor]);
   const load = async () => {
     if (!cursor || pending.current) return;
     pending.current = true;

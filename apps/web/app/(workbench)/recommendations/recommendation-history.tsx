@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { RecommendationExclusionPageSchema, RecommendationListHistoryPageSchema, type RecommendationList, type RecommendationListHistoryPage } from "@job-copilot/contracts/recommendations";
 import { exclusionReasonText } from "./exclusion-reasons";
 
@@ -14,6 +14,11 @@ async function responseJson(response: Response): Promise<unknown> {
 }
 
 export function RecommendationHistory({ targetId, initialPage }: { targetId: string; initialPage: RecommendationListHistoryPage }) {
+  const identity = `${targetId}:${initialPage.items.map((item) => item.recommendationListId).join(",")}:${initialPage.nextCursor ?? ""}`;
+  return <RecommendationHistoryState key={identity} targetId={targetId} initialPage={initialPage} />;
+}
+
+function RecommendationHistoryState({ targetId, initialPage }: { targetId: string; initialPage: RecommendationListHistoryPage }) {
   const [items, setItems] = useState(initialPage.items);
   const [nextCursor, setNextCursor] = useState(initialPage.nextCursor);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -21,12 +26,6 @@ export function RecommendationHistory({ targetId, initialPage }: { targetId: str
   const [exclusions, setExclusions] = useState<Record<string, ExclusionState>>({});
   const pendingRequests = useRef(new Set<string>());
   const historyPending = useRef(false);
-  const identity = `${targetId}:${initialPage.items.map((item) => item.recommendationListId).join(",")}:${initialPage.nextCursor ?? ""}`;
-  useEffect(() => {
-    historyPending.current = false;
-    pendingRequests.current.clear();
-    setItems(initialPage.items); setNextCursor(initialPage.nextCursor); setExclusions({}); setLoadingHistory(false); setError(null);
-  }, [identity, initialPage]);
   const loadHistory = async () => {
     if (!nextCursor || historyPending.current) return;
     historyPending.current = true;
