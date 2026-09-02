@@ -4,6 +4,7 @@ import {
   FAKE_DEEP_MATCH_TOKEN_USAGE,
   DeepMatchAssessmentSchema,
   DeepMatchCandidateSchema,
+  acceptsDeepMatchAssessment,
   validateDeepMatchEvidenceClosure,
   type DeepMatchAdapter,
   type DeepMatchCandidate,
@@ -26,8 +27,10 @@ const candidates: readonly DeepMatchCandidate[] = [
     profileEvidence: DEEP_MATCH_DIMENSIONS.map((dimension) => ({ id: `profile:react:${dimension}`, profileFactRevisionId: "00000000-0000-4000-8000-000000000211", value: `已确认${dimension}画像证据`, dimensions: [dimension] })),
   },
 ];
-
-const triageRejectedOpportunityId = "00000000-0000-4000-8000-000000000012";
+const evaluationCases: readonly { candidate: DeepMatchCandidate; triageEligible: boolean }[] = [
+  ...candidates.map((candidate) => ({ candidate, triageEligible: true })),
+  { candidate: { ...candidates[0]!, opportunityId: "00000000-0000-4000-8000-000000000012", sourcePostingVersionId: "00000000-0000-4000-8000-000000000112" }, triageEligible: false },
+];
 const qualityRejectedOpportunityId = candidates[1]!.opportunityId;
 
 export async function runDeepMatchEvaluation(adapter: DeepMatchAdapter) {
@@ -51,13 +54,13 @@ export async function runDeepMatchEvaluation(adapter: DeepMatchAdapter) {
     return parsed;
   }).sort((left, right) => right.overallScore - left.overallScore || left.opportunityId.localeCompare(right.opportunityId));
   if (assessed.length !== candidates.length || new Set(assessed.map((item) => item.opportunityId)).size !== candidates.length) throw new Error("DEEP_MATCH_EVALUATION_COMPLETENESS");
-  const accepted = assessed.filter((item) => item.overallScore >= 60);
-  const rejected = assessed.filter((item) => item.overallScore < 60);
+  const accepted = assessed.filter(acceptsDeepMatchAssessment);
+  const rejected = assessed.filter((item) => !acceptsDeepMatchAssessment(item));
   if (accepted.map((item) => item.opportunityId).join(",") !== candidates[0]!.opportunityId || rejected.map((item) => item.opportunityId).join(",") !== qualityRejectedOpportunityId) throw new Error("DEEP_MATCH_EVALUATION_RANKING_OR_REJECTION");
   return {
     evaluationVersion: DEEP_MATCH_EVALUATION_VERSION,
     cases: candidates.length,
     acceptedOpportunityIds: accepted.map((item) => item.opportunityId),
-    rejectedOpportunityIds: [qualityRejectedOpportunityId, triageRejectedOpportunityId],
+    rejectedOpportunityIds: [...rejected.map((item) => item.opportunityId), ...evaluationCases.filter((item) => !item.triageEligible).map((item) => item.candidate.opportunityId)],
   };
 }

@@ -4,7 +4,7 @@ import {
   recommendationExclusions, recommendationListItems, recommendationLists, type Database,
 } from "@job-copilot/database";
 import {
-  DEEP_MATCH_OUTPUT_SCHEMA_VERSION, DeepMatchAdapterError, DeepMatchAdapterInputSchema, DeepMatchAdapterResultSchema, DeepMatchAssessmentSchema, FakeDeepMatchAdapter, validateDeepMatchEvidenceClosure, type DeepMatchAdapter, type DeepMatchAdapterCall, type DeepMatchCandidate,
+  DEEP_MATCH_OUTPUT_SCHEMA_VERSION, DeepMatchAdapterError, DeepMatchAdapterInputSchema, DeepMatchAdapterResultSchema, DeepMatchAssessmentSchema, FakeDeepMatchAdapter, acceptsDeepMatchAssessment, validateDeepMatchEvidenceClosure, type DeepMatchAdapter, type DeepMatchAdapterCall, type DeepMatchCandidate,
 } from "@job-copilot/contracts/deep-match";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 
@@ -255,10 +255,7 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
         const [previousList] = await transaction.select({ sequence: recommendationLists.sequence }).from(recommendationLists).where(and(eq(recommendationLists.userId, input.userId), eq(recommendationLists.targetId, input.targetId), eq(recommendationLists.localDate, localDate))).orderBy(desc(recommendationLists.sequence)).limit(1);
         const [list] = await transaction.insert(recommendationLists).values({ id: deps.id(), userId: input.userId, targetId: input.targetId, localDate, sequence: (previousList?.sequence ?? 0) + 1, createdAt: deps.clock() }).returning();
         if (!list) throw new Error("RECOMMENDATION_LIST_PERSIST_FAILED");
-        const accepted = matches.filter((match) => {
-          const assessment = completed.find((entry) => entry.candidate.opportunityId === match.opportunityId)!.assessment;
-          return assessment.overallScore >= 40 && assessment.dimensions.filter((dimension) => dimension.judgment === "evidence_backed_inference").length >= 2;
-        });
+        const accepted = matches.filter((match) => acceptsDeepMatchAssessment(completed.find((entry) => entry.candidate.opportunityId === match.opportunityId)!.assessment));
         const exclusions = [...input.selectionExclusions, ...matches.filter((match) => !accepted.some((item) => item.id === match.id)).map((match) => ({ opportunityId: match.opportunityId, reasonCode: "MATCH_QUALITY_INSUFFICIENT" as const }))];
         if (exclusions.length) await transaction.insert(recommendationExclusions).values(exclusions.map((exclusion) => ({ id: deps.id(), userId: input.userId, targetId: input.targetId, opportunityId: exclusion.opportunityId, recommendationListId: list.id, reasonCode: exclusion.reasonCode, createdAt: deps.clock() })));
         if (accepted.length) await transaction.insert(recommendationListItems).values(accepted.map((match, index) => ({ id: deps.id(), userId: input.userId, recommendationListId: list.id, matchVersionId: match.id, ordinal: index + 1, highlighted: index < 3, createdAt: deps.clock() })));

@@ -55,6 +55,12 @@ export const DeepMatchAssessmentSchema = z.object({
 
 export type DeepMatchAssessment = z.infer<typeof DeepMatchAssessmentSchema>;
 
+/** Shared recommendation acceptance rule.  Persistence and ADR-0029 evaluation must never drift. */
+export function acceptsDeepMatchAssessment(assessment: DeepMatchAssessment): boolean {
+  return assessment.overallScore >= 40
+    && assessment.dimensions.filter((dimension) => dimension.judgment === "evidence_backed_inference").length >= 2;
+}
+
 export const DeepMatchCandidateSchema = z.object({
   opportunityId: z.uuid(),
   sourcePostingVersionId: z.uuid(),
