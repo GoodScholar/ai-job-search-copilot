@@ -203,7 +203,7 @@ it("对深度匹配运行使用匹配文案和冻结模型，而不是岗位发�
 
   expect(screen.getByRole("status")).toHaveTextContent("岗位匹配完成");
   expect(screen.getByText("fake · fake-deep-match-model-v1")).toBeVisible();
-  expect(screen.getByRole("list", { name: "岗位发现运行时间线" })).toHaveTextContent("开始评估岗位匹配");
+  expect(screen.getByRole("list", { name: "岗位匹配运行时间线" })).toHaveTextContent("开始评估岗位匹配");
 });
 
 it("历史消费明细不完整时只展示预算上限", () => {

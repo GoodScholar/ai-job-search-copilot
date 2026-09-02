@@ -120,7 +120,9 @@ export function createDeepMatchQueries(deps: { db: Database }) {
       return rows.map((row) => row.candidateSnapshot as SelectedDeepMatchCandidate);
     },
     async getListHistory(input: { userId: string; targetId: string }) {
-      const lists = await deps.db.select().from(recommendationLists).where(and(eq(recommendationLists.userId, input.userId), eq(recommendationLists.targetId, input.targetId))).orderBy(desc(recommendationLists.createdAt), desc(recommendationLists.sequence)).limit(20);
+      // Recommendation history is an immutable record, not a "recent activity" feed.  Never
+      // truncate it silently: callers can render or explicitly paginate the complete result.
+      const lists = await deps.db.select().from(recommendationLists).where(and(eq(recommendationLists.userId, input.userId), eq(recommendationLists.targetId, input.targetId))).orderBy(desc(recommendationLists.createdAt), desc(recommendationLists.sequence));
       return Promise.all(lists.map(async (list) => {
         const details = await readList({ userId: input.userId, targetId: input.targetId, recommendationListId: list.id });
         if (!details) throw new Error("RECOMMENDATION_HISTORY_VERSION_NOT_FOUND");
@@ -198,6 +200,12 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
         for (const entry of completed) {
           const candidate = entry.candidate;
           if (candidate.targetVersion === undefined || candidate.profileVersion === undefined || candidate.triageVersionId.length === 0 || candidate.sourcePostingVersionId.length === 0) throw new Error("DEEP_MATCH_TUPLE_INVALID");
+          const [triage] = await transaction.select().from(jobTriageVersions).where(and(
+            eq(jobTriageVersions.userId, input.userId), eq(jobTriageVersions.id, candidate.triageVersionId), eq(jobTriageVersions.opportunityId, candidate.opportunityId),
+            eq(jobTriageVersions.sourcePostingVersionId, candidate.sourcePostingVersionId), eq(jobTriageVersions.profileId, candidate.profileId),
+            eq(jobTriageVersions.profileVersion, candidate.profileVersion), eq(jobTriageVersions.targetId, input.targetId), eq(jobTriageVersions.targetVersion, candidate.targetVersion),
+          )).limit(1);
+          if (!triage) throw new Error("DEEP_MATCH_TUPLE_INVALID");
           const [previous] = await transaction.select({ sequence: jobMatchVersions.sequence }).from(jobMatchVersions).where(and(eq(jobMatchVersions.userId, input.userId), eq(jobMatchVersions.opportunityId, candidate.opportunityId))).orderBy(desc(jobMatchVersions.sequence)).limit(1);
           const assessment = { ...entry.assessment, evidenceSnapshot: entry.assessment.evidenceSnapshot ?? { jobEvidence: candidate.jobEvidence.map(({ id, value }) => ({ id, value })), profileEvidence: candidate.profileEvidence.map(({ id, value }) => ({ id, value })) }, opportunitySnapshot: entry.assessment.opportunitySnapshot ?? candidate.opportunitySnapshot };
           const [match] = await transaction.insert(jobMatchVersions).values({

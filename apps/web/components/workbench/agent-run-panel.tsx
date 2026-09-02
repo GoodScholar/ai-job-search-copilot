@@ -96,7 +96,7 @@ function runStatusLabel(run: AgentRunDetail | null): string {
   if (run.status === "paused") return `${noun}已暂停`;
   if (run.status === "cancelled") return `${noun}已取消`;
   if (run.status === "completed" && run.termination?.kind === "completed_with_source_issues") return `${noun}部分完成`;
-  if (run.status === "completed") return matching ? `岗位匹配完成，已生成 ${run.results.length} 项推荐` : `岗位发现完成，共保存 ${run.results.length} 个岗位机会`;
+  if (run.status === "completed") return matching ? `岗位匹配完成，已生成 ${run.usage.results} 项推荐` : `岗位发现完成，共保存 ${run.results.length} 个岗位机会`;
   return failureMessages[run.failureCode ?? "AGENT_RUN_PERSIST_FAILED"];
 }
 
@@ -127,6 +127,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
   const [selectedTargetId, setSelectedTargetId] = useState(initialTargetId);
   const [run, setRun] = useState(initialRun);
   const isLayeredPublicRun = run?.workflowVersion === LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION;
+  const runNoun = isDeepMatchRun(run) ? "岗位匹配" : "岗位发现";
   const [timeline, setTimeline] = useState<TimelineEvent[]>(() => detailTimeline(initialRun));
   const [message, setMessage] = useState("");
   const [isStarting, setIsStarting] = useState(false);
@@ -360,11 +361,11 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
   return (
     <section aria-labelledby="agent-run-title" className="workbench-ledger agent-run-panel" id="agent-run">
       <div className="workbench-ledger-heading">
-        <p>岗位发现 · 运行记录</p>
-        <h2 id="agent-run-title">发现新的岗位机会</h2>
+        <p>{runNoun} · 运行记录</p>
+        <h2 id="agent-run-title">{isDeepMatchRun(run) ? "评估候选岗位匹配" : "发现新的岗位机会"}</h2>
       </div>
       <div className="agent-run-controls">
-        <label htmlFor="agent-run-target">用于发现岗位的求职目标</label>
+        <label htmlFor="agent-run-target">{isDeepMatchRun(run) ? "用于岗位匹配的求职目标" : "用于发现岗位的求职目标"}</label>
         <div>
           <select disabled={isStarting || runIsUnfinished} id="agent-run-target" onChange={(event) => {
             setSelectedTargetId(event.target.value);
@@ -381,11 +382,11 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
       {showDiscoverySchedule && selectedTarget ? <DiscoverySchedulePanel key={selectedTarget.targetId} targetId={selectedTarget.targetId} targetState={selectedTarget.state} /> : null}
       {run ? <>
         <div className="agent-run-command-row">
-          {run.status === "queued" || (run.status === "running" && run.controlState === "none") ? <button className="agent-run-action workbench-touch-target" disabled={pendingControls.pause} onClick={() => void controlRun("pause")} type="button">暂停岗位发现</button> : null}
-          {run.status === "paused" || run.controlState === "pause_requested" ? <button className="agent-run-action workbench-touch-target" disabled={pendingControls.resume} onClick={() => void controlRun("resume")} type="button">继续本次岗位发现</button> : null}
-          {["queued", "running", "paused"].includes(run.status) && run.controlState !== "cancel_requested" ? <button className="agent-run-action agent-run-cancel workbench-touch-target" disabled={pendingControls.cancel} onClick={() => void controlRun("cancel")} type="button">取消岗位发现</button> : null}
+          {run.status === "queued" || (run.status === "running" && run.controlState === "none") ? <button className="agent-run-action workbench-touch-target" disabled={pendingControls.pause} onClick={() => void controlRun("pause")} type="button">暂停{runNoun}</button> : null}
+          {run.status === "paused" || run.controlState === "pause_requested" ? <button className="agent-run-action workbench-touch-target" disabled={pendingControls.resume} onClick={() => void controlRun("resume")} type="button">继续本次{runNoun}</button> : null}
+          {["queued", "running", "paused"].includes(run.status) && run.controlState !== "cancel_requested" ? <button className="agent-run-action agent-run-cancel workbench-touch-target" disabled={pendingControls.cancel} onClick={() => void controlRun("cancel")} type="button">取消{runNoun}</button> : null}
         </div>
-        <section aria-label="本次岗位发现执行规格" className="agent-run-detail">
+        <section aria-label={`本次${runNoun}执行规格`} className="agent-run-detail">
           <dl>
             <div><dt>求职目标</dt><dd>{run.executionSpec.targetSnapshot.constraints.roleFamily} · v{run.targetVersion}</dd></div>
             <div><dt>当前步骤</dt><dd>{currentStepLabel(run.currentStep)}</dd></div>
@@ -430,7 +431,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
       </p> : null}
 
       {timeline.length > 0 ? (
-        <ol aria-label="岗位发现运行时间线" className="agent-run-timeline">
+        <ol aria-label={isDeepMatchRun(run) ? "岗位匹配运行时间线" : "岗位发现运行时间线"} className="agent-run-timeline">
           {timeline.map((event) => <li data-state={event.eventType.startsWith("run.") ? event.data.status : event.eventType.endsWith("completed") ? "completed" : "running"} key={event.sequence}>
             <span aria-hidden="true">{String(event.sequence).padStart(2, "0")}</span>
             <p>{timelineLabel(event, isDeepMatchRun(run))}</p>
