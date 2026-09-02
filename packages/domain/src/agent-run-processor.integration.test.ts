@@ -198,6 +198,26 @@ describe("AgentRunProcessor checkpoints", () => {
     ])).resolves.toEqual([[], []]);
   });
 
+  it.each([["pause_requested", "paused"], ["cancel_requested", "cancelled"]] as const)("settles one actual model usage before post-call %s transition", async (controlState, expected) => {
+    const job = await deepMatchRun(); const fake = new FakeDeepMatchAdapter(); let injected = false;
+    const adapter = { ...fake, async assess(input: Parameters<FakeDeepMatchAdapter["assess"]>[0], call: Parameters<FakeDeepMatchAdapter["assess"]>[1]) {
+      const result = await fake.assess(input, call);
+      return { ...result, usage: { inputTokens: 7, outputTokens: 11, latencyMs: 1 } };
+    } };
+    const durable = checkpoint();
+    const controlled: AgentRunCheckpoint = { check: async (input) => {
+      if (!injected && input.checkpointKey.startsWith("deep_match_model:")) { injected = true; await database.update(agentRuns).set({ controlState }).where(eq(agentRuns.id, job.runId)); }
+      return durable.check(input);
+    } };
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: adapter, checkpoint: controlled, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe(expected);
+    await expect(Promise.all([
+      database.select({ category: agentRunUsageEntries.category, amount: agentRunUsageEntries.amount }).from(agentRunUsageEntries).where(eq(agentRunUsageEntries.runId, job.runId)),
+      database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, job.runId)),
+      database.select().from(recommendationLists).where(eq(recommendationLists.userId, job.userId)),
+    ])).resolves.toEqual([expect.arrayContaining([{ category: "model_call", amount: 1 }, { category: "input_tokens", amount: 7 }, { category: "output_tokens", amount: 11 }]), [{ status: expected }], []]);
+  });
+
   it.each([
     ["pause", "paused", "run.paused", "agent.run_paused"],
     ["cancel", "cancelled", "run.cancelled", "agent.run_cancelled"],

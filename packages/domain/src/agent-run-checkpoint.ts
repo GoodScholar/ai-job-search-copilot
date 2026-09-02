@@ -94,7 +94,9 @@ export function createAgentRunCheckpoint(deps: Dependencies): AgentRunCheckpoint
         const preflightDimension = exhausted({ ...run, activeDurationMs }, reserve, 0);
         // A post-call settlement is an accounting fact, not a reservation.  Never discard
         // an already incurred model call merely because it pushes the budget over its limit.
-        const chargedReserve = run.controlState === "none" && prior.length === 0 && (reserve.settleActual || preflightDimension === null) ? reserve : {};
+        // A completed model call is an immutable accounting fact even if a control request
+        // lands between the response and this checkpoint.  Record it once, then transition.
+        const chargedReserve = prior.length === 0 && (reserve.settleActual || (run.controlState === "none" && preflightDimension === null)) ? reserve : {};
         const usageEntries = prior.length === 0 ? await writeUsage(transaction, { id: deps.id, userId: input.userId, runId: input.runId, checkpointKey: input.checkpointKey, attemptCount: run.attemptCount, reserve: chargedReserve, now }) : [];
         const inputTokens = amount(chargedReserve.inputTokens);
         const outputTokens = amount(chargedReserve.outputTokens);
