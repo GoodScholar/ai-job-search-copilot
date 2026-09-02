@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, isNull, lt, lte, or } from "drizzle-orm";
+import { and, asc, desc, eq, gt, isNull, lt, lte, or, sql } from "drizzle-orm";
 import {
   deepMatchRunCandidates, agentRuns, jobMatchVersions, jobOpportunities, jobOpportunitySources, jobSourcePostingVersions, jobTargetRevisions, jobTriageVersions, profileFactRevisions, profileFacts,
   recommendationExclusions, recommendationListItems, recommendationLists, type Database,
@@ -148,7 +148,10 @@ export function createDeepMatchQueries(deps: { db: Database }) {
       const [cursor] = input.cursor ? await deps.db.select().from(recommendationLists).where(and(eq(recommendationLists.userId, input.userId), eq(recommendationLists.targetId, input.targetId), eq(recommendationLists.id, input.cursor))).limit(1) : [];
       if (input.cursor && !cursor) throw new Error("RECOMMENDATION_HISTORY_CURSOR_INVALID");
       const lists = await deps.db.select().from(recommendationLists).where(and(eq(recommendationLists.userId, input.userId), eq(recommendationLists.targetId, input.targetId),
-        ...(cursor ? [or(lt(recommendationLists.createdAt, cursor.createdAt), and(eq(recommendationLists.createdAt, cursor.createdAt), or(lt(recommendationLists.sequence, cursor.sequence), and(eq(recommendationLists.sequence, cursor.sequence), lt(recommendationLists.id, cursor.id)))))] : []),
+        ...(cursor ? [or(
+          lt(recommendationLists.createdAt, sql`(select ${recommendationLists.createdAt} from ${recommendationLists} where ${recommendationLists.id} = ${cursor.id}::uuid)`),
+          and(eq(recommendationLists.createdAt, sql`(select ${recommendationLists.createdAt} from ${recommendationLists} where ${recommendationLists.id} = ${cursor.id}::uuid)`), or(lt(recommendationLists.sequence, cursor.sequence), and(eq(recommendationLists.sequence, cursor.sequence), lt(recommendationLists.id, cursor.id)))),
+        )] : []),
       )).orderBy(desc(recommendationLists.createdAt), desc(recommendationLists.sequence), desc(recommendationLists.id)).limit(input.limit + 1);
       const page = lists.slice(0, input.limit);
       const items = await Promise.all(page.map(async (list) => {
@@ -166,7 +169,10 @@ export function createDeepMatchQueries(deps: { db: Database }) {
       if (input.cursor && !cursor) throw new Error("RECOMMENDATION_EXCLUSION_CURSOR_INVALID");
       const exclusions = await deps.db.select({ id: recommendationExclusions.id, opportunityId: recommendationExclusions.opportunityId, reasonCode: recommendationExclusions.reasonCode }).from(recommendationExclusions)
         .where(and(eq(recommendationExclusions.userId, input.userId), eq(recommendationExclusions.recommendationListId, list.id),
-          ...(cursor ? [or(gt(recommendationExclusions.createdAt, cursor.createdAt), and(eq(recommendationExclusions.createdAt, cursor.createdAt), gt(recommendationExclusions.id, cursor.id)))] : []),
+          ...(cursor ? [or(
+            gt(recommendationExclusions.createdAt, sql`(select ${recommendationExclusions.createdAt} from ${recommendationExclusions} where ${recommendationExclusions.id} = ${cursor.id}::uuid)`),
+            and(eq(recommendationExclusions.createdAt, sql`(select ${recommendationExclusions.createdAt} from ${recommendationExclusions} where ${recommendationExclusions.id} = ${cursor.id}::uuid)`), gt(recommendationExclusions.id, cursor.id)),
+          )] : []),
         )).orderBy(asc(recommendationExclusions.createdAt), asc(recommendationExclusions.id)).limit(input.limit + 1);
       const page = exclusions.slice(0, input.limit);
       return { items: page.map(({ opportunityId, reasonCode }) => ({ opportunityId, reasonCode })), nextCursor: exclusions.length > input.limit ? page.at(-1)?.id ?? null : null };

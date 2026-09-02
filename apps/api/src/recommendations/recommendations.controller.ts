@@ -16,11 +16,6 @@ class RecommendationListExclusionsQueryDto extends createZodDto(z.object({ targe
 class RecommendationListIdParamDto extends createZodDto(z.object({ recommendationListId: z.uuid() }).strict()) {}
 class StartRecommendationReevaluationDto extends createZodDto(z.object({ targetId: z.uuid(), opportunityId: z.uuid(), idempotencyKey: z.uuid() }).strict()) {}
 
-function rawCursor(request: FastifyRequest): string | undefined {
-  const cursor = (request.query as Record<string, unknown>).cursor;
-  return typeof cursor === "string" ? cursor : undefined;
-}
-
 @Controller("v1/recommendations")
 @UseGuards(SessionGuard)
 @ApiBearerAuth("bearerAuth")
@@ -39,12 +34,12 @@ export class RecommendationsController {
 
   @Get("history")
   async history(@Req() request: FastifyRequest, @Query() query: RecommendationCursorQueryDto) {
-    return RecommendationListHistoryPageSchema.parse(await this.queries.getListHistoryPage({ userId: request.authenticatedAccount!.userId, targetId: query.targetId, cursor: rawCursor(request) ?? query.cursor, limit: query.limit }));
+    return RecommendationListHistoryPageSchema.parse(await this.queries.getListHistoryPage({ userId: request.authenticatedAccount!.userId, targetId: query.targetId, cursor: query.cursor, limit: query.limit }));
   }
 
   @Get("lists/:recommendationListId/exclusions")
   async exclusions(@Req() request: FastifyRequest, @Param() params: RecommendationListIdParamDto, @Query() query: RecommendationListExclusionsQueryDto) {
-    return RecommendationExclusionPageSchema.parse(await this.queries.getListExclusionsPage({ userId: request.authenticatedAccount!.userId, targetId: query.targetId, recommendationListId: params.recommendationListId, cursor: rawCursor(request) ?? query.cursor, limit: query.limit }));
+    return RecommendationExclusionPageSchema.parse(await this.queries.getListExclusionsPage({ userId: request.authenticatedAccount!.userId, targetId: query.targetId, recommendationListId: params.recommendationListId, cursor: query.cursor, limit: query.limit }));
   }
 
   @Post("runs")

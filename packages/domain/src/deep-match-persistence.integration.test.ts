@@ -4,7 +4,7 @@ import {
   agentRuns, createDatabase, deepMatchRunCandidates, jobAccounts, jobMatchVersions, jobOpportunities, jobOpportunitySources, jobProfiles, jobSourcePostingVersions, jobSourcePostings, recommendationListItems, recommendationLists,
   jobTargetRevisions, jobTargets, jobTriageVersions, migrateDatabase, profileFactRevisions, profileFacts, recommendationExclusions, type Database,
 } from "@job-copilot/database";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { FakeDeepMatchAdapter } from "@job-copilot/contracts/deep-match";
 import { createDeepMatchRunStarter } from "./deep-match-agent-runs";
 import { createAgentRunRecoveryQueries } from "./agent-run-processor";
@@ -246,10 +246,10 @@ describe("deep match persistence", () => {
   it("keyset-paginates fixture histories and exclusions without duplicate cursor rows", async () => {
     const input = await fixture();
     const listIds = Array.from({ length: 21 }, () => crypto.randomUUID());
-    await db.insert(recommendationLists).values(listIds.map((id, index) => ({ id, userId: input.userId, targetId: input.targetId, localDate: "2026-09-01", sequence: index + 1, createdAt: now })));
+    await db.insert(recommendationLists).values(listIds.map((id, index) => ({ id, userId: input.userId, targetId: input.targetId, localDate: "2026-09-01", sequence: index + 1, createdAt: sql`transaction_timestamp()` })));
     const owner = { userId: input.userId, profileId: input.profileId, targetId: input.targetId };
     const exclusions = await Promise.all(Array.from({ length: 26 }, async () => ({ opportunityId: (await fixture({ owner, verdict: "fail" })).opportunityId })));
-    await db.insert(recommendationExclusions).values(exclusions.map((entry) => ({ id: crypto.randomUUID(), userId: input.userId, targetId: input.targetId, recommendationListId: listIds[20]!, opportunityId: entry.opportunityId, reasonCode: "TRIAGE_NOT_PASS", createdAt: now })));
+    await db.insert(recommendationExclusions).values(exclusions.map((entry) => ({ id: crypto.randomUUID(), userId: input.userId, targetId: input.targetId, recommendationListId: listIds[20]!, opportunityId: entry.opportunityId, reasonCode: "TRIAGE_NOT_PASS", createdAt: sql`transaction_timestamp()` })));
     const queries = createDeepMatchQueries({ db });
     const first = await queries.getListHistoryPage({ userId: input.userId, targetId: input.targetId, limit: 20 });
     const second = await queries.getListHistoryPage({ userId: input.userId, targetId: input.targetId, cursor: first.nextCursor!, limit: 20 });
