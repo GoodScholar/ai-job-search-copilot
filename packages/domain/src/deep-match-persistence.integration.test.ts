@@ -98,6 +98,17 @@ describe("deep match persistence", () => {
     expect(selected.exclusions.filter((item) => item.reasonCode === "TRIAGE_NOT_PASS")).toHaveLength(11);
   });
 
+  it("records evidence-insufficient exclusion and backfills the next eligible candidate", async () => {
+    const first = await fixture({ score: 90 });
+    const owner = { userId: first.userId, profileId: first.profileId, targetId: first.targetId };
+    const second = await fixture({ owner, score: 80 });
+    await db.update(jobSourcePostingVersions).set({ normalizedData: {} }).where(eq(jobSourcePostingVersions.id, first.sourcePostingVersionId));
+    await db.update(jobOpportunities).set({ title: null, location: null, description: null, normalizedData: {} }).where(eq(jobOpportunities.id, first.opportunityId));
+    const selected = await createDeepMatchQueries({ db }).selectCandidateSelection({ userId: first.userId, targetId: first.targetId });
+    expect(selected.candidates.map((candidate) => candidate.opportunityId)).toEqual([second.opportunityId]);
+    expect(selected.exclusions).toContainEqual({ opportunityId: first.opportunityId, reasonCode: "MATCH_QUALITY_INSUFFICIENT" });
+  });
+
   it("persists exactly one recoverable matching child run when queue delivery fails and retries delivery on duplicate trigger", async () => {
     const input = await fixture();
     const queue = { calls: 0, fail: true, async enqueue() { this.calls += 1; if (this.fail) throw new Error("QUEUE_DOWN"); } };

@@ -17,7 +17,7 @@ export type SelectedDeepMatchCandidate = DeepMatchCandidate & {
   opportunitySnapshot: { company: string | null; title: string | null; location: string | null };
 };
 export type RecommendationExclusionReason = "TRIAGE_NOT_PASS" | "DEADLINE_EXPIRED" | "SCORE_BELOW_THRESHOLD" | "CANDIDATE_LIMIT" | "MATCH_QUALITY_INSUFFICIENT";
-export type CandidateSelection = { candidates: SelectedDeepMatchCandidate[]; exclusions: Array<{ opportunityId: string; reasonCode: Exclude<RecommendationExclusionReason, "MATCH_QUALITY_INSUFFICIENT"> }> };
+export type CandidateSelection = { candidates: SelectedDeepMatchCandidate[]; exclusions: Array<{ opportunityId: string; reasonCode: RecommendationExclusionReason }> };
 
 function profileDimensions(factType: string): DeepMatchCandidate["profileEvidence"][number]["dimensions"] {
   if (factType === "skill" || factType === "language") return ["skills"];
@@ -82,8 +82,7 @@ export function createDeepMatchQueries(deps: { db: Database }) {
         if (triage.overallScore === null || triage.threshold === null || triage.overallScore < triage.threshold) { exclusions.push({ opportunityId: opportunity.id, reasonCode: "SCORE_BELOW_THRESHOLD" }); return false; }
         return true;
       }).sort((left, right) => right.triage.overallScore! - left.triage.overallScore! || left.triage.opportunityId.localeCompare(right.triage.opportunityId));
-      eligible.slice(10).forEach(({ opportunity }) => exclusions.push({ opportunityId: opportunity.id, reasonCode: "CANDIDATE_LIMIT" }));
-      const candidates = (await Promise.all(eligible.slice(0, 10).map(async ({ triage, opportunity, sourceVersion, targetRevisionId, targetConstraints }) => {
+      const evaluated = await Promise.all(eligible.map(async ({ triage, opportunity, sourceVersion, targetRevisionId, targetConstraints }) => {
         const revisions = await deps.db.select({ factId: profileFacts.id, revisionId: profileFactRevisions.id, factType: profileFactRevisions.factType, factValue: profileFactRevisions.factValue, state: profileFactRevisions.state, profileVersion: profileFactRevisions.profileVersion, revisionNumber: profileFactRevisions.revisionNumber })
           .from(profileFacts).innerJoin(profileFactRevisions, and(eq(profileFactRevisions.userId, profileFacts.userId), eq(profileFactRevisions.profileFactId, profileFacts.id)))
           .where(and(eq(profileFacts.userId, input.userId), eq(profileFacts.profileId, triage.profileId), lte(profileFactRevisions.profileVersion, triage.profileVersion)));
@@ -125,7 +124,14 @@ export function createDeepMatchQueries(deps: { db: Database }) {
           opportunityId: opportunity.id, sourcePostingVersionId: triage.sourcePostingVersionId, triageVersionId: triage.id, profileId: triage.profileId, profileVersion: triage.profileVersion, targetVersion: triage.targetVersion, overallScore: triage.overallScore!, opportunitySnapshot: { company: opportunity.company, title: opportunity.title, location: opportunity.location },
           jobEvidence, profileEvidence,
         } satisfies SelectedDeepMatchCandidate;
-      }))).flatMap((candidate): SelectedDeepMatchCandidate[] => candidate ? [candidate] : []);
+      }));
+      const candidates: SelectedDeepMatchCandidate[] = [];
+      for (const [index, candidate] of evaluated.entries()) {
+        const opportunityId = eligible[index]!.opportunity.id;
+        if (!candidate) exclusions.push({ opportunityId, reasonCode: "MATCH_QUALITY_INSUFFICIENT" });
+        else if (candidates.length < 10) candidates.push(candidate);
+        else exclusions.push({ opportunityId, reasonCode: "CANDIDATE_LIMIT" });
+      }
       return { candidates, exclusions };
     };
   return {
@@ -220,7 +226,7 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
     },
     /** Publishes a fully staged matching run in one fenced transaction.  Staging is private;
      * no match version or recommendation list becomes visible before every candidate is ready. */
-    async publishStagedRun(input: { userId: string; targetId: string; runId: string; fence: { claimToken: string }; selectionExclusions: readonly { opportunityId: string; reasonCode: Exclude<RecommendationExclusionReason, "MATCH_QUALITY_INSUFFICIENT"> }[]; onPublished?: (transaction: any, result: { resultCount: number }) => Promise<void> }) {
+    async publishStagedRun(input: { userId: string; targetId: string; runId: string; fence: { claimToken: string }; selectionExclusions: readonly { opportunityId: string; reasonCode: RecommendationExclusionReason }[]; onPublished?: (transaction: any, result: { resultCount: number }) => Promise<void> }) {
       return deps.db.transaction(async (transaction) => {
         await acquireAccountAdvisoryLock(transaction, input.userId);
         const [run] = await transaction.select({ id: agentRuns.id }).from(agentRuns).where(and(
