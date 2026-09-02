@@ -184,7 +184,7 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
     },
     /** Publishes a fully staged matching run in one fenced transaction.  Staging is private;
      * no match version or recommendation list becomes visible before every candidate is ready. */
-    async publishStagedRun(input: { userId: string; targetId: string; runId: string; fence: { claimToken: string }; selectionExclusions: readonly { opportunityId: string; reasonCode: Exclude<RecommendationExclusionReason, "MATCH_QUALITY_INSUFFICIENT"> }[] }) {
+    async publishStagedRun(input: { userId: string; targetId: string; runId: string; fence: { claimToken: string }; selectionExclusions: readonly { opportunityId: string; reasonCode: Exclude<RecommendationExclusionReason, "MATCH_QUALITY_INSUFFICIENT"> }[]; onPublished?: (transaction: any, result: { resultCount: number }) => Promise<void> }) {
       return deps.db.transaction(async (transaction) => {
         await acquireAccountAdvisoryLock(transaction, input.userId);
         const [run] = await transaction.select({ id: agentRuns.id }).from(agentRuns).where(and(
@@ -228,7 +228,9 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
         const exclusions = [...input.selectionExclusions, ...matches.filter((match) => !accepted.some((item) => item.id === match.id)).map((match) => ({ opportunityId: match.opportunityId, reasonCode: "MATCH_QUALITY_INSUFFICIENT" as const }))];
         if (exclusions.length) await transaction.insert(recommendationExclusions).values(exclusions.map((exclusion) => ({ id: deps.id(), userId: input.userId, targetId: input.targetId, opportunityId: exclusion.opportunityId, recommendationListId: list.id, reasonCode: exclusion.reasonCode, createdAt: deps.clock() })));
         if (accepted.length) await transaction.insert(recommendationListItems).values(accepted.map((match, index) => ({ id: deps.id(), userId: input.userId, recommendationListId: list.id, matchVersionId: match.id, ordinal: index + 1, highlighted: index < 3, createdAt: deps.clock() })));
-        return { recommendationListId: list.id, items: accepted.map((match, index) => ({ matchVersionId: match.id, ordinal: index + 1, highlighted: index < 3 })) };
+        const result = { recommendationListId: list.id, items: accepted.map((match, index) => ({ matchVersionId: match.id, ordinal: index + 1, highlighted: index < 3 })) };
+        await input.onPublished?.(transaction, { resultCount: result.items.length });
+        return result;
       });
     },
     async createMatch(input: { userId: string; targetId: string; candidate: SelectedDeepMatchCandidate; modelCall: DeepMatchAdapterCall; fence?: { runId: string; claimToken: string } }) {

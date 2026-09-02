@@ -595,9 +595,19 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           }
           const assessCompleted = await transition("assess_matches", true); if (assessCompleted) return assessCompleted;
           const listStarted = await transition("create_recommendations", false); if (listStarted) return listStarted;
-          const list = await commands.publishStagedRun({ userId: job.userId, targetId: claimed.run.targetId, runId: job.runId, selectionExclusions: selection.exclusions, fence: { claimToken: claimed.claimToken } });
           const listCompleted = await transition("create_recommendations", true); if (listCompleted) return listCompleted;
-          return completeMatching(list.items.length);
+          await commands.publishStagedRun({ userId: job.userId, targetId: claimed.run.targetId, runId: job.runId, selectionExclusions: selection.exclusions, fence: { claimToken: claimed.claimToken }, onPublished: async (transaction, { resultCount }) => {
+            const now = deps.clock();
+            const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, claimed.claimToken), eq(agentRuns.controlState, "none"), gt(agentRuns.claimExpiresAt, now))).limit(1);
+            if (!run) throw new DeepMatchClaimLostError();
+            const activeDurationMs = run.activeDurationMs + await settleActiveSlice(transaction, { id: deps.id, userId: job.userId, run, now });
+            const version = run.version + 1;
+            const [completed] = await transaction.update(agentRuns).set({ status: "completed", currentStep: "completed", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, activeDurationMs, completedAt: now, failedAt: null, failureCode: null, terminationKind: "completed", terminationBudgetDimension: null, resultCount: Math.min(resultCount, 10), usageComplete: true, version, updatedAt: now }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.claimToken, claimed.claimToken), gt(agentRuns.claimExpiresAt, now), eq(agentRuns.controlState, "none"))).returning({ id: agentRuns.id });
+            if (!completed) throw new DeepMatchClaimLostError();
+            await appendEvent(transaction, { id: deps.id, userId: job.userId, runId: job.runId, version, eventType: "run.completed", data: { eventType: "run.completed", status: "completed", currentStep: "completed", attemptCount: run.attemptCount, resultCount: Math.min(resultCount, 10) }, now });
+            await deps.auditTrail.bind(transaction).append({ userId: job.userId, actorUserId: job.userId, eventType: "agent.run_completed", occurredAt: now, requestId: job.runId, outcome: "success", reasonCode: "AGENT_RUN_COMPLETED", resourceType: "agent_run", resourceId: job.runId, metadata: { runId: job.runId, targetId: run.targetId, attemptCount: run.attemptCount, resultCount: Math.min(resultCount, 10) } });
+          } });
+          return "completed";
         } catch (error) {
           if (error instanceof DeepMatchClaimLostError) return "stale";
           return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
