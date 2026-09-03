@@ -206,6 +206,22 @@ describe("recommendation feedback persistence", () => {
     await expect(db.select().from(recommendationRuleVersions).where(eq(recommendationRuleVersions.targetId, data.targetId))).resolves.toHaveLength(2);
   });
 
+  it("排除容量不可表示时仍提交三条 ignored 决策，97 加三条时仍可审核", async () => {
+    for (const existingExclusions of [99, 97]) {
+      const data = await fixture(3); const service = commands();
+      const proposalId = crypto.randomUUID(); const revisionId = crypto.randomUUID(); const config = { minimumOverallScore: 0, minimumEvidenceDimensions: 0, requiredEvidenceDimensions: [], excludedOpportunityIds: Array.from({ length: existingExclusions }, () => crypto.randomUUID()) };
+      await db.insert(calibrationProposals).values({ id: proposalId, userId: data.userId, targetId: data.targetId, reason: "EXPIRED", status: "approved", version: 2, createdAt: now, updatedAt: now });
+      await db.insert(calibrationProposalRevisions).values({ id: revisionId, userId: data.userId, proposalId, revisionNumber: 1, baseRuleVersion: 0, strategy: "exclude_evidence_opportunities", ruleConfig: config, impactPreview: { sampleSize: 0, estimatedAffectedCount: 0, ruleDiff: {} }, idempotencyKey: crypto.randomUUID(), commandSummary: "a".repeat(64), createdAt: now });
+      await db.insert(recommendationRuleVersions).values({ id: crypto.randomUUID(), userId: data.userId, targetId: data.targetId, proposalId, proposalRevisionId: revisionId, version: 1, config, createdAt: now });
+      const results = [] as Awaited<ReturnType<typeof service.recordDecision>>[];
+      for (const item of data.items) results.push(await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: { decision: "ignored", reason: "EXPIRED", expectedVersion: 0, idempotencyKey: crypto.randomUUID() } }));
+      expect(await db.select().from(recommendationDecisionEvents).where(eq(recommendationDecisionEvents.userId, data.userId))).toHaveLength(3);
+      expect(await db.select().from(recommendationDecisionResponses).where(eq(recommendationDecisionResponses.userId, data.userId))).toHaveLength(3);
+      if (existingExclusions === 99) expect(results[2]!.proposal).toBeNull();
+      else expect(results[2]!.proposal).toEqual(expect.objectContaining({ proposalId: expect.any(String) }));
+    }
+  });
+
   it("已生效的同原因反馈仍为每个成功事件写唯一不可变响应，第三条不生成 no-op proposal", async () => {
     const data = await fixture(6); const service = commands();
     for (const item of data.items.slice(0, 3)) await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: { decision: "ignored", reason: "LOCATION", expectedVersion: 0, idempotencyKey: crypto.randomUUID() } });

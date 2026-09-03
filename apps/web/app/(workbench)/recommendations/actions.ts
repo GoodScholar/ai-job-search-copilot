@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { api } from "@/lib/server/api-client";
+import { api, ApiClientError } from "@/lib/server/api-client";
 import { readSessionToken } from "@/lib/server/session-cookie";
 
 /** Starts the durable matching workflow; this action never evaluates a model in the HTTP request. */
@@ -36,6 +36,7 @@ export async function reviseCalibrationProposalAction(proposalId: string, formDa
 
 export async function resolveCalibrationProposalAction(proposalId: string, formData: FormData): Promise<void> {
   const session = await readSessionToken(); if (!session) redirect("/login?returnTo=%2Frecommendations");
-  await api.resolveCalibrationProposal(session, proposalId, { action: String(formData.get("action")), idempotencyKey: String(formData.get("idempotencyKey")), expectedVersion: Number(formData.get("expectedVersion")) } as never);
+  try { await api.resolveCalibrationProposal(session, proposalId, { action: String(formData.get("action")), idempotencyKey: String(formData.get("idempotencyKey")), expectedVersion: Number(formData.get("expectedVersion")) } as never); }
+  catch (error) { if (error instanceof ApiClientError && error.problem?.code === "RULE_VERSION_CONFLICT") throw new Error("CALIBRATION_REBASE_REQUIRED"); throw error; }
   revalidatePath("/recommendations");
 }

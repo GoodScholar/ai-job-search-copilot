@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { expect, it, vi } from "vitest";
 import { CalibrationProposals } from "./calibration-proposals";
 
-const proposal = { proposalId: "00000000-0000-4000-8000-000000000001", targetId: "00000000-0000-4000-8000-000000000002", reason: "LOCATION" as const, status: "pending" as const, version: 1, evidenceCount: 3, availableStrategies: ["require_related_evidence", "exclude_evidence_opportunities"] as Array<"require_related_evidence" | "exclude_evidence_opportunities" | "raise_quality_bar">, revision: { revisionId: "00000000-0000-4000-8000-000000000003", revisionNumber: 1, strategy: "raise_quality_bar" as const, ruleConfig: { minimumOverallScore: 75, minimumEvidenceDimensions: 2, requiredEvidenceDimensions: [], excludedOpportunityIds: [] }, impactPreview: { sampleSize: 3, estimatedAffectedCount: 2, ruleDiff: { minimumOverallScore: { from: 60, to: 75 } } } } };
+const proposal = { proposalId: "00000000-0000-4000-8000-000000000001", targetId: "00000000-0000-4000-8000-000000000002", reason: "LOCATION" as const, status: "pending" as const, version: 1, evidenceCount: 3, stale: false, reviewState: "current" as const, availableStrategies: ["require_related_evidence", "exclude_evidence_opportunities"] as Array<"require_related_evidence" | "exclude_evidence_opportunities" | "raise_quality_bar">, revision: { revisionId: "00000000-0000-4000-8000-000000000003", revisionNumber: 1, strategy: "raise_quality_bar" as const, ruleConfig: { minimumOverallScore: 75, minimumEvidenceDimensions: 2, requiredEvidenceDimensions: [], excludedOpportunityIds: [] }, impactPreview: { sampleSize: 3, estimatedAffectedCount: 2, ruleDiff: { minimumOverallScore: { from: 60, to: 75 } } } } };
 
 it("展示校准证据、规则差异、影响预览与可访问的成功状态", async () => {
   const revise = vi.fn().mockResolvedValue(undefined); const resolve = vi.fn().mockResolvedValue(undefined);
@@ -61,4 +61,11 @@ it("将 Server Action 失败映射为屏幕阅读器可读错误", async () => {
   render(<CalibrationProposals proposals={[proposal]} reviseAction={vi.fn().mockResolvedValue(undefined)} resolveAction={vi.fn().mockRejectedValue(new Error("conflict"))} />);
   fireEvent.click(screen.getByRole("button", { name: "拒绝建议" }));
   await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("操作未完成，请刷新后重试。"));
+});
+
+it("过期建议禁用批准并指向重新计算恢复动作", () => {
+  render(<CalibrationProposals proposals={[{ ...proposal, stale: true, reviewState: "stale_rebase_required", revision: { ...proposal.revision, impactPreview: { sampleSize: 3, estimatedAffectedCount: 1, ruleDiff: { minimumOverallScore: { from: 91, to: 95 } } } } }]} reviseAction={vi.fn()} resolveAction={vi.fn()} />);
+  expect(screen.getByRole("button", { name: "批准建议" })).toBeDisabled();
+  expect(screen.getByRole("status")).toHaveTextContent("先修改建议以重新计算后再批准");
+  expect(screen.getByText(/最低匹配分：91 → 95/u)).toBeInTheDocument();
 });

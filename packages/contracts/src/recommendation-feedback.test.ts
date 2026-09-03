@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CalibrationProposalRevisionCommandSchema,
+  CalibrationProposalSchema,
   RecommendationDecisionCommandSchema,
   RecommendationDecisionSchema,
   RecommendationRuleConfigSchema,
@@ -54,5 +55,13 @@ describe("推荐反馈契约", () => {
     expect(RecommendationRuleConfigSchema.safeParse({ minimumOverallScore: 60, minimumEvidenceDimensions: 2, requiredEvidenceDimensions: ["skills", "skills"], excludedOpportunityIds: [] }).success).toBe(false);
     expect(RecommendationRuleConfigSchema.safeParse({ minimumOverallScore: 60, minimumEvidenceDimensions: 2, requiredEvidenceDimensions: [], excludedOpportunityIds: ["00000000-0000-4000-8000-000000000001", "00000000-0000-4000-8000-000000000001"] }).success).toBe(false);
     expect(DeepMatchAgentRunSourceScopeSchema.safeParse({ kind: "deep_match", trigger: "manual", opportunityId: "00000000-0000-4000-8000-000000000001", discoveryRunId: null, initialized: true, selectionExclusions: [], recommendationRuleConfig: { minimumOverallScore: 60, minimumEvidenceDimensions: 2, requiredEvidenceDimensions: ["skills", "skills"], excludedOpportunityIds: [] } }).success).toBe(false);
+  });
+
+  it("校准建议公开安全的 stale 审核状态而不暴露规则内部标识", () => {
+    expect(CalibrationProposalSchema.safeParse({
+      proposalId: "00000000-0000-4000-8000-000000000010", targetId: "00000000-0000-4000-8000-000000000011", reason: "LOCATION", status: "pending", version: 1, evidenceCount: 3,
+      stale: true, reviewState: "stale_rebase_required", availableStrategies: ["exclude_evidence_opportunities"],
+      revision: { revisionId: "00000000-0000-4000-8000-000000000012", revisionNumber: 1, strategy: "require_related_evidence", ruleConfig: { minimumOverallScore: 91, minimumEvidenceDimensions: 0, requiredEvidenceDimensions: ["location_logistics"], excludedOpportunityIds: [] }, impactPreview: { sampleSize: 3, estimatedAffectedCount: 2, ruleDiff: { requiredEvidenceDimensions: { from: [], to: ["location_logistics"] } } } },
+    }).success).toBe(true);
   });
 });

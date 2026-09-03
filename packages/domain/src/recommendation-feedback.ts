@@ -24,6 +24,9 @@ function acceptsRuleSnapshot(assessment: unknown, config: RuleConfig): boolean {
   const parsed = DeepMatchAssessmentSchema.safeParse(assessment);
   return parsed.success && acceptsRecommendationRule(parsed.data, config);
 }
+function impactPreview(active: RuleConfig, next: RuleConfig, candidates: CalibrationSample[]) {
+  return { sampleSize: candidates.length, estimatedAffectedCount: candidates.filter((item) => acceptsRuleSnapshot(item.assessment, active) && !acceptsRuleSnapshot(item.assessment, next)).length, ruleDiff: ruleDiff(active, next) };
+}
 function proposedRule(reason: string, current: RuleConfig, active: RuleConfig, candidates: CalibrationSample[], selectedStrategy?: "require_related_evidence" | "raise_quality_bar" | "exclude_evidence_opportunities") {
   const next = { ...current, requiredEvidenceDimensions: [...current.requiredEvidenceDimensions], excludedOpportunityIds: [...current.excludedOpportunityIds] };
   const strategy = selectedStrategy ?? (reason === "EXPIRED" || reason === "ALREADY_HANDLED" ? "exclude_evidence_opportunities" : reason === "SALARY" || reason === "MISMATCH" ? "raise_quality_bar" : "require_related_evidence");
@@ -37,9 +40,9 @@ function proposedRule(reason: string, current: RuleConfig, active: RuleConfig, c
     next.minimumOverallScore = Math.max(next.minimumOverallScore, threshold);
   }
   const mutation = ruleDiff(current, next);
-  const parsed = RecommendationRuleConfigSchema.parse(next);
+  const parsed = RecommendationRuleConfigSchema.safeParse(next);
   // 是否可创建 revision 取决于相对上一 revision 的真实变更；审阅展示则始终相对已批准的 active rule。
-  return Object.keys(mutation).length ? { strategy, ruleConfig: parsed, impactPreview: { sampleSize: candidates.length, estimatedAffectedCount: candidates.filter((item) => acceptsRuleSnapshot(item.assessment, active) && !acceptsRuleSnapshot(item.assessment, parsed)).length, ruleDiff: ruleDiff(active, parsed) } } : null;
+  return Object.keys(mutation).length && parsed.success ? { strategy, ruleConfig: parsed.data, impactPreview: impactPreview(active, parsed.data, candidates) } : null;
 }
 
 /**
@@ -49,12 +52,14 @@ function proposedRule(reason: string, current: RuleConfig, active: RuleConfig, c
 function effectiveProposalRule(base: RuleConfig, latest: RuleConfig, active: RuleConfig): RuleConfig {
   const includesAll = (values: string[], expected: string[]) => expected.every((value) => values.includes(value));
   if (latest.minimumOverallScore < base.minimumOverallScore || latest.minimumEvidenceDimensions < base.minimumEvidenceDimensions || !includesAll(latest.requiredEvidenceDimensions, base.requiredEvidenceDimensions) || !includesAll(latest.excludedOpportunityIds, base.excludedOpportunityIds)) throw new RecommendationFeedbackError("RULE_VERSION_CONFLICT");
-  return RecommendationRuleConfigSchema.parse({
+  const parsed = RecommendationRuleConfigSchema.safeParse({
     minimumOverallScore: Math.max(active.minimumOverallScore, latest.minimumOverallScore),
     minimumEvidenceDimensions: Math.max(active.minimumEvidenceDimensions, latest.minimumEvidenceDimensions),
     requiredEvidenceDimensions: [...new Set([...active.requiredEvidenceDimensions, ...latest.requiredEvidenceDimensions])],
     excludedOpportunityIds: [...new Set([...active.excludedOpportunityIds, ...latest.excludedOpportunityIds])],
   });
+  if (!parsed.success) throw new RecommendationFeedbackError("RULE_VERSION_CONFLICT");
+  return parsed.data;
 }
 
 /** Immutable recommendation feedback and review-gated calibration boundary. */
@@ -181,14 +186,22 @@ export function createRecommendationFeedbackQueries(deps: { db: Database }) {
       return Promise.all(proposals.map(async (proposal) => {
         const [revision] = await deps.db.select().from(calibrationProposalRevisions).where(and(eq(calibrationProposalRevisions.userId, input.userId), eq(calibrationProposalRevisions.proposalId, proposal.id))).orderBy(desc(calibrationProposalRevisions.revisionNumber)).limit(1);
         const evidence = await deps.db.select({ id: calibrationProposalEvidence.id, opportunityId: jobMatchVersions.opportunityId, overallScore: jobMatchVersions.overallScore, assessment: jobMatchVersions.assessment }).from(calibrationProposalEvidence).innerJoin(recommendationDecisionEvents, and(eq(recommendationDecisionEvents.userId, calibrationProposalEvidence.userId), eq(recommendationDecisionEvents.id, calibrationProposalEvidence.decisionEventId))).innerJoin(jobMatchVersions, and(eq(jobMatchVersions.userId, recommendationDecisionEvents.userId), eq(jobMatchVersions.id, recommendationDecisionEvents.matchVersionId))).where(and(eq(calibrationProposalEvidence.userId, input.userId), eq(calibrationProposalEvidence.proposalId, proposal.id)));
-        const [activeRule] = await deps.db.select({ config: recommendationRuleVersions.config }).from(recommendationRuleVersions).where(and(eq(recommendationRuleVersions.userId, input.userId), eq(recommendationRuleVersions.targetId, proposal.targetId))).orderBy(desc(recommendationRuleVersions.version)).limit(1);
+        const [activeRule] = await deps.db.select({ config: recommendationRuleVersions.config, version: recommendationRuleVersions.version }).from(recommendationRuleVersions).where(and(eq(recommendationRuleVersions.userId, input.userId), eq(recommendationRuleVersions.targetId, proposal.targetId))).orderBy(desc(recommendationRuleVersions.version)).limit(1);
         if (!revision) throw new RecommendationFeedbackError("PROPOSAL_REVISION_NOT_FOUND");
         const [baseRule] = revision.baseRuleVersion === 0 ? [] : await deps.db.select({ config: recommendationRuleVersions.config }).from(recommendationRuleVersions).where(and(eq(recommendationRuleVersions.userId, input.userId), eq(recommendationRuleVersions.targetId, proposal.targetId), eq(recommendationRuleVersions.version, revision.baseRuleVersion))).limit(1);
-        if (revision.baseRuleVersion !== 0 && !baseRule) throw new RecommendationFeedbackError("RULE_VERSION_CONFLICT");
         const active = RecommendationRuleConfigSchema.parse(activeRule?.config ?? defaultConfig); const samples = evidence.map((item) => ({ ...item, assessment: item.assessment as CalibrationSample["assessment"] }));
-        const current = effectiveProposalRule(RecommendationRuleConfigSchema.parse(baseRule?.config ?? defaultConfig), RecommendationRuleConfigSchema.parse(revision.ruleConfig), active);
-        const availableStrategies = (["require_related_evidence", "raise_quality_bar", "exclude_evidence_opportunities"] as const).filter((strategy) => Boolean(proposedRule(proposal.reason, current, active, samples, strategy)));
-        return { proposalId: proposal.id, targetId: proposal.targetId, reason: proposal.reason, status: proposal.status, version: proposal.version, evidenceCount: evidence.length, availableStrategies, revision: { revisionId: revision.id, revisionNumber: revision.revisionNumber, strategy: revision.strategy, ruleConfig: revision.ruleConfig, impactPreview: revision.impactPreview } };
+        const stale = revision.baseRuleVersion !== (activeRule?.version ?? 0);
+        try {
+          if (revision.baseRuleVersion !== 0 && !baseRule) throw new RecommendationFeedbackError("RULE_VERSION_CONFLICT");
+          const current = effectiveProposalRule(RecommendationRuleConfigSchema.parse(baseRule?.config ?? defaultConfig), RecommendationRuleConfigSchema.parse(revision.ruleConfig), active);
+          const preview = impactPreview(active, current, samples);
+          const covered = Object.keys(preview.ruleDiff).length === 0;
+          const availableStrategies = covered ? [] : (["require_related_evidence", "raise_quality_bar", "exclude_evidence_opportunities"] as const).filter((strategy) => Boolean(proposedRule(proposal.reason, current, active, samples, strategy)));
+          return { proposalId: proposal.id, targetId: proposal.targetId, reason: proposal.reason, status: proposal.status, version: proposal.version, evidenceCount: evidence.length, stale, reviewState: covered ? "covered" as const : stale ? "stale_rebase_required" as const : "current" as const, availableStrategies, revision: { revisionId: revision.id, revisionNumber: revision.revisionNumber, strategy: revision.strategy, ruleConfig: current, impactPreview: preview } };
+        } catch (error) {
+          if (!(error instanceof RecommendationFeedbackError) || error.code !== "RULE_VERSION_CONFLICT") throw error;
+          return { proposalId: proposal.id, targetId: proposal.targetId, reason: proposal.reason, status: proposal.status, version: proposal.version, evidenceCount: evidence.length, stale: true, reviewState: "unrebasable" as const, availableStrategies: [], revision: { revisionId: revision.id, revisionNumber: revision.revisionNumber, strategy: revision.strategy, ruleConfig: revision.ruleConfig, impactPreview: revision.impactPreview } };
+        }
       }));
     },
   };
