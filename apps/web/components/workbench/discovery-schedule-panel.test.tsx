@@ -139,8 +139,10 @@ it("CAS 冲突提示其他位置更新，但保持当前资格和操作", async 
   fireEvent.click(screen.getByRole("button", { name: "保存每日检查" }));
   expect(await screen.findByText("每日检查已在其他位置更新，请刷新后重试。")).toBeInTheDocument();
   expect(screen.getByText("可每日检查 2 个岗位来源")).toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "启用" })).toBeEnabled();
-  expect(screen.getByRole("button", { name: "保存每日检查" })).toBeEnabled();
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: "启用" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "保存每日检查" })).toBeEnabled();
+  });
 });
 
 it("读取尚未完成时明确显示加载态，随后按时间、启用、停用、保存顺序获得焦点", async () => {
