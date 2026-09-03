@@ -288,6 +288,13 @@
       "when": 1788363510001,
       "tag": "0040_loud_northstar",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1788404767673,
+      "tag": "0041_thankful_lethal_legion",
+      "breakpoints": true
     }
   ]
 }

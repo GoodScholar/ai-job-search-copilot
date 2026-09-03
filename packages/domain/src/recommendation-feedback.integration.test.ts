@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
 import {
   agentRuns, calibrationProposalEvidence, calibrationProposalRevisions, calibrationProposals, createDatabase, jobAccounts, jobMatchVersions, jobOpportunities, jobOpportunitySources,
-  jobProfiles, jobSourcePostingVersions, jobSourcePostings, jobTargets, jobTargetRevisions, jobTriageVersions, migrateDatabase, profileFactRevisions, profileFacts, recommendationDecisionEvents, recommendationListItems,
+  jobProfiles, jobSourcePostingVersions, jobSourcePostings, jobTargets, jobTargetRevisions, jobTriageVersions, migrateDatabase, profileFactRevisions, profileFacts, recommendationDecisionEvents, recommendationDecisionResponses, recommendationListItems,
   recommendationLists, recommendationRuleVersions, type Database,
 } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
@@ -179,5 +179,55 @@ describe("recommendation feedback persistence", () => {
     await expect(db.select().from(recommendationListItems).where(eq(recommendationListItems.recommendationListId, baselineListId))).resolves.toHaveLength(1);
     await expect(db.select({ id: jobMatchVersions.id }).from(jobMatchVersions).where(eq(jobMatchVersions.userId, data.userId))).resolves.toEqual(expect.arrayContaining(baselineMatchIds.map((id) => ({ id }))));
     await expect(db.select({ ruleVersion: jobMatchVersions.ruleVersion }).from(jobMatchVersions).where(and(eq(jobMatchVersions.userId, data.userId), eq(jobMatchVersions.opportunityId, data.items[3]!.opportunityId)))).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ ruleVersion: "recommendation-rule-v1" })]));
+  });
+
+  it("修改建议相对 active rule 累计展示完整差异与影响预览", async () => {
+    const data = await fixture(); const service = commands();
+    for (const item of data.items) await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: { decision: "ignored", reason: "SALARY", expectedVersion: 0, idempotencyKey: crypto.randomUUID() } });
+    const [proposal] = await createRecommendationFeedbackQueries({ db }).listCalibrationProposals({ userId: data.userId, targetId: data.targetId });
+    await service.reviseCalibrationProposal({ userId: data.userId, proposalId: proposal!.proposalId, command: { strategy: "exclude_evidence_opportunities", expectedVersion: 1, idempotencyKey: crypto.randomUUID() } });
+    const [revised] = await createRecommendationFeedbackQueries({ db }).listCalibrationProposals({ userId: data.userId, targetId: data.targetId });
+    expect(revised!.revision.impactPreview).toMatchObject({ estimatedAffectedCount: 3, ruleDiff: { minimumOverallScore: { from: 0, to: 91 }, excludedOpportunityIds: { from: [], to: expect.arrayContaining(data.items.map((item) => item.opportunityId)) } } });
+  });
+
+  it("已生效的同原因反馈仍为每个成功事件写唯一不可变响应，第三条不生成 no-op proposal", async () => {
+    const data = await fixture(6); const service = commands();
+    for (const item of data.items.slice(0, 3)) await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: { decision: "ignored", reason: "LOCATION", expectedVersion: 0, idempotencyKey: crypto.randomUUID() } });
+    const [proposal] = await createRecommendationFeedbackQueries({ db }).listCalibrationProposals({ userId: data.userId, targetId: data.targetId });
+    await service.resolveCalibrationProposal({ userId: data.userId, proposalId: proposal!.proposalId, command: { action: "approved", expectedVersion: 1, idempotencyKey: crypto.randomUUID() } });
+    const commandsByItem = data.items.slice(3).map(() => ({ decision: "ignored" as const, reason: "LOCATION" as const, expectedVersion: 0, idempotencyKey: crypto.randomUUID() }));
+    const results = [] as Awaited<ReturnType<typeof service.recordDecision>>[];
+    for (const [index, item] of data.items.slice(3).entries()) results.push(await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: commandsByItem[index]! }));
+    expect(results[2]!.proposal).toBeNull();
+    await expect(service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: data.items[5]!.itemId, command: commandsByItem[2]! })).resolves.toEqual(results[2]);
+    const responses = await db.select().from(recommendationDecisionResponses).where(eq(recommendationDecisionResponses.userId, data.userId));
+    expect(responses).toHaveLength(6); expect(new Set(responses.map((response) => response.decisionEventId)).size).toBe(6);
+    const events = await db.select().from(recommendationDecisionEvents).where(eq(recommendationDecisionEvents.userId, data.userId));
+    const laterEventIds = new Set(events.filter((event) => data.items.slice(3).some((item) => item.itemId === event.recommendationListItemId)).map((event) => event.id));
+    expect(responses.filter((response) => laterEventIds.has(response.decisionEventId)).every((response) => response.proposalId === null)).toBe(true);
+  });
+
+  it("响应 proposal 的 nullable owner FK 允许同 owner/null，并拒绝悬空与跨 owner", async () => {
+    const data = await fixture(5); const service = commands();
+    for (const item of data.items.slice(0, 3)) await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: { decision: "ignored", reason: "LOCATION", expectedVersion: 0, idempotencyKey: crypto.randomUUID() } });
+    const [proposal] = await createRecommendationFeedbackQueries({ db }).listCalibrationProposals({ userId: data.userId, targetId: data.targetId });
+    const persisted = await db.select().from(recommendationDecisionResponses).where(eq(recommendationDecisionResponses.userId, data.userId));
+    expect(persisted.some((response) => response.proposalId === null)).toBe(true); expect(persisted.some((response) => response.proposalId === proposal!.proposalId)).toBe(true);
+    const createEvent = async (item: typeof data.items[number]) => db.insert(recommendationDecisionEvents).values({ id: crypto.randomUUID(), userId: data.userId, targetId: data.targetId, recommendationListId: data.listId, recommendationListItemId: item.itemId, matchVersionId: item.matchId, decision: "saved", reason: null, note: null, idempotencyKey: crypto.randomUUID(), commandSummary: "a".repeat(64), expectedVersion: 0, version: 1, createdAt: now }).returning();
+    const [crossEvent] = await createEvent(data.items[3]!); const [danglingEvent] = await createEvent(data.items[4]!);
+    const other = await fixture(1); const otherProposalId = crypto.randomUUID(); await db.insert(calibrationProposals).values({ id: otherProposalId, userId: other.userId, targetId: other.targetId, reason: "LOCATION", status: "pending", version: 1, createdAt: now, updatedAt: now });
+    await expect(db.insert(recommendationDecisionResponses).values({ id: crypto.randomUUID(), userId: data.userId, decisionEventId: crossEvent!.id, proposalId: otherProposalId, createdAt: now })).rejects.toBeDefined();
+    await expect(db.insert(recommendationDecisionResponses).values({ id: crypto.randomUUID(), userId: data.userId, decisionEventId: danglingEvent!.id, proposalId: crypto.randomUUID(), createdAt: now })).rejects.toBeDefined();
+  });
+
+  it("九类原因的同策略修改均为 no-op：不创建 revision", async () => {
+    const reasons = ["ROLE_DIRECTION", "LOCATION", "SALARY", "COMPANY", "INDUSTRY", "SENIORITY", "MISMATCH", "EXPIRED", "ALREADY_HANDLED"] as const;
+    for (const reason of reasons) {
+      const data = await fixture(); const service = commands();
+      for (const item of data.items) await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: { decision: "ignored", reason, expectedVersion: 0, idempotencyKey: crypto.randomUUID() } });
+      const [proposal] = await createRecommendationFeedbackQueries({ db }).listCalibrationProposals({ userId: data.userId, targetId: data.targetId });
+      await expect(service.reviseCalibrationProposal({ userId: data.userId, proposalId: proposal!.proposalId, command: { strategy: proposal!.revision.strategy as "require_related_evidence" | "raise_quality_bar" | "exclude_evidence_opportunities", expectedVersion: 1, idempotencyKey: crypto.randomUUID() } })).rejects.toThrow("PROPOSAL_NO_EFFECT");
+      await expect(db.select().from(calibrationProposalRevisions).where(eq(calibrationProposalRevisions.userId, data.userId))).resolves.toHaveLength(1);
+    }
   });
 });

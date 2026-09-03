@@ -86,7 +86,7 @@ describe("authenticated workbench HTTP API", () => {
       if (!previous) { feedbackIdempotency.set(input.command.idempotencyKey, body); feedbackWrites += 1; }
       return { decision: { status: input.command.decision, version: 1 }, proposal: null };
     },
-    async reviseCalibrationProposal() { throw { code: "PROPOSAL_NOT_FOUND" }; },
+    async reviseCalibrationProposal(input: { proposalId: string }) { if (input.proposalId === "70000000-0000-4000-8000-000000000006") throw { code: "PROPOSAL_NO_EFFECT" }; throw { code: "PROPOSAL_NOT_FOUND" }; },
     async resolveCalibrationProposal() { throw { code: "PROPOSAL_NOT_FOUND" }; },
   };
   const feedbackQueries = { async listCalibrationProposals() { return []; } };
@@ -307,6 +307,12 @@ describe("authenticated workbench HTTP API", () => {
     const conflict = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/recommendations/lists/${feedbackListId}/items/${feedbackItemId}/decisions`, headers, payload: { decision: "ignored", reason: "LOCATION", expectedVersion: 0, idempotencyKey: key } });
     const stale = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/recommendations/lists/${feedbackListId}/items/${feedbackItemId}/decisions`, headers, payload: { decision: "saved", expectedVersion: 1, idempotencyKey: randomUUID() } });
     expect(conflict.statusCode).toBe(409); expect(stale.statusCode).toBe(409);
+  });
+
+  it("将无效果的校准修改稳定映射为 422，而不是内部错误", async () => {
+    const session = await createSession(app, "recommendation-no-effect-http");
+    const response = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/recommendations/calibration-proposals/70000000-0000-4000-8000-000000000006/revisions", headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: { strategy: "require_related_evidence", expectedVersion: 1, idempotencyKey: "70000000-0000-4000-8000-000000000007" } });
+    expect(response.statusCode).toBe(422); expect(response.json()).toMatchObject({ code: "PROPOSAL_NO_EFFECT" });
   });
 
   it("authenticates and strictly validates immutable job triage routes", async () => {

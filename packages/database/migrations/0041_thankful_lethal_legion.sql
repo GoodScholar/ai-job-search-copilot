@@ -1,0 +1,1 @@
+ALTER TABLE "recommendation_decision_responses" ADD CONSTRAINT "recommendation_decision_responses_owner_proposal_fk" FOREIGN KEY ("user_id","proposal_id") REFERENCES "public"."calibration_proposals"("user_id","id") ON DELETE no action ON UPDATE no action;

@@ -82,6 +82,7 @@ function feedbackException(error: unknown): ApiException {
   if (error instanceof z.ZodError) return new ApiException("INVALID_REQUEST", HttpStatus.BAD_REQUEST, "请求无效");
   const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "INTERNAL_ERROR";
   if (code === "VERSION_CONFLICT" || code === "IDEMPOTENCY_CONFLICT") return new ApiException(code, HttpStatus.CONFLICT, "请求与当前状态冲突");
+  if (code === "PROPOSAL_NO_EFFECT") return new ApiException(code, HttpStatus.UNPROCESSABLE_ENTITY, "建议不会改变当前规则");
   if (code === "RECOMMENDATION_ITEM_NOT_FOUND" || code === "PROPOSAL_NOT_FOUND") return new ApiException(code, HttpStatus.NOT_FOUND, "资源不存在");
   return new ApiException(code, HttpStatus.INTERNAL_SERVER_ERROR, "推荐反馈暂时不可用");
 }
