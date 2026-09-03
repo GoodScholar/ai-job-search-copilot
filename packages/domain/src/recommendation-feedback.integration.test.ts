@@ -190,6 +190,22 @@ describe("recommendation feedback persistence", () => {
     expect(revised!.revision.impactPreview).toMatchObject({ estimatedAffectedCount: 3, ruleDiff: { minimumOverallScore: { from: 0, to: 91 }, excludedOpportunityIds: { from: [], to: expect.arrayContaining(data.items.map((item) => item.opportunityId)) } } });
   });
 
+  it("交错提案以 immutable 基准重放累计收紧，过期批准冲突而重算后仅创建 v2", async () => {
+    const data = await fixture(6); const service = commands();
+    for (const item of data.items.slice(0, 3)) await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: { decision: "ignored", reason: "SALARY", expectedVersion: 0, idempotencyKey: crypto.randomUUID() } });
+    for (const item of data.items.slice(3)) await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: { decision: "ignored", reason: "LOCATION", expectedVersion: 0, idempotencyKey: crypto.randomUUID() } });
+    const proposals = await createRecommendationFeedbackQueries({ db }).listCalibrationProposals({ userId: data.userId, targetId: data.targetId });
+    const p1 = proposals.find((proposal) => proposal.reason === "SALARY")!; const p2 = proposals.find((proposal) => proposal.reason === "LOCATION")!;
+    await service.resolveCalibrationProposal({ userId: data.userId, proposalId: p1.proposalId, command: { action: "approved", expectedVersion: 1, idempotencyKey: crypto.randomUUID() } });
+    await expect(service.resolveCalibrationProposal({ userId: data.userId, proposalId: p2.proposalId, command: { action: "approved", expectedVersion: 1, idempotencyKey: crypto.randomUUID() } })).rejects.toThrow("RULE_VERSION_CONFLICT");
+    await expect(db.select().from(recommendationRuleVersions).where(eq(recommendationRuleVersions.targetId, data.targetId))).resolves.toHaveLength(1);
+    const rebased = await service.reviseCalibrationProposal({ userId: data.userId, proposalId: p2.proposalId, command: { strategy: "exclude_evidence_opportunities", expectedVersion: 1, idempotencyKey: crypto.randomUUID() } });
+    expect(rebased!.ruleConfig).toMatchObject({ minimumOverallScore: 91, requiredEvidenceDimensions: ["location_logistics"] });
+    expect((rebased!.ruleConfig as { excludedOpportunityIds: string[] }).excludedOpportunityIds.slice().sort()).toEqual(data.items.slice(3).map((item) => item.opportunityId).sort());
+    await expect(service.resolveCalibrationProposal({ userId: data.userId, proposalId: p2.proposalId, command: { action: "approved", expectedVersion: 2, idempotencyKey: crypto.randomUUID() } })).resolves.toMatchObject({ ruleVersion: "recommendation-rule-v2" });
+    await expect(db.select().from(recommendationRuleVersions).where(eq(recommendationRuleVersions.targetId, data.targetId))).resolves.toHaveLength(2);
+  });
+
   it("已生效的同原因反馈仍为每个成功事件写唯一不可变响应，第三条不生成 no-op proposal", async () => {
     const data = await fixture(6); const service = commands();
     for (const item of data.items.slice(0, 3)) await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: { decision: "ignored", reason: "LOCATION", expectedVersion: 0, idempotencyKey: crypto.randomUUID() } });

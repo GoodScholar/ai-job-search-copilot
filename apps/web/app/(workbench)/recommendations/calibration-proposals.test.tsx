@@ -44,12 +44,13 @@ it("建议从空列表出现时生成 UUID，同一版本重试复用、版本�
   expect((revise.mock.calls[2]![1] as FormData).get("idempotencyKey")).not.toBe(first.get("idempotencyKey"));
 });
 
-it("九类原因不提供当前策略，过期类在无有效调整时禁用提交", () => {
+it("九类原因只渲染服务端给出的可执行策略，空集合禁用提交", () => {
   const reasons = ["ROLE_DIRECTION", "LOCATION", "SALARY", "COMPANY", "INDUSTRY", "SENIORITY", "MISMATCH", "EXPIRED", "ALREADY_HANDLED"] as const;
-  const { container } = render(<CalibrationProposals proposals={reasons.map((reason, index) => ({ ...proposal, proposalId: `00000000-0000-4000-8000-0000000000${index + 10}`, reason, revision: { ...proposal.revision, strategy: reason === "EXPIRED" || reason === "ALREADY_HANDLED" ? "raise_quality_bar" : "require_related_evidence" } }))} reviseAction={vi.fn()} resolveAction={vi.fn()} />);
+  const options = [["raise_quality_bar"], ["exclude_evidence_opportunities"], ["require_related_evidence", "exclude_evidence_opportunities"]] as const;
+  const { container } = render(<CalibrationProposals proposals={reasons.map((reason, index) => ({ ...proposal, proposalId: `00000000-0000-4000-8000-0000000000${index + 10}`, reason, availableStrategies: [...options[index % options.length]!], revision: { ...proposal.revision, strategy: reason === "EXPIRED" || reason === "ALREADY_HANDLED" ? "raise_quality_bar" : "require_related_evidence" } }))} reviseAction={vi.fn()} resolveAction={vi.fn()} />);
   const selects = within(container).getAllByRole("combobox", { name: "修改策略" });
   expect(selects).toHaveLength(9);
-  for (const select of selects) expect((select as HTMLSelectElement).value).toBe("require_related_evidence");
+  for (const [index, select] of selects.entries()) expect(within(select).getAllByRole("option").map((option) => (option as HTMLOptionElement).value)).toEqual(options[index % options.length]);
   expect(screen.getAllByRole("button", { name: "修改建议" }).filter((button) => (button as HTMLButtonElement).disabled)).toHaveLength(0);
   const exhausted = { ...proposal, reason: "EXPIRED" as const, availableStrategies: [], revision: { ...proposal.revision, strategy: "raise_quality_bar" as const, ruleConfig: { ...proposal.revision.ruleConfig, minimumOverallScore: 91, excludedOpportunityIds: ["00000000-0000-4000-8000-000000000099"] } } };
   render(<CalibrationProposals proposals={[exhausted]} reviseAction={vi.fn()} resolveAction={vi.fn()} />);

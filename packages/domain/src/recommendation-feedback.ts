@@ -42,6 +42,21 @@ function proposedRule(reason: string, current: RuleConfig, active: RuleConfig, c
   return Object.keys(mutation).length ? { strategy, ruleConfig: parsed, impactPreview: { sampleSize: candidates.length, estimatedAffectedCount: candidates.filter((item) => acceptsRuleSnapshot(item.assessment, active) && !acceptsRuleSnapshot(item.assessment, parsed)).length, ruleDiff: ruleDiff(active, parsed) } } : null;
 }
 
+/**
+ * 将 proposal 相对其 immutable 基准的单调收紧意图重放到当前生效规则。
+ * 不能证明为单调收紧时拒绝，而不是悄悄丢弃用户已审核的字段。
+ */
+function effectiveProposalRule(base: RuleConfig, latest: RuleConfig, active: RuleConfig): RuleConfig {
+  const includesAll = (values: string[], expected: string[]) => expected.every((value) => values.includes(value));
+  if (latest.minimumOverallScore < base.minimumOverallScore || latest.minimumEvidenceDimensions < base.minimumEvidenceDimensions || !includesAll(latest.requiredEvidenceDimensions, base.requiredEvidenceDimensions) || !includesAll(latest.excludedOpportunityIds, base.excludedOpportunityIds)) throw new RecommendationFeedbackError("RULE_VERSION_CONFLICT");
+  return RecommendationRuleConfigSchema.parse({
+    minimumOverallScore: Math.max(active.minimumOverallScore, latest.minimumOverallScore),
+    minimumEvidenceDimensions: Math.max(active.minimumEvidenceDimensions, latest.minimumEvidenceDimensions),
+    requiredEvidenceDimensions: [...new Set([...active.requiredEvidenceDimensions, ...latest.requiredEvidenceDimensions])],
+    excludedOpportunityIds: [...new Set([...active.excludedOpportunityIds, ...latest.excludedOpportunityIds])],
+  });
+}
+
 /** Immutable recommendation feedback and review-gated calibration boundary. */
 export function createRecommendationFeedbackCommands(deps: { db: Database; id: () => string; clock: () => Date; auditTrail?: AuditTrail }) {
   async function recordDecision(input: { userId: string; recommendationListId: string; recommendationListItemId: string; command: RecommendationDecisionCommand }): Promise<DecisionResult> {
@@ -113,7 +128,9 @@ export function createRecommendationFeedbackCommands(deps: { db: Database; id: (
         .where(and(eq(calibrationProposalEvidence.userId, input.userId), eq(calibrationProposalEvidence.proposalId, proposal.id)));
       const [activeRule] = await tx.select({ config: recommendationRuleVersions.config, version: recommendationRuleVersions.version }).from(recommendationRuleVersions).where(and(eq(recommendationRuleVersions.userId, input.userId), eq(recommendationRuleVersions.targetId, proposal.targetId))).orderBy(desc(recommendationRuleVersions.version)).limit(1);
       const active = RecommendationRuleConfigSchema.parse(activeRule?.config ?? defaultConfig);
-      const current = (activeRule?.version ?? 0) === latest.baseRuleVersion ? RecommendationRuleConfigSchema.parse(latest.ruleConfig) : active;
+      const [baseRule] = latest.baseRuleVersion === 0 ? [] : await tx.select({ config: recommendationRuleVersions.config }).from(recommendationRuleVersions).where(and(eq(recommendationRuleVersions.userId, input.userId), eq(recommendationRuleVersions.targetId, proposal.targetId), eq(recommendationRuleVersions.version, latest.baseRuleVersion))).limit(1);
+      if (latest.baseRuleVersion !== 0 && !baseRule) throw new RecommendationFeedbackError("RULE_VERSION_CONFLICT");
+      const current = effectiveProposalRule(RecommendationRuleConfigSchema.parse(baseRule?.config ?? defaultConfig), RecommendationRuleConfigSchema.parse(latest.ruleConfig), active);
       const derived = proposedRule(proposal.reason, current, active, evidenceMatches.map((item) => ({ ...item, assessment: item.assessment as CalibrationSample["assessment"] })), command.strategy);
       if (!derived) throw new RecommendationFeedbackError("PROPOSAL_NO_EFFECT");
       const [revision] = await tx.insert(calibrationProposalRevisions).values({ id: deps.id(), userId: input.userId, proposalId: proposal.id, revisionNumber: latest.revisionNumber + 1, baseRuleVersion: activeRule?.version ?? 0, strategy: derived.strategy, ruleConfig: derived.ruleConfig, impactPreview: derived.impactPreview, idempotencyKey: command.idempotencyKey, commandSummary: digest, createdAt: deps.clock() }).returning();
@@ -166,8 +183,11 @@ export function createRecommendationFeedbackQueries(deps: { db: Database }) {
         const evidence = await deps.db.select({ id: calibrationProposalEvidence.id, opportunityId: jobMatchVersions.opportunityId, overallScore: jobMatchVersions.overallScore, assessment: jobMatchVersions.assessment }).from(calibrationProposalEvidence).innerJoin(recommendationDecisionEvents, and(eq(recommendationDecisionEvents.userId, calibrationProposalEvidence.userId), eq(recommendationDecisionEvents.id, calibrationProposalEvidence.decisionEventId))).innerJoin(jobMatchVersions, and(eq(jobMatchVersions.userId, recommendationDecisionEvents.userId), eq(jobMatchVersions.id, recommendationDecisionEvents.matchVersionId))).where(and(eq(calibrationProposalEvidence.userId, input.userId), eq(calibrationProposalEvidence.proposalId, proposal.id)));
         const [activeRule] = await deps.db.select({ config: recommendationRuleVersions.config }).from(recommendationRuleVersions).where(and(eq(recommendationRuleVersions.userId, input.userId), eq(recommendationRuleVersions.targetId, proposal.targetId))).orderBy(desc(recommendationRuleVersions.version)).limit(1);
         if (!revision) throw new RecommendationFeedbackError("PROPOSAL_REVISION_NOT_FOUND");
+        const [baseRule] = revision.baseRuleVersion === 0 ? [] : await deps.db.select({ config: recommendationRuleVersions.config }).from(recommendationRuleVersions).where(and(eq(recommendationRuleVersions.userId, input.userId), eq(recommendationRuleVersions.targetId, proposal.targetId), eq(recommendationRuleVersions.version, revision.baseRuleVersion))).limit(1);
+        if (revision.baseRuleVersion !== 0 && !baseRule) throw new RecommendationFeedbackError("RULE_VERSION_CONFLICT");
         const active = RecommendationRuleConfigSchema.parse(activeRule?.config ?? defaultConfig); const samples = evidence.map((item) => ({ ...item, assessment: item.assessment as CalibrationSample["assessment"] }));
-        const availableStrategies = (["require_related_evidence", "raise_quality_bar", "exclude_evidence_opportunities"] as const).filter((strategy) => Boolean(proposedRule(proposal.reason, active, active, samples, strategy)));
+        const current = effectiveProposalRule(RecommendationRuleConfigSchema.parse(baseRule?.config ?? defaultConfig), RecommendationRuleConfigSchema.parse(revision.ruleConfig), active);
+        const availableStrategies = (["require_related_evidence", "raise_quality_bar", "exclude_evidence_opportunities"] as const).filter((strategy) => Boolean(proposedRule(proposal.reason, current, active, samples, strategy)));
         return { proposalId: proposal.id, targetId: proposal.targetId, reason: proposal.reason, status: proposal.status, version: proposal.version, evidenceCount: evidence.length, availableStrategies, revision: { revisionId: revision.id, revisionNumber: revision.revisionNumber, strategy: revision.strategy, ruleConfig: revision.ruleConfig, impactPreview: revision.impactPreview } };
       }));
     },
