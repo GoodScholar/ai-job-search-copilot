@@ -295,6 +295,13 @@
       "when": 1788404767673,
       "tag": "0041_thankful_lethal_legion",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1788407394798,
+      "tag": "0042_mighty_malcolm_colcord",
+      "breakpoints": true
     }
   ]
 }

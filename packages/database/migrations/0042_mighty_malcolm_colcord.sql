@@ -1,0 +1,1 @@
+ALTER TABLE "calibration_proposal_revisions" ADD COLUMN "base_rule_version" integer DEFAULT 0 NOT NULL;

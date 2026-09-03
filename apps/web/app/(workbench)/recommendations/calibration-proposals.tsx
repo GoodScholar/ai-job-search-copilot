@@ -12,17 +12,6 @@ const statuses = { pending: "待审核", approved: "已批准", rejected: "已�
 const reasons = { ROLE_DIRECTION: "岗位方向不符", LOCATION: "地点或工作方式不合适", SALARY: "薪酬不符合预期", COMPANY: "公司不符合偏好", INDUSTRY: "行业不符合偏好", SENIORITY: "岗位级别不合适", MISMATCH: "整体匹配度不足", EXPIRED: "岗位已过期", ALREADY_HANDLED: "该岗位已处理" } as const;
 const dimensions = { skills: "技能", experience: "经验", project_depth: "项目深度", career_direction: "岗位方向", location_logistics: "地点与工作方式", qualification_risk: "资格要求" } as const;
 const fields: Record<string, string> = { minimumOverallScore: "最低匹配分", minimumEvidenceDimensions: "最低证据维度", requiredEvidenceDimensions: "必须具备的证据维度", excludedOpportunityIds: "排除岗位" };
-const reasonDimensions = { ROLE_DIRECTION: "career_direction", LOCATION: "location_logistics", SALARY: "skills", COMPANY: "qualification_risk", INDUSTRY: "career_direction", SENIORITY: "experience", MISMATCH: "project_depth" } as const;
-
-function availableStrategies(proposal: CalibrationProposal): Strategy[] {
-  const config = proposal.revision.ruleConfig; const dimension = reasonDimensions[proposal.reason as keyof typeof reasonDimensions];
-  return [
-    dimension && !config.requiredEvidenceDimensions.includes(dimension) ? "require_related_evidence" : null,
-    config.minimumOverallScore === 0 ? "raise_quality_bar" : null,
-    config.excludedOpportunityIds.length === 0 ? "exclude_evidence_opportunities" : null,
-  ].filter((strategy): strategy is Strategy => Boolean(strategy) && strategy !== proposal.revision.strategy);
-}
-
 function displayValue(field: string, input: unknown) {
   if (field === "requiredEvidenceDimensions") return (input as string[]).map((item) => dimensions[item as keyof typeof dimensions]).join("、") || "无";
   if (field === "excludedOpportunityIds") return `${(input as string[]).length} 个岗位`;
@@ -33,7 +22,7 @@ function ProposalOperationControls({ proposal, pending, submit, reviseAction, re
   // 组件以 proposalId + version 为 key 挂载：同一版本的未知结果重试复用 key，版本推进后才换 key。
   const [revisionIdempotencyKey] = useState(() => crypto.randomUUID());
   const [resolutionIdempotencyKey] = useState(() => crypto.randomUUID());
-  const options = availableStrategies(proposal);
+  const options = proposal.availableStrategies;
   return <>
     <form onSubmit={(event) => submit(event, reviseAction.bind(null, proposal.proposalId), "校准建议已修改。")} className="flex flex-wrap gap-2">
       {options.length ? <select name="strategy" defaultValue={options[0]} aria-label="修改策略">{options.map((strategy) => <option key={strategy} value={strategy}>{strategies[strategy]}</option>)}</select> : <p role="status">当前建议已包含可用调整。</p>}
