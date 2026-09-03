@@ -1,9 +1,10 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ getJobTargets: vi.fn(), getLatestRecommendations: vi.fn(), getRecommendationHistoryPage: vi.fn(), getCalibrationProposals: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/lib/server/job-targets", () => ({ getJobTargets: mocks.getJobTargets }));
 vi.mock("@/lib/server/recommendations", () => ({ getLatestRecommendations: mocks.getLatestRecommendations, getRecommendationHistoryPage: mocks.getRecommendationHistoryPage, getCalibrationProposals: mocks.getCalibrationProposals }));
-vi.mock("./actions", () => ({ requestRecommendationReevaluationAction: vi.fn(), recordRecommendationDecisionAction: vi.fn(), reviseCalibrationProposalAction: vi.fn(), resolveCalibrationProposalAction: vi.fn() }));
+vi.mock("./actions", () => ({ requestRecommendationReevaluationAction: vi.fn(), recordRecommendationDecisionAction: vi.fn(), reviseCalibrationProposalAction: vi.fn(), rebaseCalibrationProposalAction: vi.fn(), resolveCalibrationProposalAction: vi.fn() }));
 import RecommendationsPage from "./page";
 
 describe("RecommendationsPage", () => {

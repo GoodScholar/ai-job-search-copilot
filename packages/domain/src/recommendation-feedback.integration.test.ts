@@ -2,7 +2,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
 import {
-  agentRuns, calibrationProposalEvidence, calibrationProposalRevisions, calibrationProposals, createDatabase, jobAccounts, jobMatchVersions, jobOpportunities, jobOpportunitySources,
+  agentRuns, auditEvents, calibrationProposalEvidence, calibrationProposalRevisions, calibrationProposals, createDatabase, jobAccounts, jobMatchVersions, jobOpportunities, jobOpportunitySources,
   jobProfiles, jobSourcePostingVersions, jobSourcePostings, jobTargets, jobTargetRevisions, jobTriageVersions, migrateDatabase, profileFactRevisions, profileFacts, recommendationDecisionEvents, recommendationDecisionResponses, recommendationListItems,
   recommendationLists, recommendationRuleVersions, type Database,
 } from "@job-copilot/database";
@@ -204,6 +204,30 @@ describe("recommendation feedback persistence", () => {
     expect((rebased!.ruleConfig as { excludedOpportunityIds: string[] }).excludedOpportunityIds.slice().sort()).toEqual(data.items.slice(3).map((item) => item.opportunityId).sort());
     await expect(service.resolveCalibrationProposal({ userId: data.userId, proposalId: p2.proposalId, command: { action: "approved", expectedVersion: 2, idempotencyKey: crypto.randomUUID() } })).resolves.toMatchObject({ ruleVersion: "recommendation-rule-v2" });
     await expect(db.select().from(recommendationRuleVersions).where(eq(recommendationRuleVersions.targetId, data.targetId))).resolves.toHaveLength(2);
+  });
+
+  it("无可选策略的 stale 建议仍可重新计算一次并绑定最新 active 规则", async () => {
+    const data = await fixture(3); const service = commands();
+    for (const item of data.items) await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: { decision: "ignored", reason: "LOCATION", expectedVersion: 0, idempotencyKey: crypto.randomUUID() } });
+    const [proposal] = await createRecommendationFeedbackQueries({ db }).listCalibrationProposals({ userId: data.userId, targetId: data.targetId });
+    const activeProposalId = crypto.randomUUID(); const activeRevisionId = crypto.randomUUID();
+    const activeConfig = { minimumOverallScore: 91, minimumEvidenceDimensions: 0, requiredEvidenceDimensions: [], excludedOpportunityIds: data.items.map((item) => item.opportunityId) };
+    await db.insert(calibrationProposals).values({ id: activeProposalId, userId: data.userId, targetId: data.targetId, reason: "SALARY", status: "approved", version: 2, createdAt: now, updatedAt: now });
+    await db.insert(calibrationProposalRevisions).values({ id: activeRevisionId, userId: data.userId, proposalId: activeProposalId, revisionNumber: 1, baseRuleVersion: 0, strategy: "raise_quality_bar", ruleConfig: activeConfig, impactPreview: { sampleSize: 3, estimatedAffectedCount: 3, ruleDiff: {} }, idempotencyKey: crypto.randomUUID(), commandSummary: "a".repeat(64), createdAt: now });
+    await db.insert(recommendationRuleVersions).values({ id: crypto.randomUUID(), userId: data.userId, targetId: data.targetId, proposalId: activeProposalId, proposalRevisionId: activeRevisionId, version: 1, config: activeConfig, createdAt: now });
+
+    const [stale] = (await createRecommendationFeedbackQueries({ db }).listCalibrationProposals({ userId: data.userId, targetId: data.targetId })).filter((item) => item.proposalId === proposal!.proposalId);
+    expect(stale).toMatchObject({ stale: true, reviewState: "stale_rebase_required", availableStrategies: [] });
+    const command = { expectedVersion: 1, idempotencyKey: "00000000-0000-4000-8000-000000000099" };
+    const rebased = await service.rebaseCalibrationProposal({ userId: data.userId, proposalId: proposal!.proposalId, command });
+    await expect(service.rebaseCalibrationProposal({ userId: data.userId, proposalId: proposal!.proposalId, command })).resolves.toMatchObject({ id: rebased!.id, revisionNumber: 2, baseRuleVersion: 1 });
+    await expect(service.rebaseCalibrationProposal({ userId: crypto.randomUUID(), proposalId: proposal!.proposalId, command: { expectedVersion: 2, idempotencyKey: crypto.randomUUID() } })).rejects.toThrow("PROPOSAL_NOT_FOUND");
+    expect(rebased).toMatchObject({ ruleConfig: { minimumOverallScore: 91, requiredEvidenceDimensions: ["location_logistics"], excludedOpportunityIds: data.items.map((item) => item.opportunityId) }, impactPreview: { sampleSize: 3, ruleDiff: { requiredEvidenceDimensions: { from: [], to: ["location_logistics"] } } } });
+    await expect(db.select().from(calibrationProposalRevisions).where(and(eq(calibrationProposalRevisions.userId, data.userId), eq(calibrationProposalRevisions.proposalId, proposal!.proposalId)))).resolves.toHaveLength(2);
+    await expect(db.select().from(auditEvents).where(and(eq(auditEvents.userId, data.userId), eq(auditEvents.resourceId, proposal!.proposalId), eq(auditEvents.eventType, "recommendation.calibration_proposal")))).resolves.toHaveLength(2);
+    const [fresh] = (await createRecommendationFeedbackQueries({ db }).listCalibrationProposals({ userId: data.userId, targetId: data.targetId })).filter((item) => item.proposalId === proposal!.proposalId);
+    expect(fresh).toMatchObject({ stale: false, reviewState: "current", availableStrategies: [] });
+    await expect(service.resolveCalibrationProposal({ userId: data.userId, proposalId: proposal!.proposalId, command: { action: "approved", expectedVersion: 2, idempotencyKey: crypto.randomUUID() } })).resolves.toMatchObject({ ruleVersion: "recommendation-rule-v2" });
   });
 
   it("排除容量不可表示时仍提交三条 ignored 决策，97 加三条时仍可审核", async () => {

@@ -97,11 +97,11 @@ const JobDiscoveryScheduleMetadataSchema = z.object({
   version: z.int().min(1).nullable(), scheduledFor: z.iso.datetime().nullable(), state: z.enum(["enabled", "disabled", "pending", "dispatched", "skipped"]).nullable(),
 }).strict();
 const RecommendationDecisionMetadataSchema = z.object({ recommendationListId: z.uuid(), recommendationListItemId: z.uuid(), matchVersionId: z.uuid(), action: z.enum(["saved", "ignored"]), reason: z.string().min(1).max(32).nullable(), version: z.int().positive() }).strict();
-const CalibrationProposalMetadataSchema = z.object({ proposalId: z.uuid(), targetId: z.uuid(), action: z.enum(["created", "revised", "approved", "rejected"]), version: z.int().positive(), evidenceCount: z.int().nonnegative() }).strict();
+const CalibrationProposalMetadataSchema = z.object({ proposalId: z.uuid(), targetId: z.uuid(), action: z.enum(["created", "revised", "rebased", "approved", "rejected"]), version: z.int().positive(), evidenceCount: z.int().nonnegative() }).strict();
 
 const AuditEventInputSchema = z.discriminatedUnion("eventType", [
   z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("recommendation.decision_recorded"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.enum(["RECOMMENDATION_SAVED", "RECOMMENDATION_IGNORED"]), resourceType: z.literal("recommendation_list_item"), resourceId: z.uuid(), metadata: RecommendationDecisionMetadataSchema }).strict(),
-  z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("recommendation.calibration_proposal"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.enum(["CALIBRATION_PROPOSAL_CREATED", "CALIBRATION_PROPOSAL_REVISED", "CALIBRATION_PROPOSAL_APPROVED", "CALIBRATION_PROPOSAL_REJECTED"]), resourceType: z.literal("calibration_proposal"), resourceId: z.uuid(), metadata: CalibrationProposalMetadataSchema }).strict(),
+  z.object({ userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("recommendation.calibration_proposal"), occurredAt: z.date().optional(), requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.enum(["CALIBRATION_PROPOSAL_CREATED", "CALIBRATION_PROPOSAL_REVISED", "CALIBRATION_PROPOSAL_REBASED", "CALIBRATION_PROPOSAL_APPROVED", "CALIBRATION_PROPOSAL_REJECTED"]), resourceType: z.literal("calibration_proposal"), resourceId: z.uuid(), metadata: CalibrationProposalMetadataSchema }).strict(),
   z.object({
     userId: z.uuid().optional(),
     actorUserId: z.uuid().optional(),

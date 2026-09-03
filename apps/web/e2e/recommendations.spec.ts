@@ -142,6 +142,16 @@ async function expectVisibleKeyboardFocus(locator: Locator) {
   })).resolves.toBe(true);
 }
 
+async function ignoreRecommendation(page: Page, title: string, reason: "薪资" | "地点", info: TestInfo) {
+  const card = page.getByRole("listitem").filter({ has: page.getByRole("heading", { name: title }) });
+  const summary = card.locator("summary").filter({ hasText: "忽略此推荐" });
+  if (info.project.name === "Desktop Chrome") await summary.click(); else await summary.tap({ force: true });
+  await card.getByRole("radio", { name: reason }).check();
+  const confirm = card.getByRole("button", { name: "确认忽略" });
+  if (info.project.name === "Desktop Chrome") await confirm.click(); else await confirm.tap({ force: true });
+  await expect(card.getByText("当前推荐决策：", { exact: false })).toContainText("已忽略");
+}
+
 async function seedPaginatedRecommendationFixtures(userId: string, targetId: string, latestListId: string) {
   const client = new Client({ connectionString: databaseUrl });
   await client.connect();
@@ -302,6 +312,42 @@ test("推荐决策与拒绝校准建议保持规则和目标不变", async ({ pa
   const controls = page.locator("main .workbench-touch-target");
   expect(await controls.evaluateAll((items) => items.every((item) => Number.parseFloat(getComputedStyle(item).minHeight) >= 44))).toBe(true);
   await new AxeBuilder({ page }).analyze().then((result) => expect(result.violations).toEqual([]));
+});
+
+test("交错批准后立即锁定过期建议，刷新读模型并重新计算后可批准", async ({ page, request }, info) => {
+  test.setTimeout(90_000);
+  const account = await createAccount(request, info);
+  await Promise.all(["薪酬反馈一", "薪酬反馈二", "薪酬反馈三", "地点反馈一", "地点反馈二", "地点反馈三"].map((title) => importAndTriage(request, account, title)));
+  await page.context().addCookies([{ name: "job_copilot_session", value: account.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
+  const discoveryRunId = await runDiscovery(request, account, info.project.name === "Desktop Chrome" ? "10000000-0000-4000-8000-000000000341" : "10000000-0000-4000-8000-000000000342");
+  await page.goto("/recommendations"); await waitForRun(page, discoveryRunId);
+  await waitForRun(page, await automaticMatchRun(account.userId, discoveryRunId));
+  await page.reload();
+  for (const title of ["薪酬反馈一", "薪酬反馈二", "薪酬反馈三"]) await ignoreRecommendation(page, title, "薪资", info);
+  for (const title of ["地点反馈一", "地点反馈二", "地点反馈三"]) await ignoreRecommendation(page, title, "地点", info);
+  await expect(page.getByRole("heading", { name: "校准建议" })).toBeVisible();
+  const beforeRace = await request.get(`${apiBaseUrl}/v1/recommendations/calibration-proposals?targetId=${account.targetId}`, { headers: { authorization: `Bearer ${account.token}` } });
+  expect(beforeRace.status()).toBe(200);
+  const proposals = await beforeRace.json() as Array<{ proposalId: string; reason: string; version: number; stale: boolean }>;
+  const p1 = proposals.find((proposal) => proposal.reason === "SALARY")!; const p2 = proposals.find((proposal) => proposal.reason === "LOCATION")!;
+  expect(p2.stale).toBe(false);
+  const backgroundApproval = await request.post(`${apiBaseUrl}/v1/recommendations/calibration-proposals/${p1.proposalId}/resolutions`, { headers: { authorization: `Bearer ${account.token}` }, data: { action: "approved", expectedVersion: p1.version, idempotencyKey: crypto.randomUUID() } });
+  expect(backgroundApproval.status()).toBe(201);
+  const locationProposal = page.locator("article").filter({ has: page.getByText("因“地点或工作方式不合适”产生的建议") });
+  const approve = locationProposal.getByRole("button", { name: "批准建议" });
+  if (info.project.name === "Desktop Chrome") await approve.click(); else await approve.tap();
+  await expect(page.getByText("规则已更新，请先刷新后重新计算或修改建议。")).toBeVisible();
+  await expect(approve).toBeDisabled();
+  await expect(locationProposal.getByRole("button", { name: "重新计算" })).toBeVisible();
+  const rebase = locationProposal.getByRole("button", { name: "重新计算" });
+  if (info.project.name === "Desktop Chrome") await rebase.click(); else await rebase.tap();
+  await expect.poll(async () => {
+    const response = await request.get(`${apiBaseUrl}/v1/recommendations/calibration-proposals?targetId=${account.targetId}`, { headers: { authorization: `Bearer ${account.token}` } });
+    return (await response.json() as Array<{ proposalId: string; version: number; stale: boolean }>).find((proposal) => proposal.proposalId === p2.proposalId);
+  }).toMatchObject({ version: p2.version + 1, stale: false });
+  await expect(approve).toBeEnabled();
+  if (info.project.name === "Desktop Chrome") await approve.click(); else await approve.tap();
+  await expect.poll(async () => { const client = new Client({ connectionString: databaseUrl }); await client.connect(); try { return (await client.query("select count(*) as rules from recommendation_rule_versions where user_id = $1", [account.userId])).rows[0]!.rules; } finally { await client.end(); } }).toBe("2");
 });
 
 test("显式 Fake matching 的质量不足候选可生成零推荐清单", async ({ page, request }, info) => {

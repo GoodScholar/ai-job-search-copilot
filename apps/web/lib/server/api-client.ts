@@ -88,7 +88,7 @@ import {
   type AgentInboxActionResponse,
 } from "@job-copilot/contracts/agent-inbox";
 import { z } from "zod";
-import { CalibrationProposalRebaseCommandSchema, CalibrationProposalResolutionCommandSchema, CalibrationProposalRevisionCommandSchema, CalibrationProposalSchema, RecommendationDecisionCommandSchema, RecommendationExclusionPageSchema, RecommendationListHistoryPageSchema, RecommendationListSchema, type CalibrationProposalResolutionCommand, type CalibrationProposalRevisionCommand, type RecommendationDecisionCommand, type RecommendationExclusionPage, type RecommendationList, type RecommendationListHistoryPage } from "@job-copilot/contracts/recommendations";
+import { CalibrationProposalRebaseCommandSchema, CalibrationProposalResolutionCommandSchema, CalibrationProposalRevisionCommandSchema, CalibrationProposalSchema, RecommendationDecisionCommandSchema, RecommendationExclusionPageSchema, RecommendationListHistoryPageSchema, RecommendationListSchema, type CalibrationProposalRebaseCommand, type CalibrationProposalResolutionCommand, type CalibrationProposalRevisionCommand, type RecommendationDecisionCommand, type RecommendationExclusionPage, type RecommendationList, type RecommendationListHistoryPage } from "@job-copilot/contracts/recommendations";
 
 type ApiClientConfig = {
   apiInternalUrl: string;
@@ -179,9 +179,10 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
       if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法修改校准建议", response.status, problem ?? undefined); }
       return parseJson(response);
     },
-    async rebaseCalibrationProposal(sessionToken: string, proposalId: string, command: unknown) {
+    async rebaseCalibrationProposal(sessionToken: string, proposalId: string, command: CalibrationProposalRebaseCommand) {
       const response = await request(`/v1/recommendations/calibration-proposals/${encodeURIComponent(proposalId)}/rebases`, { method: "POST", headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" }, body: JSON.stringify(CalibrationProposalRebaseCommandSchema.parse(command)) });
-      return response;
+      if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法重新计算校准建议", response.status, problem ?? undefined); }
+      return parseJson(response);
     },
     async resolveCalibrationProposal(sessionToken: string, proposalId: string, command: CalibrationProposalResolutionCommand) {
       const response = await request(`/v1/recommendations/calibration-proposals/${encodeURIComponent(proposalId)}/resolutions`, { method: "POST", headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" }, body: JSON.stringify(CalibrationProposalResolutionCommandSchema.parse(command)) });

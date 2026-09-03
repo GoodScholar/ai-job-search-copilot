@@ -87,6 +87,7 @@ describe("authenticated workbench HTTP API", () => {
       return { decision: { status: input.command.decision, version: 1 }, proposal: null };
     },
     async reviseCalibrationProposal(input: { proposalId: string }) { if (input.proposalId === "70000000-0000-4000-8000-000000000006") throw { code: "PROPOSAL_NO_EFFECT" }; throw { code: "PROPOSAL_NOT_FOUND" }; },
+    async rebaseCalibrationProposal(input: { proposalId: string }) { if (input.proposalId === "70000000-0000-4000-8000-000000000006") throw { code: "RULE_VERSION_CONFLICT" }; throw { code: "PROPOSAL_NOT_FOUND" }; },
     async resolveCalibrationProposal() { throw { code: "PROPOSAL_NOT_FOUND" }; },
   };
   const feedbackQueries = { async listCalibrationProposals() { return []; } };
@@ -313,6 +314,15 @@ describe("authenticated workbench HTTP API", () => {
     const session = await createSession(app, "recommendation-no-effect-http");
     const response = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/recommendations/calibration-proposals/70000000-0000-4000-8000-000000000006/revisions", headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: { strategy: "require_related_evidence", expectedVersion: 1, idempotencyKey: "70000000-0000-4000-8000-000000000007" } });
     expect(response.statusCode).toBe(422); expect(response.json()).toMatchObject({ code: "PROPOSAL_NO_EFFECT" });
+  });
+
+  it("严格验证重新计算命令，并将规则版本竞争映射为 409", async () => {
+    const session = await createSession(app, "recommendation-rebase-http");
+    const headers = { ...bearer(session.sessionToken), "content-type": "application/json" };
+    const malformed = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/recommendations/calibration-proposals/70000000-0000-4000-8000-000000000006/rebases", headers, payload: { expectedVersion: 1, idempotencyKey: "70000000-0000-4000-8000-000000000008", strategy: "raise_quality_bar" } });
+    const conflict = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/recommendations/calibration-proposals/70000000-0000-4000-8000-000000000006/rebases", headers, payload: { expectedVersion: 1, idempotencyKey: "70000000-0000-4000-8000-000000000008" } });
+    expect(malformed.statusCode).toBe(400);
+    expect(conflict.statusCode).toBe(409); expect(conflict.json()).toMatchObject({ code: "RULE_VERSION_CONFLICT" });
   });
 
   it("authenticates and strictly validates immutable job triage routes", async () => {

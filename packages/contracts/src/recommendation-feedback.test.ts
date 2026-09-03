@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CalibrationProposalRevisionCommandSchema,
+  CalibrationProposalRebaseCommandSchema,
   CalibrationProposalSchema,
   RecommendationDecisionCommandSchema,
   RecommendationDecisionSchema,
@@ -42,6 +43,16 @@ describe("推荐反馈契约", () => {
       strategy: "raise_quality_bar", idempotencyKey: "00000000-0000-4000-8000-000000000002", expectedVersion: 1,
       ruleConfig: { minimumOverallScore: 75, minimumEvidenceDimensions: 3, requiredEvidenceDimensions: [], excludedOpportunityIds: [] },
       impactPreview: { sampleSize: 12, estimatedAffectedCount: 3, ruleDiff: {}, jobContent: "不得保存" },
+    }).success).toBe(false);
+  });
+
+  it("重新计算只接受乐观版本与幂等键，不允许客户端传入规则快照", () => {
+    expect(CalibrationProposalRebaseCommandSchema.safeParse({
+      idempotencyKey: "00000000-0000-4000-8000-000000000002", expectedVersion: 1,
+    }).success).toBe(true);
+    expect(CalibrationProposalRebaseCommandSchema.safeParse({
+      idempotencyKey: "00000000-0000-4000-8000-000000000002", expectedVersion: 1,
+      ruleConfig: { minimumOverallScore: 75, minimumEvidenceDimensions: 0, requiredEvidenceDimensions: [], excludedOpportunityIds: [] },
     }).success).toBe(false);
   });
 

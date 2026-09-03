@@ -40,9 +40,17 @@ export async function rebaseCalibrationProposalAction(proposalId: string, formDa
   revalidatePath("/recommendations");
 }
 
-export async function resolveCalibrationProposalAction(proposalId: string, formData: FormData): Promise<void> {
+export type CalibrationProposalResolutionActionResult = { kind: "ok" } | { kind: "rule_version_conflict" };
+
+export async function resolveCalibrationProposalAction(proposalId: string, formData: FormData): Promise<CalibrationProposalResolutionActionResult> {
   const session = await readSessionToken(); if (!session) redirect("/login?returnTo=%2Frecommendations");
-  try { await api.resolveCalibrationProposal(session, proposalId, { action: String(formData.get("action")), idempotencyKey: String(formData.get("idempotencyKey")), expectedVersion: Number(formData.get("expectedVersion")) } as never); }
-  catch (error) { if (error instanceof ApiClientError && error.problem?.code === "RULE_VERSION_CONFLICT") throw new Error("CALIBRATION_REBASE_REQUIRED"); throw error; }
-  revalidatePath("/recommendations");
+  try {
+    await api.resolveCalibrationProposal(session, proposalId, { action: String(formData.get("action")), idempotencyKey: String(formData.get("idempotencyKey")), expectedVersion: Number(formData.get("expectedVersion")) } as never);
+    return { kind: "ok" };
+  } catch (error) {
+    if (error instanceof ApiClientError && error.problem?.code === "RULE_VERSION_CONFLICT") return { kind: "rule_version_conflict" };
+    throw error;
+  } finally {
+    revalidatePath("/recommendations");
+  }
 }
