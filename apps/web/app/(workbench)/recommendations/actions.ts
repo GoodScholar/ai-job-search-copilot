@@ -34,6 +34,12 @@ export async function reviseCalibrationProposalAction(proposalId: string, formDa
   revalidatePath("/recommendations");
 }
 
+export async function rebaseCalibrationProposalAction(proposalId: string, formData: FormData): Promise<void> {
+  const session = await readSessionToken(); if (!session) redirect("/login?returnTo=%2Frecommendations");
+  await api.rebaseCalibrationProposal(session, proposalId, { idempotencyKey: String(formData.get("idempotencyKey")), expectedVersion: Number(formData.get("expectedVersion")) });
+  revalidatePath("/recommendations");
+}
+
 export async function resolveCalibrationProposalAction(proposalId: string, formData: FormData): Promise<void> {
   const session = await readSessionToken(); if (!session) redirect("/login?returnTo=%2Frecommendations");
   try { await api.resolveCalibrationProposal(session, proposalId, { action: String(formData.get("action")), idempotencyKey: String(formData.get("idempotencyKey")), expectedVersion: Number(formData.get("expectedVersion")) } as never); }

@@ -18,7 +18,7 @@ function displayValue(field: string, input: unknown) {
   return String(input);
 }
 
-function ProposalOperationControls({ proposal, pending, submit, reviseAction, resolveAction }: { proposal: CalibrationProposal; pending: boolean; submit: (event: FormEvent<HTMLFormElement>, action: SubmitAction, success: string) => void; reviseAction: Action; resolveAction: Action }) {
+function ProposalOperationControls({ proposal, pending, submit, reviseAction, rebaseAction, resolveAction }: { proposal: CalibrationProposal; pending: boolean; submit: (event: FormEvent<HTMLFormElement>, action: SubmitAction, success: string) => void; reviseAction: Action; rebaseAction: Action; resolveAction: Action }) {
   // 组件以 proposalId + version 为 key 挂载：同一版本的未知结果重试复用 key，版本推进后才换 key。
   const [revisionIdempotencyKey] = useState(() => crypto.randomUUID());
   const [resolutionIdempotencyKey] = useState(() => crypto.randomUUID());
@@ -30,6 +30,7 @@ function ProposalOperationControls({ proposal, pending, submit, reviseAction, re
       <input type="hidden" name="idempotencyKey" value={revisionIdempotencyKey} />
       <button className="workbench-touch-target" disabled={pending || !options.length} type="submit">修改建议</button>
     </form>
+    {proposal.reviewState === "stale_rebase_required" ? <form onSubmit={(event) => submit(event, rebaseAction.bind(null, proposal.proposalId), "校准建议已重新计算。")}><input type="hidden" name="expectedVersion" value={proposal.version} /><input type="hidden" name="idempotencyKey" value={revisionIdempotencyKey} /><button className="workbench-touch-target" disabled={pending} type="submit">重新计算</button></form> : null}
     <form onSubmit={(event) => submit(event, resolveAction.bind(null, proposal.proposalId), "校准建议已处理。")} className="flex flex-wrap gap-2">
       <input type="hidden" name="expectedVersion" value={proposal.version} />
       <input type="hidden" name="idempotencyKey" value={resolutionIdempotencyKey} />
@@ -39,7 +40,7 @@ function ProposalOperationControls({ proposal, pending, submit, reviseAction, re
   </>;
 }
 
-export function CalibrationProposals({ proposals, reviseAction, resolveAction }: { proposals: CalibrationProposal[]; reviseAction: Action; resolveAction: Action }) {
+export function CalibrationProposals({ proposals, reviseAction, rebaseAction = reviseAction, resolveAction }: { proposals: CalibrationProposal[]; reviseAction: Action; rebaseAction?: Action; resolveAction: Action }) {
   const [pending, startTransition] = useTransition(); const [message, setMessage] = useState<string | null>(null); const [error, setError] = useState<string | null>(null);
   if (!proposals.length) return null;
   const submit = (event: FormEvent<HTMLFormElement>, action: SubmitAction, success: string) => {
@@ -49,5 +50,5 @@ export function CalibrationProposals({ proposals, reviseAction, resolveAction }:
     if (submitter?.name) formData.set(submitter.name, submitter.value);
     startTransition(() => { void action(formData).then(() => setMessage(success)).catch((caught: unknown) => setError(caught instanceof Error && caught.message === "CALIBRATION_REBASE_REQUIRED" ? "规则已更新，请先修改建议以重新计算后再批准。" : "操作未完成，请刷新后重试。")); });
   };
-  return <section aria-labelledby="calibration-proposals-title" className="flex flex-col gap-4"><h2 id="calibration-proposals-title">校准建议</h2>{message ? <p role="status">{message}</p> : null}{error ? <p role="alert">{error}</p> : null}{proposals.map((proposal) => <article key={proposal.proposalId} className="flex flex-col gap-3"><h3>因“{reasons[proposal.reason]}”产生的建议</h3><p>依据：{proposal.evidenceCount} 条同类忽略反馈。建议方式：{strategies[proposal.revision.strategy]}；预计会影响 {proposal.revision.impactPreview.estimatedAffectedCount} / {proposal.revision.impactPreview.sampleSize} 个样本。</p><ul aria-label="规则调整">{Object.entries(proposal.revision.impactPreview.ruleDiff).map(([key, change]) => <li key={key}>{fields[key] ?? "规则"}：{displayValue(key, change.from)} → {displayValue(key, change.to)}</li>)}</ul><p>状态：{statuses[proposal.status]}</p>{proposal.reviewState === "stale_rebase_required" ? <p role="status">规则已更新，请先修改建议以重新计算后再批准。</p> : proposal.reviewState === "covered" ? <p role="status">该建议已被当前规则覆盖，可拒绝该建议。</p> : proposal.reviewState === "unrebasable" ? <p role="alert">该建议无法安全重算，只能拒绝。</p> : null}{proposal.status === "pending" ? <ProposalOperationControls key={`${proposal.proposalId}:${proposal.version}`} proposal={proposal} pending={pending} submit={submit} reviseAction={reviseAction} resolveAction={resolveAction} /> : null}</article>)}</section>;
+  return <section aria-labelledby="calibration-proposals-title" className="flex flex-col gap-4"><h2 id="calibration-proposals-title">校准建议</h2>{message ? <p role="status">{message}</p> : null}{error ? <p role="alert">{error}</p> : null}{proposals.map((proposal) => <article key={proposal.proposalId} className="flex flex-col gap-3"><h3>因“{reasons[proposal.reason]}”产生的建议</h3><p>依据：{proposal.evidenceCount} 条同类忽略反馈。建议方式：{strategies[proposal.revision.strategy]}；预计会影响 {proposal.revision.impactPreview.estimatedAffectedCount} / {proposal.revision.impactPreview.sampleSize} 个样本。</p><ul aria-label="规则调整">{Object.entries(proposal.revision.impactPreview.ruleDiff).map(([key, change]) => <li key={key}>{fields[key] ?? "规则"}：{displayValue(key, change.from)} → {displayValue(key, change.to)}</li>)}</ul><p>状态：{statuses[proposal.status]}</p>{proposal.status === "pending" && (proposal.reviewState === "stale_rebase_required" ? <p role="status">规则已更新，请先重新计算后再批准。</p> : proposal.reviewState === "covered" ? <p role="status">该建议已被当前规则覆盖，可拒绝该建议。</p> : proposal.reviewState === "unrebasable" ? <p role="alert">该建议无法安全重算，只能拒绝。</p> : null)}{proposal.status === "pending" ? <ProposalOperationControls key={`${proposal.proposalId}:${proposal.version}`} proposal={proposal} pending={pending} submit={submit} reviseAction={reviseAction} rebaseAction={rebaseAction} resolveAction={resolveAction} /> : null}</article>)}</section>;
 }

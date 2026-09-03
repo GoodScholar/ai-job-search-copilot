@@ -21,6 +21,7 @@ const RuleDiffValueSchema = z.union([z.int().min(0).max(100), z.array(DeepMatchD
 export const CalibrationImpactPreviewSchema = z.object({ sampleSize: z.int().nonnegative(), estimatedAffectedCount: z.int().nonnegative(), ruleDiff: z.partialRecord(z.enum(["minimumOverallScore", "minimumEvidenceDimensions", "requiredEvidenceDimensions", "excludedOpportunityIds"]), z.object({ from: RuleDiffValueSchema, to: RuleDiffValueSchema }).strict()) }).strict();
 /** Revision accepts only a user-selected strategy; config and preview are server-derived. */
 export const CalibrationProposalRevisionCommandSchema = z.object({ strategy: CalibrationStrategySchema, idempotencyKey: z.uuid(), expectedVersion: z.int().positive() }).strict();
+export const CalibrationProposalRebaseCommandSchema = z.object({ idempotencyKey: z.uuid(), expectedVersion: z.int().positive() }).strict();
 export const CalibrationProposalResolutionCommandSchema = z.object({ action: z.enum(["approved", "rejected"]), idempotencyKey: z.uuid(), expectedVersion: z.int().positive() }).strict();
 export const CalibrationProposalReviewStateSchema = z.enum(["current", "stale_rebase_required", "covered", "unrebasable"]);
 export const CalibrationProposalSchema = z.object({ proposalId: z.uuid(), targetId: z.uuid(), reason: RecommendationIgnoreReasonSchema, status: z.enum(["pending", "approved", "rejected"]), version: z.int().positive(), evidenceCount: z.int().positive(), stale: z.boolean(), reviewState: CalibrationProposalReviewStateSchema, availableStrategies: z.array(CalibrationStrategySchema), revision: z.object({ revisionId: z.uuid(), revisionNumber: z.int().positive(), strategy: CalibrationStrategySchema, ruleConfig: RecommendationRuleConfigSchema, impactPreview: CalibrationImpactPreviewSchema }).strict() }).strict();
@@ -67,5 +68,6 @@ export type RecommendationExclusionPage = z.infer<typeof RecommendationExclusion
 export type RecommendationDecisionCommand = z.infer<typeof RecommendationDecisionCommandSchema>;
 export type RecommendationRuleConfig = z.infer<typeof RecommendationRuleConfigSchema>;
 export type CalibrationProposalRevisionCommand = z.infer<typeof CalibrationProposalRevisionCommandSchema>;
+export type CalibrationProposalRebaseCommand = z.infer<typeof CalibrationProposalRebaseCommandSchema>;
 export type CalibrationProposalResolutionCommand = z.infer<typeof CalibrationProposalResolutionCommandSchema>;
 export type CalibrationProposal = z.infer<typeof CalibrationProposalSchema>;

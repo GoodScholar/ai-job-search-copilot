@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
-import type { CalibrationProposalResolutionCommand, CalibrationProposalRevisionCommand, RecommendationDecisionCommand, RecommendationRuleConfig } from "@job-copilot/contracts/recommendations";
-import { acceptsRecommendationRule, CalibrationProposalResolutionCommandSchema, CalibrationProposalRevisionCommandSchema, RecommendationDecisionCommandSchema, RecommendationRuleConfigSchema } from "@job-copilot/contracts/recommendations";
+import type { CalibrationProposalRebaseCommand, CalibrationProposalResolutionCommand, CalibrationProposalRevisionCommand, RecommendationDecisionCommand, RecommendationRuleConfig } from "@job-copilot/contracts/recommendations";
+import { acceptsRecommendationRule, CalibrationProposalRebaseCommandSchema, CalibrationProposalResolutionCommandSchema, CalibrationProposalRevisionCommandSchema, RecommendationDecisionCommandSchema, RecommendationRuleConfigSchema } from "@job-copilot/contracts/recommendations";
 import { DeepMatchAssessmentSchema } from "@job-copilot/contracts/deep-match";
 import {
   calibrationProposalEvidence, calibrationProposalRevisions, calibrationProposals, recommendationDecisionEvents, recommendationDecisionResponses,
@@ -176,7 +176,26 @@ export function createRecommendationFeedbackCommands(deps: { db: Database; id: (
       return { proposalId: proposal.id, status: updated.status, ruleVersion };
     });
   }
-  return { recordDecision, reviseCalibrationProposal, resolveCalibrationProposal };
+  async function rebaseCalibrationProposal(input: { userId: string; proposalId: string; command: CalibrationProposalRebaseCommand }) {
+    const command = CalibrationProposalRebaseCommandSchema.parse(input.command);
+    return deps.db.transaction(async (tx) => {
+      await acquireAccountAdvisoryLock(tx, input.userId);
+      const digest = summary({ kind: "rebaseCalibrationProposal", proposalId: input.proposalId, command }); const [existing] = await tx.select().from(calibrationProposalRevisions).where(and(eq(calibrationProposalRevisions.userId, input.userId), eq(calibrationProposalRevisions.idempotencyKey, command.idempotencyKey))).limit(1);
+      if (existing) { if (existing.commandSummary !== digest) throw new RecommendationFeedbackError("IDEMPOTENCY_CONFLICT"); return existing; }
+      const [proposal] = await tx.select().from(calibrationProposals).where(and(eq(calibrationProposals.userId, input.userId), eq(calibrationProposals.id, input.proposalId), eq(calibrationProposals.status, "pending"))).limit(1);
+      if (!proposal) throw new RecommendationFeedbackError("PROPOSAL_NOT_FOUND"); if (proposal.version !== command.expectedVersion) throw new RecommendationFeedbackError("VERSION_CONFLICT");
+      const [latest] = await tx.select().from(calibrationProposalRevisions).where(and(eq(calibrationProposalRevisions.userId, input.userId), eq(calibrationProposalRevisions.proposalId, proposal.id))).orderBy(desc(calibrationProposalRevisions.revisionNumber)).limit(1);
+      const [activeRule] = await tx.select({ config: recommendationRuleVersions.config, version: recommendationRuleVersions.version }).from(recommendationRuleVersions).where(and(eq(recommendationRuleVersions.userId, input.userId), eq(recommendationRuleVersions.targetId, proposal.targetId))).orderBy(desc(recommendationRuleVersions.version)).limit(1);
+      const [baseRule] = latest && latest.baseRuleVersion !== 0 ? await tx.select({ config: recommendationRuleVersions.config }).from(recommendationRuleVersions).where(and(eq(recommendationRuleVersions.userId, input.userId), eq(recommendationRuleVersions.targetId, proposal.targetId), eq(recommendationRuleVersions.version, latest.baseRuleVersion))).limit(1) : [];
+      if (!latest || (latest.baseRuleVersion !== 0 && !baseRule)) throw new RecommendationFeedbackError("RULE_VERSION_CONFLICT");
+      const active = RecommendationRuleConfigSchema.parse(activeRule?.config ?? defaultConfig); const current = effectiveProposalRule(RecommendationRuleConfigSchema.parse(baseRule?.config ?? defaultConfig), RecommendationRuleConfigSchema.parse(latest.ruleConfig), active);
+      if (latest.baseRuleVersion === (activeRule?.version ?? 0) || !Object.keys(ruleDiff(active, current)).length) throw new RecommendationFeedbackError("PROPOSAL_NO_EFFECT");
+      const [revision] = await tx.insert(calibrationProposalRevisions).values({ id: deps.id(), userId: input.userId, proposalId: proposal.id, revisionNumber: latest.revisionNumber + 1, baseRuleVersion: activeRule?.version ?? 0, strategy: latest.strategy, ruleConfig: current, impactPreview: impactPreview(active, current, []), idempotencyKey: command.idempotencyKey, commandSummary: digest, createdAt: deps.clock() }).returning();
+      await tx.update(calibrationProposals).set({ version: proposal.version + 1, updatedAt: deps.clock() }).where(and(eq(calibrationProposals.userId, input.userId), eq(calibrationProposals.id, proposal.id), eq(calibrationProposals.version, proposal.version)));
+      return revision;
+    });
+  }
+  return { recordDecision, reviseCalibrationProposal, rebaseCalibrationProposal, resolveCalibrationProposal };
 }
 
 export function createRecommendationFeedbackQueries(deps: { db: Database }) {

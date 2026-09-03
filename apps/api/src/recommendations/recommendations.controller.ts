@@ -1,6 +1,6 @@
 import { Body, Controller, Get, HttpStatus, Inject, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { ApiBearerAuth, ApiNotFoundResponse, ApiUnauthorizedResponse } from "@nestjs/swagger";
-import { CalibrationProposalResolutionCommandSchema, CalibrationProposalRevisionCommandSchema, RecommendationDecisionCommandSchema, RecommendationExclusionPageSchema, RecommendationListHistoryPageSchema, RecommendationListSchema } from "@job-copilot/contracts/recommendations";
+import { CalibrationProposalRebaseCommandSchema, CalibrationProposalResolutionCommandSchema, CalibrationProposalRevisionCommandSchema, RecommendationDecisionCommandSchema, RecommendationExclusionPageSchema, RecommendationListHistoryPageSchema, RecommendationListSchema } from "@job-copilot/contracts/recommendations";
 import type { FastifyRequest } from "fastify";
 import { createZodDto, ZodResponse } from "nestjs-zod";
 import { z } from "zod";
@@ -16,6 +16,7 @@ class RecommendationListExclusionsQueryDto extends createZodDto(z.object({ targe
 class RecommendationListIdParamDto extends createZodDto(z.object({ recommendationListId: z.uuid() }).strict()) {}
 class StartRecommendationReevaluationDto extends createZodDto(z.object({ targetId: z.uuid(), opportunityId: z.uuid(), idempotencyKey: z.uuid() }).strict()) {}
 class CalibrationProposalRevisionDto extends createZodDto(CalibrationProposalRevisionCommandSchema) {}
+class CalibrationProposalRebaseDto extends createZodDto(CalibrationProposalRebaseCommandSchema) {}
 class CalibrationProposalResolutionDto extends createZodDto(CalibrationProposalResolutionCommandSchema) {}
 class CalibrationProposalIdParamDto extends createZodDto(z.object({ id: z.uuid() }).strict()) {}
 
@@ -67,6 +68,12 @@ export class RecommendationsController {
   @Post("calibration-proposals/:id/revisions")
   async reviseProposal(@Req() request: FastifyRequest, @Param() params: CalibrationProposalIdParamDto, @Body() body: CalibrationProposalRevisionDto) {
     try { return await this.feedback.reviseCalibrationProposal({ userId: request.authenticatedAccount!.userId, proposalId: params.id, command: body }); }
+    catch (error) { throw feedbackException(error); }
+  }
+
+  @Post("calibration-proposals/:id/rebases")
+  async rebaseProposal(@Req() request: FastifyRequest, @Param() params: CalibrationProposalIdParamDto, @Body() body: CalibrationProposalRebaseDto) {
+    try { return await this.feedback.rebaseCalibrationProposal({ userId: request.authenticatedAccount!.userId, proposalId: params.id, command: body }); }
     catch (error) { throw feedbackException(error); }
   }
 
