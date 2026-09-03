@@ -19,7 +19,7 @@ function displayValue(field: string, input: unknown) {
   if (field === "excludedOpportunityIds") return `${(input as string[]).length} 个岗位`;
   return String(input);
 }
-function readModelSnapshot(proposal: CalibrationProposal) { return `${proposal.version}:${proposal.revision.revisionNumber}:${proposal.stale}:${proposal.reviewState}`; }
+function readModelSnapshot(proposal: CalibrationProposal) { return `${proposal.version}:${proposal.revision.revisionNumber}:${proposal.reviewState}`; }
 
 function ProposalOperationControls({ proposal, pending, locked, submit, reviseAction, rebaseAction, resolveAction }: { proposal: CalibrationProposal; pending: boolean; locked: boolean; submit: (event: FormEvent<HTMLFormElement>, proposal: CalibrationProposal, action: SubmitAction, success: string) => void; reviseAction: Action; rebaseAction: Action; resolveAction: Action }) {
   // 组件以 proposalId + version 为 key 挂载：同一版本的未知结果重试复用 key，版本推进后才换 key。
@@ -38,7 +38,7 @@ function ProposalOperationControls({ proposal, pending, locked, submit, reviseAc
     <form onSubmit={(event) => submit(event, proposal, resolveAction.bind(null, proposal.proposalId), "校准建议已处理。")} className="flex flex-wrap gap-2">
       <input type="hidden" name="expectedVersion" value={proposal.version} />
       <input type="hidden" name="idempotencyKey" value={resolutionIdempotencyKey} />
-      <button className="workbench-touch-target" disabled={pending || locked || proposal.stale || proposal.reviewState === "covered" || proposal.reviewState === "unrebasable"} type="submit" name="action" value="approved">批准建议</button>
+      <button className="workbench-touch-target" disabled={pending || locked || proposal.reviewState !== "current"} type="submit" name="action" value="approved">批准建议</button>
       <button className="workbench-touch-target" disabled={pending || locked} type="submit" name="action" value="rejected">拒绝建议</button>
     </form>
   </>;

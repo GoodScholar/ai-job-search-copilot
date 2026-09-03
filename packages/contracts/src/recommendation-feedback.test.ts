@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CalibrationProposalRevisionCommandSchema,
   CalibrationProposalRebaseCommandSchema,
+  CalibrationProposalCommandResponseSchema,
   CalibrationProposalSchema,
   RecommendationDecisionCommandSchema,
   RecommendationDecisionSchema,
@@ -68,11 +69,27 @@ describe("推荐反馈契约", () => {
     expect(DeepMatchAgentRunSourceScopeSchema.safeParse({ kind: "deep_match", trigger: "manual", opportunityId: "00000000-0000-4000-8000-000000000001", discoveryRunId: null, initialized: true, selectionExclusions: [], recommendationRuleConfig: { minimumOverallScore: 60, minimumEvidenceDimensions: 2, requiredEvidenceDimensions: ["skills", "skills"], excludedOpportunityIds: [] } }).success).toBe(false);
   });
 
-  it("校准建议公开安全的 stale 审核状态而不暴露规则内部标识", () => {
-    expect(CalibrationProposalSchema.safeParse({
+  it("校准建议以单一判别审核状态表达合法的 pending 与已解决组合", () => {
+    const base = {
       proposalId: "00000000-0000-4000-8000-000000000010", targetId: "00000000-0000-4000-8000-000000000011", reason: "LOCATION", status: "pending", version: 1, evidenceCount: 3,
-      stale: true, reviewState: "stale_rebase_required", availableStrategies: ["exclude_evidence_opportunities"],
       revision: { revisionId: "00000000-0000-4000-8000-000000000012", revisionNumber: 1, strategy: "require_related_evidence", ruleConfig: { minimumOverallScore: 91, minimumEvidenceDimensions: 0, requiredEvidenceDimensions: ["location_logistics"], excludedOpportunityIds: [] }, impactPreview: { sampleSize: 3, estimatedAffectedCount: 2, ruleDiff: { requiredEvidenceDimensions: { from: [], to: ["location_logistics"] } } } },
-    }).success).toBe(true);
+    };
+    for (const reviewState of ["current", "stale_rebase_required", "covered", "unrebasable"] as const) {
+      expect(CalibrationProposalSchema.safeParse({ ...base, reviewState, availableStrategies: reviewState === "current" ? ["exclude_evidence_opportunities"] : [] }).success).toBe(true);
+    }
+    for (const status of ["approved", "rejected"] as const) {
+      expect(CalibrationProposalSchema.safeParse({ ...base, status, reviewState: "resolved", availableStrategies: [] }).success).toBe(true);
+    }
+    expect(CalibrationProposalSchema.safeParse({ ...base, status: "approved", reviewState: "current", availableStrategies: [] }).success).toBe(false);
+    expect(CalibrationProposalSchema.safeParse({ ...base, reviewState: "resolved", availableStrategies: [] }).success).toBe(false);
+    expect(CalibrationProposalSchema.safeParse({ ...base, status: "rejected", reviewState: "resolved", availableStrategies: ["exclude_evidence_opportunities"] }).success).toBe(false);
+    expect(CalibrationProposalSchema.safeParse({ ...base, reviewState: "stale_rebase_required", availableStrategies: [], stale: false }).success).toBe(false);
+  });
+
+  it("校准写命令只接受最小严格的安全响应", () => {
+    const response = { proposalId: "00000000-0000-4000-8000-000000000010", revisionId: "00000000-0000-4000-8000-000000000012", revisionNumber: 2 };
+    expect(CalibrationProposalCommandResponseSchema.safeParse(response).success).toBe(true);
+    expect(CalibrationProposalCommandResponseSchema.safeParse({ ...response, userId: "00000000-0000-4000-8000-000000000013" }).success).toBe(false);
+    expect(CalibrationProposalCommandResponseSchema.safeParse({ proposalId: response.proposalId, revisionId: response.revisionId }).success).toBe(false);
   });
 });

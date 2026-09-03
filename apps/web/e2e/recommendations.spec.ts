@@ -328,9 +328,9 @@ test("交错批准后立即锁定过期建议，刷新读模型并重新计算�
   await expect(page.getByRole("heading", { name: "校准建议" })).toBeVisible();
   const beforeRace = await request.get(`${apiBaseUrl}/v1/recommendations/calibration-proposals?targetId=${account.targetId}`, { headers: { authorization: `Bearer ${account.token}` } });
   expect(beforeRace.status()).toBe(200);
-  const proposals = await beforeRace.json() as Array<{ proposalId: string; reason: string; version: number; stale: boolean }>;
+  const proposals = await beforeRace.json() as Array<{ proposalId: string; reason: string; version: number; reviewState: string }>;
   const p1 = proposals.find((proposal) => proposal.reason === "SALARY")!; const p2 = proposals.find((proposal) => proposal.reason === "LOCATION")!;
-  expect(p2.stale).toBe(false);
+  expect(p2.reviewState).toBe("current");
   const backgroundApproval = await request.post(`${apiBaseUrl}/v1/recommendations/calibration-proposals/${p1.proposalId}/resolutions`, { headers: { authorization: `Bearer ${account.token}` }, data: { action: "approved", expectedVersion: p1.version, idempotencyKey: crypto.randomUUID() } });
   expect(backgroundApproval.status()).toBe(201);
   const locationProposal = page.locator("article").filter({ has: page.getByText("因“地点或工作方式不合适”产生的建议") });
@@ -343,8 +343,8 @@ test("交错批准后立即锁定过期建议，刷新读模型并重新计算�
   if (info.project.name === "Desktop Chrome") await rebase.click(); else await rebase.tap();
   await expect.poll(async () => {
     const response = await request.get(`${apiBaseUrl}/v1/recommendations/calibration-proposals?targetId=${account.targetId}`, { headers: { authorization: `Bearer ${account.token}` } });
-    return (await response.json() as Array<{ proposalId: string; version: number; stale: boolean }>).find((proposal) => proposal.proposalId === p2.proposalId);
-  }).toMatchObject({ version: p2.version + 1, stale: false });
+    return (await response.json() as Array<{ proposalId: string; version: number; reviewState: string }>).find((proposal) => proposal.proposalId === p2.proposalId);
+  }).toMatchObject({ version: p2.version + 1, reviewState: "current" });
   await expect(approve).toBeEnabled();
   if (info.project.name === "Desktop Chrome") await approve.click(); else await approve.tap();
   await expect.poll(async () => { const client = new Client({ connectionString: databaseUrl }); await client.connect(); try { return (await client.query("select count(*) as rules from recommendation_rule_versions where user_id = $1", [account.userId])).rows[0]!.rules; } finally { await client.end(); } }).toBe("2");

@@ -5,7 +5,7 @@ import { CalibrationProposals } from "./calibration-proposals";
 const router = vi.hoisted(() => ({ refresh: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
 
-const proposal = { proposalId: "00000000-0000-4000-8000-000000000001", targetId: "00000000-0000-4000-8000-000000000002", reason: "LOCATION" as const, status: "pending" as const, version: 1, evidenceCount: 3, stale: false, reviewState: "current" as const, availableStrategies: ["require_related_evidence", "exclude_evidence_opportunities"] as Array<"require_related_evidence" | "exclude_evidence_opportunities" | "raise_quality_bar">, revision: { revisionId: "00000000-0000-4000-8000-000000000003", revisionNumber: 1, strategy: "raise_quality_bar" as const, ruleConfig: { minimumOverallScore: 75, minimumEvidenceDimensions: 2, requiredEvidenceDimensions: [], excludedOpportunityIds: [] }, impactPreview: { sampleSize: 3, estimatedAffectedCount: 2, ruleDiff: { minimumOverallScore: { from: 60, to: 75 } } } } };
+const proposal = { proposalId: "00000000-0000-4000-8000-000000000001", targetId: "00000000-0000-4000-8000-000000000002", reason: "LOCATION" as const, status: "pending" as const, version: 1, evidenceCount: 3, reviewState: "current" as const, availableStrategies: ["require_related_evidence", "exclude_evidence_opportunities"] as Array<"require_related_evidence" | "exclude_evidence_opportunities" | "raise_quality_bar">, revision: { revisionId: "00000000-0000-4000-8000-000000000003", revisionNumber: 1, strategy: "raise_quality_bar" as const, ruleConfig: { minimumOverallScore: 75, minimumEvidenceDimensions: 2, requiredEvidenceDimensions: [], excludedOpportunityIds: [] }, impactPreview: { sampleSize: 3, estimatedAffectedCount: 2, ruleDiff: { minimumOverallScore: { from: 60, to: 75 } } } } };
 
 it("展示校准证据、规则差异、影响预览与可访问的成功状态", async () => {
   const revise = vi.fn().mockResolvedValue(undefined); const resolve = vi.fn().mockResolvedValue(undefined);
@@ -67,7 +67,7 @@ it("将 Server Action 失败映射为屏幕阅读器可读错误", async () => {
 });
 
 it("过期建议禁用批准并指向重新计算恢复动作", () => {
-  render(<CalibrationProposals proposals={[{ ...proposal, stale: true, reviewState: "stale_rebase_required", revision: { ...proposal.revision, impactPreview: { sampleSize: 3, estimatedAffectedCount: 1, ruleDiff: { minimumOverallScore: { from: 91, to: 95 } } } } }]} reviseAction={vi.fn()} resolveAction={vi.fn()} />);
+  render(<CalibrationProposals proposals={[{ ...proposal, reviewState: "stale_rebase_required", revision: { ...proposal.revision, impactPreview: { sampleSize: 3, estimatedAffectedCount: 1, ruleDiff: { minimumOverallScore: { from: 91, to: 95 } } } } }]} reviseAction={vi.fn()} resolveAction={vi.fn()} />);
   expect(screen.getByRole("button", { name: "批准建议" })).toBeDisabled();
   expect(screen.getByRole("status")).toHaveTextContent("先重新计算后再批准");
   expect(screen.getByText(/最低匹配分：91 → 95/u)).toBeInTheDocument();
@@ -75,9 +75,11 @@ it("过期建议禁用批准并指向重新计算恢复动作", () => {
 
 it("已解决建议只展示历史状态，不展示恢复提示或操作控件", () => {
   for (const status of ["approved", "rejected"] as const) {
-    const { unmount } = render(<CalibrationProposals proposals={[{ ...proposal, status, stale: true, reviewState: "covered", availableStrategies: [] }]} reviseAction={vi.fn()} resolveAction={vi.fn()} />);
+    const { unmount } = render(<CalibrationProposals proposals={[{ ...proposal, status, reviewState: "resolved", availableStrategies: [] }]} reviseAction={vi.fn()} resolveAction={vi.fn()} />);
     expect(screen.queryByText(/当前规则覆盖|重新计算|无法安全重算/u)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /建议/u })).not.toBeInTheDocument();
+    expect(screen.getByText(/最低匹配分：60 → 75/u)).toBeInTheDocument();
+    expect(screen.getByText(/预计会影响 2 \/ 3 个样本/u)).toBeInTheDocument();
     unmount();
   }
 });
@@ -94,7 +96,7 @@ it("批准遇到规则并发冲突时立即锁定旧操作并刷新，收到新�
   expect(screen.getByRole("button", { name: "批准建议" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "修改建议" })).toBeDisabled();
 
-  view.rerender(<CalibrationProposals proposals={[{ ...proposal, stale: true, reviewState: "stale_rebase_required", availableStrategies: [], revision: { ...proposal.revision, revisionNumber: 2, impactPreview: { sampleSize: 3, estimatedAffectedCount: 0, ruleDiff: { requiredEvidenceDimensions: { from: [], to: ["location_logistics"] } } } } }]} reviseAction={revise} rebaseAction={rebase} resolveAction={resolve} />);
+  view.rerender(<CalibrationProposals proposals={[{ ...proposal, reviewState: "stale_rebase_required", availableStrategies: [], revision: { ...proposal.revision, revisionNumber: 2, impactPreview: { sampleSize: 3, estimatedAffectedCount: 0, ruleDiff: { requiredEvidenceDimensions: { from: [], to: ["location_logistics"] } } } } }]} reviseAction={revise} rebaseAction={rebase} resolveAction={resolve} />);
   await waitFor(() => expect(screen.getByRole("button", { name: "重新计算" })).toBeEnabled());
   expect(screen.getByRole("button", { name: "批准建议" })).toBeDisabled();
   expect(screen.getByRole("button", { name: "修改建议" })).toBeDisabled();

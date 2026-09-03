@@ -332,6 +332,27 @@ it("拒绝四个求职目标 API 的无效成功响应", async () => {
   await expect(api.deactivateJobTarget(sessionToken, targetId, { expectedVersion: 1 })).rejects.toMatchObject({ kind: "invalid_response" });
 });
 
+it("严格解析 revise 与 rebase 的最小安全响应", async () => {
+  const proposalId = "00000000-0000-4000-8000-000000000001";
+  const safe = { proposalId, revisionId: "00000000-0000-4000-8000-000000000002", revisionNumber: 2 };
+  const fetchImpl = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response(JSON.stringify(safe), { status: 201 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(safe), { status: 201 }));
+  const api = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+  await expect(api.reviseCalibrationProposal(sessionToken, proposalId, { strategy: "raise_quality_bar", expectedVersion: 1, idempotencyKey: "00000000-0000-4000-8000-000000000003" })).resolves.toEqual(safe);
+  await expect(api.rebaseCalibrationProposal(sessionToken, proposalId, { expectedVersion: 2, idempotencyKey: "00000000-0000-4000-8000-000000000004" })).resolves.toEqual(safe);
+});
+
+it("拒绝 revise 与 rebase 的多余或缺失成功字段", async () => {
+  const proposalId = "00000000-0000-4000-8000-000000000001";
+  const fetchImpl = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response(JSON.stringify({ proposalId, revisionId: "00000000-0000-4000-8000-000000000002", revisionNumber: 2, userId: "00000000-0000-4000-8000-000000000003" }), { status: 201 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ proposalId, revisionId: "00000000-0000-4000-8000-000000000002" }), { status: 201 }));
+  const api = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+  await expect(api.reviseCalibrationProposal(sessionToken, proposalId, { strategy: "raise_quality_bar", expectedVersion: 1, idempotencyKey: "00000000-0000-4000-8000-000000000003" })).rejects.toMatchObject({ kind: "invalid_response" });
+  await expect(api.rebaseCalibrationProposal(sessionToken, proposalId, { expectedVersion: 2, idempotencyKey: "00000000-0000-4000-8000-000000000004" })).rejects.toMatchObject({ kind: "invalid_response" });
+});
+
 it("通过 bearer 调用五个目标公司 Watchlist API，并严格返回共享概览 DTO", async () => {
   const fetchImpl = vi.fn<typeof fetch>()
     .mockResolvedValueOnce(new Response(JSON.stringify(companyWatchlistOverview), { status: 200 }))

@@ -86,8 +86,16 @@ describe("authenticated workbench HTTP API", () => {
       if (!previous) { feedbackIdempotency.set(input.command.idempotencyKey, body); feedbackWrites += 1; }
       return { decision: { status: input.command.decision, version: 1 }, proposal: null };
     },
-    async reviseCalibrationProposal(input: { proposalId: string }) { if (input.proposalId === "70000000-0000-4000-8000-000000000006") throw { code: "PROPOSAL_NO_EFFECT" }; throw { code: "PROPOSAL_NOT_FOUND" }; },
-    async rebaseCalibrationProposal(input: { proposalId: string }) { if (input.proposalId === "70000000-0000-4000-8000-000000000006") throw { code: "RULE_VERSION_CONFLICT" }; throw { code: "PROPOSAL_NOT_FOUND" }; },
+    async reviseCalibrationProposal(input: { proposalId: string }) {
+      if (input.proposalId === "70000000-0000-4000-8000-000000000006") throw { code: "PROPOSAL_NO_EFFECT" };
+      if (input.proposalId === "70000000-0000-4000-8000-000000000009") return { proposalId: input.proposalId, revisionId: "70000000-0000-4000-8000-000000000011", revisionNumber: 2 };
+      throw { code: "PROPOSAL_NOT_FOUND" };
+    },
+    async rebaseCalibrationProposal(input: { proposalId: string }) {
+      if (input.proposalId === "70000000-0000-4000-8000-000000000006") throw { code: "RULE_VERSION_CONFLICT" };
+      if (input.proposalId === "70000000-0000-4000-8000-000000000010") return { proposalId: input.proposalId, revisionId: "70000000-0000-4000-8000-000000000012", revisionNumber: 3 };
+      throw { code: "PROPOSAL_NOT_FOUND" };
+    },
     async resolveCalibrationProposal() { throw { code: "PROPOSAL_NOT_FOUND" }; },
   };
   const feedbackQueries = { async listCalibrationProposals() { return []; } };
@@ -323,6 +331,23 @@ describe("authenticated workbench HTTP API", () => {
     const conflict = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/recommendations/calibration-proposals/70000000-0000-4000-8000-000000000006/rebases", headers, payload: { expectedVersion: 1, idempotencyKey: "70000000-0000-4000-8000-000000000008" } });
     expect(malformed.statusCode).toBe(400);
     expect(conflict.statusCode).toBe(409); expect(conflict.json()).toMatchObject({ code: "RULE_VERSION_CONFLICT" });
+  });
+
+  it("校准 revise/rebase 成功响应只返回严格安全标识，幂等重放保持完全相同", async () => {
+    const session = await createSession(app, "recommendation-command-response-http");
+    const headers = { ...bearer(session.sessionToken), "content-type": "application/json" };
+    const cases = [
+      { path: "/v1/recommendations/calibration-proposals/70000000-0000-4000-8000-000000000009/revisions", payload: { strategy: "raise_quality_bar", expectedVersion: 1, idempotencyKey: "70000000-0000-4000-8000-000000000013" }, expected: { proposalId: "70000000-0000-4000-8000-000000000009", revisionId: "70000000-0000-4000-8000-000000000011", revisionNumber: 2 } },
+      { path: "/v1/recommendations/calibration-proposals/70000000-0000-4000-8000-000000000010/rebases", payload: { expectedVersion: 2, idempotencyKey: "70000000-0000-4000-8000-000000000014" }, expected: { proposalId: "70000000-0000-4000-8000-000000000010", revisionId: "70000000-0000-4000-8000-000000000012", revisionNumber: 3 } },
+    ];
+    for (const command of cases) {
+      const first = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: command.path, headers, payload: command.payload });
+      const replay = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: command.path, headers, payload: command.payload });
+      expect(first.statusCode).toBe(201); expect(replay.statusCode).toBe(201);
+      expect(first.json()).toEqual(command.expected); expect(replay.json()).toEqual(command.expected);
+      expect(Object.keys(first.json()).sort()).toEqual(["proposalId", "revisionId", "revisionNumber"]);
+      expect(first.body).not.toMatch(/userId|idempotencyKey|commandSummary|createdAt|baseRuleVersion/u);
+    }
   });
 
   it("authenticates and strictly validates immutable job triage routes", async () => {

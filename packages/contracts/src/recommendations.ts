@@ -22,9 +22,16 @@ export const CalibrationImpactPreviewSchema = z.object({ sampleSize: z.int().non
 /** Revision accepts only a user-selected strategy; config and preview are server-derived. */
 export const CalibrationProposalRevisionCommandSchema = z.object({ strategy: CalibrationStrategySchema, idempotencyKey: z.uuid(), expectedVersion: z.int().positive() }).strict();
 export const CalibrationProposalRebaseCommandSchema = z.object({ idempotencyKey: z.uuid(), expectedVersion: z.int().positive() }).strict();
+/** Successful revise/rebase responses intentionally expose only public command identifiers. */
+export const CalibrationProposalCommandResponseSchema = z.object({ proposalId: z.uuid(), revisionId: z.uuid(), revisionNumber: z.int().positive() }).strict();
 export const CalibrationProposalResolutionCommandSchema = z.object({ action: z.enum(["approved", "rejected"]), idempotencyKey: z.uuid(), expectedVersion: z.int().positive() }).strict();
-export const CalibrationProposalReviewStateSchema = z.enum(["current", "stale_rebase_required", "covered", "unrebasable"]);
-export const CalibrationProposalSchema = z.object({ proposalId: z.uuid(), targetId: z.uuid(), reason: RecommendationIgnoreReasonSchema, status: z.enum(["pending", "approved", "rejected"]), version: z.int().positive(), evidenceCount: z.int().positive(), stale: z.boolean(), reviewState: CalibrationProposalReviewStateSchema, availableStrategies: z.array(CalibrationStrategySchema), revision: z.object({ revisionId: z.uuid(), revisionNumber: z.int().positive(), strategy: CalibrationStrategySchema, ruleConfig: RecommendationRuleConfigSchema, impactPreview: CalibrationImpactPreviewSchema }).strict() }).strict();
+export const CalibrationProposalReviewStateSchema = z.enum(["current", "stale_rebase_required", "covered", "unrebasable", "resolved"]);
+export const CalibrationProposalSchema = z.object({ proposalId: z.uuid(), targetId: z.uuid(), reason: RecommendationIgnoreReasonSchema, status: z.enum(["pending", "approved", "rejected"]), version: z.int().positive(), evidenceCount: z.int().positive(), reviewState: CalibrationProposalReviewStateSchema, availableStrategies: z.array(CalibrationStrategySchema), revision: z.object({ revisionId: z.uuid(), revisionNumber: z.int().positive(), strategy: CalibrationStrategySchema, ruleConfig: RecommendationRuleConfigSchema, impactPreview: CalibrationImpactPreviewSchema }).strict() }).strict().superRefine((value, context) => {
+  const isResolved = value.status === "approved" || value.status === "rejected";
+  if (isResolved && value.reviewState !== "resolved") context.addIssue({ code: "custom", path: ["reviewState"], message: "已解决建议必须使用 resolved 状态" });
+  if (!isResolved && value.reviewState === "resolved") context.addIssue({ code: "custom", path: ["reviewState"], message: "pending 建议不可使用 resolved 状态" });
+  if (isResolved && value.availableStrategies.length) context.addIssue({ code: "custom", path: ["availableStrategies"], message: "已解决建议不可提供恢复策略" });
+});
 
 /** Single acceptance predicate used for previews and staged deep-match publication. */
 export function acceptsRecommendationRule(assessment: DeepMatchAssessment, config: z.infer<typeof RecommendationRuleConfigSchema>): boolean {
@@ -69,5 +76,6 @@ export type RecommendationDecisionCommand = z.infer<typeof RecommendationDecisio
 export type RecommendationRuleConfig = z.infer<typeof RecommendationRuleConfigSchema>;
 export type CalibrationProposalRevisionCommand = z.infer<typeof CalibrationProposalRevisionCommandSchema>;
 export type CalibrationProposalRebaseCommand = z.infer<typeof CalibrationProposalRebaseCommandSchema>;
+export type CalibrationProposalCommandResponse = z.infer<typeof CalibrationProposalCommandResponseSchema>;
 export type CalibrationProposalResolutionCommand = z.infer<typeof CalibrationProposalResolutionCommandSchema>;
 export type CalibrationProposal = z.infer<typeof CalibrationProposalSchema>;
