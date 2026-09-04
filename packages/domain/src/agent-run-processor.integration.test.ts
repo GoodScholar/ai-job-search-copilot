@@ -1283,7 +1283,7 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({ adapter: "greenhouse", usage: { toolCalls: 3, sourceRequests: 3, results: 1 } });
   });
 
-  it("v3 healthy + hard_failed 保留成功来源并原子写入一项来源关注 Inbox", async () => {
+  it("v3 healthy + hard_failed 保留成功来源并以失败来源的 owner-bound health check 写入 Inbox", async () => {
     const job = await run();
     const healthy = { sourceId: "greenhouse:healthy", watchlistItemId: crypto.randomUUID(), canonicalCompanyName: "Healthy", careersUrl: "https://boards.greenhouse.io/healthy", allowedDomains: ["boards-api.greenhouse.io"], boardToken: "healthy" };
     const failed = { sourceId: "greenhouse:failed", watchlistItemId: crypto.randomUUID(), canonicalCompanyName: "Failed", careersUrl: "https://boards.greenhouse.io/failed", allowedDomains: ["boards-api.greenhouse.io"], boardToken: "failed" };
@@ -1310,7 +1310,8 @@ describe("AgentRunProcessor checkpoints", () => {
       .process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("completed");
     await expect(database.select({ status: agentRuns.status, terminationKind: agentRuns.terminationKind, resultCount: agentRuns.resultCount }).from(agentRuns).where(eq(agentRuns.id, job.runId))).resolves.toEqual([{ status: "completed", terminationKind: "completed_with_source_issues", resultCount: 1 }]);
     await expect(database.select({ status: jobSourceHealthChecks.status }).from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, job.runId))).resolves.toEqual(expect.arrayContaining([{ status: "healthy" }, { status: "hard_failed" }]));
-    await expect(database.select({ kind: agentInboxItems.kind, reasonCode: agentInboxItems.reasonCode }).from(agentInboxItems).where(eq(agentInboxItems.runId, job.runId))).resolves.toEqual([{ kind: "source_attention", reasonCode: "SOURCE_HEALTH_ATTENTION" }]);
+    const [failedCheck] = await database.select({ id: jobSourceHealthChecks.id }).from(jobSourceHealthChecks).where(and(eq(jobSourceHealthChecks.runId, job.runId), eq(jobSourceHealthChecks.sourceId, failed.sourceId)));
+    await expect(database.select({ kind: agentInboxItems.kind, reasonCode: agentInboxItems.reasonCode, watchlistItemId: agentInboxItems.watchlistItemId, sourceHealthCheckId: agentInboxItems.sourceHealthCheckId }).from(agentInboxItems).where(eq(agentInboxItems.runId, job.runId))).resolves.toEqual([{ kind: "source_attention", reasonCode: "SOURCE_HEALTH_ATTENTION", watchlistItemId: failed.watchlistItemId, sourceHealthCheckId: failedCheck!.id }]);
     await expect(database.select({ availability: jobSourcePostings.availability }).from(jobSourcePostings).where(eq(jobSourcePostings.id, historicalPostingId))).resolves.toEqual([{ availability: "open" }]);
     await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({ sourceChecks: expect.arrayContaining([expect.objectContaining({ status: "healthy" }), expect.objectContaining({ status: "hard_failed" })]) });
   });
@@ -1399,7 +1400,7 @@ describe("AgentRunProcessor checkpoints", () => {
     const persistedAvailability = await Promise.all(sources.map(async (source) => ({ sourceId: source.sourceId, availability: (await database.select({ availability: jobSourcePostings.availability }).from(jobSourcePostings).where(eq(jobSourcePostings.id, historicalPostingIds.get(source.sourceId)!)))[0]!.availability })));
     expect(persistedAvailability.sort((left, right) => left.sourceId.localeCompare(right.sourceId))).toEqual(sources.map((source) => ({ sourceId: source.sourceId, availability: healthFacts[source.outcome].availability })).sort((left, right) => left.sourceId.localeCompare(right.sourceId)));
     const issueCount = outcomes.filter((sourceOutcome) => sourceOutcome !== "healthy" && sourceOutcome !== "zero_valid_results").length;
-    await expect(database.select({ kind: agentInboxItems.kind }).from(agentInboxItems).where(eq(agentInboxItems.runId, job.runId)).orderBy(asc(agentInboxItems.kind))).resolves.toEqual(terminationKind === "source_failed" ? [{ kind: "run_failed" }, { kind: "source_attention" }] : issueCount ? [{ kind: "source_attention" }] : []);
+    await expect(database.select({ kind: agentInboxItems.kind }).from(agentInboxItems).where(eq(agentInboxItems.runId, job.runId)).orderBy(asc(agentInboxItems.kind))).resolves.toEqual([...(terminationKind === "source_failed" ? [{ kind: "run_failed" }] : []), ...Array.from({ length: issueCount }, () => ({ kind: "source_attention" }))]);
     await expect(database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, job.runId))).resolves.toHaveLength(resultCount);
     if (terminationKind === "source_failed") {
       const [failedEvent] = await database.select({ sequence: agentRunEvents.sequence, runVersion: agentRunEvents.runVersion, eventType: agentRunEvents.eventType, data: agentRunEvents.data, createdAt: agentRunEvents.createdAt }).from(agentRunEvents)
