@@ -1,8 +1,8 @@
-import { and, count, countDistinct, desc, eq, inArray, or } from "drizzle-orm";
+import { and, count, desc, eq, inArray, or } from "drizzle-orm";
 import type { WorkbenchHome } from "@job-copilot/contracts/workbench";
 import { CompanyWatchlistItemSchema } from "@job-copilot/contracts/company-watchlists";
 import { classifyGreenhousePublicSource } from "@job-copilot/contracts/job-discovery-schedules";
-import { agentInboxItems, agentRuns, candidateFacts, companyWatchlistRevisions, companyWatchlists, jobAccounts, jobSourceHealthChecks, recommendationLists, type Database } from "@job-copilot/database";
+import { agentInboxItems, agentRuns, candidateFacts, companyWatchlistRevisions, companyWatchlists, jobAccounts, jobSourceHealthChecks, recommendationListItems, recommendationLists, type Database } from "@job-copilot/database";
 
 export class DomainError extends Error {
   constructor(public readonly code: "ACCOUNT_NOT_FOUND") {
@@ -62,6 +62,21 @@ async function countLatestEnabledSourceFailures(db: Database, userId: string): P
   return countFromDatabase(latest.filter(({ status }) => status === "parser_degraded" || status === "rate_limited" || status === "hard_failed").length, "来源失败");
 }
 
+async function countTodayRecommendationItems(db: Database, userId: string, localDate: string): Promise<number> {
+  const latestLists = await db.selectDistinctOn(
+    [recommendationLists.targetId],
+    { id: recommendationLists.id },
+  ).from(recommendationLists)
+    .where(and(eq(recommendationLists.userId, userId), eq(recommendationLists.localDate, localDate)))
+    .orderBy(recommendationLists.targetId, desc(recommendationLists.sequence), desc(recommendationLists.id));
+  if (latestLists.length === 0) return 0;
+  const [items] = await db.select({ count: count() }).from(recommendationListItems).where(and(
+    eq(recommendationListItems.userId, userId),
+    inArray(recommendationListItems.recommendationListId, latestLists.map(({ id }) => id)),
+  ));
+  return countFromDatabase(items?.count ?? 0, "今日推荐");
+}
+
 export function createWorkbenchHome(input: { db: Database; clock: () => Date }): GetWorkbenchHome {
   return async ({ userId }) => {
     const [account] = await input.db.select({ userId: jobAccounts.id })
@@ -76,14 +91,14 @@ export function createWorkbenchHome(input: { db: Database; clock: () => Date }):
       input.db.select({ count: count() }).from(candidateFacts).where(and(eq(candidateFacts.userId, userId), eq(candidateFacts.confirmationStatus, "pending"))),
       input.db.select({ count: count() }).from(agentRuns).where(and(eq(agentRuns.userId, userId), inArray(agentRuns.status, ["queued", "running", "paused"]))),
       input.db.select({ count: count() }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.status, "failed"))),
-      input.db.select({ count: countDistinct(recommendationLists.targetId) }).from(recommendationLists).where(and(eq(recommendationLists.userId, userId), eq(recommendationLists.localDate, shanghaiDate(input.clock)))),
+      countTodayRecommendationItems(input.db, userId, shanghaiDate(input.clock)),
       input.db.select({ count: count() }).from(agentInboxItems).where(and(eq(agentInboxItems.userId, userId), inArray(agentInboxItems.status, ["unread", "read"]))),
       countLatestEnabledSourceFailures(input.db, userId),
     ]);
     return {
       account,
       summary: {
-        todayRecommendations: countFromDatabase(recommendations[0]?.count ?? 0, "今日推荐"),
+        todayRecommendations: recommendations,
         pendingFacts: countFromDatabase(facts[0]?.count ?? 0, "待确认候选事实"),
         activeAgentRuns: countFromDatabase(activeRuns[0]?.count ?? 0, "活跃 Agent Run"),
         failedAgentRuns: countFromDatabase(failedRuns[0]?.count ?? 0, "失败 Agent Run"),

@@ -12,7 +12,14 @@ import {
   companyWatchlistRevisions,
   companyWatchlists,
   jobSourceHealthChecks,
+  jobMatchVersions,
+  jobOpportunities,
+  jobProfiles,
+  jobSourcePostingVersions,
+  jobSourcePostings,
   jobTargets,
+  jobTriageVersions,
+  recommendationListItems,
   recommendationLists,
   migrateDatabase,
   type Database,
@@ -188,7 +195,68 @@ describe("workbench home", () => {
 
     await expect(createWorkbenchHome({ db: database, clock: () => now })({ userId })).resolves.toEqual({
       account: { userId },
-      summary: { todayRecommendations: 2, pendingFacts: 1, activeAgentRuns: 3, failedAgentRuns: 1, sourceFailures: 2, pendingDecisions: 2, applications: 0, applicationsAvailable: false },
+      summary: { todayRecommendations: 0, pendingFacts: 1, activeAgentRuns: 3, failedAgentRuns: 1, sourceFailures: 2, pendingDecisions: 2, applications: 0, applicationsAvailable: false },
     });
+  });
+
+  it("只汇总上海当日每个目标最新清单中的推荐条目", async () => {
+    const userId = crypto.randomUUID();
+    const otherUserId = crypto.randomUUID();
+    const targetIds = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
+    const otherTargetId = crypto.randomUUID();
+    const now = new Date("2026-09-04T16:30:00.000Z");
+
+    await database.insert(jobAccounts).values([{ id: userId, status: "active" }, { id: otherUserId, status: "active" }]);
+    await database.insert(jobTargets).values([
+      { id: targetIds[0]!, userId, version: 1, priority: "primary", state: "active", activeSlot: null },
+      { id: targetIds[1]!, userId, version: 1, priority: "secondary", state: "active", activeSlot: 1 },
+      { id: targetIds[2]!, userId, version: 1, priority: "secondary", state: "active", activeSlot: 2 },
+      { id: otherTargetId, userId: otherUserId, version: 1, priority: "primary", state: "active", activeSlot: null },
+    ]);
+
+    async function createMatchContext(ownerId: string, targetId: string) {
+      const profileId = crypto.randomUUID();
+      const postingId = crypto.randomUUID();
+      const postingVersionId = crypto.randomUUID();
+      const opportunityId = crypto.randomUUID();
+      const triageVersionId = crypto.randomUUID();
+      const sourceHash = crypto.randomUUID().replaceAll("-", "").padEnd(64, "a");
+      await database.insert(jobProfiles).values({ id: profileId, userId: ownerId, version: 1, createdAt: now, updatedAt: now });
+      await database.insert(jobSourcePostings).values({ id: postingId, userId: ownerId, sourceType: "user_import", sourceIdentifier: sourceHash, sourceIdentity: { hash: sourceHash }, isOfficial: false, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
+      await database.insert(jobSourcePostingVersions).values({ id: postingVersionId, userId: ownerId, sourcePostingId: postingId, version: 1, contentSha256: sourceHash, rawContentSha256: sourceHash, rawObjectReference: { key: "safe" }, normalizedData: {}, retrievedAt: now, availability: "open", createdAt: now });
+      await database.insert(jobOpportunities).values({ id: opportunityId, userId: ownerId, importId: null, sourcePostingVersionId: postingVersionId, canonicalOpportunityId: null, dedupKey: sourceHash, company: "示例科技", title: "工程师", location: "上海", postedAt: null, deadline: null, description: "TypeScript", normalizedData: {}, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
+      await database.insert(jobTriageVersions).values({ id: triageVersionId, userId: ownerId, opportunityId, sourcePostingVersionId: postingVersionId, profileId, profileVersion: 1, targetId, targetVersion: 1, qualificationRuleVersion: "q1", coarseRuleVersion: "c1", overallVerdict: "pass", gateResults: {}, pendingItems: [], deadlineStatus: "valid", confidenceBasisPoints: 10_000, dimensionScores: {}, overallScore: 80, threshold: 70, sequence: 1, createdAt: now });
+      return async (sequence: number) => {
+        const id = crypto.randomUUID();
+        await database.insert(jobMatchVersions).values({ id, userId: ownerId, opportunityId, sourcePostingVersionId: postingVersionId, triageVersionId, profileId, profileVersion: 1, targetId, targetVersion: 1, ruleVersion: "r1", promptVersion: "p1", adapter: "fake", adapterVersion: "v1", model: "fake", outputSchemaVersion: "v1", overallScore: 80, displayBand: "worth_trying", assessment: {}, sequence, createdAt: now });
+        return id;
+      };
+    }
+
+    const ownerMatches = await createMatchContext(userId, targetIds[0]!);
+    const [firstMatchId, secondMatchId, thirdMatchId, fourthMatchId] = await Promise.all([ownerMatches(1), ownerMatches(2), ownerMatches(3), ownerMatches(4)]);
+    const otherMatches = await createMatchContext(otherUserId, otherTargetId);
+    const otherMatchId = await otherMatches(1);
+    const [firstOldListId, firstLatestListId, secondOldListId, secondLatestListId, thirdOldListId, thirdLatestListId, previousDateListId, otherListId] = Array.from({ length: 8 }, () => crypto.randomUUID());
+    await database.insert(recommendationLists).values([
+      { id: firstOldListId!, userId, targetId: targetIds[0]!, localDate: "2026-09-05", sequence: 1, createdAt: now },
+      { id: firstLatestListId!, userId, targetId: targetIds[0]!, localDate: "2026-09-05", sequence: 2, createdAt: now },
+      { id: secondOldListId!, userId, targetId: targetIds[1]!, localDate: "2026-09-05", sequence: 1, createdAt: now },
+      { id: secondLatestListId!, userId, targetId: targetIds[1]!, localDate: "2026-09-05", sequence: 2, createdAt: now },
+      { id: thirdOldListId!, userId, targetId: targetIds[2]!, localDate: "2026-09-05", sequence: 1, createdAt: now },
+      { id: thirdLatestListId!, userId, targetId: targetIds[2]!, localDate: "2026-09-05", sequence: 2, createdAt: now },
+      { id: previousDateListId!, userId, targetId: targetIds[0]!, localDate: "2026-09-04", sequence: 1, createdAt: now },
+      { id: otherListId!, userId: otherUserId, targetId: otherTargetId, localDate: "2026-09-05", sequence: 1, createdAt: now },
+    ]);
+    const recommendationItem = (recommendationListId: string, matchVersionId: string, ordinal: number, ownerId = userId) => ({ id: crypto.randomUUID(), userId: ownerId, recommendationListId, matchVersionId, ordinal, highlighted: false, createdAt: now });
+    await database.insert(recommendationListItems).values([
+      recommendationItem(firstOldListId!, firstMatchId!, 1), recommendationItem(firstOldListId!, secondMatchId!, 2),
+      recommendationItem(firstLatestListId!, thirdMatchId!, 1),
+      recommendationItem(secondOldListId!, firstMatchId!, 1), recommendationItem(secondLatestListId!, firstMatchId!, 1), recommendationItem(secondLatestListId!, secondMatchId!, 2), recommendationItem(secondLatestListId!, fourthMatchId!, 3),
+      recommendationItem(thirdOldListId!, thirdMatchId!, 1), recommendationItem(previousDateListId!, firstMatchId!, 1),
+      recommendationItem(otherListId!, otherMatchId, 1, otherUserId),
+    ]);
+
+    await expect(createWorkbenchHome({ db: database, clock: () => now })({ userId })).resolves.toMatchObject({ summary: { todayRecommendations: 4 } });
   });
 });
