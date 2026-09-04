@@ -238,6 +238,84 @@ describe("agent inbox", () => {
     await expect(inbox().act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: item.itemId, command: { actionId: crypto.randomUUID(), action: "resume_run" } })).resolves.toMatchObject({ applied: true, item: { status: "resolved" } });
   });
 
+  it("同一 actionId 的重叠成功调用只结算并审计一次", async () => {
+    const owner = await activeTarget();
+    const item = await openItem({ ...owner, kind: "decision_required", reasonCode: "AGENT_RUN_PAUSED" });
+    const actionId = crypto.randomUUID();
+    const [first, second] = await Promise.all([
+      inbox().act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: item.itemId, command: { actionId, action: "resume_run" } }),
+      inbox().act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: item.itemId, command: { actionId, action: "resume_run" } }),
+    ]);
+
+    expect(second).toEqual(first);
+    await expect(database.select({ outcome: agentInboxItemActions.outcome }).from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, owner.userId), eq(agentInboxItemActions.itemId, item.itemId), eq(agentInboxItemActions.actionId, actionId)))).resolves.toEqual([{ outcome: "applied" }]);
+    await expect(database.select().from(auditEvents).where(and(eq(auditEvents.userId, owner.userId), eq(auditEvents.resourceId, item.itemId), eq(auditEvents.eventType, "agent.inbox_action_applied")))).resolves.toHaveLength(1);
+  });
+
+  it("同一 actionId 的重叠失败调用只记录一次失败审计", async () => {
+    const owner = await activeTarget();
+    const item = await openItem({ ...owner, kind: "decision_required", reasonCode: "AGENT_RUN_PAUSED" });
+    const actionId = crypto.randomUUID();
+    const commandService = commands();
+    const failingInbox = createAgentInbox({
+      db: database,
+      commands: { start: commandService.start, async control() { throw new Error("control unavailable"); } },
+      auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+
+    const results = await Promise.allSettled([
+      failingInbox.act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: item.itemId, command: { actionId, action: "resume_run" } }),
+      failingInbox.act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: item.itemId, command: { actionId, action: "resume_run" } }),
+    ]);
+
+    expect(results.every((result) => result.status === "rejected" && result.reason.code === "AGENT_INBOX_ACTION_FAILED")).toBe(true);
+    await expect(database.select({ outcome: agentInboxItemActions.outcome }).from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, owner.userId), eq(agentInboxItemActions.itemId, item.itemId), eq(agentInboxItemActions.actionId, actionId)))).resolves.toEqual([{ outcome: "failed" }]);
+    await expect(database.select().from(auditEvents).where(and(eq(auditEvents.userId, owner.userId), eq(auditEvents.resourceId, item.itemId), eq(auditEvents.eventType, "agent.inbox_action_applied")))).resolves.toHaveLength(1);
+  });
+
+  it("晚到的同 actionId 控制失败不能覆盖已 applied 的成功结算", async () => {
+    const owner = await activeTarget();
+    const item = await openItem({ ...owner, kind: "decision_required", reasonCode: "AGENT_RUN_PAUSED" });
+    const actionId = crypto.randomUUID();
+    let releaseSuccess: (() => void) | undefined;
+    let releaseFailure: (() => void) | undefined;
+    let signalSuccess: (() => void) | undefined;
+    let signalFailure: (() => void) | undefined;
+    const successReady = new Promise<void>((resolve) => { signalSuccess = resolve; });
+    const failureReady = new Promise<void>((resolve) => { signalFailure = resolve; });
+    const commandService = commands();
+    let calls = 0;
+    const racingInbox = createAgentInbox({
+      db: database,
+      commands: {
+        start: commandService.start,
+        async control(input) {
+          calls += 1;
+          if (calls === 1) {
+            signalSuccess!();
+            await new Promise<void>((resolve) => { releaseSuccess = resolve; });
+            return { applied: true, run: { runId: input.runId, status: "queued", currentStep: "select_candidates", controlState: "none", version: 2 } };
+          }
+          signalFailure!();
+          await new Promise<void>((resolve) => { releaseFailure = resolve; });
+          throw new Error("late control failure");
+        },
+      },
+      auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+
+    const successful = racingInbox.act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: item.itemId, command: { actionId, action: "resume_run" } });
+    await successReady;
+    const lateFailure = racingInbox.act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: item.itemId, command: { actionId, action: "resume_run" } });
+    await failureReady;
+    releaseSuccess!();
+    const first = await successful;
+    releaseFailure!();
+    await expect(lateFailure).resolves.toEqual(first);
+    await expect(database.select({ outcome: agentInboxItemActions.outcome }).from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, owner.userId), eq(agentInboxItemActions.itemId, item.itemId), eq(agentInboxItemActions.actionId, actionId)))).resolves.toEqual([{ outcome: "applied" }]);
+    await expect(database.select().from(auditEvents).where(and(eq(auditEvents.userId, owner.userId), eq(auditEvents.resourceId, item.itemId), eq(auditEvents.eventType, "agent.inbox_action_applied")))).resolves.toHaveLength(1);
+  });
+
   it("新运行已创建但解决事项失败时重放复用该运行并完成解决", async () => {
     const owner = await activeTarget();
     const failed = await openItem({ ...owner, kind: "run_failed", reasonCode: "AGENT_RUN_ADAPTER_FAILED" });
