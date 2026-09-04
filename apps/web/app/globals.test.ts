@@ -15,3 +15,9 @@ it("declares the workbench navigation touch height once", async () => {
 
   expect(rule.match(/min-height:\s*2\.75rem;/g)).toHaveLength(1);
 });
+
+it("keeps loading summary density aligned with seven summary facts and preserves reduced motion", async () => {
+  const css = await readFile(resolve(process.cwd(), "app/globals.css"), "utf8");
+  expect(css).toMatch(/\.workbench-loading-summary \{[^}]*grid-template-columns:\s*repeat\(7, minmax\(0, 1fr\)\);/);
+  expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
+});

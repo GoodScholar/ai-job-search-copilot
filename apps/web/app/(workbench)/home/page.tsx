@@ -1,4 +1,5 @@
 import type { WorkbenchHome } from "@job-copilot/contracts/workbench";
+import type { JobTargetOverview } from "@job-copilot/contracts/job-targets";
 import { WorkbenchHomeView } from "@/components/workbench/workbench-home-view";
 import { unstable_rethrow } from "next/navigation";
 import { getWorkbenchHome } from "@/lib/server/workbench";
@@ -31,7 +32,7 @@ export default async function WorkbenchHomePage({ searchParams }: WorkbenchHomeP
   ]);
   const unavailable: UnavailableSection[] = [];
   const home = valueOr<WorkbenchHome | null>(homeResult, null, "summary", unavailable);
-  const targets = valueOr(targetsResult, { suggestions: [], targets: [] }, "targets", unavailable);
+  const targets = valueOr<JobTargetOverview | null>(targetsResult, null, "targets", unavailable);
   const initialRun = valueOr(runResult, null, "run", unavailable);
   const inbox = valueOr(inboxResult, { items: [] }, "inbox", unavailable);
 

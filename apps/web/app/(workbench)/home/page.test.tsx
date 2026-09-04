@@ -24,17 +24,28 @@ beforeEach(() => {
 
 it("declares a stable workbench document title", () => expect(metadata.title).toBe("工作台 | AI Job Search Copilot"));
 
-it("并行读取独立区块，一项失败时仍把成功结果和不可用区块交给工作台", async () => {
+it("targets 失败不伪造成空数组，并保留成功的运行结果", async () => {
   mocks.getWorkbenchHome.mockResolvedValue(home);
   mocks.getJobTargets.mockRejectedValue(new Error("targets unavailable"));
-  mocks.getLatestAgentRun.mockResolvedValue({ run: null });
+  const run = { runId: "4f8c6eb3-2b92-4d91-aad4-959b7d4cd7a3" };
+  mocks.getLatestAgentRun.mockResolvedValue({ run });
   mocks.getOpenAgentInbox.mockResolvedValue({ items: [] });
   const page = await WorkbenchHomePage();
   expect(mocks.getWorkbenchHome).toHaveBeenCalledOnce();
   expect(mocks.getJobTargets).toHaveBeenCalledOnce();
   expect(mocks.getLatestAgentRun).toHaveBeenCalledOnce();
   expect(mocks.getOpenAgentInbox).toHaveBeenCalledOnce();
-  expect(page.props).toMatchObject({ home, targets: { suggestions: [], targets: [] }, inbox: { items: [] }, unavailableSections: ["targets"] });
+  expect(page.props).toMatchObject({ home, targets: null, initialRun: run, inbox: { items: [] }, unavailableSections: ["targets"] });
+});
+
+it("运行读取失败不隐藏成功的 targets", async () => {
+  const targets = { suggestions: [], targets: [] };
+  mocks.getWorkbenchHome.mockResolvedValue(home);
+  mocks.getJobTargets.mockResolvedValue(targets);
+  mocks.getLatestAgentRun.mockRejectedValue(new Error("run unavailable"));
+  mocks.getOpenAgentInbox.mockResolvedValue({ items: [] });
+  const page = await WorkbenchHomePage();
+  expect(page.props).toMatchObject({ targets, initialRun: null, unavailableSections: ["run"] });
 });
 
 it("不把认证重定向转成局部错误", async () => {

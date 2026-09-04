@@ -23,6 +23,37 @@ it("用语义 article 呈现依据、影响、建议与可追溯目标", () => {
   expect(screen.getByRole("article", { name: "确认工作经历" })).toHaveTextContent("来自已导入资料的可追溯片段。");
   expect(screen.getByRole("article", { name: "确认工作经历" })).toHaveTextContent("确认前不会用于推荐或材料生成。");
   expect(screen.getByRole("link", { name: "查看相关记录" })).toHaveAttribute("href", "/profile#candidate-facts");
+  expect(screen.getByText("核对后确认、修改或拒绝这条事实。")).toBeVisible();
+});
+
+it("隔离各状态缓存并忽略乱序响应，往返后仍显示权威 pending 项", async () => {
+  const user = userEvent.setup();
+  let resolveUnread!: (response: Response) => void;
+  let resolveRead!: (response: Response) => void;
+  const unread = new Promise<Response>((resolve) => { resolveUnread = resolve; });
+  const read = new Promise<Response>((resolve) => { resolveRead = resolve; });
+  const readItem = { ...item, itemId: "5a1b0207-b852-4f86-8b1f-3b9615655ed8", title: "已读事项", status: "read" as const, readAt: now };
+  const unreadItem = { ...item, itemId: "6a1b0207-b852-4f86-8b1f-3b9615655ed8", title: "未读事项" };
+  const resolvedItem = { ...item, itemId: "7a1b0207-b852-4f86-8b1f-3b9615655ed8", title: "已处理事项", status: "resolved" as const, readAt: now, resolvedAt: now, availableActions: [] };
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>((input) => {
+    const url = String(input);
+    if (url.includes("status=unread")) return unread;
+    if (url.includes("status=read")) return read;
+    if (url.includes("status=resolved")) return Promise.resolve(Response.json({ items: [resolvedItem] }));
+    throw new Error(`unexpected request: ${url}`);
+  }));
+  render(<AgentInboxPanel items={[item]} onResolved={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "未读" }));
+  await user.click(screen.getByRole("button", { name: "已读" }));
+  resolveRead(Response.json({ items: [readItem] }));
+  await screen.findByRole("article", { name: "已读事项" });
+  resolveUnread(Response.json({ items: [unreadItem] }));
+  await waitFor(() => expect(screen.getByRole("article", { name: "已读事项" })).toBeVisible());
+  await user.click(screen.getByRole("button", { name: "已处理" }));
+  await screen.findByRole("article", { name: "已处理事项" });
+  await user.click(screen.getByRole("button", { name: "待处理" }));
+  expect(screen.getByRole("article", { name: "确认工作经历" })).toBeVisible();
 });
 
 it("提供未读、已读、已处理筛选，并对诚实空状态说明没有事项", async () => {

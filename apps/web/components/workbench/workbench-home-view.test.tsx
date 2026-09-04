@@ -1,6 +1,8 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { renderToString } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
+import type { AgentInboxItem } from "@job-copilot/contracts/agent-inbox";
 
 const refresh = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
@@ -29,9 +31,9 @@ it("在保留最后成功数据时显示离线标记，并在网络恢复后刷�
   expect(screen.getByText("离线：正在显示上次成功读取的数据，可能已过期。")).toBeVisible();
   await user.keyboard("{Tab}");
   Object.defineProperty(navigator, "onLine", { configurable: true, value: true });
-  window.dispatchEvent(new Event("online"));
+  act(() => window.dispatchEvent(new Event("online")));
   await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
-  expect(screen.getByText("网络已恢复，正在更新最新数据。")).toBeVisible();
+  expect(screen.getByText("网络已恢复，正在等待最新数据。")).toBeVisible();
 });
 
 it("为不可读取的首页摘要保留可用 Inbox 与明确异常说明", () => {
@@ -39,4 +41,33 @@ it("为不可读取的首页摘要保留可用 Inbox 与明确异常说明", () 
   expect(screen.getByRole("heading", { name: "待决定事项暂时无法读取" })).toBeVisible();
   expect(screen.getByText("今日摘要暂时无法读取，其余可用内容仍会保留。")).toBeVisible();
   expect(screen.getByRole("region", { name: "需要你决定的事项" })).toBeVisible();
+});
+
+it("分别说明 targets 与运行读取失败，且不隐藏另一项成功区块", () => {
+  const { rerender } = render(<WorkbenchHomeView home={home} inbox={{ items: [] }} initialRun={null} targets={{ suggestions: [], targets: [] }} unavailableSections={["targets"]} />);
+  expect(screen.getByRole("heading", { name: "求职目标暂时无法读取" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "先确认求职目标" })).toBeVisible();
+  rerender(<WorkbenchHomeView home={home} inbox={{ items: [] }} initialRun={null} targets={{ suggestions: [], targets: [] }} unavailableSections={["run"]} />);
+  expect(screen.getByRole("heading", { name: "运行状态暂时无法读取" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "先确认求职目标" })).toBeVisible();
+});
+
+it("服务端快照固定在线，挂载后才读取离线状态", () => {
+  vi.stubGlobal("navigator", { onLine: false });
+  const html = renderToString(<WorkbenchHomeView home={home} inbox={{ items: [] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
+  expect(html).not.toContain("离线：正在显示上次成功读取的数据，可能已过期。");
+});
+
+it("收到刷新后的服务端 props 后替换 Inbox 并结束陈旧提示", async () => {
+  const user = userEvent.setup();
+  const freshItem: AgentInboxItem = { itemId: "8a1b0207-b852-4f86-8b1f-3b9615655ed8", runId: null, kind: "candidate_fact", status: "unread", reasonCode: "CANDIDATE_FACT_PENDING", budgetDimension: null, title: "刷新后的事项", message: "新读取的数据。", basis: "新依据。", impact: "新影响。", suggestedAction: "新建议。", target: { type: "candidate_fact", candidateFactId: "9a1b0207-b852-4f86-8b1f-3b9615655ed8", href: "/profile#candidate-facts" }, availableActions: ["dismiss"], createdAt: "2026-09-04T08:00:00.000Z", readAt: null, resolvedAt: null };
+  Object.defineProperty(navigator, "onLine", { configurable: true, value: true });
+  const view = render(<WorkbenchHomeView home={home} inbox={{ items: [] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
+  act(() => window.dispatchEvent(new Event("online")));
+  await waitFor(() => expect(refresh).toHaveBeenCalled());
+  expect(screen.getByText("网络已恢复，正在等待最新数据。")).toBeVisible();
+  view.rerender(<WorkbenchHomeView home={home} inbox={{ items: [freshItem] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
+  expect(screen.getByRole("article", { name: "刷新后的事项" })).toBeVisible();
+  expect(screen.queryByText("网络已恢复，正在等待最新数据。")).not.toBeInTheDocument();
+  await user.keyboard("{Tab}");
 });

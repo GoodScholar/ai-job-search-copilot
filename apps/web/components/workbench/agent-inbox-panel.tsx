@@ -6,16 +6,15 @@ import Link from "next/link";
 import { useRef, useState } from "react";
 
 type InboxFilter = "pending" | "unread" | "read" | "resolved";
+type InboxCache = Partial<Record<InboxFilter, AgentInboxItem[]>>;
 const filters: { value: InboxFilter; label: string }[] = [
   { value: "pending", label: "待处理" }, { value: "unread", label: "未读" }, { value: "read", label: "已读" }, { value: "resolved", label: "已处理" },
 ];
 const actionLabels: Record<AgentInboxActionCommand["action"], string> = {
   restart_run: "重新开始岗位发现", resume_run: "继续本次岗位发现", cancel_run: "取消岗位发现", mark_read: "标记为已读", dismiss: "标记已处理",
 };
-
 const emptyCopy: Record<InboxFilter, string> = {
-  pending: "目前没有需要你决定的事项。新的确认、异常或推荐会显示在这里。",
-  unread: "没有未读事项。", read: "没有已读事项。", resolved: "没有已处理事项。",
+  pending: "目前没有需要你决定的事项。新的确认、异常或推荐会显示在这里。", unread: "没有未读事项。", read: "没有已读事项。", resolved: "没有已处理事项。",
 };
 
 export async function loadAgentInbox(status: InboxFilter): Promise<AgentInboxItem[] | false> {
@@ -29,38 +28,31 @@ export async function loadAgentInbox(status: InboxFilter): Promise<AgentInboxIte
   }
 }
 
-export function AgentInboxPanel({ items, onResolved, onRunUpdated, onItemsChange }: {
+export function AgentInboxPanel({ items, onResolved, onRunUpdated }: {
   items: AgentInboxItem[];
   onResolved: (itemId: string) => void;
   onRunUpdated?: (run: AgentRunControlSnapshot) => void;
-  onItemsChange?: (items: AgentInboxItem[]) => void;
 }) {
   const [filter, setFilter] = useState<InboxFilter>("pending");
-  const [loadedItems, setLoadedItems] = useState(items);
+  const [cache, setCache] = useState<InboxCache>({ pending: items });
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState<string | null>(null);
   const actionIds = useRef(new Map<string, string>());
+  const requestVersion = useRef(0);
   const filterButtons = useRef<Partial<Record<InboxFilter, HTMLButtonElement | null>>>({});
-
-  const visibleItems = filter === "pending" ? items : loadedItems;
-
-  function replaceItems(next: AgentInboxItem[]) {
-    setLoadedItems(next);
-    onItemsChange?.(next);
-  }
+  const visibleItems = cache[filter] ?? [];
 
   async function changeFilter(next: InboxFilter) {
     setFilter(next);
     setMessage("");
-    if (next === "pending") {
-      return;
-    }
+    if (cache[next] !== undefined) return;
+    const version = ++requestVersion.current;
     const nextItems = await loadAgentInbox(next);
-    if (nextItems === false) {
-      setMessage("事项暂时无法读取，请稍后重试。");
+    if (version !== requestVersion.current || nextItems === false) {
+      if (version === requestVersion.current && nextItems === false) setMessage("事项暂时无法读取，请稍后重试。");
       return;
     }
-    replaceItems(nextItems);
+    setCache((current) => ({ ...current, [next]: nextItems }));
   }
 
   async function actOn(item: AgentInboxItem, action: AgentInboxActionCommand["action"]) {
@@ -81,13 +73,12 @@ export function AgentInboxPanel({ items, onResolved, onRunUpdated, onItemsChange
       actionIds.current.delete(key);
       if (parsed.data.run) onRunUpdated?.(parsed.data.run);
       if (parsed.data.item.status === "resolved") {
-        const next = visibleItems.filter((current) => current.itemId !== item.itemId);
-        replaceItems(next);
+        setCache((current) => Object.fromEntries(Object.entries(current).map(([status, entries]) => [status, entries?.filter((entry) => entry.itemId !== item.itemId)])) as InboxCache);
         onResolved(item.itemId);
         setMessage("事项已处理。");
         queueMicrotask(() => filterButtons.current.pending?.focus());
       } else {
-        replaceItems(visibleItems.map((current) => current.itemId === item.itemId ? parsed.data.item : current));
+        setCache((current) => ({ ...current, [filter]: (current[filter] ?? []).map((entry) => entry.itemId === item.itemId ? parsed.data.item : entry) }));
         setMessage(action === "mark_read" ? "事项已标记为已读。" : "事项状态已更新。");
       }
     } catch {
@@ -97,30 +88,20 @@ export function AgentInboxPanel({ items, onResolved, onRunUpdated, onItemsChange
     }
   }
 
-  return (
-    <section aria-labelledby="agent-inbox-title" className="workbench-ledger agent-inbox-panel">
-      <div className="workbench-ledger-heading">
-        <p>待处理事项</p>
-        <h2 id="agent-inbox-title">需要你决定的事项</h2>
-      </div>
-      <div aria-label="事项状态筛选" className="agent-inbox-filters" role="group">
-        {filters.map(({ value, label }) => <button aria-pressed={filter === value} className="workbench-touch-target" key={value} onClick={() => void changeFilter(value)} ref={(node) => { filterButtons.current[value] = node; }} type="button">{label}</button>)}
-      </div>
-      <p aria-live="polite" className={message ? "agent-inbox-live" : "agent-inbox-live is-empty"} role="status">{message}</p>
-      {visibleItems.length === 0 ? <p className="agent-inbox-empty">{emptyCopy[filter]}</p> : <div className="agent-inbox-list">
-        {visibleItems.map((item) => <article aria-label={item.title} key={item.itemId}>
-          <h3>{item.title}</h3>
-          <p>{item.message}</p>
-          <dl className="agent-inbox-details"><div><dt>依据</dt><dd>{item.basis}</dd></div><div><dt>影响</dt><dd>{item.impact}</dd></div><div><dt>建议</dt><dd>{item.suggestedAction}</dd></div></dl>
-          <div className="agent-inbox-actions">
-            <Link className="workbench-ledger-link workbench-touch-target" href={item.target.href}>查看相关记录</Link>
-            {item.availableActions.map((action) => {
-              const key = `${item.itemId}:${action}`;
-              return <button className="agent-run-action workbench-touch-target" disabled={pending === key} key={action} onClick={() => void actOn(item, action)} type="button">{pending === key ? "正在处理…" : `${actionLabels[action]}：${item.title}`}</button>;
-            })}
-          </div>
-        </article>)}
-      </div>}
-    </section>
-  );
+  return <section aria-labelledby="agent-inbox-title" className="workbench-ledger agent-inbox-panel">
+    <div className="workbench-ledger-heading"><p>待处理事项</p><h2 id="agent-inbox-title">需要你决定的事项</h2></div>
+    <div aria-label="事项状态筛选" className="agent-inbox-filters" role="group">
+      {filters.map(({ value, label }) => <button aria-pressed={filter === value} className="workbench-touch-target" key={value} onClick={() => void changeFilter(value)} ref={(node) => { filterButtons.current[value] = node; }} type="button">{label}</button>)}
+    </div>
+    <p aria-live="polite" className={message ? "agent-inbox-live" : "agent-inbox-live is-empty"} role="status">{message}</p>
+    {visibleItems.length === 0 ? <p className="agent-inbox-empty">{emptyCopy[filter]}</p> : <div className="agent-inbox-list">
+      {visibleItems.map((item) => <article aria-label={item.title} key={item.itemId}>
+        <h3>{item.title}</h3><p>{item.message}</p>
+        <dl className="agent-inbox-details"><div><dt>依据</dt><dd>{item.basis}</dd></div><div><dt>影响</dt><dd>{item.impact}</dd></div><div><dt>建议</dt><dd>{item.suggestedAction}</dd></div></dl>
+        <div className="agent-inbox-actions"><Link className="workbench-ledger-link workbench-touch-target" href={item.target.href}>查看相关记录</Link>
+          {item.availableActions.map((action) => { const key = `${item.itemId}:${action}`; return <button className="agent-run-action workbench-touch-target" disabled={pending === key} key={action} onClick={() => void actOn(item, action)} type="button">{pending === key ? "正在处理…" : `${actionLabels[action]}：${item.title}`}</button>; })}
+        </div>
+      </article>)}
+    </div>}
+  </section>;
 }
