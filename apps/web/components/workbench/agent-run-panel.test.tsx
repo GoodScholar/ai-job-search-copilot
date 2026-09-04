@@ -148,18 +148,26 @@ it("来源问题完成显示诊断状态、问题来源数量和锚点链接", (
   expect(screen.getByRole("link", { name: "查看来源诊断" })).toHaveClass("workbench-touch-target");
 });
 
-it("能力拒绝显示稳定影响、不可重试和有限建议", () => {
-  const partial = { ...detail("completed"), workflowVersion: "job-discovery-workflow-v3", adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2", outputSchemaVersion: "job-discovery-result-v3", termination: { kind: "completed_with_source_issues", failureCode: null, budgetDimension: null }, sourceChecks: [], sourceIssues: [{ provider: "greenhouse", code: "SOURCE_CAPABILITY_UNSUPPORTED", affectedCount: 1, impact: { scope: "entire_source", affectedCount: null }, retryable: false, suggestedActions: ["review_source_capabilities"] }] } as unknown as AgentRunDetail;
+it("能力拒绝显示稳定影响、受影响公司、不可重试和有限建议", () => {
+  const partial = { ...detail("completed"), workflowVersion: "job-discovery-workflow-v3", adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2", outputSchemaVersion: "job-discovery-result-v3", sourceScope: { kind: "company_watchlist", adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2", watchlistVersion: 1, sources: [{ sourceId: "greenhouse:denied", watchlistItemId: "11111111-1111-4111-8111-111111111111", canonicalCompanyName: "受影响公司", careersUrl: "https://boards.greenhouse.io/denied", allowedDomains: ["boards-api.greenhouse.io"], boardToken: "denied" }] }, termination: { kind: "completed_with_source_issues", failureCode: null, budgetDimension: null }, sourceChecks: [], sourceIssues: [{ provider: "greenhouse", code: "SOURCE_CAPABILITY_UNSUPPORTED", affectedCount: 1, impact: { scope: "entire_source", affectedCount: null }, retryable: false, suggestedActions: ["review_source_capabilities"] }] } as unknown as AgentRunDetail;
   render(<AgentRunPanel targets={[target()]} initialRun={partial} />);
   expect(screen.getByText(/影响范围：整个来源；不可重试。建议：检查来源能力声明/u)).toBeVisible();
+  expect(screen.getByText(/受影响来源 1 个（受影响公司）/u)).toBeVisible();
   expect(screen.getByRole("link", { name: "查看来源能力" })).toHaveAttribute("href", `/profile/targets/${targetId}/watchlist#source-capabilities`);
 });
 
-it("失败运行也显示能力拒绝的代码和聚合来源数", () => {
+it("失败运行以中文说明声明失配且不暴露内部代码", () => {
   const failed = { ...detail("failed"), workflowVersion: "job-discovery-workflow-v3", adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2", outputSchemaVersion: "job-discovery-result-v3", termination: { kind: "source_failed", failureCode: "AGENT_RUN_ADAPTER_FAILED", budgetDimension: null }, sourceChecks: [], sourceIssues: [{ provider: "greenhouse", code: "SOURCE_CAPABILITY_DECLARATION_MISMATCH", affectedCount: 2, impact: { scope: "entire_source", affectedCount: null }, retryable: false, suggestedActions: ["review_source_capabilities"] }] } as unknown as AgentRunDetail;
   render(<AgentRunPanel targets={[target()]} initialRun={failed} />);
-  expect(screen.getByText(/SOURCE_CAPABILITY_DECLARATION_MISMATCH；受影响来源 2 个/u)).toBeVisible();
+  expect(screen.getByText(/该来源声明与本次冻结执行规格不一致；受影响来源 2 个/u)).toBeVisible();
+  expect(screen.queryByText(/SOURCE_CAPABILITY_DECLARATION_MISMATCH/u)).not.toBeInTheDocument();
   expect(screen.getByText(/影响范围：整个来源；不可重试。建议：检查来源能力声明/u)).toBeVisible();
+});
+
+it("能力影响达到聚合上限时标示至少数量", () => {
+  const partial = { ...detail("completed"), workflowVersion: "job-discovery-workflow-v3", adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2", outputSchemaVersion: "job-discovery-result-v3", termination: { kind: "completed_with_source_issues", failureCode: null, budgetDimension: null }, sourceChecks: [], sourceIssues: [{ provider: "greenhouse", code: "SOURCE_CAPABILITY_UNSUPPORTED", affectedCount: 10, impact: { scope: "entire_source", affectedCount: null }, retryable: false, suggestedActions: ["review_source_capabilities"] }] } as unknown as AgentRunDetail;
+  render(<AgentRunPanel targets={[target()]} initialRun={partial} />);
+  expect(screen.getByText(/该来源未声明所需能力；受影响来源 至少 10 个/u)).toBeVisible();
 });
 
 it("收到 Inbox 已处理通知后重新读取权威运行详情", async () => {

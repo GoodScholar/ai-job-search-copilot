@@ -1352,6 +1352,23 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(database.select({ kind: agentInboxItems.kind, reasonCode: agentInboxItems.reasonCode }).from(agentInboxItems).where(eq(agentInboxItems.runId, job.runId))).resolves.toEqual([{ kind: "discovery_attention", reasonCode: "DISCOVERY_ATTENTION" }]);
   });
 
+  it("v3 详情阶段能力收窄时丢弃该来源已累积详情，保留其它来源结果", async () => {
+    const job = await run();
+    const narrowed = { sourceId: "greenhouse:narrowed", watchlistItemId: crypto.randomUUID(), canonicalCompanyName: "Narrowed", careersUrl: "https://boards.greenhouse.io/narrowed", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], boardToken: "narrowed" };
+    const healthy = { sourceId: "greenhouse:healthy-after-narrow", watchlistItemId: crypto.randomUUID(), canonicalCompanyName: "Healthy", careersUrl: "https://boards.greenhouse.io/healthy-after-narrow", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], boardToken: "healthy-after-narrow" };
+    await database.update(agentRuns).set({ adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER, adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, workflowVersion: GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, ruleVersion: GREENHOUSE_SOURCE_HEALTH_RULE_VERSION, outputSchemaVersion: GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION, toolAllowlist: GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST, budgetSnapshot: PUBLIC_JOB_DISCOVERY_BUDGET, sourceScope: { kind: "company_watchlist", adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, watchlistVersion: 1, sources: [narrowed, healthy] } }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId)));
+    let narrowedDeclarations = 0;
+    const adapter = {
+      adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
+      declareCapabilities: ({ sourceId }: { sourceId: string }) => ({ sourceId, adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, contractVersion: "source-capabilities-v1" as const, capabilities: sourceId === narrowed.sourceId && ++narrowedDeclarations > 2 ? ["active_discovery", "continuous_monitoring", "safe_open_original_page"] : ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
+      listSource: async ({ source }: any) => ({ ok: true as const, attemptCount: 1, data: { sourceId: source.sourceId, observedDetailIds: source.sourceId === narrowed.sourceId ? ["a-1", "a-2"] : ["b-1"], candidates: (source.sourceId === narrowed.sourceId ? ["a-1", "a-2"] : ["b-1"]).map((detailId) => ({ sourceId: source.sourceId, detailId, company: null, title: "AI Engineer", location: "Shanghai" })) } }),
+      getSourceDetail: async ({ source, detailId }: any) => ({ ok: true as const, attemptCount: 1, data: { sourceId: source.sourceId, detailId, company: source.canonicalCompanyName, title: "AI Engineer", location: "Shanghai", postedAt: "2026-08-20T00:00:00.000Z", deadline: null, sourceType: "company_careers" as const, isOfficial: true as const, absoluteUrl: `https://boards.greenhouse.io/${source.boardToken}/jobs/${detailId}`, rawPayload: { detailId } } }),
+    };
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(successAdapter()), sourceHealthAdapterResolver: { resolve: () => adapter as any }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now } as any).process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("completed");
+    await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({ status: "completed", termination: { kind: "completed_with_source_issues" }, results: [expect.objectContaining({ company: healthy.canonicalCompanyName })], sourceIssues: [expect.objectContaining({ code: "SOURCE_CAPABILITY_UNSUPPORTED", affectedCount: 1 })] });
+    await expect(database.select({ sourceId: jobSourceHealthChecks.sourceId }).from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, job.runId))).resolves.toEqual([{ sourceId: healthy.sourceId }]);
+  });
+
   it("v3 冻结身份优先于 adapter 自称身份：全来源拒绝终止且不触发 I/O", async () => {
     const job = await run();
     const sources = ["first", "second"].map((boardToken) => ({ sourceId: `greenhouse:${boardToken}`, watchlistItemId: crypto.randomUUID(), canonicalCompanyName: boardToken, careersUrl: `https://boards.greenhouse.io/${boardToken}`, allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], boardToken }));

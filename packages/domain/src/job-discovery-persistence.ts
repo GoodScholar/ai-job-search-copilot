@@ -23,14 +23,15 @@ import { deriveSourceHealthTerminal } from "./source-health-terminal";
 import type { SourceHealthTerminal } from "./source-health-terminal";
 import { GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, JobSourceHealthCheckSchema, PublicAgentRunSourceScopeSchema, PublicSourceHealthAgentRunSourceScopeSchema, type JobSourceHealthCheck } from "@job-copilot/contracts/agent-runs";
 import { LayeredPublicJobDiscoverySourceScopeSchema } from "@job-copilot/contracts/job-discovery";
-import { SourceCapabilityRejectionReasonCodeSchema, SourceCapabilitySchema } from "@job-copilot/contracts/source-capabilities";
+import { SourceCapabilityRejectionReasonCodeSchema } from "@job-copilot/contracts/source-capabilities";
+import { SourceExecutionActionSchema, type SourceExecutionAction } from "./source-capabilities";
 import { z } from "zod";
 
 const PersistedCapabilityIssueSchema = z.object({
   provider: z.literal("greenhouse"),
   code: SourceCapabilityRejectionReasonCodeSchema,
   sourceId: z.string().trim().min(1).max(256),
-  action: SourceCapabilitySchema,
+  action: SourceExecutionActionSchema,
   affectedCount: z.literal(1),
 }).strict();
 
@@ -344,7 +345,7 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
       scans: Array<{ sourceId: string; observedDetailIds: string[]; complete: boolean }>;
       storedObjects: StoredDiscoveryObject[];
       sourceChecks?: JobSourceHealthCheck[];
-      sourceIssues?: Array<{ provider: "greenhouse"; code: "SOURCE_CAPABILITY_UNSUPPORTED" | "SOURCE_CAPABILITY_DECLARATION_MISMATCH"; sourceId: string; action: "continuous_monitoring" | "active_discovery" | "read_details"; affectedCount: 1 }>;
+      sourceIssues?: Array<{ provider: "greenhouse"; code: "SOURCE_CAPABILITY_UNSUPPORTED" | "SOURCE_CAPABILITY_DECLARATION_MISMATCH"; sourceId: string; action: SourceExecutionAction; affectedCount: 1 }>;
       terminal?: SourceHealthTerminal;
       now: Date;
       /** Processor-only seam: caller has already started the bounded account transaction. */

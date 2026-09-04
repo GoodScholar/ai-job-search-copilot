@@ -26,7 +26,7 @@ import { normalizeAgentRunSourceScope } from "./agent-run-source-scope";
 import { applyTransactionDeadline } from "./transaction-deadline";
 import { deriveSourceHealthTerminal, type SourceHealthTerminal } from "./source-health-terminal";
 import type { SourceHealthDiscoveryAdapter, SourceHealthDiscoveryAdapterResolver } from "./source-health-discovery-adapter";
-import { authorizeSourceAction, type SourceCapabilityAdapter } from "./source-capabilities";
+import { authorizeSourceAction, type SourceCapabilityAdapter, type SourceExecutionAction } from "./source-capabilities";
 import {
   type LayeredPublicJobDiscoveryWorkflow,
   type LayeredPublicJobDiscoveryWorkflowResolver,
@@ -639,7 +639,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
         }
       }
-      const persistDiscoveryOutcome = async (input: { details: DiscoveryDetail[]; scans: Array<{ sourceId: string; observedDetailIds: string[]; complete: boolean }>; sourceChecks?: JobSourceHealthCheck[]; sourceIssues?: Array<{ provider: "greenhouse"; code: "SOURCE_CAPABILITY_UNSUPPORTED" | "SOURCE_CAPABILITY_DECLARATION_MISMATCH"; sourceId: string; action: "continuous_monitoring" | "active_discovery" | "read_details"; affectedCount: 1 }>; terminal?: SourceHealthTerminal }) => {
+      const persistDiscoveryOutcome = async (input: { details: DiscoveryDetail[]; scans: Array<{ sourceId: string; observedDetailIds: string[]; complete: boolean }>; sourceChecks?: JobSourceHealthCheck[]; sourceIssues?: Array<{ provider: "greenhouse"; code: "SOURCE_CAPABILITY_UNSUPPORTED" | "SOURCE_CAPABILITY_DECLARATION_MISMATCH"; sourceId: string; action: SourceExecutionAction; affectedCount: 1 }>; terminal?: SourceHealthTerminal }) => {
         const stored = input.details.map((detail) => {
           const bytes = canonicalJsonBytes(detail.rawPayload); const sourceIdentifier = discoverySourceIdentifier(detail.sourceId, detail.detailId); const rawContentSha256 = createHash("sha256").update(bytes).digest("hex");
           return { detail, bytes, rawContentSha256, objectKey: `accounts/${job.userId}/agent-runs/${job.runId}/sources/${sourceIdentifier}/${claimed.claimToken}/${rawContentSha256}.json` };
@@ -752,7 +752,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         const v3Scope = sourceScope as import("@job-copilot/contracts/agent-runs").PublicSourceHealthAgentRunSourceScope;
         const batchStart = await transition("batch_search", false); if (batchStart) return batchStart;
         const sourceStates: Array<{ source: typeof v3Scope.sources[number]; observedDetailIds: string[]; candidates: Array<{ sourceId: string; detailId: string }>; requestAttemptCount: number; capabilityDenied?: boolean; failure?: Extract<import("@job-copilot/contracts/agent-runs").SourceHealthListResult, { ok: false }>["failure"] }> = [];
-        const sourceIssues: Array<{ provider: "greenhouse"; code: "SOURCE_CAPABILITY_UNSUPPORTED" | "SOURCE_CAPABILITY_DECLARATION_MISMATCH"; sourceId: string; action: "continuous_monitoring" | "active_discovery" | "read_details"; affectedCount: 1 }> = [];
+        const sourceIssues: Array<{ provider: "greenhouse"; code: "SOURCE_CAPABILITY_UNSUPPORTED" | "SOURCE_CAPABILITY_DECLARATION_MISMATCH"; sourceId: string; action: SourceExecutionAction; affectedCount: 1 }> = [];
         try {
           for (const [index, source] of v3Scope.sources.entries()) {
             const declaration = sourceHealthAdapter.declareCapabilities({ sourceId: source.sourceId });
@@ -774,6 +774,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           let detailOrdinal = 0;
           for (const state of sourceStates) {
             if (state.failure || state.capabilityDenied) continue;
+            const sourceDetails: typeof details = [];
             for (const candidate of state.candidates) {
               const authorization = authorizeSourceAction({ declaration: sourceHealthAdapter.declareCapabilities({ sourceId: state.source.sourceId }), action: "read_details", expected: { sourceId: state.source.sourceId, adapter: v3Scope.adapter, adapterVersion: v3Scope.adapterVersion } });
               if (!authorization.allowed) { sourceIssues.push({ provider: "greenhouse", code: authorization.failure.reasonCode, sourceId: state.source.sourceId, action: "read_details", affectedCount: 1 }); state.capabilityDenied = true; break; }
@@ -782,8 +783,9 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
               const detail = parseSourceHealthDetailResult(called.value, candidate);
               if (!detail.ok) { state.requestAttemptCount += detail.failure.attemptCount; state.failure = detail.failure; break; }
               state.requestAttemptCount += detail.attemptCount;
-              details.push(detail.data);
+              sourceDetails.push(detail.data);
             }
+            if (!state.capabilityDenied) details.push(...sourceDetails);
           }
         } catch (error) { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline }); }
         const checks: JobSourceHealthCheck[] = sourceStates.filter((state) => !state.capabilityDenied).map((state) => {

@@ -750,7 +750,7 @@ describe("job discovery persistence lifecycle", () => {
     await expect(persistence.persistSuccessfulDiscovery({ run: { ...frozen, claimToken: run.claimToken }, details: [], scans, storedObjects: [], sourceChecks: [check], now: later })).rejects.toThrow("AGENT_RUN_PERSIST_FAILED");
   });
 
-  it.each(["unknown_source", "illegal_action", "duplicate_source", "zero_count"] as const)("v3 persistence 拒绝畸形 capability issue，且不写终态事实：%s", async (variant) => {
+  it.each(["unknown_source", "illegal_action", "safe_open", "duplicate_source", "zero_count"] as const)("v3 persistence 拒绝畸形 capability issue，且不写终态事实：%s", async (variant) => {
     const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const deniedWatchlistItemId = crypto.randomUUID(); const checkedWatchlistItemId = crypto.randomUUID();
     await database.insert(jobAccounts).values({ id: userId });
     await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: firstSeen, updatedAt: firstSeen });
@@ -763,7 +763,7 @@ describe("job discovery persistence lifecycle", () => {
     if (!frozen) throw new Error("run not frozen");
     const check = { checkId: crypto.randomUUID(), runId: run.id, targetId, watchlistItemId: checked.watchlistItemId, sourceId: checked.sourceId, status: "zero_valid_results" as const, reasonCodes: [], impact: { scope: "none" as const, affectedCount: null }, observedPostingCount: 0, selectedDetailCount: 0, validDetailCount: 0, requestAttemptCount: 1, checkedAt: later.toISOString() };
     const issue = { provider: "greenhouse", code: "SOURCE_CAPABILITY_UNSUPPORTED", sourceId: denied.sourceId, action: "continuous_monitoring", affectedCount: 1 };
-    const issues = variant === "unknown_source" ? [{ ...issue, sourceId: "greenhouse:outside" }] : variant === "illegal_action" ? [{ ...issue, action: "not_an_action" }] : variant === "duplicate_source" ? [issue, { ...issue, action: "read_details" }] : [{ ...issue, affectedCount: 0 }];
+    const issues = variant === "unknown_source" ? [{ ...issue, sourceId: "greenhouse:outside" }] : variant === "illegal_action" ? [{ ...issue, action: "not_an_action" }] : variant === "safe_open" ? [{ ...issue, action: "safe_open_original_page" }] : variant === "duplicate_source" ? [issue, { ...issue, action: "read_details" }] : [{ ...issue, affectedCount: 0 }];
     const before = await Promise.all([database.select().from(agentRunEvents).where(eq(agentRunEvents.runId, run.id)), database.select().from(agentInboxItems).where(eq(agentInboxItems.runId, run.id)), database.select().from(jobDiscoverySourceIssues).where(eq(jobDiscoverySourceIssues.runId, run.id))]);
     await expect(persistence.persistSuccessfulDiscovery({ run: { ...frozen, claimToken: run.claimToken }, details: [], scans: [{ sourceId: checked.sourceId, observedDetailIds: [], complete: true }], storedObjects: [], sourceChecks: [check], sourceIssues: issues as any, now: later })).rejects.toThrow("AGENT_RUN_PERSIST_FAILED");
     await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, run.id))).resolves.toEqual([{ status: "running" }]);

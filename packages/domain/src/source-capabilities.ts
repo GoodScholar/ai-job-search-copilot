@@ -10,6 +10,11 @@ import {
   type SourceCapability,
 } from "@job-copilot/contracts/source-capabilities";
 import { GREENHOUSE_JOB_DISCOVERY_ADAPTER, GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION } from "@job-copilot/contracts/agent-runs";
+import { z } from "zod";
+
+/** 当前已执行的来源动作；safe-open 仅声明/展示，尚未进入执行面。 */
+export const SourceExecutionActionSchema = SourceCapabilitySchema.exclude(["safe_open_original_page"]);
+export type SourceExecutionAction = z.infer<typeof SourceExecutionActionSchema>;
 
 export interface SourceCapabilityAdapter {
   readonly adapter: string;
