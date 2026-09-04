@@ -397,6 +397,7 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
               return derived;
             })()
           : input.terminal ?? "completed";
+        const persistedCheckIds = new Map<string, string>();
         if (sourceChecks.length > 0) {
           const inserted = await transaction.insert(jobSourceHealthChecks).values(sourceChecks.map((check) => ({
           id: check.checkId, userId: run.userId, runId: check.runId, targetId: check.targetId, watchlistItemId: check.watchlistItemId,
@@ -404,8 +405,9 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
           impactAffectedCount: check.impact.affectedCount, observedPostingCount: check.observedPostingCount,
           selectedDetailCount: check.selectedDetailCount, validDetailCount: check.validDetailCount,
           requestAttemptCount: check.requestAttemptCount, checkedAt: new Date(check.checkedAt),
-          }))).onConflictDoNothing().returning({ sourceId: jobSourceHealthChecks.sourceId });
-          const insertedSourceIds = new Set<string>(inserted.map((item: { sourceId: string }) => item.sourceId));
+          }))).onConflictDoNothing().returning({ sourceId: jobSourceHealthChecks.sourceId, id: jobSourceHealthChecks.id });
+          inserted.forEach((item: { sourceId: string; id: string }) => persistedCheckIds.set(item.sourceId, item.id));
+          const insertedSourceIds = new Set<string>(persistedCheckIds.keys());
           for (const check of sourceChecks.filter((item) => !insertedSourceIds.has(item.sourceId))) {
             const [existing] = await transaction.select().from(jobSourceHealthChecks).where(and(
               eq(jobSourceHealthChecks.userId, run.userId), eq(jobSourceHealthChecks.runId, check.runId), eq(jobSourceHealthChecks.sourceId, check.sourceId),
@@ -423,6 +425,10 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
               && existing.requestAttemptCount === check.requestAttemptCount
               && existing.checkedAt.toISOString() === new Date(check.checkedAt).toISOString();
             if (!same) throw new Error("AGENT_RUN_PERSIST_FAILED");
+            persistedCheckIds.set(check.sourceId, existing.id);
+          }
+          for (const check of sourceChecks) {
+            if (!persistedCheckIds.has(check.sourceId)) throw new Error("AGENT_RUN_PERSIST_FAILED");
           }
         }
         const cleanupObjectKeys: string[] = [];
@@ -489,8 +495,8 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
         });
         if (failed) await deps.auditTrail.bind(transaction).append({ userId: run.userId, actorUserId: run.userId, eventType: "agent.run_failed", occurredAt: input.now, requestId: run.id, outcome: "failure", reasonCode: "AGENT_RUN_ADAPTER_FAILED", resourceType: "agent_run", resourceId: run.id, metadata: { runId: run.id, targetId: run.targetId, attemptCount: run.attemptCount, failureCode: "AGENT_RUN_ADAPTER_FAILED" } });
         else await deps.auditTrail.bind(transaction).append({ userId: run.userId, actorUserId: run.userId, eventType: "agent.run_completed", occurredAt: input.now, requestId: run.id, outcome: "success", reasonCode: "AGENT_RUN_COMPLETED", resourceType: "agent_run", resourceId: run.id, metadata: { runId: run.id, targetId: run.targetId, attemptCount: run.attemptCount, resultCount: run.resultCount + resultCount } });
-        for (const [index, check] of sourceChecks.filter((item) => item.status === "parser_degraded" || item.status === "rate_limited" || item.status === "hard_failed").entries()) {
-          const [item] = await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: run.userId, runId: run.id, triggerEventSequence: terminalSequence + index, watchlistItemId: check.watchlistItemId, sourceHealthCheckId: check.checkId, kind: "source_attention", status: "unread", reasonCode: "SOURCE_HEALTH_ATTENTION", budgetDimension: null, createdAt: input.now }).onConflictDoNothing().returning({ id: agentInboxItems.id });
+        for (const check of sourceChecks.filter((item) => item.status === "parser_degraded" || item.status === "rate_limited" || item.status === "hard_failed")) {
+          const [item] = await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: run.userId, runId: run.id, triggerEventSequence: null, watchlistItemId: check.watchlistItemId, sourceHealthCheckId: persistedCheckIds.get(check.sourceId)!, kind: "source_attention", status: "unread", reasonCode: "SOURCE_HEALTH_ATTENTION", budgetDimension: null, createdAt: input.now }).onConflictDoNothing().returning({ id: agentInboxItems.id });
           if (item) await deps.auditTrail.bind(transaction).append({ userId: run.userId, actorUserId: run.userId, eventType: "agent.inbox_opened", occurredAt: input.now, requestId: run.id, outcome: "success", reasonCode: "SOURCE_HEALTH_ATTENTION", resourceType: "agent_inbox_item", resourceId: item.id, metadata: { runId: run.id, kind: "source_attention", reasonCode: "SOURCE_HEALTH_ATTENTION", budgetDimension: null } });
         }
         if (failed) {
