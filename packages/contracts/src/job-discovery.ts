@@ -245,7 +245,7 @@ const GenericDiscoverySourceIssueSummarySchema = z.object({
 const CapabilityDiscoverySourceIssueSummarySchema = z.object({
   provider: z.literal("greenhouse"),
   code: z.enum(["SOURCE_CAPABILITY_UNSUPPORTED", "SOURCE_CAPABILITY_DECLARATION_MISMATCH"]),
-  affectedCount: nonnegativeInteger.max(10),
+  affectedCount: z.int().min(1).max(10),
   impact: SourceCapabilityImpactSchema,
   retryable: z.literal(false),
   suggestedActions: z.tuple([SourceCapabilitySuggestedActionSchema]),

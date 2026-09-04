@@ -2,17 +2,28 @@ import {
   SourceCapabilityDeclarationSchema,
   SourceCapabilityRejectionSchema,
   SourceCapabilitySchema,
+  declareFormalBetaSourceCapabilities,
   mismatchedSourceCapabilityDeclaration,
   unsupportedSourceCapability,
   type SourceCapabilityDeclaration,
   type SourceCapabilityRejection,
   type SourceCapability,
 } from "@job-copilot/contracts/source-capabilities";
+import { GREENHOUSE_JOB_DISCOVERY_ADAPTER, GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION } from "@job-copilot/contracts/agent-runs";
 
 export interface SourceCapabilityAdapter {
   readonly adapter: string;
   readonly adapterVersion: string;
   declareCapabilities(input: { sourceId: string }): SourceCapabilityDeclaration;
+}
+
+/** 服务端 Greenhouse v2 声明端口；Worker 与 API 均复用同一 contracts 构造器。 */
+export class GreenhouseSourceCapabilityAdapter implements SourceCapabilityAdapter {
+  readonly adapter = GREENHOUSE_JOB_DISCOVERY_ADAPTER;
+  readonly adapterVersion = GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION;
+  declareCapabilities(input: { sourceId: string }): SourceCapabilityDeclaration {
+    return declareFormalBetaSourceCapabilities({ sourceId: input.sourceId, adapter: this.adapter, adapterVersion: this.adapterVersion });
+  }
 }
 
 export type SourceActionAuthorization = { allowed: true } | { allowed: false; failure: SourceCapabilityRejection };

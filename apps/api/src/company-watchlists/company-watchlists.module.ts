@@ -4,6 +4,7 @@ import type { AuditTrail } from "@job-copilot/domain/audit-trail";
 import { createCompanyWatchlistCommands, createCompanyWatchlistQueries } from "@job-copilot/domain/company-watchlists";
 import { createSourceHealthQueries } from "@job-copilot/domain/source-health";
 import { createSourceCapabilityProjectionQueries } from "@job-copilot/domain/source-capability-projections";
+import { GreenhouseSourceCapabilityAdapter } from "@job-copilot/domain/source-capabilities";
 import { AuthModule, AUDIT_TRAIL } from "../auth/auth.module.js";
 import { DATABASE, RuntimeConfigModule } from "../config/runtime-config.module.js";
 import { CompanyWatchlistsController } from "./company-watchlists.controller.js";
@@ -28,7 +29,7 @@ import { COMPANY_WATCHLIST_COMMANDS, COMPANY_WATCHLIST_QUERIES, SOURCE_CAPABILIT
       useFactory: (db: Database) => createCompanyWatchlistQueries({ db }),
     },
     { provide: SOURCE_HEALTH_QUERIES, inject: [DATABASE], useFactory: (db: Database) => createSourceHealthQueries({ db }) },
-    { provide: SOURCE_CAPABILITY_PROJECTION_QUERIES, inject: [DATABASE], useFactory: (db: Database) => createSourceCapabilityProjectionQueries({ db }) },
+    { provide: SOURCE_CAPABILITY_PROJECTION_QUERIES, inject: [DATABASE], useFactory: (db: Database) => createSourceCapabilityProjectionQueries({ db, capabilityAdapter: new GreenhouseSourceCapabilityAdapter() }) },
   ],
 })
 export class CompanyWatchlistsModule {}

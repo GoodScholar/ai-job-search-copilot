@@ -61,7 +61,7 @@ export function createSourceHealthDiscoveryAdapterResolver(environment: NodeJS.P
         || executionSpec.data.adapterVersion !== GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION) {
         throw new Error("AGENT_RUN_ADAPTER_UNSUPPORTED");
       }
-      if (config.environment === "test") return new FakePublicSourceHealthAdapter(config.sourceHealthScenarios[input.idempotencyKey] as Readonly<Record<string, FakePublicSourceHealthScenario>> | undefined);
+      if (config.environment === "test") return new FakePublicSourceHealthAdapter(config.sourceHealthScenarios[input.idempotencyKey] as Readonly<Record<string, FakePublicSourceHealthScenario>> | undefined, { adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER, adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION });
       if (config.environment === "production" || config.executionMode === "greenhouse") {
         return new GreenhouseSourceHealthAdapter();
       }

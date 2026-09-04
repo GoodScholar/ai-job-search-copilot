@@ -430,11 +430,11 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
       <p aria-live="polite" className={message ? "agent-run-live agent-run-live-error" : "agent-run-live"} role="status">
         {message || runStatusLabel(run)}
       </p>
-      {run?.status === "completed" && run.termination?.kind === "completed_with_source_issues" ? <p>
-        {isLayeredPublicRun ? <>公开岗位发现存在待关注诊断。 <Link className="workbench-touch-target" href={`/home?runId=${run.runId}#agent-run`}>查看本次运行诊断</Link></> : (() => {
-          const capabilityIssue = "sourceIssues" in run && run.sourceIssues.find((issue) => issue.code === "SOURCE_CAPABILITY_UNSUPPORTED" || issue.code === "SOURCE_CAPABILITY_DECLARATION_MISMATCH");
-          return capabilityIssue ? <>该来源不支持本次动作，影响范围：整个来源；不可重试。建议：检查来源能力声明。 <Link className="workbench-touch-target" href={`/profile/targets/${run.targetId}/watchlist#source-capabilities`}>查看来源能力</Link></> : <>问题来源 {("sourceChecks" in run ? run.sourceChecks : []).filter((check) => ["parser_degraded", "rate_limited", "hard_failed"].includes(check.status)).length} 个。 <Link className="workbench-touch-target" href={`/profile/targets/${run.targetId}/watchlist#source-health`}>查看来源诊断</Link></>;
-        })()}
+      {run && "sourceIssues" in run && run.sourceIssues.some((issue) => "impact" in issue && (issue.code === "SOURCE_CAPABILITY_UNSUPPORTED" || issue.code === "SOURCE_CAPABILITY_DECLARATION_MISMATCH")) ? (() => {
+        const capabilityIssues = run.sourceIssues.filter((issue): issue is Extract<typeof issue, { impact: unknown }> => "impact" in issue && (issue.code === "SOURCE_CAPABILITY_UNSUPPORTED" || issue.code === "SOURCE_CAPABILITY_DECLARATION_MISMATCH"));
+        return <p>来源能力拒绝：{capabilityIssues.map((issue) => issue.code).join("、")}；受影响来源 {capabilityIssues.reduce((total, issue) => total + issue.affectedCount, 0)} 个；影响范围：{capabilityIssues.map((issue) => issue.impact.scope === "entire_source" ? "整个来源" : "受限范围").join("、")}；{capabilityIssues.every((issue) => issue.retryable === false) ? "不可重试" : "可重试"}。建议：{capabilityIssues.flatMap((issue) => issue.suggestedActions).map((action) => action === "review_source_capabilities" ? "检查来源能力声明" : action).join("、")}。 <Link className="workbench-touch-target" href={`/profile/targets/${run.targetId}/watchlist#source-capabilities`}>查看来源能力</Link></p>;
+      })() : run?.status === "completed" && run.termination?.kind === "completed_with_source_issues" ? <p>
+        {isLayeredPublicRun ? <>公开岗位发现存在待关注诊断。 <Link className="workbench-touch-target" href={`/home?runId=${run.runId}#agent-run`}>查看本次运行诊断</Link></> : <>问题来源 {("sourceChecks" in run ? run.sourceChecks : []).filter((check) => ["parser_degraded", "rate_limited", "hard_failed"].includes(check.status)).length} 个。 <Link className="workbench-touch-target" href={`/profile/targets/${run.targetId}/watchlist#source-health`}>查看来源诊断</Link></>}
       </p> : null}
 
       {timeline.length > 0 ? (

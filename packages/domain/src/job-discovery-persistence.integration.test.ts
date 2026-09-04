@@ -12,6 +12,7 @@ import {
   auditEvents,
   createDatabase,
   jobAccounts,
+  jobDiscoverySourceIssues,
   jobOpportunities,
   jobSourceHealthChecks,
   jobOpportunitySources,
@@ -747,6 +748,26 @@ describe("job discovery persistence lifecycle", () => {
     const check = { checkId: crypto.randomUUID(), runId: run.id, targetId, watchlistItemId, sourceId: source.sourceId, status: "zero_valid_results" as const, reasonCodes: [], impact: { scope: "none" as const, affectedCount: null }, observedPostingCount: 0, selectedDetailCount: 0, validDetailCount: 0, requestAttemptCount: 1, checkedAt: later.toISOString() };
     const scans = variant === "wrong" ? [{ sourceId: "greenhouse:other", observedDetailIds: [], complete: true }] : variant === "missing" ? [] : [{ sourceId: source.sourceId, observedDetailIds: [], complete: true }, { sourceId: "greenhouse:other", observedDetailIds: [], complete: true }];
     await expect(persistence.persistSuccessfulDiscovery({ run: { ...frozen, claimToken: run.claimToken }, details: [], scans, storedObjects: [], sourceChecks: [check], now: later })).rejects.toThrow("AGENT_RUN_PERSIST_FAILED");
+  });
+
+  it.each(["unknown_source", "illegal_action", "duplicate_source", "zero_count"] as const)("v3 persistence 拒绝畸形 capability issue，且不写终态事实：%s", async (variant) => {
+    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const deniedWatchlistItemId = crypto.randomUUID(); const checkedWatchlistItemId = crypto.randomUUID();
+    await database.insert(jobAccounts).values({ id: userId });
+    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: firstSeen, updatedAt: firstSeen });
+    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: firstSeen });
+    const persistence = createJobDiscoveryPersistence({ db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => later }) });
+    const run = await claimRun(userId, targetId, later);
+    const denied = { sourceId: "greenhouse:denied", watchlistItemId: deniedWatchlistItemId, canonicalCompanyName: "Denied", careersUrl: "https://boards.greenhouse.io/denied", allowedDomains: ["boards-api.greenhouse.io"], boardToken: "denied" };
+    const checked = { sourceId: "greenhouse:checked", watchlistItemId: checkedWatchlistItemId, canonicalCompanyName: "Checked", careersUrl: "https://boards.greenhouse.io/checked", allowedDomains: ["boards-api.greenhouse.io"], boardToken: "checked" };
+    const [frozen] = await database.update(agentRuns).set({ workflowVersion: GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, adapterVersion: "greenhouse-job-board-v2", outputSchemaVersion: "job-discovery-result-v3", ruleVersion: "job-discovery-source-health-rules-v1", toolAllowlist: ["job_discovery.list_source", "job_discovery.get_detail"], sourceScope: { kind: "company_watchlist", adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2", watchlistVersion: 1, sources: [denied, checked] } }).where(eq(agentRuns.id, run.id)).returning();
+    if (!frozen) throw new Error("run not frozen");
+    const check = { checkId: crypto.randomUUID(), runId: run.id, targetId, watchlistItemId: checked.watchlistItemId, sourceId: checked.sourceId, status: "zero_valid_results" as const, reasonCodes: [], impact: { scope: "none" as const, affectedCount: null }, observedPostingCount: 0, selectedDetailCount: 0, validDetailCount: 0, requestAttemptCount: 1, checkedAt: later.toISOString() };
+    const issue = { provider: "greenhouse", code: "SOURCE_CAPABILITY_UNSUPPORTED", sourceId: denied.sourceId, action: "continuous_monitoring", affectedCount: 1 };
+    const issues = variant === "unknown_source" ? [{ ...issue, sourceId: "greenhouse:outside" }] : variant === "illegal_action" ? [{ ...issue, action: "not_an_action" }] : variant === "duplicate_source" ? [issue, { ...issue, action: "read_details" }] : [{ ...issue, affectedCount: 0 }];
+    const before = await Promise.all([database.select().from(agentRunEvents).where(eq(agentRunEvents.runId, run.id)), database.select().from(agentInboxItems).where(eq(agentInboxItems.runId, run.id)), database.select().from(jobDiscoverySourceIssues).where(eq(jobDiscoverySourceIssues.runId, run.id))]);
+    await expect(persistence.persistSuccessfulDiscovery({ run: { ...frozen, claimToken: run.claimToken }, details: [], scans: [{ sourceId: checked.sourceId, observedDetailIds: [], complete: true }], storedObjects: [], sourceChecks: [check], sourceIssues: issues as any, now: later })).rejects.toThrow("AGENT_RUN_PERSIST_FAILED");
+    await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, run.id))).resolves.toEqual([{ status: "running" }]);
+    await expect(Promise.all([database.select().from(agentRunEvents).where(eq(agentRunEvents.runId, run.id)), database.select().from(agentInboxItems).where(eq(agentInboxItems.runId, run.id)), database.select().from(jobDiscoverySourceIssues).where(eq(jobDiscoverySourceIssues.runId, run.id))])).resolves.toEqual(before);
   });
 
   it.each(["observed_count", "completion"] as const)("v3 check 必须与同来源 scan 一致：%s", async (variant) => {

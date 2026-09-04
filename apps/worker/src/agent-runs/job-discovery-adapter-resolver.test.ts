@@ -128,6 +128,7 @@ describe("JobDiscoveryAdapterResolver", () => {
       const resolver = createSourceHealthDiscoveryAdapterResolver({ APP_ENV: "test", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: JSON.stringify({ [idempotencyKey]: { "greenhouse:example": "rate_limited" } }) });
       const adapter = resolver.resolve({ runId, idempotencyKey, executionSpec: sourceHealthExecutionSpec, attemptCount: 1 });
       expect(adapter).toBeInstanceOf(FakePublicSourceHealthAdapter);
+      expect(adapter).toMatchObject({ adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2" });
       expect(createSourceHealthDiscoveryAdapterResolver({ APP_ENV: "test", E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: "   " }).resolve({ runId, idempotencyKey, executionSpec: sourceHealthExecutionSpec, attemptCount: 1 })).toBeInstanceOf(FakePublicSourceHealthAdapter);
       await expect(adapter.listSource({ targetSnapshot, source: { ...sourceHealthExecutionSpec.sourceScope.sources[0]!, allowedDomains: [...sourceHealthExecutionSpec.sourceScope.sources[0]!.allowedDomains] } })).resolves.toEqual({ ok: false, failure: { category: "rate_limited", reasonCode: "SOURCE_RATE_LIMITED", retryable: true, attemptCount: 2 } });
     } finally {

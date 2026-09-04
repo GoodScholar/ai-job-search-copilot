@@ -23,6 +23,16 @@ import { deriveSourceHealthTerminal } from "./source-health-terminal";
 import type { SourceHealthTerminal } from "./source-health-terminal";
 import { GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, JobSourceHealthCheckSchema, PublicAgentRunSourceScopeSchema, PublicSourceHealthAgentRunSourceScopeSchema, type JobSourceHealthCheck } from "@job-copilot/contracts/agent-runs";
 import { LayeredPublicJobDiscoverySourceScopeSchema } from "@job-copilot/contracts/job-discovery";
+import { SourceCapabilityRejectionReasonCodeSchema, SourceCapabilitySchema } from "@job-copilot/contracts/source-capabilities";
+import { z } from "zod";
+
+const PersistedCapabilityIssueSchema = z.object({
+  provider: z.literal("greenhouse"),
+  code: SourceCapabilityRejectionReasonCodeSchema,
+  sourceId: z.string().trim().min(1).max(256),
+  action: SourceCapabilitySchema,
+  affectedCount: z.literal(1),
+}).strict();
 
 export type DiscoveryDetail = {
   sourceId: string;
@@ -334,7 +344,7 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
       scans: Array<{ sourceId: string; observedDetailIds: string[]; complete: boolean }>;
       storedObjects: StoredDiscoveryObject[];
       sourceChecks?: JobSourceHealthCheck[];
-      sourceIssues?: Array<{ provider: "greenhouse"; code: "SOURCE_CAPABILITY_UNSUPPORTED" | "SOURCE_CAPABILITY_DECLARATION_MISMATCH"; affectedCount: number }>;
+      sourceIssues?: Array<{ provider: "greenhouse"; code: "SOURCE_CAPABILITY_UNSUPPORTED" | "SOURCE_CAPABILITY_DECLARATION_MISMATCH"; sourceId: string; action: "continuous_monitoring" | "active_discovery" | "read_details"; affectedCount: 1 }>;
       terminal?: SourceHealthTerminal;
       now: Date;
       /** Processor-only seam: caller has already started the bounded account transaction. */
@@ -381,12 +391,18 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
         if (run.workflowVersion === GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION) {
           const frozenSources = PublicSourceHealthAgentRunSourceScopeSchema.parse(run.sourceScope).sources;
           const sourceById = new Map(frozenSources.map((source) => [source.sourceId, source.watchlistItemId]));
-          if (sourceChecks.some((check) => sourceById.get(check.sourceId) !== check.watchlistItemId)
-            || (sourceChecks.length !== sourceById.size && (input.sourceIssues?.length ?? 0) === 0)) {
+          let validIssues: Array<z.infer<typeof PersistedCapabilityIssueSchema>>;
+          try { validIssues = (input.sourceIssues ?? []).map((issue) => PersistedCapabilityIssueSchema.parse(issue)); }
+          catch { throw new Error("AGENT_RUN_PERSIST_FAILED"); }
+          const denied = new Map(validIssues.map((issue) => [issue.sourceId, issue]));
+          if (denied.size !== validIssues.length
+            || validIssues.some((issue) => !sourceById.has(issue.sourceId))
+            || sourceChecks.some((check) => sourceById.get(check.sourceId) !== check.watchlistItemId || denied.has(check.sourceId))
+            || sourceChecks.length + denied.size !== sourceById.size) {
             throw new Error("AGENT_RUN_PERSIST_FAILED");
           }
           const scansBySource = new Map(input.scans.map((scan) => [scan.sourceId, scan]));
-          if (sourceChecks.some((check) => {
+          if (scansBySource.size !== sourceChecks.length || [...scansBySource.keys()].some((sourceId) => !sourceChecks.some((check) => check.sourceId === sourceId)) || sourceChecks.some((check) => {
             const scan = scansBySource.get(check.sourceId);
             const completed = check.status === "healthy" || check.status === "zero_valid_results";
             return !scan || check.observedPostingCount !== scan.observedDetailIds.length || scan.complete !== completed;
@@ -440,7 +456,7 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
         for (const issue of input.sourceIssues ?? []) {
           const key = `${issue.provider}:${issue.code}`;
           const existing = sourceIssues.get(key);
-          sourceIssues.set(key, { ...issue, affectedCount: Math.min(10, (existing?.affectedCount ?? 0) + issue.affectedCount) });
+          sourceIssues.set(key, { provider: issue.provider, code: issue.code, affectedCount: Math.min(10, (existing?.affectedCount ?? 0) + issue.affectedCount) });
         }
         for (const issue of sourceIssues.values()) await transaction.insert(jobDiscoverySourceIssues).values({ id: deps.id(), userId: run.userId, runId: run.id, provider: issue.provider, code: issue.code, affectedCount: issue.affectedCount, createdAt: input.now }).onConflictDoUpdate({
           target: [jobDiscoverySourceIssues.userId, jobDiscoverySourceIssues.runId, jobDiscoverySourceIssues.provider, jobDiscoverySourceIssues.code],
@@ -513,6 +529,13 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
         for (const check of sourceChecks.filter((item) => item.status === "parser_degraded" || item.status === "rate_limited" || item.status === "hard_failed")) {
           const [item] = await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: run.userId, runId: run.id, triggerEventSequence: null, watchlistItemId: check.watchlistItemId, sourceHealthCheckId: persistedCheckIds.get(check.sourceId)!, kind: "source_attention", status: "unread", reasonCode: "SOURCE_HEALTH_ATTENTION", budgetDimension: null, createdAt: input.now }).onConflictDoNothing().returning({ id: agentInboxItems.id });
           if (item) await deps.auditTrail.bind(transaction).append({ userId: run.userId, actorUserId: run.userId, eventType: "agent.inbox_opened", occurredAt: input.now, requestId: run.id, outcome: "success", reasonCode: "SOURCE_HEALTH_ATTENTION", resourceType: "agent_inbox_item", resourceId: item.id, metadata: { runId: run.id, kind: "source_attention", reasonCode: "SOURCE_HEALTH_ATTENTION", budgetDimension: null } });
+        }
+        if ((input.sourceIssues?.length ?? 0) > 0) {
+          const [existing] = await transaction.select({ id: agentInboxItems.id }).from(agentInboxItems).where(and(eq(agentInboxItems.userId, run.userId), eq(agentInboxItems.runId, run.id), eq(agentInboxItems.kind, "discovery_attention"))).limit(1);
+          if (!existing) {
+            const [item] = await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: run.userId, runId: run.id, triggerEventSequence: terminalSequence, kind: "discovery_attention", status: "unread", reasonCode: "DISCOVERY_ATTENTION", budgetDimension: null, createdAt: input.now }).returning({ id: agentInboxItems.id });
+            if (item) await deps.auditTrail.bind(transaction).append({ userId: run.userId, actorUserId: run.userId, eventType: "agent.inbox_opened", occurredAt: input.now, requestId: run.id, outcome: "success", reasonCode: "DISCOVERY_ATTENTION", resourceType: "agent_inbox_item", resourceId: item.id, metadata: { runId: run.id, kind: "discovery_attention", reasonCode: "DISCOVERY_ATTENTION", budgetDimension: null } });
+          }
         }
         if (failed) {
           const [item] = await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: run.userId, runId: run.id, triggerEventSequence: terminalSequence, kind: "run_failed", status: "unread", reasonCode: "AGENT_RUN_ADAPTER_FAILED", budgetDimension: null, createdAt: input.now }).onConflictDoNothing().returning({ id: agentInboxItems.id });

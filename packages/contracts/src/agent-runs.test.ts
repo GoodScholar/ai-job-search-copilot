@@ -276,6 +276,10 @@ describe("agent run contracts", () => {
     const capabilityIssue = { provider: "greenhouse", code: "SOURCE_CAPABILITY_UNSUPPORTED", affectedCount: 1, impact: { scope: "entire_source", affectedCount: null }, retryable: false, suggestedActions: ["review_source_capabilities"] };
     expect(AgentRunDetailSchema.safeParse({ ...twoSourceDetail, sourceChecks: [sourceCheck], sourceIssues: [capabilityIssue] }).success).toBe(true);
     expect(AgentRunDetailSchema.safeParse({ ...twoSourceDetail, sourceChecks: [sourceCheck], sourceIssues: [] }).success).toBe(false);
+    const elevenSources = Array.from({ length: 11 }, (_, index) => ({ ...v3Detail.sourceScope.sources[0]!, sourceId: `greenhouse:bounded-${index}`, watchlistItemId: `${(index + 20).toString().padStart(8, "0")}-6262-4e12-a8f7-091081ca6f48`, canonicalCompanyName: `Bounded ${index}`, careersUrl: `https://boards.greenhouse.io/bounded-${index}`, boardToken: `bounded-${index}` }));
+    const elevenSourceDetail = { ...v3Detail, sourceScope: { ...v3Detail.sourceScope, sources: elevenSources }, executionSpec: { ...v3Detail.executionSpec, sourceScope: { ...v3Detail.executionSpec.sourceScope, sources: elevenSources } } };
+    expect(AgentRunDetailSchema.safeParse({ ...elevenSourceDetail, sourceChecks: [], sourceIssues: [{ ...capabilityIssue, affectedCount: 10 }] }).success).toBe(true);
+    expect(AgentRunDetailSchema.safeParse({ ...elevenSourceDetail, sourceChecks: [], sourceIssues: [{ ...capabilityIssue, affectedCount: 0 }] }).success).toBe(false);
     expect(AgentRunDetailSchema.safeParse({ ...twoSourceDetail, status: "running", currentStep: "batch_search", completedAt: null, termination: null, usage: { ...twoSourceDetail.usage, complete: false } }).success).toBe(true);
     const failedGlobal = { ...twoSourceDetail, status: "failed", currentStep: "failed", completedAt: null, failedAt: now, failureCode: "AGENT_RUN_ADAPTER_FAILED", termination: { kind: "source_failed", failureCode: "AGENT_RUN_ADAPTER_FAILED", budgetDimension: null }, sourceChecks: [] };
     expect(AgentRunDetailSchema.safeParse(failedGlobal).success).toBe(true);

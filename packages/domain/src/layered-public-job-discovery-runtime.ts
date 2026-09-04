@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Database } from "@job-copilot/database";
+import { GREENHOUSE_JOB_DISCOVERY_ADAPTER, GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION } from "@job-copilot/contracts/agent-runs";
 
 import type { AuditTrail } from "./audit-trail";
 import { canonicalJsonBytes, type DiscoveryContentStore } from "./agent-run-processor";
@@ -67,7 +68,7 @@ export function createLayeredPublicJobDiscoveryRuntime(input: Omit<WorkflowDepen
       let listedSourceCount = 0;
       for (const trusted of frozenSources) {
         const source = trusted.source;
-        const discoveryAuthorization = authorizeSourceAction({ declaration: input.trustedSourceAdapter.declareCapabilities({ sourceId: source.sourceId }), action: "active_discovery", expected: { sourceId: source.sourceId, adapter: input.trustedSourceAdapter.adapter, adapterVersion: input.trustedSourceAdapter.adapterVersion } });
+        const discoveryAuthorization = authorizeSourceAction({ declaration: input.trustedSourceAdapter.declareCapabilities({ sourceId: source.sourceId }), action: "active_discovery", expected: { sourceId: source.sourceId, adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER, adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION } });
         if (!discoveryAuthorization.allowed) {
           sourceIssues.push({ code: discoveryAuthorization.failure.reasonCode, affectedCount: 1 });
           continue;
@@ -90,7 +91,7 @@ export function createLayeredPublicJobDiscoveryRuntime(input: Omit<WorkflowDepen
         listedSourceCount += 1;
         const details: DiscoveryDetail[] = [];
         for (const candidate of listed.data.candidates) {
-          const detailAuthorization = authorizeSourceAction({ declaration: input.trustedSourceAdapter.declareCapabilities({ sourceId: source.sourceId }), action: "read_details", expected: { sourceId: source.sourceId, adapter: input.trustedSourceAdapter.adapter, adapterVersion: input.trustedSourceAdapter.adapterVersion } });
+          const detailAuthorization = authorizeSourceAction({ declaration: input.trustedSourceAdapter.declareCapabilities({ sourceId: source.sourceId }), action: "read_details", expected: { sourceId: source.sourceId, adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER, adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION } });
           if (!detailAuthorization.allowed) {
             sourceIssues.push({ code: detailAuthorization.failure.reasonCode, affectedCount: 1 });
             break;

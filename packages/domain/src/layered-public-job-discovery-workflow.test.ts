@@ -89,7 +89,7 @@ describe("layered public job discovery workflow", () => {
     const runtime = createLayeredPublicJobDiscoveryRuntime({
       db: { transaction: async (callback: (value: never) => unknown) => callback(transaction as never) } as never, id: () => "aaaaaaaa-aaaa-8aaa-8aaa-aaaaaaaaaaaa", auditTrail: {} as never,
       contentStore: { put: async () => undefined, delete: async () => undefined }, evidenceStore: { put: async () => ({ created: true }), delete: async () => undefined },
-      trustedSourceAdapter: { adapter: "greenhouse", adapterVersion: "test", declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: [] }), listSource: async () => { adapterCalls += 1; throw new Error("UNUSED"); }, getSourceDetail: async () => { adapterCalls += 1; throw new Error("UNUSED"); } },
+      trustedSourceAdapter: { adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2", declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2", contractVersion: "source-capabilities-v1", capabilities: [] }), listSource: async () => { adapterCalls += 1; throw new Error("UNUSED"); }, getSourceDetail: async () => { adapterCalls += 1; throw new Error("UNUSED"); } },
       anySearch: { search: async () => ({ candidates: [] }), extract: async () => { throw new Error("UNUSED"); } },
       preflight: async () => null, fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
     });
@@ -106,8 +106,8 @@ describe("layered public job discovery workflow", () => {
       db: {} as never, id: () => "aaaaaaaa-aaaa-8aaa-8aaa-aaaaaaaaaaaa", auditTrail: {} as never,
       contentStore: { put: async () => undefined, delete: async () => undefined }, evidenceStore: { put: async () => ({ created: true }), delete: async () => undefined },
       trustedSourceAdapter: {
-        adapter: "greenhouse", adapterVersion: "test",
-        declareCapabilities: ({ sourceId }: { sourceId: string }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: sourceId === unsupported ? [] : ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
+        adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2",
+        declareCapabilities: ({ sourceId }: { sourceId: string }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2", contractVersion: "source-capabilities-v1", capabilities: sourceId === unsupported ? [] : ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
         listSource: async ({ source }: any) => {
           adapterCalls += 1;
           expect(source.sourceId).toBe(supported);
@@ -130,6 +130,20 @@ describe("layered public job discovery workflow", () => {
 
     expect(adapterCalls).toBe(1);
     expect(outcome).toMatchObject({ branchOutcome: { trusted: "succeeded", publicDiscovery: "failed" }, sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED", affectedCount: 1 }, { provider: "greenhouse", code: "SOURCE_CAPABILITY_UNSUPPORTED", affectedCount: 1 }] });
+  });
+
+  it("v4 冻结身份拒绝 adapter 自称一致的错误版本，且不发生来源 I/O", async () => {
+    let calls = 0;
+    const sourceId = "greenhouse:wrong-version";
+    const runtime = createLayeredPublicJobDiscoveryRuntime({
+      db: {} as never, id: () => "aaaaaaaa-aaaa-8aaa-8aaa-aaaaaaaaaaaa", auditTrail: {} as never,
+      contentStore: { put: async () => undefined, delete: async () => undefined }, evidenceStore: { put: async () => ({ created: true }), delete: async () => undefined },
+      trustedSourceAdapter: { adapter: "greenhouse", adapterVersion: "malicious-v9", declareCapabilities: ({ sourceId: declaredSourceId }: { sourceId: string }) => ({ sourceId: declaredSourceId, adapter: "greenhouse", adapterVersion: "malicious-v9", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }), listSource: async () => { calls += 1; throw new Error("UNREACHABLE"); }, getSourceDetail: async () => { calls += 1; throw new Error("UNREACHABLE"); } },
+      anySearch: { isConfigured: () => false, search: async () => ({ candidates: [] }), extract: async () => { throw new Error("UNREACHABLE"); } }, preflight: async () => null, fetcher: { fetch: async () => { throw new Error("UNREACHABLE"); } },
+    } as never);
+    const outcome = await runtime.run({ userId: targetId, runId, claimToken: "99999999-9999-8999-8999-999999999999", now: new Date(), attemptCount: 1, executionSpec: executionSpecFor([{ ordinal: 1, queryId, kind: "general", stableFingerprint: "a".repeat(64), query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }], [{ kind: "greenhouse_trusted_source", source: { sourceId, watchlistItemId: "55555555-5555-8555-8555-555555555555", canonicalCompanyName: "Wrong", careersUrl: "https://boards.greenhouse.io/wrong-version", allowedDomains: ["boards-api.greenhouse.io"], boardToken: "wrong-version" } }]) as never, beforePhysicalOperation: async () => undefined, onDiagnostics: () => undefined, signal: new AbortController().signal });
+    expect(calls).toBe(0);
+    expect(outcome.sourceIssues).toEqual(expect.arrayContaining([expect.objectContaining({ provider: "greenhouse", code: "SOURCE_CAPABILITY_DECLARATION_MISMATCH", affectedCount: 1 })]));
   });
 
   it("在同一 run 调度可信来源和 AnySearch，并仅返回脱敏事实", async () => {

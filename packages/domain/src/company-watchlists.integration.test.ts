@@ -272,7 +272,10 @@ describe("company watchlists", () => {
       allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null,
     } });
     const item = overview.items[0]!;
-    const projection = createSourceCapabilityProjectionQueries({ db: database });
+    const projection = createSourceCapabilityProjectionQueries({ db: database, capabilityAdapter: {
+      adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2",
+      declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2", contractVersion: "source-capabilities-v1", capabilities: ["continuous_monitoring"] }),
+    } });
     const started = await createAgentRunCommands({ db: database, queue: { enqueue: async () => {} }, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
       .start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
     await database.insert(jobSourceHealthChecks).values({ id: crypto.randomUUID(), userId, runId: started.runId, targetId, watchlistItemId: item.itemId, sourceId: "greenhouse:capability-board", status: "rate_limited", reasonCodes: ["SOURCE_RATE_LIMITED"], impactScope: "entire_source", impactAffectedCount: null, observedPostingCount: 0, selectedDetailCount: 0, validDetailCount: 0, requestAttemptCount: 1, checkedAt: now });
@@ -280,7 +283,7 @@ describe("company watchlists", () => {
       targetId, watchlistVersion: overview.version,
       sources: [{ watchlistItemId: item.itemId, name: "Capability Board", state: "enabled", declaration: {
         sourceId: "greenhouse:capability-board", adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2",
-        contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"],
+        contractVersion: "source-capabilities-v1", capabilities: ["continuous_monitoring"],
       } }],
     });
     const foreignUserId = crypto.randomUUID();

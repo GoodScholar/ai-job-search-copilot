@@ -2,7 +2,7 @@ import type {
   AgentRunDetail,
   PublicSourceHealthAgentRunSourceScope,
 } from "@job-copilot/contracts/agent-runs";
-import { FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER, FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION } from "@job-copilot/contracts/agent-runs";
+import { FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER, FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION, GREENHOUSE_JOB_DISCOVERY_ADAPTER, GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION } from "@job-copilot/contracts/agent-runs";
 import { declareFormalBetaSourceCapabilities, type SourceCapabilityDeclaration } from "@job-copilot/contracts/source-capabilities";
 import type { SourceHealthAdapterFailure, SourceHealthDiscoveryAdapter, SourceHealthDetailResult, SourceHealthListResult } from "@job-copilot/domain/agent-runs";
 import { PUBLIC_SOURCE_HEALTH_SCENARIOS, type PublicSourceHealthScenario } from "@job-copilot/domain/job-discovery-execution-mode";
@@ -31,10 +31,12 @@ function matchesTarget(target: TargetSnapshot): boolean {
 
 /** 仅供 APP_ENV=test 的公共来源受控检查夹具；不产生任何网络请求。 */
 export class FakePublicSourceHealthAdapter implements SourceHealthDiscoveryAdapter {
-  readonly adapter = FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER;
-  readonly adapterVersion = FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION;
-  constructor(private readonly scenarios: Readonly<Record<string, FakePublicSourceHealthScenario>> = {}) {
+  readonly adapter: typeof FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER | typeof GREENHOUSE_JOB_DISCOVERY_ADAPTER;
+  readonly adapterVersion: typeof FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION | typeof GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION;
+  constructor(private readonly scenarios: Readonly<Record<string, FakePublicSourceHealthScenario>> = {}, identity: { adapter: typeof FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER | typeof GREENHOUSE_JOB_DISCOVERY_ADAPTER; adapterVersion: typeof FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION | typeof GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION } = { adapter: FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER, adapterVersion: FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION }) {
     if (process.env.APP_ENV !== "test") throw new Error("FAKE_PUBLIC_SOURCE_HEALTH_TEST_ONLY");
+    this.adapter = identity.adapter;
+    this.adapterVersion = identity.adapterVersion;
   }
 
   declareCapabilities(input: { sourceId: string }): SourceCapabilityDeclaration {

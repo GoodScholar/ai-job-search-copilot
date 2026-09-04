@@ -1,11 +1,11 @@
-import { GREENHOUSE_JOB_DISCOVERY_ADAPTER, GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION } from "@job-copilot/contracts/agent-runs";
 import { classifyGreenhousePublicSource } from "@job-copilot/contracts/job-discovery-schedules";
-import { SourceCapabilityProjectionOverviewSchema, declareFormalBetaSourceCapabilities, type SourceCapabilityProjectionOverview } from "@job-copilot/contracts/source-capabilities";
+import { SourceCapabilityProjectionOverviewSchema, type SourceCapabilityProjectionOverview } from "@job-copilot/contracts/source-capabilities";
 import type { Database } from "@job-copilot/database";
 import { createCompanyWatchlistQueries } from "./company-watchlists";
+import type { SourceCapabilityAdapter } from "./source-capabilities";
 
 /** 服务端唯一将 owner-bound Watchlist 投影为来源能力声明的查询边界。 */
-export function createSourceCapabilityProjectionQueries(deps: { db: Database }): {
+export function createSourceCapabilityProjectionQueries(deps: { db: Database; capabilityAdapter: SourceCapabilityAdapter }): {
   get(input: { userId: string; targetId: string }): Promise<SourceCapabilityProjectionOverview>;
 } {
   return {
@@ -21,7 +21,7 @@ export function createSourceCapabilityProjectionQueries(deps: { db: Database }):
             watchlistItemId: item.itemId,
             name: item.canonicalCompanyName,
             state: item.state,
-            declaration: declareFormalBetaSourceCapabilities({ sourceId: classified.source.sourceId, adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER, adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION }),
+            declaration: deps.capabilityAdapter.declareCapabilities({ sourceId: classified.source.sourceId }),
           }];
         }),
       });

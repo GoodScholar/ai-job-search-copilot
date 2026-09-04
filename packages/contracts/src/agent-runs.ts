@@ -574,8 +574,12 @@ export const AgentRunDetailSchema = z.union([
       }
       checkedSourceIds.add(check.sourceId);
     }
-    const capabilityDenied = "sourceIssues" in detail && detail.sourceIssues.some((issue) => issue.code === "SOURCE_CAPABILITY_UNSUPPORTED" || issue.code === "SOURCE_CAPABILITY_DECLARATION_MISMATCH");
-    const requiresCompleteSourceChecks = (detail.status === "completed" || (terminal && detail.sourceChecks.length > 0)) && !capabilityDenied;
+    const capabilityIssues = "sourceIssues" in detail ? detail.sourceIssues.filter((issue) => issue.code === "SOURCE_CAPABILITY_UNSUPPORTED" || issue.code === "SOURCE_CAPABILITY_DECLARATION_MISMATCH") : [];
+    const missingSourceChecks = sourceWatchlistItems.size - checkedSourceIds.size;
+    if (capabilityIssues.length > 0 && Math.min(10, capabilityIssues.reduce((total, issue) => total + issue.affectedCount, 0)) !== Math.min(10, missingSourceChecks)) {
+      context.addIssue({ code: "custom", path: ["sourceIssues"], message: "capability issue affected count must exactly cover missing v3 source checks" });
+    }
+    const requiresCompleteSourceChecks = capabilityIssues.length === 0 && (detail.status === "completed" || (terminal && detail.sourceChecks.length > 0));
     if (requiresCompleteSourceChecks && (checkedSourceIds.size !== sourceWatchlistItems.size || [...sourceWatchlistItems.keys()].some((sourceId) => !checkedSourceIds.has(sourceId)))) {
       context.addIssue({ code: "custom", path: ["sourceChecks"], message: "terminal v3 runs require one source check for every frozen source" });
     }

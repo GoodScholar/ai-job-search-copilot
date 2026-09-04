@@ -155,6 +155,13 @@ it("能力拒绝显示稳定影响、不可重试和有限建议", () => {
   expect(screen.getByRole("link", { name: "查看来源能力" })).toHaveAttribute("href", `/profile/targets/${targetId}/watchlist#source-capabilities`);
 });
 
+it("失败运行也显示能力拒绝的代码和聚合来源数", () => {
+  const failed = { ...detail("failed"), workflowVersion: "job-discovery-workflow-v3", adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2", outputSchemaVersion: "job-discovery-result-v3", termination: { kind: "source_failed", failureCode: "AGENT_RUN_ADAPTER_FAILED", budgetDimension: null }, sourceChecks: [], sourceIssues: [{ provider: "greenhouse", code: "SOURCE_CAPABILITY_DECLARATION_MISMATCH", affectedCount: 2, impact: { scope: "entire_source", affectedCount: null }, retryable: false, suggestedActions: ["review_source_capabilities"] }] } as unknown as AgentRunDetail;
+  render(<AgentRunPanel targets={[target()]} initialRun={failed} />);
+  expect(screen.getByText(/SOURCE_CAPABILITY_DECLARATION_MISMATCH；受影响来源 2 个/u)).toBeVisible();
+  expect(screen.getByText(/影响范围：整个来源；不可重试。建议：检查来源能力声明/u)).toBeVisible();
+});
+
 it("收到 Inbox 已处理通知后重新读取权威运行详情", async () => {
   const paused = { ...detail(), status: "paused" as const, currentStep: "batch_search" as const, version: 4 };
   vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(Response.json(detail("completed"))));
