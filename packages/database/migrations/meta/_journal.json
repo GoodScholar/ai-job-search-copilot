@@ -302,6 +302,13 @@
       "when": 1788407394798,
       "tag": "0042_mighty_malcolm_colcord",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1788408000000,
+      "tag": "0043_task_control_agent_inbox",
+      "breakpoints": true
     }
   ]
 }

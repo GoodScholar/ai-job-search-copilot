@@ -914,22 +914,42 @@ export const agentRunUsageEntries = pgTable("agent_run_usage_entries", {
 
 export const agentInboxItems = pgTable("agent_inbox_items", {
   id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id),
-  runId: uuid("run_id").notNull().references(() => agentRuns.id), triggerEventSequence: integer("trigger_event_sequence").notNull(),
-  kind: varchar("kind", { length: 32 }).notNull(), status: varchar("status", { length: 16 }).notNull().default("open"),
+  runId: uuid("run_id").references(() => agentRuns.id), triggerEventSequence: integer("trigger_event_sequence"),
+  candidateFactId: uuid("candidate_fact_id").references(() => candidateFacts.id), watchlistItemId: uuid("watchlist_item_id"),
+  recommendationListId: uuid("recommendation_list_id").references(() => recommendationLists.id), calibrationProposalId: uuid("calibration_proposal_id").references(() => calibrationProposals.id),
+  kind: varchar("kind", { length: 32 }).notNull(), status: varchar("status", { length: 16 }).notNull().default("unread"),
   reasonCode: varchar("reason_code", { length: 64 }).notNull(), budgetDimension: varchar("budget_dimension", { length: 32 }),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), readAt: timestamp("read_at", { withTimezone: true }), resolvedAt: timestamp("resolved_at", { withTimezone: true }),
 }, (table) => [
   unique("agent_inbox_items_user_id_id_unique").on(table.userId, table.id),
   unique("agent_inbox_items_run_event_kind_unique").on(table.runId, table.triggerEventSequence, table.kind),
   index("agent_inbox_items_open_lookup_idx").on(table.userId, table.status, table.createdAt),
+  uniqueIndex("agent_inbox_items_candidate_fact_unique_idx").on(table.candidateFactId).where(sql`${table.candidateFactId} is not null`),
+  uniqueIndex("agent_inbox_items_recommendation_list_unique_idx").on(table.recommendationListId).where(sql`${table.recommendationListId} is not null`),
+  uniqueIndex("agent_inbox_items_calibration_proposal_unique_idx").on(table.calibrationProposalId).where(sql`${table.calibrationProposalId} is not null`),
+  uniqueIndex("agent_inbox_items_source_run_watchlist_unique_idx").on(table.runId, table.watchlistItemId).where(sql`${table.kind} = 'source_attention'`),
   foreignKey({ columns: [table.userId, table.runId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "agent_inbox_items_owner_run_fk" }),
+  foreignKey({ columns: [table.userId, table.candidateFactId], foreignColumns: [candidateFacts.userId, candidateFacts.id], name: "agent_inbox_items_owner_candidate_fact_fk" }),
+  foreignKey({ columns: [table.userId, table.recommendationListId], foreignColumns: [recommendationLists.userId, recommendationLists.id], name: "agent_inbox_items_owner_recommendation_list_fk" }),
+  foreignKey({ columns: [table.userId, table.calibrationProposalId], foreignColumns: [calibrationProposals.userId, calibrationProposals.id], name: "agent_inbox_items_owner_calibration_proposal_fk" }),
   check("agent_inbox_items_trigger_event_positive", sql`${table.triggerEventSequence} >= 1`),
-  check("agent_inbox_items_kind_check", sql`${table.kind} in ('run_failed', 'budget_exhausted', 'decision_required', 'source_attention', 'discovery_attention')`),
-  check("agent_inbox_items_status_check", sql`${table.status} in ('open', 'resolved')`),
-  check("agent_inbox_items_reason_check", sql`${table.reasonCode} in ('AGENT_RUN_PAUSED', 'SOURCE_HEALTH_ATTENTION', 'DISCOVERY_ATTENTION', 'AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_CONTENT_STORAGE_FAILED', 'AGENT_RUN_PERSIST_FAILED', 'AGENT_RUN_BUDGET_EXCEEDED', 'AGENT_RUN_MODEL_RETRYABLE', 'AGENT_RUN_MODEL_AUTH_FAILED', 'AGENT_RUN_MODEL_POLICY_REJECTED', 'AGENT_RUN_MODEL_INVALID_RESPONSE')`),
-  check("agent_inbox_items_kind_reason_pair_check", sql`(${table.kind} = 'source_attention') = (${table.reasonCode} = 'SOURCE_HEALTH_ATTENTION') and (${table.kind} = 'discovery_attention') = (${table.reasonCode} = 'DISCOVERY_ATTENTION')`),
+  check("agent_inbox_items_kind_check", sql`${table.kind} in ('run_failed', 'budget_exhausted', 'decision_required', 'source_attention', 'discovery_attention', 'candidate_fact', 'recommendation_list', 'calibration_proposal')`),
+  check("agent_inbox_items_status_check", sql`${table.status} in ('unread', 'read', 'resolved')`),
+  check("agent_inbox_items_reason_check", sql`${table.reasonCode} in ('AGENT_RUN_PAUSED', 'SOURCE_HEALTH_ATTENTION', 'DISCOVERY_ATTENTION', 'CANDIDATE_FACT_PENDING', 'RECOMMENDATION_LIST_PUBLISHED', 'CALIBRATION_PROPOSAL_CREATED', 'AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_CONTENT_STORAGE_FAILED', 'AGENT_RUN_PERSIST_FAILED', 'AGENT_RUN_BUDGET_EXCEEDED', 'AGENT_RUN_MODEL_RETRYABLE', 'AGENT_RUN_MODEL_AUTH_FAILED', 'AGENT_RUN_MODEL_POLICY_REJECTED', 'AGENT_RUN_MODEL_INVALID_RESPONSE')`),
+  check("agent_inbox_items_kind_reason_pair_check", sql`(${table.kind} = 'source_attention') = (${table.reasonCode} = 'SOURCE_HEALTH_ATTENTION') and (${table.kind} = 'discovery_attention') = (${table.reasonCode} = 'DISCOVERY_ATTENTION') and (${table.kind} = 'candidate_fact') = (${table.reasonCode} = 'CANDIDATE_FACT_PENDING') and (${table.kind} = 'recommendation_list') = (${table.reasonCode} = 'RECOMMENDATION_LIST_PUBLISHED') and (${table.kind} = 'calibration_proposal') = (${table.reasonCode} = 'CALIBRATION_PROPOSAL_CREATED')`),
   check("agent_inbox_items_dimension_check", sql`${table.budgetDimension} is null or ${table.budgetDimension} in ('active_duration', 'attempts', 'tool_calls', 'model_calls', 'tokens')`),
-  check("agent_inbox_items_resolved_check", sql`(${table.status} = 'open') = (${table.resolvedAt} is null)`),
+  check("agent_inbox_items_lifecycle_check", sql`
+    (${table.status} = 'unread' and ${table.readAt} is null and ${table.resolvedAt} is null)
+    or (${table.status} = 'read' and ${table.readAt} is not null and ${table.resolvedAt} is null and ${table.readAt} >= ${table.createdAt})
+    or (${table.status} = 'resolved' and ${table.resolvedAt} is not null and ${table.resolvedAt} >= ${table.createdAt} and (${table.readAt} is null or (${table.readAt} >= ${table.createdAt} and ${table.resolvedAt} >= ${table.readAt})))
+  `),
+  check("agent_inbox_items_reference_combination_check", sql`
+    (${table.kind} in ('run_failed', 'budget_exhausted', 'decision_required', 'discovery_attention') and ${table.runId} is not null and ${table.triggerEventSequence} is not null and ${table.candidateFactId} is null and ${table.watchlistItemId} is null and ${table.recommendationListId} is null and ${table.calibrationProposalId} is null)
+    or (${table.kind} = 'source_attention' and ${table.runId} is not null and ${table.watchlistItemId} is not null and ${table.candidateFactId} is null and ${table.recommendationListId} is null and ${table.calibrationProposalId} is null)
+    or (${table.kind} = 'candidate_fact' and ${table.runId} is null and ${table.triggerEventSequence} is null and ${table.candidateFactId} is not null and ${table.watchlistItemId} is null and ${table.recommendationListId} is null and ${table.calibrationProposalId} is null)
+    or (${table.kind} = 'recommendation_list' and ${table.runId} is null and ${table.triggerEventSequence} is null and ${table.candidateFactId} is null and ${table.watchlistItemId} is null and ${table.recommendationListId} is not null and ${table.calibrationProposalId} is null)
+    or (${table.kind} = 'calibration_proposal' and ${table.runId} is null and ${table.triggerEventSequence} is null and ${table.candidateFactId} is null and ${table.watchlistItemId} is null and ${table.recommendationListId} is null and ${table.calibrationProposalId} is not null)
+  `),
 ]);
 
 export const agentInboxItemActions = pgTable("agent_inbox_item_actions", {
@@ -942,7 +962,7 @@ export const agentInboxItemActions = pgTable("agent_inbox_item_actions", {
   unique("agent_inbox_item_actions_user_item_action_unique").on(table.userId, table.itemId, table.actionId),
   foreignKey({ columns: [table.userId, table.itemId], foreignColumns: [agentInboxItems.userId, agentInboxItems.id], name: "agent_inbox_item_actions_owner_item_fk" }),
   foreignKey({ columns: [table.userId, table.relatedRunId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "agent_inbox_item_actions_owner_related_run_fk" }),
-  check("agent_inbox_item_actions_action_check", sql`${table.action} in ('restart_run', 'resume_run', 'cancel_run', 'dismiss')`),
+  check("agent_inbox_item_actions_action_check", sql`${table.action} in ('restart_run', 'resume_run', 'cancel_run', 'mark_read', 'dismiss')`),
   check("agent_inbox_item_actions_outcome_check", sql`${table.outcome} in ('pending', 'applied', 'no_change', 'failed')`),
 ]);
 
