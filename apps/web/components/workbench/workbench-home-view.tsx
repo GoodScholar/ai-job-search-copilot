@@ -102,9 +102,9 @@ function WorkbenchHomeContent({ home, targets, initialRun, inbox, unavailableSec
       {(!targetsUnavailable || !runUnavailable) && <AgentRunPanel initialRun={initialRun} onInboxRefresh={refreshInbox} refreshVersion={runRefreshVersion} showDiscoverySchedule targets={targetsUnavailable ? null : targets?.targets ?? []} />}
 
       <section aria-labelledby="ledger-title" className="workbench-ledger">
-        <div className="workbench-ledger-heading"><p>档案纸 · 当前状态</p><h2 id="ledger-title">{hasPendingFacts ? "职业资料等待确认" : "职业资料尚未建立"}</h2></div>
-        <div className="workbench-ledger-row"><div><h3>下一步</h3><p>{hasPendingFacts ? "检查候选事实的来源和证据，确认后再让它们进入求职画像。" : "上传一份 Markdown 或 DOCX 职业资料，系统会从原文中提取带证据的候选事实。"}</p></div><Link className="workbench-ledger-link workbench-touch-target" href="/profile">{hasPendingFacts ? "查看待确认事实" : "导入职业资料"}</Link></div>
-        <p className="workbench-ledger-note">{hasPendingFacts ? "待确认事实尚未进入求职画像，不能用于推荐或材料生成。" : "在资料建立前，Copilot 不会生成岗位推荐、启动求职代理或创建投递记录。"}</p>
+        <div className="workbench-ledger-heading"><p>档案纸 · 当前状态</p><h2 id="ledger-title">{hasPendingFacts ? "职业资料等待确认" : "当前无待确认事实"}</h2></div>
+        <div className="workbench-ledger-row"><div><h3>下一步</h3><p>{hasPendingFacts ? "检查候选事实的来源和证据，确认后再让它们进入求职画像。" : "你可以查看或导入职业资料，继续完善求职画像。"}</p></div><Link className="workbench-ledger-link workbench-touch-target" href="/profile">{hasPendingFacts ? "查看待确认事实" : "查看职业资料"}</Link></div>
+        <p className="workbench-ledger-note">{hasPendingFacts ? "待确认事实尚未进入求职画像，不能用于推荐或材料生成。" : "导入或更新职业资料后，新的候选事实会先等待确认，再用于推荐或材料生成。"}</p>
       </section>
 
       <section aria-labelledby="job-import-entry-title" className="workbench-ledger workbench-job-import-entry">

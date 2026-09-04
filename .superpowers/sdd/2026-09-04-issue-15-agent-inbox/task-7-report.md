@@ -34,6 +34,8 @@
 
 ## 工作树与证据边界
 
+- Deferred smell：Inbox producer 必须嵌入各自现有事务以保证与来源记录同一提交的原子性；当前不抽取公共 transaction helper，避免扩大跨 producer 耦合。
+
 - `apps/api/dist` 与 `apps/worker/dist` 已在构建后验证为 Nest build 生成物，并移出工作树；未删除或提交任何其他文件。
 - `.impeccable/review/desktop.png` 与 `.impeccable/review/mobile.png` 保留为视觉验收证据，保持未跟踪且未提交。
 - 未执行宽泛审查、Issue 评论、关闭 Issue、push、PR 或 merge。

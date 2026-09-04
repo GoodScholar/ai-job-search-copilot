@@ -42,6 +42,20 @@ it("把需要决定的事项放在首页标题，并完整呈现真实摘要和�
   expect(screen.getByText("投递记录功能尚未启用，当前不会保存或显示投递数据。")).toBeVisible();
 });
 
+it("待确认事实为零时不推断职业资料尚未建立", () => {
+  render(<WorkbenchHomeView home={{ ...home, summary: { ...home.summary, pendingFacts: 0 } }} inbox={{ items: [] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
+  expect(screen.getByRole("heading", { name: "当前无待确认事实" })).toBeVisible();
+  expect(screen.getByText("你可以查看或导入职业资料，继续完善求职画像。" )).toBeVisible();
+  expect(screen.getByRole("link", { name: "查看职业资料" })).toHaveAttribute("href", "/profile");
+  expect(screen.queryByText("职业资料尚未建立")).not.toBeInTheDocument();
+});
+
+it("待确认事实大于零时保留确认工作流", () => {
+  render(<WorkbenchHomeView home={home} inbox={{ items: [] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
+  expect(screen.getByRole("heading", { name: "职业资料等待确认" })).toBeVisible();
+  expect(screen.getByRole("link", { name: "查看待确认事实" })).toHaveAttribute("href", "/profile");
+});
+
 it("候选事实 Inbox dismiss 只减少待决定事项，权威刷新后仍保留待确认事实", async () => {
   const user = userEvent.setup();
   const pendingHome = { ...home, summary: { ...home.summary, pendingFacts: 1, pendingDecisions: 1 } };

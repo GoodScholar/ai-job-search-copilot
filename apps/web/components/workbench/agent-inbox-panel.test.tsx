@@ -208,6 +208,41 @@ it("标记已读后把焦点交给同一事项的可追溯目标", async () => {
   expect(document.activeElement).toBe(screen.getByRole("link", { name: "查看相关记录" }));
 });
 
+it("标记已读时在所有已加载缓存中迁移投影，并安全回退未读筛选焦点", async () => {
+  const user = userEvent.setup();
+  const priorRead = { ...item, itemId: "8a1b0207-b852-4f86-8b1f-3b9615655ed8", title: "原有已读事项", status: "read" as const, availableActions: ["dismiss"] as const, readAt: now };
+  const resolved = { ...item, itemId: "9a1b0207-b852-4f86-8b1f-3b9615655ed8", title: "已处理事项", status: "resolved" as const, availableActions: [] as const, readAt: now, resolvedAt: now };
+  const read = { ...item, status: "read" as const, availableActions: ["dismiss"] as const, readAt: now };
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>((input) => {
+    const url = String(input);
+    if (url.includes("status=unread")) return Promise.resolve(Response.json({ items: [item] }));
+    if (url.includes("status=read")) return Promise.resolve(Response.json({ items: [priorRead] }));
+    if (url.includes("status=resolved")) return Promise.resolve(Response.json({ items: [resolved] }));
+    if (url.includes(`/api/agent-inbox/${itemId}/actions`)) return Promise.resolve(Response.json({ applied: true, item: read, run: null }));
+    throw new Error(`unexpected request: ${url}`);
+  }));
+  render(<AgentInboxPanel items={[item]} onResolved={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "未读" }));
+  await screen.findByRole("article", { name: "确认工作经历" });
+  await user.click(screen.getByRole("button", { name: "已读" }));
+  await screen.findByRole("article", { name: "原有已读事项" });
+  await user.click(screen.getByRole("button", { name: "已处理" }));
+  await screen.findByRole("article", { name: "已处理事项" });
+  await user.click(screen.getByRole("button", { name: "未读" }));
+  await user.click(screen.getByRole("button", { name: "标记为已读：确认工作经历" }));
+
+  await waitFor(() => expect(screen.queryByRole("article", { name: "确认工作经历" })).not.toBeInTheDocument());
+  expect(document.activeElement).toBe(screen.getByRole("button", { name: "未读" }));
+  await user.click(screen.getByRole("button", { name: "待处理" }));
+  expect(screen.getByRole("article", { name: "确认工作经历" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "已读" }));
+  expect(screen.getByRole("article", { name: "确认工作经历" })).toBeVisible();
+  expect(screen.getByRole("article", { name: "原有已读事项" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "已处理" }));
+  expect(screen.getByRole("article", { name: "已处理事项" })).toBeVisible();
+});
+
 it("动作失败时保留事项并提供可恢复的错误信息", async () => {
   const user = userEvent.setup();
   vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 409 })));

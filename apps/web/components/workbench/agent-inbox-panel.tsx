@@ -30,6 +30,19 @@ function authoritativeInboxCache(items: AgentInboxItem[]): InboxCache {
   const pending = items.filter((item) => item.status !== "resolved");
   return { pending, unread: pending.filter((item) => item.status === "unread"), read: pending.filter((item) => item.status === "read") };
 }
+function replaceOrAppend(entries: AgentInboxItem[], item: AgentInboxItem): AgentInboxItem[] {
+  return entries.some((entry) => entry.itemId === item.itemId)
+    ? entries.map((entry) => entry.itemId === item.itemId ? item : entry)
+    : [...entries, item];
+}
+function moveCachedItem(current: InboxCache, item: AgentInboxItem): InboxCache {
+  return {
+    ...current,
+    pending: current.pending === undefined ? undefined : replaceOrAppend(current.pending, item),
+    unread: current.unread === undefined ? undefined : item.status === "unread" ? replaceOrAppend(current.unread, item) : current.unread.filter((entry) => entry.itemId !== item.itemId),
+    read: current.read === undefined ? undefined : item.status === "read" ? replaceOrAppend(current.read, item) : current.read.filter((entry) => entry.itemId !== item.itemId),
+  };
+}
 
 export async function loadAgentInbox(status: InboxFilter): Promise<AgentInboxItem[] | false> {
   try {
@@ -132,9 +145,9 @@ export function AgentInboxPanel({ items, onResolved, onRunUpdated }: {
         setMessage("事项已处理。");
         queueMicrotask(() => filterButtons.current.pending?.focus());
       } else {
-        updateCache((current) => ({ ...current, [filter]: (current[filter] ?? []).map((entry) => entry.itemId === item.itemId ? parsed.data.item : entry) }));
+        updateCache((current) => moveCachedItem(current, parsed.data.item));
         setMessage(action === "mark_read" ? "事项已标记为已读。" : "事项状态已更新。");
-        if (action === "mark_read") queueMicrotask(() => (itemTargets.current[item.itemId] ?? filterButtons.current.pending)?.focus());
+        if (action === "mark_read") queueMicrotask(() => (filter === "unread" ? filterButtons.current.unread : itemTargets.current[item.itemId] ?? filterButtons.current[filter] ?? filterButtons.current.pending)?.focus());
       }
     } catch {
       setMessage("暂时无法处理该事项，请稍后重试。");

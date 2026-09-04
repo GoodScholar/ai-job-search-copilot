@@ -167,16 +167,20 @@ it("求职目标暂时不可读取时仍以只读方式保留成功的运行记�
 });
 
 it.each([
-  ["运行中", { ...detail(), status: "running" as const, controlState: "none" as const }, ["暂停岗位发现", "取消岗位发现"]],
-  ["已暂停", { ...detail(), status: "paused" as const, controlState: "none" as const }, ["继续本次岗位发现", "取消岗位发现"]],
-])("目标暂时不可读取时，%s运行只读且不显示变更控制", (_state, run, controls) => {
+  ["运行中", { ...detail(), status: "running" as const, controlState: "none" as const }, ["暂停岗位发现", "取消岗位发现"], "暂停岗位发现"],
+  ["已暂停", { ...detail(), status: "paused" as const, controlState: "none" as const }, ["继续本次岗位发现", "取消岗位发现"], "继续本次岗位发现"],
+])("目标暂时不可读取时，%s运行仍保留 run-id 控制", async (_state, run, controls, action) => {
+  const user = userEvent.setup();
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(Response.json({ applied: true, run: { runId, status: run.status, currentStep: run.currentStep, controlState: "none", version: run.version + 1 } })));
   render(<AgentRunPanel initialRun={run} targets={null} />);
 
   expect(screen.getByRole("heading", { name: "发现新的岗位机会" })).toBeVisible();
   expect(screen.getByText("求职目标暂时无法读取；以下仅显示已成功读取的本次运行记录。")).toBeVisible();
   expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "发现岗位" })).not.toBeInTheDocument();
-  controls.forEach((name) => expect(screen.queryByRole("button", { name })).not.toBeInTheDocument());
+  controls.forEach((name) => expect(screen.getByRole("button", { name })).toBeVisible());
+  await user.click(screen.getByRole("button", { name: action }));
+  expect(fetch).toHaveBeenCalledWith(`/api/agent-runs/${runId}/controls`, expect.objectContaining({ method: "POST" }));
 });
 
 it("没有活动目标时仍展示已完成历史运行，但不渲染空选择器或启动操作", () => {
