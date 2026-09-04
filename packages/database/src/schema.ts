@@ -915,7 +915,7 @@ export const agentRunUsageEntries = pgTable("agent_run_usage_entries", {
 export const agentInboxItems = pgTable("agent_inbox_items", {
   id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id),
   runId: uuid("run_id").references(() => agentRuns.id), triggerEventSequence: integer("trigger_event_sequence"),
-  candidateFactId: uuid("candidate_fact_id").references(() => candidateFacts.id), watchlistItemId: uuid("watchlist_item_id"),
+  candidateFactId: uuid("candidate_fact_id").references(() => candidateFacts.id), watchlistItemId: uuid("watchlist_item_id"), sourceHealthCheckId: uuid("source_health_check_id"),
   recommendationListId: uuid("recommendation_list_id").references(() => recommendationLists.id), calibrationProposalId: uuid("calibration_proposal_id").references(() => calibrationProposals.id),
   kind: varchar("kind", { length: 32 }).notNull(), status: varchar("status", { length: 16 }).notNull().default("unread"),
   reasonCode: varchar("reason_code", { length: 64 }).notNull(), budgetDimension: varchar("budget_dimension", { length: 32 }),
@@ -927,12 +927,12 @@ export const agentInboxItems = pgTable("agent_inbox_items", {
   uniqueIndex("agent_inbox_items_candidate_fact_unique_idx").on(table.candidateFactId).where(sql`${table.candidateFactId} is not null`),
   uniqueIndex("agent_inbox_items_recommendation_list_unique_idx").on(table.recommendationListId).where(sql`${table.recommendationListId} is not null`),
   uniqueIndex("agent_inbox_items_calibration_proposal_unique_idx").on(table.calibrationProposalId).where(sql`${table.calibrationProposalId} is not null`),
-  uniqueIndex("agent_inbox_items_source_run_watchlist_unique_idx").on(table.runId, table.watchlistItemId).where(sql`${table.kind} = 'source_attention'`),
+  uniqueIndex("agent_inbox_items_source_run_source_health_check_unique_idx").on(table.runId, table.sourceHealthCheckId).where(sql`${table.kind} = 'source_attention'`),
   foreignKey({ columns: [table.userId, table.runId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "agent_inbox_items_owner_run_fk" }),
   foreignKey({ columns: [table.userId, table.candidateFactId], foreignColumns: [candidateFacts.userId, candidateFacts.id], name: "agent_inbox_items_owner_candidate_fact_fk" }),
   foreignKey({ columns: [table.userId, table.recommendationListId], foreignColumns: [recommendationLists.userId, recommendationLists.id], name: "agent_inbox_items_owner_recommendation_list_fk" }),
   foreignKey({ columns: [table.userId, table.calibrationProposalId], foreignColumns: [calibrationProposals.userId, calibrationProposals.id], name: "agent_inbox_items_owner_calibration_proposal_fk" }),
-  foreignKey({ columns: [table.userId, table.runId, table.watchlistItemId], foreignColumns: [jobSourceHealthChecks.userId, jobSourceHealthChecks.runId, jobSourceHealthChecks.watchlistItemId], name: "agent_inbox_items_owner_source_health_check_fk" }),
+  foreignKey({ columns: [table.userId, table.runId, table.watchlistItemId, table.sourceHealthCheckId], foreignColumns: [jobSourceHealthChecks.userId, jobSourceHealthChecks.runId, jobSourceHealthChecks.watchlistItemId, jobSourceHealthChecks.id], name: "agent_inbox_items_owner_source_health_check_fk" }),
   check("agent_inbox_items_trigger_event_positive", sql`${table.triggerEventSequence} >= 1`),
   check("agent_inbox_items_kind_check", sql`${table.kind} in ('run_failed', 'budget_exhausted', 'decision_required', 'source_attention', 'discovery_attention', 'candidate_fact', 'recommendation_list', 'calibration_proposal')`),
   check("agent_inbox_items_status_check", sql`${table.status} in ('unread', 'read', 'resolved')`),
@@ -945,11 +945,11 @@ export const agentInboxItems = pgTable("agent_inbox_items", {
     or (${table.status} = 'resolved' and ${table.resolvedAt} is not null and ${table.resolvedAt} >= ${table.createdAt} and (${table.readAt} is null or (${table.readAt} >= ${table.createdAt} and ${table.resolvedAt} >= ${table.readAt})))
   `),
   check("agent_inbox_items_reference_combination_check", sql`
-    (${table.kind} in ('run_failed', 'budget_exhausted', 'decision_required', 'discovery_attention') and ${table.runId} is not null and ${table.triggerEventSequence} is not null and ${table.candidateFactId} is null and ${table.watchlistItemId} is null and ${table.recommendationListId} is null and ${table.calibrationProposalId} is null)
-    or (${table.kind} = 'source_attention' and ${table.runId} is not null and ${table.watchlistItemId} is not null and ${table.candidateFactId} is null and ${table.recommendationListId} is null and ${table.calibrationProposalId} is null)
-    or (${table.kind} = 'candidate_fact' and ${table.runId} is null and ${table.triggerEventSequence} is null and ${table.candidateFactId} is not null and ${table.watchlistItemId} is null and ${table.recommendationListId} is null and ${table.calibrationProposalId} is null)
-    or (${table.kind} = 'recommendation_list' and ${table.runId} is null and ${table.triggerEventSequence} is null and ${table.candidateFactId} is null and ${table.watchlistItemId} is null and ${table.recommendationListId} is not null and ${table.calibrationProposalId} is null)
-    or (${table.kind} = 'calibration_proposal' and ${table.runId} is null and ${table.triggerEventSequence} is null and ${table.candidateFactId} is null and ${table.watchlistItemId} is null and ${table.recommendationListId} is null and ${table.calibrationProposalId} is not null)
+    (${table.kind} in ('run_failed', 'budget_exhausted', 'decision_required', 'discovery_attention') and ${table.runId} is not null and ${table.triggerEventSequence} is not null and ${table.candidateFactId} is null and ${table.watchlistItemId} is null and ${table.sourceHealthCheckId} is null and ${table.recommendationListId} is null and ${table.calibrationProposalId} is null)
+    or (${table.kind} = 'source_attention' and ${table.runId} is not null and ${table.watchlistItemId} is not null and ${table.sourceHealthCheckId} is not null and ${table.candidateFactId} is null and ${table.recommendationListId} is null and ${table.calibrationProposalId} is null)
+    or (${table.kind} = 'candidate_fact' and ${table.runId} is null and ${table.triggerEventSequence} is null and ${table.candidateFactId} is not null and ${table.watchlistItemId} is null and ${table.sourceHealthCheckId} is null and ${table.recommendationListId} is null and ${table.calibrationProposalId} is null)
+    or (${table.kind} = 'recommendation_list' and ${table.runId} is null and ${table.triggerEventSequence} is null and ${table.candidateFactId} is null and ${table.watchlistItemId} is null and ${table.sourceHealthCheckId} is null and ${table.recommendationListId} is not null and ${table.calibrationProposalId} is null)
+    or (${table.kind} = 'calibration_proposal' and ${table.runId} is null and ${table.triggerEventSequence} is null and ${table.candidateFactId} is null and ${table.watchlistItemId} is null and ${table.sourceHealthCheckId} is null and ${table.recommendationListId} is null and ${table.calibrationProposalId} is not null)
   `),
 ]);
 
@@ -1081,7 +1081,7 @@ export const jobSourceHealthChecks = pgTable("job_source_health_checks", {
 }, (table) => [
   unique("job_source_health_checks_run_source_unique").on(table.runId, table.sourceId),
   unique("job_source_health_checks_user_id_id_unique").on(table.userId, table.id),
-  unique("job_source_health_checks_user_run_watchlist_unique").on(table.userId, table.runId, table.watchlistItemId),
+  unique("job_source_health_checks_user_run_watchlist_id_unique").on(table.userId, table.runId, table.watchlistItemId, table.id),
   index("job_source_health_checks_latest_lookup_idx").on(table.userId, table.targetId, table.watchlistItemId, table.sourceId, table.checkedAt, table.id),
   foreignKey({
     columns: [table.userId, table.runId, table.targetId],
