@@ -163,7 +163,7 @@ const inboxItem: AgentInboxItem = {
   impact: "本次发现不会继续。",
   suggestedAction: "继续或取消运行。",
   target: { type: "agent_run", runId: agentRunId, href: `/home?runId=${agentRunId}#agent-run` },
-  availableActions: ["resume_run", "cancel_run"],
+  availableActions: ["mark_read", "resume_run", "cancel_run"],
   createdAt: "2026-08-29T08:00:00.000Z",
   readAt: null,
   resolvedAt: null,
