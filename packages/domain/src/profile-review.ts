@@ -104,6 +104,19 @@ async function advanceProfile(input: {
   return profile;
 }
 
+export async function resolveCandidateFactInboxItems(input: {
+  db: Pick<Database, "update">;
+  userId: string;
+  candidateFactIds: readonly string[];
+  resolvedAt: Date;
+}): Promise<void> {
+  await input.db.update(agentInboxItems).set({ status: "resolved", resolvedAt: input.resolvedAt }).where(and(
+    eq(agentInboxItems.userId, input.userId),
+    inArray(agentInboxItems.candidateFactId, input.candidateFactIds),
+    inArray(agentInboxItems.status, ["unread", "read"]),
+  ));
+}
+
 export function createTrustedProfileQueries(deps: { db: Database }): {
   getCurrent(input: { userId: string }): Promise<ProfileSnapshot>;
 } {
@@ -167,11 +180,7 @@ export function createProfileReviewCommands(deps: Dependencies): {
               factType: candidate.factType as "experience" | "education" | "skill" | "project" | "language" | "achievement" | "certification",
               decision: "rejected", profileVersion: profile.version },
           });
-          await transaction.update(agentInboxItems).set({ status: "resolved", resolvedAt: deps.clock() }).where(and(
-            eq(agentInboxItems.userId, input.userId),
-            eq(agentInboxItems.candidateFactId, candidate.id),
-            inArray(agentInboxItems.status, ["unread", "read"]),
-          ));
+          await resolveCandidateFactInboxItems({ db: transaction, userId: input.userId, candidateFactIds: [candidate.id], resolvedAt: deps.clock() });
           return;
         }
 
@@ -209,11 +218,7 @@ export function createProfileReviewCommands(deps: Dependencies): {
             decision: input.command.decision, profileVersion: profile.version,
           },
         });
-        await transaction.update(agentInboxItems).set({ status: "resolved", resolvedAt: deps.clock() }).where(and(
-          eq(agentInboxItems.userId, input.userId),
-          eq(agentInboxItems.candidateFactId, candidate.id),
-          inArray(agentInboxItems.status, ["unread", "read"]),
-        ));
+        await resolveCandidateFactInboxItems({ db: transaction, userId: input.userId, candidateFactIds: [candidate.id], resolvedAt: deps.clock() });
       });
       return currentSnapshot(deps.db, input.userId);
     },
