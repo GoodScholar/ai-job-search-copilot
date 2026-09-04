@@ -208,6 +208,49 @@ it("标记已读后把焦点交给同一事项的可追溯目标", async () => {
   expect(document.activeElement).toBe(screen.getByRole("link", { name: "查看相关记录" }));
 });
 
+it("标记已读后按服务端稳定顺序 upsert 已加载的已读缓存", async () => {
+  const user = userEvent.setup();
+  const later = "2026-09-04T10:00:00.000Z";
+  const newer = { ...item, itemId: "2a1b0207-b852-4f86-8b1f-3b9615655ed8", title: "更新已读事项", status: "read" as const, availableActions: ["dismiss"] as const, createdAt: "2026-09-04T09:00:00.000Z", readAt: later };
+  const sameCreatedHigher = { ...item, itemId: "5a1b0207-b852-4f86-8b1f-3b9615655ed8", title: "同秒较大 ID 事项", status: "read" as const, availableActions: ["dismiss"] as const, readAt: later };
+  const sameCreatedLower = { ...item, itemId: "3a1b0207-b852-4f86-8b1f-3b9615655ed8", title: "同秒较小 ID 事项", status: "read" as const, availableActions: ["dismiss"] as const, readAt: later };
+  const older = { ...item, itemId: "1a1b0207-b852-4f86-8b1f-3b9615655ed8", title: "更旧已读事项", status: "read" as const, availableActions: ["dismiss"] as const, createdAt: "2026-09-04T07:00:00.000Z", readAt: later };
+  const replacementUnread: AgentInboxItem = { ...item, itemId: "6a1b0207-b852-4f86-8b1f-3b9615655ed8", title: "待替换已读事项", createdAt: "2026-09-04T06:00:00.000Z" };
+  const staleRead = { ...replacementUnread, title: "旧待替换已读事项", status: "read" as const, availableActions: ["dismiss"] as const, readAt: now };
+  const markedRead = { ...item, title: "新标记已读事项", status: "read" as const, availableActions: ["dismiss"] as const, readAt: now };
+  const replacementRead = { ...staleRead, title: "更新后的已读事项" };
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>((input) => {
+    const url = String(input);
+    if (url.includes("status=unread")) return Promise.resolve(Response.json({ items: [item, replacementUnread] }));
+    if (url.includes("status=read")) return Promise.resolve(Response.json({ items: [newer, sameCreatedHigher, sameCreatedLower, older, staleRead] }));
+    if (url.includes(`/api/agent-inbox/${itemId}/actions`)) return Promise.resolve(Response.json({ applied: true, item: markedRead, run: null }));
+    if (url.includes(`/api/agent-inbox/${replacementUnread.itemId}/actions`)) return Promise.resolve(Response.json({ applied: true, item: replacementRead, run: null }));
+    throw new Error(`unexpected request: ${url}`);
+  }));
+  render(<AgentInboxPanel items={[item, replacementUnread]} onResolved={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "已读" }));
+  await screen.findByRole("article", { name: "更新已读事项" });
+  await user.click(screen.getByRole("button", { name: "未读" }));
+  await screen.findByRole("article", { name: "确认工作经历" });
+  await user.click(screen.getByRole("button", { name: "标记为已读：确认工作经历" }));
+  await user.click(screen.getByRole("button", { name: "已读" }));
+
+  await waitFor(() => expect(screen.getAllByRole("article").map((article) => article.getAttribute("aria-label"))).toEqual([
+    "更新已读事项", "同秒较大 ID 事项", "新标记已读事项", "同秒较小 ID 事项", "更旧已读事项", "旧待替换已读事项",
+  ]));
+
+  await user.click(screen.getByRole("button", { name: "未读" }));
+  await user.click(screen.getByRole("button", { name: "标记为已读：待替换已读事项" }));
+  await user.click(screen.getByRole("button", { name: "已读" }));
+
+  await waitFor(() => expect(screen.getAllByRole("article").map((article) => article.getAttribute("aria-label"))).toEqual([
+    "更新已读事项", "同秒较大 ID 事项", "新标记已读事项", "同秒较小 ID 事项", "更旧已读事项", "更新后的已读事项",
+  ]));
+  expect(screen.queryByRole("article", { name: "旧待替换已读事项" })).not.toBeInTheDocument();
+  expect(screen.getAllByRole("article", { name: "更新后的已读事项" })).toHaveLength(1);
+});
+
 it("标记已读时在所有已加载缓存中迁移投影，并安全回退未读筛选焦点", async () => {
   const user = userEvent.setup();
   const priorRead = { ...item, itemId: "8a1b0207-b852-4f86-8b1f-3b9615655ed8", title: "原有已读事项", status: "read" as const, availableActions: ["dismiss"] as const, readAt: now };

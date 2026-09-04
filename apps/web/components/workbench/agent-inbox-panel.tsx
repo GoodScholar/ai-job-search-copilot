@@ -30,17 +30,20 @@ function authoritativeInboxCache(items: AgentInboxItem[]): InboxCache {
   const pending = items.filter((item) => item.status !== "resolved");
   return { pending, unread: pending.filter((item) => item.status === "unread"), read: pending.filter((item) => item.status === "read") };
 }
-function replaceOrAppend(entries: AgentInboxItem[], item: AgentInboxItem): AgentInboxItem[] {
-  return entries.some((entry) => entry.itemId === item.itemId)
-    ? entries.map((entry) => entry.itemId === item.itemId ? item : entry)
-    : [...entries, item];
+function compareInboxItems(left: AgentInboxItem, right: AgentInboxItem): number {
+  const createdAtOrder = Date.parse(right.createdAt) - Date.parse(left.createdAt);
+  if (createdAtOrder !== 0) return createdAtOrder;
+  return right.itemId > left.itemId ? 1 : right.itemId < left.itemId ? -1 : 0;
+}
+function upsertInboxItem(entries: AgentInboxItem[], item: AgentInboxItem): AgentInboxItem[] {
+  return [...entries.filter((entry) => entry.itemId !== item.itemId), item].sort(compareInboxItems);
 }
 function moveCachedItem(current: InboxCache, item: AgentInboxItem): InboxCache {
   return {
     ...current,
-    pending: current.pending === undefined ? undefined : replaceOrAppend(current.pending, item),
-    unread: current.unread === undefined ? undefined : item.status === "unread" ? replaceOrAppend(current.unread, item) : current.unread.filter((entry) => entry.itemId !== item.itemId),
-    read: current.read === undefined ? undefined : item.status === "read" ? replaceOrAppend(current.read, item) : current.read.filter((entry) => entry.itemId !== item.itemId),
+    pending: current.pending === undefined ? undefined : upsertInboxItem(current.pending, item),
+    unread: current.unread === undefined ? undefined : item.status === "unread" ? upsertInboxItem(current.unread, item) : current.unread.filter((entry) => entry.itemId !== item.itemId),
+    read: current.read === undefined ? undefined : item.status === "read" ? upsertInboxItem(current.read, item) : current.read.filter((entry) => entry.itemId !== item.itemId),
   };
 }
 
