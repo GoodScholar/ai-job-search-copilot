@@ -71,3 +71,25 @@ FORM=established Operate extension，seed 4e302c13（apps/web/app/layout.tsx 已
 ### Fix Round 1 最终 GREEN
 
 最终捕图命令的 ordinary phase 为 4 passed、2 skipped，受控来源 phase 为 2 passed、4 skipped；Desktop Chrome 与 Mobile Safari 的三条旅程合计 6 次均通过、0 失败。最终聚焦回归：`workbench-home.integration.test.ts` 为 6/6，`agent-inbox-panel.test.tsx` 与 `e2e-runner.test.ts` 合计 19/19；`pnpm typecheck`、`pnpm lint` 与 `git diff --check` 均为 exit 0。
+
+## Fix Round 2：显式相位与即时首页摘要
+
+### RED 与修正
+
+- Runner 混合显式 spec 的 RED 显示 AnySearch 与 workbench、AnySearch 与来源、以及三者同传时会静默遗漏 phase。现在将每个显式特殊 spec 映射到所需 phase，并按 `anysearch-configured`、`anysearch-missing-key`、`ordinary`、`source-health`、`workbench-inbox` 的稳定顺序去重合并；4 组 mixed-spec 回归覆盖该行为。
+- 首页仅在后续服务端刷新后才更新待决定/待确认事实摘要。现在 Inbox 解决动作立刻按事项种类作本地扣减（`candidate_fact` 同时扣减 `pendingFacts`），并调用 `router.refresh()`；新的 `home` prop 以其对象身份使旧调整失效，避免权威数据回来后重复扣减。
+- fresh foreign owner 的列表断言收紧为 `toEqual([])`，变更请求仍验证 404。
+- 定向 E2E 曾暴露渲染后对旧 locator 手动 `focus()` 的不稳定断言。Desktop 输入动作改为 locator 的键盘 Enter；候选事实 mark-read 后仍直接验证焦点已自动转移到稳定的“查看相关记录”目标。
+
+### Fix Round 2 GREEN
+
+```bash
+pnpm --filter web exec vitest run scripts/e2e-runner.test.ts components/workbench/workbench-home-view.test.tsx components/workbench/agent-inbox-panel.test.tsx --no-file-parallelism
+DOCKER_API_VERSION=1.51 pnpm --filter @job-copilot/domain exec vitest run src/workbench-home.integration.test.ts --no-file-parallelism
+DOCKER_API_VERSION=1.51 pnpm --filter web test:e2e -- workbench-inbox.spec.ts --project 'Desktop Chrome' --project 'Mobile Safari'
+pnpm typecheck
+pnpm lint
+git diff --check
+```
+
+组件/runner 聚焦为 30/30，领域为 6/6；最终 E2E ordinary phase 为 4 passed、2 skipped，受控来源 phase 为 2 passed、4 skipped，三条旅程在 Desktop Chrome 与 Mobile Safari 共 6 条有效执行、0 失败。视觉 CSS 未变更，既有 `.impeccable/review/desktop.png`（1440×1773）和 `.impeccable/review/mobile.png`（1170×6330）再次确认是有效 PNG；沿用此前人工检查结果（内容完整、非黑屏、无 overlay），未运行第二次 detector。

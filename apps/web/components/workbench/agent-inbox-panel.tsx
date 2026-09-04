@@ -30,7 +30,7 @@ export async function loadAgentInbox(status: InboxFilter): Promise<AgentInboxIte
 
 export function AgentInboxPanel({ items, onResolved, onRunUpdated }: {
   items: AgentInboxItem[];
-  onResolved: (itemId: string) => void;
+  onResolved: (item: AgentInboxItem) => void;
   onRunUpdated?: (run: AgentRunControlSnapshot) => void;
 }) {
   const [filter, setFilter] = useState<InboxFilter>("pending");
@@ -80,7 +80,7 @@ export function AgentInboxPanel({ items, onResolved, onRunUpdated }: {
       if (parsed.data.run) onRunUpdated?.(parsed.data.run);
       if (parsed.data.item.status === "resolved") {
         setCache((current) => Object.fromEntries(Object.entries(current).map(([status, entries]) => [status, entries?.filter((entry) => entry.itemId !== item.itemId)])) as InboxCache);
-        onResolved(item.itemId);
+        onResolved(item);
         setMessage("事项已处理。");
         queueMicrotask(() => filterButtons.current.pending?.focus());
       } else {

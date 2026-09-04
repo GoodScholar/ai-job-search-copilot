@@ -92,11 +92,7 @@ async function activate(page: Page, info: TestInfo, label: string | RegExp): Pro
 
 async function activateControl(page: Page, control: ReturnType<Page["getByRole"]>, info: TestInfo): Promise<void> {
   if (info.project.name === "Mobile Safari") await control.tap();
-  else {
-    await control.focus();
-    await expect(control).toBeFocused();
-    await page.keyboard.press("Enter");
-  }
+  else await control.press("Enter");
 }
 
 async function assertAccessible(page: Page): Promise<void> {
@@ -222,7 +218,7 @@ test("从首页将候选事实由未读标记为已读并确认解决", async ({
   await expect(page.getByRole("heading", { name: "需要你决定的事项", exact: true })).toBeVisible();
   const unread = await inboxItem(request, session.token, "candidate_fact", "unread");
   const foreign = await createSession(request, subject(info, "foreign"));
-  expect((await inboxItems(request, foreign.token, "unread")).map((item) => item.itemId)).not.toContain(unread.itemId);
+  expect(await inboxItems(request, foreign.token, "unread")).toEqual([]);
   const foreignMutation = await request.post(`${apiBaseUrl}/v1/agent-inbox/${unread.itemId}/actions`, {
     headers: { authorization: `Bearer ${foreign.token}` }, data: { actionId: crypto.randomUUID(), action: "mark_read" },
   });
@@ -294,6 +290,8 @@ test("从首页将受限来源标记已读、停用并标记为已处理", async
   await page.goto("/home");
   await activate(page, info, "标记已处理：部分来源需要关注");
   await expect(page.getByRole("region", { name: "需要你决定的事项", exact: true }).getByRole("status")).toContainText("事项已处理。");
+  await expect(page.getByRole("heading", { name: "先处理需要你决定的事项", exact: true })).toBeVisible();
+  await expect(page.locator(".workbench-summary > div").filter({ has: page.getByText("待决定事项", { exact: true }) }).locator("dd")).toHaveText("1");
   await expect.poll(() => inboxStatus(request, session.token, "source_attention", "resolved")).toBe("resolved");
   expect(await inboxItem(request, session.token, "source_attention", "resolved")).toMatchObject({ itemId: unread.itemId, status: "resolved" });
   const recommendation = await inboxItem(request, session.token, "recommendation_list", "unread");

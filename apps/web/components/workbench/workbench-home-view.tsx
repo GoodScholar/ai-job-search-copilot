@@ -48,13 +48,20 @@ function WorkbenchHomeContent({ home, targets, initialRun, inbox, unavailableSec
   const inboxItems = inboxRefresh?.source === inbox ? inboxRefresh.items : inbox.items;
   const online = useSyncExternalStore(subscribeToOnlineState, readOnlineState, readServerOnlineState);
   const [refreshRequestedFor, setRefreshRequestedFor] = useState<typeof inbox | null>(null);
+  const [summaryAdjustment, setSummaryAdjustment] = useState({ source: home, pendingDecisions: 0, pendingFacts: 0 });
   const stale = refreshRequestedFor === inbox;
   const summaryUnavailable = unavailableSections.includes("summary") || home === null;
   const inboxUnavailable = unavailableSections.includes("inbox");
   const targetsUnavailable = unavailableSections.includes("targets") || targets === null;
   const runUnavailable = unavailableSections.includes("run");
-  const pendingDecisions = home?.summary.pendingDecisions ?? 0;
-  const hasPendingFacts = (home?.summary.pendingFacts ?? 0) > 0;
+  const adjustment = summaryAdjustment.source === home ? summaryAdjustment : { pendingDecisions: 0, pendingFacts: 0 };
+  const summary = home ? {
+    ...home.summary,
+    pendingDecisions: Math.max(0, home.summary.pendingDecisions - adjustment.pendingDecisions),
+    pendingFacts: Math.max(0, home.summary.pendingFacts - adjustment.pendingFacts),
+  } : null;
+  const pendingDecisions = summary?.pendingDecisions ?? 0;
+  const hasPendingFacts = (summary?.pendingFacts ?? 0) > 0;
 
   useEffect(() => {
     const onlineListener = () => { setRefreshRequestedFor(inbox); router.refresh(); };
@@ -79,13 +86,18 @@ function WorkbenchHomeContent({ home, targets, initialRun, inbox, unavailableSec
 
       {summaryUnavailable ? <section aria-label="今日摘要不可用" className="workbench-summary workbench-summary-unavailable"><p>今日摘要暂时无法读取。请稍后刷新重试。</p></section> : <>
         <dl aria-label="当前求职记录摘要" className="workbench-summary">
-          {summaryItems.map(([label, key]) => <div key={key}><dt>{label}</dt><dd>{home.summary[key]}</dd></div>)}
+          {summaryItems.map(([label, key]) => <div key={key}><dt>{label}</dt><dd>{summary![key]}</dd></div>)}
           <div className="workbench-summary-disabled"><dt>投递记录（尚未启用）</dt><dd>0</dd></div>
         </dl>
         <p className="workbench-summary-note">投递记录功能尚未启用，当前不会保存或显示投递数据。</p>
       </>}
 
-      {inboxUnavailable ? <section aria-labelledby="agent-inbox-unavailable-title" className="workbench-ledger"><h2 id="agent-inbox-unavailable-title">待决定事项暂时无法读取</h2><p>请稍后刷新重试。</p></section> : <AgentInboxPanel key={inboxKey(inboxItems)} items={inboxItems} onResolved={() => undefined} onRunUpdated={() => setRunRefreshVersion((version) => version + 1)} />}
+      {inboxUnavailable ? <section aria-labelledby="agent-inbox-unavailable-title" className="workbench-ledger"><h2 id="agent-inbox-unavailable-title">待决定事项暂时无法读取</h2><p>请稍后刷新重试。</p></section> : <AgentInboxPanel key={inboxKey(inboxItems)} items={inboxItems} onResolved={(item) => {
+        setSummaryAdjustment((current) => current.source === home
+          ? { ...current, pendingDecisions: current.pendingDecisions + 1, pendingFacts: current.pendingFacts + (item.kind === "candidate_fact" ? 1 : 0) }
+          : { source: home, pendingDecisions: 1, pendingFacts: item.kind === "candidate_fact" ? 1 : 0 });
+        router.refresh();
+      }} onRunUpdated={() => setRunRefreshVersion((version) => version + 1)} />}
 
       {targetsUnavailable && <section aria-labelledby="targets-unavailable-title" className="workbench-ledger"><h2 id="targets-unavailable-title">求职目标暂时无法读取</h2><p>已成功读取的运行状态仍会保留。请稍后刷新重试。</p></section>}
       {runUnavailable && <section aria-labelledby="run-unavailable-title" className="workbench-ledger"><h2 id="run-unavailable-title">运行状态暂时无法读取</h2><p>已成功读取的求职目标仍可继续使用。请稍后刷新重试。</p></section>}

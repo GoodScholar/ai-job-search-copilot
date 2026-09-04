@@ -32,7 +32,7 @@ const completedRun = {
   termination: { kind: "completed", failureCode: null, budgetDimension: null }, retryOfRunId: null, steps: [], events: [], results: [],
 } as unknown as AgentRunDetail;
 
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => { refresh.mockClear(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 it("把需要决定的事项放在首页标题，并完整呈现真实摘要和未启用的投递能力", () => {
   render(<WorkbenchHomeView home={home} inbox={{ items: [] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
@@ -40,6 +40,33 @@ it("把需要决定的事项放在首页标题，并完整呈现真实摘要和�
   for (const label of ["今日推荐", "待确认事实", "运行中的求职代理", "失败的求职代理", "需要关注的来源", "待决定事项"]) expect(screen.getByText(label)).toBeVisible();
   expect(screen.getByText("投递记录（尚未启用）")).toBeVisible();
   expect(screen.getByText("投递记录功能尚未启用，当前不会保存或显示投递数据。")).toBeVisible();
+});
+
+it("Inbox 解决后立即同步标题与摘要，并由新的 home props 清除乐观调整", async () => {
+  const user = userEvent.setup();
+  const pendingHome = { ...home, summary: { ...home.summary, pendingFacts: 1, pendingDecisions: 1 } };
+  const resolvedItem: AgentInboxItem = {
+    itemId: "8a1b0207-b852-4f86-8b1f-3b9615655ed8", runId: null, kind: "candidate_fact", status: "resolved", reasonCode: "CANDIDATE_FACT_PENDING", budgetDimension: null,
+    title: "确认候选事实", message: "待确认。", basis: "依据。", impact: "影响。", suggestedAction: "确认。",
+    target: { type: "candidate_fact", candidateFactId: "9a1b0207-b852-4f86-8b1f-3b9615655ed8", href: "/profile#candidate-facts" }, availableActions: [], createdAt: "2026-09-04T08:00:00.000Z", readAt: "2026-09-04T08:00:00.000Z", resolvedAt: "2026-09-04T08:00:01.000Z",
+  };
+  const unresolvedItem: AgentInboxItem = { ...resolvedItem, status: "read", availableActions: ["dismiss"], resolvedAt: null };
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(Response.json({ applied: true, item: resolvedItem, run: null })));
+  const view = render(<WorkbenchHomeView home={pendingHome} inbox={{ items: [unresolvedItem] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
+
+  await user.click(screen.getByRole("button", { name: "标记已处理：确认候选事实" }));
+  await waitFor(() => expect(screen.getByRole("heading", { name: "今天暂无待决定事项" })).toBeVisible());
+  const summary = screen.getByLabelText("当前求职记录摘要");
+  expect(summary).toHaveTextContent("待确认事实0");
+  expect(summary).toHaveTextContent("待决定事项0");
+  expect(refresh).toHaveBeenCalled();
+
+  view.rerender(<WorkbenchHomeView home={{ ...pendingHome, summary: { ...pendingHome.summary } }} inbox={{ items: [] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
+  expect(screen.getByRole("heading", { name: "先处理需要你决定的事项" })).toBeVisible();
+  await waitFor(() => {
+    expect(screen.getByLabelText("当前求职记录摘要")).toHaveTextContent("待确认事实1");
+    expect(screen.getByLabelText("当前求职记录摘要")).toHaveTextContent("待决定事项1");
+  });
 });
 
 it("在保留最后成功数据时显示离线标记，并在网络恢复后刷新路由", async () => {

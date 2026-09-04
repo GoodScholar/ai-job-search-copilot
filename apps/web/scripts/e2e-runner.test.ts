@@ -50,13 +50,13 @@ describe("E2E runner", () => {
     expect(await selectE2EPhases(["e2e/workbench-inbox.spec.ts", "--project", "Mobile Safari"])).toEqual(["ordinary", "workbench-inbox"]);
   });
 
-  it("同时指定 source-health 与 workbench-inbox spec 时按有序并集运行全部所需 phase", async () => {
-    expect(await selectE2EPhases([
-      "e2e/source-health.spec.ts",
-      "e2e/workbench-inbox.spec.ts",
-      "--project",
-      "Mobile Safari",
-    ])).toEqual(["ordinary", "source-health", "workbench-inbox"]);
+  it.each([
+    [["e2e/anysearch-public-job-discovery.spec.ts", "e2e/workbench-inbox.spec.ts"], ["anysearch-configured", "anysearch-missing-key", "ordinary", "workbench-inbox"]],
+    [["e2e/anysearch-public-job-discovery.spec.ts", "e2e/source-health.spec.ts"], ["anysearch-configured", "anysearch-missing-key", "source-health"]],
+    [["e2e/source-health.spec.ts", "e2e/workbench-inbox.spec.ts"], ["ordinary", "source-health", "workbench-inbox"]],
+    [["e2e/auth-workbench.spec.ts", "e2e/anysearch-public-job-discovery.spec.ts", "e2e/source-health.spec.ts", "e2e/workbench-inbox.spec.ts"], ["anysearch-configured", "anysearch-missing-key", "ordinary", "source-health", "workbench-inbox"]],
+  ])("混合显式 special specs 按稳定有序并集运行，不静默漏 phase：%o", async (specs, expected) => {
+    expect(await selectE2EPhases([...specs, "--project", "Mobile Safari"])).toEqual(expected);
   });
 
   it("版本化 Fake AnySearch spec 依次进入 configured 与 missing-key phase，并清理其他 phase 与 transport 注入", async () => {
