@@ -27,6 +27,48 @@ const completedEvent: AgentRunDetail["events"][number] = {
   data: { eventType: "run.completed", status: "completed", currentStep: "completed", attemptCount: 1, resultCount: 2 },
   createdAt,
 };
+const pauseRequestedEvent: AgentRunDetail["events"][number] = {
+  sequence: 3,
+  runVersion: 3,
+  eventType: "run.pause_requested",
+  data: { eventType: "run.pause_requested", status: "running", currentStep: "fetch_details", attemptCount: 1 },
+  createdAt,
+};
+const pausedEvent: AgentRunDetail["events"][number] = {
+  sequence: 4,
+  runVersion: 4,
+  eventType: "run.paused",
+  data: { eventType: "run.paused", status: "paused", currentStep: "fetch_details", attemptCount: 1 },
+  createdAt,
+};
+const resumeRequestedEvent: AgentRunDetail["events"][number] = {
+  sequence: 3,
+  runVersion: 3,
+  eventType: "run.resume_requested",
+  data: { eventType: "run.resume_requested", status: "running", currentStep: "fetch_details", attemptCount: 1 },
+  createdAt,
+};
+const cancelledEvent: AgentRunDetail["events"][number] = {
+  sequence: 3,
+  runVersion: 3,
+  eventType: "run.cancelled",
+  data: { eventType: "run.cancelled", status: "cancelled", currentStep: "cancelled", attemptCount: 1 },
+  createdAt,
+};
+const cancelRequestedEvent: AgentRunDetail["events"][number] = {
+  sequence: 3,
+  runVersion: 3,
+  eventType: "run.cancel_requested",
+  data: { eventType: "run.cancel_requested", status: "running", currentStep: "fetch_details", attemptCount: 1 },
+  createdAt,
+};
+const failedEvent: AgentRunDetail["events"][number] = {
+  sequence: 3,
+  runVersion: 3,
+  eventType: "run.failed",
+  data: { eventType: "run.failed", status: "failed", currentStep: "failed", attemptCount: 1, failureCode: "AGENT_RUN_ADAPTER_FAILED" },
+  createdAt,
+};
 
 afterEach(() => {
   vi.useRealTimers();
@@ -41,11 +83,12 @@ describe("Agent Run SSE", () => {
 
     expect(eventsAfter).toHaveBeenCalledWith({ userId, runId, afterSequence: 0 });
     expect(text).toBe([
-      'id: 1\nevent: run.queued\ndata: {"eventType":"run.queued","status":"queued","currentStep":"queued","attemptCount":0}\n\n',
-      'id: 2\nevent: run.started\ndata: {"eventType":"run.started","status":"running","currentStep":"batch_search","attemptCount":1}\n\n',
-      'id: 3\nevent: run.completed\ndata: {"eventType":"run.completed","status":"completed","currentStep":"completed","attemptCount":1,"resultCount":2}\n\n',
+      'id: 1\nevent: run.queued\ndata: {"id":"1","event":"run.queued","runVersion":1,"data":{"eventType":"run.queued","status":"queued","currentStep":"queued","attemptCount":0}}\n\n',
+      'id: 2\nevent: run.started\ndata: {"id":"2","event":"run.started","runVersion":2,"data":{"eventType":"run.started","status":"running","currentStep":"batch_search","attemptCount":1}}\n\n',
+      'id: 3\nevent: run.completed\ndata: {"id":"3","event":"run.completed","runVersion":3,"data":{"eventType":"run.completed","status":"completed","currentStep":"completed","attemptCount":1,"resultCount":2}}\n\n',
     ].join(""));
-    expect(text).not.toMatch(/createdAt|runVersion|rawPayload|description|objectKey/);
+    expect(text).not.toMatch(/createdAt|rawPayload|description|objectKey/);
+    expect(text).toContain('"runVersion":3');
   });
 
   it.each([
@@ -66,6 +109,38 @@ describe("Agent Run SSE", () => {
     expect(text).toContain("id: 3");
     expect(text).not.toContain("id: 1");
     expect(text).not.toContain("id: 2");
+  });
+
+  it.each([
+    ["paused", pausedEvent],
+    ["cancelled", cancelledEvent],
+    ["completed", completedEvent],
+    ["failed", failedEvent],
+  ] as const)("%s 事件终止流", async (_name, event) => {
+    const eventsAfter = vi.fn().mockResolvedValue([event]);
+    const text = await readAll(createAgentRunEventStream({ queries: { eventsAfter }, userId, runId, afterSequence: event.sequence - 1 }));
+    expect(text).toContain(`event: ${event.eventType}`);
+    expect(eventsAfter).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["pause_requested", pauseRequestedEvent],
+    ["resume_requested", resumeRequestedEvent],
+    ["cancel_requested", cancelRequestedEvent],
+  ] as const)("%s 事件不终止流", async (_name, event) => {
+    const completedAfterRequest = { ...completedEvent, sequence: event.sequence + 1, runVersion: event.runVersion + 1 };
+    const eventsAfter = vi.fn().mockResolvedValue([event, completedAfterRequest]);
+    const text = await readAll(createAgentRunEventStream({ queries: { eventsAfter }, userId, runId, afterSequence: event.sequence - 1 }));
+    expect(text).toContain(`event: ${event.eventType}`);
+    expect(text).toContain("event: run.completed");
+  });
+
+  it("安全暂停后可从旧游标恢复且不重复", async () => {
+    const resumedCompleted = { ...completedEvent, sequence: 5, runVersion: 5 };
+    const resumedEventsAfter = vi.fn().mockResolvedValue([resumedCompleted]);
+    const resumed = await readAll(createAgentRunEventStream({ queries: { eventsAfter: resumedEventsAfter }, userId, runId, afterSequence: 4 }));
+    expect(resumed).toContain("id: 5");
+    expect(resumed).not.toContain("id: 4");
   });
 
   it("终态游标已被客户端确认时立即关闭而不继续轮询", async () => {

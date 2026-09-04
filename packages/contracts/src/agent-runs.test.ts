@@ -1,13 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
   AGENT_RUN_BUDGET,
+  AGENT_RUN_RULE_VERSION,
+  AGENT_RUN_TOOL_ALLOWLIST,
+  AGENT_RUN_TERMINAL_EVENT_TYPES,
   AGENT_RUN_CLAIM_LEASE_MS,
   AGENT_RUN_JOB_NAME,
   AGENT_RUN_QUEUE,
   AGENT_RUN_SCAN_INTERVAL_MS,
   AgentRunAdapterErrorSchema,
   AgentRunBudgetSchema,
+  AgentRunBudgetDimensionSchema,
+  AgentRunControlActionSchema,
+  AgentRunControlStateSchema,
   AgentRunDetailSchema,
+  AgentRunExecutionSpecSchema,
   AgentRunEventDataSchema,
   AgentRunEventSchema,
   AgentRunJobSchema,
@@ -17,7 +24,28 @@ import {
   AgentRunSseEventSchema,
   AgentRunStepSchema,
   AgentRunSummarySchema,
+  AgentRunTerminationSchema,
   AgentRunTargetSnapshotSchema,
+  AgentRunUsageSchema,
+  JobSourceHealthCheckSchema,
+  JobSourceHealthOverviewSchema,
+  JobSourceHealthProjectionSchema,
+  SourceHealthDetailResultSchema,
+  SourceHealthListResultSchema,
+  parseSourceHealthDetailResult,
+  parseSourceHealthListResult,
+  GREENHOUSE_JOB_DISCOVERY_ADAPTER,
+  GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
+  GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+  GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION,
+  GREENHOUSE_JOB_DISCOVERY_RULE_VERSION,
+  GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
+  GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION,
+  GREENHOUSE_SOURCE_HEALTH_RULE_VERSION,
+  GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST,
+  GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION,
+  PUBLIC_JOB_DISCOVERY_BUDGET,
+  PublicDiscoveryBatchSearchResultSchema,
   DiscoveryBatchSearchInputSchema,
   DiscoveryBatchSearchResultSchema,
   DiscoveryDetailInputSchema,
@@ -28,12 +56,24 @@ import {
   DiscoverySearchSummarySchema,
   FAKE_JOB_DISCOVERY_ADAPTER,
   FAKE_JOB_DISCOVERY_ADAPTER_VERSION,
+  FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER,
+  FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION,
   FAKE_JOB_DISCOVERY_SOURCE_IDS,
   FAKE_JOB_DISCOVERY_WORKFLOW_VERSION,
   LatestAgentRunResponseSchema,
   StartAgentRunCommandSchema,
   StartAgentRunResponseSchema,
+  ControlAgentRunCommandSchema,
+  ControlAgentRunResponseSchema,
+  isAgentRunTerminalEvent,
 } from "./agent-runs";
+import {
+  LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER,
+  LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION,
+  LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+  LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION,
+  LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION,
+} from "./job-discovery";
 
 const targetId = "87a0d3ac-4aed-4bd5-a703-68bf82cc6c49";
 const runId = "1e764df5-19f3-49f3-b16e-512147298baa";
@@ -49,7 +89,16 @@ const targetSnapshot = {
 };
 const sourceScope = {
   kind: "company_watchlist", adapter: "fake", adapterVersion: FAKE_JOB_DISCOVERY_ADAPTER_VERSION,
+  watchlistVersion: 0,
   sources: FAKE_JOB_DISCOVERY_SOURCE_IDS,
+};
+const publicSourceScope = {
+  kind: "company_watchlist", adapter: "greenhouse", adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
+  watchlistVersion: 1,
+  sources: [{
+    sourceId: "greenhouse:example", watchlistItemId: "9c4b4001-25a6-4fb6-8090-9e957d6fca0c", canonicalCompanyName: "Example AI",
+    careersUrl: "https://boards.greenhouse.io/example", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], boardToken: "example",
+  }],
 };
 const runTargetSnapshot = { targetId, version: 1, priority: "primary", state: "active", constraints: targetSnapshot };
 const queuedSummary = {
@@ -58,7 +107,17 @@ const queuedSummary = {
   adapter: FAKE_JOB_DISCOVERY_ADAPTER, adapterVersion: FAKE_JOB_DISCOVERY_ADAPTER_VERSION,
   outputSchemaVersion: "job-discovery-result-v1", budget: AGENT_RUN_BUDGET,
   status: "queued", currentStep: "queued", version: 1, attemptCount: 0,
-  failureCode: null, queuedAt: now, startedAt: null, completedAt: null, failedAt: null, updatedAt: now,
+  failureCode: null, queuedAt: now, startedAt: null, completedAt: null, failedAt: null, cancelledAt: null, updatedAt: now,
+};
+const executionSpec = {
+  targetSnapshot: runTargetSnapshot, sourceScope, workflowVersion: FAKE_JOB_DISCOVERY_WORKFLOW_VERSION,
+  ruleVersion: AGENT_RUN_RULE_VERSION, adapter: FAKE_JOB_DISCOVERY_ADAPTER,
+  adapterVersion: FAKE_JOB_DISCOVERY_ADAPTER_VERSION, outputSchemaVersion: "job-discovery-result-v1",
+  toolAllowlist: AGENT_RUN_TOOL_ALLOWLIST, model: null, budget: AGENT_RUN_BUDGET,
+};
+const usage = {
+  activeDurationMs: 0, attempts: 0, toolCalls: 0, sourceRequests: 0, modelCalls: 0,
+  inputTokens: 0, outputTokens: 0, totalTokens: 0, results: 0, complete: false,
 };
 const step = {
   stepKey: "batch_search", ordinal: 1, status: "pending", attemptCount: 0,
@@ -72,7 +131,10 @@ const result = {
   sourcePostingVersionId: "d6804068-4fae-4c49-af06-7de4c08ff8cf", company: "示例科技", title: "AI 工程师",
   location: "上海", postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true,
 };
-const detail = { ...queuedSummary, steps: [step], events: [event], results: [result] };
+const detail = {
+  ...queuedSummary, executionSpec, controlState: "none", usage, termination: null, retryOfRunId: null,
+  steps: [step], events: [event], results: [result],
+};
 const searchSummary = {
   sourceId: "fake:aurora-careers", detailId: "aurora-1", company: "示例科技", title: "AI 工程师",
   location: "上海", postedAt: null, deadline: null,
@@ -84,10 +146,371 @@ function expectUnknownKeyRejected(schema: { safeParse(input: unknown): { success
 }
 
 describe("agent run contracts", () => {
+  it("严格验证 v3 单来源 adapter 结果并绑定预期来源和详情", () => {
+    const list = { ok: true, attemptCount: 1, data: { sourceId: "greenhouse:example", observedDetailIds: ["701"], candidates: [{ sourceId: "greenhouse:example", detailId: "701", company: null, title: "Engineer", location: "Beijing" }] } };
+    const detail = { ok: true, attemptCount: 1, data: { sourceId: "greenhouse:example", detailId: "701", company: "Example", title: "Engineer", location: "Beijing", postedAt: "2026-08-20T00:00:00.000Z", deadline: null, sourceType: "company_careers", isOfficial: true, absoluteUrl: "https://boards.greenhouse.io/example/jobs/701", rawPayload: {} } };
+    expect(parseSourceHealthListResult(list, "greenhouse:example")).toEqual(list);
+    expect(parseSourceHealthDetailResult(detail, { sourceId: "greenhouse:example", detailId: "701" })).toEqual(detail);
+    for (const invalid of [
+      { ok: false, failure: { category: "parser_degraded", reasonCode: "SOURCE_RATE_LIMITED", retryable: false, attemptCount: 1 } },
+      { ...list, attemptCount: 0 }, { ...list, attemptCount: -1 },
+      { ...list, data: { ...list.data, sourceId: "greenhouse:other" } }, { ...list, extra: true },
+    ]) expect(SourceHealthListResultSchema.safeParse(invalid).success).toBe(false);
+    expect(() => parseSourceHealthDetailResult({ ...detail, data: { ...detail.data, detailId: "999" } }, { sourceId: "greenhouse:example", detailId: "701" })).toThrow();
+    expect(SourceHealthDetailResultSchema.safeParse({ ...detail, extra: true }).success).toBe(false);
+  });
+  it("在保留 Fake v1 和 Greenhouse v2 语义的同时解析 Greenhouse 来源健康 v3 执行规格", () => {
+    const v3ExecutionSpec = {
+      targetSnapshot: runTargetSnapshot,
+      sourceScope: {
+        ...publicSourceScope,
+        adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
+      },
+      workflowVersion: GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION,
+      ruleVersion: GREENHOUSE_SOURCE_HEALTH_RULE_VERSION,
+      adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER,
+      adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
+      outputSchemaVersion: GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION,
+      toolAllowlist: GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST,
+      model: null,
+      budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+    };
+
+    expect(AgentRunExecutionSpecSchema.parse(executionSpec)).toEqual(executionSpec);
+    expect(AgentRunExecutionSpecSchema.parse({
+      targetSnapshot: runTargetSnapshot, sourceScope: publicSourceScope,
+      workflowVersion: GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION,
+      ruleVersion: GREENHOUSE_JOB_DISCOVERY_RULE_VERSION,
+      adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER,
+      adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
+      outputSchemaVersion: GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+      toolAllowlist: AGENT_RUN_TOOL_ALLOWLIST, model: null, budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+    })).toMatchObject({ workflowVersion: GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION });
+    expect(AgentRunExecutionSpecSchema.parse(v3ExecutionSpec)).toEqual(v3ExecutionSpec);
+    expect(AgentRunExecutionSpecSchema.safeParse({ ...v3ExecutionSpec, adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION }).success)
+      .toBe(false);
+    expect({ adapter: FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER, version: FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION })
+      .toEqual({ adapter: "fake-public", version: "fake-public-job-discovery-v1" });
+  });
+
+  it("为 v3 运行详情投影安全、可追溯的来源健康受控检查", () => {
+    const sourceCheck = {
+      checkId: "6d5ee5dd-49f0-4a92-bab6-e8d2740c14f9",
+      runId,
+      targetId,
+      watchlistItemId: publicSourceScope.sources[0]!.watchlistItemId,
+      sourceId: "greenhouse:example",
+      status: "parser_degraded",
+      reasonCodes: ["SOURCE_DETAIL_FIELDS_MISSING"],
+      impact: { scope: "job_details", affectedCount: 2 },
+      observedPostingCount: 3,
+      selectedDetailCount: 3,
+      validDetailCount: 1,
+      requestAttemptCount: 4,
+      checkedAt: now,
+    };
+    const v3Summary = {
+      ...queuedSummary,
+      sourceScope: { ...publicSourceScope, adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION },
+      workflowVersion: GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION,
+      adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER,
+      adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
+      outputSchemaVersion: GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION,
+      budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+      status: "completed",
+      currentStep: "completed",
+      startedAt: now,
+      completedAt: now,
+    };
+    const v3ExecutionSpec = {
+      targetSnapshot: runTargetSnapshot,
+      sourceScope: v3Summary.sourceScope,
+      workflowVersion: GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION,
+      ruleVersion: GREENHOUSE_SOURCE_HEALTH_RULE_VERSION,
+      adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER,
+      adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
+      outputSchemaVersion: GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION,
+      toolAllowlist: GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST,
+      model: null,
+      budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+    };
+
+    expect(JobSourceHealthCheckSchema.parse(sourceCheck)).toEqual(sourceCheck);
+    expect(JobSourceHealthCheckSchema.safeParse({ ...sourceCheck, reasonCodes: [] }).success).toBe(false);
+    expect(JobSourceHealthCheckSchema.safeParse({ ...sourceCheck, impact: { scope: "job_details", affectedCount: null } }).success).toBe(false);
+    expect(JobSourceHealthProjectionSchema.parse({
+      watchlistItemId: sourceCheck.watchlistItemId, sourceId: sourceCheck.sourceId, name: "Example AI",
+      state: "enabled", status: null, runId: null, reasonCodes: [], impact: { scope: "none", affectedCount: null },
+      lastCheckedAt: null, suggestedAction: "wait_for_next_run",
+    }).status).toBeNull();
+    expect(JobSourceHealthOverviewSchema.parse({
+      targetId: runTargetSnapshot.targetId, watchlistVersion: 1,
+      sources: [{ watchlistItemId: sourceCheck.watchlistItemId, sourceId: sourceCheck.sourceId, name: "Example AI", state: "disabled", status: "disabled", runId: null, reasonCodes: [], impact: { scope: "none", affectedCount: null }, lastCheckedAt: null, suggestedAction: "reenable_source" }],
+    }).sources).toHaveLength(1);
+    const v3Detail = {
+      ...v3Summary,
+      executionSpec: v3ExecutionSpec,
+      controlState: "none",
+      usage: { ...usage, complete: true },
+      termination: { kind: "completed_with_source_issues", failureCode: null, budgetDimension: null },
+      retryOfRunId: null,
+      steps: [], events: [], results: [], sourceChecks: [sourceCheck],
+    };
+    expect(AgentRunDetailSchema.parse(v3Detail).termination).toMatchObject({ kind: "completed_with_source_issues" });
+    expect(AgentRunDetailSchema.safeParse({ ...detail, sourceChecks: [sourceCheck] }).success).toBe(false);
+    for (const sourceChecks of [
+      [{ ...sourceCheck, runId: "c9862e7d-5821-46d1-b1d5-4b2c1170b8c7" }],
+      [{ ...sourceCheck, targetId: "9a208a3c-a1ec-4d52-8fac-a3aeecd34b36" }],
+      [{ ...sourceCheck, watchlistItemId: "12f96a8e-6262-4e12-a8f7-091081ca6f48" }],
+      [{ ...sourceCheck, sourceId: "greenhouse:outside" }],
+      [sourceCheck, sourceCheck],
+    ]) expect(AgentRunDetailSchema.safeParse({ ...v3Detail, sourceChecks }).success).toBe(false);
+
+    const secondSource = { ...v3Summary.sourceScope.sources[0]!, sourceId: "greenhouse:second", watchlistItemId: "13f96a8e-6262-4e12-a8f7-091081ca6f48", canonicalCompanyName: "Second", careersUrl: "https://boards.greenhouse.io/second", boardToken: "second" };
+    const secondCheck = { ...sourceCheck, checkId: "7d5ee5dd-49f0-4a92-bab6-e8d2740c14f9", sourceId: secondSource.sourceId, watchlistItemId: secondSource.watchlistItemId };
+    const twoSourceDetail = { ...v3Detail, sourceScope: { ...v3Detail.sourceScope, sources: [v3Detail.sourceScope.sources[0]!, secondSource] }, executionSpec: { ...v3Detail.executionSpec, sourceScope: { ...v3Detail.executionSpec.sourceScope, sources: [v3Detail.sourceScope.sources[0]!, secondSource] } } };
+    expect(AgentRunDetailSchema.safeParse(twoSourceDetail).success).toBe(false);
+    expect(AgentRunDetailSchema.safeParse({ ...twoSourceDetail, sourceChecks: [sourceCheck, secondCheck] }).success).toBe(true);
+    expect(AgentRunDetailSchema.safeParse({ ...twoSourceDetail, status: "running", currentStep: "batch_search", completedAt: null, termination: null, usage: { ...twoSourceDetail.usage, complete: false } }).success).toBe(true);
+    const failedGlobal = { ...twoSourceDetail, status: "failed", currentStep: "failed", completedAt: null, failedAt: now, failureCode: "AGENT_RUN_ADAPTER_FAILED", termination: { kind: "source_failed", failureCode: "AGENT_RUN_ADAPTER_FAILED", budgetDimension: null }, sourceChecks: [] };
+    expect(AgentRunDetailSchema.safeParse(failedGlobal).success).toBe(true);
+    expect(AgentRunDetailSchema.safeParse({ ...failedGlobal, sourceChecks: [sourceCheck] }).success).toBe(false);
+    const cancelledGlobal = { ...twoSourceDetail, status: "cancelled", currentStep: "cancelled", completedAt: null, cancelledAt: now, failureCode: null, termination: { kind: "cancelled_by_user", failureCode: null, budgetDimension: null }, sourceChecks: [] };
+    expect(AgentRunDetailSchema.safeParse(cancelledGlobal).success).toBe(true);
+    expect(AgentRunDetailSchema.safeParse({ ...cancelledGlobal, sourceChecks: [sourceCheck] }).success).toBe(false);
+  });
+
+  it("拒绝矛盾的来源健康事实、未经检查的伪证据和 URL 形式来源 ID", () => {
+    const base = {
+      checkId: "6d5ee5dd-49f0-4a92-bab6-e8d2740c14f9", runId, targetId,
+      watchlistItemId: publicSourceScope.sources[0]!.watchlistItemId, sourceId: "greenhouse:example",
+      status: "parser_degraded", reasonCodes: ["SOURCE_DETAIL_FIELDS_MISSING"],
+      impact: { scope: "job_details", affectedCount: 2 }, observedPostingCount: 3,
+      selectedDetailCount: 3, validDetailCount: 1, requestAttemptCount: 1, checkedAt: now,
+    };
+    const unchecked = {
+      watchlistItemId: base.watchlistItemId, sourceId: base.sourceId, name: "Example AI", state: "enabled",
+      status: null, runId: null, reasonCodes: [], impact: { scope: "none", affectedCount: null },
+      lastCheckedAt: null, suggestedAction: "wait_for_next_run",
+    };
+
+    expect(JobSourceHealthCheckSchema.safeParse({ ...base, sourceId: "https://boards.greenhouse.io/example?token=secret" }).success).toBe(false);
+    expect(JobSourceHealthCheckSchema.safeParse({ ...base, status: "zero_valid_results", reasonCodes: [], impact: { scope: "none", affectedCount: null }, validDetailCount: 1 }).success).toBe(false);
+    expect(JobSourceHealthCheckSchema.safeParse({ ...base, status: "healthy", reasonCodes: [], impact: { scope: "none", affectedCount: null }, validDetailCount: 0 }).success).toBe(false);
+    expect(JobSourceHealthCheckSchema.safeParse({ ...base, status: "rate_limited", reasonCodes: ["SOURCE_TIMEOUT"], impact: { scope: "entire_source", affectedCount: null } }).success).toBe(false);
+    expect(JobSourceHealthCheckSchema.safeParse({ ...base, status: "parser_degraded", reasonCodes: ["SOURCE_UNREACHABLE"] }).success).toBe(false);
+    expect(JobSourceHealthCheckSchema.safeParse({ ...base, status: "hard_failed", reasonCodes: ["SOURCE_DETAIL_URL_INVALID"] }).success).toBe(false);
+    expect(JobSourceHealthCheckSchema.safeParse({ ...base, selectedDetailCount: 4 }).success).toBe(false);
+    expect(JobSourceHealthCheckSchema.safeParse({ ...base, requestAttemptCount: 0 }).success).toBe(false);
+    expect(JobSourceHealthCheckSchema.safeParse({ ...base, impact: { scope: "none", affectedCount: 0 } }).success).toBe(false);
+    expect(JobSourceHealthCheckSchema.safeParse({ ...base, impact: { scope: "job_details", affectedCount: 0 } }).success).toBe(false);
+    expect(JobSourceHealthProjectionSchema.safeParse({ ...unchecked, suggestedAction: "none" }).success).toBe(false);
+    expect(JobSourceHealthProjectionSchema.safeParse({ ...unchecked, runId }).success).toBe(false);
+    expect(JobSourceHealthProjectionSchema.safeParse({ ...unchecked, state: "disabled", status: "healthy", runId, lastCheckedAt: now }).success).toBe(false);
+    expect(JobSourceHealthProjectionSchema.safeParse({
+      ...unchecked, state: "disabled", status: "disabled", runId, lastCheckedAt: now,
+      reasonCodes: ["SOURCE_UNREACHABLE"], impact: { scope: "entire_source", affectedCount: null }, suggestedAction: "reenable_source",
+    }).success).toBe(false);
+
+    const parserPlusRateReasonAccepted = JobSourceHealthCheckSchema.safeParse({
+      ...base, reasonCodes: ["SOURCE_DETAIL_FIELDS_MISSING", "SOURCE_RATE_LIMITED"],
+    }).success;
+    const hardPlusParserReasonAccepted = JobSourceHealthCheckSchema.safeParse({
+      ...base, status: "hard_failed", reasonCodes: ["SOURCE_UNREACHABLE", "SOURCE_DETAIL_URL_INVALID"], impact: { scope: "entire_source", affectedCount: null },
+    }).success;
+    const parserWithNoImpactAccepted = JobSourceHealthCheckSchema.safeParse({
+      ...base, impact: { scope: "none", affectedCount: null },
+    }).success;
+    const hardFailureWithNoImpactAccepted = JobSourceHealthCheckSchema.safeParse({
+      ...base, status: "hard_failed", reasonCodes: ["SOURCE_UNREACHABLE"], impact: { scope: "none", affectedCount: null },
+    }).success;
+    const checkedRateProjectionWithoutIssueEvidenceAccepted = JobSourceHealthProjectionSchema.safeParse({
+      ...unchecked, status: "rate_limited", runId, lastCheckedAt: now, suggestedAction: "retry_later",
+    }).success;
+    const healthyProjectionWithRateEvidenceAccepted = JobSourceHealthProjectionSchema.safeParse({
+      ...unchecked, status: "healthy", runId, lastCheckedAt: now, reasonCodes: ["SOURCE_RATE_LIMITED"], impact: { scope: "entire_source", affectedCount: null }, suggestedAction: "none",
+    }).success;
+
+    expect(parserPlusRateReasonAccepted).toBe(false);
+    expect(hardPlusParserReasonAccepted).toBe(false);
+    expect(parserWithNoImpactAccepted).toBe(false);
+    expect(hardFailureWithNoImpactAccepted).toBe(false);
+    expect(checkedRateProjectionWithoutIssueEvidenceAccepted).toBe(false);
+    expect(healthyProjectionWithRateEvidenceAccepted).toBe(false);
+  });
+
+  it("保留 legacy 详情的原始输出，不投射 v3 的来源检查字段", () => {
+    const parsed = AgentRunDetailSchema.parse(detail);
+
+    expect(parsed).toEqual(detail);
+    expect("sourceChecks" in parsed).toBe(false);
+  });
+
+  it("将 Fake v1 与 Public v2 严格联合用于启动、详情和 latest 响应", () => {
+    const publicSummary = {
+      ...queuedSummary, sourceScope: publicSourceScope, workflowVersion: GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION,
+      adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER, adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
+      outputSchemaVersion: GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+    };
+    const publicExecution = {
+      targetSnapshot: runTargetSnapshot, sourceScope: publicSourceScope, workflowVersion: GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION,
+      ruleVersion: GREENHOUSE_JOB_DISCOVERY_RULE_VERSION, adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER,
+      adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION, outputSchemaVersion: GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+      toolAllowlist: AGENT_RUN_TOOL_ALLOWLIST, model: null, budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+    };
+    const publicDetail = { ...publicSummary, executionSpec: publicExecution, controlState: "none", usage, termination: null, retryOfRunId: null, steps: [step], events: [event], results: [] };
+
+    expect(StartAgentRunResponseSchema.safeParse({ ...publicSummary, reused: false }).success).toBe(true);
+    expect(AgentRunDetailSchema.safeParse(publicDetail).success).toBe(true);
+    expect(LatestAgentRunResponseSchema.safeParse({ run: publicDetail }).success).toBe(true);
+    expect(StartAgentRunResponseSchema.safeParse({ ...publicSummary, adapter: "fake", reused: false }).success).toBe(false);
+    expect(StartAgentRunResponseSchema.safeParse({
+      ...publicSummary,
+      sourceScope: { ...publicSourceScope, untrusted: true },
+      reused: false,
+    }).success).toBe(false);
+  });
+  it("defines strict control state, control command, and public budget", () => {
+    const commandId = "17fcd7b1-1a1d-4f25-9d10-45522417e919";
+
+    expect(AgentRunControlStateSchema.options).toEqual(["none", "pause_requested", "cancel_requested"]);
+    expect(AgentRunControlActionSchema.options).toEqual(["pause", "resume", "cancel"]);
+    expect(AgentRunBudgetDimensionSchema.options).toEqual([
+      "active_duration", "attempts", "tool_calls", "model_calls", "tokens",
+    ]);
+    expect(ControlAgentRunCommandSchema.parse({ commandId, action: "pause" }))
+      .toEqual({ commandId, action: "pause" });
+    expect(ControlAgentRunCommandSchema.safeParse({ commandId, action: "pause", extra: true }).success)
+      .toBe(false);
+    expect(AGENT_RUN_RULE_VERSION).toBe("fake-job-discovery-rules-v1");
+    expect(AGENT_RUN_TOOL_ALLOWLIST).toEqual([
+      "job_discovery.search_batch", "job_discovery.get_detail",
+    ]);
+    expect(AgentRunBudgetSchema.parse({
+      maxActiveDurationMs: 60_000, maxAttempts: 3, maxToolCalls: 10, maxResults: 5,
+      maxModelCalls: 0, maxTokens: 0,
+    })).toEqual(AGENT_RUN_BUDGET);
+  });
+
+  it("defines execution usage termination and control response contracts", () => {
+    const usage = {
+      activeDurationMs: 1_250, attempts: 1, toolCalls: 2, sourceRequests: 2,
+      modelCalls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, results: 1, complete: true,
+    };
+    const executionSpec = {
+      targetSnapshot: runTargetSnapshot, sourceScope, workflowVersion: FAKE_JOB_DISCOVERY_WORKFLOW_VERSION,
+      ruleVersion: "fake-job-discovery-rules-v1", adapter: "fake",
+      adapterVersion: FAKE_JOB_DISCOVERY_ADAPTER_VERSION, outputSchemaVersion: "job-discovery-result-v1",
+      toolAllowlist: ["job_discovery.search_batch", "job_discovery.get_detail"], model: null, budget: AGENT_RUN_BUDGET,
+    };
+    expect(AgentRunExecutionSpecSchema.parse(executionSpec)).toEqual(executionSpec);
+    expect(AgentRunUsageSchema.parse(usage)).toMatchObject({ activeDurationMs: 1_250, sourceRequests: 2 });
+    expect(AgentRunUsageSchema.safeParse({ ...usage, inputTokens: 1 }).success).toBe(false);
+    expect(AgentRunTerminationSchema.parse({
+      kind: "budget_exhausted", failureCode: "AGENT_RUN_BUDGET_EXCEEDED", budgetDimension: "attempts",
+    })).toEqual({ kind: "budget_exhausted", failureCode: "AGENT_RUN_BUDGET_EXCEEDED", budgetDimension: "attempts" });
+    expect(ControlAgentRunResponseSchema.parse({
+      applied: true, run: { runId, status: "running", currentStep: "fetch_details", controlState: "none", version: 2 },
+    })).toMatchObject({ applied: true, run: { runId, status: "running" } });
+  });
+
+  it("允许版本化的有序唯一 Watchlist 来源范围，同时保留完整执行规格", () => {
+    const watchlistSourceScope = {
+      kind: "company_watchlist",
+      adapter: "fake",
+      adapterVersion: "fake-job-discovery-v1",
+      watchlistVersion: 3,
+      sources: ["https://careers.example.com/jobs", "fake:aurora-careers"],
+    };
+    const completeExecutionSpec = {
+      targetSnapshot: runTargetSnapshot,
+      sourceScope: watchlistSourceScope,
+      workflowVersion: "job-discovery-workflow-v1",
+      ruleVersion: "fake-job-discovery-rules-v1",
+      adapter: "fake",
+      adapterVersion: "fake-job-discovery-v1",
+      outputSchemaVersion: "job-discovery-result-v1",
+      toolAllowlist: ["job_discovery.search_batch", "job_discovery.get_detail"],
+      model: null,
+      budget: {
+        maxActiveDurationMs: 60_000,
+        maxAttempts: 3,
+        maxToolCalls: 10,
+        maxResults: 5,
+        maxModelCalls: 0,
+        maxTokens: 0,
+      },
+    };
+
+    expect(AgentRunSourceScopeSchema.parse(watchlistSourceScope)).toEqual(watchlistSourceScope);
+    expect(AgentRunSourceScopeSchema.safeParse({
+      kind: "company_watchlist", adapter: "fake", adapterVersion: "fake-job-discovery-v1",
+      sources: ["fake:aurora-careers", "fake:orbit-careers"],
+    }).success).toBe(false);
+    expect(AgentRunSourceScopeSchema.safeParse({ ...watchlistSourceScope, watchlistVersion: -1 }).success).toBe(false);
+    expect(AgentRunSourceScopeSchema.safeParse({ ...watchlistSourceScope, sources: ["duplicate", "duplicate"] }).success).toBe(false);
+    expect(AgentRunSourceScopeSchema.safeParse({ ...watchlistSourceScope, sources: ["x".repeat(2_049)] }).success).toBe(false);
+    expect(AgentRunSourceScopeSchema.safeParse({ ...watchlistSourceScope, sources: Array.from({ length: 53 }, (_, index) => `source-${index}`) }).success).toBe(false);
+    expect(AgentRunSourceScopeSchema.parse({ ...watchlistSourceScope, sources: [] }).sources).toEqual([]);
+    expect(AgentRunExecutionSpecSchema.parse(completeExecutionSpec)).toEqual(completeExecutionSpec);
+  });
+
+  it("keeps the complete Fake v1 execution specimen valid while accepting a discriminated public v2 scope", () => {
+    const publicExecutionSpec = {
+      targetSnapshot: runTargetSnapshot,
+      sourceScope: {
+        kind: "company_watchlist",
+        adapter: "greenhouse",
+        adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
+        watchlistVersion: 1,
+        sources: [{
+          sourceId: "greenhouse:aurora",
+          watchlistItemId: "e384ef6d-7dc3-4e4e-8692-7d3199575716",
+          canonicalCompanyName: "Aurora Labs",
+          careersUrl: "https://boards.greenhouse.io/aurora",
+          allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"],
+          boardToken: "aurora",
+        }],
+      },
+      workflowVersion: GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION,
+      ruleVersion: GREENHOUSE_JOB_DISCOVERY_RULE_VERSION,
+      adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER,
+      adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
+      outputSchemaVersion: GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+      toolAllowlist: ["job_discovery.search_batch", "job_discovery.get_detail"],
+      model: null,
+      budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+    };
+    expect(AgentRunExecutionSpecSchema.parse(executionSpec)).toEqual(executionSpec);
+    expect(AgentRunExecutionSpecSchema.parse(publicExecutionSpec)).toEqual(publicExecutionSpec);
+    expect(AgentRunExecutionSpecSchema.safeParse({
+      ...publicExecutionSpec,
+      sourceScope: { ...publicExecutionSpec.sourceScope, sources: [{ ...publicExecutionSpec.sourceScope.sources[0], boardToken: "other" }] },
+    }).success).toBe(false);
+  });
+
+  it("fixes public v2 batch success to complete scan facts without changing the v1 array shape", () => {
+    const publicListCandidate = {
+      sourceId: "greenhouse:aurora", detailId: "42", company: "Aurora Labs", title: "AI 工程师", location: "上海",
+    };
+    expect(DiscoveryBatchSearchResultSchema.parse({ ok: true, data: [searchSummary] })).toEqual({ ok: true, data: [searchSummary] });
+    expect(PublicDiscoveryBatchSearchResultSchema.parse({
+      ok: true, data: { items: [publicListCandidate], scans: [{ sourceId: "greenhouse:aurora", observedDetailIds: ["42", "84"], complete: true }] },
+    })).toEqual({
+      ok: true, data: { items: [publicListCandidate], scans: [{ sourceId: "greenhouse:aurora", observedDetailIds: ["42", "84"], complete: true }] },
+    });
+    expect(PublicDiscoveryBatchSearchResultSchema.safeParse({
+      ok: true, data: { items: [publicListCandidate], scans: [{ sourceId: "greenhouse:aurora", observedDetailIds: ["42", "42"], complete: true }] },
+    }).success).toBe(false);
+    expect(PublicDiscoveryBatchSearchResultSchema.safeParse({
+      ok: true, data: { items: [{ ...publicListCandidate, postedAt: null }], scans: [{ sourceId: "greenhouse:aurora", observedDetailIds: ["42"], complete: true }] },
+    }).success).toBe(false);
+  });
+
   it("parses the strict start command and queued run detail", () => {
     expect(StartAgentRunCommandSchema.parse({ targetId, idempotencyKey: "08614f5c-b5cb-4c1d-8fca-3777105b5f19" }))
       .toEqual({ targetId, idempotencyKey: "08614f5c-b5cb-4c1d-8fca-3777105b5f19" });
-    expect(AgentRunDetailSchema.parse({ ...queuedSummary, steps: [], events: [], results: [] }))
+    expect(AgentRunDetailSchema.parse({ ...detail, steps: [], events: [], results: [] }))
       .toMatchObject({ runId, targetId, status: "queued", currentStep: "queued" });
     expect(StartAgentRunResponseSchema.parse({ ...queuedSummary, reused: false }))
       .toMatchObject({ runId, targetId, reused: false });
@@ -101,7 +524,7 @@ describe("agent run contracts", () => {
       sources: FAKE_JOB_DISCOVERY_SOURCE_IDS,
     }).toEqual({
       queue: "agent-runs", job: "discover-jobs", lease: 30_000, scan: 1_000,
-      budget: { maxDurationMs: 60_000, maxAttempts: 3, maxToolCalls: 10, maxResults: 5, maxModelCalls: 0, maxTokens: 0 },
+      budget: { maxActiveDurationMs: 60_000, maxAttempts: 3, maxToolCalls: 10, maxResults: 5, maxModelCalls: 0, maxTokens: 0 },
       adapter: "fake", adapterVersion: "fake-job-discovery-v1", workflow: "job-discovery-workflow-v1",
       sources: ["fake:aurora-careers", "fake:orbit-careers"],
     });
@@ -111,16 +534,26 @@ describe("agent run contracts", () => {
     ]);
   });
 
-  it("serializes nonnegative safe cursors as decimal SSE ids", () => {
-    const event = { id: "0", event: "run.queued", data: { eventType: "run.queued", status: "queued", currentStep: "queued", attemptCount: 0 } };
+  it("serializes versioned strict SSE envelopes with decimal cursors", () => {
+    const event = { id: "0", event: "run.queued", runVersion: 1, data: { eventType: "run.queued", status: "queued", currentStep: "queued", attemptCount: 0 } };
     expect(AgentRunSseEventSchema.parse(event)).toEqual(event);
     expect(AgentRunSseEventSchema.safeParse({ ...event, id: "01" }).success).toBe(false);
     expect(AgentRunSseEventSchema.safeParse({ ...event, id: "9007199254740992" }).success).toBe(false);
+    expect(AgentRunSseEventSchema.safeParse(({ id: event.id, event: event.event, data: event.data })).success).toBe(false);
+    expect(AgentRunSseEventSchema.safeParse({ ...event, runVersion: 0 }).success).toBe(false);
+  });
+
+  it("exports one terminal event policy for all four terminal and three request events", () => {
+    expect(AGENT_RUN_TERMINAL_EVENT_TYPES).toEqual(["run.paused", "run.cancelled", "run.completed", "run.failed"]);
+    for (const eventType of AGENT_RUN_TERMINAL_EVENT_TYPES) expect(isAgentRunTerminalEvent(eventType)).toBe(true);
+    for (const eventType of ["run.pause_requested", "run.resume_requested", "run.cancel_requested"] as const) {
+      expect(isAgentRunTerminalEvent(eventType)).toBe(false);
+    }
   });
 
   it("rejects an unexpected key from every public object schema", () => {
     const start = { targetId, idempotencyKey: "08614f5c-b5cb-4c1d-8fca-3777105b5f19" };
-    const sseEvent = { id: "1", event: "run.queued", data: eventData };
+    const sseEvent = { id: "1", event: "run.queued", runVersion: 1, data: eventData };
     const adapterError = { code: "SOURCE_UNAVAILABLE", retryable: true };
     for (const [schema, sample] of [
       [StartAgentRunCommandSchema, start], [AgentRunBudgetSchema, AGENT_RUN_BUDGET],
@@ -156,5 +589,200 @@ describe("agent run contracts", () => {
         failureCode: "AGENT_RUN_ADAPTER_RETRYABLE",
       }).success).toBe(false);
     }
+  });
+
+  it("models control, budget, and cancelled events with matching lifecycle pairs", () => {
+    const usageFixture = {
+      activeDurationMs: 1_250, attempts: 1, toolCalls: 2, sourceRequests: 2,
+      modelCalls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, results: 1, complete: true,
+    };
+    expect(AgentRunEventDataSchema.parse({
+      eventType: "run.pause_requested", status: "running", currentStep: "fetch_details", attemptCount: 1,
+    })).toMatchObject({ eventType: "run.pause_requested" });
+    expect(AgentRunEventDataSchema.parse({
+      eventType: "run.budget_updated", status: "running", currentStep: "fetch_details", attemptCount: 1, usage: usageFixture,
+    })).toMatchObject({ usage: usageFixture });
+    expect(AgentRunEventDataSchema.parse({
+      eventType: "run.cancelled", status: "cancelled", currentStep: "cancelled", attemptCount: 1,
+    })).toMatchObject({ status: "cancelled" });
+    expect(AgentRunEventDataSchema.safeParse({
+      eventType: "run.cancelled", status: "cancelled", currentStep: "fetch_details", attemptCount: 1,
+    }).success).toBe(false);
+    expect(AgentRunSummarySchema.safeParse({
+      ...queuedSummary, status: "cancelled", currentStep: "queued", cancelledAt: now,
+    }).success).toBe(false);
+  });
+
+  it("requires complete terminal details to match their termination", () => {
+    expect(AgentRunDetailSchema.safeParse({
+      ...detail,
+      status: "completed",
+      currentStep: "completed",
+      startedAt: now,
+      completedAt: now,
+      usage: { ...usage, complete: true },
+      termination: { kind: "cancelled_by_user", failureCode: null, budgetDimension: null },
+    }).success).toBe(false);
+  });
+
+  it("round-trips the immutable v4 layered public discovery execution and detail", () => {
+    const v4TargetSnapshot = {
+      targetId,
+      version: 1,
+      priority: "primary",
+      state: "active",
+      constraints: targetSnapshot,
+    };
+    const v4ExecutionSpec = {
+      targetSnapshot: v4TargetSnapshot,
+      profileSnapshot: {
+        targetId,
+        version: 2,
+        confirmedActiveSkillNames: ["TypeScript", "Agent Engineering"],
+      },
+      watchlistSnapshot: {
+        targetId,
+        version: 3,
+        companies: [],
+      },
+      sourceScope: {
+        kind: "layered_public",
+        trustedSources: [{
+          kind: "greenhouse_trusted_source",
+          source: publicSourceScope.sources[0],
+        }],
+        publicDiscovery: {
+          provider: "anysearch",
+          queries: [{
+            ordinal: 1,
+            queryId: "d3b1f38c-36c3-47df-8f40-4e62bb749e7f",
+            kind: "general",
+            stableFingerprint: "a".repeat(64),
+            query: "AI 工程师 上海",
+            allowedSiteDomains: [],
+            targetCompanyNames: [],
+            resultLimit: 5,
+          }],
+          batchSize: 5,
+          maxVerificationCandidates: 10,
+        },
+      },
+      workflowVersion: LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION,
+      ruleVersion: LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION,
+      adapter: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER,
+      adapterVersion: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION,
+      outputSchemaVersion: LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+      toolAllowlist: ["job_discovery.list_source", "job_discovery.search", "job_discovery.extract", "job_discovery.fetch"],
+      model: null,
+      budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+    };
+    const v4Detail = {
+      ...queuedSummary,
+      targetSnapshot: v4TargetSnapshot,
+      sourceScope: v4ExecutionSpec.sourceScope,
+      workflowVersion: LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION,
+      adapter: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER,
+      adapterVersion: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION,
+      outputSchemaVersion: LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+      budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+      executionSpec: v4ExecutionSpec,
+      controlState: "none",
+      usage,
+      termination: null,
+      retryOfRunId: null,
+      steps: [],
+      events: [],
+      results: [],
+      discoveryDiagnostics: [],
+      sourceIssues: [],
+    };
+
+    expect(AgentRunExecutionSpecSchema.parse(v4ExecutionSpec)).toEqual(v4ExecutionSpec);
+    expect(AgentRunDetailSchema.parse(v4Detail)).toEqual(v4Detail);
+    expect(AgentRunDetailSchema.safeParse({
+      ...v4Detail,
+      targetId: "9f5346c4-9955-4193-9f70-5f33cc79f5ab",
+    }).success).toBe(false);
+  });
+
+  it("permits source-issue completion only for v3 and v4 workflows", () => {
+    const v4TargetSnapshot = { targetId, version: 1, priority: "primary", state: "active", constraints: targetSnapshot };
+    const v4ExecutionSpec = {
+      targetSnapshot: v4TargetSnapshot,
+      profileSnapshot: { targetId, version: 2, confirmedActiveSkillNames: [] },
+      watchlistSnapshot: { targetId, version: 0, companies: [] },
+      sourceScope: {
+        kind: "layered_public",
+        trustedSources: [],
+        publicDiscovery: {
+          provider: "anysearch",
+          queries: [{ ordinal: 1, queryId: "d3b1f38c-36c3-47df-8f40-4e62bb749e7f", kind: "general", stableFingerprint: "a".repeat(64), query: "AI 工程师 上海", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }],
+          batchSize: 5,
+          maxVerificationCandidates: 10,
+        },
+      },
+      workflowVersion: LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION,
+      ruleVersion: LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION,
+      adapter: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER,
+      adapterVersion: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION,
+      outputSchemaVersion: LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+      toolAllowlist: ["job_discovery.list_source", "job_discovery.search", "job_discovery.extract", "job_discovery.fetch"],
+      model: null,
+      budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+    };
+    const v4CompletedDetail = {
+      ...queuedSummary,
+      targetSnapshot: v4TargetSnapshot,
+      sourceScope: v4ExecutionSpec.sourceScope,
+      workflowVersion: LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION,
+      adapter: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER,
+      adapterVersion: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION,
+      outputSchemaVersion: LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+      budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+      status: "completed",
+      currentStep: "completed",
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+      executionSpec: v4ExecutionSpec,
+      controlState: "none",
+      usage: { ...usage, complete: true },
+      termination: { kind: "completed_with_source_issues", failureCode: null, budgetDimension: null },
+      retryOfRunId: null,
+      steps: [],
+      events: [],
+      results: [],
+      discoveryDiagnostics: [{
+        scope: "provider",
+        diagnosticId: "1d300e98-1979-4c5c-8789-9a9055622a2a",
+        runId,
+        provider: "anysearch",
+        code: "ANYSEARCH_NOT_CONFIGURED",
+        retryable: false,
+        affectedCount: 1,
+      }],
+      sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED", affectedCount: 1 }],
+    };
+
+    expect(AgentRunDetailSchema.parse(v4CompletedDetail)).toEqual(v4CompletedDetail);
+    expect(AgentRunDetailSchema.safeParse({
+      ...v4CompletedDetail,
+      discoveryDiagnostics: [{
+        ...v4CompletedDetail.discoveryDiagnostics[0],
+        runId: "b8c646b5-a836-46d4-a33a-3f65f1ea794f",
+      }],
+    }).success).toBe(false);
+    expect(AgentRunDetailSchema.safeParse({
+      ...v4CompletedDetail,
+      discoveryDiagnostics: [],
+      sourceIssues: [],
+    }).success).toBe(false);
+    expect(AgentRunDetailSchema.safeParse({
+      ...v4CompletedDetail,
+      workflowVersion: FAKE_JOB_DISCOVERY_WORKFLOW_VERSION,
+      adapter: FAKE_JOB_DISCOVERY_ADAPTER,
+      adapterVersion: FAKE_JOB_DISCOVERY_ADAPTER_VERSION,
+      outputSchemaVersion: "job-discovery-result-v1",
+    }).success).toBe(false);
   });
 });

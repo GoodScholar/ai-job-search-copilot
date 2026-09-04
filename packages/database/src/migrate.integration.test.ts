@@ -538,7 +538,6 @@ describe("database migrations", () => {
     expect(await listConstraintNames(migratedDatabase)).toEqual(expect.arrayContaining([
       "job_source_postings_user_identity_unique",
       "job_source_posting_versions_posting_version_unique",
-      "job_opportunities_user_dedup_unique",
       "job_opportunity_sources_opportunity_version_unique",
       "job_opportunity_sources_owner_opportunity_fk",
       "job_opportunity_sources_owner_posting_version_fk",
@@ -554,6 +553,23 @@ describe("database migrations", () => {
     ]));
   });
 
+  it("migrates immutable owner-bound job triage versions with score invariants", async () => {
+    expect(await listPublicTables(migratedDatabase)).toContain("job_triage_versions");
+    expect(await listConstraintNames(migratedDatabase)).toEqual(expect.arrayContaining([
+      "job_triage_versions_input_rule_unique",
+      "job_triage_versions_owner_opportunity_fk",
+      "job_triage_versions_owner_profile_fk",
+      "job_triage_versions_owner_target_fk",
+      "job_triage_versions_score_verdict_check",
+    ]));
+    expect(await listColumns(migratedDatabase)).toEqual(expect.arrayContaining([
+      { table_name: "job_triage_versions", column_name: "gate_results", data_type: "jsonb" },
+      { table_name: "job_triage_versions", column_name: "pending_items", data_type: "jsonb" },
+      { table_name: "job_triage_versions", column_name: "deadline_status", data_type: "character varying" },
+      { table_name: "job_triage_versions", column_name: "overall_score", data_type: "integer" },
+    ]));
+  });
+
   it("migrates durable account-owned agent runs without requiring an import", async () => {
     expect(await listPublicTables(migratedDatabase)).toEqual(expect.arrayContaining([
       "agent_runs", "agent_run_steps", "agent_run_events", "agent_run_job_results",
@@ -563,6 +579,7 @@ describe("database migrations", () => {
       "agent_run_steps_run_step_unique",
       "agent_run_events_run_sequence_unique",
       "agent_run_job_results_run_opportunity_source_unique",
+      "recommendation_exclusions_owner_list_fk",
       "job_opportunities_owner_import_fk",
       "job_opportunities_owner_posting_version_fk",
     ]));
@@ -604,20 +621,27 @@ describe("database migrations", () => {
     await migratedDatabase.execute(sql`
       insert into agent_runs (
         id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot,
-        workflow_version, adapter, adapter_version, output_schema_version, status, current_step
+        workflow_version, rule_version, adapter, adapter_version, output_schema_version, tool_allowlist, status, current_step
       ) values (
         ${runId}, ${firstAccountId}, ${targetId}, '2f15fd9f-0398-4a5c-94e2-103167bcd1c2', 1,
-        '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 'workflow-v1', 'fake', 'fake-v1', 'result-v1', 'queued', 'queued'
+        '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 'workflow-v1', 'fake-job-discovery-rules-v1', 'fake', 'fake-v1', 'result-v1', '[]'::jsonb, 'queued', 'queued'
       )
     `);
     await expect(migratedDatabase.execute(sql`
+      insert into agent_run_steps (id, user_id, run_id, step_key, ordinal, status, started_at, failed_at, failure_code)
+      values (
+        'a1f6f5c8-4b1d-4a22-a3f7-5c8d9e0f1a2b', ${firstAccountId}, ${runId}, 'assess_matches', 2,
+        'failed', now(), now(), 'AGENT_RUN_MODEL_INVALID_RESPONSE'
+      )
+    `)).resolves.toBeDefined();
+    await expect(migratedDatabase.execute(sql`
       insert into agent_runs (
         id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot,
-        workflow_version, adapter, adapter_version, output_schema_version, status, current_step
+        workflow_version, rule_version, adapter, adapter_version, output_schema_version, tool_allowlist, status, current_step
       ) values (
         'c1367bbf-f608-4be2-85ea-0742160a16d8', ${secondAccountId}, ${targetId},
         '5572512a-e2f2-43d6-8290-88d64f12ed46', 1, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb,
-        'workflow-v1', 'fake', 'fake-v1', 'result-v1', 'queued', 'queued'
+        'workflow-v1', 'fake-job-discovery-rules-v1', 'fake', 'fake-v1', 'result-v1', '[]'::jsonb, 'queued', 'queued'
       )
     `)).rejects.toMatchObject({ cause: { code: "23503" } });
     await expect(migratedDatabase.execute(sql`
@@ -657,6 +681,816 @@ describe("database migrations", () => {
     await expect(migratedDatabase.execute(sql`
       insert into agent_run_job_results (id, user_id, run_id, opportunity_id, source_posting_version_id, ordinal)
       values ('1eb77c10-d6e1-4f75-9e8c-a32db63967ee', ${firstAccountId}, ${runId}, ${firstOpportunityId}, ${secondVersionId}, 3)
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
+  });
+
+  it("migrates agent run controls, usage ledger, and Inbox ownership constraints", async () => {
+    expect(await listPublicTables(migratedDatabase)).toEqual(expect.arrayContaining([
+      "agent_run_control_commands", "agent_run_usage_entries", "agent_inbox_items", "agent_inbox_item_actions",
+    ]));
+    expect(await listConstraintNames(migratedDatabase)).toEqual(expect.arrayContaining([
+      "agent_run_control_commands_user_run_command_unique",
+      "agent_run_usage_entries_run_key_category_unique",
+      "agent_inbox_items_run_event_kind_unique",
+      "agent_inbox_item_actions_user_item_action_unique",
+    ]));
+    expect(await listColumns(migratedDatabase)).toEqual(expect.arrayContaining([
+      { table_name: "agent_runs", column_name: "control_state", data_type: "character varying" },
+      { table_name: "agent_runs", column_name: "usage_complete", data_type: "boolean" },
+      { table_name: "agent_runs", column_name: "cancelled_at", data_type: "timestamp with time zone" },
+    ]));
+
+    const userId = "5bfd5c5e-dc14-4648-8f5e-a9cda8c86b89";
+    const otherUserId = "55e88f9d-7609-443e-b6a9-db1b3a56d747";
+    const targetId = "f40889d1-bf7f-4fa0-b9ce-a6651b6e1f23";
+    const runId = "b1a4c066-d64c-4e27-9f4f-b102701adf30";
+    await migratedDatabase.execute(sql`insert into job_accounts (id) values (${userId}), (${otherUserId})`);
+    await migratedDatabase.execute(sql`insert into job_targets (id, user_id, version, priority, state) values (${targetId}, ${userId}, 1, 'primary', 'active')`);
+    await migratedDatabase.execute(sql`
+      insert into agent_runs (
+        id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot,
+        workflow_version, rule_version, adapter, adapter_version, output_schema_version, tool_allowlist, status, current_step
+      ) values (
+        ${runId}, ${userId}, ${targetId}, '7b8b0f5e-0e77-4e54-8501-d03987e4b76e', 1, '{}'::jsonb, '{}'::jsonb,
+        '{"maxActiveDurationMs":60000}'::jsonb, 'job-discovery-workflow-v1', 'fake-job-discovery-rules-v1', 'fake',
+        'fake-job-discovery-v1', 'job-discovery-result-v1', '["job_discovery.search_batch","job_discovery.get_detail"]'::jsonb, 'queued', 'queued'
+      )
+    `);
+    for (const [index, eventType] of [
+      "run.pause_requested",
+      "run.paused",
+      "run.resume_requested",
+      "run.resumed",
+      "run.cancel_requested",
+      "run.cancelled",
+      "run.budget_updated",
+    ].entries()) {
+      await expect(migratedDatabase.execute(sql`
+        insert into agent_run_events (id, user_id, run_id, sequence, run_version, event_type, data)
+        values (
+          ${`933bfe5a-8154-4c67-9f51-00000000000${index + 1}`}, ${userId}, ${runId}, ${index + 1}, 1,
+          ${eventType}, '{}'::jsonb
+        )
+      `)).resolves.toBeDefined();
+    }
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_run_events (id, user_id, run_id, sequence, run_version, event_type, data)
+      values ('933bfe5a-8154-4c67-9f51-000000000008', ${userId}, ${runId}, 8, 1, 'run.unknown', '{}'::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_run_control_commands (user_id, run_id, command_id, action, applied, result_run_version, result_snapshot)
+      values (${otherUserId}, ${runId}, '61fbc726-9ab7-4ea4-bfb8-701d4a31eb04', 'pause', true, 1,
+        '{"runId":"b1a4c066-d64c-4e27-9f4f-b102701adf30","status":"queued","currentStep":"queued","controlState":"none","version":1}'::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_run_control_commands (user_id, run_id, command_id, action, applied, result_run_version, result_snapshot)
+      values (${userId}, ${runId}, '77c1a312-af11-4450-99a2-6712be94ea1f', 'pause', true, 1, '{}'::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_run_control_commands (user_id, run_id, command_id, action, applied, result_run_version, result_snapshot)
+      values (${userId}, ${runId}, 'f2c1b5b8-e8f0-4e9e-b99d-e92ebef62e88', 'pause', true, 1,
+        '{"runId":"b1a4c066-d64c-4e27-9f4f-b102701adf30","status":"queued","currentStep":"queued","controlState":"none","version":1,"extra":true}'::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_run_control_commands (user_id, run_id, command_id, action, applied, result_run_version, result_snapshot)
+      values (${userId}, ${runId}, '7af22430-308f-4db1-b7cf-2d5b3e8daa15', 'pause', true, 2,
+        '{"runId":"49a910ab-1d1f-4669-b4b4-9021b52ed88f","status":"queued","currentStep":"queued","controlState":"none","version":1}'::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
+      update agent_runs
+      set status = 'completed', current_step = 'completed', started_at = now(), completed_at = now(),
+          usage_complete = true, termination_kind = 'cancelled_by_user'
+      where id = ${runId}
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
+      update agent_runs
+      set termination_kind = 'source_failed', failure_code = 'AGENT_RUN_ADAPTER_FAILED'
+      where id = ${runId}
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
+      update agent_runs
+      set status = 'completed', current_step = 'completed', started_at = now(), completed_at = now(),
+          usage_complete = true, termination_kind = null, failure_code = null, termination_budget_dimension = null
+      where id = ${runId}
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
+      update agent_runs
+      set status = 'failed', current_step = 'failed', started_at = now(), failed_at = now(),
+          usage_complete = true, termination_kind = 'source_failed', failure_code = null, termination_budget_dimension = null
+      where id = ${runId}
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
+      update agent_runs
+      set status = 'failed', current_step = 'failed', started_at = now(), failed_at = now(),
+          usage_complete = true, termination_kind = 'budget_exhausted', failure_code = null, termination_budget_dimension = null
+      where id = ${runId}
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
+      update agent_runs
+      set status = 'completed', current_step = 'completed', started_at = now(), completed_at = now(),
+          usage_complete = false, termination_kind = null, failure_code = null, termination_budget_dimension = null
+      where id = ${runId}
+    `)).resolves.toBeDefined();
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_run_usage_entries (user_id, run_id, usage_key, category, amount, attempt_count)
+      values (${userId}, ${runId}, 'claim:1', 'tool_call', -1, 0)
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_runs (id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot, workflow_version, rule_version, adapter, adapter_version, output_schema_version, tool_allowlist, status, current_step)
+      values ('6c6d14df-dedf-468e-a0b3-e4379f73ca01', ${userId}, ${targetId}, '03ea1134-1f6d-4b8f-a671-873a1cc48660', 1, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 'job-discovery-workflow-v1', 'fake-job-discovery-rules-v1', 'fake', 'fake-job-discovery-v1', 'job-discovery-result-v1', '[]'::jsonb, 'unknown', 'queued')
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_run_control_commands (user_id, run_id, command_id, action, applied, result_run_version, result_snapshot)
+      values (${userId}, ${runId}, '87b056c2-42e1-4f34-8353-f430e80268a0', 'unknown', true, 1, '{}'::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await migratedDatabase.execute(sql`
+      insert into agent_run_usage_entries (user_id, run_id, usage_key, category, amount, attempt_count)
+      values (${userId}, ${runId}, 'claim:1', 'tool_call', 1, 0)
+    `);
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_run_usage_entries (user_id, run_id, usage_key, category, amount, attempt_count)
+      values (${userId}, ${runId}, 'claim:1', 'tool_call', 1, 0)
+    `)).rejects.toMatchObject({ cause: { code: "23505" } });
+
+    const claimRunId = "7be68e63-a4a2-476a-ac4b-6472d58498d2";
+    const claimToken = "3fd44a07-cd0d-4d0e-9db2-af6989826d22";
+    await migratedDatabase.execute(sql`
+      insert into agent_runs (
+        id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot,
+        workflow_version, rule_version, adapter, adapter_version, output_schema_version, tool_allowlist, status, current_step
+      ) values (
+        ${claimRunId}, ${userId}, ${targetId}, 'dd3eb80c-98a9-4783-81e7-53e7d8d78b0e', 1, '{}'::jsonb, '{}'::jsonb,
+        '{"maxActiveDurationMs":60000}'::jsonb, 'job-discovery-workflow-v1', 'fake-job-discovery-rules-v1', 'fake',
+        'fake-job-discovery-v1', 'job-discovery-result-v1', '["job_discovery.search_batch","job_discovery.get_detail"]'::jsonb, 'queued', 'queued'
+      )
+    `);
+    const partialClaims = [
+      sql`update agent_runs set claim_token = ${claimToken} where id = ${claimRunId}`,
+      sql`update agent_runs set claim_expires_at = now() + interval '30 seconds' where id = ${claimRunId}`,
+      sql`update agent_runs set active_slice_started_at = now() where id = ${claimRunId}`,
+      sql`update agent_runs set status = 'running', current_step = 'batch_search', started_at = now(), claim_token = ${claimToken}, claim_expires_at = now() + interval '30 seconds' where id = ${claimRunId}`,
+      sql`update agent_runs set claim_token = ${claimToken}, active_slice_started_at = now() where id = ${claimRunId}`,
+      sql`update agent_runs set claim_expires_at = now() + interval '30 seconds', active_slice_started_at = now() where id = ${claimRunId}`,
+    ];
+    for (const partialClaim of partialClaims) {
+      await expect(migratedDatabase.execute(partialClaim)).rejects.toMatchObject({ cause: { code: "23514" } });
+    }
+    await expect(migratedDatabase.execute(sql`
+      update agent_runs
+      set status = 'running', current_step = 'batch_search', started_at = now(), claim_token = ${claimToken},
+          claim_expires_at = now() + interval '30 seconds', active_slice_started_at = now()
+      where id = ${claimRunId}
+    `)).resolves.toBeDefined();
+  });
+
+  it("upgrades a #9-shaped agent run budget without inventing usage", async () => {
+    const legacyContainer = await new PostgreSqlContainer("postgres:17-alpine").start();
+    const legacyDatabase = createDatabase(legacyContainer.getConnectionUri());
+    const migrationsFolder = await mkdtemp(join(tmpdir(), "job-copilot-agent-run-legacy-"));
+    try {
+      const migrationSource = fileURLToPath(new URL("../migrations", import.meta.url));
+      await cp(migrationSource, migrationsFolder, { recursive: true });
+      await unlink(join(migrationsFolder, "0018_agent_run_control_budget_inbox.sql"));
+      const journalPath = join(migrationsFolder, "meta", "_journal.json");
+      const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: unknown[] };
+      journal.entries = journal.entries.slice(0, 18);
+      await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
+      await migrate(legacyDatabase, { migrationsFolder });
+
+      const userId = "ffd381dc-764b-481a-a6f1-ac7b88a5f2cf";
+      const targetId = "32a8d3c7-cb50-47f2-b13c-67a4d09c41c9";
+      const runId = "adc1750f-89dc-40b2-ad18-6de0938a698f";
+      await legacyDatabase.execute(sql`insert into job_accounts (id) values (${userId})`);
+      await legacyDatabase.execute(sql`insert into job_targets (id, user_id, version, priority, state) values (${targetId}, ${userId}, 1, 'primary', 'active')`);
+      await legacyDatabase.execute(sql`
+        insert into agent_runs (
+          id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot,
+          workflow_version, adapter, adapter_version, output_schema_version, status, current_step
+        ) values (
+          ${runId}, ${userId}, ${targetId}, '462eb676-60c6-48d7-9c7a-5d2797946909', 1, '{}'::jsonb, '{}'::jsonb,
+          '{"maxDurationMs":60000,"maxAttempts":3}'::jsonb, 'job-discovery-workflow-v1', 'fake', 'fake-job-discovery-v1',
+          'job-discovery-result-v1', 'queued', 'queued'
+        )
+      `);
+      await migrateDatabase(legacyDatabase);
+      const [upgraded] = await legacyDatabase.execute(sql`
+        select budget_snapshot, usage_complete from agent_runs where id = ${runId}
+      `) as unknown as Array<{ budget_snapshot: { maxActiveDurationMs: number; maxDurationMs?: number }; usage_complete: boolean }>;
+      expect(upgraded).toEqual({ budget_snapshot: { maxActiveDurationMs: 60_000, maxAttempts: 3 }, usage_complete: false });
+    } finally {
+      await legacyDatabase.$client.end();
+      await legacyContainer.stop();
+      await rm(migrationsFolder, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("migrates one versioned company Watchlist per owned job target", async () => {
+    expect(await listPublicTables(migratedDatabase)).toEqual(expect.arrayContaining([
+      "company_watchlists", "company_watchlist_revisions",
+    ]));
+    expect(await listColumns(migratedDatabase)).toEqual(expect.arrayContaining([
+      { table_name: "company_watchlists", column_name: "id", data_type: "uuid" },
+      { table_name: "company_watchlists", column_name: "user_id", data_type: "uuid" },
+      { table_name: "company_watchlists", column_name: "target_id", data_type: "uuid" },
+      { table_name: "company_watchlists", column_name: "version", data_type: "integer" },
+      { table_name: "company_watchlists", column_name: "created_at", data_type: "timestamp with time zone" },
+      { table_name: "company_watchlists", column_name: "updated_at", data_type: "timestamp with time zone" },
+      { table_name: "company_watchlist_revisions", column_name: "id", data_type: "uuid" },
+      { table_name: "company_watchlist_revisions", column_name: "user_id", data_type: "uuid" },
+      { table_name: "company_watchlist_revisions", column_name: "watchlist_id", data_type: "uuid" },
+      { table_name: "company_watchlist_revisions", column_name: "target_id", data_type: "uuid" },
+      { table_name: "company_watchlist_revisions", column_name: "version", data_type: "integer" },
+      { table_name: "company_watchlist_revisions", column_name: "items", data_type: "jsonb" },
+      { table_name: "company_watchlist_revisions", column_name: "created_at", data_type: "timestamp with time zone" },
+    ]));
+    expect(await listConstraintNames(migratedDatabase)).toEqual(expect.arrayContaining([
+      "company_watchlists_user_target_unique",
+      "company_watchlists_user_id_id_unique",
+      "company_watchlists_user_watchlist_target_unique",
+      "company_watchlists_owner_target_fk",
+      "company_watchlists_version_positive",
+      "company_watchlist_revisions_watchlist_version_unique",
+      "company_watchlist_revisions_watchlist_target_fk",
+      "company_watchlist_revisions_owner_target_fk",
+      "company_watchlist_revisions_version_positive",
+      "company_watchlist_revisions_items_array",
+    ]));
+
+    const firstUserId = "b4a8c44c-56f5-4420-8f58-bd3e7552e7f1";
+    const secondUserId = "56ee9fe7-fd11-40a8-99ad-49d43c53f1d2";
+    const targetId = "1e71e774-1e28-4f02-86d9-9d28b7626ac8";
+    const unrelatedTargetId = "97d7d6a4-cec0-4476-9b1a-f70da8fdeae4";
+    const watchlistId = "eb2a0489-c159-46a3-9465-5eb4e6c6b0a9";
+    await migratedDatabase.execute(sql`insert into job_accounts (id) values (${firstUserId}), (${secondUserId})`);
+    await migratedDatabase.execute(sql`
+      insert into job_targets (id, user_id, version, priority, state)
+      values (${targetId}, ${firstUserId}, 1, 'primary', 'active')
+    `);
+    await migratedDatabase.execute(sql`
+      insert into job_targets (id, user_id, version, priority, state, active_slot)
+      values (${unrelatedTargetId}, ${firstUserId}, 1, 'secondary', 'active', 1)
+    `);
+    await migratedDatabase.execute(sql`
+      insert into company_watchlists (id, user_id, target_id, version)
+      values (${watchlistId}, ${firstUserId}, ${targetId}, 1)
+    `);
+    await expect(migratedDatabase.execute(sql`
+      insert into company_watchlists (id, user_id, target_id, version)
+      values ('61ab659a-01a0-4d76-bc2e-2fe35deaf004', ${firstUserId}, ${targetId}, 1)
+    `)).rejects.toMatchObject({ cause: { code: "23505" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into company_watchlists (id, user_id, target_id, version)
+      values ('a9c819a8-43cf-45ce-b68d-f4a490cd61d9', ${secondUserId}, ${targetId}, 1)
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into company_watchlists (id, user_id, target_id, version)
+      values ('fc18b30c-c9f4-4be9-8b2a-049765b910ce', ${firstUserId}, ${targetId}, 0)
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await migratedDatabase.execute(sql`
+      insert into company_watchlist_revisions (user_id, watchlist_id, target_id, version, items)
+      values (${firstUserId}, ${watchlistId}, ${targetId}, 1, '[]'::jsonb)
+    `);
+    await expect(migratedDatabase.execute(sql`
+      insert into company_watchlist_revisions (user_id, watchlist_id, target_id, version, items)
+      values (${firstUserId}, ${watchlistId}, ${unrelatedTargetId}, 2, '[]'::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into company_watchlist_revisions (user_id, watchlist_id, target_id, version, items)
+      values (${firstUserId}, ${watchlistId}, ${targetId}, 2, '{}'::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into company_watchlist_revisions (user_id, watchlist_id, target_id, version, items)
+      values (${firstUserId}, ${watchlistId}, ${targetId}, 1, '[]'::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23505" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into company_watchlist_revisions (user_id, watchlist_id, target_id, version, items)
+      values (${firstUserId}, ${watchlistId}, ${targetId}, 0, '[]'::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into company_watchlist_revisions (user_id, watchlist_id, target_id, version, items)
+      values (${secondUserId}, ${watchlistId}, ${targetId}, 2, '[]'::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
+  });
+
+  it("migrates owned daily schedules, occurrence ledger, and lifecycle availability", async () => {
+    expect(await listPublicTables(migratedDatabase)).toEqual(expect.arrayContaining([
+      "job_discovery_schedules", "job_discovery_schedule_occurrences",
+    ]));
+    expect(await listConstraintNames(migratedDatabase)).toEqual(expect.arrayContaining([
+      "job_discovery_schedules_user_target_unique",
+      "job_discovery_schedules_user_schedule_target_unique",
+      "job_discovery_schedules_owner_target_fk",
+      "job_discovery_schedules_version_positive",
+      "job_discovery_schedules_state_check",
+      "job_discovery_schedules_daily_time_check",
+      "job_discovery_schedules_time_zone_check",
+      "job_discovery_schedule_occurrences_schedule_time_unique",
+      "job_discovery_schedule_occurrences_owner_schedule_fk",
+      "job_discovery_schedule_occurrences_owner_run_fk",
+      "job_discovery_schedule_occurrences_status_check",
+      "job_discovery_schedule_occurrences_skip_reason_check",
+      "job_discovery_schedule_occurrences_outcome_check",
+      "job_source_postings_availability_check",
+      "job_source_posting_versions_availability_check",
+      "job_opportunities_availability_check",
+      "job_opportunities_owner_canonical_opportunity_fk",
+      "job_opportunities_canonical_opportunity_not_self",
+    ]));
+    expect(await listColumns(migratedDatabase)).toEqual(expect.arrayContaining([
+      { table_name: "job_discovery_schedules", column_name: "daily_time", data_type: "character varying" },
+      { table_name: "job_discovery_schedules", column_name: "time_zone", data_type: "character varying" },
+      { table_name: "job_discovery_schedules", column_name: "next_run_at", data_type: "timestamp with time zone" },
+      { table_name: "job_discovery_schedule_occurrences", column_name: "scheduled_for", data_type: "timestamp with time zone" },
+      { table_name: "job_discovery_schedule_occurrences", column_name: "skip_reason", data_type: "character varying" },
+      { table_name: "job_source_postings", column_name: "availability", data_type: "character varying" },
+      { table_name: "job_source_postings", column_name: "availability_updated_at", data_type: "timestamp with time zone" },
+      { table_name: "job_source_postings", column_name: "source_id", data_type: "character varying" },
+      { table_name: "job_source_postings", column_name: "application_deadline", data_type: "timestamp with time zone" },
+      { table_name: "job_source_posting_versions", column_name: "availability", data_type: "character varying" },
+      { table_name: "job_source_posting_versions", column_name: "normalized_data", data_type: "jsonb" },
+      { table_name: "job_opportunities", column_name: "availability", data_type: "character varying" },
+      { table_name: "job_opportunities", column_name: "availability_updated_at", data_type: "timestamp with time zone" },
+      { table_name: "job_opportunities", column_name: "canonical_opportunity_id", data_type: "uuid" },
+    ]));
+
+    const userId = "429ab3b5-3c62-4e21-aa78-00222a75d2cd";
+    const otherUserId = "de9e73e0-75c7-427c-98cc-251c4710053c";
+    const targetId = "9c472d0c-3d3a-41f8-89eb-a060c42c0e5e";
+    const scheduleId = "b0da74f1-a86c-4677-8a7a-fb74ab0080c6";
+    const runId = "aeacbdd8-0fdb-4b43-85f9-15dce9bb7cd9";
+    await migratedDatabase.execute(sql`insert into job_accounts (id) values (${userId}), (${otherUserId})`);
+    await migratedDatabase.execute(sql`
+      insert into job_targets (id, user_id, version, priority, state)
+      values (${targetId}, ${userId}, 1, 'primary', 'active')
+    `);
+    await migratedDatabase.execute(sql`
+      insert into job_discovery_schedules (id, user_id, target_id, version, state, daily_time, time_zone)
+      values (${scheduleId}, ${userId}, ${targetId}, 1, 'enabled', '09:30', 'Asia/Shanghai')
+    `);
+    await expect(migratedDatabase.execute(sql`
+      insert into job_discovery_schedules (id, user_id, target_id, version, state, daily_time, time_zone)
+      values ('6a4a9dd9-2093-4564-8f9c-8f8bc1f17cd0', ${userId}, ${targetId}, 1, 'enabled', '09:30', 'Asia/Shanghai')
+    `)).rejects.toMatchObject({ cause: { code: "23505" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into job_discovery_schedules (id, user_id, target_id, version, state, daily_time, time_zone)
+      values ('ed6e5cbc-1c3d-4051-97f7-f3d7096d1b7c', ${userId}, ${targetId}, 0, 'enabled', '24:00', 'UTC')
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await migratedDatabase.execute(sql`
+      insert into agent_runs (
+        id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot,
+        workflow_version, rule_version, adapter, adapter_version, output_schema_version, tool_allowlist, status, current_step
+      ) values (
+        ${runId}, ${userId}, ${targetId}, '6e8a1a25-3164-49cd-8747-8f81f1ebf8e5', 1,
+        '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 'workflow-v1', 'fake-job-discovery-rules-v1', 'fake', 'fake-v1', 'result-v1', '[]'::jsonb, 'queued', 'queued'
+      )
+    `);
+    await migratedDatabase.execute(sql`
+      insert into job_discovery_schedule_occurrences (
+        id, user_id, schedule_id, target_id, scheduled_for, status, run_id, skip_reason
+      ) values (
+        'c2d6e6ba-ef51-4f5f-ae34-bc5fbc823bb4', ${userId}, ${scheduleId}, ${targetId}, now(), 'dispatched', ${runId}, null
+      )
+    `);
+    await expect(migratedDatabase.execute(sql`
+      insert into job_discovery_schedule_occurrences (
+        id, user_id, schedule_id, target_id, scheduled_for, status, run_id, skip_reason
+      ) values (
+        'e9ab0917-4a19-4483-a9b7-e97aa9cc7478', ${otherUserId}, ${scheduleId}, ${targetId}, now() + interval '1 day', 'dispatched', ${runId}, null
+      )
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into job_discovery_schedule_occurrences (
+        id, user_id, schedule_id, target_id, scheduled_for, status, run_id, skip_reason
+      ) values (
+        'dceff33a-259a-4b9c-bc81-966866e45fbb', ${userId}, ${scheduleId}, ${targetId}, now() + interval '2 days', 'skipped', ${runId}, 'NO_SUPPORTED_SOURCE'
+      )
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+
+    const indexes = await migratedDatabase.execute(sql`
+      select indexname from pg_indexes
+      where schemaname = 'public' and indexname in (
+        'job_discovery_schedules_due_idx', 'job_discovery_schedule_occurrences_pending_idx',
+        'job_source_postings_availability_idx', 'job_source_posting_versions_availability_idx',
+        'job_opportunities_availability_idx', 'job_opportunities_canonical_idx', 'job_opportunities_current_dedup_unique', 'job_source_postings_source_scan_idx'
+      ) order by indexname
+    `);
+    expect(indexes).toHaveLength(8);
+  });
+
+  it("upgrades a 0020 snapshot with open lifecycle defaults without changing stored run JSON", async () => {
+    const legacyContainer = await new PostgreSqlContainer("postgres:17-alpine").start();
+    const legacyDatabase = createDatabase(legacyContainer.getConnectionUri());
+    const migrationsFolder = await mkdtemp(join(tmpdir(), "job-copilot-0020-"));
+    try {
+      const migrationSource = fileURLToPath(new URL("../migrations", import.meta.url));
+      await cp(migrationSource, migrationsFolder, { recursive: true });
+      await unlink(join(migrationsFolder, "0021_scheduled_public_job_discovery.sql"));
+      const journalPath = join(migrationsFolder, "meta", "_journal.json");
+      const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: unknown[] };
+      journal.entries = journal.entries.slice(0, 21);
+      await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
+      await migrate(legacyDatabase, { migrationsFolder });
+
+      const userId = "3e2acbfd-5f0b-40b5-9f8d-ec6a2cda1099";
+      const targetId = "69a17980-6900-4e37-8a80-e3d69566caec";
+      const runId = "93d6b42f-818d-4a79-8e46-3bcb76d4de80";
+      const postingId = "c138c93c-d6f3-4bbe-bcb9-28b4fc2ee589";
+      const versionId = "5e0a176b-b445-4b8e-bb39-61f496f22329";
+      const opportunityId = "e5ef2ec4-37c1-43d5-a3b6-1a5e414841d6";
+      await legacyDatabase.execute(sql`insert into job_accounts (id) values (${userId})`);
+      await legacyDatabase.execute(sql`insert into job_targets (id, user_id, version, priority, state) values (${targetId}, ${userId}, 1, 'primary', 'active')`);
+      await legacyDatabase.execute(sql`
+        insert into agent_runs (id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot, workflow_version, rule_version, adapter, adapter_version, output_schema_version, tool_allowlist, status, current_step)
+        values (${runId}, ${userId}, ${targetId}, 'cc5035d8-eddb-4058-95f1-330ec3d4114e', 1, '{}'::jsonb, '{"kind":"company_watchlist","adapter":"fake"}'::jsonb, '{}'::jsonb, 'workflow-v1', 'fake-job-discovery-rules-v1', 'fake', 'fake-v1', 'result-v1', '[]'::jsonb, 'queued', 'queued')
+      `);
+      await legacyDatabase.execute(sql`insert into job_source_postings (id, user_id, source_type, source_identifier, source_identity) values (${postingId}, ${userId}, 'fake', 'legacy-posting', '{"sourceId":"legacy-source"}'::jsonb)`);
+      await legacyDatabase.execute(sql`
+        insert into job_source_posting_versions (id, user_id, source_posting_id, version, content_sha256, raw_content_sha256, raw_object_reference, retrieved_at)
+        values (${versionId}, ${userId}, ${postingId}, 1, ${"a".repeat(64)}, ${"b".repeat(64)}, '{}'::jsonb, now())
+      `);
+      await legacyDatabase.execute(sql`insert into job_opportunities (id, user_id, source_posting_version_id, dedup_key, normalized_data) values (${opportunityId}, ${userId}, ${versionId}, ${"c".repeat(64)}, '{}'::jsonb)`);
+      await migrateDatabase(legacyDatabase);
+      const [upgraded] = await legacyDatabase.execute(sql`
+        select p.availability as posting_availability, p.availability_updated_at is not null as posting_time, p.source_id,
+               v.availability as version_availability, o.availability as opportunity_availability,
+               o.availability_updated_at is not null as opportunity_time, o.canonical_opportunity_id, v.normalized_data, r.source_scope
+        from job_source_postings p
+        join job_source_posting_versions v on v.id = ${versionId}
+        join job_opportunities o on o.id = ${opportunityId}
+        join agent_runs r on r.id = ${runId}
+        where p.id = ${postingId}
+      `) as unknown as Array<Record<string, unknown>>;
+      expect(upgraded).toEqual({
+        posting_availability: "open", posting_time: true, source_id: "legacy-source", version_availability: "open",
+        opportunity_availability: "open", opportunity_time: true, canonical_opportunity_id: null, normalized_data: {},
+        source_scope: { kind: "company_watchlist", adapter: "fake" },
+      });
+      await expect(legacyDatabase.execute(sql`
+        update job_opportunities set canonical_opportunity_id = ${opportunityId} where id = ${opportunityId}
+      `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    } finally {
+      await legacyDatabase.$client.end();
+      await legacyContainer.stop();
+      await rm(migrationsFolder, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("keeps the 0021 snapshot aligned with source scan and immutable history columns", async () => {
+    const snapshotPath = fileURLToPath(new URL("../migrations/meta/0021_snapshot.json", import.meta.url));
+    const snapshot = JSON.parse(await readFile(snapshotPath, "utf8")) as { tables: Record<string, { columns: Record<string, unknown>; indexes: Record<string, unknown>; foreignKeys: Record<string, unknown>; checkConstraints: Record<string, unknown> }> };
+    const postings = snapshot.tables["public.job_source_postings"];
+    const opportunities = snapshot.tables["public.job_opportunities"];
+    const versions = snapshot.tables["public.job_source_posting_versions"];
+    expect(postings?.columns).toMatchObject({ source_id: expect.any(Object), application_deadline: expect.any(Object) });
+    expect(opportunities?.columns).toHaveProperty("canonical_opportunity_id");
+    expect(opportunities?.indexes).toHaveProperty("job_opportunities_canonical_idx");
+    expect(opportunities?.indexes).toHaveProperty("job_opportunities_current_dedup_unique");
+    expect(opportunities?.foreignKeys).toHaveProperty("job_opportunities_owner_canonical_opportunity_fk");
+    expect(opportunities?.checkConstraints).toHaveProperty("job_opportunities_canonical_opportunity_not_self");
+    expect(versions?.columns).toHaveProperty("normalized_data");
+    expect(postings?.indexes).toHaveProperty("job_source_postings_source_scan_idx");
+  });
+
+  it("keeps source-attention immutable before the lead persistence upgrade", async () => {
+    const journalPath = fileURLToPath(new URL("../migrations/meta/_journal.json", import.meta.url));
+    const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
+    await expect(readFile(fileURLToPath(new URL("../migrations/0023_source_attention_inbox.sql", import.meta.url)), "utf8")).resolves.toContain("source_attention");
+    const sourceAttentionIndex = journal.entries.findIndex(({ tag }) => tag === "0023_source_attention_inbox");
+    expect(journal.entries[sourceAttentionIndex + 1]?.tag).toBe("0024_fat_jane_foster");
+  });
+
+  it("upgrades an existing 0022 database to source-attention without losing rows", async () => {
+    const upgradeContainer = await new PostgreSqlContainer("postgres:17-alpine").start();
+    const upgradeDatabase = createDatabase(upgradeContainer.getConnectionUri());
+    const migrationsFolder = await mkdtemp(join(tmpdir(), "job-copilot-0023-"));
+    try {
+      const migrationSource = fileURLToPath(new URL("../migrations", import.meta.url));
+      await cp(migrationSource, migrationsFolder, { recursive: true });
+      await Promise.all([
+        unlink(join(migrationsFolder, "0023_source_attention_inbox.sql")),
+        unlink(join(migrationsFolder, "0024_fat_jane_foster.sql")),
+        unlink(join(migrationsFolder, "0025_layered_public_discovery_workflow.sql")),
+        unlink(join(migrationsFolder, "0026_discovery_attention.sql")),
+        unlink(join(migrationsFolder, "0027_massive_purple_man.sql")),
+        unlink(join(migrationsFolder, "0028_job_triage_versions.sql")),
+        unlink(join(migrationsFolder, "0029_heavy_devos.sql")),
+        unlink(join(migrationsFolder, "0030_deep_match_recommendations.sql")),
+        unlink(join(migrationsFolder, "0031_deep_match_agent_runs.sql")),
+        unlink(join(migrationsFolder, "0032_recommendation_highlight_limit.sql")),
+        unlink(join(migrationsFolder, "0033_deep_match_usage_entries.sql")),
+        unlink(join(migrationsFolder, "0034_recommendation_highlight_limit_lock.sql")),
+        unlink(join(migrationsFolder, "0035_agent_run_step_model_failures.sql")),
+        unlink(join(migrationsFolder, "0036_recommendation_exclusion_list_ownership.sql")),
+        unlink(join(migrationsFolder, "0037_deep_match_run_staging.sql")),
+        unlink(join(migrationsFolder, "0038_recommendation_feedback_calibration.sql")),
+        unlink(join(migrationsFolder, "0039_boring_sleepwalker.sql")),
+        unlink(join(migrationsFolder, "0040_loud_northstar.sql")),
+        unlink(join(migrationsFolder, "0041_thankful_lethal_legion.sql")),
+        unlink(join(migrationsFolder, "0042_mighty_malcolm_colcord.sql")),
+        unlink(join(migrationsFolder, "0043_task_control_agent_inbox.sql")),
+        unlink(join(migrationsFolder, "meta", "0023_snapshot.json")),
+        unlink(join(migrationsFolder, "meta", "0024_snapshot.json")),
+        unlink(join(migrationsFolder, "meta", "0025_snapshot.json")),
+        unlink(join(migrationsFolder, "meta", "0026_snapshot.json")),
+        unlink(join(migrationsFolder, "meta", "0027_snapshot.json")),
+        unlink(join(migrationsFolder, "meta", "0028_snapshot.json")),
+        unlink(join(migrationsFolder, "meta", "0029_snapshot.json")),
+        unlink(join(migrationsFolder, "meta", "0038_snapshot.json")),
+        unlink(join(migrationsFolder, "meta", "0039_snapshot.json")),
+        unlink(join(migrationsFolder, "meta", "0040_snapshot.json")),
+        unlink(join(migrationsFolder, "meta", "0041_snapshot.json")),
+        unlink(join(migrationsFolder, "meta", "0042_snapshot.json")),
+      ]);
+      const journalPath = join(migrationsFolder, "meta", "_journal.json");
+      const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
+      await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter((entry) => ![
+        "0023_source_attention_inbox", "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_job_triage_versions", "0029_heavy_devos", "0030_deep_match_recommendations", "0031_deep_match_agent_runs", "0032_recommendation_highlight_limit", "0033_deep_match_usage_entries", "0034_recommendation_highlight_limit_lock", "0035_agent_run_step_model_failures", "0036_recommendation_exclusion_list_ownership", "0037_deep_match_run_staging", "0038_recommendation_feedback_calibration", "0039_boring_sleepwalker", "0040_loud_northstar", "0041_thankful_lethal_legion", "0042_mighty_malcolm_colcord", "0043_task_control_agent_inbox",
+      ].includes(entry.tag)) }, null, 2));
+      await migrate(upgradeDatabase, { migrationsFolder });
+      const userId = "a9f4da20-e9e9-44c4-a6a5-fc2cf5b9ed93"; const targetId = "f1e7a7a6-a3e6-458e-9f53-33cdbbf2d6ea"; const runId = "833f4544-376c-4f8d-81af-16e50df78624";
+      await upgradeDatabase.execute(sql`insert into job_accounts (id) values (${userId})`);
+      await upgradeDatabase.execute(sql`insert into job_targets (id, user_id, version, priority, state) values (${targetId}, ${userId}, 1, 'primary', 'active')`);
+      await upgradeDatabase.execute(sql`insert into agent_runs (id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot, workflow_version, rule_version, adapter, adapter_version, output_schema_version, tool_allowlist, status, current_step) values (${runId}, ${userId}, ${targetId}, '2a8d1440-c1be-4c07-9f07-c839ae1b68cc', 1, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 'job-discovery-workflow-v3', 'job-discovery-source-health-rules-v1', 'greenhouse', 'greenhouse-job-board-v2', 'job-discovery-result-v3', '[]'::jsonb, 'queued', 'queued')`);
+      await upgradeDatabase.execute(sql`insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, kind, status, reason_code, budget_dimension) values ('bf553314-3619-49a7-8c20-e2ba7677e5fc', ${userId}, ${runId}, 1, 'run_failed', 'open', 'AGENT_RUN_ADAPTER_FAILED', null)`);
+      await migrate(upgradeDatabase, { migrationsFolder: migrationSource });
+      await expect(upgradeDatabase.execute(sql`select id from agent_inbox_items where id = 'bf553314-3619-49a7-8c20-e2ba7677e5fc'`)).resolves.toHaveLength(1);
+      await upgradeDatabase.execute(sql`
+        insert into job_source_health_checks (
+          id, user_id, run_id, target_id, watchlist_item_id, source_id, status, reason_codes, impact_scope, impact_affected_count,
+          observed_posting_count, selected_detail_count, valid_detail_count, request_attempt_count, checked_at
+        ) values ('abb3b0d1-070c-4fa8-8918-6500d0cf947b', ${userId}, ${runId}, ${targetId}, '23b7f4b6-1cce-4de4-bc44-0c2953af37f4', 'greenhouse:legacy-source', 'hard_failed', '["SOURCE_UNREACHABLE"]'::jsonb, 'entire_source', null, 0, 0, 0, 1, now())
+      `);
+      await upgradeDatabase.execute(sql`insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, watchlist_item_id, source_health_check_id, kind, status, reason_code, budget_dimension) values ('d52b17a4-3222-4f4a-9923-a0603b85e31a', ${userId}, ${runId}, 2, '23b7f4b6-1cce-4de4-bc44-0c2953af37f4', 'abb3b0d1-070c-4fa8-8918-6500d0cf947b', 'source_attention', 'unread', 'SOURCE_HEALTH_ATTENTION', null)`);
+    } finally {
+      await upgradeDatabase.$client.end();
+      await upgradeContainer.stop();
+      await rm(migrationsFolder, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("migrates immutable owner-bound per-run source health checks with a latest lookup", async () => {
+    expect(await listPublicTables(migratedDatabase)).toContain("job_source_health_checks");
+    expect(await listConstraintNames(migratedDatabase)).toEqual(expect.arrayContaining([
+      "job_source_health_checks_run_source_unique",
+      "job_source_health_checks_owner_run_target_fk",
+      "job_source_health_checks_status_check",
+      "job_source_health_checks_reason_codes_safe_check",
+      "job_source_health_checks_impact_scope_check",
+      "job_source_health_checks_counts_nonnegative",
+    ]));
+    expect(await listColumns(migratedDatabase)).toEqual(expect.arrayContaining([
+      { table_name: "job_source_health_checks", column_name: "reason_codes", data_type: "jsonb" },
+      { table_name: "job_source_health_checks", column_name: "checked_at", data_type: "timestamp with time zone" },
+    ]));
+
+    const userId = "bbc4f321-2c8a-4ec0-8ae3-8e987dd5f5e1";
+    const otherUserId = "bd1ea9a4-6bf2-4bc2-8dad-7c5b89f6bb80";
+    const targetId = "a350a2ae-0f08-4e98-84bb-e6ad1a21e906";
+    const otherTargetId = "31bd0918-0624-44fd-8f52-1dfcfa653db9";
+    const runId = "e1a26335-2e06-4224-a58e-06225fbd3f40";
+    const checkId = "d96d2d4a-8709-41ca-9f0f-4c131d1d6f89";
+    await migratedDatabase.execute(sql`insert into job_accounts (id) values (${userId}), (${otherUserId})`);
+    await migratedDatabase.execute(sql`
+      insert into job_targets (id, user_id, version, priority, state)
+      values (${targetId}, ${userId}, 1, 'primary', 'active'), (${otherTargetId}, ${userId}, 1, 'secondary', 'inactive')
+    `);
+    await migratedDatabase.execute(sql`
+      insert into agent_runs (
+        id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot,
+        workflow_version, rule_version, adapter, adapter_version, output_schema_version, tool_allowlist, status, current_step
+      ) values (
+        ${runId}, ${userId}, ${targetId}, '9889ca8a-3ba6-4551-8c02-c12345cb0365', 1, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb,
+        'job-discovery-workflow-v3', 'job-discovery-source-health-rules-v1', 'greenhouse', 'greenhouse-job-board-v2',
+        'job-discovery-result-v3', '[]'::jsonb, 'queued', 'queued'
+      )
+    `);
+    const completedRunId = "da4812a8-cc62-44da-94b5-4f5681d87dca";
+    await migratedDatabase.execute(sql`
+      insert into agent_runs (
+        id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot,
+        workflow_version, rule_version, adapter, adapter_version, output_schema_version, tool_allowlist,
+        status, current_step, usage_complete, termination_kind, started_at, completed_at
+      ) values (
+        ${completedRunId}, ${userId}, ${targetId}, '6f17ac03-bdc5-4e38-a91b-6cf831b51c7a', 1, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb,
+        'job-discovery-workflow-v3', 'job-discovery-source-health-rules-v1', 'greenhouse', 'greenhouse-job-board-v2',
+        'job-discovery-result-v3', '[]'::jsonb, 'completed', 'completed', true, 'completed_with_source_issues', now(), now()
+      )
+    `);
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_runs (
+        id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot,
+        workflow_version, rule_version, adapter, adapter_version, output_schema_version, tool_allowlist,
+        status, current_step, usage_complete, termination_kind, started_at, failed_at
+      ) values (
+        '1a49ddd1-a3f0-4468-bcb5-40db759d0570', ${userId}, ${targetId}, '03893e59-78b5-49d8-87c2-0aef0fef21b6', 1, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb,
+        'job-discovery-workflow-v3', 'job-discovery-source-health-rules-v1', 'greenhouse', 'greenhouse-job-board-v2',
+        'job-discovery-result-v3', '[]'::jsonb, 'failed', 'failed', true, 'completed_with_source_issues', now(), now()
+      )
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await migratedDatabase.execute(sql`
+      insert into job_source_health_checks (
+        id, user_id, run_id, target_id, watchlist_item_id, source_id, status, reason_codes, impact_scope, impact_affected_count,
+        observed_posting_count, selected_detail_count, valid_detail_count, request_attempt_count, checked_at
+      ) values (
+        ${checkId}, ${userId}, ${runId}, ${targetId}, '3f906934-fac2-4db9-93c4-09ccdec40ee6', 'greenhouse:example',
+        'parser_degraded', '["SOURCE_DETAIL_FIELDS_MISSING"]'::jsonb, 'job_details', 2, 3, 3, 1, 4, now()
+      )
+    `);
+    await expect(migratedDatabase.execute(sql`
+      insert into job_source_health_checks (
+        user_id, run_id, target_id, watchlist_item_id, source_id, status, reason_codes, impact_scope, impact_affected_count,
+        observed_posting_count, selected_detail_count, valid_detail_count, request_attempt_count, checked_at
+      ) values (
+        ${userId}, ${runId}, ${targetId}, '3f906934-fac2-4db9-93c4-09ccdec40ee6', 'greenhouse:example',
+        'parser_degraded', '["SOURCE_DETAIL_FIELDS_MISSING"]'::jsonb, 'job_details', 1, 1, 1, 0, 1, now()
+      )
+    `)).rejects.toMatchObject({ cause: { code: "23505" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into job_source_health_checks (
+        user_id, run_id, target_id, watchlist_item_id, source_id, status, reason_codes, impact_scope, impact_affected_count,
+        observed_posting_count, selected_detail_count, valid_detail_count, request_attempt_count, checked_at
+      ) values (
+        ${otherUserId}, ${runId}, ${targetId}, '3f906934-fac2-4db9-93c4-09ccdec40ee6', 'greenhouse:other',
+        'hard_failed', '["SOURCE_UNREACHABLE"]'::jsonb, 'entire_source', null, 0, 0, 0, 3, now()
+      )
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into job_source_health_checks (
+        user_id, run_id, target_id, watchlist_item_id, source_id, status, reason_codes, impact_scope, impact_affected_count,
+        observed_posting_count, selected_detail_count, valid_detail_count, request_attempt_count, checked_at
+      ) values (
+        ${userId}, ${runId}, ${otherTargetId}, '9d19c3c2-e916-4e8b-acdc-020511312727', 'greenhouse:other',
+        'hard_failed', '["SOURCE_UNREACHABLE"]'::jsonb, 'entire_source', null, 0, 0, 0, 3, now()
+      )
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
+    await expect(migratedDatabase.execute(sql`
+      update job_source_health_checks set status = 'healthy' where id = ${checkId}
+    `)).rejects.toMatchObject({ cause: { code: "55000" } });
+    for (const invalid of [
+      { sourceId: "greenhouse:zero-invalid", watchlistItemId: "c06a313a-b38a-4405-bdaf-5644eae77ca1", status: "zero_valid_results", reasonCodes: "[]", impactScope: "none", impactAffectedCount: null, observed: 1, selected: 1, valid: 1, attempts: 1 },
+      { sourceId: "greenhouse:rate-invalid", watchlistItemId: "20990968-87a3-4bb2-a027-8a4ddfbb0f3d", status: "rate_limited", reasonCodes: '["SOURCE_TIMEOUT"]', impactScope: "entire_source", impactAffectedCount: null, observed: 1, selected: 1, valid: 1, attempts: 1 },
+      { sourceId: "greenhouse:count-invalid", watchlistItemId: "81d48448-5663-4af0-8707-a50d8225922c", status: "parser_degraded", reasonCodes: '["SOURCE_DETAIL_FIELDS_MISSING"]', impactScope: "job_details", impactAffectedCount: 1, observed: 1, selected: 1, valid: 2, attempts: 1 },
+      { sourceId: "https://boards.greenhouse.io/unsafe?token=secret", watchlistItemId: "4b1b0bc9-6d28-46a1-aa94-155539442c04", status: "hard_failed", reasonCodes: '["SOURCE_UNREACHABLE"]', impactScope: "entire_source", impactAffectedCount: null, observed: 0, selected: 0, valid: 0, attempts: 1 },
+      { sourceId: "greenhouse:impact-invalid", watchlistItemId: "f2c85b70-ddc9-4ac5-9320-c148598c756a", status: "healthy", reasonCodes: "[]", impactScope: "none", impactAffectedCount: 0, observed: 1, selected: 1, valid: 1, attempts: 0 },
+    ]) {
+      await expect(migratedDatabase.execute(sql`
+        insert into job_source_health_checks (
+          user_id, run_id, target_id, watchlist_item_id, source_id, status, reason_codes, impact_scope, impact_affected_count,
+          observed_posting_count, selected_detail_count, valid_detail_count, request_attempt_count, checked_at
+        ) values (
+          ${userId}, ${runId}, ${targetId}, ${invalid.watchlistItemId}, ${invalid.sourceId}, ${invalid.status}, ${invalid.reasonCodes}::jsonb,
+          ${invalid.impactScope}, ${invalid.impactAffectedCount}, ${invalid.observed}, ${invalid.selected}, ${invalid.valid}, ${invalid.attempts}, now()
+        )
+      `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    }
+    for (const invalid of [
+      { sourceId: "greenhouse:parser-mixed", watchlistItemId: "11a6d6aa-85fb-45d2-8c31-457ce7b00837", status: "parser_degraded", reasonCodes: '["SOURCE_DETAIL_FIELDS_MISSING", "SOURCE_RATE_LIMITED"]', impactScope: "job_details", impactAffectedCount: 1 },
+      { sourceId: "greenhouse:hard-mixed", watchlistItemId: "8f143c81-4f7e-49f0-8d3c-27dcceafac53", status: "hard_failed", reasonCodes: '["SOURCE_UNREACHABLE", "SOURCE_DETAIL_URL_INVALID"]', impactScope: "entire_source", impactAffectedCount: null },
+      { sourceId: "greenhouse:parser-no-impact", watchlistItemId: "7b1ed12b-30b5-4b3e-8c43-3b36084552d3", status: "parser_degraded", reasonCodes: '["SOURCE_DETAIL_FIELDS_MISSING"]', impactScope: "none", impactAffectedCount: null },
+      { sourceId: "greenhouse:hard-no-impact", watchlistItemId: "363990b0-1f43-4af7-8632-a14103e5f7b7", status: "hard_failed", reasonCodes: '["SOURCE_UNREACHABLE"]', impactScope: "none", impactAffectedCount: null },
+    ]) {
+      await expect(migratedDatabase.execute(sql`
+        insert into job_source_health_checks (
+          user_id, run_id, target_id, watchlist_item_id, source_id, status, reason_codes, impact_scope, impact_affected_count,
+          observed_posting_count, selected_detail_count, valid_detail_count, request_attempt_count, checked_at
+        ) values (
+          ${userId}, ${runId}, ${targetId}, ${invalid.watchlistItemId}, ${invalid.sourceId}, ${invalid.status}, ${invalid.reasonCodes}::jsonb,
+          ${invalid.impactScope}, ${invalid.impactAffectedCount}, 1, 1, 0, 1, now()
+        )
+      `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    }
+
+    const indexes = await migratedDatabase.execute(sql`
+      select indexname from pg_indexes
+      where schemaname = 'public' and indexname = 'job_source_health_checks_latest_lookup_idx'
+    `);
+    expect(indexes).toHaveLength(1);
+    expect(await listConstraintNames(migratedDatabase)).toEqual(expect.arrayContaining([
+      "agent_inbox_items_kind_check", "agent_inbox_items_reason_check",
+    ]));
+    await migratedDatabase.execute(sql`
+      insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, watchlist_item_id, source_health_check_id, kind, status, reason_code, budget_dimension)
+      values ('0f7a4f89-cf14-4d5c-b3ea-492a17c64f79', ${userId}, ${runId}, 99, '3f906934-fac2-4db9-93c4-09ccdec40ee6', ${checkId}, 'source_attention', 'unread', 'SOURCE_HEALTH_ATTENTION', null)
+    `);
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, watchlist_item_id, source_health_check_id, kind, status, reason_code, budget_dimension)
+      values ('e6337e34-3662-47e1-913c-fc40a12fe969', ${userId}, ${runId}, 100, '3f906934-fac2-4db9-93c4-09ccdec40ee6', ${checkId}, 'source_attention', 'unread', 'AGENT_RUN_ADAPTER_FAILED', null)
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+  });
+
+  it("upgrades legacy Inbox rows into owner-bound task-control lifecycle records", async () => {
+    expect(await listColumns(migratedDatabase)).toEqual(expect.arrayContaining([
+      { table_name: "agent_inbox_items", column_name: "read_at", data_type: "timestamp with time zone" },
+      { table_name: "agent_inbox_items", column_name: "candidate_fact_id", data_type: "uuid" },
+      { table_name: "agent_inbox_items", column_name: "watchlist_item_id", data_type: "uuid" },
+      { table_name: "agent_inbox_items", column_name: "source_health_check_id", data_type: "uuid" },
+      { table_name: "agent_inbox_items", column_name: "recommendation_list_id", data_type: "uuid" },
+      { table_name: "agent_inbox_items", column_name: "calibration_proposal_id", data_type: "uuid" },
+    ]));
+    expect(await listConstraintNames(migratedDatabase)).toEqual(expect.arrayContaining([
+      "agent_inbox_items_lifecycle_check", "agent_inbox_items_reference_combination_check",
+      "agent_inbox_items_owner_candidate_fact_fk", "agent_inbox_items_owner_recommendation_list_fk",
+      "agent_inbox_items_owner_calibration_proposal_fk", "agent_inbox_items_owner_source_health_check_fk",
+      "job_source_health_checks_user_run_watchlist_id_unique",
+    ]));
+
+    const indexes = await migratedDatabase.execute(sql`
+      select indexname from pg_indexes where schemaname = 'public' and indexname in (
+        'agent_inbox_items_candidate_fact_unique_idx', 'agent_inbox_items_recommendation_list_unique_idx',
+        'agent_inbox_items_calibration_proposal_unique_idx', 'agent_inbox_items_source_run_source_health_check_unique_idx'
+      ) order by indexname
+    `);
+    expect(indexes).toHaveLength(4);
+
+    const userId = "2f6e3c5d-bc28-43aa-8647-3ea840450ea1";
+    const targetId = "a659e03e-c93e-4c21-ae29-ba64fe83f7d6";
+    const runId = "f67e6865-fc83-42bb-b91d-7045fef2e21e";
+    await migratedDatabase.execute(sql`insert into job_accounts (id) values (${userId})`);
+    await migratedDatabase.execute(sql`insert into job_targets (id, user_id, version, priority, state) values (${targetId}, ${userId}, 1, 'primary', 'active')`);
+    await migratedDatabase.execute(sql`insert into agent_runs (id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot, workflow_version, rule_version, adapter, adapter_version, output_schema_version, tool_allowlist, status, current_step) values (${runId}, ${userId}, ${targetId}, 'abe08804-646e-47a4-b168-38eb61bfaf3a', 1, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 'job-discovery-workflow-v3', 'job-discovery-source-health-rules-v1', 'greenhouse', 'greenhouse-job-board-v2', 'job-discovery-result-v3', '[]'::jsonb, 'queued', 'queued')`);
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, kind, status, reason_code, budget_dimension)
+      values ('8b5db874-35a3-4ab8-a30c-7047316df176', ${userId}, ${runId}, 1, 'candidate_fact', 'unread', 'CANDIDATE_FACT_PENDING', null)
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    const upgradeContainer = await new PostgreSqlContainer("postgres:17-alpine").start();
+    const upgradeDatabase = createDatabase(upgradeContainer.getConnectionUri());
+    const migrationsFolder = await mkdtemp(join(tmpdir(), "job-copilot-0043-"));
+    try {
+      const migrationSource = fileURLToPath(new URL("../migrations", import.meta.url));
+      await cp(migrationSource, migrationsFolder, { recursive: true });
+      await unlink(join(migrationsFolder, "0043_task_control_agent_inbox.sql")).catch(() => undefined);
+      const journalPath = join(migrationsFolder, "meta", "_journal.json");
+      const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
+      await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter((entry) => entry.tag !== "0043_task_control_agent_inbox") }, null, 2));
+      await migrate(upgradeDatabase, { migrationsFolder });
+      await upgradeDatabase.execute(sql`insert into job_accounts (id) values (${userId})`);
+      await upgradeDatabase.execute(sql`insert into job_targets (id, user_id, version, priority, state) values (${targetId}, ${userId}, 1, 'primary', 'active')`);
+      await upgradeDatabase.execute(sql`insert into agent_runs (id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot, workflow_version, rule_version, adapter, adapter_version, output_schema_version, tool_allowlist, status, current_step) values (${runId}, ${userId}, ${targetId}, 'abe08804-646e-47a4-b168-38eb61bfaf3a', 1, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 'job-discovery-workflow-v3', 'job-discovery-source-health-rules-v1', 'greenhouse', 'greenhouse-job-board-v2', 'job-discovery-result-v3', '[]'::jsonb, 'queued', 'queued')`);
+      await upgradeDatabase.execute(sql`
+        insert into job_source_health_checks (
+          id, user_id, run_id, target_id, watchlist_item_id, source_id, status, reason_codes, impact_scope, impact_affected_count,
+          observed_posting_count, selected_detail_count, valid_detail_count, request_attempt_count, checked_at
+        ) values
+          ('a3f9e138-57f4-4b2c-9e35-5fd693fb674a', ${userId}, ${runId}, ${targetId}, 'fca59446-6c22-430d-8c26-77b96e1dca0d', 'greenhouse:healthy-earlier', 'healthy', '[]'::jsonb, 'none', null, 1, 1, 1, 1, '2025-12-31T00:00:00.000Z'),
+          ('0e78c071-9595-4417-b4fb-6562334e065d', ${userId}, ${runId}, ${targetId}, '0ce8c21d-d758-4cb3-b99f-f9cbd66bd58f', 'greenhouse:legacy-one', 'hard_failed', '["SOURCE_UNREACHABLE"]'::jsonb, 'entire_source', null, 0, 0, 0, 1, '2026-01-01T00:00:00.000Z'),
+          ('7eeaf5fc-31cb-4dbe-8dc6-4dcbb8fd2a15', ${userId}, ${runId}, ${targetId}, '0ce8c21d-d758-4cb3-b99f-f9cbd66bd58f', 'greenhouse:legacy-two', 'parser_degraded', '["SOURCE_DETAIL_FIELDS_MISSING"]'::jsonb, 'job_details', 1, 2, 2, 1, 1, '2026-01-02T00:00:00.000Z')
+      `);
+      await upgradeDatabase.execute(sql`
+        insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, kind, status, reason_code, budget_dimension, created_at, resolved_at) values
+          ('18333bf2-5d0d-4659-b056-06028b571d70', ${userId}, ${runId}, 1, 'run_failed', 'open', 'AGENT_RUN_ADAPTER_FAILED', null, '2026-01-03T00:00:00.000Z', null),
+          ('78a7e5ef-9722-44cc-bbf2-c3139b830c9f', ${userId}, ${runId}, 2, 'budget_exhausted', 'open', 'AGENT_RUN_BUDGET_EXCEEDED', 'tokens', '2026-01-04T00:00:00.000Z', null),
+          ('2050c071-9595-4417-b4fb-6562334e065d', ${userId}, ${runId}, 3, 'source_attention', 'open', 'SOURCE_HEALTH_ATTENTION', null, '2026-01-01T00:00:00.000Z', null),
+          ('3050c071-9595-4417-b4fb-6562334e065d', ${userId}, ${runId}, 4, 'source_attention', 'resolved', 'SOURCE_HEALTH_ATTENTION', null, '2026-01-02T00:00:00.000Z', '2026-01-02T00:01:00.000Z'),
+          ('4050c071-9595-4417-b4fb-6562334e065d', ${userId}, ${runId}, 5, 'source_attention', 'open', 'SOURCE_HEALTH_ATTENTION', null, '2026-01-03T00:00:00.000Z', null)
+      `);
+      await upgradeDatabase.execute(sql`update agent_inbox_items set status = 'resolved', resolved_at = now() where id = '78a7e5ef-9722-44cc-bbf2-c3139b830c9f'`);
+      await migrate(upgradeDatabase, { migrationsFolder: migrationSource });
+      const upgraded = await upgradeDatabase.execute(sql`select id, kind, reason_code, status, watchlist_item_id, source_health_check_id, read_at is null as read_at_is_null, resolved_at is null as resolved_at_is_null from agent_inbox_items order by id`) as unknown as Array<{ id: string; kind: string; reason_code: string; status: string; watchlist_item_id: string | null; source_health_check_id: string | null; read_at_is_null: boolean; resolved_at_is_null: boolean }>;
+      expect(upgraded).toHaveLength(6);
+      expect(upgraded).toEqual(expect.arrayContaining([
+        { id: "18333bf2-5d0d-4659-b056-06028b571d70", kind: "run_failed", reason_code: "AGENT_RUN_ADAPTER_FAILED", status: "unread", watchlist_item_id: null, source_health_check_id: null, read_at_is_null: true, resolved_at_is_null: true },
+        { id: "2050c071-9595-4417-b4fb-6562334e065d", kind: "source_attention", reason_code: "SOURCE_HEALTH_ATTENTION", status: "unread", watchlist_item_id: "0ce8c21d-d758-4cb3-b99f-f9cbd66bd58f", source_health_check_id: "0e78c071-9595-4417-b4fb-6562334e065d", read_at_is_null: true, resolved_at_is_null: true },
+        { id: "3050c071-9595-4417-b4fb-6562334e065d", kind: "discovery_attention", reason_code: "DISCOVERY_ATTENTION", status: "resolved", watchlist_item_id: null, source_health_check_id: null, read_at_is_null: true, resolved_at_is_null: false },
+        { id: "4050c071-9595-4417-b4fb-6562334e065d", kind: "discovery_attention", reason_code: "DISCOVERY_ATTENTION", status: "unread", watchlist_item_id: null, source_health_check_id: null, read_at_is_null: true, resolved_at_is_null: true },
+        { id: "78a7e5ef-9722-44cc-bbf2-c3139b830c9f", kind: "budget_exhausted", reason_code: "AGENT_RUN_BUDGET_EXCEEDED", status: "resolved", watchlist_item_id: null, source_health_check_id: null, read_at_is_null: true, resolved_at_is_null: false },
+      ]));
+      const generatedSourceItems = upgraded.filter(({ id }) => ![
+        "18333bf2-5d0d-4659-b056-06028b571d70", "2050c071-9595-4417-b4fb-6562334e065d", "3050c071-9595-4417-b4fb-6562334e065d", "4050c071-9595-4417-b4fb-6562334e065d", "78a7e5ef-9722-44cc-bbf2-c3139b830c9f",
+      ].includes(id));
+      expect(generatedSourceItems).toEqual([expect.objectContaining({
+        kind: "source_attention", reason_code: "SOURCE_HEALTH_ATTENTION", status: "unread", watchlist_item_id: "0ce8c21d-d758-4cb3-b99f-f9cbd66bd58f", source_health_check_id: "7eeaf5fc-31cb-4dbe-8dc6-4dcbb8fd2a15", read_at_is_null: true, resolved_at_is_null: true,
+      })]);
+    } finally {
+      await upgradeDatabase.$client.end();
+      await upgradeContainer.stop();
+      await rm(migrationsFolder, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("rejects source Inbox references without a same-owner source-health check", async () => {
+    const userId = "399ff7d6-3f6c-4d38-93b6-f97cb7bf4b61";
+    const targetId = "7e57ea51-417a-456e-ae48-6053d5579a61";
+    const runId = "4cdd9f30-c500-4591-8d80-2dc8d86038f4";
+    const otherUserId = "82597e17-ca9d-4620-a0d0-01f4b3f1e071";
+    const otherTargetId = "e80e6ba3-266b-442d-b53c-d3a4f08e9a4c";
+    const otherRunId = "fb6e5c63-7727-4924-bb69-1f3610d104d2";
+    const foreignWatchlistItemId = "214adcf4-b646-4173-9279-ed5d67a1a313";
+    const foreignSourceHealthCheckId = "36d571f6-cd95-4b0b-bd48-dd9eaf93f8db";
+    await migratedDatabase.execute(sql`insert into job_accounts (id) values (${userId}), (${otherUserId})`);
+    await migratedDatabase.execute(sql`insert into job_targets (id, user_id, version, priority, state) values (${targetId}, ${userId}, 1, 'primary', 'active'), (${otherTargetId}, ${otherUserId}, 1, 'primary', 'active')`);
+    await migratedDatabase.execute(sql`
+      insert into agent_runs (id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot, workflow_version, rule_version, adapter, adapter_version, output_schema_version, tool_allowlist, status, current_step) values
+        (${runId}, ${userId}, ${targetId}, 'ce95a5c6-62b4-44af-8161-aa1cfe2ec0d2', 1, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 'job-discovery-workflow-v3', 'job-discovery-source-health-rules-v1', 'greenhouse', 'greenhouse-job-board-v2', 'job-discovery-result-v3', '[]'::jsonb, 'queued', 'queued'),
+        (${otherRunId}, ${otherUserId}, ${otherTargetId}, 'a1051b0e-2a63-486b-9ab5-59f11c42613e', 1, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 'job-discovery-workflow-v3', 'job-discovery-source-health-rules-v1', 'greenhouse', 'greenhouse-job-board-v2', 'job-discovery-result-v3', '[]'::jsonb, 'queued', 'queued')
+    `);
+    await migratedDatabase.execute(sql`insert into job_source_health_checks (id, user_id, run_id, target_id, watchlist_item_id, source_id, status, reason_codes, impact_scope, impact_affected_count, observed_posting_count, selected_detail_count, valid_detail_count, request_attempt_count, checked_at) values (${foreignSourceHealthCheckId}, ${otherUserId}, ${otherRunId}, ${otherTargetId}, ${foreignWatchlistItemId}, 'greenhouse:foreign-owner', 'hard_failed', '["SOURCE_UNREACHABLE"]'::jsonb, 'entire_source', null, 0, 0, 0, 1, now())`);
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, watchlist_item_id, source_health_check_id, kind, status, reason_code, budget_dimension)
+      values ('8816d5d8-3e18-458b-bd09-6a2273d60fd4', ${userId}, ${runId}, 1, '2fcba8f0-a95f-40ca-a9e8-8395a26e5619', '6207d95c-5930-421e-a908-74502f83e584', 'source_attention', 'unread', 'SOURCE_HEALTH_ATTENTION', null)
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, watchlist_item_id, source_health_check_id, kind, status, reason_code, budget_dimension)
+      values ('ba514f51-7a0a-4fdd-a1b0-a0ef534711fc', ${userId}, ${runId}, 2, ${foreignWatchlistItemId}, ${foreignSourceHealthCheckId}, 'source_attention', 'unread', 'SOURCE_HEALTH_ATTENTION', null)
     `)).rejects.toMatchObject({ cause: { code: "23503" } });
   });
 });

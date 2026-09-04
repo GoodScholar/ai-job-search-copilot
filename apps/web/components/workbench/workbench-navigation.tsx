@@ -3,9 +3,9 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-const navigation: ReadonlyArray<{ href?: "/home" | "/profile"; label: string }> = [
+const navigation: ReadonlyArray<{ href?: "/home" | "/profile" | "/recommendations"; label: string }> = [
   { href: "/home", label: "首页" },
-  { label: "推荐" },
+  { href: "/recommendations", label: "推荐" },
   { label: "投递" },
   { href: "/profile", label: "画像" },
 ];

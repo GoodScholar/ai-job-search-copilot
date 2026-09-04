@@ -1,0 +1,86 @@
+# SDD ledger — plan: .superpowers/issue30-implementation-plan.md
+
+Baseline: `3a1a3940773921a1a03c3b25ea7baa378c025e83`
+Spec authority: GitHub Issue #30, parent Issue #1, root `AGENTS.md`, `PRODUCT.md`, `CONTEXT.md`, relevant ADRs, and supervisor approval messages dated 2026-08-30.
+Model authority: `gpt-5.6-sol/high` for planning/final review; `gpt-5.6-terra/high` for implementation/tests/fixes.
+
+## Pre-flight consistency scan
+
+| Scope | Producer → consumer | Finding |
+| --- | --- | --- |
+| Task 1 | ADR/CONTEXT/tracked plan agree internally | Consistent: domain concepts remain implementation-free; the ADR alone carries the capability decision. |
+| Task 2 | v4 contract tests → immutable exported unions | Consistent: additive v4 only; explicit v1–v3 compatibility tests match the code requirement. |
+| Task 3 | query-plan behavior tests → deterministic snapshots | Consistent: all limits and privacy exclusions have independent literal expectations. |
+| Task 4 | source-access tests → shared verifier/API adapter | Consistent: the public seam owns safety/classification while API remains a thin consumer. |
+| Task 5 | adapter tests → AnySearch boundary | Consistent: official HTTP status classification and strict envelope parsing do not require message matching. |
+| Task 6 | migration/repository tests → Lead/Attribution persistence | Consistent: transaction/constraint requirement matches owner-bound association tests. |
+| Task 7 | domain/integration tests → verified persistence gate | Consistent: only VerifiedJobPage crosses the gate; rejection assertions cover all downstream absence. |
+| Task 8 | processor/workflow tests → durable v4 workflow | Consistent: physical-call budgets, partial failure, cancellation and replay requirements share one public run seam. |
+| Task 9 | runtime integration tests → resolver/scheduler wiring | Consistent: v4 production wiring remains additive and preserves legacy fake/v3 phases. |
+| Task 10 | Playwright acceptance → Fake AnySearch runtime | Consistent: only the external provider is faked; end-to-end assertions exercise user-observable run behavior. |
+| Task 11 | full commands + independent review → acceptance | Consistent: review baseline is fixed and every severity must be zero on both axes. |
+| Task 12 | evidence + status → Issue close | Consistent: external mutation is delayed until all objective gates pass. |
+| Tasks 1 → 2–10 | approved vocabulary/capability → all implementation seams | No conflict: later tasks must use the frozen names and single-URL/single-validation authority. |
+| Tasks 2 → 3, 5–10 | v4 contracts → planner/adapter/persistence/workflow/runtime/E2E | No conflict: contracts are additive and downstream tasks consume v4 without modifying v1–v3. |
+| Tasks 3 → 8–10 | query snapshots → workflow/runtime/E2E | No conflict: versioned fixed allowlist and caps are the shared boundary. |
+| Tasks 4 → 7–10 | shared verifier → persistence gate/workflow/runtime/E2E | No conflict: local safe fetch remains authoritative after untrusted extract. |
+| Tasks 5 → 8–10 | AnySearch adapter → workflow/runtime/E2E | No conflict: each adapter request exposes one physical-call hook and stable redacted error. |
+| Tasks 6 → 7, 8, 10 | Lead/Attribution repository → gate/workflow/E2E | No conflict: the transaction owns normalized Lead state and verified Attribution linkage. |
+| Tasks 7 → 8, 10 | verified persistence gate → workflow/E2E | No conflict: workflow can persist only through this bridge. |
+| Tasks 8 → 9, 10 | durable workflow → runtime/E2E | No conflict: runtime wiring selects the already-tested workflow rather than duplicating it. |
+| Tasks 9 → 10 | Fake runtime wiring → Playwright | No conflict: dedicated phase preserves existing ordinary/source-health phases. |
+| Tasks 2–10 → 11 | implementation + focused evidence → whole-branch verification | No conflict: Task 11 re-runs fresh suites and reviews the cumulative fixed-baseline diff. |
+| Tasks 1–11 → 12 | complete implementation/review → GitHub evidence | No conflict: clean worktree and issue closure are terminal gates only. |
+
+Provider-contract gate: CLEARED by official AnySearch API Reference. HTTP 402 is authoritative quota classification; HTTP 429 is authoritative rate-limit classification. JSON symbol field location remains unspecified and must not be guessed. `message` is never a classifier.
+
+Task 1: complete (commits `3a1a394..cefdca1`, review clean)
+
+Task 2: fix round 1/5 (7 addressed, 2 open — encoded URL value bypass; HTTP 402/429 reverse binding; commits `07b1628..4fe7f36`)
+Task 2: fix round 2/5 (3 addressed, 0 open — URL value policy; HTTP reverse binding; dead schema; commit `4768e5c`)
+Task 2: complete (commits `cefdca1..4768e5c`, review clean)
+
+Task 3: Ruling: max-500 company query discriminator conflict — use supervisor A′: retain full role/company, then only whole site tokens that fit; structured domains are local candidate-host enforcement, never an AnySearch provider filter. Cost if wrong: recall may lose some `site:` hints at maximum input lengths, while local safety and attribution remain enforced.
+Task 3: fix round 1/5 (6 addressed, 0 open — domain cap/fingerprint, Watchlist identity, fixed policy isolation, max-length A′, UUIDv8, behavior Red; commit `1ef0f87`)
+Task 3: complete (commits `4768e5c..1ef0f87`, review clean)
+
+Task 4: fix rounds 1–9 complete (hidden inline CSS/cascade, conservative detail-vs-list classification, canonical safety, regression migration; commits `dd10962..809fea4`)
+Task 4: complete (commits `1ef0f87..809fea4`, independent review Critical/Important/Minor `0/0/0`)
+
+Task 5: fix rounds 1–4 complete (lexical preflight, serializable/recoverable capability, immutable URL policy, deterministic batch issuance, strict public PSL/private-tenant boundary, manual redirect, explicit durable decisions, `.arpa` exclusion; commits `2d0fb68..0dfe028`)
+Task 5: complete (commits `809fea4..0dfe028`, independent review Critical/Important/Minor `0/0/0`)
+
+Task 6: complete (commits `f59e2a8..b56c3f1`; fix round 1 closed 3 Important / 2 Minor; independent Standards and Spec reviews both `0/0/0`)
+
+Acceptance baseline note: Task 5a lifecycle repair received an independent 0/0/0 code review. A final fresh serial run at HEAD `2152048` with `DOCKER_API_VERSION=1.51 pnpm --filter worker test` passed 20/20 files and 256/256 tests in 87.01 seconds. The earlier afterAll timeout and independent Testcontainer port-binding failure remain recorded as historical diagnostics; no timeout increase or manual resource cleanup was used. Task 6 may proceed.
+
+Task 8: complete (commits `768b8c6..4473524`; final independent Standards and Spec reviews both `0/0/0`)
+
+Task 9: complete (commits `4473524..0ed9933`; final independent Standards and Spec reviews both `0/0/0`; report `task-9-report.md`).
+
+Task 10: Slice 9 Red/Green A–C 与串行验收已完成（`357e4a1..57ac9f3`；报告 `task-10-report.md`）；等待独立 Standards/Spec 审查。
+Task 10: fix round 2/5 (6 addressed, 4 open — duplicate behavior lacked committed Red; fixed site/company assertions; canonical/final identity evidence; complete-run secret assertion; commits `dc47036..49f21bb`).
+Task 10: Ruling: fix round 3 remains load-bearing and has a concrete non-guess path — dispatch a fresh `gpt-5.6-terra/high` implementer because project model authority forbids changing implementation to sol; obtain a committed behavior Red by temporarily restoring the old completed outcome, then restore stale Green. Cost if wrong: two extra audit-only commits remain in history, but production HEAD retains the approved stale semantics and the TDD evidence becomes reproducible.
+Task 10: fix round 3/5 (4 addressed, 1 open — three new public assertions lacked independent mutation Red; commits `49f21bb..ec4fa53`).
+Task 10: fix round 4/5 (query and canonical mutation Reds addressed; secret mutation Red still leaks adjacent relative run-detail href in Playwright source context; commits `ec4fa53..fad239e`).
+Task 10: fix round 5/5 (secret mutation Red isolated in neutral helper; Standards and Spec both 0/0/0; commits `fad239e..8e7af1b`).
+Task 10: full-slice review fix round 1 — accepted: recovered-candidate fixture base fail-closed, lockfile minimization, shared test phase policy. Ruling: a lexically unsafe provider URL that cannot produce `SafeNormalizedPublicJobUrl` must not be persisted as a Lead; the existing safe candidate rejected at cross-host fetch is the required unsafe-page rejected Lead. Ruling: authentic raw HTML evidence preserves page links; the binding capability rule forbids following/expanding them, not storing a faithful raw page. Cost if wrong: the reviewer may continue to interpret the derived Task 10 audit brief more strictly than the direct product/security decisions, requiring explicit supervisor adjudication.
+Task 10: fix round 4/5 (3 addressed — query discriminator、canonical/final identity、complete run secret exclusion 均取得各自 committed mutation Red→Green；旧 secret Red `d8fe6ac..e64a260` 因 Playwright 相邻源码上下文含完整 placeholder 而 INVALID/SUPERSEDED 且其日志已删除，替代安全 pair `7d953c2..84e4e59`；报告 `task-10-report.md`)。
+Task 10: fix round 5/5（最后的缺 key mutation Red 页面链接泄漏已修复；`7d953c2..84e4e59` INVALID/SUPERSEDED，替代 pair `842835e..b2d6519`，Red 禁词扫描 0 行，configured/missing-key Desktop/Mobile 4/4；报告 `task-10-report.md`）。
+Task 10: audit/MinIO/phase regressions complete（`008418a..d68fe7e`；chain audit、page-only MinIO projection、ordinary/source-health Desktop+Mobile 回归均已记录；报告 `task-10-report.md`）。
+Task 10: full-slice review fix round 1 complete（recovered fixed-base Red/Green `46f7510..7f2a61f`，shared phase-policy Red/Green `32e15ec..bb9b423`，minimal lockfile `1857a02`，direct ruling E2E clarification `a86515f`；报告 `task-10-report.md`）。
+Task 10: recovered-base behavior evidence correction（`46f7510..7f2a61f` 仅 structural seam，committed mutation Red/Green `7190212..2bf3209` 以受控 extract transport 证明旧回退与 fixed-origin Green；报告 `task-10-report.md`）。
+Task 10: full-slice review fix round 2 complete（独立审查 Standards `0/0/0`、Spec `0/1/0` 的唯一 lexical-unsafe provider diagnostic 问题；committed Red/Green `0101e65..1440394`，Adapter→Worker→workflow 仅传递有界拒绝计数并记录 query diagnostic；报告 `task-10-report.md`）。
+Task 10: full-slice review fix round 2 boundary correction（committed Red/Green `2b53df2..b92f675`；冻结契约要求 query diagnostic ≤5，Worker/domain/aggregation 已收紧为5，provider/source issue 保持≤10；报告 `task-10-report.md`）。
+Task 11: Final Review Fix Round 1 complete (`b7383f5..b9dbc8d`); recovery initial Red invalid/superseded by `5600757..53292b2`; Findings 6/7 committed mutation pairs `14524a4..9d95bd9` and `257e94a..b9dbc8d`; workspace typecheck, static Drizzle check and Fake AnySearch configured/missing-key Desktop/Mobile 4/4 passed; report `task-11-report.md`.
+Task 11: Final Review Fix Round 2 complete (`ebbfc41..8e88e5f`); review counts Standards `0C/1I/0M`, Spec `0C/4I/0M`; exact Bearer assertion, verified-final-only source identity, same-Lead final replay conflict, legacy nonofficial Opportunity compatibility, and heartbeat control-terminal recovery all have committed behavior Red/Green evidence. Focused Gate 22/22, Opportunity 41/41, Processor 66/66, Adapter/source-safety 92/92; Domain/Worker typecheck and static Drizzle check passed. Round 1 Fake AnySearch configured/missing-key Desktop/Mobile 4/4 remains the fresh accepted E2E evidence because this round has no browser-visible change; report `task-11-report.md`.
+Task 11: Final Review Fix Round 3 complete (`b37c618..f562bc8`); Round 2 review counts Standards `0C/2I/0M`, Spec `0C/1I/0M`. Unsafe Round 2 Authorization and Gate Red logs were deleted and marked INVALID/SUPERSEDED. New safe Authorization mutation Red/Green isolates exact credential comparison in a neutral helper. Additive `0028_lead_verified_final` adds transaction-bound `verified_final_url`, fail-closed owner-join backfill, and outcome constraints; Lead A/B replay behavior has a safe committed Red/Green pair, while `f562bc8` confirms this internal fact is absent from public lead projection. Gate+Lead 34/34, migration-focused 7/7, migration application 22/22, Adapter/source-safety 92/92, Database/Domain/Worker typechecks and static Drizzle check passed; report `task-11-report.md`.
+Task 11: Final Review Fix Round 4 complete (`7ac7cd3..ab4bff8`); `0028` now recovers each verified Lead's final through owner-bound Attribution→Version→Posting mapping, fails closed on absent/ambiguous mappings, validates recovered public URL facts before independent writes, and rewrites legacy alias maps to taxonomy/canonical/final/finalUrls only. Accepted committed mutation pairs: recovery `7ac7cd3..1b6bc89`, unsafe recovered values `139500b..651f56d`, ambiguity `7b69d7b..f906fd9`, alias-map removal `a5e4b31..cc2e473`, public-host parity `c1294cf..ab4bff8`; safety constraint pair `1b6bc89..7e264fd`. Safe migration application 15/15, final combined migrations 39/39, Gate+Lead 34/34, Database/Domain typechecks and static Drizzle check passed. The initial outer non-object fixture was rejected before migration and is INVALID; its raw log was deleted. Report `task-11-report.md`.
+Task 11: Final Review Fix Round 5 complete (`247e35f..96f11df`); fixed baseline contains none of the Issue #30 migrations at `0024..0028`, and no release tag/branch contains them. Actual Lead-table creation is `0024` (not reviewer-described `0027`), so final-state field, length and outcome constraints were folded into `0024`; `0028`, its snapshot/journal entry, regex policy copy and unreleased recovery path were removed. Round 4 `0028` evidence is SUPERSEDED rather than final-schema evidence. Fresh-chain Red is neutral/safe; final database migration/application 28/28, contracts URL policy 8/8, Gate+Lead 34/34, Database/Contracts/Domain typechecks and static Drizzle check passed. Report `task-11-report.md`.
+Task 11: Final Review Fix Round 6 complete (`134cfa3`); restores the mistakenly removed pre-0028 real PostgreSQL `0024→0025→0026→0027` application seam from `622aa628`, while retaining deletion of only 0028 recovery tests. An uncommitted/remediated 0027 owner/run/version uniqueness mutation gives safe boolean Red evidence; Green is restored before commit. Restored application 4/4, database migration suite 29/29, Gate+Lead 34/34, Database typecheck and static Drizzle check passed. Report `task-11-report.md`.
+## Task 11 — Final Review Fix Round 7 (docs correction)
+
+- Corrected the Task 11 report’s migration-application evidence count: three neutral assertions cover two constraint types (one ordinal-range and two version-uniqueness assertions). No implementation or test changes; no tests rerun.
+
+Task 12: final acceptance rerun passed from `bc29187` after an initial root-test diagnostic failure exposed a stale test-only query-builder substitute; scoped review of that test repair is Standards `0/0/0`, Spec `0/0/0`. Fresh serial root/runtime/package tests, typecheck, lint, build, Drizzle static, migration-chain verification, AnySearch configured+missing-key `4/4`, ordinary `2/2`, source-health `2/2`, diff and safe additions-only secret audit all passed. The first root log and two overbroad auxiliary probes are INVALID and excluded; GitHub close remains pending. Report `task-12-report.md`.
+Task 12: Evidence Fix Round 1 corrects final-acceptance evidence only: `05b` (broad migration scan, exit `1`), `11` (broad all-diff audit, exit `1`), and `16` (pipefail instrumentation, exit `1`) are explicitly INVALID; exact migration probe `05d` is authoritative and exits `0` with SQL/snapshot highest `0027`, journal highest `27`, and all `0028` counts `0`. The final post-report gate is `/tmp/issue30-final-rerun-18-post-report-integrity.log`; it records final HEAD, baseline ancestry, diff, clean status, residual-process count, and added live-secret count.

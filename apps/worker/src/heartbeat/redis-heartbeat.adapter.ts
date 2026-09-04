@@ -3,7 +3,9 @@ import {
   WorkerHeartbeatSchema,
   type WorkerHeartbeat,
 } from "@job-copilot/contracts/runtime";
+import type { OnModuleDestroy } from "@nestjs/common";
 import type Redis from "ioredis";
+import { closeWithinDeadline } from "../close-within-deadline.js";
 import {
   WORKER_HEARTBEAT_FRESHNESS_MS,
   WORKER_HEARTBEAT_KEY,
@@ -11,7 +13,9 @@ import {
   type Heartbeat,
 } from "./heartbeat.js";
 
-export class RedisHeartbeatAdapter implements Heartbeat {
+export class RedisHeartbeatAdapter implements Heartbeat, OnModuleDestroy {
+  private closePromise: Promise<void> | undefined;
+
   constructor(private readonly redis: Redis) {}
 
   async write(heartbeat: WorkerHeartbeat): Promise<void> {
@@ -34,8 +38,21 @@ export class RedisHeartbeatAdapter implements Heartbeat {
   }
 
   async close(): Promise<void> {
-    if (this.redis.status !== "end") {
-      await this.redis.quit();
+    this.closePromise ??= this.closeResources();
+    return this.closePromise;
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    await this.close();
+  }
+
+  private async closeResources(): Promise<void> {
+    try {
+      if (this.redis.status !== "end") await closeWithinDeadline(this.redis.quit(), "heartbeat close deadline");
+    } catch {
+      // Disconnect below is the non-blocking final fallback.
+    } finally {
+      if (this.redis.status !== "end") this.redis.disconnect();
     }
   }
 }

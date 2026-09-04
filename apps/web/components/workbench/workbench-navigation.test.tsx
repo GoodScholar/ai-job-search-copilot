@@ -12,10 +12,10 @@ it("renders the fixed 首页、推荐、投递、画像 order and only links rea
 
   expect(screen.getByRole("link", { name: "画像" })).toHaveAttribute("aria-current", "page");
   expect(screen.getByRole("link", { name: "首页" })).not.toHaveAttribute("aria-current");
-  expect(screen.queryByRole("link", { name: "推荐" })).not.toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "推荐" })).toHaveAttribute("href", "/recommendations");
   expect(screen.queryByRole("link", { name: "投递" })).not.toBeInTheDocument();
   expect(screen.getByRole("navigation").textContent).toBe("首页推荐投递画像");
-  expect(screen.getByText("推荐")).toHaveAttribute("aria-disabled", "true");
+  expect(screen.getByRole("link", { name: "推荐" })).not.toHaveAttribute("aria-disabled");
   expect(screen.getByText("投递")).toHaveAttribute("aria-disabled", "true");
 });
 

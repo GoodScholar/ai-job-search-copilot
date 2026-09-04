@@ -2,7 +2,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { candidateFactDecisions, candidateFacts, careerFactConflicts, jobProfiles, profileFactRevisions, profileFacts, type Database } from "@job-copilot/database";
 import type { ResolveCareerFactConflictCommand } from "@job-copilot/contracts/career-import";
 import type { AuditTrail } from "./audit-trail";
-import { createTrustedProfileQueries } from "./profile-review";
+import { createTrustedProfileQueries, resolveCandidateFactInboxItems } from "./profile-review";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 
 export class CareerFactConflictReviewError extends Error {
@@ -77,6 +77,12 @@ export function createCareerFactConflictReviewCommands(deps: { db: Database; id:
         await applyDesiredState(incoming, input.command.resolution !== "use_existing");
 
         const resolvedAt = deps.clock();
+        await resolveCandidateFactInboxItems({
+          db: tx,
+          userId: input.userId,
+          candidateFactIds: [existing.id, incoming.id],
+          resolvedAt,
+        });
         const [updated] = await tx.update(careerFactConflicts).set({ status: "resolved", resolution: input.command.resolution, profileVersion: profile.version, resolvedAt })
           .where(and(eq(careerFactConflicts.id, conflict.id), eq(careerFactConflicts.userId, input.userId), eq(careerFactConflicts.status, "pending"))).returning({ id: careerFactConflicts.id });
         if (!updated) throw new CareerFactConflictReviewError("CAREER_FACT_CONFLICT_ALREADY_RESOLVED");

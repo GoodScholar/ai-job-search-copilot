@@ -1,13 +1,12 @@
 import {
   AgentRunSseCursorSchema,
   AgentRunSseEventSchema,
+  isAgentRunTerminalEvent,
   type AgentRunDetail,
 } from "@job-copilot/contracts/agent-runs";
 
 const POLL_INTERVAL_MS = 250;
 const HEARTBEAT_INTERVAL_MS = 15_000;
-const terminalEvents = new Set(["run.completed", "run.failed"]);
-
 type EventQueries = {
   eventsAfter(input: { userId: string; runId: string; afterSequence: number }): Promise<AgentRunDetail["events"] | null>;
 };
@@ -92,14 +91,15 @@ export function createAgentRunEventStream(input: {
         const sse = AgentRunSseEventSchema.parse({
           id: String(event.sequence),
           event: event.eventType,
+          runVersion: event.runVersion,
           data: event.data,
         });
         if (heartbeatTimer) clearTimeout(heartbeatTimer);
         heartbeatTimer = undefined;
-        controller.enqueue(encoder.encode(`id: ${sse.id}\nevent: ${sse.event}\ndata: ${JSON.stringify(sse.data)}\n\n`));
+        controller.enqueue(encoder.encode(`id: ${sse.id}\nevent: ${sse.event}\ndata: ${JSON.stringify(sse)}\n\n`));
         pendingEvents.shift();
         cursor = event.sequence;
-        if (terminalEvents.has(event.eventType)) {
+        if (isAgentRunTerminalEvent(event.eventType)) {
           finish();
           return;
         }

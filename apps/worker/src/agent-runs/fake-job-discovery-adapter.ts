@@ -14,6 +14,7 @@ type AdapterOperation = "search" | "searchBatch" | "getDetail";
 
 export type FakeJobDiscoveryAdapterOptions = {
   failures?: Partial<Record<AdapterOperation, AdapterFailure>>;
+  delayMs?: number;
 };
 
 type Fixture = {
@@ -97,6 +98,7 @@ export class FakeJobDiscoveryAdapter implements JobDiscoveryAdapter {
   constructor(private readonly options: FakeJobDiscoveryAdapterOptions = {}) {}
 
   async search(input: DiscoverySearchInput): Promise<DiscoverySearchResult> {
+    await this.delay();
     const failure = this.options.failures?.search;
     if (failure) return { ok: false, error: failure };
     const match = fixtures.find((item) => item.sourceId === input.sourceId && matchesTarget(item, input.targetSnapshot));
@@ -106,6 +108,7 @@ export class FakeJobDiscoveryAdapter implements JobDiscoveryAdapter {
   }
 
   async searchBatch(input: DiscoveryBatchSearchInput): Promise<DiscoveryBatchSearchResult> {
+    await this.delay();
     const failure = this.options.failures?.searchBatch;
     if (failure) return { ok: false, error: failure };
     const sourceOrder = new Map<string, number>(input.sourceScope.sources.map((sourceId, index) => [sourceId, index]));
@@ -121,11 +124,17 @@ export class FakeJobDiscoveryAdapter implements JobDiscoveryAdapter {
   }
 
   async getDetail(input: DiscoveryDetailInput): Promise<DiscoveryDetailResult> {
+    await this.delay();
     const failure = this.options.failures?.getDetail;
     if (failure) return { ok: false, error: failure };
     const match = fixtures.find((item) => item.sourceId === input.sourceId && item.detailId === input.detailId);
     return match
       ? { ok: true, data: { ...summary(match), sourceType: "company_careers", isOfficial: true, rawPayload: { ...match.rawPayload } } }
       : { ok: false, error: { code: "FAKE_JOB_DETAIL_NOT_FOUND", retryable: false } };
+  }
+
+  private async delay(): Promise<void> {
+    if (!this.options.delayMs) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, this.options.delayMs));
   }
 }

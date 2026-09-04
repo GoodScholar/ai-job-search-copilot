@@ -1,0 +1,2 @@
+ALTER TABLE "agent_run_steps" DROP CONSTRAINT "agent_run_steps_failure_code_check";--> statement-breakpoint
+ALTER TABLE "agent_run_steps" ADD CONSTRAINT "agent_run_steps_failure_code_check" CHECK ("failure_code" is null or "failure_code" in ('AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_CONTENT_STORAGE_FAILED', 'AGENT_RUN_PERSIST_FAILED', 'AGENT_RUN_BUDGET_EXCEEDED', 'AGENT_RUN_MODEL_RETRYABLE', 'AGENT_RUN_MODEL_AUTH_FAILED', 'AGENT_RUN_MODEL_POLICY_REJECTED', 'AGENT_RUN_MODEL_INVALID_RESPONSE'));

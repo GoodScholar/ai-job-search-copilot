@@ -144,6 +144,15 @@ it("keeps target actions labelled and touch-sized through keyboard-native contro
   expect(screen.getByRole("button", { name: "停用 AI 应用工程" })).toHaveClass("workbench-touch-target");
 });
 
+it("为每个已确认求职目标提供维护目标公司 Watchlist 的同源入口", () => {
+  render(<JobTargetsView initialOverview={overview([activeTarget(1)])} />);
+
+  expect(screen.getByRole("link", { name: "维护 AI 应用工程 的目标公司 Watchlist" })).toHaveAttribute(
+    "href",
+    `/profile/targets/${targetId}/watchlist`,
+  );
+});
+
 it("defaults a new target to the remaining secondary slot when a primary target already exists", () => {
   render(<JobTargetsView initialOverview={overview([activeTarget(1)])} />);
 

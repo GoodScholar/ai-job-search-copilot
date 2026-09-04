@@ -294,6 +294,14 @@ test("Playwright delegates isolated cleanup to the local runtime", async () => {
   assert.match(config, /command: "node scripts\/local-runtime\.mjs --test"/);
 });
 
+test("Playwright config 仅将版本化 Fake AnySearch phase 交给本地测试运行时", async () => {
+  const config = await readFile(new URL("../apps/web/playwright.config.ts", import.meta.url), "utf8");
+
+  assert.match(config, /E2E_ANYSEARCH_PUBLIC_JOB_PHASE/);
+  assert.match(config, /fake-anysearch-test-phase-policy/);
+  assert.match(config, /anysearch-public-job-discovery/);
+});
+
 test("starts compose and waits for healthy dependencies before applications", async () => {
   const calls = [];
   await prepareInfrastructure({
@@ -707,6 +715,7 @@ test("test runtime passes its isolated service addresses to every application", 
 
   const [command, args, options] = spawnCall;
   assert.equal(options.env.APP_ENV, "test");
+  assert.equal(options.env.PUBLIC_SOURCE_NETWORK_MODE, "disabled");
   assert.equal(options.env.PORT, "3120");
   assert.equal(options.env.API_PORT, "3121");
   assert.equal(options.env.API_INTERNAL_URL, "http://127.0.0.1:3121");
@@ -721,6 +730,85 @@ test("test runtime passes its isolated service addresses to every application", 
   assert.equal(options.env.NODE_OPTIONS, undefined);
   assert.equal(options.env.UNRELATED_VALUE, "preserved");
   assert.doesNotMatch(JSON.stringify([command, args]), /local_only_job_copilot_secret/);
+});
+
+test("版本化 Fake AnySearch phase 在取消时关闭 fixture server，再清理隔离基础设施", async () => {
+  const events = [];
+  const signalSource = new EventEmitter();
+  const child = createControlledChild();
+  let fixtureSignal;
+  const runtime = runRuntime({
+    config: createRuntimeConfig({ test: true, anysearchPublicJobPhase: "fake-anysearch-public-job-v1" }),
+    signalSource,
+    prepare: async () => events.push("prepare"),
+    migrate: async () => events.push("migrate"),
+    startFixtureServer: async ({ config, signal }) => {
+      fixtureSignal = signal;
+      assert.equal(config.anysearchPublicJobPhase, "fake-anysearch-public-job-v1");
+      events.push("fixture-start");
+      return { close: async () => events.push("fixture-close") };
+    },
+    start: () => {
+      events.push("start");
+      return child;
+    },
+    waitForReady: async () => events.push("ready"),
+    cleanup: async () => events.push("cleanup"),
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  signalSource.emit("SIGTERM");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(fixtureSignal?.aborted, true);
+  child.emit("exit", 0, null);
+
+  assert.deepEqual(await runtime, { exitCode: 143 });
+  assert.deepEqual(events, ["prepare", "migrate", "fixture-start", "start", "ready", "fixture-close", "cleanup"]);
+});
+
+test("fixture close 失败仍清理隔离 compose 基础设施", async () => {
+  const events = [];
+  const child = createControlledChild();
+  const runtime = runRuntime({
+    config: createRuntimeConfig({ test: true, anysearchPublicJobPhase: "fake-anysearch-public-job-v1" }),
+    prepare: async () => events.push("prepare"),
+    migrate: async () => events.push("migrate"),
+    startFixtureServer: async () => ({ close: async () => { events.push("fixture-close"); throw new Error("fixture close failed"); } }),
+    start: () => child,
+    waitForReady: async () => undefined,
+    cleanup: async () => events.push("cleanup"),
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  child.emit("exit", 0, null);
+  await assert.rejects(runtime, /fixture close failed/);
+  assert.deepEqual(events, ["prepare", "migrate", "fixture-close", "cleanup"]);
+});
+
+test("版本化 missing-key phase 保留只读 fixture endpoint，但绝不向应用注入 AnySearch key", () => {
+  let spawnCall;
+  const runtime = createRuntimeConfig({ test: true, anysearchPublicJobPhase: "fake-anysearch-public-job-missing-key-v1" });
+
+  startApplications({
+    config: runtime,
+    env: { ANYSEARCH_API_KEY: "caller-key-must-not-survive" },
+    spawnProcess: (...args) => {
+      spawnCall = args;
+      return {};
+    },
+  });
+
+  const [, , options] = spawnCall;
+  assert.equal(runtime.anysearchPublicJobPhase, "fake-anysearch-public-job-missing-key-v1");
+  assert.equal(options.env.E2E_ANYSEARCH_PUBLIC_JOB_PHASE, "fake-anysearch-public-job-missing-key-v1");
+  assert.equal(options.env.ANYSEARCH_BASE_URL, "http://127.0.0.1:39334");
+  assert.equal(options.env.JOB_PAGE_FETCHER_TEST_ORIGIN, "http://127.0.0.1:39334");
+  assert.equal(options.env.ANYSEARCH_API_KEY, undefined);
+});
+
+test("test runtime 对未知或空白 AnySearch phase fail closed", () => {
+  for (const phase of ["", " ", "fake-anysearch-public-job-v2"]) {
+    assert.throws(() => createRuntimeConfig({ test: true, anysearchPublicJobPhase: phase }), /JOB_DISCOVERY_RUNTIME_CONFIG_INVALID/);
+  }
 });
 
 test("signal waits for the controlled application child before isolated cleanup", async () => {

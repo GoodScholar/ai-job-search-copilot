@@ -1,0 +1,268 @@
+import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
+import { and, eq, sql } from "drizzle-orm";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import {
+  agentRunJobResults,
+  agentRuns,
+  createDatabase,
+  jobAccounts,
+  jobDiscoveryAttributions,
+  jobDiscoveryLeads,
+  jobOpportunities,
+  jobSourcePostingVersions,
+  jobSourcePostings,
+  jobTargets,
+  migrateDatabase,
+  type Database,
+} from "@job-copilot/database";
+import { JobDiscoveryLeadError, createJobDiscoveryLeadRepository } from "./job-discovery-leads";
+import { createJobDiscoveryLeadTransitions } from "./job-discovery-lead-transitions";
+
+const now = new Date("2026-08-30T12:00:00.000Z");
+const fingerprint = "a".repeat(64);
+const queryFingerprint = "b".repeat(64);
+const verifiedFinalUrl = "https://jobs.example.com/opening?job=123";
+
+describe("job discovery lead repository", () => {
+  let container: StartedPostgreSqlContainer;
+  let database: Database;
+
+  beforeAll(async () => {
+    container = await new PostgreSqlContainer("postgres:17-alpine").start();
+    database = createDatabase(container.getConnectionUri());
+    await migrateDatabase(database);
+  }, 60_000);
+
+  afterAll(async () => {
+    await database?.$client.end();
+    await container?.stop();
+  });
+
+  async function owner(prefix: string) {
+    const userId = crypto.randomUUID();
+    const targetId = crypto.randomUUID();
+    const runId = crypto.randomUUID();
+    await database.insert(jobAccounts).values({ id: userId });
+    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active" });
+    await database.insert(agentRuns).values({
+      id: runId, userId, targetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1,
+      targetSnapshot: {}, sourceScope: {}, budgetSnapshot: {}, workflowVersion: "workflow-v4", ruleVersion: "rules-v1",
+      adapter: "layered-public", adapterVersion: "v1", outputSchemaVersion: "result-v4", toolAllowlist: [],
+      status: "queued", currentStep: "queued", createdAt: now, updatedAt: now, queuedAt: now,
+    });
+    const postingId = crypto.randomUUID();
+    const versionId = crypto.randomUUID();
+    await database.insert(jobSourcePostings).values({
+      id: postingId, userId, sourceType: "official", sourceIdentifier: `${prefix}-source`, sourceIdentity: {}, createdAt: now, updatedAt: now,
+    });
+    await database.insert(jobSourcePostingVersions).values({
+      id: versionId, userId, sourcePostingId: postingId, version: 1, contentSha256: fingerprint,
+      rawContentSha256: fingerprint, rawObjectReference: {}, normalizedData: {}, retrievedAt: now, createdAt: now,
+    });
+    return { userId, targetId, runId, versionId };
+  }
+
+  function repository(id: () => string = () => crypto.randomUUID()) {
+    return { ...createJobDiscoveryLeadRepository({ db: database, id }), ...createJobDiscoveryLeadTransitions({ db: database, id }) };
+  }
+
+  function pendingInput(input: { userId: string; runId: string; targetId: string; queryId?: string; stableFingerprint?: string }) {
+    return {
+      userId: input.userId,
+      runId: input.runId,
+      targetId: input.targetId,
+      queryId: input.queryId ?? crypto.randomUUID(),
+      queryKind: "general" as const,
+      queryFingerprint,
+      normalizedUrl: "https://jobs.example.com/opening?id=123",
+      stableFingerprint: input.stableFingerprint ?? fingerprint,
+      now,
+    };
+  }
+
+  it("只记录安全的待验证 Lead，并把 30 天过期作为读取投影", async () => {
+    const subject = await owner("pending");
+    const created = await repository().recordPending(pendingInput(subject));
+
+    expect(created).toMatchObject({
+      ownerId: subject.userId, runId: subject.runId, targetId: subject.targetId, provider: "anysearch",
+      state: "pending", sourcePostingVersionId: null, rejectionCode: null,
+      expiresAt: "2026-09-29T12:00:00.000Z",
+    });
+    await expect(repository().getLead({ userId: subject.userId, leadId: created.leadId, now: new Date("2026-09-29T12:00:00.000Z") }))
+      .resolves.toMatchObject({ leadId: created.leadId, expired: true, state: "pending" });
+    await expect(repository().getLead({ userId: subject.userId, leadId: created.leadId, now: new Date("2026-09-28T12:00:00.000Z") }))
+      .resolves.toMatchObject({ expired: false });
+    await expect(database.select().from(jobDiscoveryLeads).where(eq(jobDiscoveryLeads.id, created.leadId)))
+      .resolves.toEqual([expect.objectContaining({ expiresAt: new Date("2026-09-29T12:00:00.000Z"), state: "pending" })]);
+  });
+
+  it("携旧 claim authority 的 pending 写入在 claim 被接管后原子拒绝", async () => {
+    const subject = await owner("claim-stale"); const oldToken = crypto.randomUUID();
+    await database.update(agentRuns).set({ status: "running", startedAt: now, claimToken: oldToken, claimExpiresAt: new Date(Date.now() + 60_000), activeSliceStartedAt: now }).where(eq(agentRuns.id, subject.runId));
+    await database.update(agentRuns).set({ claimToken: crypto.randomUUID(), claimExpiresAt: new Date(Date.now() + 60_000) }).where(eq(agentRuns.id, subject.runId));
+    await expect(repository().recordPendingForClaim({ ...pendingInput(subject), claimToken: oldToken })).rejects.toMatchObject({ code: "JOB_DISCOVERY_CLAIM_STALE" });
+    await expect(database.select().from(jobDiscoveryLeads).where(eq(jobDiscoveryLeads.runId, subject.runId))).resolves.toEqual([]);
+  });
+
+  it("只枚举并授权当前 owner/run/query/claim 的 pending Lead", async () => {
+    const subject = await owner("recover"); const claimToken = crypto.randomUUID();
+    await database.update(agentRuns).set({ status: "running", startedAt: now, claimToken, claimExpiresAt: new Date(Date.now() + 60_000), activeSliceStartedAt: now }).where(eq(agentRuns.id, subject.runId));
+    const input = pendingInput(subject);
+    const created = await repository().recordPendingForClaim({ ...input, claimToken });
+    const recovered = await repository().recoverPendingForClaim({ userId: subject.userId, runId: subject.runId, queryId: input.queryId, queryFingerprint: input.queryFingerprint, claimToken, now });
+    expect(recovered).toEqual([expect.objectContaining({ leadId: created.leadId, userId: subject.userId, runId: subject.runId, queryId: input.queryId, stableFingerprint: input.stableFingerprint })]);
+    await expect(repository().authorizeRecoveredCandidateForClaim({ userId: subject.userId, runId: subject.runId, queryId: input.queryId, candidateFingerprint: input.stableFingerprint, leadId: created.leadId, claimToken, now })).resolves.toBe(true);
+    await expect(repository().authorizeRecoveredCandidateForClaim({ userId: subject.userId, runId: subject.runId, queryId: crypto.randomUUID(), candidateFingerprint: input.stableFingerprint, leadId: created.leadId, claimToken, now })).resolves.toBe(false);
+    await expect(repository().authorizeRecoveredCandidateForClaim({ userId: subject.userId, runId: subject.runId, queryId: input.queryId, candidateFingerprint: "c".repeat(64), leadId: created.leadId, claimToken, now })).resolves.toBe(false);
+    await expect(repository().authorizeRecoveredCandidateForClaim({ userId: crypto.randomUUID(), runId: subject.runId, queryId: input.queryId, candidateFingerprint: input.stableFingerprint, leadId: created.leadId, claimToken, now })).rejects.toMatchObject({ code: "JOB_DISCOVERY_CLAIM_STALE" });
+  });
+
+  it("按创建时间和 Lead 身份稳定恢复同一 query 的 pending 候选", async () => {
+    const subject = await owner("recover-order"); const claimToken = crypto.randomUUID(); const queryId = crypto.randomUUID();
+    await database.update(agentRuns).set({ status: "running", startedAt: now, claimToken, claimExpiresAt: new Date(Date.now() + 60_000), activeSliceStartedAt: now }).where(eq(agentRuns.id, subject.runId));
+    const ids = ["018f2d4e-75a1-8f64-bc1d-0123456789af", "018f2d4e-75a1-8f64-bc1d-0123456789aa"];
+    const stableFingerprints = ["c".repeat(64), "d".repeat(64)];
+    for (const index of [0, 1]) await repository(() => ids[index]!).recordPendingForClaim({
+      ...pendingInput({ ...subject, queryId, stableFingerprint: stableFingerprints[index] }),
+      normalizedUrl: `https://jobs.example.com/opening?id=${index + 1}`,
+      now: index === 0 ? new Date(now.getTime() + 1_000) : now,
+      claimToken,
+    });
+
+    const recovered = await repository().recoverPendingForClaim({ userId: subject.userId, runId: subject.runId, queryId, queryFingerprint, claimToken, now });
+    expect(recovered.map((candidate) => candidate.leadId)).toEqual([ids[1], ids[0]]);
+  });
+
+  it("拒绝敏感 URL 与未知输入字段，不持久化 AnySearch 内容", async () => {
+    const subject = await owner("privacy");
+    const secret = "secret-token-sentinel";
+    const base = pendingInput(subject);
+    for (const input of [
+      { ...base, normalizedUrl: `https://user:${secret}@jobs.example.com/opening?id=123` },
+      { ...base, normalizedUrl: "https://jobs.example.com/opening?id=123#fragment" },
+      { ...base, normalizedUrl: `https://jobs.example.com/opening?id=123&token=${secret}` },
+      { ...base, rawUrl: `https://jobs.example.com/opening?id=123&session=${secret}` },
+      { ...base, title: secret }, { ...base, snippet: secret }, { ...base, extract: secret }, { ...base, content: secret }, { ...base, credentials: secret },
+    ]) {
+      await expect(repository().recordPending(input)).rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_INVALID_INPUT" } satisfies Partial<JobDiscoveryLeadError>);
+    }
+    const persisted = await database.execute(sql`
+      select coalesce(string_agg(row::text, ' '), '') as value from (
+        select to_jsonb(lead)::text as row from job_discovery_leads as lead
+        union all select to_jsonb(attribution)::text from job_discovery_attributions as attribution
+        union all select to_jsonb(health)::text from job_source_health_checks as health
+        union all select to_jsonb(audit)::text from audit_events as audit
+      ) persisted
+    `) as unknown as Array<{ value: string }>;
+    expect(persisted[0]!.value).not.toContain(secret);
+  });
+
+  it("拒绝只转换未过期待验证 Lead，并使相同重试收敛", async () => {
+    const subject = await owner("reject");
+    const created = await repository().recordPending(pendingInput(subject));
+    const first = await repository().reject({ userId: subject.userId, leadId: created.leadId, rejectionCode: "POLICY_REJECTED", now });
+    const retry = await repository().reject({ userId: subject.userId, leadId: created.leadId, rejectionCode: "POLICY_REJECTED", now });
+
+    expect(retry).toEqual(first);
+    await expect(repository().reject({ userId: subject.userId, leadId: created.leadId, rejectionCode: "POLICY_REJECTED", now: new Date("2026-09-29T12:00:00.000Z") }))
+      .resolves.toEqual(first);
+    expect(first).toMatchObject({ state: "rejected", sourcePostingVersionId: null, rejectionCode: "POLICY_REJECTED" });
+    await expect(repository().reject({ userId: subject.userId, leadId: created.leadId, rejectionCode: "UNSAFE_URL", now }))
+      .rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_REJECTION_CONFLICT" } satisfies Partial<JobDiscoveryLeadError>);
+    await expect(repository().verifyAndAttribute({ userId: subject.userId, leadId: created.leadId, sourcePostingVersionId: subject.versionId, verifiedFinalUrl, now }))
+      .rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_STATE_CONFLICT" } satisfies Partial<JobDiscoveryLeadError>);
+  });
+
+  it("在同一事务验证并归因，重试不会创建 Source Posting、Opportunity 或 Result", async () => {
+    const subject = await owner("verify");
+    const created = await repository().recordPending(pendingInput(subject));
+    const before = await Promise.all([
+      database.select().from(jobSourcePostings).where(eq(jobSourcePostings.userId, subject.userId)),
+      database.select().from(jobOpportunities).where(eq(jobOpportunities.userId, subject.userId)),
+      database.select().from(agentRunJobResults).where(eq(agentRunJobResults.userId, subject.userId)),
+    ]);
+    const [first, retry] = await Promise.all([
+      repository().verifyAndAttribute({ userId: subject.userId, leadId: created.leadId, sourcePostingVersionId: subject.versionId, verifiedFinalUrl, now }),
+      repository().verifyAndAttribute({ userId: subject.userId, leadId: created.leadId, sourcePostingVersionId: subject.versionId, verifiedFinalUrl, now }),
+    ]);
+
+    expect(retry).toEqual(first);
+    expect(first).toMatchObject({ lead: { state: "verified", sourcePostingVersionId: subject.versionId, rejectionCode: null }, attribution: expect.objectContaining({ ownerId: subject.userId, runId: subject.runId, leadId: created.leadId, provider: "anysearch", sourcePostingVersionId: subject.versionId }) });
+    expect(Object.hasOwn(first.lead, "verifiedFinalUrl")).toBe(false);
+    await expect(database.select().from(jobDiscoveryAttributions).where(and(eq(jobDiscoveryAttributions.userId, subject.userId), eq(jobDiscoveryAttributions.leadId, created.leadId))))
+      .resolves.toHaveLength(1);
+    await expect(repository().getAttribution({ userId: subject.userId, leadId: created.leadId })).resolves.toEqual(first.attribution);
+    await expect(Promise.all([
+      database.select().from(jobSourcePostings).where(eq(jobSourcePostings.userId, subject.userId)),
+      database.select().from(jobOpportunities).where(eq(jobOpportunities.userId, subject.userId)),
+      database.select().from(agentRunJobResults).where(eq(agentRunJobResults.userId, subject.userId)),
+    ])).resolves.toEqual(before);
+  });
+
+  it("不泄露其他 owner 的 Lead，且跨 owner/version 失败后不留下半写入", async () => {
+    const subject = await owner("owner");
+    const other = await owner("other");
+    const created = await repository().recordPending(pendingInput(subject));
+
+    await expect(repository().getLead({ userId: other.userId, leadId: created.leadId, now })).resolves.toBeNull();
+    await expect(repository().reject({ userId: other.userId, leadId: created.leadId, rejectionCode: "POLICY_REJECTED", now }))
+      .rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_NOT_FOUND" } satisfies Partial<JobDiscoveryLeadError>);
+    await expect(repository().verifyAndAttribute({ userId: subject.userId, leadId: created.leadId, sourcePostingVersionId: other.versionId, verifiedFinalUrl, now }))
+      .rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_VERSION_NOT_FOUND" } satisfies Partial<JobDiscoveryLeadError>);
+    await expect(repository().verifyAndAttribute({ userId: other.userId, leadId: created.leadId, sourcePostingVersionId: other.versionId, verifiedFinalUrl, now }))
+      .rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_NOT_FOUND" } satisfies Partial<JobDiscoveryLeadError>);
+    await expect(database.select().from(jobDiscoveryLeads).where(eq(jobDiscoveryLeads.id, created.leadId)))
+      .resolves.toEqual([expect.objectContaining({ state: "pending", sourcePostingVersionId: null, rejectionCode: null })]);
+    await expect(database.select().from(jobDiscoveryAttributions).where(eq(jobDiscoveryAttributions.leadId, created.leadId))).resolves.toEqual([]);
+    await expect(repository().getAttribution({ userId: other.userId, leadId: created.leadId })).resolves.toBeNull();
+  });
+
+  it("过期 Lead 不转换，且重复 recordPending 只返回原记录", async () => {
+    const subject = await owner("expiry");
+    const input = pendingInput(subject);
+    const [first, second] = await Promise.all([repository().recordPending(input), repository().recordPending(input)]);
+
+    expect(second).toEqual(first);
+    await expect(repository().reject({ userId: subject.userId, leadId: first.leadId, rejectionCode: "POLICY_REJECTED", now: new Date("2026-09-29T12:00:00.000Z") }))
+      .rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_EXPIRED" } satisfies Partial<JobDiscoveryLeadError>);
+    await expect(repository().verifyAndAttribute({ userId: subject.userId, leadId: first.leadId, sourcePostingVersionId: subject.versionId, verifiedFinalUrl, now: new Date("2026-09-29T12:00:00.000Z") }))
+      .rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_EXPIRED" } satisfies Partial<JobDiscoveryLeadError>);
+    await expect(database.select().from(jobDiscoveryLeads).where(eq(jobDiscoveryLeads.id, first.leadId))).resolves.toEqual([expect.objectContaining({ state: "pending" })]);
+  });
+
+  it("recordPending 只将完全相同的不可变事实视为重试，忽略晚到 retry 的 now", async () => {
+    const subject = await owner("identity");
+    const input = pendingInput(subject);
+    const first = await repository().recordPending(input);
+    const later = await repository().recordPending({ ...input, now: new Date("2026-08-31T12:00:00.000Z") });
+
+    expect(later).toEqual(first);
+    for (const mismatch of [
+      { targetId: crypto.randomUUID() },
+      { queryId: crypto.randomUUID() },
+      { queryKind: "site_constrained" as const },
+      { queryFingerprint: "c".repeat(64) },
+      { normalizedUrl: "https://jobs.example.com/opening?id=456" },
+    ]) {
+      await expect(repository().recordPending({ ...input, ...mismatch }))
+        .rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_IDENTITY_CONFLICT" } satisfies Partial<JobDiscoveryLeadError>);
+    }
+    await expect(database.select().from(jobDiscoveryLeads).where(eq(jobDiscoveryLeads.id, first.leadId)))
+      .resolves.toEqual([expect.objectContaining({ targetId: subject.targetId, queryId: input.queryId, normalizedUrl: input.normalizedUrl })]);
+  });
+
+  it("recordPending 将预期 owner/run/target 与 id 约束映射为稳定领域错误", async () => {
+    const subject = await owner("record-errors");
+    const other = await owner("record-errors-other");
+    await expect(repository().recordPending({ ...pendingInput(subject), runId: crypto.randomUUID() }))
+      .rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_RUN_NOT_FOUND" } satisfies Partial<JobDiscoveryLeadError>);
+    await expect(repository().recordPending({ ...pendingInput(subject), targetId: other.targetId }))
+      .rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_RUN_NOT_FOUND" } satisfies Partial<JobDiscoveryLeadError>);
+
+    const duplicateId = crypto.randomUUID();
+    await repository(() => duplicateId).recordPending(pendingInput(subject));
+    await expect(repository(() => duplicateId).recordPending(pendingInput(other)))
+      .rejects.toMatchObject({ code: "JOB_DISCOVERY_LEAD_ID_CONFLICT" } satisfies Partial<JobDiscoveryLeadError>);
+  });
+});

@@ -1,0 +1,61 @@
+# Task 5 report — mission control and Inbox
+
+## Design pass
+
+- **对象与单一工作：** 面向普通求职者的岗位发现任务控制台；用户在此只需看清一次运行的进度、预算和待处理事项，并能安全地暂停、继续或取消。
+- **既有账本 token：** `--ground #f5f1e8`（纸张底）、`--surface #fffdf7`（票据面）、`--ink #17231f`（正文）、`--muted #64726a`（说明）、`--emerald #25745a` / `--emerald-strong #14523d`（可操作事实）、`--amber #c68b2f` / `--amber-ink #805100`（等待或风险）。不引入渐变或新品牌色。
+- **字体角色：** 沿用全站既有正文/标题字体；大标题只用于工作台入口，面板标题为紧凑粗体，预算和运行序号使用 tabular numerals，避免把数据当作装饰性大数字。
+- **布局线框：**
+
+  ```text
+  [运行选择与启动]
+  [状态文字 | 暂停 / 继续 / 取消]
+  [执行规格与预算分录（dl）]
+  [时间线]
+  [本次结果]
+  [Agent Inbox：每项为 article + 明确动作]
+  ```
+
+- **signature：** 预算不是仪表盘，而是一组带“已用 / 上限”文字的账本分录；它把任务、预算与待处理事项连成一个可核对的行动记录。
+- **自检与取舍：** 已去除英雄数据、渐变、圆角卡片堆叠、装饰性图标和无意义动画。色彩仅辅助状态，文字状态、定义列表、按钮标签和结果消息承担实际语义。
+
+## RED
+
+- `pnpm --filter web typecheck`：失败（Task 4 明确递延的 3 项）：`maxActiveDurationMs` fixture 旧字段、4 个模型失败码未覆盖、`timelineLabel` 非穷尽返回。
+- 待补 UI RED：页面四请求并行、运行详情/安全控制/SSE、Inbox 4 个动作及幂等重试。
+
+## GREEN
+
+- 首页并行读取工作台、目标、最新运行和开放 Inbox，并将严格 DTO 传给视图。
+- 运行面板渲染执行规格、来源/步骤、规则、Adapter、工具白名单、模型未使用说明及预算分录；`queued`、`running`、`paused` 均阻止再次启动。
+- 控制命令按动作保留 UUID；网络失败复用，成功或 409 冲突才清理。取消请求更新后不会显示继续；暂停/终态 SSE 关闭后重读权威详情。
+- Inbox 用 `article` 呈现，统一支持重启、继续、取消、标记已处理；预算事项保留“调整求职目标”链接，导航本身不解决事项。
+
+## Verification
+
+- `pnpm --filter web test -- components/workbench/agent-run-panel.test.tsx components/workbench/agent-inbox-panel.test.tsx components/workbench/workbench-home-view.test.tsx 'app/(workbench)/home/page.test.tsx'` — 42 files / 201 tests passed。
+- `pnpm --filter web typecheck` — passed（Task 4 递延的 3 个错误已关闭）。
+- `pnpm --filter @job-copilot/contracts typecheck` — passed。
+- `git diff --check` — passed。
+
+## Concerns
+
+- Task 6 仍负责真实 Web/API/Worker 的 Playwright 暂停、取消、重试和预算耗尽验收；本 Task 仅覆盖组件与页面边界。
+
+## Review-fix RED/GREEN
+
+- **RED：** 审查新增 9 个失败断言，覆盖暂停/终态后的 Inbox 刷新、低版本暂停响应晚于高版本取消、请求发出时的即时反馈、历史消费不完整、当前步骤与输出结构、控制按钮矩阵、409 后 UUID 轮换，以及四种 Inbox 动作的成功/失败语义。
+- **GREEN：** `WorkbenchHomeView` 持有开放 Inbox 的唯一客户端投影，并通过同源 GET 显式刷新；运行面板只在暂停或终态详情权威重读后触发刷新。控制响应按 version 单调应用，且已观察到的取消意图不可被旧暂停覆盖。每个动作请求前立即显示稳定状态。历史运行只显示预算上限。最后一项解决后保留带成功消息的 `aria-live` 区域。
+- **验证：** focused Web suite 42 files / 214 tests passed；`pnpm --filter web typecheck`、`pnpm --filter @job-copilot/contracts typecheck`、`git diff --check` 全部通过。
+
+## Review-fix round 2
+
+- **RED：** Inbox 网络/解析辅助读取能够 reject，导致 SSE fire-and-forget 未处理拒绝，直接控制把辅助刷新失败误归类为详情读取失败。
+- **GREEN：** 同源 Inbox 读取统一返回 `AgentInboxItem[] | false`，并捕获网络、HTTP 与解析失败。SSE 显式处理辅助刷新结果；直接控制先完成权威详情读取，再单独处理刷新。两条路径均保留已应用的运行状态，并仅显示“待处理事项暂未刷新，请刷新页面查看”。
+- **验证：** focused Web suite 42 files / 217 tests passed；Web typecheck、Contracts typecheck、diff check 全部通过。
+
+## Review-fix round 3
+
+- **RED：** SSE 将暂停详情写入 state 后触发 effect cleanup，局部 `streamActive` 变为 false，使随后延迟完成的 Inbox 刷新失败提示被吞掉。
+- **GREEN：** Inbox 刷新回调使用组件挂载 ref 与同一 `runId` guard，而不是 EventSource effect 的局部生命周期。暂停详情落地后，延迟 `false` 仍显示稳定警告；卸载或运行切换后不更新状态。
+- **验证：** focused Web suite 42 files / 218 tests passed；Web typecheck、Contracts typecheck、diff check 全部通过。

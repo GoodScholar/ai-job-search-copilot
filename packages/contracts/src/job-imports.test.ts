@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CreateJobImportCommandSchema,
   JobImportDetailSchema,
+  JobNormalizerOutputSchema,
 } from "./job-imports";
 
 describe("job import contracts", () => {
@@ -38,5 +39,41 @@ describe("job import contracts", () => {
           requestedUrl: null, finalUrl: null, canonicalUrl: null, pageClassification: null, sourceKind: null },
       },
     })).toBeDefined();
+  });
+
+  it("keeps only explicit qualification fields and their minimal evidence", () => {
+    expect(JobNormalizerOutputSchema.parse({
+      normalizerVersion: "fake-job-normalizer-v2",
+      company: "示例科技",
+      title: "高级前端工程师",
+      location: null,
+      postedAt: null,
+      deadline: null,
+      description: null,
+      qualifications: {
+        workMode: { value: "remote", evidence: { field: "workMode", path: "工作方式", value: "远程" } },
+        relocationRequired: null,
+        salary: null,
+        seniority: null,
+        education: null,
+        languages: null,
+        workEligibility: null,
+        industry: null,
+        employmentType: null,
+        requiredSkills: null,
+      },
+    })).toMatchObject({
+      qualifications: { workMode: { value: "remote", evidence: { field: "workMode", path: "工作方式", value: "远程" } } },
+    });
+  });
+
+  it("treats legacy normalized data without qualifications as missing fields", () => {
+    expect(JobNormalizerOutputSchema.parse({
+      normalizerVersion: "fake-job-normalizer-v1", company: null, title: null, location: null,
+      postedAt: null, deadline: null, description: null,
+    }).qualifications).toEqual({
+      workMode: null, relocationRequired: null, salary: null, seniority: null, education: null,
+      languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: null,
+    });
   });
 });

@@ -24,3 +24,7 @@ Issue 与规格使用 GitHub Issues，目标仓库为 `GoodScholar/ai-job-search
 
 - 每个 Issue 都必须完整经过需求规划、implementation plan、TDD 切片实现、双轴代码审查、完整验收与关闭，不得因连续执行而省略阶段。
 - 开始下一个 Issue 时，必须创建全新的 Codex 任务，并在新任务中发送 `/implement #<issue-number>`；不在已完成上一 Issue 的任务中直接续做。
+
+### 测试并发纪律
+
+- Supervisor 与 Executor 不得并发运行相同或重叠的测试命令；发现重叠时，相关结果一律作废，确认无遗留测试进程后仅以单进程串行命令从零重跑并保留完整日志。

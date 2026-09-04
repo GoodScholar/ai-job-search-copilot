@@ -31,4 +31,5 @@ describe("RedisHeartbeatAdapter", () => {
     });
     await expect(heartbeat.readFresh(new Date("2026-08-26T10:00:11.000Z"))).resolves.toBeNull();
   });
+
 });

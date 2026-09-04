@@ -11,7 +11,7 @@
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
-    "test:e2e": "PLAYWRIGHT_HTML_OPEN=never playwright test"
+    "test:e2e": "PLAYWRIGHT_HTML_OPEN=never node scripts/e2e-runner.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
@@ -37,6 +37,7 @@
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.6",
     "@types/node": "^20",
+    "@types/pg": "^8.15.5",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^6.1.0",
@@ -44,6 +45,8 @@
     "eslint": "^9",
     "eslint-config-next": "16.3.2",
     "jsdom": "^30.0.1",
+    "minio": "8.0.6",
+    "pg": "8.16.3",
     "tailwindcss": "^4",
     "typescript": "^5.9.3",
     "vitest": "^4.1.11"

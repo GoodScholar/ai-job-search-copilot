@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Injectable, Module, type OnModuleDestroy } from "@nestjs/common";
+import { Inject, Injectable, Module, type OnModuleDestroy } from "@nestjs/common";
 import { Client as MinioClient } from "minio";
 import { createDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
@@ -30,11 +30,13 @@ function createMinioClient(): MinioClient {
 }
 
 @Injectable()
-class WorkerDatabase implements OnModuleDestroy {
+class WorkerDatabase {
   readonly db: Database = createDatabase(required("DATABASE_URL", "postgresql://job_copilot:local_only_job_copilot@127.0.0.1:54320/job_copilot"));
+  private closePromise: Promise<void> | undefined;
 
-  async onModuleDestroy(): Promise<void> {
-    await this.db.$client.end();
+  close(): Promise<void> {
+    this.closePromise ??= this.db.$client.end({ timeout: 5 });
+    return this.closePromise;
   }
 }
 
@@ -64,4 +66,23 @@ class WorkerDatabase implements OnModuleDestroy {
   ],
   exports: [CAREER_IMPORT_CONSUMER],
 })
-export class CareerImportModule {}
+export class CareerImportModule implements OnModuleDestroy {
+  constructor(
+    @Inject(CAREER_IMPORT_CONSUMER) private readonly consumer: CareerImportConsumer,
+    @Inject(WORKER_DATABASE) private readonly database: WorkerDatabase,
+  ) {}
+
+  async onModuleDestroy(): Promise<void> {
+    try {
+      await this.consumer.close();
+    } catch {
+      // Database cleanup still runs in finally.
+    } finally {
+      try {
+        await this.database.close();
+      } catch {
+        // postgres-js timeout is the final forced-release boundary.
+      }
+    }
+  }
+}

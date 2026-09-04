@@ -1,0 +1,11 @@
+{
+  "jobs": [
+    { "id": 701, "title": "Machine Learning Engineer", "location": { "name": "Beijing" }, "updated_at": "2026-08-29T09:00:00.000Z", "absolute_url": "https://boards.greenhouse.io/fictional-labs/jobs/701" },
+    { "id": 702, "title": "Platform Engineer", "location": { "name": "Shanghai" }, "updated_at": "2026-08-29T10:00:00.000Z", "absolute_url": "https://boards.greenhouse.io/fictional-labs/jobs/702" },
+    { "id": 703, "title": "Data Engineer", "location": { "name": "Shenzhen" }, "updated_at": "2026-08-29T11:00:00.000Z", "absolute_url": "https://boards.greenhouse.io/fictional-labs/jobs/703" },
+    { "id": 704, "title": "Backend Engineer", "location": { "name": "Hangzhou" }, "updated_at": "2026-08-29T12:00:00.000Z", "absolute_url": "https://boards.greenhouse.io/fictional-labs/jobs/704" },
+    { "id": 705, "title": "Frontend Engineer", "location": { "name": "Beijing" }, "updated_at": "2026-08-29T13:00:00.000Z", "absolute_url": "https://boards.greenhouse.io/fictional-labs/jobs/705" },
+    { "id": 706, "title": "Security Engineer", "location": { "name": "Remote" }, "updated_at": "2026-08-29T14:00:00.000Z", "absolute_url": "https://boards.greenhouse.io/fictional-labs/jobs/706" }
+  ],
+  "meta": { "total": 6 }
+}

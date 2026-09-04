@@ -127,6 +127,188 @@
       "when": 1787981781118,
       "tag": "0017_agent_run_recovery_index",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1788005549840,
+      "tag": "0018_agent_run_control_budget_inbox",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1788005550000,
+      "tag": "0019_agent_inbox_action_ownership",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1788022752945,
+      "tag": "0020_company_watchlists",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1788031112341,
+      "tag": "0021_scheduled_public_job_discovery",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1788054893724,
+      "tag": "0022_source_health_and_partial_discovery",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1788060617070,
+      "tag": "0023_source_attention_inbox",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1788089830066,
+      "tag": "0024_fat_jane_foster",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1788096120000,
+      "tag": "0025_layered_public_discovery_workflow",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1788096255425,
+      "tag": "0026_discovery_attention",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1788096750092,
+      "tag": "0027_massive_purple_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1788246548431,
+      "tag": "0028_job_triage_versions",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1788251969779,
+      "tag": "0029_heavy_devos",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1788252000000,
+      "tag": "0030_deep_match_recommendations",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1788252100000,
+      "tag": "0031_deep_match_agent_runs",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1788252200000,
+      "tag": "0032_recommendation_highlight_limit",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1788252300000,
+      "tag": "0033_deep_match_usage_entries",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1788252400000,
+      "tag": "0034_recommendation_highlight_limit_lock",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1788252500000,
+      "tag": "0035_agent_run_step_model_failures",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1788252600000,
+      "tag": "0036_recommendation_exclusion_list_ownership",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1788252700000,
+      "tag": "0037_deep_match_run_staging",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1788355983811,
+      "tag": "0038_recommendation_feedback_calibration",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1788360933191,
+      "tag": "0039_boring_sleepwalker",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1788363510001,
+      "tag": "0040_loud_northstar",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1788404767673,
+      "tag": "0041_thankful_lethal_legion",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1788407394798,
+      "tag": "0042_mighty_malcolm_colcord",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1788408000000,
+      "tag": "0043_task_control_agent_inbox",
+      "breakpoints": true
     }
   ]
 }

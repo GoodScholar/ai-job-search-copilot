@@ -322,6 +322,49 @@ export const jobTargetRevisions = pgTable("job_target_revisions", {
   check("job_target_revisions_constraints_object", sql`jsonb_typeof(${table.constraints}) = 'object'`),
 ]);
 
+export const companyWatchlists = pgTable("company_watchlists", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  targetId: uuid("target_id").notNull().references(() => jobTargets.id),
+  version: integer("version").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("company_watchlists_user_target_unique").on(table.userId, table.targetId),
+  unique("company_watchlists_user_id_id_unique").on(table.userId, table.id),
+  unique("company_watchlists_user_watchlist_target_unique").on(table.userId, table.id, table.targetId),
+  foreignKey({
+    columns: [table.userId, table.targetId],
+    foreignColumns: [jobTargets.userId, jobTargets.id],
+    name: "company_watchlists_owner_target_fk",
+  }),
+  check("company_watchlists_version_positive", sql`${table.version} >= 1`),
+]);
+
+export const companyWatchlistRevisions = pgTable("company_watchlist_revisions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  watchlistId: uuid("watchlist_id").notNull(),
+  targetId: uuid("target_id").notNull(),
+  version: integer("version").notNull(),
+  items: jsonb("items").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("company_watchlist_revisions_watchlist_version_unique").on(table.watchlistId, table.version),
+  foreignKey({
+    columns: [table.userId, table.watchlistId, table.targetId],
+    foreignColumns: [companyWatchlists.userId, companyWatchlists.id, companyWatchlists.targetId],
+    name: "company_watchlist_revisions_watchlist_target_fk",
+  }),
+  foreignKey({
+    columns: [table.userId, table.targetId],
+    foreignColumns: [jobTargets.userId, jobTargets.id],
+    name: "company_watchlist_revisions_owner_target_fk",
+  }),
+  check("company_watchlist_revisions_version_positive", sql`${table.version} >= 1`),
+  check("company_watchlist_revisions_items_array", sql`jsonb_typeof(${table.items}) = 'array'`),
+]);
+
 export const jobImports = pgTable("job_imports", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").notNull().references(() => jobAccounts.id),
@@ -357,14 +400,21 @@ export const jobSourcePostings = pgTable("job_source_postings", {
   userId: uuid("user_id").notNull().references(() => jobAccounts.id),
   sourceType: varchar("source_type", { length: 32 }).notNull(),
   sourceIdentifier: varchar("source_identifier", { length: 512 }).notNull(),
+  sourceId: varchar("source_id", { length: 2_048 }),
   sourceIdentity: jsonb("source_identity").notNull(),
+  applicationDeadline: timestamp("application_deadline", { withTimezone: true }),
   isOfficial: boolean("is_official").notNull().default(false),
+  availability: varchar("availability", { length: 16 }).notNull().default("open"),
+  availabilityUpdatedAt: timestamp("availability_updated_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   unique("job_source_postings_user_identity_unique").on(table.userId, table.sourceType, table.sourceIdentifier),
   unique("job_source_postings_user_id_id_unique").on(table.userId, table.id),
+  index("job_source_postings_availability_idx").on(table.userId, table.availability, table.availabilityUpdatedAt),
+  index("job_source_postings_source_scan_idx").on(table.userId, table.sourceType, table.sourceId, table.applicationDeadline),
   check("job_source_postings_source_identity_object", sql`jsonb_typeof(${table.sourceIdentity}) = 'object'`),
+  check("job_source_postings_availability_check", sql`${table.availability} in ('open', 'closed', 'expired')`),
 ]);
 
 export const jobSourcePostingVersions = pgTable("job_source_posting_versions", {
@@ -375,11 +425,14 @@ export const jobSourcePostingVersions = pgTable("job_source_posting_versions", {
   contentSha256: varchar("content_sha256", { length: 64 }).notNull(),
   rawContentSha256: varchar("raw_content_sha256", { length: 64 }).notNull(),
   rawObjectReference: jsonb("raw_object_reference").notNull(),
+  normalizedData: jsonb("normalized_data").notNull().default({}),
   retrievedAt: timestamp("retrieved_at", { withTimezone: true }).notNull(),
+  availability: varchar("availability", { length: 16 }).notNull().default("open"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   unique("job_source_posting_versions_posting_version_unique").on(table.sourcePostingId, table.version),
   unique("job_source_posting_versions_user_id_id_unique").on(table.userId, table.id),
+  index("job_source_posting_versions_availability_idx").on(table.userId, table.availability, table.createdAt, table.sourcePostingId),
   foreignKey({
     columns: [table.userId, table.sourcePostingId],
     foreignColumns: [jobSourcePostings.userId, jobSourcePostings.id],
@@ -389,6 +442,7 @@ export const jobSourcePostingVersions = pgTable("job_source_posting_versions", {
   check("job_source_posting_versions_content_sha256_format", sql`${table.contentSha256} ~ '^[0-9a-f]{64}$'`),
   check("job_source_posting_versions_raw_content_sha256_format", sql`${table.rawContentSha256} ~ '^[0-9a-f]{64}$'`),
   check("job_source_posting_versions_raw_object_reference_object", sql`jsonb_typeof(${table.rawObjectReference}) = 'object'`),
+  check("job_source_posting_versions_availability_check", sql`${table.availability} in ('open', 'closed', 'expired')`),
 ]);
 
 export const jobOpportunities = pgTable("job_opportunities", {
@@ -396,6 +450,7 @@ export const jobOpportunities = pgTable("job_opportunities", {
   userId: uuid("user_id").notNull().references(() => jobAccounts.id),
   importId: uuid("import_id").references(() => jobImports.id),
   sourcePostingVersionId: uuid("source_posting_version_id").notNull().references(() => jobSourcePostingVersions.id),
+  canonicalOpportunityId: uuid("canonical_opportunity_id"),
   dedupKey: varchar("dedup_key", { length: 64 }).notNull(),
   company: text("company"),
   title: text("title"),
@@ -404,11 +459,15 @@ export const jobOpportunities = pgTable("job_opportunities", {
   deadline: timestamp("deadline", { withTimezone: true }),
   description: text("description"),
   normalizedData: jsonb("normalized_data").notNull(),
+  availability: varchar("availability", { length: 16 }).notNull().default("open"),
+  availabilityUpdatedAt: timestamp("availability_updated_at", { withTimezone: true }).notNull().defaultNow(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
-  unique("job_opportunities_user_dedup_unique").on(table.userId, table.dedupKey),
+  uniqueIndex("job_opportunities_current_dedup_unique").on(table.userId, table.dedupKey).where(sql`${table.canonicalOpportunityId} is null`),
   unique("job_opportunities_user_id_id_unique").on(table.userId, table.id),
+  index("job_opportunities_availability_idx").on(table.userId, table.availability, table.availabilityUpdatedAt),
+  index("job_opportunities_canonical_idx").on(table.userId, table.canonicalOpportunityId),
   foreignKey({
     columns: [table.userId, table.importId],
     foreignColumns: [jobImports.userId, jobImports.id],
@@ -419,8 +478,15 @@ export const jobOpportunities = pgTable("job_opportunities", {
     foreignColumns: [jobSourcePostingVersions.userId, jobSourcePostingVersions.id],
     name: "job_opportunities_owner_posting_version_fk",
   }),
+  foreignKey({
+    columns: [table.userId, table.canonicalOpportunityId],
+    foreignColumns: [table.userId, table.id],
+    name: "job_opportunities_owner_canonical_opportunity_fk",
+  }),
   check("job_opportunities_dedup_key_format", sql`${table.dedupKey} ~ '^[0-9a-f]{64}$'`),
+  check("job_opportunities_canonical_opportunity_not_self", sql`${table.canonicalOpportunityId} is null or ${table.canonicalOpportunityId} <> ${table.id}`),
   check("job_opportunities_normalized_data_object", sql`jsonb_typeof(${table.normalizedData}) = 'object'`),
+  check("job_opportunities_availability_check", sql`${table.availability} in ('open', 'closed', 'expired')`),
 ]);
 
 export const jobOpportunitySources = pgTable("job_opportunity_sources", {
@@ -445,6 +511,58 @@ export const jobOpportunitySources = pgTable("job_opportunity_sources", {
   }),
 ]);
 
+/**
+ * 一次确定性资格门槛与粗排的不可变快照。岗位、画像、目标或任一规则版本
+ * 改变时必须新建记录；失败、未知及过期岗位不允许携带评分。
+ */
+export const jobTriageVersions = pgTable("job_triage_versions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  opportunityId: uuid("opportunity_id").notNull().references(() => jobOpportunities.id),
+  sourcePostingVersionId: uuid("source_posting_version_id").notNull().references(() => jobSourcePostingVersions.id),
+  profileId: uuid("profile_id").notNull().references(() => jobProfiles.id),
+  profileVersion: integer("profile_version").notNull(),
+  targetId: uuid("target_id").notNull().references(() => jobTargets.id),
+  targetVersion: integer("target_version").notNull(),
+  qualificationRuleVersion: varchar("qualification_rule_version", { length: 64 }).notNull(),
+  coarseRuleVersion: varchar("coarse_rule_version", { length: 64 }).notNull(),
+  overallVerdict: varchar("overall_verdict", { length: 16 }).notNull(),
+  gateResults: jsonb("gate_results").notNull(),
+  pendingItems: jsonb("pending_items").notNull(),
+  deadlineStatus: varchar("deadline_status", { length: 16 }).notNull(),
+  confidenceBasisPoints: integer("confidence_basis_points").notNull(),
+  dimensionScores: jsonb("dimension_scores"),
+  overallScore: integer("overall_score"),
+  threshold: integer("threshold"),
+  sequence: integer("sequence").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_triage_versions_input_rule_unique").on(
+    table.userId, table.opportunityId, table.sourcePostingVersionId, table.profileId, table.profileVersion,
+    table.targetId, table.targetVersion, table.qualificationRuleVersion, table.coarseRuleVersion,
+  ),
+  unique("job_triage_versions_user_id_id_unique").on(table.userId, table.id),
+  unique("job_triage_versions_owner_opportunity_sequence_unique").on(table.userId, table.opportunityId, table.sequence),
+  index("job_triage_versions_owner_opportunity_created_idx").on(table.userId, table.opportunityId, table.sequence),
+  foreignKey({ columns: [table.userId, table.opportunityId], foreignColumns: [jobOpportunities.userId, jobOpportunities.id], name: "job_triage_versions_owner_opportunity_fk" }),
+  foreignKey({ columns: [table.userId, table.sourcePostingVersionId], foreignColumns: [jobSourcePostingVersions.userId, jobSourcePostingVersions.id], name: "job_triage_versions_owner_source_version_fk" }),
+  foreignKey({ columns: [table.userId, table.profileId], foreignColumns: [jobProfiles.userId, jobProfiles.id], name: "job_triage_versions_owner_profile_fk" }),
+  foreignKey({ columns: [table.userId, table.targetId], foreignColumns: [jobTargets.userId, jobTargets.id], name: "job_triage_versions_owner_target_fk" }),
+  check("job_triage_versions_profile_version_positive", sql`${table.profileVersion} >= 1`),
+  check("job_triage_versions_target_version_positive", sql`${table.targetVersion} >= 1`),
+  check("job_triage_versions_rule_versions_nonempty", sql`length(${table.qualificationRuleVersion}) between 1 and 64 and length(${table.coarseRuleVersion}) between 1 and 64`),
+  check("job_triage_versions_verdict_check", sql`${table.overallVerdict} in ('pass', 'fail', 'unknown')`),
+  check("job_triage_versions_gate_results_object", sql`jsonb_typeof(${table.gateResults}) = 'object'`),
+  check("job_triage_versions_pending_items_array", sql`jsonb_typeof(${table.pendingItems}) = 'array'`),
+  check("job_triage_versions_deadline_status_check", sql`${table.deadlineStatus} in ('expired', 'closing_soon', 'valid', 'missing', 'invalid')`),
+  check("job_triage_versions_confidence_range", sql`${table.confidenceBasisPoints} between 0 and 10000`),
+  check("job_triage_versions_dimension_scores_object", sql`${table.dimensionScores} is null or jsonb_typeof(${table.dimensionScores}) = 'object'`),
+  check("job_triage_versions_score_range", sql`(${table.overallScore} is null or ${table.overallScore} between 0 and 100) and (${table.threshold} is null or ${table.threshold} between 0 and 100)`),
+  check("job_triage_versions_score_verdict_check", sql`
+    ((${table.overallVerdict} = 'pass' and ${table.deadlineStatus} <> 'expired') = (${table.dimensionScores} is not null and ${table.overallScore} is not null and ${table.threshold} is not null))
+  `),
+]);
+
 export const agentRuns = pgTable("agent_runs", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").notNull().references(() => jobAccounts.id),
@@ -452,16 +570,35 @@ export const agentRuns = pgTable("agent_runs", {
   idempotencyKey: uuid("idempotency_key").notNull(),
   targetVersion: integer("target_version").notNull(),
   targetSnapshot: jsonb("target_snapshot").notNull(),
+  profileSnapshot: jsonb("profile_snapshot"),
+  watchlistSnapshot: jsonb("watchlist_snapshot"),
   sourceScope: jsonb("source_scope").notNull(),
   budgetSnapshot: jsonb("budget_snapshot").notNull(),
   workflowVersion: varchar("workflow_version", { length: 64 }).notNull(),
+  ruleVersion: varchar("rule_version", { length: 64 }).notNull(),
   adapter: varchar("adapter", { length: 64 }).notNull(),
   adapterVersion: varchar("adapter_version", { length: 64 }).notNull(),
   outputSchemaVersion: varchar("output_schema_version", { length: 64 }).notNull(),
+  toolAllowlist: jsonb("tool_allowlist").notNull(),
+  modelSnapshot: jsonb("model_snapshot"),
   status: varchar("status", { length: 16 }).notNull().default("queued"),
   currentStep: varchar("current_step", { length: 32 }).notNull().default("queued"),
+  controlState: varchar("control_state", { length: 24 }).notNull().default("none"),
   version: integer("version").notNull().default(1),
   attemptCount: integer("attempt_count").notNull().default(0),
+  activeSliceStartedAt: timestamp("active_slice_started_at", { withTimezone: true }),
+  activeDurationMs: integer("active_duration_ms").notNull().default(0),
+  toolCallCount: integer("tool_call_count").notNull().default(0),
+  sourceRequestCount: integer("source_request_count").notNull().default(0),
+  modelCallCount: integer("model_call_count").notNull().default(0),
+  inputTokenCount: integer("input_token_count").notNull().default(0),
+  outputTokenCount: integer("output_token_count").notNull().default(0),
+  totalTokenCount: integer("total_token_count").notNull().default(0),
+  resultCount: integer("result_count").notNull().default(0),
+  usageComplete: boolean("usage_complete").notNull().default(false),
+  terminationKind: varchar("termination_kind", { length: 64 }),
+  terminationBudgetDimension: varchar("termination_budget_dimension", { length: 32 }),
+  retryOfRunId: uuid("retry_of_run_id"),
   failureCode: varchar("failure_code", { length: 64 }),
   claimToken: uuid("claim_token"),
   claimExpiresAt: timestamp("claim_expires_at", { withTimezone: true }),
@@ -469,29 +606,365 @@ export const agentRuns = pgTable("agent_runs", {
   startedAt: timestamp("started_at", { withTimezone: true }),
   completedAt: timestamp("completed_at", { withTimezone: true }),
   failedAt: timestamp("failed_at", { withTimezone: true }),
+  cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   unique("agent_runs_user_id_id_unique").on(table.userId, table.id),
+  unique("agent_runs_user_id_id_target_id_unique").on(table.userId, table.id, table.targetId),
   unique("agent_runs_user_idempotency_unique").on(table.userId, table.idempotencyKey),
   index("agent_runs_recovery_status_expiry_idx").on(table.status, table.claimExpiresAt, table.queuedAt, table.id),
   foreignKey({ columns: [table.userId, table.targetId], foreignColumns: [jobTargets.userId, jobTargets.id], name: "agent_runs_owner_target_fk" }),
+  foreignKey({ columns: [table.userId, table.retryOfRunId], foreignColumns: [table.userId, table.id], name: "agent_runs_owner_retry_fk" }),
   check("agent_runs_target_version_positive", sql`${table.targetVersion} >= 1`),
   check("agent_runs_target_snapshot_object", sql`jsonb_typeof(${table.targetSnapshot}) = 'object'`),
+  check("agent_runs_v4_snapshot_pair_check", sql`(
+    ${table.workflowVersion} = 'layered-public-job-discovery-v1'
+    and jsonb_typeof(${table.profileSnapshot}) = 'object'
+    and jsonb_typeof(${table.watchlistSnapshot}) = 'object'
+    and ${table.profileSnapshot} ->> 'targetId' = ${table.targetSnapshot} ->> 'targetId'
+    and ${table.watchlistSnapshot} ->> 'targetId' = ${table.targetSnapshot} ->> 'targetId'
+  ) or (
+    ${table.workflowVersion} <> 'layered-public-job-discovery-v1'
+    and ${table.profileSnapshot} is null
+    and ${table.watchlistSnapshot} is null
+  )`),
   check("agent_runs_source_scope_object", sql`jsonb_typeof(${table.sourceScope}) = 'object'`),
   check("agent_runs_budget_snapshot_object", sql`jsonb_typeof(${table.budgetSnapshot}) = 'object'`),
-  check("agent_runs_status_check", sql`${table.status} in ('queued', 'running', 'completed', 'failed')`),
-  check("agent_runs_current_step_check", sql`${table.currentStep} in ('queued', 'batch_search', 'fetch_details', 'persist_results', 'completed', 'failed')`),
+  check("agent_runs_status_check", sql`${table.status} in ('queued', 'running', 'paused', 'completed', 'failed', 'cancelled')`),
+  check("agent_runs_current_step_check", sql`${table.currentStep} in ('queued', 'batch_search', 'fetch_details', 'persist_results', 'select_candidates', 'assess_matches', 'create_recommendations', 'completed', 'failed', 'cancelled')`),
+  check("agent_runs_control_state_check", sql`${table.controlState} in ('none', 'pause_requested', 'cancel_requested')`),
   check("agent_runs_version_positive", sql`${table.version} >= 1`),
   check("agent_runs_attempt_count_nonnegative", sql`${table.attemptCount} >= 0`),
-  check("agent_runs_failure_code_check", sql`${table.failureCode} is null or ${table.failureCode} in ('AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_CONTENT_STORAGE_FAILED', 'AGENT_RUN_PERSIST_FAILED', 'AGENT_RUN_BUDGET_EXCEEDED')`),
+  check("agent_runs_failure_code_check", sql`${table.failureCode} is null or ${table.failureCode} in ('AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_CONTENT_STORAGE_FAILED', 'AGENT_RUN_PERSIST_FAILED', 'AGENT_RUN_BUDGET_EXCEEDED', 'AGENT_RUN_MODEL_RETRYABLE', 'AGENT_RUN_MODEL_AUTH_FAILED', 'AGENT_RUN_MODEL_POLICY_REJECTED', 'AGENT_RUN_MODEL_INVALID_RESPONSE')`),
   check("agent_runs_claim_consistency_check", sql`(${table.claimToken} is null) = (${table.claimExpiresAt} is null)`),
+  check("agent_runs_execution_claim_check", sql`(${table.claimToken} is null and ${table.claimExpiresAt} is null and ${table.activeSliceStartedAt} is null) or (${table.claimToken} is not null and ${table.claimExpiresAt} is not null and ${table.activeSliceStartedAt} is not null and ${table.status} = 'running')`),
+  check("agent_runs_aggregate_nonnegative", sql`${table.activeDurationMs} >= 0 and ${table.toolCallCount} >= 0 and ${table.sourceRequestCount} >= 0 and ${table.modelCallCount} >= 0 and ${table.inputTokenCount} >= 0 and ${table.outputTokenCount} >= 0 and ${table.totalTokenCount} >= 0 and ${table.resultCount} >= 0`),
+  check("agent_runs_total_tokens_check", sql`${table.totalTokenCount} = ${table.inputTokenCount} + ${table.outputTokenCount}`),
+  check("agent_runs_fake_model_usage_check", sql`(${table.workflowVersion} = 'deep-match-v1' and jsonb_typeof(${table.modelSnapshot}) = 'object') or (${table.workflowVersion} <> 'deep-match-v1' and ${table.modelSnapshot} is null and ${table.modelCallCount} = 0 and ${table.inputTokenCount} = 0 and ${table.outputTokenCount} = 0 and ${table.totalTokenCount} = 0)`),
+  check("agent_runs_termination_kind_check", sql`${table.terminationKind} is null or ${table.terminationKind} in ('completed', 'completed_with_source_issues', 'cancelled_by_user', 'source_failed', 'content_storage_failed', 'persistence_failed', 'budget_exhausted')`),
+  check("agent_runs_termination_budget_dimension_check", sql`(${table.terminationKind} = 'budget_exhausted' and ${table.terminationBudgetDimension} in ('active_duration', 'attempts', 'tool_calls', 'model_calls', 'tokens')) or (${table.terminationKind} is distinct from 'budget_exhausted' and ${table.terminationBudgetDimension} is null)`),
+  check("agent_runs_cancelled_step_check", sql`(${table.status} = 'cancelled') = (${table.currentStep} = 'cancelled')`),
+  check("agent_runs_termination_mapping_check", sql`coalesce((
+    (${table.status} in ('queued', 'running', 'paused') and ${table.terminationKind} is null and ${table.terminationBudgetDimension} is null)
+    or (${table.status} = 'completed' and ((not ${table.usageComplete} and ${table.terminationKind} is null) or (${table.terminationKind} in ('completed', 'completed_with_source_issues') and ${table.failureCode} is null and ${table.terminationBudgetDimension} is null)))
+    or (${table.status} = 'cancelled' and ((not ${table.usageComplete} and ${table.terminationKind} is null) or (${table.terminationKind} = 'cancelled_by_user' and ${table.failureCode} is null and ${table.terminationBudgetDimension} is null)))
+    or (${table.status} = 'failed' and (
+      (not ${table.usageComplete} and ${table.terminationKind} is null)
+      or (${table.terminationKind} = 'source_failed' and ${table.failureCode} in ('AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_MODEL_RETRYABLE', 'AGENT_RUN_MODEL_AUTH_FAILED', 'AGENT_RUN_MODEL_POLICY_REJECTED', 'AGENT_RUN_MODEL_INVALID_RESPONSE') and ${table.terminationBudgetDimension} is null)
+      or (${table.terminationKind} = 'content_storage_failed' and ${table.failureCode} = 'AGENT_RUN_CONTENT_STORAGE_FAILED' and ${table.terminationBudgetDimension} is null)
+      or (${table.terminationKind} = 'persistence_failed' and ${table.failureCode} = 'AGENT_RUN_PERSIST_FAILED' and ${table.terminationBudgetDimension} is null)
+      or (${table.terminationKind} = 'budget_exhausted' and ${table.failureCode} = 'AGENT_RUN_BUDGET_EXCEEDED' and ${table.terminationBudgetDimension} is not null)
+    ))
+  ), false)`),
   check("agent_runs_timestamp_state_check", sql`
-    (${table.status} = 'queued' and ${table.startedAt} is null and ${table.completedAt} is null and ${table.failedAt} is null)
-    or (${table.status} = 'running' and ${table.startedAt} is not null and ${table.completedAt} is null and ${table.failedAt} is null)
-    or (${table.status} = 'completed' and ${table.startedAt} is not null and ${table.completedAt} is not null and ${table.failedAt} is null)
-    or (${table.status} = 'failed' and ${table.startedAt} is not null and ${table.completedAt} is null and ${table.failedAt} is not null)
+    (${table.status} in ('queued', 'paused') and ${table.completedAt} is null and ${table.failedAt} is null and ${table.cancelledAt} is null)
+    or (${table.status} = 'running' and ${table.startedAt} is not null and ${table.completedAt} is null and ${table.failedAt} is null and ${table.cancelledAt} is null)
+    or (${table.status} = 'completed' and ${table.startedAt} is not null and ${table.completedAt} is not null and ${table.failedAt} is null and ${table.cancelledAt} is null)
+    or (${table.status} = 'failed' and ${table.startedAt} is not null and ${table.completedAt} is null and ${table.failedAt} is not null and ${table.cancelledAt} is null)
+    or (${table.status} = 'cancelled' and ${table.completedAt} is null and ${table.failedAt} is null and ${table.cancelledAt} is not null)
   `),
+]);
+
+export const jobDiscoveryLeads = pgTable("job_discovery_leads", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull(),
+  runId: uuid("run_id").notNull(),
+  targetId: uuid("target_id").notNull(),
+  provider: varchar("provider", { length: 32 }).notNull(),
+  queryId: uuid("query_id").notNull(),
+  queryKind: varchar("query_kind", { length: 32 }).notNull(),
+  queryFingerprint: varchar("query_fingerprint", { length: 64 }).notNull(),
+  normalizedUrl: varchar("normalized_url", { length: 2_048 }).notNull(),
+  stableFingerprint: varchar("stable_fingerprint", { length: 64 }).notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  state: varchar("state", { length: 16 }).notNull().default("pending"),
+  sourcePostingVersionId: uuid("source_posting_version_id"),
+  verifiedFinalUrl: varchar("verified_final_url", { length: 2_048 }),
+  rejectionCode: varchar("rejection_code", { length: 64 }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_discovery_leads_owner_run_provider_identity_unique").on(table.userId, table.runId, table.provider, table.stableFingerprint),
+  unique("job_discovery_leads_user_id_id_unique").on(table.userId, table.id),
+  unique("job_discovery_leads_attr_ref_unique").on(table.userId, table.id, table.runId, table.provider, table.queryId, table.sourcePostingVersionId),
+  index("job_discovery_leads_owner_run_state_idx").on(table.userId, table.runId, table.state, table.createdAt, table.id),
+  foreignKey({
+    columns: [table.userId, table.runId, table.targetId],
+    foreignColumns: [agentRuns.userId, agentRuns.id, agentRuns.targetId],
+    name: "job_discovery_leads_owner_run_target_fk",
+  }),
+  foreignKey({
+    columns: [table.userId, table.sourcePostingVersionId],
+    foreignColumns: [jobSourcePostingVersions.userId, jobSourcePostingVersions.id],
+    name: "job_discovery_leads_owner_version_fk",
+  }),
+  check("job_discovery_leads_provider_check", sql`${table.provider} = 'anysearch'`),
+  check("job_discovery_leads_query_kind_check", sql`${table.queryKind} in ('general', 'site_constrained', 'target_company')`),
+  check("job_discovery_leads_query_fingerprint_format", sql`${table.queryFingerprint} ~ '^[0-9a-f]{64}$'`),
+  check("job_discovery_leads_stable_fingerprint_format", sql`${table.stableFingerprint} ~ '^[0-9a-f]{64}$'`),
+  check("job_discovery_leads_url_length_check", sql`length(${table.normalizedUrl}) between 1 and 2048`),
+  check("job_discovery_leads_verified_final_url_length_check", sql`${table.verifiedFinalUrl} is null or length(${table.verifiedFinalUrl}) between 1 and 2048`),
+  check("job_discovery_leads_ttl_check", sql`${table.expiresAt} = ${table.createdAt} + interval '30 days'`),
+  check("job_discovery_leads_state_check", sql`${table.state} in ('pending', 'verified', 'rejected')`),
+  check("job_discovery_leads_rejection_code_check", sql`${table.rejectionCode} is null or ${table.rejectionCode} ~ '^[A-Z][A-Z0-9_]{1,63}$'`),
+  check("job_discovery_leads_outcome_check", sql`
+    (${table.state} = 'pending' and ${table.sourcePostingVersionId} is null and ${table.verifiedFinalUrl} is null and ${table.rejectionCode} is null)
+    or (${table.state} = 'verified' and ${table.sourcePostingVersionId} is not null and ${table.verifiedFinalUrl} is not null and ${table.rejectionCode} is null)
+    or (${table.state} = 'rejected' and ${table.sourcePostingVersionId} is null and ${table.verifiedFinalUrl} is null and ${table.rejectionCode} is not null)
+  `),
+]);
+
+export const jobDiscoveryAttributions = pgTable("job_discovery_attributions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull(),
+  runId: uuid("run_id").notNull(),
+  leadId: uuid("lead_id").notNull(),
+  queryId: uuid("query_id").notNull(),
+  provider: varchar("provider", { length: 32 }).notNull(),
+  sourcePostingVersionId: uuid("source_posting_version_id").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_discovery_attributions_lead_unique").on(table.leadId),
+  unique("job_discovery_attributions_user_id_id_unique").on(table.userId, table.id),
+  index("job_discovery_attributions_owner_run_idx").on(table.userId, table.runId, table.createdAt, table.id),
+  foreignKey({
+    columns: [table.userId, table.leadId, table.runId, table.provider, table.queryId, table.sourcePostingVersionId],
+    foreignColumns: [jobDiscoveryLeads.userId, jobDiscoveryLeads.id, jobDiscoveryLeads.runId, jobDiscoveryLeads.provider, jobDiscoveryLeads.queryId, jobDiscoveryLeads.sourcePostingVersionId],
+    name: "job_discovery_attributions_lead_ref_fk",
+  }),
+  foreignKey({
+    columns: [table.userId, table.sourcePostingVersionId],
+    foreignColumns: [jobSourcePostingVersions.userId, jobSourcePostingVersions.id],
+    name: "job_discovery_attributions_owner_version_fk",
+  }),
+  check("job_discovery_attributions_provider_check", sql`${table.provider} = 'anysearch'`),
+]);
+
+/** 与 Watchlist 来源健康严格分离的 v4 run/查询/线索诊断；不保存 URL、查询正文或 provider 内容。 */
+export const jobDiscoveryDiagnostics = pgTable("job_discovery_diagnostics", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull(),
+  runId: uuid("run_id").notNull(),
+  scope: varchar("scope", { length: 16 }).notNull(),
+  provider: varchar("provider", { length: 32 }).notNull(),
+  queryId: uuid("query_id"),
+  queryKind: varchar("query_kind", { length: 32 }),
+  queryFingerprint: varchar("query_fingerprint", { length: 64 }),
+  leadId: uuid("lead_id"),
+  code: varchar("code", { length: 64 }).notNull(),
+  retryable: boolean("retryable").notNull(),
+  affectedCount: integer("affected_count").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_discovery_diagnostics_owner_run_identity_unique").on(table.userId, table.runId, table.scope, table.provider, table.queryId, table.leadId, table.code).nullsNotDistinct(),
+  unique("job_discovery_diagnostics_user_id_id_unique").on(table.userId, table.id),
+  index("job_discovery_diagnostics_owner_run_idx").on(table.userId, table.runId, table.createdAt, table.id),
+  foreignKey({ columns: [table.userId, table.runId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "job_discovery_diagnostics_owner_run_fk" }),
+  foreignKey({ columns: [table.userId, table.leadId], foreignColumns: [jobDiscoveryLeads.userId, jobDiscoveryLeads.id], name: "job_discovery_diagnostics_owner_lead_fk" }),
+  check("job_discovery_diagnostics_scope_check", sql`${table.scope} in ('provider', 'query', 'lead')`),
+  check("job_discovery_diagnostics_provider_check", sql`${table.provider} = 'anysearch'`),
+  check("job_discovery_diagnostics_code_check", sql`${table.code} ~ '^[A-Z][A-Z0-9_]{1,63}$'`),
+  check("job_discovery_diagnostics_affected_count_check", sql`${table.affectedCount} between 0 and 10`),
+  check("job_discovery_diagnostics_scope_pair_check", sql`
+    (${table.scope} = 'provider' and ${table.queryId} is null and ${table.queryKind} is null and ${table.queryFingerprint} is null and ${table.leadId} is null)
+    or (${table.scope} = 'query' and ${table.queryId} is not null and ${table.queryKind} in ('general', 'site_constrained', 'target_company') and ${table.queryFingerprint} ~ '^[0-9a-f]{64}$' and ${table.leadId} is null)
+    or (${table.scope} = 'lead' and ${table.queryId} is null and ${table.queryKind} is null and ${table.queryFingerprint} is null and ${table.leadId} is not null)
+  `),
+]);
+
+/** v4 运行级问题汇总，独立于 AnySearch diagnostics 与 v3 source health。 */
+export const jobDiscoverySourceIssues = pgTable("job_discovery_source_issues", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull(),
+  runId: uuid("run_id").notNull(),
+  provider: varchar("provider", { length: 32 }).notNull(),
+  code: varchar("code", { length: 64 }).notNull(),
+  affectedCount: integer("affected_count").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_discovery_source_issues_owner_run_identity_unique").on(table.userId, table.runId, table.provider, table.code),
+  unique("job_discovery_source_issues_user_id_id_unique").on(table.userId, table.id),
+  index("job_discovery_source_issues_owner_run_idx").on(table.userId, table.runId, table.provider, table.code),
+  foreignKey({ columns: [table.userId, table.runId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "job_discovery_source_issues_owner_run_fk" }),
+  check("job_discovery_source_issues_provider_check", sql`${table.provider} in ('anysearch', 'greenhouse')`),
+  check("job_discovery_source_issues_code_check", sql`${table.code} ~ '^[A-Z][A-Z0-9_]{1,63}$'`),
+  check("job_discovery_source_issues_affected_count_check", sql`${table.affectedCount} between 0 and 10`),
+]);
+
+/** v4 不创建 Opportunity；只把已经 owner-bound 的真实 Source Version 作为运行结果摘要。 */
+export const jobDiscoveryRunResults = pgTable("job_discovery_run_results", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull(),
+  runId: uuid("run_id").notNull(),
+  sourcePostingVersionId: uuid("source_posting_version_id").notNull(),
+  ordinal: integer("ordinal").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_discovery_run_results_owner_run_ordinal_unique").on(table.userId, table.runId, table.ordinal),
+  unique("job_discovery_run_results_owner_run_version_unique").on(table.userId, table.runId, table.sourcePostingVersionId),
+  unique("job_discovery_run_results_user_id_id_unique").on(table.userId, table.id),
+  foreignKey({ columns: [table.userId, table.runId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "job_discovery_run_results_owner_run_fk" }),
+  foreignKey({ columns: [table.userId, table.sourcePostingVersionId], foreignColumns: [jobSourcePostingVersions.userId, jobSourcePostingVersions.id], name: "job_discovery_run_results_owner_version_fk" }),
+  check("job_discovery_run_results_ordinal_check", sql`${table.ordinal} between 1 and 5`),
+]);
+
+export const jobDiscoverySchedules = pgTable("job_discovery_schedules", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  targetId: uuid("target_id").notNull().references(() => jobTargets.id),
+  version: integer("version").notNull(),
+  state: varchar("state", { length: 16 }).notNull().default("disabled"),
+  dailyTime: varchar("daily_time", { length: 5 }).notNull(),
+  timeZone: varchar("time_zone", { length: 32 }).notNull().default("Asia/Shanghai"),
+  nextRunAt: timestamp("next_run_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_discovery_schedules_user_target_unique").on(table.userId, table.targetId),
+  unique("job_discovery_schedules_user_id_id_unique").on(table.userId, table.id),
+  unique("job_discovery_schedules_user_schedule_target_unique").on(table.userId, table.id, table.targetId),
+  index("job_discovery_schedules_due_idx").on(table.state, table.nextRunAt, table.id),
+  foreignKey({
+    columns: [table.userId, table.targetId],
+    foreignColumns: [jobTargets.userId, jobTargets.id],
+    name: "job_discovery_schedules_owner_target_fk",
+  }),
+  check("job_discovery_schedules_version_positive", sql`${table.version} >= 1`),
+  check("job_discovery_schedules_state_check", sql`${table.state} in ('enabled', 'disabled')`),
+  check("job_discovery_schedules_daily_time_check", sql`${table.dailyTime} ~ '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$'`),
+  check("job_discovery_schedules_time_zone_check", sql`${table.timeZone} = 'Asia/Shanghai'`),
+]);
+
+export const jobDiscoveryScheduleOccurrences = pgTable("job_discovery_schedule_occurrences", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  scheduleId: uuid("schedule_id").notNull(),
+  targetId: uuid("target_id").notNull(),
+  scheduledFor: timestamp("scheduled_for", { withTimezone: true }).notNull(),
+  status: varchar("status", { length: 16 }).notNull().default("pending"),
+  runId: uuid("run_id"),
+  skipReason: varchar("skip_reason", { length: 32 }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_discovery_schedule_occurrences_schedule_time_unique").on(table.scheduleId, table.scheduledFor),
+  unique("job_discovery_schedule_occurrences_user_id_id_unique").on(table.userId, table.id),
+  index("job_discovery_schedule_occurrences_pending_idx").on(table.status, table.scheduledFor, table.id),
+  foreignKey({
+    columns: [table.userId, table.scheduleId, table.targetId],
+    foreignColumns: [jobDiscoverySchedules.userId, jobDiscoverySchedules.id, jobDiscoverySchedules.targetId],
+    name: "job_discovery_schedule_occurrences_owner_schedule_fk",
+  }),
+  foreignKey({
+    columns: [table.userId, table.runId],
+    foreignColumns: [agentRuns.userId, agentRuns.id],
+    name: "job_discovery_schedule_occurrences_owner_run_fk",
+  }),
+  check("job_discovery_schedule_occurrences_status_check", sql`${table.status} in ('pending', 'dispatched', 'skipped')`),
+  check("job_discovery_schedule_occurrences_skip_reason_check", sql`${table.skipReason} is null or ${table.skipReason} in ('TARGET_INACTIVE', 'NO_SUPPORTED_SOURCE', 'SOURCE_POLICY_REQUIRED')`),
+  check("job_discovery_schedule_occurrences_outcome_check", sql`
+    (${table.status} = 'pending' and ${table.runId} is null and ${table.skipReason} is null)
+    or (${table.status} = 'dispatched' and ${table.runId} is not null and ${table.skipReason} is null)
+    or (${table.status} = 'skipped' and ${table.runId} is null and ${table.skipReason} is not null)
+  `),
+]);
+
+export const agentRunControlCommands = pgTable("agent_run_control_commands", {
+  id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  runId: uuid("run_id").notNull().references(() => agentRuns.id), commandId: uuid("command_id").notNull(),
+  action: varchar("action", { length: 16 }).notNull(), applied: boolean("applied").notNull(),
+  resultRunVersion: integer("result_run_version").notNull(), resultSnapshot: jsonb("result_snapshot").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("agent_run_control_commands_user_run_command_unique").on(table.userId, table.runId, table.commandId),
+  foreignKey({ columns: [table.userId, table.runId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "agent_run_control_commands_owner_run_fk" }),
+  check("agent_run_control_commands_action_check", sql`${table.action} in ('pause', 'resume', 'cancel')`),
+  check("agent_run_control_commands_result_version_positive", sql`${table.resultRunVersion} >= 1`),
+  check("agent_run_control_commands_result_snapshot_object", sql`jsonb_typeof(${table.resultSnapshot}) = 'object'`),
+  check("agent_run_control_commands_result_snapshot_check", sql`
+    ${table.resultSnapshot} ?& array['runId', 'status', 'currentStep', 'controlState', 'version']
+    and (${table.resultSnapshot} - array['runId', 'status', 'currentStep', 'controlState', 'version']) = '{}'::jsonb
+    and jsonb_typeof(${table.resultSnapshot} -> 'runId') = 'string'
+    and ${table.resultSnapshot} -> 'runId' = to_jsonb(${table.runId}::text)
+    and jsonb_typeof(${table.resultSnapshot} -> 'status') = 'string'
+    and ${table.resultSnapshot} ->> 'status' in ('queued', 'running', 'paused', 'completed', 'failed', 'cancelled')
+    and jsonb_typeof(${table.resultSnapshot} -> 'currentStep') = 'string'
+    and ${table.resultSnapshot} ->> 'currentStep' in ('queued', 'batch_search', 'fetch_details', 'persist_results', 'completed', 'failed', 'cancelled')
+    and ((${table.resultSnapshot} ->> 'status' = 'cancelled') = (${table.resultSnapshot} ->> 'currentStep' = 'cancelled'))
+    and jsonb_typeof(${table.resultSnapshot} -> 'controlState') = 'string'
+    and ${table.resultSnapshot} ->> 'controlState' in ('none', 'pause_requested', 'cancel_requested')
+    and jsonb_typeof(${table.resultSnapshot} -> 'version') = 'number'
+    and ${table.resultSnapshot} -> 'version' = to_jsonb(${table.resultRunVersion})
+  `),
+]);
+
+export const agentRunUsageEntries = pgTable("agent_run_usage_entries", {
+  id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  runId: uuid("run_id").notNull().references(() => agentRuns.id), usageKey: varchar("usage_key", { length: 128 }).notNull(),
+  category: varchar("category", { length: 32 }).notNull(), amount: integer("amount").notNull(), stepKey: varchar("step_key", { length: 32 }),
+  attemptCount: integer("attempt_count").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("agent_run_usage_entries_run_key_category_unique").on(table.runId, table.usageKey, table.category),
+  foreignKey({ columns: [table.userId, table.runId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "agent_run_usage_entries_owner_run_fk" }),
+  check("agent_run_usage_entries_category_check", sql`${table.category} in ('active_duration', 'tool_call', 'source_request', 'model_call', 'input_tokens', 'output_tokens', 'result')`),
+  check("agent_run_usage_entries_amount_positive", sql`${table.amount} >= 1`),
+  check("agent_run_usage_entries_attempt_nonnegative", sql`${table.attemptCount} >= 0`),
+  check("agent_run_usage_entries_step_check", sql`${table.stepKey} is null or ${table.stepKey} in ('batch_search', 'fetch_details', 'persist_results', 'select_candidates', 'assess_matches', 'create_recommendations')`),
+]);
+
+export const agentInboxItems = pgTable("agent_inbox_items", {
+  id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  runId: uuid("run_id").references(() => agentRuns.id), triggerEventSequence: integer("trigger_event_sequence"),
+  candidateFactId: uuid("candidate_fact_id").references(() => candidateFacts.id), watchlistItemId: uuid("watchlist_item_id"), sourceHealthCheckId: uuid("source_health_check_id"),
+  recommendationListId: uuid("recommendation_list_id").references(() => recommendationLists.id), calibrationProposalId: uuid("calibration_proposal_id").references(() => calibrationProposals.id),
+  kind: varchar("kind", { length: 32 }).notNull(), status: varchar("status", { length: 16 }).notNull().default("unread"),
+  reasonCode: varchar("reason_code", { length: 64 }).notNull(), budgetDimension: varchar("budget_dimension", { length: 32 }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), readAt: timestamp("read_at", { withTimezone: true }), resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+}, (table) => [
+  unique("agent_inbox_items_user_id_id_unique").on(table.userId, table.id),
+  unique("agent_inbox_items_run_event_kind_unique").on(table.runId, table.triggerEventSequence, table.kind),
+  index("agent_inbox_items_open_lookup_idx").on(table.userId, table.status, table.createdAt),
+  uniqueIndex("agent_inbox_items_candidate_fact_unique_idx").on(table.candidateFactId).where(sql`${table.candidateFactId} is not null`),
+  uniqueIndex("agent_inbox_items_recommendation_list_unique_idx").on(table.recommendationListId).where(sql`${table.recommendationListId} is not null`),
+  uniqueIndex("agent_inbox_items_calibration_proposal_unique_idx").on(table.calibrationProposalId).where(sql`${table.calibrationProposalId} is not null`),
+  uniqueIndex("agent_inbox_items_source_run_source_health_check_unique_idx").on(table.runId, table.sourceHealthCheckId).where(sql`${table.kind} = 'source_attention'`),
+  foreignKey({ columns: [table.userId, table.runId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "agent_inbox_items_owner_run_fk" }),
+  foreignKey({ columns: [table.userId, table.candidateFactId], foreignColumns: [candidateFacts.userId, candidateFacts.id], name: "agent_inbox_items_owner_candidate_fact_fk" }),
+  foreignKey({ columns: [table.userId, table.recommendationListId], foreignColumns: [recommendationLists.userId, recommendationLists.id], name: "agent_inbox_items_owner_recommendation_list_fk" }),
+  foreignKey({ columns: [table.userId, table.calibrationProposalId], foreignColumns: [calibrationProposals.userId, calibrationProposals.id], name: "agent_inbox_items_owner_calibration_proposal_fk" }),
+  foreignKey({ columns: [table.userId, table.runId, table.watchlistItemId, table.sourceHealthCheckId], foreignColumns: [jobSourceHealthChecks.userId, jobSourceHealthChecks.runId, jobSourceHealthChecks.watchlistItemId, jobSourceHealthChecks.id], name: "agent_inbox_items_owner_source_health_check_fk" }),
+  check("agent_inbox_items_trigger_event_positive", sql`${table.triggerEventSequence} >= 1`),
+  check("agent_inbox_items_kind_check", sql`${table.kind} in ('run_failed', 'budget_exhausted', 'decision_required', 'source_attention', 'discovery_attention', 'candidate_fact', 'recommendation_list', 'calibration_proposal')`),
+  check("agent_inbox_items_status_check", sql`${table.status} in ('unread', 'read', 'resolved')`),
+  check("agent_inbox_items_reason_check", sql`${table.reasonCode} in ('AGENT_RUN_PAUSED', 'SOURCE_HEALTH_ATTENTION', 'DISCOVERY_ATTENTION', 'CANDIDATE_FACT_PENDING', 'RECOMMENDATION_LIST_PUBLISHED', 'CALIBRATION_PROPOSAL_CREATED', 'AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_CONTENT_STORAGE_FAILED', 'AGENT_RUN_PERSIST_FAILED', 'AGENT_RUN_BUDGET_EXCEEDED', 'AGENT_RUN_MODEL_RETRYABLE', 'AGENT_RUN_MODEL_AUTH_FAILED', 'AGENT_RUN_MODEL_POLICY_REJECTED', 'AGENT_RUN_MODEL_INVALID_RESPONSE')`),
+  check("agent_inbox_items_kind_reason_pair_check", sql`(${table.kind} = 'source_attention') = (${table.reasonCode} = 'SOURCE_HEALTH_ATTENTION') and (${table.kind} = 'discovery_attention') = (${table.reasonCode} = 'DISCOVERY_ATTENTION') and (${table.kind} = 'candidate_fact') = (${table.reasonCode} = 'CANDIDATE_FACT_PENDING') and (${table.kind} = 'recommendation_list') = (${table.reasonCode} = 'RECOMMENDATION_LIST_PUBLISHED') and (${table.kind} = 'calibration_proposal') = (${table.reasonCode} = 'CALIBRATION_PROPOSAL_CREATED')`),
+  check("agent_inbox_items_dimension_check", sql`${table.budgetDimension} is null or ${table.budgetDimension} in ('active_duration', 'attempts', 'tool_calls', 'model_calls', 'tokens')`),
+  check("agent_inbox_items_lifecycle_check", sql`
+    (${table.status} = 'unread' and ${table.readAt} is null and ${table.resolvedAt} is null)
+    or (${table.status} = 'read' and ${table.readAt} is not null and ${table.resolvedAt} is null and ${table.readAt} >= ${table.createdAt})
+    or (${table.status} = 'resolved' and ${table.resolvedAt} is not null and ${table.resolvedAt} >= ${table.createdAt} and (${table.readAt} is null or (${table.readAt} >= ${table.createdAt} and ${table.resolvedAt} >= ${table.readAt})))
+  `),
+  check("agent_inbox_items_reference_combination_check", sql`
+    (${table.kind} in ('run_failed', 'budget_exhausted', 'decision_required', 'discovery_attention') and ${table.runId} is not null and ${table.triggerEventSequence} is not null and ${table.candidateFactId} is null and ${table.watchlistItemId} is null and ${table.sourceHealthCheckId} is null and ${table.recommendationListId} is null and ${table.calibrationProposalId} is null)
+    or (${table.kind} = 'source_attention' and ${table.runId} is not null and ${table.watchlistItemId} is not null and ${table.sourceHealthCheckId} is not null and ${table.candidateFactId} is null and ${table.recommendationListId} is null and ${table.calibrationProposalId} is null)
+    or (${table.kind} = 'candidate_fact' and ${table.runId} is null and ${table.triggerEventSequence} is null and ${table.candidateFactId} is not null and ${table.watchlistItemId} is null and ${table.sourceHealthCheckId} is null and ${table.recommendationListId} is null and ${table.calibrationProposalId} is null)
+    or (${table.kind} = 'recommendation_list' and ${table.runId} is null and ${table.triggerEventSequence} is null and ${table.candidateFactId} is null and ${table.watchlistItemId} is null and ${table.sourceHealthCheckId} is null and ${table.recommendationListId} is not null and ${table.calibrationProposalId} is null)
+    or (${table.kind} = 'calibration_proposal' and ${table.runId} is null and ${table.triggerEventSequence} is null and ${table.candidateFactId} is null and ${table.watchlistItemId} is null and ${table.sourceHealthCheckId} is null and ${table.recommendationListId} is null and ${table.calibrationProposalId} is not null)
+  `),
+]);
+
+export const agentInboxItemActions = pgTable("agent_inbox_item_actions", {
+  id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  itemId: uuid("item_id").notNull().references(() => agentInboxItems.id), actionId: uuid("action_id").notNull(),
+  action: varchar("action", { length: 16 }).notNull(), outcome: varchar("outcome", { length: 16 }).notNull(),
+  relatedRunId: uuid("related_run_id"), reasonCode: varchar("reason_code", { length: 64 }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("agent_inbox_item_actions_user_item_action_unique").on(table.userId, table.itemId, table.actionId),
+  foreignKey({ columns: [table.userId, table.itemId], foreignColumns: [agentInboxItems.userId, agentInboxItems.id], name: "agent_inbox_item_actions_owner_item_fk" }),
+  foreignKey({ columns: [table.userId, table.relatedRunId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "agent_inbox_item_actions_owner_related_run_fk" }),
+  check("agent_inbox_item_actions_action_check", sql`${table.action} in ('restart_run', 'resume_run', 'cancel_run', 'mark_read', 'dismiss')`),
+  check("agent_inbox_item_actions_outcome_check", sql`${table.outcome} in ('pending', 'applied', 'no_change', 'failed')`),
 ]);
 
 export const agentRunSteps = pgTable("agent_run_steps", {
@@ -511,11 +984,11 @@ export const agentRunSteps = pgTable("agent_run_steps", {
   unique("agent_run_steps_run_step_unique").on(table.runId, table.stepKey),
   unique("agent_run_steps_run_ordinal_unique").on(table.runId, table.ordinal),
   foreignKey({ columns: [table.userId, table.runId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "agent_run_steps_owner_run_fk" }),
-  check("agent_run_steps_step_key_check", sql`${table.stepKey} in ('batch_search', 'fetch_details', 'persist_results')`),
+  check("agent_run_steps_step_key_check", sql`${table.stepKey} in ('batch_search', 'fetch_details', 'persist_results', 'select_candidates', 'assess_matches', 'create_recommendations')`),
   check("agent_run_steps_ordinal_check", sql`${table.ordinal} between 1 and 3`),
   check("agent_run_steps_status_check", sql`${table.status} in ('pending', 'running', 'completed', 'failed')`),
   check("agent_run_steps_attempt_count_nonnegative", sql`${table.attemptCount} >= 0`),
-  check("agent_run_steps_failure_code_check", sql`${table.failureCode} is null or ${table.failureCode} in ('AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_CONTENT_STORAGE_FAILED', 'AGENT_RUN_PERSIST_FAILED', 'AGENT_RUN_BUDGET_EXCEEDED')`),
+  check("agent_run_steps_failure_code_check", sql`${table.failureCode} is null or ${table.failureCode} in ('AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_CONTENT_STORAGE_FAILED', 'AGENT_RUN_PERSIST_FAILED', 'AGENT_RUN_BUDGET_EXCEEDED', 'AGENT_RUN_MODEL_RETRYABLE', 'AGENT_RUN_MODEL_AUTH_FAILED', 'AGENT_RUN_MODEL_POLICY_REJECTED', 'AGENT_RUN_MODEL_INVALID_RESPONSE')`),
   check("agent_run_steps_timestamp_state_check", sql`
     (${table.status} = 'pending' and ${table.startedAt} is null and ${table.completedAt} is null and ${table.failedAt} is null)
     or (${table.status} = 'running' and ${table.startedAt} is not null and ${table.completedAt} is null and ${table.failedAt} is null)
@@ -539,7 +1012,7 @@ export const agentRunEvents = pgTable("agent_run_events", {
   foreignKey({ columns: [table.userId, table.runId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "agent_run_events_owner_run_fk" }),
   check("agent_run_events_sequence_positive", sql`${table.sequence} >= 1`),
   check("agent_run_events_run_version_positive", sql`${table.runVersion} >= 1`),
-  check("agent_run_events_event_type_check", sql`${table.eventType} in ('run.queued', 'run.started', 'step.started', 'step.completed', 'run.retry_scheduled', 'run.completed', 'run.failed')`),
+  check("agent_run_events_event_type_check", sql`${table.eventType} in ('run.queued', 'run.started', 'step.started', 'step.completed', 'run.retry_scheduled', 'run.completed', 'run.failed', 'run.pause_requested', 'run.paused', 'run.resume_requested', 'run.resumed', 'run.cancel_requested', 'run.cancelled', 'run.budget_updated')`),
   check("agent_run_events_data_object", sql`jsonb_typeof(${table.data}) = 'object'`),
 ]);
 
@@ -564,4 +1037,130 @@ export const agentRunJobResults = pgTable("agent_run_job_results", {
     name: "agent_run_job_results_evidence_tuple_fk",
   }),
   check("agent_run_job_results_ordinal_positive", sql`${table.ordinal} >= 1`),
+]);
+
+/** Matching-only durable staging; discovery results intentionally retain their evidence-tuple FK. */
+export const deepMatchRunCandidates = pgTable("deep_match_run_candidates", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  runId: uuid("run_id").notNull().references(() => agentRuns.id),
+  opportunityId: uuid("opportunity_id").notNull().references(() => jobOpportunities.id),
+  sourcePostingVersionId: uuid("source_posting_version_id").notNull().references(() => jobSourcePostingVersions.id),
+  ordinal: integer("ordinal").notNull(),
+  candidateSnapshot: jsonb("candidate_snapshot").notNull(),
+  assessment: jsonb("assessment"),
+  adapterUsage: jsonb("adapter_usage"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("deep_match_run_candidates_run_opportunity_unique").on(table.runId, table.opportunityId),
+  unique("deep_match_run_candidates_run_ordinal_unique").on(table.runId, table.ordinal),
+  foreignKey({ columns: [table.userId, table.runId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "deep_match_run_candidates_owner_run_fk" }),
+  foreignKey({ columns: [table.userId, table.opportunityId], foreignColumns: [jobOpportunities.userId, jobOpportunities.id], name: "deep_match_run_candidates_owner_opportunity_fk" }),
+  foreignKey({ columns: [table.userId, table.sourcePostingVersionId], foreignColumns: [jobSourcePostingVersions.userId, jobSourcePostingVersions.id], name: "deep_match_run_candidates_owner_source_version_fk" }),
+  check("deep_match_run_candidates_ordinal_range", sql`${table.ordinal} between 1 and 10`),
+  check("deep_match_run_candidates_snapshot_object", sql`jsonb_typeof(${table.candidateSnapshot}) = 'object'`),
+]);
+
+export const jobSourceHealthChecks = pgTable("job_source_health_checks", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  runId: uuid("run_id").notNull(),
+  targetId: uuid("target_id").notNull(),
+  watchlistItemId: uuid("watchlist_item_id").notNull(),
+  sourceId: varchar("source_id", { length: 2_048 }).notNull(),
+  status: varchar("status", { length: 32 }).notNull(),
+  reasonCodes: jsonb("reason_codes").notNull(),
+  impactScope: varchar("impact_scope", { length: 32 }).notNull(),
+  impactAffectedCount: integer("impact_affected_count"),
+  observedPostingCount: integer("observed_posting_count").notNull(),
+  selectedDetailCount: integer("selected_detail_count").notNull(),
+  validDetailCount: integer("valid_detail_count").notNull(),
+  requestAttemptCount: integer("request_attempt_count").notNull(),
+  checkedAt: timestamp("checked_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_source_health_checks_run_source_unique").on(table.runId, table.sourceId),
+  unique("job_source_health_checks_user_id_id_unique").on(table.userId, table.id),
+  unique("job_source_health_checks_user_run_watchlist_id_unique").on(table.userId, table.runId, table.watchlistItemId, table.id),
+  index("job_source_health_checks_latest_lookup_idx").on(table.userId, table.targetId, table.watchlistItemId, table.sourceId, table.checkedAt, table.id),
+  foreignKey({
+    columns: [table.userId, table.runId, table.targetId],
+    foreignColumns: [agentRuns.userId, agentRuns.id, agentRuns.targetId],
+    name: "job_source_health_checks_owner_run_target_fk",
+  }),
+  check("job_source_health_checks_status_check", sql`${table.status} in ('healthy', 'zero_valid_results', 'parser_degraded', 'rate_limited', 'hard_failed')`),
+  check("job_source_health_checks_reason_codes_array_check", sql`jsonb_typeof(${table.reasonCodes}) = 'array'`),
+  check("job_source_health_checks_reason_codes_safe_check", sql`${table.reasonCodes} <@ '["SOURCE_LIST_SCHEMA_INVALID", "SOURCE_DETAIL_FIELDS_MISSING", "SOURCE_DETAIL_URL_INVALID", "SOURCE_DETAIL_IDENTITY_INVALID", "SOURCE_RATE_LIMITED", "SOURCE_AUTH_FAILED", "SOURCE_TIMEOUT", "SOURCE_UNREACHABLE", "SOURCE_SERVER_ERROR", "SOURCE_POLICY_REJECTED"]'::jsonb`),
+  check("job_source_health_checks_source_id_check", sql`${table.sourceId} ~ '^greenhouse:[A-Za-z0-9_-]{1,128}$'`),
+  check("job_source_health_checks_impact_scope_check", sql`(${table.impactScope} = 'none' and ${table.impactAffectedCount} is null) or (${table.impactScope} = 'job_details' and ${table.impactAffectedCount} >= 1) or (${table.impactScope} = 'entire_source' and (${table.impactAffectedCount} is null or ${table.impactAffectedCount} >= 0))`),
+  check("job_source_health_checks_counts_nonnegative", sql`${table.observedPostingCount} >= 0 and ${table.selectedDetailCount} >= 0 and ${table.validDetailCount} >= 0 and ${table.requestAttemptCount} >= 1 and ${table.validDetailCount} <= ${table.selectedDetailCount} and ${table.selectedDetailCount} <= ${table.observedPostingCount}`),
+  check("job_source_health_checks_status_evidence_check", sql`
+    (${table.status} = 'healthy' and ${table.validDetailCount} >= 1 and ${table.reasonCodes} = '[]'::jsonb and ${table.impactScope} = 'none' and ${table.impactAffectedCount} is null)
+    or (${table.status} = 'zero_valid_results' and ${table.validDetailCount} = 0 and ${table.reasonCodes} = '[]'::jsonb and ${table.impactScope} = 'none' and ${table.impactAffectedCount} is null)
+    or (${table.status} = 'parser_degraded' and ${table.reasonCodes} <> '[]'::jsonb and ${table.reasonCodes} <@ '["SOURCE_LIST_SCHEMA_INVALID", "SOURCE_DETAIL_FIELDS_MISSING", "SOURCE_DETAIL_URL_INVALID", "SOURCE_DETAIL_IDENTITY_INVALID"]'::jsonb and ${table.impactScope} in ('job_details', 'entire_source'))
+    or (${table.status} = 'rate_limited' and ${table.reasonCodes} = '["SOURCE_RATE_LIMITED"]'::jsonb and ${table.impactScope} = 'entire_source')
+    or (${table.status} = 'hard_failed' and ${table.reasonCodes} <> '[]'::jsonb and ${table.reasonCodes} <@ '["SOURCE_AUTH_FAILED", "SOURCE_TIMEOUT", "SOURCE_UNREACHABLE", "SOURCE_SERVER_ERROR", "SOURCE_POLICY_REJECTED"]'::jsonb and ${table.impactScope} = 'entire_source')
+  `),
+]);
+
+/** 一次深度匹配的不可变、证据闭包校验后的快照。 */
+export const jobMatchVersions = pgTable("job_match_versions", {
+  id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  opportunityId: uuid("opportunity_id").notNull().references(() => jobOpportunities.id), sourcePostingVersionId: uuid("source_posting_version_id").notNull().references(() => jobSourcePostingVersions.id),
+  triageVersionId: uuid("triage_version_id").notNull().references(() => jobTriageVersions.id), profileId: uuid("profile_id").notNull().references(() => jobProfiles.id), profileVersion: integer("profile_version").notNull(),
+  targetId: uuid("target_id").notNull().references(() => jobTargets.id), targetVersion: integer("target_version").notNull(),
+  ruleVersion: varchar("rule_version", { length: 64 }).notNull(), promptVersion: varchar("prompt_version", { length: 64 }).notNull(), adapter: varchar("adapter", { length: 64 }).notNull(), adapterVersion: varchar("adapter_version", { length: 64 }).notNull(),
+  model: varchar("model", { length: 128 }).notNull(), outputSchemaVersion: varchar("output_schema_version", { length: 64 }).notNull(), overallScore: integer("overall_score").notNull(), displayBand: varchar("display_band", { length: 32 }).notNull(), assessment: jsonb("assessment").notNull(), sequence: integer("sequence").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_match_versions_user_id_id_unique").on(table.userId, table.id), unique("job_match_versions_owner_opportunity_sequence_unique").on(table.userId, table.opportunityId, table.sequence), index("job_match_versions_owner_target_created_idx").on(table.userId, table.targetId, table.createdAt, table.id),
+  foreignKey({ columns: [table.userId, table.opportunityId], foreignColumns: [jobOpportunities.userId, jobOpportunities.id], name: "job_match_versions_owner_opportunity_fk" }), foreignKey({ columns: [table.userId, table.sourcePostingVersionId], foreignColumns: [jobSourcePostingVersions.userId, jobSourcePostingVersions.id], name: "job_match_versions_owner_source_version_fk" }), foreignKey({ columns: [table.userId, table.triageVersionId], foreignColumns: [jobTriageVersions.userId, jobTriageVersions.id], name: "job_match_versions_owner_triage_fk" }), foreignKey({ columns: [table.userId, table.profileId], foreignColumns: [jobProfiles.userId, jobProfiles.id], name: "job_match_versions_owner_profile_fk" }), foreignKey({ columns: [table.userId, table.targetId], foreignColumns: [jobTargets.userId, jobTargets.id], name: "job_match_versions_owner_target_fk" }),
+  check("job_match_versions_versions_positive", sql`${table.profileVersion} >= 1 and ${table.targetVersion} >= 1 and ${table.sequence} >= 1`), check("job_match_versions_score_range", sql`${table.overallScore} between 0 and 100`), check("job_match_versions_display_band_check", sql`${table.displayBand} in ('highly_matched', 'worth_trying', 'consider_carefully')`), check("job_match_versions_assessment_object", sql`jsonb_typeof(${table.assessment}) = 'object'`),
+]);
+
+/** 上海自然日的一次推荐交付；同日重跑永不覆盖旧清单。 */
+export const recommendationLists = pgTable("recommendation_lists", {
+  id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id), targetId: uuid("target_id").notNull().references(() => jobTargets.id), localDate: varchar("local_date", { length: 10 }).notNull(), sequence: integer("sequence").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("recommendation_lists_user_id_id_unique").on(table.userId, table.id), unique("recommendation_lists_target_date_sequence_unique").on(table.userId, table.targetId, table.localDate, table.sequence), foreignKey({ columns: [table.userId, table.targetId], foreignColumns: [jobTargets.userId, jobTargets.id], name: "recommendation_lists_owner_target_fk" }), check("recommendation_lists_sequence_positive", sql`${table.sequence} >= 1`), check("recommendation_lists_local_date_format", sql`${table.localDate} ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'`),
+]);
+
+export const recommendationListItems = pgTable("recommendation_list_items", {
+  id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id), recommendationListId: uuid("recommendation_list_id").notNull().references(() => recommendationLists.id), matchVersionId: uuid("match_version_id").notNull().references(() => jobMatchVersions.id), ordinal: integer("ordinal").notNull(), highlighted: boolean("highlighted").notNull().default(false), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("recommendation_list_items_user_id_id_unique").on(table.userId, table.id), unique("recommendation_list_items_list_match_unique").on(table.recommendationListId, table.matchVersionId), unique("recommendation_list_items_list_ordinal_unique").on(table.recommendationListId, table.ordinal), foreignKey({ columns: [table.userId, table.recommendationListId], foreignColumns: [recommendationLists.userId, recommendationLists.id], name: "recommendation_list_items_owner_list_fk" }), foreignKey({ columns: [table.userId, table.matchVersionId], foreignColumns: [jobMatchVersions.userId, jobMatchVersions.id], name: "recommendation_list_items_owner_match_fk" }), check("recommendation_list_items_ordinal_range", sql`${table.ordinal} between 1 and 10`),
+]);
+
+export const recommendationDecisionEvents = pgTable("recommendation_decision_events", {
+  id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id), targetId: uuid("target_id").notNull().references(() => jobTargets.id), recommendationListId: uuid("recommendation_list_id").notNull().references(() => recommendationLists.id), recommendationListItemId: uuid("recommendation_list_item_id").notNull().references(() => recommendationListItems.id), matchVersionId: uuid("match_version_id").notNull().references(() => jobMatchVersions.id), decision: varchar("decision", { length: 16 }).notNull(), reason: varchar("reason", { length: 32 }), note: text("note"), idempotencyKey: uuid("idempotency_key").notNull(), commandSummary: varchar("command_summary", { length: 64 }).notNull(), expectedVersion: integer("expected_version").notNull(), version: integer("version").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("recommendation_decision_events_user_key_unique").on(table.userId, table.idempotencyKey), unique("recommendation_decision_events_user_item_version_unique").on(table.userId, table.recommendationListItemId, table.version), unique("recommendation_decision_events_user_id_id_unique").on(table.userId, table.id), index("recommendation_decision_events_current_idx").on(table.userId, table.recommendationListItemId, table.version),
+  foreignKey({ columns: [table.userId, table.targetId], foreignColumns: [jobTargets.userId, jobTargets.id], name: "recommendation_decision_events_owner_target_fk" }), foreignKey({ columns: [table.userId, table.recommendationListId], foreignColumns: [recommendationLists.userId, recommendationLists.id], name: "recommendation_decision_events_owner_list_fk" }), foreignKey({ columns: [table.userId, table.recommendationListItemId], foreignColumns: [recommendationListItems.userId, recommendationListItems.id], name: "recommendation_decision_events_owner_item_fk" }), foreignKey({ columns: [table.userId, table.matchVersionId], foreignColumns: [jobMatchVersions.userId, jobMatchVersions.id], name: "recommendation_decision_events_owner_match_fk" }),
+  check("recommendation_decision_events_decision_check", sql`${table.decision} in ('saved', 'ignored')`), check("recommendation_decision_events_reason_check", sql`${table.reason} is null or ${table.reason} in ('ROLE_DIRECTION', 'LOCATION', 'SALARY', 'COMPANY', 'INDUSTRY', 'SENIORITY', 'MISMATCH', 'EXPIRED', 'ALREADY_HANDLED')`), check("recommendation_decision_events_note_check", sql`${table.note} is null or length(${table.note}) between 1 and 500`), check("recommendation_decision_events_version_check", sql`${table.version} = ${table.expectedVersion} + 1 and ${table.expectedVersion} >= 0`),
+]);
+
+/** Immutable first response for a decision idempotency key; never infer it from later evidence. */
+export const recommendationDecisionResponses = pgTable("recommendation_decision_responses", {
+  id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id), decisionEventId: uuid("decision_event_id").notNull().references(() => recommendationDecisionEvents.id), proposalId: uuid("proposal_id"), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [unique("recommendation_decision_responses_event_unique").on(table.decisionEventId), foreignKey({ columns: [table.userId, table.decisionEventId], foreignColumns: [recommendationDecisionEvents.userId, recommendationDecisionEvents.id], name: "recommendation_decision_responses_owner_event_fk" }), foreignKey({ columns: [table.userId, table.proposalId], foreignColumns: [calibrationProposals.userId, calibrationProposals.id], name: "recommendation_decision_responses_owner_proposal_fk" })]);
+
+export const calibrationProposals = pgTable("calibration_proposals", {
+  id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id), targetId: uuid("target_id").notNull().references(() => jobTargets.id), reason: varchar("reason", { length: 32 }).notNull(), status: varchar("status", { length: 16 }).notNull().default("pending"), version: integer("version").notNull().default(1), resolvedAt: timestamp("resolved_at", { withTimezone: true }), resolutionIdempotencyKey: uuid("resolution_idempotency_key"), resolutionCommandSummary: varchar("resolution_command_summary", { length: 64 }), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [unique("calibration_proposals_user_id_id_unique").on(table.userId, table.id), unique("calibration_proposals_user_resolution_key_unique").on(table.userId, table.resolutionIdempotencyKey), index("calibration_proposals_owner_target_status_idx").on(table.userId, table.targetId, table.status, table.createdAt), foreignKey({ columns: [table.userId, table.targetId], foreignColumns: [jobTargets.userId, jobTargets.id], name: "calibration_proposals_owner_target_fk" }), check("calibration_proposals_status_check", sql`${table.status} in ('pending', 'approved', 'rejected')`), check("calibration_proposals_version_positive", sql`${table.version} >= 1`)]);
+
+export const calibrationProposalRevisions = pgTable("calibration_proposal_revisions", {
+  id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id), proposalId: uuid("proposal_id").notNull().references(() => calibrationProposals.id), revisionNumber: integer("revision_number").notNull(), baseRuleVersion: integer("base_rule_version").notNull().default(0), strategy: varchar("strategy", { length: 48 }).notNull(), ruleConfig: jsonb("rule_config").notNull(), impactPreview: jsonb("impact_preview").notNull(), idempotencyKey: uuid("idempotency_key").notNull(), commandSummary: varchar("command_summary", { length: 64 }).notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [unique("calibration_proposal_revisions_proposal_number_unique").on(table.proposalId, table.revisionNumber), unique("calibration_proposal_revisions_user_key_unique").on(table.userId, table.idempotencyKey), unique("calibration_proposal_revisions_user_id_id_unique").on(table.userId, table.id), foreignKey({ columns: [table.userId, table.proposalId], foreignColumns: [calibrationProposals.userId, calibrationProposals.id], name: "calibration_proposal_revisions_owner_proposal_fk" }), check("calibration_proposal_revisions_strategy_check", sql`${table.strategy} in ('require_related_evidence', 'raise_quality_bar', 'exclude_evidence_opportunities')`), check("calibration_proposal_revisions_config_object", sql`jsonb_typeof(${table.ruleConfig}) = 'object'`), check("calibration_proposal_revisions_preview_object", sql`jsonb_typeof(${table.impactPreview}) = 'object'`)]);
+
+export const calibrationProposalEvidence = pgTable("calibration_proposal_evidence", {
+  id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id), proposalId: uuid("proposal_id").notNull().references(() => calibrationProposals.id), decisionEventId: uuid("decision_event_id").notNull().references(() => recommendationDecisionEvents.id), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [unique("calibration_proposal_evidence_decision_unique").on(table.decisionEventId), foreignKey({ columns: [table.userId, table.proposalId], foreignColumns: [calibrationProposals.userId, calibrationProposals.id], name: "calibration_proposal_evidence_owner_proposal_fk" }), foreignKey({ columns: [table.userId, table.decisionEventId], foreignColumns: [recommendationDecisionEvents.userId, recommendationDecisionEvents.id], name: "calibration_proposal_evidence_owner_decision_fk" })]);
+
+export const recommendationRuleVersions = pgTable("recommendation_rule_versions", {
+  id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id), targetId: uuid("target_id").notNull().references(() => jobTargets.id), proposalId: uuid("proposal_id").notNull().references(() => calibrationProposals.id), proposalRevisionId: uuid("proposal_revision_id").notNull().references(() => calibrationProposalRevisions.id), version: integer("version").notNull(), config: jsonb("config").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [unique("recommendation_rule_versions_target_version_unique").on(table.userId, table.targetId, table.version), unique("recommendation_rule_versions_user_id_id_unique").on(table.userId, table.id), foreignKey({ columns: [table.userId, table.targetId], foreignColumns: [jobTargets.userId, jobTargets.id], name: "recommendation_rule_versions_owner_target_fk" }), foreignKey({ columns: [table.userId, table.proposalId], foreignColumns: [calibrationProposals.userId, calibrationProposals.id], name: "recommendation_rule_versions_owner_proposal_fk" }), foreignKey({ columns: [table.userId, table.proposalRevisionId], foreignColumns: [calibrationProposalRevisions.userId, calibrationProposalRevisions.id], name: "recommendation_rule_versions_owner_revision_fk" }), check("recommendation_rule_versions_version_positive", sql`${table.version} >= 1`), check("recommendation_rule_versions_config_object", sql`jsonb_typeof(${table.config}) = 'object'`)]);
+
+export const recommendationExclusions = pgTable("recommendation_exclusions", {
+  id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id), targetId: uuid("target_id").notNull().references(() => jobTargets.id), opportunityId: uuid("opportunity_id").notNull().references(() => jobOpportunities.id), recommendationListId: uuid("recommendation_list_id").notNull().references(() => recommendationLists.id), reasonCode: varchar("reason_code", { length: 64 }).notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  index("recommendation_exclusions_owner_target_opportunity_idx").on(table.userId, table.targetId, table.opportunityId, table.createdAt), foreignKey({ columns: [table.userId, table.targetId], foreignColumns: [jobTargets.userId, jobTargets.id], name: "recommendation_exclusions_owner_target_fk" }), foreignKey({ columns: [table.userId, table.opportunityId], foreignColumns: [jobOpportunities.userId, jobOpportunities.id], name: "recommendation_exclusions_owner_opportunity_fk" }), foreignKey({ columns: [table.userId, table.recommendationListId], foreignColumns: [recommendationLists.userId, recommendationLists.id], name: "recommendation_exclusions_owner_list_fk" }), check("recommendation_exclusions_reason_code_check", sql`${table.reasonCode} in ('TRIAGE_NOT_PASS', 'DEADLINE_EXPIRED', 'SCORE_BELOW_THRESHOLD', 'CANDIDATE_LIMIT', 'MATCH_QUALITY_INSUFFICIENT')`),
 ]);

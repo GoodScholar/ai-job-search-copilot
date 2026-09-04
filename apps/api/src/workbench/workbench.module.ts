@@ -12,7 +12,7 @@ import { WORKBENCH_HOME } from "./workbench.tokens.js";
   providers: [{
     provide: WORKBENCH_HOME,
     inject: [DATABASE],
-    useFactory: (database: Database) => createWorkbenchHome({ db: database }),
+    useFactory: (database: Database) => createWorkbenchHome({ db: database, clock: () => new Date() }),
   }],
 })
 export class WorkbenchModule {}

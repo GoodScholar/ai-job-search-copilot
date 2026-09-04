@@ -1,11 +1,13 @@
 "use client";
 
 import { JobImportDetailSchema, type JobImportDetail, type JobImportList, type JobImportStatus } from "@job-copilot/contracts/job-imports";
+import type { JobTarget } from "@job-copilot/contracts/job-targets";
 import { useCallback, useEffect, useRef, useState, useTransition, type FormEvent, type KeyboardEvent } from "react";
 import { createJobImportAction, type JobImportActionState } from "@/app/(workbench)/jobs/import/actions";
+import { JobTriagePanel } from "./job-triage-panel";
 
 type JobImportSummary = JobImportList["imports"][number];
-type JobImportViewProps = { initialImports: JobImportSummary[] };
+type JobImportViewProps = { initialImports: JobImportSummary[]; initialTargets?: JobTarget[] };
 type InputMode = "paste" | "upload" | "url";
 type RawEvidenceState =
   | { status: "idle" }
@@ -41,7 +43,7 @@ function importLabel(item: JobImportSummary): string {
   return item.originalFilename ?? "粘贴的岗位描述";
 }
 
-export function JobImportView({ initialImports }: JobImportViewProps) {
+export function JobImportView({ initialImports, initialTargets = [] }: JobImportViewProps) {
   const [mode, setMode] = useState<InputMode>("paste");
   const [content, setContent] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -206,6 +208,7 @@ export function JobImportView({ initialImports }: JobImportViewProps) {
           {opportunity?.description && <p className="job-import-description">{opportunity.description}</p>}
         </section>
       </div>
+      {opportunity && <JobTriagePanel key={opportunity.opportunityId} opportunityId={opportunity.opportunityId} targets={initialTargets} initialVersion={null} />}
       {detail && <section aria-labelledby="raw-evidence-title" className="job-import-panel"><h2 id="raw-evidence-title">原始证据</h2><p>原文仅供核对，不会被执行或转换为网页内容。</p>
         {!terminalStatuses.has(detail.status) ? <p>岗位完成后可以查看原始证据。</p>
           : rawEvidence.status === "idle" ? <p>原始证据等待读取。</p>

@@ -12,8 +12,21 @@
     "./profile-review": "./src/profile-review.ts",
     "./career-fact-conflict-review": "./src/career-fact-conflict-review.ts",
     "./job-targets": "./src/job-targets.ts",
+    "./company-watchlists": "./src/company-watchlists.ts",
+    "./source-health": "./src/source-health.ts",
     "./job-imports": "./src/job-imports.ts",
-    "./agent-runs": "./src/agent-runs.ts"
+    "./job-triage": "./src/job-triage.ts",
+    "./job-triage-persistence": "./src/job-triage-persistence.ts",
+    "./recommendation-queries": "./src/recommendation-queries.ts",
+    "./recommendation-feedback": "./src/recommendation-feedback.ts",
+    "./deep-match-agent-runs": "./src/deep-match-agent-runs.ts",
+    "./job-discovery-schedules": "./src/job-discovery-schedules.ts",
+    "./public-job-discovery-sources": "./src/public-job-discovery-sources.ts",
+    "./job-discovery-execution-mode": "./src/job-discovery-execution-mode.ts",
+    "./agent-runs": "./src/agent-runs.ts",
+    "./anysearch-query-plan": "./src/anysearch-query-plan.ts",
+    "./job-discovery-leads": "./src/job-discovery-leads.public.ts",
+    "./verified-job-source-gate": "./src/verified-job-source-gate.public.ts"
   },
   "scripts": {
     "test": "vitest run --no-file-parallelism",
@@ -23,6 +36,7 @@
   "dependencies": {
     "@job-copilot/contracts": "workspace:*",
     "@job-copilot/database": "workspace:*",
+    "@job-copilot/source-access": "workspace:*",
     "drizzle-orm": "0.45.2",
     "zod": "4.4.3"
   },

@@ -7,7 +7,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { auditEvents, candidateFactEvidence, candidateFacts, careerDocuments, careerFactConflicts, careerImports, createDatabase, migrateDatabase, type Database } from "@job-copilot/database";
 import type { CareerDocumentStore, CareerImportQueue } from "@job-copilot/domain/career-imports";
 import type { JobContentStore, JobImportQueue } from "@job-copilot/domain/job-imports";
-import type { AgentRunQueue } from "@job-copilot/domain/agent-runs";
+import { createAgentRunCommands, type AgentRunQueue } from "@job-copilot/domain/agent-runs";
+import { createAuditTrail } from "@job-copilot/domain/audit-trail";
+import { createCompanyWatchlistCommands } from "@job-copilot/domain/company-watchlists";
+import { createJobDiscoverySchedules } from "@job-copilot/domain/job-discovery-schedules";
+import { JobTriageError } from "@job-copilot/domain/job-triage-persistence";
+import { JobTriageVersionSchema } from "@job-copilot/contracts/job-triage";
 import { AppModule } from "./app.module.js";
 import { configureApiApplication } from "./configure-api-application.js";
 import { DATABASE } from "./config/runtime-config.module.js";
@@ -17,6 +22,8 @@ import { JobPageFetchError, type JobPageFetcher } from "./job-imports/job-page-f
 import { createMinimalDocx } from "./career-import/minimal-docx.test-support.js";
 import { CAREER_FACT_CONFLICT_REVIEW_COMMANDS, PROFILE_REVIEW_COMMANDS, type ProfileReviewCommands } from "./profile-review/profile-review.tokens.js";
 import { AGENT_RUN_QUEUE_PORT } from "./agent-runs/agent-runs.tokens.js";
+import { JOB_TRIAGE_COMMANDS, JOB_TRIAGE_QUERIES } from "./job-triage/job-triage.tokens.js";
+import { RECOMMENDATION_FEEDBACK_COMMANDS, RECOMMENDATION_FEEDBACK_QUERIES } from "./recommendations/recommendations.tokens.js";
 import { z } from "zod";
 
 const testSecret = "test-dev-auth-shared-secret-must-be-at-least-32-characters";
@@ -36,7 +43,62 @@ describe("authenticated workbench HTTP API", () => {
   let app: NestFastifyApplication;
   let container: StartedPostgreSqlContainer;
   let database: Database;
+  const triageVersionId = "90000000-0000-4000-8000-000000000001";
+  const triageOpportunityId = "90000000-0000-4000-8000-000000000002";
+  const inactiveTriageTargetId = "90000000-0000-4000-8000-000000000003";
+  const emptyProfileTriageTargetId = "90000000-0000-4000-8000-000000000004";
+  let triageCandidateEvidenceCount = 0;
+  let triageMissingSkillCount = 0;
+  let triageEvidenceValues: { job: string; candidate: string } | null = null;
+  const triageResponse = (targetId: string) => ({
+    triageVersionId, opportunityId: triageOpportunityId, targetId, overallVerdict: triageCandidateEvidenceCount || triageMissingSkillCount || triageEvidenceValues ? "pass" as const : "unknown" as const,
+    gateResults: Object.fromEntries(["location", "work_mode", "relocation", "salary", "seniority", "education", "language", "work_eligibility", "deal_breakers"].map((gate) => [gate, { verdict: "unknown", reasonCode: "JOB_EVIDENCE_MISSING", jobEvidence: null, candidateEvidence: null }])),
+    pendingItems: triageCandidateEvidenceCount || triageMissingSkillCount || triageEvidenceValues ? [] : [{ gate: "language", reasonCode: "JOB_EVIDENCE_MISSING", message: "需要补充岗位或画像证据" }], deadlineStatus: triageCandidateEvidenceCount || triageMissingSkillCount || triageEvidenceValues ? "valid" as const : "missing" as const,
+    confidenceBasisPoints: triageMissingSkillCount ? 0 : 8_400, dimensionScores: triageCandidateEvidenceCount || triageMissingSkillCount || triageEvidenceValues ? {
+      technical: triageMissingSkillCount ? { score: 50, reasonCode: "REQUIRED_SKILLS_EVIDENCE_MISSING_NEUTRAL", jobEvidence: [{ sourcePostingVersionId: triageVersionId, field: "requiredSkills", path: "必备技能", value: triageEvidenceValues?.job ?? "相关技能" }], candidateEvidence: [], missing: [{ kind: "profile_skills" as const, count: triageMissingSkillCount, examples: Array.from({ length: Math.min(triageMissingSkillCount, 20) }, (_, index) => `缺失技能${index + 1}`) }] } : { score: 100, reasonCode: "REQUIRED_SKILLS_COMPARED", jobEvidence: [{ sourcePostingVersionId: triageVersionId, field: "requiredSkills", path: "必备技能", value: triageEvidenceValues?.job ?? "相关技能" }], candidateEvidence: Array.from({ length: triageCandidateEvidenceCount }, (_, index) => ({ kind: "profile_fact" as const, factId: `90000000-0000-4000-8000-${String(100 + index).padStart(12, "0")}`, revisionId: `90000000-0000-4000-8000-${String(200 + index).padStart(12, "0")}`, label: "已确认画像", value: triageEvidenceValues?.candidate ?? `相关技能${index + 1}` })), missing: [] },
+      experience: { score: 50, reasonCode: "EXPERIENCE_EVIDENCE_MISSING_NEUTRAL", jobEvidence: [], candidateEvidence: [], missing: [{ kind: "profile_experience" as const }] },
+      targetAlignment: { score: 50, reasonCode: "TARGET_ALIGNMENT_EVIDENCE_MISSING_NEUTRAL", jobEvidence: [], candidateEvidence: [], missing: [{ kind: "target_alignment" as const }] },
+    } : null, overallScore: triageCandidateEvidenceCount || triageMissingSkillCount || triageEvidenceValues ? 65 : null, threshold: triageCandidateEvidenceCount || triageMissingSkillCount || triageEvidenceValues ? 60 : null, sequence: 1, createdAt: "2026-09-01T00:00:00.000Z",
+  });
+  const triageCommands = {
+    async create(input: { opportunityId: string; command: { targetId: string } }) {
+      if (input.opportunityId !== triageOpportunityId) throw new JobTriageError("JOB_TRIAGE_OPPORTUNITY_NOT_FOUND");
+      if (input.command.targetId === inactiveTriageTargetId) throw new JobTriageError("JOB_TRIAGE_TARGET_INACTIVE");
+      if (input.command.targetId === emptyProfileTriageTargetId) throw new JobTriageError("JOB_TRIAGE_PROFILE_EMPTY");
+      return { ...triageResponse(input.command.targetId), reused: true };
+    },
+  };
+  const triageQueries = {
+    async getLatest(input: { opportunityId: string; targetId: string }) { return input.opportunityId === triageOpportunityId ? triageResponse(input.targetId) : null; },
+    async get(input: { opportunityId: string; triageVersionId: string }) { return input.opportunityId === triageOpportunityId && input.triageVersionId === triageVersionId ? triageResponse("90000000-0000-4000-8000-000000000005") : null; },
+  };
   let conflictResolutionResponse: unknown = undefined;
+  const feedbackListId = "70000000-0000-4000-8000-000000000001";
+  const feedbackItemId = "70000000-0000-4000-8000-000000000002";
+  const feedbackIdempotency = new Map<string, string>();
+  let feedbackWrites = 0;
+  const feedbackCommands = {
+    async recordDecision(input: { recommendationListId: string; recommendationListItemId: string; command: { idempotencyKey: string; expectedVersion: number; decision: string } }) {
+      if (input.recommendationListId !== feedbackListId || input.recommendationListItemId !== feedbackItemId) throw { code: "RECOMMENDATION_ITEM_NOT_FOUND" };
+      if (input.command.expectedVersion !== 0) throw { code: "VERSION_CONFLICT" };
+      const body = JSON.stringify(input.command); const previous = feedbackIdempotency.get(input.command.idempotencyKey);
+      if (previous && previous !== body) throw { code: "IDEMPOTENCY_CONFLICT" };
+      if (!previous) { feedbackIdempotency.set(input.command.idempotencyKey, body); feedbackWrites += 1; }
+      return { decision: { status: input.command.decision, version: 1 }, proposal: null };
+    },
+    async reviseCalibrationProposal(input: { proposalId: string }) {
+      if (input.proposalId === "70000000-0000-4000-8000-000000000006") throw { code: "PROPOSAL_NO_EFFECT" };
+      if (input.proposalId === "70000000-0000-4000-8000-000000000009") return { proposalId: input.proposalId, revisionId: "70000000-0000-4000-8000-000000000011", revisionNumber: 2 };
+      throw { code: "PROPOSAL_NOT_FOUND" };
+    },
+    async rebaseCalibrationProposal(input: { proposalId: string }) {
+      if (input.proposalId === "70000000-0000-4000-8000-000000000006") throw { code: "RULE_VERSION_CONFLICT" };
+      if (input.proposalId === "70000000-0000-4000-8000-000000000010") return { proposalId: input.proposalId, revisionId: "70000000-0000-4000-8000-000000000012", revisionNumber: 3 };
+      throw { code: "PROPOSAL_NOT_FOUND" };
+    },
+    async resolveCalibrationProposal() { throw { code: "PROPOSAL_NOT_FOUND" }; },
+  };
+  const feedbackQueries = { async listCalibrationProposals() { return []; } };
   const conflictReviewCommands = {
     resolve: async () => conflictResolutionResponse,
   };
@@ -139,6 +201,10 @@ describe("authenticated workbench HTTP API", () => {
       .overrideProvider(JOB_PAGE_FETCHER).useValue(jobPageFetcher)
       .overrideProvider(AGENT_RUN_QUEUE_PORT).useValue(agentRunQueue)
       .overrideProvider(CAREER_FACT_CONFLICT_REVIEW_COMMANDS).useValue(conflictReviewCommands)
+      .overrideProvider(JOB_TRIAGE_COMMANDS).useValue(triageCommands)
+      .overrideProvider(JOB_TRIAGE_QUERIES).useValue(triageQueries)
+      .overrideProvider(RECOMMENDATION_FEEDBACK_COMMANDS).useValue(feedbackCommands)
+      .overrideProvider(RECOMMENDATION_FEEDBACK_QUERIES).useValue(feedbackQueries)
       .compile();
     app = module.createNestApplication<NestFastifyApplication>(new FastifyAdapter({ loggerInstance: testLogger as never }));
     await configureApiApplication(app);
@@ -233,6 +299,137 @@ describe("authenticated workbench HTTP API", () => {
     });
   });
 
+  it("通过真实 HTTP 严格验证、隔离并映射推荐决策的幂等与 CAS 错误", async () => {
+    const key = "70000000-0000-4000-8000-000000000003";
+    const unauthenticated = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/recommendations/lists/${feedbackListId}/items/${feedbackItemId}/decisions`, payload: { decision: "saved", expectedVersion: 0, idempotencyKey: key } });
+    expect(unauthenticated.statusCode).toBe(401);
+    const session = await createSession(app, "recommendation-feedback-http");
+    const headers = { ...bearer(session.sessionToken), "content-type": "application/json" };
+    const malformed = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/recommendations/lists/${feedbackListId}/items/${feedbackItemId}/decisions`, headers, payload: { decision: "saved", expectedVersion: 0, idempotencyKey: key, applicationStatus: "submitted" } });
+    expect(malformed.statusCode).toBe(400);
+    const ownerBoundMissing = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/recommendations/lists/70000000-0000-4000-8000-000000000004/items/${feedbackItemId}/decisions`, headers, payload: { decision: "saved", expectedVersion: 0, idempotencyKey: randomUUID() } });
+    expect(ownerBoundMissing.statusCode).toBe(404);
+    const before = feedbackWrites;
+    const created = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/recommendations/lists/${feedbackListId}/items/${feedbackItemId}/decisions`, headers, payload: { decision: "saved", expectedVersion: 0, idempotencyKey: key } });
+    const replay = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/recommendations/lists/${feedbackListId}/items/${feedbackItemId}/decisions`, headers, payload: { decision: "saved", expectedVersion: 0, idempotencyKey: key } });
+    expect(created.statusCode).toBe(201); expect(replay.statusCode).toBe(201); expect(created.json()).toEqual(replay.json()); expect(feedbackWrites).toBe(before + 1);
+    const conflict = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/recommendations/lists/${feedbackListId}/items/${feedbackItemId}/decisions`, headers, payload: { decision: "ignored", reason: "LOCATION", expectedVersion: 0, idempotencyKey: key } });
+    const stale = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/recommendations/lists/${feedbackListId}/items/${feedbackItemId}/decisions`, headers, payload: { decision: "saved", expectedVersion: 1, idempotencyKey: randomUUID() } });
+    expect(conflict.statusCode).toBe(409); expect(stale.statusCode).toBe(409);
+  });
+
+  it("将无效果的校准修改稳定映射为 422，而不是内部错误", async () => {
+    const session = await createSession(app, "recommendation-no-effect-http");
+    const response = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/recommendations/calibration-proposals/70000000-0000-4000-8000-000000000006/revisions", headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: { strategy: "require_related_evidence", expectedVersion: 1, idempotencyKey: "70000000-0000-4000-8000-000000000007" } });
+    expect(response.statusCode).toBe(422); expect(response.json()).toMatchObject({ code: "PROPOSAL_NO_EFFECT" });
+  });
+
+  it("严格验证重新计算命令，并将规则版本竞争映射为 409", async () => {
+    const session = await createSession(app, "recommendation-rebase-http");
+    const headers = { ...bearer(session.sessionToken), "content-type": "application/json" };
+    const malformed = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/recommendations/calibration-proposals/70000000-0000-4000-8000-000000000006/rebases", headers, payload: { expectedVersion: 1, idempotencyKey: "70000000-0000-4000-8000-000000000008", strategy: "raise_quality_bar" } });
+    const conflict = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/recommendations/calibration-proposals/70000000-0000-4000-8000-000000000006/rebases", headers, payload: { expectedVersion: 1, idempotencyKey: "70000000-0000-4000-8000-000000000008" } });
+    expect(malformed.statusCode).toBe(400);
+    expect(conflict.statusCode).toBe(409); expect(conflict.json()).toMatchObject({ code: "RULE_VERSION_CONFLICT" });
+  });
+
+  it("校准 revise/rebase 成功响应只返回严格安全标识，幂等重放保持完全相同", async () => {
+    const session = await createSession(app, "recommendation-command-response-http");
+    const headers = { ...bearer(session.sessionToken), "content-type": "application/json" };
+    const cases = [
+      { path: "/v1/recommendations/calibration-proposals/70000000-0000-4000-8000-000000000009/revisions", payload: { strategy: "raise_quality_bar", expectedVersion: 1, idempotencyKey: "70000000-0000-4000-8000-000000000013" }, expected: { proposalId: "70000000-0000-4000-8000-000000000009", revisionId: "70000000-0000-4000-8000-000000000011", revisionNumber: 2 } },
+      { path: "/v1/recommendations/calibration-proposals/70000000-0000-4000-8000-000000000010/rebases", payload: { expectedVersion: 2, idempotencyKey: "70000000-0000-4000-8000-000000000014" }, expected: { proposalId: "70000000-0000-4000-8000-000000000010", revisionId: "70000000-0000-4000-8000-000000000012", revisionNumber: 3 } },
+    ];
+    for (const command of cases) {
+      const first = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: command.path, headers, payload: command.payload });
+      const replay = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: command.path, headers, payload: command.payload });
+      expect(first.statusCode).toBe(201); expect(replay.statusCode).toBe(201);
+      expect(first.json()).toEqual(command.expected); expect(replay.json()).toEqual(command.expected);
+      expect(Object.keys(first.json()).sort()).toEqual(["proposalId", "revisionId", "revisionNumber"]);
+      expect(first.body).not.toMatch(/userId|idempotencyKey|commandSummary|createdAt|baseRuleVersion/u);
+    }
+  });
+
+  it("authenticates and strictly validates immutable job triage routes", async () => {
+    const unauthenticated = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-opportunities/${triageOpportunityId}/triage-versions`, payload: { targetId: triageVersionId },
+    });
+    expect(unauthenticated.statusCode).toBe(401);
+
+    const session = await createSession(app, "job-triage-http");
+    const malformed = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-opportunities/${triageOpportunityId}/triage-versions`, headers: { ...bearer(session.sessionToken), "content-type": "application/json" },
+      payload: { targetId: triageVersionId, extra: "not allowed" },
+    });
+    expect(malformed.statusCode).toBe(400);
+
+    const missing = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: "/v1/job-opportunities/90000000-0000-4000-8000-000000000099/triage-versions", headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: { targetId: triageVersionId },
+    });
+    expect(missing.statusCode).toBe(404);
+    const inactive = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-opportunities/${triageOpportunityId}/triage-versions`, headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: { targetId: inactiveTriageTargetId },
+    });
+    expect(inactive.statusCode).toBe(409);
+    const emptyProfile = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-opportunities/${triageOpportunityId}/triage-versions`, headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: { targetId: emptyProfileTriageTargetId },
+    });
+    expect(emptyProfile.statusCode).toBe(409);
+
+    const created = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-opportunities/${triageOpportunityId}/triage-versions`, headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: { targetId: triageVersionId },
+    });
+    const replay = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-opportunities/${triageOpportunityId}/triage-versions`, headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: { targetId: triageVersionId },
+    });
+    expect(created.statusCode).toBe(201);
+    expect(replay.json().triageVersionId).toBe(created.json().triageVersionId);
+    const latest = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/job-opportunities/${triageOpportunityId}/triage-versions/latest?targetId=${triageVersionId}`, headers: bearer(session.sessionToken) });
+    const exact = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/job-opportunities/${triageOpportunityId}/triage-versions/${triageVersionId}`, headers: bearer(session.sessionToken) });
+    expect(latest.statusCode).toBe(200);
+    expect(exact.statusCode).toBe(200);
+  });
+
+  it("通过真实 HTTP Zod 序列化稳定返回二十条相关技能证据", async () => {
+    triageCandidateEvidenceCount = 20;
+    const session = await createSession(app, "job-triage-evidence-cap");
+    const response = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-opportunities/${triageOpportunityId}/triage-versions`, headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: { targetId: triageVersionId },
+    });
+    triageCandidateEvidenceCount = 0;
+    expect(response.statusCode).toBe(201);
+    expect(response.json().dimensionScores.technical.candidateEvidence).toHaveLength(20);
+    expect(response.json().dimensionScores.technical.candidateEvidence.map((item: { value: string }) => item.value)).toEqual(Array.from({ length: 20 }, (_, index) => `相关技能${index + 1}`));
+  });
+
+  it.each([21, 100])("通过真实 HTTP Zod 序列化保留 %i 条未匹配技能的全量计数并限制公开投影", async (skillCount) => {
+    triageMissingSkillCount = skillCount;
+    const session = await createSession(app, `job-triage-missing-skills-${skillCount}`);
+    const response = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-opportunities/${triageOpportunityId}/triage-versions`, headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: { targetId: triageVersionId },
+    });
+    triageMissingSkillCount = 0;
+    expect(response.statusCode).toBe(201);
+    const parsed = JobTriageVersionSchema.parse(response.json());
+    expect(parsed.confidenceBasisPoints).toBe(0);
+    expect(parsed.dimensionScores?.technical).toMatchObject({ score: 50, missing: [{ kind: "profile_skills", count: skillCount, examples: Array.from({ length: 20 }, (_, index) => `缺失技能${index + 1}`) }] });
+  });
+
+  it("通过真实 HTTP Zod 序列化返回截断后的岗位和候选证据", async () => {
+    triageEvidenceValues = { job: `岗位${"甲".repeat(510)}`, candidate: `目标${"乙".repeat(254)}` };
+    triageCandidateEvidenceCount = 1;
+    const session = await createSession(app, "job-triage-evidence-summary");
+    const response = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-opportunities/${triageOpportunityId}/triage-versions`, headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: { targetId: triageVersionId },
+    });
+    triageEvidenceValues = null;
+    triageCandidateEvidenceCount = 0;
+    expect(response.statusCode).toBe(201);
+    const parsed = JobTriageVersionSchema.parse(response.json());
+    expect(parsed.dimensionScores?.technical.jobEvidence[0]?.value).toHaveLength(512);
+    expect(parsed.dimensionScores?.technical.candidateEvidence[0]?.value).toHaveLength(256);
+  });
+
   it("通过真实 HTTP 序列化器拒绝残缺的职业事实冲突解决响应", async () => {
     const session = await createSession(app, "conflict-response-serializer");
     conflictResolutionResponse = {
@@ -267,8 +464,9 @@ describe("authenticated workbench HTTP API", () => {
     expect(response.headers["x-request-id"]).toMatch(/^[0-9a-f-]{36}$/i);
     expect(response.json()).toEqual({
       account: { userId: primary.account.userId },
-      summary: { recommendations: 0, pendingFacts: 0, runningAgentRuns: 0, applications: 0 },
+      summary: { todayRecommendations: 0, pendingFacts: 0, activeAgentRuns: 0, failedAgentRuns: 0, sourceFailures: 0, pendingDecisions: 0, applications: 0, applicationsAvailable: false },
     });
+    expect(response.headers["cache-control"]).toBe("no-store");
   });
 
   it("creates one manual profile fact and rejects a stale profile version", async () => {
@@ -410,6 +608,169 @@ describe("authenticated workbench HTTP API", () => {
     expect(invalidBody.body).not.toContain("ZodError");
   });
 
+  it("通过认证 API 维护目标公司 Watchlist，并将输入与领域错误映射为固定问题体", async () => {
+    const primary = await createSession(app, "company-watchlist-primary");
+    const other = await createSession(app, "company-watchlist-other");
+    const targetId = await createActiveTarget(app, primary.sessionToken, "Watchlist API 工程师");
+    const headers = { ...bearer(primary.sessionToken), "content-type": "application/json" };
+    const sourceNote = "不要回显的来源备注";
+    const careersUrl = "https://careers.example.com/jobs";
+    const allowedDomain = "example.com";
+
+    const empty = await app.getHttpAdapter().getInstance().inject({
+      method: "GET", url: `/v1/job-targets/${targetId}/company-watchlist`, headers: bearer(primary.sessionToken),
+    });
+    expect(empty.statusCode).toBe(200);
+    expect(empty.json()).toEqual({
+      target: { targetId, targetVersion: 1, targetState: "active", roleFamily: "Watchlist API 工程师" },
+      version: 0,
+      items: [],
+    });
+
+    const invalid = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/items`, headers,
+      payload: { expectedVersion: 0, canonicalCompanyName: "不得回显的公司", careersUrl: "https://evil.example.test/?token=private", allowedDomains: [allowedDomain], sourceNote, captchaBypass: true },
+    });
+    expect(invalid.statusCode).toBe(400);
+    expect(invalid.json()).toEqual({ code: "INVALID_REQUEST", message: "请求无效", requestId: expect.any(String) });
+    for (const secret of ["不得回显的公司", "evil.example.test", "private", sourceNote, "captchaBypass"]) {
+      expect(invalid.body).not.toContain(secret);
+    }
+
+    const added = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/items`, headers,
+      payload: { expectedVersion: 0, canonicalCompanyName: "示例公司", careersUrl, allowedDomains: [allowedDomain], sourceNote },
+    });
+    expect(added.statusCode).toBe(201);
+    expect(added.json()).toMatchObject({ version: 1, items: [{ canonicalCompanyName: "示例公司", careersUrl, allowedDomains: [allowedDomain], sourceNote, state: "enabled", position: 1 }] });
+    const itemId = added.json().items[0].itemId as string;
+
+    const revised = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/items/${itemId}/revisions`, headers,
+      payload: { expectedVersion: 1, canonicalCompanyName: "示例公司（修订）", careersUrl: "https://jobs.example.com/openings", allowedDomains: [allowedDomain], sourceNote: null },
+    });
+    expect(revised.statusCode).toBe(201);
+    expect(revised.json()).toMatchObject({ version: 2, items: [{ itemId, canonicalCompanyName: "示例公司（修订）", state: "enabled", position: 1 }] });
+
+    const reordered = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/reorders`, headers,
+      payload: { expectedVersion: 2, orderedItemIds: [itemId] },
+    });
+    expect(reordered.statusCode).toBe(201);
+    const disabled = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/items/${itemId}/state-changes`, headers,
+      payload: { expectedVersion: 3, state: "disabled" },
+    });
+    expect(disabled.statusCode).toBe(201);
+    const enabled = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/items/${itemId}/state-changes`, headers,
+      payload: { expectedVersion: 4, state: "enabled" },
+    });
+    expect(enabled.statusCode).toBe(201);
+
+    const stale = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/items`, headers,
+      payload: { expectedVersion: 0, canonicalCompanyName: "陈旧写入", careersUrl: "https://new.example.com/jobs", allowedDomains: [allowedDomain], sourceNote: null },
+    });
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json()).toEqual({ code: "COMPANY_WATCHLIST_VERSION_CONFLICT", message: "目标公司 Watchlist 已在其他位置更新，请刷新后重试", requestId: expect.any(String) });
+    expect(stale.body).not.toContain("陈旧写入");
+
+    const crossAccount = await app.getHttpAdapter().getInstance().inject({
+      method: "GET", url: `/v1/job-targets/${targetId}/company-watchlist`, headers: bearer(other.sessionToken),
+    });
+    expect(crossAccount.statusCode).toBe(404);
+    expect(crossAccount.json()).toEqual({ code: "COMPANY_WATCHLIST_TARGET_NOT_FOUND", message: "求职目标不存在", requestId: expect.any(String) });
+
+    const reloaded = await app.getHttpAdapter().getInstance().inject({
+      method: "GET", url: `/v1/job-targets/${targetId}/company-watchlist`, headers: bearer(primary.sessionToken),
+    });
+    expect(reloaded.statusCode).toBe(200);
+    expect(reloaded.json()).toMatchObject({ version: 5, items: [{ itemId, state: "enabled" }] });
+  });
+
+  it("仅向所有者返回严格的来源健康概览，并沿用认证与不存在问题体", async () => {
+    const owner = await createSession(app, "source-health-owner");
+    const other = await createSession(app, "source-health-other");
+    const targetId = await createActiveTarget(app, owner.sessionToken, "来源健康 API 工程师");
+    const anonymous = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/job-targets/${targetId}/source-health` });
+    expect(anonymous.statusCode).toBe(401);
+    const owned = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/job-targets/${targetId}/source-health`, headers: bearer(owner.sessionToken) });
+    expect(owned.statusCode).toBe(200);
+    expect(owned.json()).toEqual({ targetId, watchlistVersion: 0, sources: [] });
+    const foreign = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/job-targets/${targetId}/source-health`, headers: bearer(other.sessionToken) });
+    expect(foreign.statusCode).toBe(404);
+    expect(foreign.json()).toEqual({ code: "COMPANY_WATCHLIST_TARGET_NOT_FOUND", message: "求职目标不存在", requestId: expect.any(String) });
+  });
+
+  it("拒绝所有凭据或绕过字段，并将缺失条目、重复项和上限固定映射为 404 或 409", async () => {
+    const session = await createSession(app, "company-watchlist-errors");
+    const targetId = await createActiveTarget(app, session.sessionToken, "Watchlist 错误映射工程师");
+    const headers = { ...bearer(session.sessionToken), "content-type": "application/json" };
+    const command = (expectedVersion: number, index: number) => ({
+      expectedVersion,
+      canonicalCompanyName: `示例公司 ${index}`,
+      careersUrl: `https://jobs-${index}.example.com/openings`,
+      allowedDomains: ["example.com"],
+      sourceNote: null,
+    });
+
+    for (const field of ["username", "password", "cookie", "captchaBypass", "loginWallAuthorization"]) {
+      const rejected = await app.getHttpAdapter().getInstance().inject({
+        method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/items`, headers,
+        payload: { ...command(0, 0), [field]: "private-value" },
+      });
+      expect(rejected.statusCode).toBe(400);
+      expect(rejected.json()).toEqual({ code: "INVALID_REQUEST", message: "请求无效", requestId: expect.any(String) });
+      expect(rejected.body).not.toContain("private-value");
+      expect(rejected.body).not.toContain(field);
+    }
+
+    const first = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/items`, headers, payload: command(0, 0),
+    });
+    expect(first.statusCode).toBe(201);
+    const itemId = first.json().items[0].itemId as string;
+
+    const missingItem = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/items/6b8c6eb3-2b92-4d91-aad4-959b7d4cd7a3/revisions`, headers,
+      payload: command(1, 1),
+    });
+    expect(missingItem.statusCode).toBe(404);
+    expect(missingItem.json()).toEqual({ code: "COMPANY_WATCHLIST_ITEM_NOT_FOUND", message: "目标公司 Watchlist 项不存在", requestId: expect.any(String) });
+
+    const duplicateCompany = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/items`, headers,
+      payload: { ...command(1, 1), canonicalCompanyName: "示例公司 0" },
+    });
+    expect(duplicateCompany.statusCode).toBe(409);
+    expect(duplicateCompany.json()).toEqual({ code: "COMPANY_WATCHLIST_DUPLICATE_COMPANY", message: "目标公司 Watchlist 中已存在该公司", requestId: expect.any(String) });
+
+    const duplicateSource = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/items`, headers,
+      payload: { ...command(1, 1), careersUrl: command(1, 0).careersUrl },
+    });
+    expect(duplicateSource.statusCode).toBe(409);
+    expect(duplicateSource.json()).toEqual({ code: "COMPANY_WATCHLIST_DUPLICATE_SOURCE", message: "目标公司 Watchlist 中已存在该岗位来源", requestId: expect.any(String) });
+
+    let version = 1;
+    for (let index = 1; index < 50; index += 1) {
+      const added = await app.getHttpAdapter().getInstance().inject({
+        method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/items`, headers, payload: command(version, index),
+      });
+      expect(added.statusCode).toBe(201);
+      version += 1;
+    }
+    const limit = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/job-targets/${targetId}/company-watchlist/items`, headers, payload: command(version, 50),
+    });
+    expect(limit.statusCode).toBe(409);
+    expect(limit.json()).toEqual({ code: "COMPANY_WATCHLIST_LIMIT", message: "目标公司 Watchlist 已达上限", requestId: expect.any(String) });
+    expect(limit.body).not.toContain("示例公司 50");
+
+    expect(itemId).toMatch(/^[0-9a-f-]{36}$/i);
+  });
+
   it("以持久化运行提供幂等且账户隔离的岗位发现入口", async () => {
     const primary = await createSession(app, "agent-runs-primary");
     const other = await createSession(app, "agent-runs-other");
@@ -496,6 +857,7 @@ describe("authenticated workbench HTTP API", () => {
     await database.$client`
       update agent_runs
       set status = 'completed', current_step = 'completed', version = 2, attempt_count = 1,
+          termination_kind = 'completed', termination_budget_dimension = null,
           started_at = ${completedAt.toISOString()}, completed_at = ${completedAt.toISOString()}, updated_at = ${completedAt.toISOString()}
       where id = ${runId} and user_id = ${primary.account.userId}
     `;
@@ -515,7 +877,7 @@ describe("authenticated workbench HTTP API", () => {
     expect(successfulEvents.statusCode).toBe(200);
     expect(successfulEvents.headers["content-type"]).toBe("text/event-stream; charset=utf-8");
     expect(successfulEvents.headers["cache-control"]).toBe("no-cache, no-transform");
-    expect(successfulEvents.body).toBe('id: 2\nevent: run.completed\ndata: {"eventType":"run.completed","status":"completed","currentStep":"completed","attemptCount":1,"resultCount":0}\n\n');
+    expect(successfulEvents.body).toBe('id: 2\nevent: run.completed\ndata: {"id":"2","event":"run.completed","runVersion":2,"data":{"eventType":"run.completed","status":"completed","currentStep":"completed","attemptCount":1,"resultCount":0}}\n\n');
 
     agentRunQueue.failNext = true;
     const durable = await app.getHttpAdapter().getInstance().inject({
@@ -524,6 +886,244 @@ describe("authenticated workbench HTTP API", () => {
     });
     expect(durable.statusCode).toBe(201);
     expect(durable.json()).toMatchObject({ status: "queued", reused: false });
+  });
+
+  it("通过真实 HTTP 序列化 Public v2 scheduled run 的 latest 与 detail 响应", async () => {
+    const session = await createSession(app, "public-v2-run-response");
+    const targetId = await createActiveTarget(app, session.sessionToken, "Public v2 工程师");
+    const setupClock = () => new Date("2026-08-30T01:31:00.000Z");
+    const dueClock = () => new Date("2026-08-31T01:31:00.000Z");
+    const auditTrail = createAuditTrail({ db: database, clock: setupClock });
+    await createCompanyWatchlistCommands({ db: database, auditTrail, id: randomUUID, clock: setupClock }).addItem({
+      userId: session.account.userId, targetId, requestId: randomUUID(),
+      command: { expectedVersion: 0, canonicalCompanyName: "Public Example", careersUrl: "https://boards.greenhouse.io/public-example", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null },
+    });
+    const runs = createAgentRunCommands({ db: database, queue: agentRunQueue, auditTrail, id: randomUUID, clock: setupClock, executionMode: "greenhouse" });
+    const schedules = createJobDiscoverySchedules({ db: database, runs, auditTrail, id: randomUUID, clock: setupClock });
+    const schedule = await schedules.set({ userId: session.account.userId, targetId, requestId: randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
+    expect(schedule.nextRunAt).toBe("2026-08-31T01:30:00.000Z");
+    const dueSchedules = createJobDiscoverySchedules({ db: database, runs, auditTrail, id: randomUUID, clock: dueClock });
+    await dueSchedules.materializeDue({ limit: 1 });
+    await dueSchedules.dispatchPending({ limit: 1 });
+    const headers = bearer(session.sessionToken);
+    const latest = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-runs/latest", headers });
+
+    expect(latest.statusCode).toBe(200);
+    expect(latest.json().run).toMatchObject({ adapter: "greenhouse", sourceScope: { sources: [expect.objectContaining({ sourceId: "greenhouse:public-example" })] } });
+    const detail = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/agent-runs/${latest.json().run.runId}`, headers });
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json()).toMatchObject({ adapter: "greenhouse", executionSpec: { adapter: "greenhouse" } });
+  });
+
+  it("以认证账户暴露严格的每日检查计划，并脱敏来源策略问题", async () => {
+    const primary = await createSession(app, "daily-schedule-primary");
+    const other = await createSession(app, "daily-schedule-other");
+    const targetId = await createActiveTarget(app, primary.sessionToken, "每日检查工程师");
+    const path = `/v1/job-targets/${targetId}/discovery-schedule`;
+    const [missingAuth, hidden, invalid] = await Promise.all([
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: path }),
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: path, headers: bearer(other.sessionToken) }),
+      app.getHttpAdapter().getInstance().inject({ method: "PUT", url: path, headers: bearer(primary.sessionToken), payload: { expectedVersion: 0, state: "enabled", dailyTime: "09:30", userId: other.account.userId } }),
+    ]);
+    expect(missingAuth.statusCode).toBe(401);
+    expect(hidden.statusCode).toBe(404);
+    expect(invalid.statusCode).toBe(400);
+
+    const initial = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: path, headers: bearer(primary.sessionToken) });
+    expect(initial.statusCode).toBe(200);
+    expect(initial.json()).toEqual({ schedule: null, sourceSupport: { status: "unsupported" } });
+    const unsupportedEnable = await app.getHttpAdapter().getInstance().inject({ method: "PUT", url: path, headers: bearer(primary.sessionToken), payload: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
+    expect(unsupportedEnable.statusCode).toBe(409);
+    expect(unsupportedEnable.json()).toMatchObject({ code: "NO_SUPPORTED_SOURCE", message: "待接入" });
+    expect((await app.getHttpAdapter().getInstance().inject({ method: "GET", url: path, headers: bearer(primary.sessionToken) })).json()).toEqual({ schedule: null, sourceSupport: { status: "unsupported" } });
+    const created = await app.getHttpAdapter().getInstance().inject({ method: "PUT", url: path, headers: bearer(primary.sessionToken), payload: { expectedVersion: 0, state: "disabled", dailyTime: "09:30" } });
+    expect(created.statusCode).toBe(200);
+    expect(created.json()).toMatchObject({ schedule: { version: 1, state: "disabled", dailyTime: "09:30", timeZone: "Asia/Shanghai" }, sourceSupport: { status: "unsupported" } });
+    const conflict = await app.getHttpAdapter().getInstance().inject({ method: "PUT", url: path, headers: bearer(primary.sessionToken), payload: { expectedVersion: 0, state: "disabled", dailyTime: "10:00" } });
+    expect(conflict.statusCode).toBe(409);
+
+    await createCompanyWatchlistCommands({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: randomUUID, clock: () => new Date() }).addItem({
+      userId: primary.account.userId, targetId, requestId: randomUUID(),
+      command: { expectedVersion: 0, canonicalCompanyName: "Private Company", careersUrl: "https://boards.greenhouse.io/private-company", allowedDomains: ["boards.greenhouse.io"], sourceNote: null },
+    });
+    const policy = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: path, headers: bearer(primary.sessionToken) });
+    expect(policy.statusCode).toBe(200);
+    expect(policy.json()).toMatchObject({ schedule: { version: 1, state: "disabled" }, sourceSupport: { status: "policy_required", message: "需允许 boards-api.greenhouse.io" } });
+    expect(policy.body).not.toContain("private-company");
+    expect(policy.body).not.toContain("allowedDomains");
+    const policyEnable = await app.getHttpAdapter().getInstance().inject({ method: "PUT", url: path, headers: bearer(primary.sessionToken), payload: { expectedVersion: 1, state: "enabled", dailyTime: "09:30" } });
+    expect(policyEnable.statusCode).toBe(409);
+    expect(policyEnable.json()).toMatchObject({ code: "SOURCE_POLICY_REQUIRED", message: "需允许 boards-api.greenhouse.io", requestId: expect.any(String) });
+    expect(policyEnable.body).not.toContain("private-company");
+    const deactivated = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/job-targets/${targetId}/deactivations`, headers: bearer(primary.sessionToken), payload: { expectedVersion: 1 } });
+    expect(deactivated.statusCode).toBe(201);
+    const inactiveEnable = await app.getHttpAdapter().getInstance().inject({ method: "PUT", url: path, headers: bearer(primary.sessionToken), payload: { expectedVersion: 1, state: "enabled", dailyTime: "09:30" } });
+    expect(inactiveEnable.statusCode).toBe(409);
+    expect(inactiveEnable.json()).toMatchObject({ code: "JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE", requestId: expect.any(String) });
+  });
+
+  it("以认证账户暴露幂等运行控制和可处理 Inbox", async () => {
+    const primary = await createSession(app, "agent-run-controls-primary");
+    const other = await createSession(app, "agent-run-controls-other");
+    const targetId = await createActiveTarget(app, primary.sessionToken, "Agent 控制工程师");
+    const createRun = async () => {
+      const response = await app.getHttpAdapter().getInstance().inject({
+        method: "POST", url: "/v1/agent-runs", headers: bearer(primary.sessionToken),
+        payload: { targetId, idempotencyKey: randomUUID() },
+      });
+      expect(response.statusCode).toBe(201);
+      return response.json().runId as string;
+    };
+    const runId = await createRun();
+
+    const [unauthenticated, malformed, hidden, unauthenticatedInbox] = await Promise.all([
+      app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/agent-runs/${runId}/controls`, payload: { commandId: randomUUID(), action: "pause" } }),
+      app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/agent-runs/${runId}/controls`, headers: bearer(primary.sessionToken), payload: { commandId: randomUUID(), action: "pause", ownerId: other.account.userId } }),
+      app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/agent-runs/${runId}/controls`, headers: bearer(other.sessionToken), payload: { commandId: randomUUID(), action: "pause" } }),
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=pending" }),
+    ]);
+    expect(unauthenticated.statusCode).toBe(401);
+    expect(malformed.statusCode).toBe(400);
+    expect(hidden.statusCode).toBe(404);
+    expect(unauthenticatedInbox.statusCode).toBe(401);
+
+    const commandId = randomUUID();
+    const paused = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-runs/${runId}/controls`, headers: bearer(primary.sessionToken),
+      payload: { commandId, action: "pause" },
+    });
+    expect(paused.statusCode).toBe(200);
+    expect(paused.json()).toMatchObject({ applied: true, run: { runId, status: "paused", controlState: "none" } });
+
+    const replay = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-runs/${runId}/controls`, headers: bearer(primary.sessionToken),
+      payload: { commandId, action: "pause" },
+    });
+    const commandConflict = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-runs/${runId}/controls`, headers: bearer(primary.sessionToken),
+      payload: { commandId, action: "cancel" },
+    });
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json()).toEqual(paused.json());
+    expect(commandConflict.statusCode).toBe(409);
+    expect(commandConflict.json()).toMatchObject({ code: "AGENT_RUN_COMMAND_ID_CONFLICT" });
+
+    const inbox = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=pending", headers: bearer(primary.sessionToken) });
+    expect(inbox.statusCode).toBe(200);
+    expect(inbox.json()).toMatchObject({ items: [expect.objectContaining({ runId, kind: "decision_required", status: "unread", availableActions: ["mark_read", "resume_run", "cancel_run"] })] });
+    const pauseItemId = inbox.json().items[0].itemId as string;
+    const unread = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=unread", headers: bearer(primary.sessionToken) });
+    expect(unread.statusCode).toBe(200);
+    expect(unread.json()).toMatchObject({ items: [expect.objectContaining({ itemId: pauseItemId, status: "unread" })] });
+    const markedRead = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/agent-inbox/${pauseItemId}/actions`, headers: bearer(primary.sessionToken), payload: { actionId: randomUUID(), action: "mark_read" } });
+    expect(markedRead.statusCode).toBe(200);
+    expect(markedRead.json()).toMatchObject({ applied: true, item: { status: "read" } });
+    const read = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=read", headers: bearer(primary.sessionToken) });
+    expect(read.statusCode).toBe(200);
+    expect(read.json()).toMatchObject({ items: [expect.objectContaining({ itemId: pauseItemId, status: "read" })] });
+    const hiddenItem = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-inbox/${pauseItemId}/actions`, headers: bearer(other.sessionToken),
+      payload: { actionId: randomUUID(), action: "dismiss" },
+    });
+    expect(hiddenItem.statusCode).toBe(404);
+
+    agentRunQueue.failNext = true;
+    const resumed = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-inbox/${pauseItemId}/actions`, headers: bearer(primary.sessionToken),
+      payload: { actionId: randomUUID(), action: "resume_run" },
+    });
+    expect(resumed.statusCode).toBe(200);
+    expect(resumed.json()).toMatchObject({ applied: true, item: { status: "resolved" }, run: { runId, status: "queued" } });
+    const resolved = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=resolved", headers: bearer(primary.sessionToken) });
+    expect(resolved.statusCode).toBe(200);
+    expect(resolved.json()).toMatchObject({ items: [expect.objectContaining({ itemId: pauseItemId, status: "resolved" })] });
+    await expect(app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/agent-inbox/${pauseItemId}/actions`, headers: bearer(primary.sessionToken), payload: { actionId: randomUUID(), action: "mark_read" } })).resolves.toMatchObject({ statusCode: 409 });
+
+    const cancelRunId = await createRun();
+    const cancelPause = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-runs/${cancelRunId}/controls`, headers: bearer(primary.sessionToken),
+      payload: { commandId: randomUUID(), action: "pause" },
+    });
+    expect(cancelPause.statusCode).toBe(200);
+    const cancelInbox = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=pending", headers: bearer(primary.sessionToken) });
+    const cancelItemId = cancelInbox.json().items.find((item: { runId: string }) => item.runId === cancelRunId).itemId as string;
+    const cancelled = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-inbox/${cancelItemId}/actions`, headers: bearer(primary.sessionToken),
+      payload: { actionId: randomUUID(), action: "cancel_run" },
+    });
+    expect(cancelled.statusCode).toBe(200);
+    expect(cancelled.json()).toMatchObject({ applied: true, item: { status: "resolved" }, run: { runId: cancelRunId, status: "cancelled" } });
+
+    const failedRunId = await createRun();
+    const budgetRunId = await createRun();
+    const now = new Date("2026-08-29T10:00:00.000Z").toISOString();
+    await database.$client`
+      update agent_runs set status = 'failed', current_step = 'failed', version = 2, attempt_count = 1,
+        failure_code = 'AGENT_RUN_ADAPTER_FAILED', termination_kind = 'source_failed', termination_budget_dimension = null,
+        started_at = ${now}, failed_at = ${now}, updated_at = ${now}
+      where id = ${failedRunId} and user_id = ${primary.account.userId}
+    `;
+    await database.$client`
+      update agent_runs set status = 'failed', current_step = 'failed', version = 2, attempt_count = 3,
+        failure_code = 'AGENT_RUN_BUDGET_EXCEEDED', termination_kind = 'budget_exhausted', termination_budget_dimension = 'attempts',
+        started_at = ${now}, failed_at = ${now}, updated_at = ${now}
+      where id = ${budgetRunId} and user_id = ${primary.account.userId}
+    `;
+    await database.$client`
+      insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, kind, status, reason_code, budget_dimension, created_at, resolved_at)
+      values (${randomUUID()}, ${primary.account.userId}, ${failedRunId}, 2, 'run_failed', 'unread', 'AGENT_RUN_ADAPTER_FAILED', null, ${now}, null)
+    `;
+    await database.$client`
+      insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, kind, status, reason_code, budget_dimension, created_at, resolved_at)
+      values (${randomUUID()}, ${primary.account.userId}, ${budgetRunId}, 2, 'budget_exhausted', 'unread', 'AGENT_RUN_BUDGET_EXCEEDED', 'attempts', ${now}, null)
+    `;
+    const afterFailures = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=pending", headers: bearer(primary.sessionToken) });
+    const restartItemId = afterFailures.json().items.find((item: { runId: string }) => item.runId === failedRunId).itemId as string;
+    const dismissItemId = afterFailures.json().items.find((item: { runId: string }) => item.runId === budgetRunId).itemId as string;
+    await database.$client`
+      update job_targets set state = 'inactive', active_slot = null
+      where id = ${targetId} and user_id = ${primary.account.userId}
+    `;
+    const failedRestartActionId = randomUUID();
+    const failedRestart = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-inbox/${restartItemId}/actions`, headers: bearer(primary.sessionToken),
+      payload: { actionId: failedRestartActionId, action: "restart_run" },
+    });
+    const failedRestartReplay = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-inbox/${restartItemId}/actions`, headers: bearer(primary.sessionToken),
+      payload: { actionId: failedRestartActionId, action: "restart_run" },
+    });
+    expect(failedRestart.statusCode).toBe(500);
+    expect(failedRestart.json()).toMatchObject({ code: "INTERNAL_ERROR", message: "服务暂时不可用", requestId: expect.any(String) });
+    expect(failedRestart.body).not.toContain("AGENT_INBOX_ACTION_FAILED");
+    expect(failedRestartReplay.statusCode).toBe(500);
+    await expect(database.$client`
+      select outcome, reason_code as "reasonCode" from agent_inbox_item_actions
+      where user_id = ${primary.account.userId} and item_id = ${restartItemId} and action_id = ${failedRestartActionId}
+    `).resolves.toEqual([{ outcome: "failed", reasonCode: "AGENT_INBOX_ACTION_FAILED" }]);
+    await database.$client`
+      update job_targets set state = 'active', active_slot = null
+      where id = ${targetId} and user_id = ${primary.account.userId}
+    `;
+    const restarted = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-inbox/${restartItemId}/actions`, headers: bearer(primary.sessionToken),
+      payload: { actionId: randomUUID(), action: "restart_run" },
+    });
+    const dismissed = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-inbox/${dismissItemId}/actions`, headers: bearer(primary.sessionToken),
+      payload: { actionId: randomUUID(), action: "dismiss" },
+    });
+    expect(restarted.statusCode).toBe(200);
+    expect(restarted.json()).toMatchObject({ applied: true, item: { status: "resolved" }, run: { status: "queued" } });
+    expect(dismissed.statusCode).toBe(200);
+    expect(dismissed.json()).toMatchObject({ applied: true, item: { status: "resolved" }, run: null });
+
+    const terminal = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-runs/${cancelRunId}/controls`, headers: bearer(primary.sessionToken),
+      payload: { commandId: randomUUID(), action: "resume" },
+    });
+    expect(terminal.statusCode).toBe(409);
+    expect(terminal.json()).toMatchObject({ code: "AGENT_RUN_CONTROL_CONFLICT" });
   });
 
   it("keeps a command-side Zod error as an internal error rather than blaming the request", async () => {
@@ -1000,11 +1600,29 @@ describe("authenticated workbench HTTP API", () => {
       "/v1/job-targets": expect.anything(),
       "/v1/job-targets/{targetId}/revisions": expect.anything(),
       "/v1/job-targets/{targetId}/deactivations": expect.anything(),
+      "/v1/job-targets/{targetId}/company-watchlist": expect.anything(),
+      "/v1/job-targets/{targetId}/company-watchlist/items": expect.anything(),
+      "/v1/job-targets/{targetId}/company-watchlist/items/{itemId}/revisions": expect.anything(),
+      "/v1/job-targets/{targetId}/company-watchlist/items/{itemId}/state-changes": expect.anything(),
+      "/v1/job-targets/{targetId}/company-watchlist/reorders": expect.anything(),
+      "/v1/job-targets/{targetId}/source-health": expect.anything(),
+      "/v1/job-targets/{targetId}/discovery-schedule": expect.anything(),
       "/v1/career-documents/imports": expect.anything(),
       "/v1/career-documents/imports/{importId}": expect.anything(),
       "/health/live": expect.anything(),
     }));
     expect(document.components.schemas.ApiProblem).toBeDefined();
+    const agentRunResponses = document.paths["/v1/agent-runs"].post.responses;
+    const startRunSchema = document.components.schemas.StartAgentRunResponseDto_Output;
+    expect(JSON.stringify(agentRunResponses)).toContain("StartAgentRunResponseDto_Output");
+    expect(startRunSchema).toMatchObject({
+      anyOf: expect.arrayContaining([
+        expect.objectContaining({ additionalProperties: false, properties: expect.objectContaining({ adapter: expect.objectContaining({ enum: ["fake"] }) }) }),
+        expect.objectContaining({ additionalProperties: false, properties: expect.objectContaining({ adapterVersion: expect.objectContaining({ enum: ["greenhouse-job-board-v1"] }) }) }),
+        expect.objectContaining({ additionalProperties: false, properties: expect.objectContaining({ adapterVersion: expect.objectContaining({ enum: ["greenhouse-job-board-v2"] }) }) }),
+      ]),
+    });
+    expect(JSON.stringify(startRunSchema)).not.toContain('"additionalProperties":{}');
     expect(document.components.securitySchemes.bearerAuth).toEqual({
       type: "http",
       scheme: "bearer",
@@ -1025,12 +1643,23 @@ describe("authenticated workbench HTTP API", () => {
       ["/v1/job-targets", "post"],
       ["/v1/job-targets/{targetId}/revisions", "post"],
       ["/v1/job-targets/{targetId}/deactivations", "post"],
+      ["/v1/job-targets/{targetId}/company-watchlist", "get"],
+      ["/v1/job-targets/{targetId}/company-watchlist/items", "post"],
+      ["/v1/job-targets/{targetId}/company-watchlist/items/{itemId}/revisions", "post"],
+      ["/v1/job-targets/{targetId}/company-watchlist/items/{itemId}/state-changes", "post"],
+      ["/v1/job-targets/{targetId}/company-watchlist/reorders", "post"],
+      ["/v1/job-targets/{targetId}/discovery-schedule", "get"],
+      ["/v1/job-targets/{targetId}/discovery-schedule", "put"],
       ["/v1/career-documents/imports", "get"],
       ["/v1/career-documents/imports", "post"],
       ["/v1/career-documents/imports/{importId}", "get"],
     ] as const) {
       expect(document.paths[path][method].security).toEqual([{ bearerAuth: [] }]);
     }
+    const scheduleResponses = document.paths["/v1/job-targets/{targetId}/discovery-schedule"];
+    expect(scheduleResponses.get.responses["200"].content["application/json"].schema)
+      .toEqual(scheduleResponses.put.responses["200"].content["application/json"].schema);
+    expect(JSON.stringify(scheduleResponses.get.responses["200"])).toContain("JobDiscoveryScheduleResponseDto_Output");
     expect(document.paths["/v1/career-documents/imports"].post.requestBody.content["multipart/form-data"].schema)
       .toMatchObject({
         required: ["file", "privacyMode"],
@@ -1046,6 +1675,19 @@ describe("authenticated workbench HTTP API", () => {
     expect(document.paths["/v1/job-targets"].post.responses["201"].content["application/json"].schema).toEqual(jobTargetResponseSchema);
     expect(document.paths["/v1/job-targets/{targetId}/revisions"].post.responses["201"].content["application/json"].schema).toEqual(jobTargetResponseSchema);
     expect(document.paths["/v1/job-targets/{targetId}/deactivations"].post.responses["201"].content["application/json"].schema).toEqual(jobTargetResponseSchema);
+    const watchlistOverviewSchema = document.paths["/v1/job-targets/{targetId}/company-watchlist"].get.responses["200"].content["application/json"].schema;
+    for (const path of [
+      "/v1/job-targets/{targetId}/company-watchlist/items",
+      "/v1/job-targets/{targetId}/company-watchlist/items/{itemId}/revisions",
+      "/v1/job-targets/{targetId}/company-watchlist/items/{itemId}/state-changes",
+      "/v1/job-targets/{targetId}/company-watchlist/reorders",
+    ]) {
+      expect(document.paths[path].post.responses["201"].content["application/json"].schema).toEqual(watchlistOverviewSchema);
+      const requestSchema = document.paths[path].post.requestBody.content["application/json"].schema;
+      const reference = requestSchema.$ref as string;
+      expect(reference).toMatch(/^#\/components\/schemas\//);
+      expect(document.components.schemas[reference.slice("#/components/schemas/".length)].additionalProperties).toBe(false);
+    }
     expect(document.paths["/v1/career-documents/imports/{importId}"].get.responses["400"])
       .toEqual(expect.objectContaining({ description: expect.any(String) }));
   });
