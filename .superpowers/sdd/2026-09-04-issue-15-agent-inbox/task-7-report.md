@@ -1,6 +1,6 @@
 # Task 7 — 全量验证报告
 
-固定基线：`5cafc4f71392d221f21cdaa035ff74f85cfaf7fa`  
+固定基线：`5cafc4f71392d221f21cdaa035ff74f85cfaf7fa`
 任务起始 HEAD：`aaf51ab1e5805c4a6d35631a69a913e8e4d8a248`
 
 ## 失败诊断与修复
