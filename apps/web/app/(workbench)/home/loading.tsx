@@ -11,6 +11,9 @@ export default function WorkbenchHomeLoading() {
         <span className="workbench-skeleton" />
         <span className="workbench-skeleton" />
         <span className="workbench-skeleton" />
+        <span className="workbench-skeleton" />
+        <span className="workbench-skeleton" />
+        <span className="workbench-skeleton" />
       </div>
     </main>
   );

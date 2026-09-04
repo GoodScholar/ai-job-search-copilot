@@ -7,41 +7,33 @@ import { getAgentRun, getLatestAgentRun } from "@/lib/server/agent-runs";
 import { getOpenAgentInbox } from "@/lib/server/agent-inbox";
 import type { Metadata } from "next";
 
-export const metadata: Metadata = {
-  title: "工作台 | AI Job Search Copilot",
-};
+export const metadata: Metadata = { title: "工作台 | AI Job Search Copilot" };
 
 type WorkbenchHomePageProps = { searchParams: Promise<{ runId?: string | string[] }> };
+type UnavailableSection = "summary" | "targets" | "run" | "inbox";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
+function valueOr<T>(result: PromiseSettledResult<T>, fallback: T, section: UnavailableSection, unavailable: UnavailableSection[]): T {
+  if (result.status === "fulfilled") return result.value;
+  unstable_rethrow(result.reason);
+  unavailable.push(section);
+  return fallback;
+}
+
 export default async function WorkbenchHomePage({ searchParams }: WorkbenchHomePageProps = { searchParams: Promise.resolve({}) }) {
-  let home: WorkbenchHome;
-  let targets;
-  let initialRun;
-  let inbox;
+  const requestedRunId = (await searchParams).runId;
+  const hasRequestedRun = requestedRunId !== undefined;
+  const runPromise = typeof requestedRunId === "string" && uuid.test(requestedRunId)
+    ? getAgentRun(requestedRunId)
+    : hasRequestedRun ? Promise.resolve(null) : getLatestAgentRun().then((response) => response.run);
+  const [homeResult, targetsResult, runResult, inboxResult] = await Promise.allSettled([
+    getWorkbenchHome(), getJobTargets(), runPromise, getOpenAgentInbox(),
+  ]);
+  const unavailable: UnavailableSection[] = [];
+  const home = valueOr<WorkbenchHome | null>(homeResult, null, "summary", unavailable);
+  const targets = valueOr(targetsResult, { suggestions: [], targets: [] }, "targets", unavailable);
+  const initialRun = valueOr(runResult, null, "run", unavailable);
+  const inbox = valueOr(inboxResult, { items: [] }, "inbox", unavailable);
 
-  try {
-    const requestedRunId = (await searchParams).runId;
-    const hasRequestedRun = requestedRunId !== undefined;
-    const runPromise = typeof requestedRunId === "string" && uuid.test(requestedRunId)
-      ? getAgentRun(requestedRunId)
-      : hasRequestedRun ? Promise.resolve(null) : getLatestAgentRun().then((response) => response.run);
-    [home, targets, initialRun, inbox] = await Promise.all([
-      getWorkbenchHome(), getJobTargets(), runPromise, getOpenAgentInbox(),
-    ]);
-  } catch (error) {
-    unstable_rethrow(error);
-    return (
-      <main className="container workbench-main">
-        <section aria-labelledby="workbench-error-title" className="workbench-error" role="status">
-          <p className="workbench-kicker">求职行动账本 · 暂未读取</p>
-          <h1 id="workbench-error-title">无法读取当前求职记录</h1>
-          <p>暂时无法确认你的真实求职数据。请稍后重新尝试。</p>
-          <a href="/home">重新尝试</a>
-        </section>
-      </main>
-    );
-  }
-
-  return <WorkbenchHomeView home={home} inbox={inbox} initialRun={initialRun} targets={targets} />;
+  return <WorkbenchHomeView home={home} inbox={inbox} initialRun={initialRun} targets={targets} unavailableSections={unavailable} />;
 }
