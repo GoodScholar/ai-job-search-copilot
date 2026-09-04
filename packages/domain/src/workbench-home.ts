@@ -1,8 +1,8 @@
-import { and, count, desc, eq, inArray, or } from "drizzle-orm";
+import { and, count, desc, eq, inArray, notExists, or } from "drizzle-orm";
 import type { WorkbenchHome } from "@job-copilot/contracts/workbench";
 import { CompanyWatchlistItemSchema } from "@job-copilot/contracts/company-watchlists";
 import { classifyGreenhousePublicSource } from "@job-copilot/contracts/job-discovery-schedules";
-import { agentInboxItems, agentRuns, candidateFacts, companyWatchlistRevisions, companyWatchlists, jobAccounts, jobSourceHealthChecks, recommendationListItems, recommendationLists, type Database } from "@job-copilot/database";
+import { agentInboxItems, agentRuns, candidateFactDecisions, candidateFacts, companyWatchlistRevisions, companyWatchlists, jobAccounts, jobSourceHealthChecks, recommendationListItems, recommendationLists, type Database } from "@job-copilot/database";
 
 export class DomainError extends Error {
   constructor(public readonly code: "ACCOUNT_NOT_FOUND") {
@@ -88,7 +88,13 @@ export function createWorkbenchHome(input: { db: Database; clock: () => Date }):
     }
 
     const [facts, activeRuns, failedRuns, recommendations, pendingInbox, sourceFailures] = await Promise.all([
-      input.db.select({ count: count() }).from(candidateFacts).where(and(eq(candidateFacts.userId, userId), eq(candidateFacts.confirmationStatus, "pending"))),
+      input.db.select({ count: count() }).from(candidateFacts).where(and(
+        eq(candidateFacts.userId, userId),
+        notExists(input.db.select({ id: candidateFactDecisions.id }).from(candidateFactDecisions).where(and(
+          eq(candidateFactDecisions.userId, userId),
+          eq(candidateFactDecisions.candidateFactId, candidateFacts.id),
+        ))),
+      )),
       input.db.select({ count: count() }).from(agentRuns).where(and(eq(agentRuns.userId, userId), inArray(agentRuns.status, ["queued", "running", "paused"]))),
       input.db.select({ count: count() }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.status, "failed"))),
       countTodayRecommendationItems(input.db, userId, shanghaiDate(input.clock)),

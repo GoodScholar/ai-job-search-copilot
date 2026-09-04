@@ -50,6 +50,15 @@ describe("E2E runner", () => {
     expect(await selectE2EPhases(["e2e/workbench-inbox.spec.ts", "--project", "Mobile Safari"])).toEqual(["ordinary", "workbench-inbox"]);
   });
 
+  it("同时指定 source-health 与 workbench-inbox spec 时按有序并集运行全部所需 phase", async () => {
+    expect(await selectE2EPhases([
+      "e2e/source-health.spec.ts",
+      "e2e/workbench-inbox.spec.ts",
+      "--project",
+      "Mobile Safari",
+    ])).toEqual(["ordinary", "source-health", "workbench-inbox"]);
+  });
+
   it("版本化 Fake AnySearch spec 依次进入 configured 与 missing-key phase，并清理其他 phase 与 transport 注入", async () => {
     const arguments_ = ["e2e/anysearch-public-job-discovery.spec.ts", "--project", "Desktop Chrome"];
     expect(await selectE2EPhases(arguments_)).toEqual(["anysearch-configured", "anysearch-missing-key"]);

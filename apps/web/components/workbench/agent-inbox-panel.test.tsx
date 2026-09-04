@@ -75,6 +75,24 @@ it("切回命中缓存的筛选时忽略旧请求的失败", async () => {
   expect(screen.queryByText("事项暂时无法读取，请稍后重试。")).not.toBeInTheDocument();
 });
 
+it("读取筛选期间不伪造空态，失败时只显示问题和可操作重试", async () => {
+  const user = userEvent.setup();
+  let rejectUnread!: (reason?: unknown) => void;
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>((input) => {
+    if (String(input).includes("status=unread")) return new Promise<Response>((_resolve, reject) => { rejectUnread = reject; });
+    throw new Error(`unexpected request: ${String(input)}`);
+  }));
+  render(<AgentInboxPanel items={[item]} onResolved={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "未读" }));
+  expect(screen.getByText("正在读取事项…")).toBeVisible();
+  expect(screen.queryByText("没有未读事项。")).not.toBeInTheDocument();
+  rejectUnread(new Error("offline"));
+  await expect(screen.findByText("事项暂时无法读取，请稍后重试。")).resolves.toBeVisible();
+  expect(screen.queryByText("没有未读事项。")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "重试读取未读事项" })).toBeVisible();
+});
+
 it("提供未读、已读、已处理筛选，并对诚实空状态说明没有事项", async () => {
   const user = userEvent.setup();
   vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(Response.json({ items: [] })));
@@ -93,6 +111,17 @@ it("处理后恢复到可预测焦点，并保留拒绝或暂不可用的说明"
   await user.click(screen.getByRole("button", { name: "标记已处理：确认工作经历" }));
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("事项已处理。"));
   await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("button", { name: "待处理" })));
+});
+
+it("标记已读后把焦点交给同一事项的可追溯目标", async () => {
+  const user = userEvent.setup();
+  const read = { ...item, status: "read" as const, availableActions: ["dismiss"] as const, readAt: now };
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(Response.json({ applied: true, item: read, run: null })));
+  render(<AgentInboxPanel items={[item]} onResolved={vi.fn()} />);
+  const markRead = screen.getByRole("button", { name: "标记为已读：确认工作经历" });
+  await user.click(markRead);
+  await waitFor(() => expect(screen.queryByRole("button", { name: "标记为已读：确认工作经历" })).not.toBeInTheDocument());
+  expect(document.activeElement).toBe(screen.getByRole("link", { name: "查看相关记录" }));
 });
 
 it("动作失败时保留事项并提供可恢复的错误信息", async () => {

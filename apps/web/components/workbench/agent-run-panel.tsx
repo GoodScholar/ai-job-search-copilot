@@ -362,7 +362,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
   }
 
   return (
-    <section aria-labelledby="agent-run-title" className="workbench-ledger agent-run-panel" id="agent-run">
+    <section aria-labelledby="agent-run-title" className={`workbench-ledger agent-run-panel${runIsUnfinished ? " agent-run-panel-active" : ""}`} id="agent-run">
       <div className="workbench-ledger-heading">
         <p>{runNoun} · 运行记录</p>
         <h2 id="agent-run-title">{isDeepMatchRun(run) ? "评估候选岗位匹配" : "发现新的岗位机会"}</h2>

@@ -37,19 +37,25 @@ export function AgentInboxPanel({ items, onResolved, onRunUpdated }: {
   const [cache, setCache] = useState<InboxCache>({ pending: items });
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState<string | null>(null);
+  const [loadingFilter, setLoadingFilter] = useState<InboxFilter | null>(null);
+  const [failedFilter, setFailedFilter] = useState<InboxFilter | null>(null);
   const actionIds = useRef(new Map<string, string>());
   const requestVersion = useRef(0);
   const filterButtons = useRef<Partial<Record<InboxFilter, HTMLButtonElement | null>>>({});
+  const itemTargets = useRef<Record<string, HTMLAnchorElement | null>>({});
   const visibleItems = cache[filter] ?? [];
 
-  async function changeFilter(next: InboxFilter) {
+  async function changeFilter(next: InboxFilter, retry = false) {
     const version = ++requestVersion.current;
     setFilter(next);
     setMessage("");
-    if (cache[next] !== undefined) return;
+    setFailedFilter(null);
+    if (!retry && cache[next] !== undefined) return;
+    setLoadingFilter(next);
     const nextItems = await loadAgentInbox(next);
+    if (version === requestVersion.current) setLoadingFilter(null);
     if (version !== requestVersion.current || nextItems === false) {
-      if (version === requestVersion.current && nextItems === false) setMessage("事项暂时无法读取，请稍后重试。");
+      if (version === requestVersion.current && nextItems === false) setFailedFilter(next);
       return;
     }
     setCache((current) => ({ ...current, [next]: nextItems }));
@@ -80,6 +86,7 @@ export function AgentInboxPanel({ items, onResolved, onRunUpdated }: {
       } else {
         setCache((current) => ({ ...current, [filter]: (current[filter] ?? []).map((entry) => entry.itemId === item.itemId ? parsed.data.item : entry) }));
         setMessage(action === "mark_read" ? "事项已标记为已读。" : "事项状态已更新。");
+        if (action === "mark_read") queueMicrotask(() => (itemTargets.current[item.itemId] ?? filterButtons.current.pending)?.focus());
       }
     } catch {
       setMessage("暂时无法处理该事项，请稍后重试。");
@@ -94,11 +101,11 @@ export function AgentInboxPanel({ items, onResolved, onRunUpdated }: {
       {filters.map(({ value, label }) => <button aria-pressed={filter === value} className="workbench-touch-target" key={value} onClick={() => void changeFilter(value)} ref={(node) => { filterButtons.current[value] = node; }} type="button">{label}</button>)}
     </div>
     <p aria-live="polite" className={message ? "agent-inbox-live" : "agent-inbox-live is-empty"} role="status">{message}</p>
-    {visibleItems.length === 0 ? <p className="agent-inbox-empty">{emptyCopy[filter]}</p> : <div className="agent-inbox-list">
+    {loadingFilter === filter ? <p className="agent-inbox-empty">正在读取事项…</p> : failedFilter === filter ? <div className="agent-inbox-load-error"><p>事项暂时无法读取，请稍后重试。</p><button className="workbench-touch-target" onClick={() => void changeFilter(filter, true)} type="button">重试读取{filters.find(({ value }) => value === filter)!.label}事项</button></div> : visibleItems.length === 0 ? <p className="agent-inbox-empty">{emptyCopy[filter]}</p> : <div className="agent-inbox-list">
       {visibleItems.map((item) => <article aria-label={item.title} key={item.itemId}>
         <h3>{item.title}</h3><p>{item.message}</p>
         <dl className="agent-inbox-details"><div><dt>依据</dt><dd>{item.basis}</dd></div><div><dt>影响</dt><dd>{item.impact}</dd></div><div><dt>建议</dt><dd>{item.suggestedAction}</dd></div></dl>
-        <div className="agent-inbox-actions"><Link className="workbench-ledger-link workbench-touch-target" href={item.target.href}>查看相关记录</Link>
+        <div className="agent-inbox-actions"><Link className="workbench-ledger-link workbench-touch-target" href={item.target.href} ref={(node) => { itemTargets.current[item.itemId] = node; }}>查看相关记录</Link>
           {item.availableActions.map((action) => { const key = `${item.itemId}:${action}`; return <button className="agent-run-action workbench-touch-target" disabled={pending === key} key={action} onClick={() => void actOn(item, action)} type="button">{pending === key ? "正在处理…" : `${actionLabels[action]}：${item.title}`}</button>; })}
         </div>
       </article>)}

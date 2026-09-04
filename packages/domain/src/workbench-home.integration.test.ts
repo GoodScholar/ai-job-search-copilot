@@ -2,6 +2,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   candidateFacts,
+  candidateFactDecisions,
   careerDocuments,
   careerImports,
   createDatabase,
@@ -86,11 +87,14 @@ describe("workbench home", () => {
       { id: "f1b7e4fc-1b4f-4c64-85a2-4fc4bc5f4473", userId: activeUserId, careerImportId: firstImportId, careerDocumentId: firstDocumentId, factKey: "4".repeat(64), factType: "skill", factValue: { name: "PostgreSQL" }, confidenceBasisPoints: 10_000 },
       { id: "56cb9b03-96ca-40f2-b66f-e2cc6ad7645a", userId: secondActiveUserId, careerImportId: secondImportId, careerDocumentId: secondDocumentId, factKey: "5".repeat(64), factType: "skill", factValue: { name: "Rust" }, confidenceBasisPoints: 10_000 },
     ]);
+    const profileId = crypto.randomUUID();
+    await database.insert(jobProfiles).values({ id: profileId, userId: activeUserId, version: 1 });
+    await database.insert(candidateFactDecisions).values({ id: crypto.randomUUID(), userId: activeUserId, profileId, candidateFactId: "f1b7e4fc-1b4f-4c64-85a2-4fc4bc5f4473", decision: "rejected", profileFactRevisionId: null, profileVersion: 1 });
 
     const getWorkbenchHome = createWorkbenchHome({ db: database, clock });
     await expect(getWorkbenchHome({ userId: activeUserId })).resolves.toEqual({
       account: { userId: activeUserId },
-      summary: { todayRecommendations: 0, pendingFacts: 2, activeAgentRuns: 0, failedAgentRuns: 0, sourceFailures: 0, pendingDecisions: 0, applications: 0, applicationsAvailable: false },
+      summary: { todayRecommendations: 0, pendingFacts: 1, activeAgentRuns: 0, failedAgentRuns: 0, sourceFailures: 0, pendingDecisions: 0, applications: 0, applicationsAvailable: false },
     });
     await expect(getWorkbenchHome({ userId: secondActiveUserId })).resolves.toEqual({
       account: { userId: secondActiveUserId },

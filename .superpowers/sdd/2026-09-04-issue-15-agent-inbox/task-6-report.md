@@ -43,3 +43,31 @@ git diff --check
   - `.impeccable/review/desktop.png`
   - `.impeccable/review/mobile.png`
 - 未重新运行 Impeccable detector。
+
+## Fix Round 1：行为与视觉验收
+
+### Code-led 方向合同与可核验 seed
+
+THESIS=待处理决策是首页主角；
+OWN-WORLD=晨间求职内参冷白档案纸/深绿行动/琥珀边界；
+STORY=先决定、再看证据与运行、最后继续资料/岗位；
+FIRST VIEWPORT=标题+7项摘要+首要Inbox，桌面与390px均在首屏展示任务状态；
+FORM=established Operate extension，seed 4e302c13（apps/web/app/layout.tsx 已有）。
+
+### 补充 RED 与最小修正
+
+- `pendingFacts` 原本按永远为 pending 的导入确认字段统计；领域集成 RED 证明已决候选事实仍被计数。现在按 owner-bound、尚无 `candidate_fact_decision` 的事实统计，并覆盖当前 owner、其他 owner 与已决事实。
+- 筛选请求期间曾会展示空态，`mark_read` 卸载按钮后会让焦点落回 document body。组件 RED 后改为互斥 loading/error/empty，并将焦点恢复到同项“查看相关记录”（失效时回退待处理筛选）。
+- 校准拒绝以前只比较空规则计数。现在先从公共页面批准一个非空规则，再刷新并拒绝第二个 proposal，逐字段比较最新 active rule 的 version/config。
+- runner 对 source-health 与 workbench-inbox 的显式组合会漏掉 workbench phase；现在按既有相位顺序取并集。
+
+### 视觉修正
+
+- 首页去除 hero kicker；仅首要 Inbox 与进行中的运行任务保留 paper shadow，辅助账本改为平面档案纸。
+- 标题和摘要数字 tracking 限制为不小于 `-0.04em`；390px 的第 7 项变为完整跨列 disabled row。
+- 使用既有色板补齐 hover、selection、caret 与 scrollbar；未增加字体、图标、动画或设计系统。
+- full-stack E2E 将在最终捕图复跑中重新验证 populated Inbox 的 axe critical/serious、44px 宽高、overflow、键盘 focus、Mobile Safari tap、offline 与 reduced motion。
+
+### Fix Round 1 最终 GREEN
+
+最终捕图命令的 ordinary phase 为 4 passed、2 skipped，受控来源 phase 为 2 passed、4 skipped；Desktop Chrome 与 Mobile Safari 的三条旅程合计 6 次均通过、0 失败。最终聚焦回归：`workbench-home.integration.test.ts` 为 6/6，`agent-inbox-panel.test.tsx` 与 `e2e-runner.test.ts` 合计 19/19；`pnpm typecheck`、`pnpm lint` 与 `git diff --check` 均为 exit 0。

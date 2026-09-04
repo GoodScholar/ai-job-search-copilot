@@ -73,7 +73,6 @@ function WorkbenchHomeContent({ home, targets, initialRun, inbox, unavailableSec
     <main className="container workbench-main">
       {(!online || stale || unavailableSections.length > 0) && <p className="workbench-connection" role="status">{!online ? "离线：正在显示上次成功读取的数据，可能已过期。" : stale ? "网络已恢复，正在等待最新数据。" : "部分内容暂时无法读取，其余可用内容仍会保留。"}</p>}
       <section aria-labelledby="workbench-home-title" className="workbench-intro">
-        <p className="workbench-kicker">求职行动内参 · 今日优先</p>
         <h1 id="workbench-home-title">{summaryUnavailable ? "待决定事项暂时无法读取" : pendingDecisions > 0 ? "先处理需要你决定的事项" : "今天暂无待决定事项"}</h1>
         <p>{summaryUnavailable ? "今日摘要暂时无法读取，其余可用内容仍会保留。" : pendingDecisions > 0 ? "先完成待决定事项，再查看今天的推荐、运行和来源状态。" : "当前没有等待你确认的事项；新的确认、异常或推荐会显示在这里。"}</p>
       </section>
@@ -81,7 +80,7 @@ function WorkbenchHomeContent({ home, targets, initialRun, inbox, unavailableSec
       {summaryUnavailable ? <section aria-label="今日摘要不可用" className="workbench-summary workbench-summary-unavailable"><p>今日摘要暂时无法读取。请稍后刷新重试。</p></section> : <>
         <dl aria-label="当前求职记录摘要" className="workbench-summary">
           {summaryItems.map(([label, key]) => <div key={key}><dt>{label}</dt><dd>{home.summary[key]}</dd></div>)}
-          <div><dt>投递记录（尚未启用）</dt><dd>0</dd></div>
+          <div className="workbench-summary-disabled"><dt>投递记录（尚未启用）</dt><dd>0</dd></div>
         </dl>
         <p className="workbench-summary-note">投递记录功能尚未启用，当前不会保存或显示投递数据。</p>
       </>}

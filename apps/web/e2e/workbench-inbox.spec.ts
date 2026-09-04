@@ -82,8 +82,15 @@ async function inboxStatus(request: APIRequestContext, token: string, kind: stri
   return (await inboxItems(request, token, status)).find((entry) => entry.kind === kind)?.status ?? null;
 }
 
+async function inboxItemStatus(request: APIRequestContext, token: string, itemId: string, status: "pending" | "unread" | "read" | "resolved"): Promise<string | null> {
+  return (await inboxItems(request, token, status)).find((entry) => entry.itemId === itemId)?.status ?? null;
+}
+
 async function activate(page: Page, info: TestInfo, label: string | RegExp): Promise<void> {
-  const control = page.getByRole("button", { name: label });
+  await activateControl(page, page.getByRole("button", { name: label }), info);
+}
+
+async function activateControl(page: Page, control: ReturnType<Page["getByRole"]>, info: TestInfo): Promise<void> {
   if (info.project.name === "Mobile Safari") await control.tap();
   else {
     await control.focus();
@@ -95,7 +102,10 @@ async function activate(page: Page, info: TestInfo, label: string | RegExp): Pro
 async function assertAccessible(page: Page): Promise<void> {
   const controls = page.locator("main .workbench-touch-target");
   expect(await controls.count()).toBeGreaterThan(0);
-  expect(await controls.evaluateAll((items) => items.every((item) => item.getBoundingClientRect().height >= 44))).toBe(true);
+  expect(await controls.evaluateAll((items) => items.every((item) => {
+    const rect = item.getBoundingClientRect();
+    return rect.height >= 44 && rect.width >= 44;
+  }))).toBe(true);
   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
   const result = await new AxeBuilder({ page }).analyze();
   expect(result.violations.filter((violation) => violation.impact === "critical" || violation.impact === "serious")).toEqual([]);
@@ -193,12 +203,12 @@ async function waitForAutomaticMatch(userId: string, discoveryRunId: string): Pr
   } finally { await client.end(); }
 }
 
-async function ruleSnapshot(userId: string, targetId: string): Promise<{ rules: string; targetVersion: number }> {
+async function activeRuleSnapshot(userId: string, targetId: string): Promise<{ version: number; config: unknown } | null> {
   const client = new Client({ connectionString: databaseUrl });
   await client.connect();
   try {
-    const result = await client.query("select (select count(*) from recommendation_rule_versions where user_id = $1) as rules, (select version from job_targets where id = $2) as target_version", [userId, targetId]);
-    return { rules: result.rows[0]!.rules as string, targetVersion: Number(result.rows[0]!.target_version) };
+    const result = await client.query("select version, config from recommendation_rule_versions where user_id = $1 and target_id = $2 order by version desc limit 1", [userId, targetId]);
+    return result.rows[0] ? { version: Number(result.rows[0].version), config: result.rows[0].config } : null;
   } finally { await client.end(); }
 }
 
@@ -211,8 +221,15 @@ test("从首页将候选事实由未读标记为已读并确认解决", async ({
 
   await expect(page.getByRole("heading", { name: "需要你决定的事项", exact: true })).toBeVisible();
   const unread = await inboxItem(request, session.token, "candidate_fact", "unread");
+  const foreign = await createSession(request, subject(info, "foreign"));
+  expect((await inboxItems(request, foreign.token, "unread")).map((item) => item.itemId)).not.toContain(unread.itemId);
+  const foreignMutation = await request.post(`${apiBaseUrl}/v1/agent-inbox/${unread.itemId}/actions`, {
+    headers: { authorization: `Bearer ${foreign.token}` }, data: { actionId: crypto.randomUUID(), action: "mark_read" },
+  });
+  expect(foreignMutation.status()).toBe(404);
   const article = page.getByRole("article", { name: "有待确认的画像事实" });
   await expect(article).toBeVisible();
+  await assertAccessible(page);
   const inboxStatusMessage = page.getByRole("region", { name: "需要你决定的事项", exact: true }).getByRole("status");
   await page.context().setOffline(true);
   await activate(page, info, "标记为已读：有待确认的画像事实");
@@ -226,13 +243,15 @@ test("从首页将候选事实由未读标记为已读并确认解决", async ({
 
   const detail = article.getByRole("link", { name: "查看相关记录" });
   if (info.project.name === "Mobile Safari") await detail.tap();
-  else { await detail.focus(); await page.keyboard.press("Enter"); }
+  else { await expect(detail).toBeFocused(); await page.keyboard.press("Enter"); }
   await expect(page).toHaveURL(/\/profile#candidate-facts$/u);
   await activate(page, info, "确认 TypeScript");
   await expect.poll(() => inboxStatus(request, session.token, "candidate_fact", "resolved")).toBe("resolved");
   expect(await inboxItem(request, session.token, "candidate_fact", "resolved")).toMatchObject({ itemId: unread.itemId, status: "resolved" });
 
   await page.goto("/home");
+  await expect(page.getByRole("heading", { name: "今天暂无待决定事项", exact: true })).toBeVisible();
+  await expect(page.locator(".workbench-summary > div").filter({ has: page.getByText("待确认事实", { exact: true }) }).locator("dd")).toHaveText("0");
   await expect(page.getByText("目前没有需要你决定的事项。新的确认、异常或推荐会显示在这里。")).toBeVisible();
   await assertReducedMotion(page);
   await assertAccessible(page);
@@ -292,7 +311,11 @@ test("从首页拒绝校准建议不会修改现行规则", async ({ page, reque
   test.skip(process.env.E2E_WORKBENCH_INBOX_SOURCE_ONLY === "1", "来源受控 phase 只运行来源旅程。");
   const account = await createRecommendationAccount(request, info);
   await signIn(page, account.token);
-  await Promise.all(["Inbox 校准反馈一", "Inbox 校准反馈二", "Inbox 校准反馈三"].map((title) => importAndTriage(request, account, title)));
+  const feedback = [
+    ["Inbox 薪酬反馈一", "薪资"], ["Inbox 薪酬反馈二", "薪资"], ["Inbox 薪酬反馈三", "薪资"],
+    ["Inbox 地点反馈一", "地点"], ["Inbox 地点反馈二", "地点"], ["Inbox 地点反馈三", "地点"],
+  ] as const;
+  for (const [title] of feedback) await importAndTriage(request, account, title);
   const discovery = await request.post(`${apiBaseUrl}/v1/agent-runs`, { headers: { authorization: `Bearer ${account.token}` }, data: { targetId: account.targetId, idempotencyKey: info.project.name === "Desktop Chrome" ? "10000000-0000-4000-8000-000000000161" : "10000000-0000-4000-8000-000000000162" } });
   expect(discovery.status()).toBe(201);
   const discoveryRunId = (await discovery.json() as { runId: string }).runId;
@@ -300,16 +323,22 @@ test("从首页拒绝校准建议不会修改现行规则", async ({ page, reque
   await page.goto("/home");
   await page.getByRole("link", { name: "推荐" }).click();
   await expect(page.getByRole("list", { name: "推荐岗位" })).toBeVisible({ timeout: 45_000 });
-  for (const title of ["Inbox 校准反馈一", "Inbox 校准反馈二", "Inbox 校准反馈三"]) {
+  for (const [title, reason] of feedback) {
     const card = page.getByRole("listitem").filter({ has: page.getByRole("heading", { name: title }) });
     const summary = card.locator("summary").filter({ hasText: "忽略此推荐" });
     if (info.project.name === "Mobile Safari") await summary.tap({ force: true }); else await summary.click();
-    await card.getByRole("radio", { name: "地点" }).check();
+    await card.getByRole("radio", { name: reason }).check();
     if (info.project.name === "Mobile Safari") await card.getByRole("button", { name: "确认忽略" }).tap({ force: true }); else await card.getByRole("button", { name: "确认忽略" }).click();
     await expect(card.getByText("当前推荐决策：", { exact: false })).toContainText("已忽略");
   }
-  await expect(page.getByRole("heading", { name: "校准建议" })).toBeVisible();
-  const before = await ruleSnapshot(account.userId, account.targetId);
+  const calibration = page.getByRole("heading", { name: "校准建议" }).locator("..");
+  await expect(calibration).toBeVisible();
+  await expect(calibration.getByRole("article")).toHaveCount(2);
+  await activateControl(page, calibration.getByRole("button", { name: "批准建议" }).first(), info);
+  await expect(calibration.getByText("状态：已批准")).toBeVisible();
+  const before = await activeRuleSnapshot(account.userId, account.targetId);
+  expect(before).toMatchObject({ version: 1 });
+  expect(before?.config).toBeTruthy();
 
   await page.goto("/home");
   const unread = await inboxItem(request, account.token, "calibration_proposal", "unread");
@@ -319,10 +348,12 @@ test("从首页拒绝校准建议不会修改现行规则", async ({ page, reque
   const detail = page.getByRole("article", { name: "推荐校准建议待查看" }).getByRole("link", { name: "查看相关记录" });
   if (info.project.name === "Mobile Safari") await detail.tap(); else await detail.click();
   await expect(page).toHaveURL(/\/recommendations\?targetId=.*#calibration-proposal$/u);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "拒绝建议" })).toBeEnabled();
   await activate(page, info, "拒绝建议");
-  await expect.poll(() => ruleSnapshot(account.userId, account.targetId)).toEqual(before);
-  await expect.poll(() => inboxStatus(request, account.token, "calibration_proposal", "resolved")).toBe("resolved");
-  expect(await inboxItem(request, account.token, "calibration_proposal", "resolved")).toMatchObject({ itemId: unread.itemId, status: "resolved" });
+  await expect.poll(() => activeRuleSnapshot(account.userId, account.targetId)).toEqual(before);
+  await expect.poll(() => inboxItemStatus(request, account.token, unread.itemId, "resolved")).toBe("resolved");
+  expect((await inboxItems(request, account.token, "resolved")).find((item) => item.itemId === unread.itemId)).toMatchObject({ itemId: unread.itemId, status: "resolved" });
 
   await page.goto("/home");
   const recommendation = await inboxItem(request, account.token, "recommendation_list", "unread");
