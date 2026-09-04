@@ -114,3 +114,24 @@ git diff --check
 ```
 
 UI 为 17/17、runner 为 14/14、领域为 6/6；最终 E2E ordinary phase 为 4 passed、2 skipped，受控来源 phase 为 2 passed、4 skipped，Desktop Chrome 与 Mobile Safari 共 6 条有效旅程、0 失败。没有视觉 CSS 改动；已再次打开 `.impeccable/review/desktop.png` 与 `.impeccable/review/mobile.png` 确认内容完整、非黑屏且无 overlay，故未重生成截图，也没有运行第二次 detector。
+
+## Fix Round 4：权威 Inbox 筛选缓存
+
+### RED 与最小修正
+
+- 新权威 Inbox props 到达时，当前停留在 unread/read 会因为只有 pending 缓存而错误显示空态；停留在 resolved 会继续使用旧 resolved 缓存。新增 RED 覆盖 unread、read、resolved 三种筛选：新来源直接重建 pending，并按状态精确派生 unread/read；resolved 立即失效，显示“正在读取事项…”并重新读取，期间不展示空态。
+- 在途筛选请求此前只按全局版本处理，旧来源的成功或失败仍可能写入当前状态。现在每个加载/失败请求都绑定权威 props 的数组身份与内容签名；即使内容相同但数组身份改变也会淘汰旧来源状态，且新 resolved 请求递增版本，使旧成功/失败都不能写入或清除新来源状态。
+- 不再使用 props key 重挂载：mark-read 和 resolve 的既有焦点恢复、pending cache 与首页摘要真值继续保留。
+
+### Fix Round 4 GREEN
+
+```bash
+pnpm --filter web exec vitest run components/workbench/workbench-home-view.test.tsx components/workbench/agent-inbox-panel.test.tsx scripts/e2e-runner.test.ts --no-file-parallelism
+DOCKER_API_VERSION=1.51 pnpm --filter @job-copilot/domain exec vitest run src/workbench-home.integration.test.ts --no-file-parallelism
+DOCKER_API_VERSION=1.51 pnpm --filter web test:e2e -- workbench-inbox.spec.ts --project 'Desktop Chrome' --project 'Mobile Safari'
+pnpm typecheck
+pnpm lint
+git diff --check
+```
+
+UI/runner 聚焦为 37/37，领域为 6/6；最终 E2E ordinary phase 为 4 passed、2 skipped，受控来源 phase 为 2 passed、4 skipped，Desktop Chrome 与 Mobile Safari 共 6 条有效旅程、0 失败。无 CSS 变更，因此未重截现有 `.impeccable/review/desktop.png` 与 `.impeccable/review/mobile.png`，也未运行 detector。

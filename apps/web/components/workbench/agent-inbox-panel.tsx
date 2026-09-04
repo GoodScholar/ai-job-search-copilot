@@ -3,11 +3,12 @@
 import { AgentInboxActionResponseSchema, AgentInboxListSchema, type AgentInboxActionCommand, type AgentInboxItem } from "@job-copilot/contracts/agent-inbox";
 import type { AgentRunControlSnapshot } from "@job-copilot/contracts/agent-runs";
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type InboxFilter = "pending" | "unread" | "read" | "resolved";
 type InboxCache = Partial<Record<InboxFilter, AgentInboxItem[]>>;
-type InboxCacheState = { source: AgentInboxItem[]; cache: InboxCache };
+type InboxCacheState = { source: string; cache: InboxCache };
+type FilterRequest = { source: string; filter: InboxFilter; version: number };
 const filters: { value: InboxFilter; label: string }[] = [
   { value: "pending", label: "待处理" }, { value: "unread", label: "未读" }, { value: "read", label: "已读" }, { value: "resolved", label: "已处理" },
 ];
@@ -17,6 +18,18 @@ const actionLabels: Record<AgentInboxActionCommand["action"], string> = {
 const emptyCopy: Record<InboxFilter, string> = {
   pending: "目前没有需要你决定的事项。新的确认、异常或推荐会显示在这里。", unread: "没有未读事项。", read: "没有已读事项。", resolved: "没有已处理事项。",
 };
+
+const inboxSourceIds = new WeakMap<AgentInboxItem[], number>();
+let nextInboxSourceId = 0;
+function inboxSource(items: AgentInboxItem[]) {
+  let identity = inboxSourceIds.get(items);
+  if (identity === undefined) { identity = ++nextInboxSourceId; inboxSourceIds.set(items, identity); }
+  return `${identity}:${JSON.stringify(items)}`;
+}
+function authoritativeInboxCache(items: AgentInboxItem[]): InboxCache {
+  const pending = items.filter((item) => item.status !== "resolved");
+  return { pending, unread: pending.filter((item) => item.status === "unread"), read: pending.filter((item) => item.status === "read") };
+}
 
 export async function loadAgentInbox(status: InboxFilter): Promise<AgentInboxItem[] | false> {
   try {
@@ -34,39 +47,65 @@ export function AgentInboxPanel({ items, onResolved, onRunUpdated }: {
   onResolved: (item: AgentInboxItem) => void;
   onRunUpdated?: (run: AgentRunControlSnapshot) => void;
 }) {
+  const source = inboxSource(items);
   const [filter, setFilter] = useState<InboxFilter>("pending");
-  const [cacheState, setCacheState] = useState<InboxCacheState>({ source: items, cache: { pending: items } });
+  const [cacheState, setCacheState] = useState<InboxCacheState>({ source, cache: { pending: items } });
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState<string | null>(null);
-  const [loadingFilter, setLoadingFilter] = useState<InboxFilter | null>(null);
-  const [failedFilter, setFailedFilter] = useState<InboxFilter | null>(null);
+  const [loadingRequest, setLoadingRequest] = useState<FilterRequest | null>(null);
+  const [failedRequest, setFailedRequest] = useState<FilterRequest | null>(null);
   const actionIds = useRef(new Map<string, string>());
   const requestVersion = useRef(0);
+  const resolvedRequestSource = useRef<string | null>(null);
   const filterButtons = useRef<Partial<Record<InboxFilter, HTMLButtonElement | null>>>({});
   const itemTargets = useRef<Record<string, HTMLAnchorElement | null>>({});
-  const cache = cacheState.source === items ? cacheState.cache : { pending: items };
+  const sourceChanged = cacheState.source !== source;
+  const cache = sourceChanged ? authoritativeInboxCache(items) : cacheState.cache;
+  const loadingFilter = loadingRequest?.source === source ? loadingRequest.filter : sourceChanged && filter === "resolved" ? "resolved" : null;
+  const failedFilter = failedRequest?.source === source ? failedRequest.filter : null;
   const visibleItems = cache[filter] ?? [];
 
   function updateCache(update: (current: InboxCache) => InboxCache) {
     setCacheState((current) => {
-      const authoritativeCache = current.source === items ? current.cache : { pending: items };
-      return { source: items, cache: update(authoritativeCache) };
+      const authoritativeCache = current.source === source ? current.cache : authoritativeInboxCache(items);
+      return { source, cache: update(authoritativeCache) };
     });
   }
 
+  useEffect(() => {
+    if (filter !== "resolved" || resolvedRequestSource.current === source) return;
+    resolvedRequestSource.current = source;
+    const version = ++requestVersion.current;
+    const request = { source, filter: "resolved" as const, version };
+    setLoadingRequest(request);
+    setFailedRequest(null);
+    void loadAgentInbox("resolved").then((nextItems) => {
+      if (version !== requestVersion.current) return;
+      setLoadingRequest((current) => current?.source === source && current.version === version ? null : current);
+      if (nextItems === false) {
+        setFailedRequest(request);
+        return;
+      }
+      setCacheState((current) => {
+        const authoritativeCache = current.source === source ? current.cache : authoritativeInboxCache(items);
+        return { source, cache: { ...authoritativeCache, resolved: nextItems } };
+      });
+    });
+  }, [filter, items, source]);
+
   async function changeFilter(next: InboxFilter, retry = false) {
     const version = ++requestVersion.current;
+    const request = { source, filter: next, version };
+    if (next === "resolved") resolvedRequestSource.current = source;
     setFilter(next);
     setMessage("");
-    setFailedFilter(null);
+    setFailedRequest(null);
     if (!retry && cache[next] !== undefined) return;
-    setLoadingFilter(next);
+    setLoadingRequest(request);
     const nextItems = await loadAgentInbox(next);
-    if (version === requestVersion.current) setLoadingFilter(null);
-    if (version !== requestVersion.current || nextItems === false) {
-      if (version === requestVersion.current && nextItems === false) setFailedFilter(next);
-      return;
-    }
+    if (version !== requestVersion.current) return;
+    setLoadingRequest((current) => current?.source === source && current.version === version ? null : current);
+    if (nextItems === false) { setFailedRequest(request); return; }
     updateCache((current) => ({ ...current, [next]: nextItems }));
   }
 

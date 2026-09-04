@@ -75,6 +75,90 @@ it("切回命中缓存的筛选时忽略旧请求的失败", async () => {
   expect(screen.queryByText("事项暂时无法读取，请稍后重试。")).not.toBeInTheDocument();
 });
 
+it("权威 props 更新时在未读筛选中重建未读缓存，而非显示空态", async () => {
+  const user = userEvent.setup();
+  const refreshed = { ...item, title: "刷新后的未读事项" };
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(Response.json({ items: [item] })));
+  const view = render(<AgentInboxPanel items={[item]} onResolved={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "未读" }));
+  await screen.findByRole("article", { name: "确认工作经历" });
+  view.rerender(<AgentInboxPanel items={[refreshed]} onResolved={vi.fn()} />);
+
+  expect(screen.getByRole("article", { name: "刷新后的未读事项" })).toBeVisible();
+  expect(screen.queryByText("没有未读事项。")).not.toBeInTheDocument();
+});
+
+it("权威 props 更新时在已读筛选中重建已读缓存，而非显示空态", async () => {
+  const user = userEvent.setup();
+  const read: AgentInboxItem = { ...item, status: "read", availableActions: ["dismiss"], readAt: now };
+  const refreshed = { ...read, title: "刷新后的已读事项" };
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(Response.json({ items: [read] })));
+  const view = render(<AgentInboxPanel items={[read]} onResolved={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "已读" }));
+  await screen.findByRole("article", { name: "确认工作经历" });
+  view.rerender(<AgentInboxPanel items={[refreshed]} onResolved={vi.fn()} />);
+
+  expect(screen.getByRole("article", { name: "刷新后的已读事项" })).toBeVisible();
+  expect(screen.queryByText("没有已读事项。")).not.toBeInTheDocument();
+});
+
+it("权威 props 更新时使已处理缓存失效并在读取期间不显示空态", async () => {
+  const user = userEvent.setup();
+  const oldResolved = { ...item, title: "旧已处理事项", status: "resolved" as const, availableActions: [] as const, readAt: now, resolvedAt: now };
+  const freshResolved = { ...oldResolved, itemId: "5a1b0207-b852-4f86-8b1f-3b9615655ed8", title: "刷新后的已处理事项" };
+  let resolveRefresh!: (response: Response) => void;
+  const refresh = new Promise<Response>((resolve) => { resolveRefresh = resolve; });
+  let calls = 0;
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>(() => ++calls === 1 ? Promise.resolve(Response.json({ items: [oldResolved] })) : refresh));
+  const view = render(<AgentInboxPanel items={[item]} onResolved={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "已处理" }));
+  await screen.findByRole("article", { name: "旧已处理事项" });
+  view.rerender(<AgentInboxPanel items={[{ ...item, title: "新的权威待处理事项" }]} onResolved={vi.fn()} />);
+
+  await screen.findByText("正在读取事项…");
+  expect(screen.queryByText("没有已处理事项。")).not.toBeInTheDocument();
+  resolveRefresh(Response.json({ items: [freshResolved] }));
+  await screen.findByRole("article", { name: "刷新后的已处理事项" });
+});
+
+it.each(["success", "failure"] as const)("权威 props 更新后忽略旧来源在途未读请求的 %s 结果", async (outcome) => {
+  const user = userEvent.setup();
+  const refreshed = { ...item, title: "新来源未读事项" };
+  let resolveOld!: (response: Response) => void;
+  const oldRequest = new Promise<Response>((resolve) => { resolveOld = resolve; });
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockReturnValue(oldRequest));
+  const view = render(<AgentInboxPanel items={[item]} onResolved={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "未读" }));
+  expect(screen.getByText("正在读取事项…")).toBeVisible();
+  view.rerender(<AgentInboxPanel items={[refreshed]} onResolved={vi.fn()} />);
+  expect(screen.getByRole("article", { name: "新来源未读事项" })).toBeVisible();
+
+  resolveOld(outcome === "success" ? Response.json({ items: [item] }) : new Response(null, { status: 503 }));
+  await waitFor(() => expect(screen.getByRole("article", { name: "新来源未读事项" })).toBeVisible());
+  expect(screen.queryByText("事项暂时无法读取，请稍后重试。")).not.toBeInTheDocument();
+});
+
+it("相同内容但新数组身份的权威 props 也淘汰旧来源在途请求", async () => {
+  const user = userEvent.setup();
+  let resolveOld!: (response: Response) => void;
+  const oldRequest = new Promise<Response>((resolve) => { resolveOld = resolve; });
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockReturnValue(oldRequest));
+  const view = render(<AgentInboxPanel items={[item]} onResolved={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "未读" }));
+  expect(screen.getByText("正在读取事项…")).toBeVisible();
+  view.rerender(<AgentInboxPanel items={[{ ...item }]} onResolved={vi.fn()} />);
+  expect(screen.getByRole("article", { name: "确认工作经历" })).toBeVisible();
+
+  resolveOld(new Response(null, { status: 503 }));
+  await waitFor(() => expect(screen.getByRole("article", { name: "确认工作经历" })).toBeVisible());
+  expect(screen.queryByText("事项暂时无法读取，请稍后重试。")).not.toBeInTheDocument();
+});
+
 it("读取筛选期间不伪造空态，失败时只显示问题和可操作重试", async () => {
   const user = userEvent.setup();
   let rejectUnread!: (reason?: unknown) => void;
