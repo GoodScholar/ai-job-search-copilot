@@ -41,3 +41,13 @@
 - 未执行宽泛审查、Issue 评论、关闭 Issue、push、PR 或 merge。
 
 提交本报告后，预期 `git status --short` 仍只显示上述未跟踪截图目录。
+
+## Final Review Fix Round 1
+
+基线：`9352a5516e5bd3911e97528f85aade30974e5b81`。
+
+- RED：`pnpm --filter web exec vitest run app/api/agent-inbox/route.test.ts components/workbench/agent-inbox-panel.test.tsx components/workbench/workbench-home-view.test.tsx components/workbench/agent-run-panel.test.tsx --reporter=dot` 退出码 1；68 个测试中 8 个失败，分别复现 Inbox query 固定为 pending、mark-read 缓存没有跨筛选迁移、零待确认事实错误宣称资料未建立、targets 失败时隐藏 run-id 控制。
+- GREEN：同一聚焦命令退出码 0；4 files、68 passed、1.17s。
+- 修复提交：`320c83b3ef9c65b8d9659a5a018d5c2c63ee63f0`。BFF 校验并透传 pending/unread/read/resolved（无参数默认 pending、非法值 400）；已加载 Inbox 缓存会在 mark-read 时同步 pending/unread/read，resolved 保持不变且未读筛选安全回退焦点；零待确认事实改为中性文案；targets 失败只阻止新运行选择/启动，不阻止已有运行的 pause/resume/cancel；README 更新为真实任务控制范围，投递仍未启用。
+- 完整复验：`DOCKER_API_VERSION=1.51 pnpm test` 退出码 0、30.2s（runtime 40/40、contracts 151/151、database 32/32、source-access 125/125、web 346/346）；`pnpm typecheck` 0、11.4s；`pnpm lint` 0、4.5s；`pnpm build` 0、12.2s；Drizzle check 0、0.7s；fixed-baseline `git diff --check` 0。
+- build 后仅移出生成的 `apps/api/dist` 与 `apps/worker/dist`；最终 status 仅为未跟踪 `.impeccable/review/` 截图证据。
