@@ -29,29 +29,36 @@ describe("shared contracts", () => {
       .toBe(false);
   });
 
-  it("accepts only the real empty workbench in this slice", () => {
+  it("accepts the task-control workbench summary and rejects unsafe counts", () => {
     expect(WorkbenchHomeSchema.parse({
       account: { userId: "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3" },
-      summary: { recommendations: 0, pendingFacts: 0, runningAgentRuns: 0, applications: 0 },
-    }).summary.recommendations).toBe(0);
-  });
+      summary: {
+        todayRecommendations: 2,
+        pendingFacts: 1,
+        activeAgentRuns: 3,
+        failedAgentRuns: 1,
+        sourceFailures: 2,
+        pendingDecisions: 2,
+        applications: 0,
+        applicationsAvailable: false,
+      },
+    }).summary.todayRecommendations).toBe(2);
 
-  it("accepts a real nonnegative pending candidate-fact count but rejects invalid counts", () => {
-    expect(WorkbenchHomeSchema.parse({
-      account: { userId: "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3" },
-      summary: { recommendations: 0, pendingFacts: 2, runningAgentRuns: 0, applications: 0 },
-    }).summary.pendingFacts).toBe(2);
-
-    for (const pendingFacts of [-1, 1.5]) {
+    for (const todayRecommendations of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
       expect(WorkbenchHomeSchema.safeParse({
         account: { userId: "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3" },
-        summary: { recommendations: 0, pendingFacts, runningAgentRuns: 0, applications: 0 },
+        summary: {
+          todayRecommendations,
+          pendingFacts: 0,
+          activeAgentRuns: 0,
+          failedAgentRuns: 0,
+          sourceFailures: 0,
+          pendingDecisions: 0,
+          applications: 0,
+          applicationsAvailable: false,
+        },
       }).success).toBe(false);
     }
-  });
-
-  it("accepts a real nonnegative running agent-run count", () => {
-    expect(WorkbenchHomeSchema.parse({ account: { userId: "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3" }, summary: { recommendations: 0, pendingFacts: 0, runningAgentRuns: 2, applications: 0 } }).summary.runningAgentRuns).toBe(2);
   });
 
   it("rejects an empty Dev Auth subject", () => {

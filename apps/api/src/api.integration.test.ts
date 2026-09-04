@@ -464,8 +464,9 @@ describe("authenticated workbench HTTP API", () => {
     expect(response.headers["x-request-id"]).toMatch(/^[0-9a-f-]{36}$/i);
     expect(response.json()).toEqual({
       account: { userId: primary.account.userId },
-      summary: { recommendations: 0, pendingFacts: 0, runningAgentRuns: 0, applications: 0 },
+      summary: { todayRecommendations: 0, pendingFacts: 0, activeAgentRuns: 0, failedAgentRuns: 0, sourceFailures: 0, pendingDecisions: 0, applications: 0, applicationsAvailable: false },
     });
+    expect(response.headers["cache-control"]).toBe("no-store");
   });
 
   it("creates one manual profile fact and rejects a stale profile version", async () => {

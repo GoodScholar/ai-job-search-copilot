@@ -154,14 +154,18 @@ const inboxItem: AgentInboxItem = {
   itemId: "39d2bfbf-7e40-49fc-86c8-3a15d7ad4f98",
   runId: agentRunId,
   kind: "decision_required",
-  status: "open",
+  status: "unread",
   reasonCode: "AGENT_RUN_PAUSED",
   budgetDimension: null,
   title: "岗位发现已暂停",
   message: "选择继续或取消本次岗位发现。",
+  basis: "运行已暂停。",
+  impact: "本次发现不会继续。",
+  suggestedAction: "继续或取消运行。",
+  target: { type: "agent_run", runId: agentRunId, href: `/home?runId=${agentRunId}#agent-run` },
   availableActions: ["resume_run", "cancel_run"],
-  targetHref: null,
   createdAt: "2026-08-29T08:00:00.000Z",
+  readAt: null,
   resolvedAt: null,
 };
 
@@ -207,7 +211,7 @@ it("reads the authenticated empty workbench through the shared DTO", async () =>
   const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
     new Response(JSON.stringify({
       account: { userId },
-      summary: { recommendations: 0, pendingFacts: 0, runningAgentRuns: 0, applications: 0 },
+      summary: { todayRecommendations: 0, pendingFacts: 0, activeAgentRuns: 0, failedAgentRuns: 0, sourceFailures: 0, pendingDecisions: 0, applications: 0, applicationsAvailable: false },
     }), { status: 200 }),
   );
   const api = createApiClient({
@@ -218,12 +222,12 @@ it("reads the authenticated empty workbench through the shared DTO", async () =>
 
   await expect(api.getWorkbenchHome(sessionToken)).resolves.toEqual({
     account: { userId },
-    summary: { recommendations: 0, pendingFacts: 0, runningAgentRuns: 0, applications: 0 },
+    summary: { todayRecommendations: 0, pendingFacts: 0, activeAgentRuns: 0, failedAgentRuns: 0, sourceFailures: 0, pendingDecisions: 0, applications: 0, applicationsAvailable: false },
   });
 
   const [url, init] = fetchImpl.mock.calls[0]!;
   expect(url).toBe("http://127.0.0.1:3021/v1/workbench/home");
-  expect(init).toMatchObject({ method: "GET" });
+  expect(init).toMatchObject({ method: "GET", cache: "no-store" });
   expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${sessionToken}`);
 });
 
@@ -615,12 +619,12 @@ it("通过服务端 bearer 严格处理运行控制与 Agent Inbox", async () =>
   const action = { actionId: "59d2bfbf-7e40-49fc-86c8-3a15d7ad4f98", action: "resume_run" as const };
 
   await expect(client.controlAgentRun(sessionToken, agentRunId, control)).resolves.toEqual(controlResponse);
-  await expect(client.listAgentInbox(sessionToken, "open")).resolves.toEqual({ items: [inboxItem] });
+  await expect(client.listAgentInbox(sessionToken, "pending")).resolves.toEqual({ items: [inboxItem] });
   await expect(client.actOnAgentInboxItem(sessionToken, inboxItem.itemId, action)).resolves.toEqual(inboxActionResponse);
 
   expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
     `http://127.0.0.1:3021/v1/agent-runs/${agentRunId}/controls`,
-    "http://127.0.0.1:3021/v1/agent-inbox?status=open",
+    "http://127.0.0.1:3021/v1/agent-inbox?status=pending",
     `http://127.0.0.1:3021/v1/agent-inbox/${inboxItem.itemId}/actions`,
   ]);
   expect(fetchImpl.mock.calls.map(([, init]) => ({ method: init?.method, body: init?.body }))).toEqual([
@@ -643,7 +647,7 @@ it("拒绝不符合控制和 Inbox 共享契约的成功 JSON", async () => {
   const action = { actionId: "59d2bfbf-7e40-49fc-86c8-3a15d7ad4f98", action: "resume_run" as const };
 
   await expect(client.controlAgentRun(sessionToken, agentRunId, control)).rejects.toMatchObject({ kind: "invalid_response" });
-  await expect(client.listAgentInbox(sessionToken, "open")).rejects.toMatchObject({ kind: "invalid_response" });
+  await expect(client.listAgentInbox(sessionToken, "pending")).rejects.toMatchObject({ kind: "invalid_response" });
   await expect(client.actOnAgentInboxItem(sessionToken, inboxItem.itemId, action)).rejects.toMatchObject({ kind: "invalid_response" });
 });
 

@@ -263,6 +263,7 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
       const response = await request("/v1/workbench/home", {
         method: "GET",
         headers: { authorization: `Bearer ${sessionToken}` },
+        cache: "no-store",
       });
       if (!response.ok) {
         const problem = await readProblem(response);
