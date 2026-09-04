@@ -56,6 +56,24 @@ it("隔离各状态缓存并忽略乱序响应，往返后仍显示权威 pendin
   expect(screen.getByRole("article", { name: "确认工作经历" })).toBeVisible();
 });
 
+it("切回命中缓存的筛选时忽略旧请求的失败", async () => {
+  const user = userEvent.setup();
+  let resolveUnread!: (response: Response) => void;
+  const unread = new Promise<Response>((resolve) => { resolveUnread = resolve; });
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>((input) => {
+    if (String(input).includes("status=unread")) return unread;
+    throw new Error(`unexpected request: ${String(input)}`);
+  }));
+  render(<AgentInboxPanel items={[item]} onResolved={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "未读" }));
+  await user.click(screen.getByRole("button", { name: "待处理" }));
+  resolveUnread(new Response(null, { status: 503 }));
+
+  await waitFor(() => expect(screen.getByRole("article", { name: "确认工作经历" })).toBeVisible());
+  expect(screen.queryByText("事项暂时无法读取，请稍后重试。")).not.toBeInTheDocument();
+});
+
 it("提供未读、已读、已处理筛选，并对诚实空状态说明没有事项", async () => {
   const user = userEvent.setup();
   vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(Response.json({ items: [] })));

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { renderToString } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
 import type { AgentInboxItem } from "@job-copilot/contracts/agent-inbox";
+import type { AgentRunDetail } from "@job-copilot/contracts/agent-runs";
 
 const refresh = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
@@ -13,6 +14,23 @@ const home = {
   account: { userId: "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3" },
   summary: { todayRecommendations: 2, pendingFacts: 1, activeAgentRuns: 1, failedAgentRuns: 1, sourceFailures: 1, pendingDecisions: 2, applications: 0 as const, applicationsAvailable: false as const },
 };
+
+const completedRun = {
+  runId: "9a5a0c80-2a73-4e61-8b14-d80f6e345af0", targetId: "d194d0ce-fc7e-45db-9425-e8ff4eaf8c08", targetVersion: 1,
+  workflowVersion: "job-discovery-workflow-v1", adapter: "fake", adapterVersion: "fake-job-discovery-v1", outputSchemaVersion: "job-discovery-result-v1",
+  status: "completed", currentStep: "completed", version: 8, attemptCount: 1, failureCode: null, controlState: "none",
+  targetSnapshot: { targetId: "d194d0ce-fc7e-45db-9425-e8ff4eaf8c08", version: 1, priority: "primary", state: "active", constraints: { roleFamily: "AI 应用工程师" } },
+  sourceScope: { kind: "company_watchlist", adapter: "fake", adapterVersion: "fake-job-discovery-v1", watchlistVersion: 0, sources: [] },
+  budget: { maxActiveDurationMs: 60_000, maxAttempts: 3, maxToolCalls: 10, maxResults: 5, maxModelCalls: 0, maxTokens: 0 },
+  queuedAt: "2026-09-04T08:00:00.000Z", startedAt: "2026-09-04T08:00:00.000Z", completedAt: "2026-09-04T08:00:03.000Z", failedAt: null, cancelledAt: null, updatedAt: "2026-09-04T08:00:03.000Z",
+  executionSpec: {
+    targetSnapshot: { targetId: "d194d0ce-fc7e-45db-9425-e8ff4eaf8c08", version: 1, priority: "primary", state: "active", constraints: { roleFamily: "AI 应用工程师" } },
+    sourceScope: { kind: "company_watchlist", adapter: "fake", adapterVersion: "fake-job-discovery-v1", watchlistVersion: 0, sources: [] }, workflowVersion: "job-discovery-workflow-v1", ruleVersion: "fake-job-discovery-rules-v1", adapter: "fake", adapterVersion: "fake-job-discovery-v1", outputSchemaVersion: "job-discovery-result-v1", toolAllowlist: [], model: null,
+    budget: { maxActiveDurationMs: 60_000, maxAttempts: 3, maxToolCalls: 10, maxResults: 5, maxModelCalls: 0, maxTokens: 0 },
+  },
+  usage: { activeDurationMs: 1200, attempts: 1, toolCalls: 2, sourceRequests: 2, modelCalls: 0, inputTokens: 0, outputTokens: 0, totalTokens: 0, results: 0, complete: true },
+  termination: { kind: "completed", failureCode: null, budgetDimension: null }, retryOfRunId: null, steps: [], events: [], results: [],
+} as unknown as AgentRunDetail;
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
@@ -50,6 +68,15 @@ it("分别说明 targets 与运行读取失败，且不隐藏另一项成功区�
   rerender(<WorkbenchHomeView home={home} inbox={{ items: [] }} initialRun={null} targets={{ suggestions: [], targets: [] }} unavailableSections={["run"]} />);
   expect(screen.getByRole("heading", { name: "运行状态暂时无法读取" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "先确认求职目标" })).toBeVisible();
+});
+
+it("targets 读取失败时保留已成功读取的运行记录，而不是伪造目标空态", () => {
+  render(<WorkbenchHomeView home={home} inbox={{ items: [] }} initialRun={completedRun} targets={null} unavailableSections={["targets"]} />);
+
+  expect(screen.getByRole("heading", { name: "求职目标暂时无法读取" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "发现新的岗位机会" })).toBeVisible();
+  expect(screen.getByText("岗位发现完成，共保存 0 个岗位机会")).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "先确认求职目标" })).not.toBeInTheDocument();
 });
 
 it("服务端快照固定在线，挂载后才读取离线状态", () => {

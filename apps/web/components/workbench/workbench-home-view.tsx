@@ -38,8 +38,14 @@ function readServerOnlineState() { return true; }
 function inboxKey(items: AgentInboxItem[]) { return JSON.stringify(items); }
 
 export function WorkbenchHomeView({ home, targets, initialRun, inbox, unavailableSections = [] }: WorkbenchHomeViewProps) {
+  return <WorkbenchHomeContent key={inboxKey(inbox.items)} home={home} inbox={inbox} initialRun={initialRun} targets={targets} unavailableSections={unavailableSections} />;
+}
+
+function WorkbenchHomeContent({ home, targets, initialRun, inbox, unavailableSections = [] }: WorkbenchHomeViewProps) {
   const router = useRouter();
   const [runRefreshVersion, setRunRefreshVersion] = useState(0);
+  const [inboxRefresh, setInboxRefresh] = useState<{ source: typeof inbox; items: AgentInboxItem[] } | null>(null);
+  const inboxItems = inboxRefresh?.source === inbox ? inboxRefresh.items : inbox.items;
   const online = useSyncExternalStore(subscribeToOnlineState, readOnlineState, readServerOnlineState);
   const [refreshRequestedFor, setRefreshRequestedFor] = useState<typeof inbox | null>(null);
   const stale = refreshRequestedFor === inbox;
@@ -59,8 +65,9 @@ export function WorkbenchHomeView({ home, targets, initialRun, inbox, unavailabl
   const refreshInbox = useCallback(async () => {
     const nextItems = await loadOpenAgentInbox();
     if (nextItems === false) return false;
+    setInboxRefresh({ source: inbox, items: nextItems });
     return true;
-  }, []);
+  }, [inbox]);
 
   return (
     <main className="container workbench-main">
@@ -79,11 +86,11 @@ export function WorkbenchHomeView({ home, targets, initialRun, inbox, unavailabl
         <p className="workbench-summary-note">投递记录功能尚未启用，当前不会保存或显示投递数据。</p>
       </>}
 
-      {inboxUnavailable ? <section aria-labelledby="agent-inbox-unavailable-title" className="workbench-ledger"><h2 id="agent-inbox-unavailable-title">待决定事项暂时无法读取</h2><p>请稍后刷新重试。</p></section> : <AgentInboxPanel key={inboxKey(inbox.items)} items={inbox.items} onResolved={() => undefined} onRunUpdated={() => setRunRefreshVersion((version) => version + 1)} />}
+      {inboxUnavailable ? <section aria-labelledby="agent-inbox-unavailable-title" className="workbench-ledger"><h2 id="agent-inbox-unavailable-title">待决定事项暂时无法读取</h2><p>请稍后刷新重试。</p></section> : <AgentInboxPanel key={inboxKey(inboxItems)} items={inboxItems} onResolved={() => undefined} onRunUpdated={() => setRunRefreshVersion((version) => version + 1)} />}
 
       {targetsUnavailable && <section aria-labelledby="targets-unavailable-title" className="workbench-ledger"><h2 id="targets-unavailable-title">求职目标暂时无法读取</h2><p>已成功读取的运行状态仍会保留。请稍后刷新重试。</p></section>}
       {runUnavailable && <section aria-labelledby="run-unavailable-title" className="workbench-ledger"><h2 id="run-unavailable-title">运行状态暂时无法读取</h2><p>已成功读取的求职目标仍可继续使用。请稍后刷新重试。</p></section>}
-      {(!targetsUnavailable || !runUnavailable) && <AgentRunPanel initialRun={initialRun} onInboxRefresh={refreshInbox} refreshVersion={runRefreshVersion} showDiscoverySchedule targets={targets?.targets ?? []} />}
+      {(!targetsUnavailable || !runUnavailable) && <AgentRunPanel initialRun={initialRun} onInboxRefresh={refreshInbox} refreshVersion={runRefreshVersion} showDiscoverySchedule targets={targetsUnavailable ? null : targets?.targets ?? []} />}
 
       <section aria-labelledby="ledger-title" className="workbench-ledger">
         <div className="workbench-ledger-heading"><p>档案纸 · 当前状态</p><h2 id="ledger-title">{hasPendingFacts ? "职业资料等待确认" : "职业资料尚未建立"}</h2></div>

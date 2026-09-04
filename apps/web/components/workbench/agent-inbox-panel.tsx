@@ -43,10 +43,10 @@ export function AgentInboxPanel({ items, onResolved, onRunUpdated }: {
   const visibleItems = cache[filter] ?? [];
 
   async function changeFilter(next: InboxFilter) {
+    const version = ++requestVersion.current;
     setFilter(next);
     setMessage("");
     if (cache[next] !== undefined) return;
-    const version = ++requestVersion.current;
     const nextItems = await loadAgentInbox(next);
     if (version !== requestVersion.current || nextItems === false) {
       if (version === requestVersion.current && nextItems === false) setMessage("事项暂时无法读取，请稍后重试。");

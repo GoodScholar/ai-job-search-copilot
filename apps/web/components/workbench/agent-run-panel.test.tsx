@@ -1,10 +1,13 @@
 import type { AgentRunDetail } from "@job-copilot/contracts/agent-runs";
+import type { AgentInboxItem } from "@job-copilot/contracts/agent-inbox";
 import type { JobTarget } from "@job-copilot/contracts/job-targets";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import { AgentRunPanel } from "./agent-run-panel";
+import { AgentInboxPanel } from "./agent-inbox-panel";
 
 const runId = "9a5a0c80-2a73-4e61-8b14-d80f6e345af0";
 const targetId = "d194d0ce-fc7e-45db-9425-e8ff4eaf8c08";
@@ -153,6 +156,14 @@ it("收到 Inbox 已处理通知后重新读取权威运行详情", async () => 
   view.rerender(<AgentRunPanel initialRun={paused} refreshVersion={1} targets={[target()]} />);
 
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("岗位发现完成，共保存 1 个岗位机会"));
+});
+
+it("求职目标暂时不可读取时仍以只读方式保留成功的运行记录", () => {
+  render(<AgentRunPanel initialRun={detail("completed")} targets={null as unknown as JobTarget[]} />);
+
+  expect(screen.getByRole("heading", { name: "发现新的岗位机会" })).toBeVisible();
+  expect(screen.getByText("岗位发现完成，共保存 1 个岗位机会")).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "先确认求职目标" })).not.toBeInTheDocument();
 });
 
 it("lets the user choose an active target and exposes a touch-sized discovery action", async () => {
@@ -346,6 +357,33 @@ it("暂停的权威详情读取后刷新开放 Inbox", async () => {
 
   act(() => source.emit("run.paused", "3", { eventType: "run.paused", status: "paused", currentStep: "batch_search", attemptCount: 1 }));
   await waitFor(() => expect(refreshInbox).toHaveBeenCalledOnce());
+});
+
+it("运行面板触发 Inbox 刷新后将新权威事项呈现在收件箱", async () => {
+  const paused = { ...detail(), status: "paused" as const, currentStep: "batch_search" as const, controlState: "none" as const, version: 3 };
+  const refreshedItem: AgentInboxItem = {
+    itemId: "4a1b0207-b852-4f86-8b1f-3b9615655ed8", runId: runId, kind: "candidate_fact", status: "unread", reasonCode: "CANDIDATE_FACT_PENDING", budgetDimension: null,
+    title: "刷新后的事项", message: "新读取的数据。", basis: "新依据。", impact: "新影响。", suggestedAction: "新建议。",
+    target: { type: "candidate_fact", candidateFactId: "1a1b0207-b852-4f86-8b1f-3b9615655ed8", href: "/profile#candidate-facts" }, availableActions: ["dismiss"], createdAt: now, readAt: null, resolvedAt: null,
+  };
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(Response.json(paused))
+    .mockResolvedValueOnce(Response.json({ items: [refreshedItem] })));
+
+  function RunInboxHarness() {
+    const [items, setItems] = useState<AgentInboxItem[]>([]);
+    return <><AgentInboxPanel key={JSON.stringify(items)} items={items} onResolved={vi.fn()} /><AgentRunPanel initialRun={detail()} onInboxRefresh={async () => {
+      const response = await fetch("/api/agent-inbox?status=pending", { cache: "no-store" });
+      if (!response.ok) return false;
+      setItems((await response.json() as { items: AgentInboxItem[] }).items);
+      return true;
+    }} targets={[target()]} /></>;
+  }
+
+  render(<RunInboxHarness />);
+  act(() => FakeEventSource.instances[0]!.emit("run.paused", "3", { eventType: "run.paused", status: "paused", currentStep: "batch_search", attemptCount: 1 }));
+
+  expect(await screen.findByRole("article", { name: "刷新后的事项" })).toBeVisible();
 });
 
 it("SSE 权威详情成功后 Inbox 刷新失败不会回退运行状态", async () => {

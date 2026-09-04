@@ -115,13 +115,14 @@ async function fetchRunDetail(runId: string): Promise<AgentRunDetail> {
 }
 
 export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVersion = 0, showDiscoverySchedule = false }: {
-  targets: JobTarget[];
+  targets: JobTarget[] | null;
   initialRun: AgentRunDetail | null;
   onInboxRefresh?: () => Promise<boolean>;
   refreshVersion?: number;
   showDiscoverySchedule?: boolean;
 }) {
-  const activeTargets = targets.filter((target) => target.state === "active");
+  const activeTargets = targets?.filter((target) => target.state === "active") ?? [];
+  const targetsUnavailable = targets === null;
   const initialTargetId = activeTargets.some((target) => target.targetId === initialRun?.targetId)
     ? initialRun!.targetId
     : activeTargets.find((target) => target.priority === "primary")?.targetId ?? activeTargets[0]?.targetId ?? "";
@@ -139,7 +140,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
   const runRef = useRef(run);
   const mountedRef = useRef(false);
   const [pendingControls, setPendingControls] = useState<Record<"pause" | "resume" | "cancel", boolean>>({ pause: false, resume: false, cancel: false });
-  const selectedTarget = targets.find((target) => target.targetId === selectedTargetId);
+  const selectedTarget = targets?.find((target) => target.targetId === selectedTargetId);
 
   const replaceRun = useCallback((next: AgentRunDetail | null) => {
     runRef.current = next;
@@ -344,7 +345,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
     }
   }
 
-  if (activeTargets.length === 0) {
+  if (activeTargets.length === 0 && !run) {
     return (
       <section aria-labelledby="agent-run-title" className="workbench-ledger agent-run-panel">
         <div className="workbench-ledger-heading">
@@ -366,7 +367,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
         <h2 id="agent-run-title">{isDeepMatchRun(run) ? "评估候选岗位匹配" : "发现新的岗位机会"}</h2>
       </div>
       <div className="agent-run-controls">
-        <label htmlFor="agent-run-target">{isDeepMatchRun(run) ? "用于岗位匹配的求职目标" : "用于发现岗位的求职目标"}</label>
+        {targetsUnavailable ? <div><p>求职目标暂时无法读取；以下仅显示已成功读取的本次运行记录。</p></div> : <><label htmlFor="agent-run-target">{isDeepMatchRun(run) ? "用于岗位匹配的求职目标" : "用于发现岗位的求职目标"}</label>
         <div>
           <select disabled={isStarting || runIsUnfinished} id="agent-run-target" onChange={(event) => {
             setSelectedTargetId(event.target.value);
@@ -378,7 +379,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
           {isDeepMatchRun(run) ? <p className="agent-run-start-note">岗位匹配会在岗位发现完成后自动开始；如需重新评估，请在推荐清单中选择具体岗位。</p> : <Button className="agent-run-start workbench-touch-target" disabled={isStarting || runIsUnfinished} onClick={startRun} size="lg" type="button">
             {isStarting ? "正在启动…" : runIsUnfinished ? `${runNoun}中…` : "发现岗位"}
           </Button>}
-        </div>
+        </div></>}
       </div>
       {showDiscoverySchedule && selectedTarget ? <DiscoverySchedulePanel key={selectedTarget.targetId} targetId={selectedTarget.targetId} targetState={selectedTarget.state} /> : null}
       {run ? <>
