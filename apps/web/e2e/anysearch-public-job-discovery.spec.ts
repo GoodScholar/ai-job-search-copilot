@@ -327,10 +327,10 @@ test("版本化 Fake AnySearch 从普通 UI 运行真实 layered public 验收�
     await queue.close();
   }
   expect(await persistedFacts(account.userId, runId)).toEqual(facts);
-  await page.reload();
+  await page.goto(`/home?runId=${runId}#agent-run`);
   await expect(page.locator(".agent-run-panel [role=status]")).toContainText("岗位发现部分完成");
   await expect(page.locator(".agent-run-results li")).toHaveCount(1);
-  const attention = page.locator(".agent-inbox-panel").getByRole("link", { name: "查看本次运行诊断" });
+  const attention = page.locator(".agent-inbox-panel").getByRole("article", { name: "公开岗位发现需要关注" }).getByRole("link", { name: "查看相关记录" });
   expectTrue(await routeMatches(attention, runId));
   const controls = page.locator(".agent-run-panel .workbench-touch-target, .agent-inbox-panel .workbench-touch-target");
   expect(await controls.count()).toBeGreaterThan(0);
@@ -368,6 +368,6 @@ test("版本化 Fake AnySearch 缺 key 时从普通 UI 失败且不触发 provid
   expect(await fixtureAudit()).toEqual([]);
   assertFalse(serializedRunAndFactsContainFixedTestKey(run, facts));
   await page.reload();
-  const attention = page.locator(".agent-inbox-panel").getByRole("link", { name: "查看本次运行诊断" });
+  const attention = page.locator(".agent-inbox-panel").getByRole("article", { name: "公开岗位发现需要关注" }).getByRole("link", { name: "查看相关记录" });
   expectTrue(await routeMatches(attention, runId));
 });
