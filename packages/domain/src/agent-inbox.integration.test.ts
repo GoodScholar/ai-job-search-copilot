@@ -1,7 +1,7 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { agentInboxItemActions, agentInboxItems, agentRunEvents, agentRuns, createDatabase, jobAccounts, jobSourceHealthChecks, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
+import { agentInboxItemActions, agentInboxItems, agentRunEvents, agentRuns, calibrationProposals, candidateFacts, careerDocuments, careerImports, createDatabase, jobAccounts, jobSourceHealthChecks, jobTargetRevisions, jobTargets, migrateDatabase, recommendationLists, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
 import { createAgentInbox, createAgentRunCommands, type AgentRunQueue } from "./agent-runs";
 
@@ -115,6 +115,39 @@ describe("agent inbox", () => {
       expect.objectContaining({ itemId: newerId, status: "read" }),
       expect.objectContaining({ itemId: older.itemId, status: "unread" }),
     ] });
+  });
+
+  it("相同 createdAt 的 pending 项按 itemId 倒序稳定排序，且同一 actionId 不可改作另一动作", async () => {
+    const owner = await activeTarget();
+    const first = await openItem({ ...owner, kind: "run_failed", reasonCode: "AGENT_RUN_ADAPTER_FAILED" });
+    const second = await openItem({ ...owner, kind: "budget_exhausted", reasonCode: "AGENT_RUN_BUDGET_EXCEEDED", budgetDimension: "tool_calls" });
+    const listed = await inbox().list({ userId: owner.userId, status: "pending" });
+    expect(listed.items.map((item) => item.itemId)).toEqual([first.itemId, second.itemId].sort().reverse());
+    const actionId = crypto.randomUUID();
+    await inbox().act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: first.itemId, command: { actionId, action: "mark_read" } });
+    await expect(inbox().act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: first.itemId, command: { actionId, action: "dismiss" } })).rejects.toMatchObject({ code: "AGENT_INBOX_ACTION_CONFLICT" });
+  });
+
+  it("从 owner-bound candidate fact、recommendation list 与 calibration proposal 投影安全 typed target 和说明", async () => {
+    const owner = await activeTarget();
+    const documentId = crypto.randomUUID(); const importId = crypto.randomUUID(); const factId = crypto.randomUUID(); const listId = crypto.randomUUID(); const proposalId = crypto.randomUUID();
+    await database.insert(careerDocuments).values({ id: documentId, userId: owner.userId, checksumSha256: "a".repeat(64), objectKey: `accounts/${owner.userId}/source.md`, originalFilename: "source.md", mediaType: "text/markdown", byteSize: 1 });
+    await database.insert(careerImports).values({ id: importId, userId: owner.userId, careerDocumentId: documentId, originatingRequestId: crypto.randomUUID() });
+    await database.insert(candidateFacts).values({ id: factId, userId: owner.userId, careerImportId: importId, careerDocumentId: documentId, factKey: "b".repeat(64), factType: "skill", factValue: { name: "private skill" }, confidenceBasisPoints: 9000, createdAt: now });
+    await database.insert(recommendationLists).values({ id: listId, userId: owner.userId, targetId: owner.targetId, localDate: "2026-08-29", sequence: 1, createdAt: now });
+    await database.insert(calibrationProposals).values({ id: proposalId, userId: owner.userId, targetId: owner.targetId, reason: "SALARY", status: "pending", version: 1, createdAt: now, updatedAt: now });
+    await database.insert(agentInboxItems).values([
+      { id: crypto.randomUUID(), userId: owner.userId, runId: null, triggerEventSequence: null, candidateFactId: factId, kind: "candidate_fact", status: "unread", reasonCode: "CANDIDATE_FACT_PENDING", budgetDimension: null, createdAt: now },
+      { id: crypto.randomUUID(), userId: owner.userId, runId: null, triggerEventSequence: null, recommendationListId: listId, kind: "recommendation_list", status: "unread", reasonCode: "RECOMMENDATION_LIST_PUBLISHED", budgetDimension: null, createdAt: now },
+      { id: crypto.randomUUID(), userId: owner.userId, runId: null, triggerEventSequence: null, calibrationProposalId: proposalId, kind: "calibration_proposal", status: "unread", reasonCode: "CALIBRATION_PROPOSAL_CREATED", budgetDimension: null, createdAt: now },
+    ]);
+    const items = (await inbox().list({ userId: owner.userId, status: "pending" })).items;
+    expect(items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "candidate_fact", target: expect.objectContaining({ type: "candidate_fact", candidateFactId: factId }), basis: expect.any(String), impact: expect.any(String), suggestedAction: expect.any(String) }),
+      expect.objectContaining({ kind: "recommendation_list", target: expect.objectContaining({ type: "recommendation_list", recommendationListId: listId, targetId: owner.targetId }), basis: expect.any(String), impact: expect.any(String), suggestedAction: expect.any(String) }),
+      expect.objectContaining({ kind: "calibration_proposal", target: expect.objectContaining({ type: "calibration_proposal", proposalId, targetId: owner.targetId }), basis: expect.any(String), impact: expect.any(String), suggestedAction: expect.any(String) }),
+    ]));
+    expect(JSON.stringify(items)).not.toContain("private skill");
   });
 
   it("恢复或取消 decision 项时只执行允许的控制并解决项，重放不重复审计或事件", async () => {

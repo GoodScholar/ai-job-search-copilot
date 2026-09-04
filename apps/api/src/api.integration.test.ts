@@ -1011,6 +1011,15 @@ describe("authenticated workbench HTTP API", () => {
     expect(inbox.statusCode).toBe(200);
     expect(inbox.json()).toMatchObject({ items: [expect.objectContaining({ runId, kind: "decision_required", availableActions: ["resume_run", "cancel_run"] })] });
     const pauseItemId = inbox.json().items[0].itemId as string;
+    const unread = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=unread", headers: bearer(primary.sessionToken) });
+    expect(unread.statusCode).toBe(200);
+    expect(unread.json()).toMatchObject({ items: [expect.objectContaining({ itemId: pauseItemId, status: "unread" })] });
+    const markedRead = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/agent-inbox/${pauseItemId}/actions`, headers: bearer(primary.sessionToken), payload: { actionId: randomUUID(), action: "mark_read" } });
+    expect(markedRead.statusCode).toBe(200);
+    expect(markedRead.json()).toMatchObject({ applied: true, item: { status: "read" } });
+    const read = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=read", headers: bearer(primary.sessionToken) });
+    expect(read.statusCode).toBe(200);
+    expect(read.json()).toMatchObject({ items: [expect.objectContaining({ itemId: pauseItemId, status: "read" })] });
     const hiddenItem = await app.getHttpAdapter().getInstance().inject({
       method: "POST", url: `/v1/agent-inbox/${pauseItemId}/actions`, headers: bearer(other.sessionToken),
       payload: { actionId: randomUUID(), action: "dismiss" },
@@ -1024,6 +1033,10 @@ describe("authenticated workbench HTTP API", () => {
     });
     expect(resumed.statusCode).toBe(200);
     expect(resumed.json()).toMatchObject({ applied: true, item: { status: "resolved" }, run: { runId, status: "queued" } });
+    const resolved = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=resolved", headers: bearer(primary.sessionToken) });
+    expect(resolved.statusCode).toBe(200);
+    expect(resolved.json()).toMatchObject({ items: [expect.objectContaining({ itemId: pauseItemId, status: "resolved" })] });
+    await expect(app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/agent-inbox/${pauseItemId}/actions`, headers: bearer(primary.sessionToken), payload: { actionId: randomUUID(), action: "mark_read" } })).resolves.toMatchObject({ statusCode: 409 });
 
     const cancelRunId = await createRun();
     const cancelPause = await app.getHttpAdapter().getInstance().inject({
