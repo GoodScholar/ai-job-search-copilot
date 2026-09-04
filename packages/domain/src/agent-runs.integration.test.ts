@@ -446,7 +446,7 @@ describe("agent runs", () => {
       steps: expect.arrayContaining([expect.objectContaining({ stepKey: "batch_search", status: "failed", failureCode: "AGENT_RUN_ADAPTER_FAILED", failedAt: expect.any(String) })]),
     });
     await expect(database.select().from(agentInboxItems).where(and(eq(agentInboxItems.userId, userId), eq(agentInboxItems.runId, run.runId), eq(agentInboxItems.kind, "run_failed")))).resolves.toEqual([
-      expect.objectContaining({ status: "open", reasonCode: "AGENT_RUN_ADAPTER_FAILED", budgetDimension: null }),
+      expect.objectContaining({ status: "unread", reasonCode: "AGENT_RUN_ADAPTER_FAILED", budgetDimension: null }),
     ]);
     await expect(database.select().from(auditEvents).where(and(eq(auditEvents.userId, userId), eq(auditEvents.eventType, "agent.inbox_opened")))).resolves.toHaveLength(1);
     expect(store.puts).toEqual([]);

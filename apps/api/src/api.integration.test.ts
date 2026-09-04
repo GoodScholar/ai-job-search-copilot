@@ -1010,7 +1010,7 @@ describe("authenticated workbench HTTP API", () => {
 
     const inbox = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=pending", headers: bearer(primary.sessionToken) });
     expect(inbox.statusCode).toBe(200);
-    expect(inbox.json()).toMatchObject({ items: [expect.objectContaining({ runId, kind: "decision_required", availableActions: ["resume_run", "cancel_run"] })] });
+    expect(inbox.json()).toMatchObject({ items: [expect.objectContaining({ runId, kind: "decision_required", status: "unread", availableActions: ["mark_read", "resume_run", "cancel_run"] })] });
     const pauseItemId = inbox.json().items[0].itemId as string;
     const unread = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=unread", headers: bearer(primary.sessionToken) });
     expect(unread.statusCode).toBe(200);

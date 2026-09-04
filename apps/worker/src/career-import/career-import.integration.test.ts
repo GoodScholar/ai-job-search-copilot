@@ -7,6 +7,7 @@ import { RedisContainer, type StartedRedisContainer } from "@testcontainers/redi
 import { GenericContainer, type StartedTestContainer, Wait } from "testcontainers";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
+  agentInboxItems,
   candidateFacts,
   candidateFactEvidence,
   careerDocuments,
@@ -112,6 +113,7 @@ describe("CareerImportConsumer", () => {
     await consumer?.close();
     consumer = undefined;
     await queue.drain(true);
+    await database.delete(agentInboxItems);
     await database.delete(candidateFactEvidence);
     await database.delete(candidateFacts);
     await database.delete(careerImports);
