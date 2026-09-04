@@ -51,3 +51,28 @@
 - 修复提交：`320c83b3ef9c65b8d9659a5a018d5c2c63ee63f0`。BFF 校验并透传 pending/unread/read/resolved（无参数默认 pending、非法值 400）；已加载 Inbox 缓存会在 mark-read 时同步 pending/unread/read，resolved 保持不变且未读筛选安全回退焦点；零待确认事实改为中性文案；targets 失败只阻止新运行选择/启动，不阻止已有运行的 pause/resume/cancel；README 更新为真实任务控制范围，投递仍未启用。
 - 完整复验：`DOCKER_API_VERSION=1.51 pnpm test` 退出码 0、30.2s（runtime 40/40、contracts 151/151、database 32/32、source-access 125/125、web 346/346）；`pnpm typecheck` 0、11.4s；`pnpm lint` 0、4.5s；`pnpm build` 0、12.2s；Drizzle check 0、0.7s；fixed-baseline `git diff --check` 0。
 - build 后仅移出生成的 `apps/api/dist` 与 `apps/worker/dist`；最终 status 仅为未跟踪 `.impeccable/review/` 截图证据。
+
+## Final Review Fix Round 2
+
+本轮基线：`c4cf34b31192c7eec9dd764caaf9fee40159a84b`。
+
+- RED：`pnpm --filter web exec vitest run components/workbench/agent-inbox-panel.test.tsx --reporter=dot` 退出码 1，16 个测试中 1 个失败、1.80s。已加载的 read 缓存把新标记项追加到末尾，违反服务端 `createdAt DESC, itemId DESC` 顺序。
+- GREEN：同一组件文件退出码 0，16/16、0.80s。新增用例覆盖更旧/更新项排序、同一 `createdAt` 的 `itemId` 降序 tie-break，以及已有条目的替换无重复。
+- 排序修复：`agent-inbox-panel.tsx` 以共享 `compareInboxItems`/`upsertInboxItem` 替代追加逻辑；pending、unread、read 的已加载缓存均在更新时保持服务端排序，resolved 缓存不受 mark-read 影响。
+- 历史夹具兼容：完整测试依次复现并最小修正三处 Issue #15 生命周期迁移遗留断言/清理：domain 的 run_failed 状态 `open` → `unread`；API 的 unread pause item 补回 `mark_read` 动作和 `unread` 状态；worker career-import teardown 在删除 candidate facts 前先删除引用它们的 Inbox 项。生产 contracts/producers 已确认只接受并写入 `unread/read/resolved`，未修改生产行为。
+- 瞬态运行时复验：一次完整运行在 `scripts/local-runtime.test.mjs` 的受控子进程 ESRCH 断言出现瞬态失败；原样重跑 `pnpm test:runtime` 退出码 0、40/40、0.47s，未改动 runtime 代码。
+
+| 命令 | 退出码 | 耗时 / 结果 |
+| --- | ---: | --- |
+| Inbox 排序 RED | 1 | 16 个测试中 15 passed、1 failed，1.80s。 |
+| Inbox 组件 GREEN | 0 | 16/16，0.80s。 |
+| `pnpm --filter @job-copilot/domain exec vitest run src/agent-runs.integration.test.ts --no-file-parallelism` | 0 | 33/33，4.23s。 |
+| `pnpm --filter api exec vitest run src/api.integration.test.ts --reporter=dot` | 0 | 52/52，3.97s。 |
+| `pnpm --filter worker exec vitest run src/career-import/career-import.integration.test.ts --no-file-parallelism` | 0 | 7/7，4.51s。 |
+| `DOCKER_API_VERSION=1.51 pnpm test`（最终） | 0 | runtime 40/40；contracts 151/151；database 32/32；source-access 125/125；web 347/347；domain 503/503；API 162/162；worker 301/301。 |
+| `pnpm typecheck` | 0 | 8.6s。 |
+| `pnpm lint` | 0 | 3.4s。 |
+| `pnpm build` | 0 | 9.2s。 |
+| `pnpm --filter @job-copilot/database exec drizzle-kit check --config=drizzle.config.ts` | 0 | 0.5s；`Everything's fine`。 |
+
+本轮构建后再次验证 `apps/api/dist`、`apps/worker/dist` 为未跟踪 Nest 生成物，并移至 `/tmp/issue15-task7-build-artifacts.GwGgjj`；没有删除其他用户文件。`.impeccable/review/` 继续保留为未跟踪验收截图，不提交。
