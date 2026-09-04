@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  agentInboxItems,
   auditEvents,
   candidateFacts,
   candidateFactDecisions,
@@ -387,6 +388,32 @@ describe("profile review", () => {
         eq(candidateFactDecisions.userId, userId),
         eq(candidateFactDecisions.candidateFactId, rejectionCandidateId),
       ))).resolves.toEqual([{ candidateFactId: rejectionCandidateId, profileVersion: rejected.version }]);
+  });
+
+  it("在确认、更正或拒绝候选事实时原子解决所属 Inbox 项", async () => {
+    const confirmedId = await seedCandidateFact({ factValue: { name: "Inbox confirmed" } });
+    const correctedId = await seedCandidateFact({ factValue: { name: "Inbox corrected" } });
+    const rejectedId = await seedCandidateFact({ factValue: { name: "Inbox rejected" } });
+    await database.insert(agentInboxItems).values([confirmedId, correctedId, rejectedId].map((candidateFactId) => ({
+      id: crypto.randomUUID(), userId, candidateFactId, kind: "candidate_fact" as const,
+      status: "unread" as const, reasonCode: "CANDIDATE_FACT_PENDING", budgetDimension: null, createdAt: now,
+    })));
+
+    const service = commands();
+    let snapshot = await createTrustedProfileQueries({ db: database }).getCurrent({ userId });
+    await service.decideCandidateFact({ userId, requestId: crypto.randomUUID(), candidateFactId: confirmedId, command: { expectedVersion: snapshot.version, decision: "confirmed" } });
+    snapshot = await createTrustedProfileQueries({ db: database }).getCurrent({ userId });
+    await service.decideCandidateFact({ userId, requestId: crypto.randomUUID(), candidateFactId: correctedId, command: { expectedVersion: snapshot.version, decision: "corrected", factValue: { name: "Corrected inbox fact" }, reason: "人工更正" } });
+    snapshot = await createTrustedProfileQueries({ db: database }).getCurrent({ userId });
+    await service.decideCandidateFact({ userId, requestId: crypto.randomUUID(), candidateFactId: rejectedId, command: { expectedVersion: snapshot.version, decision: "rejected" } });
+
+    await expect(database.select({ candidateFactId: agentInboxItems.candidateFactId, status: agentInboxItems.status, resolvedAt: agentInboxItems.resolvedAt })
+      .from(agentInboxItems).where(and(eq(agentInboxItems.userId, userId), sql`${agentInboxItems.candidateFactId} in (${confirmedId}, ${correctedId}, ${rejectedId})`))
+      .orderBy(agentInboxItems.candidateFactId)).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ candidateFactId: confirmedId, status: "resolved", resolvedAt: now }),
+      expect.objectContaining({ candidateFactId: correctedId, status: "resolved", resolvedAt: now }),
+      expect.objectContaining({ candidateFactId: rejectedId, status: "resolved", resolvedAt: now }),
+    ]));
   });
 
   it("maintains manual facts as immutable revisions and omits a removed fact from trusted reads", async () => {

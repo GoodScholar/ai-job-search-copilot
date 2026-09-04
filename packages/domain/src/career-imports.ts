@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, asc, desc, eq, ne, or, sql } from "drizzle-orm";
 import {
+  agentInboxItems,
   candidateFactEvidence,
   candidateFactDecisions,
   candidateFacts,
@@ -881,6 +882,13 @@ export function createCareerImportProcessor(deps: ProcessorDependencies): {
               confidenceBasisPoints: fact.confidenceBasisPoints,
               confirmationStatus: "pending",
               createdAt: now,
+            });
+            await transaction.insert(agentInboxItems).values({
+              userId: record.userId, candidateFactId, kind: "candidate_fact",
+              status: "unread", reasonCode: "CANDIDATE_FACT_PENDING", budgetDimension: null, createdAt: now,
+            }).onConflictDoNothing({
+              target: agentInboxItems.candidateFactId,
+              where: sql`${agentInboxItems.candidateFactId} is not null`,
             });
             await transaction.insert(candidateFactEvidence).values({
               id: deps.id(),

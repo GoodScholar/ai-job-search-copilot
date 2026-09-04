@@ -2,7 +2,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
 import {
-  agentRuns, auditEvents, calibrationProposalEvidence, calibrationProposalRevisions, calibrationProposals, createDatabase, jobAccounts, jobMatchVersions, jobOpportunities, jobOpportunitySources,
+  agentInboxItems, agentRuns, auditEvents, calibrationProposalEvidence, calibrationProposalRevisions, calibrationProposals, createDatabase, jobAccounts, jobMatchVersions, jobOpportunities, jobOpportunitySources,
   jobProfiles, jobSourcePostingVersions, jobSourcePostings, jobTargets, jobTargetRevisions, jobTriageVersions, migrateDatabase, profileFactRevisions, profileFacts, recommendationDecisionEvents, recommendationDecisionResponses, recommendationListItems,
   recommendationLists, recommendationRuleVersions, type Database,
 } from "@job-copilot/database";
@@ -98,15 +98,29 @@ describe("recommendation feedback persistence", () => {
     for (const item of data.items.slice(3)) await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: { decision: "ignored", reason: "LOCATION", expectedVersion: 0, idempotencyKey: crypto.randomUUID() } });
     const proposals = await createRecommendationFeedbackQueries({ db }).listCalibrationProposals({ userId: data.userId, targetId: data.targetId });
     const proposal = proposals.find((item) => item.revision.strategy === "raise_quality_bar"); const secondProposal = proposals.find((item) => item.proposalId !== proposal!.proposalId);
+    await expect(db.select({ calibrationProposalId: agentInboxItems.calibrationProposalId, status: agentInboxItems.status, kind: agentInboxItems.kind })
+      .from(agentInboxItems).where(and(eq(agentInboxItems.userId, data.userId), sql`${agentInboxItems.calibrationProposalId} in (${proposal!.proposalId}, ${secondProposal!.proposalId})`)))
+      .resolves.toEqual(expect.arrayContaining([
+        { calibrationProposalId: proposal!.proposalId, status: "unread", kind: "calibration_proposal" },
+        { calibrationProposalId: secondProposal!.proposalId, status: "unread", kind: "calibration_proposal" },
+      ]));
     const revisionCommand = { expectedVersion: 1, idempotencyKey: crypto.randomUUID(), strategy: "exclude_evidence_opportunities" as const };
     const revision = await service.reviseCalibrationProposal({ userId: data.userId, proposalId: proposal!.proposalId, command: revisionCommand });
     await expect(service.reviseCalibrationProposal({ userId: data.userId, proposalId: proposal!.proposalId, command: revisionCommand })).resolves.toEqual(revision);
     expect(revision).toEqual({ proposalId: proposal!.proposalId, revisionId: expect.any(String), revisionNumber: 2 });
+    await expect(db.select({ status: agentInboxItems.status }).from(agentInboxItems).where(and(eq(agentInboxItems.userId, data.userId), eq(agentInboxItems.calibrationProposalId, proposal!.proposalId)))).resolves.toEqual([{ status: "unread" }]);
     const resolution = { action: "approved" as const, expectedVersion: 2, idempotencyKey: crypto.randomUUID() };
     await expect(service.resolveCalibrationProposal({ userId: data.userId, proposalId: proposal!.proposalId, command: resolution })).resolves.toMatchObject({ status: "approved", ruleVersion: "recommendation-rule-v1" });
     await expect(service.resolveCalibrationProposal({ userId: data.userId, proposalId: proposal!.proposalId, command: resolution })).resolves.toMatchObject({ status: "approved", ruleVersion: "recommendation-rule-v1" });
     await expect(service.resolveCalibrationProposal({ userId: data.userId, proposalId: secondProposal!.proposalId, command: { action: "rejected", expectedVersion: 1, idempotencyKey: resolution.idempotencyKey } })).rejects.toThrow("IDEMPOTENCY_CONFLICT");
     await expect(db.select().from(recommendationRuleVersions).where(eq(recommendationRuleVersions.proposalId, proposal!.proposalId))).resolves.toHaveLength(1);
+    await expect(db.select({ calibrationProposalId: agentInboxItems.calibrationProposalId, status: agentInboxItems.status, resolvedAt: agentInboxItems.resolvedAt })
+      .from(agentInboxItems).where(and(eq(agentInboxItems.userId, data.userId), eq(agentInboxItems.calibrationProposalId, proposal!.proposalId))))
+      .resolves.toEqual([expect.objectContaining({ calibrationProposalId: proposal!.proposalId, status: "resolved", resolvedAt: now })]);
+    await service.resolveCalibrationProposal({ userId: data.userId, proposalId: secondProposal!.proposalId, command: { action: "rejected", expectedVersion: 1, idempotencyKey: crypto.randomUUID() } });
+    await expect(db.select({ calibrationProposalId: agentInboxItems.calibrationProposalId, status: agentInboxItems.status, resolvedAt: agentInboxItems.resolvedAt })
+      .from(agentInboxItems).where(and(eq(agentInboxItems.userId, data.userId), eq(agentInboxItems.calibrationProposalId, secondProposal!.proposalId))))
+      .resolves.toEqual([expect.objectContaining({ calibrationProposalId: secondProposal!.proposalId, status: "resolved", resolvedAt: now })]);
     await expect(db.select({ version: jobTargets.version }).from(jobTargets).where(eq(jobTargets.id, data.targetId))).resolves.toEqual([{ version: 1 }]);
     await expect(db.execute(sql`update calibration_proposal_revisions set strategy = 'require_related_evidence' where id = ${revision!.revisionId}`)).rejects.toBeDefined();
     await expect(db.execute(sql`delete from recommendation_rule_versions where proposal_id = ${proposal!.proposalId}`)).rejects.toBeDefined();
@@ -127,6 +141,9 @@ describe("recommendation feedback persistence", () => {
     expect(afterFirstApproval).toMatchObject({ status: "approved", reviewState: "resolved", availableStrategies: [], revision: immutable });
 
     await service.rebaseCalibrationProposal({ userId: data.userId, proposalId: second.proposalId, command: { expectedVersion: 1, idempotencyKey: crypto.randomUUID() } });
+    await expect(db.select({ status: agentInboxItems.status, resolvedAt: agentInboxItems.resolvedAt }).from(agentInboxItems)
+      .where(and(eq(agentInboxItems.userId, data.userId), eq(agentInboxItems.calibrationProposalId, second.proposalId))))
+      .resolves.toEqual([{ status: "unread", resolvedAt: null }]);
     await service.resolveCalibrationProposal({ userId: data.userId, proposalId: second.proposalId, command: { action: "approved", expectedVersion: 2, idempotencyKey: crypto.randomUUID() } });
     const afterSecondApproval = (await queries.listCalibrationProposals({ userId: data.userId, targetId: data.targetId })).find((item) => item.proposalId === first.proposalId)!;
     expect(afterSecondApproval).toMatchObject({ status: "approved", reviewState: "resolved", availableStrategies: [], revision: immutable });

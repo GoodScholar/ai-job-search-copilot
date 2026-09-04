@@ -2,7 +2,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  agentRuns, createDatabase, deepMatchRunCandidates, jobAccounts, jobMatchVersions, jobOpportunities, jobOpportunitySources, jobProfiles, jobSourcePostingVersions, jobSourcePostings, recommendationListItems, recommendationLists,
+  agentInboxItems, agentRuns, createDatabase, deepMatchRunCandidates, jobAccounts, jobMatchVersions, jobOpportunities, jobOpportunitySources, jobProfiles, jobSourcePostingVersions, jobSourcePostings, recommendationListItems, recommendationLists,
   jobTargetRevisions, jobTargets, jobTriageVersions, migrateDatabase, profileFactRevisions, profileFacts, recommendationExclusions, type Database,
 } from "@job-copilot/database";
 import { and, eq, sql } from "drizzle-orm";
@@ -176,7 +176,20 @@ describe("deep match persistence", () => {
     const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now, adapter: new FakeDeepMatchAdapter() });
     const staged = await commands.invokeAndValidate({ userId: input.userId, runId: run.runId, candidate: frozen, modelCall: modelCall() });
     await commands.stageValidatedAssessment({ userId: input.userId, runId: run.runId, claimToken, candidate: frozen, assessment: staged.assessment, usage: staged.usage });
-    await commands.publishStagedRun({ userId: input.userId, targetId: input.targetId, runId: run.runId, fence: { claimToken }, selectionExclusions: [] });
+    const published = await commands.publishStagedRun({ userId: input.userId, targetId: input.targetId, runId: run.runId, fence: { claimToken }, selectionExclusions: [] });
+    await expect(db.select({
+      userId: agentInboxItems.userId,
+      recommendationListId: agentInboxItems.recommendationListId,
+      kind: agentInboxItems.kind,
+      status: agentInboxItems.status,
+      reasonCode: agentInboxItems.reasonCode,
+    }).from(agentInboxItems).where(eq(agentInboxItems.recommendationListId, published.recommendationListId))).resolves.toEqual([{
+      userId: input.userId,
+      recommendationListId: published.recommendationListId,
+      kind: "recommendation_list",
+      status: "unread",
+      reasonCode: "RECOMMENDATION_LIST_PUBLISHED",
+    }]);
     const beforeTargetChange = await queries.getLatestList({ userId: input.userId, targetId: input.targetId });
     await db.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId: input.userId, targetId: input.targetId, version: 2, priority: "primary", state: "active", constraints: { ...constraints, roleFamily: "后端工程师" }, createdAt: new Date(now.getTime() + 1_000) });
     await db.update(jobTargets).set({ version: 2 }).where(eq(jobTargets.id, input.targetId));

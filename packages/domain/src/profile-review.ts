@@ -1,5 +1,6 @@
-import { and, asc, desc, eq, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
 import {
+  agentInboxItems,
   candidateFactDecisions,
   candidateFacts,
   careerFactConflicts,
@@ -166,6 +167,11 @@ export function createProfileReviewCommands(deps: Dependencies): {
               factType: candidate.factType as "experience" | "education" | "skill" | "project" | "language" | "achievement" | "certification",
               decision: "rejected", profileVersion: profile.version },
           });
+          await transaction.update(agentInboxItems).set({ status: "resolved", resolvedAt: deps.clock() }).where(and(
+            eq(agentInboxItems.userId, input.userId),
+            eq(agentInboxItems.candidateFactId, candidate.id),
+            inArray(agentInboxItems.status, ["unread", "read"]),
+          ));
           return;
         }
 
@@ -203,6 +209,11 @@ export function createProfileReviewCommands(deps: Dependencies): {
             decision: input.command.decision, profileVersion: profile.version,
           },
         });
+        await transaction.update(agentInboxItems).set({ status: "resolved", resolvedAt: deps.clock() }).where(and(
+          eq(agentInboxItems.userId, input.userId),
+          eq(agentInboxItems.candidateFactId, candidate.id),
+          inArray(agentInboxItems.status, ["unread", "read"]),
+        ));
       });
       return currentSnapshot(deps.db, input.userId);
     },

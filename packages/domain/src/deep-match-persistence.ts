@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gt, isNull, lt, lte, or, sql } from "drizzle-orm";
 import {
-  deepMatchRunCandidates, agentRuns, jobMatchVersions, jobOpportunities, jobOpportunitySources, jobSourcePostingVersions, jobTargetRevisions, jobTriageVersions, profileFactRevisions, profileFacts,
+  agentInboxItems, deepMatchRunCandidates, agentRuns, jobMatchVersions, jobOpportunities, jobOpportunitySources, jobSourcePostingVersions, jobTargetRevisions, jobTriageVersions, profileFactRevisions, profileFacts,
   recommendationExclusions, recommendationListItems, recommendationLists, recommendationDecisionEvents, type Database,
 } from "@job-copilot/database";
 import {
@@ -394,6 +394,13 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
         const [previousList] = await transaction.select({ sequence: recommendationLists.sequence }).from(recommendationLists).where(and(eq(recommendationLists.userId, input.userId), eq(recommendationLists.targetId, input.targetId), eq(recommendationLists.localDate, localDate))).orderBy(desc(recommendationLists.sequence)).limit(1);
         const [list] = await transaction.insert(recommendationLists).values({ id: deps.id(), userId: input.userId, targetId: input.targetId, localDate, sequence: (previousList?.sequence ?? 0) + 1, createdAt: deps.clock() }).returning();
         if (!list) throw new Error("RECOMMENDATION_LIST_PERSIST_FAILED");
+        await transaction.insert(agentInboxItems).values({
+          id: deps.id(), userId: input.userId, recommendationListId: list.id, kind: "recommendation_list",
+          status: "unread", reasonCode: "RECOMMENDATION_LIST_PUBLISHED", budgetDimension: null, createdAt: deps.clock(),
+        }).onConflictDoNothing({
+          target: agentInboxItems.recommendationListId,
+          where: sql`${agentInboxItems.recommendationListId} is not null`,
+        });
         const accepted = matches.filter((match) => {
           const assessment = completed.find((entry) => entry.candidate.opportunityId === match.opportunityId)!.assessment;
           const config = input.ruleConfig;

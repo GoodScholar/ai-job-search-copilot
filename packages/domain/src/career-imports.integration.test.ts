@@ -3,6 +3,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  agentInboxItems,
   candidateFacts,
   careerFactConflicts,
   careerDocuments,
@@ -689,6 +690,21 @@ describe("career imports", () => {
         evidence: expect.objectContaining({ startLine: 6, endLine: 6, excerpt: "- TypeScript" }),
       })],
     });
+    const [fact] = await database.select({ id: candidateFacts.id }).from(candidateFacts)
+      .where(eq(candidateFacts.careerImportId, created.importId));
+    await expect(database.select({
+      userId: agentInboxItems.userId,
+      candidateFactId: agentInboxItems.candidateFactId,
+      kind: agentInboxItems.kind,
+      status: agentInboxItems.status,
+      reasonCode: agentInboxItems.reasonCode,
+    }).from(agentInboxItems).where(eq(agentInboxItems.candidateFactId, fact!.id))).resolves.toEqual([{
+      userId,
+      candidateFactId: fact!.id,
+      kind: "candidate_fact",
+      status: "unread",
+      reasonCode: "CANDIDATE_FACT_PENDING",
+    }]);
   });
 
   it("rolls back facts and completion when the transaction-bound completion audit rejects", async () => {
@@ -722,6 +738,8 @@ describe("career imports", () => {
     await expect(processor.process({ version: 1, importId: created.importId, userId, finalAttempt: false }))
       .rejects.toThrow("career import temporarily unavailable");
     await expect(database.select().from(candidateFacts).where(eq(candidateFacts.careerImportId, created.importId)))
+      .resolves.toEqual([]);
+    await expect(database.select().from(agentInboxItems).where(eq(agentInboxItems.candidateFactId, "0c17b971-6a1f-4e28-8a7f-16b3783a9844")))
       .resolves.toEqual([]);
     await expect(createCareerImportQueries({ db: database }).get({ userId, importId: created.importId }))
       .resolves.toMatchObject({ status: "processing", facts: [] });
