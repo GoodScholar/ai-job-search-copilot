@@ -123,6 +123,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
 }) {
   const activeTargets = targets?.filter((target) => target.state === "active") ?? [];
   const targetsUnavailable = targets === null;
+  const canStartRun = !targetsUnavailable && activeTargets.length > 0;
   const initialTargetId = activeTargets.some((target) => target.targetId === initialRun?.targetId)
     ? initialRun!.targetId
     : activeTargets.find((target) => target.priority === "primary")?.targetId ?? activeTargets[0]?.targetId ?? "";
@@ -345,7 +346,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
     }
   }
 
-  if (activeTargets.length === 0 && !run) {
+  if (!canStartRun && !run) {
     return (
       <section aria-labelledby="agent-run-title" className="workbench-ledger agent-run-panel">
         <div className="workbench-ledger-heading">
@@ -367,7 +368,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
         <h2 id="agent-run-title">{isDeepMatchRun(run) ? "评估候选岗位匹配" : "发现新的岗位机会"}</h2>
       </div>
       <div className="agent-run-controls">
-        {targetsUnavailable ? <div><p>求职目标暂时无法读取；以下仅显示已成功读取的本次运行记录。</p></div> : <><label htmlFor="agent-run-target">{isDeepMatchRun(run) ? "用于岗位匹配的求职目标" : "用于发现岗位的求职目标"}</label>
+        {!canStartRun ? <div><p>{targetsUnavailable ? "求职目标暂时无法读取；以下仅显示已成功读取的本次运行记录。" : "当前没有可用的求职目标；以下仅显示已成功读取的本次运行记录。"}</p></div> : <><label htmlFor="agent-run-target">{isDeepMatchRun(run) ? "用于岗位匹配的求职目标" : "用于发现岗位的求职目标"}</label>
         <div>
           <select disabled={isStarting || runIsUnfinished} id="agent-run-target" onChange={(event) => {
             setSelectedTargetId(event.target.value);
@@ -383,11 +384,12 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
       </div>
       {showDiscoverySchedule && selectedTarget ? <DiscoverySchedulePanel key={selectedTarget.targetId} targetId={selectedTarget.targetId} targetState={selectedTarget.state} /> : null}
       {run ? <>
+        {!targetsUnavailable ?
         <div className="agent-run-command-row">
           {run.status === "queued" || (run.status === "running" && run.controlState === "none") ? <button className="agent-run-action workbench-touch-target" disabled={pendingControls.pause} onClick={() => void controlRun("pause")} type="button">暂停{runNoun}</button> : null}
           {run.status === "paused" || run.controlState === "pause_requested" ? <button className="agent-run-action workbench-touch-target" disabled={pendingControls.resume} onClick={() => void controlRun("resume")} type="button">继续本次{runNoun}</button> : null}
           {["queued", "running", "paused"].includes(run.status) && run.controlState !== "cancel_requested" ? <button className="agent-run-action agent-run-cancel workbench-touch-target" disabled={pendingControls.cancel} onClick={() => void controlRun("cancel")} type="button">取消{runNoun}</button> : null}
-        </div>
+        </div> : null}
         <section aria-label={`本次${runNoun}执行规格`} className="agent-run-detail">
           <dl>
             <div><dt>求职目标</dt><dd>{run.executionSpec.targetSnapshot.constraints.roleFamily} · v{run.targetVersion}</dd></div>
