@@ -29,7 +29,7 @@
 
 **Files:**
 - Modify: `packages/database/src/schema.ts`
-- Create: `packages/database/migrations/0039_task_control_agent_inbox.sql`
+- Create: `packages/database/migrations/0043_task_control_agent_inbox.sql`
 - Modify: `packages/database/migrations/meta/_journal.json`
 - Modify: `packages/database/src/migrate.integration.test.ts`
 - Modify: `packages/contracts/src/agent-inbox.ts`
@@ -63,7 +63,7 @@ type AgentInboxTarget =
   | { type: "calibration_proposal"; proposalId: string; targetId: string; href: string };
 ```
 
-Database checks must encode valid lifecycle timestamps and valid reference combinations for each kind. Add partial unique indexes for one fact item per candidate fact, one recommendation item per list, one calibration item per proposal, and one source item per run/source pair.
+Database checks must encode valid lifecycle timestamps and valid reference combinations for each kind. Add partial unique indexes for one fact item per candidate fact, one recommendation item per list, one calibration item per proposal, and one source item per run/source pair. Append journal index 43; never rewrite migrations 0039-0042 already present in the fixed baseline.
 
 - [ ] **Step 4: Run focused tests to verify GREEN**
 
