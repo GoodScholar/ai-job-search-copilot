@@ -5,7 +5,6 @@ import {
   AgentInboxActionResponseSchema,
   AgentInboxActionSchema,
   AgentInboxListSchema,
-  AgentInboxStatusSchema,
 } from "@job-copilot/contracts/agent-inbox";
 import { AgentInboxError } from "@job-copilot/domain/agent-runs";
 import type { FastifyRequest } from "fastify";
@@ -23,7 +22,7 @@ class AgentInboxActionCommandDto extends createZodDto(z.object({
 }).strict()) {}
 class AgentInboxActionResponseDto extends createZodDto(AgentInboxActionResponseSchema) {}
 class AgentInboxPathDto extends createZodDto(z.object({ itemId: z.uuid() }).strict()) {}
-class AgentInboxListQueryDto extends createZodDto(z.object({ status: AgentInboxStatusSchema.default("open") }).strict()) {}
+class AgentInboxListQueryDto extends createZodDto(z.object({ status: z.enum(["unread", "read", "resolved", "pending"]).default("pending") }).strict()) {}
 
 function inboxProblem(error: AgentInboxError): ApiException {
   if (error.code === "AGENT_INBOX_NOT_FOUND") {

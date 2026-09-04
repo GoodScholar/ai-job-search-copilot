@@ -11,7 +11,7 @@ export async function getOpenAgentInbox() {
   if (!sessionToken) redirect(loginLocation);
 
   try {
-    return await api.listAgentInbox(sessionToken, "open");
+    return await api.listAgentInbox(sessionToken, "pending");
   } catch (error) {
     if (typeof error === "object" && error !== null && "status" in error && error.status === 401) {
       redirect(loginLocation);

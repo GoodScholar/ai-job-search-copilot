@@ -979,7 +979,7 @@ describe("authenticated workbench HTTP API", () => {
       app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/agent-runs/${runId}/controls`, payload: { commandId: randomUUID(), action: "pause" } }),
       app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/agent-runs/${runId}/controls`, headers: bearer(primary.sessionToken), payload: { commandId: randomUUID(), action: "pause", ownerId: other.account.userId } }),
       app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/agent-runs/${runId}/controls`, headers: bearer(other.sessionToken), payload: { commandId: randomUUID(), action: "pause" } }),
-      app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=open" }),
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=pending" }),
     ]);
     expect(unauthenticated.statusCode).toBe(401);
     expect(malformed.statusCode).toBe(400);
@@ -1007,7 +1007,7 @@ describe("authenticated workbench HTTP API", () => {
     expect(commandConflict.statusCode).toBe(409);
     expect(commandConflict.json()).toMatchObject({ code: "AGENT_RUN_COMMAND_ID_CONFLICT" });
 
-    const inbox = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=open", headers: bearer(primary.sessionToken) });
+    const inbox = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=pending", headers: bearer(primary.sessionToken) });
     expect(inbox.statusCode).toBe(200);
     expect(inbox.json()).toMatchObject({ items: [expect.objectContaining({ runId, kind: "decision_required", availableActions: ["resume_run", "cancel_run"] })] });
     const pauseItemId = inbox.json().items[0].itemId as string;
@@ -1031,7 +1031,7 @@ describe("authenticated workbench HTTP API", () => {
       payload: { commandId: randomUUID(), action: "pause" },
     });
     expect(cancelPause.statusCode).toBe(200);
-    const cancelInbox = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=open", headers: bearer(primary.sessionToken) });
+    const cancelInbox = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=pending", headers: bearer(primary.sessionToken) });
     const cancelItemId = cancelInbox.json().items.find((item: { runId: string }) => item.runId === cancelRunId).itemId as string;
     const cancelled = await app.getHttpAdapter().getInstance().inject({
       method: "POST", url: `/v1/agent-inbox/${cancelItemId}/actions`, headers: bearer(primary.sessionToken),
@@ -1057,13 +1057,13 @@ describe("authenticated workbench HTTP API", () => {
     `;
     await database.$client`
       insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, kind, status, reason_code, budget_dimension, created_at, resolved_at)
-      values (${randomUUID()}, ${primary.account.userId}, ${failedRunId}, 2, 'run_failed', 'open', 'AGENT_RUN_ADAPTER_FAILED', null, ${now}, null)
+      values (${randomUUID()}, ${primary.account.userId}, ${failedRunId}, 2, 'run_failed', 'unread', 'AGENT_RUN_ADAPTER_FAILED', null, ${now}, null)
     `;
     await database.$client`
       insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, kind, status, reason_code, budget_dimension, created_at, resolved_at)
-      values (${randomUUID()}, ${primary.account.userId}, ${budgetRunId}, 2, 'budget_exhausted', 'open', 'AGENT_RUN_BUDGET_EXCEEDED', 'attempts', ${now}, null)
+      values (${randomUUID()}, ${primary.account.userId}, ${budgetRunId}, 2, 'budget_exhausted', 'unread', 'AGENT_RUN_BUDGET_EXCEEDED', 'attempts', ${now}, null)
     `;
-    const afterFailures = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=open", headers: bearer(primary.sessionToken) });
+    const afterFailures = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=pending", headers: bearer(primary.sessionToken) });
     const restartItemId = afterFailures.json().items.find((item: { runId: string }) => item.runId === failedRunId).itemId as string;
     const dismissItemId = afterFailures.json().items.find((item: { runId: string }) => item.runId === budgetRunId).itemId as string;
     await database.$client`

@@ -8,7 +8,7 @@ export async function GET(): Promise<Response> {
   const sessionToken = await readSessionToken();
   if (!sessionToken) return emptyResponse(401);
   try {
-    return Response.json(await api.listAgentInbox(sessionToken, "open"), { headers: noStore });
+    return Response.json(await api.listAgentInbox(sessionToken, "pending"), { headers: noStore });
   } catch (error) {
     return emptyResponse(safeStatus(error));
   }

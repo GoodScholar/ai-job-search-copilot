@@ -1,7 +1,7 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { agentInboxItemActions, agentInboxItems, agentRunEvents, agentRuns, createDatabase, jobAccounts, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
+import { agentInboxItemActions, agentInboxItems, agentRunEvents, agentRuns, createDatabase, jobAccounts, jobSourceHealthChecks, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
 import { createAgentInbox, createAgentRunCommands, type AgentRunQueue } from "./agent-runs";
 
@@ -43,40 +43,78 @@ describe("agent inbox", () => {
     const run = await commands().start({ userId: input.userId, requestId: crypto.randomUUID(), command: { targetId: input.targetId, idempotencyKey: crypto.randomUUID() } });
     if (input.kind === "decision_required") await database.update(agentRuns).set({ status: "paused" }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, run.runId)));
     const itemId = crypto.randomUUID();
-    await database.insert(agentInboxItems).values({ id: itemId, userId: input.userId, runId: run.runId, triggerEventSequence: 1, kind: input.kind, status: "open", reasonCode: input.reasonCode, budgetDimension: input.budgetDimension ?? null, createdAt: now });
-    return { itemId, runId: run.runId };
+    const watchlistItemId = input.kind === "source_attention" ? crypto.randomUUID() : null;
+    const sourceHealthCheckId = input.kind === "source_attention" ? crypto.randomUUID() : null;
+    if (watchlistItemId && sourceHealthCheckId) {
+      await database.insert(jobSourceHealthChecks).values({
+        id: sourceHealthCheckId, userId: input.userId, runId: run.runId, targetId: input.targetId, watchlistItemId,
+        sourceId: `greenhouse:inbox-${itemId.replaceAll("-", "")}`,
+        status: "rate_limited", reasonCodes: ["SOURCE_RATE_LIMITED"], impactScope: "entire_source", impactAffectedCount: null,
+        observedPostingCount: 0, selectedDetailCount: 0, validDetailCount: 0, requestAttemptCount: 1, checkedAt: now,
+      });
+    }
+    await database.insert(agentInboxItems).values({ id: itemId, userId: input.userId, runId: run.runId, triggerEventSequence: 1, watchlistItemId, sourceHealthCheckId, kind: input.kind, status: "unread", reasonCode: input.reasonCode, budgetDimension: input.budgetDimension ?? null, createdAt: now });
+    return { itemId, runId: run.runId, watchlistItemId };
   }
 
-  it("只向 owner 投影固定的 open Inbox 项及其可用动作", async () => {
+  it("只向 owner 投影固定的 unread Inbox 项及其可用动作", async () => {
     const owner = await activeTarget();
     const other = await activeTarget();
     await openItem({ ...owner, kind: "decision_required", reasonCode: "AGENT_RUN_PAUSED" });
     await openItem({ ...owner, kind: "run_failed", reasonCode: "AGENT_RUN_ADAPTER_FAILED" });
     await openItem({ ...owner, kind: "budget_exhausted", reasonCode: "AGENT_RUN_BUDGET_EXCEEDED", budgetDimension: "tool_calls" });
 
-    await expect(inbox().list({ userId: owner.userId, status: "open" })).resolves.toEqual({ items: expect.arrayContaining([
-      expect.objectContaining({ kind: "decision_required", availableActions: ["resume_run", "cancel_run"], title: "岗位发现已暂停", targetHref: null }),
-      expect.objectContaining({ kind: "run_failed", availableActions: ["restart_run", "dismiss"], title: "岗位发现未完成", targetHref: null }),
-      expect.objectContaining({ kind: "budget_exhausted", availableActions: ["dismiss"], targetHref: "/profile/targets" }),
-    ]) });
-    await expect(inbox().list({ userId: other.userId, status: "open" })).resolves.toEqual({ items: [] });
+    const result = await inbox().list({ userId: owner.userId, status: "pending" });
+    expect(result.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "decision_required", availableActions: ["resume_run", "cancel_run"], title: "岗位发现已暂停", target: expect.objectContaining({ type: "agent_run" }) }),
+      expect.objectContaining({ kind: "run_failed", availableActions: ["restart_run", "dismiss"], title: "岗位发现未完成", target: expect.objectContaining({ type: "agent_run" }) }),
+      expect.objectContaining({ kind: "budget_exhausted", availableActions: ["dismiss"], target: expect.objectContaining({ type: "agent_run" }) }),
+    ]));
+    await expect(inbox().list({ userId: other.userId, status: "pending" })).resolves.toEqual({ items: [] });
   });
 
   it("为来源关注项从 owner-bound run 投影精确诊断链接，并以 actionId 幂等 dismiss", async () => {
     const owner = await activeTarget();
     const other = await activeTarget();
     const item = await openItem({ ...owner, kind: "source_attention", reasonCode: "SOURCE_HEALTH_ATTENTION" });
-    await expect(inbox().list({ userId: owner.userId, status: "open" })).resolves.toMatchObject({ items: [expect.objectContaining({
+    await expect(inbox().list({ userId: owner.userId, status: "pending" })).resolves.toMatchObject({ items: [expect.objectContaining({
       itemId: item.itemId, kind: "source_attention", availableActions: ["dismiss"],
-      targetHref: `/profile/targets/${owner.targetId}/watchlist#source-health`,
+      target: { type: "job_source", watchlistItemId: item.watchlistItemId, targetId: owner.targetId, href: `/profile/targets/${owner.targetId}/watchlist#source-health` },
     })] });
-    await expect(inbox().list({ userId: other.userId, status: "open" })).resolves.toEqual({ items: [] });
+    await expect(inbox().list({ userId: other.userId, status: "pending" })).resolves.toEqual({ items: [] });
     const actionId = crypto.randomUUID();
     const first = await inbox().act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: item.itemId, command: { actionId, action: "dismiss" } });
     const replay = await inbox().act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: item.itemId, command: { actionId, action: "dismiss" } });
-    expect(first).toMatchObject({ applied: true, item: { status: "resolved", availableActions: [], targetHref: `/profile/targets/${owner.targetId}/watchlist#source-health` }, run: null });
+    expect(first).toMatchObject({ applied: true, item: { status: "resolved", availableActions: [], target: { type: "job_source", targetId: owner.targetId } }, run: null });
     expect(replay).toEqual(first);
     await expect(database.select().from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, owner.userId), eq(agentInboxItemActions.itemId, item.itemId)))).resolves.toHaveLength(1);
+  });
+
+  it("mark_read 将 unread 事项转为 read，允许后续 dismiss，并按 actionId 重放", async () => {
+    const owner = await activeTarget();
+    const item = await openItem({ ...owner, kind: "budget_exhausted", reasonCode: "AGENT_RUN_BUDGET_EXCEEDED", budgetDimension: "tool_calls" });
+    const actionId = crypto.randomUUID();
+    const first = await inbox().act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: item.itemId, command: { actionId, action: "mark_read" } });
+    const replay = await inbox().act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: item.itemId, command: { actionId, action: "mark_read" } });
+
+    expect(first).toMatchObject({ applied: true, item: { status: "read", readAt: now.toISOString(), resolvedAt: null, availableActions: ["dismiss"] }, run: null });
+    expect(replay).toEqual(first);
+    await expect(inbox().list({ userId: owner.userId, status: "pending" })).resolves.toMatchObject({ items: [expect.objectContaining({ itemId: item.itemId, status: "read" })] });
+    await expect(inbox().act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: item.itemId, command: { actionId: crypto.randomUUID(), action: "dismiss" } })).resolves.toMatchObject({ applied: true, item: { status: "resolved" } });
+  });
+
+  it("pending 合并 unread 和 read，并以 createdAt、itemId 稳定地从新到旧排序", async () => {
+    const owner = await activeTarget();
+    const older = await openItem({ ...owner, kind: "run_failed", reasonCode: "AGENT_RUN_ADAPTER_FAILED" });
+    const newerId = crypto.randomUUID();
+    await database.insert(agentInboxItems).values({
+      id: newerId, userId: owner.userId, runId: older.runId, triggerEventSequence: 2, kind: "discovery_attention",
+      status: "read", reasonCode: "DISCOVERY_ATTENTION", budgetDimension: null, createdAt: new Date("2026-08-29T13:00:00.000Z"), readAt: new Date("2026-08-29T13:00:00.000Z"),
+    });
+    await expect(inbox().list({ userId: owner.userId, status: "pending" })).resolves.toMatchObject({ items: [
+      expect.objectContaining({ itemId: newerId, status: "read" }),
+      expect.objectContaining({ itemId: older.itemId, status: "unread" }),
+    ] });
   });
 
   it("恢复或取消 decision 项时只执行允许的控制并解决项，重放不重复审计或事件", async () => {
@@ -128,7 +166,7 @@ describe("agent inbox", () => {
     await expect(inbox().act(action)).rejects.toMatchObject({ code: "AGENT_INBOX_ACTION_FAILED" });
     await expect(inbox().act({ ...action, requestId: crypto.randomUUID() })).rejects.toMatchObject({ code: "AGENT_INBOX_ACTION_FAILED" });
     await expect(database.select({ outcome: agentInboxItemActions.outcome, reasonCode: agentInboxItemActions.reasonCode }).from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, owner.userId), eq(agentInboxItemActions.itemId, failed.itemId), eq(agentInboxItemActions.actionId, actionId)))).resolves.toEqual([{ outcome: "failed", reasonCode: "AGENT_INBOX_ACTION_FAILED" }]);
-    await expect(inbox().list({ userId: owner.userId, status: "open" })).resolves.toMatchObject({ items: [expect.objectContaining({ itemId: failed.itemId, status: "open" })] });
+    await expect(inbox().list({ userId: owner.userId, status: "pending" })).resolves.toMatchObject({ items: [expect.objectContaining({ itemId: failed.itemId, status: "unread" })] });
     await database.update(jobTargets).set({ state: "active" }).where(and(eq(jobTargets.userId, owner.userId), eq(jobTargets.id, owner.targetId)));
     await expect(inbox().act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: failed.itemId, command: { actionId: crypto.randomUUID(), action: "restart_run" } })).resolves.toMatchObject({ applied: true, item: { status: "resolved" }, run: { status: "queued" } });
   });

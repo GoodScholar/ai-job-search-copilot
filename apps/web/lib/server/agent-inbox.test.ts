@@ -23,7 +23,7 @@ it("只在服务端读取 HttpOnly 会话并代理打开的 Agent Inbox", async 
   mocks.readSessionToken.mockResolvedValue("a".repeat(43));
   mocks.listAgentInbox.mockResolvedValue({ items: [] });
   await expect(getOpenAgentInbox()).resolves.toEqual({ items: [] });
-  expect(mocks.listAgentInbox).toHaveBeenCalledWith("a".repeat(43), "open");
+  expect(mocks.listAgentInbox).toHaveBeenCalledWith("a".repeat(43), "pending");
 });
 
 it("上游会话失效时使用同一登录重定向", async () => {

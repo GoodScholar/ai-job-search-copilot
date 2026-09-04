@@ -14,14 +14,14 @@ it("缺少会话时不读取 Inbox", async () => {
   expect(mocks.listAgentInbox).not.toHaveBeenCalled();
 });
 
-it("只读取打开的 Inbox 并禁止缓存", async () => {
+it("只读取待处理的 Inbox 并禁止缓存", async () => {
   mocks.readSessionToken.mockResolvedValue("a".repeat(43));
   mocks.listAgentInbox.mockResolvedValue({ items: [] });
   const response = await GET();
   expect(response.status).toBe(200);
   expect(response.headers.get("cache-control")).toBe("no-store");
   await expect(response.json()).resolves.toEqual({ items: [] });
-  expect(mocks.listAgentInbox).toHaveBeenCalledWith("a".repeat(43), "open");
+  expect(mocks.listAgentInbox).toHaveBeenCalledWith("a".repeat(43), "pending");
 });
 
 it("只透传安全上游状态，并折叠内部错误", async () => {

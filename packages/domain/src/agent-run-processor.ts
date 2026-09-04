@@ -287,7 +287,7 @@ async function failOrRetry(deps: AgentRunProcessorDependencies, input: { userId:
       const sequence = await terminateBudgetRun(transaction, { id: deps.id, auditTrail: deps.auditTrail, userId: input.userId, requestId: input.runId, run, now, budgetDimension: decision.budgetDimension, activeDurationMs });
       for (const issue of input.discoveryIssues ?? []) await transaction.insert(jobDiscoverySourceIssues).values({ id: deps.id(), userId: input.userId, runId: input.runId, provider: issue.provider, code: issue.code, affectedCount: issue.affectedCount, createdAt: now }).onConflictDoNothing();
       if ((input.discoveryIssues?.length ?? 0) > 0) {
-        const [attention] = await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: input.userId, runId: input.runId, triggerEventSequence: sequence, kind: "discovery_attention", status: "open", reasonCode: "DISCOVERY_ATTENTION", budgetDimension: null, createdAt: now }).onConflictDoNothing().returning({ id: agentInboxItems.id });
+        const [attention] = await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: input.userId, runId: input.runId, triggerEventSequence: sequence, kind: "discovery_attention", status: "unread", reasonCode: "DISCOVERY_ATTENTION", budgetDimension: null, createdAt: now }).onConflictDoNothing().returning({ id: agentInboxItems.id });
         if (attention) await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.inbox_opened", occurredAt: now, requestId: input.runId, outcome: "success", reasonCode: "DISCOVERY_ATTENTION", resourceType: "agent_inbox_item", resourceId: attention.id, metadata: { runId: input.runId, kind: "discovery_attention", reasonCode: "DISCOVERY_ATTENTION", budgetDimension: null } });
       }
       return "budget_exhausted";
@@ -297,12 +297,12 @@ async function failOrRetry(deps: AgentRunProcessorDependencies, input: { userId:
     const sequence = await appendEvent(transaction, { id: deps.id, userId: input.userId, runId: input.runId, version, eventType: "run.failed", data: { eventType: "run.failed", status: "failed", currentStep: "failed", attemptCount: input.attemptCount, failureCode }, now });
     for (const issue of input.discoveryIssues ?? []) await transaction.insert(jobDiscoverySourceIssues).values({ id: deps.id(), userId: input.userId, runId: input.runId, provider: issue.provider, code: issue.code, affectedCount: issue.affectedCount, createdAt: now }).onConflictDoNothing();
     if ((input.discoveryIssues?.length ?? 0) > 0) {
-      const [attention] = await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: input.userId, runId: input.runId, triggerEventSequence: sequence, kind: "discovery_attention", status: "open", reasonCode: "DISCOVERY_ATTENTION", budgetDimension: null, createdAt: now }).onConflictDoNothing().returning({ id: agentInboxItems.id });
+      const [attention] = await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: input.userId, runId: input.runId, triggerEventSequence: sequence, kind: "discovery_attention", status: "unread", reasonCode: "DISCOVERY_ATTENTION", budgetDimension: null, createdAt: now }).onConflictDoNothing().returning({ id: agentInboxItems.id });
       if (attention) await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.inbox_opened", occurredAt: now, requestId: input.runId, outcome: "success", reasonCode: "DISCOVERY_ATTENTION", resourceType: "agent_inbox_item", resourceId: attention.id, metadata: { runId: input.runId, kind: "discovery_attention", reasonCode: "DISCOVERY_ATTENTION", budgetDimension: null } });
     }
     await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.run_failed", occurredAt: now, requestId: input.runId, outcome: "failure", reasonCode: failureCode, resourceType: "agent_run", resourceId: input.runId, metadata: { runId: input.runId, targetId: run.targetId, attemptCount: input.attemptCount, failureCode } });
     const nonBudgetFailureCode = failureCode as NonBudgetFailureCode;
-    const [item] = await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: input.userId, runId: input.runId, triggerEventSequence: sequence, kind: "run_failed", status: "open", reasonCode: nonBudgetFailureCode, budgetDimension: null, createdAt: now }).onConflictDoNothing().returning({ id: agentInboxItems.id });
+    const [item] = await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: input.userId, runId: input.runId, triggerEventSequence: sequence, kind: "run_failed", status: "unread", reasonCode: nonBudgetFailureCode, budgetDimension: null, createdAt: now }).onConflictDoNothing().returning({ id: agentInboxItems.id });
     if (item) await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.inbox_opened", occurredAt: now, requestId: input.runId, outcome: "success", reasonCode: nonBudgetFailureCode, resourceType: "agent_inbox_item", resourceId: item.id, metadata: { runId: input.runId, kind: "run_failed", reasonCode: nonBudgetFailureCode, budgetDimension: null } });
     return "failed";
   });
@@ -380,7 +380,7 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
         const [existing] = await transaction.select({ id: agentInboxItems.id }).from(agentInboxItems).where(and(eq(agentInboxItems.userId, input.userId), eq(agentInboxItems.runId, input.runId), eq(agentInboxItems.kind, "discovery_attention"))).limit(1);
         if (!existing) {
           const [latest] = await transaction.select({ sequence: agentRunEvents.sequence }).from(agentRunEvents).where(and(eq(agentRunEvents.userId, input.userId), eq(agentRunEvents.runId, input.runId))).orderBy(desc(agentRunEvents.sequence)).limit(1);
-          if (latest) await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: input.userId, runId: input.runId, triggerEventSequence: latest.sequence, kind: "discovery_attention", status: "open", reasonCode: "DISCOVERY_ATTENTION", budgetDimension: null, createdAt: input.now }).onConflictDoNothing();
+          if (latest) await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: input.userId, runId: input.runId, triggerEventSequence: latest.sequence, kind: "discovery_attention", status: "unread", reasonCode: "DISCOVERY_ATTENTION", budgetDimension: null, createdAt: input.now }).onConflictDoNothing();
         }
       }
       return "facts";
@@ -437,7 +437,7 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
     if (sourceIssues.length > 0) {
       const [existing] = await transaction.select({ id: agentInboxItems.id }).from(agentInboxItems).where(and(eq(agentInboxItems.userId, input.userId), eq(agentInboxItems.runId, input.runId), eq(agentInboxItems.kind, "discovery_attention"))).limit(1);
       if (!existing) {
-        const [item] = await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: input.userId, runId: input.runId, triggerEventSequence: sequence, kind: "discovery_attention", status: "open", reasonCode: "DISCOVERY_ATTENTION", budgetDimension: null, createdAt: input.now }).returning({ id: agentInboxItems.id });
+        const [item] = await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: input.userId, runId: input.runId, triggerEventSequence: sequence, kind: "discovery_attention", status: "unread", reasonCode: "DISCOVERY_ATTENTION", budgetDimension: null, createdAt: input.now }).returning({ id: agentInboxItems.id });
         if (item) await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.inbox_opened", occurredAt: input.now, requestId: input.runId, outcome: "success", reasonCode: "DISCOVERY_ATTENTION", resourceType: "agent_inbox_item", resourceId: item.id, metadata: { runId: input.runId, kind: "discovery_attention", reasonCode: "DISCOVERY_ATTENTION", budgetDimension: null } });
       }
     }

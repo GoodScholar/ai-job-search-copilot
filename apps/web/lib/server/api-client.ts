@@ -658,8 +658,8 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
       return parseSuccess(response, ControlAgentRunResponseSchema);
     },
 
-    async listAgentInbox(sessionToken: string, status: z.infer<typeof AgentInboxStatusSchema>): Promise<z.infer<typeof AgentInboxListSchema>> {
-      const query = new URLSearchParams({ status: AgentInboxStatusSchema.parse(status) });
+    async listAgentInbox(sessionToken: string, status: z.infer<typeof AgentInboxStatusSchema> | "pending"): Promise<z.infer<typeof AgentInboxListSchema>> {
+      const query = new URLSearchParams({ status: z.enum(["unread", "read", "resolved", "pending"]).parse(status) });
       const response = await request(`/v1/agent-inbox?${query.toString()}`, {
         method: "GET",
         headers: { authorization: `Bearer ${sessionToken}` },

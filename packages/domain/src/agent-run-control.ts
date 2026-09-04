@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import {
   agentInboxItems, agentRunControlCommands, agentRunEvents, agentRunSteps, agentRuns, companyWatchlistRevisions, companyWatchlists, jobTargetRevisions, jobTargets, type Database,
 } from "@job-copilot/database";
@@ -169,16 +169,16 @@ async function appendControlAudit(auditTrail: AuditTrail, input: { userId: strin
 
 async function resolveDecisionItems(transaction: any, auditTrail: AuditTrail, input: { userId: string; requestId: string; runId: string; action: "resume_run" | "cancel_run"; now: Date }) {
   const items = await transaction.select({ id: agentInboxItems.id, reasonCode: agentInboxItems.reasonCode }).from(agentInboxItems).where(and(
-    eq(agentInboxItems.userId, input.userId), eq(agentInboxItems.runId, input.runId), eq(agentInboxItems.kind, "decision_required"), eq(agentInboxItems.status, "open"),
+    eq(agentInboxItems.userId, input.userId), eq(agentInboxItems.runId, input.runId), eq(agentInboxItems.kind, "decision_required"), inArray(agentInboxItems.status, ["unread", "read"]),
   ));
   for (const item of items) {
-    await transaction.update(agentInboxItems).set({ status: "resolved", resolvedAt: input.now }).where(and(eq(agentInboxItems.userId, input.userId), eq(agentInboxItems.id, item.id), eq(agentInboxItems.status, "open")));
+    await transaction.update(agentInboxItems).set({ status: "resolved", resolvedAt: input.now }).where(and(eq(agentInboxItems.userId, input.userId), eq(agentInboxItems.id, item.id), inArray(agentInboxItems.status, ["unread", "read"])));
     await auditTrail.append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.inbox_resolved", occurredAt: input.now, requestId: input.requestId, outcome: "success", reasonCode: item.reasonCode as "AGENT_RUN_PAUSED", resourceType: "agent_inbox_item", resourceId: item.id, metadata: { itemId: item.id, runId: input.runId, action: input.action, reasonCode: item.reasonCode } });
   }
 }
 
 async function openDecisionItem(transaction: any, auditTrail: AuditTrail, input: { id: () => string; userId: string; runId: string; sequence: number; requestId: string; now: Date }) {
-  const [item] = await transaction.insert(agentInboxItems).values({ id: input.id(), userId: input.userId, runId: input.runId, triggerEventSequence: input.sequence, kind: "decision_required", status: "open", reasonCode: "AGENT_RUN_PAUSED", budgetDimension: null, createdAt: input.now }).onConflictDoNothing().returning({ id: agentInboxItems.id });
+  const [item] = await transaction.insert(agentInboxItems).values({ id: input.id(), userId: input.userId, runId: input.runId, triggerEventSequence: input.sequence, kind: "decision_required", status: "unread", reasonCode: "AGENT_RUN_PAUSED", budgetDimension: null, createdAt: input.now }).onConflictDoNothing().returning({ id: agentInboxItems.id });
   if (item) await auditTrail.append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.inbox_opened", occurredAt: input.now, requestId: input.requestId, outcome: "success", reasonCode: "AGENT_RUN_PAUSED", resourceType: "agent_inbox_item", resourceId: item.id, metadata: { runId: input.runId, kind: "decision_required", reasonCode: "AGENT_RUN_PAUSED", budgetDimension: null } });
 }
 

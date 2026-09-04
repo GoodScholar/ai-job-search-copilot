@@ -1,195 +1,62 @@
-import { and, asc, eq } from "drizzle-orm";
-import { agentInboxItemActions, agentInboxItems, agentRuns, type Database } from "@job-copilot/database";
-import {
-  AgentInboxActionCommandSchema, AgentInboxActionResponseSchema, AgentInboxListSchema,
-  type AgentInboxActionCommand, type AgentInboxActionResponse, type AgentInboxItem,
-} from "@job-copilot/contracts/agent-inbox";
+import { and, desc, eq, inArray } from "drizzle-orm";
+import { agentInboxItemActions, agentInboxItems, agentRuns, calibrationProposals, jobSourceHealthChecks, recommendationLists, type Database } from "@job-copilot/database";
+import { AgentInboxActionCommandSchema, AgentInboxActionResponseSchema, AgentInboxListSchema, type AgentInboxActionCommand, type AgentInboxActionResponse, type AgentInboxItem, type AgentInboxTarget } from "@job-copilot/contracts/agent-inbox";
 import type { ControlAgentRunResponse, StartAgentRunCommand, StartAgentRunResponse } from "@job-copilot/contracts/agent-runs";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import type { AuditTrail } from "./audit-trail";
 
-type InboxAction = AgentInboxActionCommand["action"];
-type InboxItemRow = typeof agentInboxItems.$inferSelect;
-type Commands = {
-  start(input: { userId: string; requestId: string; command: StartAgentRunCommand }): Promise<StartAgentRunResponse>;
-  control(input: { userId: string; requestId: string; runId: string; command: { commandId: string; action: "pause" | "resume" | "cancel" } }): Promise<ControlAgentRunResponse>;
-};
+type Action = AgentInboxActionCommand["action"];
+type Row = typeof agentInboxItems.$inferSelect;
+type Commands = { start(input: { userId: string; requestId: string; command: StartAgentRunCommand }): Promise<StartAgentRunResponse>; control(input: { userId: string; requestId: string; runId: string; command: { commandId: string; action: "pause" | "resume" | "cancel" } }): Promise<ControlAgentRunResponse> };
 
-export class AgentInboxError extends Error {
-  constructor(public readonly code: "AGENT_INBOX_NOT_FOUND" | "AGENT_INBOX_ACTION_CONFLICT") { super(code); }
+export class AgentInboxError extends Error { constructor(public readonly code: "AGENT_INBOX_NOT_FOUND" | "AGENT_INBOX_ACTION_CONFLICT") { super(code); } }
+export class AgentInboxActionError extends Error { constructor(public readonly code: "AGENT_INBOX_ACTION_FAILED") { super(code); } }
+
+const runCopy = {
+  decision_required: ["岗位发现已暂停", "选择继续或取消本次岗位发现。", "本次运行已暂停。", "继续前不会再发现新岗位。", "选择继续或取消本次运行。"],
+  run_failed: ["岗位发现未完成", "可以重新运行或标记为已处理。", "本次运行未能完成。", "本次结果可能不完整。", "重新运行，或在确认后标记为已处理。"],
+  source_attention: ["部分来源需要关注", "部分岗位来源未完成检查。", "来源健康检查需要关注。", "该来源的岗位发现可能不完整。", "查看来源诊断并决定后续处理。"],
+  discovery_attention: ["公开岗位发现需要关注", "部分公开岗位发现未完成。", "本次公开岗位发现需要关注。", "本次运行结果可能不完整。", "查看本次运行诊断。"],
+  candidate_fact: ["有待确认的画像事实", "新的画像事实等待确认。", "已生成一条待确认的结构化画像事实。", "确认后可用于后续匹配。", "查看并确认画像事实。"],
+  recommendation_list: ["新的推荐清单已生成", "可以查看最新推荐岗位。", "已生成一份新的结构化推荐清单。", "可据此安排后续求职行动。", "查看推荐清单。"],
+  calibration_proposal: ["推荐校准建议待查看", "有一项推荐校准建议可供查看。", "已生成结构化校准建议。", "建议可能影响后续推荐排序。", "查看校准建议。"],
+} as const;
+function copyFor(item: Row) {
+  if (item.kind !== "budget_exhausted") { const [title, message, basis, impact, suggestedAction] = runCopy[item.kind as keyof typeof runCopy]; return { title, message, basis, impact, suggestedAction }; }
+  const message = ({ active_duration: "本次岗位发现达到活跃时间上限。", attempts: "本次岗位发现达到重试次数上限。", tool_calls: "本次岗位发现达到来源调用上限。", model_calls: "本次岗位发现达到模型调用上限。", tokens: "本次岗位发现达到 Token 上限。" } as const)[item.budgetDimension as "active_duration" | "attempts" | "tool_calls" | "model_calls" | "tokens"];
+  return { title: "岗位发现预算已用尽", message, basis: "本次运行达到已配置的预算上限。", impact: "本次运行已停止，结果可能不完整。", suggestedAction: "调整目标后重新运行。" };
 }
-export class AgentInboxActionError extends Error {
-  constructor(public readonly code: "AGENT_INBOX_ACTION_FAILED") { super(code); }
+function actions(item: Row): Action[] { return item.kind === "decision_required" ? ["resume_run", "cancel_run"] : item.kind === "run_failed" ? ["restart_run", "dismiss"] : ["dismiss"]; }
+function accepts(item: Row, action: Action) { return action !== "mark_read" && actions(item).includes(action); }
+function snapshot(run: typeof agentRuns.$inferSelect) { return { runId: run.id, status: run.status, currentStep: run.currentStep, controlState: run.controlState, version: run.version } as ControlAgentRunResponse["run"]; }
+async function itemFor(db: Pick<Database, "select">, userId: string, itemId: string) { return (await db.select().from(agentInboxItems).where(and(eq(agentInboxItems.userId, userId), eq(agentInboxItems.id, itemId))))[0]; }
+
+async function targetFor(db: Pick<Database, "select">, userId: string, item: Row): Promise<AgentInboxTarget> {
+  if (item.kind === "candidate_fact" && item.candidateFactId) return { type: "candidate_fact", candidateFactId: item.candidateFactId, href: "/profile#candidate-facts" };
+  if (item.kind === "recommendation_list" && item.recommendationListId) { const list = (await db.select({ targetId: recommendationLists.targetId }).from(recommendationLists).where(and(eq(recommendationLists.userId, userId), eq(recommendationLists.id, item.recommendationListId))))[0]; if (list) return { type: "recommendation_list", recommendationListId: item.recommendationListId, targetId: list.targetId, href: `/recommendations?targetId=${list.targetId}#recommendation-list` }; }
+  if (item.kind === "calibration_proposal" && item.calibrationProposalId) { const proposal = (await db.select({ targetId: calibrationProposals.targetId }).from(calibrationProposals).where(and(eq(calibrationProposals.userId, userId), eq(calibrationProposals.id, item.calibrationProposalId))))[0]; if (proposal) return { type: "calibration_proposal", proposalId: item.calibrationProposalId, targetId: proposal.targetId, href: `/recommendations?targetId=${proposal.targetId}#calibration-proposal` }; }
+  if (item.kind === "source_attention" && item.runId && item.watchlistItemId && item.sourceHealthCheckId) { const check = (await db.select({ targetId: jobSourceHealthChecks.targetId }).from(jobSourceHealthChecks).where(and(eq(jobSourceHealthChecks.userId, userId), eq(jobSourceHealthChecks.runId, item.runId), eq(jobSourceHealthChecks.watchlistItemId, item.watchlistItemId), eq(jobSourceHealthChecks.id, item.sourceHealthCheckId))))[0]; if (check) return { type: "job_source", watchlistItemId: item.watchlistItemId, targetId: check.targetId, href: `/profile/targets/${check.targetId}/watchlist#source-health` }; }
+  if (item.runId) return { type: "agent_run", runId: item.runId, href: `/home?runId=${item.runId}#agent-run` };
+  throw new AgentInboxError("AGENT_INBOX_NOT_FOUND");
 }
+function project(item: Row, target: AgentInboxTarget): AgentInboxItem { return { itemId: item.id, runId: item.runId, kind: item.kind as AgentInboxItem["kind"], status: item.status as AgentInboxItem["status"], reasonCode: item.reasonCode as AgentInboxItem["reasonCode"], budgetDimension: item.budgetDimension as AgentInboxItem["budgetDimension"], ...copyFor(item), target, availableActions: item.status === "resolved" ? [] : actions(item), createdAt: item.createdAt.toISOString(), readAt: item.readAt?.toISOString() ?? null, resolvedAt: item.resolvedAt?.toISOString() ?? null } as AgentInboxItem; }
 
-function projection(item: InboxItemRow, targetId: string): AgentInboxItem {
-  const open = item.status === "open";
-  const common = {
-    itemId: item.id, runId: item.runId, kind: item.kind, status: item.status, reasonCode: item.reasonCode,
-    budgetDimension: item.budgetDimension, createdAt: item.createdAt.toISOString(), resolvedAt: item.resolvedAt?.toISOString() ?? null,
-  } as const;
-  if (item.kind === "decision_required") return { ...common, title: "岗位发现已暂停", message: "选择继续或取消本次岗位发现。", availableActions: open ? ["resume_run", "cancel_run"] : [], targetHref: null } as AgentInboxItem;
-  if (item.kind === "run_failed") return { ...common, title: "岗位发现未完成", message: "可以重新运行或标记为已处理。", availableActions: open ? ["restart_run", "dismiss"] : [], targetHref: null } as AgentInboxItem;
-  if (item.kind === "source_attention") return { ...common, title: "部分来源需要关注", message: "部分岗位来源未完成检查。可查看诊断、稍后重试或停用来源。", availableActions: open ? ["dismiss"] : [], targetHref: `/profile/targets/${targetId}/watchlist#source-health` } as AgentInboxItem;
-  if (item.kind === "discovery_attention") return { ...common, title: "公开岗位发现需要关注", message: "部分公开岗位发现未完成。可查看本次运行诊断。", availableActions: open ? ["dismiss"] : [], targetHref: `/home?runId=${item.runId}#agent-run` } as AgentInboxItem;
-  const messages = {
-    active_duration: "本次岗位发现达到活跃时间上限。请调整目标后重试。",
-    attempts: "本次岗位发现达到重试次数上限。请调整目标后重试。",
-    tool_calls: "本次岗位发现达到来源调用上限。请调整目标后重试。",
-    model_calls: "本次岗位发现达到模型调用上限。请调整目标后重试。",
-    tokens: "本次岗位发现达到 Token 上限。请调整目标后重试。",
-  } as const;
-  return { ...common, title: "岗位发现预算已用尽", message: messages[item.budgetDimension as keyof typeof messages], availableActions: open ? ["dismiss"] : [], targetHref: "/profile/targets" } as AgentInboxItem;
-}
-
-function accepts(item: InboxItemRow, action: InboxAction) {
-  return (item.kind === "decision_required" && (action === "resume_run" || action === "cancel_run"))
-    || (item.kind === "run_failed" && (action === "restart_run" || action === "dismiss"))
-    || (item.kind === "budget_exhausted" && action === "dismiss")
-    || ((item.kind === "source_attention" || item.kind === "discovery_attention") && action === "dismiss");
-}
-
-function snapshot(run: typeof agentRuns.$inferSelect) {
-  return { runId: run.id, status: run.status, currentStep: run.currentStep, controlState: run.controlState, version: run.version } as ControlAgentRunResponse["run"];
-}
-
-async function itemFor(database: Pick<Database, "select">, userId: string, itemId: string) {
-  const [item] = await database.select().from(agentInboxItems).where(and(eq(agentInboxItems.userId, userId), eq(agentInboxItems.id, itemId)));
-  return item;
-}
-
-async function itemProjectionFor(database: Pick<Database, "select">, userId: string, itemId: string) {
-  const [row] = await database.select({ item: agentInboxItems, targetId: agentRuns.targetId }).from(agentInboxItems)
-    .innerJoin(agentRuns, and(eq(agentRuns.userId, agentInboxItems.userId), eq(agentRuns.id, agentInboxItems.runId)))
-    .where(and(eq(agentInboxItems.userId, userId), eq(agentInboxItems.id, itemId)));
-  return row;
-}
-
-export function createAgentInbox(deps: { db: Database; commands: Commands; auditTrail: AuditTrail; id: () => string; clock: () => Date }): {
-  list(input: { userId: string; status: "open" | "resolved" }): Promise<{ items: AgentInboxItem[] }>;
-  act(input: { userId: string; requestId: string; itemId: string; command: AgentInboxActionCommand }): Promise<AgentInboxActionResponse>;
-} {
-  async function response(userId: string, itemId: string, relatedRunId: string | null, applied: boolean): Promise<AgentInboxActionResponse> {
-    const row = await itemProjectionFor(deps.db, userId, itemId);
-    if (!row) throw new AgentInboxError("AGENT_INBOX_NOT_FOUND");
-    const item = row.item;
-    const [run] = relatedRunId ? await deps.db.select().from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, relatedRunId))) : [];
-    return AgentInboxActionResponseSchema.parse({ applied, item: projection(item, row.targetId), run: run ? snapshot(run) : null });
-  }
-
-  async function recordFailure(input: { userId: string; requestId: string; itemId: string; actionId: string; action: InboxAction }) {
-    const now = deps.clock();
-    await deps.db.transaction(async (transaction) => {
-      await acquireAccountAdvisoryLock(transaction, input.userId);
-      const item = await itemFor(transaction, input.userId, input.itemId);
-      if (!item) return;
-      const [prior] = await transaction.select().from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, input.userId), eq(agentInboxItemActions.itemId, input.itemId), eq(agentInboxItemActions.actionId, input.actionId)));
-      if (!prior || prior.outcome !== "pending") return;
-      const reasonCode = "AGENT_INBOX_ACTION_FAILED" as const;
-      await transaction.update(agentInboxItemActions).set({ outcome: "failed", reasonCode }).where(eq(agentInboxItemActions.id, prior.id));
-      await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.inbox_action_applied", occurredAt: now, requestId: input.requestId, outcome: "failure", reasonCode, resourceType: "agent_inbox_item", resourceId: item.id, metadata: { itemId: item.id, runId: item.runId, action: input.action, outcome: "failed", reasonCode } });
-    });
-  }
-
-  async function resolveAndRecord(input: { userId: string; requestId: string; itemId: string; actionId: string; action: InboxAction; relatedRunId: string | null; retryOfRunId?: string; alreadyResolved?: boolean }) {
-    const now = deps.clock();
-    return deps.db.transaction(async (transaction) => {
-      await acquireAccountAdvisoryLock(transaction, input.userId);
-      const item = await itemFor(transaction, input.userId, input.itemId);
-      if (!item) throw new AgentInboxError("AGENT_INBOX_NOT_FOUND");
-      const [prior] = await transaction.select().from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, input.userId), eq(agentInboxItemActions.itemId, input.itemId), eq(agentInboxItemActions.actionId, input.actionId)));
-      if (prior && prior.outcome !== "pending") {
-        if (prior.action !== input.action) throw new AgentInboxError("AGENT_INBOX_ACTION_CONFLICT");
-        if (prior.outcome === "failed") throw new AgentInboxActionError("AGENT_INBOX_ACTION_FAILED");
-        return { replay: true, applied: prior.outcome === "applied", relatedRunId: prior.relatedRunId };
-      }
-      if (!accepts(item, input.action)) throw new AgentInboxError("AGENT_INBOX_ACTION_CONFLICT");
-      if (item.status !== "open") {
-        const outcome = input.alreadyResolved ? "applied" : "no_change";
-        await transaction.update(agentInboxItemActions).set({ outcome, relatedRunId: input.relatedRunId, reasonCode: item.reasonCode }).where(and(eq(agentInboxItemActions.userId, input.userId), eq(agentInboxItemActions.itemId, item.id), eq(agentInboxItemActions.actionId, input.actionId)));
-        if (input.alreadyResolved) {
-          const reasonCode = item.reasonCode as AgentInboxItem["reasonCode"];
-          await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.inbox_action_applied", occurredAt: now, requestId: input.requestId, outcome: "success", reasonCode, resourceType: "agent_inbox_item", resourceId: item.id, metadata: { itemId: item.id, runId: item.runId, action: input.action, outcome: "applied", reasonCode } });
-        }
-        return { replay: false, applied: input.alreadyResolved ?? false, relatedRunId: input.relatedRunId };
-      }
-      if (input.retryOfRunId && input.relatedRunId) await transaction.update(agentRuns).set({ retryOfRunId: input.retryOfRunId }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.relatedRunId)));
-      if (item.status === "open") {
-        await transaction.update(agentInboxItems).set({ status: "resolved", resolvedAt: now }).where(and(eq(agentInboxItems.userId, input.userId), eq(agentInboxItems.id, item.id), eq(agentInboxItems.status, "open")));
-        const reasonCode = item.reasonCode as AgentInboxItem["reasonCode"];
-        await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.inbox_resolved", occurredAt: now, requestId: input.requestId, outcome: "success", reasonCode, resourceType: "agent_inbox_item", resourceId: item.id, metadata: { itemId: item.id, runId: item.runId, action: input.action, reasonCode } });
-      }
-      await transaction.update(agentInboxItemActions).set({ outcome: "applied", relatedRunId: input.relatedRunId, reasonCode: item.reasonCode }).where(and(eq(agentInboxItemActions.userId, input.userId), eq(agentInboxItemActions.itemId, item.id), eq(agentInboxItemActions.actionId, input.actionId)));
-      const reasonCode = item.reasonCode as AgentInboxItem["reasonCode"];
-      await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.inbox_action_applied", occurredAt: now, requestId: input.requestId, outcome: "success", reasonCode, resourceType: "agent_inbox_item", resourceId: item.id, metadata: { itemId: item.id, runId: item.runId, action: input.action, outcome: "applied", reasonCode } });
-      return { replay: false, applied: true, relatedRunId: input.relatedRunId };
-    });
-  }
-
-  async function claimAction(input: { userId: string; itemId: string; actionId: string; action: InboxAction }) {
-    const now = deps.clock();
-    return deps.db.transaction(async (transaction) => {
-      await acquireAccountAdvisoryLock(transaction, input.userId);
-      const item = await itemFor(transaction, input.userId, input.itemId);
-      if (!item) throw new AgentInboxError("AGENT_INBOX_NOT_FOUND");
-      const [prior] = await transaction.select().from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, input.userId), eq(agentInboxItemActions.itemId, item.id), eq(agentInboxItemActions.actionId, input.actionId)));
-      if (prior) {
-        if (prior.action !== input.action) throw new AgentInboxError("AGENT_INBOX_ACTION_CONFLICT");
-        if (prior.outcome === "failed") throw new AgentInboxActionError("AGENT_INBOX_ACTION_FAILED");
-        if (prior.outcome !== "pending") return { item, replay: true, relatedRunId: prior.relatedRunId, applied: prior.outcome === "applied" };
-        return { item, replay: false, relatedRunId: null, applied: false };
-      }
-      const others = await transaction.select({ outcome: agentInboxItemActions.outcome }).from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, input.userId), eq(agentInboxItemActions.itemId, item.id)));
-      if ((item.status !== "open" && others.length > 0) || others.some((other) => other.outcome !== "failed")) throw new AgentInboxError("AGENT_INBOX_ACTION_CONFLICT");
-      if (!accepts(item, input.action)) throw new AgentInboxError("AGENT_INBOX_ACTION_CONFLICT");
-      await transaction.insert(agentInboxItemActions).values({ id: deps.id(), userId: input.userId, itemId: item.id, actionId: input.actionId, action: input.action, outcome: "pending", relatedRunId: null, reasonCode: null, createdAt: now });
-      return { item, replay: false, relatedRunId: null, applied: false };
-    });
-  }
-
+export type AgentInbox = { list(input: { userId: string; status: "unread" | "read" | "resolved" | "pending" }): Promise<{ items: AgentInboxItem[] }>; act(input: { userId: string; requestId: string; itemId: string; command: AgentInboxActionCommand }): Promise<AgentInboxActionResponse> };
+export function createAgentInbox(deps: { db: Database; commands: Commands; auditTrail: AuditTrail; id: () => string; clock: () => Date }): AgentInbox {
+  const response = async (userId: string, itemId: string, relatedRunId: string | null, applied: boolean) => { const item = await itemFor(deps.db, userId, itemId); if (!item) throw new AgentInboxError("AGENT_INBOX_NOT_FOUND"); const run = relatedRunId ? (await deps.db.select().from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, relatedRunId))))[0] : undefined; return AgentInboxActionResponseSchema.parse({ applied, item: project(item, await targetFor(deps.db, userId, item)), run: run ? snapshot(run) : null }); };
+  const claim = async (userId: string, itemId: string, actionId: string, action: Action) => deps.db.transaction(async (tx) => {
+    await acquireAccountAdvisoryLock(tx, userId); const item = await itemFor(tx, userId, itemId); if (!item) throw new AgentInboxError("AGENT_INBOX_NOT_FOUND");
+    const prior = (await tx.select().from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, userId), eq(agentInboxItemActions.itemId, itemId), eq(agentInboxItemActions.actionId, actionId))))[0];
+    if (prior) { if (prior.action !== action) throw new AgentInboxError("AGENT_INBOX_ACTION_CONFLICT"); if (prior.outcome === "failed") throw new AgentInboxActionError("AGENT_INBOX_ACTION_FAILED"); return { item, replay: prior.outcome !== "pending", applied: prior.outcome === "applied", relatedRunId: prior.relatedRunId }; }
+    if (item.status === "resolved" || !accepts(item, action) && action !== "mark_read") throw new AgentInboxError("AGENT_INBOX_ACTION_CONFLICT");
+    const others = await tx.select({ action: agentInboxItemActions.action, outcome: agentInboxItemActions.outcome }).from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, userId), eq(agentInboxItemActions.itemId, itemId)));
+    if (action !== "mark_read" && others.some((other) => other.action !== "mark_read" && other.outcome !== "failed")) throw new AgentInboxError("AGENT_INBOX_ACTION_CONFLICT");
+    await tx.insert(agentInboxItemActions).values({ id: deps.id(), userId, itemId, actionId, action, outcome: "pending", relatedRunId: null, reasonCode: null, createdAt: deps.clock() }); return { item, replay: false, applied: false, relatedRunId: null };
+  });
+  const markRead = async (userId: string, itemId: string, actionId: string) => deps.db.transaction(async (tx) => { await acquireAccountAdvisoryLock(tx, userId); const item = await itemFor(tx, userId, itemId); const prior = (await tx.select().from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, userId), eq(agentInboxItemActions.itemId, itemId), eq(agentInboxItemActions.actionId, actionId))))[0]; if (!item || !prior || item.status === "resolved") throw new AgentInboxError("AGENT_INBOX_ACTION_CONFLICT"); if (prior.outcome !== "pending") return prior.outcome === "applied"; const applied = item.status === "unread"; if (applied) await tx.update(agentInboxItems).set({ status: "read", readAt: deps.clock() }).where(and(eq(agentInboxItems.userId, userId), eq(agentInboxItems.id, itemId), eq(agentInboxItems.status, "unread"))); await tx.update(agentInboxItemActions).set({ outcome: applied ? "applied" : "no_change", reasonCode: item.reasonCode }).where(eq(agentInboxItemActions.id, prior.id)); return applied; });
+  const settle = async (input: { userId: string; requestId: string; itemId: string; actionId: string; action: Exclude<Action, "mark_read">; relatedRunId: string | null; retryOfRunId?: string }) => deps.db.transaction(async (tx) => { await acquireAccountAdvisoryLock(tx, input.userId); const item = await itemFor(tx, input.userId, input.itemId); if (!item || !accepts(item, input.action)) throw new AgentInboxError("AGENT_INBOX_ACTION_CONFLICT"); if (item.status === "resolved") { await tx.update(agentInboxItemActions).set({ outcome: "applied", relatedRunId: input.relatedRunId, reasonCode: item.reasonCode }).where(and(eq(agentInboxItemActions.userId, input.userId), eq(agentInboxItemActions.itemId, input.itemId), eq(agentInboxItemActions.actionId, input.actionId))); return true; } if (input.retryOfRunId && input.relatedRunId) await tx.update(agentRuns).set({ retryOfRunId: input.retryOfRunId }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.relatedRunId))); await tx.update(agentInboxItems).set({ status: "resolved", resolvedAt: deps.clock() }).where(and(eq(agentInboxItems.userId, input.userId), eq(agentInboxItems.id, input.itemId), inArray(agentInboxItems.status, ["unread", "read"]))); if (item.runId) await deps.auditTrail.bind(tx).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.inbox_resolved", occurredAt: deps.clock(), requestId: input.requestId, outcome: "success", reasonCode: item.reasonCode, resourceType: "agent_inbox_item", resourceId: item.id, metadata: { itemId: item.id, runId: item.runId, action: input.action, reasonCode: item.reasonCode } } as never); await tx.update(agentInboxItemActions).set({ outcome: "applied", relatedRunId: input.relatedRunId, reasonCode: item.reasonCode }).where(and(eq(agentInboxItemActions.userId, input.userId), eq(agentInboxItemActions.itemId, input.itemId), eq(agentInboxItemActions.actionId, input.actionId))); return true; });
   return {
-    async list({ userId, status }) {
-      const rows = await deps.db.select().from(agentInboxItems).where(and(eq(agentInboxItems.userId, userId), eq(agentInboxItems.status, status))).orderBy(asc(agentInboxItems.createdAt), asc(agentInboxItems.id));
-      const projected = await Promise.all(rows.map(async (item) => {
-        const [run] = await deps.db.select({ targetId: agentRuns.targetId }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, item.runId)));
-        if (!run) throw new AgentInboxError("AGENT_INBOX_NOT_FOUND");
-        return projection(item, run.targetId);
-      }));
-      return AgentInboxListSchema.parse({ items: projected });
-    },
-    async act(input) {
-      const command = AgentInboxActionCommandSchema.parse(input.command);
-      const claim = await claimAction({ userId: input.userId, itemId: input.itemId, actionId: command.actionId, action: command.action });
-      const item = claim.item;
-      if (claim.replay) return response(input.userId, item.id, claim.relatedRunId, claim.applied);
-      if (item.status !== "open") {
-        const settled = await resolveAndRecord({ userId: input.userId, requestId: input.requestId, itemId: item.id, actionId: command.actionId, action: command.action, relatedRunId: null });
-        return response(input.userId, item.id, settled.relatedRunId, settled.applied);
-      }
-      if (command.action === "dismiss") {
-        const settled = await resolveAndRecord({ userId: input.userId, requestId: input.requestId, itemId: item.id, actionId: command.actionId, action: command.action, relatedRunId: null });
-        return response(input.userId, item.id, settled.relatedRunId, settled.applied);
-      }
-      if (command.action === "restart_run") {
-        let started: StartAgentRunResponse;
-        try {
-          started = await deps.commands.start({ userId: input.userId, requestId: input.requestId, command: { targetId: (await deps.db.select({ targetId: agentRuns.targetId }).from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, item.runId))))[0]?.targetId ?? "", idempotencyKey: command.actionId } });
-        } catch (error) {
-          await recordFailure({ userId: input.userId, requestId: input.requestId, itemId: item.id, actionId: command.actionId, action: command.action });
-          throw new AgentInboxActionError("AGENT_INBOX_ACTION_FAILED");
-        }
-        const settled = await resolveAndRecord({ userId: input.userId, requestId: input.requestId, itemId: item.id, actionId: command.actionId, action: command.action, relatedRunId: started.runId, retryOfRunId: item.runId });
-        return response(input.userId, item.id, settled.relatedRunId, settled.applied);
-      }
-      let controlled: ControlAgentRunResponse;
-      try {
-        controlled = await deps.commands.control({ userId: input.userId, requestId: input.requestId, runId: item.runId, command: { commandId: command.actionId, action: command.action === "resume_run" ? "resume" : "cancel" } });
-      } catch (error) {
-        await recordFailure({ userId: input.userId, requestId: input.requestId, itemId: item.id, actionId: command.actionId, action: command.action });
-        throw new AgentInboxActionError("AGENT_INBOX_ACTION_FAILED");
-      }
-      const settled = await resolveAndRecord({ userId: input.userId, requestId: input.requestId, itemId: item.id, actionId: command.actionId, action: command.action, relatedRunId: controlled.run.runId, alreadyResolved: controlled.applied });
-      return response(input.userId, item.id, settled.relatedRunId, settled.applied);
-    },
+    async list({ userId, status }) { const where = status === "pending" ? and(eq(agentInboxItems.userId, userId), inArray(agentInboxItems.status, ["unread", "read"])) : and(eq(agentInboxItems.userId, userId), eq(agentInboxItems.status, status)); const rows = await deps.db.select().from(agentInboxItems).where(where).orderBy(desc(agentInboxItems.createdAt), desc(agentInboxItems.id)); return AgentInboxListSchema.parse({ items: await Promise.all(rows.map(async (item) => project(item, await targetFor(deps.db, userId, item)))) }); },
+    async act(input) { const command = AgentInboxActionCommandSchema.parse(input.command); const owned = await claim(input.userId, input.itemId, command.actionId, command.action); if (owned.replay) return response(input.userId, input.itemId, owned.relatedRunId, owned.applied); if (command.action === "mark_read") return response(input.userId, input.itemId, null, await markRead(input.userId, input.itemId, command.actionId)); if (command.action === "dismiss") return response(input.userId, input.itemId, null, await settle({ userId: input.userId, requestId: input.requestId, itemId: input.itemId, actionId: command.actionId, action: command.action, relatedRunId: null })); if (command.action === "restart_run") { let started: StartAgentRunResponse; try { const run = (await deps.db.select({ targetId: agentRuns.targetId }).from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, owned.item.runId!))))[0]; started = await deps.commands.start({ userId: input.userId, requestId: input.requestId, command: { targetId: run?.targetId ?? "", idempotencyKey: command.actionId } }); } catch { await deps.db.update(agentInboxItemActions).set({ outcome: "failed", reasonCode: "AGENT_INBOX_ACTION_FAILED" }).where(and(eq(agentInboxItemActions.userId, input.userId), eq(agentInboxItemActions.itemId, input.itemId), eq(agentInboxItemActions.actionId, command.actionId))); throw new AgentInboxActionError("AGENT_INBOX_ACTION_FAILED"); } await settle({ userId: input.userId, requestId: input.requestId, itemId: input.itemId, actionId: command.actionId, action: command.action, relatedRunId: started.runId, retryOfRunId: owned.item.runId! }); return response(input.userId, input.itemId, started.runId, true); } let controlled: ControlAgentRunResponse; try { controlled = await deps.commands.control({ userId: input.userId, requestId: input.requestId, runId: owned.item.runId!, command: { commandId: command.actionId, action: command.action === "resume_run" ? "resume" : "cancel" } }); } catch { await deps.db.update(agentInboxItemActions).set({ outcome: "failed", reasonCode: "AGENT_INBOX_ACTION_FAILED" }).where(and(eq(agentInboxItemActions.userId, input.userId), eq(agentInboxItemActions.itemId, input.itemId), eq(agentInboxItemActions.actionId, command.actionId))); throw new AgentInboxActionError("AGENT_INBOX_ACTION_FAILED"); } await settle({ userId: input.userId, requestId: input.requestId, itemId: input.itemId, actionId: command.actionId, action: command.action, relatedRunId: controlled.run.runId }); return response(input.userId, input.itemId, controlled.run.runId, true); },
   };
 }
