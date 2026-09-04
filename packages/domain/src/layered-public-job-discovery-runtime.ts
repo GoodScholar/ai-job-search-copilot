@@ -7,12 +7,13 @@ import { createJobDiscoveryPersistence, type DiscoveryDetail, type StoredDiscove
 import { createJobDiscoveryLeadRepository } from "./job-discovery-leads";
 import { createLayeredPublicJobDiscoveryWorkflow, type LayeredPublicJobDiscoveryWorkflow } from "./layered-public-job-discovery-workflow";
 import { createVerifiedJobSourceGate, type VerifiedJobEvidenceStore } from "./verified-job-source-gate";
+import { authorizeSourceAction, type SourceCapabilityAdapter } from "./source-capabilities";
 
 type WorkflowDependencies = Parameters<typeof createLayeredPublicJobDiscoveryWorkflow>[0];
 type LayeredSpec = Parameters<LayeredPublicJobDiscoveryWorkflow["run"]>[0]["executionSpec"];
 type TrustedSource = Extract<LayeredSpec["sourceScope"]["trustedSources"][number], { kind: "greenhouse_trusted_source" }>["source"];
 
-export interface LayeredTrustedSourceAdapter {
+export interface LayeredTrustedSourceAdapter extends SourceCapabilityAdapter {
   listSource(input: { targetSnapshot: LayeredSpec["targetSnapshot"]; source: TrustedSource; signal: AbortSignal }): Promise<
     | { ok: true; data: { sourceId: string; observedDetailIds: string[]; candidates: Array<{ sourceId: string; detailId: string }> } }
     | { ok: false; error: { code: string } }
@@ -24,7 +25,7 @@ export interface LayeredTrustedSourceAdapter {
 }
 
 function sourceIssueCode(value: string, fallback: string) {
-  return /^GREENHOUSE_[A-Z0-9_]{1,100}$/u.test(value) ? value : fallback;
+  return /^GREENHOUSE_[A-Z0-9_]{1,100}$/u.test(value) || value === "SOURCE_CAPABILITY_UNSUPPORTED" ? value : fallback;
 }
 
 function rawObject(input: { id: () => string; userId: string; runId: string; sourceId: string; detail: DiscoveryDetail }): StoredDiscoveryObject {
@@ -66,6 +67,11 @@ export function createLayeredPublicJobDiscoveryRuntime(input: Omit<WorkflowDepen
       let listedSourceCount = 0;
       for (const trusted of frozenSources) {
         const source = trusted.source;
+        const discoveryAuthorization = authorizeSourceAction({ declaration: input.trustedSourceAdapter.declareCapabilities({ sourceId: source.sourceId }), action: "active_discovery" });
+        if (!discoveryAuthorization.allowed) {
+          sourceIssues.push({ code: discoveryAuthorization.failure.reasonCode, affectedCount: 1 });
+          continue;
+        }
         await beforeRequest(source.watchlistItemId);
         const listed = await input.trustedSourceAdapter.listSource({ targetSnapshot: executionSpec.targetSnapshot, source, signal });
         if (!listed.ok) {
@@ -84,6 +90,11 @@ export function createLayeredPublicJobDiscoveryRuntime(input: Omit<WorkflowDepen
         listedSourceCount += 1;
         const details: DiscoveryDetail[] = [];
         for (const candidate of listed.data.candidates) {
+          const detailAuthorization = authorizeSourceAction({ declaration: input.trustedSourceAdapter.declareCapabilities({ sourceId: source.sourceId }), action: "read_details" });
+          if (!detailAuthorization.allowed) {
+            sourceIssues.push({ code: detailAuthorization.failure.reasonCode, affectedCount: 1 });
+            break;
+          }
           await beforeRequest(source.watchlistItemId);
           const detailed = await input.trustedSourceAdapter.getSourceDetail({ source, detailId: candidate.detailId, signal });
           if (!detailed.ok) {

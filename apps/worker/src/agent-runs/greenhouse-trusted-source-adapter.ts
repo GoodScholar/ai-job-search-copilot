@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { PUBLIC_JOB_DISCOVERY_BUDGET, type AgentRunDetail } from "@job-copilot/contracts/agent-runs";
 import { GreenhousePublicSourceSchema } from "@job-copilot/contracts/job-discovery-schedules";
+import { declareFormalBetaSourceCapabilities, type SourceCapabilityDeclaration } from "@job-copilot/contracts/source-capabilities";
 import { PublicSourceAccessError, createPublicSourceClient, type PublicSourceClient } from "@job-copilot/source-access";
 import type { LayeredTrustedSourceAdapter } from "@job-copilot/domain/agent-runs";
 
@@ -60,6 +61,10 @@ export class GreenhouseTrustedSourceAdapter implements LayeredTrustedSourceAdapt
   constructor(input: { client?: PublicSourceClient } = {}) {
     if (input.client && process.env.APP_ENV !== "test") throw new Error("GREENHOUSE_TEST_CLIENT_DISABLED");
     this.client = input.client ?? createPublicSourceClient({ exactHosts: [GREENHOUSE_API_HOST] });
+  }
+
+  declareCapabilities(input: { sourceId: string }): SourceCapabilityDeclaration {
+    return declareFormalBetaSourceCapabilities({ sourceId: input.sourceId, adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2" });
   }
 
   async listSource(input: Parameters<LayeredTrustedSourceAdapter["listSource"]>[0]) {

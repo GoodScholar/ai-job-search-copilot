@@ -1,4 +1,5 @@
 import { AGENT_RUN_BUDGET } from "@job-copilot/contracts/agent-runs";
+import { declareFormalBetaSourceCapabilities, type SourceCapabilityDeclaration } from "@job-copilot/contracts/source-capabilities";
 import type {
   DiscoveryBatchSearchInput,
   DiscoveryBatchSearchResult,
@@ -96,6 +97,10 @@ function matchesTarget(item: Fixture, target: DiscoverySearchInput["targetSnapsh
 
 export class FakeJobDiscoveryAdapter implements JobDiscoveryAdapter {
   constructor(private readonly options: FakeJobDiscoveryAdapterOptions = {}) {}
+
+  declareCapabilities(input: { sourceId: string }): SourceCapabilityDeclaration {
+    return declareFormalBetaSourceCapabilities({ sourceId: input.sourceId, adapter: "fake", adapterVersion: "fake-job-discovery-v1" });
+  }
 
   async search(input: DiscoverySearchInput): Promise<DiscoverySearchResult> {
     await this.delay();

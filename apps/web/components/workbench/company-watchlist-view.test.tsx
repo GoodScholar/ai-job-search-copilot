@@ -63,6 +63,15 @@ it("初始健康读取降级时保留 Watchlist 控制与可恢复诊断", async
   expect(screen.queryByRole("button", { name: "重新加载来源诊断" })).not.toBeInTheDocument();
 });
 
+it("来源诊断暂不可读时仍展示已声明的稳定能力", () => {
+  const publicSource = { itemId: firstItemId, canonicalCompanyName: "曙光云图", careersUrl: "https://boards.greenhouse.io/aurora", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null, state: "enabled" as const, position: 1 };
+  render(<CompanyWatchlistView initialOverview={overview([publicSource], 1)} initialHealthRefreshFailed />);
+
+  expect(screen.getByRole("heading", { name: "来源能力" })).toBeVisible();
+  expect(screen.getByLabelText("曙光云图 来源能力")).toHaveTextContent("主动发现、读取详情、持续监控、安全打开原始页面");
+  expect(screen.getByText("来源诊断暂时无法读取，请重新加载或刷新页面。")).toBeVisible();
+});
+
 it("逐来源以文字呈现七种诊断状态、时间、影响和建议动作", () => {
   const states: JobSourceHealthOverview["sources"] = [
     { watchlistItemId: crypto.randomUUID(), sourceId: "greenhouse:source0", name: "来源 0", state: "enabled", status: "healthy", runId: crypto.randomUUID(), reasonCodes: [], impact: { scope: "none", affectedCount: null }, lastCheckedAt: "2026-08-30T00:00:00.000Z", suggestedAction: "none" },
@@ -77,6 +86,18 @@ it("逐来源以文字呈现七种诊断状态、时间、影响和建议动作"
   ["健康", "暂无有效岗位", "解析异常", "访问受限", "来源不可用", "已停用", "尚未检查", "无需处理", "等待下次发现", "稍后重试", "稍后重试或停用来源", "可重新启用来源"].forEach((text) => expect(screen.getAllByText(text, { exact: false }).length).toBeGreaterThan(0));
   expect(screen.getAllByText("影响范围：整个来源")).toHaveLength(3);
   expect(screen.getAllByText("最后检查：尚未检查")).toHaveLength(2);
+});
+
+it("将稳定来源能力与动态来源诊断分区呈现", () => {
+  render(<CompanyWatchlistView initialOverview={overview()} initialSourceHealth={health(0, [source(firstItemId, "greenhouse:aurora", "曙光", "rate_limited")])} />);
+
+  expect(screen.getByRole("heading", { name: "来源能力" })).toBeVisible();
+  expect(screen.getByLabelText("曙光 来源能力")).toHaveTextContent("主动发现");
+  expect(screen.getByLabelText("曙光 来源能力")).toHaveTextContent("读取详情");
+  expect(screen.getByLabelText("曙光 来源能力")).toHaveTextContent("持续监控");
+  expect(screen.getByLabelText("曙光 来源能力")).toHaveTextContent("安全打开原始页面");
+  expect(screen.getByRole("heading", { name: "来源诊断" })).toBeVisible();
+  expect(screen.getByLabelText("曙光 来源诊断")).toHaveTextContent("访问受限");
 });
 
 it("分别说明缺少名称、无效 URL、域名不匹配和凭据型 URL", async () => {

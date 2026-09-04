@@ -1,6 +1,8 @@
 import { z } from "zod";
 import {
   PUBLIC_JOB_DISCOVERY_BUDGET,
+  GREENHOUSE_JOB_DISCOVERY_ADAPTER,
+  GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION,
   AgentRunTargetSnapshotSchema,
   type DiscoveryDetailInput,
   type DiscoveryDetailResult,
@@ -10,6 +12,7 @@ import {
   PublicAgentRunSourceScopeSchema,
 } from "@job-copilot/contracts/agent-runs";
 import { classifyGreenhousePublicSource } from "@job-copilot/contracts/job-discovery-schedules";
+import { declareFormalBetaSourceCapabilities, type SourceCapabilityDeclaration } from "@job-copilot/contracts/source-capabilities";
 import { PublicSourceAccessError, createPublicSourceClient, type PublicSourceClient } from "@job-copilot/source-access";
 import type { JobDiscoveryAdapter, PublicDiscoveryBatchSearchInput } from "@job-copilot/domain/agent-runs";
 
@@ -130,6 +133,10 @@ export class GreenhouseJobDiscoveryAdapter implements JobDiscoveryAdapter {
   constructor(input: { client?: PublicSourceClient } = {}) {
     if (input.client && process.env.APP_ENV !== "test") throw new Error("GREENHOUSE_TEST_CLIENT_DISABLED");
     this.client = input.client ?? createPublicSourceClient({ exactHosts: [GREENHOUSE_API_HOST] });
+  }
+
+  declareCapabilities(input: { sourceId: string }): SourceCapabilityDeclaration {
+    return declareFormalBetaSourceCapabilities({ sourceId: input.sourceId, adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER, adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION });
   }
 
   async search(_input: DiscoverySearchInput): Promise<DiscoverySearchResult> {

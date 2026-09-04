@@ -107,6 +107,7 @@ describe("AgentRunProcessor checkpoints", () => {
   function successAdapter(calls = { search: 0, detail: 0 }): JobDiscoveryAdapter {
     const summary = { sourceId: "fake:aurora-careers", detailId: "opening-1", company: "示例科技", title: "AI 工程师", location: "上海", postedAt: null, deadline: null };
     return {
+      declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "fake", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
       search: async () => ({ ok: false, error: { code: "UNUSED", retryable: false } }),
       searchBatch: async () => { calls.search += 1; return { ok: true, data: [summary] }; },
       getDetail: async () => { calls.detail += 1; return { ok: true, data: { ...summary, sourceType: "company_careers", isOfficial: true, rawPayload: { source: "aurora" } } }; },
@@ -571,6 +572,7 @@ describe("AgentRunProcessor checkpoints", () => {
       db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => now }),
       contentStore: new Store(), evidenceStore,
       trustedSourceAdapter: {
+        declareCapabilities: ({ sourceId }: any) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
         listSource: async () => ({ ok: false as const, error: { code: "GREENHOUSE_UNAVAILABLE" } }),
         getSourceDetail: async () => { throw new Error("UNUSED"); },
       },
@@ -609,6 +611,7 @@ describe("AgentRunProcessor checkpoints", () => {
     const runtime = createLayeredPublicJobDiscoveryRuntime({
       db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => now }), contentStore: new Store(), evidenceStore: new Store() as never,
       trustedSourceAdapter: {
+        declareCapabilities: ({ sourceId }: any) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
         listSource: async ({ source, signal }: any) => source.sourceId === "greenhouse:unavailable"
           ? { ok: false as const, error: { code: "GREENHOUSE_TIMEOUT" } }
           : { ok: true as const, data: { sourceId: source.sourceId, observedDetailIds: ["opening-2"], candidates: [{ sourceId: source.sourceId, detailId: "opening-2" }] }, signal },
@@ -635,6 +638,7 @@ describe("AgentRunProcessor checkpoints", () => {
     const runtime = createLayeredPublicJobDiscoveryRuntime({
       db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => now }), contentStore: store, evidenceStore: store as never,
       trustedSourceAdapter: {
+        declareCapabilities: ({ sourceId }: any) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
         listSource: async ({ source }: any) => ({ ok: true as const, data: { sourceId: source.sourceId, observedDetailIds: ["opening-2"], candidates: [{ sourceId: source.sourceId, detailId: "opening-2" }] } }),
         getSourceDetail: async ({ source, detailId }: any) => {
           await database.update(agentRuns).set({ controlState: "pause_requested" }).where(eq(agentRuns.id, job.runId));
@@ -1124,6 +1128,7 @@ describe("AgentRunProcessor checkpoints", () => {
     const job = await run();
     let details = 0;
     const adapter: JobDiscoveryAdapter = {
+      declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "fake", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
       search: async () => ({ ok: false, error: { code: "UNUSED", retryable: false } }),
       searchBatch: async () => {
         await database.update(agentRuns).set({ controlState: "pause_requested" }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId)));
@@ -1273,6 +1278,7 @@ describe("AgentRunProcessor checkpoints", () => {
       sourceScope: { kind: "company_watchlist", adapter: "greenhouse", adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION, watchlistVersion: 1, sources },
     }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId)));
     const adapter: JobDiscoveryAdapter = {
+      declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
       search: async () => ({ ok: false, error: { code: "UNUSED", retryable: false } }),
       searchBatch: async (input: any) => { await input.beforeList?.(sources[0]!.sourceId); await input.beforeList?.(sources[1]!.sourceId); return { ok: true, data: { items: [{ sourceId: sources[0]!.sourceId, detailId: "701", company: null, title: "AI Engineer", location: "Shanghai" }], scans: [{ sourceId: sources[0]!.sourceId, observedDetailIds: ["701"], complete: true }, { sourceId: sources[1]!.sourceId, observedDetailIds: [], complete: true }] } }; },
       getDetail: async () => ({ ok: true, data: { sourceId: sources[0]!.sourceId, detailId: "701", company: "Fictional Labs", title: "AI Engineer", location: "Shanghai", postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true, rawPayload: { job: 701 } } }),
@@ -1464,7 +1470,7 @@ describe("AgentRunProcessor checkpoints", () => {
     await database.insert(jobOpportunities).values({ id: opportunityId, userId: job.userId, importId: null, sourcePostingVersionId: versionId, dedupKey: "a".repeat(64), company: "Failure", title: "Historical role", location: null, postedAt: null, deadline: null, description: null, normalizedData: { sourceId: source.sourceId, detailId: "historical" }, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
     await database.insert(jobOpportunitySources).values({ id: evidenceId, userId: job.userId, opportunityId, sourcePostingVersionId: versionId, createdAt: now });
     await database.update(agentRuns).set({ adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER, adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION, workflowVersion: GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION, ruleVersion: GREENHOUSE_JOB_DISCOVERY_RULE_VERSION, outputSchemaVersion: GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, budgetSnapshot: PUBLIC_JOB_DISCOVERY_BUDGET, sourceScope: { kind: "company_watchlist", adapter: "greenhouse", adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION, watchlistVersion: 1, sources: [source] } }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId)));
-    const adapter: JobDiscoveryAdapter = { search: async () => ({ ok: false, error: { code: "UNUSED", retryable: false } }), searchBatch: async (input: any) => { await input.beforeList(source.sourceId); return { ok: true, data: { items: [{ sourceId: source.sourceId, detailId: "missing", company: null, title: "AI Engineer", location: null }], scans: [{ sourceId: source.sourceId, observedDetailIds: ["missing"], complete: true }] } }; }, getDetail: async () => ({ ok: false, error: { code: "DETAIL_FAILED", retryable: true } }) };
+    const adapter: JobDiscoveryAdapter = { declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }), search: async () => ({ ok: false, error: { code: "UNUSED", retryable: false } }), searchBatch: async (input: any) => { await input.beforeList(source.sourceId); return { ok: true, data: { items: [{ sourceId: source.sourceId, detailId: "missing", company: null, title: "AI Engineer", location: null }], scans: [{ sourceId: source.sourceId, observedDetailIds: ["missing"], complete: true }] } }; }, getDetail: async () => ({ ok: false, error: { code: "DETAIL_FAILED", retryable: true } }) };
     await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(adapter), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("retry");
     await expect(database.select({ id: jobSourcePostings.id, availability: jobSourcePostings.availability }).from(jobSourcePostings).where(eq(jobSourcePostings.id, postingId))).resolves.toEqual([{ id: postingId, availability: "open" }]);
     await expect(database.select({ id: jobOpportunities.id, availability: jobOpportunities.availability }).from(jobOpportunities).where(eq(jobOpportunities.id, opportunityId))).resolves.toEqual([{ id: opportunityId, availability: "open" }]);
@@ -1492,6 +1498,7 @@ describe("AgentRunProcessor checkpoints", () => {
     }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId)));
     let gets = 0;
     const adapter: JobDiscoveryAdapter = {
+      declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
       search: async () => ({ ok: false, error: { code: "UNUSED", retryable: false } }),
       searchBatch: async (input: any) => {
         await input.beforeList(sources[0].sourceId);

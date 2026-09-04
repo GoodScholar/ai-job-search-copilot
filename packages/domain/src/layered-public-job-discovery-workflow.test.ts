@@ -89,13 +89,46 @@ describe("layered public job discovery workflow", () => {
     const runtime = createLayeredPublicJobDiscoveryRuntime({
       db: { transaction: async (callback: (value: never) => unknown) => callback(transaction as never) } as never, id: () => "aaaaaaaa-aaaa-8aaa-8aaa-aaaaaaaaaaaa", auditTrail: {} as never,
       contentStore: { put: async () => undefined, delete: async () => undefined }, evidenceStore: { put: async () => ({ created: true }), delete: async () => undefined },
-      trustedSourceAdapter: { listSource: async () => { adapterCalls += 1; throw new Error("UNUSED"); }, getSourceDetail: async () => { adapterCalls += 1; throw new Error("UNUSED"); } },
+      trustedSourceAdapter: { declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: [] }), listSource: async () => { adapterCalls += 1; throw new Error("UNUSED"); }, getSourceDetail: async () => { adapterCalls += 1; throw new Error("UNUSED"); } },
       anySearch: { search: async () => ({ candidates: [] }), extract: async () => { throw new Error("UNUSED"); } },
       preflight: async () => null, fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
     });
     const outcome = await runtime.run({ userId: targetId, runId, claimToken: "99999999-9999-8999-8999-999999999999", now: new Date(), executionSpec: executionSpecFor([{ ordinal: 1, queryId, kind: "general", stableFingerprint: "a".repeat(64), query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }], []) as never, attemptCount: 1, beforePhysicalOperation: async () => undefined, onDiagnostics: () => undefined, signal: new AbortController().signal });
     expect(outcome).toMatchObject({ branchOutcome: { trusted: "failed", publicDiscovery: "clean_zero" }, trustedSourcePostingVersionIds: [] });
     expect(adapterCalls).toBe(0);
+  });
+
+  it("缺少主动发现能力时跳过该来源并保留其它分支结果", async () => {
+    let adapterCalls = 0;
+    const unsupported = "greenhouse:unsupported";
+    const supported = "greenhouse:supported";
+    const runtime = createLayeredPublicJobDiscoveryRuntime({
+      db: {} as never, id: () => "aaaaaaaa-aaaa-8aaa-8aaa-aaaaaaaaaaaa", auditTrail: {} as never,
+      contentStore: { put: async () => undefined, delete: async () => undefined }, evidenceStore: { put: async () => ({ created: true }), delete: async () => undefined },
+      trustedSourceAdapter: {
+        declareCapabilities: ({ sourceId }: { sourceId: string }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: sourceId === unsupported ? [] : ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
+        listSource: async ({ source }: any) => {
+          adapterCalls += 1;
+          expect(source.sourceId).toBe(supported);
+          return { ok: true as const, data: { sourceId: supported, observedDetailIds: [], candidates: [] } };
+        },
+        getSourceDetail: async () => { adapterCalls += 1; throw new Error("UNUSED"); },
+      },
+      anySearch: { isConfigured: () => false, search: async () => ({ candidates: [] }), extract: async () => { throw new Error("UNUSED"); } },
+      preflight: async () => null, fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
+    } as never);
+
+    const outcome = await runtime.run({
+      userId: targetId, runId, claimToken: "99999999-9999-8999-8999-999999999999", now: new Date(), attemptCount: 1,
+      executionSpec: executionSpecFor([{ ordinal: 1, queryId, kind: "general", stableFingerprint: "a".repeat(64), query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }], [
+        { kind: "greenhouse_trusted_source", source: { sourceId: unsupported, watchlistItemId: "55555555-5555-8555-8555-555555555555", canonicalCompanyName: "Unsupported", careersUrl: "https://boards.greenhouse.io/unsupported", allowedDomains: ["boards-api.greenhouse.io"], boardToken: "unsupported" } },
+        { kind: "greenhouse_trusted_source", source: { sourceId: supported, watchlistItemId: "66666666-6666-8666-8666-666666666666", canonicalCompanyName: "Supported", careersUrl: "https://boards.greenhouse.io/supported", allowedDomains: ["boards-api.greenhouse.io"], boardToken: "supported" } },
+      ]) as never,
+      beforePhysicalOperation: async () => undefined, onDiagnostics: () => undefined, signal: new AbortController().signal,
+    });
+
+    expect(adapterCalls).toBe(1);
+    expect(outcome).toMatchObject({ branchOutcome: { trusted: "succeeded", publicDiscovery: "failed" }, sourceIssues: [{ provider: "anysearch", code: "ANYSEARCH_NOT_CONFIGURED", affectedCount: 1 }, { provider: "greenhouse", code: "SOURCE_CAPABILITY_UNSUPPORTED", affectedCount: 1 }] });
   });
 
   it("在同一 run 调度可信来源和 AnySearch，并仅返回脱敏事实", async () => {

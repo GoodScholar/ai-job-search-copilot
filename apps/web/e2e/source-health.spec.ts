@@ -122,6 +122,12 @@ test("两来源 Fake 运行保留成功岗位、展示局部诊断并可停用�
   await expect(attention).toHaveAttribute("href", `/profile/targets/${targetId}/watchlist#source-health`);
   if (testInfo.project.name === "Desktop Chrome") { await attention.focus(); await expect(attention).toBeFocused(); await page.keyboard.press("Enter"); } else await attention.tap();
   await expect(page).toHaveURL(new RegExp(`/profile/targets/${targetId}/watchlist#source-health$`));
+  await expect(page.getByRole("heading", { name: "来源能力" })).toBeVisible();
+  for (const name of ["健康来源", "受限来源"]) {
+    const capabilities = page.getByRole("article", { name: `${name} 来源能力` });
+    await expect(capabilities).toContainText("契约版本：source-capabilities-v1");
+    await expect(capabilities).toContainText("主动发现、读取详情、持续监控、安全打开原始页面");
+  }
   const healthy = page.getByRole("article", { name: "健康来源 来源诊断" });
   const limited = page.getByRole("article", { name: "受限来源 来源诊断" });
   await expect(healthy).toContainText("状态：健康"); await expectCheckedAt(healthy); await expect(healthy).toContainText("影响范围：无"); await expect(healthy).toContainText("建议动作：无需处理");

@@ -14,6 +14,7 @@
     "./job-targets": "./src/job-targets.ts",
     "./company-watchlists": "./src/company-watchlists.ts",
     "./source-health": "./src/source-health.ts",
+    "./source-capabilities": "./src/source-capabilities.ts",
     "./job-imports": "./src/job-imports.ts",
     "./job-triage": "./src/job-triage.ts",
     "./job-triage-persistence": "./src/job-triage-persistence.ts",

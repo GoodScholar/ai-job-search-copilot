@@ -15,6 +15,7 @@
     "./recommendations": "./src/recommendations.ts",
     "./job-discovery-schedules": "./src/job-discovery-schedules.ts",
     "./job-discovery": "./src/job-discovery.ts",
+    "./source-capabilities": "./src/source-capabilities.ts",
     "./agent-runs": "./src/agent-runs.ts",
     "./agent-inbox": "./src/agent-inbox.ts",
     "./job-targets": "./src/job-targets.ts",

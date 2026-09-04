@@ -8,6 +8,7 @@ import {
   type PublicSourceHealthAgentRunSourceScope,
 } from "@job-copilot/contracts/agent-runs";
 import { GreenhousePublicSourceSchema } from "@job-copilot/contracts/job-discovery-schedules";
+import { declareFormalBetaSourceCapabilities, type SourceCapabilityDeclaration } from "@job-copilot/contracts/source-capabilities";
 import { PublicSourceAccessError, createPublicSourceClient, type PublicSourceClient } from "@job-copilot/source-access";
 import type { SourceHealthAdapterFailure, SourceHealthDiscoveryAdapter, SourceHealthDetailResult, SourceHealthListResult } from "@job-copilot/domain/agent-runs";
 
@@ -117,6 +118,10 @@ export class GreenhouseSourceHealthAdapter implements SourceHealthDiscoveryAdapt
   constructor(input: { client?: PublicSourceClient } = {}) {
     if (input.client && process.env.APP_ENV !== "test") throw new Error("GREENHOUSE_TEST_CLIENT_DISABLED");
     this.client = input.client ?? createPublicSourceClient({ exactHosts: [GREENHOUSE_API_HOST] });
+  }
+
+  declareCapabilities(input: { sourceId: string }): SourceCapabilityDeclaration {
+    return declareFormalBetaSourceCapabilities({ sourceId: input.sourceId, adapter: this.adapter, adapterVersion: this.adapterVersion });
   }
 
   async listSource(input: { targetSnapshot: TargetSnapshot; source: Source }): Promise<SourceHealthListResult> {

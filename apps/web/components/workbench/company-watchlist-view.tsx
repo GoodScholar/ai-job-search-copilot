@@ -8,6 +8,8 @@ import {
   type CompanyWatchlistOverview,
 } from "@job-copilot/contracts/company-watchlists";
 import { JobSourceHealthOverviewSchema, type JobSourceHealthOverview } from "@job-copilot/contracts/agent-runs";
+import { classifyGreenhousePublicSource } from "@job-copilot/contracts/job-discovery-schedules";
+import { declareFormalBetaSourceCapabilities } from "@job-copilot/contracts/source-capabilities";
 import { useState, type FormEvent } from "react";
 
 type Draft = {
@@ -75,6 +77,12 @@ function validateDraft(draft: Draft, expectedVersion: number): { command?: AddCo
 
 const healthLabels = { healthy: "健康", zero_valid_results: "暂无有效岗位", parser_degraded: "解析异常", rate_limited: "访问受限", hard_failed: "来源不可用", disabled: "已停用", unchecked: "尚未检查" } as const;
 const actionLabels = { none: "无需处理", wait_for_next_run: "等待下次发现", retry_later: "稍后重试", retry_or_disable: "稍后重试或停用来源", reenable_source: "可重新启用来源" } as const;
+const capabilityLabels = {
+  active_discovery: "主动发现",
+  read_details: "读取详情",
+  continuous_monitoring: "持续监控",
+  safe_open_original_page: "安全打开原始页面",
+} as const;
 
 export function CompanyWatchlistView({ initialOverview, initialSourceHealth, initialHealthRefreshFailed = false }: { initialOverview: CompanyWatchlistOverview; initialSourceHealth?: JobSourceHealthOverview; initialHealthRefreshFailed?: boolean }) {
   const [overview, setOverview] = useState(initialOverview);
@@ -87,6 +95,10 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth, ini
   const inactive = overview.target.targetState === "inactive";
   const editingItem = overview.items.find((item) => item.itemId === editingItemId) ?? null;
   const healthRefreshMessage = healthRefreshFailure === "initial" ? initialHealthRefreshMessage : "来源诊断未能更新。请重新加载或刷新页面。";
+  const capabilitySources = sourceHealth?.sources ?? overview.items.flatMap((item) => {
+    const classified = classifyGreenhousePublicSource({ itemId: item.itemId, canonicalCompanyName: item.canonicalCompanyName, careersUrl: item.careersUrl, allowedDomains: item.allowedDomains });
+    return classified.kind === "supported" ? [{ sourceId: classified.source.sourceId, name: item.canonicalCompanyName, watchlistItemId: item.itemId }] : [];
+  });
 
   function updateDraft<Key extends keyof Draft>(key: Key, value: Draft[Key]) {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -228,6 +240,20 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth, ini
         </article>
       </li>)}</ol> : <p className="profile-next-step">尚未登记目标公司。添加第一个公开来源后，它会成为优先级 01。</p>}
     </section>
+    {capabilitySources.length ? <section aria-labelledby="source-capabilities-title" className="company-watchlist-section" id="source-capabilities">
+      <h2 id="source-capabilities-title">来源能力</h2>
+      <p>能力是来源稳定支持边界，不会因本次诊断结果扩大或缩小。</p>
+      <ol className="company-watchlist-list">{capabilitySources.map((source) => {
+        const declaration = declareFormalBetaSourceCapabilities({ sourceId: source.sourceId, adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2" });
+        return <li key={`${source.watchlistItemId}:${source.sourceId}`}>
+          <article aria-label={`${source.name} 来源能力`}>
+            <p>{source.name}</p>
+            <p>契约版本：{declaration.contractVersion}</p>
+            <p>支持动作：{declaration.capabilities.map((capability) => capabilityLabels[capability]).join("、")}</p>
+          </article>
+        </li>;
+      })}</ol>
+    </section> : null}
     {sourceHealth ? <section aria-labelledby="source-health-title" className="company-watchlist-section" id="source-health">
       <h2 id="source-health-title">来源诊断</h2>
       <p>显示当前 Watchlist 来源最近一次受控检查；尚未检查的启用来源不会被视为健康。</p>

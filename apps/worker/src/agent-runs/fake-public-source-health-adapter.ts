@@ -3,6 +3,7 @@ import type {
   PublicSourceHealthAgentRunSourceScope,
 } from "@job-copilot/contracts/agent-runs";
 import { FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER, FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION } from "@job-copilot/contracts/agent-runs";
+import { declareFormalBetaSourceCapabilities, type SourceCapabilityDeclaration } from "@job-copilot/contracts/source-capabilities";
 import type { SourceHealthAdapterFailure, SourceHealthDiscoveryAdapter, SourceHealthDetailResult, SourceHealthListResult } from "@job-copilot/domain/agent-runs";
 import { PUBLIC_SOURCE_HEALTH_SCENARIOS, type PublicSourceHealthScenario } from "@job-copilot/domain/job-discovery-execution-mode";
 
@@ -34,6 +35,10 @@ export class FakePublicSourceHealthAdapter implements SourceHealthDiscoveryAdapt
   readonly adapterVersion = FAKE_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION;
   constructor(private readonly scenarios: Readonly<Record<string, FakePublicSourceHealthScenario>> = {}) {
     if (process.env.APP_ENV !== "test") throw new Error("FAKE_PUBLIC_SOURCE_HEALTH_TEST_ONLY");
+  }
+
+  declareCapabilities(input: { sourceId: string }): SourceCapabilityDeclaration {
+    return declareFormalBetaSourceCapabilities({ sourceId: input.sourceId, adapter: this.adapter, adapterVersion: this.adapterVersion });
   }
 
   async listSource(input: { targetSnapshot: TargetSnapshot; source: Source }): Promise<SourceHealthListResult> {

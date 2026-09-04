@@ -26,6 +26,7 @@ import { normalizeAgentRunSourceScope } from "./agent-run-source-scope";
 import { applyTransactionDeadline } from "./transaction-deadline";
 import { deriveSourceHealthTerminal, type SourceHealthTerminal } from "./source-health-terminal";
 import type { SourceHealthDiscoveryAdapter, SourceHealthDiscoveryAdapterResolver } from "./source-health-discovery-adapter";
+import type { SourceCapabilityAdapter } from "./source-capabilities";
 import {
   type LayeredPublicJobDiscoveryWorkflow,
   type LayeredPublicJobDiscoveryWorkflowResolver,
@@ -48,7 +49,12 @@ export type PublicDiscoveryBatchSearchInput = {
   beforeList?: PublicDiscoveryListHook;
 };
 
-export interface JobDiscoveryAdapter {
+/**
+ * 旧 v1–v3 恢复路径保留既有执行语义，但仍必须提供同一能力声明。
+ * 正式来源动作的能力门位于 v4 `LayeredTrustedSourceAdapter` 运行时，
+ * 不在冻结路径中补写会改变历史恢复结果的授权步骤。
+ */
+export interface JobDiscoveryAdapter extends SourceCapabilityAdapter {
   search(input: import("@job-copilot/contracts/agent-runs").DiscoverySearchInput): Promise<import("@job-copilot/contracts/agent-runs").DiscoverySearchResult>;
   searchBatch(input: import("@job-copilot/contracts/agent-runs").DiscoveryBatchSearchInput | PublicDiscoveryBatchSearchInput): Promise<import("@job-copilot/contracts/agent-runs").DiscoveryBatchSearchResult | import("@job-copilot/contracts/agent-runs").PublicDiscoveryBatchSearchResult>;
   getDetail(input: import("@job-copilot/contracts/agent-runs").DiscoveryDetailInput): Promise<import("@job-copilot/contracts/agent-runs").DiscoveryDetailResult>;
