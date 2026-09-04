@@ -1214,6 +1214,12 @@ describe("database migrations", () => {
       await upgradeDatabase.execute(sql`insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, kind, status, reason_code, budget_dimension) values ('bf553314-3619-49a7-8c20-e2ba7677e5fc', ${userId}, ${runId}, 1, 'run_failed', 'open', 'AGENT_RUN_ADAPTER_FAILED', null)`);
       await migrate(upgradeDatabase, { migrationsFolder: migrationSource });
       await expect(upgradeDatabase.execute(sql`select id from agent_inbox_items where id = 'bf553314-3619-49a7-8c20-e2ba7677e5fc'`)).resolves.toHaveLength(1);
+      await upgradeDatabase.execute(sql`
+        insert into job_source_health_checks (
+          user_id, run_id, target_id, watchlist_item_id, source_id, status, reason_codes, impact_scope, impact_affected_count,
+          observed_posting_count, selected_detail_count, valid_detail_count, request_attempt_count, checked_at
+        ) values (${userId}, ${runId}, ${targetId}, '23b7f4b6-1cce-4de4-bc44-0c2953af37f4', 'greenhouse:legacy-source', 'hard_failed', '["SOURCE_UNREACHABLE"]'::jsonb, 'entire_source', null, 0, 0, 0, 1, now())
+      `);
       await upgradeDatabase.execute(sql`insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, watchlist_item_id, kind, status, reason_code, budget_dimension) values ('d52b17a4-3222-4f4a-9923-a0603b85e31a', ${userId}, ${runId}, 2, '23b7f4b6-1cce-4de4-bc44-0c2953af37f4', 'source_attention', 'unread', 'SOURCE_HEALTH_ATTENTION', null)`);
     } finally {
       await upgradeDatabase.$client.end();
@@ -1313,7 +1319,7 @@ describe("database migrations", () => {
         user_id, run_id, target_id, watchlist_item_id, source_id, status, reason_codes, impact_scope, impact_affected_count,
         observed_posting_count, selected_detail_count, valid_detail_count, request_attempt_count, checked_at
       ) values (
-        ${userId}, ${runId}, ${otherTargetId}, '3f906934-fac2-4db9-93c4-09ccdec40ee6', 'greenhouse:other',
+        ${userId}, ${runId}, ${otherTargetId}, '9d19c3c2-e916-4e8b-acdc-020511312727', 'greenhouse:other',
         'hard_failed', '["SOURCE_UNREACHABLE"]'::jsonb, 'entire_source', null, 0, 0, 0, 3, now()
       )
     `)).rejects.toMatchObject({ cause: { code: "23503" } });
@@ -1321,34 +1327,34 @@ describe("database migrations", () => {
       update job_source_health_checks set status = 'healthy' where id = ${checkId}
     `)).rejects.toMatchObject({ cause: { code: "55000" } });
     for (const invalid of [
-      { sourceId: "greenhouse:zero-invalid", status: "zero_valid_results", reasonCodes: "[]", impactScope: "none", impactAffectedCount: null, observed: 1, selected: 1, valid: 1, attempts: 1 },
-      { sourceId: "greenhouse:rate-invalid", status: "rate_limited", reasonCodes: '["SOURCE_TIMEOUT"]', impactScope: "entire_source", impactAffectedCount: null, observed: 1, selected: 1, valid: 1, attempts: 1 },
-      { sourceId: "greenhouse:count-invalid", status: "parser_degraded", reasonCodes: '["SOURCE_DETAIL_FIELDS_MISSING"]', impactScope: "job_details", impactAffectedCount: 1, observed: 1, selected: 1, valid: 2, attempts: 1 },
-      { sourceId: "https://boards.greenhouse.io/unsafe?token=secret", status: "hard_failed", reasonCodes: '["SOURCE_UNREACHABLE"]', impactScope: "entire_source", impactAffectedCount: null, observed: 0, selected: 0, valid: 0, attempts: 1 },
-      { sourceId: "greenhouse:impact-invalid", status: "healthy", reasonCodes: "[]", impactScope: "none", impactAffectedCount: 0, observed: 1, selected: 1, valid: 1, attempts: 0 },
+      { sourceId: "greenhouse:zero-invalid", watchlistItemId: "c06a313a-b38a-4405-bdaf-5644eae77ca1", status: "zero_valid_results", reasonCodes: "[]", impactScope: "none", impactAffectedCount: null, observed: 1, selected: 1, valid: 1, attempts: 1 },
+      { sourceId: "greenhouse:rate-invalid", watchlistItemId: "20990968-87a3-4bb2-a027-8a4ddfbb0f3d", status: "rate_limited", reasonCodes: '["SOURCE_TIMEOUT"]', impactScope: "entire_source", impactAffectedCount: null, observed: 1, selected: 1, valid: 1, attempts: 1 },
+      { sourceId: "greenhouse:count-invalid", watchlistItemId: "81d48448-5663-4af0-8707-a50d8225922c", status: "parser_degraded", reasonCodes: '["SOURCE_DETAIL_FIELDS_MISSING"]', impactScope: "job_details", impactAffectedCount: 1, observed: 1, selected: 1, valid: 2, attempts: 1 },
+      { sourceId: "https://boards.greenhouse.io/unsafe?token=secret", watchlistItemId: "4b1b0bc9-6d28-46a1-aa94-155539442c04", status: "hard_failed", reasonCodes: '["SOURCE_UNREACHABLE"]', impactScope: "entire_source", impactAffectedCount: null, observed: 0, selected: 0, valid: 0, attempts: 1 },
+      { sourceId: "greenhouse:impact-invalid", watchlistItemId: "f2c85b70-ddc9-4ac5-9320-c148598c756a", status: "healthy", reasonCodes: "[]", impactScope: "none", impactAffectedCount: 0, observed: 1, selected: 1, valid: 1, attempts: 0 },
     ]) {
       await expect(migratedDatabase.execute(sql`
         insert into job_source_health_checks (
           user_id, run_id, target_id, watchlist_item_id, source_id, status, reason_codes, impact_scope, impact_affected_count,
           observed_posting_count, selected_detail_count, valid_detail_count, request_attempt_count, checked_at
         ) values (
-          ${userId}, ${runId}, ${targetId}, '3f906934-fac2-4db9-93c4-09ccdec40ee6', ${invalid.sourceId}, ${invalid.status}, ${invalid.reasonCodes}::jsonb,
+          ${userId}, ${runId}, ${targetId}, ${invalid.watchlistItemId}, ${invalid.sourceId}, ${invalid.status}, ${invalid.reasonCodes}::jsonb,
           ${invalid.impactScope}, ${invalid.impactAffectedCount}, ${invalid.observed}, ${invalid.selected}, ${invalid.valid}, ${invalid.attempts}, now()
         )
       `)).rejects.toMatchObject({ cause: { code: "23514" } });
     }
     for (const invalid of [
-      { sourceId: "greenhouse:parser-mixed", status: "parser_degraded", reasonCodes: '["SOURCE_DETAIL_FIELDS_MISSING", "SOURCE_RATE_LIMITED"]', impactScope: "job_details", impactAffectedCount: 1 },
-      { sourceId: "greenhouse:hard-mixed", status: "hard_failed", reasonCodes: '["SOURCE_UNREACHABLE", "SOURCE_DETAIL_URL_INVALID"]', impactScope: "entire_source", impactAffectedCount: null },
-      { sourceId: "greenhouse:parser-no-impact", status: "parser_degraded", reasonCodes: '["SOURCE_DETAIL_FIELDS_MISSING"]', impactScope: "none", impactAffectedCount: null },
-      { sourceId: "greenhouse:hard-no-impact", status: "hard_failed", reasonCodes: '["SOURCE_UNREACHABLE"]', impactScope: "none", impactAffectedCount: null },
+      { sourceId: "greenhouse:parser-mixed", watchlistItemId: "11a6d6aa-85fb-45d2-8c31-457ce7b00837", status: "parser_degraded", reasonCodes: '["SOURCE_DETAIL_FIELDS_MISSING", "SOURCE_RATE_LIMITED"]', impactScope: "job_details", impactAffectedCount: 1 },
+      { sourceId: "greenhouse:hard-mixed", watchlistItemId: "8f143c81-4f7e-49f0-8d3c-27dcceafac53", status: "hard_failed", reasonCodes: '["SOURCE_UNREACHABLE", "SOURCE_DETAIL_URL_INVALID"]', impactScope: "entire_source", impactAffectedCount: null },
+      { sourceId: "greenhouse:parser-no-impact", watchlistItemId: "7b1ed12b-30b5-4b3e-8c43-3b36084552d3", status: "parser_degraded", reasonCodes: '["SOURCE_DETAIL_FIELDS_MISSING"]', impactScope: "none", impactAffectedCount: null },
+      { sourceId: "greenhouse:hard-no-impact", watchlistItemId: "363990b0-1f43-4af7-8632-a14103e5f7b7", status: "hard_failed", reasonCodes: '["SOURCE_UNREACHABLE"]', impactScope: "none", impactAffectedCount: null },
     ]) {
       await expect(migratedDatabase.execute(sql`
         insert into job_source_health_checks (
           user_id, run_id, target_id, watchlist_item_id, source_id, status, reason_codes, impact_scope, impact_affected_count,
           observed_posting_count, selected_detail_count, valid_detail_count, request_attempt_count, checked_at
         ) values (
-          ${userId}, ${runId}, ${targetId}, '3f906934-fac2-4db9-93c4-09ccdec40ee6', ${invalid.sourceId}, ${invalid.status}, ${invalid.reasonCodes}::jsonb,
+          ${userId}, ${runId}, ${targetId}, ${invalid.watchlistItemId}, ${invalid.sourceId}, ${invalid.status}, ${invalid.reasonCodes}::jsonb,
           ${invalid.impactScope}, ${invalid.impactAffectedCount}, 1, 1, 0, 1, now()
         )
       `)).rejects.toMatchObject({ cause: { code: "23514" } });
@@ -1383,7 +1389,8 @@ describe("database migrations", () => {
     expect(await listConstraintNames(migratedDatabase)).toEqual(expect.arrayContaining([
       "agent_inbox_items_lifecycle_check", "agent_inbox_items_reference_combination_check",
       "agent_inbox_items_owner_candidate_fact_fk", "agent_inbox_items_owner_recommendation_list_fk",
-      "agent_inbox_items_owner_calibration_proposal_fk",
+      "agent_inbox_items_owner_calibration_proposal_fk", "agent_inbox_items_owner_source_health_check_fk",
+      "job_source_health_checks_user_run_watchlist_unique",
     ]));
 
     const indexes = await migratedDatabase.execute(sql`
@@ -1404,7 +1411,6 @@ describe("database migrations", () => {
       insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, kind, status, reason_code, budget_dimension)
       values ('8b5db874-35a3-4ab8-a30c-7047316df176', ${userId}, ${runId}, 1, 'candidate_fact', 'unread', 'CANDIDATE_FACT_PENDING', null)
     `)).rejects.toMatchObject({ cause: { code: "23514" } });
-
     const upgradeContainer = await new PostgreSqlContainer("postgres:17-alpine").start();
     const upgradeDatabase = createDatabase(upgradeContainer.getConnectionUri());
     const migrationsFolder = await mkdtemp(join(tmpdir(), "job-copilot-0043-"));
@@ -1419,13 +1425,31 @@ describe("database migrations", () => {
       await upgradeDatabase.execute(sql`insert into job_accounts (id) values (${userId})`);
       await upgradeDatabase.execute(sql`insert into job_targets (id, user_id, version, priority, state) values (${targetId}, ${userId}, 1, 'primary', 'active')`);
       await upgradeDatabase.execute(sql`insert into agent_runs (id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot, workflow_version, rule_version, adapter, adapter_version, output_schema_version, tool_allowlist, status, current_step) values (${runId}, ${userId}, ${targetId}, 'abe08804-646e-47a4-b168-38eb61bfaf3a', 1, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 'job-discovery-workflow-v3', 'job-discovery-source-health-rules-v1', 'greenhouse', 'greenhouse-job-board-v2', 'job-discovery-result-v3', '[]'::jsonb, 'queued', 'queued')`);
-      await upgradeDatabase.execute(sql`insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, kind, status, reason_code, budget_dimension) values ('18333bf2-5d0d-4659-b056-06028b571d70', ${userId}, ${runId}, 1, 'run_failed', 'open', 'AGENT_RUN_ADAPTER_FAILED', null), ('78a7e5ef-9722-44cc-bbf2-c3139b830c9f', ${userId}, ${runId}, 2, 'budget_exhausted', 'open', 'AGENT_RUN_BUDGET_EXCEEDED', 'tokens')`);
+      await upgradeDatabase.execute(sql`
+        insert into job_source_health_checks (
+          id, user_id, run_id, target_id, watchlist_item_id, source_id, status, reason_codes, impact_scope, impact_affected_count,
+          observed_posting_count, selected_detail_count, valid_detail_count, request_attempt_count, checked_at
+        ) values
+          ('0e78c071-9595-4417-b4fb-6562334e065d', ${userId}, ${runId}, ${targetId}, '0ce8c21d-d758-4cb3-b99f-f9cbd66bd58f', 'greenhouse:legacy-one', 'hard_failed', '["SOURCE_UNREACHABLE"]'::jsonb, 'entire_source', null, 0, 0, 0, 1, '2026-01-01T00:00:00.000Z'),
+          ('7eeaf5fc-31cb-4dbe-8dc6-4dcbb8fd2a15', ${userId}, ${runId}, ${targetId}, 'bc5e1703-9eb6-4620-ae8a-3433bbbaed80', 'greenhouse:legacy-two', 'hard_failed', '["SOURCE_UNREACHABLE"]'::jsonb, 'entire_source', null, 0, 0, 0, 1, '2026-01-02T00:00:00.000Z')
+      `);
+      await upgradeDatabase.execute(sql`
+        insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, kind, status, reason_code, budget_dimension, created_at, resolved_at) values
+          ('18333bf2-5d0d-4659-b056-06028b571d70', ${userId}, ${runId}, 1, 'run_failed', 'open', 'AGENT_RUN_ADAPTER_FAILED', null, '2026-01-03T00:00:00.000Z', null),
+          ('78a7e5ef-9722-44cc-bbf2-c3139b830c9f', ${userId}, ${runId}, 2, 'budget_exhausted', 'open', 'AGENT_RUN_BUDGET_EXCEEDED', 'tokens', '2026-01-04T00:00:00.000Z', null),
+          ('2050c071-9595-4417-b4fb-6562334e065d', ${userId}, ${runId}, 3, 'source_attention', 'open', 'SOURCE_HEALTH_ATTENTION', null, '2026-01-01T00:00:00.000Z', null),
+          ('3050c071-9595-4417-b4fb-6562334e065d', ${userId}, ${runId}, 4, 'source_attention', 'resolved', 'SOURCE_HEALTH_ATTENTION', null, '2026-01-02T00:00:00.000Z', '2026-01-02T00:01:00.000Z'),
+          ('4050c071-9595-4417-b4fb-6562334e065d', ${userId}, ${runId}, 5, 'source_attention', 'open', 'SOURCE_HEALTH_ATTENTION', null, '2026-01-03T00:00:00.000Z', null)
+      `);
       await upgradeDatabase.execute(sql`update agent_inbox_items set status = 'resolved', resolved_at = now() where id = '78a7e5ef-9722-44cc-bbf2-c3139b830c9f'`);
       await migrate(upgradeDatabase, { migrationsFolder: migrationSource });
-      const upgraded = await upgradeDatabase.execute(sql`select id, status, read_at is null as read_at_is_null, resolved_at is null as resolved_at_is_null from agent_inbox_items order by id`) as unknown as Array<{ id: string; status: string; read_at_is_null: boolean; resolved_at_is_null: boolean }>;
+      const upgraded = await upgradeDatabase.execute(sql`select id, kind, reason_code, status, watchlist_item_id, read_at is null as read_at_is_null, resolved_at is null as resolved_at_is_null from agent_inbox_items order by id`) as unknown as Array<{ id: string; kind: string; reason_code: string; status: string; watchlist_item_id: string | null; read_at_is_null: boolean; resolved_at_is_null: boolean }>;
       expect(upgraded).toEqual([
-        { id: "18333bf2-5d0d-4659-b056-06028b571d70", status: "unread", read_at_is_null: true, resolved_at_is_null: true },
-        { id: "78a7e5ef-9722-44cc-bbf2-c3139b830c9f", status: "resolved", read_at_is_null: true, resolved_at_is_null: false },
+        { id: "18333bf2-5d0d-4659-b056-06028b571d70", kind: "run_failed", reason_code: "AGENT_RUN_ADAPTER_FAILED", status: "unread", watchlist_item_id: null, read_at_is_null: true, resolved_at_is_null: true },
+        { id: "2050c071-9595-4417-b4fb-6562334e065d", kind: "source_attention", reason_code: "SOURCE_HEALTH_ATTENTION", status: "unread", watchlist_item_id: "0ce8c21d-d758-4cb3-b99f-f9cbd66bd58f", read_at_is_null: true, resolved_at_is_null: true },
+        { id: "3050c071-9595-4417-b4fb-6562334e065d", kind: "source_attention", reason_code: "SOURCE_HEALTH_ATTENTION", status: "resolved", watchlist_item_id: "bc5e1703-9eb6-4620-ae8a-3433bbbaed80", read_at_is_null: true, resolved_at_is_null: false },
+        { id: "4050c071-9595-4417-b4fb-6562334e065d", kind: "discovery_attention", reason_code: "DISCOVERY_ATTENTION", status: "unread", watchlist_item_id: null, read_at_is_null: true, resolved_at_is_null: true },
+        { id: "78a7e5ef-9722-44cc-bbf2-c3139b830c9f", kind: "budget_exhausted", reason_code: "AGENT_RUN_BUDGET_EXCEEDED", status: "resolved", watchlist_item_id: null, read_at_is_null: true, resolved_at_is_null: false },
       ]);
     } finally {
       await upgradeDatabase.$client.end();
@@ -1433,4 +1457,30 @@ describe("database migrations", () => {
       await rm(migrationsFolder, { recursive: true, force: true });
     }
   }, 60_000);
+
+  it("rejects source Inbox references without a same-owner source-health check", async () => {
+    const userId = "399ff7d6-3f6c-4d38-93b6-f97cb7bf4b61";
+    const targetId = "7e57ea51-417a-456e-ae48-6053d5579a61";
+    const runId = "4cdd9f30-c500-4591-8d80-2dc8d86038f4";
+    const otherUserId = "82597e17-ca9d-4620-a0d0-01f4b3f1e071";
+    const otherTargetId = "e80e6ba3-266b-442d-b53c-d3a4f08e9a4c";
+    const otherRunId = "fb6e5c63-7727-4924-bb69-1f3610d104d2";
+    const foreignWatchlistItemId = "214adcf4-b646-4173-9279-ed5d67a1a313";
+    await migratedDatabase.execute(sql`insert into job_accounts (id) values (${userId}), (${otherUserId})`);
+    await migratedDatabase.execute(sql`insert into job_targets (id, user_id, version, priority, state) values (${targetId}, ${userId}, 1, 'primary', 'active'), (${otherTargetId}, ${otherUserId}, 1, 'primary', 'active')`);
+    await migratedDatabase.execute(sql`
+      insert into agent_runs (id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot, workflow_version, rule_version, adapter, adapter_version, output_schema_version, tool_allowlist, status, current_step) values
+        (${runId}, ${userId}, ${targetId}, 'ce95a5c6-62b4-44af-8161-aa1cfe2ec0d2', 1, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 'job-discovery-workflow-v3', 'job-discovery-source-health-rules-v1', 'greenhouse', 'greenhouse-job-board-v2', 'job-discovery-result-v3', '[]'::jsonb, 'queued', 'queued'),
+        (${otherRunId}, ${otherUserId}, ${otherTargetId}, 'a1051b0e-2a63-486b-9ab5-59f11c42613e', 1, '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 'job-discovery-workflow-v3', 'job-discovery-source-health-rules-v1', 'greenhouse', 'greenhouse-job-board-v2', 'job-discovery-result-v3', '[]'::jsonb, 'queued', 'queued')
+    `);
+    await migratedDatabase.execute(sql`insert into job_source_health_checks (user_id, run_id, target_id, watchlist_item_id, source_id, status, reason_codes, impact_scope, impact_affected_count, observed_posting_count, selected_detail_count, valid_detail_count, request_attempt_count, checked_at) values (${otherUserId}, ${otherRunId}, ${otherTargetId}, ${foreignWatchlistItemId}, 'greenhouse:foreign-owner', 'hard_failed', '["SOURCE_UNREACHABLE"]'::jsonb, 'entire_source', null, 0, 0, 0, 1, now())`);
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, watchlist_item_id, kind, status, reason_code, budget_dimension)
+      values ('8816d5d8-3e18-458b-bd09-6a2273d60fd4', ${userId}, ${runId}, 1, '2fcba8f0-a95f-40ca-a9e8-8395a26e5619', 'source_attention', 'unread', 'SOURCE_HEALTH_ATTENTION', null)
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, watchlist_item_id, kind, status, reason_code, budget_dimension)
+      values ('ba514f51-7a0a-4fdd-a1b0-a0ef534711fc', ${userId}, ${runId}, 2, ${foreignWatchlistItemId}, 'source_attention', 'unread', 'SOURCE_HEALTH_ATTENTION', null)
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
+  });
 });

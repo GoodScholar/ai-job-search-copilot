@@ -932,6 +932,7 @@ export const agentInboxItems = pgTable("agent_inbox_items", {
   foreignKey({ columns: [table.userId, table.candidateFactId], foreignColumns: [candidateFacts.userId, candidateFacts.id], name: "agent_inbox_items_owner_candidate_fact_fk" }),
   foreignKey({ columns: [table.userId, table.recommendationListId], foreignColumns: [recommendationLists.userId, recommendationLists.id], name: "agent_inbox_items_owner_recommendation_list_fk" }),
   foreignKey({ columns: [table.userId, table.calibrationProposalId], foreignColumns: [calibrationProposals.userId, calibrationProposals.id], name: "agent_inbox_items_owner_calibration_proposal_fk" }),
+  foreignKey({ columns: [table.userId, table.runId, table.watchlistItemId], foreignColumns: [jobSourceHealthChecks.userId, jobSourceHealthChecks.runId, jobSourceHealthChecks.watchlistItemId], name: "agent_inbox_items_owner_source_health_check_fk" }),
   check("agent_inbox_items_trigger_event_positive", sql`${table.triggerEventSequence} >= 1`),
   check("agent_inbox_items_kind_check", sql`${table.kind} in ('run_failed', 'budget_exhausted', 'decision_required', 'source_attention', 'discovery_attention', 'candidate_fact', 'recommendation_list', 'calibration_proposal')`),
   check("agent_inbox_items_status_check", sql`${table.status} in ('unread', 'read', 'resolved')`),
@@ -1080,6 +1081,7 @@ export const jobSourceHealthChecks = pgTable("job_source_health_checks", {
 }, (table) => [
   unique("job_source_health_checks_run_source_unique").on(table.runId, table.sourceId),
   unique("job_source_health_checks_user_id_id_unique").on(table.userId, table.id),
+  unique("job_source_health_checks_user_run_watchlist_unique").on(table.userId, table.runId, table.watchlistItemId),
   index("job_source_health_checks_latest_lookup_idx").on(table.userId, table.targetId, table.watchlistItemId, table.sourceId, table.checkedAt, table.id),
   foreignKey({
     columns: [table.userId, table.runId, table.targetId],
