@@ -35,10 +35,9 @@ function subscribeToOnlineState(callback: () => void) {
 
 function readOnlineState() { return navigator.onLine; }
 function readServerOnlineState() { return true; }
-function inboxKey(items: AgentInboxItem[]) { return JSON.stringify(items); }
 
 export function WorkbenchHomeView({ home, targets, initialRun, inbox, unavailableSections = [] }: WorkbenchHomeViewProps) {
-  return <WorkbenchHomeContent key={inboxKey(inbox.items)} home={home} inbox={inbox} initialRun={initialRun} targets={targets} unavailableSections={unavailableSections} />;
+  return <WorkbenchHomeContent home={home} inbox={inbox} initialRun={initialRun} targets={targets} unavailableSections={unavailableSections} />;
 }
 
 function WorkbenchHomeContent({ home, targets, initialRun, inbox, unavailableSections = [] }: WorkbenchHomeViewProps) {
@@ -48,17 +47,16 @@ function WorkbenchHomeContent({ home, targets, initialRun, inbox, unavailableSec
   const inboxItems = inboxRefresh?.source === inbox ? inboxRefresh.items : inbox.items;
   const online = useSyncExternalStore(subscribeToOnlineState, readOnlineState, readServerOnlineState);
   const [refreshRequestedFor, setRefreshRequestedFor] = useState<typeof inbox | null>(null);
-  const [summaryAdjustment, setSummaryAdjustment] = useState({ source: home, pendingDecisions: 0, pendingFacts: 0 });
+  const [summaryAdjustment, setSummaryAdjustment] = useState({ source: home, pendingDecisions: 0 });
   const stale = refreshRequestedFor === inbox;
   const summaryUnavailable = unavailableSections.includes("summary") || home === null;
   const inboxUnavailable = unavailableSections.includes("inbox");
   const targetsUnavailable = unavailableSections.includes("targets") || targets === null;
   const runUnavailable = unavailableSections.includes("run");
-  const adjustment = summaryAdjustment.source === home ? summaryAdjustment : { pendingDecisions: 0, pendingFacts: 0 };
+  const adjustment = summaryAdjustment.source === home ? summaryAdjustment : { pendingDecisions: 0 };
   const summary = home ? {
     ...home.summary,
     pendingDecisions: Math.max(0, home.summary.pendingDecisions - adjustment.pendingDecisions),
-    pendingFacts: Math.max(0, home.summary.pendingFacts - adjustment.pendingFacts),
   } : null;
   const pendingDecisions = summary?.pendingDecisions ?? 0;
   const hasPendingFacts = (summary?.pendingFacts ?? 0) > 0;
@@ -92,10 +90,10 @@ function WorkbenchHomeContent({ home, targets, initialRun, inbox, unavailableSec
         <p className="workbench-summary-note">投递记录功能尚未启用，当前不会保存或显示投递数据。</p>
       </>}
 
-      {inboxUnavailable ? <section aria-labelledby="agent-inbox-unavailable-title" className="workbench-ledger"><h2 id="agent-inbox-unavailable-title">待决定事项暂时无法读取</h2><p>请稍后刷新重试。</p></section> : <AgentInboxPanel key={inboxKey(inboxItems)} items={inboxItems} onResolved={(item) => {
+      {inboxUnavailable ? <section aria-labelledby="agent-inbox-unavailable-title" className="workbench-ledger"><h2 id="agent-inbox-unavailable-title">待决定事项暂时无法读取</h2><p>请稍后刷新重试。</p></section> : <AgentInboxPanel items={inboxItems} onResolved={() => {
         setSummaryAdjustment((current) => current.source === home
-          ? { ...current, pendingDecisions: current.pendingDecisions + 1, pendingFacts: current.pendingFacts + (item.kind === "candidate_fact" ? 1 : 0) }
-          : { source: home, pendingDecisions: 1, pendingFacts: item.kind === "candidate_fact" ? 1 : 0 });
+          ? { ...current, pendingDecisions: current.pendingDecisions + 1 }
+          : { source: home, pendingDecisions: 1 });
         router.refresh();
       }} onRunUpdated={() => setRunRefreshVersion((version) => version + 1)} />}
 

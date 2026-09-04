@@ -42,7 +42,7 @@ it("把需要决定的事项放在首页标题，并完整呈现真实摘要和�
   expect(screen.getByText("投递记录功能尚未启用，当前不会保存或显示投递数据。")).toBeVisible();
 });
 
-it("Inbox 解决后立即同步标题与摘要，并由新的 home props 清除乐观调整", async () => {
+it("候选事实 Inbox dismiss 只减少待决定事项，权威刷新后仍保留待确认事实", async () => {
   const user = userEvent.setup();
   const pendingHome = { ...home, summary: { ...home.summary, pendingFacts: 1, pendingDecisions: 1 } };
   const resolvedItem: AgentInboxItem = {
@@ -57,15 +57,16 @@ it("Inbox 解决后立即同步标题与摘要，并由新的 home props 清除�
   await user.click(screen.getByRole("button", { name: "标记已处理：确认候选事实" }));
   await waitFor(() => expect(screen.getByRole("heading", { name: "今天暂无待决定事项" })).toBeVisible());
   const summary = screen.getByLabelText("当前求职记录摘要");
-  expect(summary).toHaveTextContent("待确认事实0");
+  expect(summary).toHaveTextContent("待确认事实1");
   expect(summary).toHaveTextContent("待决定事项0");
+  expect(screen.getByRole("heading", { name: "职业资料等待确认" })).toBeVisible();
   expect(refresh).toHaveBeenCalled();
 
-  view.rerender(<WorkbenchHomeView home={{ ...pendingHome, summary: { ...pendingHome.summary } }} inbox={{ items: [] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
-  expect(screen.getByRole("heading", { name: "先处理需要你决定的事项" })).toBeVisible();
+  view.rerender(<WorkbenchHomeView home={{ ...pendingHome, summary: { ...pendingHome.summary, pendingDecisions: 0 } }} inbox={{ items: [] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
+  expect(screen.getByRole("heading", { name: "今天暂无待决定事项" })).toBeVisible();
   await waitFor(() => {
     expect(screen.getByLabelText("当前求职记录摘要")).toHaveTextContent("待确认事实1");
-    expect(screen.getByLabelText("当前求职记录摘要")).toHaveTextContent("待决定事项1");
+    expect(screen.getByLabelText("当前求职记录摘要")).toHaveTextContent("待决定事项0");
   });
 });
 
@@ -124,4 +125,19 @@ it("收到刷新后的服务端 props 后替换 Inbox 并结束陈旧提示", as
   expect(screen.getByRole("article", { name: "刷新后的事项" })).toBeVisible();
   expect(screen.queryByText("网络已恢复，正在等待最新数据。")).not.toBeInTheDocument();
   await user.keyboard("{Tab}");
+});
+
+it("刷新后的 Inbox props 到达时保留 mark-read 自动恢复的稳定焦点", async () => {
+  const user = userEvent.setup();
+  const unreadItem: AgentInboxItem = { itemId: "8a1b0207-b852-4f86-8b1f-3b9615655ed8", runId: null, kind: "candidate_fact", status: "unread", reasonCode: "CANDIDATE_FACT_PENDING", budgetDimension: null, title: "刷新后仍可查看的事项", message: "新读取的数据。", basis: "新依据。", impact: "新影响。", suggestedAction: "新建议。", target: { type: "candidate_fact", candidateFactId: "9a1b0207-b852-4f86-8b1f-3b9615655ed8", href: "/profile#candidate-facts" }, availableActions: ["mark_read", "dismiss"], createdAt: "2026-09-04T08:00:00.000Z", readAt: null, resolvedAt: null };
+  const readItem: AgentInboxItem = { ...unreadItem, status: "read", availableActions: ["dismiss"], readAt: "2026-09-04T08:00:01.000Z" };
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(Response.json({ applied: true, item: readItem, run: null })));
+  const view = render(<WorkbenchHomeView home={home} inbox={{ items: [unreadItem] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
+
+  await user.click(screen.getByRole("button", { name: "标记为已读：刷新后仍可查看的事项" }));
+  const target = screen.getByRole("link", { name: "查看相关记录" });
+  await waitFor(() => expect(document.activeElement).toBe(target));
+
+  view.rerender(<WorkbenchHomeView home={{ ...home, summary: { ...home.summary } }} inbox={{ items: [readItem] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
+  expect(document.activeElement).toBe(target);
 });

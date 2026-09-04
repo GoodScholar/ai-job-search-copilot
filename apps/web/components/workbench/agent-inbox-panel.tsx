@@ -7,6 +7,7 @@ import { useRef, useState } from "react";
 
 type InboxFilter = "pending" | "unread" | "read" | "resolved";
 type InboxCache = Partial<Record<InboxFilter, AgentInboxItem[]>>;
+type InboxCacheState = { source: AgentInboxItem[]; cache: InboxCache };
 const filters: { value: InboxFilter; label: string }[] = [
   { value: "pending", label: "待处理" }, { value: "unread", label: "未读" }, { value: "read", label: "已读" }, { value: "resolved", label: "已处理" },
 ];
@@ -34,7 +35,7 @@ export function AgentInboxPanel({ items, onResolved, onRunUpdated }: {
   onRunUpdated?: (run: AgentRunControlSnapshot) => void;
 }) {
   const [filter, setFilter] = useState<InboxFilter>("pending");
-  const [cache, setCache] = useState<InboxCache>({ pending: items });
+  const [cacheState, setCacheState] = useState<InboxCacheState>({ source: items, cache: { pending: items } });
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState<string | null>(null);
   const [loadingFilter, setLoadingFilter] = useState<InboxFilter | null>(null);
@@ -43,7 +44,15 @@ export function AgentInboxPanel({ items, onResolved, onRunUpdated }: {
   const requestVersion = useRef(0);
   const filterButtons = useRef<Partial<Record<InboxFilter, HTMLButtonElement | null>>>({});
   const itemTargets = useRef<Record<string, HTMLAnchorElement | null>>({});
+  const cache = cacheState.source === items ? cacheState.cache : { pending: items };
   const visibleItems = cache[filter] ?? [];
+
+  function updateCache(update: (current: InboxCache) => InboxCache) {
+    setCacheState((current) => {
+      const authoritativeCache = current.source === items ? current.cache : { pending: items };
+      return { source: items, cache: update(authoritativeCache) };
+    });
+  }
 
   async function changeFilter(next: InboxFilter, retry = false) {
     const version = ++requestVersion.current;
@@ -58,7 +67,7 @@ export function AgentInboxPanel({ items, onResolved, onRunUpdated }: {
       if (version === requestVersion.current && nextItems === false) setFailedFilter(next);
       return;
     }
-    setCache((current) => ({ ...current, [next]: nextItems }));
+    updateCache((current) => ({ ...current, [next]: nextItems }));
   }
 
   async function actOn(item: AgentInboxItem, action: AgentInboxActionCommand["action"]) {
@@ -79,12 +88,12 @@ export function AgentInboxPanel({ items, onResolved, onRunUpdated }: {
       actionIds.current.delete(key);
       if (parsed.data.run) onRunUpdated?.(parsed.data.run);
       if (parsed.data.item.status === "resolved") {
-        setCache((current) => Object.fromEntries(Object.entries(current).map(([status, entries]) => [status, entries?.filter((entry) => entry.itemId !== item.itemId)])) as InboxCache);
+        updateCache((current) => Object.fromEntries(Object.entries(current).map(([status, entries]) => [status, entries?.filter((entry) => entry.itemId !== item.itemId)])) as InboxCache);
         onResolved(item);
         setMessage("事项已处理。");
         queueMicrotask(() => filterButtons.current.pending?.focus());
       } else {
-        setCache((current) => ({ ...current, [filter]: (current[filter] ?? []).map((entry) => entry.itemId === item.itemId ? parsed.data.item : entry) }));
+        updateCache((current) => ({ ...current, [filter]: (current[filter] ?? []).map((entry) => entry.itemId === item.itemId ? parsed.data.item : entry) }));
         setMessage(action === "mark_read" ? "事项已标记为已读。" : "事项状态已更新。");
         if (action === "mark_read") queueMicrotask(() => (itemTargets.current[item.itemId] ?? filterButtons.current.pending)?.focus());
       }

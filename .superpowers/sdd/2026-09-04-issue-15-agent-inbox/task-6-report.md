@@ -93,3 +93,24 @@ git diff --check
 ```
 
 组件/runner 聚焦为 30/30，领域为 6/6；最终 E2E ordinary phase 为 4 passed、2 skipped，受控来源 phase 为 2 passed、4 skipped，三条旅程在 Desktop Chrome 与 Mobile Safari 共 6 条有效执行、0 失败。视觉 CSS 未变更，既有 `.impeccable/review/desktop.png`（1440×1773）和 `.impeccable/review/mobile.png`（1170×6330）再次确认是有效 PNG；沿用此前人工检查结果（内容完整、非黑屏、无 overlay），未运行第二次 detector。
+
+## Fix Round 3：候选事实真值与刷新焦点
+
+### RED 与最小修正
+
+- Fix Round 2 的候选事实 dismiss 乐观调整错误地将 `pendingFacts` 一并扣减；该动作只解决 Inbox 通知，不会创建 `candidate_fact_decision`。组件 RED 直接证明 dismiss 后应为 `pendingFacts=1`、`pendingDecisions=0`，且新权威 `home` props 到达后仍必须保持该真值。现在只乐观扣减 `pendingDecisions`；候选事实数只由 profile 的真实 confirm/correct/reject 后服务端读取决定。
+- 新 Inbox props 到达时，`WorkbenchHomeContent` 和 `AgentInboxPanel` 的 `key` 会令整个内容树重挂载，丢失 mark-read 已恢复到“查看相关记录”的焦点。移除两个重挂载 key，面板内部以新 `items` props 为权威 pending 缓存基准，同时保留稳定的 DOM 节点和当前筛选状态。
+
+### Fix Round 3 GREEN
+
+```bash
+pnpm --filter web exec vitest run components/workbench/workbench-home-view.test.tsx components/workbench/agent-inbox-panel.test.tsx --no-file-parallelism
+pnpm --filter web exec vitest run scripts/e2e-runner.test.ts --no-file-parallelism
+DOCKER_API_VERSION=1.51 pnpm --filter @job-copilot/domain exec vitest run src/workbench-home.integration.test.ts --no-file-parallelism
+DOCKER_API_VERSION=1.51 pnpm --filter web test:e2e -- workbench-inbox.spec.ts --project 'Desktop Chrome' --project 'Mobile Safari'
+pnpm typecheck
+pnpm lint
+git diff --check
+```
+
+UI 为 17/17、runner 为 14/14、领域为 6/6；最终 E2E ordinary phase 为 4 passed、2 skipped，受控来源 phase 为 2 passed、4 skipped，Desktop Chrome 与 Mobile Safari 共 6 条有效旅程、0 失败。没有视觉 CSS 改动；已再次打开 `.impeccable/review/desktop.png` 与 `.impeccable/review/mobile.png` 确认内容完整、非黑屏且无 overlay，故未重生成截图，也没有运行第二次 detector。
