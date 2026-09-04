@@ -39,7 +39,7 @@ const validJob = [
   "# 高级前端工程师",
   "公司：示例科技",
   "地点：上海",
-  "发布时间：2026-08-01",
+  "发布时间：2026-08-01T09:00:00.000Z",
   "## 职位描述",
   "负责求职工作台。",
   "<script>window.jobImportEvidenceMustStayLiteral = true</script>",

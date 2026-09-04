@@ -368,7 +368,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
         <h2 id="agent-run-title">{isDeepMatchRun(run) ? "评估候选岗位匹配" : "发现新的岗位机会"}</h2>
       </div>
       <div className="agent-run-controls">
-        {!canStartRun ? <div><p>{targetsUnavailable ? "求职目标暂时无法读取；以下仅显示已成功读取的本次运行记录。" : "当前没有可用的求职目标；以下仅显示已成功读取的本次运行记录。"}</p></div> : <><label htmlFor="agent-run-target">{isDeepMatchRun(run) ? "用于岗位匹配的求职目标" : "用于发现岗位的求职目标"}</label>
+        {!canStartRun ? <div><p>{targetsUnavailable ? "求职目标暂时无法读取；以下仅显示已成功读取的本次运行记录。" : "当前没有可用的求职目标；以下仅显示已成功读取的本次运行记录。"}</p></div> : <><label htmlFor="agent-run-target">用于发现岗位的求职目标</label>
         <div>
           <select disabled={isStarting || runIsUnfinished} id="agent-run-target" onChange={(event) => {
             setSelectedTargetId(event.target.value);
@@ -377,9 +377,10 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
           }} value={selectedTargetId}>
             {activeTargets.map((target) => <option key={target.targetId} value={target.targetId}>{target.constraints.roleFamily} · {target.priority === "primary" ? "主目标" : "次目标"}</option>)}
           </select>
-          {isDeepMatchRun(run) ? <p className="agent-run-start-note">岗位匹配会在岗位发现完成后自动开始；如需重新评估，请在推荐清单中选择具体岗位。</p> : <Button className="agent-run-start workbench-touch-target" disabled={isStarting || runIsUnfinished} onClick={startRun} size="lg" type="button">
+          <Button className="agent-run-start workbench-touch-target" disabled={isStarting || runIsUnfinished} onClick={startRun} size="lg" type="button">
             {isStarting ? "正在启动…" : runIsUnfinished ? `${runNoun}中…` : "发现岗位"}
-          </Button>}
+          </Button>
+          {isDeepMatchRun(run) ? <p className="agent-run-start-note">岗位匹配会在岗位发现完成后自动开始；如需重新评估，请在推荐清单中选择具体岗位。</p> : null}
         </div></>}
       </div>
       {showDiscoverySchedule && selectedTarget ? <DiscoverySchedulePanel key={selectedTarget.targetId} targetId={selectedTarget.targetId} targetState={selectedTarget.state} /> : null}

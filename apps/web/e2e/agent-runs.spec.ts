@@ -17,14 +17,29 @@ const mobileScenarios: Record<keyof typeof desktopScenarios, string> = {
   retryBudget: "10000000-0000-4000-8000-000000000114",
 };
 const redisPort = Number(process.env.E2E_REDIS_PORT ?? "64790");
+const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
+const testDevAuthSecret = "issue-2-e2e-dev-auth-shared-secret";
 
 function scenarioFor(testInfo: TestInfo, scenario: keyof typeof desktopScenarios): string {
   return (testInfo.project.name === "Mobile Safari" ? mobileScenarios : desktopScenarios)[scenario];
 }
 
-async function signIn(page: Page): Promise<void> {
-  await page.goto("/login?returnTo=%2Fprofile%2Ftargets");
-  await page.getByRole("button", { name: "使用本地体验账户登录" }).click();
+async function signIn(page: Page, testInfo: TestInfo, idempotencyKey: string): Promise<void> {
+  const sessionResponse = await page.request.post(`${apiBaseUrl}/v1/auth/dev/sessions`, {
+    headers: { "x-dev-auth-secret": testDevAuthSecret },
+    data: { subject: `agent-runs-${testInfo.project.name}-${idempotencyKey}` },
+  });
+  expect(sessionResponse.status()).toBe(201);
+  const { sessionToken } = await sessionResponse.json() as { sessionToken: string };
+  await page.context().addCookies([{
+    name: "job_copilot_session",
+    value: sessionToken,
+    domain: "127.0.0.1",
+    path: "/",
+    httpOnly: true,
+    sameSite: "Lax",
+  }]);
+  await page.goto("/profile/targets");
   await expect(page).toHaveURL(/\/profile\/targets$/);
 }
 
@@ -60,7 +75,7 @@ async function installFirstRandomUuid(page: Page, value: string): Promise<void> 
 }
 
 async function startScenario(page: Page, testInfo: TestInfo, idempotencyKey: string): Promise<string> {
-  await signIn(page);
+  await signIn(page, testInfo, idempotencyKey);
   await replaceActiveTarget(page);
   await installFirstRandomUuid(page, idempotencyKey);
   await page.getByRole("link", { name: "AI Job Search Copilot" }).click();
@@ -81,7 +96,7 @@ async function getRun(page: Page, runId: string): Promise<AgentRunDetail> {
 }
 
 async function getOpenInbox(page: Page): Promise<AgentInboxItem[]> {
-  const response = await page.request.get("/api/agent-inbox?status=open");
+  const response = await page.request.get("/api/agent-inbox?status=pending");
   expect(response.status()).toBe(200);
   return ((await response.json()) as { items: AgentInboxItem[] }).items;
 }
@@ -197,7 +212,8 @@ test("重试预算耗尽会安全失败、说明原因并允许在 Inbox 标记�
   test.setTimeout(90_000);
   const runId = await startScenario(page, testInfo, scenarioFor(testInfo, "retryBudget"));
   await expect(runStatus(page)).toContainText("本次发现超过固定处理预算", { timeout: 75_000 });
-  await expect(page.getByRole("heading", { name: "岗位发现预算已用尽" })).toBeVisible();
+  const budgetItem = page.getByRole("article", { name: "岗位发现预算已用尽" });
+  await expect(budgetItem.getByRole("heading", { name: "岗位发现预算已用尽" })).toBeVisible();
   const failed = await getRun(page, runId);
   assertExecutionEvidence(failed);
   expect(failed).toMatchObject({
@@ -208,9 +224,14 @@ test("重试预算耗尽会安全失败、说明原因并允许在 Inbox 标记�
   expect(failed.usage.attempts).toBe(3);
   expect(failed.events.some((event) => event.eventType === "run.failed")).toBe(true);
   const item = (await getOpenInbox(page)).find((inboxItem) => inboxItem.runId === runId);
-  expect(item).toMatchObject({ kind: "budget_exhausted", reasonCode: "AGENT_RUN_BUDGET_EXCEEDED", budgetDimension: "attempts", targetHref: "/profile/targets" });
-  await expect(page.getByRole("link", { name: "调整求职目标" })).toHaveAttribute("href", "/profile/targets");
-  await page.getByRole("button", { name: "标记已处理：岗位发现预算已用尽" }).click();
+  expect(item).toMatchObject({
+    kind: "budget_exhausted",
+    reasonCode: "AGENT_RUN_BUDGET_EXCEEDED",
+    budgetDimension: "attempts",
+    target: { type: "agent_run", runId, href: `/home?runId=${runId}#agent-run` },
+  });
+  await expect(budgetItem.getByRole("link", { name: "查看相关记录" })).toHaveAttribute("href", `/home?runId=${runId}#agent-run`);
+  await budgetItem.getByRole("button", { name: "标记已处理：岗位发现预算已用尽" }).click();
   await expect(page.getByRole("heading", { name: "岗位发现预算已用尽" })).toHaveCount(0);
   expect((await getOpenInbox(page)).some((inboxItem) => inboxItem.runId === runId)).toBe(false);
   await assertAccessibleControls(page, testInfo);

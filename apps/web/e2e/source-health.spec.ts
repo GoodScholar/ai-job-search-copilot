@@ -65,7 +65,7 @@ async function getRun(page: Page, runId: string): Promise<AgentRunDetail> {
 }
 
 async function getOpenInbox(page: Page): Promise<AgentInboxItem[]> {
-  const response = await page.request.get("/api/agent-inbox?status=open");
+  const response = await page.request.get("/api/agent-inbox?status=pending");
   expect(response.status()).toBe(200);
   return ((await response.json()) as { items: AgentInboxItem[] }).items;
 }
@@ -96,7 +96,7 @@ test("两来源 Fake 运行保留成功岗位、展示局部诊断并可停用�
     const run = await getRun(page, runId);
     return `${run.status}:${run.termination?.kind}`;
   }, { timeout: 45_000 }).toBe("completed:completed_with_source_issues");
-  await page.reload();
+  await page.goto(`/home?runId=${runId}#agent-run`);
   const run = await getRun(page, runId);
   expect(run.executionSpec).toMatchObject({ workflowVersion: "job-discovery-workflow-v3", adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2" });
   expect(run.results).toHaveLength(1);
@@ -111,12 +111,14 @@ test("两来源 Fake 运行保留成功岗位、展示局部诊断并可停用�
       runId,
       kind: "source_attention",
       reasonCode: "SOURCE_HEALTH_ATTENTION",
-      targetHref: `/profile/targets/${targetId}/watchlist#source-health`,
+      target: expect.objectContaining({ type: "job_source", targetId, href: `/profile/targets/${targetId}/watchlist#source-health` }),
     }),
   ]));
   await expect(page.locator(".agent-run-panel [role=status]")).toContainText("岗位发现部分完成");
   await expect(page.locator(".agent-run-results")).toContainText("Engineer");
-  const attention = page.locator(".agent-inbox-panel").getByRole("link", { name: "查看来源诊断" });
+  const attention = page
+    .getByRole("article", { name: "部分来源需要关注" })
+    .getByRole("link", { name: "查看相关记录" });
   await expect(attention).toHaveAttribute("href", `/profile/targets/${targetId}/watchlist#source-health`);
   if (testInfo.project.name === "Desktop Chrome") { await attention.focus(); await expect(attention).toBeFocused(); await page.keyboard.press("Enter"); } else await attention.tap();
   await expect(page).toHaveURL(new RegExp(`/profile/targets/${targetId}/watchlist#source-health$`));

@@ -386,8 +386,8 @@ test("真实 discovery 自动 child 以深评稳定重排十项并标出正确 T
 
   await page.goto(`/home?runId=${runId}#agent-run`);
   await expect(page.getByRole("heading", { name: "评估候选岗位匹配" })).toBeVisible();
-  await expect(page.getByLabel("用于岗位匹配的求职目标")).toBeVisible();
-  await expect(page.getByRole("status")).toContainText("已生成 10 项推荐");
+  await expect(page.getByLabel("用于发现岗位的求职目标")).toBeVisible();
+  await expect(page.locator(".agent-run-panel [role=status]")).toContainText("已生成 10 项推荐");
   await expect(page.getByRole("list", { name: "岗位匹配运行时间线" })).toContainText("岗位匹配完成");
 
   await page.goto("/recommendations");

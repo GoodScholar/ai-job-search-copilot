@@ -101,11 +101,11 @@ test("每日检查通过 Fake Worker 交付一组岗位，并抵抗重复 Worker
   const schedule = await scheduleResponse.json() as { schedule: { scheduleId: string; state: string } | null };
   expect(schedule.schedule).toMatchObject({ state: "enabled", scheduleId: expect.any(String) });
   const queue = new Queue("agent-runs", { connection: { host: "127.0.0.1", port: redisPort } });
+  let queued!: NonNullable<LatestResponse["run"]>;
   try {
     await queue.pause();
     await fastForwardSchedule(schedule.schedule!.scheduleId);
 
-    let queued!: NonNullable<LatestResponse["run"]>;
     await expect.poll(async () => {
       const current = await latest(page);
       if (current.run?.status === "queued") queued = current.run;
@@ -134,7 +134,7 @@ test("每日检查通过 Fake Worker 交付一组岗位，并抵抗重复 Worker
     await queue.resume().catch(() => undefined);
     await queue.close();
   }
-  await page.reload();
+  await page.goto(`/home?runId=${queued.runId}#agent-run`);
   await expect(page.getByRole("heading", { name: "发现新的岗位机会" })).toBeVisible();
   await expect(page.locator(".agent-run-results li")).toHaveCount(2);
 

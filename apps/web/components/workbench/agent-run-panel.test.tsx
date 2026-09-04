@@ -225,7 +225,7 @@ it("显示冻结的执行规格、模型说明和预算账本", () => {
   expect(screen.getByText("允许的操作范围")).toBeVisible();
 });
 
-it("对深度匹配运行使用匹配文案和冻结模型，而不是岗位发现文案", () => {
+it("对深度匹配运行保留匹配记录，同时仍允许发起下一次岗位发现", () => {
   const matching = {
     ...detail("completed"), workflowVersion: "deep-match-v1", currentStep: "completed",
     usage: { ...detail("completed").usage, results: 7 },
@@ -242,7 +242,8 @@ it("对深度匹配运行使用匹配文案和冻结模型，而不是岗位发�
   expect(screen.getByRole("status")).toHaveTextContent("岗位匹配完成");
   expect(screen.getByRole("status")).toHaveTextContent("已生成 7 项推荐");
   expect(screen.getByRole("heading", { name: "评估候选岗位匹配" })).toBeVisible();
-  expect(screen.getByLabelText("用于岗位匹配的求职目标")).toBeVisible();
+  expect(screen.getByLabelText("用于发现岗位的求职目标")).toBeVisible();
+  expect(screen.getByRole("button", { name: "发现岗位" })).toBeEnabled();
   expect(screen.queryByRole("button", { name: "开始岗位匹配" })).not.toBeInTheDocument();
   expect(screen.getByText("岗位匹配会在岗位发现完成后自动开始；如需重新评估，请在推荐清单中选择具体岗位。")).toBeVisible();
   expect(screen.getByLabelText("本次岗位匹配执行规格")).toBeVisible();

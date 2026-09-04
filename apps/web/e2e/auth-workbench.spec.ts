@@ -43,7 +43,7 @@ async function signIn(page: Page, returnTo = "/home"): Promise<void> {
 test("首次登录创建并复用求职账户", async ({ page, request }) => {
   await signIn(page);
 
-  await expect(page.getByRole("heading", { name: "从真实职业资料开始" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天暂无待决定事项" })).toBeVisible();
   await expect(page.getByLabel("当前求职记录摘要")).toContainText("今日推荐0");
 
   const firstAccount = await fetchBrowserAccount(page, request);
@@ -100,7 +100,7 @@ test("登录回跳不接受站外地址", async ({ page }) => {
 test("工作台在目标浏览器保持键盘、触控、减动效与无障碍基线", async ({ page }, testInfo) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await signIn(page);
-  await expect(page.getByRole("heading", { name: "从真实职业资料开始" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "今天暂无待决定事项" })).toBeVisible();
 
   const brand = page.getByRole("link", { name: "AI Job Search Copilot" });
   const signOut = page.getByRole("button", { name: "退出" });
@@ -117,6 +117,8 @@ test("工作台在目标浏览器保持键盘、触控、减动效与无障碍�
     await expect(brand).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(page.getByRole("link", { name: "首页" })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("link", { name: "推荐" })).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(page.getByRole("link", { name: "画像" })).toBeFocused();
     await page.keyboard.press("Tab");

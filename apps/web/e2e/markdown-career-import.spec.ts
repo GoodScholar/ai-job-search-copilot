@@ -107,6 +107,8 @@ test("登录用户可导入、持久化并安全复用 Markdown 职业资料", a
     await page.keyboard.press("Tab");
     await expect(page.getByRole("link", { name: "首页" })).toBeFocused();
     await page.keyboard.press("Tab");
+    await expect(page.getByRole("link", { name: "推荐" })).toBeFocused();
+    await page.keyboard.press("Tab");
     await expect(page.getByRole("link", { name: "画像" })).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(page.getByRole("button", { name: "退出" })).toBeFocused();
