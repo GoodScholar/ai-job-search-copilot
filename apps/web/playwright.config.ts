@@ -6,6 +6,7 @@ const port = "3120";
 const baseURL = `http://127.0.0.1:${port}`;
 const repositoryRoot = fileURLToPath(new URL("../..", import.meta.url));
 const sourceHealthOnly = process.env.E2E_SOURCE_HEALTH_ONLY === "1";
+const workbenchInboxSourceOnly = process.env.E2E_WORKBENCH_INBOX_SOURCE_ONLY === "1";
 const anysearchPublicJobPhase = process.env.E2E_ANYSEARCH_PUBLIC_JOB_PHASE;
 const configuredAnysearchPublicJobPhase = isConfiguredFakeAnysearchPublicJobPhase(anysearchPublicJobPhase);
 const anysearchPhase = isFakeAnysearchPublicJobPhase(anysearchPublicJobPhase);
@@ -19,12 +20,20 @@ const sourceHealthScenarios = {
     "greenhouse:e2e-health-mobile-good": "healthy",
     "greenhouse:e2e-health-mobile-limited": "rate_limited",
   },
+  "10000000-0000-4000-8000-000000000151": {
+    "greenhouse:e2e-inbox-desktop-good": "healthy",
+    "greenhouse:e2e-inbox-desktop-limited": "rate_limited",
+  },
+  "10000000-0000-4000-8000-000000000152": {
+    "greenhouse:e2e-inbox-mobile-good": "healthy",
+    "greenhouse:e2e-inbox-mobile-limited": "rate_limited",
+  },
 };
 
 export default defineConfig({
   testDir: "./e2e",
-  testIgnore: anysearchPhase || sourceHealthOnly ? undefined : /source-health\.spec\.ts|anysearch-public-job-discovery\.spec\.ts/,
-  testMatch: anysearchPhase ? /anysearch-public-job-discovery\.spec\.ts/ : sourceHealthOnly ? /source-health\.spec\.ts/ : undefined,
+  testIgnore: anysearchPhase || sourceHealthOnly || workbenchInboxSourceOnly ? undefined : /source-health\.spec\.ts|anysearch-public-job-discovery\.spec\.ts/,
+  testMatch: anysearchPhase ? /anysearch-public-job-discovery\.spec\.ts/ : sourceHealthOnly ? /source-health\.spec\.ts/ : workbenchInboxSourceOnly ? /workbench-inbox\.spec\.ts/ : undefined,
   grep: configuredAnysearchPublicJobPhase ? /@configured/ : missingKeyAnysearchPublicJobPhase ? /@missing-key/ : undefined,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
@@ -52,7 +61,7 @@ export default defineConfig({
           "10000000-0000-4000-8000-000000000113": "retry_once",
           "10000000-0000-4000-8000-000000000114": "retry_until_budget",
         }),
-        ...(sourceHealthOnly ? { E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: JSON.stringify(sourceHealthScenarios) } : {}),
+        ...(sourceHealthOnly || workbenchInboxSourceOnly ? { E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: JSON.stringify(sourceHealthScenarios) } : {}),
       }),
     },
     reuseExistingServer: false,

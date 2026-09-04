@@ -7,6 +7,7 @@ import {
 
 const uuidPattern = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const sameActions = (actual: readonly string[], expected: readonly string[]) => actual.length === expected.length && actual.every((action, index) => action === expected[index]);
+const unreadActions = (status: z.infer<typeof AgentInboxStatusSchema>, terminalActions: readonly string[]) => status === "unread" ? ["mark_read", ...terminalActions] : terminalActions;
 const nonBudgetFailureCodes = new Set<string>(AgentRunFailureCodeSchema.options.filter((code) => code !== "AGENT_RUN_BUDGET_EXCEEDED"));
 
 export const AgentInboxKindSchema = z.enum([
@@ -35,7 +36,7 @@ const itemSchema = z.object({
   reasonCode: AgentInboxReasonCodeSchema, budgetDimension: AgentRunBudgetDimensionSchema.nullable(),
   title: z.string().trim().min(1).max(200), message: copy,
   basis: copy, impact: copy, suggestedAction: copy,
-  target: AgentInboxTargetSchema, availableActions: z.array(AgentInboxActionSchema).max(2),
+  target: AgentInboxTargetSchema, availableActions: z.array(AgentInboxActionSchema).max(3),
   createdAt: z.iso.datetime(), readAt: z.iso.datetime().nullable(), resolvedAt: z.iso.datetime().nullable(),
 }).strict();
 
@@ -57,30 +58,30 @@ export const AgentInboxItemSchema = itemSchema.superRefine((item, context) => {
   const active = item.status !== "resolved";
   if (item.kind === "candidate_fact") {
     if (item.reasonCode !== "CANDIDATE_FACT_PENDING" || item.budgetDimension !== null || item.runId !== null || item.target.type !== "candidate_fact") issue("kind", "invalid candidate fact projection");
-    if (active && !sameActions(item.availableActions, ["dismiss"])) issue("availableActions", "invalid candidate fact actions");
+    if (active && !sameActions(item.availableActions, unreadActions(item.status, ["dismiss"]))) issue("availableActions", "invalid candidate fact actions");
   } else if (item.kind === "recommendation_list") {
     if (item.reasonCode !== "RECOMMENDATION_LIST_PUBLISHED" || item.budgetDimension !== null || item.runId !== null || item.target.type !== "recommendation_list") issue("kind", "invalid recommendation projection");
-    if (active && !sameActions(item.availableActions, ["dismiss"])) issue("availableActions", "invalid recommendation actions");
+    if (active && !sameActions(item.availableActions, unreadActions(item.status, ["dismiss"]))) issue("availableActions", "invalid recommendation actions");
   } else if (item.kind === "calibration_proposal") {
     if (item.reasonCode !== "CALIBRATION_PROPOSAL_CREATED" || item.budgetDimension !== null || item.runId !== null || item.target.type !== "calibration_proposal") issue("kind", "invalid calibration projection");
-    if (active && !sameActions(item.availableActions, ["dismiss"])) issue("availableActions", "invalid calibration actions");
+    if (active && !sameActions(item.availableActions, unreadActions(item.status, ["dismiss"]))) issue("availableActions", "invalid calibration actions");
   } else if (item.kind === "source_attention") {
     if (item.reasonCode !== "SOURCE_HEALTH_ATTENTION" || item.budgetDimension !== null || item.runId === null || item.target.type !== "job_source") issue("kind", "invalid source attention projection");
-    if (active && !sameActions(item.availableActions, ["dismiss"])) issue("availableActions", "invalid source attention actions");
+    if (active && !sameActions(item.availableActions, unreadActions(item.status, ["dismiss"]))) issue("availableActions", "invalid source attention actions");
   } else {
     if (item.runId === null || item.target.type !== "agent_run" || item.target.runId !== item.runId) issue("target", "run items require matching run provenance");
     if (item.kind === "decision_required") {
       if (item.reasonCode !== "AGENT_RUN_PAUSED" || item.budgetDimension !== null) issue("kind", "invalid decision projection");
-      if (active && !sameActions(item.availableActions, ["resume_run", "cancel_run"])) issue("availableActions", "invalid decision actions");
+      if (active && !sameActions(item.availableActions, unreadActions(item.status, ["resume_run", "cancel_run"]))) issue("availableActions", "invalid decision actions");
     } else if (item.kind === "run_failed") {
       if (!nonBudgetFailureCodes.has(item.reasonCode) || item.budgetDimension !== null) issue("kind", "invalid failure projection");
-      if (active && !sameActions(item.availableActions, ["restart_run", "dismiss"])) issue("availableActions", "invalid failure actions");
+      if (active && !sameActions(item.availableActions, unreadActions(item.status, ["restart_run", "dismiss"]))) issue("availableActions", "invalid failure actions");
     } else if (item.kind === "budget_exhausted") {
       if (item.reasonCode !== "AGENT_RUN_BUDGET_EXCEEDED" || item.budgetDimension === null) issue("kind", "invalid budget projection");
-      if (active && !sameActions(item.availableActions, ["dismiss"])) issue("availableActions", "invalid budget actions");
+      if (active && !sameActions(item.availableActions, unreadActions(item.status, ["dismiss"]))) issue("availableActions", "invalid budget actions");
     } else if (item.kind === "discovery_attention") {
       if (item.reasonCode !== "DISCOVERY_ATTENTION" || item.budgetDimension !== null) issue("kind", "invalid discovery attention projection");
-      if (active && !sameActions(item.availableActions, ["dismiss"])) issue("availableActions", "invalid discovery attention actions");
+      if (active && !sameActions(item.availableActions, unreadActions(item.status, ["dismiss"]))) issue("availableActions", "invalid discovery attention actions");
     }
   }
 });

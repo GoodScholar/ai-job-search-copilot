@@ -8,7 +8,7 @@ type RunnerCall = { phase: string; args: string[]; environment: Record<string, s
 const baseEnvironment = { CI: "true", KEEP_ME: "yes" } as unknown as NodeJS.ProcessEnv;
 
 describe("E2E runner", () => {
-  it("无参数按 ordinary、source-health 顺序运行", async () => {
+  it("无参数按 ordinary、source-health、workbench-inbox 顺序运行", async () => {
     const calls: RunnerCall[] = [];
     const result = await executeE2E([], {
       environment: baseEnvironment,
@@ -19,6 +19,7 @@ describe("E2E runner", () => {
     expect(calls).toEqual([
       { phase: "ordinary", args: [], environment: { CI: "true", KEEP_ME: "yes" } },
       { phase: "source-health", args: [], environment: { CI: "true", KEEP_ME: "yes", E2E_SOURCE_HEALTH_ONLY: "1" } },
+      { phase: "workbench-inbox", args: [], environment: { CI: "true", KEEP_ME: "yes", E2E_WORKBENCH_INBOX_SOURCE_ONLY: "1" } },
     ]);
   });
 
@@ -39,12 +40,14 @@ describe("E2E runner", () => {
     expect(calls).toEqual([
       { phase: "ordinary", args: [], environment: { CI: "true", KEEP_ME: "yes" } },
       { phase: "source-health", args: [], environment: { CI: "true", KEEP_ME: "yes", E2E_SOURCE_HEALTH_ONLY: "1" } },
+      { phase: "workbench-inbox", args: [], environment: { CI: "true", KEEP_ME: "yes", E2E_WORKBENCH_INBOX_SOURCE_ONLY: "1" } },
     ]);
   });
 
-  it("明确普通或 source-health spec 时只运行对应阶段并原样透传参数", async () => {
+  it("明确普通、source-health 或 workbench-inbox spec 时只运行对应阶段并原样透传参数", async () => {
     expect(await selectE2EPhases(["e2e/auth-workbench.spec.ts", "--list"])).toEqual(["ordinary"]);
     expect(await selectE2EPhases(["e2e/source-health.spec.ts", "--project", "Mobile Safari"])).toEqual(["source-health"]);
+    expect(await selectE2EPhases(["e2e/workbench-inbox.spec.ts", "--project", "Mobile Safari"])).toEqual(["ordinary", "workbench-inbox"]);
   });
 
   it("版本化 Fake AnySearch spec 依次进入 configured 与 missing-key phase，并清理其他 phase 与 transport 注入", async () => {
@@ -118,7 +121,9 @@ describe("E2E runner", () => {
     expect(genericCalls).toEqual([
       { phase: "ordinary", args: ["--list", "--project", "Desktop Chrome", "--grep", "来源"], environment: { CI: "true", KEEP_ME: "yes" } },
       { phase: "source-health", args: ["--list", "--project", "Desktop Chrome", "--grep", "来源"], environment: { CI: "true", KEEP_ME: "yes", E2E_SOURCE_HEALTH_ONLY: "1" } },
+      { phase: "workbench-inbox", args: ["--list", "--project", "Desktop Chrome", "--grep", "来源"], environment: { CI: "true", KEEP_ME: "yes", E2E_WORKBENCH_INBOX_SOURCE_ONLY: "1" } },
       { phase: "source-health", args: ["--project", "Desktop Chrome", "--grep", "来源"], environment: { CI: "true", KEEP_ME: "yes", E2E_SOURCE_HEALTH_ONLY: "1" } },
+      { phase: "workbench-inbox", args: ["--project", "Desktop Chrome", "--grep", "来源"], environment: { CI: "true", KEEP_ME: "yes", E2E_WORKBENCH_INBOX_SOURCE_ONLY: "1" } },
     ]);
   });
 
@@ -136,6 +141,7 @@ describe("E2E runner", () => {
     expect(calls).toEqual([
       { phase: "ordinary", args: ["--list", "--project", "Mobile Safari", "--grep", "来源"], environment: { CI: "true", KEEP_ME: "yes" } },
       { phase: "source-health", args: ["--list", "--project", "Mobile Safari", "--grep", "来源"], environment: { CI: "true", KEEP_ME: "yes", E2E_SOURCE_HEALTH_ONLY: "1" } },
+      { phase: "workbench-inbox", args: ["--list", "--project", "Mobile Safari", "--grep", "来源"], environment: { CI: "true", KEEP_ME: "yes", E2E_WORKBENCH_INBOX_SOURCE_ONLY: "1" } },
       { phase: "source-health", args: ["--project", "Mobile Safari", "--grep", "来源"], environment: { CI: "true", KEEP_ME: "yes", E2E_SOURCE_HEALTH_ONLY: "1" } },
     ]);
   });

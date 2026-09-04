@@ -16,7 +16,7 @@ const copy = { title: "待处理事项", message: "请查看并处理此事项�
 
 describe("agent inbox contracts", () => {
   it("parses an unread candidate-fact item with its allowlisted target", () => {
-    expect(AgentInboxItemSchema.parse({ itemId, runId: null, kind: "candidate_fact", status: "unread", reasonCode: "CANDIDATE_FACT_PENDING", budgetDimension: null, ...copy, availableActions: ["dismiss"], target: { type: "candidate_fact", candidateFactId, href: "/profile#candidate-facts" }, createdAt, readAt: null, resolvedAt: null })).toMatchObject({ status: "unread", target: { type: "candidate_fact", candidateFactId } });
+    expect(AgentInboxItemSchema.parse({ itemId, runId: null, kind: "candidate_fact", status: "unread", reasonCode: "CANDIDATE_FACT_PENDING", budgetDimension: null, ...copy, availableActions: ["mark_read", "dismiss"], target: { type: "candidate_fact", candidateFactId, href: "/profile#candidate-facts" }, createdAt, readAt: null, resolvedAt: null })).toMatchObject({ status: "unread", target: { type: "candidate_fact", candidateFactId } });
   });
 
   it("parses a read source item with run provenance", () => {
@@ -24,8 +24,8 @@ describe("agent inbox contracts", () => {
   });
 
   it("parses unread recommendation and calibration items", () => {
-    expect(AgentInboxItemSchema.parse({ itemId, runId: null, kind: "recommendation_list", status: "unread", reasonCode: "RECOMMENDATION_LIST_PUBLISHED", budgetDimension: null, ...copy, availableActions: ["dismiss"], target: { type: "recommendation_list", recommendationListId, targetId, href: `/recommendations?targetId=${targetId}#recommendation-list` }, createdAt, readAt: null, resolvedAt: null })).toMatchObject({ target: { type: "recommendation_list", recommendationListId } });
-    expect(AgentInboxItemSchema.parse({ itemId, runId: null, kind: "calibration_proposal", status: "unread", reasonCode: "CALIBRATION_PROPOSAL_CREATED", budgetDimension: null, ...copy, availableActions: ["dismiss"], target: { type: "calibration_proposal", proposalId, targetId, href: `/recommendations?targetId=${targetId}#calibration-proposal` }, createdAt, readAt: null, resolvedAt: null })).toMatchObject({ target: { type: "calibration_proposal", proposalId } });
+    expect(AgentInboxItemSchema.parse({ itemId, runId: null, kind: "recommendation_list", status: "unread", reasonCode: "RECOMMENDATION_LIST_PUBLISHED", budgetDimension: null, ...copy, availableActions: ["mark_read", "dismiss"], target: { type: "recommendation_list", recommendationListId, targetId, href: `/recommendations?targetId=${targetId}#recommendation-list` }, createdAt, readAt: null, resolvedAt: null })).toMatchObject({ target: { type: "recommendation_list", recommendationListId } });
+    expect(AgentInboxItemSchema.parse({ itemId, runId: null, kind: "calibration_proposal", status: "unread", reasonCode: "CALIBRATION_PROPOSAL_CREATED", budgetDimension: null, ...copy, availableActions: ["mark_read", "dismiss"], target: { type: "calibration_proposal", proposalId, targetId, href: `/recommendations?targetId=${targetId}#calibration-proposal` }, createdAt, readAt: null, resolvedAt: null })).toMatchObject({ target: { type: "calibration_proposal", proposalId } });
   });
 
   it("parses a resolved run item and accepts lifecycle commands", () => {
@@ -35,7 +35,7 @@ describe("agent inbox contracts", () => {
   });
 
   it("rejects free-form targets, cross-kind targets, inconsistent timestamps, and the former open status", () => {
-    const candidate = { itemId, runId: null, kind: "candidate_fact", status: "unread", reasonCode: "CANDIDATE_FACT_PENDING", budgetDimension: null, ...copy, availableActions: ["dismiss"], target: { type: "candidate_fact", candidateFactId, href: "/profile#candidate-facts" }, createdAt, readAt: null, resolvedAt: null };
+    const candidate = { itemId, runId: null, kind: "candidate_fact", status: "unread", reasonCode: "CANDIDATE_FACT_PENDING", budgetDimension: null, ...copy, availableActions: ["mark_read", "dismiss"], target: { type: "candidate_fact", candidateFactId, href: "/profile#candidate-facts" }, createdAt, readAt: null, resolvedAt: null };
     expect(AgentInboxItemSchema.safeParse({ ...candidate, target: { type: "candidate_fact", candidateFactId, href: "https://example.test" } }).success).toBe(false);
     expect(AgentInboxItemSchema.safeParse({ ...candidate, target: { type: "agent_run", runId, href: `/home?runId=${runId}#agent-run` } }).success).toBe(false);
     expect(AgentInboxItemSchema.safeParse({ ...candidate, status: "read", readAt: null }).success).toBe(false);

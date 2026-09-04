@@ -11,7 +11,7 @@ const now = "2026-09-04T08:00:00.000Z";
 const item: AgentInboxItem = {
   itemId, runId: null, kind: "candidate_fact", status: "unread", reasonCode: "CANDIDATE_FACT_PENDING", budgetDimension: null,
   title: "确认工作经历", message: "发现一条候选工作经历。", basis: "来自已导入资料的可追溯片段。", impact: "确认前不会用于推荐或材料生成。", suggestedAction: "核对后确认、修改或拒绝这条事实。",
-  target: { type: "candidate_fact", candidateFactId: "1a1b0207-b852-4f86-8b1f-3b9615655ed8", href: "/profile#candidate-facts" }, availableActions: ["dismiss"], createdAt: now, readAt: null, resolvedAt: null,
+  target: { type: "candidate_fact", candidateFactId: "1a1b0207-b852-4f86-8b1f-3b9615655ed8", href: "/profile#candidate-facts" }, availableActions: ["mark_read", "dismiss"], createdAt: now, readAt: null, resolvedAt: null,
 };
 
 beforeEach(() => vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(actionId));
@@ -23,6 +23,7 @@ it("用语义 article 呈现依据、影响、建议与可追溯目标", () => {
   expect(screen.getByRole("article", { name: "确认工作经历" })).toHaveTextContent("来自已导入资料的可追溯片段。");
   expect(screen.getByRole("article", { name: "确认工作经历" })).toHaveTextContent("确认前不会用于推荐或材料生成。");
   expect(screen.getByRole("link", { name: "查看相关记录" })).toHaveAttribute("href", "/profile#candidate-facts");
+  expect(screen.getByRole("button", { name: "标记为已读：确认工作经历" })).toBeVisible();
   expect(screen.getByText("核对后确认、修改或拒绝这条事实。")).toBeVisible();
 });
 
@@ -32,7 +33,7 @@ it("隔离各状态缓存并忽略乱序响应，往返后仍显示权威 pendin
   let resolveRead!: (response: Response) => void;
   const unread = new Promise<Response>((resolve) => { resolveUnread = resolve; });
   const read = new Promise<Response>((resolve) => { resolveRead = resolve; });
-  const readItem = { ...item, itemId: "5a1b0207-b852-4f86-8b1f-3b9615655ed8", title: "已读事项", status: "read" as const, readAt: now };
+  const readItem = { ...item, itemId: "5a1b0207-b852-4f86-8b1f-3b9615655ed8", title: "已读事项", status: "read" as const, availableActions: ["dismiss"] as const, readAt: now };
   const unreadItem = { ...item, itemId: "6a1b0207-b852-4f86-8b1f-3b9615655ed8", title: "未读事项" };
   const resolvedItem = { ...item, itemId: "7a1b0207-b852-4f86-8b1f-3b9615655ed8", title: "已处理事项", status: "resolved" as const, readAt: now, resolvedAt: now, availableActions: [] };
   vi.stubGlobal("fetch", vi.fn<typeof fetch>((input) => {

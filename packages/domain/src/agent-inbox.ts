@@ -26,7 +26,10 @@ function copyFor(item: Row) {
   const message = ({ active_duration: "本次岗位发现达到活跃时间上限。", attempts: "本次岗位发现达到重试次数上限。", tool_calls: "本次岗位发现达到来源调用上限。", model_calls: "本次岗位发现达到模型调用上限。", tokens: "本次岗位发现达到 Token 上限。" } as const)[item.budgetDimension as "active_duration" | "attempts" | "tool_calls" | "model_calls" | "tokens"];
   return { title: "岗位发现预算已用尽", message, basis: "本次运行达到已配置的预算上限。", impact: "本次运行已停止，结果可能不完整。", suggestedAction: "调整目标后重新运行。" };
 }
-function actions(item: Row): Action[] { return item.kind === "decision_required" ? ["resume_run", "cancel_run"] : item.kind === "run_failed" ? ["restart_run", "dismiss"] : ["dismiss"]; }
+function actions(item: Row): Action[] {
+  const terminalActions: Action[] = item.kind === "decision_required" ? ["resume_run", "cancel_run"] : item.kind === "run_failed" ? ["restart_run", "dismiss"] : ["dismiss"];
+  return item.status === "unread" ? ["mark_read", ...terminalActions] : terminalActions;
+}
 function accepts(item: Row, action: Action) { return action !== "mark_read" && actions(item).includes(action); }
 function snapshot(run: typeof agentRuns.$inferSelect) { return { runId: run.id, status: run.status, currentStep: run.currentStep, controlState: run.controlState, version: run.version } as ControlAgentRunResponse["run"]; }
 async function itemFor(db: Pick<Database, "select">, userId: string, itemId: string) { return (await db.select().from(agentInboxItems).where(and(eq(agentInboxItems.userId, userId), eq(agentInboxItems.id, itemId))))[0]; }

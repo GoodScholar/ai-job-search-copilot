@@ -66,9 +66,9 @@ describe("agent inbox", () => {
 
     const result = await inbox().list({ userId: owner.userId, status: "pending" });
     expect(result.items).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: "decision_required", availableActions: ["resume_run", "cancel_run"], title: "岗位发现已暂停", target: expect.objectContaining({ type: "agent_run" }) }),
-      expect.objectContaining({ kind: "run_failed", availableActions: ["restart_run", "dismiss"], title: "岗位发现未完成", target: expect.objectContaining({ type: "agent_run" }) }),
-      expect.objectContaining({ kind: "budget_exhausted", availableActions: ["dismiss"], target: expect.objectContaining({ type: "agent_run" }) }),
+      expect.objectContaining({ kind: "decision_required", availableActions: ["mark_read", "resume_run", "cancel_run"], title: "岗位发现已暂停", target: expect.objectContaining({ type: "agent_run" }) }),
+      expect.objectContaining({ kind: "run_failed", availableActions: ["mark_read", "restart_run", "dismiss"], title: "岗位发现未完成", target: expect.objectContaining({ type: "agent_run" }) }),
+      expect.objectContaining({ kind: "budget_exhausted", availableActions: ["mark_read", "dismiss"], target: expect.objectContaining({ type: "agent_run" }) }),
     ]));
     await expect(inbox().list({ userId: other.userId, status: "pending" })).resolves.toEqual({ items: [] });
   });
@@ -78,7 +78,7 @@ describe("agent inbox", () => {
     const other = await activeTarget();
     const item = await openItem({ ...owner, kind: "source_attention", reasonCode: "SOURCE_HEALTH_ATTENTION" });
     await expect(inbox().list({ userId: owner.userId, status: "pending" })).resolves.toMatchObject({ items: [expect.objectContaining({
-      itemId: item.itemId, kind: "source_attention", availableActions: ["dismiss"],
+      itemId: item.itemId, kind: "source_attention", availableActions: ["mark_read", "dismiss"],
       target: { type: "job_source", watchlistItemId: item.watchlistItemId, targetId: owner.targetId, href: `/profile/targets/${owner.targetId}/watchlist#source-health` },
     })] });
     await expect(inbox().list({ userId: other.userId, status: "pending" })).resolves.toEqual({ items: [] });
@@ -156,9 +156,9 @@ describe("agent inbox", () => {
     ]);
     const items = (await inbox().list({ userId: owner.userId, status: "pending" })).items;
     expect(items).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: "candidate_fact", target: expect.objectContaining({ type: "candidate_fact", candidateFactId: factId }), basis: expect.any(String), impact: expect.any(String), suggestedAction: expect.any(String) }),
-      expect.objectContaining({ kind: "recommendation_list", target: expect.objectContaining({ type: "recommendation_list", recommendationListId: listId, targetId: owner.targetId }), basis: expect.any(String), impact: expect.any(String), suggestedAction: expect.any(String) }),
-      expect.objectContaining({ kind: "calibration_proposal", target: expect.objectContaining({ type: "calibration_proposal", proposalId, targetId: owner.targetId }), basis: expect.any(String), impact: expect.any(String), suggestedAction: expect.any(String) }),
+      expect.objectContaining({ kind: "candidate_fact", availableActions: ["mark_read", "dismiss"], target: expect.objectContaining({ type: "candidate_fact", candidateFactId: factId }), basis: expect.any(String), impact: expect.any(String), suggestedAction: expect.any(String) }),
+      expect.objectContaining({ kind: "recommendation_list", availableActions: ["mark_read", "dismiss"], target: expect.objectContaining({ type: "recommendation_list", recommendationListId: listId, targetId: owner.targetId }), basis: expect.any(String), impact: expect.any(String), suggestedAction: expect.any(String) }),
+      expect.objectContaining({ kind: "calibration_proposal", availableActions: ["mark_read", "dismiss"], target: expect.objectContaining({ type: "calibration_proposal", proposalId, targetId: owner.targetId }), basis: expect.any(String), impact: expect.any(String), suggestedAction: expect.any(String) }),
     ]));
     expect(JSON.stringify(items)).not.toContain("private skill");
   });
