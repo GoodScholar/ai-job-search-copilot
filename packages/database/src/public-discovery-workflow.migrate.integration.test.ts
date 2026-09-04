@@ -93,6 +93,7 @@ describe("public discovery workflow migration", () => {
         unlink(join(migrationsFolder, "0040_loud_northstar.sql")),
         unlink(join(migrationsFolder, "0041_thankful_lethal_legion.sql")),
         unlink(join(migrationsFolder, "0042_mighty_malcolm_colcord.sql")),
+        unlink(join(migrationsFolder, "0043_task_control_agent_inbox.sql")),
         unlink(join(migrationsFolder, "meta", "0025_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0026_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0027_snapshot.json")),
@@ -106,7 +107,7 @@ describe("public discovery workflow migration", () => {
       ]);
       const journalPath = join(migrationsFolder, "meta", "_journal.json");
       const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
-      journal.entries = journal.entries.filter(({ tag }) => !["0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_job_triage_versions", "0029_heavy_devos", "0030_deep_match_recommendations", "0031_deep_match_agent_runs", "0032_recommendation_highlight_limit", "0033_deep_match_usage_entries", "0034_recommendation_highlight_limit_lock", "0035_agent_run_step_model_failures", "0036_recommendation_exclusion_list_ownership", "0037_deep_match_run_staging", "0038_recommendation_feedback_calibration", "0039_boring_sleepwalker", "0040_loud_northstar", "0041_thankful_lethal_legion", "0042_mighty_malcolm_colcord"].includes(tag));
+      journal.entries = journal.entries.filter(({ tag }) => !["0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_job_triage_versions", "0029_heavy_devos", "0030_deep_match_recommendations", "0031_deep_match_agent_runs", "0032_recommendation_highlight_limit", "0033_deep_match_usage_entries", "0034_recommendation_highlight_limit_lock", "0035_agent_run_step_model_failures", "0036_recommendation_exclusion_list_ownership", "0037_deep_match_run_staging", "0038_recommendation_feedback_calibration", "0039_boring_sleepwalker", "0040_loud_northstar", "0041_thankful_lethal_legion", "0042_mighty_malcolm_colcord", "0043_task_control_agent_inbox"].includes(tag));
       await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
       await migrate(database, { migrationsFolder });
 
@@ -147,7 +148,7 @@ describe("public discovery workflow migration", () => {
         { id: leadId, normalized_url: "https://jobs.example.com/opening?id=123" },
       ]);
       await expect(database.execute(sql`select kind, reason_code from agent_inbox_items where id = '12121212-1212-4121-8121-121212121212'`)).resolves.toEqual([
-        { kind: "source_attention", reason_code: "SOURCE_HEALTH_ATTENTION" },
+        { kind: "discovery_attention", reason_code: "DISCOVERY_ATTENTION" },
       ]);
 
       await database.execute(sql`
@@ -201,15 +202,15 @@ describe("public discovery workflow migration", () => {
 
       await database.execute(sql`
         insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, kind, status, reason_code, budget_dimension)
-        values ('26262626-2626-4262-8262-262626262626', ${ownerId}, ${runId}, 2, 'discovery_attention', 'open', 'DISCOVERY_ATTENTION', null)
+        values ('26262626-2626-4262-8262-262626262626', ${ownerId}, ${runId}, 2, 'discovery_attention', 'unread', 'DISCOVERY_ATTENTION', null)
       `);
       await expect(database.execute(sql`
         insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, kind, status, reason_code, budget_dimension)
-        values ('27272727-2727-4272-8272-272727272727', ${ownerId}, ${runId}, 3, 'discovery_attention', 'open', 'SOURCE_HEALTH_ATTENTION', null)
+        values ('27272727-2727-4272-8272-272727272727', ${ownerId}, ${runId}, 3, 'discovery_attention', 'unread', 'SOURCE_HEALTH_ATTENTION', null)
       `)).rejects.toMatchObject({ cause: { code: "23514" } });
       await expect(database.execute(sql`
         insert into agent_inbox_items (id, user_id, run_id, trigger_event_sequence, kind, status, reason_code, budget_dimension)
-        values ('28282828-2828-4282-8282-282828282828', ${ownerId}, ${runId}, 4, 'source_attention', 'open', 'DISCOVERY_ATTENTION', null)
+        values ('28282828-2828-4282-8282-282828282828', ${ownerId}, ${runId}, 4, 'source_attention', 'unread', 'DISCOVERY_ATTENTION', null)
       `)).rejects.toMatchObject({ cause: { code: "23514" } });
 
       await database.execute(sql`
