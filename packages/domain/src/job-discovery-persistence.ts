@@ -7,6 +7,7 @@ import {
   agentRunUsageEntries,
   agentRuns,
   agentInboxItems,
+  jobDiscoverySourceIssues,
   jobSourceHealthChecks,
   jobOpportunities,
   jobOpportunitySources,
@@ -333,6 +334,7 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
       scans: Array<{ sourceId: string; observedDetailIds: string[]; complete: boolean }>;
       storedObjects: StoredDiscoveryObject[];
       sourceChecks?: JobSourceHealthCheck[];
+      sourceIssues?: Array<{ provider: "greenhouse"; code: "SOURCE_CAPABILITY_UNSUPPORTED" | "SOURCE_CAPABILITY_DECLARATION_MISMATCH"; affectedCount: number }>;
       terminal?: SourceHealthTerminal;
       now: Date;
       /** Processor-only seam: caller has already started the bounded account transaction. */
@@ -351,7 +353,7 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
         if (run.adapter === "greenhouse") {
           // The persistence seam independently protects lifecycle facts from
           // malformed adapter output; upstream schema parsing is not authority.
-          if (input.scans.length === 0) throw new Error("AGENT_RUN_PERSIST_FAILED");
+          if (input.scans.length === 0 && (input.sourceIssues?.length ?? 0) === 0) throw new Error("AGENT_RUN_PERSIST_FAILED");
           const sourceIds = new Set<string>();
           const observed = new Map<string, Set<string>>();
           for (const scan of input.scans) {
@@ -364,7 +366,8 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
               ? PublicSourceHealthAgentRunSourceScopeSchema.parse(run.sourceScope)
               : PublicAgentRunSourceScopeSchema.parse(run.sourceScope)).sources;
             const frozenSourceIds = new Set(frozenSources.map((source) => source.sourceId));
-            if (sourceIds.size !== frozenSourceIds.size || [...sourceIds].some((sourceId) => !frozenSourceIds.has(sourceId))) {
+            if ([...sourceIds].some((sourceId) => !frozenSourceIds.has(sourceId))
+              || (sourceIds.size !== frozenSourceIds.size && (input.sourceIssues?.length ?? 0) === 0)) {
               throw new Error("AGENT_RUN_PERSIST_FAILED");
             }
           }
@@ -378,7 +381,8 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
         if (run.workflowVersion === GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION) {
           const frozenSources = PublicSourceHealthAgentRunSourceScopeSchema.parse(run.sourceScope).sources;
           const sourceById = new Map(frozenSources.map((source) => [source.sourceId, source.watchlistItemId]));
-          if (sourceChecks.length !== sourceById.size || sourceChecks.some((check) => sourceById.get(check.sourceId) !== check.watchlistItemId)) {
+          if (sourceChecks.some((check) => sourceById.get(check.sourceId) !== check.watchlistItemId)
+            || (sourceChecks.length !== sourceById.size && (input.sourceIssues?.length ?? 0) === 0)) {
             throw new Error("AGENT_RUN_PERSIST_FAILED");
           }
           const scansBySource = new Map(input.scans.map((scan) => [scan.sourceId, scan]));
@@ -392,10 +396,11 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
         }
         const terminal = run.workflowVersion === GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION
           ? (() => {
-              const derived = deriveSourceHealthTerminal(sourceChecks);
+              const derivedBase = deriveSourceHealthTerminal(sourceChecks);
+              const derived = input.sourceIssues?.length && derivedBase !== "source_failed" ? "completed_with_source_issues" : derivedBase;
               if (input.terminal !== undefined && input.terminal !== derived) throw new Error("AGENT_RUN_PERSIST_FAILED");
               return derived;
-            })()
+          })()
           : input.terminal ?? "completed";
         const persistedCheckIds = new Map<string, string>();
         if (sourceChecks.length > 0) {
@@ -431,6 +436,16 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
             if (!persistedCheckIds.has(check.sourceId)) throw new Error("AGENT_RUN_PERSIST_FAILED");
           }
         }
+        const sourceIssues = new Map<string, { provider: "greenhouse"; code: "SOURCE_CAPABILITY_UNSUPPORTED" | "SOURCE_CAPABILITY_DECLARATION_MISMATCH"; affectedCount: number }>();
+        for (const issue of input.sourceIssues ?? []) {
+          const key = `${issue.provider}:${issue.code}`;
+          const existing = sourceIssues.get(key);
+          sourceIssues.set(key, { ...issue, affectedCount: Math.min(10, (existing?.affectedCount ?? 0) + issue.affectedCount) });
+        }
+        for (const issue of sourceIssues.values()) await transaction.insert(jobDiscoverySourceIssues).values({ id: deps.id(), userId: run.userId, runId: run.id, provider: issue.provider, code: issue.code, affectedCount: issue.affectedCount, createdAt: input.now }).onConflictDoUpdate({
+          target: [jobDiscoverySourceIssues.userId, jobDiscoverySourceIssues.runId, jobDiscoverySourceIssues.provider, jobDiscoverySourceIssues.code],
+          set: { affectedCount: sql`greatest(${jobDiscoverySourceIssues.affectedCount}, excluded.affected_count)` },
+        });
         const cleanupObjectKeys: string[] = [];
         const opportunityIds = new Set<string>();
         const resultRows: Array<{ opportunityId: string; sourcePostingVersionId: string }> = [];

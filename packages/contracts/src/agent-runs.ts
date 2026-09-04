@@ -519,7 +519,7 @@ const AgentRunDetailFields = {
 export const AgentRunDetailSchema = z.union([
   FakeAgentRunSummarySchema.extend({ ...AgentRunDetailFields, executionSpec: FakeAgentRunExecutionSpecSchema }).strict(),
   PublicAgentRunSummarySchema.extend({ ...AgentRunDetailFields, executionSpec: PublicAgentRunExecutionSpecSchema }).strict(),
-  PublicSourceHealthAgentRunSummarySchema.extend({ ...AgentRunDetailFields, executionSpec: PublicSourceHealthAgentRunExecutionSpecSchema, sourceChecks: z.array(JobSourceHealthCheckSchema).max(50) }).strict(),
+  PublicSourceHealthAgentRunSummarySchema.extend({ ...AgentRunDetailFields, executionSpec: PublicSourceHealthAgentRunExecutionSpecSchema, sourceChecks: z.array(JobSourceHealthCheckSchema).max(50), sourceIssues: z.array(DiscoverySourceIssueSummarySchema).max(10).default([]) }).strict(),
   LayeredPublicAgentRunSummarySchema.extend({
     ...AgentRunDetailFields,
     executionSpec: LayeredPublicAgentRunExecutionSpecSchema,
@@ -574,7 +574,8 @@ export const AgentRunDetailSchema = z.union([
       }
       checkedSourceIds.add(check.sourceId);
     }
-    const requiresCompleteSourceChecks = detail.status === "completed" || (terminal && detail.sourceChecks.length > 0);
+    const capabilityDenied = "sourceIssues" in detail && detail.sourceIssues.some((issue) => issue.code === "SOURCE_CAPABILITY_UNSUPPORTED" || issue.code === "SOURCE_CAPABILITY_DECLARATION_MISMATCH");
+    const requiresCompleteSourceChecks = (detail.status === "completed" || (terminal && detail.sourceChecks.length > 0)) && !capabilityDenied;
     if (requiresCompleteSourceChecks && (checkedSourceIds.size !== sourceWatchlistItems.size || [...sourceWatchlistItems.keys()].some((sourceId) => !checkedSourceIds.has(sourceId)))) {
       context.addIssue({ code: "custom", path: ["sourceChecks"], message: "terminal v3 runs require one source check for every frozen source" });
     }

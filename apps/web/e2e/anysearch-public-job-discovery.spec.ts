@@ -217,7 +217,7 @@ test("版本化 Fake AnySearch 从普通 UI 运行真实 layered public 验收�
   const run = await readRun(page, runId);
   expect(run.executionSpec.workflowVersion).toBe("layered-public-job-discovery-v1");
   expect(run.executionSpec.adapter).toBe("layered-public");
-  if (!("sourceIssues" in run)) throw new Error("LAYERED_PUBLIC_RUN_REQUIRED");
+  if (run.workflowVersion !== "layered-public-job-discovery-v1") throw new Error("LAYERED_PUBLIC_RUN_REQUIRED");
   const queries = "publicDiscovery" in run.executionSpec.sourceScope ? run.executionSpec.sourceScope.publicDiscovery.queries : [];
   const publicDiscovery = "publicDiscovery" in run.executionSpec.sourceScope ? run.executionSpec.sourceScope.publicDiscovery : null;
   expect(publicDiscovery?.batchSize).toBe(5);

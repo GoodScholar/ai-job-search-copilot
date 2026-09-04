@@ -4,9 +4,18 @@ import {
   type Database,
 } from "@job-copilot/database";
 import { AgentRunDetailSchema, AgentRunExecutionSpecSchema, StartAgentRunResponseSchema, type AgentRunDetail, type StartAgentRunResponse } from "@job-copilot/contracts/agent-runs";
+import { mismatchedSourceCapabilityDeclaration, unsupportedSourceCapability } from "@job-copilot/contracts/source-capabilities";
 import { normalizeAgentRunSourceScope } from "./agent-run-source-scope";
 
 type RunRow = typeof agentRuns.$inferSelect;
+
+function sourceIssueSummary(issue: { provider: string; code: string; affectedCount: number }) {
+  if (issue.code === "SOURCE_CAPABILITY_UNSUPPORTED" || issue.code === "SOURCE_CAPABILITY_DECLARATION_MISMATCH") {
+    const failure = issue.code === "SOURCE_CAPABILITY_UNSUPPORTED" ? unsupportedSourceCapability() : mismatchedSourceCapabilityDeclaration();
+    return { provider: "greenhouse" as const, code: failure.reasonCode, affectedCount: issue.affectedCount, impact: failure.impact, retryable: failure.retryable, suggestedActions: failure.suggestedActions };
+  }
+  return { provider: issue.provider as "anysearch" | "greenhouse", code: issue.code, affectedCount: issue.affectedCount };
+}
 
 function summary(row: RunRow): StartAgentRunResponse {
   const sourceScope = row.workflowVersion === "layered-public-job-discovery-v1"
@@ -55,9 +64,9 @@ async function detail(db: Database, userId: string, runId: string): Promise<Agen
     executionSpec: { ...base.executionSpec, profileSnapshot: run.profileSnapshot, watchlistSnapshot: run.watchlistSnapshot },
     results: discoveryResults.map(({ ordinal: _ordinal, ...result }) => ({ ...result, sourceType: result.sourceType as "company_careers" | "recruitment_platform" | "wechat_recruitment_h5" | "public_web" })),
     discoveryDiagnostics: discoveryDiagnostics.map((diagnostic) => diagnostic.scope === "provider" ? { scope: "provider", diagnosticId: diagnostic.id, runId: diagnostic.runId, provider: "anysearch", code: diagnostic.code, retryable: diagnostic.retryable, affectedCount: diagnostic.affectedCount } : diagnostic.scope === "query" ? { scope: "query", diagnosticId: diagnostic.id, runId: diagnostic.runId, queryId: diagnostic.queryId!, kind: diagnostic.queryKind!, stableFingerprint: diagnostic.queryFingerprint!, code: diagnostic.code, retryable: diagnostic.retryable, affectedCount: diagnostic.affectedCount } : { scope: "lead", diagnosticId: diagnostic.id, runId: diagnostic.runId, leadId: diagnostic.leadId!, code: diagnostic.code, retryable: diagnostic.retryable, affectedCount: diagnostic.affectedCount }),
-    sourceIssues: discoveryIssues.map((issue) => ({ provider: issue.provider as "anysearch" | "greenhouse", code: issue.code, affectedCount: issue.affectedCount })),
+    sourceIssues: discoveryIssues.map(sourceIssueSummary),
   });
-  return AgentRunDetailSchema.parse({ ...base, ...(run.workflowVersion === "job-discovery-workflow-v3" ? { sourceChecks: sourceChecks.map((check) => ({ checkId: check.id, runId: check.runId, targetId: check.targetId, watchlistItemId: check.watchlistItemId, sourceId: check.sourceId, status: check.status, reasonCodes: check.reasonCodes, impact: { scope: check.impactScope, affectedCount: check.impactAffectedCount }, observedPostingCount: check.observedPostingCount, selectedDetailCount: check.selectedDetailCount, validDetailCount: check.validDetailCount, requestAttemptCount: check.requestAttemptCount, checkedAt: check.checkedAt.toISOString() })) } : {}) });
+  return AgentRunDetailSchema.parse({ ...base, ...(run.workflowVersion === "job-discovery-workflow-v3" ? { sourceChecks: sourceChecks.map((check) => ({ checkId: check.id, runId: check.runId, targetId: check.targetId, watchlistItemId: check.watchlistItemId, sourceId: check.sourceId, status: check.status, reasonCodes: check.reasonCodes, impact: { scope: check.impactScope, affectedCount: check.impactAffectedCount }, observedPostingCount: check.observedPostingCount, selectedDetailCount: check.selectedDetailCount, validDetailCount: check.validDetailCount, requestAttemptCount: check.requestAttemptCount, checkedAt: check.checkedAt.toISOString() })), sourceIssues: discoveryIssues.map(sourceIssueSummary) } : {}) });
 }
 
 export function createAgentRunQueries(deps: { db: Database }): {

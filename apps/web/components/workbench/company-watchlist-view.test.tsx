@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { CompanyWatchlistOverview } from "@job-copilot/contracts/company-watchlists";
 import type { JobSourceHealthOverview } from "@job-copilot/contracts/agent-runs";
+import type { SourceCapabilityProjectionOverview } from "@job-copilot/contracts/source-capabilities";
 
 import { CompanyWatchlistView } from "./company-watchlist-view";
 
@@ -19,6 +20,10 @@ function item(itemId: string, position: number, canonicalCompanyName: string, st
 }
 
 function health(watchlistVersion: number, sources: JobSourceHealthOverview["sources"]): JobSourceHealthOverview {
+  return { targetId, watchlistVersion, sources };
+}
+
+function capabilities(watchlistVersion: number, sources: SourceCapabilityProjectionOverview["sources"]): SourceCapabilityProjectionOverview {
   return { targetId, watchlistVersion, sources };
 }
 
@@ -65,11 +70,18 @@ it("初始健康读取降级时保留 Watchlist 控制与可恢复诊断", async
 
 it("来源诊断暂不可读时仍展示已声明的稳定能力", () => {
   const publicSource = { itemId: firstItemId, canonicalCompanyName: "曙光云图", careersUrl: "https://boards.greenhouse.io/aurora", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null, state: "enabled" as const, position: 1 };
-  render(<CompanyWatchlistView initialOverview={overview([publicSource], 1)} initialHealthRefreshFailed />);
+  render(<CompanyWatchlistView initialOverview={overview([publicSource], 1)} initialHealthRefreshFailed initialSourceCapabilities={capabilities(1, [{ watchlistItemId: firstItemId, name: "曙光云图", state: "enabled", declaration: { sourceId: "greenhouse:aurora", adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] } }])} />);
 
   expect(screen.getByRole("heading", { name: "来源能力" })).toBeVisible();
   expect(screen.getByLabelText("曙光云图 来源能力")).toHaveTextContent("主动发现、读取详情、持续监控、安全打开原始页面");
   expect(screen.getByText("来源诊断暂时无法读取，请重新加载或刷新页面。")).toBeVisible();
+});
+
+it("能力读取失败独立展示，且不从诊断或 URL 推测能力", () => {
+  render(<CompanyWatchlistView initialOverview={overview([item(firstItemId, 1, "曙光云图")], 1)} initialSourceHealth={health(1, [source(firstItemId, "greenhouse:aurora", "曙光")])} initialCapabilityRefreshFailed />);
+  expect(screen.getByText("来源能力暂不可读，请重新加载或刷新页面。")).toBeVisible();
+  expect(screen.queryByLabelText("曙光云图 来源能力")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("曙光 来源诊断")).toBeVisible();
 });
 
 it("逐来源以文字呈现七种诊断状态、时间、影响和建议动作", () => {
@@ -89,7 +101,7 @@ it("逐来源以文字呈现七种诊断状态、时间、影响和建议动作"
 });
 
 it("将稳定来源能力与动态来源诊断分区呈现", () => {
-  render(<CompanyWatchlistView initialOverview={overview()} initialSourceHealth={health(0, [source(firstItemId, "greenhouse:aurora", "曙光", "rate_limited")])} />);
+  render(<CompanyWatchlistView initialOverview={overview()} initialSourceCapabilities={capabilities(0, [{ watchlistItemId: firstItemId, name: "曙光", state: "enabled", declaration: { sourceId: "greenhouse:aurora", adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] } }])} initialSourceHealth={health(0, [source(firstItemId, "greenhouse:aurora", "曙光", "rate_limited")])} />);
 
   expect(screen.getByRole("heading", { name: "来源能力" })).toBeVisible();
   expect(screen.getByLabelText("曙光 来源能力")).toHaveTextContent("主动发现");
@@ -155,14 +167,19 @@ it("每次成功写入后都用 BFF 的当前 health 投影替换旧证据", asy
   const fetchMock = vi.fn<typeof fetch>()
     .mockResolvedValueOnce(Response.json(added, { status: 201 }))
     .mockResolvedValueOnce(Response.json(health(3, [...initialHealth.sources, source(addedItemId, "greenhouse:new", "新来源", null)])))
+    .mockResolvedValueOnce(Response.json(capabilities(3, [])))
     .mockResolvedValueOnce(Response.json(edited, { status: 201 }))
     .mockResolvedValueOnce(Response.json(health(4, [source(firstItemId, "greenhouse:replacement", "替换曙光", null), source(secondItemId, "greenhouse:orbit", "星轨"), source(addedItemId, "greenhouse:new", "新来源", null)])))
+    .mockResolvedValueOnce(Response.json(capabilities(4, [])))
     .mockResolvedValueOnce(Response.json(disabled, { status: 201 }))
     .mockResolvedValueOnce(Response.json(health(5, [source(firstItemId, "greenhouse:replacement", "替换曙光", "disabled"), source(secondItemId, "greenhouse:orbit", "星轨"), source(addedItemId, "greenhouse:new", "新来源", null)])))
+    .mockResolvedValueOnce(Response.json(capabilities(5, [])))
     .mockResolvedValueOnce(Response.json(enabled, { status: 201 }))
     .mockResolvedValueOnce(Response.json(health(6, [source(firstItemId, "greenhouse:replacement", "替换曙光", "rate_limited"), source(secondItemId, "greenhouse:orbit", "星轨"), source(addedItemId, "greenhouse:new", "新来源", null)])))
+    .mockResolvedValueOnce(Response.json(capabilities(6, [])))
     .mockResolvedValueOnce(Response.json(reordered, { status: 201 }))
-    .mockResolvedValueOnce(Response.json(health(7, [source(secondItemId, "greenhouse:orbit", "星轨"), source(firstItemId, "greenhouse:replacement", "替换曙光", "rate_limited"), source(addedItemId, "greenhouse:new", "新来源", null)])));
+    .mockResolvedValueOnce(Response.json(health(7, [source(secondItemId, "greenhouse:orbit", "星轨"), source(firstItemId, "greenhouse:replacement", "替换曙光", "rate_limited"), source(addedItemId, "greenhouse:new", "新来源", null)])))
+    .mockResolvedValueOnce(Response.json(capabilities(7, [])));
   vi.stubGlobal("fetch", fetchMock);
   render(<CompanyWatchlistView initialOverview={initial} initialSourceHealth={initialHealth} />);
 
@@ -191,7 +208,7 @@ it("每次成功写入后都用 BFF 的当前 health 投影替换旧证据", asy
   await waitFor(() => expect(screen.getByLabelText("替换曙光 来源诊断")).toHaveTextContent("访问受限"));
   await user.click(screen.getByRole("button", { name: "上移 星轨智造" }));
   await waitFor(() => expect(screen.getByText("Watchlist 版本 7")).toBeVisible());
-  expect(fetchMock).toHaveBeenNthCalledWith(10, `/api/job-targets/${targetId}/source-health`, expect.anything());
+  expect(fetchMock).toHaveBeenNthCalledWith(14, `/api/job-targets/${targetId}/source-health`, expect.anything());
 });
 
 it("health 刷新失败后编辑或取消不会移除恢复入口，重试成功才恢复诊断", async () => {
@@ -201,6 +218,7 @@ it("health 刷新失败后编辑或取消不会移除恢复入口，重试成功
   const fetchMock = vi.fn<typeof fetch>()
     .mockResolvedValueOnce(Response.json(next, { status: 201 }))
     .mockResolvedValueOnce(new Response("unavailable", { status: 502 }))
+    .mockResolvedValueOnce(Response.json(capabilities(2, [])))
     .mockResolvedValueOnce(Response.json(health(2, [source(firstItemId, "greenhouse:aurora", "曙光", "disabled")])))
   vi.stubGlobal("fetch", fetchMock);
   render(<CompanyWatchlistView initialOverview={initial} initialSourceHealth={health(1, [source(firstItemId, "greenhouse:aurora", "旧证据")])} />);
@@ -230,12 +248,16 @@ it("编辑、完整排列上移下移和启停均携带当前聚合版本并保�
   const fetchMock = vi.fn<typeof fetch>()
     .mockResolvedValueOnce(Response.json(edited, { status: 201 }))
     .mockResolvedValueOnce(Response.json(health(3, [])))
+    .mockResolvedValueOnce(Response.json(capabilities(3, [])))
     .mockResolvedValueOnce(Response.json(reordered, { status: 201 }))
     .mockResolvedValueOnce(Response.json(health(4, [])))
+    .mockResolvedValueOnce(Response.json(capabilities(4, [])))
     .mockResolvedValueOnce(Response.json(disabled, { status: 201 }))
     .mockResolvedValueOnce(Response.json(health(5, [])))
+    .mockResolvedValueOnce(Response.json(capabilities(5, [])))
     .mockResolvedValueOnce(Response.json(enabled, { status: 201 }))
-    .mockResolvedValueOnce(Response.json(health(6, [])));
+    .mockResolvedValueOnce(Response.json(health(6, [])))
+    .mockResolvedValueOnce(Response.json(capabilities(6, [])));
   vi.stubGlobal("fetch", fetchMock);
   render(<CompanyWatchlistView initialOverview={initial} />);
 
@@ -247,19 +269,19 @@ it("编辑、完整排列上移下移和启停均携带当前聚合版本并保�
   expect(JSON.parse(String(fetchMock.mock.calls[0]![1]?.body))).toMatchObject({ expectedVersion: 2, sourceNote: "更新说明" });
 
   await user.click(screen.getByRole("button", { name: "上移 星轨智造" }));
-  await waitFor(() => expect(fetchMock).toHaveBeenNthCalledWith(3, `/api/job-targets/${targetId}/company-watchlist/reorders`, expect.anything()));
-  expect(JSON.parse(String(fetchMock.mock.calls[2]![1]?.body))).toEqual({ expectedVersion: 3, orderedItemIds: [secondItemId, firstItemId] });
+  await waitFor(() => expect(fetchMock).toHaveBeenNthCalledWith(4, `/api/job-targets/${targetId}/company-watchlist/reorders`, expect.anything()));
+  expect(JSON.parse(String(fetchMock.mock.calls[3]![1]?.body))).toEqual({ expectedVersion: 3, orderedItemIds: [secondItemId, firstItemId] });
   expect(screen.getAllByText("优先级 01")[0]).toBeVisible();
 
   await user.click(screen.getByRole("button", { name: "停用 星轨智造" }));
-  await waitFor(() => expect(fetchMock).toHaveBeenNthCalledWith(5, `/api/job-targets/${targetId}/company-watchlist/items/${secondItemId}/state-changes`, expect.anything()));
-  expect(JSON.parse(String(fetchMock.mock.calls[4]![1]?.body))).toEqual({ expectedVersion: 4, state: "disabled" });
+  await waitFor(() => expect(fetchMock).toHaveBeenNthCalledWith(7, `/api/job-targets/${targetId}/company-watchlist/items/${secondItemId}/state-changes`, expect.anything()));
+  expect(JSON.parse(String(fetchMock.mock.calls[6]![1]?.body))).toEqual({ expectedVersion: 4, state: "disabled" });
   expect(screen.getByText("已停用")).toBeVisible();
   expect(screen.getByText("更新说明")).toBeVisible();
 
   await user.click(screen.getByRole("button", { name: "启用 星轨智造" }));
-  await waitFor(() => expect(fetchMock).toHaveBeenNthCalledWith(7, `/api/job-targets/${targetId}/company-watchlist/items/${secondItemId}/state-changes`, expect.anything()));
-  expect(JSON.parse(String(fetchMock.mock.calls[6]![1]?.body))).toEqual({ expectedVersion: 5, state: "enabled" });
+  await waitFor(() => expect(fetchMock).toHaveBeenNthCalledWith(10, `/api/job-targets/${targetId}/company-watchlist/items/${secondItemId}/state-changes`, expect.anything()));
+  expect(JSON.parse(String(fetchMock.mock.calls[9]![1]?.body))).toEqual({ expectedVersion: 5, state: "enabled" });
 });
 
 it("下移使用当前完整 ID 排列而不是局部位置更新", async () => {

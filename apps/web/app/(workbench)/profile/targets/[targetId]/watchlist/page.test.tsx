@@ -3,6 +3,7 @@ import { expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   getCompanyWatchlist: vi.fn(),
   getSourceHealth: vi.fn(),
+  getSourceCapabilities: vi.fn(),
   view: vi.fn(() => null),
   notFound: vi.fn(() => { throw new Error("NEXT_NOT_FOUND"); }),
   unstableRethrow: vi.fn((error: unknown) => {
@@ -12,6 +13,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/server/company-watchlists", () => ({ getCompanyWatchlist: mocks.getCompanyWatchlist }));
 vi.mock("@/lib/server/source-health", () => ({ getSourceHealth: mocks.getSourceHealth }));
+vi.mock("@/lib/server/source-capabilities", () => ({ getSourceCapabilities: mocks.getSourceCapabilities }));
 vi.mock("@/components/workbench/company-watchlist-view", () => ({ CompanyWatchlistView: mocks.view }));
 vi.mock("next/navigation", () => ({ notFound: mocks.notFound, unstable_rethrow: mocks.unstableRethrow }));
 
@@ -33,11 +35,13 @@ it("将服务端已验证概览传给客户端视图", async () => {
   const overview = { target: { targetId, targetVersion: 1, targetState: "active", roleFamily: "AI 应用工程" }, version: 0, items: [] };
   mocks.getCompanyWatchlist.mockResolvedValue(overview);
   mocks.getSourceHealth.mockResolvedValue({ targetId, watchlistVersion: 0, sources: [] });
+  mocks.getSourceCapabilities.mockResolvedValue({ targetId, watchlistVersion: 0, sources: [] });
 
   const page = await WatchlistPage(context);
 
   expect(page.props.initialOverview).toEqual(overview);
   expect(page.props.initialSourceHealth).toEqual({ targetId, watchlistVersion: 0, sources: [] });
+  expect(page.props.initialSourceCapabilities).toEqual({ targetId, watchlistVersion: 0, sources: [] });
 });
 
 it("将初次 target 或 Watchlist 版本不匹配的健康概览降级为可重试诊断", async () => {

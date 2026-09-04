@@ -2,6 +2,7 @@ import {
   SourceCapabilityDeclarationSchema,
   SourceCapabilityRejectionSchema,
   SourceCapabilitySchema,
+  mismatchedSourceCapabilityDeclaration,
   unsupportedSourceCapability,
   type SourceCapabilityDeclaration,
   type SourceCapabilityRejection,
@@ -9,6 +10,8 @@ import {
 } from "@job-copilot/contracts/source-capabilities";
 
 export interface SourceCapabilityAdapter {
+  readonly adapter: string;
+  readonly adapterVersion: string;
   declareCapabilities(input: { sourceId: string }): SourceCapabilityDeclaration;
 }
 
@@ -18,9 +21,15 @@ export type SourceActionAuthorization = { allowed: true } | { allowed: false; fa
 export function authorizeSourceAction(input: {
   declaration: SourceCapabilityDeclaration;
   action: SourceCapability;
+  expected: { sourceId: string; adapter: string; adapterVersion: string };
 }): SourceActionAuthorization {
   const declaration = SourceCapabilityDeclarationSchema.parse(input.declaration);
   const action = SourceCapabilitySchema.parse(input.action);
+  if (declaration.sourceId !== input.expected.sourceId
+    || declaration.adapter !== input.expected.adapter
+    || declaration.adapterVersion !== input.expected.adapterVersion) {
+    return { allowed: false, failure: SourceCapabilityRejectionSchema.parse(mismatchedSourceCapabilityDeclaration()) };
+  }
   if (declaration.capabilities.includes(action)) return { allowed: true };
   return { allowed: false, failure: SourceCapabilityRejectionSchema.parse(unsupportedSourceCapability()) };
 }

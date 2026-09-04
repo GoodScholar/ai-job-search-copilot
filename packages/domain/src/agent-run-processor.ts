@@ -26,7 +26,7 @@ import { normalizeAgentRunSourceScope } from "./agent-run-source-scope";
 import { applyTransactionDeadline } from "./transaction-deadline";
 import { deriveSourceHealthTerminal, type SourceHealthTerminal } from "./source-health-terminal";
 import type { SourceHealthDiscoveryAdapter, SourceHealthDiscoveryAdapterResolver } from "./source-health-discovery-adapter";
-import type { SourceCapabilityAdapter } from "./source-capabilities";
+import { authorizeSourceAction, type SourceCapabilityAdapter } from "./source-capabilities";
 import {
   type LayeredPublicJobDiscoveryWorkflow,
   type LayeredPublicJobDiscoveryWorkflowResolver,
@@ -49,11 +49,7 @@ export type PublicDiscoveryBatchSearchInput = {
   beforeList?: PublicDiscoveryListHook;
 };
 
-/**
- * 旧 v1–v3 恢复路径保留既有执行语义，但仍必须提供同一能力声明。
- * 正式来源动作的能力门位于 v4 `LayeredTrustedSourceAdapter` 运行时，
- * 不在冻结路径中补写会改变历史恢复结果的授权步骤。
- */
+/** 旧 v1–v3 恢复路径保留既有执行语义；v3 每个实际来源动作同样先经版本化声明授权。 */
 export interface JobDiscoveryAdapter extends SourceCapabilityAdapter {
   search(input: import("@job-copilot/contracts/agent-runs").DiscoverySearchInput): Promise<import("@job-copilot/contracts/agent-runs").DiscoverySearchResult>;
   searchBatch(input: import("@job-copilot/contracts/agent-runs").DiscoveryBatchSearchInput | PublicDiscoveryBatchSearchInput): Promise<import("@job-copilot/contracts/agent-runs").DiscoveryBatchSearchResult | import("@job-copilot/contracts/agent-runs").PublicDiscoveryBatchSearchResult>;
@@ -643,7 +639,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
         }
       }
-      const persistDiscoveryOutcome = async (input: { details: DiscoveryDetail[]; scans: Array<{ sourceId: string; observedDetailIds: string[]; complete: boolean }>; sourceChecks?: JobSourceHealthCheck[]; terminal?: SourceHealthTerminal }) => {
+      const persistDiscoveryOutcome = async (input: { details: DiscoveryDetail[]; scans: Array<{ sourceId: string; observedDetailIds: string[]; complete: boolean }>; sourceChecks?: JobSourceHealthCheck[]; sourceIssues?: Array<{ provider: "greenhouse"; code: "SOURCE_CAPABILITY_UNSUPPORTED" | "SOURCE_CAPABILITY_DECLARATION_MISMATCH"; affectedCount: number }>; terminal?: SourceHealthTerminal }) => {
         const stored = input.details.map((detail) => {
           const bytes = canonicalJsonBytes(detail.rawPayload); const sourceIdentifier = discoverySourceIdentifier(detail.sourceId, detail.detailId); const rawContentSha256 = createHash("sha256").update(bytes).digest("hex");
           return { detail, bytes, rawContentSha256, objectKey: `accounts/${job.userId}/agent-runs/${job.runId}/sources/${sourceIdentifier}/${claimed.claimToken}/${rawContentSha256}.json` };
@@ -660,7 +656,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         const commitBefore = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_before", ordinal: 1 });
         if (commitBefore) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return commitBefore; }
         let persisted: { cleanupObjectKeys: string[]; completed: boolean };
-        try { persisted = await runTransaction(deps, deadline, (transaction) => createJobDiscoveryPersistence({ db: deps.db, id: deps.id, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({ run: { ...claimed.run, claimToken: claimed.claimToken }, details: input.details, scans: input.scans, storedObjects: stored.map((item) => ({ sourceId: item.detail.sourceId, detailId: item.detail.detailId, objectKey: item.objectKey, rawContentSha256: item.rawContentSha256 })), sourceChecks: input.sourceChecks, terminal: input.terminal, now: deps.clock(), transaction, afterCompleted: async ({ transaction: completedTransaction, userId, targetId, discoveryRunId }) => { await ensureDeepMatchRunInTransaction({ transaction: completedTransaction, id: deps.id, clock: deps.clock, userId, targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(discoveryRunId), trigger: "automatic", discoveryRunId }); } })); }
+        try { persisted = await runTransaction(deps, deadline, (transaction) => createJobDiscoveryPersistence({ db: deps.db, id: deps.id, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({ run: { ...claimed.run, claimToken: claimed.claimToken }, details: input.details, scans: input.scans, storedObjects: stored.map((item) => ({ sourceId: item.detail.sourceId, detailId: item.detail.detailId, objectKey: item.objectKey, rawContentSha256: item.rawContentSha256 })), sourceChecks: input.sourceChecks, sourceIssues: input.sourceIssues, terminal: input.terminal, now: deps.clock(), transaction, afterCompleted: async ({ transaction: completedTransaction, userId, targetId, discoveryRunId }) => { await ensureDeepMatchRunInTransaction({ transaction: completedTransaction, id: deps.id, clock: deps.clock, userId, targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(discoveryRunId), trigger: "automatic", discoveryRunId }); } })); }
         catch { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_PERSIST_FAILED", retryable: true, category: "source" }, deadline }); }
         await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), persisted.cleanupObjectKeys); if (!persisted.completed) return "stale";
         // PostgreSQL queued state is authoritative; the shared queue wakes it immediately and reconciler repairs delivery failures.
@@ -755,9 +751,15 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
       if (claimed.run.workflowVersion === GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION) {
         const v3Scope = sourceScope as import("@job-copilot/contracts/agent-runs").PublicSourceHealthAgentRunSourceScope;
         const batchStart = await transition("batch_search", false); if (batchStart) return batchStart;
-        const sourceStates: Array<{ source: typeof v3Scope.sources[number]; observedDetailIds: string[]; candidates: Array<{ sourceId: string; detailId: string }>; requestAttemptCount: number; failure?: Extract<import("@job-copilot/contracts/agent-runs").SourceHealthListResult, { ok: false }>["failure"] }> = [];
+        const sourceStates: Array<{ source: typeof v3Scope.sources[number]; observedDetailIds: string[]; candidates: Array<{ sourceId: string; detailId: string }>; requestAttemptCount: number; capabilityDenied?: boolean; failure?: Extract<import("@job-copilot/contracts/agent-runs").SourceHealthListResult, { ok: false }>["failure"] }> = [];
+        const sourceIssues: Array<{ provider: "greenhouse"; code: "SOURCE_CAPABILITY_UNSUPPORTED" | "SOURCE_CAPABILITY_DECLARATION_MISMATCH"; affectedCount: number }> = [];
         try {
           for (const [index, source] of v3Scope.sources.entries()) {
+            const declaration = sourceHealthAdapter.declareCapabilities({ sourceId: source.sourceId });
+            const monitoringAuthorization = authorizeSourceAction({ declaration, action: "continuous_monitoring", expected: { sourceId: source.sourceId, adapter: sourceHealthAdapter.adapter, adapterVersion: sourceHealthAdapter.adapterVersion } });
+            if (!monitoringAuthorization.allowed) { sourceIssues.push({ provider: "greenhouse", code: monitoringAuthorization.failure.reasonCode, affectedCount: 1 }); continue; }
+            const authorization = authorizeSourceAction({ declaration, action: "active_discovery", expected: { sourceId: source.sourceId, adapter: sourceHealthAdapter.adapter, adapterVersion: sourceHealthAdapter.adapterVersion } });
+            if (!authorization.allowed) { sourceIssues.push({ provider: "greenhouse", code: authorization.failure.reasonCode, affectedCount: 1 }); continue; }
             const called = await adapterCall("source_list", index + 1, () => sourceHealthAdapter.listSource({ targetSnapshot: snapshot, source }));
             if (called.outcome) return called.outcome;
             const list = parseSourceHealthListResult(called.value, source.sourceId);
@@ -771,8 +773,10 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         try {
           let detailOrdinal = 0;
           for (const state of sourceStates) {
-            if (state.failure) continue;
+            if (state.failure || state.capabilityDenied) continue;
             for (const candidate of state.candidates) {
+              const authorization = authorizeSourceAction({ declaration: sourceHealthAdapter.declareCapabilities({ sourceId: state.source.sourceId }), action: "read_details", expected: { sourceId: state.source.sourceId, adapter: sourceHealthAdapter.adapter, adapterVersion: sourceHealthAdapter.adapterVersion } });
+              if (!authorization.allowed) { sourceIssues.push({ provider: "greenhouse", code: authorization.failure.reasonCode, affectedCount: 1 }); state.capabilityDenied = true; break; }
               const called = await adapterCall("source_get_detail", ++detailOrdinal, () => sourceHealthAdapter.getSourceDetail({ source: state.source, detailId: candidate.detailId }));
               if (called.outcome) return called.outcome;
               const detail = parseSourceHealthDetailResult(called.value, candidate);
@@ -782,7 +786,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
             }
           }
         } catch (error) { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline }); }
-        const checks: JobSourceHealthCheck[] = sourceStates.map((state) => {
+        const checks: JobSourceHealthCheck[] = sourceStates.filter((state) => !state.capabilityDenied).map((state) => {
           const validDetailCount = details.filter((detail) => detail.sourceId === state.source.sourceId).length;
           const failure = state.failure;
           const status = !failure ? (validDetailCount === 0 ? "zero_valid_results" : "healthy") : failure.category;
@@ -800,8 +804,9 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         const detailsComplete = await transition("fetch_details", true); if (detailsComplete) return detailsComplete;
         const persistStart = await transition("persist_results", false); if (persistStart) return persistStart;
         const detailsForPersistence = details.slice(0, claimed.run.budgetSnapshot.maxResults);
-        const terminal = deriveSourceHealthTerminal(checks);
-        return persistDiscoveryOutcome({ details: detailsForPersistence, scans: sourceStates.map((state) => ({ sourceId: state.source.sourceId, observedDetailIds: state.observedDetailIds, complete: !state.failure })), sourceChecks: checks, terminal });
+        const baseTerminal = deriveSourceHealthTerminal(checks);
+        const terminal = sourceIssues.length && baseTerminal !== "source_failed" ? "completed_with_source_issues" : baseTerminal;
+        return persistDiscoveryOutcome({ details: detailsForPersistence, scans: sourceStates.filter((state) => !state.capabilityDenied).map((state) => ({ sourceId: state.source.sourceId, observedDetailIds: state.observedDetailIds, complete: !state.failure })), sourceChecks: checks, sourceIssues, terminal });
       }
       const batchStart = await transition("batch_search", false); if (batchStart) return batchStart;
       let summaries: Array<{ sourceId: string; detailId: string }>;

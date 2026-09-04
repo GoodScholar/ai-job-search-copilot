@@ -8,8 +8,7 @@ import {
   type CompanyWatchlistOverview,
 } from "@job-copilot/contracts/company-watchlists";
 import { JobSourceHealthOverviewSchema, type JobSourceHealthOverview } from "@job-copilot/contracts/agent-runs";
-import { classifyGreenhousePublicSource } from "@job-copilot/contracts/job-discovery-schedules";
-import { declareFormalBetaSourceCapabilities } from "@job-copilot/contracts/source-capabilities";
+import { SourceCapabilityProjectionOverviewSchema, type SourceCapabilityProjectionOverview } from "@job-copilot/contracts/source-capabilities";
 import { useState, type FormEvent } from "react";
 
 type Draft = {
@@ -23,9 +22,10 @@ const emptyDraft: Draft = { canonicalCompanyName: "", careersUrl: "", allowedDom
 const conflictMessage = "Watchlist 已在其他位置更新，请刷新后重试。";
 const initialHealthRefreshMessage = "来源诊断暂时无法读取，请重新加载或刷新页面。";
 const postWriteHealthRefreshMessage = "Watchlist 已保存，但来源诊断刷新失败。请重新加载来源诊断或刷新页面。";
+const initialCapabilityRefreshMessage = "来源能力暂不可读，请重新加载或刷新页面。";
 const safetyNotice = "不要填写账号、密码、Cookie、验证码或绕过登录限制的说明。";
 
-type HealthRefreshFailure = "initial" | "post_write" | null;
+type RefreshFailure = "initial" | "post_write" | null;
 
 function domains(value: string): string[] {
   return value.split(/[，,\s]+/u).map((domain) => domain.trim().toLowerCase()).filter(Boolean);
@@ -84,21 +84,20 @@ const capabilityLabels = {
   safe_open_original_page: "安全打开原始页面",
 } as const;
 
-export function CompanyWatchlistView({ initialOverview, initialSourceHealth, initialHealthRefreshFailed = false }: { initialOverview: CompanyWatchlistOverview; initialSourceHealth?: JobSourceHealthOverview; initialHealthRefreshFailed?: boolean }) {
+export function CompanyWatchlistView({ initialOverview, initialSourceHealth, initialSourceCapabilities, initialHealthRefreshFailed = false, initialCapabilityRefreshFailed = false }: { initialOverview: CompanyWatchlistOverview; initialSourceHealth?: JobSourceHealthOverview; initialSourceCapabilities?: SourceCapabilityProjectionOverview; initialHealthRefreshFailed?: boolean; initialCapabilityRefreshFailed?: boolean }) {
   const [overview, setOverview] = useState(initialOverview);
   const [sourceHealth, setSourceHealth] = useState(initialSourceHealth);
+  const [sourceCapabilities, setSourceCapabilities] = useState(initialSourceCapabilities);
   const [draft, setDraft] = useState<Draft>(emptyDraft);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
-  const [healthRefreshFailure, setHealthRefreshFailure] = useState<HealthRefreshFailure>(initialHealthRefreshFailed ? "initial" : null);
+  const [healthRefreshFailure, setHealthRefreshFailure] = useState<RefreshFailure>(initialHealthRefreshFailed ? "initial" : null);
+  const [capabilityRefreshFailure, setCapabilityRefreshFailure] = useState<RefreshFailure>(initialCapabilityRefreshFailed ? "initial" : null);
   const [isSaving, setIsSaving] = useState(false);
   const inactive = overview.target.targetState === "inactive";
   const editingItem = overview.items.find((item) => item.itemId === editingItemId) ?? null;
   const healthRefreshMessage = healthRefreshFailure === "initial" ? initialHealthRefreshMessage : "来源诊断未能更新。请重新加载或刷新页面。";
-  const capabilitySources = sourceHealth?.sources ?? overview.items.flatMap((item) => {
-    const classified = classifyGreenhousePublicSource({ itemId: item.itemId, canonicalCompanyName: item.canonicalCompanyName, careersUrl: item.careersUrl, allowedDomains: item.allowedDomains });
-    return classified.kind === "supported" ? [{ sourceId: classified.source.sourceId, name: item.canonicalCompanyName, watchlistItemId: item.itemId }] : [];
-  });
+  const capabilitySources = sourceCapabilities?.sources ?? [];
 
   function updateDraft<Key extends keyof Draft>(key: Key, value: Draft[Key]) {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -112,20 +111,24 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth, ini
     return parsed.data;
   }
 
+  async function fetchSourceCapabilities(nextOverview: CompanyWatchlistOverview): Promise<SourceCapabilityProjectionOverview> {
+    const response = await fetch(`/api/job-targets/${nextOverview.target.targetId}/source-capabilities`, { cache: "no-store" });
+    if (!response.ok) throw new Error("source capabilities unavailable");
+    const parsed = SourceCapabilityProjectionOverviewSchema.safeParse(await response.json());
+    if (!parsed.success || parsed.data.targetId !== nextOverview.target.targetId || parsed.data.watchlistVersion !== nextOverview.version) throw new Error("source capabilities invalid");
+    return parsed.data;
+  }
+
   async function applySuccessfulMutation(nextOverview: CompanyWatchlistOverview, successMessage: string) {
     // A successful write invalidates every prior health identity/version before the
     // authoritative projection has returned.
     setSourceHealth(undefined);
+    setSourceCapabilities(undefined);
     setOverview(nextOverview);
-    try {
-      setSourceHealth(await fetchSourceHealth(nextOverview));
-      setHealthRefreshFailure(null);
-      setMessage(successMessage);
-    } catch {
-      setSourceHealth(undefined);
-      setHealthRefreshFailure("post_write");
-      setMessage(postWriteHealthRefreshMessage);
-    }
+    const [health, capabilities] = await Promise.allSettled([fetchSourceHealth(nextOverview), fetchSourceCapabilities(nextOverview)]);
+    if (health.status === "fulfilled") { setSourceHealth(health.value); setHealthRefreshFailure(null); } else { setHealthRefreshFailure("post_write"); }
+    if (capabilities.status === "fulfilled") { setSourceCapabilities(capabilities.value); setCapabilityRefreshFailure(null); } else { setCapabilityRefreshFailure("post_write"); }
+    setMessage(health.status === "rejected" ? postWriteHealthRefreshMessage : successMessage);
   }
 
   async function retrySourceHealth() {
@@ -139,6 +142,13 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth, ini
     } finally {
       setIsSaving(false);
     }
+  }
+
+  async function retrySourceCapabilities() {
+    setMessage(""); setIsSaving(true);
+    try { setSourceCapabilities(await fetchSourceCapabilities(overview)); setCapabilityRefreshFailure(null); }
+    catch { setSourceCapabilities(undefined); setCapabilityRefreshFailure((current) => current ?? "initial"); }
+    finally { setIsSaving(false); }
   }
 
   async function save(event: FormEvent<HTMLFormElement>) {
@@ -244,8 +254,8 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth, ini
       <h2 id="source-capabilities-title">来源能力</h2>
       <p>能力是来源稳定支持边界，不会因本次诊断结果扩大或缩小。</p>
       <ol className="company-watchlist-list">{capabilitySources.map((source) => {
-        const declaration = declareFormalBetaSourceCapabilities({ sourceId: source.sourceId, adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2" });
-        return <li key={`${source.watchlistItemId}:${source.sourceId}`}>
+        const declaration = source.declaration;
+        return <li key={`${source.watchlistItemId}:${declaration.sourceId}`}>
           <article aria-label={`${source.name} 来源能力`}>
             <p>{source.name}</p>
             <p>契约版本：{declaration.contractVersion}</p>
@@ -253,6 +263,9 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth, ini
           </article>
         </li>;
       })}</ol>
+    </section> : capabilityRefreshFailure ? <section aria-labelledby="source-capabilities-title" className="company-watchlist-section" id="source-capabilities">
+      <h2 id="source-capabilities-title">来源能力</h2><p>{initialCapabilityRefreshMessage}</p>
+      <button className="workbench-touch-target" disabled={isSaving} onClick={() => void retrySourceCapabilities()} type="button">重新加载来源能力</button>
     </section> : null}
     {sourceHealth ? <section aria-labelledby="source-health-title" className="company-watchlist-section" id="source-health">
       <h2 id="source-health-title">来源诊断</h2>

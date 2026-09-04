@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SourceCapabilityImpactSchema, SourceCapabilitySuggestedActionSchema } from "./source-capabilities";
 import { GreenhousePublicSourceSchema } from "./job-discovery-schedules";
 import { JobTargetConstraintsSchema } from "./job-targets";
 import { isPublicJobDiscoveryHostname, SafeNormalizedPublicJobUrlSchema } from "./public-job-url-policy";
@@ -235,11 +236,25 @@ export const DiscoveryDiagnosticSchema = z.discriminatedUnion("scope", [
   z.object({ scope: z.literal("lead"), diagnosticId: z.uuid(), runId: z.uuid(), leadId: z.uuid(), code: stableCode, retryable: z.boolean(), affectedCount: z.literal(1) }).strict(),
 ]);
 
-export const DiscoverySourceIssueSummarySchema = z.object({
+const GenericDiscoverySourceIssueSummarySchema = z.object({
   provider: z.enum(["greenhouse", "anysearch"]),
-  code: stableCode,
+  code: stableCode.refine((code) => !["SOURCE_CAPABILITY_UNSUPPORTED", "SOURCE_CAPABILITY_DECLARATION_MISMATCH"].includes(code)),
   affectedCount: nonnegativeInteger.max(10),
 }).strict();
+
+const CapabilityDiscoverySourceIssueSummarySchema = z.object({
+  provider: z.literal("greenhouse"),
+  code: z.enum(["SOURCE_CAPABILITY_UNSUPPORTED", "SOURCE_CAPABILITY_DECLARATION_MISMATCH"]),
+  affectedCount: nonnegativeInteger.max(10),
+  impact: SourceCapabilityImpactSchema,
+  retryable: z.literal(false),
+  suggestedActions: z.tuple([SourceCapabilitySuggestedActionSchema]),
+}).strict();
+
+export const DiscoverySourceIssueSummarySchema = z.union([
+  GenericDiscoverySourceIssueSummarySchema,
+  CapabilityDiscoverySourceIssueSummarySchema,
+]);
 
 export const LayeredPublicJobDiscoveryResultSummarySchema = z.object({
   resultId: z.uuid(),

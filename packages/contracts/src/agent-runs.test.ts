@@ -256,7 +256,9 @@ describe("agent run contracts", () => {
       retryOfRunId: null,
       steps: [], events: [], results: [], sourceChecks: [sourceCheck],
     };
-    expect(AgentRunDetailSchema.parse(v3Detail).termination).toMatchObject({ kind: "completed_with_source_issues" });
+    const parsedV3Detail = AgentRunDetailSchema.parse(v3Detail);
+    expect(parsedV3Detail.termination).toMatchObject({ kind: "completed_with_source_issues" });
+    expect("sourceIssues" in parsedV3Detail && parsedV3Detail.sourceIssues).toEqual([]);
     expect(AgentRunDetailSchema.safeParse({ ...detail, sourceChecks: [sourceCheck] }).success).toBe(false);
     for (const sourceChecks of [
       [{ ...sourceCheck, runId: "c9862e7d-5821-46d1-b1d5-4b2c1170b8c7" }],
@@ -271,6 +273,9 @@ describe("agent run contracts", () => {
     const twoSourceDetail = { ...v3Detail, sourceScope: { ...v3Detail.sourceScope, sources: [v3Detail.sourceScope.sources[0]!, secondSource] }, executionSpec: { ...v3Detail.executionSpec, sourceScope: { ...v3Detail.executionSpec.sourceScope, sources: [v3Detail.sourceScope.sources[0]!, secondSource] } } };
     expect(AgentRunDetailSchema.safeParse(twoSourceDetail).success).toBe(false);
     expect(AgentRunDetailSchema.safeParse({ ...twoSourceDetail, sourceChecks: [sourceCheck, secondCheck] }).success).toBe(true);
+    const capabilityIssue = { provider: "greenhouse", code: "SOURCE_CAPABILITY_UNSUPPORTED", affectedCount: 1, impact: { scope: "entire_source", affectedCount: null }, retryable: false, suggestedActions: ["review_source_capabilities"] };
+    expect(AgentRunDetailSchema.safeParse({ ...twoSourceDetail, sourceChecks: [sourceCheck], sourceIssues: [capabilityIssue] }).success).toBe(true);
+    expect(AgentRunDetailSchema.safeParse({ ...twoSourceDetail, sourceChecks: [sourceCheck], sourceIssues: [] }).success).toBe(false);
     expect(AgentRunDetailSchema.safeParse({ ...twoSourceDetail, status: "running", currentStep: "batch_search", completedAt: null, termination: null, usage: { ...twoSourceDetail.usage, complete: false } }).success).toBe(true);
     const failedGlobal = { ...twoSourceDetail, status: "failed", currentStep: "failed", completedAt: null, failedAt: now, failureCode: "AGENT_RUN_ADAPTER_FAILED", termination: { kind: "source_failed", failureCode: "AGENT_RUN_ADAPTER_FAILED", budgetDimension: null }, sourceChecks: [] };
     expect(AgentRunDetailSchema.safeParse(failedGlobal).success).toBe(true);

@@ -12,7 +12,7 @@ const declaration = {
 
 describe("authorizeSourceAction", () => {
   it("不因来源名称或历史健康推测未声明的详情读取权限", () => {
-    expect(authorizeSourceAction({ declaration, action: "read_details" })).toEqual({
+    expect(authorizeSourceAction({ declaration, action: "read_details", expected: { sourceId: "greenhouse:acme", adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2" } })).toEqual({
       allowed: false,
       failure: {
         reasonCode: "SOURCE_CAPABILITY_UNSUPPORTED",
@@ -24,6 +24,18 @@ describe("authorizeSourceAction", () => {
   });
 
   it("仅允许声明的动作", () => {
-    expect(authorizeSourceAction({ declaration, action: "active_discovery" })).toEqual({ allowed: true });
+    expect(authorizeSourceAction({ declaration, action: "active_discovery", expected: { sourceId: "greenhouse:acme", adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2" } })).toEqual({ allowed: true });
+  });
+
+  it("声明身份与实际 Adapter 不一致时拒绝，不能以同名来源放宽授权", () => {
+    expect(authorizeSourceAction({ declaration, action: "active_discovery", expected: { sourceId: "greenhouse:acme", adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v9" } })).toEqual({
+      allowed: false,
+      failure: {
+        reasonCode: "SOURCE_CAPABILITY_DECLARATION_MISMATCH",
+        impact: { scope: "entire_source", affectedCount: null },
+        retryable: false,
+        suggestedActions: ["review_source_capabilities"],
+      },
+    });
   });
 });

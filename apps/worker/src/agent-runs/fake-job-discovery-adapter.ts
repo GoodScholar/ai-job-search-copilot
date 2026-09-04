@@ -96,10 +96,12 @@ function matchesTarget(item: Fixture, target: DiscoverySearchInput["targetSnapsh
 }
 
 export class FakeJobDiscoveryAdapter implements JobDiscoveryAdapter {
+  readonly adapter = "fake";
+  readonly adapterVersion = "fake-job-discovery-v1";
   constructor(private readonly options: FakeJobDiscoveryAdapterOptions = {}) {}
 
   declareCapabilities(input: { sourceId: string }): SourceCapabilityDeclaration {
-    return declareFormalBetaSourceCapabilities({ sourceId: input.sourceId, adapter: "fake", adapterVersion: "fake-job-discovery-v1" });
+    return declareFormalBetaSourceCapabilities({ sourceId: input.sourceId, adapter: this.adapter, adapterVersion: this.adapterVersion });
   }
 
   async search(input: DiscoverySearchInput): Promise<DiscoverySearchResult> {

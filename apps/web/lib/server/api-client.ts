@@ -57,6 +57,7 @@ import {
   type JobTriageVersion,
 } from "@job-copilot/contracts/job-triage";
 import { WorkbenchHomeSchema, type WorkbenchHome } from "@job-copilot/contracts/workbench";
+import { SourceCapabilityProjectionOverviewSchema, type SourceCapabilityProjectionOverview } from "@job-copilot/contracts/source-capabilities";
 import {
   AgentRunDetailSchema,
   JobSourceHealthOverviewSchema,
@@ -406,6 +407,15 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
         throw new ApiClientError("api", problem?.message ?? "无法读取来源诊断", response.status, problem ?? undefined);
       }
       return parseSuccess(response, JobSourceHealthOverviewSchema);
+    },
+
+    async getSourceCapabilities(sessionToken: string, targetId: string): Promise<SourceCapabilityProjectionOverview> {
+      const response = await request(`/v1/job-targets/${targetId}/source-capabilities`, { method: "GET", headers: { authorization: `Bearer ${sessionToken}` } });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法读取来源能力", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, SourceCapabilityProjectionOverviewSchema);
     },
 
     async addCompanyWatchlistItem(sessionToken: string, targetId: string, command: AddCompanyWatchlistItemCommand): Promise<CompanyWatchlistOverview> {

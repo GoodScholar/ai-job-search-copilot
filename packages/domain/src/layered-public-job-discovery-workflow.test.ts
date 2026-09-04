@@ -89,7 +89,7 @@ describe("layered public job discovery workflow", () => {
     const runtime = createLayeredPublicJobDiscoveryRuntime({
       db: { transaction: async (callback: (value: never) => unknown) => callback(transaction as never) } as never, id: () => "aaaaaaaa-aaaa-8aaa-8aaa-aaaaaaaaaaaa", auditTrail: {} as never,
       contentStore: { put: async () => undefined, delete: async () => undefined }, evidenceStore: { put: async () => ({ created: true }), delete: async () => undefined },
-      trustedSourceAdapter: { declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: [] }), listSource: async () => { adapterCalls += 1; throw new Error("UNUSED"); }, getSourceDetail: async () => { adapterCalls += 1; throw new Error("UNUSED"); } },
+      trustedSourceAdapter: { adapter: "greenhouse", adapterVersion: "test", declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: [] }), listSource: async () => { adapterCalls += 1; throw new Error("UNUSED"); }, getSourceDetail: async () => { adapterCalls += 1; throw new Error("UNUSED"); } },
       anySearch: { search: async () => ({ candidates: [] }), extract: async () => { throw new Error("UNUSED"); } },
       preflight: async () => null, fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
     });
@@ -106,6 +106,7 @@ describe("layered public job discovery workflow", () => {
       db: {} as never, id: () => "aaaaaaaa-aaaa-8aaa-8aaa-aaaaaaaaaaaa", auditTrail: {} as never,
       contentStore: { put: async () => undefined, delete: async () => undefined }, evidenceStore: { put: async () => ({ created: true }), delete: async () => undefined },
       trustedSourceAdapter: {
+        adapter: "greenhouse", adapterVersion: "test",
         declareCapabilities: ({ sourceId }: { sourceId: string }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: sourceId === unsupported ? [] : ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
         listSource: async ({ source }: any) => {
           adapterCalls += 1;

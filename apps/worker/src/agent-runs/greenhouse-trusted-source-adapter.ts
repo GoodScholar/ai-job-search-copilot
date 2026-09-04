@@ -55,6 +55,8 @@ function matchesTarget(job: z.infer<typeof ListSchema>["jobs"][number], target: 
 
 /** v4 可信分支专用端口；不改变 v1–v3 adapter 的方法签名或恢复语义。 */
 export class GreenhouseTrustedSourceAdapter implements LayeredTrustedSourceAdapter {
+  readonly adapter = "greenhouse";
+  readonly adapterVersion = "greenhouse-job-board-v2";
   private readonly client: PublicSourceClient;
   private readonly selected = new Set<string>();
 
@@ -64,7 +66,7 @@ export class GreenhouseTrustedSourceAdapter implements LayeredTrustedSourceAdapt
   }
 
   declareCapabilities(input: { sourceId: string }): SourceCapabilityDeclaration {
-    return declareFormalBetaSourceCapabilities({ sourceId: input.sourceId, adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2" });
+    return declareFormalBetaSourceCapabilities({ sourceId: input.sourceId, adapter: this.adapter, adapterVersion: this.adapterVersion });
   }
 
   async listSource(input: Parameters<LayeredTrustedSourceAdapter["listSource"]>[0]) {

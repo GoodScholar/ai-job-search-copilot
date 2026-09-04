@@ -4,6 +4,7 @@ import { z } from "zod";
 import { CompanyWatchlistView } from "@/components/workbench/company-watchlist-view";
 import { getCompanyWatchlist } from "@/lib/server/company-watchlists";
 import { getSourceHealth } from "@/lib/server/source-health";
+import { getSourceCapabilities } from "@/lib/server/source-capabilities";
 
 export const metadata: Metadata = {
   title: "目标公司 Watchlist | AI Job Search Copilot",
@@ -14,8 +15,8 @@ const TargetIdSchema = z.uuid();
 export default async function WatchlistPage({ params }: { params: Promise<{ targetId: string }> }) {
   const { targetId } = await params;
   if (!TargetIdSchema.safeParse(targetId).success) notFound();
-  const [watchlistResult, sourceHealthResult] = await Promise.allSettled([getCompanyWatchlist(targetId), getSourceHealth(targetId)]);
-  for (const result of [watchlistResult, sourceHealthResult]) {
+  const [watchlistResult, sourceHealthResult, sourceCapabilitiesResult] = await Promise.allSettled([getCompanyWatchlist(targetId), getSourceHealth(targetId), getSourceCapabilities(targetId)]);
+  for (const result of [watchlistResult, sourceHealthResult, sourceCapabilitiesResult]) {
     if (result.status === "rejected") unstable_rethrow(result.reason);
   }
   if (watchlistResult.status === "rejected") {
@@ -30,10 +31,9 @@ export default async function WatchlistPage({ params }: { params: Promise<{ targ
       </main>
     );
   }
-  if (sourceHealthResult.status === "rejected") {
-    return <CompanyWatchlistView initialHealthRefreshFailed initialOverview={watchlistResult.value} />;
-  }
-  const sourceHealth = sourceHealthResult.value;
-  const healthMatchesWatchlist = sourceHealth.targetId === watchlistResult.value.target.targetId && sourceHealth.watchlistVersion === watchlistResult.value.version;
-  return <CompanyWatchlistView initialHealthRefreshFailed={!healthMatchesWatchlist} initialOverview={watchlistResult.value} initialSourceHealth={healthMatchesWatchlist ? sourceHealth : undefined} />;
+  const sourceHealth = sourceHealthResult.status === "fulfilled" ? sourceHealthResult.value : undefined;
+  const sourceCapabilities = sourceCapabilitiesResult.status === "fulfilled" ? sourceCapabilitiesResult.value : undefined;
+  const healthMatchesWatchlist = sourceHealth?.targetId === watchlistResult.value.target.targetId && sourceHealth.watchlistVersion === watchlistResult.value.version;
+  const capabilitiesMatchWatchlist = sourceCapabilities?.targetId === watchlistResult.value.target.targetId && sourceCapabilities.watchlistVersion === watchlistResult.value.version;
+  return <CompanyWatchlistView initialCapabilityRefreshFailed={!capabilitiesMatchWatchlist} initialHealthRefreshFailed={!healthMatchesWatchlist} initialOverview={watchlistResult.value} initialSourceCapabilities={capabilitiesMatchWatchlist ? sourceCapabilities : undefined} initialSourceHealth={healthMatchesWatchlist ? sourceHealth : undefined} />;
 }

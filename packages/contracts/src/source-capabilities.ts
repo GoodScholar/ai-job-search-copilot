@@ -16,8 +16,13 @@ export const SourceCapabilityImpactSchema = z.object({
 
 export const SourceCapabilitySuggestedActionSchema = z.enum(["review_source_capabilities"]);
 
+export const SourceCapabilityRejectionReasonCodeSchema = z.enum([
+  "SOURCE_CAPABILITY_UNSUPPORTED",
+  "SOURCE_CAPABILITY_DECLARATION_MISMATCH",
+]);
+
 export const SourceCapabilityRejectionSchema = z.object({
-  reasonCode: z.literal("SOURCE_CAPABILITY_UNSUPPORTED"),
+  reasonCode: SourceCapabilityRejectionReasonCodeSchema,
   impact: SourceCapabilityImpactSchema,
   retryable: z.literal(false),
   suggestedActions: z.tuple([SourceCapabilitySuggestedActionSchema]),
@@ -34,9 +39,27 @@ export const SourceCapabilityDeclarationSchema = z.object({
   ),
 }).strict();
 
+/** 当前 owner 的 Watchlist 项目与服务端声明的能力投影。 */
+export const SourceCapabilityProjectionSchema = z.object({
+  watchlistItemId: z.uuid(),
+  name: z.string().trim().min(1).max(200),
+  state: z.enum(["enabled", "disabled"]),
+  declaration: SourceCapabilityDeclarationSchema,
+}).strict();
+
+export const SourceCapabilityProjectionOverviewSchema = z.object({
+  targetId: z.uuid(),
+  watchlistVersion: z.int().nonnegative(),
+  sources: z.array(SourceCapabilityProjectionSchema).max(50),
+}).strict().superRefine((overview, context) => {
+  const ids = overview.sources.map(({ watchlistItemId }) => watchlistItemId);
+  if (new Set(ids).size !== ids.length) context.addIssue({ code: "custom", path: ["sources"], message: "watchlist capability projections must be unique" });
+});
+
 export type SourceCapability = z.infer<typeof SourceCapabilitySchema>;
 export type SourceCapabilityDeclaration = z.infer<typeof SourceCapabilityDeclarationSchema>;
 export type SourceCapabilityRejection = z.infer<typeof SourceCapabilityRejectionSchema>;
+export type SourceCapabilityProjectionOverview = z.infer<typeof SourceCapabilityProjectionOverviewSchema>;
 
 export function declareFormalBetaSourceCapabilities(input: {
   sourceId: string;
@@ -53,6 +76,15 @@ export function declareFormalBetaSourceCapabilities(input: {
 export function unsupportedSourceCapability(): SourceCapabilityRejection {
   return SourceCapabilityRejectionSchema.parse({
     reasonCode: "SOURCE_CAPABILITY_UNSUPPORTED",
+    impact: { scope: "entire_source", affectedCount: null },
+    retryable: false,
+    suggestedActions: ["review_source_capabilities"],
+  });
+}
+
+export function mismatchedSourceCapabilityDeclaration(): SourceCapabilityRejection {
+  return SourceCapabilityRejectionSchema.parse({
+    reasonCode: "SOURCE_CAPABILITY_DECLARATION_MISMATCH",
     impact: { scope: "entire_source", affectedCount: null },
     retryable: false,
     suggestedActions: ["review_source_capabilities"],

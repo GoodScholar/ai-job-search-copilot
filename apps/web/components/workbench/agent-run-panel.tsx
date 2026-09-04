@@ -431,7 +431,10 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
         {message || runStatusLabel(run)}
       </p>
       {run?.status === "completed" && run.termination?.kind === "completed_with_source_issues" ? <p>
-        {isLayeredPublicRun ? <>公开岗位发现存在待关注诊断。 <Link className="workbench-touch-target" href={`/home?runId=${run.runId}#agent-run`}>查看本次运行诊断</Link></> : <>问题来源 {("sourceChecks" in run ? run.sourceChecks : []).filter((check) => ["parser_degraded", "rate_limited", "hard_failed"].includes(check.status)).length} 个。 <Link className="workbench-touch-target" href={`/profile/targets/${run.targetId}/watchlist#source-health`}>查看来源诊断</Link></>}
+        {isLayeredPublicRun ? <>公开岗位发现存在待关注诊断。 <Link className="workbench-touch-target" href={`/home?runId=${run.runId}#agent-run`}>查看本次运行诊断</Link></> : (() => {
+          const capabilityIssue = "sourceIssues" in run && run.sourceIssues.find((issue) => issue.code === "SOURCE_CAPABILITY_UNSUPPORTED" || issue.code === "SOURCE_CAPABILITY_DECLARATION_MISMATCH");
+          return capabilityIssue ? <>该来源不支持本次动作，影响范围：整个来源；不可重试。建议：检查来源能力声明。 <Link className="workbench-touch-target" href={`/profile/targets/${run.targetId}/watchlist#source-capabilities`}>查看来源能力</Link></> : <>问题来源 {("sourceChecks" in run ? run.sourceChecks : []).filter((check) => ["parser_degraded", "rate_limited", "hard_failed"].includes(check.status)).length} 个。 <Link className="workbench-touch-target" href={`/profile/targets/${run.targetId}/watchlist#source-health`}>查看来源诊断</Link></>;
+        })()}
       </p> : null}
 
       {timeline.length > 0 ? (

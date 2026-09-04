@@ -16,6 +16,7 @@ import { createAuditTrail } from "./audit-trail";
 import { createAgentRunCommands } from "./agent-run-control";
 import { createCompanyWatchlistCommands, createCompanyWatchlistQueries } from "./company-watchlists";
 import { createSourceHealthQueries } from "./source-health";
+import { createSourceCapabilityProjectionQueries } from "./source-capability-projections";
 
 const now = new Date("2026-08-30T12:00:00.000Z");
 
@@ -262,5 +263,28 @@ describe("company watchlists", () => {
       expectedVersion: 1, canonicalCompanyName: "Stale Board", careersUrl: "https://boards.greenhouse.io/replacement-board", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null,
     } });
     await expect(createSourceHealthQueries({ db: database }).get({ userId, targetId })).resolves.toMatchObject({ watchlistVersion: revised.version, sources: [{ sourceId: "greenhouse:replacement-board", status: null, runId: null, reasonCodes: [], lastCheckedAt: null, suggestedAction: "wait_for_next_run" }] });
+  });
+
+  it("能力投影只绑定 owner 的当前 Watchlist 与服务端适配器声明，不读取健康事实", async () => {
+    const { userId, targetId } = await activeTarget();
+    const overview = await commands().addItem({ userId, targetId, requestId: crypto.randomUUID(), command: {
+      expectedVersion: 0, canonicalCompanyName: "Capability Board", careersUrl: "https://boards.greenhouse.io/capability-board",
+      allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null,
+    } });
+    const item = overview.items[0]!;
+    const projection = createSourceCapabilityProjectionQueries({ db: database });
+    const started = await createAgentRunCommands({ db: database, queue: { enqueue: async () => {} }, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    await database.insert(jobSourceHealthChecks).values({ id: crypto.randomUUID(), userId, runId: started.runId, targetId, watchlistItemId: item.itemId, sourceId: "greenhouse:capability-board", status: "rate_limited", reasonCodes: ["SOURCE_RATE_LIMITED"], impactScope: "entire_source", impactAffectedCount: null, observedPostingCount: 0, selectedDetailCount: 0, validDetailCount: 0, requestAttemptCount: 1, checkedAt: now });
+    await expect(projection.get({ userId, targetId })).resolves.toMatchObject({
+      targetId, watchlistVersion: overview.version,
+      sources: [{ watchlistItemId: item.itemId, name: "Capability Board", state: "enabled", declaration: {
+        sourceId: "greenhouse:capability-board", adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2",
+        contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"],
+      } }],
+    });
+    const foreignUserId = crypto.randomUUID();
+    await database.insert(jobAccounts).values({ id: foreignUserId });
+    await expect(projection.get({ userId: foreignUserId, targetId })).rejects.toMatchObject({ code: "COMPANY_WATCHLIST_TARGET_NOT_FOUND" });
   });
 });

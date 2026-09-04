@@ -125,6 +125,8 @@ function decode(body: Uint8Array): unknown { return JSON.parse(new TextDecoder()
 
 /** 只读取已授权 Greenhouse Job Board API 的列表和精确岗位详情。 */
 export class GreenhouseJobDiscoveryAdapter implements JobDiscoveryAdapter {
+  readonly adapter = GREENHOUSE_JOB_DISCOVERY_ADAPTER;
+  readonly adapterVersion = GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION;
   private sources = new Map<string, AuthorizedSource>();
   private candidates = new Set<string>();
   private detailCache = new Map<string, DiscoveryDetailResult>();
@@ -136,7 +138,7 @@ export class GreenhouseJobDiscoveryAdapter implements JobDiscoveryAdapter {
   }
 
   declareCapabilities(input: { sourceId: string }): SourceCapabilityDeclaration {
-    return declareFormalBetaSourceCapabilities({ sourceId: input.sourceId, adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER, adapterVersion: GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION });
+    return declareFormalBetaSourceCapabilities({ sourceId: input.sourceId, adapter: this.adapter, adapterVersion: this.adapterVersion });
   }
 
   async search(_input: DiscoverySearchInput): Promise<DiscoverySearchResult> {

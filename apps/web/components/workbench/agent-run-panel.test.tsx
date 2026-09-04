@@ -148,6 +148,13 @@ it("来源问题完成显示诊断状态、问题来源数量和锚点链接", (
   expect(screen.getByRole("link", { name: "查看来源诊断" })).toHaveClass("workbench-touch-target");
 });
 
+it("能力拒绝显示稳定影响、不可重试和有限建议", () => {
+  const partial = { ...detail("completed"), workflowVersion: "job-discovery-workflow-v3", adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2", outputSchemaVersion: "job-discovery-result-v3", termination: { kind: "completed_with_source_issues", failureCode: null, budgetDimension: null }, sourceChecks: [], sourceIssues: [{ provider: "greenhouse", code: "SOURCE_CAPABILITY_UNSUPPORTED", affectedCount: 1, impact: { scope: "entire_source", affectedCount: null }, retryable: false, suggestedActions: ["review_source_capabilities"] }] } as unknown as AgentRunDetail;
+  render(<AgentRunPanel targets={[target()]} initialRun={partial} />);
+  expect(screen.getByText(/影响范围：整个来源；不可重试。建议：检查来源能力声明/u)).toBeVisible();
+  expect(screen.getByRole("link", { name: "查看来源能力" })).toHaveAttribute("href", `/profile/targets/${targetId}/watchlist#source-capabilities`);
+});
+
 it("收到 Inbox 已处理通知后重新读取权威运行详情", async () => {
   const paused = { ...detail(), status: "paused" as const, currentStep: "batch_search" as const, version: 4 };
   vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(Response.json(detail("completed"))));

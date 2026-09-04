@@ -33,6 +33,7 @@ class MemoryStore implements DiscoveryContentStore {
 function adapter(result: { retryable?: boolean } = {}): JobDiscoveryAdapter {
   const summary = { sourceId: "fake:aurora-careers", detailId: "opening-1", company: "示例科技", title: "AI 工程师", location: "上海", postedAt: null, deadline: null };
   return {
+    adapter: "fake", adapterVersion: "test",
     declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "fake", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
     search: async () => ({ ok: true, data: summary }),
     searchBatch: async () => result.retryable ? { ok: false, error: { code: "UPSTREAM", retryable: true } } : { ok: true, data: [summary] },
@@ -54,6 +55,7 @@ function twoSourceAdapter(): JobDiscoveryAdapter {
     { sourceId: "fake:orbit-careers", detailId: "opening-2", company: "轨道科技", title: "平台工程师", location: "北京", postedAt: null, deadline: null },
   ];
   return {
+    adapter: "fake", adapterVersion: "test",
     declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "fake", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
     search: async () => ({ ok: true, data: summaries[0]! }),
     searchBatch: async () => ({ ok: true, data: summaries }),
