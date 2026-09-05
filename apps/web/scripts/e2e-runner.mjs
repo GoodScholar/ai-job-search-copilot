@@ -76,7 +76,7 @@ export async function selectE2EPhases(arguments_, run) {
 }
 
 export async function executeE2E(arguments_, { environment = process.env, run }) {
-  const phaseRun = (call) => run({ ...call, environment: phaseEnvironment(call.phase, environment, call.args) });
+  const phaseRun = (call) => run({ ...call, environment: phaseEnvironment(call.phase, environment) });
   const selected = await selectE2EPhases(arguments_, phaseRun);
   if ("signal" in selected) return { signal: selected.signal };
   if ("error" in selected) return { code: selected.error.code ?? 1, signal: selected.error.signal };
