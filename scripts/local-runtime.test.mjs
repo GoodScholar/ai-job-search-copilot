@@ -103,11 +103,12 @@ async function waitForFile(path, deadlineMs = 1_000) {
   const deadline = Date.now() + deadlineMs;
   while (Date.now() < deadline) {
     try {
-      return await readFile(path, "utf8");
+      const contents = await readFile(path, "utf8");
+      if (contents.trim()) return contents;
     } catch (error) {
       if (error?.code !== "ENOENT") throw error;
-      await new Promise((resolve) => setTimeout(resolve, 10));
     }
+    await new Promise((resolve) => setTimeout(resolve, 10));
   }
 
   throw new Error(`timed out waiting for ${path}`);
