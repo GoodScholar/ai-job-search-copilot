@@ -25,7 +25,7 @@ function initialProject(args) {
       while (args[index + 1] && !args[index + 1].startsWith("-")) selectors.push(args[++index]);
     }
   }
-  const matches = (project, selector) => new RegExp(`^${selector.split("*").map((part) => part.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")).join(".*")}$`, "u").test(project);
+  const matches = (project, selector) => new RegExp(`^${selector.split("*").map((part) => part.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")).join(".*")}$`, "iu").test(project);
   return playwrightProjects.find((project) => selectors.some((selector) => matches(project, selector))) ?? "Desktop Chrome";
 }
 

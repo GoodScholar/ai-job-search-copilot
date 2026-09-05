@@ -59,7 +59,7 @@ describe("E2E runner", () => {
     const defaultCalls: RunnerCall[] = [];
     await executeE2E(["e2e/model-diagnostics.spec.ts"], { environment: baseEnvironment, run: async (call: RunnerCall) => { defaultCalls.push(call); return { code: 0, stdout: "" }; } });
     expect(defaultCalls.map((call) => call.environment.E2E_MODEL_DIAGNOSTIC_INITIAL_PROJECT)).toEqual(["Desktop Chrome", "Desktop Chrome", "Desktop Chrome"]);
-    for (const [args, expected] of [[ ["--project", "Mobile Safari"], "Mobile Safari" ], [["--project", "Mobile Safari", "Desktop Chrome"], "Desktop Chrome"], [["--project=Mobile*"], "Mobile Safari"], [["--project", "*"], "Desktop Chrome"], [["--project=Mobile Safari", "--project", "Desktop Chrome"], "Desktop Chrome"]] as const) {
+    for (const [args, expected] of [[ ["--project", "Mobile Safari"], "Mobile Safari" ], [["--project", "Mobile Safari", "Desktop Chrome"], "Desktop Chrome"], [["--project=Mobile*"], "Mobile Safari"], [["--project=mobile*"], "Mobile Safari"], [["--project", "*"], "Desktop Chrome"], [["--project=Mobile Safari", "--project", "Desktop Chrome"], "Desktop Chrome"]] as const) {
       const selected: RunnerCall[] = [];
       await executeE2E(["e2e/model-diagnostics.spec.ts", ...args], { environment: baseEnvironment, run: async (call: RunnerCall) => { selected.push(call); return { code: 0, stdout: "" }; } });
       expect(selected[0]!.environment.E2E_MODEL_DIAGNOSTIC_INITIAL_PROJECT).toBe(expected);
