@@ -153,6 +153,18 @@ pnpm --filter @job-copilot/domain typecheck && pnpm --filter worker typecheck &&
 all exit 0
 ```
 
+## 修复轮 4：processor blocker / replay
+
+- 真实 `processor.process` blocker 用例现在断言 parent 为 completed、`run.completed` 与 discovery result 已提交，deep-match child 为零。
+- 入口 warning 用例在首次完成后将 evaluator 的当前状态切换为 blocked，再以同一 processor replay；trace 仍只有最初的 automatic deep-match evaluation，child 数量为一且原 warning snapshot/policy 保留，证明幂等行在当前 preflight 前优先返回。
+
+```text
+Domain Step6: 4 files passed; 148 tests passed; exit 0
+Worker module: 1 file; 37 tests passed; exit 0
+Worker scheduler: 1 file; 5 tests passed; exit 0
+domain typecheck; worker typecheck; git diff --check: exit 0
+```
+
 本轮 `rg -n '\\.insert\\(agentRuns\\)' packages apps` 仍只有两处非测试生产插入：`agent-run-control.ts` 和 `deep-match-agent-runs.ts`，均先调用统一 preflight gate；其余命中为 integration fixture。
 
 ## 修复轮 2
