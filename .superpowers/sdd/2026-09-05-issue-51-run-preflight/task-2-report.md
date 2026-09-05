@@ -89,3 +89,38 @@ pnpm --filter @job-copilot/contracts typecheck
 ```
 
 修复后不再存在 typecheck 疑虑。
+
+## 审查修复 round 1/5（追加）
+
+### RED
+
+先确认无遗留测试进程后，先扩展真实 PostgreSQL 集成测试，运行：
+
+```sh
+pnpm --filter @job-copilot/domain exec vitest run --no-file-parallelism src/run-preflight.integration.test.ts
+```
+
+结果：11 项中 2 项按预期失败。
+
+- 单一 enabled Greenhouse 缺少 `continuous_monitoring` 被错误投影为 `SOURCE_CAPABILITY_PARTIAL` warning，而测试要求 `SOURCE_CAPABILITY_UNAVAILABLE` blocking。
+- schedule 缺少 `scheduledFor` 时错误回退到当前时刻并报告策略 ready，而测试要求安全阻塞。
+
+### 最小修复与覆盖
+
+- capability 判定改为：零真实来源或 `capable === 0` 均为 unavailable/blocking；仅 `0 < capable < enabled` 为 partial/warning。
+- schedule 现在要求 `scheduledFor` 存在，并分别检查 evaluator 当前时刻与该 occurrence 时刻。
+- fingerprint 只包含版本、workflow、trigger、target、warning code、剔除时间字段后的安全 evidence 与固定 actions；移除了展示文案、severity 和 retryable。
+- 新增/加强了单来源 schedule 能力缺失、双来源 partial、缺少时间、当前/occurrence 各自越窗、advisory lock `checking`、当前账户敏感字段负面证明，以及 health counts/code/target/workflow/trigger 变化的 hash 回归覆盖。
+
+### GREEN
+
+以下命令严格单进程串行执行：
+
+```sh
+pnpm --filter @job-copilot/domain exec vitest run --no-file-parallelism src/run-preflight.integration.test.ts src/model-diagnostics.integration.test.ts
+# 2 files / 24 tests passed
+pnpm --filter @job-copilot/domain typecheck
+# tsc --noEmit passed
+git diff --check
+# passed
+```

@@ -71,21 +71,35 @@ describe("统一运行前检查", () => {
     return itemId;
   }
 
+  async function addSecondGreenhouseSource(userId: string, targetId: string) {
+    const [watchlist] = await database.select({ id: companyWatchlists.id, version: companyWatchlists.version, items: companyWatchlistRevisions.items })
+      .from(companyWatchlists).innerJoin(companyWatchlistRevisions, and(eq(companyWatchlistRevisions.watchlistId, companyWatchlists.id), eq(companyWatchlistRevisions.version, companyWatchlists.version)))
+      .where(and(eq(companyWatchlists.userId, userId), eq(companyWatchlists.targetId, targetId)));
+    const itemId = randomUUID(); const version = watchlist!.version + 1;
+    const items = [...(watchlist!.items as object[]), { itemId, canonicalCompanyName: "second-sentinel-company", careersUrl: "https://boards.greenhouse.io/secondboard", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: "second-secret", state: "enabled", position: 2 }];
+    await database.update(companyWatchlists).set({ version, updatedAt: now }).where(eq(companyWatchlists.id, watchlist!.id));
+    await database.insert(companyWatchlistRevisions).values({ id: randomUUID(), userId, watchlistId: watchlist!.id, targetId, version, items, createdAt: now });
+    return itemId;
+  }
+
   function evaluator(input: { capabilities?: readonly (typeof completeCapabilities)[number][]; mode?: "greenhouse" | "fake" | "layered_public"; modelFingerprint?: string } = {}) {
     return createRunPreflightEvaluator({ capabilityAdapter: capabilityAdapter(input.capabilities ?? completeCapabilities), modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: input.modelFingerprint ?? fingerprint }), discoveryExecutionMode: input.mode ?? "greenhouse", id: randomUUID, clock: () => now });
   }
   const get = async (input: Parameters<ReturnType<typeof createRunPreflightQueries>["get"]>[0], value = evaluator()) => createRunPreflightQueries({ db: database, evaluator: value }).get(input);
 
-  it("无当前有效画像事实、无主目标或无真实来源会阻塞，且 owner 数据不会串读", async () => {
-    const owner = await account(); const other = await account({ fact: true, source: "greenhouse" });
+  it("当前账户的职业文本、URL、域名和原始错误不会泄漏到安全投影", async () => {
+    const owner = await account({ source: "greenhouse" }); await addFact(owner.userId, "removed"); const other = await account({ fact: true, source: "greenhouse" });
     const report = await get({ userId: owner.userId, workflow: "discovery", trigger: "manual" });
     expect(report.targetId).toBe(owner.targetId);
     expect(report.status).toBe("blocked");
-    expect(report.items.map((item) => item.code)).toEqual(["PROFILE_EVIDENCE_MISSING", "PRIMARY_JOB_TARGET_READY", "REQUESTED_JOB_TARGET_READY", "SOURCE_CAPABILITY_UNAVAILABLE", "SOURCE_HEALTH_READY", "MODEL_DIAGNOSTIC_UNAVAILABLE", "ACCOUNT_RUN_POLICY_READY"]);
+    expect(report.items.map((item) => item.code)).toEqual(["PROFILE_EVIDENCE_MISSING", "PRIMARY_JOB_TARGET_READY", "REQUESTED_JOB_TARGET_READY", "SOURCE_CAPABILITY_READY", "SOURCE_HEALTH_UNCHECKED", "MODEL_DIAGNOSTIC_UNAVAILABLE", "ACCOUNT_RUN_POLICY_READY"]);
     expect(report.items[0]?.evidence).toMatchObject({ kind: "profile", activeTrustedFactCount: 0 });
-    expect(report.items[3]?.evidence).toMatchObject({ kind: "source_capability", enabledSourceCount: 0 });
+    expect(report.items[3]?.evidence).toMatchObject({ kind: "source_capability", enabledSourceCount: 1 });
     expect(JSON.stringify(report)).not.toContain("sentinel-profile-text");
     expect(JSON.stringify(report)).not.toContain("api-key-secret-sentinel");
+    expect(JSON.stringify(report)).not.toContain("https://boards.greenhouse.io/sentinelboard");
+    expect(JSON.stringify(report)).not.toContain("boards-api.greenhouse.io");
+    expect(JSON.stringify(report)).not.toContain("raw-error-sentinel");
     expect(JSON.stringify(report)).not.toContain(fingerprint);
     expect(other.targetId).not.toBe(report.targetId);
   });
@@ -105,7 +119,7 @@ describe("统一运行前检查", () => {
     expect(removed.items[0]?.code).toBe("PROFILE_EVIDENCE_MISSING");
   });
 
-  it("只把 enabled Greenhouse 视作真实来源，能力缺失为警告，计划额外要求持续监控", async () => {
+  it("只把 enabled Greenhouse 视作真实来源：全数缺能力阻塞，只有部分缺能力才警告", async () => {
     const anySearch = await account({ fact: true, source: "anysearch" });
     expect((await get({ userId: anySearch.userId, workflow: "discovery", trigger: "manual" })).items[3]?.code).toBe("SOURCE_CAPABILITY_UNAVAILABLE");
     const disabled = await account({ fact: true, source: "disabled" });
@@ -114,7 +128,12 @@ describe("统一运行前检查", () => {
     const manual = await get({ userId: partial.userId, workflow: "discovery", trigger: "manual" }, evaluator({ capabilities: ["active_discovery", "read_details"] }));
     expect(manual.items[3]).toMatchObject({ code: "SOURCE_CAPABILITY_READY", severity: "informational" });
     const schedule = await get({ userId: partial.userId, workflow: "discovery", trigger: "schedule", scheduledFor: now }, evaluator({ capabilities: ["active_discovery", "read_details"] }));
-    expect(schedule.items[3]).toMatchObject({ code: "SOURCE_CAPABILITY_PARTIAL", severity: "warning" });
+    expect(schedule.items[3]).toMatchObject({ code: "SOURCE_CAPABILITY_UNAVAILABLE", severity: "blocking", evidence: { enabledSourceCount: 1, capableSourceCount: 0 } });
+    await addSecondGreenhouseSource(partial.userId, partial.targetId);
+    const partialAdapter: SourceCapabilityAdapter = { ...capabilityAdapter(), declareCapabilities: ({ sourceId }) => ({ ...capabilityAdapter().declareCapabilities({ sourceId }), capabilities: sourceId === "greenhouse:secondboard" ? ["active_discovery", "read_details"] : [...completeCapabilities] }) };
+    const partialEvaluator = createRunPreflightEvaluator({ capabilityAdapter: partialAdapter, modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: fingerprint }), discoveryExecutionMode: "greenhouse", id: randomUUID, clock: () => now });
+    const mixed = await get({ userId: partial.userId, workflow: "discovery", trigger: "schedule", scheduledFor: now }, partialEvaluator);
+    expect(mixed.items[3]).toMatchObject({ code: "SOURCE_CAPABILITY_PARTIAL", severity: "warning", evidence: { enabledSourceCount: 2, capableSourceCount: 1 } });
   });
 
   it("健康检查未检查和退化均非阻塞，并且只按 owner/target/item/source 采用最新记录", async () => {
@@ -135,7 +154,7 @@ describe("统一运行前检查", () => {
     expect(degraded.items[4]?.severity).toBe("warning");
   });
 
-  it("deep match 的来源项仅为非必需信息，策略预算和计划的两个时间窗口可阻塞", async () => {
+  it("deep match 的来源项仅为非必需信息，策略预算和计划的两个时间窗口及缺失时间可阻塞", async () => {
     const owner = await account({ fact: true });
     const deep = await get({ userId: owner.userId, workflow: "deep_match", trigger: "manual" });
     expect(deep.items.slice(3, 5).map((item) => [item.code, item.severity])).toEqual([["SOURCE_CAPABILITY_NOT_REQUIRED", "informational"], ["SOURCE_HEALTH_NOT_REQUIRED", "informational"]]);
@@ -148,19 +167,60 @@ describe("统一运行前检查", () => {
     await database.update(accountRunPolicyRevisions).set({ settings }).where(and(eq(accountRunPolicyRevisions.userId, owner.userId), eq(accountRunPolicyRevisions.revisionNumber, 1)));
     const scheduled = await get({ userId: owner.userId, workflow: "discovery", trigger: "schedule", scheduledFor: new Date("2026-09-05T04:00:00.000Z") });
     expect(scheduled.items[6]?.code).toBe("ACCOUNT_RUN_POLICY_BLOCKED");
+    const missingScheduledFor = await get({ userId: owner.userId, workflow: "discovery", trigger: "schedule" });
+    expect(missingScheduledFor.items[6]?.code).toBe("ACCOUNT_RUN_POLICY_BLOCKED");
     const manual = await get({ userId: owner.userId, workflow: "discovery", trigger: "manual" });
     expect(manual.items[6]?.code).toBe("ACCOUNT_RUN_POLICY_READY");
+  });
+
+  it("schedule 分别在当前时刻或 scheduledFor 越出窗口时阻塞", async () => {
+    const owner = await account({ fact: true, source: "greenhouse" });
+    const settings = structuredClone(systemAccountRunPolicy().effective); settings.backgroundWindow = { start: "08:00", end: "22:00", timeZone: "Asia/Shanghai" };
+    await database.insert(accountRunPolicyRevisions).values({ id: randomUUID(), userId: owner.userId, revisionNumber: 1, settings, createdAt: now });
+    await database.insert(accountRunPolicies).values({ userId: owner.userId, currentRevisionNumber: 1, version: 1, updatedAt: now });
+    const scheduledOutside = await get({ userId: owner.userId, workflow: "discovery", trigger: "schedule", scheduledFor: new Date("2026-09-05T15:00:00.000Z") });
+    expect(scheduledOutside.items[6]?.code).toBe("ACCOUNT_RUN_POLICY_BLOCKED");
+    const afterHours = createRunPreflightEvaluator({ capabilityAdapter: capabilityAdapter(), modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: fingerprint }), discoveryExecutionMode: "greenhouse", id: randomUUID, clock: () => new Date("2026-09-05T15:00:00.000Z") });
+    const currentOutside = await get({ userId: owner.userId, workflow: "discovery", trigger: "schedule", scheduledFor: new Date("2026-09-05T04:00:00.000Z") }, afterHours);
+    expect(currentOutside.items[6]?.code).toBe("ACCOUNT_RUN_POLICY_BLOCKED");
+    const missingScheduledFor = await get({ userId: owner.userId, workflow: "discovery", trigger: "schedule" });
+    expect(missingScheduledFor.items[6]?.code).toBe("ACCOUNT_RUN_POLICY_BLOCKED");
   });
 
   it("fingerprint 只由安全警告状态决定，报告顺序和 JSON 稳定，授权矩阵精确执行", async () => {
     const owner = await account({ fact: true, source: "greenhouse" });
     await database.insert(modelDiagnosticResults).values({ configurationFingerprint: fingerprint, status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket: "under_1s", checkedAt: new Date("2026-09-05T10:00:00.000Z") });
+    await addSecondGreenhouseSource(owner.userId, owner.targetId);
     const first = await get({ userId: owner.userId, workflow: "discovery", trigger: "manual" });
     const laterEvaluator = createRunPreflightEvaluator({ capabilityAdapter: capabilityAdapter(), modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: fingerprint }), discoveryExecutionMode: "greenhouse", id: randomUUID, clock: () => new Date("2026-09-05T13:00:00.000Z") });
     const later = await get({ userId: owner.userId, workflow: "discovery", trigger: "manual" }, laterEvaluator);
     expect(first.warningFingerprint).toBe(later.warningFingerprint);
+    const scheduledFingerprint = await get({ userId: owner.userId, workflow: "discovery", trigger: "schedule", scheduledFor: now });
+    expect(scheduledFingerprint.warningFingerprint).not.toBe(first.warningFingerprint);
+    const deepMatchFingerprint = await get({ userId: owner.userId, workflow: "deep_match", trigger: "manual" });
+    expect(deepMatchFingerprint.warningFingerprint).not.toBe(first.warningFingerprint);
+    const secondaryTargetId = randomUUID();
+    await database.insert(jobTargets).values({ id: secondaryTargetId, userId: owner.userId, version: 1, priority: "secondary", state: "active", activeSlot: 1, createdAt: now, updatedAt: now });
+    await database.insert(jobTargetRevisions).values({ id: randomUUID(), userId: owner.userId, targetId: secondaryTargetId, version: 1, priority: "secondary", state: "active", constraints, createdAt: now });
+    await addSource(owner.userId, secondaryTargetId, "greenhouse");
+    const targetFingerprint = await get({ userId: owner.userId, targetId: secondaryTargetId, workflow: "discovery", trigger: "manual" });
+    expect(targetFingerprint.warningFingerprint).not.toBe(first.warningFingerprint);
+    const firstItemId = (await database.select({ items: companyWatchlistRevisions.items }).from(companyWatchlistRevisions).where(and(eq(companyWatchlistRevisions.userId, owner.userId), eq(companyWatchlistRevisions.targetId, owner.targetId))))[0]!.items as Array<{ itemId: string }>;
+    const healthRunId = randomUUID();
+    await database.insert(agentRuns).values({ id: healthRunId, userId: owner.userId, targetId: owner.targetId, idempotencyKey: randomUUID(), targetVersion: 1, targetSnapshot: { targetId: owner.targetId }, sourceScope: {}, budgetSnapshot: {}, workflowVersion: "job-discovery-workflow-v1", ruleVersion: "fake-job-discovery-rules-v1", adapter: "fake", adapterVersion: "fake-job-discovery-v1", outputSchemaVersion: "job-discovery-result-v1", toolAllowlist: [], queuedAt: now, createdAt: now, updatedAt: now });
+    await database.insert(jobSourceHealthChecks).values({ id: randomUUID(), userId: owner.userId, runId: healthRunId, targetId: owner.targetId, watchlistItemId: firstItemId[0]!.itemId, sourceId: "greenhouse:sentinelboard", status: "healthy", reasonCodes: [], impactScope: "none", impactAffectedCount: null, observedPostingCount: 1, selectedDetailCount: 1, validDetailCount: 1, requestAttemptCount: 1, checkedAt: now });
+    const healthFingerprint = await get({ userId: owner.userId, workflow: "discovery", trigger: "manual" });
+    expect(healthFingerprint.items[4]?.evidence).toMatchObject({ checkedSourceCount: 1, uncheckedSourceCount: 1 });
+    expect(healthFingerprint.warningFingerprint).not.toBe(first.warningFingerprint);
+    const scheduledAfterHealth = await get({ userId: owner.userId, workflow: "discovery", trigger: "schedule", scheduledFor: now });
+    const codeAdapter: SourceCapabilityAdapter = { ...capabilityAdapter(), declareCapabilities: ({ sourceId }) => ({ ...capabilityAdapter().declareCapabilities({ sourceId }), capabilities: sourceId === "greenhouse:secondboard" ? ["active_discovery", "read_details"] : [...completeCapabilities] }) };
+    const codeEvaluator = createRunPreflightEvaluator({ capabilityAdapter: codeAdapter, modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: fingerprint }), discoveryExecutionMode: "greenhouse", id: randomUUID, clock: () => now });
+    const codeFingerprint = await get({ userId: owner.userId, workflow: "discovery", trigger: "schedule", scheduledFor: now }, codeEvaluator);
+    expect(codeFingerprint.items[3]?.code).toBe("SOURCE_CAPABILITY_PARTIAL");
+    expect(codeFingerprint.warningFingerprint).not.toBe(scheduledAfterHealth.warningFingerprint);
     expect(first.items.map((item) => item.evidence.kind)).toEqual(["profile", "job_target", "job_target", "source_capability", "source_health", "model_diagnostic", "account_run_policy"]);
-    expect(JSON.stringify(first)).toBe(JSON.stringify(await get({ userId: owner.userId, workflow: "discovery", trigger: "manual" })));
+    const stable = await get({ userId: owner.userId, workflow: "discovery", trigger: "manual" });
+    expect(JSON.stringify(stable)).toBe(JSON.stringify(await get({ userId: owner.userId, workflow: "discovery", trigger: "manual" })));
     const evaluation = await evaluator().evaluate(database, { userId: owner.userId, workflow: "discovery", trigger: "manual" });
     expect(() => authorizeRunPreflight({ evaluation, warningFingerprint: null })).toThrowError("RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED");
     expect(() => authorizeRunPreflight({ evaluation, warningFingerprint: "a".repeat(64) })).toThrowError("RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED");
@@ -178,6 +238,16 @@ describe("统一运行前检查", () => {
     await expect(createModelDiagnosticProjectionReader({ configurationFingerprint: freshFingerprint }).get(database, now)).resolves.toMatchObject({ status: "unverified" });
     await database.insert(modelDiagnosticResults).values({ configurationFingerprint: freshFingerprint, status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket: "under_1s", checkedAt: new Date("2026-09-05T01:00:00.000Z") });
     await expect(createModelDiagnosticProjectionReader({ configurationFingerprint: freshFingerprint }).get(database, now)).resolves.toMatchObject({ status: "available" });
+  });
+
+  it("模型稳定投影遇到 advisory lock 竞争立即返回 checking，且没有外部调用入口", async () => {
+    const lockedFingerprint = `locked-projection-${randomUUID()}`; let externalCalls = 0;
+    const lock = await database.$client.reserve(); const other = createDatabase(container.getConnectionUri());
+    try {
+      await lock`begin`; await lock`select pg_advisory_xact_lock(hashtextextended(${lockedFingerprint}, 50))`;
+      await expect(createModelDiagnosticProjectionReader({ configurationFingerprint: lockedFingerprint }).get(other, now)).resolves.toMatchObject({ status: "checking" });
+      expect(externalCalls).toBe(0);
+    } finally { await other.$client.end(); await lock`rollback`; lock.release(); }
   });
 
   it.each([

@@ -80,7 +80,7 @@ function fingerprintEvidence(value: unknown): unknown {
   return value;
 }
 function fingerprint(input: { workflow: RunPreflightInput["workflow"]; trigger: RunPreflightInput["trigger"]; targetId: string | null; items: RunPreflightItem[] }): string | null {
-  const warnings = input.items.filter((value) => value.severity === "warning").map(({ code, severity, evidence, impact, retryable, suggestedActions }) => ({ code, severity, evidence: fingerprintEvidence(evidence), impact, retryable, suggestedActions: [...suggestedActions].sort() }));
+  const warnings = input.items.filter((value) => value.severity === "warning").map(({ code, evidence, suggestedActions }) => ({ code, evidence: fingerprintEvidence(evidence), suggestedActions: [...suggestedActions].sort() }));
   return warnings.length ? createHash("sha256").update(canonical({ version: "run-preflight-v1", workflow: input.workflow, trigger: input.trigger, targetId: input.targetId, warnings })).digest("hex") : null;
 }
 
@@ -144,7 +144,9 @@ function usableBudget(settings: AccountRunPolicySettings, input: RunPreflightInp
     : [budget.maxActiveDurationMs, budget.maxAttempts, budget.maxToolCalls, budget.maxResults];
   if (required.some((value) => value <= 0)) return false;
   if (input.trigger !== "schedule") return true;
-  return isDateInBackgroundWindow(now, settings.backgroundWindow) && isDateInBackgroundWindow(input.scheduledFor ?? now, settings.backgroundWindow);
+  return input.scheduledFor !== undefined
+    && isDateInBackgroundWindow(now, settings.backgroundWindow)
+    && isDateInBackgroundWindow(input.scheduledFor, settings.backgroundWindow);
 }
 
 export function createRunPreflightEvaluator(deps: { capabilityAdapter: SourceCapabilityAdapter; modelDiagnosticReader: ModelDiagnosticProjectionReader; discoveryExecutionMode: JobDiscoveryExecutionMode; id: () => string; clock: () => Date }): RunPreflightEvaluator {
@@ -169,7 +171,7 @@ export function createRunPreflightEvaluator(deps: { capabilityAdapter: SourceCap
         items.push(item("SOURCE_HEALTH_NOT_REQUIRED", "informational", { kind: "source_health", checkedSourceCount: 0, healthySourceCount: 0, degradedSourceCount: 0, uncheckedSourceCount: 0, latestCheckedAt: null }, false, []));
       } else {
         const capable = capabilities(deps.capabilityAdapter, input, realSources);
-        const capabilityCode = realSources.length === 0 ? "SOURCE_CAPABILITY_UNAVAILABLE" : capable === realSources.length ? "SOURCE_CAPABILITY_READY" : "SOURCE_CAPABILITY_PARTIAL";
+        const capabilityCode = realSources.length === 0 || capable === 0 ? "SOURCE_CAPABILITY_UNAVAILABLE" : capable === realSources.length ? "SOURCE_CAPABILITY_READY" : "SOURCE_CAPABILITY_PARTIAL";
         items.push(item(capabilityCode, capabilityCode === "SOURCE_CAPABILITY_UNAVAILABLE" ? "blocking" : capabilityCode === "SOURCE_CAPABILITY_PARTIAL" ? "warning" : "informational", { kind: "source_capability", enabledSourceCount: realSources.length, capableSourceCount: capable, status: capabilityCode === "SOURCE_CAPABILITY_UNAVAILABLE" ? "unavailable" : capabilityCode === "SOURCE_CAPABILITY_PARTIAL" ? "partial" : "ready", checkedAt: checkedAt.toISOString() }, capabilityCode !== "SOURCE_CAPABILITY_READY", capabilityCode === "SOURCE_CAPABILITY_READY" ? [] : sourceActions));
         const sourceHealth = await health(db, input.userId, targetId, realSources);
         const healthCode = sourceHealth.degraded ? "SOURCE_HEALTH_DEGRADED" : sourceHealth.unchecked ? "SOURCE_HEALTH_UNCHECKED" : "SOURCE_HEALTH_READY";
