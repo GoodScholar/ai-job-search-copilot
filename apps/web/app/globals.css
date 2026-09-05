@@ -42,7 +42,7 @@
   --primary-foreground: var(--surface);
   --secondary: var(--surface);
   --secondary-foreground: var(--ink);
-  --muted-foreground: var(--muted);
+  --muted-foreground: #626d66;
   --border: var(--rule);
   --input: var(--rule);
   --ring: var(--emerald);
