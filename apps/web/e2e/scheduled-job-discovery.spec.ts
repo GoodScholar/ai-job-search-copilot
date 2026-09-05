@@ -44,14 +44,32 @@ async function addProfileEvidence(request: APIRequestContext, token: string): Pr
   expect(response.status()).toBe(201);
 }
 
-async function ensureScheduleWindow(request: APIRequestContext, token: string): Promise<void> {
+function shanghaiDailyTime(date: Date): string {
+  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(date);
+  return `${parts.find((part) => part.type === "hour")!.value}:${parts.find((part) => part.type === "minute")!.value}`;
+}
+
+function shiftDailyTime(time: string, minutes: number): string {
+  const [hour, minute] = time.split(":").map(Number) as [number, number];
+  const shifted = (hour * 60 + minute + minutes + 24 * 60) % (24 * 60);
+  return `${String(Math.floor(shifted / 60)).padStart(2, "0")}:${String(shifted % 60).padStart(2, "0")}`;
+}
+
+function scheduledTestWindow(date: Date) {
+  const dailyTime = shanghaiDailyTime(date);
+  return { dailyTime, backgroundWindow: { start: shiftDailyTime(dailyTime, -5), end: shiftDailyTime(dailyTime, 5), timeZone: "Asia/Shanghai" } };
+}
+
+async function ensureScheduleWindow(request: APIRequestContext, token: string): Promise<string> {
+  const window = scheduledTestWindow(new Date());
   const current = await request.get(`${apiBaseUrl}/v1/account/run-policy`, { headers: { authorization: `Bearer ${token}` } });
   expect(current.status()).toBe(200);
   const policy = await current.json() as { revision: { revisionNumber: number }; effective: Record<string, unknown> };
   const settings = structuredClone(policy.effective) as { backgroundWindow: { start: string; end: string; timeZone: string } };
-  settings.backgroundWindow = { start: "00:00", end: "23:59", timeZone: "Asia/Shanghai" };
+  settings.backgroundWindow = window.backgroundWindow;
   const saved = await request.put(`${apiBaseUrl}/v1/account/run-policy`, { headers: { authorization: `Bearer ${token}` }, data: { expectedVersion: policy.revision.revisionNumber, settings } });
   expect(saved.status()).toBe(200);
+  return window.dailyTime;
 }
 
 async function addExecutableWatchlistSource(request: APIRequestContext, token: string, targetId: string): Promise<void> {
@@ -97,6 +115,15 @@ async function runPreflightSnapshot(runId: string): Promise<{ status: string; tr
   }
 }
 
+test("计划 E2E fixture 的窗口覆盖上海日界分钟", () => {
+  expect(scheduledTestWindow(new Date("2026-09-05T15:59:00.000Z"))).toEqual({
+    dailyTime: "23:59", backgroundWindow: { start: "23:54", end: "00:04", timeZone: "Asia/Shanghai" },
+  });
+  expect(scheduledTestWindow(new Date("2026-09-05T16:00:00.000Z"))).toEqual({
+    dailyTime: "00:00", backgroundWindow: { start: "23:55", end: "00:05", timeZone: "Asia/Shanghai" },
+  });
+});
+
 test("每日检查通过 Fake Worker 交付一组岗位，并抵抗重复 Worker delivery", async ({ page, request }, testInfo) => {
   test.setTimeout(60_000);
   const session = await createSession(request, `scheduled-job-discovery-${testInfo.project.name}-${runSuffix}`);
@@ -107,7 +134,7 @@ test("每日检查通过 Fake Worker 交付一组岗位，并抵抗重复 Worker
   });
   expect(diagnostic.status()).toBe(201);
   await expect(diagnostic.json()).resolves.toMatchObject({ status: "available" });
-  await ensureScheduleWindow(request, session.token);
+  const scheduledDailyTime = await ensureScheduleWindow(request, session.token);
   await addExecutableWatchlistSource(request, session.token, targetId);
   await page.context().addCookies([{ name: "job_copilot_session", value: session.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
   await page.goto("/home");
@@ -119,7 +146,7 @@ test("每日检查通过 Fake Worker 交付一组岗位，并抵抗重复 Worker
   for (const name of ["启用", "停用", "保存每日检查"]) {
     expect(await page.getByRole("button", { name }).evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
   }
-  await time.fill("09:30");
+  await time.fill(scheduledDailyTime);
   const enable = page.getByRole("button", { name: "启用" });
   if (testInfo.project.name === "Desktop Chrome") {
     await enable.focus();
@@ -202,11 +229,11 @@ test("计划 occurrence 遇到运行前阻塞会跳过且绝不创建岗位发�
   });
   expect(diagnostic.status()).toBe(201);
   await expect(diagnostic.json()).resolves.toMatchObject({ status: "available" });
-  await ensureScheduleWindow(request, session.token);
+  const scheduledDailyTime = await ensureScheduleWindow(request, session.token);
   await addExecutableWatchlistSource(request, session.token, targetId);
   const scheduleResponse = await request.put(`${apiBaseUrl}/v1/job-targets/${targetId}/discovery-schedule`, {
     headers: { authorization: `Bearer ${session.token}` },
-    data: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" },
+    data: { expectedVersion: 0, state: "enabled", dailyTime: scheduledDailyTime },
   });
   expect(scheduleResponse.status()).toBe(200);
   const schedule = await scheduleResponse.json() as { schedule: { scheduleId: string } | null };

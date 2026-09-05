@@ -10,6 +10,7 @@ import type {
 import type { AgentInboxActionResponse, AgentInboxItem } from "@job-copilot/contracts/agent-inbox";
 import type { JobTriageVersion } from "@job-copilot/contracts/job-triage";
 import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-policies";
+import { RunPreflightProblemSchema } from "@job-copilot/contracts/run-preflight";
 
 vi.mock("server-only", () => ({}));
 
@@ -23,6 +24,30 @@ const conflictId = "c4d4a7c1-9a17-4a8c-8b36-0f815d042e9a";
 const targetId = "4f8c6eb3-2b92-4d91-aad4-959b7d4cd7a3";
 const jobImportId = "b0d2bfbf-7e40-49fc-86c8-3a15d7ad4f98";
 const agentRunId = "d194d0ce-fc7e-45db-9425-e8ff4eaf8c08";
+const restartWarningProblem = RunPreflightProblemSchema.parse({
+  code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED",
+  message: "请确认当前运行前检查提示",
+  preflight: {
+    version: "run-preflight-v1", workflow: "discovery", trigger: "manual", targetId,
+    status: "ready_with_warnings", warningFingerprint: "a".repeat(64), checkedAt: "2026-09-05T00:00:00.000Z",
+    items: [{
+      code: "SOURCE_HEALTH_UNCHECKED", severity: "warning", summary: "来源尚未完成健康检查", impact: "运行可以继续，建议稍后查看来源健康状态。", retryable: true,
+      suggestedActions: ["review_source_health"], evidence: { kind: "source_health", checkedSourceCount: 0, healthySourceCount: 0, degradedSourceCount: 0, uncheckedSourceCount: 1, latestCheckedAt: null },
+    }],
+  },
+});
+const restartBlockedProblem = RunPreflightProblemSchema.parse({
+  code: "RUN_PREFLIGHT_BLOCKED",
+  message: "请先创建主求职目标",
+  preflight: {
+    version: "run-preflight-v1", workflow: "discovery", trigger: "manual", targetId: null,
+    status: "blocked", warningFingerprint: null, checkedAt: "2026-09-05T00:00:00.000Z",
+    items: [{
+      code: "PRIMARY_JOB_TARGET_MISSING", severity: "blocking", summary: "缺少主求职目标", impact: "请先创建主求职目标。", retryable: false,
+      suggestedActions: ["review_job_targets"], evidence: { kind: "job_target", primaryTargetId: null, primaryTargetVersion: null, requestedTargetId: null, requestedTargetVersion: null, requestedTargetState: "missing", checkedAt: "2026-09-05T00:00:00.000Z" },
+    }],
+  },
+});
 
 const queuedImport = {
   importId,
@@ -656,6 +681,28 @@ it("通过服务端 bearer 严格处理运行控制与 Agent Inbox", async () =>
   for (const [, init] of fetchImpl.mock.calls) {
     expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${sessionToken}`);
   }
+});
+
+it("restart Agent Inbox 原样保留共享契约的运行前检查 409", async () => {
+  const fetchImpl = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response(JSON.stringify({ ...restartWarningProblem, requestId: "a7a6aa9c-5cec-4681-a5f4-a017ed3ad5d0" }), { status: 409 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ ...restartBlockedProblem, requestId: "b7a6aa9c-5cec-4681-a5f4-a017ed3ad5d0" }), { status: 409 }));
+  const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+  const action = { actionId: "59d2bfbf-7e40-49fc-86c8-3a15d7ad4f98", action: "restart_run" as const };
+
+  await expect(client.actOnAgentInboxItem(sessionToken, inboxItem.itemId, action)).rejects.toMatchObject({ kind: "api", status: 409, problem: restartWarningProblem });
+  await expect(client.actOnAgentInboxItem(sessionToken, inboxItem.itemId, { ...action, actionId: "69d2bfbf-7e40-49fc-86c8-3a15d7ad4f98" })).rejects.toMatchObject({ kind: "api", status: 409, problem: restartBlockedProblem });
+});
+
+it("restart Agent Inbox 将畸形或恶意运行前检查 409 降级为安全 502", async () => {
+  const fetchImpl = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response(JSON.stringify({ code: "RUN_PREFLIGHT_BLOCKED", message: "恶意正文", preflight: { rawPayload: "secret" } }), { status: 409 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ code: "SOMETHING_ELSE", message: "恶意正文" }), { status: 409 }));
+  const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+  const action = { actionId: "59d2bfbf-7e40-49fc-86c8-3a15d7ad4f98", action: "restart_run" as const };
+
+  await expect(client.actOnAgentInboxItem(sessionToken, inboxItem.itemId, action)).rejects.toMatchObject({ kind: "api", status: 502, problem: undefined });
+  await expect(client.actOnAgentInboxItem(sessionToken, inboxItem.itemId, { ...action, actionId: "69d2bfbf-7e40-49fc-86c8-3a15d7ad4f98" })).rejects.toMatchObject({ kind: "api", status: 502, problem: undefined });
 });
 
 it("拒绝不符合控制和 Inbox 共享契约的成功 JSON", async () => {

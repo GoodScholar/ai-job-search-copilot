@@ -268,7 +268,7 @@ test("local runtime migrates before starting applications", async () => {
   assert.deepEqual(events, ["prepare", "migrate", "start", "ready", "cleanup"]);
 });
 
-test("本地运行时在启动 API 与 Worker 前完成应用构建，避免 watch 读取缺失的 dist 入口", async () => {
+test("本地运行时在迁移后直接启动应用，不预构建 API 与 Worker", async () => {
   const events = [];
   const child = createControlledChild();
   const runtime = runRuntime({
@@ -276,7 +276,7 @@ test("本地运行时在启动 API 与 Worker 前完成应用构建，避免 wat
     signalSource: new EventEmitter(),
     prepare: async () => events.push("prepare"),
     migrate: async () => events.push("migrate"),
-    build: async () => events.push("build"),
+    build: async () => { throw new Error("不应预构建应用入口"); },
     start: () => { events.push("start"); return child; },
     waitForReady: async () => events.push("ready"),
     cleanup: async () => events.push("cleanup"),
@@ -285,7 +285,7 @@ test("本地运行时在启动 API 与 Worker 前完成应用构建，避免 wat
   await new Promise((resolve) => setImmediate(resolve));
   child.emit("exit", 0, null);
   await runtime;
-  assert.deepEqual(events, ["prepare", "migrate", "build", "start", "ready", "cleanup"]);
+  assert.deepEqual(events, ["prepare", "migrate", "start", "ready", "cleanup"]);
 });
 
 test("a local migration failure prevents application startup", async () => {

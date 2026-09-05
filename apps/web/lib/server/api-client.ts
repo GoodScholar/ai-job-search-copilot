@@ -754,6 +754,7 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
         body: JSON.stringify(requestBody),
       });
       if (!response.ok) {
+        if (response.status === 409 && requestBody.action === "restart_run") return throwRunPreflightConflict(response, "无法处理 Agent Inbox");
         const problem = await readProblem(response);
         throw new ApiClientError("api", problem?.message ?? "无法处理 Agent Inbox", response.status, problem ?? undefined);
       }

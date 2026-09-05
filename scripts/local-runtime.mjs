@@ -173,14 +173,6 @@ export function startApplications({ spawnProcess = spawn, env = process.env, con
   );
 }
 
-/** Nest watch resolves compiled entrypoints before its first TypeScript rebuild. */
-export async function buildApplicationEntrypoints({ runProcess = run, env = process.env, config } = {}) {
-  const runtime = config ?? createRuntimeConfig({ env });
-  const options = { env: applicationEnv(runtime, env) };
-  await runProcess("pnpm", ["--filter", "api", "build"], options);
-  await runProcess("pnpm", ["--filter", "worker", "build"], options);
-}
-
 function abortReason(signal) {
   return signal?.reason instanceof Error ? signal.reason : new Error("本地测试运行时启动已取消");
 }
@@ -261,7 +253,6 @@ export async function runRuntime({
   fetchImpl = fetch,
   prepare = ({ config: runtimeConfig }) => prepareInfrastructure({ config: runtimeConfig, run }),
   migrate = ({ config: runtimeConfig }) => runDatabaseMigrations({ config: runtimeConfig }),
-  build,
   start = ({ config: runtimeConfig }) => startApplications({ config: runtimeConfig }),
   waitForReady = ({ config: runtimeConfig, signal }) => waitForRuntime({ config: runtimeConfig, fetchImpl, signal }),
   startFixtureServer = ({ config: runtimeConfig, signal }) => runtimeConfig.anysearchPublicJobPhase
@@ -306,7 +297,6 @@ export async function runRuntime({
   try {
     await prepare({ config });
     await migrate({ config });
-    await build?.({ config });
     fixtureServer = await startFixtureServer({ config, signal: fixtureController.signal });
     child = start({ config });
     childExit = waitForApplicationExit(child);
@@ -376,7 +366,7 @@ export async function runRuntime({
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const config = createRuntimeConfig({ test: process.argv.includes("--test") });
-  runRuntime({ config, build: ({ config: runtimeConfig }) => buildApplicationEntrypoints({ config: runtimeConfig }) }).then(
+  runRuntime({ config }).then(
     ({ exitCode }) => { process.exitCode = exitCode; },
     (error) => {
       console.error(error);
