@@ -211,7 +211,9 @@ describe("agent inbox", () => {
       db: database,
       commands: {
         async start(input) {
-          received.push({ warningFingerprint: input.command.warningFingerprint ?? null });
+          const receivedWarningFingerprint = input.command.warningFingerprint;
+          if (receivedWarningFingerprint === undefined) throw new Error("agent inbox must normalize warningFingerprint");
+          received.push({ warningFingerprint: receivedWarningFingerprint });
           if (input.command.warningFingerprint !== warningFingerprint) throw new RunPreflightRejectedError("RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED", report);
           return commandService.start(input);
         },
