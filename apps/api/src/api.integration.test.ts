@@ -11,11 +11,14 @@ import { createAgentRunCommands, type AgentRunQueue } from "@job-copilot/domain/
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
 import { createCompanyWatchlistCommands } from "@job-copilot/domain/company-watchlists";
 import { createJobDiscoverySchedules } from "@job-copilot/domain/job-discovery-schedules";
+import { createModelDiagnostics } from "@job-copilot/domain/model-diagnostics";
+import type { RuntimeConfig } from "@job-copilot/domain/runtime-config";
+import type { ModelDiagnosticAdapter } from "@job-copilot/contracts/model-diagnostics";
 import { JobTriageError } from "@job-copilot/domain/job-triage-persistence";
 import { JobTriageVersionSchema } from "@job-copilot/contracts/job-triage";
 import { AppModule } from "./app.module.js";
 import { configureApiApplication } from "./configure-api-application.js";
-import { DATABASE } from "./config/runtime-config.module.js";
+import { DATABASE, RUNTIME_CONFIG } from "./config/runtime-config.module.js";
 import { CAREER_DOCUMENT_STORE, CAREER_IMPORT_QUEUE } from "./career-import/career-import.tokens.js";
 import { JOB_CONTENT_STORE, JOB_IMPORT_QUEUE, JOB_PAGE_FETCHER } from "./job-imports/job-imports.tokens.js";
 import { JobPageFetchError, type JobPageFetcher } from "./job-imports/job-page-fetcher.js";
@@ -24,14 +27,16 @@ import { CAREER_FACT_CONFLICT_REVIEW_COMMANDS, PROFILE_REVIEW_COMMANDS, type Pro
 import { AGENT_RUN_QUEUE_PORT } from "./agent-runs/agent-runs.tokens.js";
 import { JOB_TRIAGE_COMMANDS, JOB_TRIAGE_QUERIES } from "./job-triage/job-triage.tokens.js";
 import { RECOMMENDATION_FEEDBACK_COMMANDS, RECOMMENDATION_FEEDBACK_QUERIES } from "./recommendations/recommendations.tokens.js";
+import { MODEL_DIAGNOSTICS } from "./model-diagnostics/model-diagnostics.tokens.js";
 import { z } from "zod";
 
 const testSecret = "test-dev-auth-shared-secret-must-be-at-least-32-characters";
-const diagnosticSecretSentinels = ["openai-key-sentinel", "configuration-fingerprint-sentinel", "organization-sentinel", "project-sentinel", "model-id-sentinel", "provider-request-sentinel"] as const;
+const diagnosticSecretSentinels = ["openai-key-sentinel", "endpoint-sentinel", "organization-sentinel", "project-sentinel", "low-model-sentinel", "high-model-sentinel", "actual-fingerprint-sentinel", "raw-provider-response-sentinel", "raw-client-request-sentinel"] as const;
 const capturedLogs: unknown[][] = [];
 const recordLog = (...args: unknown[]) => { capturedLogs.push(args); };
 const testLogger = {
   child: () => testLogger,
+  log: recordLog,
   info: recordLog,
   error: recordLog,
   debug: recordLog,
@@ -44,6 +49,8 @@ describe("authenticated workbench HTTP API", () => {
   let app: NestFastifyApplication;
   let container: StartedPostgreSqlContainer;
   let database: Database;
+  let diagnosticAdapterCalls = 0;
+  let diagnosticAdapterInput: { apiKey?: string; endpoint?: string; organization?: string; project?: string; lowCostModel: string; highQualityModel: string } | undefined;
   const triageVersionId = "90000000-0000-4000-8000-000000000001";
   const triageOpportunityId = "90000000-0000-4000-8000-000000000002";
   const inactiveTriageTargetId = "90000000-0000-4000-8000-000000000003";
@@ -198,8 +205,9 @@ describe("authenticated workbench HTTP API", () => {
       AUTH_MODE: "dev",
       DEV_AUTH_SHARED_SECRET: testSecret,
       DATABASE_URL: container.getConnectionUri(),
-      OPENAI_API_KEY: diagnosticSecretSentinels[0], OPENAI_ENDPOINT: "https://configuration-fingerprint-sentinel.example.test", OPENAI_ORGANIZATION: diagnosticSecretSentinels[2], OPENAI_PROJECT: diagnosticSecretSentinels[3], OPENAI_LOW_COST_MODEL: diagnosticSecretSentinels[4], OPENAI_HIGH_QUALITY_MODEL: "high-model-id-sentinel",
+      OPENAI_API_KEY: diagnosticSecretSentinels[0], OPENAI_ENDPOINT: `https://${diagnosticSecretSentinels[1]}.example.test`, OPENAI_ORGANIZATION: diagnosticSecretSentinels[2], OPENAI_PROJECT: diagnosticSecretSentinels[3], OPENAI_LOW_COST_MODEL: diagnosticSecretSentinels[4], OPENAI_HIGH_QUALITY_MODEL: diagnosticSecretSentinels[5],
     });
+    capturedLogs.length = 0;
 
     const module = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(CAREER_DOCUMENT_STORE).useValue(documentStore)
@@ -213,6 +221,21 @@ describe("authenticated workbench HTTP API", () => {
       .overrideProvider(JOB_TRIAGE_QUERIES).useValue(triageQueries)
       .overrideProvider(RECOMMENDATION_FEEDBACK_COMMANDS).useValue(feedbackCommands)
       .overrideProvider(RECOMMENDATION_FEEDBACK_QUERIES).useValue(feedbackQueries)
+      .overrideProvider(MODEL_DIAGNOSTICS).useFactory({
+        inject: [DATABASE, RUNTIME_CONFIG],
+        factory: (db: Database, config: RuntimeConfig) => {
+          diagnosticAdapterInput = config.openAi;
+          const adapter: ModelDiagnosticAdapter = {
+            configurationFingerprint: diagnosticSecretSentinels[6],
+            async diagnose() {
+              diagnosticAdapterCalls += 1;
+              throw new Error(JSON.stringify({ ...config.openAi, providerResponse: diagnosticSecretSentinels[7] }));
+            },
+          };
+          return createModelDiagnostics({ db, adapter, clock: () => new Date() });
+        },
+      })
+      .setLogger(testLogger as never)
       .compile();
     app = module.createNestApplication<NestFastifyApplication>(new FastifyAdapter({ loggerInstance: testLogger as never }));
     await configureApiApplication(app);
@@ -276,22 +299,27 @@ describe("authenticated workbench HTTP API", () => {
   });
 
   it("仅允许已认证会话读取或运行脱敏模型诊断，并禁止 HTTP 缓存", async () => {
-    capturedLogs.length = 0;
+    diagnosticAdapterCalls = 0;
     const anonymous = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/model-diagnostics" });
     expect(anonymous.statusCode).toBe(401); expect(anonymous.headers["cache-control"]).toBe("no-store");
     const session = await createSession(app, `model-diagnostic-${crypto.randomUUID()}`);
     const get = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/model-diagnostics", headers: bearer(session.sessionToken) });
     expect(get.statusCode).toBe(200); expect(get.headers["cache-control"]).toBe("no-store"); expect(get.json()).toMatchObject({ status: "unverified", checks: { authentication: "not_verified" } });
     const post = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/model-diagnostics", headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: {} });
-    expect(post.statusCode).toBe(201); expect(post.headers["cache-control"]).toBe("no-store"); expect(post.json()).toMatchObject({ status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" } });
+    expect(post.statusCode).toBe(201); expect(post.headers["cache-control"]).toBe("no-store"); expect(post.json()).toMatchObject({ status: "failed", reasonCode: "MODEL_DIAGNOSTIC_FAILED" });
+    expect(diagnosticAdapterCalls).toBe(1);
+    expect(diagnosticAdapterInput).toEqual({ apiKey: diagnosticSecretSentinels[0], endpoint: `https://${diagnosticSecretSentinels[1]}.example.test`, organization: diagnosticSecretSentinels[2], project: diagnosticSecretSentinels[3], lowCostModel: diagnosticSecretSentinels[4], highQualityModel: diagnosticSecretSentinels[5] });
+    await expect(database.$client`select configuration_fingerprint from model_diagnostic_results where configuration_fingerprint = ${diagnosticSecretSentinels[6]}`).resolves.toEqual([{ configuration_fingerprint: diagnosticSecretSentinels[6] }]);
+    const afterPostGet = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/model-diagnostics", headers: bearer(session.sessionToken) });
+    expect(afterPostGet.statusCode).toBe(200); expect(afterPostGet.headers["cache-control"]).toBe("no-store"); expect(afterPostGet.json()).toMatchObject({ status: "failed", reasonCode: "MODEL_DIAGNOSTIC_FAILED" });
     const noBody = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/model-diagnostics", headers: bearer(session.sessionToken) });
     expect(noBody.statusCode).toBe(201); expect(noBody.headers["cache-control"]).toBe("no-store");
     expect(Object.keys(post.json())).not.toEqual(expect.arrayContaining(["configurationFingerprint", "apiKey", "providerResponse", "organization", "project", "model"]));
-    const invalid = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/model-diagnostics", headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: { ignored: diagnosticSecretSentinels[5] } });
+    const invalid = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/model-diagnostics", headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: { ignored: diagnosticSecretSentinels[8] } });
     expect(invalid.statusCode).toBe(400); expect(invalid.headers["cache-control"]).toBe("no-store");
     const postAnonymous = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/model-diagnostics" });
     expect(postAnonymous.statusCode).toBe(401); expect(postAnonymous.headers["cache-control"]).toBe("no-store");
-    const exposed = `${post.body}${get.body}${invalid.body}${postAnonymous.body}${normalizedLogText(capturedLogs)}`;
+    const exposed = `${post.body}${get.body}${afterPostGet.body}${noBody.body}${invalid.body}${postAnonymous.body}${anonymous.body}${normalizedLogText(capturedLogs)}`;
     for (const sentinel of diagnosticSecretSentinels) expect(exposed).not.toContain(sentinel);
   });
 
