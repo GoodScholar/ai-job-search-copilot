@@ -8,7 +8,7 @@
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
+  --color-muted: var(--muted-surface);
   --color-muted-foreground: var(--muted-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
@@ -28,6 +28,7 @@
   --surface: #fffefa;
   --ink: #15211d;
   --muted: #657069;
+  --muted-surface: #e8ede8;
   --emerald: #246a49;
   --emerald-strong: #18553a;
   --amber: #c98532;
@@ -41,7 +42,7 @@
   --primary-foreground: var(--surface);
   --secondary: var(--surface);
   --secondary-foreground: var(--ink);
-  --muted-foreground: var(--muted);
+  --muted-foreground: #626d66;
   --border: var(--rule);
   --input: var(--rule);
   --ring: var(--emerald);
@@ -1010,6 +1011,20 @@ summary.workbench-touch-target:focus-visible,
 .agent-inbox-panel,
 .agent-run-panel-active { box-shadow: var(--shadow-paper); }
 .agent-run-panel { max-width: 100%; }
+.run-preflight-panel { border-bottom: 1px solid var(--rule); padding-block: 1.25rem; }
+.run-preflight-heading { align-items: baseline; display: flex; gap: 1rem; justify-content: space-between; }
+.run-preflight-panel h3, .run-preflight-panel h4 { margin: 0; }
+.run-preflight-panel > p { margin: 0.5rem 0 0; }
+.run-preflight-panel ol { list-style: none; margin: 1rem 0 0; padding: 0; }
+.run-preflight-panel li { border-top: 1px solid var(--rule); padding: 1rem 0; }
+.run-preflight-panel li p { font-size: 0.88rem; margin: 0.35rem 0 0; overflow-wrap: anywhere; }
+.run-preflight-panel li[data-severity="blocking"] h4 { color: var(--amber-ink); }
+.run-preflight-panel li[data-severity="warning"] h4 { color: var(--amber-ink); }
+.run-preflight-panel li[data-severity="informational"] h4 { color: var(--emerald-strong); }
+.run-preflight-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.run-preflight-actions a { color: var(--emerald-strong); font-size: 0.88rem; font-weight: 700; text-decoration: underline; }
+.agent-run-warning-confirmation { grid-column: 1 / -1; border-top: 1px solid var(--rule); padding-top: 0.75rem; }
+.agent-run-warning-confirmation p { color: var(--amber-ink); font-weight: 700; margin: 0 0 0.75rem; }
 .agent-run-controls { border-bottom: 1px solid var(--rule); padding-block: 1.25rem; }
 .agent-run-controls > label { color: var(--muted); display: block; font-size: 0.82rem; font-weight: 700; margin-bottom: 0.5rem; }
 .agent-run-controls > div { display: grid; gap: 0.75rem; grid-template-columns: minmax(0, 1fr) auto; }

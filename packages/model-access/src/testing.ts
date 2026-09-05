@@ -3,6 +3,8 @@ import { createInternalOpenAiModelDiagnosticAdapter, type ModelDiagnosticTestOpt
 
 export type { ModelDiagnosticTestTransport } from "./internal.js";
 
+export const TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED = "job-copilot-test-deployment-v1";
+
 export type ModelDiagnosticFakeScenario = { kind:
   | "success"
   | "authentication_failed"
@@ -29,7 +31,9 @@ export function createOpenAiModelDiagnosticAdapterForTest(config: OpenAiModelDia
 
 export function createFakeModelDiagnosticAdapter(scenario: ModelDiagnosticFakeScenario, fingerprintSeed?: string): ModelDiagnosticAdapter {
   return {
-    configurationFingerprint: `fake-model-diagnostic-${scenario.kind}${fingerprintSeed ? `-${fingerprintSeed}` : ""}`,
+    configurationFingerprint: fingerprintSeed
+      ? `fake-model-diagnostic-deployment-${fingerprintSeed}`
+      : `fake-model-diagnostic-scenario-${scenario.kind}`,
     async diagnose() {
       return fakeResult(scenario.kind);
     },

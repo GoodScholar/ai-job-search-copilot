@@ -1,10 +1,12 @@
 import AxeBuilder from "@axe-core/playwright";
+import { Queue } from "bullmq";
 import { Client } from "pg";
 import { expect, test, type APIRequestContext, type Locator, type Page, type TestInfo } from "@playwright/test";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const databaseUrl = process.env.E2E_DATABASE_URL ?? "postgresql://job_copilot:local_only_job_copilot@127.0.0.1:55420/job_copilot";
 const secret = "issue-2-e2e-dev-auth-shared-secret";
+const redisPort = Number(process.env.E2E_REDIS_PORT ?? "64790");
 const scenarios = {
   "Desktop Chrome": { batchKey: "10000000-0000-4000-8000-000000000141", subject: "recommendations-desktop" },
   "Mobile Safari": { batchKey: "10000000-0000-4000-8000-000000000142", subject: "recommendations-mobile" },
@@ -34,6 +36,16 @@ async function createAccount(request: APIRequestContext, info: TestInfo): Promis
   } } });
   expect(target.status()).toBe(201);
   const targetId = (await target.json() as { targets: Array<{ targetId: string; priority: string }> }).targets.find((item) => item.priority === "primary")!.targetId;
+  const source = await request.post(`${apiBaseUrl}/v1/job-targets/${targetId}/company-watchlist/items`, {
+    headers: { authorization: `Bearer ${body.sessionToken}` },
+    data: { expectedVersion: 0, canonicalCompanyName: "Recommendations Fake Fixture", careersUrl: "https://boards.greenhouse.io/recommendations-fake-fixture", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null },
+  });
+  expect(source.status()).toBe(201);
+  const diagnostic = await request.post(`${apiBaseUrl}/v1/model-diagnostics`, {
+    headers: { authorization: `Bearer ${body.sessionToken}` }, data: {},
+  });
+  expect(diagnostic.status()).toBe(201);
+  await expect(diagnostic.json()).resolves.toMatchObject({ status: "available" });
   return { token: body.sessionToken, userId: body.account.userId, targetId };
 }
 
@@ -58,7 +70,16 @@ async function importAndTriage(request: APIRequestContext, account: Account, tit
 }
 
 async function runDiscovery(request: APIRequestContext, account: Account, idempotencyKey: string): Promise<string> {
-  const response = await request.post(`${apiBaseUrl}/v1/agent-runs`, { headers: { authorization: `Bearer ${account.token}` }, data: { targetId: account.targetId, idempotencyKey } });
+  const preflight = await request.get(`${apiBaseUrl}/v1/run-preflight?workflow=discovery&trigger=manual&targetId=${account.targetId}`, {
+    headers: { authorization: `Bearer ${account.token}` },
+  });
+  expect(preflight.status()).toBe(200);
+  const report = await preflight.json() as { status: string; warningFingerprint: string | null };
+  expect(report).toMatchObject({ status: "ready_with_warnings", warningFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/) });
+  const response = await request.post(`${apiBaseUrl}/v1/agent-runs`, {
+    headers: { authorization: `Bearer ${account.token}` },
+    data: { targetId: account.targetId, idempotencyKey, warningFingerprint: report.warningFingerprint },
+  });
   expect(response.status()).toBe(201);
   return (await response.json() as { runId: string }).runId;
 }
@@ -68,7 +89,8 @@ async function installMatchingFixture(userId: string, targetId: string, fixture:
   await client.connect();
   try {
     const fixtureJson = JSON.stringify(fixture).replaceAll("'", "''");
-    await client.query(`create or replace function e2e_deep_match_fixture() returns trigger language plpgsql as $$
+    await client.query(`drop trigger if exists e2e_deep_match_fixture_trigger on agent_runs;
+      create or replace function e2e_deep_match_fixture() returns trigger language plpgsql as $$
       begin
         if new.user_id = '${userId}'::uuid and new.target_id = '${targetId}'::uuid and new.workflow_version = 'deep-match-v1' then
           update agent_runs set source_scope = jsonb_set(new.source_scope, '{testFixture}', '${fixtureJson}'::jsonb) where id = new.id;
@@ -104,6 +126,20 @@ async function waitForRun(page: Page, runId: string): Promise<void> {
     const response = await page.request.get(`/api/agent-runs/${runId}`);
     return response.ok() ? (await response.json() as { status: string }).status : "unavailable";
   }, { timeout: 30_000 }).toBe("completed");
+}
+
+async function removeAllProfileFacts(request: APIRequestContext, token: string): Promise<void> {
+  const snapshotResponse = await request.get(`${apiBaseUrl}/v1/profile`, { headers: { authorization: `Bearer ${token}` } });
+  expect(snapshotResponse.status()).toBe(200);
+  let snapshot = await snapshotResponse.json() as { version: number; facts: Array<{ factId: string }> };
+  for (const fact of snapshot.facts) {
+    const removal = await request.post(`${apiBaseUrl}/v1/profile/facts/${fact.factId}/removals`, {
+      headers: { authorization: `Bearer ${token}` },
+      data: { expectedVersion: snapshot.version, reason: "验证自动深评运行前阻塞" },
+    });
+    expect(removal.status()).toBe(201);
+    snapshot = await removal.json() as { version: number; facts: Array<{ factId: string }> };
+  }
 }
 
 async function matchSnapshot(userId: string, targetId: string) {
@@ -369,6 +405,37 @@ test("显式 Fake matching 的质量不足候选可生成零推荐清单", async
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
 
+test("automatic deep-match 遇到运行前阻塞不会创建 child，也不会回滚已完成的 discovery 父运行", async ({ page, request }, info) => {
+  test.setTimeout(90_000);
+  const account = await createAccount(request, info);
+  await importAndTriage(request, account, "自动阻塞夹具岗位");
+  await page.context().addCookies([{ name: "job_copilot_session", value: account.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
+  const queue = new Queue("agent-runs", { connection: { host: "127.0.0.1", port: redisPort } });
+  try {
+    await queue.pause();
+    const parentRunId = await runDiscovery(request, account, crypto.randomUUID());
+    await removeAllProfileFacts(request, account.token);
+    await queue.resume();
+    await waitForRun(page, parentRunId);
+    const client = new Client({ connectionString: databaseUrl });
+    await client.connect();
+    try {
+      const parent = await client.query("select status from agent_runs where id = $1", [parentRunId]);
+      expect(parent.rows).toEqual([{ status: "completed" }]);
+      const children = await client.query(
+        "select id from agent_runs where user_id = $1 and workflow_version = 'deep-match-v1' and source_scope ->> 'discoveryRunId' = $2",
+        [account.userId, parentRunId],
+      );
+      expect(children.rows).toEqual([]);
+    } finally {
+      await client.end();
+    }
+  } finally {
+    await queue.resume().catch(() => undefined);
+    await queue.close();
+  }
+});
+
 test("真实 discovery 自动 child 以深评稳定重排十项并标出正确 Top3 与 matching 面板", async ({ page, request }, info) => {
   test.setTimeout(120_000);
   const account = await createAccount(request, info);
@@ -387,7 +454,7 @@ test("真实 discovery 自动 child 以深评稳定重排十项并标出正确 T
   await page.goto(`/home?runId=${runId}#agent-run`);
   await expect(page.getByRole("heading", { name: "评估候选岗位匹配" })).toBeVisible();
   await expect(page.getByLabel("用于发现岗位的求职目标")).toBeVisible();
-  await expect(page.locator(".agent-run-panel [role=status]")).toContainText("已生成 10 项推荐");
+  await expect(page.locator(".agent-run-panel .agent-run-live")).toContainText("已生成 10 项推荐");
   await expect(page.getByRole("list", { name: "岗位匹配运行时间线" })).toContainText("岗位匹配完成");
 
   await page.goto("/recommendations");

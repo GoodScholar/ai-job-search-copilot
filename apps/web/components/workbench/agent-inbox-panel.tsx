@@ -1,9 +1,11 @@
 "use client";
 
 import { AgentInboxActionResponseSchema, AgentInboxListSchema, type AgentInboxActionCommand, type AgentInboxItem } from "@job-copilot/contracts/agent-inbox";
+import { RunPreflightProblemSchema, type RunPreflightReport } from "@job-copilot/contracts/run-preflight";
 import type { AgentRunControlSnapshot } from "@job-copilot/contracts/agent-runs";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { RunPreflightPanel } from "./run-preflight-panel";
 
 type InboxFilter = "pending" | "unread" | "read" | "resolved";
 type InboxCache = Partial<Record<InboxFilter, AgentInboxItem[]>>;
@@ -68,6 +70,7 @@ export function AgentInboxPanel({ items, onResolved, onRunUpdated }: {
   const [cacheState, setCacheState] = useState<InboxCacheState>({ source, cache: { pending: items } });
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState<string | null>(null);
+  const [restartPreflight, setRestartPreflight] = useState<Record<string, RunPreflightReport>>({});
   const [loadingRequest, setLoadingRequest] = useState<FilterRequest | null>(null);
   const [failedRequest, setFailedRequest] = useState<FilterRequest | null>(null);
   const actionIds = useRef(new Map<string, string>());
@@ -125,15 +128,17 @@ export function AgentInboxPanel({ items, onResolved, onRunUpdated }: {
     updateCache((current) => ({ ...current, [next]: nextItems }));
   }
 
-  async function actOn(item: AgentInboxItem, action: AgentInboxActionCommand["action"]) {
+  async function actOn(item: AgentInboxItem, action: AgentInboxActionCommand["action"], warningFingerprint?: string) {
     const key = `${item.itemId}:${action}`;
     const actionId = actionIds.current.get(key) ?? crypto.randomUUID();
     actionIds.current.set(key, actionId);
     setPending(key);
     setMessage("");
     try {
-      const response = await fetch(`/api/agent-inbox/${item.itemId}/actions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ actionId, action }) });
+      const response = await fetch(`/api/agent-inbox/${item.itemId}/actions`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ actionId, action, ...(warningFingerprint === undefined ? {} : { warningFingerprint }) }) });
       if (!response.ok) {
+        const preflight = action === "restart_run" ? RunPreflightProblemSchema.safeParse(await response.json().catch(() => null)).data : undefined;
+        if (preflight) { setRestartPreflight((current) => ({ ...current, [item.itemId]: preflight.preflight })); return; }
         if (response.status === 409) actionIds.current.delete(key);
         setMessage(response.status === 409 ? "该事项状态已变化，请刷新后查看。" : "暂时无法处理该事项，请稍后重试。");
         return;
@@ -166,13 +171,15 @@ export function AgentInboxPanel({ items, onResolved, onRunUpdated }: {
     </div>
     <p aria-live="polite" className={message ? "agent-inbox-live" : "agent-inbox-live is-empty"} role="status">{message}</p>
     {loadingFilter === filter ? <p className="agent-inbox-empty">正在读取事项…</p> : failedFilter === filter ? <div className="agent-inbox-load-error"><p>事项暂时无法读取，请稍后重试。</p><button className="workbench-touch-target" onClick={() => void changeFilter(filter, true)} type="button">重试读取{filters.find(({ value }) => value === filter)!.label}事项</button></div> : visibleItems.length === 0 ? <p className="agent-inbox-empty">{emptyCopy[filter]}</p> : <div className="agent-inbox-list">
-      {visibleItems.map((item) => <article aria-label={item.title} key={item.itemId}>
+      {visibleItems.map((item) => { const preflight = restartPreflight[item.itemId]; return <article aria-label={item.title} key={item.itemId}>
         <h3>{item.title}</h3><p>{item.message}</p>
         <dl className="agent-inbox-details"><div><dt>依据</dt><dd>{item.basis}</dd></div><div><dt>影响</dt><dd>{item.impact}</dd></div><div><dt>建议</dt><dd>{item.suggestedAction}</dd></div></dl>
         <div className="agent-inbox-actions"><Link className="workbench-ledger-link workbench-touch-target" href={item.target.href} ref={(node) => { itemTargets.current[item.itemId] = node; }}>查看相关记录</Link>
-          {item.availableActions.map((action) => { const key = `${item.itemId}:${action}`; return <button className="agent-run-action workbench-touch-target" disabled={pending === key} key={action} onClick={() => void actOn(item, action)} type="button">{pending === key ? "正在处理…" : `${actionLabels[action]}：${item.title}`}</button>; })}
+          {preflight ? <RunPreflightPanel report={preflight} unavailable={false} /> : null}
+          {item.availableActions.filter((action) => action !== "restart_run" || !preflight).map((action) => { const key = `${item.itemId}:${action}`; return <button className="agent-run-action workbench-touch-target" disabled={pending === key} key={action} onClick={() => void actOn(item, action)} type="button">{pending === key ? "正在处理…" : `${actionLabels[action]}：${item.title}`}</button>; })}
+          {preflight?.status === "ready_with_warnings" ? <button className="agent-run-action workbench-touch-target" disabled={pending === `${item.itemId}:restart_run`} onClick={() => void actOn(item, "restart_run", preflight.warningFingerprint!)} type="button">确认当前提示并重新开始岗位发现</button> : null}
         </div>
-      </article>)}
+      </article>; })}
     </div>}
   </section>;
 }

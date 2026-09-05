@@ -28,6 +28,7 @@ import { applyTransactionDeadline } from "./transaction-deadline";
 import type { JobDiscoveryExecutionMode } from "./job-discovery-execution-mode";
 import { resolveEffectiveAccountRunPolicy } from "./account-run-policies";
 import { isDateInBackgroundWindow, isInBackgroundWindow } from "./account-run-policy-window";
+import { RunPreflightRejectedError } from "./run-preflight";
 
 export class JobDiscoveryScheduleError extends Error {
   constructor(public readonly code: "JOB_DISCOVERY_SCHEDULE_TARGET_NOT_FOUND" | "JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE" | "JOB_DISCOVERY_SCHEDULE_VERSION_CONFLICT" | "SOURCE_POLICY_REQUIRED" | "NO_SUPPORTED_SOURCE" | "PROFILE_UNAVAILABLE" | "ACCOUNT_RUN_POLICY_WINDOW_CLOSED") { super(code); }
@@ -76,12 +77,8 @@ async function scheduleTarget(db: Pick<Database, "select">, userId: string, targ
   return target;
 }
 
-async function dispatchReason(db: Pick<Database, "select" | "insert" | "update">, userId: string, targetId: string, executionMode?: JobDiscoveryExecutionMode, now?: Date, scheduledFor?: Date, context?: { id: () => string; clock: () => Date }): Promise<"TARGET_INACTIVE" | "NO_SUPPORTED_SOURCE" | "SOURCE_POLICY_REQUIRED" | "PROFILE_UNAVAILABLE" | "ACCOUNT_RUN_POLICY_WINDOW_CLOSED" | null> {
+async function validateScheduleConfiguration(db: Pick<Database, "select" | "insert" | "update">, userId: string, targetId: string, executionMode?: JobDiscoveryExecutionMode, context?: { id: () => string; clock: () => Date }): Promise<"TARGET_INACTIVE" | "NO_SUPPORTED_SOURCE" | "SOURCE_POLICY_REQUIRED" | "PROFILE_UNAVAILABLE" | null> {
   const policy = await resolveEffectiveAccountRunPolicy(db, userId, context);
-  if (now) {
-    const window = policy.effective.backgroundWindow;
-    if (!isDateInBackgroundWindow(now, window) || (scheduledFor && !isDateInBackgroundWindow(scheduledFor, window))) return "ACCOUNT_RUN_POLICY_WINDOW_CLOSED";
-  }
   const target = await scheduleTarget(db, userId, targetId);
   if (target.state !== "active") return "TARGET_INACTIVE";
   // v4 总会冻结 general/site public discovery；Greenhouse 仅是可选 trusted branch。
@@ -164,11 +161,10 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
         if (command.state === "enabled") {
           const policy = await resolveEffectiveAccountRunPolicy(transaction, input.userId, { id: deps.id, clock: deps.clock });
           if (!isInBackgroundWindow(command.dailyTime, policy.effective.backgroundWindow)) throw new JobDiscoveryScheduleError("ACCOUNT_RUN_POLICY_WINDOW_CLOSED");
-          const reason = await dispatchReason(transaction, input.userId, input.targetId, deps.executionMode, undefined, undefined, { id: deps.id, clock: deps.clock });
+          const reason = await validateScheduleConfiguration(transaction, input.userId, input.targetId, deps.executionMode, { id: deps.id, clock: deps.clock });
           if (reason === "SOURCE_POLICY_REQUIRED") throw new JobDiscoveryScheduleError("SOURCE_POLICY_REQUIRED");
           if (reason === "NO_SUPPORTED_SOURCE") throw new JobDiscoveryScheduleError("NO_SUPPORTED_SOURCE");
           if (reason === "PROFILE_UNAVAILABLE") throw new JobDiscoveryScheduleError("PROFILE_UNAVAILABLE");
-          if (reason === "ACCOUNT_RUN_POLICY_WINDOW_CLOSED") throw new JobDiscoveryScheduleError("ACCOUNT_RUN_POLICY_WINDOW_CLOSED");
         }
         const [current] = await transaction.select().from(jobDiscoverySchedules).where(and(eq(jobDiscoverySchedules.userId, input.userId), eq(jobDiscoverySchedules.targetId, input.targetId)));
         const currentVersion = current?.version ?? 0;
@@ -241,7 +237,7 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
               .where(and(eq(jobDiscoveryScheduleOccurrences.id, occurrence.id), eq(jobDiscoveryScheduleOccurrences.status, "pending"))).returning();
             if (dispatched) await appendScheduleAudit(auditTrail, { userId: dispatched.userId, requestId: deps.id(), eventType: "occurrence_dispatched", scheduleId: dispatched.scheduleId, targetId: dispatched.targetId, occurrenceId: dispatched.id, runId, scheduledFor: dispatched.scheduledFor, state: "dispatched", now });
           };
-          const skip = async (reason: "TARGET_INACTIVE" | "NO_SUPPORTED_SOURCE" | "SOURCE_POLICY_REQUIRED" | "PROFILE_UNAVAILABLE" | "ACCOUNT_RUN_POLICY_WINDOW_CLOSED") => {
+          const skip = async (reason: "TARGET_INACTIVE" | "NO_SUPPORTED_SOURCE" | "SOURCE_POLICY_REQUIRED" | "PROFILE_UNAVAILABLE" | "ACCOUNT_RUN_POLICY_WINDOW_CLOSED" | "RUN_PREFLIGHT_BLOCKED") => {
             const [skipped] = await transaction.update(jobDiscoveryScheduleOccurrences).set({ status: "skipped", runId: null, skipReason: reason })
               .where(and(eq(jobDiscoveryScheduleOccurrences.id, occurrence.id), eq(jobDiscoveryScheduleOccurrences.status, "pending"))).returning();
             if (skipped) await appendScheduleAudit(auditTrail, { userId: skipped.userId, requestId: deps.id(), eventType: "occurrence_skipped", scheduleId: skipped.scheduleId, targetId: skipped.targetId, occurrenceId: skipped.id, scheduledFor: skipped.scheduledFor, state: "skipped", now });
@@ -255,24 +251,18 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
             continue;
           }
 
-          let reason: Awaited<ReturnType<typeof dispatchReason>>;
-          try { reason = await dispatchReason(transaction, occurrence.userId, occurrence.targetId, deps.executionMode, now, occurrence.scheduledFor, { id: deps.id, clock: deps.clock }); } catch (error) {
-            if (!(error instanceof JobDiscoveryScheduleError)) throw error;
-            reason = "TARGET_INACTIVE";
-          }
-          if (reason) {
-            await skip(reason);
-            continue;
-          }
           try {
             const run = await deps.runs.start({ userId: occurrence.userId, requestId: deps.id(), command: { targetId: occurrence.targetId, idempotencyKey: occurrence.id }, trigger: { kind: "schedule", occurrenceId: occurrence.id, scheduledFor: occurrence.scheduledFor }, deadline });
             await dispatch(run.runId);
           } catch (error) {
+            if (error instanceof RunPreflightRejectedError && error.code === "RUN_PREFLIGHT_BLOCKED") { await skip("RUN_PREFLIGHT_BLOCKED"); continue; }
             if (!(error instanceof AgentRunError)) throw error;
             if (error.code === "AGENT_RUN_TARGET_INACTIVE") { await skip("TARGET_INACTIVE"); continue; }
             if (error.code === "AGENT_RUN_UNAVAILABLE") {
-              const retryReason = await dispatchReason(transaction, occurrence.userId, occurrence.targetId, deps.executionMode, deps.clock(), occurrence.scheduledFor, { id: deps.id, clock: deps.clock });
-              if (retryReason) { await skip(retryReason); continue; }
+              const reason = await validateScheduleConfiguration(transaction, occurrence.userId, occurrence.targetId, deps.executionMode, { id: deps.id, clock: deps.clock });
+              if (reason) { await skip(reason); continue; }
+              const policy = await resolveEffectiveAccountRunPolicy(transaction, occurrence.userId, { id: deps.id, clock: deps.clock });
+              if (!isDateInBackgroundWindow(deps.clock(), policy.effective.backgroundWindow) || !isDateInBackgroundWindow(occurrence.scheduledFor, policy.effective.backgroundWindow)) { await skip("ACCOUNT_RUN_POLICY_WINDOW_CLOSED"); continue; }
             }
             throw error;
           }

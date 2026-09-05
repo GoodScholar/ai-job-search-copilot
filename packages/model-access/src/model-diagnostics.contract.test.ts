@@ -326,6 +326,16 @@ describe("OpenAI 模型诊断 adapter", () => {
     await expect(first.diagnose({ signal: new AbortController().signal })).resolves.not.toHaveProperty("fingerprintSeed");
   });
 
+  it("显式 deployment seed 跨诊断场景共享 fingerprint，未提供 seed 时仍隔离场景", () => {
+    const seed = "shared-test-deployment";
+    const seeded = ["success", "authentication_failed", "provider_unavailable"].map((kind) => createFakeModelDiagnosticAdapter({ kind } as ModelDiagnosticFakeScenario, seed).configurationFingerprint);
+    const unseeded = ["success", "authentication_failed", "provider_unavailable"].map((kind) => createFakeModelDiagnosticAdapter({ kind } as ModelDiagnosticFakeScenario).configurationFingerprint);
+
+    expect([...new Set(seeded)]).toHaveLength(1);
+    expect(createFakeModelDiagnosticAdapter({ kind: "success" }, "other-test-deployment").configurationFingerprint).not.toBe(seeded[0]);
+    expect([...new Set(unseeded)]).toHaveLength(3);
+  });
+
   it("测试契约每个固定请求字段变动均使指纹失效并进入实际请求", async () => {
     const base = { method: "POST", path: "/responses", contentType: "application/json", redirect: "error" as RequestRedirect, store: false, input: [{ role: "user", content: [{ type: "input_text", text: "Return the requested JSON object." }] }], reasoningEffort: "none", maxOutputTokens: 256, format: { type: "json_schema", name: "model_diagnostic_probe", strict: true, schema: { type: "object", additionalProperties: false, required: ["probe"], properties: { probe: { type: "string", enum: ["ok"] } } } }, timeoutMs: 20_000 };
     const variants = [ { ...base, method: "PUT" }, { ...base, path: "/other" }, { ...base, contentType: "application/problem+json" }, { ...base, redirect: "manual" as RequestRedirect }, { ...base, store: true }, { ...base, input: [{ role: "developer", content: base.input[0]!.content }] }, { ...base, input: [{ role: "user", content: [{ type: "other", text: base.input[0]!.content[0]!.text }] }] }, { ...base, input: [{ role: "user", content: [{ type: "input_text", text: "changed" }] }] }, { ...base, reasoningEffort: "low" }, { ...base, maxOutputTokens: 257 }, { ...base, format: { ...base.format, type: "other" } }, { ...base, format: { ...base.format, name: "other" } }, { ...base, format: { ...base.format, strict: false } }, { ...base, format: { ...base.format, schema: { ...base.format.schema, required: ["changed"] } } }, { ...base, timeoutMs: 19_999 } ];

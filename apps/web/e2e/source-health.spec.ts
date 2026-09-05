@@ -20,12 +20,16 @@ async function installFirstRandomUuid(page: Page, value: string): Promise<void> 
   }, value);
 }
 
-async function configureTarget(page: Page, request: APIRequestContext, subject: string): Promise<string> {
+async function configureTarget(page: Page, request: APIRequestContext, subject: string): Promise<{ targetId: string; token: string }> {
   const sessionResponse = await request.post(`${apiBaseUrl}/v1/auth/dev/sessions`, {
     headers: { "x-dev-auth-secret": testDevAuthSecret }, data: { subject },
   });
   expect(sessionResponse.status()).toBe(201);
   const token = (await sessionResponse.json() as { sessionToken: string }).sessionToken;
+  const factResponse = await request.post(`${apiBaseUrl}/v1/profile/facts`, {
+    headers: { authorization: `Bearer ${token}` }, data: { expectedVersion: 0, factType: "skill", factValue: { name: "TypeScript" } },
+  });
+  expect(factResponse.status()).toBe(201);
   const targetResponse = await request.post(`${apiBaseUrl}/v1/job-targets`, {
     headers: { authorization: `Bearer ${token}` },
     data: {
@@ -40,7 +44,7 @@ async function configureTarget(page: Page, request: APIRequestContext, subject: 
   expect(targetResponse.status()).toBe(201);
   const targetId = ((await targetResponse.json()) as { targets: Array<{ targetId: string; priority: string }> }).targets.find((target) => target.priority === "primary")!.targetId;
   await page.context().addCookies([{ name: "job_copilot_session", value: token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
-  return targetId;
+  return { targetId, token };
 }
 
 async function addSource(page: Page, name: string, board: string): Promise<void> {
@@ -82,15 +86,33 @@ test("两来源 Fake 运行保留成功岗位、展示局部诊断并可停用�
   const scenario = scenarioFor(testInfo);
   const publicRequests: string[] = [];
   page.on("request", (request) => { if (/^(?:boards|job-boards|boards-api)\.greenhouse\.io$/u.test(new URL(request.url()).hostname)) publicRequests.push(request.url()); });
-  const targetId = await configureTarget(page, request, `source-health-${testInfo.project.name}-${Date.now()}`);
+  const account = await configureTarget(page, request, `source-health-${testInfo.project.name}-${Date.now()}`);
+  const { targetId } = account;
   await page.goto(`/profile/targets/${targetId}/watchlist`);
   await addSource(page, "健康来源", scenario.healthyBoard);
   await addSource(page, "受限来源", scenario.limitedBoard);
+  const diagnosticResponse = await request.post(`${apiBaseUrl}/v1/model-diagnostics`, {
+    headers: { authorization: `Bearer ${account.token}` }, data: {},
+  });
+  expect(diagnosticResponse.status()).toBe(201);
+  await expect(diagnosticResponse.json()).resolves.toMatchObject({ status: "available" });
+  const preflightResponse = await request.get(`${apiBaseUrl}/v1/run-preflight?workflow=discovery&trigger=manual&targetId=${targetId}`, {
+    headers: { authorization: `Bearer ${account.token}` },
+  });
+  expect(preflightResponse.status()).toBe(200);
+  const preflight = await preflightResponse.json() as { status: string; warningFingerprint: string | null; items: Array<{ code: string; severity: string }> };
+  expect(preflight.status).toBe("ready_with_warnings");
+  expect(preflight.warningFingerprint).toMatch(/^[a-f0-9]{64}$/u);
+  expect(preflight.items.filter((item) => item.severity === "blocking")).toEqual([]);
+  expect(preflight.items.filter((item) => item.severity === "warning")).toEqual([expect.objectContaining({ code: "SOURCE_HEALTH_UNCHECKED" })]);
   await installFirstRandomUuid(page, scenario.idempotencyKey);
   await page.goto("/home");
-  const responsePromise = page.waitForResponse((response) => response.url().endsWith("/api/agent-runs") && response.request().method() === "POST");
   const start = page.getByRole("button", { name: "发现岗位" });
   if (testInfo.project.name === "Mobile Safari") await start.tap(); else await start.click();
+  const confirmation = page.getByRole("button", { name: "我已了解，仍要启动" });
+  await expect(confirmation).toBeVisible();
+  const responsePromise = page.waitForResponse((response) => response.url().endsWith("/api/agent-runs") && response.request().method() === "POST");
+  if (testInfo.project.name === "Mobile Safari") await confirmation.tap(); else await confirmation.click();
   const runId = ((await (await responsePromise).json()) as { runId: string }).runId;
   await expect.poll(async () => {
     const run = await getRun(page, runId);
@@ -114,7 +136,7 @@ test("两来源 Fake 运行保留成功岗位、展示局部诊断并可停用�
       target: expect.objectContaining({ type: "job_source", targetId, href: `/profile/targets/${targetId}/watchlist#source-health` }),
     }),
   ]));
-  await expect(page.locator(".agent-run-panel [role=status]")).toContainText("岗位发现部分完成");
+  await expect(page.locator(".agent-run-panel .agent-run-live")).toContainText("岗位发现部分完成");
   await expect(page.locator(".agent-run-results")).toContainText("Engineer");
   const attention = page
     .getByRole("article", { name: "部分来源需要关注" })

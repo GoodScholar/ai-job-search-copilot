@@ -7,13 +7,18 @@ import {
   recommendationLists, recommendationRuleVersions, type Database,
 } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
-import { createDeepMatchRunStarter } from "./deep-match-agent-runs";
+import { createDeepMatchRunStarter as createDomainDeepMatchRunStarter } from "./deep-match-agent-runs";
 import { createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
 import { DEEP_MATCH_DIMENSIONS, FakeDeepMatchAdapter } from "@job-copilot/contracts/deep-match";
 import { createRecommendationFeedbackCommands, createRecommendationFeedbackQueries } from "./recommendation-feedback";
+import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
 
 const now = new Date("2026-09-02T00:00:00.000Z");
 const constraints = { roleFamily: "frontend", seniority: null, locations: [], workModes: [], relocation: "unknown", salary: null, industries: [], dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] } };
+
+function createDeepMatchRunStarter(deps: Omit<Parameters<typeof createDomainDeepMatchRunStarter>[0], "runPreflight"> & { runPreflight?: Parameters<typeof createDomainDeepMatchRunStarter>[0]["runPreflight"] }) {
+  return createDomainDeepMatchRunStarter({ ...deps, runPreflight: deps.runPreflight ?? createReadyRunPreflightEvaluator({ clock: deps.clock }) });
+}
 
 describe("recommendation feedback persistence", () => {
   let container: StartedPostgreSqlContainer;

@@ -1,4 +1,4 @@
-import type { OnModuleDestroy, OnModuleInit } from "@nestjs/common";
+import type { OnModuleInit } from "@nestjs/common";
 import { AGENT_RUN_SCAN_INTERVAL_MS } from "@job-copilot/contracts/agent-runs";
 import type { createJobDiscoverySchedules } from "@job-copilot/domain/job-discovery-schedules";
 
@@ -27,10 +27,11 @@ async function withinDeadline<T>(operation: Promise<T>, timeoutMs: number): Prom
 }
 
 /** PostgreSQL schedule facts are authoritative; this only supplies bounded Worker wakeups. */
-export class AgentRunScheduler implements OnModuleInit, OnModuleDestroy {
+export class AgentRunScheduler implements OnModuleInit {
   private timer: ReturnType<typeof setInterval> | undefined;
   private destroyed = false;
   private scanPromise: Promise<void> | undefined;
+  private destroyPromise: Promise<void> | undefined;
 
   constructor(private readonly input: {
     schedules: JobDiscoverySchedules;
@@ -43,7 +44,12 @@ export class AgentRunScheduler implements OnModuleInit, OnModuleDestroy {
     if (!this.destroyed) this.timer = setInterval(() => { void this.scan(); }, AGENT_RUN_SCAN_INTERVAL_MS);
   }
 
-  async onModuleDestroy(): Promise<void> {
+  close(): Promise<void> {
+    this.destroyPromise ??= this.destroy();
+    return this.destroyPromise;
+  }
+
+  private async destroy(): Promise<void> {
     this.destroyed = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;

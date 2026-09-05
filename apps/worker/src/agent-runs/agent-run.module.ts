@@ -1,13 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { Injectable, Module, type OnModuleDestroy } from "@nestjs/common";
+import { Inject, Injectable, Module, type OnModuleDestroy } from "@nestjs/common";
 import { Client as MinioClient } from "minio";
 import { createDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
 import { createAgentRunCommands, createAgentRunProcessor, createAgentRunRecoveryQueries, createLayeredPublicJobDiscoveryRuntime, type DiscoveryContentStore, type LayeredPublicJobDiscoveryWorkflowResolver } from "@job-copilot/domain/agent-runs";
 import { FAKE_ANYSEARCH_PUBLIC_JOB_PHASE, resolveJobDiscoveryExecutionMode, resolveJobDiscoveryRuntimeConfig } from "@job-copilot/domain/job-discovery-execution-mode";
 import { createJobDiscoverySchedules } from "@job-copilot/domain/job-discovery-schedules";
+import { createRunPreflightEvaluator } from "@job-copilot/domain/run-preflight";
+import { createModelDiagnosticProjectionReader } from "@job-copilot/domain/model-diagnostics";
 import type { VerifiedJobEvidenceStore } from "@job-copilot/domain/verified-job-source-gate";
 import { SecureJobPageFetcher } from "@job-copilot/source-access";
+import { createOpenAiModelDiagnosticAdapter } from "@job-copilot/model-access";
+import { createFakeModelDiagnosticAdapter, TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED } from "@job-copilot/model-access/testing";
 
 import { AgentRunConsumer } from "./agent-run-consumer.js";
 import {
@@ -36,7 +40,17 @@ export const AGENT_RUN_RECOVERY_REPORTER = Symbol("AGENT_RUN_RECOVERY_REPORTER")
 export const AGENT_RUN_SCHEDULER = Symbol("AGENT_RUN_SCHEDULER");
 export const AGENT_RUN_SCHEDULE_REPORTER = Symbol("AGENT_RUN_SCHEDULE_REPORTER");
 export const AGENT_RUN_EXECUTION_MODE = Symbol("AGENT_RUN_EXECUTION_MODE");
+export const AGENT_RUN_PREFLIGHT = Symbol("AGENT_RUN_PREFLIGHT");
 const MAX_QUERY_POLICY_REJECTED_CANDIDATES = 5;
+
+/** 只读模型诊断投影；此装配从不主动运行外部诊断。 */
+export function createWorkerRunPreflight(input: { environment?: NodeJS.ProcessEnv; executionMode: ReturnType<typeof createConfiguredJobDiscoveryExecutionMode> }) {
+  const environment = input.environment ?? process.env;
+  const adapter = environment.APP_ENV === "test"
+    ? createFakeModelDiagnosticAdapter({ kind: "success" }, TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED)
+    : createOpenAiModelDiagnosticAdapter({ apiKey: environment.OPENAI_API_KEY ?? "", endpoint: environment.OPENAI_ENDPOINT, organization: environment.OPENAI_ORGANIZATION, project: environment.OPENAI_PROJECT, lowCostModel: environment.OPENAI_LOW_COST_MODEL, highQualityModel: environment.OPENAI_HIGH_QUALITY_MODEL });
+  return createRunPreflightEvaluator({ capabilityAdapter: new GreenhouseTrustedSourceAdapter(), modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: adapter.configurationFingerprint }), discoveryExecutionMode: input.executionMode, id: randomUUID, clock: () => new Date() });
+}
 
 function required(
   name: "DATABASE_URL" | "REDIS_URL" | "MINIO_ENDPOINT" | "MINIO_ACCESS_KEY" | "MINIO_SECRET_KEY" | "MINIO_BUCKET",
@@ -181,14 +195,16 @@ export function createConfiguredLayeredPublicJobDiscoveryWorkflowResolver(input:
 }
 
 @Injectable()
-class AgentRunDatabase implements OnModuleDestroy {
+class AgentRunDatabase {
   readonly db: Database = createDatabase(required(
     "DATABASE_URL",
     "postgresql://job_copilot:local_only_job_copilot@127.0.0.1:54320/job_copilot",
   ));
+  private closePromise: Promise<void> | undefined;
 
-  async onModuleDestroy(): Promise<void> {
-    await this.db.$client.end({ timeout: 5 });
+  close(): Promise<void> {
+    this.closePromise ??= this.db.$client.end({ timeout: 5 });
+    return this.closePromise;
   }
 }
 
@@ -196,6 +212,7 @@ class AgentRunDatabase implements OnModuleDestroy {
   providers: [
     { provide: AGENT_RUN_DATABASE, useClass: AgentRunDatabase },
     { provide: AGENT_RUN_EXECUTION_MODE, useFactory: () => createConfiguredJobDiscoveryExecutionMode() },
+    { provide: AGENT_RUN_PREFLIGHT, inject: [AGENT_RUN_EXECUTION_MODE], useFactory: (executionMode: ReturnType<typeof createConfiguredJobDiscoveryExecutionMode>) => createWorkerRunPreflight({ executionMode }) },
     {
       provide: AGENT_RUN_QUEUE,
       useFactory: () => new BullmqAgentRunQueue(redisUrl()),
@@ -214,8 +231,8 @@ class AgentRunDatabase implements OnModuleDestroy {
     },
     {
       provide: AGENT_RUN_CONSUMER,
-      inject: [AGENT_RUN_DATABASE, AGENT_RUN_QUEUE],
-      useFactory: (database: AgentRunDatabase, queue: BullmqAgentRunQueue) => {
+      inject: [AGENT_RUN_DATABASE, AGENT_RUN_QUEUE, AGENT_RUN_PREFLIGHT],
+      useFactory: (database: AgentRunDatabase, queue: BullmqAgentRunQueue, runPreflight: ReturnType<typeof createWorkerRunPreflight>) => {
         const db = database.db;
         return new AgentRunConsumer({
           redisUrl: redisUrl(),
@@ -233,6 +250,7 @@ class AgentRunDatabase implements OnModuleDestroy {
             contentStore: new MinioDiscoveryContentStore(createMinioClient(), required("MINIO_BUCKET", "career-documents")),
             auditTrail: createAuditTrail({ db, clock: () => new Date() }),
             matchingQueue: queue,
+            runPreflight,
             id: randomUUID,
             clock: () => new Date(),
           }),
@@ -254,12 +272,13 @@ class AgentRunDatabase implements OnModuleDestroy {
     },
     {
       provide: AGENT_RUN_SCHEDULER,
-      inject: [AGENT_RUN_DATABASE, AGENT_RUN_QUEUE, AGENT_RUN_SCHEDULE_REPORTER, AGENT_RUN_EXECUTION_MODE],
+      inject: [AGENT_RUN_DATABASE, AGENT_RUN_QUEUE, AGENT_RUN_SCHEDULE_REPORTER, AGENT_RUN_EXECUTION_MODE, AGENT_RUN_PREFLIGHT],
       useFactory: (
         database: AgentRunDatabase,
         queue: BullmqAgentRunQueue,
         reporter: AgentRunScheduleReporter,
         executionMode: ReturnType<typeof createConfiguredJobDiscoveryExecutionMode>,
+        runPreflight: ReturnType<typeof createWorkerRunPreflight>,
       ) => {
         const db = database.db;
         const auditTrail = createAuditTrail({ db, clock: () => new Date() });
@@ -270,6 +289,7 @@ class AgentRunDatabase implements OnModuleDestroy {
           id: randomUUID,
           clock: () => new Date(),
           executionMode,
+          runPreflight,
         });
         return new AgentRunScheduler({
           schedules: createJobDiscoverySchedules({ db, runs, auditTrail, id: randomUUID, clock: () => new Date(), executionMode }),
@@ -280,4 +300,20 @@ class AgentRunDatabase implements OnModuleDestroy {
   ],
   exports: [AGENT_RUN_CONSUMER, AGENT_RUN_SCHEDULER],
 })
-export class AgentRunModule {}
+export class AgentRunModule implements OnModuleDestroy {
+  constructor(
+    @Inject(AGENT_RUN_SCHEDULER) private readonly scheduler: AgentRunScheduler,
+    @Inject(AGENT_RUN_RECONCILER) private readonly reconciler: AgentRunReconciler,
+    @Inject(AGENT_RUN_CONSUMER) private readonly consumer: AgentRunConsumer,
+    @Inject(AGENT_RUN_QUEUE) private readonly queue: BullmqAgentRunQueue,
+    @Inject(AGENT_RUN_DATABASE) private readonly database: AgentRunDatabase,
+  ) {}
+
+  async onModuleDestroy(): Promise<void> {
+    try { await this.scheduler.close(); } catch { /* 其余资源仍需关闭。 */ }
+    try { await this.reconciler.close(); } catch { /* 其余资源仍需关闭。 */ }
+    try { await this.consumer.close(); } catch { /* 其余资源仍需关闭。 */ }
+    try { await this.queue.close(); } catch { /* PostgreSQL cleanup 仍需执行。 */ }
+    try { await this.database.close(); } catch { /* postgres-js timeout 是最终强制释放边界。 */ }
+  }
+}

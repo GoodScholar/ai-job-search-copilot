@@ -10,12 +10,14 @@ import {
   type AgentRunEventType,
   type AgentRunSseEvent,
 } from "@job-copilot/contracts/agent-runs";
+import { RunPreflightProblemSchema, RunPreflightReportSchema, type RunPreflightReport, type RunPreflightSnapshot } from "@job-copilot/contracts/run-preflight";
 import { LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION } from "@job-copilot/contracts/job-discovery";
 import type { JobTarget } from "@job-copilot/contracts/job-targets";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { DiscoverySchedulePanel } from "./discovery-schedule-panel";
+import { RunPreflightPanel } from "./run-preflight-panel";
 
 type TimelineEvent = {
   sequence: number;
@@ -43,6 +45,18 @@ const stepLabels = {
 const sourceLabels: Record<string, string> = {
   company_careers: "公司招聘官网",
 };
+
+const triggerLabels = {
+  manual: "手动启动",
+  schedule: "计划启动",
+  automatic: "自动触发",
+} satisfies Record<RunPreflightSnapshot["trigger"], string>;
+
+const warningSummaries = {
+  manual: "手动启动时已确认提示",
+  schedule: "计划启动时带提示自动继续",
+  automatic: "自动触发时带提示自动继续",
+} satisfies Record<RunPreflightSnapshot["trigger"], string>;
 
 function isDeepMatchRun(run: AgentRunDetail | null | undefined): boolean {
   return run?.workflowVersion === "deep-match-v1";
@@ -114,9 +128,24 @@ async function fetchRunDetail(runId: string): Promise<AgentRunDetail> {
   return parsed.data;
 }
 
-export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVersion = 0, showDiscoverySchedule = false }: {
+function RunPreflightHistory({ snapshot }: { snapshot: RunPreflightSnapshot }) {
+  const policy = snapshot.items.find((item) => item.evidence.kind === "account_run_policy");
+  const policyRevision = policy?.evidence.kind === "account_run_policy" ? policy.evidence.revisionNumber : "未记录";
+  const triggerLabel = triggerLabels[snapshot.trigger];
+  const summary = snapshot.status === "blocked"
+    ? "启动时存在阻塞"
+    : snapshot.status === "ready"
+      ? "启动时条件已满足"
+      : warningSummaries[snapshot.trigger];
+  return <><p>{summary}</p><dl><div><dt>触发方式</dt><dd>{triggerLabel}</dd></div><div><dt>检查时间</dt><dd>{snapshot.checkedAt}</dd></div><div><dt>账户策略版本</dt><dd>{policyRevision}</dd></div></dl>{snapshot.items.filter((item) => item.severity !== "blocking").map((item) => <p key={item.code}>{item.summary}：{item.impact}</p>)}</>;
+}
+
+export function AgentRunPanel({ targets, initialRun, currentReport, onPreflightChange, preflightUnavailable = false, onInboxRefresh, refreshVersion = 0, showDiscoverySchedule = false }: {
   targets: JobTarget[] | null;
   initialRun: AgentRunDetail | null;
+  currentReport?: RunPreflightReport | null;
+  onPreflightChange?: (report: RunPreflightReport) => void;
+  preflightUnavailable?: boolean;
   onInboxRefresh?: () => Promise<boolean>;
   refreshVersion?: number;
   showDiscoverySchedule?: boolean;
@@ -124,10 +153,13 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
   const activeTargets = targets?.filter((target) => target.state === "active") ?? [];
   const targetsUnavailable = targets === null;
   const canStartRun = !targetsUnavailable && activeTargets.length > 0;
-  const initialTargetId = activeTargets.some((target) => target.targetId === initialRun?.targetId)
-    ? initialRun!.targetId
-    : activeTargets.find((target) => target.priority === "primary")?.targetId ?? activeTargets[0]?.targetId ?? "";
+  const initialTargetId = activeTargets.find((target) => target.priority === "primary")?.targetId ?? activeTargets[0]?.targetId ?? "";
   const [selectedTargetId, setSelectedTargetId] = useState(initialTargetId);
+  const [preflight, setPreflight] = useState<RunPreflightReport | null | undefined>(currentReport);
+  const [preflightIsUnavailable, setPreflightIsUnavailable] = useState(preflightUnavailable);
+  const [warningConfirmation, setWarningConfirmation] = useState(false);
+  const preflightRequest = useRef<{ controller: AbortController; sequence: number } | null>(null);
+  const preflightSequence = useRef(0);
   const [run, setRun] = useState(initialRun);
   const isLayeredPublicRun = run?.workflowVersion === LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION;
   const runNoun = isDeepMatchRun(run) ? "岗位匹配" : "岗位发现";
@@ -142,6 +174,30 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
   const mountedRef = useRef(false);
   const [pendingControls, setPendingControls] = useState<Record<"pause" | "resume" | "cancel", boolean>>({ pause: false, resume: false, cancel: false });
   const selectedTarget = targets?.find((target) => target.targetId === selectedTargetId);
+
+  const applyPreflight = useCallback((next: RunPreflightReport, unavailable = false) => {
+    setPreflight(next); setPreflightIsUnavailable(unavailable); setWarningConfirmation(false); onPreflightChange?.(next);
+  }, [onPreflightChange]);
+
+  const refreshPreflight = useCallback(async (targetId: string) => {
+    preflightRequest.current?.controller.abort();
+    const controller = new AbortController();
+    const sequence = ++preflightSequence.current;
+    preflightRequest.current = { controller, sequence };
+    setPreflightIsUnavailable(true);
+    setWarningConfirmation(false);
+    setMessage("正在刷新所选求职目标的启动条件。");
+    try {
+      const response = await fetch(`/api/run-preflight?targetId=${encodeURIComponent(targetId)}`, { cache: "no-store", signal: controller.signal });
+      if (controller.signal.aborted || sequence !== preflightSequence.current) return;
+      if (!response.ok) { setPreflightIsUnavailable(true); setMessage("运行前检查暂时无法读取，请稍后重试。"); return; }
+      const parsed = RunPreflightReportSchema.safeParse(await response.json().catch(() => null));
+      if (!parsed.success || parsed.data.targetId !== targetId) { setPreflightIsUnavailable(true); setMessage("运行前检查暂时无法读取，请稍后重试。"); return; }
+      applyPreflight(parsed.data);
+    } catch {
+      if (!controller.signal.aborted && sequence === preflightSequence.current) { setPreflightIsUnavailable(true); setMessage("运行前检查暂时无法读取，请稍后重试。"); }
+    }
+  }, [applyPreflight]);
 
   const replaceRun = useCallback((next: AgentRunDetail | null) => {
     runRef.current = next;
@@ -261,8 +317,11 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
     };
   }, [applyAuthoritativeDetail, applyRunProjection, refreshInboxSafely, replaceRun, run]);
 
-  async function startRun() {
+  async function startRun(confirmedWarning = false) {
     if (!selectedTargetId || runIsUnfinished || isStarting) return;
+    if (preflight === null || preflightIsUnavailable) { setMessage("运行前检查暂时无法读取，请稍后重试。"); return; }
+    if (preflight?.status === "blocked") { setMessage("请先处理运行前检查中的阻塞项。"); return; }
+    if (preflight?.status === "ready_with_warnings" && !confirmedWarning) { setWarningConfirmation(true); return; }
     idempotencyKey.current ??= crypto.randomUUID();
     setIsStarting(true);
     setMessage("");
@@ -272,9 +331,13 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
         const response = await fetch("/api/agent-runs", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ targetId: selectedTargetId, idempotencyKey: idempotencyKey.current }),
+          body: JSON.stringify({ targetId: selectedTargetId, idempotencyKey: idempotencyKey.current, warningFingerprint: preflight?.status === "ready_with_warnings" ? preflight.warningFingerprint : null }),
         });
         if (!response.ok) {
+          if (response.status === 409) {
+            const conflict = RunPreflightProblemSchema.safeParse(await response.json().catch(() => null));
+            if (conflict.success) { applyPreflight(conflict.data.preflight); setMessage("启动条件已变化，请查看最新检查后再次确认。"); return; }
+          }
           setMessage("岗位发现暂时无法启动，请稍后重试。");
           return;
         }
@@ -353,6 +416,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
           <p>岗位发现 · 尚未启用</p>
           <h2 id="agent-run-title">先确认求职目标</h2>
         </div>
+        {currentReport !== undefined ? <RunPreflightPanel report={preflight ?? null} unavailable={preflightIsUnavailable} /> : null}
         <div className="workbench-ledger-row">
           <div><h3>告诉 Copilot 你在找什么</h3><p>确认岗位方向、地点和不可接受条件后，才能开始发现岗位。</p></div>
           <Link className="workbench-ledger-link workbench-touch-target" href="/profile/targets">确认求职目标</Link>
@@ -367,6 +431,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
         <p>{runNoun} · 运行记录</p>
         <h2 id="agent-run-title">{isDeepMatchRun(run) ? "评估候选岗位匹配" : "发现新的岗位机会"}</h2>
       </div>
+      {currentReport !== undefined ? <RunPreflightPanel report={preflight ?? null} unavailable={preflightIsUnavailable} /> : null}
       <div className="agent-run-controls">
         {!canStartRun ? <div><p>{targetsUnavailable ? "求职目标暂时无法读取；以下仅显示已成功读取的本次运行记录。" : "当前没有可用的求职目标；以下仅显示已成功读取的本次运行记录。"}</p></div> : <><label htmlFor="agent-run-target">用于发现岗位的求职目标</label>
         <div>
@@ -374,12 +439,15 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
             setSelectedTargetId(event.target.value);
             idempotencyKey.current = null;
             pendingRunId.current = null;
+            setWarningConfirmation(false);
+            if (currentReport !== undefined) void refreshPreflight(event.target.value);
           }} value={selectedTargetId}>
             {activeTargets.map((target) => <option key={target.targetId} value={target.targetId}>{target.constraints.roleFamily} · {target.priority === "primary" ? "主目标" : "次目标"}</option>)}
           </select>
-          <Button className="agent-run-start workbench-touch-target" disabled={isStarting || runIsUnfinished} onClick={startRun} size="lg" type="button">
+          <Button className="agent-run-start workbench-touch-target" disabled={isStarting || runIsUnfinished || preflight === null || preflightIsUnavailable || preflight?.status === "blocked"} onClick={() => void startRun()} size="lg" type="button">
             {isStarting ? "正在启动…" : runIsUnfinished ? `${runNoun}中…` : "发现岗位"}
           </Button>
+          {warningConfirmation ? <div className="agent-run-warning-confirmation"><p>来源状态有待确认提示。请确认你已了解影响后继续。</p><Button className="workbench-touch-target" onClick={() => void startRun(true)} size="lg" type="button">我已了解，仍要启动</Button></div> : null}
           {isDeepMatchRun(run) ? <p className="agent-run-start-note">岗位匹配会在岗位发现完成后自动开始；如需重新评估，请在推荐清单中选择具体岗位。</p> : null}
         </div></>}
       </div>
@@ -403,6 +471,7 @@ export function AgentRunPanel({ targets, initialRun, onInboxRefresh, refreshVers
             <div><dt>模型</dt><dd>{isDeepMatchRun(run) && run.executionSpec.model ? `${run.executionSpec.model.provider} · ${run.executionSpec.model.model}` : "本流程未使用模型"}</dd></div>
           </dl>
         </section>
+        <section aria-labelledby="agent-run-preflight-history-title" className="agent-run-detail"><h3 id="agent-run-preflight-history-title">本次启动条件</h3>{!run.preflightSnapshot ? <p>该历史运行创建时尚未记录运行前检查快照</p> : <RunPreflightHistory snapshot={run.preflightSnapshot} />}</section>
         <section aria-labelledby="agent-run-budget-title" className="agent-run-budget">
           <h3 id="agent-run-budget-title">预算使用分录</h3>
           {!run.usage.complete ? <p className="agent-run-usage-incomplete">历史消费明细不完整；以下仅展示本次运行的预算上限。</p> : null}

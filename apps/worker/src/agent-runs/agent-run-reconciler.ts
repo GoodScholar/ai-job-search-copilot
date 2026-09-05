@@ -1,4 +1,4 @@
-import type { OnModuleDestroy, OnModuleInit } from "@nestjs/common";
+import type { OnModuleInit } from "@nestjs/common";
 import { Queue, type JobsOptions } from "bullmq";
 import Redis from "ioredis";
 import {
@@ -49,7 +49,7 @@ export function agentRunQueueJobOptions(runId: string): JobsOptions {
   };
 }
 
-export class BullmqAgentRunQueue implements AgentRunQueue, OnModuleDestroy {
+export class BullmqAgentRunQueue implements AgentRunQueue {
   private readonly redis: Redis;
   private readonly queue: Queue;
   private closePromise: Promise<void> | undefined;
@@ -63,9 +63,9 @@ export class BullmqAgentRunQueue implements AgentRunQueue, OnModuleDestroy {
     await withinDeadline(this.queue.add(AGENT_RUN_JOB_NAME, job, agentRunQueueJobOptions(job.runId)));
   }
 
-  async onModuleDestroy(): Promise<void> {
+  close(): Promise<void> {
     this.closePromise ??= this.closeResources();
-    await this.closePromise;
+    return this.closePromise;
   }
 
   private async closeResources(): Promise<void> {
@@ -74,12 +74,14 @@ export class BullmqAgentRunQueue implements AgentRunQueue, OnModuleDestroy {
   }
 }
 
-export class AgentRunReconciler implements OnModuleInit, OnModuleDestroy {
+export class AgentRunReconciler implements OnModuleInit {
   private timer: ReturnType<typeof setInterval> | undefined;
   private scanning = false;
   private destroyed = false;
   private scanPromise: Promise<void> | undefined;
+  private recoveryPromise: Promise<AgentRunJob[]> | undefined;
   private abortScan: (() => void) | undefined;
+  private destroyPromise: Promise<void> | undefined;
 
   constructor(private readonly input: {
     recoveryQueries: AgentRunRecoveryQueries;
@@ -93,26 +95,39 @@ export class AgentRunReconciler implements OnModuleInit, OnModuleDestroy {
     this.timer = setInterval(() => { void this.scan(); }, AGENT_RUN_SCAN_INTERVAL_MS);
   }
 
-  async onModuleDestroy(): Promise<void> {
+  close(): Promise<void> {
+    this.destroyPromise ??= this.destroy();
+    return this.destroyPromise;
+  }
+
+  private async destroy(): Promise<void> {
     this.destroyed = true;
     this.abortScan?.();
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
-    if (this.scanPromise) {
-      try { await withinDeadline(this.scanPromise, this.input.scanTimeoutMs ?? REDIS_LIFECYCLE_TIMEOUT_MS); } catch { /* 超时后已停止继续入队。 */ }
-    }
+    const deadline = Date.now() + (this.input.scanTimeoutMs ?? REDIS_LIFECYCLE_TIMEOUT_MS);
+    await this.waitForClose(this.scanPromise, deadline);
+    await this.waitForClose(this.recoveryPromise, deadline);
   }
 
   private async scan(): Promise<void> {
-    if (this.destroyed || this.scanning) return;
+    if (this.destroyed || this.scanning || this.recoveryPromise) return;
     this.scanning = true;
     let active = true;
     this.abortScan = () => { active = false; };
     const scanDeadline = Date.now() + (this.input.scanTimeoutMs ?? REDIS_LIFECYCLE_TIMEOUT_MS);
     const work = (async () => {
       let jobs: AgentRunJob[];
+      const recovery = this.input.recoveryQueries.listRecoverable();
+      this.recoveryPromise = recovery;
+      void recovery.then(
+        () => undefined,
+        () => undefined,
+      ).finally(() => {
+        if (this.recoveryPromise === recovery) this.recoveryPromise = undefined;
+      }).catch(() => undefined);
       try {
-        jobs = await withinDeadline(this.input.recoveryQueries.listRecoverable(), Math.max(1, scanDeadline - Date.now() - 1));
+        jobs = await withinDeadline(recovery, Math.max(1, scanDeadline - Date.now() - 1));
       } catch {
         if (active) await this.report({ failureCode: "AGENT_RUN_RECOVERY_SCAN_FAILED" });
         return;
@@ -140,7 +155,15 @@ export class AgentRunReconciler implements OnModuleInit, OnModuleDestroy {
       active = false;
       this.abortScan = undefined;
       this.scanning = false;
+      if (this.scanPromise === work) this.scanPromise = undefined;
     }
+  }
+
+  private async waitForClose(operation: Promise<unknown> | undefined, deadline: number): Promise<void> {
+    if (!operation) return;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return;
+    try { await withinDeadline(operation, remaining); } catch { /* deadline 后由 PostgreSQL client close 强制终止；原 promise 已附加 rejection handler。 */ }
   }
 
   private async report(failure: AgentRunRecoveryFailure): Promise<void> {

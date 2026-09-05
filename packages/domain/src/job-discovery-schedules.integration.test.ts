@@ -10,6 +10,9 @@ import {
   jobDiscoveryScheduleOccurrences,
   jobDiscoverySchedules,
   jobProfiles,
+  modelDiagnosticResults,
+  profileFactRevisions,
+  profileFacts,
   jobTargetRevisions,
   jobTargets,
   migrateDatabase,
@@ -21,6 +24,9 @@ import { createCompanyWatchlistCommands } from "./company-watchlists";
 import { JobDiscoveryScheduleError, createJobDiscoverySchedules } from "./job-discovery-schedules";
 import { createAccountRunPolicies } from "./account-run-policies";
 import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-policies";
+import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
+import { createRunPreflightEvaluator } from "./run-preflight";
+import { createModelDiagnosticProjectionReader } from "./model-diagnostics";
 
 const now = new Date("2026-08-30T01:31:00.000Z");
 const constraints = {
@@ -83,15 +89,31 @@ describe("job discovery schedules", () => {
     const auditTrail = createAuditTrail({ db: database, clock: () => at });
     return {
       queue,
-      commands: createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => at, executionMode: "greenhouse" }),
+      commands: createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => at, executionMode: "greenhouse", runPreflight: createReadyRunPreflightEvaluator({ clock: () => at }) }),
       service: createJobDiscoverySchedules({
         db: database,
-        runs: createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => at, executionMode: "greenhouse" }),
+        runs: createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => at, executionMode: "greenhouse", runPreflight: createReadyRunPreflightEvaluator({ clock: () => at }) }),
         auditTrail,
         id: () => crypto.randomUUID(),
         clock: () => at,
       }),
     };
+  }
+
+  async function addConfirmedProfileFact(userId: string) {
+    const profileId = crypto.randomUUID(); const factId = crypto.randomUUID();
+    await database.insert(jobProfiles).values({ id: profileId, userId, version: 1, createdAt: now, updatedAt: now });
+    await database.insert(profileFacts).values({ id: factId, userId, profileId, factType: "skill", createdAt: now });
+    await database.insert(profileFactRevisions).values({ id: crypto.randomUUID(), userId, profileFactId: factId, revisionNumber: 1, factType: "skill", factValue: { name: "TypeScript" }, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1, createdAt: now });
+  }
+
+  async function realPreflight() {
+    const configurationFingerprint = crypto.randomUUID();
+    await database.insert(modelDiagnosticResults).values({ configurationFingerprint, status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket: "under_1s", checkedAt: now });
+    return createRunPreflightEvaluator({
+      capabilityAdapter: { adapter: "greenhouse", adapterVersion: "test", declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring"] }) },
+      modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint }), discoveryExecutionMode: "greenhouse", id: () => crypto.randomUUID(), clock: () => now,
+    });
   }
 
   async function addWatchlistSource(input: { userId: string; targetId: string; careersUrl: string; allowedDomains: string[]; expectedVersion?: number; companyName?: string }) {
@@ -162,7 +184,7 @@ describe("job discovery schedules", () => {
     await expect(set(crossDayClosed, new Date("2026-08-30T15:00:00.000Z"), "12:00")).rejects.toMatchObject({ code: "ACCOUNT_RUN_POLICY_WINDOW_CLOSED" }); // 夜间不能配置跨日窗口外 12:00
   });
 
-  it("派发读取当前窗口收紧策略，但重派已冻结的运行", async () => {
+  it("既有幂等运行优先回填 dispatched，即使当前策略已收紧", async () => {
     const policy = createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now });
     const tightenedSettings = {
       discovery: { trustedSourceLimit: 50, publicQueryLimit: 5, verificationCandidateLimit: 10, enabledProviders: ["anysearch"] as ["anysearch"] },
@@ -173,24 +195,18 @@ describe("job discovery schedules", () => {
       },
       backgroundWindow: { start: "22:00", end: "02:00", timeZone: "Asia/Shanghai" as const },
     };
-    const skippedOwner = await target();
-    await addWatchlistSource({ userId: skippedOwner.userId, targetId: skippedOwner.targetId, careersUrl: "https://boards.greenhouse.io/window-current-policy", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
-    const { service: skipService } = schedules(new Queue(), now); // 上海 09:31，基线窗口内
-    const skipSchedule = await skipService.set({ userId: skippedOwner.userId, targetId: skippedOwner.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
-    await database.update(jobDiscoverySchedules).set({ nextRunAt: new Date("2026-08-27T01:30:00.000Z") }).where(eq(jobDiscoverySchedules.id, skipSchedule.scheduleId));
-    const [skippedOccurrence] = await skipService.materializeDue({ limit: 1 });
-    await policy.save({ userId: skippedOwner.userId, command: { expectedVersion: 0, settings: tightenedSettings } });
-    await skipService.dispatchPending({ limit: 1 });
-    await expect(database.select({ status: jobDiscoveryScheduleOccurrences.status, skipReason: jobDiscoveryScheduleOccurrences.skipReason }).from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, skippedOccurrence!.occurrenceId))).resolves.toEqual([{ status: "skipped", skipReason: "ACCOUNT_RUN_POLICY_WINDOW_CLOSED" }]);
-
     const retryOwner = await target();
     await addWatchlistSource({ userId: retryOwner.userId, targetId: retryOwner.targetId, careersUrl: "https://boards.greenhouse.io/window-retry", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
+    await addConfirmedProfileFact(retryOwner.userId);
     const queue = new Queue();
-    const { service: retryService } = schedules(queue, now);
+    const auditTrail = createAuditTrail({ db: database, clock: () => now });
+    const runPreflight = await realPreflight();
+    const runs = createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse", runPreflight });
+    const retryService = createJobDiscoverySchedules({ db: database, runs, auditTrail, id: () => crypto.randomUUID(), clock: () => now });
     const retrySchedule = await retryService.set({ userId: retryOwner.userId, targetId: retryOwner.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
     await database.update(jobDiscoverySchedules).set({ nextRunAt: new Date("2026-08-27T01:30:00.000Z") }).where(eq(jobDiscoverySchedules.id, retrySchedule.scheduleId));
     const [retryOccurrence] = await retryService.materializeDue({ limit: 1 });
-    await retryService.dispatchPending({ limit: 1 });
+    await runs.start({ userId: retryOwner.userId, requestId: crypto.randomUUID(), command: { targetId: retryOwner.targetId, idempotencyKey: retryOccurrence!.occurrenceId }, trigger: { kind: "schedule", occurrenceId: retryOccurrence!.occurrenceId, scheduledFor: new Date(retryOccurrence!.scheduledFor) } });
     const [frozenRun] = await database.select({ id: agentRuns.id, revision: agentRuns.accountPolicyRevisionNumber }).from(agentRuns).where(and(eq(agentRuns.userId, retryOwner.userId), eq(agentRuns.idempotencyKey, retryOccurrence!.occurrenceId)));
     expect(frozenRun).toMatchObject({ revision: 0 });
     await policy.save({ userId: retryOwner.userId, command: { expectedVersion: 0, settings: tightenedSettings } });
@@ -270,6 +286,38 @@ describe("job discovery schedules", () => {
     await expect(database.select().from(auditEvents).where(eq(auditEvents.userId, owner.userId))).resolves.toSatisfy((events) => !JSON.stringify(events).includes("boards.greenhouse.io"));
   });
 
+  it("无既有运行时，计划派发只以创建事务内当前 preflight blocker 标记 occurrence", async () => {
+    const owner = await target();
+    await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/preflight-blocked", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
+    const occurrence = await dueOccurrence(owner);
+    const auditTrail = createAuditTrail({ db: database, clock: () => now });
+    const runs = createAgentRunCommands({ db: database, queue: new Queue(), auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse", runPreflight: await realPreflight() });
+    const service = createJobDiscoverySchedules({ db: database, runs, auditTrail, id: () => crypto.randomUUID(), clock: () => now });
+
+    await service.dispatchPending({ limit: 1 });
+
+    await expect(database.select({ status: jobDiscoveryScheduleOccurrences.status, runId: jobDiscoveryScheduleOccurrences.runId, skipReason: jobDiscoveryScheduleOccurrences.skipReason }).from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, occurrence.occurrenceId))).resolves.toEqual([{ status: "skipped", runId: null, skipReason: "RUN_PREFLIGHT_BLOCKED" }]);
+    await expect(database.select({ id: agentRuns.id }).from(agentRuns).where(and(eq(agentRuns.userId, owner.userId), eq(agentRuns.idempotencyKey, occurrence.occurrenceId)))).resolves.toEqual([]);
+  });
+
+  it("计划 warning 自动继续，并冻结同一次真实 preflight 的报告与策略", async () => {
+    const owner = await target();
+    await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/preflight-warning", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
+    await addConfirmedProfileFact(owner.userId);
+    const occurrence = await dueOccurrence(owner);
+    const queue = new Queue(); const auditTrail = createAuditTrail({ db: database, clock: () => now }); const runPreflight = await realPreflight();
+    const expected = await database.transaction((tx) => runPreflight.evaluate(tx, { userId: owner.userId, targetId: owner.targetId, workflow: "discovery", trigger: "schedule", scheduledFor: new Date(occurrence.scheduledFor) }));
+    expect(expected.report.status).toBe("ready_with_warnings");
+    const runs = createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse", runPreflight });
+    const service = createJobDiscoverySchedules({ db: database, runs, auditTrail, id: () => crypto.randomUUID(), clock: () => now });
+
+    await service.dispatchPending({ limit: 1 });
+
+    const [run] = await database.select({ preflightSnapshot: agentRuns.preflightSnapshot, accountPolicySnapshot: agentRuns.accountPolicySnapshot, accountPolicyRevisionNumber: agentRuns.accountPolicyRevisionNumber }).from(agentRuns).where(and(eq(agentRuns.userId, owner.userId), eq(agentRuns.idempotencyKey, occurrence.occurrenceId)));
+    expect(run).toEqual({ preflightSnapshot: expected.report, accountPolicySnapshot: expected.policy.snapshot, accountPolicyRevisionNumber: expected.policy.revisionNumber });
+    expect(run!.preflightSnapshot).toMatchObject({ status: "ready_with_warnings", warningFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/) });
+  });
+
   it("v4 无 Watchlist 的 occurrence 仍派发一个冻结五条 general/site query 的 run，重放不重复创建", async () => {
     const owner = await target();
     await database.insert(jobProfiles).values({ id: crypto.randomUUID(), userId: owner.userId, version: 1, createdAt: now, updatedAt: now });
@@ -282,6 +330,7 @@ describe("job discovery schedules", () => {
       id: () => crypto.randomUUID(),
       clock: () => now,
       executionMode: "layered_public",
+      runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }),
     });
     const service = createJobDiscoverySchedules({
       db: database,
@@ -337,7 +386,7 @@ describe("job discovery schedules", () => {
     const auditTrail = createAuditTrail({ db: database, clock: () => now });
     const service = createJobDiscoverySchedules({
       db: database,
-      runs: createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public" }),
+      runs: createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public", runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) }),
       auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public",
     });
     await expect(service.get(owner)).resolves.toMatchObject({ sourceSupport: { status: "executable", supportedSourceCount: 0 } });
@@ -354,7 +403,7 @@ describe("job discovery schedules", () => {
     const auditTrail = createAuditTrail({ db: database, clock: () => now });
     const service = createJobDiscoverySchedules({
       db: database,
-      runs: createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public" }),
+      runs: createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public", runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) }),
       auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public",
     });
     const schedule = await service.set({ userId: owner.userId, targetId: owner.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
@@ -415,7 +464,7 @@ describe("job discovery schedules", () => {
     const queue = new Queue();
     const service = createJobDiscoverySchedules({
       db: database,
-      runs: createAgentRunCommands({ db: database, queue, auditTrail: realAuditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse" }),
+      runs: createAgentRunCommands({ db: database, queue, auditTrail: realAuditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse", runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) }),
       auditTrail,
       id: () => crypto.randomUUID(),
       clock: () => now,
@@ -460,7 +509,7 @@ describe("job discovery schedules", () => {
     const occurrence = await dueOccurrence(owner);
     const queue = new Queue();
     const auditTrail = createAuditTrail({ db: database, clock: () => now });
-    const real = createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse" });
+    const real = createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse", runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) });
     let failAfterCommit = true;
     const runs: AgentRunStarter = { start: async (input) => {
       const started = await real.start(input);
@@ -484,7 +533,7 @@ describe("job discovery schedules", () => {
     const occurrence = await dueOccurrence(owner);
     const queue = new Queue();
     const auditTrail = createAuditTrail({ db: database, clock: () => now });
-    const real = createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse" });
+    const real = createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse", runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) });
     let startCalls = 0;
     let firstStartCommitted!: () => void;
     let releaseFirstBind!: () => void;

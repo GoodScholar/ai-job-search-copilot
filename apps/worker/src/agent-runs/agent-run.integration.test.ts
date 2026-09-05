@@ -7,7 +7,7 @@ import { NestFactory } from "@nestjs/core";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { RedisContainer, type StartedRedisContainer } from "@testcontainers/redis";
 import { GenericContainer, type StartedTestContainer, Wait } from "testcontainers";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   agentRunJobResults,
   agentRuns,
@@ -15,22 +15,31 @@ import {
   jobDiscoveryScheduleOccurrences,
   jobDiscoverySchedules,
   jobAccounts,
+  jobProfiles,
+  modelDiagnosticResults,
   jobOpportunities,
   jobSourcePostingVersions,
   jobSourcePostings,
   jobTargetRevisions,
   jobTargets,
   migrateDatabase,
+  profileFactRevisions,
+  profileFacts,
   type Database,
 } from "@job-copilot/database";
 import { AGENT_RUN_JOB_NAME, AGENT_RUN_QUEUE } from "@job-copilot/contracts/agent-runs";
 import { createAgentRunCommands, createAgentRunProcessor, createAgentRunQueries, createAgentRunRecoveryQueries } from "@job-copilot/domain/agent-runs";
+import { createAccountRunPolicies } from "@job-copilot/domain/account-run-policies";
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
+import { createReadyRunPreflightEvaluator } from "../../../../packages/domain/src/testing/run-preflight.js";
 import { createCompanyWatchlistCommands } from "@job-copilot/domain/company-watchlists";
 import { createJobDiscoverySchedules } from "@job-copilot/domain/job-discovery-schedules";
+import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-policies";
+import { createFakeModelDiagnosticAdapter, TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED } from "@job-copilot/model-access/testing";
+import type { RunPreflightEvaluator } from "@job-copilot/domain/run-preflight";
 
 import { AppModule } from "../app.module.js";
-import { AGENT_RUN_CONSUMER } from "./agent-run.module.js";
+import { AGENT_RUN_CONSUMER, AGENT_RUN_PREFLIGHT, createConfiguredJobDiscoveryExecutionMode, createWorkerRunPreflight } from "./agent-run.module.js";
 import type { AgentRunConsumer } from "./agent-run-consumer.js";
 import { agentRunQueueJobOptions } from "./agent-run-reconciler.js";
 import { AgentRunScheduler, type AgentRunScheduleFailure } from "./agent-run-scheduler.js";
@@ -70,6 +79,17 @@ async function waitFor(check: () => Promise<boolean>, message: string, timeoutMs
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(message);
+}
+
+function shanghaiDailyTime(date: Date): string {
+  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(date);
+  return `${parts.find((part) => part.type === "hour")!.value}:${parts.find((part) => part.type === "minute")!.value}`;
+}
+
+function shiftDailyTime(time: string, minutes: number): string {
+  const [hour, minute] = time.split(":").map(Number) as [number, number];
+  const shifted = (hour * 60 + minute + minutes + 24 * 60) % (24 * 60);
+  return `${String(Math.floor(shifted / 60)).padStart(2, "0")}:${String(shifted % 60).padStart(2, "0")}`;
 }
 
 describe("岗位发现 Agent Run Worker", () => {
@@ -173,6 +193,7 @@ describe("岗位发现 Agent Run Worker", () => {
       db: database,
       queue: { enqueue: async () => { throw new Error("API queue wakeup unavailable"); } },
       auditTrail: createAuditTrail({ db: database, clock: () => new Date() }),
+      runPreflight: createReadyRunPreflightEvaluator({ clock: () => new Date() }),
       id: randomUUID,
       clock: () => new Date(),
     });
@@ -194,6 +215,15 @@ describe("岗位发现 Agent Run Worker", () => {
   async function stopWorker(): Promise<void> {
     await context?.close();
     context = undefined;
+  }
+
+  async function configureScheduledRunWindow(userId: string): Promise<string> {
+    const dailyTime = shanghaiDailyTime(new Date());
+    const settings = structuredClone(systemAccountRunPolicy().effective);
+    settings.backgroundWindow = { start: shiftDailyTime(dailyTime, -5), end: shiftDailyTime(dailyTime, 5), timeZone: "Asia/Shanghai" };
+    await createAccountRunPolicies({ db: database, id: randomUUID, clock: () => new Date() })
+      .save({ userId, command: { expectedVersion: 0, settings } });
+    return dailyTime;
   }
 
   it("MinIO store 仅接受 JSON，并实现真实写入和删除", async () => {
@@ -327,6 +357,13 @@ describe("岗位发现 Agent Run Worker", () => {
     const scheduledUserId = randomUUID();
     const scheduledTargetId = randomUUID();
     await database.insert(jobAccounts).values({ id: scheduledUserId });
+    const scheduledDailyTime = await configureScheduledRunWindow(scheduledUserId);
+    const profileId = randomUUID();
+    const factId = randomUUID();
+    await database.insert(jobProfiles).values({ id: profileId, userId: scheduledUserId, version: 1 });
+    await database.insert(profileFacts).values({ id: factId, userId: scheduledUserId, profileId, factType: "skill" });
+    await database.insert(profileFactRevisions).values({ id: randomUUID(), userId: scheduledUserId, profileFactId: factId, revisionNumber: 1, factType: "skill", factValue: { name: "TypeScript" }, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1 });
+    await database.insert(modelDiagnosticResults).values({ configurationFingerprint: createFakeModelDiagnosticAdapter({ kind: "success" }, TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED).configurationFingerprint, status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket: "under_1s", checkedAt: new Date() });
     await database.insert(jobTargets).values({ id: scheduledTargetId, userId: scheduledUserId, version: 1, priority: "primary", state: "active", activeSlot: null });
     await database.insert(jobTargetRevisions).values({ id: randomUUID(), userId: scheduledUserId, targetId: scheduledTargetId, version: 1, priority: "primary", state: "active", constraints });
     const auditTrail = createAuditTrail({ db: database, clock: () => new Date() });
@@ -335,7 +372,7 @@ describe("岗位发现 Agent Run Worker", () => {
       command: { expectedVersion: 0, canonicalCompanyName: "Schedule Fixture", careersUrl: "https://boards.greenhouse.io/schedule-fixture", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null },
     });
     const schedules = createJobDiscoverySchedules({ db: database, runs: commands(), auditTrail, id: randomUUID, clock: () => new Date() });
-    const schedule = await schedules.set({ userId: scheduledUserId, targetId: scheduledTargetId, requestId: randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
+    const schedule = await schedules.set({ userId: scheduledUserId, targetId: scheduledTargetId, requestId: randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: scheduledDailyTime } });
     await database.update(jobDiscoverySchedules).set({ nextRunAt: new Date(Date.now() - 1_000) }).where(eq(jobDiscoverySchedules.id, schedule.scheduleId));
 
     const skippedSchedule = async (input: { targetState: "active" | "inactive"; careersUrl: string; allowedDomains: string[] }) => {
@@ -396,9 +433,112 @@ describe("岗位发现 Agent Run Worker", () => {
     await expect.poll(async () => Promise.all([inactive, unsupported, policy].map(async ({ scheduleId }) => {
       const [occurrence] = await database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.scheduleId, scheduleId));
       return occurrence?.skipReason;
-    }))).toEqual(["TARGET_INACTIVE", "NO_SUPPORTED_SOURCE", "SOURCE_POLICY_REQUIRED"]);
+    }))).toEqual(["RUN_PREFLIGHT_BLOCKED", "RUN_PREFLIGHT_BLOCKED", "RUN_PREFLIGHT_BLOCKED"]);
     await expect(Promise.all([inactive, unsupported, policy].map(({ userId }) => database.select().from(agentRuns).where(eq(agentRuns.userId, userId))))).resolves.toEqual([[], [], []]);
   }, 45_000);
+
+  it("计划 starter 与 automatic child 在真实 Worker 路径中调用同一个 preflight provider", async () => {
+    await stopWorker();
+    await startWorker();
+    const workerPreflight = context!.get<RunPreflightEvaluator>(AGENT_RUN_PREFLIGHT, { strict: false });
+    const trace: Array<{ workflow: string; trigger: string; userId: string }> = [];
+    const evaluate = workerPreflight.evaluate.bind(workerPreflight);
+    vi.spyOn(workerPreflight, "evaluate").mockImplementation(async (transaction, input) => {
+      trace.push({ workflow: input.workflow, trigger: input.trigger, userId: input.userId });
+      return evaluate(transaction, input);
+    });
+
+    const scheduledUserId = randomUUID();
+    const scheduledTargetId = randomUUID();
+    const profileId = randomUUID();
+    const factId = randomUUID();
+    await database.insert(jobAccounts).values({ id: scheduledUserId });
+    const scheduledDailyTime = await configureScheduledRunWindow(scheduledUserId);
+    await database.insert(jobProfiles).values({ id: profileId, userId: scheduledUserId, version: 1 });
+    await database.insert(profileFacts).values({ id: factId, userId: scheduledUserId, profileId, factType: "skill" });
+    await database.insert(profileFactRevisions).values({ id: randomUUID(), userId: scheduledUserId, profileFactId: factId, revisionNumber: 1, factType: "skill", factValue: { name: "TypeScript" }, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1 });
+    await database.insert(modelDiagnosticResults).values({ configurationFingerprint: createFakeModelDiagnosticAdapter({ kind: "success" }, TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED).configurationFingerprint, status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket: "under_1s", checkedAt: new Date() });
+    await database.insert(jobTargets).values({ id: scheduledTargetId, userId: scheduledUserId, version: 1, priority: "primary", state: "active", activeSlot: null });
+    await database.insert(jobTargetRevisions).values({ id: randomUUID(), userId: scheduledUserId, targetId: scheduledTargetId, version: 1, priority: "primary", state: "active", constraints });
+    const auditTrail = createAuditTrail({ db: database, clock: () => new Date() });
+    await createCompanyWatchlistCommands({ db: database, auditTrail, id: randomUUID, clock: () => new Date() }).addItem({
+      userId: scheduledUserId, targetId: scheduledTargetId, requestId: randomUUID(),
+      command: { expectedVersion: 0, canonicalCompanyName: "Composition Fixture", careersUrl: "https://boards.greenhouse.io/composition-fixture", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null },
+    });
+    const schedules = createJobDiscoverySchedules({ db: database, runs: commands(), auditTrail, id: randomUUID, clock: () => new Date() });
+    const schedule = await schedules.set({ userId: scheduledUserId, targetId: scheduledTargetId, requestId: randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: scheduledDailyTime } });
+    await database.update(jobDiscoverySchedules).set({ nextRunAt: new Date(Date.now() - 1_000) }).where(eq(jobDiscoverySchedules.id, schedule.scheduleId));
+
+    await waitFor(async () => {
+      const [occurrence] = await database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.scheduleId, schedule.scheduleId));
+      return occurrence?.status === "dispatched" && Boolean(occurrence.runId)
+        && (await createAgentRunQueries({ db: database }).get({ userId: scheduledUserId, runId: occurrence.runId! }))?.status === "completed";
+    }, "scheduler command starter did not complete the scheduled discovery");
+    await waitFor(async () => trace.some((entry) => entry.userId === scheduledUserId && entry.workflow === "deep_match" && entry.trigger === "automatic"), "processor did not create its automatic child through the provider", 30_000);
+
+    expect(trace).toEqual(expect.arrayContaining([
+      { userId: scheduledUserId, workflow: "discovery", trigger: "schedule" },
+      { userId: scheduledUserId, workflow: "deep_match", trigger: "automatic" },
+    ]));
+  }, 45_000);
+
+  it("生产缺模型配置时只读当前 deployment 的 unverified 投影并阻断 Worker", async () => {
+    await stopWorker();
+    const productionUserId = randomUUID();
+    const productionTargetId = randomUUID();
+    const profileId = randomUUID();
+    const factId = randomUUID();
+    await database.insert(jobAccounts).values({ id: productionUserId });
+    await database.insert(jobProfiles).values({ id: profileId, userId: productionUserId, version: 1 });
+    await database.insert(profileFacts).values({ id: factId, userId: productionUserId, profileId, factType: "skill" });
+    await database.insert(profileFactRevisions).values({ id: randomUUID(), userId: productionUserId, profileFactId: factId, revisionNumber: 1, factType: "skill", factValue: { name: "TypeScript" }, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1 });
+    await database.insert(jobTargets).values({ id: productionTargetId, userId: productionUserId, version: 1, priority: "primary", state: "active", activeSlot: null });
+    await database.insert(jobTargetRevisions).values({ id: randomUUID(), userId: productionUserId, targetId: productionTargetId, version: 1, priority: "primary", state: "active", constraints });
+    const transport = vi.fn(async () => { throw new Error("production preflight must not diagnose"); });
+    vi.stubGlobal("fetch", transport);
+    try {
+      const evaluator = createWorkerRunPreflight({ environment: { APP_ENV: "production" }, executionMode: createConfiguredJobDiscoveryExecutionMode({ APP_ENV: "production" }) });
+      const evaluation = await database.transaction((transaction) => evaluator.evaluate(transaction, { userId: productionUserId, targetId: productionTargetId, workflow: "deep_match", trigger: "automatic" }));
+
+      expect(evaluation.report.status).toBe("blocked");
+      expect(evaluation.report.items.find((item) => item.code === "MODEL_DIAGNOSTIC_UNAVAILABLE")).toMatchObject({
+        severity: "blocking", evidence: { kind: "model_diagnostic", status: "unverified" },
+      });
+      expect(transport).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("Worker 在 test deployment 读取 provider unavailable 的共享诊断投影", async () => {
+    await stopWorker();
+    const diagnosticUserId = randomUUID();
+    const diagnosticTargetId = randomUUID();
+    const profileId = randomUUID();
+    const factId = randomUUID();
+    await database.insert(jobAccounts).values({ id: diagnosticUserId });
+    await database.insert(jobProfiles).values({ id: profileId, userId: diagnosticUserId, version: 1 });
+    await database.insert(profileFacts).values({ id: factId, userId: diagnosticUserId, profileId, factType: "skill" });
+    await database.insert(profileFactRevisions).values({ id: randomUUID(), userId: diagnosticUserId, profileFactId: factId, revisionNumber: 1, factType: "skill", factValue: { name: "TypeScript" }, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1 });
+    await database.insert(jobTargets).values({ id: diagnosticTargetId, userId: diagnosticUserId, version: 1, priority: "primary", state: "active", activeSlot: null });
+    await database.insert(jobTargetRevisions).values({ id: randomUUID(), userId: diagnosticUserId, targetId: diagnosticTargetId, version: 1, priority: "primary", state: "active", constraints });
+    await database.insert(modelDiagnosticResults).values({
+      configurationFingerprint: createFakeModelDiagnosticAdapter({ kind: "provider_unavailable" }, TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED).configurationFingerprint,
+      status: "temporarily_unavailable",
+      checks: { authentication: "not_verified", modelAvailability: "not_verified", structuredOutput: "not_verified", timeout: "passed" },
+      reasonCode: "MODEL_DIAGNOSTIC_PROVIDER_UNAVAILABLE",
+      latencyBucket: "under_1s",
+      checkedAt: new Date(),
+    });
+
+    const evaluator = createWorkerRunPreflight({ environment: { APP_ENV: "test" }, executionMode: createConfiguredJobDiscoveryExecutionMode({ APP_ENV: "test" }) });
+    const evaluation = await database.transaction((transaction) => evaluator.evaluate(transaction, { userId: diagnosticUserId, targetId: diagnosticTargetId, workflow: "deep_match", trigger: "automatic" }));
+
+    expect(evaluation.report.items.find((item) => item.code === "MODEL_DIAGNOSTIC_UNAVAILABLE")).toMatchObject({
+      severity: "blocking",
+      evidence: { kind: "model_diagnostic", status: "temporarily_unavailable" },
+    });
+  });
 
   it("计划扫描的真实 PostgreSQL 锁超时会清理查询，并在下一个 tick 恢复", async () => {
     await stopWorker();
@@ -443,7 +583,7 @@ describe("岗位发现 Agent Run Worker", () => {
     } finally {
       releaseLock.resolve();
       await lock.catch(() => undefined);
-      await scheduler.onModuleDestroy();
+      await scheduler.close();
     }
   }, 10_000);
 
@@ -479,7 +619,7 @@ describe("岗位发现 Agent Run Worker", () => {
     } finally {
       releaseLock.resolve();
       await lock.catch(() => undefined);
-      await scheduler.onModuleDestroy();
+      await scheduler.close();
     }
   }, 10_000);
 
@@ -550,7 +690,7 @@ describe("岗位发现 Agent Run Worker", () => {
     } finally {
       releaseLock.resolve();
       await holder.catch(() => undefined);
-      await scheduler.onModuleDestroy();
+      await scheduler.close();
     }
   }, 12_000);
 
@@ -590,6 +730,7 @@ describe("岗位发现 Agent Run Worker", () => {
       adapterResolver: createJobDiscoveryAdapterResolver({ APP_ENV: "production" }),
       contentStore: new MinioDiscoveryContentStore(minio, minioBucket),
       auditTrail: createAuditTrail({ db: database, clock: () => new Date() }),
+      runPreflight: createReadyRunPreflightEvaluator({ clock: () => new Date() }),
       id: randomUUID,
       clock: () => new Date(),
     });

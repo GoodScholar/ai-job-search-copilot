@@ -4,6 +4,7 @@ import {
   AgentRunControlSnapshotSchema,
   AgentRunFailureCodeSchema,
 } from "./agent-runs";
+import { RunPreflightWarningFingerprintSchema } from "./run-preflight";
 
 const uuidPattern = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const sameActions = (actual: readonly string[], expected: readonly string[]) => actual.length === expected.length && actual.every((action, index) => action === expected[index]);
@@ -88,7 +89,7 @@ export const AgentInboxItemSchema = itemSchema.superRefine((item, context) => {
 
 export const AgentInboxListSchema = z.object({ items: z.array(AgentInboxItemSchema) }).strict();
 export const AgentInboxActionCommandSchema = z.discriminatedUnion("action", [
-  z.object({ actionId: z.uuid(), action: z.literal("restart_run") }).strict(),
+  z.object({ actionId: z.uuid(), action: z.literal("restart_run"), warningFingerprint: RunPreflightWarningFingerprintSchema.nullable().optional() }).strict(),
   z.object({ actionId: z.uuid(), action: z.literal("resume_run") }).strict(),
   z.object({ actionId: z.uuid(), action: z.literal("cancel_run") }).strict(),
   z.object({ actionId: z.uuid(), action: z.literal("mark_read") }).strict(),

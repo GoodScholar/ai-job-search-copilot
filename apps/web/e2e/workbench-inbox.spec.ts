@@ -166,6 +166,16 @@ async function createRecommendationAccount(request: APIRequestContext, info: Tes
   });
   expect(target.status()).toBe(201);
   const targetId = (await target.json() as { targets: Array<{ targetId: string; priority: string }> }).targets.find((entry) => entry.priority === "primary")!.targetId;
+  const source = await request.post(`${apiBaseUrl}/v1/job-targets/${targetId}/company-watchlist/items`, {
+    headers: { authorization: `Bearer ${session.token}` },
+    data: { expectedVersion: 0, canonicalCompanyName: "Inbox Calibration Fixture", careersUrl: "https://boards.greenhouse.io/inbox-calibration-fixture", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null },
+  });
+  expect(source.status()).toBe(201);
+  const diagnostic = await request.post(`${apiBaseUrl}/v1/model-diagnostics`, {
+    headers: { authorization: `Bearer ${session.token}` }, data: {},
+  });
+  expect(diagnostic.status()).toBe(201);
+  await expect(diagnostic.json()).resolves.toMatchObject({ status: "available" });
   return { ...session, targetId };
 }
 
@@ -260,6 +270,11 @@ test("从首页将受限来源标记已读、停用并标记为已处理", async
   test.setTimeout(90_000);
   test.skip(process.env.E2E_WORKBENCH_INBOX_SOURCE_ONLY !== "1", "普通 Fake phase 只运行候选事实与校准旅程。");
   const session = await createSession(request, subject(info, "source"));
+  const fact = await request.post(`${apiBaseUrl}/v1/profile/facts`, {
+    headers: { authorization: `Bearer ${session.token}` },
+    data: { expectedVersion: 0, factType: "skill", factValue: { name: "TypeScript" } },
+  });
+  expect(fact.status()).toBe(201);
   const targetId = await createTarget(request, session.token);
   await signIn(page, session.token);
   await page.goto("/home");
@@ -267,10 +282,27 @@ test("从首页将受限来源标记已读、停用并标记为已处理", async
   const healthyBoard = info.project.name === "Desktop Chrome" ? "e2e-inbox-desktop-good" : "e2e-inbox-mobile-good";
   await addWatchlistSource(page, targetId, "Inbox 健康来源", healthyBoard);
   await addWatchlistSource(page, targetId, "Inbox 受限来源", board);
+  const diagnostic = await request.post(`${apiBaseUrl}/v1/model-diagnostics`, {
+    headers: { authorization: `Bearer ${session.token}` }, data: {},
+  });
+  expect(diagnostic.status()).toBe(201);
+  await expect(diagnostic.json()).resolves.toMatchObject({ status: "available" });
+  const preflightResponse = await request.get(`${apiBaseUrl}/v1/run-preflight?workflow=discovery&trigger=manual&targetId=${targetId}`, {
+    headers: { authorization: `Bearer ${session.token}` },
+  });
+  expect(preflightResponse.status()).toBe(200);
+  const preflight = await preflightResponse.json() as { status: string; warningFingerprint: string | null; items: Array<{ code: string; severity: string }> };
+  expect(preflight.status).toBe("ready_with_warnings");
+  expect(preflight.warningFingerprint).toMatch(/^[a-f0-9]{64}$/u);
+  expect(preflight.items.filter((item) => item.severity === "blocking")).toEqual([]);
+  expect(preflight.items.filter((item) => item.severity === "warning")).toEqual([expect.objectContaining({ code: "SOURCE_HEALTH_UNCHECKED" })]);
   await installFirstRandomUuid(page, info.project.name === "Desktop Chrome" ? "10000000-0000-4000-8000-000000000151" : "10000000-0000-4000-8000-000000000152");
   await page.goto("/home");
-  const responsePromise = page.waitForResponse((response) => response.url().endsWith("/api/agent-runs") && response.request().method() === "POST");
   await activate(page, info, "发现岗位");
+  const confirmation = page.getByRole("button", { name: "我已了解，仍要启动" });
+  await expect(confirmation).toBeVisible();
+  const responsePromise = page.waitForResponse((response) => response.url().endsWith("/api/agent-runs") && response.request().method() === "POST");
+  await activateControl(page, confirmation, info);
   const runId = (await (await responsePromise).json() as { runId: string }).runId;
   await waitForRun(page, runId);
   await page.reload();
@@ -314,7 +346,12 @@ test("从首页拒绝校准建议不会修改现行规则", async ({ page, reque
     ["Inbox 地点反馈一", "地点"], ["Inbox 地点反馈二", "地点"], ["Inbox 地点反馈三", "地点"],
   ] as const;
   for (const [title] of feedback) await importAndTriage(request, account, title);
-  const discovery = await request.post(`${apiBaseUrl}/v1/agent-runs`, { headers: { authorization: `Bearer ${account.token}` }, data: { targetId: account.targetId, idempotencyKey: info.project.name === "Desktop Chrome" ? "10000000-0000-4000-8000-000000000161" : "10000000-0000-4000-8000-000000000162" } });
+  const preflight = await request.get(`${apiBaseUrl}/v1/run-preflight?workflow=discovery&trigger=manual&targetId=${account.targetId}`, { headers: { authorization: `Bearer ${account.token}` } });
+  expect(preflight.status()).toBe(200);
+  const report = await preflight.json() as { status: string; warningFingerprint: string | null; items: Array<{ code: string }> };
+  expect(report).toMatchObject({ status: "ready_with_warnings", warningFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u) });
+  expect(report.items.map((item) => item.code)).toContain("SOURCE_HEALTH_UNCHECKED");
+  const discovery = await request.post(`${apiBaseUrl}/v1/agent-runs`, { headers: { authorization: `Bearer ${account.token}` }, data: { targetId: account.targetId, idempotencyKey: info.project.name === "Desktop Chrome" ? "10000000-0000-4000-8000-000000000161" : "10000000-0000-4000-8000-000000000162", warningFingerprint: report.warningFingerprint } });
   expect(discovery.status()).toBe(201);
   const discoveryRunId = (await discovery.json() as { runId: string }).runId;
   await waitForRun(page, await waitForAutomaticMatch(account.userId, discoveryRunId));

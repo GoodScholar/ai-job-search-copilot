@@ -1,4 +1,3 @@
-import type { OnModuleDestroy } from "@nestjs/common";
 import { Worker } from "bullmq";
 import Redis from "ioredis";
 import {
@@ -22,7 +21,7 @@ export async function processAgentRunJob(
   return outcome;
 }
 
-export class AgentRunConsumer implements OnModuleDestroy {
+export class AgentRunConsumer {
   private readonly redis: Redis;
   private readonly worker: Worker;
   private closePromise: Promise<void> | undefined;
@@ -44,10 +43,6 @@ export class AgentRunConsumer implements OnModuleDestroy {
   async close(): Promise<void> {
     this.closePromise ??= this.closeResources();
     return this.closePromise;
-  }
-
-  async onModuleDestroy(): Promise<void> {
-    await this.close();
   }
 
   private async closeResources(): Promise<void> {

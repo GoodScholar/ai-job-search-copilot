@@ -6,6 +6,9 @@ import { ModelDiagnosticChecksSchema, ModelDiagnosticPublicResponseSchema, type 
 type Stored = { status: "available" | "failed" | "temporarily_unavailable"; checks: ModelDiagnosticChecks; reasonCode: ModelDiagnosticReasonCode; checkedAt: Date; latencyBucket: ModelDiagnosticLatencyBucket };
 type DatabaseLike = Pick<Database, "select" | "insert" | "transaction">;
 type Dependencies = { db: DatabaseLike; adapter: ModelDiagnosticAdapter; clock: () => Date; timeoutMs?: number };
+export type ModelDiagnosticProjectionReader = {
+  get(db: Pick<Database, "select" | "execute">, now: Date): Promise<ModelDiagnosticPublicResponse>;
+};
 const tenMinutes = 10 * 60_000;
 const backoff = [30_000, 60_000, 120_000, 240_000, 480_000, 600_000];
 const unknownChecks: ModelDiagnosticChecks = { authentication: "not_verified", modelAvailability: "not_verified", structuredOutput: "not_verified", timeout: "not_verified" };
@@ -52,6 +55,20 @@ function latestStable(row: Stored | undefined, now: Date, failures: number) {
   const retryAt = new Date(row.checkedAt.getTime() + backoff[Math.min(Math.max(failures, 1) - 1, backoff.length - 1)]!);
   return response(row.status, row, retryAt.getTime() > now.getTime() ? retryAt : null);
 }
+/**
+ * 只读取当前部署指纹的最后稳定诊断。此投影从不触发 Adapter；拿不到 advisory lock
+ * 代表另一个实例正在确定该指纹的当前状态，因此安全地返回 checking。
+ */
+export function createModelDiagnosticProjectionReader(deps: { configurationFingerprint: string }): ModelDiagnosticProjectionReader {
+  return {
+    async get(db, now) {
+      const [lock] = await db.execute(sql`select pg_try_advisory_xact_lock(hashtextextended(${deps.configurationFingerprint}, 50)) as locked`) as unknown as Array<{ locked: boolean }>;
+      if (!lock?.locked) return response("checking");
+      const row = await latest(db, deps.configurationFingerprint);
+      return latestStable(row, now, row?.status === "available" ? 0 : await failureCount(db, deps.configurationFingerprint)) ?? response("unverified");
+    },
+  };
+}
 function sanitizedFailure(): ModelDiagnosticProbeResult { return { status: "failed", checks: unknownChecks, reasonCode: "MODEL_DIAGNOSTIC_FAILED", latencyBucket: "under_1s" }; }
 function timeoutFailure(): ModelDiagnosticProbeResult { return { status: "temporarily_unavailable", checks: { ...unknownChecks, timeout: "failed" }, reasonCode: "MODEL_DIAGNOSTIC_TIMEOUT", latencyBucket: "timeout" }; }
 async function diagnoseWithinDeadline(adapter: ModelDiagnosticAdapter, timeoutMs: number): Promise<ModelDiagnosticProbeResult> {
@@ -70,8 +87,8 @@ async function diagnoseWithinDeadline(adapter: ModelDiagnosticAdapter, timeoutMs
 
 export function createModelDiagnostics(deps: Dependencies): { get(): Promise<ModelDiagnosticPublicResponse>; run(): Promise<ModelDiagnosticPublicResponse> } {
   const fingerprint = deps.adapter.configurationFingerprint;
+  const reader = createModelDiagnosticProjectionReader({ configurationFingerprint: fingerprint });
   const cached = async (db: Pick<Database, "select">, now: Date) => { const row = await latest(db, fingerprint); return current(row, now, row?.status === "available" ? 0 : await failureCount(db, fingerprint)); };
-  const stable = async (db: Pick<Database, "select">, now: Date) => { const row = await latest(db, fingerprint); return latestStable(row, now, row?.status === "available" ? 0 : await failureCount(db, fingerprint)); };
   let gate = false;
   const acquireGate = () => { if (gate) return false; gate = true; return true; };
   return {
@@ -80,9 +97,7 @@ export function createModelDiagnostics(deps: Dependencies): { get(): Promise<Mod
       const now = deps.clock(); const existing = await cached(deps.db, now); if (existing) return existing;
       if (!acquireGate()) return response("checking");
       try { return await deps.db.transaction(async (tx) => {
-        const [row] = await tx.execute(sql`select pg_try_advisory_xact_lock(hashtextextended(${fingerprint}, 50)) as locked`) as unknown as Array<{ locked: boolean }>;
-        if (!row?.locked) return response("checking");
-        return (await stable(tx, now)) ?? response("unverified");
+        return reader.get(tx, now);
       });
       } finally { gate = false; }
     },

@@ -149,6 +149,7 @@ function applicationEnv(config, env) {
     MAILPIT_ENDPOINT: `http://127.0.0.1:${config.mailpitHttpPort}`,
     NEXT_PUBLIC_AUTH_MODE: "dev",
     PUBLIC_SOURCE_NETWORK_MODE: config.test ? "disabled" : env.PUBLIC_SOURCE_NETWORK_MODE,
+    ...(config.test ? { LOCAL_E2E_NEST_TS_ENTRY: "1" } : {}),
     ...(config.anysearchPublicJobPhase ? {
       ...(isConfiguredFakeAnysearchPublicJobPhase(config.anysearchPublicJobPhase) ? { ANYSEARCH_API_KEY: "fake-anysearch-public-job-test-key" } : {}),
       ANYSEARCH_BASE_URL: "http://127.0.0.1:" + config.anysearchFixturePort,

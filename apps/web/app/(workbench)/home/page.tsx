@@ -6,12 +6,13 @@ import { getWorkbenchHome } from "@/lib/server/workbench";
 import { getJobTargets } from "@/lib/server/job-targets";
 import { getAgentRun, getLatestAgentRun } from "@/lib/server/agent-runs";
 import { getOpenAgentInbox } from "@/lib/server/agent-inbox";
+import { getRunPreflight } from "@/lib/server/run-preflight";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = { title: "工作台 | AI Job Search Copilot" };
 
 type WorkbenchHomePageProps = { searchParams: Promise<{ runId?: string | string[] }> };
-type UnavailableSection = "summary" | "targets" | "run" | "inbox";
+type UnavailableSection = "summary" | "targets" | "run" | "inbox" | "preflight";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
 function valueOr<T>(result: PromiseSettledResult<T>, fallback: T, section: UnavailableSection, unavailable: UnavailableSection[]): T {
@@ -27,14 +28,17 @@ export default async function WorkbenchHomePage({ searchParams }: WorkbenchHomeP
   const runPromise = typeof requestedRunId === "string" && uuid.test(requestedRunId)
     ? getAgentRun(requestedRunId)
     : hasRequestedRun ? Promise.resolve(null) : getLatestAgentRun().then((response) => response.run);
-  const [homeResult, targetsResult, runResult, inboxResult] = await Promise.allSettled([
-    getWorkbenchHome(), getJobTargets(), runPromise, getOpenAgentInbox(),
+  const targetsPromise = getJobTargets();
+  const preflightPromise = targetsPromise.then((targets) => getRunPreflight(targets.targets.find((target) => target.state === "active" && target.priority === "primary")?.targetId));
+  const [homeResult, targetsResult, runResult, inboxResult, preflightResult] = await Promise.allSettled([
+    getWorkbenchHome(), targetsPromise, runPromise, getOpenAgentInbox(), preflightPromise,
   ]);
   const unavailable: UnavailableSection[] = [];
   const home = valueOr<WorkbenchHome | null>(homeResult, null, "summary", unavailable);
   const targets = valueOr<JobTargetOverview | null>(targetsResult, null, "targets", unavailable);
   const initialRun = valueOr(runResult, null, "run", unavailable);
   const inbox = valueOr(inboxResult, { items: [] }, "inbox", unavailable);
+  const preflight = valueOr(preflightResult, null, "preflight", unavailable);
 
-  return <WorkbenchHomeView home={home} inbox={inbox} initialRun={initialRun} targets={targets} unavailableSections={unavailable} />;
+  return <WorkbenchHomeView home={home} inbox={inbox} initialRun={initialRun} preflight={preflight} targets={targets} unavailableSections={unavailable} />;
 }

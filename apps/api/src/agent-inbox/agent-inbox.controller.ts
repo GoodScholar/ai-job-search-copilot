@@ -1,25 +1,25 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Inject, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
-import { ApiBadRequestResponse, ApiBearerAuth, ApiConflictResponse, ApiNotFoundResponse, ApiUnauthorizedResponse } from "@nestjs/swagger";
+import { ApiBadRequestResponse, ApiBearerAuth, ApiBody, ApiConflictResponse, ApiNotFoundResponse, ApiUnauthorizedResponse } from "@nestjs/swagger";
 import {
   AgentInboxActionCommandSchema,
   AgentInboxActionResponseSchema,
-  AgentInboxActionSchema,
   AgentInboxListSchema,
 } from "@job-copilot/contracts/agent-inbox";
 import { AgentInboxError } from "@job-copilot/domain/agent-runs";
+import { RunPreflightRejectedError } from "@job-copilot/domain/run-preflight";
 import type { FastifyRequest } from "fastify";
-import { createZodDto, ZodResponse } from "nestjs-zod";
+import { createZodDto, ZodResponse, ZodValidationPipe } from "nestjs-zod";
 import { z } from "zod";
 import { ApiProblem } from "../auth/auth.controller.js";
 import { SessionGuard } from "../auth/session.guard.js";
 import { ApiException } from "../common/api-problem.filter.js";
 import { getRequestId } from "../common/request-id.hook.js";
+import { runPreflightConflict } from "../run-preflight/run-preflight-error.js";
 import { AGENT_INBOX, type AgentInbox } from "./agent-inbox.tokens.js";
 
 class AgentInboxListDto extends createZodDto(AgentInboxListSchema) {}
-class AgentInboxActionCommandDto extends createZodDto(z.object({
-  actionId: z.uuid(), action: AgentInboxActionSchema,
-}).strict()) {}
+const AgentInboxActionCommandDto = createZodDto(AgentInboxActionCommandSchema);
+Object.defineProperty(AgentInboxActionCommandDto, "name", { value: "AgentInboxActionCommandDto" });
 class AgentInboxActionResponseDto extends createZodDto(AgentInboxActionResponseSchema) {}
 class AgentInboxPathDto extends createZodDto(z.object({ itemId: z.uuid() }).strict()) {}
 class AgentInboxListQueryDto extends createZodDto(z.object({ status: z.enum(["unread", "read", "resolved", "pending"]).default("pending") }).strict()) {}
@@ -49,6 +49,7 @@ export class AgentInboxController {
   }
 
   @Post(":itemId/actions")
+  @ApiBody({ type: AgentInboxActionCommandDto })
   @HttpCode(HttpStatus.OK)
   @ZodResponse({ type: AgentInboxActionResponseDto })
   @ApiBadRequestResponse({ type: ApiProblem })
@@ -58,7 +59,7 @@ export class AgentInboxController {
   async act(
     @Req() request: FastifyRequest,
     @Param() params: AgentInboxPathDto,
-    @Body() command: AgentInboxActionCommandDto,
+    @Body(new ZodValidationPipe(AgentInboxActionCommandDto)) command: z.infer<typeof AgentInboxActionCommandSchema>,
   ) {
     try {
       return await this.inbox.act({
@@ -68,6 +69,7 @@ export class AgentInboxController {
         command: AgentInboxActionCommandSchema.parse(command),
       });
     } catch (error) {
+      if (error instanceof RunPreflightRejectedError) throw runPreflightConflict(error);
       if (error instanceof AgentInboxError) throw inboxProblem(error);
       throw error;
     }

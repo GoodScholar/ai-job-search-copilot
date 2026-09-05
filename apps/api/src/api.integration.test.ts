@@ -4,14 +4,18 @@ import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fa
 import { Test } from "@nestjs/testing";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { auditEvents, candidateFactEvidence, candidateFacts, careerDocuments, careerFactConflicts, careerImports, createDatabase, migrateDatabase, type Database } from "@job-copilot/database";
+import { agentRuns, auditEvents, candidateFactEvidence, candidateFacts, careerDocuments, careerFactConflicts, careerImports, companyWatchlistRevisions, companyWatchlists, createDatabase, jobProfiles, jobSourceHealthChecks, modelDiagnosticResults, migrateDatabase, profileFactRevisions, profileFacts, type Database } from "@job-copilot/database";
 import type { CareerDocumentStore, CareerImportQueue } from "@job-copilot/domain/career-imports";
 import type { JobContentStore, JobImportQueue } from "@job-copilot/domain/job-imports";
 import { createAgentRunCommands, type AgentRunQueue } from "@job-copilot/domain/agent-runs";
+import { createReadyRunPreflightEvaluator } from "../../../packages/domain/src/testing/run-preflight.js";
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
 import { createCompanyWatchlistCommands } from "@job-copilot/domain/company-watchlists";
 import { createJobDiscoverySchedules } from "@job-copilot/domain/job-discovery-schedules";
 import { createModelDiagnostics } from "@job-copilot/domain/model-diagnostics";
+import { createModelDiagnosticProjectionReader } from "@job-copilot/domain/model-diagnostics";
+import { fingerprintRunPreflightWarnings, type RunPreflightEvaluator } from "@job-copilot/domain/run-preflight";
+import { RunPreflightReportSchema, type RunPreflightItem } from "@job-copilot/contracts/run-preflight";
 import type { RuntimeConfig } from "@job-copilot/domain/runtime-config";
 import type { ModelDiagnosticAdapter } from "@job-copilot/contracts/model-diagnostics";
 import { JobTriageError } from "@job-copilot/domain/job-triage-persistence";
@@ -25,9 +29,12 @@ import { JobPageFetchError, type JobPageFetcher } from "./job-imports/job-page-f
 import { createMinimalDocx } from "./career-import/minimal-docx.test-support.js";
 import { CAREER_FACT_CONFLICT_REVIEW_COMMANDS, PROFILE_REVIEW_COMMANDS, type ProfileReviewCommands } from "./profile-review/profile-review.tokens.js";
 import { AGENT_RUN_QUEUE_PORT } from "./agent-runs/agent-runs.tokens.js";
+import { RUN_PREFLIGHT_EVALUATOR } from "./run-preflight/run-preflight.tokens.js";
+import { createConfiguredRunPreflightEvaluator } from "./run-preflight/run-preflight.module.js";
 import { JOB_TRIAGE_COMMANDS, JOB_TRIAGE_QUERIES } from "./job-triage/job-triage.tokens.js";
 import { RECOMMENDATION_FEEDBACK_COMMANDS, RECOMMENDATION_FEEDBACK_QUERIES } from "./recommendations/recommendations.tokens.js";
 import { MODEL_DIAGNOSTICS } from "./model-diagnostics/model-diagnostics.tokens.js";
+import { createFakeModelDiagnosticAdapter, TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED } from "@job-copilot/model-access/testing";
 import { z } from "zod";
 
 const testSecret = "test-dev-auth-shared-secret-must-be-at-least-32-characters";
@@ -49,6 +56,8 @@ describe("authenticated workbench HTTP API", () => {
   let app: NestFastifyApplication;
   let container: StartedPostgreSqlContainer;
   let database: Database;
+  let activeRunPreflight: RunPreflightEvaluator = createReadyRunPreflightEvaluator();
+  const runPreflightProxy: RunPreflightEvaluator = { evaluate: (db, input) => activeRunPreflight.evaluate(db, input) };
   let diagnosticAdapterCalls = 0;
   let diagnosticAdapterInput: { apiKey?: string; endpoint?: string; organization?: string; project?: string; lowCostModel: string; highQualityModel: string } | undefined;
   const triageVersionId = "90000000-0000-4000-8000-000000000001";
@@ -235,6 +244,7 @@ describe("authenticated workbench HTTP API", () => {
           return createModelDiagnostics({ db, adapter, clock: () => new Date() });
         },
       })
+      .overrideProvider(RUN_PREFLIGHT_EVALUATOR).useValue(runPreflightProxy)
       .setLogger(testLogger as never)
       .compile();
     app = module.createNestApplication<NestFastifyApplication>(new FastifyAdapter({ loggerInstance: testLogger as never }));
@@ -254,6 +264,55 @@ describe("authenticated workbench HTTP API", () => {
     await container?.stop();
     Object.assign(process.env, originalEnvironment);
   });
+
+  const productionPreflight = () => createConfiguredRunPreflightEvaluator(
+    createModelDiagnosticProjectionReader({ configurationFingerprint: createFakeModelDiagnosticAdapter({ kind: "success" }, TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED).configurationFingerprint }),
+  );
+
+  function withDeepMatchWarning(evaluator: RunPreflightEvaluator, warningRevision: () => number): RunPreflightEvaluator {
+    return {
+      async evaluate(db, input) {
+        const evaluation = await evaluator.evaluate(db, input);
+        if (input.workflow !== "deep_match") return evaluation;
+        const items = evaluation.report.items.map((item) => item.code === "SOURCE_HEALTH_NOT_REQUIRED" ? {
+          ...item,
+          severity: "warning" as const,
+          retryable: true,
+          suggestedActions: ["review_source_health"] as RunPreflightItem["suggestedActions"],
+          evidence: { ...item.evidence, uncheckedSourceCount: warningRevision() },
+        } : item);
+        const warnings = items.filter((item) => item.severity === "warning").map(({ code, evidence, suggestedActions }) => ({ code, evidence, suggestedActions }));
+        const report = RunPreflightReportSchema.parse({
+          ...evaluation.report,
+          status: "ready_with_warnings",
+          items,
+          warningFingerprint: fingerprintRunPreflightWarnings({ workflow: input.workflow, trigger: input.trigger, targetId: evaluation.report.targetId, warnings }),
+        });
+        return { ...evaluation, report };
+      },
+    };
+  }
+
+  async function prepareRealPreflightAccount(subject: string) {
+    const session = await createSession(app, subject);
+    const targetId = await createActiveTarget(app, session.sessionToken, `${subject}-角色`);
+    const now = new Date(); const profileId = randomUUID(); const factId = randomUUID(); const watchlistId = randomUUID(); const watchlistItemId = randomUUID(); const sourceSentinel = `private-source-${randomUUID()}`;
+    const sensitive = { factValue: `factValue-${randomUUID()}`, careerText: `careerText-${randomUUID()}`, jobText: `jobText-${randomUUID()}`, modelOutput: `modelOutput-${randomUUID()}`, allowedDomain: `allowedDomain-${randomUUID()}.example.test` };
+    const modelFingerprint = createFakeModelDiagnosticAdapter({ kind: "success" }, TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED).configurationFingerprint;
+    await database.insert(jobProfiles).values({ id: profileId, userId: session.account.userId, version: 1, createdAt: now, updatedAt: now });
+    await database.insert(profileFacts).values({ id: factId, userId: session.account.userId, profileId, factType: "skill", createdAt: now });
+    await database.insert(profileFactRevisions).values({ id: randomUUID(), userId: session.account.userId, profileFactId: factId, revisionNumber: 1, factType: "skill", factValue: { name: "private-profile-sentinel", ...sensitive }, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1, createdAt: now });
+    await database.insert(companyWatchlists).values({ id: watchlistId, userId: session.account.userId, targetId, version: 1, createdAt: now, updatedAt: now });
+    await database.insert(companyWatchlistRevisions).values({ id: randomUUID(), userId: session.account.userId, watchlistId, targetId, version: 1, createdAt: now, items: [{ itemId: watchlistItemId, canonicalCompanyName: `${sourceSentinel}-company`, careersUrl: `https://boards.greenhouse.io/${sourceSentinel}`, allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io", sensitive.allowedDomain], sourceNote: `${sourceSentinel}-note`, state: "enabled", position: 1 }] });
+    await database.insert(modelDiagnosticResults).values({ configurationFingerprint: modelFingerprint, status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket: "under_1s", checkedAt: now });
+    return { session, targetId, watchlistItemId, sourceSentinel, sensitive, modelFingerprint };
+  }
+
+  async function insertHealthCarrier(userId: string, targetId: string, itemId: string, sourceSentinel: string) {
+    const now = new Date(); const runId = randomUUID();
+    await database.insert(agentRuns).values({ id: runId, userId, targetId, idempotencyKey: randomUUID(), targetVersion: 1, targetSnapshot: { targetId }, sourceScope: {}, budgetSnapshot: {}, workflowVersion: "job-discovery-workflow-v1", ruleVersion: "fake-job-discovery-rules-v1", adapter: "fake", adapterVersion: "fake-job-discovery-v1", outputSchemaVersion: "job-discovery-result-v1", toolAllowlist: [], queuedAt: now, createdAt: now, updatedAt: now });
+    await database.insert(jobSourceHealthChecks).values({ id: randomUUID(), userId, runId, targetId, watchlistItemId: itemId, sourceId: `greenhouse:${sourceSentinel}`, status: "rate_limited", reasonCodes: ["SOURCE_RATE_LIMITED"], impactScope: "entire_source", impactAffectedCount: null, observedPostingCount: 0, selectedDetailCount: 0, validDetailCount: 0, requestAttemptCount: 1, checkedAt: now });
+  }
 
   it("expands Error values before checking captured logger output", () => {
     const messageSentinel = "message-sentinel";
@@ -321,6 +380,128 @@ describe("authenticated workbench HTTP API", () => {
     expect(postAnonymous.statusCode).toBe(401); expect(postAnonymous.headers["cache-control"]).toBe("no-store");
     const exposed = `${post.body}${get.body}${afterPostGet.body}${noBody.body}${invalid.body}${postAnonymous.body}${anonymous.body}${normalizedLogText(capturedLogs)}`;
     for (const sentinel of diagnosticSecretSentinels) expect(exposed).not.toContain(sentinel);
+  });
+
+  it("以认证会话提供无副作用的运行预检查询，并拒绝浏览器扩大 query", async () => {
+    const session = await createSession(app, `run-preflight-${crypto.randomUUID()}`);
+    const targetId = await createActiveTarget(app, session.sessionToken, "预检查询工程师");
+    const path = `/v1/run-preflight?workflow=discovery&trigger=manual&targetId=${targetId}`;
+    const [anonymous, report, scheduledFor, unknown] = await Promise.all([
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: path }),
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: path, headers: bearer(session.sessionToken) }),
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: `${path}&scheduledFor=2026-09-05T00%3A00%3A00.000Z`, headers: bearer(session.sessionToken) }),
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: `${path}&rawPayload=secret`, headers: bearer(session.sessionToken) }),
+    ]);
+    expect(anonymous.statusCode).toBe(401); expect(anonymous.headers["cache-control"]).toBe("no-store");
+    expect(report.statusCode).toBe(200); expect(report.headers["cache-control"]).toBe("no-store"); expect(report.json()).toMatchObject({ workflow: "discovery", trigger: "manual", targetId });
+    for (const response of [scheduledFor, unknown]) { expect(response.statusCode).toBe(400); expect(response.headers["cache-control"]).toBe("no-store"); expect(response.body).not.toContain("secret"); }
+  });
+
+  it("以真实 production preflight 在 HTTP 中隔离账户、重检 warning，并冻结运行快照", async () => {
+    const logStart = capturedLogs.length;
+    activeRunPreflight = productionPreflight();
+    try {
+      const owner = await prepareRealPreflightAccount(`preflight-owner-${randomUUID()}`);
+      const other = await prepareRealPreflightAccount(`preflight-other-${randomUUID()}`);
+      await insertHealthCarrier(other.session.account.userId, other.targetId, other.watchlistItemId, other.sourceSentinel);
+      // This deliberately malformed foreign health identity proves the query's owner/target filter,
+      // while the preceding row remains Account B's own independent health data.
+      await insertHealthCarrier(other.session.account.userId, other.targetId, owner.watchlistItemId, owner.sourceSentinel);
+      const headers = { ...bearer(owner.session.sessionToken), "content-type": "application/json" };
+      const first = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/run-preflight?workflow=discovery&trigger=manual&targetId=${owner.targetId}`, headers });
+      expect(first.statusCode).toBe(200);
+      expect(first.json()).toMatchObject({ status: "ready_with_warnings", warningFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u), items: expect.arrayContaining([expect.objectContaining({ code: "SOURCE_HEALTH_UNCHECKED", evidence: { kind: "source_health", checkedSourceCount: 0, healthySourceCount: 0, degradedSourceCount: 0, uncheckedSourceCount: 1, latestCheckedAt: null } })]) });
+      const firstReport = first.json();
+
+      const foreign = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/run-preflight?workflow=discovery&trigger=manual&targetId=${other.targetId}`, headers });
+      expect(foreign.statusCode).toBe(200); expect(foreign.json()).toMatchObject({ status: "blocked", targetId: owner.targetId, items: expect.arrayContaining([expect.objectContaining({ code: "REQUESTED_JOB_TARGET_MISSING", evidence: expect.objectContaining({ requestedTargetId: null, requestedTargetState: "missing" }) })]) });
+      const foreignText = foreign.body;
+      for (const secret of [other.targetId, other.watchlistItemId, other.sourceSentinel, `${other.sourceSentinel}-company`, `${other.sourceSentinel}-note`, "private-profile-sentinel"]) expect(foreignText).not.toContain(secret);
+
+      await insertHealthCarrier(owner.session.account.userId, owner.targetId, owner.watchlistItemId, owner.sourceSentinel);
+      const refreshed = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/run-preflight?workflow=discovery&trigger=manual&targetId=${owner.targetId}`, headers });
+      expect(refreshed.statusCode).toBe(200); expect(refreshed.json()).toMatchObject({ status: "ready_with_warnings", items: expect.arrayContaining([expect.objectContaining({ code: "SOURCE_HEALTH_DEGRADED" })]) });
+      const currentReport = refreshed.json(); expect(currentReport.warningFingerprint).not.toBe(firstReport.warningFingerprint);
+
+      const before = (await database.select({ id: agentRuns.id, userId: agentRuns.userId, targetId: agentRuns.targetId }).from(agentRuns)).filter((run) => run.userId === owner.session.account.userId && run.targetId === owner.targetId);
+      const stale = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/agent-runs", headers, payload: { targetId: owner.targetId, idempotencyKey: randomUUID(), warningFingerprint: firstReport.warningFingerprint } });
+      expect(stale.statusCode).toBe(409); expect(stale.json()).toMatchObject({ code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED", message: expect.any(String), requestId: expect.any(String), preflight: { status: "ready_with_warnings", warningFingerprint: currentReport.warningFingerprint, items: expect.arrayContaining([expect.objectContaining({ code: "SOURCE_HEALTH_DEGRADED" })]) } });
+      const staleReport = stale.json().preflight;
+      const afterStale = (await database.select({ id: agentRuns.id, userId: agentRuns.userId, targetId: agentRuns.targetId }).from(agentRuns)).filter((run) => run.userId === owner.session.account.userId && run.targetId === owner.targetId);
+      expect(afterStale).toEqual(before);
+
+      const started = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/agent-runs", headers, payload: { targetId: owner.targetId, idempotencyKey: randomUUID(), warningFingerprint: staleReport.warningFingerprint } });
+      expect(started.statusCode).toBe(201);
+      const detail = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/agent-runs/${started.json().runId}`, headers: bearer(owner.session.sessionToken) });
+      expect(detail.statusCode).toBe(200); expect(detail.json()).toMatchObject({ preflightSnapshot: { status: "ready_with_warnings", warningFingerprint: staleReport.warningFingerprint, items: expect.arrayContaining([expect.objectContaining({ code: "SOURCE_HEALTH_DEGRADED" })]) }, accountPolicyRevisionNumber: staleReport.items.find((item: { evidence: { kind: string } }) => item.evidence.kind === "account_run_policy")?.evidence.revisionNumber });
+
+      await database.$client`update agent_runs set preflight_snapshot = null where id = ${started.json().runId}::uuid`;
+      const legacy = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/agent-runs/${started.json().runId}`, headers: bearer(owner.session.sessionToken) });
+      expect(legacy.statusCode).toBe(200); expect(legacy.json().preflightSnapshot).toBeNull();
+
+      const blockedOwner = await createSession(app, `preflight-blocked-${randomUUID()}`);
+      const blockedTarget = await createActiveTarget(app, blockedOwner.sessionToken, `preflight-blocked-target-${randomUUID()}`);
+      const blocked = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/recommendations/runs", headers: { ...bearer(blockedOwner.sessionToken), "content-type": "application/json" }, payload: { targetId: blockedTarget, opportunityId: randomUUID(), idempotencyKey: randomUUID(), warningFingerprint: null } });
+      expect(blocked.statusCode).toBe(409); expect(blocked.json()).toMatchObject({ code: "RUN_PREFLIGHT_BLOCKED", preflight: expect.objectContaining({ workflow: "deep_match", status: "blocked" }), requestId: expect.any(String) });
+      const deep = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/recommendations/runs", headers, payload: { targetId: owner.targetId, opportunityId: randomUUID(), idempotencyKey: randomUUID(), warningFingerprint: null } });
+      expect(deep.statusCode).toBe(201); expect((await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/agent-runs/${deep.json().runId}`, headers: bearer(owner.session.sessionToken) })).json().preflightSnapshot).toMatchObject({ workflow: "deep_match" });
+
+      const key = randomUUID();
+      const ownerKey = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/agent-runs", headers, payload: { targetId: owner.targetId, idempotencyKey: key, warningFingerprint: staleReport.warningFingerprint } });
+      const otherKey = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/agent-runs", headers: { ...bearer(other.session.sessionToken), "content-type": "application/json" }, payload: { targetId: other.targetId, idempotencyKey: key, warningFingerprint: null } });
+      expect(ownerKey.statusCode).toBe(201); expect(otherKey.statusCode).toBe(409); expect(otherKey.json().preflight.runId).toBeUndefined();
+      const ownerVisible = `${foreign.body}${stale.body}${detail.body}${legacy.body}${blocked.body}${deep.body}${ownerKey.body}`;
+      for (const secret of [other.targetId, other.watchlistItemId, other.sourceSentinel, `${other.sourceSentinel}-company`, `${other.sourceSentinel}-note`]) expect(ownerVisible).not.toContain(secret);
+      const preflightSecrets = [
+        "factValue", "careerText", "jobText", "careersUrl", "allowedDomain", "modelOutput", "rawPayload", "providerResponse", "configurationFingerprint", "apiKey", "stack", "private-profile-sentinel",
+        owner.sourceSentinel, `https://boards.greenhouse.io/${owner.sourceSentinel}`, `${owner.sourceSentinel}-company`, `${owner.sourceSentinel}-note`,
+        owner.modelFingerprint, ...Object.values(owner.sensitive),
+      ];
+      const safeProjections = {
+        discovery409Preflight: JSON.stringify(stale.json().preflight),
+        runDetailPreflightSnapshot: JSON.stringify(detail.json().preflightSnapshot),
+        recommendation409Preflight: JSON.stringify(blocked.json().preflight),
+        capturedJourneyLogs: normalizedLogText(capturedLogs.slice(logStart)),
+      };
+      for (const projection of Object.values(safeProjections)) for (const secret of preflightSecrets) expect(projection).not.toContain(secret);
+    } finally {
+      activeRunPreflight = createReadyRunPreflightEvaluator();
+    }
+  });
+
+  it("对 recommendations 的真实 deep-match gate 要求当前 warning 确认并冻结快照", async () => {
+    const logStart = capturedLogs.length;
+    let warningRevision = 1;
+    activeRunPreflight = withDeepMatchWarning(productionPreflight(), () => warningRevision);
+    try {
+      const owner = await prepareRealPreflightAccount(`preflight-deep-warning-${randomUUID()}`);
+      const headers = { ...bearer(owner.session.sessionToken), "content-type": "application/json" };
+      const initial = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/run-preflight?workflow=deep_match&trigger=manual&targetId=${owner.targetId}`, headers });
+      expect(initial.statusCode).toBe(200);
+      expect(initial.json()).toMatchObject({ workflow: "deep_match", status: "ready_with_warnings", warningFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u) });
+      const firstFingerprint = initial.json().warningFingerprint;
+      const before = (await database.select({ id: agentRuns.id }).from(agentRuns)).length;
+      const uppercase = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/recommendations/runs", headers, payload: { targetId: owner.targetId, opportunityId: randomUUID(), idempotencyKey: randomUUID(), warningFingerprint: firstFingerprint.toUpperCase() } });
+      expect(uppercase.statusCode).toBe(400);
+      const missing = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/recommendations/runs", headers, payload: { targetId: owner.targetId, opportunityId: randomUUID(), idempotencyKey: randomUUID(), warningFingerprint: null } });
+      expect(missing.statusCode).toBe(409); expect(missing.json()).toMatchObject({ code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED", preflight: { warningFingerprint: firstFingerprint } });
+      expect((await database.select({ id: agentRuns.id }).from(agentRuns)).length).toBe(before);
+
+      warningRevision = 2;
+      const stale = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/recommendations/runs", headers, payload: { targetId: owner.targetId, opportunityId: randomUUID(), idempotencyKey: randomUUID(), warningFingerprint: firstFingerprint } });
+      expect(stale.statusCode).toBe(409); expect(stale.json()).toMatchObject({ code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED", preflight: { warningFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u) } });
+      expect(stale.json().preflight.warningFingerprint).not.toBe(firstFingerprint);
+      expect((await database.select({ id: agentRuns.id }).from(agentRuns)).length).toBe(before);
+
+      const started = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/recommendations/runs", headers, payload: { targetId: owner.targetId, opportunityId: randomUUID(), idempotencyKey: randomUUID(), warningFingerprint: stale.json().preflight.warningFingerprint } });
+      expect(started.statusCode).toBe(201);
+      const detail = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/agent-runs/${started.json().runId}`, headers: bearer(owner.session.sessionToken) });
+      expect(detail.statusCode).toBe(200); expect(detail.json()).toMatchObject({ preflightSnapshot: { workflow: "deep_match", status: "ready_with_warnings", warningFingerprint: stale.json().preflight.warningFingerprint } });
+      const safeProjections = `${JSON.stringify(missing.json().preflight)}${JSON.stringify(stale.json().preflight)}${JSON.stringify(detail.json().preflightSnapshot)}${normalizedLogText(capturedLogs.slice(logStart))}`;
+      for (const secret of ["factValue", "careerText", "jobText", "careersUrl", "allowedDomain", "modelOutput", "rawPayload", "providerResponse", "configurationFingerprint", "apiKey", "stack", "private-profile-sentinel", owner.modelFingerprint, ...Object.values(owner.sensitive)]) expect(safeProjections).not.toContain(secret);
+    } finally {
+      activeRunPreflight = createReadyRunPreflightEvaluator();
+    }
   });
 
   it("hides dev auth behind the server secret", async () => {
@@ -954,7 +1135,7 @@ describe("authenticated workbench HTTP API", () => {
       userId: session.account.userId, targetId, requestId: randomUUID(),
       command: { expectedVersion: 0, canonicalCompanyName: "Public Example", careersUrl: "https://boards.greenhouse.io/public-example", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null },
     });
-    const runs = createAgentRunCommands({ db: database, queue: agentRunQueue, auditTrail, id: randomUUID, clock: setupClock, executionMode: "greenhouse" });
+    const runs = createAgentRunCommands({ db: database, queue: agentRunQueue, auditTrail, runPreflight: createReadyRunPreflightEvaluator({ clock: setupClock }), id: randomUUID, clock: setupClock, executionMode: "greenhouse" });
     const schedules = createJobDiscoverySchedules({ db: database, runs, auditTrail, id: randomUUID, clock: setupClock });
     const schedule = await schedules.set({ userId: session.account.userId, targetId, requestId: randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
     expect(schedule.nextRunAt).toBe("2026-08-31T01:30:00.000Z");
@@ -1165,6 +1346,30 @@ describe("authenticated workbench HTTP API", () => {
     const afterFailures = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=pending", headers: bearer(primary.sessionToken) });
     const restartItemId = afterFailures.json().items.find((item: { runId: string }) => item.runId === failedRunId).itemId as string;
     const dismissItemId = afterFailures.json().items.find((item: { runId: string }) => item.runId === budgetRunId).itemId as string;
+    const invalidDismissActionId = randomUUID();
+    const invalidRestartActionId = randomUUID();
+    const dismissedFingerprint = "a".repeat(64);
+    const invalidRestartFingerprint = "invalid-fingerprint-sentinel";
+    const logStart = capturedLogs.length;
+    const invalidDismiss = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-inbox/${dismissItemId}/actions`, headers: bearer(primary.sessionToken),
+      payload: { actionId: invalidDismissActionId, action: "dismiss", warningFingerprint: dismissedFingerprint },
+    });
+    const invalidRestart = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-inbox/${restartItemId}/actions`, headers: bearer(primary.sessionToken),
+      payload: { actionId: invalidRestartActionId, action: "restart_run", warningFingerprint: invalidRestartFingerprint },
+    });
+    expect(invalidDismiss.statusCode).toBe(400);
+    expect(invalidRestart.statusCode).toBe(400);
+    expect(invalidDismiss.json()).toMatchObject({ code: "INVALID_REQUEST", message: "请求无效", requestId: expect.any(String) });
+    expect(invalidRestart.json()).toMatchObject({ code: "INVALID_REQUEST", message: "请求无效", requestId: expect.any(String) });
+    const invalidResponseAndLogs = `${invalidDismiss.body}${invalidRestart.body}${normalizedLogText(capturedLogs.slice(logStart))}`;
+    for (const secret of [dismissedFingerprint, invalidRestartFingerprint, "ZodError", "warningFingerprint"]) expect(invalidResponseAndLogs).not.toContain(secret);
+    await expect(database.$client`
+      select action_id as "actionId" from agent_inbox_item_actions
+      where user_id = ${primary.account.userId} and item_id in (${dismissItemId}, ${restartItemId})
+        and action_id in (${invalidDismissActionId}, ${invalidRestartActionId})
+    `).resolves.toEqual([]);
     await database.$client`
       update job_targets set state = 'inactive', active_slot = null
       where id = ${targetId} and user_id = ${primary.account.userId}
@@ -1756,6 +1961,39 @@ describe("authenticated workbench HTTP API", () => {
       });
     const responses = document.paths["/v1/career-documents/imports"].post.responses;
     expect(responses["200"].content["application/json"].schema).toEqual(responses["202"].content["application/json"].schema);
+    const inboxActionRequestSchema = document.paths["/v1/agent-inbox/{itemId}/actions"].post.requestBody
+      .content["application/json"].schema as Record<string, unknown>;
+    const resolveSchema = (schema: Record<string, unknown>): Record<string, unknown> => {
+      const reference = schema.$ref;
+      if (typeof reference !== "string") return schema;
+      expect(reference).toMatch(/^#\/components\/schemas\//);
+      return resolveSchema(document.components.schemas[reference.slice("#/components/schemas/".length)] as Record<string, unknown>);
+    };
+    const schemaVariants = (schema: Record<string, unknown>): Record<string, unknown>[] => {
+      const variants = schema.oneOf ?? schema.anyOf;
+      return Array.isArray(variants) ? variants as Record<string, unknown>[] : [schema];
+    };
+    const inboxActionSchema = resolveSchema(inboxActionRequestSchema);
+    const actionBranches = schemaVariants(inboxActionSchema).map(resolveSchema);
+    const actionBranchByName = new Map<string, Record<string, unknown>>(actionBranches.map((branch) => {
+      const action = (branch.properties as Record<string, Record<string, unknown>>).action;
+      const name = typeof action.const === "string"
+        ? action.const
+        : Array.isArray(action.enum) && typeof action.enum[0] === "string" ? action.enum[0] : "";
+      return [name, branch] as const;
+    }));
+    expect([...actionBranchByName.keys()].sort()).toEqual(["mark_read", "dismiss", "resume_run", "cancel_run", "restart_run"].sort());
+    for (const action of ["mark_read", "dismiss", "resume_run", "cancel_run"] as const) {
+      expect((actionBranchByName.get(action)?.properties as Record<string, unknown>).warningFingerprint).toBeUndefined();
+    }
+    const restartProperties = actionBranchByName.get("restart_run")?.properties as Record<string, Record<string, unknown>>;
+    const warningFingerprintSchema = restartProperties.warningFingerprint;
+    expect(warningFingerprintSchema).toBeDefined();
+    const warningFingerprintVariants = schemaVariants(warningFingerprintSchema).map(resolveSchema);
+    expect(warningFingerprintVariants.some((variant) => variant.type === "null" || variant.nullable === true)).toBe(true);
+    expect(warningFingerprintVariants).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "string", pattern: "^[a-f0-9]{64}$" }),
+    ]));
     const jobTargetResponseSchema = document.paths["/v1/job-targets"].get.responses["200"].content["application/json"].schema;
     expect(document.paths["/v1/job-targets"].post.responses["201"].content["application/json"].schema).toEqual(jobTargetResponseSchema);
     expect(document.paths["/v1/job-targets/{targetId}/revisions"].post.responses["201"].content["application/json"].schema).toEqual(jobTargetResponseSchema);

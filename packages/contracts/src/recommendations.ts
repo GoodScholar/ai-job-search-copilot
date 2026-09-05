@@ -1,10 +1,17 @@
 import { z } from "zod";
 import { acceptsDeepMatchAssessment, DeepMatchAssessmentSchema, DeepMatchDimensionSchema, type DeepMatchAssessment } from "./deep-match";
+import { RunPreflightWarningFingerprintSchema } from "./run-preflight";
 
 export const RecommendationBandSchema = z.enum(["highly_matched", "worth_trying", "consider_carefully"]);
 export const RecommendationDecisionStatusSchema = z.enum(["pending", "saved", "ignored"]);
 export const RecommendationIgnoreReasonSchema = z.enum(["ROLE_DIRECTION", "LOCATION", "SALARY", "COMPANY", "INDUSTRY", "SENIORITY", "MISMATCH", "EXPIRED", "ALREADY_HANDLED"]);
 export const RecommendationDecisionSchema = z.object({ status: RecommendationDecisionStatusSchema, version: z.int().nonnegative() }).strict();
+export const StartRecommendationReevaluationCommandSchema = z.object({
+  targetId: z.uuid(),
+  opportunityId: z.uuid(),
+  idempotencyKey: z.uuid(),
+  warningFingerprint: RunPreflightWarningFingerprintSchema.nullable(),
+}).strict();
 export const RecommendationDecisionCommandSchema = z.discriminatedUnion("decision", [
   z.object({ decision: z.literal("saved"), idempotencyKey: z.uuid(), expectedVersion: z.int().nonnegative() }).strict(),
   z.object({ decision: z.literal("ignored"), reason: RecommendationIgnoreReasonSchema.optional(), note: z.string().trim().min(1).max(500).optional(), idempotencyKey: z.uuid(), expectedVersion: z.int().nonnegative() }).strict(),

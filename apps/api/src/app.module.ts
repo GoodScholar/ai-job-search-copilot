@@ -20,9 +20,10 @@ import { JobDiscoverySchedulesModule } from "./job-discovery-schedules/job-disco
 import { RecommendationsModule } from "./recommendations/recommendations.module.js";
 import { AccountRunPoliciesModule } from "./account-run-policies/account-run-policies.module.js";
 import { ModelDiagnosticsModule } from "./model-diagnostics/model-diagnostics.module.js";
+import { RunPreflightModule } from "./run-preflight/run-preflight.module.js";
 
 @Module({
-  imports: [RuntimeConfigModule, AuthModule, HealthModule, WorkbenchModule, CareerImportModule, ProfileReviewModule, JobTargetsModule, CompanyWatchlistsModule, JobDiscoverySchedulesModule, JobImportsModule, JobTriageModule, AgentRunsModule, AgentInboxModule, RecommendationsModule, AccountRunPoliciesModule, ModelDiagnosticsModule],
+  imports: [RuntimeConfigModule, AuthModule, HealthModule, WorkbenchModule, CareerImportModule, ProfileReviewModule, JobTargetsModule, CompanyWatchlistsModule, JobDiscoverySchedulesModule, JobImportsModule, JobTriageModule, AgentRunsModule, AgentInboxModule, RecommendationsModule, AccountRunPoliciesModule, ModelDiagnosticsModule, RunPreflightModule],
   controllers: [AccountsController],
   providers: [
     RequestIdHook,

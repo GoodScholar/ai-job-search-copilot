@@ -3,6 +3,7 @@ import type { AgentInboxItem } from "@job-copilot/contracts/agent-inbox";
 import { AGENT_RUN_QUEUE, type AgentRunDetail } from "@job-copilot/contracts/agent-runs";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { Queue } from "bullmq";
+import { Client } from "pg";
 
 const desktopScenarios = {
   pause: "10000000-0000-4000-8000-000000000101",
@@ -19,12 +20,13 @@ const mobileScenarios: Record<keyof typeof desktopScenarios, string> = {
 const redisPort = Number(process.env.E2E_REDIS_PORT ?? "64790");
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const testDevAuthSecret = "issue-2-e2e-dev-auth-shared-secret";
+const databaseUrl = process.env.E2E_DATABASE_URL ?? "postgresql://job_copilot:local_only_job_copilot@127.0.0.1:55420/job_copilot";
 
 function scenarioFor(testInfo: TestInfo, scenario: keyof typeof desktopScenarios): string {
   return (testInfo.project.name === "Mobile Safari" ? mobileScenarios : desktopScenarios)[scenario];
 }
 
-async function signIn(page: Page, testInfo: TestInfo, idempotencyKey: string): Promise<void> {
+async function signIn(page: Page, testInfo: TestInfo, idempotencyKey: string): Promise<string> {
   const sessionResponse = await page.request.post(`${apiBaseUrl}/v1/auth/dev/sessions`, {
     headers: { "x-dev-auth-secret": testDevAuthSecret },
     data: { subject: `agent-runs-${testInfo.project.name}-${idempotencyKey}` },
@@ -39,8 +41,19 @@ async function signIn(page: Page, testInfo: TestInfo, idempotencyKey: string): P
     httpOnly: true,
     sameSite: "Lax",
   }]);
+  const profile = await page.request.post(`${apiBaseUrl}/v1/profile/facts`, {
+    headers: { authorization: `Bearer ${sessionToken}` },
+    data: { expectedVersion: 0, factType: "skill", factValue: { name: "TypeScript" } },
+  });
+  expect(profile.status()).toBe(201);
+  const diagnostic = await page.request.post(`${apiBaseUrl}/v1/model-diagnostics`, {
+    headers: { authorization: `Bearer ${sessionToken}` }, data: {},
+  });
+  expect(diagnostic.status()).toBe(201);
+  await expect(diagnostic.json()).resolves.toMatchObject({ status: "available" });
   await page.goto("/profile/targets");
   await expect(page).toHaveURL(/\/profile\/targets$/);
+  return sessionToken;
 }
 
 async function replaceActiveTarget(page: Page): Promise<void> {
@@ -75,16 +88,26 @@ async function installFirstRandomUuid(page: Page, value: string): Promise<void> 
 }
 
 async function startScenario(page: Page, testInfo: TestInfo, idempotencyKey: string): Promise<string> {
-  await signIn(page, testInfo, idempotencyKey);
+  const sessionToken = await signIn(page, testInfo, idempotencyKey);
   await replaceActiveTarget(page);
+  const targets = await page.request.get(`${apiBaseUrl}/v1/job-targets`, { headers: { authorization: `Bearer ${sessionToken}` } });
+  expect(targets.status()).toBe(200);
+  const targetId = (await targets.json() as { targets: Array<{ targetId: string; priority: string }> }).targets.find((target) => target.priority === "primary")!.targetId;
+  const source = await page.request.post(`${apiBaseUrl}/v1/job-targets/${targetId}/company-watchlist/items`, {
+    headers: { authorization: `Bearer ${sessionToken}` },
+    data: { expectedVersion: 0, canonicalCompanyName: "Agent Run Fake Fixture", careersUrl: "https://boards.greenhouse.io/agent-run-fake-fixture", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null },
+  });
+  expect(source.status()).toBe(201);
   await installFirstRandomUuid(page, idempotencyKey);
   await page.getByRole("link", { name: "AI Job Search Copilot" }).click();
   await expect(page).toHaveURL(/\/home$/);
-  const requestPromise = page.waitForRequest((request) => request.url().endsWith("/api/agent-runs") && request.method() === "POST");
-  const responsePromise = page.waitForResponse((response) => response.url().endsWith("/api/agent-runs") && response.request().method() === "POST");
   const start = page.getByRole("button", { name: "发现岗位" });
   if (testInfo.project.name === "Mobile Safari") await start.tap();
   else await start.click();
+  await expect(page.getByRole("button", { name: "我已了解，仍要启动" })).toBeVisible();
+  const requestPromise = page.waitForRequest((request) => request.url().endsWith("/api/agent-runs") && request.method() === "POST");
+  const responsePromise = page.waitForResponse((response) => response.url().endsWith("/api/agent-runs") && response.request().method() === "POST");
+  await page.getByRole("button", { name: "我已了解，仍要启动" }).click();
   expect((await requestPromise).postDataJSON()).toMatchObject({ idempotencyKey });
   return ((await (await responsePromise).json()) as { runId: string }).runId;
 }
@@ -102,12 +125,14 @@ async function getOpenInbox(page: Page): Promise<AgentInboxItem[]> {
 }
 
 function runStatus(page: Page) {
-  return page.locator(".agent-run-panel [role=status]");
+  return page.locator(".agent-run-panel .agent-run-live");
 }
 
 function assertExecutionEvidence(run: AgentRunDetail): void {
   expect(run.targetSnapshot.constraints.roleFamily).toBe("AI 应用工程师");
-  expect("sources" in run.executionSpec.sourceScope ? run.executionSpec.sourceScope.sources : []).toEqual(["fake:aurora-careers", "fake:orbit-careers"]);
+  expect("sources" in run.executionSpec.sourceScope ? run.executionSpec.sourceScope.sources : []).toEqual(expect.arrayContaining([
+    "fake:aurora-careers", "fake:orbit-careers", "https://boards.greenhouse.io/agent-run-fake-fixture",
+  ]));
   expect(run.executionSpec.ruleVersion).toBe("fake-job-discovery-rules-v1");
   expect(run.executionSpec.budget).toMatchObject({ maxAttempts: 3, maxToolCalls: 10, maxResults: 5 });
   expect(run.usage.complete).toBe(true);
@@ -235,4 +260,38 @@ test("重试预算耗尽会安全失败、说明原因并允许在 Inbox 标记�
   await expect(page.getByRole("heading", { name: "岗位发现预算已用尽" })).toHaveCount(0);
   expect((await getOpenInbox(page)).some((inboxItem) => inboxItem.runId === runId)).toBe(false);
   await assertAccessibleControls(page, testInfo);
+});
+
+test("运行详情保留启动快照，当前状态改变后不污染历史，并兼容 pre-0047 空快照", async ({ page }, testInfo) => {
+  test.setTimeout(60_000);
+  const runId = await startScenario(page, testInfo, crypto.randomUUID());
+  await expect.poll(async () => (await getRun(page, runId)).status, { timeout: 30_000 }).toBe("completed");
+  const before = await getRun(page, runId);
+  await page.goto(`/home?runId=${runId}#agent-run`);
+  expect(before.preflightSnapshot).not.toBeNull();
+  const checkedAt = before.preflightSnapshot!.checkedAt;
+  const policy = before.preflightSnapshot!.items.find((item) => item.evidence.kind === "account_run_policy");
+  const revision = policy?.evidence.kind === "account_run_policy" ? policy.evidence.revisionNumber : "未记录";
+  const history = page.getByRole("region", { name: "本次启动条件" });
+  await expect(history).toContainText(`检查时间${checkedAt}`);
+  await expect(history).toContainText(`账户策略版本${revision}`);
+
+  const token = (await page.context().cookies()).find((cookie) => cookie.name === "job_copilot_session")!.value;
+  const profile = await page.request.get(`${apiBaseUrl}/v1/profile`, { headers: { authorization: `Bearer ${token}` } });
+  expect(profile.status()).toBe(200);
+  const snapshot = await profile.json() as { version: number; facts: Array<{ factId: string }> };
+  const removal = await page.request.post(`${apiBaseUrl}/v1/profile/facts/${snapshot.facts[0]!.factId}/removals`, { headers: { authorization: `Bearer ${token}` }, data: { expectedVersion: snapshot.version, reason: "验证历史运行启动快照" } });
+  expect(removal.status()).toBe(201);
+  const current = await page.request.get(`${apiBaseUrl}/v1/run-preflight?workflow=discovery&trigger=manual&targetId=${before.targetId}`, { headers: { authorization: `Bearer ${token}` } });
+  expect(current.status()).toBe(200);
+  await expect(current.json()).resolves.toMatchObject({ status: "blocked" });
+  await page.reload();
+  await expect(history).toContainText(`检查时间${checkedAt}`);
+  await expect(history).toContainText(`账户策略版本${revision}`);
+
+  const client = new Client({ connectionString: databaseUrl });
+  await client.connect();
+  try { await client.query("update agent_runs set preflight_snapshot = null where id = $1", [runId]); } finally { await client.end(); }
+  await page.reload();
+  await expect(page.getByText("该历史运行创建时尚未记录运行前检查快照", { exact: true })).toBeVisible();
 });

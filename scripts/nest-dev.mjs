@@ -48,7 +48,9 @@ export function createNestDevCommand({
     : [env.NODE_OPTIONS, tsxLoader].filter(Boolean).join(" ");
 
   return {
-    args: [tsxLoader, resolve(cwd, "node_modules/@nestjs/cli/bin/nest.js"), "start", "--watch"],
+    args: env.LOCAL_E2E_NEST_TS_ENTRY === "1"
+      ? [tsxLoader, "--watch", resolve(cwd, "src/main.ts")]
+      : [tsxLoader, resolve(cwd, "node_modules/@nestjs/cli/bin/nest.js"), "start", "--watch"],
     env: { ...env, NODE_OPTIONS: nodeOptions },
     nodeExecutable,
   };

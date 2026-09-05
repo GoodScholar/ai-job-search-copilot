@@ -3,13 +3,15 @@ import type { ExceptionFilter } from "@nestjs/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { DomainError } from "@job-copilot/domain/workbench-home";
 import { getRequestId } from "./request-id.hook.js";
+import type { RunPreflightReport } from "@job-copilot/contracts/run-preflight";
+import { RunPreflightReportSchema } from "@job-copilot/contracts/run-preflight";
 
 export class ApiException extends HttpException {
   constructor(
     public readonly code: string,
     status: HttpStatus,
     public readonly publicMessage: string,
-    public readonly details?: { dependencies?: Record<string, "ready" | "not_ready">; issues?: Array<{ reasonCode: string; path: string[]; maximum: number | null; suggestedAction: string }> },
+    public readonly details?: { dependencies?: Record<string, "ready" | "not_ready">; issues?: Array<{ reasonCode: string; path: string[]; maximum: number | null; suggestedAction: string }>; preflight?: RunPreflightReport },
   ) {
     super(code, status);
   }
@@ -19,7 +21,7 @@ function getProblem(exception: unknown): {
   status: HttpStatus;
   code: string;
   message: string;
-  details?: { dependencies?: Record<string, "ready" | "not_ready">; issues?: Array<{ reasonCode: string; path: string[]; maximum: number | null; suggestedAction: string }> };
+  details?: { dependencies?: Record<string, "ready" | "not_ready">; issues?: Array<{ reasonCode: string; path: string[]; maximum: number | null; suggestedAction: string }>; preflight?: RunPreflightReport };
 } {
   if (typeof exception === "object" && exception !== null && "code" in exception) {
     const code = (exception as { code?: unknown }).code;
@@ -63,11 +65,22 @@ export class ApiProblemFilter implements ExceptionFilter {
     const request = context.getRequest<FastifyRequest>();
     const reply = context.getResponse<FastifyReply>();
     const problem = getProblem(exception);
+    const details = publicDetails(problem.details);
     reply.status(problem.status).send({
       code: problem.code,
       message: problem.message,
       requestId: getRequestId(request),
-      ...problem.details,
+      ...details,
     });
   }
+}
+
+function publicDetails(details: ReturnType<typeof getProblem>["details"]): Record<string, unknown> {
+  if (!details) return {};
+  const result: Record<string, unknown> = {};
+  if (details.dependencies && Object.values(details.dependencies).every((value) => value === "ready" || value === "not_ready")) result.dependencies = { ...details.dependencies };
+  if (details.issues && details.issues.every((issue) => typeof issue.reasonCode === "string" && Array.isArray(issue.path) && issue.path.every((part) => typeof part === "string") && (typeof issue.maximum === "number" || issue.maximum === null) && typeof issue.suggestedAction === "string")) result.issues = details.issues.map((issue) => ({ reasonCode: issue.reasonCode, path: [...issue.path], maximum: issue.maximum, suggestedAction: issue.suggestedAction }));
+  const preflight = RunPreflightReportSchema.safeParse(details.preflight);
+  if (preflight.success) result.preflight = preflight.data;
+  return result;
 }

@@ -1,13 +1,16 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { agentInboxItems, agentRunControlCommands, agentRunEvents, agentRunUsageEntries, agentRuns, auditEvents, createDatabase, jobAccounts, jobProfiles, jobTargetRevisions, jobTargets, migrateDatabase, profileFactRevisions, profileFacts, type Database } from "@job-copilot/database";
+import { agentInboxItems, agentRunControlCommands, agentRunEvents, agentRunSteps, agentRunUsageEntries, agentRuns, auditEvents, companyWatchlistRevisions, companyWatchlists, createDatabase, jobAccounts, jobProfiles, jobTargetRevisions, jobTargets, migrateDatabase, modelDiagnosticResults, profileFactRevisions, profileFacts, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
 import { AgentRunControlError, createAgentRunCheckpoint, createAgentRunCommands, type AgentRunQueue } from "./agent-runs";
 import { createCompanyWatchlistCommands } from "./company-watchlists";
-import { createDeepMatchRunStarter } from "./deep-match-agent-runs";
+import { createDeepMatchRunStarter as createDomainDeepMatchRunStarter } from "./deep-match-agent-runs";
 import { createAccountRunPolicies } from "./account-run-policies";
 import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-policies";
+import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
+import { RunPreflightRejectedError, createRunPreflightEvaluator } from "./run-preflight";
+import { createModelDiagnosticProjectionReader } from "./model-diagnostics";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
 const constraints = {
@@ -22,6 +25,10 @@ class MemoryQueue implements AgentRunQueue {
     if (this.fail) throw new Error("queue unavailable");
     this.jobs.push(job);
   }
+}
+
+function createDeepMatchRunStarter(deps: Omit<Parameters<typeof createDomainDeepMatchRunStarter>[0], "runPreflight"> & { runPreflight?: Parameters<typeof createDomainDeepMatchRunStarter>[0]["runPreflight"] }) {
+  return createDomainDeepMatchRunStarter({ ...deps, runPreflight: deps.runPreflight ?? createReadyRunPreflightEvaluator({ clock: deps.clock }) });
 }
 
 describe("agent run controls", () => {
@@ -44,13 +51,41 @@ describe("agent run controls", () => {
   }
 
   function commands(queue: AgentRunQueue) {
-    return createAgentRunCommands({ db: database, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    return createAgentRunCommands({ db: database, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) });
+  }
+
+  async function realEvaluatorWithFingerprint(clock: () => Date = () => now) {
+    const fingerprint = crypto.randomUUID();
+    await database.insert(modelDiagnosticResults).values({ configurationFingerprint: fingerprint, status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket: "under_1s", checkedAt: now });
+    return { fingerprint, evaluator: createRunPreflightEvaluator({
+      capabilityAdapter: { adapter: "greenhouse", adapterVersion: "test", declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring"] }) },
+      modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: fingerprint }), discoveryExecutionMode: "greenhouse", id: () => crypto.randomUUID(), clock,
+    }) };
+  }
+
+  async function realEvaluator(userId: string) {
+    void userId;
+    return (await realEvaluatorWithFingerprint()).evaluator;
+  }
+
+  function realCommands(queue: AgentRunQueue, runPreflight: Awaited<ReturnType<typeof realEvaluator>>) {
+    return createAgentRunCommands({ db: database, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse", runPreflight });
   }
 
   async function addGreenhouseWatchlistSource(userId: string, targetId: string): Promise<void> {
     await createCompanyWatchlistCommands({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).addItem({
       userId, targetId, requestId: crypto.randomUUID(),
       command: { expectedVersion: 0, canonicalCompanyName: "Example AI", careersUrl: "https://boards.greenhouse.io/example", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null },
+    });
+  }
+
+  async function disableOnlyGreenhouseWatchlistSource(userId: string, targetId: string): Promise<void> {
+    const [watchlist] = await database.select({ id: companyWatchlists.id, version: companyWatchlists.version }).from(companyWatchlists).where(and(eq(companyWatchlists.userId, userId), eq(companyWatchlists.targetId, targetId)));
+    const [revision] = await database.select({ items: companyWatchlistRevisions.items }).from(companyWatchlistRevisions).where(and(eq(companyWatchlistRevisions.userId, userId), eq(companyWatchlistRevisions.watchlistId, watchlist!.id), eq(companyWatchlistRevisions.version, watchlist!.version)));
+    await database.update(companyWatchlists).set({ version: watchlist!.version + 1, updatedAt: now }).where(eq(companyWatchlists.id, watchlist!.id));
+    await database.insert(companyWatchlistRevisions).values({
+      id: crypto.randomUUID(), userId, watchlistId: watchlist!.id, targetId, version: watchlist!.version + 1,
+      items: (revision!.items as Array<Record<string, unknown>>).map((item) => ({ ...item, state: "disabled" })), createdAt: now,
     });
   }
 
@@ -71,6 +106,176 @@ describe("agent run controls", () => {
     return createAgentRunCheckpoint({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => at }), id: () => crypto.randomUUID(), clock: () => at });
   }
 
+  it("ready preflight fixture 将报告中的策略证据与返回策略保持同一修订", async () => {
+    const { userId, targetId } = await activeTarget();
+    const settings = structuredClone(systemAccountRunPolicy().effective);
+    settings.budgets.fake.maxResults = 4;
+    await createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now }).save({ userId, command: { expectedVersion: 0, settings } });
+
+    const evaluation = await createReadyRunPreflightEvaluator({ clock: () => now }).evaluate(database, { userId, targetId, workflow: "discovery", trigger: "manual" });
+    const evidence = evaluation.report.items.find((item) => item.code === "ACCOUNT_RUN_POLICY_READY")!.evidence;
+    expect(evidence).toMatchObject({ kind: "account_run_policy", revisionNumber: evaluation.policy.revisionNumber });
+    expect(evaluation.policy.snapshot).toEqual(settings);
+  });
+
+  it("真实 preflight 在同一启动事务拒绝 blocked、要求当前 warning 确认，并原子保存 ready 快照", async () => {
+    const blocked = await activeTarget();
+    await addGreenhouseWatchlistSource(blocked.userId, blocked.targetId);
+    const blockedRuntime = realCommands(new MemoryQueue(), await realEvaluator(blocked.userId));
+    await expect(blockedRuntime.start({ userId: blocked.userId, requestId: crypto.randomUUID(), command: { targetId: blocked.targetId, idempotencyKey: crypto.randomUUID() } })).rejects.toMatchObject({ code: "RUN_PREFLIGHT_BLOCKED" } satisfies Partial<RunPreflightRejectedError>);
+    await expect(database.select().from(agentRuns).where(eq(agentRuns.userId, blocked.userId))).resolves.toHaveLength(0);
+    await expect(database.select().from(agentRunSteps).where(eq(agentRunSteps.userId, blocked.userId))).resolves.toHaveLength(0);
+    await expect(database.select().from(agentRunEvents).where(eq(agentRunEvents.userId, blocked.userId))).resolves.toHaveLength(0);
+
+    const ready = await activeTarget();
+    await addConfirmedSkills(ready.userId, ["TypeScript"]);
+    await addGreenhouseWatchlistSource(ready.userId, ready.targetId);
+    const evaluator = await realEvaluator(ready.userId);
+    const runtime = realCommands(new MemoryQueue(), evaluator);
+    const preflight = await evaluator.evaluate(database, { userId: ready.userId, targetId: ready.targetId, workflow: "discovery", trigger: "manual" });
+    expect(preflight.report.status).toBe("ready_with_warnings");
+    await expect(runtime.start({ userId: ready.userId, requestId: crypto.randomUUID(), command: { targetId: ready.targetId, idempotencyKey: crypto.randomUUID() } })).rejects.toMatchObject({ code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED", report: preflight.report });
+    const idempotencyKey = crypto.randomUUID();
+    const created = await runtime.start({ userId: ready.userId, requestId: crypto.randomUUID(), command: { targetId: ready.targetId, idempotencyKey, warningFingerprint: preflight.report.warningFingerprint } });
+    const [persisted] = await database.select({ preflightSnapshot: agentRuns.preflightSnapshot, policyRevision: agentRuns.accountPolicyRevisionNumber, policySnapshot: agentRuns.accountPolicySnapshot }).from(agentRuns).where(eq(agentRuns.id, created.runId));
+    expect(persisted).toEqual({ preflightSnapshot: preflight.report, policyRevision: preflight.policy.revisionNumber, policySnapshot: preflight.policy.snapshot });
+    await database.update(jobTargets).set({ state: "inactive" }).where(eq(jobTargets.id, ready.targetId));
+    await expect(runtime.start({ userId: ready.userId, requestId: crypto.randomUUID(), command: { targetId: ready.targetId, idempotencyKey } })).resolves.toMatchObject({ runId: created.runId, reused: true });
+
+    const stale = await activeTarget();
+    await addConfirmedSkills(stale.userId, ["TypeScript"]);
+    await addGreenhouseWatchlistSource(stale.userId, stale.targetId);
+    const staleEvaluator = await realEvaluator(stale.userId);
+    const pageReport = await staleEvaluator.evaluate(database, { userId: stale.userId, targetId: stale.targetId, workflow: "discovery", trigger: "manual" });
+    await database.update(jobTargets).set({ state: "inactive" }).where(eq(jobTargets.id, stale.targetId));
+    await expect(realCommands(new MemoryQueue(), staleEvaluator).start({ userId: stale.userId, requestId: crypto.randomUUID(), command: { targetId: stale.targetId, idempotencyKey: crypto.randomUUID(), warningFingerprint: pageReport.report.warningFingerprint } })).rejects.toMatchObject({ code: "RUN_PREFLIGHT_BLOCKED" } satisfies Partial<RunPreflightRejectedError>);
+    await expect(database.select().from(agentRuns).where(eq(agentRuns.userId, stale.userId))).resolves.toHaveLength(0);
+  });
+
+  it("页面预读后在启动事务重检五类权威 blocker，且不创建运行副作用", async () => {
+    const scenarios = [
+      {
+        name: "移除最后 active profile fact",
+        blockerCode: "PROFILE_EVIDENCE_MISSING",
+        mutate: async ({ userId }: { userId: string; targetId: string; fingerprint: string }) => {
+          await database.delete(profileFactRevisions).where(eq(profileFactRevisions.userId, userId));
+          await database.delete(profileFacts).where(eq(profileFacts.userId, userId));
+        },
+      },
+      {
+        name: "停用 requested target",
+        blockerCode: "REQUESTED_JOB_TARGET_INACTIVE",
+        mutate: async ({ targetId }: { userId: string; targetId: string; fingerprint: string }) => {
+          await database.update(jobTargets).set({ state: "inactive" }).where(eq(jobTargets.id, targetId));
+        },
+      },
+      {
+        name: "停用唯一 enabled real Greenhouse source",
+        blockerCode: "SOURCE_CAPABILITY_UNAVAILABLE",
+        mutate: async ({ userId, targetId }: { userId: string; targetId: string; fingerprint: string }) => {
+          await disableOnlyGreenhouseWatchlistSource(userId, targetId);
+        },
+      },
+      {
+        name: "将当前 deployment fingerprint 的模型诊断改为 failed",
+        blockerCode: "MODEL_DIAGNOSTIC_UNAVAILABLE",
+        mutate: async ({ fingerprint }: { userId: string; targetId: string; fingerprint: string }) => {
+          await database.insert(modelDiagnosticResults).values({ configurationFingerprint: fingerprint, status: "failed", checks: { authentication: "passed", modelAvailability: "failed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_LOW_COST_MODEL_UNAVAILABLE", latencyBucket: "under_1s", checkedAt: new Date(now.getTime() + 1) });
+        },
+      },
+      {
+        name: "将 relevant account policy budget 改为 0",
+        blockerCode: "ACCOUNT_RUN_POLICY_BLOCKED",
+        mutate: async ({ userId }: { userId: string; targetId: string; fingerprint: string }) => {
+          const settings = structuredClone(systemAccountRunPolicy().effective);
+          settings.budgets.publicDiscovery.maxResults = 0;
+          await createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now }).save({ userId, command: { expectedVersion: 0, settings } });
+        },
+      },
+    ] as const;
+
+    for (const scenario of scenarios) {
+      const { userId, targetId } = await activeTarget();
+      await addConfirmedSkills(userId, ["TypeScript"]);
+      await addGreenhouseWatchlistSource(userId, targetId);
+      const { evaluator, fingerprint } = await realEvaluatorWithFingerprint();
+      const page = await evaluator.evaluate(database, { userId, targetId, workflow: "discovery", trigger: "manual" });
+      expect(page.report).toMatchObject({ status: "ready_with_warnings", warningFingerprint: expect.any(String) });
+
+      await scenario.mutate({ userId, targetId, fingerprint });
+
+      await expect(realCommands(new MemoryQueue(), evaluator).start({
+        userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID(), warningFingerprint: page.report.warningFingerprint },
+      })).rejects.toMatchObject({
+        code: "RUN_PREFLIGHT_BLOCKED",
+        report: { status: "blocked", items: expect.arrayContaining([expect.objectContaining({ code: scenario.blockerCode, severity: "blocking" })]) },
+      });
+      await expect(database.select().from(agentRuns).where(eq(agentRuns.userId, userId))).resolves.toHaveLength(0);
+      await expect(database.select().from(agentRunSteps).where(eq(agentRunSteps.userId, userId))).resolves.toHaveLength(0);
+      await expect(database.select().from(agentRunEvents).where(eq(agentRunEvents.userId, userId))).resolves.toHaveLength(0);
+    }
+  });
+
+  it("真实 preflight 以账户边界隔离 target、warning fingerprint 和 idempotency key", async () => {
+    const owner = await activeTarget();
+    await addConfirmedSkills(owner.userId, ["TypeScript"]);
+    await addGreenhouseWatchlistSource(owner.userId, owner.targetId);
+    const ownerEvaluator = await realEvaluator(owner.userId);
+    const ownerReport = await ownerEvaluator.evaluate(database, { userId: owner.userId, targetId: owner.targetId, workflow: "discovery", trigger: "manual" });
+    const key = crypto.randomUUID();
+    const ownerRun = await realCommands(new MemoryQueue(), ownerEvaluator).start({ userId: owner.userId, requestId: crypto.randomUUID(), command: { targetId: owner.targetId, idempotencyKey: key, warningFingerprint: ownerReport.report.warningFingerprint } });
+
+    const other = await activeTarget();
+    await addConfirmedSkills(other.userId, ["TypeScript"]);
+    await addGreenhouseWatchlistSource(other.userId, other.targetId);
+    const otherEvaluator = await realEvaluator(other.userId);
+    const otherRuntime = realCommands(new MemoryQueue(), otherEvaluator);
+    await expect(otherRuntime.start({ userId: other.userId, requestId: crypto.randomUUID(), command: { targetId: owner.targetId, idempotencyKey: key, warningFingerprint: ownerReport.report.warningFingerprint } })).rejects.toMatchObject({ code: "RUN_PREFLIGHT_BLOCKED" } satisfies Partial<RunPreflightRejectedError>);
+    const otherReport = await otherEvaluator.evaluate(database, { userId: other.userId, targetId: other.targetId, workflow: "discovery", trigger: "manual" });
+    await expect(otherRuntime.start({ userId: other.userId, requestId: crypto.randomUUID(), command: { targetId: other.targetId, idempotencyKey: key, warningFingerprint: ownerReport.report.warningFingerprint } })).rejects.toMatchObject({ code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED", report: otherReport.report } satisfies Partial<RunPreflightRejectedError>);
+    const otherRun = await otherRuntime.start({ userId: other.userId, requestId: crypto.randomUUID(), command: { targetId: other.targetId, idempotencyKey: key, warningFingerprint: otherReport.report.warningFingerprint } });
+    expect(otherRun.runId).not.toBe(ownerRun.runId);
+    await expect(database.select().from(agentRuns).where(eq(agentRuns.idempotencyKey, key))).resolves.toHaveLength(2);
+  });
+
+  it("账户锁等待期间以锁后来源状态重算 warning fingerprint", async () => {
+    const owner = await activeTarget();
+    await addConfirmedSkills(owner.userId, ["TypeScript"]);
+    await addGreenhouseWatchlistSource(owner.userId, owner.targetId);
+    const beforeLock = now;
+    const afterLock = new Date(now.getTime() + 1_000);
+    let lockReleased = false;
+    const { evaluator } = await realEvaluatorWithFingerprint(() => lockReleased ? afterLock : beforeLock);
+    const page = await evaluator.evaluate(database, { userId: owner.userId, targetId: owner.targetId, workflow: "discovery", trigger: "manual" });
+    expect(page.report.checkedAt).toBe(beforeLock.toISOString());
+    let release!: () => void; let locked!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const acquired = new Promise<void>((resolve) => { locked = resolve; });
+    const holder = database.$client.begin(async (connection) => {
+      await connection.unsafe("select pg_advisory_xact_lock(hashtextextended($1, 0))", [owner.userId]);
+      locked(); await held;
+    });
+    await acquired;
+    try {
+      const start = realCommands(new MemoryQueue(), evaluator).start({ userId: owner.userId, requestId: crypto.randomUUID(), command: { targetId: owner.targetId, idempotencyKey: crypto.randomUUID(), warningFingerprint: page.report.warningFingerprint } });
+      const [watchlist] = await database.select({ id: companyWatchlists.id, items: companyWatchlistRevisions.items }).from(companyWatchlists).innerJoin(companyWatchlistRevisions, and(eq(companyWatchlistRevisions.watchlistId, companyWatchlists.id), eq(companyWatchlistRevisions.version, companyWatchlists.version))).where(eq(companyWatchlists.targetId, owner.targetId));
+      await database.update(companyWatchlists).set({ version: 2, updatedAt: now }).where(eq(companyWatchlists.id, watchlist!.id));
+      await database.insert(companyWatchlistRevisions).values({ id: crypto.randomUUID(), userId: owner.userId, watchlistId: watchlist!.id, targetId: owner.targetId, version: 2, items: [...watchlist!.items as object[], { itemId: crypto.randomUUID(), canonicalCompanyName: "Second", careersUrl: "https://boards.greenhouse.io/second", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null, state: "enabled", position: 2 }], createdAt: now });
+      lockReleased = true; release(); await holder;
+      const rejection = await start.then(() => null, (error: unknown) => error);
+      expect(rejection).toBeInstanceOf(RunPreflightRejectedError);
+      const report = (rejection as RunPreflightRejectedError).report;
+      expect((rejection as RunPreflightRejectedError).code).toBe("RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED");
+      expect(report.targetId).toBe(owner.targetId);
+      expect(report.checkedAt).toBe(afterLock.toISOString());
+      expect(report.warningFingerprint).not.toBe(page.report.warningFingerprint);
+      expect(report.items).toEqual(expect.arrayContaining([expect.objectContaining({ code: "SOURCE_CAPABILITY_READY", evidence: expect.objectContaining({ kind: "source_capability", enabledSourceCount: 2, capableSourceCount: 2, status: "ready", checkedAt: afterLock.toISOString() }) }), expect.objectContaining({ code: "SOURCE_HEALTH_UNCHECKED", evidence: expect.objectContaining({ kind: "source_health", uncheckedSourceCount: 2 }) })]));
+      await expect(database.select().from(agentRuns).where(eq(agentRuns.userId, owner.userId))).resolves.toHaveLength(0);
+      await expect(database.select().from(agentRunSteps).where(eq(agentRunSteps.userId, owner.userId))).resolves.toHaveLength(0);
+      await expect(database.select().from(agentRunEvents).where(eq(agentRunEvents.userId, owner.userId))).resolves.toHaveLength(0);
+    } finally { release(); await holder.catch(() => undefined); }
+  }, 15_000);
+
   it("重放同一暂停命令时返回首次快照且只写一次事件、控制记录和审计", async () => {
     const { userId, targetId } = await activeTarget();
     const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
@@ -90,7 +295,7 @@ describe("agent run controls", () => {
     await addGreenhouseWatchlistSource(userId, targetId);
     const runtimeCommands = createAgentRunCommands({
       db: database, queue: new MemoryQueue(), auditTrail: createAuditTrail({ db: database, clock: () => now }),
-      id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse",
+      id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse", runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }),
     });
     const manual = await runtimeCommands.start({
       userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() },
@@ -110,18 +315,22 @@ describe("agent run controls", () => {
     const settings = structuredClone(systemAccountRunPolicy().effective);
     settings.discovery.trustedSourceLimit = 0;
     await createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now }).save({ userId, command: { expectedVersion: 0, settings } });
-    const runtime = createAgentRunCommands({ db: database, queue: new MemoryQueue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse" });
+    const runtime = createAgentRunCommands({ db: database, queue: new MemoryQueue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse", runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) });
     await expect(runtime.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } })).rejects.toMatchObject({ code: "AGENT_RUN_UNAVAILABLE" });
   });
 
   it("计划触发在启动事务内复核同次策略窗口，手动运行不受该窗口限制", async () => {
     const { userId, targetId } = await activeTarget();
+    await addConfirmedSkills(userId, ["TypeScript"]);
+    await addGreenhouseWatchlistSource(userId, targetId);
     const settings = structuredClone(systemAccountRunPolicy().effective);
     settings.backgroundWindow = { start: "19:00", end: "21:00", timeZone: "Asia/Shanghai" };
     await createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now }).save({ userId, command: { expectedVersion: 0, settings } });
-    const runtime = commands(new MemoryQueue());
-    await expect(runtime.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() }, trigger: { kind: "schedule", occurrenceId: crypto.randomUUID(), scheduledFor: new Date("2026-08-29T16:00:00.000Z") } })).rejects.toMatchObject({ code: "AGENT_RUN_UNAVAILABLE" });
-    await expect(runtime.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() }, trigger: { kind: "manual" } })).resolves.toMatchObject({ accountPolicyRevisionNumber: 1 });
+    const preflight = await realEvaluator(userId);
+    const runtime = realCommands(new MemoryQueue(), preflight);
+    await expect(runtime.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() }, trigger: { kind: "schedule", occurrenceId: crypto.randomUUID(), scheduledFor: new Date("2026-08-29T16:00:00.000Z") } })).rejects.toMatchObject({ code: "RUN_PREFLIGHT_BLOCKED" });
+    const manual = await preflight.evaluate(database, { userId, targetId, workflow: "discovery", trigger: "manual" });
+    await expect(runtime.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID(), warningFingerprint: manual.report.warningFingerprint }, trigger: { kind: "manual" } })).resolves.toMatchObject({ accountPolicyRevisionNumber: 1 });
   });
 
   it("等待账户锁跨越窗口边界后，以取得锁后的时刻校验计划触发", async () => {
@@ -144,7 +353,7 @@ describe("agent run controls", () => {
     await lockHeld;
     const runtime = createAgentRunCommands({
       db: database, queue: new MemoryQueue(), auditTrail: createAuditTrail({ db: database, clock: () => released ? afterLock : beforeLock }),
-      id: () => crypto.randomUUID(), clock: () => released ? afterLock : beforeLock,
+      id: () => crypto.randomUUID(), clock: () => released ? afterLock : beforeLock, runPreflight: createReadyRunPreflightEvaluator({ clock: () => released ? afterLock : beforeLock }),
     });
     const start = runtime.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() }, trigger: { kind: "schedule", occurrenceId: crypto.randomUUID(), scheduledFor: afterLock } });
     released = true;
@@ -161,7 +370,7 @@ describe("agent run controls", () => {
     const policies = createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now });
     const firstSettings = structuredClone(systemAccountRunPolicy().effective); firstSettings.discovery.trustedSourceLimit = 1;
     await policies.save({ userId, command: { expectedVersion: 0, settings: firstSettings } });
-    const greenhouse = (queue: AgentRunQueue) => createAgentRunCommands({ db: database, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse" });
+    const greenhouse = (queue: AgentRunQueue) => createAgentRunCommands({ db: database, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse", runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) });
     const key = crypto.randomUUID();
     const first = await greenhouse(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: key } });
     expect(first).toMatchObject({ accountPolicyRevisionNumber: 1, sourceScope: { sources: [expect.objectContaining({ sourceId: "greenhouse:first" })] } });
@@ -185,7 +394,7 @@ describe("agent run controls", () => {
     settings.discovery.verificationCandidateLimit = 2;
     settings.discovery.enabledProviders = [];
     await createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now }).save({ userId, command: { expectedVersion: 0, settings } });
-    const layered = createAgentRunCommands({ db: database, queue: new MemoryQueue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public" });
+    const layered = createAgentRunCommands({ db: database, queue: new MemoryQueue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public", runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) });
 
     await expect(layered.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } })).resolves.toMatchObject({
       accountPolicyRevisionNumber: 1,
@@ -203,7 +412,7 @@ describe("agent run controls", () => {
     await addConfirmedSkills(userId, ["TypeScript", "React"]);
     const runtimeCommands = createAgentRunCommands({
       db: database, queue: new MemoryQueue(), auditTrail: createAuditTrail({ db: database, clock: () => now }),
-      id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public",
+      id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public", runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }),
     });
 
     const manual = await runtimeCommands.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
@@ -361,7 +570,7 @@ describe("agent run controls", () => {
     await expect(database.select({ revision: agentRuns.accountPolicyRevisionNumber, budget: agentRuns.budgetSnapshot }).from(agentRuns).where(eq(agentRuns.id, first.runId))).resolves.toEqual([{ revision: 1, budget: expect.objectContaining({ maxResults: 1, maxModelCalls: 1 }) }]);
     const secondSettings = structuredClone(firstSettings); secondSettings.budgets.deepMatch.maxResults = 2; secondSettings.budgets.deepMatch.maxModelCalls = 2;
     await policies.save({ userId, command: { expectedVersion: 1, settings: secondSettings } });
-    await expect(starter.start({ userId, targetId, opportunityId: crypto.randomUUID(), idempotencyKey: key, trigger: "manual" })).resolves.toEqual({ runId: first.runId, reused: true });
+    await expect(starter.start({ userId, targetId, opportunityId: crypto.randomUUID(), idempotencyKey: key, trigger: "manual" })).resolves.toEqual({ kind: "created", runId: first.runId, reused: true });
     const second = await starter.start({ userId, targetId, opportunityId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID(), trigger: "manual" });
     await expect(database.select({ revision: agentRuns.accountPolicyRevisionNumber, budget: agentRuns.budgetSnapshot }).from(agentRuns).where(eq(agentRuns.id, second.runId))).resolves.toEqual([{ revision: 2, budget: expect.objectContaining({ maxResults: 2, maxModelCalls: 2 }) }]);
 
@@ -370,7 +579,7 @@ describe("agent run controls", () => {
     await expect(database.select({ revision: agentRuns.accountPolicyRevisionNumber, budget: agentRuns.budgetSnapshot }).from(agentRuns).where(eq(agentRuns.id, automatic.runId))).resolves.toEqual([{ revision: 2, budget: expect.objectContaining({ maxResults: 2, maxModelCalls: 2 }) }]);
     const thirdSettings = structuredClone(secondSettings); thirdSettings.budgets.deepMatch.maxResults = 1; thirdSettings.budgets.deepMatch.maxModelCalls = 1;
     await policies.save({ userId, command: { expectedVersion: 2, settings: thirdSettings } });
-    await expect(starter.start({ userId, targetId, discoveryRunId: crypto.randomUUID(), idempotencyKey: automaticKey, trigger: "automatic" })).resolves.toEqual({ runId: automatic.runId, reused: true });
+    await expect(starter.start({ userId, targetId, discoveryRunId: crypto.randomUUID(), idempotencyKey: automaticKey, trigger: "automatic" })).resolves.toEqual({ kind: "created", runId: automatic.runId, reused: true });
     const laterAutomatic = await starter.start({ userId, targetId, discoveryRunId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID(), trigger: "automatic" });
     await expect(database.select({ revision: agentRuns.accountPolicyRevisionNumber, budget: agentRuns.budgetSnapshot }).from(agentRuns).where(eq(agentRuns.id, laterAutomatic.runId))).resolves.toEqual([{ revision: 3, budget: expect.objectContaining({ maxResults: 1, maxModelCalls: 1 }) }]);
   });
