@@ -41,7 +41,7 @@ test("从运行设置进入模型连接页并以受控 Fake 展示稳定状态",
   await enterModelConnection(page);
   const status = page.getByRole("status");
   const unverified = await status.textContent().then((text) => text?.includes("尚未完成模型连接检查"));
-  const firstSelectedProject = testInfo.config.projects[0]?.name;
+  const firstSelectedProject = process.env.E2E_MODEL_DIAGNOSTIC_INITIAL_PROJECT ?? "Desktop Chrome";
   if (testInfo.retry === 0 && testInfo.project.name === firstSelectedProject) await expect(status).toContainText("尚未完成模型连接检查");
   if (unverified) await expect(status).toContainText("尚未完成模型连接检查");
 

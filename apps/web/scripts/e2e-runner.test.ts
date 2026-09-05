@@ -51,6 +51,16 @@ describe("E2E runner", () => {
     expect(await selectE2EPhases(["e2e/model-diagnostics.spec.ts", "--project", "Mobile Safari"])).toEqual(["model-diagnostics-success", "model-diagnostics-failed", "model-diagnostics-temporarily-unavailable"]);
   });
 
+  it("模型诊断 phase 从实际 --project 参数注入初始项目，并覆盖遗留值", async () => {
+    const calls: RunnerCall[] = [];
+    await executeE2E(["e2e/model-diagnostics.spec.ts", "--project", "Mobile Safari"], { environment: { ...baseEnvironment, E2E_MODEL_DIAGNOSTIC_INITIAL_PROJECT: "stale" }, run: async (call: RunnerCall) => { calls.push(call); return { code: 0, stdout: "" }; } });
+    expect(calls).toHaveLength(3);
+    expect(calls.map((call) => call.environment.E2E_MODEL_DIAGNOSTIC_INITIAL_PROJECT)).toEqual(["Mobile Safari", "Mobile Safari", "Mobile Safari"]);
+    const defaultCalls: RunnerCall[] = [];
+    await executeE2E(["e2e/model-diagnostics.spec.ts"], { environment: baseEnvironment, run: async (call: RunnerCall) => { defaultCalls.push(call); return { code: 0, stdout: "" }; } });
+    expect(defaultCalls.map((call) => call.environment.E2E_MODEL_DIAGNOSTIC_INITIAL_PROJECT)).toEqual(["Desktop Chrome", "Desktop Chrome", "Desktop Chrome"]);
+  });
+
   it.each([
     [["e2e/anysearch-public-job-discovery.spec.ts", "e2e/workbench-inbox.spec.ts"], ["anysearch-configured", "anysearch-missing-key", "ordinary", "workbench-inbox"]],
     [["e2e/anysearch-public-job-discovery.spec.ts", "e2e/source-health.spec.ts"], ["anysearch-configured", "anysearch-missing-key", "source-health"]],

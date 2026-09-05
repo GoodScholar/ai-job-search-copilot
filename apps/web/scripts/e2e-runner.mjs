@@ -16,9 +16,18 @@ export function normalizeE2EArguments(arguments_) {
   return arguments_[0] === "--" ? arguments_.slice(1) : arguments_;
 }
 
-function phaseEnvironment(phase, environment) {
+function initialProject(args) {
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] === "--project") return args[index + 1] ?? "Desktop Chrome";
+    if (args[index]?.startsWith("--project=")) return args[index].slice("--project=".length) || "Desktop Chrome";
+  }
+  return "Desktop Chrome";
+}
+
+function phaseEnvironment(phase, environment, args = []) {
   const baseEnvironment = { ...environment };
   delete baseEnvironment.E2E_MODEL_DIAGNOSTIC_SCENARIO;
+  delete baseEnvironment.E2E_MODEL_DIAGNOSTIC_INITIAL_PROJECT;
   delete baseEnvironment.E2E_ANYSEARCH_PUBLIC_JOB_PHASE;
   delete baseEnvironment.ANYSEARCH_BASE_URL;
   delete baseEnvironment.ANYSEARCH_PROVIDER_BASE_URL;
@@ -29,9 +38,9 @@ function phaseEnvironment(phase, environment) {
   }
   delete baseEnvironment.E2E_SOURCE_HEALTH_ONLY;
   if (phase === "source-health") return { ...baseEnvironment, E2E_SOURCE_HEALTH_ONLY: "1" };
-  if (phase === "model-diagnostics-success") return { ...baseEnvironment, E2E_MODEL_DIAGNOSTIC_SCENARIO: "success" };
-  if (phase === "model-diagnostics-failed") return { ...baseEnvironment, E2E_MODEL_DIAGNOSTIC_SCENARIO: "authentication_failed" };
-  if (phase === "model-diagnostics-temporarily-unavailable") return { ...baseEnvironment, E2E_MODEL_DIAGNOSTIC_SCENARIO: "provider_unavailable" };
+  if (phase === "model-diagnostics-success") return { ...baseEnvironment, E2E_MODEL_DIAGNOSTIC_SCENARIO: "success", E2E_MODEL_DIAGNOSTIC_INITIAL_PROJECT: initialProject(args) };
+  if (phase === "model-diagnostics-failed") return { ...baseEnvironment, E2E_MODEL_DIAGNOSTIC_SCENARIO: "authentication_failed", E2E_MODEL_DIAGNOSTIC_INITIAL_PROJECT: initialProject(args) };
+  if (phase === "model-diagnostics-temporarily-unavailable") return { ...baseEnvironment, E2E_MODEL_DIAGNOSTIC_SCENARIO: "provider_unavailable", E2E_MODEL_DIAGNOSTIC_INITIAL_PROJECT: initialProject(args) };
   return phase === "workbench-inbox" ? { ...baseEnvironment, E2E_WORKBENCH_INBOX_SOURCE_ONLY: "1" } : baseEnvironment;
 }
 
@@ -75,7 +84,7 @@ export async function selectE2EPhases(arguments_, run) {
 }
 
 export async function executeE2E(arguments_, { environment = process.env, run }) {
-  const phaseRun = (call) => run({ ...call, environment: phaseEnvironment(call.phase, environment) });
+  const phaseRun = (call) => run({ ...call, environment: phaseEnvironment(call.phase, environment, call.args) });
   const selected = await selectE2EPhases(arguments_, phaseRun);
   if ("signal" in selected) return { signal: selected.signal };
   if ("error" in selected) return { code: selected.error.code ?? 1, signal: selected.error.signal };
