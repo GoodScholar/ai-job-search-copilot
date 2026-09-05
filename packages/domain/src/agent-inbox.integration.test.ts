@@ -211,7 +211,7 @@ describe("agent inbox", () => {
       db: database,
       commands: {
         async start(input) {
-          received.push({ warningFingerprint: input.command.warningFingerprint });
+          received.push({ warningFingerprint: input.command.warningFingerprint ?? null });
           if (input.command.warningFingerprint !== warningFingerprint) throw new RunPreflightRejectedError("RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED", report);
           return commandService.start(input);
         },
