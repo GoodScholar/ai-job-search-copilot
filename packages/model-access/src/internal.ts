@@ -33,11 +33,12 @@ export type ModelDiagnosticTestTransport = (input: { url: string; init: RequestI
 
 type AttemptKind = "success" | "authentication_failed" | "access_restricted" | "low_cost_model_unavailable" | "high_quality_model_unavailable" | "strict_output_unsupported" | "timeout" | "rate_limited" | "provider_unavailable" | "generic_failure";
 type Attempt = { kind: AttemptKind; checks: ModelDiagnosticChecks };
-export type ModelDiagnosticTestOptions = { now?: () => number };
+/** 测试工厂专用；生产构造器不能覆盖诊断版本。 */
+export type ModelDiagnosticTestOptions = { now?: () => number; diagnosticVersion?: string };
 
 export function createInternalOpenAiModelDiagnosticAdapter(config: OpenAiModelDiagnosticConfig, transport: ModelDiagnosticTestTransport = fetchTransport, options: ModelDiagnosticTestOptions = {}): ModelDiagnosticAdapter {
   const normalized = normalizeConfig(config);
-  const configurationFingerprint = fingerprint(normalized);
+  const configurationFingerprint = fingerprint(normalized, options.diagnosticVersion ?? DIAGNOSTIC_VERSION);
   const now = options.now ?? Date.now;
 
   return {
@@ -107,6 +108,7 @@ function requestFor(model: string, config: NormalizedConfig): RequestInit {
     redirect: "error",
     body: JSON.stringify({
       model,
+      store: false,
       input: [{ role: "user", content: [{ type: "input_text", text: "Return the requested JSON object." }] }],
       reasoning: { effort: "none" },
       max_output_tokens: 256,
@@ -239,9 +241,9 @@ function normalizeConfig(config: OpenAiModelDiagnosticConfig): NormalizedConfig 
   };
 }
 
-function fingerprint(config: NormalizedConfig): string {
+function fingerprint(config: NormalizedConfig, diagnosticVersion: string): string {
   return createHash("sha256").update(JSON.stringify({
-    version: DIAGNOSTIC_VERSION,
+    version: diagnosticVersion,
     endpoint: config.endpoint,
     organization: config.organization,
     project: config.project,

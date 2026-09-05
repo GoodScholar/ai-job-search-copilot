@@ -97,10 +97,15 @@ describe("模型连接诊断持久化协调", () => {
 
   it("Adapter 忽略取消并永不结束时仍在总截止后持久化超时并释放锁", async () => {
     fresh(); const fingerprint = `never-settles-${crypto.randomUUID()}`;
-    const never: ModelDiagnosticAdapter = { configurationFingerprint: fingerprint, diagnose: async () => new Promise<ModelDiagnosticProbeResult>(() => undefined) };
-    await expect(service(never, 1).run()).resolves.toMatchObject({ status: "temporarily_unavailable", reasonCode: "MODEL_DIAGNOSTIC_TIMEOUT", latencyBucket: "timeout", checks: { timeout: "failed" } });
-    const next = adapter(fingerprint);
-    await expect(service(next.value, 1).run()).resolves.not.toMatchObject({ status: "checking" });
+    let calls = 0;
+    const firstThenAvailable: ModelDiagnosticAdapter = { configurationFingerprint: fingerprint, diagnose: async () => ++calls === 1 ? new Promise<ModelDiagnosticProbeResult>(() => undefined) : available };
+    const timedOut = await service(firstThenAvailable, 1).run();
+    expect(timedOut).toMatchObject({ status: "temporarily_unavailable", reasonCode: "MODEL_DIAGNOSTIC_TIMEOUT", latencyBucket: "timeout", checks: { timeout: "failed" } });
+    now = new Date(timedOut.retryAt!);
+    const other = createDatabase(container.getConnectionUri());
+    try { await expect(createModelDiagnostics({ db: other, adapter: firstThenAvailable, clock: () => now, timeoutMs: 1 }).run()).resolves.toMatchObject({ status: "available" }); }
+    finally { await other.$client.end(); }
+    expect(calls).toBe(2);
   });
 
   it("成功会重置连续失败退避，全部稳定原因码都有受限中文投影", async () => {
@@ -109,10 +114,12 @@ describe("模型连接诊断持久化协调", () => {
     now = new Date("2026-09-05T02:00:30.000Z"); const succeeding = adapter(fingerprint); await service(succeeding.value).run();
     now = new Date("2026-09-05T02:10:30.000Z"); const failingAgain = adapter(fingerprint, unavailable); const reset = await service(failingAgain.value).run();
     expect(reset.retryAt).toBe("2026-09-05T02:11:00.000Z");
-    const reasons: ModelDiagnosticProbeResult["reasonCode"][] = ["MODEL_DIAGNOSTIC_AVAILABLE", "MODEL_DIAGNOSTIC_CONFIGURATION_MISSING", "MODEL_DIAGNOSTIC_AUTHENTICATION_FAILED", "MODEL_DIAGNOSTIC_ACCESS_RESTRICTED", "MODEL_DIAGNOSTIC_LOW_COST_MODEL_UNAVAILABLE", "MODEL_DIAGNOSTIC_HIGH_QUALITY_MODEL_UNAVAILABLE", "MODEL_DIAGNOSTIC_STRICT_OUTPUT_UNSUPPORTED", "MODEL_DIAGNOSTIC_TIMEOUT", "MODEL_DIAGNOSTIC_RATE_LIMITED", "MODEL_DIAGNOSTIC_PROVIDER_UNAVAILABLE", "MODEL_DIAGNOSTIC_FAILED"];
-    for (const reasonCode of reasons) {
+    const reasons: Array<[ModelDiagnosticProbeResult["reasonCode"], string, string, string[]]> = [
+      ["MODEL_DIAGNOSTIC_AVAILABLE", "模型连接正常", "两档业务模型可以执行受限诊断。", []], ["MODEL_DIAGNOSTIC_CONFIGURATION_MISSING", "模型服务尚未配置", "当前部署无法发起模型请求。", ["请联系部署管理员配置模型服务。"]], ["MODEL_DIAGNOSTIC_AUTHENTICATION_FAILED", "模型服务认证失败", "模型功能暂不可用。", ["请联系部署管理员检查服务凭据。"]], ["MODEL_DIAGNOSTIC_ACCESS_RESTRICTED", "模型服务访问受限", "当前部署无法使用所需模型能力。", ["请联系部署管理员检查访问权限。"]], ["MODEL_DIAGNOSTIC_LOW_COST_MODEL_UNAVAILABLE", "基础模型不可用", "部分模型功能暂不可用。", ["请稍后重试。", "如持续出现，请联系部署管理员。"]], ["MODEL_DIAGNOSTIC_HIGH_QUALITY_MODEL_UNAVAILABLE", "高质量模型不可用", "需要高质量模型的功能暂不可用。", ["请稍后重试。", "如持续出现，请联系部署管理员。"]], ["MODEL_DIAGNOSTIC_STRICT_OUTPUT_UNSUPPORTED", "模型返回格式异常", "模型结果暂不能安全用于求职流程。", ["请稍后重试。", "如持续出现，请联系部署管理员。"]], ["MODEL_DIAGNOSTIC_TIMEOUT", "模型服务响应超时", "模型功能暂时不可用。", ["请稍后重试。"]], ["MODEL_DIAGNOSTIC_RATE_LIMITED", "模型服务暂时繁忙", "模型功能暂时不可用。", ["请稍后重试。"]], ["MODEL_DIAGNOSTIC_PROVIDER_UNAVAILABLE", "模型服务暂不可用", "模型功能暂时不可用。", ["请稍后重试。"]], ["MODEL_DIAGNOSTIC_FAILED", "模型连接检查失败", "模型功能暂时不可用。", ["请稍后重试。", "如持续出现，请联系部署管理员。"]],
+    ];
+    for (const [reasonCode, reasonSummary, impact, suggestedActions] of reasons) {
       const projected = await service(adapter(`reason-${reasonCode}-${crypto.randomUUID()}`, { ...unavailable, reasonCode }).value).run();
-      expect(projected.reasonSummary).toMatch(/[\u4e00-\u9fff]/u); expect(projected.impact).toMatch(/[\u4e00-\u9fff]/u); expect(projected.suggestedActions.length).toBeLessThanOrEqual(3);
+      expect(projected).toMatchObject({ reasonSummary, impact, suggestedActions });
     }
   });
 });

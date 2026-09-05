@@ -174,6 +174,7 @@ describe("OpenAI 模型诊断 adapter", () => {
     expect(calls.map((call) => call.url)).toEqual(["https://openai.example.test/v1/responses", "https://openai.example.test/v1/responses"]);
     for (const call of calls) {
       expect(call.init.redirect).toBe("error");
+      expect(JSON.parse(String(call.init.body))).toMatchObject({ store: false });
       expect(call.init.signal).toBeInstanceOf(AbortSignal);
       const request = JSON.parse(String(call.init.body));
       expect(request).toMatchObject({
@@ -311,6 +312,12 @@ describe("OpenAI 模型诊断 adapter", () => {
     expect(first.configurationFingerprint).not.toBe(changedProject.configurationFingerprint);
     expect(first.configurationFingerprint).not.toBe(changedHighQualityModel.configurationFingerprint);
     expect(first.configurationFingerprint).not.toContain(configuration.apiKey);
+  });
+
+  it("仅测试工厂可变更诊断版本并使同一配置的指纹失效", () => {
+    const v1 = createOpenAiModelDiagnosticAdapterForTest(configuration, async () => responseFor({ kind: "success" }, "gpt-5.6-luna"), { diagnosticVersion: "probe-v1" });
+    const v2 = createOpenAiModelDiagnosticAdapterForTest(configuration, async () => responseFor({ kind: "success" }, "gpt-5.6-luna"), { diagnosticVersion: "probe-v2" });
+    expect(v1.configurationFingerprint).not.toBe(v2.configurationFingerprint);
   });
 
   it.each([{ apiKey: "" }, { endpoint: "not-a-url" }, { lowCostModel: "" }, { highQualityModel: "" }])("配置 %o 无效时以稳定失败返回且不发出外部请求", async (invalid) => {

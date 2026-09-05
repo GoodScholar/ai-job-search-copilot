@@ -27,6 +27,7 @@ import { RECOMMENDATION_FEEDBACK_COMMANDS, RECOMMENDATION_FEEDBACK_QUERIES } fro
 import { z } from "zod";
 
 const testSecret = "test-dev-auth-shared-secret-must-be-at-least-32-characters";
+const diagnosticSecretSentinels = ["openai-key-sentinel", "configuration-fingerprint-sentinel", "organization-sentinel", "project-sentinel", "model-id-sentinel", "provider-request-sentinel"] as const;
 const capturedLogs: unknown[][] = [];
 const recordLog = (...args: unknown[]) => { capturedLogs.push(args); };
 const testLogger = {
@@ -180,6 +181,12 @@ describe("authenticated workbench HTTP API", () => {
     AUTH_MODE: process.env.AUTH_MODE,
     DEV_AUTH_SHARED_SECRET: process.env.DEV_AUTH_SHARED_SECRET,
     DATABASE_URL: process.env.DATABASE_URL,
+    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+    OPENAI_ENDPOINT: process.env.OPENAI_ENDPOINT,
+    OPENAI_ORGANIZATION: process.env.OPENAI_ORGANIZATION,
+    OPENAI_PROJECT: process.env.OPENAI_PROJECT,
+    OPENAI_LOW_COST_MODEL: process.env.OPENAI_LOW_COST_MODEL,
+    OPENAI_HIGH_QUALITY_MODEL: process.env.OPENAI_HIGH_QUALITY_MODEL,
   };
 
   beforeAll(async () => {
@@ -191,6 +198,7 @@ describe("authenticated workbench HTTP API", () => {
       AUTH_MODE: "dev",
       DEV_AUTH_SHARED_SECRET: testSecret,
       DATABASE_URL: container.getConnectionUri(),
+      OPENAI_API_KEY: diagnosticSecretSentinels[0], OPENAI_ENDPOINT: "https://configuration-fingerprint-sentinel.example.test", OPENAI_ORGANIZATION: diagnosticSecretSentinels[2], OPENAI_PROJECT: diagnosticSecretSentinels[3], OPENAI_LOW_COST_MODEL: diagnosticSecretSentinels[4], OPENAI_HIGH_QUALITY_MODEL: "high-model-id-sentinel",
     });
 
     const module = await Test.createTestingModule({ imports: [AppModule] })
@@ -268,6 +276,7 @@ describe("authenticated workbench HTTP API", () => {
   });
 
   it("仅允许已认证会话读取或运行脱敏模型诊断，并禁止 HTTP 缓存", async () => {
+    capturedLogs.length = 0;
     const anonymous = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/model-diagnostics" });
     expect(anonymous.statusCode).toBe(401); expect(anonymous.headers["cache-control"]).toBe("no-store");
     const session = await createSession(app, `model-diagnostic-${crypto.randomUUID()}`);
@@ -278,10 +287,12 @@ describe("authenticated workbench HTTP API", () => {
     const noBody = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/model-diagnostics", headers: bearer(session.sessionToken) });
     expect(noBody.statusCode).toBe(201); expect(noBody.headers["cache-control"]).toBe("no-store");
     expect(Object.keys(post.json())).not.toEqual(expect.arrayContaining(["configurationFingerprint", "apiKey", "providerResponse", "organization", "project", "model"]));
-    const invalid = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/model-diagnostics", headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: { ignored: true } });
+    const invalid = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/model-diagnostics", headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: { ignored: diagnosticSecretSentinels[5] } });
     expect(invalid.statusCode).toBe(400); expect(invalid.headers["cache-control"]).toBe("no-store");
     const postAnonymous = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/model-diagnostics" });
     expect(postAnonymous.statusCode).toBe(401); expect(postAnonymous.headers["cache-control"]).toBe("no-store");
+    const exposed = `${post.body}${get.body}${invalid.body}${postAnonymous.body}${normalizedLogText(capturedLogs)}`;
+    for (const sentinel of diagnosticSecretSentinels) expect(exposed).not.toContain(sentinel);
   });
 
   it("hides dev auth behind the server secret", async () => {
