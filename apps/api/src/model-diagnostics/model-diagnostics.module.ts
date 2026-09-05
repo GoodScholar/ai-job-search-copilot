@@ -1,4 +1,5 @@
 import { MiddlewareConsumer, Module, NestModule } from "@nestjs/common";
+import { randomUUID } from "node:crypto";
 import type { Database } from "@job-copilot/database";
 import { createModelDiagnostics } from "@job-copilot/domain/model-diagnostics";
 import { createOpenAiModelDiagnosticAdapter } from "@job-copilot/model-access";
@@ -10,6 +11,7 @@ import { ModelDiagnosticsController } from "./model-diagnostics.controller.js";
 import { MODEL_DIAGNOSTICS } from "./model-diagnostics.tokens.js";
 
 const testScenarios = ["success", "authentication_failed", "provider_unavailable"] as const;
+const testFingerprintSeed = randomUUID();
 function testScenario(appEnv: string): ModelDiagnosticFakeScenario {
   const configured = process.env.E2E_MODEL_DIAGNOSTIC_SCENARIO;
   if (configured !== undefined && appEnv !== "test") throw new Error("MODEL_DIAGNOSTIC_TEST_SCENARIO_DISABLED");
@@ -22,7 +24,7 @@ function testScenario(appEnv: string): ModelDiagnosticFakeScenario {
   providers: [{
     provide: MODEL_DIAGNOSTICS, inject: [DATABASE, RUNTIME_CONFIG],
     useFactory: (db: Database, config: RuntimeConfig) => createModelDiagnostics({
-      db, clock: () => new Date(), adapter: config.APP_ENV === "test" ? createFakeModelDiagnosticAdapter(testScenario(config.APP_ENV)) : createOpenAiModelDiagnosticAdapter({ ...config.openAi, apiKey: config.openAi.apiKey ?? "" }),
+      db, clock: () => new Date(), adapter: config.APP_ENV === "test" ? createFakeModelDiagnosticAdapter(testScenario(config.APP_ENV), testFingerprintSeed) : createOpenAiModelDiagnosticAdapter({ ...config.openAi, apiKey: config.openAi.apiKey ?? "" }),
     }),
   }], exports: [MODEL_DIAGNOSTICS],
 })

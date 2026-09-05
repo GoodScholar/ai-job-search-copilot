@@ -27,9 +27,9 @@ export function createOpenAiModelDiagnosticAdapterForTest(config: OpenAiModelDia
   return createInternalOpenAiModelDiagnosticAdapter(config, transport, options);
 }
 
-export function createFakeModelDiagnosticAdapter(scenario: ModelDiagnosticFakeScenario): ModelDiagnosticAdapter {
+export function createFakeModelDiagnosticAdapter(scenario: ModelDiagnosticFakeScenario, fingerprintSeed?: string): ModelDiagnosticAdapter {
   return {
-    configurationFingerprint: `fake-model-diagnostic-${scenario.kind}`,
+    configurationFingerprint: `fake-model-diagnostic-${scenario.kind}${fingerprintSeed ? `-${fingerprintSeed}` : ""}`,
     async diagnose() {
       return fakeResult(scenario.kind);
     },

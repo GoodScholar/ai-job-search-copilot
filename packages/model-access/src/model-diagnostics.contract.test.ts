@@ -320,6 +320,12 @@ describe("OpenAI 模型诊断 adapter", () => {
     expect(v1.configurationFingerprint).not.toBe(v2.configurationFingerprint);
   });
 
+  it("测试 Fake seed 仅隔离指纹，不进入诊断返回对象", async () => {
+    const first = createFakeModelDiagnosticAdapter({ kind: "success" }, "one"); const second = createFakeModelDiagnosticAdapter({ kind: "success" }, "two");
+    expect(first.configurationFingerprint).not.toBe(second.configurationFingerprint);
+    await expect(first.diagnose({ signal: new AbortController().signal })).resolves.not.toHaveProperty("fingerprintSeed");
+  });
+
   it("测试契约每个固定请求字段变动均使指纹失效并进入实际请求", async () => {
     const base = { method: "POST", path: "/responses", contentType: "application/json", redirect: "error" as RequestRedirect, store: false, input: [{ role: "user", content: [{ type: "input_text", text: "Return the requested JSON object." }] }], reasoningEffort: "none", maxOutputTokens: 256, format: { type: "json_schema", name: "model_diagnostic_probe", strict: true, schema: { type: "object", additionalProperties: false, required: ["probe"], properties: { probe: { type: "string", enum: ["ok"] } } } }, timeoutMs: 20_000 };
     const variants = [ { ...base, method: "PUT" }, { ...base, path: "/other" }, { ...base, contentType: "application/problem+json" }, { ...base, redirect: "manual" as RequestRedirect }, { ...base, store: true }, { ...base, input: [{ role: "developer", content: base.input[0]!.content }] }, { ...base, input: [{ role: "user", content: [{ type: "other", text: base.input[0]!.content[0]!.text }] }] }, { ...base, input: [{ role: "user", content: [{ type: "input_text", text: "changed" }] }] }, { ...base, reasoningEffort: "low" }, { ...base, maxOutputTokens: 257 }, { ...base, format: { ...base.format, type: "other" } }, { ...base, format: { ...base.format, name: "other" } }, { ...base, format: { ...base.format, strict: false } }, { ...base, format: { ...base.format, schema: { ...base.format.schema, required: ["changed"] } } }, { ...base, timeoutMs: 19_999 } ];
