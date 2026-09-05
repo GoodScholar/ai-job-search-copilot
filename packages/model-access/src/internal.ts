@@ -18,7 +18,7 @@ const PROBE_SCHEMA = {
   required: ["probe"],
   properties: { probe: { type: "string", enum: ["ok"] } },
 } as const;
-export type ModelDiagnosticProbeContract = Readonly<{ method: "POST" | string; path: string; contentType: string; redirect: RequestRedirect; store: boolean; input: readonly { readonly role: string; readonly content: readonly { readonly type: string; readonly text: string }[] }[]; reasoningEffort: string; maxOutputTokens: number; format: Readonly<{ type: string; name: string; strict: boolean; schema: object }>; timeoutMs: number }>;
+export type ModelDiagnosticProbeContract = Readonly<{ method: string; path: string; contentType: string; redirect: RequestRedirect; store: boolean; input: ReadonlyArray<Readonly<{ role: string; content: ReadonlyArray<Readonly<{ type: string; text: string }>> }>>; reasoningEffort: string; maxOutputTokens: number; format: Readonly<{ type: string; name: string; strict: boolean; schema: Readonly<Record<string, unknown>> }>; timeoutMs: number }>;
 const PRODUCTION_PROBE_CONTRACT: ModelDiagnosticProbeContract = Object.freeze({ method: "POST", path: "/responses", contentType: "application/json", redirect: "error", store: false, input: Object.freeze([{ role: "user", content: Object.freeze([{ type: "input_text", text: "Return the requested JSON object." }]) }]), reasoningEffort: "none", maxOutputTokens: 256, format: Object.freeze({ type: "json_schema", name: "model_diagnostic_probe", strict: true, schema: PROBE_SCHEMA }), timeoutMs: DIAGNOSTIC_TIMEOUT_MS });
 
 export type OpenAiModelDiagnosticConfig = {
