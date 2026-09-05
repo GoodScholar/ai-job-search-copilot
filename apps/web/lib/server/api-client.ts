@@ -2,6 +2,7 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 import { ApiProblemSchema, type ApiProblem } from "@job-copilot/contracts/api-problem";
+import { RunPreflightProblemSchema, RunPreflightReportSchema, type RunPreflightProblem, type RunPreflightReport } from "@job-copilot/contracts/run-preflight";
 import {
   StartDevSessionRequestSchema,
   StartDevSessionResponseSchema,
@@ -106,7 +107,7 @@ export class ApiClientError extends Error {
     public readonly kind: ApiErrorKind,
     message: string,
     public readonly status?: number,
-    public readonly problem?: ApiProblem | AccountRunPolicyProblem,
+    public readonly problem?: ApiProblem | AccountRunPolicyProblem | RunPreflightProblem,
   ) {
     super(message);
   }
@@ -148,6 +149,13 @@ async function readAccountRunPolicyProblem(response: Response): Promise<AccountR
   const problem = { ...(payload as Record<string, unknown>) };
   delete problem.requestId;
   return AccountRunPolicyProblemSchema.safeParse(problem).data ?? null;
+}
+async function readRunPreflightProblem(response: Response): Promise<RunPreflightProblem | null> {
+  const payload = await parseJson(response).catch(() => null);
+  if (!payload || typeof payload !== "object") return null;
+  const problem = { ...(payload as Record<string, unknown>) };
+  delete problem.requestId;
+  return RunPreflightProblemSchema.safeParse(problem).data ?? null;
 }
 
 async function parseSuccess<T extends z.ZodType>(response: Response, schema: T): Promise<z.output<T>> {
@@ -204,14 +212,14 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
       if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法记录推荐决策", response.status, problem ?? undefined); }
       return parseSuccess(response, z.object({ decision: z.object({ status: z.enum(["saved", "ignored"]), version: z.int() }).strict(), proposal: z.object({ proposalId: z.uuid() }).nullable() }).strict());
     },
-    async startDeepMatchRun(sessionToken: string, targetId: string, opportunityId: string, idempotencyKey: string): Promise<{ runId: string; reused: boolean }> {
+    async startDeepMatchRun(sessionToken: string, targetId: string, opportunityId: string, idempotencyKey: string, warningFingerprint: string | null = null): Promise<{ runId: string; reused: boolean }> {
       const response = await request("/v1/recommendations/runs", {
         method: "POST",
         headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" },
-        body: JSON.stringify({ targetId, opportunityId, idempotencyKey }),
+        body: JSON.stringify({ targetId, opportunityId, idempotencyKey, warningFingerprint }),
       });
       if (!response.ok) {
-        const problem = await readProblem(response);
+        const problem = response.status === 409 ? await readRunPreflightProblem(response) : await readProblem(response);
         throw new ApiClientError("api", problem?.message ?? "无法开始重新评估", response.status, problem ?? undefined);
       }
       return parseSuccess(response, z.object({ runId: z.uuid(), reused: z.boolean() }).strict());
@@ -611,10 +619,17 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
         body: JSON.stringify(requestBody),
       });
       if (!response.ok) {
-        const problem = await readProblem(response);
+        const problem = response.status === 409 ? await readRunPreflightProblem(response) : await readProblem(response);
         throw new ApiClientError("api", problem?.message ?? "无法启动岗位发现", response.status, problem ?? undefined);
       }
       return parseSuccess(response, StartAgentRunResponseSchema);
+    },
+
+    async getRunPreflight(sessionToken: string, targetId?: string): Promise<RunPreflightReport> {
+      const target = targetId === undefined ? "" : `&targetId=${encodeURIComponent(targetId)}`;
+      const response = await request(`/v1/run-preflight?workflow=discovery&trigger=manual${target}`, { method: "GET", headers: { authorization: `Bearer ${sessionToken}` }, cache: "no-store" });
+      if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法读取运行前检查", response.status, problem ?? undefined); }
+      return parseSuccess(response, RunPreflightReportSchema);
     },
 
     async getJobDiscoverySchedule(sessionToken: string, targetId: string): Promise<JobDiscoveryScheduleResponse> {

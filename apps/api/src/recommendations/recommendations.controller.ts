@@ -1,5 +1,5 @@
 import { Body, Controller, Get, HttpStatus, Inject, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
-import { ApiBearerAuth, ApiNotFoundResponse, ApiUnauthorizedResponse } from "@nestjs/swagger";
+import { ApiBearerAuth, ApiConflictResponse, ApiNotFoundResponse, ApiUnauthorizedResponse } from "@nestjs/swagger";
 import { CalibrationProposalCommandResponseSchema, CalibrationProposalRebaseCommandSchema, CalibrationProposalResolutionCommandSchema, CalibrationProposalRevisionCommandSchema, RecommendationDecisionCommandSchema, RecommendationExclusionPageSchema, RecommendationListHistoryPageSchema, RecommendationListSchema } from "@job-copilot/contracts/recommendations";
 import type { FastifyRequest } from "fastify";
 import { createZodDto, ZodResponse } from "nestjs-zod";
@@ -8,13 +8,15 @@ import { SessionGuard } from "../auth/session.guard.js";
 import { ApiException } from "../common/api-problem.filter.js";
 import { RECOMMENDATION_FEEDBACK_COMMANDS, RECOMMENDATION_FEEDBACK_QUERIES, RECOMMENDATION_QUERIES, type RecommendationFeedbackCommands, type RecommendationFeedbackQueries, type RecommendationQueries } from "./recommendations.tokens.js";
 import { RECOMMENDATION_RUN_STARTER, type RecommendationRunStarter } from "./recommendations.tokens.js";
+import { RunPreflightRejectedError } from "@job-copilot/domain/run-preflight";
+import { RunPreflightController } from "../run-preflight/run-preflight.controller.js";
 
 class RecommendationListDto extends createZodDto(RecommendationListSchema) {}
 class RecommendationTargetQueryDto extends createZodDto(z.object({ targetId: z.uuid() }).strict()) {}
 class RecommendationCursorQueryDto extends createZodDto(z.object({ targetId: z.uuid(), cursor: z.uuid().optional(), limit: z.coerce.number().int().min(1).max(100).default(20) }).strict()) {}
 class RecommendationListExclusionsQueryDto extends createZodDto(z.object({ targetId: z.uuid(), cursor: z.uuid().optional(), limit: z.coerce.number().int().min(1).max(100).default(25) }).strict()) {}
 class RecommendationListIdParamDto extends createZodDto(z.object({ recommendationListId: z.uuid() }).strict()) {}
-class StartRecommendationReevaluationDto extends createZodDto(z.object({ targetId: z.uuid(), opportunityId: z.uuid(), idempotencyKey: z.uuid() }).strict()) {}
+class StartRecommendationReevaluationDto extends createZodDto(z.object({ targetId: z.uuid(), opportunityId: z.uuid(), idempotencyKey: z.uuid(), warningFingerprint: z.string().regex(/^[a-f0-9]{64}$/iu).nullable().default(null) }).strict()) {}
 class CalibrationProposalRevisionDto extends createZodDto(CalibrationProposalRevisionCommandSchema) {}
 class CalibrationProposalRebaseDto extends createZodDto(CalibrationProposalRebaseCommandSchema) {}
 class CalibrationProposalCommandResponseDto extends createZodDto(CalibrationProposalCommandResponseSchema) {}
@@ -48,8 +50,10 @@ export class RecommendationsController {
   }
 
   @Post("runs")
+  @ApiConflictResponse()
   async reevaluate(@Req() request: FastifyRequest, @Body() body: StartRecommendationReevaluationDto) {
-    return this.starter.start({ userId: request.authenticatedAccount!.userId, targetId: body.targetId, opportunityId: body.opportunityId, idempotencyKey: body.idempotencyKey, trigger: "manual" });
+    try { return await this.starter.start({ userId: request.authenticatedAccount!.userId, targetId: body.targetId, opportunityId: body.opportunityId, idempotencyKey: body.idempotencyKey, warningFingerprint: body.warningFingerprint, trigger: "manual" }); }
+    catch (error) { if (error instanceof RunPreflightRejectedError) throw RunPreflightController.preflightConflict(error); throw error; }
   }
 
   @Post("lists/:listId/items/:itemId/decisions")

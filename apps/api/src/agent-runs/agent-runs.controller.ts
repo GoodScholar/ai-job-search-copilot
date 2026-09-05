@@ -12,6 +12,7 @@ import {
   type AgentRunDetail,
 } from "@job-copilot/contracts/agent-runs";
 import { AgentRunControlError, AgentRunError } from "@job-copilot/domain/agent-runs";
+import { RunPreflightRejectedError } from "@job-copilot/domain/run-preflight";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { createZodDto, ZodResponse } from "nestjs-zod";
 import { z } from "zod";
@@ -21,6 +22,7 @@ import { ApiException } from "../common/api-problem.filter.js";
 import { getRequestId } from "../common/request-id.hook.js";
 import { createAgentRunEventStream, resolveAgentRunEventCursor } from "./agent-run-event-stream.js";
 import { AGENT_RUN_COMMANDS, AGENT_RUN_QUERIES, type AgentRunCommands, type AgentRunQueries } from "./agent-runs.tokens.js";
+import { RunPreflightController } from "../run-preflight/run-preflight.controller.js";
 
 class StartAgentRunCommandDto extends createZodDto(StartAgentRunCommandSchema) {}
 class ControlAgentRunCommandDto extends createZodDto(ControlAgentRunCommandSchema) {}
@@ -72,6 +74,7 @@ export class AgentRunsController {
   @ApiNotFoundResponse({ type: ApiProblem })
   @ApiUnauthorizedResponse({ type: ApiProblem })
   @ApiServiceUnavailableResponse({ type: ApiProblem })
+  @ApiConflictResponse({ type: ApiProblem })
   async start(
     @Req() request: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
@@ -87,6 +90,7 @@ export class AgentRunsController {
       reply.status(response.reused ? HttpStatus.OK : HttpStatus.CREATED);
       return response;
     } catch (error) {
+      if (error instanceof RunPreflightRejectedError) throw RunPreflightController.preflightConflict(error);
       if (error instanceof AgentRunError) throw mapStartError(error);
       throw error;
     }

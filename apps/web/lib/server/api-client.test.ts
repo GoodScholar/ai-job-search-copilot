@@ -98,6 +98,7 @@ const agentRunSummary = {
   targetId,
   targetVersion: 1,
   accountPolicyRevisionNumber: null,
+  preflightSnapshot: null,
   targetSnapshot: { targetId, version: 1, priority: "primary", state: "active", constraints: jobTargetOverview.targets[0].constraints },
   sourceScope: {
     kind: "company_watchlist", adapter: "fake", adapterVersion: "fake-job-discovery-v1",
@@ -592,7 +593,7 @@ it("通过服务端 bearer 启动并严格读取 Agent Run DTO", async () => {
     "http://127.0.0.1:3021/v1/agent-runs/latest",
     `http://127.0.0.1:3021/v1/agent-runs/${agentRunId}`,
   ]);
-  expect(fetchImpl.mock.calls[0]![1]).toMatchObject({ method: "POST", body: JSON.stringify(command) });
+  expect(fetchImpl.mock.calls[0]![1]).toMatchObject({ method: "POST", body: JSON.stringify({ ...command, warningFingerprint: null }) });
   for (const [, init] of fetchImpl.mock.calls) {
     expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${sessionToken}`);
   }

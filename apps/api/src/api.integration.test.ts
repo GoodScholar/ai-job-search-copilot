@@ -8,6 +8,7 @@ import { auditEvents, candidateFactEvidence, candidateFacts, careerDocuments, ca
 import type { CareerDocumentStore, CareerImportQueue } from "@job-copilot/domain/career-imports";
 import type { JobContentStore, JobImportQueue } from "@job-copilot/domain/job-imports";
 import { createAgentRunCommands, type AgentRunQueue } from "@job-copilot/domain/agent-runs";
+import { createReadyRunPreflightEvaluator } from "../../../packages/domain/src/testing/run-preflight.js";
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
 import { createCompanyWatchlistCommands } from "@job-copilot/domain/company-watchlists";
 import { createJobDiscoverySchedules } from "@job-copilot/domain/job-discovery-schedules";
@@ -25,6 +26,7 @@ import { JobPageFetchError, type JobPageFetcher } from "./job-imports/job-page-f
 import { createMinimalDocx } from "./career-import/minimal-docx.test-support.js";
 import { CAREER_FACT_CONFLICT_REVIEW_COMMANDS, PROFILE_REVIEW_COMMANDS, type ProfileReviewCommands } from "./profile-review/profile-review.tokens.js";
 import { AGENT_RUN_QUEUE_PORT } from "./agent-runs/agent-runs.tokens.js";
+import { RUN_PREFLIGHT_EVALUATOR } from "./run-preflight/run-preflight.tokens.js";
 import { JOB_TRIAGE_COMMANDS, JOB_TRIAGE_QUERIES } from "./job-triage/job-triage.tokens.js";
 import { RECOMMENDATION_FEEDBACK_COMMANDS, RECOMMENDATION_FEEDBACK_QUERIES } from "./recommendations/recommendations.tokens.js";
 import { MODEL_DIAGNOSTICS } from "./model-diagnostics/model-diagnostics.tokens.js";
@@ -235,6 +237,7 @@ describe("authenticated workbench HTTP API", () => {
           return createModelDiagnostics({ db, adapter, clock: () => new Date() });
         },
       })
+      .overrideProvider(RUN_PREFLIGHT_EVALUATOR).useValue(createReadyRunPreflightEvaluator())
       .setLogger(testLogger as never)
       .compile();
     app = module.createNestApplication<NestFastifyApplication>(new FastifyAdapter({ loggerInstance: testLogger as never }));
@@ -321,6 +324,21 @@ describe("authenticated workbench HTTP API", () => {
     expect(postAnonymous.statusCode).toBe(401); expect(postAnonymous.headers["cache-control"]).toBe("no-store");
     const exposed = `${post.body}${get.body}${afterPostGet.body}${noBody.body}${invalid.body}${postAnonymous.body}${anonymous.body}${normalizedLogText(capturedLogs)}`;
     for (const sentinel of diagnosticSecretSentinels) expect(exposed).not.toContain(sentinel);
+  });
+
+  it("以认证会话提供无副作用的运行预检查询，并拒绝浏览器扩大 query", async () => {
+    const session = await createSession(app, `run-preflight-${crypto.randomUUID()}`);
+    const targetId = await createActiveTarget(app, session.sessionToken, "预检查询工程师");
+    const path = `/v1/run-preflight?workflow=discovery&trigger=manual&targetId=${targetId}`;
+    const [anonymous, report, scheduledFor, unknown] = await Promise.all([
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: path }),
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: path, headers: bearer(session.sessionToken) }),
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: `${path}&scheduledFor=2026-09-05T00%3A00%3A00.000Z`, headers: bearer(session.sessionToken) }),
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: `${path}&rawPayload=secret`, headers: bearer(session.sessionToken) }),
+    ]);
+    expect(anonymous.statusCode).toBe(401); expect(anonymous.headers["cache-control"]).toBe("no-store");
+    expect(report.statusCode).toBe(200); expect(report.headers["cache-control"]).toBe("no-store"); expect(report.json()).toMatchObject({ workflow: "discovery", trigger: "manual", targetId });
+    for (const response of [scheduledFor, unknown]) { expect(response.statusCode).toBe(400); expect(response.headers["cache-control"]).toBe("no-store"); expect(response.body).not.toContain("secret"); }
   });
 
   it("hides dev auth behind the server secret", async () => {
@@ -954,7 +972,7 @@ describe("authenticated workbench HTTP API", () => {
       userId: session.account.userId, targetId, requestId: randomUUID(),
       command: { expectedVersion: 0, canonicalCompanyName: "Public Example", careersUrl: "https://boards.greenhouse.io/public-example", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null },
     });
-    const runs = createAgentRunCommands({ db: database, queue: agentRunQueue, auditTrail, id: randomUUID, clock: setupClock, executionMode: "greenhouse" });
+    const runs = createAgentRunCommands({ db: database, queue: agentRunQueue, auditTrail, runPreflight: createReadyRunPreflightEvaluator({ clock: setupClock }), id: randomUUID, clock: setupClock, executionMode: "greenhouse" });
     const schedules = createJobDiscoverySchedules({ db: database, runs, auditTrail, id: randomUUID, clock: setupClock });
     const schedule = await schedules.set({ userId: session.account.userId, targetId, requestId: randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
     expect(schedule.nextRunAt).toBe("2026-08-31T01:30:00.000Z");
