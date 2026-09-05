@@ -5,10 +5,10 @@ import { createOpenAiModelDiagnosticAdapter } from "@job-copilot/model-access";
 import { createFakeModelDiagnosticAdapter, type ModelDiagnosticFakeScenario } from "@job-copilot/model-access/testing";
 import { AuthModule } from "../auth/auth.module.js";
 import { DATABASE, RUNTIME_CONFIG, RuntimeConfigModule } from "../config/runtime-config.module.js";
+import type { RuntimeConfig } from "@job-copilot/domain/runtime-config";
 import { ModelDiagnosticsController } from "./model-diagnostics.controller.js";
 import { MODEL_DIAGNOSTICS } from "./model-diagnostics.tokens.js";
 
-type OpenAiConfig = { apiKey?: string; endpoint?: string; organization?: string; project?: string; lowCostModel: string; highQualityModel: string };
 const testScenarios = ["success", "authentication_failed", "provider_unavailable"] as const;
 function testScenario(appEnv: string): ModelDiagnosticFakeScenario {
   const configured = process.env.E2E_MODEL_DIAGNOSTIC_SCENARIO;
@@ -21,7 +21,7 @@ function testScenario(appEnv: string): ModelDiagnosticFakeScenario {
   imports: [RuntimeConfigModule, AuthModule], controllers: [ModelDiagnosticsController],
   providers: [{
     provide: MODEL_DIAGNOSTICS, inject: [DATABASE, RUNTIME_CONFIG],
-    useFactory: (db: Database, config: { APP_ENV: string; openAi: OpenAiConfig }) => createModelDiagnostics({
+    useFactory: (db: Database, config: RuntimeConfig) => createModelDiagnostics({
       db, clock: () => new Date(), adapter: config.APP_ENV === "test" ? createFakeModelDiagnosticAdapter(testScenario(config.APP_ENV)) : createOpenAiModelDiagnosticAdapter({ ...config.openAi, apiKey: config.openAi.apiKey ?? "" }),
     }),
   }], exports: [MODEL_DIAGNOSTICS],

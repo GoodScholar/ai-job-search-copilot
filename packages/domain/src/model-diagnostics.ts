@@ -72,23 +72,24 @@ export function createModelDiagnostics(deps: Dependencies): { get(): Promise<Mod
   const fingerprint = deps.adapter.configurationFingerprint;
   const cached = async (db: Pick<Database, "select">, now: Date) => { const row = await latest(db, fingerprint); return current(row, now, row?.status === "available" ? 0 : await failureCount(db, fingerprint)); };
   const stable = async (db: Pick<Database, "select">, now: Date) => { const row = await latest(db, fingerprint); return latestStable(row, now, row?.status === "available" ? 0 : await failureCount(db, fingerprint)); };
-  let inFlight = false;
+  let gate = false;
+  const acquireGate = () => { if (gate) return false; gate = true; return true; };
   return {
     async get() {
-      if (inFlight) return response("checking");
-      const now = deps.clock(); const existing = await stable(deps.db, now); if (existing) return existing;
-      const active = await deps.db.transaction(async (tx) => {
+      if (gate) return response("checking");
+      const now = deps.clock(); const existing = await cached(deps.db, now); if (existing) return existing;
+      if (!acquireGate()) return response("checking");
+      try { return await deps.db.transaction(async (tx) => {
         const [row] = await tx.execute(sql`select pg_try_advisory_xact_lock(hashtextextended(${fingerprint}, 50)) as locked`) as unknown as Array<{ locked: boolean }>;
-        if (!row?.locked) return true;
-        return false;
+        if (!row?.locked) return response("checking");
+        return (await stable(tx, now)) ?? response("unverified");
       });
-      return active ? response("checking") : response("unverified");
+      } finally { gate = false; }
     },
     async run() {
-      if (inFlight) return response("checking");
+      if (gate) return response("checking");
       const now = deps.clock(); const existing = await cached(deps.db, now); if (existing) return existing;
-      if (inFlight) return response("checking");
-      inFlight = true;
+      if (!acquireGate()) return response("checking");
       try { return await deps.db.transaction(async (tx) => {
         const [lock] = await tx.execute(sql`select pg_try_advisory_xact_lock(hashtextextended(${fingerprint}, 50)) as locked`) as unknown as Array<{ locked: boolean }>;
         if (!lock?.locked) return response("checking");
@@ -99,7 +100,7 @@ export function createModelDiagnostics(deps: Dependencies): { get(): Promise<Mod
         const row: Stored = { ...result, checkedAt };
         const retryAt = result.status === "available" ? null : new Date(checkedAt.getTime() + backoff[Math.min((await failureCount(tx, fingerprint)) - 1, backoff.length - 1)]!);
         return response(result.status, row, retryAt);
-      }); } finally { inFlight = false; }
+      }); } finally { gate = false; }
     },
   };
 }
