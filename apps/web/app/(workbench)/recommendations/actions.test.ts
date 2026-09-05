@@ -36,25 +36,40 @@ it("预检 blocker 返回判别结果并保留调用方幂等键", async () => {
   expect(mocks.startDeepMatchRun).toHaveBeenCalledWith("session", "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000001", null);
 });
 
-it("预检 warning 返回判别结果，成功才失效读模型，未知错误不被当作冲突", async () => {
+it("预检 warning 缺失、过期、当前确认连续复用同一幂等键，成功才失效读模型", async () => {
   mocks.revalidatePath.mockClear();
   mocks.readSessionToken.mockResolvedValue("session");
-  const preflight = { version: "run-preflight-v1", workflow: "deep_match", trigger: "manual", targetId: "00000000-0000-4000-8000-000000000002", status: "ready_with_warnings", warningFingerprint: "a".repeat(64), checkedAt: "2026-09-05T00:00:00.000Z", items: [{ code: "SOURCE_HEALTH_DEGRADED", severity: "warning", summary: "来源健康存在降级", impact: "结果可能不完整，请确认后继续。", retryable: true, suggestedActions: ["review_source_health"], evidence: { kind: "source_health", checkedSourceCount: 1, healthySourceCount: 0, degradedSourceCount: 1, uncheckedSourceCount: 0, latestCheckedAt: "2026-09-05T00:00:00.000Z" } }] };
+  const targetId = "00000000-0000-4000-8000-000000000002";
+  const opportunityId = "00000000-0000-4000-8000-000000000003";
+  const staleFingerprint = "a".repeat(64);
+  const currentFingerprint = "b".repeat(64);
+  const preflight = { version: "run-preflight-v1", workflow: "deep_match", trigger: "manual", targetId, status: "ready_with_warnings", warningFingerprint: staleFingerprint, checkedAt: "2026-09-05T00:00:00.000Z", items: [{ code: "SOURCE_HEALTH_DEGRADED", severity: "warning", summary: "来源健康存在降级", impact: "结果可能不完整，请确认后继续。", retryable: true, suggestedActions: ["review_source_health"], evidence: { kind: "source_health", checkedSourceCount: 1, healthySourceCount: 0, degradedSourceCount: 1, uncheckedSourceCount: 0, latestCheckedAt: "2026-09-05T00:00:00.000Z" } }] };
+  const refreshedPreflight = { ...preflight, warningFingerprint: currentFingerprint };
   const idempotencyKey = "00000000-0000-4000-8000-000000000001";
-  const warningForm = new FormData(); warningForm.set("idempotencyKey", idempotencyKey);
-  mocks.startDeepMatchRun.mockRejectedValueOnce(new mocks.ApiClientError("api", "需要确认", 409, { code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED", message: "需要确认", preflight }));
-  await expect(requestRecommendationReevaluationAction("00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003", warningForm)).resolves.toEqual({ kind: "warning_confirmation_required", preflight });
-  expect(mocks.startDeepMatchRun).toHaveBeenLastCalledWith("session", "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003", idempotencyKey, null);
+  const missingForm = new FormData(); missingForm.set("idempotencyKey", idempotencyKey);
+  const staleForm = new FormData(); staleForm.set("idempotencyKey", idempotencyKey); staleForm.set("warningFingerprint", staleFingerprint);
+  const currentForm = new FormData(); currentForm.set("idempotencyKey", idempotencyKey); currentForm.set("warningFingerprint", currentFingerprint);
+  mocks.startDeepMatchRun
+    .mockRejectedValueOnce(new mocks.ApiClientError("api", "需要确认", 409, { code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED", message: "需要确认", preflight }))
+    .mockRejectedValueOnce(new mocks.ApiClientError("api", "确认已过期", 409, { code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED", message: "确认已过期", preflight: refreshedPreflight }))
+    .mockResolvedValueOnce({ runId: "00000000-0000-4000-8000-000000000005", reused: false });
+  await expect(requestRecommendationReevaluationAction(targetId, opportunityId, missingForm)).resolves.toEqual({ kind: "warning_confirmation_required", preflight });
+  expect(mocks.startDeepMatchRun).toHaveBeenLastCalledWith("session", targetId, opportunityId, idempotencyKey, null);
   expect(mocks.revalidatePath).not.toHaveBeenCalledWith("/recommendations");
 
-  const startedForm = new FormData(); startedForm.set("idempotencyKey", idempotencyKey); startedForm.set("warningFingerprint", "a".repeat(64));
-  mocks.startDeepMatchRun.mockResolvedValueOnce({ runId: "00000000-0000-4000-8000-000000000005", reused: false });
-  await expect(requestRecommendationReevaluationAction("00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003", startedForm)).resolves.toEqual({ kind: "started" });
-  expect(mocks.startDeepMatchRun).toHaveBeenLastCalledWith("session", "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003", idempotencyKey, "a".repeat(64));
-  expect(mocks.revalidatePath).toHaveBeenCalledWith("/recommendations");
+  await expect(requestRecommendationReevaluationAction(targetId, opportunityId, staleForm)).resolves.toEqual({ kind: "warning_confirmation_required", preflight: refreshedPreflight });
+  expect(mocks.startDeepMatchRun).toHaveBeenLastCalledWith("session", targetId, opportunityId, idempotencyKey, staleFingerprint);
 
+  await expect(requestRecommendationReevaluationAction(targetId, opportunityId, currentForm)).resolves.toEqual({ kind: "started" });
+  expect(mocks.startDeepMatchRun).toHaveBeenLastCalledWith("session", targetId, opportunityId, idempotencyKey, currentFingerprint);
+  expect(mocks.revalidatePath).toHaveBeenCalledWith("/recommendations");
+});
+
+it("未知重评错误不被当作预检冲突", async () => {
+  mocks.readSessionToken.mockResolvedValue("session");
+  const form = new FormData(); form.set("idempotencyKey", "00000000-0000-4000-8000-000000000001");
   mocks.startDeepMatchRun.mockRejectedValueOnce(new mocks.ApiClientError("api", "上游错误", 502));
-  await expect(requestRecommendationReevaluationAction("00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003", startedForm)).rejects.toMatchObject({ status: 502 });
+  await expect(requestRecommendationReevaluationAction("00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003", form)).rejects.toMatchObject({ status: 502 });
 });
 
 it("大写 warning fingerprint 不会穿过 action 边界", async () => {

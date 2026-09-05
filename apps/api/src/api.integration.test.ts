@@ -453,8 +453,18 @@ describe("authenticated workbench HTTP API", () => {
       expect(ownerKey.statusCode).toBe(201); expect(otherKey.statusCode).toBe(409); expect(otherKey.json().preflight.runId).toBeUndefined();
       const ownerVisible = `${foreign.body}${stale.body}${detail.body}${legacy.body}${blocked.body}${deep.body}${ownerKey.body}`;
       for (const secret of [other.targetId, other.watchlistItemId, other.sourceSentinel, `${other.sourceSentinel}-company`, `${other.sourceSentinel}-note`]) expect(ownerVisible).not.toContain(secret);
-      const safeProjections = `${JSON.stringify(stale.json().preflight)}${JSON.stringify(detail.json().preflightSnapshot)}${JSON.stringify(blocked.json().preflight)}${normalizedLogText(capturedLogs.slice(logStart))}`;
-      for (const secret of ["factValue", "careerText", "jobText", "careersUrl", "allowedDomain", "modelOutput", "rawPayload", "providerResponse", "configurationFingerprint", "apiKey", "stack", "private-profile-sentinel", owner.modelFingerprint, ...Object.values(owner.sensitive)]) expect(safeProjections).not.toContain(secret);
+      const preflightSecrets = [
+        "factValue", "careerText", "jobText", "careersUrl", "allowedDomain", "modelOutput", "rawPayload", "providerResponse", "configurationFingerprint", "apiKey", "stack", "private-profile-sentinel",
+        owner.sourceSentinel, `https://boards.greenhouse.io/${owner.sourceSentinel}`, `${owner.sourceSentinel}-company`, `${owner.sourceSentinel}-note`,
+        owner.modelFingerprint, ...Object.values(owner.sensitive),
+      ];
+      const safeProjections = {
+        discovery409Preflight: JSON.stringify(stale.json().preflight),
+        runDetailPreflightSnapshot: JSON.stringify(detail.json().preflightSnapshot),
+        recommendation409Preflight: JSON.stringify(blocked.json().preflight),
+        capturedJourneyLogs: normalizedLogText(capturedLogs.slice(logStart)),
+      };
+      for (const projection of Object.values(safeProjections)) for (const secret of preflightSecrets) expect(projection).not.toContain(secret);
     } finally {
       activeRunPreflight = createReadyRunPreflightEvaluator();
     }
