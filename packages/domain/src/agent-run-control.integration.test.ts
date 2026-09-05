@@ -1,7 +1,7 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { agentInboxItems, agentRunControlCommands, agentRunEvents, agentRunSteps, agentRunUsageEntries, agentRuns, auditEvents, createDatabase, jobAccounts, jobProfiles, jobTargetRevisions, jobTargets, migrateDatabase, modelDiagnosticResults, profileFactRevisions, profileFacts, type Database } from "@job-copilot/database";
+import { agentInboxItems, agentRunControlCommands, agentRunEvents, agentRunSteps, agentRunUsageEntries, agentRuns, auditEvents, companyWatchlistRevisions, companyWatchlists, createDatabase, jobAccounts, jobProfiles, jobTargetRevisions, jobTargets, migrateDatabase, modelDiagnosticResults, profileFactRevisions, profileFacts, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
 import { AgentRunControlError, createAgentRunCheckpoint, createAgentRunCommands, type AgentRunQueue } from "./agent-runs";
 import { createCompanyWatchlistCommands } from "./company-watchlists";
@@ -154,6 +154,37 @@ describe("agent run controls", () => {
     expect(otherRun.runId).not.toBe(ownerRun.runId);
     await expect(database.select().from(agentRuns).where(eq(agentRuns.idempotencyKey, key))).resolves.toHaveLength(2);
   });
+
+  it("账户锁等待期间以锁后来源状态重算 warning fingerprint", async () => {
+    const owner = await activeTarget();
+    await addConfirmedSkills(owner.userId, ["TypeScript"]);
+    await addGreenhouseWatchlistSource(owner.userId, owner.targetId);
+    const evaluator = await realEvaluator(owner.userId);
+    const page = await evaluator.evaluate(database, { userId: owner.userId, targetId: owner.targetId, workflow: "discovery", trigger: "manual" });
+    let release!: () => void; let locked!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const acquired = new Promise<void>((resolve) => { locked = resolve; });
+    const holder = database.$client.begin(async (connection) => {
+      await connection.unsafe("select pg_advisory_xact_lock(hashtextextended($1, 0))", [owner.userId]);
+      locked(); await held;
+    });
+    await acquired;
+    try {
+      const start = realCommands(new MemoryQueue(), evaluator).start({ userId: owner.userId, requestId: crypto.randomUUID(), command: { targetId: owner.targetId, idempotencyKey: crypto.randomUUID(), warningFingerprint: page.report.warningFingerprint } });
+      const [watchlist] = await database.select({ id: companyWatchlists.id, items: companyWatchlistRevisions.items }).from(companyWatchlists).innerJoin(companyWatchlistRevisions, and(eq(companyWatchlistRevisions.watchlistId, companyWatchlists.id), eq(companyWatchlistRevisions.version, companyWatchlists.version))).where(eq(companyWatchlists.targetId, owner.targetId));
+      await database.update(companyWatchlists).set({ version: 2, updatedAt: now }).where(eq(companyWatchlists.id, watchlist!.id));
+      await database.insert(companyWatchlistRevisions).values({ id: crypto.randomUUID(), userId: owner.userId, watchlistId: watchlist!.id, targetId: owner.targetId, version: 2, items: [...watchlist!.items as object[], { itemId: crypto.randomUUID(), canonicalCompanyName: "Second", careersUrl: "https://boards.greenhouse.io/second", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null, state: "enabled", position: 2 }], createdAt: now });
+      release(); await holder;
+      await expect(start).rejects.toMatchObject({ code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED" } satisfies Partial<RunPreflightRejectedError>);
+      const latest = await evaluator.evaluate(database, { userId: owner.userId, targetId: owner.targetId, workflow: "discovery", trigger: "manual" });
+      expect(latest.report.warningFingerprint).not.toBe(page.report.warningFingerprint);
+      expect(latest.report.checkedAt).toBe(now.toISOString());
+      expect(latest.report.items.find((item) => item.code === "SOURCE_HEALTH_UNCHECKED")?.evidence).toMatchObject({ uncheckedSourceCount: 2 });
+      await expect(database.select().from(agentRuns).where(eq(agentRuns.userId, owner.userId))).resolves.toHaveLength(0);
+      await expect(database.select().from(agentRunSteps).where(eq(agentRunSteps.userId, owner.userId))).resolves.toHaveLength(0);
+      await expect(database.select().from(agentRunEvents).where(eq(agentRunEvents.userId, owner.userId))).resolves.toHaveLength(0);
+    } finally { release(); await holder.catch(() => undefined); }
+  }, 15_000);
 
   it("重放同一暂停命令时返回首次快照且只写一次事件、控制记录和审计", async () => {
     const { userId, targetId } = await activeTarget();
