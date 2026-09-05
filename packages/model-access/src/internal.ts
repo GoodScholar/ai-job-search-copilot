@@ -12,16 +12,14 @@ const DIAGNOSTIC_VERSION = "model-diagnostic-v1";
 const DIAGNOSTIC_TIMEOUT_MS = 20_000;
 const LOW_COST_MODEL = "gpt-5.6-luna";
 const HIGH_QUALITY_MODEL = "gpt-5.6-terra";
-const PROBE_NAME = "model_diagnostic_probe";
-const PROBE_INPUT_TEXT = "Return the requested JSON object.";
-const PROBE_REASONING_EFFORT = "none";
-const PROBE_MAX_OUTPUT_TOKENS = 256;
 const PROBE_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ["probe"],
   properties: { probe: { type: "string", enum: ["ok"] } },
 } as const;
+export type ModelDiagnosticProbeContract = Readonly<{ method: "POST" | string; path: string; contentType: string; redirect: RequestRedirect; store: boolean; input: readonly { readonly role: string; readonly content: readonly { readonly type: string; readonly text: string }[] }[]; reasoningEffort: string; maxOutputTokens: number; format: Readonly<{ type: string; name: string; strict: boolean; schema: object }>; timeoutMs: number }>;
+const PRODUCTION_PROBE_CONTRACT: ModelDiagnosticProbeContract = Object.freeze({ method: "POST", path: "/responses", contentType: "application/json", redirect: "error", store: false, input: Object.freeze([{ role: "user", content: Object.freeze([{ type: "input_text", text: "Return the requested JSON object." }]) }]), reasoningEffort: "none", maxOutputTokens: 256, format: Object.freeze({ type: "json_schema", name: "model_diagnostic_probe", strict: true, schema: PROBE_SCHEMA }), timeoutMs: DIAGNOSTIC_TIMEOUT_MS });
 
 export type OpenAiModelDiagnosticConfig = {
   apiKey: string;
@@ -37,11 +35,12 @@ export type ModelDiagnosticTestTransport = (input: { url: string; init: RequestI
 type AttemptKind = "success" | "authentication_failed" | "access_restricted" | "low_cost_model_unavailable" | "high_quality_model_unavailable" | "strict_output_unsupported" | "timeout" | "rate_limited" | "provider_unavailable" | "generic_failure";
 type Attempt = { kind: AttemptKind; checks: ModelDiagnosticChecks };
 /** 测试工厂专用；生产构造器不能覆盖诊断版本。 */
-export type ModelDiagnosticTestOptions = { now?: () => number; diagnosticVersion?: string };
+export type ModelDiagnosticTestOptions = { now?: () => number; diagnosticVersion?: string; contract?: ModelDiagnosticProbeContract };
 
 export function createInternalOpenAiModelDiagnosticAdapter(config: OpenAiModelDiagnosticConfig, transport: ModelDiagnosticTestTransport = fetchTransport, options: ModelDiagnosticTestOptions = {}): ModelDiagnosticAdapter {
   const normalized = normalizeConfig(config);
-  const configurationFingerprint = fingerprint(normalized, options.diagnosticVersion ?? DIAGNOSTIC_VERSION);
+  const contract = options.contract ?? PRODUCTION_PROBE_CONTRACT;
+  const configurationFingerprint = fingerprint(normalized, options.diagnosticVersion ?? DIAGNOSTIC_VERSION, contract);
   const now = options.now ?? Date.now;
 
   return {
@@ -52,13 +51,13 @@ export function createInternalOpenAiModelDiagnosticAdapter(config: OpenAiModelDi
 
       const startedAt = now();
       const deadline = new AbortController();
-      const timeout = setTimeout(() => deadline.abort(), DIAGNOSTIC_TIMEOUT_MS);
+      const timeout = setTimeout(() => deadline.abort(), contract.timeoutMs);
       const abort = () => deadline.abort();
       signal.addEventListener("abort", abort, { once: true });
       try {
         const attempts = await Promise.all([
-          probe({ model: normalized.lowCostModel, kind: "low_cost_model_unavailable", config: normalized, signal: deadline.signal, transport }),
-          probe({ model: normalized.highQualityModel, kind: "high_quality_model_unavailable", config: normalized, signal: deadline.signal, transport }),
+          probe({ model: normalized.lowCostModel, kind: "low_cost_model_unavailable", config: normalized, signal: deadline.signal, transport, contract }),
+          probe({ model: normalized.highQualityModel, kind: "high_quality_model_unavailable", config: normalized, signal: deadline.signal, transport, contract }),
         ]);
         return aggregate(attempts, latencyBucket(now() - startedAt, attempts));
       } finally {
@@ -76,11 +75,12 @@ async function probe(input: {
   config: NormalizedConfig;
   signal: AbortSignal;
   transport: ModelDiagnosticTestTransport;
+  contract: ModelDiagnosticProbeContract;
 }): Promise<Attempt> {
   try {
     const response = await beforeDeadline(input.transport({
-      url: `${input.config.endpoint}/responses`,
-      init: { ...requestFor(input.model, input.config), signal: input.signal },
+      url: `${input.config.endpoint}${input.contract.path}`,
+      init: { ...requestFor(input.model, input.config, input.contract), signal: input.signal },
       signal: input.signal,
     }), input.signal);
     if (response.status === 401) return attempt("authentication_failed");
@@ -98,25 +98,18 @@ async function probe(input: {
   }
 }
 
-function requestFor(model: string, config: NormalizedConfig): RequestInit {
+function requestFor(model: string, config: NormalizedConfig, contract: ModelDiagnosticProbeContract): RequestInit {
   const headers: Record<string, string> = {
     authorization: `Bearer ${config.apiKey}`,
-    "content-type": "application/json",
+    "content-type": contract.contentType,
   };
   if (config.organization) headers["openai-organization"] = config.organization;
   if (config.project) headers["openai-project"] = config.project;
   return {
-    method: "POST",
+    method: contract.method,
     headers,
-    redirect: "error",
-    body: JSON.stringify({
-      model,
-      store: false,
-      input: [{ role: "user", content: [{ type: "input_text", text: PROBE_INPUT_TEXT }] }],
-      reasoning: { effort: PROBE_REASONING_EFFORT },
-      max_output_tokens: PROBE_MAX_OUTPUT_TOKENS,
-      text: { format: { type: "json_schema", name: PROBE_NAME, strict: true, schema: PROBE_SCHEMA } },
-    }),
+    redirect: contract.redirect,
+    body: JSON.stringify({ model, store: contract.store, input: contract.input, reasoning: { effort: contract.reasoningEffort }, max_output_tokens: contract.maxOutputTokens, text: { format: contract.format } }),
   };
 }
 
@@ -244,7 +237,7 @@ function normalizeConfig(config: OpenAiModelDiagnosticConfig): NormalizedConfig 
   };
 }
 
-function fingerprint(config: NormalizedConfig, diagnosticVersion: string): string {
+function fingerprint(config: NormalizedConfig, diagnosticVersion: string, contract: ModelDiagnosticProbeContract): string {
   return createHash("sha256").update(JSON.stringify({
     version: diagnosticVersion,
     endpoint: config.endpoint,
@@ -252,7 +245,7 @@ function fingerprint(config: NormalizedConfig, diagnosticVersion: string): strin
     project: config.project,
     lowCostModel: config.lowCostModel,
     highQualityModel: config.highQualityModel,
-    probe: { name: PROBE_NAME, schema: PROBE_SCHEMA, inputText: PROBE_INPUT_TEXT, reasoning: PROBE_REASONING_EFFORT, maxOutputTokens: PROBE_MAX_OUTPUT_TOKENS, timeoutMs: DIAGNOSTIC_TIMEOUT_MS },
+    probe: contract,
     apiKey: config.apiKey,
   })).digest("hex");
 }

@@ -320,12 +320,14 @@ describe("OpenAI 模型诊断 adapter", () => {
     expect(v1.configurationFingerprint).not.toBe(v2.configurationFingerprint);
   });
 
-  it("指纹结构覆盖实际发送的固定探针输入和请求常量", async () => {
-    const source = await import("node:fs/promises").then((fs) => fs.readFile(new URL("./internal.ts", import.meta.url), "utf8"));
-    expect(source).toContain("const PROBE_INPUT_TEXT =");
-    expect(source).toContain("inputText: PROBE_INPUT_TEXT");
-    expect(source).toContain("PROBE_REASONING_EFFORT");
-    expect(source).toContain("PROBE_MAX_OUTPUT_TOKENS");
+  it("测试契约每个固定请求字段变动均使指纹失效并进入实际请求", async () => {
+    const base = { method: "POST", path: "/responses", contentType: "application/json", redirect: "error" as RequestRedirect, store: false, input: [{ role: "user", content: [{ type: "input_text", text: "Return the requested JSON object." }] }], reasoningEffort: "none", maxOutputTokens: 256, format: { type: "json_schema", name: "model_diagnostic_probe", strict: true, schema: { type: "object", additionalProperties: false, required: ["probe"], properties: { probe: { type: "string", enum: ["ok"] } } } }, timeoutMs: 20_000 };
+    const variants = [ { ...base, method: "PUT" }, { ...base, path: "/other" }, { ...base, contentType: "application/problem+json" }, { ...base, redirect: "manual" as RequestRedirect }, { ...base, store: true }, { ...base, input: [{ role: "developer", content: [{ type: "input_text", text: "changed" }] }] }, { ...base, reasoningEffort: "low" }, { ...base, maxOutputTokens: 257 }, { ...base, format: { ...base.format, name: "other" } }, { ...base, timeoutMs: 19_999 } ];
+    const original = createOpenAiModelDiagnosticAdapterForTest(configuration, async () => responseFor({ kind: "success" }, "gpt-5.6-luna"), { contract: base });
+    for (const contract of variants) expect(createOpenAiModelDiagnosticAdapterForTest(configuration, async () => responseFor({ kind: "success" }, "gpt-5.6-luna"), { contract }).configurationFingerprint).not.toBe(original.configurationFingerprint);
+    const calls: any[] = []; const adapter = createOpenAiModelDiagnosticAdapterForTest(configuration, async (request) => { calls.push(request); return responseFor({ kind: "success" }, "gpt-5.6-luna"); }, { contract: base });
+    await adapter.diagnose({ signal: new AbortController().signal });
+    expect(calls[0].url).toBe("https://openai.example.test/v1/responses"); expect(calls[0].init).toMatchObject({ method: "POST", redirect: "error" }); expect(JSON.parse(calls[0].init.body)).toMatchObject({ store: false, input: base.input, reasoning: { effort: "none" }, max_output_tokens: 256, text: { format: base.format } });
   });
 
   it.each([{ apiKey: "" }, { endpoint: "not-a-url" }, { lowCostModel: "" }, { highQualityModel: "" }])("配置 %o 无效时以稳定失败返回且不发出外部请求", async (invalid) => {
