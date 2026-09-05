@@ -6,7 +6,6 @@ const sourceHealthSpec = "source-health.spec.ts";
 const workbenchInboxSpec = "workbench-inbox.spec.ts";
 const anysearchSpec = "anysearch-public-job-discovery.spec.ts";
 const modelDiagnosticsSpec = "model-diagnostics.spec.ts";
-const playwrightProjects = ["Desktop Chrome", "Mobile Safari"];
 const phases = ["ordinary", "source-health", "workbench-inbox"];
 const require = createRequire(import.meta.url);
 const playwrightCli = require.resolve("@playwright/test/cli");
@@ -17,19 +16,7 @@ export function normalizeE2EArguments(arguments_) {
   return arguments_[0] === "--" ? arguments_.slice(1) : arguments_;
 }
 
-function initialProject(args) {
-  const selectors = [];
-  for (let index = 0; index < args.length; index += 1) {
-    if (args[index]?.startsWith("--project=")) selectors.push(args[index].slice("--project=".length));
-    if (args[index] === "--project") {
-      while (args[index + 1] && !args[index + 1].startsWith("-")) selectors.push(args[++index]);
-    }
-  }
-  const matches = (project, selector) => new RegExp(`^${selector.split("*").map((part) => part.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")).join(".*")}$`, "iu").test(project);
-  return playwrightProjects.find((project) => selectors.some((selector) => matches(project, selector))) ?? "Desktop Chrome";
-}
-
-function phaseEnvironment(phase, environment, args = []) {
+function phaseEnvironment(phase, environment) {
   const baseEnvironment = { ...environment };
   delete baseEnvironment.E2E_MODEL_DIAGNOSTIC_SCENARIO;
   delete baseEnvironment.E2E_MODEL_DIAGNOSTIC_INITIAL_PROJECT;
@@ -43,9 +30,9 @@ function phaseEnvironment(phase, environment, args = []) {
   }
   delete baseEnvironment.E2E_SOURCE_HEALTH_ONLY;
   if (phase === "source-health") return { ...baseEnvironment, E2E_SOURCE_HEALTH_ONLY: "1" };
-  if (phase === "model-diagnostics-success") return { ...baseEnvironment, E2E_MODEL_DIAGNOSTIC_SCENARIO: "success", E2E_MODEL_DIAGNOSTIC_INITIAL_PROJECT: initialProject(args) };
-  if (phase === "model-diagnostics-failed") return { ...baseEnvironment, E2E_MODEL_DIAGNOSTIC_SCENARIO: "authentication_failed", E2E_MODEL_DIAGNOSTIC_INITIAL_PROJECT: initialProject(args) };
-  if (phase === "model-diagnostics-temporarily-unavailable") return { ...baseEnvironment, E2E_MODEL_DIAGNOSTIC_SCENARIO: "provider_unavailable", E2E_MODEL_DIAGNOSTIC_INITIAL_PROJECT: initialProject(args) };
+  if (phase === "model-diagnostics-success") return { ...baseEnvironment, E2E_MODEL_DIAGNOSTIC_SCENARIO: "success" };
+  if (phase === "model-diagnostics-failed") return { ...baseEnvironment, E2E_MODEL_DIAGNOSTIC_SCENARIO: "authentication_failed" };
+  if (phase === "model-diagnostics-temporarily-unavailable") return { ...baseEnvironment, E2E_MODEL_DIAGNOSTIC_SCENARIO: "provider_unavailable" };
   return phase === "workbench-inbox" ? { ...baseEnvironment, E2E_WORKBENCH_INBOX_SOURCE_ONLY: "1" } : baseEnvironment;
 }
 

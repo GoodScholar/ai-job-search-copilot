@@ -166,6 +166,16 @@ async function createRecommendationAccount(request: APIRequestContext, info: Tes
   });
   expect(target.status()).toBe(201);
   const targetId = (await target.json() as { targets: Array<{ targetId: string; priority: string }> }).targets.find((entry) => entry.priority === "primary")!.targetId;
+  const source = await request.post(`${apiBaseUrl}/v1/job-targets/${targetId}/company-watchlist/items`, {
+    headers: { authorization: `Bearer ${session.token}` },
+    data: { expectedVersion: 0, canonicalCompanyName: "Inbox Calibration Fixture", careersUrl: "https://boards.greenhouse.io/inbox-calibration-fixture", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null },
+  });
+  expect(source.status()).toBe(201);
+  const diagnostic = await request.post(`${apiBaseUrl}/v1/model-diagnostics`, {
+    headers: { authorization: `Bearer ${session.token}` }, data: {},
+  });
+  expect(diagnostic.status()).toBe(201);
+  await expect(diagnostic.json()).resolves.toMatchObject({ status: "available" });
   return { ...session, targetId };
 }
 
@@ -314,7 +324,12 @@ test("从首页拒绝校准建议不会修改现行规则", async ({ page, reque
     ["Inbox 地点反馈一", "地点"], ["Inbox 地点反馈二", "地点"], ["Inbox 地点反馈三", "地点"],
   ] as const;
   for (const [title] of feedback) await importAndTriage(request, account, title);
-  const discovery = await request.post(`${apiBaseUrl}/v1/agent-runs`, { headers: { authorization: `Bearer ${account.token}` }, data: { targetId: account.targetId, idempotencyKey: info.project.name === "Desktop Chrome" ? "10000000-0000-4000-8000-000000000161" : "10000000-0000-4000-8000-000000000162" } });
+  const preflight = await request.get(`${apiBaseUrl}/v1/run-preflight?workflow=discovery&trigger=manual&targetId=${account.targetId}`, { headers: { authorization: `Bearer ${account.token}` } });
+  expect(preflight.status()).toBe(200);
+  const report = await preflight.json() as { status: string; warningFingerprint: string | null; items: Array<{ code: string }> };
+  expect(report).toMatchObject({ status: "ready_with_warnings", warningFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u) });
+  expect(report.items.map((item) => item.code)).toContain("SOURCE_HEALTH_UNCHECKED");
+  const discovery = await request.post(`${apiBaseUrl}/v1/agent-runs`, { headers: { authorization: `Bearer ${account.token}` }, data: { targetId: account.targetId, idempotencyKey: info.project.name === "Desktop Chrome" ? "10000000-0000-4000-8000-000000000161" : "10000000-0000-4000-8000-000000000162", warningFingerprint: report.warningFingerprint } });
   expect(discovery.status()).toBe(201);
   const discoveryRunId = (await discovery.json() as { runId: string }).runId;
   await waitForRun(page, await waitForAutomaticMatch(account.userId, discoveryRunId));

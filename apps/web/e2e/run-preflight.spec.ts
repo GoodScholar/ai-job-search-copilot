@@ -156,7 +156,8 @@ test("账户 B 不能从工作台或正式报告读取账户 A 的目标和来�
   expect(report.targetId).toBeNull();
   expect(JSON.stringify(report.items)).not.toContain("Preflight Health Fixture");
   await page.context().addCookies([{ name: "job_copilot_session", value: sessionToken, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
-  await page.goto("/home");
+  await page.goto("/home", { waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("main")).toBeVisible();
   await expect(page.getByText("Preflight Health Fixture")).toHaveCount(0);
   await expect(page.getByText("AI 应用工程师 · 主目标")).toHaveCount(0);
 });
