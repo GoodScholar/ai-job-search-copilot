@@ -1867,6 +1867,27 @@ describe("AgentRunProcessor checkpoints", () => {
     });
   });
 
+  it("processor 的事务完成、事务外补偿与重放共用 automatic evaluator 并只建一个 child", async () => {
+    const parent = await run(); const real = await realDeepMatchPreflight(parent.userId); const trace: Array<{ workflow: string; trigger: string }> = [];
+    const warning = { evaluate: async (tx: Database, input: any) => {
+      trace.push({ workflow: input.workflow, trigger: input.trigger }); const evaluation = await real.evaluate(tx, input);
+      return { ...evaluation, report: { ...evaluation.report, status: "ready_with_warnings" as const, warningFingerprint: "c".repeat(64), items: [...evaluation.report.items, { code: "SOURCE_HEALTH_UNCHECKED", severity: "warning" as const, summary: "warning", impact: "warning", retryable: true, suggestedActions: ["review_source_health"], evidence: { kind: "source_health", checkedSourceCount: 0, healthySourceCount: 0, degradedSourceCount: 0, uncheckedSourceCount: 1, latestCheckedAt: null } }] } };
+    } };
+    const processor = createAgentRunProcessor({ db: database, adapterResolver: resolver(successAdapter()), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, runPreflight: warning as any });
+    await expect(processor.process({ version: 1, ...parent, finalAttempt: true })).resolves.toBe("completed");
+    await expect(processor.process({ version: 1, ...parent, finalAttempt: true })).resolves.toBe("stale");
+    expect(trace).toEqual([{ workflow: "deep_match", trigger: "automatic" }]);
+    const children = await database.select({ preflight: agentRuns.preflightSnapshot, policy: agentRuns.accountPolicySnapshot }).from(agentRuns).where(and(eq(agentRuns.userId, parent.userId), eq(agentRuns.workflowVersion, "deep-match-v1")));
+    expect(children).toEqual([{ preflight: expect.objectContaining({ status: "ready_with_warnings", warningFingerprint: "c".repeat(64) }), policy: (await real.evaluate(database, { userId: parent.userId, targetId: parent.targetId, workflow: "deep_match", trigger: "automatic" })).policy.snapshot }]);
+  });
+
+  it("processor automatic evaluator 的未知错误走原持久化失败语义，不伪装为 blocker", async () => {
+    const parent = await run(); const processor = createAgentRunProcessor({ db: database, adapterResolver: resolver(successAdapter()), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, runPreflight: { evaluate: async () => { throw new Error("unexpected-preflight"); } } as any });
+    await expect(processor.process({ version: 1, ...parent, finalAttempt: true })).resolves.toBe("retry");
+    await expect(database.select({ status: agentRuns.status, failure: agentRuns.failureCode }).from(agentRuns).where(eq(agentRuns.id, parent.runId))).resolves.toEqual([{ status: "queued", failure: null }]);
+    await expect(database.select().from(agentRuns).where(and(eq(agentRuns.userId, parent.userId), eq(agentRuns.workflowVersion, "deep-match-v1")))).resolves.toHaveLength(0);
+  });
+
   it.each(["cancel_requested", "pause_requested"] as const)("过期 lease 的 %s 先于 attempts/active budget 被处理", async (controlState) => {
     const job = await run();
     const oldToken = crypto.randomUUID();

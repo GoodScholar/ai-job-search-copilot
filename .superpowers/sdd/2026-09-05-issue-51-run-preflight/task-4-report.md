@@ -166,6 +166,17 @@ pnpm --filter @job-copilot/domain typecheck && git diff --check
 exit 0
 ```
 
+## 修复轮 3：processor 公开入口
+
+新增的 processor 入口用例不直接调用 deep-match helper：`processor.process` 的成功路径同时覆盖 discovery persistence transaction 内 `afterCompleted` 与提交后的补偿触发；trace 记录唯一一次 `workflow=deep_match, trigger=automatic` evaluation，第二次 processor replay 为 stale 且 child 不重复。数据库断言 child warning snapshot/policy 与真实 evaluator 一致。未知 evaluator 错误走原 retry/queued 语义且 child 为零，未被 automatic blocker 分支吞掉。
+
+```text
+pnpm --filter @job-copilot/domain exec vitest run --no-file-parallelism src/agent-run-processor.integration.test.ts
+1 file passed; 105 tests passed; exit 0
+pnpm --filter @job-copilot/domain typecheck && pnpm --filter worker typecheck && git diff --check
+all exit 0
+```
+
 ## Worker composition 补证据（Task 4 fix round 1）
 
 - `agent-run.integration.test.ts` 新增真实 Worker 调用链覆盖：从 Worker scheduler tick 创建 schedule discovery，再由真实 processor 提交 automatic deep-match child；对 Nest 的唯一 `AGENT_RUN_PREFLIGHT` 实例记录 evaluator identity/call trace，确认同一实例收到 `discovery/schedule` 与 `deep_match/automatic` 两类调用。测试不是 provider 注册或 mock 存在性断言。
