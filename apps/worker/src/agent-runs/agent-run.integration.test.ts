@@ -29,10 +29,12 @@ import {
 } from "@job-copilot/database";
 import { AGENT_RUN_JOB_NAME, AGENT_RUN_QUEUE } from "@job-copilot/contracts/agent-runs";
 import { createAgentRunCommands, createAgentRunProcessor, createAgentRunQueries, createAgentRunRecoveryQueries } from "@job-copilot/domain/agent-runs";
+import { createAccountRunPolicies } from "@job-copilot/domain/account-run-policies";
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
 import { createReadyRunPreflightEvaluator } from "../../../../packages/domain/src/testing/run-preflight.js";
 import { createCompanyWatchlistCommands } from "@job-copilot/domain/company-watchlists";
 import { createJobDiscoverySchedules } from "@job-copilot/domain/job-discovery-schedules";
+import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-policies";
 import { createFakeModelDiagnosticAdapter } from "@job-copilot/model-access/testing";
 import type { RunPreflightEvaluator } from "@job-copilot/domain/run-preflight";
 
@@ -77,6 +79,17 @@ async function waitFor(check: () => Promise<boolean>, message: string, timeoutMs
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(message);
+}
+
+function shanghaiDailyTime(date: Date): string {
+  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(date);
+  return `${parts.find((part) => part.type === "hour")!.value}:${parts.find((part) => part.type === "minute")!.value}`;
+}
+
+function shiftDailyTime(time: string, minutes: number): string {
+  const [hour, minute] = time.split(":").map(Number) as [number, number];
+  const shifted = (hour * 60 + minute + minutes + 24 * 60) % (24 * 60);
+  return `${String(Math.floor(shifted / 60)).padStart(2, "0")}:${String(shifted % 60).padStart(2, "0")}`;
 }
 
 describe("岗位发现 Agent Run Worker", () => {
@@ -202,6 +215,15 @@ describe("岗位发现 Agent Run Worker", () => {
   async function stopWorker(): Promise<void> {
     await context?.close();
     context = undefined;
+  }
+
+  async function configureScheduledRunWindow(userId: string): Promise<string> {
+    const dailyTime = shanghaiDailyTime(new Date());
+    const settings = structuredClone(systemAccountRunPolicy().effective);
+    settings.backgroundWindow = { start: shiftDailyTime(dailyTime, -5), end: shiftDailyTime(dailyTime, 5), timeZone: "Asia/Shanghai" };
+    await createAccountRunPolicies({ db: database, id: randomUUID, clock: () => new Date() })
+      .save({ userId, command: { expectedVersion: 0, settings } });
+    return dailyTime;
   }
 
   it("MinIO store 仅接受 JSON，并实现真实写入和删除", async () => {
@@ -335,6 +357,7 @@ describe("岗位发现 Agent Run Worker", () => {
     const scheduledUserId = randomUUID();
     const scheduledTargetId = randomUUID();
     await database.insert(jobAccounts).values({ id: scheduledUserId });
+    const scheduledDailyTime = await configureScheduledRunWindow(scheduledUserId);
     const profileId = randomUUID();
     const factId = randomUUID();
     await database.insert(jobProfiles).values({ id: profileId, userId: scheduledUserId, version: 1 });
@@ -349,7 +372,7 @@ describe("岗位发现 Agent Run Worker", () => {
       command: { expectedVersion: 0, canonicalCompanyName: "Schedule Fixture", careersUrl: "https://boards.greenhouse.io/schedule-fixture", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null },
     });
     const schedules = createJobDiscoverySchedules({ db: database, runs: commands(), auditTrail, id: randomUUID, clock: () => new Date() });
-    const schedule = await schedules.set({ userId: scheduledUserId, targetId: scheduledTargetId, requestId: randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
+    const schedule = await schedules.set({ userId: scheduledUserId, targetId: scheduledTargetId, requestId: randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: scheduledDailyTime } });
     await database.update(jobDiscoverySchedules).set({ nextRunAt: new Date(Date.now() - 1_000) }).where(eq(jobDiscoverySchedules.id, schedule.scheduleId));
 
     const skippedSchedule = async (input: { targetState: "active" | "inactive"; careersUrl: string; allowedDomains: string[] }) => {
@@ -430,6 +453,7 @@ describe("岗位发现 Agent Run Worker", () => {
     const profileId = randomUUID();
     const factId = randomUUID();
     await database.insert(jobAccounts).values({ id: scheduledUserId });
+    const scheduledDailyTime = await configureScheduledRunWindow(scheduledUserId);
     await database.insert(jobProfiles).values({ id: profileId, userId: scheduledUserId, version: 1 });
     await database.insert(profileFacts).values({ id: factId, userId: scheduledUserId, profileId, factType: "skill" });
     await database.insert(profileFactRevisions).values({ id: randomUUID(), userId: scheduledUserId, profileFactId: factId, revisionNumber: 1, factType: "skill", factValue: { name: "TypeScript" }, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1 });
@@ -442,7 +466,7 @@ describe("岗位发现 Agent Run Worker", () => {
       command: { expectedVersion: 0, canonicalCompanyName: "Composition Fixture", careersUrl: "https://boards.greenhouse.io/composition-fixture", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null },
     });
     const schedules = createJobDiscoverySchedules({ db: database, runs: commands(), auditTrail, id: randomUUID, clock: () => new Date() });
-    const schedule = await schedules.set({ userId: scheduledUserId, targetId: scheduledTargetId, requestId: randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
+    const schedule = await schedules.set({ userId: scheduledUserId, targetId: scheduledTargetId, requestId: randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: scheduledDailyTime } });
     await database.update(jobDiscoverySchedules).set({ nextRunAt: new Date(Date.now() - 1_000) }).where(eq(jobDiscoverySchedules.id, schedule.scheduleId));
 
     await waitFor(async () => {
