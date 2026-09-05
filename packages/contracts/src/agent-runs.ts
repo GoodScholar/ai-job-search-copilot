@@ -704,7 +704,7 @@ export function parseSourceHealthDetailResult(value: unknown, expected: { source
   return result;
 }
 
-export type StartAgentRunCommand = z.infer<typeof StartAgentRunCommandSchema>;
+export type StartAgentRunCommand = z.input<typeof StartAgentRunCommandSchema>;
 export type ControlAgentRunCommand = z.infer<typeof ControlAgentRunCommandSchema>;
 export type AgentRunControlSnapshot = z.infer<typeof AgentRunControlSnapshotSchema>;
 export type ControlAgentRunResponse = z.infer<typeof ControlAgentRunResponseSchema>;

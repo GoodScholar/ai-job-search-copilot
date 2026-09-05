@@ -70,3 +70,22 @@ src/agent-inbox.ts(77,1035): Property 'warningFingerprint' is missing in type
 
 - 完整 domain typecheck 当前被上述已有 `agent-inbox.ts` 不匹配阻断，非 Task 2 所能修改。
 - 指定 `pnpm ... test -- <files>` 运行方式在当前 package script 下会全包扫描；GREEN 使用等价的直接 Vitest 定点命令以维持单进程、非重叠测试纪律。
+
+## 门禁修复（追加）
+
+账本裁决确认上述 typecheck 是必须关闭的门禁。最小修复将 `StartAgentRunCommand` 导出类型从 `z.infer` 改为 `z.input<typeof StartAgentRunCommandSchema>`：调用方可以省略拥有 `.default(null)` 的 `warningFingerprint`，而所有生产边界仍由 `StartAgentRunCommandSchema.parse()` 输出显式 `warningFingerprint: null`。未修改 `agent-inbox.ts`，也未改变运行语义。
+
+以下命令按单进程串行执行，全部通过：
+
+```sh
+pnpm --filter @job-copilot/domain exec vitest run --no-file-parallelism src/run-preflight.integration.test.ts src/model-diagnostics.integration.test.ts
+# 2 files / 22 tests passed
+pnpm --filter @job-copilot/domain typecheck
+# tsc --noEmit passed
+pnpm --filter @job-copilot/contracts exec vitest run --no-file-parallelism src/agent-runs.test.ts
+# 1 file / 21 tests passed
+pnpm --filter @job-copilot/contracts typecheck
+# tsc --noEmit passed
+```
+
+修复后不再存在 typecheck 疑虑。
