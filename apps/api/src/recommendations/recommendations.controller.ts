@@ -1,6 +1,6 @@
 import { Body, Controller, Get, HttpStatus, Inject, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { ApiBearerAuth, ApiConflictResponse, ApiNotFoundResponse, ApiUnauthorizedResponse } from "@nestjs/swagger";
-import { CalibrationProposalCommandResponseSchema, CalibrationProposalRebaseCommandSchema, CalibrationProposalResolutionCommandSchema, CalibrationProposalRevisionCommandSchema, RecommendationDecisionCommandSchema, RecommendationExclusionPageSchema, RecommendationListHistoryPageSchema, RecommendationListSchema } from "@job-copilot/contracts/recommendations";
+import { CalibrationProposalCommandResponseSchema, CalibrationProposalRebaseCommandSchema, CalibrationProposalResolutionCommandSchema, CalibrationProposalRevisionCommandSchema, RecommendationDecisionCommandSchema, RecommendationExclusionPageSchema, RecommendationListHistoryPageSchema, RecommendationListSchema, StartRecommendationReevaluationCommandSchema } from "@job-copilot/contracts/recommendations";
 import type { FastifyRequest } from "fastify";
 import { createZodDto, ZodResponse } from "nestjs-zod";
 import { z } from "zod";
@@ -16,7 +16,7 @@ class RecommendationTargetQueryDto extends createZodDto(z.object({ targetId: z.u
 class RecommendationCursorQueryDto extends createZodDto(z.object({ targetId: z.uuid(), cursor: z.uuid().optional(), limit: z.coerce.number().int().min(1).max(100).default(20) }).strict()) {}
 class RecommendationListExclusionsQueryDto extends createZodDto(z.object({ targetId: z.uuid(), cursor: z.uuid().optional(), limit: z.coerce.number().int().min(1).max(100).default(25) }).strict()) {}
 class RecommendationListIdParamDto extends createZodDto(z.object({ recommendationListId: z.uuid() }).strict()) {}
-class StartRecommendationReevaluationDto extends createZodDto(z.object({ targetId: z.uuid(), opportunityId: z.uuid(), idempotencyKey: z.uuid(), warningFingerprint: z.string().regex(/^[a-f0-9]{64}$/iu).nullable().default(null) }).strict()) {}
+class StartRecommendationReevaluationDto extends createZodDto(StartRecommendationReevaluationCommandSchema) {}
 class CalibrationProposalRevisionDto extends createZodDto(CalibrationProposalRevisionCommandSchema) {}
 class CalibrationProposalRebaseDto extends createZodDto(CalibrationProposalRebaseCommandSchema) {}
 class CalibrationProposalCommandResponseDto extends createZodDto(CalibrationProposalCommandResponseSchema) {}

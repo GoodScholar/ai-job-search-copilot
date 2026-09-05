@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { api, ApiClientError } from "@/lib/server/api-client";
 import { readSessionToken } from "@/lib/server/session-cookie";
-import { RunPreflightProblemSchema, type RunPreflightReport } from "@job-copilot/contracts/run-preflight";
+import { RunPreflightProblemSchema, RunPreflightWarningFingerprintSchema, type RunPreflightReport } from "@job-copilot/contracts/run-preflight";
 
 export type RecommendationReevaluationActionResult = { kind: "started" } | { kind: "blocked"; preflight: RunPreflightReport } | { kind: "warning_confirmation_required"; preflight: RunPreflightReport };
 
@@ -14,7 +14,7 @@ export async function requestRecommendationReevaluationAction(targetId: string, 
   if (!sessionToken) redirect("/login?returnTo=%2Frecommendations");
   const idempotencyKey = String(formData.get("idempotencyKey") ?? "");
   const rawFingerprint = formData.get("warningFingerprint");
-  const warningFingerprint = typeof rawFingerprint === "string" && /^[a-f0-9]{64}$/iu.test(rawFingerprint) ? rawFingerprint : null;
+  const warningFingerprint = typeof rawFingerprint === "string" ? RunPreflightWarningFingerprintSchema.safeParse(rawFingerprint).data ?? null : null;
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(idempotencyKey)) throw new Error("DEEP_MATCH_IDEMPOTENCY_KEY_INVALID");
   try {
     await api.startDeepMatchRun(sessionToken, targetId, opportunityId, idempotencyKey, warningFingerprint);
