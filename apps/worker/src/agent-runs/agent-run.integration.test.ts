@@ -7,7 +7,7 @@ import { NestFactory } from "@nestjs/core";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { RedisContainer, type StartedRedisContainer } from "@testcontainers/redis";
 import { GenericContainer, type StartedTestContainer, Wait } from "testcontainers";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   agentRunJobResults,
   agentRuns,
@@ -34,9 +34,10 @@ import { createReadyRunPreflightEvaluator } from "../../../../packages/domain/sr
 import { createCompanyWatchlistCommands } from "@job-copilot/domain/company-watchlists";
 import { createJobDiscoverySchedules } from "@job-copilot/domain/job-discovery-schedules";
 import { createFakeModelDiagnosticAdapter } from "@job-copilot/model-access/testing";
+import type { RunPreflightEvaluator } from "@job-copilot/domain/run-preflight";
 
 import { AppModule } from "../app.module.js";
-import { AGENT_RUN_CONSUMER, TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED } from "./agent-run.module.js";
+import { AGENT_RUN_CONSUMER, AGENT_RUN_PREFLIGHT, TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED, createConfiguredJobDiscoveryExecutionMode, createWorkerRunPreflight } from "./agent-run.module.js";
 import type { AgentRunConsumer } from "./agent-run-consumer.js";
 import { agentRunQueueJobOptions } from "./agent-run-reconciler.js";
 import { AgentRunScheduler, type AgentRunScheduleFailure } from "./agent-run-scheduler.js";
@@ -412,6 +413,78 @@ describe("岗位发现 Agent Run Worker", () => {
     }))).toEqual(["RUN_PREFLIGHT_BLOCKED", "RUN_PREFLIGHT_BLOCKED", "RUN_PREFLIGHT_BLOCKED"]);
     await expect(Promise.all([inactive, unsupported, policy].map(({ userId }) => database.select().from(agentRuns).where(eq(agentRuns.userId, userId))))).resolves.toEqual([[], [], []]);
   }, 45_000);
+
+  it("计划 starter 与 automatic child 在真实 Worker 路径中调用同一个 preflight provider", async () => {
+    await stopWorker();
+    await startWorker();
+    const workerPreflight = context!.get<RunPreflightEvaluator>(AGENT_RUN_PREFLIGHT, { strict: false });
+    const trace: Array<{ workflow: string; trigger: string; userId: string }> = [];
+    const evaluate = workerPreflight.evaluate.bind(workerPreflight);
+    vi.spyOn(workerPreflight, "evaluate").mockImplementation(async (transaction, input) => {
+      trace.push({ workflow: input.workflow, trigger: input.trigger, userId: input.userId });
+      return evaluate(transaction, input);
+    });
+
+    const scheduledUserId = randomUUID();
+    const scheduledTargetId = randomUUID();
+    const profileId = randomUUID();
+    const factId = randomUUID();
+    await database.insert(jobAccounts).values({ id: scheduledUserId });
+    await database.insert(jobProfiles).values({ id: profileId, userId: scheduledUserId, version: 1 });
+    await database.insert(profileFacts).values({ id: factId, userId: scheduledUserId, profileId, factType: "skill" });
+    await database.insert(profileFactRevisions).values({ id: randomUUID(), userId: scheduledUserId, profileFactId: factId, revisionNumber: 1, factType: "skill", factValue: { name: "TypeScript" }, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1 });
+    await database.insert(modelDiagnosticResults).values({ configurationFingerprint: createFakeModelDiagnosticAdapter({ kind: "success" }, TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED).configurationFingerprint, status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket: "under_1s", checkedAt: new Date() });
+    await database.insert(jobTargets).values({ id: scheduledTargetId, userId: scheduledUserId, version: 1, priority: "primary", state: "active", activeSlot: null });
+    await database.insert(jobTargetRevisions).values({ id: randomUUID(), userId: scheduledUserId, targetId: scheduledTargetId, version: 1, priority: "primary", state: "active", constraints });
+    const auditTrail = createAuditTrail({ db: database, clock: () => new Date() });
+    await createCompanyWatchlistCommands({ db: database, auditTrail, id: randomUUID, clock: () => new Date() }).addItem({
+      userId: scheduledUserId, targetId: scheduledTargetId, requestId: randomUUID(),
+      command: { expectedVersion: 0, canonicalCompanyName: "Composition Fixture", careersUrl: "https://boards.greenhouse.io/composition-fixture", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null },
+    });
+    const schedules = createJobDiscoverySchedules({ db: database, runs: commands(), auditTrail, id: randomUUID, clock: () => new Date() });
+    const schedule = await schedules.set({ userId: scheduledUserId, targetId: scheduledTargetId, requestId: randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
+    await database.update(jobDiscoverySchedules).set({ nextRunAt: new Date(Date.now() - 1_000) }).where(eq(jobDiscoverySchedules.id, schedule.scheduleId));
+
+    await waitFor(async () => {
+      const [occurrence] = await database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.scheduleId, schedule.scheduleId));
+      return occurrence?.status === "dispatched" && Boolean(occurrence.runId)
+        && (await createAgentRunQueries({ db: database }).get({ userId: scheduledUserId, runId: occurrence.runId! }))?.status === "completed";
+    }, "scheduler command starter did not complete the scheduled discovery");
+    await waitFor(async () => trace.some((entry) => entry.userId === scheduledUserId && entry.workflow === "deep_match" && entry.trigger === "automatic"), "processor did not create its automatic child through the provider", 30_000);
+
+    expect(trace).toEqual(expect.arrayContaining([
+      { userId: scheduledUserId, workflow: "discovery", trigger: "schedule" },
+      { userId: scheduledUserId, workflow: "deep_match", trigger: "automatic" },
+    ]));
+  }, 45_000);
+
+  it("生产缺模型配置时只读当前 deployment 的 unverified 投影并阻断 Worker", async () => {
+    await stopWorker();
+    const productionUserId = randomUUID();
+    const productionTargetId = randomUUID();
+    const profileId = randomUUID();
+    const factId = randomUUID();
+    await database.insert(jobAccounts).values({ id: productionUserId });
+    await database.insert(jobProfiles).values({ id: profileId, userId: productionUserId, version: 1 });
+    await database.insert(profileFacts).values({ id: factId, userId: productionUserId, profileId, factType: "skill" });
+    await database.insert(profileFactRevisions).values({ id: randomUUID(), userId: productionUserId, profileFactId: factId, revisionNumber: 1, factType: "skill", factValue: { name: "TypeScript" }, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1 });
+    await database.insert(jobTargets).values({ id: productionTargetId, userId: productionUserId, version: 1, priority: "primary", state: "active", activeSlot: null });
+    await database.insert(jobTargetRevisions).values({ id: randomUUID(), userId: productionUserId, targetId: productionTargetId, version: 1, priority: "primary", state: "active", constraints });
+    const transport = vi.fn(async () => { throw new Error("production preflight must not diagnose"); });
+    vi.stubGlobal("fetch", transport);
+    try {
+      const evaluator = createWorkerRunPreflight({ environment: { APP_ENV: "production" }, executionMode: createConfiguredJobDiscoveryExecutionMode({ APP_ENV: "production" }) });
+      const evaluation = await database.transaction((transaction) => evaluator.evaluate(transaction, { userId: productionUserId, targetId: productionTargetId, workflow: "deep_match", trigger: "automatic" }));
+
+      expect(evaluation.report.status).toBe("blocked");
+      expect(evaluation.report.items.find((item) => item.code === "MODEL_DIAGNOSTIC_UNAVAILABLE")).toMatchObject({
+        severity: "blocking", evidence: { kind: "model_diagnostic", status: "unverified" },
+      });
+      expect(transport).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 
   it("计划扫描的真实 PostgreSQL 锁超时会清理查询，并在下一个 tick 恢复", async () => {
     await stopWorker();

@@ -165,3 +165,79 @@ pnpm --filter @job-copilot/domain exec vitest run --no-file-parallelism src/agen
 pnpm --filter @job-copilot/domain typecheck && git diff --check
 exit 0
 ```
+
+## Worker composition 补证据（Task 4 fix round 1）
+
+- `agent-run.integration.test.ts` 新增真实 Worker 调用链覆盖：从 Worker scheduler tick 创建 schedule discovery，再由真实 processor 提交 automatic deep-match child；对 Nest 的唯一 `AGENT_RUN_PREFLIGHT` 实例记录 evaluator identity/call trace，确认同一实例收到 `discovery/schedule` 与 `deep_match/automatic` 两类调用。测试不是 provider 注册或 mock 存在性断言。
+- 同文件新增 production-like 缺模型配置覆盖：以 `APP_ENV=production` 构造 Worker evaluator，写入真实 profile/target 但不写入当前 deployment 指纹的 diagnostic 行；断言只读 projection 返回 `MODEL_DIAGNOSTIC_UNAVAILABLE` / `unverified` blocker，并把全局 fetch 设为失败以证明没有诊断或 OpenAI 请求。若 production fallback 改回 test ready fake，此测试会不再得到当前 deployment 的 unverified blocker。
+- test diagnostic 继续从既有 `TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED` 经 `createFakeModelDiagnosticAdapter` 派生，未引入第二套硬编码 fingerprint 规则。
+
+### RED / mutation 记录
+
+- 首次新增测试运行到断言阶段：production projection 的真实报告为 `blocked`，且包含 `MODEL_DIAGNOSTIC_UNAVAILABLE` / `unverified`；初始 `toMatchObject` 对数组作了错误的完整数组匹配，导致 1 项断言失败。该断言已改为先断言 report status，再按 code 寻找 model item；没有修改生产实现，也不把该测试辅助错误计为产品 RED。
+- 计划中的两个受控 mutation（scheduler factory 绕过 injected provider、production 分支改用 ready fake）尚未执行。修正断言后，Testcontainers 在 `beforeAll` 连续三次无法得到 Docker 发布的 PostgreSQL host port，所有 11 项测试被跳过，故不能诚实声称 mutation 已执行。
+
+### 本轮串行验证与外部阻塞
+
+```text
+pnpm --filter worker exec vitest run --no-file-parallelism src/agent-runs/agent-run.module.test.ts
+1 file passed; 37 tests passed; exit 0
+
+pnpm --filter worker exec vitest run --no-file-parallelism src/agent-runs/agent-run-scheduler.test.ts
+1 file passed; 5 tests passed; exit 0
+
+pnpm --filter @job-copilot/domain exec vitest run --no-file-parallelism src/job-discovery-schedules.integration.test.ts src/deep-match-trigger.test.ts src/deep-match-persistence.integration.test.ts src/agent-run-processor.integration.test.ts
+4 files passed; 146 tests passed; exit 0
+
+pnpm --filter @job-copilot/domain typecheck
+exit 0
+
+pnpm --filter worker typecheck
+exit 0
+
+git diff --check
+exit 0
+```
+
+Worker integration 的修正前完整一次运行已到测试主体（10 passed、1 assertion failed，exit 1）；修正后连续三次在 `PostgreSqlContainer.start()` 的 `beforeAll` 阶段失败（11 skipped，exit 1）。运行中检查到新 `postgres:17-alpine` 容器健康，但 Docker 的 `HostConfig.PortBindings` 为 `HostPort: "0"` 且 `NetworkSettings.Ports["5432/tcp"]` 为空；Testcontainers 因而在等待 host port 绑定 10 秒后超时。现有用户 PostgreSQL 占用 `127.0.0.1:5432`，未被停止或修改。本缺口需要 Docker 恢复随机 host-port 分配后，单进程重跑 worker integration、两个 mutation check 与要求的三文件组合。
+
+## 环境恢复与最终验收（Task 4 fix round 1）
+
+### Docker 只读与清理边界
+
+- `pgrep` 未发现 96d4 残留 Vitest/worker 测试进程；唯一 Docker PostgreSQL 是用户既有 `b6640bc0529294b0754c420cdae8ec6ea38f6f30358f7b3bf3cb5a5a0dd54c93` / `wanyou-dev-postgres-1`（`postgres:17.6-alpine`，已运行约 20 小时，host `127.0.0.1:5432`），未触碰。
+- 检查时没有遗留的 `postgres:17-alpine` 或 Testcontainers reaper，故未停止或删除任何容器。最终 runner 退出后短暂存在的 reaper `fd1d44b672ef11932cab21b6b3437ee4f778cfd141018e638b0b7ef814434280` 已由 Testcontainers 自行清理；再次 inspect 返回 `no such object`。
+- Docker 为 client/server `29.5.2`、API `1.54`、linux/arm64、overlayfs；未读取或输出敏感环境变量。
+
+### 完整 RED / GREEN mutation
+
+1. 临时将 scheduler command composition 改为 `createWorkerRunPreflight({ executionMode })`，绕过 injected provider。只跑 Worker integration 得到预期 `exit 1`：trace 仅有 `deep_match/automatic`，缺少 `discovery/schedule`，失败于新增同一实例断言。立即恢复 `runPreflight` 注入；重跑 `11 passed / exit 0`。
+2. 临时将 `APP_ENV=production` 分支改走 test ready fake。只跑 Worker integration 得到预期 `exit 1`：production-like 测试实际 `status: ready`，期望 `blocked`。立即恢复 production OpenAI configuration projection；重跑 `11 passed / exit 0`。
+
+### 最终从头串行验收
+
+```text
+pnpm --filter worker exec vitest run --no-file-parallelism src/agent-runs/agent-run.module.test.ts
+1 file passed; 37 tests passed; exit 0
+
+pnpm --filter worker exec vitest run --no-file-parallelism src/agent-runs/agent-run.integration.test.ts
+1 file passed; 11 tests passed; exit 0
+
+pnpm --filter worker exec vitest run --no-file-parallelism src/agent-runs/agent-run-scheduler.test.ts
+1 file passed; 5 tests passed; exit 0
+
+pnpm --filter worker exec vitest run --no-file-parallelism src/agent-runs/agent-run.module.test.ts src/agent-runs/agent-run.integration.test.ts src/agent-runs/agent-run-scheduler.test.ts
+3 files passed; 53 tests passed; exit 0
+
+pnpm --filter @job-copilot/domain exec vitest run --no-file-parallelism src/job-discovery-schedules.integration.test.ts src/deep-match-trigger.test.ts src/deep-match-persistence.integration.test.ts src/agent-run-processor.integration.test.ts
+4 files passed; 146 tests passed; exit 0
+
+pnpm --filter @job-copilot/domain typecheck
+exit 0
+
+pnpm --filter worker typecheck
+exit 0
+
+git diff --check
+exit 0
+```
