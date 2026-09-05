@@ -1,0 +1,72 @@
+# Task 2 — 统一 run-preflight evaluator 与模型稳定投影
+
+## 实现摘要
+
+- 新增 `@job-copilot/domain/run-preflight`：事务可绑定 evaluator、短事务查询门面、稳定 SHA-256 警告 fingerprint，以及精确的 blocking/manual-warning 授权错误。
+- evaluator 只投影 owner-bound 的当前 profile、主/请求目标、当前 Watchlist 中 enabled Greenhouse 来源、每个来源的最新健康记录、稳定模型投影及 effective policy；不输出自由文本、URL、配置指纹或原始错误。
+- 模型诊断新增只读 `ModelDiagnosticProjectionReader`，使用现有 advisory lock 的非阻塞探测；`createModelDiagnostics().get()` 重用它。
+- 新增仅供旧领域夹具显式注入的 `createReadyRunPreflightEvaluator()`，未被生产代码导入。
+
+## TDD 证据
+
+### RED
+
+1. 已确认不存在遗留 `vitest`、`playwright`、`pnpm test` 进程。
+2. 先添加 `run-preflight.integration.test.ts` 与模型 reader 集成断言，再运行：
+
+   ```sh
+   pnpm --filter @job-copilot/domain test -- src/run-preflight.integration.test.ts src/model-diagnostics.integration.test.ts
+   ```
+
+3. 该仓库的 package script 将参数后的 `--` 解释为全包扫描，RED 如预期暴露缺少 evaluator/reader/授权导出的错误；同时无关旧集成套件也被扫描。此命令不能作为定点结果。
+
+### GREEN
+
+```sh
+pnpm --filter @job-copilot/domain exec vitest run --no-file-parallelism src/run-preflight.integration.test.ts src/model-diagnostics.integration.test.ts
+```
+
+结果：2 个文件、22 项测试全部通过。覆盖真实 PostgreSQL owner 隔离、活动/移除画像修订、主/次目标、Greenhouse/AnySearch/disabled 来源边界、来源健康最新行和非阻塞语义、deep-match 非必需来源项、策略预算/窗口、模型不同指纹与失败状态、fingerprint 稳定性、敏感字段负面证明及授权矩阵。
+
+## 验证命令与结果
+
+```sh
+git diff --check
+```
+
+通过。
+
+```sh
+pnpm --filter @job-copilot/domain typecheck
+```
+
+未通过，唯一错误为本任务开始前 Task 1 contracts 变更造成的既有调用不匹配：
+
+```text
+src/agent-inbox.ts(77,1035): Property 'warningFingerprint' is missing in type
+{ targetId: string; idempotencyKey: string; }
+```
+
+`agent-inbox.ts` 不在 Task 2 brief 允许修改的文件中，故未越界修复；Task 3 应在其完整受影响 fixture/API 接线中统一补齐该新必填字段，或由 owner 指派独立修复。
+
+## 变更文件
+
+- `packages/domain/src/run-preflight.ts`
+- `packages/domain/src/run-preflight.integration.test.ts`
+- `packages/domain/src/testing/run-preflight.ts`
+- `packages/domain/src/model-diagnostics.ts`
+- `packages/domain/src/model-diagnostics.integration.test.ts`
+- `packages/domain/package.json`
+
+## 自审
+
+- evaluator 仅接受 `select/insert/execute` DB seam；公开查询自己开短事务。
+- fingerprint 排除 `checkedAt` 与 `latestCheckedAt`，canonical JSON 排序键，且只包含 warning 的安全投影。
+- `schedule` 同时检查 evaluator 当前时刻和 `scheduledFor`；manual 不检查窗口。
+- 报告固定为画像、主目标、请求目标、来源能力、来源健康、模型、策略的顺序；所有中文文案由受限 code switch 生成。
+- 外部 Adapter 仅用于来源能力声明；模型 projection reader 从不调用 Adapter。
+
+## 疑虑
+
+- 完整 domain typecheck 当前被上述已有 `agent-inbox.ts` 不匹配阻断，非 Task 2 所能修改。
+- 指定 `pnpm ... test -- <files>` 运行方式在当前 package script 下会全包扫描；GREEN 使用等价的直接 Vitest 定点命令以维持单进程、非重叠测试纪律。

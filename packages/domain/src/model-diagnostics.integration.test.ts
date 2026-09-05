@@ -3,7 +3,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { sql } from "drizzle-orm";
 import { createDatabase, migrateDatabase, type Database } from "@job-copilot/database";
 import type { ModelDiagnosticAdapter, ModelDiagnosticProbeResult } from "@job-copilot/contracts/model-diagnostics";
-import { createModelDiagnostics } from "./model-diagnostics";
+import { createModelDiagnosticProjectionReader, createModelDiagnostics } from "./model-diagnostics";
 
 const available: ModelDiagnosticProbeResult = {
   status: "available", reasonCode: "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket: "under_1s",
@@ -58,6 +58,17 @@ describe("模型连接诊断持久化协调", () => {
     await diagnostics.run(); now = new Date("2026-09-05T03:10:00.000Z");
     await expect(diagnostics.get()).resolves.toMatchObject({ status: "available", retryAt: null }); expect(fake.calls()).toBe(1);
     await diagnostics.run(); expect(fake.calls()).toBe(2);
+  });
+
+  it("公开 GET 与稳定投影 reader 对同一当前指纹给出相同安全状态，reader 不触发 Adapter", async () => {
+    now = new Date("2026-09-05T05:00:00.000Z"); const fake = adapter(`projection-${crypto.randomUUID()}`); const diagnostics = service(fake.value);
+    await diagnostics.run();
+    const [fromGet, fromReader] = await Promise.all([
+      diagnostics.get(),
+      createModelDiagnosticProjectionReader({ configurationFingerprint: fake.value.configurationFingerprint }).get(database, now),
+    ]);
+    expect(fromReader).toEqual(fromGet);
+    expect(fake.calls()).toBe(1);
   });
 
   it("连续稳定失败按上限指数退避，结束后允许新的探针", async () => {

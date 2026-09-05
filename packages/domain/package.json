@@ -6,6 +6,7 @@
   "exports": {
     "./runtime-config": "./src/runtime-config.ts",
     "./model-diagnostics": "./src/model-diagnostics.ts",
+    "./run-preflight": "./src/run-preflight.ts",
     "./audit-trail": "./src/audit-trail.ts",
     "./account-sessions": "./src/account-sessions.ts",
     "./workbench-home": "./src/workbench-home.ts",
