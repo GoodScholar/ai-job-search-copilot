@@ -65,3 +65,11 @@ it("仅将严格预检 409 原样返回；未知 409 仍为 502", async () => {
   mocks.startAgentRun.mockRejectedValueOnce(Object.assign(new Error("unknown"), { status: 409 }));
   await expect(POST(new Request("http://localhost/api/agent-runs", { method: "POST", body: JSON.stringify(command) }))).resolves.toMatchObject({ status: 502 });
 });
+
+it("BFF 不会将 api-client 已降级的恶意预检响应重新包装为 409", async () => {
+  mocks.readSessionToken.mockResolvedValue("a".repeat(43));
+  mocks.startAgentRun.mockRejectedValueOnce(Object.assign(new Error("恶意正文"), { status: 502, problem: { code: "RUN_PREFLIGHT_BLOCKED", message: "恶意正文", preflight: { rawPayload: "secret" } } }));
+  const response = await POST(new Request("http://localhost/api/agent-runs", { method: "POST", body: JSON.stringify(command) }));
+  expect(response.status).toBe(502);
+  expect(await response.text()).toBe("");
+});

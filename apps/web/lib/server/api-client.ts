@@ -158,6 +158,14 @@ async function readRunPreflightProblem(response: Response): Promise<RunPreflight
   return RunPreflightProblemSchema.safeParse(problem).data ?? null;
 }
 
+async function throwRunPreflightConflict(response: Response, fallbackMessage: string): Promise<never> {
+  const problem = await readRunPreflightProblem(response);
+  if (!problem) {
+    throw new ApiClientError("api", "上游运行前检查冲突响应无效", 502);
+  }
+  throw new ApiClientError("api", problem.message ?? fallbackMessage, 409, problem);
+}
+
 async function parseSuccess<T extends z.ZodType>(response: Response, schema: T): Promise<z.output<T>> {
   const payload = await parseJson(response);
   const parsed = schema.safeParse(payload);
@@ -219,7 +227,8 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
         body: JSON.stringify({ targetId, opportunityId, idempotencyKey, warningFingerprint }),
       });
       if (!response.ok) {
-        const problem = response.status === 409 ? await readRunPreflightProblem(response) : await readProblem(response);
+        if (response.status === 409) return throwRunPreflightConflict(response, "无法开始重新评估");
+        const problem = await readProblem(response);
         throw new ApiClientError("api", problem?.message ?? "无法开始重新评估", response.status, problem ?? undefined);
       }
       return parseSuccess(response, z.object({ runId: z.uuid(), reused: z.boolean() }).strict());
@@ -619,7 +628,8 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
         body: JSON.stringify(requestBody),
       });
       if (!response.ok) {
-        const problem = response.status === 409 ? await readRunPreflightProblem(response) : await readProblem(response);
+        if (response.status === 409) return throwRunPreflightConflict(response, "无法启动岗位发现");
+        const problem = await readProblem(response);
         throw new ApiClientError("api", problem?.message ?? "无法启动岗位发现", response.status, problem ?? undefined);
       }
       return parseSuccess(response, StartAgentRunResponseSchema);

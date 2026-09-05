@@ -9,10 +9,10 @@ const mocks = vi.hoisted(() => {
       super(typeof kindOrProblem === "string" ? message : "api"); this.kind = typeof kindOrProblem === "string" ? kindOrProblem : "api"; this.status = typeof kindOrProblem === "string" ? status : undefined; this.problem = typeof kindOrProblem === "string" ? problem : kindOrProblem;
     }
   }
-  return { ApiClientError, revalidatePath: vi.fn(), resolveCalibrationProposal: vi.fn(), startDeepMatchRun: vi.fn(), readSessionToken: vi.fn() };
+  return { ApiClientError, redirect: vi.fn(() => { throw new Error("NEXT_REDIRECT"); }), revalidatePath: vi.fn(), resolveCalibrationProposal: vi.fn(), startDeepMatchRun: vi.fn(), readSessionToken: vi.fn() };
 });
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
-vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
+vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 vi.mock("@/lib/server/api-client", () => ({ api: { resolveCalibrationProposal: mocks.resolveCalibrationProposal, startDeepMatchRun: mocks.startDeepMatchRun }, ApiClientError: mocks.ApiClientError }));
 vi.mock("@/lib/server/session-cookie", () => ({ readSessionToken: mocks.readSessionToken }));
 
@@ -34,4 +34,31 @@ it("预检 blocker 返回判别结果并保留调用方幂等键", async () => {
   const form = new FormData(); form.set("idempotencyKey", "00000000-0000-4000-8000-000000000001");
   await expect(requestRecommendationReevaluationAction("00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003", form)).resolves.toEqual({ kind: "blocked", preflight });
   expect(mocks.startDeepMatchRun).toHaveBeenCalledWith("session", "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000001", null);
+});
+
+it("预检 warning 返回判别结果，成功才失效读模型，未知错误不被当作冲突", async () => {
+  mocks.revalidatePath.mockClear();
+  mocks.readSessionToken.mockResolvedValue("session");
+  const preflight = { version: "run-preflight-v1", workflow: "deep_match", trigger: "manual", targetId: "00000000-0000-4000-8000-000000000002", status: "ready_with_warnings", warningFingerprint: "a".repeat(64), checkedAt: "2026-09-05T00:00:00.000Z", items: [{ code: "SOURCE_HEALTH_DEGRADED", severity: "warning", summary: "来源健康存在降级", impact: "结果可能不完整，请确认后继续。", retryable: true, suggestedActions: ["review_source_health"], evidence: { kind: "source_health", checkedSourceCount: 1, healthySourceCount: 0, degradedSourceCount: 1, uncheckedSourceCount: 0, latestCheckedAt: "2026-09-05T00:00:00.000Z" } }] };
+  const warningForm = new FormData(); warningForm.set("idempotencyKey", "00000000-0000-4000-8000-000000000001"); warningForm.set("warningFingerprint", "a".repeat(64));
+  mocks.startDeepMatchRun.mockRejectedValueOnce(new mocks.ApiClientError("api", "需要确认", 409, { code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED", message: "需要确认", preflight }));
+  await expect(requestRecommendationReevaluationAction("00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003", warningForm)).resolves.toEqual({ kind: "warning_confirmation_required", preflight });
+  expect(mocks.revalidatePath).not.toHaveBeenCalledWith("/recommendations");
+
+  const startedForm = new FormData(); startedForm.set("idempotencyKey", "00000000-0000-4000-8000-000000000001");
+  mocks.startDeepMatchRun.mockResolvedValueOnce({ runId: "00000000-0000-4000-8000-000000000005", reused: false });
+  await expect(requestRecommendationReevaluationAction("00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003", startedForm)).resolves.toEqual({ kind: "started" });
+  expect(mocks.revalidatePath).toHaveBeenCalledWith("/recommendations");
+
+  mocks.startDeepMatchRun.mockRejectedValueOnce(new mocks.ApiClientError("api", "上游错误", 502));
+  await expect(requestRecommendationReevaluationAction("00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003", startedForm)).rejects.toMatchObject({ status: 502 });
+});
+
+it("无会话时重定向到 recommendations 登录入口且绝不启动重评", async () => {
+  mocks.readSessionToken.mockResolvedValue(null);
+  mocks.startDeepMatchRun.mockClear();
+  const form = new FormData(); form.set("idempotencyKey", "00000000-0000-4000-8000-000000000001");
+  await expect(requestRecommendationReevaluationAction("00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003", form)).rejects.toThrow("NEXT_REDIRECT");
+  expect(mocks.redirect).toHaveBeenCalledWith("/login?returnTo=%2Frecommendations");
+  expect(mocks.startDeepMatchRun).not.toHaveBeenCalled();
 });

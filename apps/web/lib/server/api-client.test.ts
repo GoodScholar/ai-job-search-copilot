@@ -599,6 +599,17 @@ it("通过服务端 bearer 启动并严格读取 Agent Run DTO", async () => {
   }
 });
 
+it("仅将严格预检冲突保留为 409，畸形上游 409 统一降级为安全 502", async () => {
+  const fetchImpl = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response(JSON.stringify({ code: "RUN_PREFLIGHT_BLOCKED", message: "恶意正文", preflight: { rawPayload: "secret" } }), { status: 409 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ code: "SOMETHING_ELSE", message: "恶意正文" }), { status: 409 }));
+  const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+  const command = { targetId, idempotencyKey: "91cc6d11-6e50-4456-b2f0-393461336376" };
+
+  await expect(client.startAgentRun(sessionToken, command)).rejects.toMatchObject({ kind: "api", status: 502, problem: undefined });
+  await expect(client.startDeepMatchRun(sessionToken, targetId, "00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000004")).rejects.toMatchObject({ kind: "api", status: 502, problem: undefined });
+});
+
 it("拒绝不符合 Agent Run 契约的成功 JSON", async () => {
   const fetchImpl = vi.fn<typeof fetch>()
     .mockResolvedValueOnce(new Response(JSON.stringify({ ...agentRunSummary, reused: false, rawPayload: "secret" }), { status: 201 }))
