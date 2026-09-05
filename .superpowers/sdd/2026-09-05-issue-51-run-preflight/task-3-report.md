@@ -82,3 +82,31 @@ all exit 0
 ```
 
 新增 owner-bound 独立用例验证：账户 B 不能使用 A 的 targetId 取得/重放 A 的运行；即便 idempotency key 相同，B 的旧 warning fingerprint 也会收到 B 自己的最新 warning 报告，使用 B 当前 fingerprint 后只创建 B 自己的 run。mutation check：若去掉 owner `userId` 条件，测试会错误复用 A run；若 fingerprint 不包含 target/账户状态，B 旧 fingerprint 拒绝断言会失效。
+
+## Fix round 2/5：手动启动权威状态重检矩阵
+
+- 在真实 PostgreSQL 的 `agent-run-control.integration.test.ts` 增加一组 data-driven 覆盖。每个场景均使用隔离账户和幂等键，先通过真实 `createRunPreflightEvaluator` 取得 `ready_with_warnings` 页面报告与可确认启动的 fingerprint，随后才改变数据库权威状态并调用真实手动启动器。
+- 覆盖的五类变化及锁内最新 blocker：移除最后 active profile fact → `PROFILE_EVIDENCE_MISSING`；停用 requested target → `REQUESTED_JOB_TARGET_INACTIVE`；停用唯一 enabled Greenhouse source → `SOURCE_CAPABILITY_UNAVAILABLE`；将当前 deployment fingerprint 的模型诊断写为 `failed` → `MODEL_DIAGNOSTIC_UNAVAILABLE`；将 relevant account policy 的 `publicDiscovery.maxResults` 改为 `0` → `ACCOUNT_RUN_POLICY_BLOCKED`。
+- 每项均断言拒绝码为 `RUN_PREFLIGHT_BLOCKED`、返回报告为 `blocked` 且含对应 blocking item，并分别确认该账户的 `agent_runs`、`agent_run_steps`、`agent_run_events` 均未新增。
+- 新覆盖首次在既有生产实现上直接通过，故这是补覆盖而非伪造 RED。mutation check：临时将启动事务内 `authorizeRunPreflight` gate 改为不执行后，定点文件以 exit 1 失败（24 项中 4 项失败；新增矩阵错误地得到已创建运行而非 `RUN_PREFLIGHT_BLOCKED`）；随后立即恢复原实现。
+
+### Fix round 2 验证（全部 exit 0，除上述预期 mutation run）
+
+```text
+$ pnpm --filter @job-copilot/domain exec vitest run --no-file-parallelism src/agent-run-control.integration.test.ts
+Test Files  1 passed (1)
+Tests       24 passed (24)
+
+$ pnpm --filter @job-copilot/database exec vitest run --no-file-parallelism src/migrate.integration.test.ts
+Test Files  1 passed (1)
+Tests       27 passed (27)
+
+$ pnpm --filter @job-copilot/domain exec vitest run --no-file-parallelism src/agent-run-control.integration.test.ts src/agent-runs.test.ts src/agent-runs.integration.test.ts src/agent-inbox.integration.test.ts src/company-watchlists.integration.test.ts src/job-discovery-persistence.integration.test.ts src/recommendation-feedback.integration.test.ts
+Test Files  7 passed (7)
+Tests       146 passed (146)
+
+$ pnpm --filter @job-copilot/database typecheck
+$ pnpm --filter @job-copilot/domain typecheck
+$ git diff --check
+all exit 0
+```

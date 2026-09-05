@@ -50,13 +50,18 @@ describe("agent run controls", () => {
     return createAgentRunCommands({ db: database, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) });
   }
 
-  async function realEvaluator(userId: string) {
+  async function realEvaluatorWithFingerprint() {
     const fingerprint = crypto.randomUUID();
     await database.insert(modelDiagnosticResults).values({ configurationFingerprint: fingerprint, status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket: "under_1s", checkedAt: now });
-    return createRunPreflightEvaluator({
+    return { fingerprint, evaluator: createRunPreflightEvaluator({
       capabilityAdapter: { adapter: "greenhouse", adapterVersion: "test", declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring"] }) },
       modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: fingerprint }), discoveryExecutionMode: "greenhouse", id: () => crypto.randomUUID(), clock: () => now,
-    });
+    }) };
+  }
+
+  async function realEvaluator(userId: string) {
+    void userId;
+    return (await realEvaluatorWithFingerprint()).evaluator;
   }
 
   function realCommands(queue: AgentRunQueue, runPreflight: Awaited<ReturnType<typeof realEvaluator>>) {
@@ -67,6 +72,16 @@ describe("agent run controls", () => {
     await createCompanyWatchlistCommands({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).addItem({
       userId, targetId, requestId: crypto.randomUUID(),
       command: { expectedVersion: 0, canonicalCompanyName: "Example AI", careersUrl: "https://boards.greenhouse.io/example", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null },
+    });
+  }
+
+  async function disableOnlyGreenhouseWatchlistSource(userId: string, targetId: string): Promise<void> {
+    const [watchlist] = await database.select({ id: companyWatchlists.id, version: companyWatchlists.version }).from(companyWatchlists).where(and(eq(companyWatchlists.userId, userId), eq(companyWatchlists.targetId, targetId)));
+    const [revision] = await database.select({ items: companyWatchlistRevisions.items }).from(companyWatchlistRevisions).where(and(eq(companyWatchlistRevisions.userId, userId), eq(companyWatchlistRevisions.watchlistId, watchlist!.id), eq(companyWatchlistRevisions.version, watchlist!.version)));
+    await database.update(companyWatchlists).set({ version: watchlist!.version + 1, updatedAt: now }).where(eq(companyWatchlists.id, watchlist!.id));
+    await database.insert(companyWatchlistRevisions).values({
+      id: crypto.randomUUID(), userId, watchlistId: watchlist!.id, targetId, version: watchlist!.version + 1,
+      items: (revision!.items as Array<Record<string, unknown>>).map((item) => ({ ...item, state: "disabled" })), createdAt: now,
     });
   }
 
@@ -131,6 +146,70 @@ describe("agent run controls", () => {
     await database.update(jobTargets).set({ state: "inactive" }).where(eq(jobTargets.id, stale.targetId));
     await expect(realCommands(new MemoryQueue(), staleEvaluator).start({ userId: stale.userId, requestId: crypto.randomUUID(), command: { targetId: stale.targetId, idempotencyKey: crypto.randomUUID(), warningFingerprint: pageReport.report.warningFingerprint } })).rejects.toMatchObject({ code: "RUN_PREFLIGHT_BLOCKED" } satisfies Partial<RunPreflightRejectedError>);
     await expect(database.select().from(agentRuns).where(eq(agentRuns.userId, stale.userId))).resolves.toHaveLength(0);
+  });
+
+  it("页面预读后在启动事务重检五类权威 blocker，且不创建运行副作用", async () => {
+    const scenarios = [
+      {
+        name: "移除最后 active profile fact",
+        blockerCode: "PROFILE_EVIDENCE_MISSING",
+        mutate: async ({ userId }: { userId: string; targetId: string; fingerprint: string }) => {
+          await database.delete(profileFactRevisions).where(eq(profileFactRevisions.userId, userId));
+          await database.delete(profileFacts).where(eq(profileFacts.userId, userId));
+        },
+      },
+      {
+        name: "停用 requested target",
+        blockerCode: "REQUESTED_JOB_TARGET_INACTIVE",
+        mutate: async ({ targetId }: { userId: string; targetId: string; fingerprint: string }) => {
+          await database.update(jobTargets).set({ state: "inactive" }).where(eq(jobTargets.id, targetId));
+        },
+      },
+      {
+        name: "停用唯一 enabled real Greenhouse source",
+        blockerCode: "SOURCE_CAPABILITY_UNAVAILABLE",
+        mutate: async ({ userId, targetId }: { userId: string; targetId: string; fingerprint: string }) => {
+          await disableOnlyGreenhouseWatchlistSource(userId, targetId);
+        },
+      },
+      {
+        name: "将当前 deployment fingerprint 的模型诊断改为 failed",
+        blockerCode: "MODEL_DIAGNOSTIC_UNAVAILABLE",
+        mutate: async ({ fingerprint }: { userId: string; targetId: string; fingerprint: string }) => {
+          await database.insert(modelDiagnosticResults).values({ configurationFingerprint: fingerprint, status: "failed", checks: { authentication: "passed", modelAvailability: "failed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_LOW_COST_MODEL_UNAVAILABLE", latencyBucket: "under_1s", checkedAt: new Date(now.getTime() + 1) });
+        },
+      },
+      {
+        name: "将 relevant account policy budget 改为 0",
+        blockerCode: "ACCOUNT_RUN_POLICY_BLOCKED",
+        mutate: async ({ userId }: { userId: string; targetId: string; fingerprint: string }) => {
+          const settings = structuredClone(systemAccountRunPolicy().effective);
+          settings.budgets.publicDiscovery.maxResults = 0;
+          await createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now }).save({ userId, command: { expectedVersion: 0, settings } });
+        },
+      },
+    ] as const;
+
+    for (const scenario of scenarios) {
+      const { userId, targetId } = await activeTarget();
+      await addConfirmedSkills(userId, ["TypeScript"]);
+      await addGreenhouseWatchlistSource(userId, targetId);
+      const { evaluator, fingerprint } = await realEvaluatorWithFingerprint();
+      const page = await evaluator.evaluate(database, { userId, targetId, workflow: "discovery", trigger: "manual" });
+      expect(page.report).toMatchObject({ status: "ready_with_warnings", warningFingerprint: expect.any(String) });
+
+      await scenario.mutate({ userId, targetId, fingerprint });
+
+      await expect(realCommands(new MemoryQueue(), evaluator).start({
+        userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID(), warningFingerprint: page.report.warningFingerprint },
+      })).rejects.toMatchObject({
+        code: "RUN_PREFLIGHT_BLOCKED",
+        report: { status: "blocked", items: expect.arrayContaining([expect.objectContaining({ code: scenario.blockerCode, severity: "blocking" })]) },
+      });
+      await expect(database.select().from(agentRuns).where(eq(agentRuns.userId, userId))).resolves.toHaveLength(0);
+      await expect(database.select().from(agentRunSteps).where(eq(agentRunSteps.userId, userId))).resolves.toHaveLength(0);
+      await expect(database.select().from(agentRunEvents).where(eq(agentRunEvents.userId, userId))).resolves.toHaveLength(0);
+    }
   });
 
   it("真实 preflight 以账户边界隔离 target、warning fingerprint 和 idempotency key", async () => {
