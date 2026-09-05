@@ -223,6 +223,12 @@ describe("OpenAI 模型诊断 adapter", () => {
   });
 
   it.each([
+    [{ kind: "authentication_failed" }, { kind: "timeout" }, {
+      status: "failed", checks: { authentication: "failed", modelAvailability: "not_verified", structuredOutput: "not_verified", timeout: "not_verified" }, reasonCode: "MODEL_DIAGNOSTIC_AUTHENTICATION_FAILED", latencyBucket: "timeout",
+    }],
+    [{ kind: "authentication_failed" }, { kind: "high_quality_model_unavailable" }, {
+      status: "failed", checks: { authentication: "failed", modelAvailability: "not_verified", structuredOutput: "not_verified", timeout: "not_verified" }, reasonCode: "MODEL_DIAGNOSTIC_AUTHENTICATION_FAILED", latencyBucket: "under_1s",
+    }],
     [{ kind: "low_cost_model_unavailable" }, { kind: "timeout" }, {
       status: "failed", checks: { authentication: "not_verified", modelAvailability: "failed", structuredOutput: "not_verified", timeout: "failed" }, reasonCode: "MODEL_DIAGNOSTIC_LOW_COST_MODEL_UNAVAILABLE", latencyBucket: "timeout",
     }],
@@ -238,6 +244,27 @@ describe("OpenAI 模型诊断 adapter", () => {
       return responseFor(model === "gpt-5.6-luna" ? lowCost : highQuality, model);
     });
     await expect(adapter.diagnose({ signal: new AbortController().signal })).resolves.toEqual(expected);
+  });
+
+  it("遍历 completed 输出，允许 reasoning 和非输出 metadata，只接受唯一合法 output_text", async () => {
+    const response = Response.json({
+      status: "completed",
+      output: [
+        { type: "reasoning", summary: [{ type: "summary_text", text: "internal" }] },
+        { type: "message", content: [{ type: "output_text", text: "{\"probe\":\"ok\"}" }, { type: "metadata", key: "safe" }] },
+      ],
+    });
+    const adapter = createOpenAiModelDiagnosticAdapterForTest(configuration, async () => response.clone());
+
+    await expect(adapter.diagnose({ signal: new AbortController().signal })).resolves.toEqual(available);
+  });
+
+  it.each([
+    [{ status: "completed", output: [{ type: "reasoning" }, { type: "message", content: [{ type: "output_text", text: "{\"probe\":\"ok\"}" }, { type: "output_text", text: "{\"probe\":\"ok\"}" }] }] }],
+    [{ status: "completed", output: [{ type: "reasoning" }, { type: "message", content: [{ type: "output_text", text: "{\"probe\":\"ok\"}" }, { type: "refusal", refusal: "no" }] }] }],
+  ])("多重 output_text 或 refusal 都不能形成成功结果", async (wire) => {
+    const adapter = createOpenAiModelDiagnosticAdapterForTest(configuration, async () => Response.json(wire));
+    await expect(adapter.diagnose({ signal: new AbortController().signal })).resolves.toEqual(expectedByScenario.strict_output_unsupported);
   });
 
   it("已取消的父 signal 零请求并立即收敛为稳定超时", async () => {

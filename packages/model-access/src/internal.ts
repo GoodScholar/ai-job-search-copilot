@@ -118,14 +118,24 @@ function requestFor(model: string, config: NormalizedConfig): RequestInit {
 function validCompletedResponse(body: string): boolean {
   try {
     const parsed = JSON.parse(body) as { status?: unknown; output?: unknown };
-    if (parsed.status !== "completed" || !Array.isArray(parsed.output) || parsed.output.length !== 1) return false;
-    const [message] = parsed.output;
-    if (!message || typeof message !== "object" || (message as { type?: unknown }).type !== "message") return false;
-    const content = (message as { content?: unknown }).content;
-    if (!Array.isArray(content) || content.length !== 1) return false;
-    const [part] = content;
-    if (!part || typeof part !== "object" || (part as { type?: unknown }).type !== "output_text" || typeof (part as { text?: unknown }).text !== "string") return false;
-    const output = JSON.parse((part as { text: string }).text) as unknown;
+    if (parsed.status !== "completed" || !Array.isArray(parsed.output)) return false;
+    const texts: string[] = [];
+    for (const item of parsed.output) {
+      if (!item || typeof item !== "object") return false;
+      if ((item as { type?: unknown }).type === "refusal") return false;
+      const content = (item as { content?: unknown }).content;
+      if (!Array.isArray(content)) continue;
+      for (const part of content) {
+        if (!part || typeof part !== "object") return false;
+        if ((part as { type?: unknown }).type === "refusal") return false;
+        if ((part as { type?: unknown }).type === "output_text") {
+          if (typeof (part as { text?: unknown }).text !== "string") return false;
+          texts.push((part as { text: string }).text);
+        }
+      }
+    }
+    if (texts.length !== 1) return false;
+    const output = JSON.parse(texts[0]!) as unknown;
     return Boolean(output && typeof output === "object" && Object.keys(output).length === 1 && (output as { probe?: unknown }).probe === "ok");
   } catch {
     return false;
@@ -149,7 +159,9 @@ function attempt(kind: AttemptKind): Attempt {
 
 function aggregate(attempts: readonly Attempt[], latencyBucket: ModelDiagnosticLatencyBucket): ModelDiagnosticProbeResult {
   const kinds = new Set(attempts.map((attempt) => attempt.kind));
-  const checks = combineChecks(attempts);
+  const checks = kinds.has("authentication_failed")
+    ? { authentication: "failed", modelAvailability: "not_verified", structuredOutput: "not_verified", timeout: "not_verified" } as const
+    : combineChecks(attempts);
   if (kinds.has("authentication_failed")) return result("failed", checks, "MODEL_DIAGNOSTIC_AUTHENTICATION_FAILED", latencyBucket);
   if (kinds.has("access_restricted")) return result("failed", checks, "MODEL_DIAGNOSTIC_ACCESS_RESTRICTED", latencyBucket);
   if (kinds.has("low_cost_model_unavailable")) return result("failed", checks, "MODEL_DIAGNOSTIC_LOW_COST_MODEL_UNAVAILABLE", latencyBucket);
