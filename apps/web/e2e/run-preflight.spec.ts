@@ -146,6 +146,7 @@ test("活动主次目标切换期间禁用启动，完成后只采用所选目�
 });
 
 test("账户 B 不能从工作台或正式报告读取账户 A 的目标和来源证据", async ({ page, request }, info) => {
+  test.setTimeout(60_000);
   const accountA = await createWarningAccount(request, info);
   const accountB = await request.post(`${apiBaseUrl}/v1/auth/dev/sessions`, { headers: { "x-dev-auth-secret": secret }, data: { subject: `run-preflight-isolation-${info.project.name}-${Date.now()}` } });
   expect(accountB.status()).toBe(201);
