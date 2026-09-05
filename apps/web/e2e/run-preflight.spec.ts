@@ -51,6 +51,47 @@ test("新账户在工作台看到可修复的运行前阻塞，且不会创建�
   await expect(new AxeBuilder({ page }).include("main").analyze()).resolves.toMatchObject({ violations: [] });
 });
 
+test("新账户按画像、主目标、真实来源和模型诊断逐项解除阻塞，并始终给出固定修复路由", async ({ page, request }, info) => {
+  const session = await request.post(`${apiBaseUrl}/v1/auth/dev/sessions`, { headers: { "x-dev-auth-secret": secret }, data: { subject: `run-preflight-progression-${info.project.name}-${Date.now()}` } });
+  expect(session.status()).toBe(201);
+  const { sessionToken } = await session.json() as { sessionToken: string };
+  const authorization = { authorization: `Bearer ${sessionToken}` };
+  await page.context().addCookies([{ name: "job_copilot_session", value: sessionToken, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
+
+  await page.goto("/home");
+  const preflight = page.getByRole("region", { name: "运行前检查" });
+  await expect(preflight.getByRole("link", { name: "完善求职画像" })).toHaveAttribute("href", "/profile");
+
+  const fact = await request.post(`${apiBaseUrl}/v1/profile/facts`, { headers: authorization, data: { expectedVersion: 0, factType: "skill", factValue: { name: "TypeScript" } } });
+  expect(fact.status()).toBe(201);
+  await page.reload();
+  await expect(preflight.getByRole("link", { name: "查看求职目标" }).first()).toHaveAttribute("href", "/profile/targets");
+
+  const targetId = await createActiveTarget(request, sessionToken, "primary", "平台工程师");
+  await page.reload();
+  await expect(preflight.getByRole("link", { name: "查看来源能力" })).toHaveAttribute("href", `/profile/targets/${targetId}/watchlist#source-capabilities`);
+
+  const source = await request.post(`${apiBaseUrl}/v1/job-targets/${targetId}/company-watchlist/items`, { headers: authorization, data: { expectedVersion: 0, canonicalCompanyName: "Progression Greenhouse Fixture", careersUrl: `https://boards.greenhouse.io/progression-${info.project.name === "Desktop Chrome" ? "desktop" : "mobile"}`, allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null } });
+  expect(source.status()).toBe(201);
+  const reportResponse = await request.get(`${apiBaseUrl}/v1/run-preflight?workflow=discovery&trigger=manual&targetId=${targetId}`, { headers: authorization });
+  expect(reportResponse.status()).toBe(200);
+  const report = await reportResponse.json() as { items: Array<{ code: string }> };
+  const modelBlocked = report.items.some((item) => item.code === "MODEL_DIAGNOSTIC_UNAVAILABLE");
+  await page.reload();
+  const diagnosticLink = preflight.getByRole("link", { name: "检查模型连接" });
+  // 诊断记录以部署指纹共享；串行 worker 的第二个浏览器项目会继承第一个项目的真实稳定结果。
+  if (modelBlocked) await expect(diagnosticLink).toHaveAttribute("href", "/profile/model-connection");
+  else await expect(preflight.getByText("模型诊断已就绪")).toBeVisible();
+
+  const diagnostic = await request.post(`${apiBaseUrl}/v1/model-diagnostics`, { headers: authorization, data: {} });
+  expect(diagnostic.status()).toBe(201);
+  await expect(diagnostic.json()).resolves.toMatchObject({ status: "available" });
+  await page.reload();
+  await expect(preflight.getByText("启动前需要你确认")).toBeVisible();
+  await expect(preflight.getByRole("link", { name: "查看来源健康" })).toHaveAttribute("href", `/profile/targets/${targetId}/watchlist#source-health`);
+  await expect(page.getByRole("button", { name: "发现岗位" })).toBeEnabled();
+});
+
 test("正式 health fixture 使旧 warning 过期，页面刷新后以同一 key 再确认", async ({ page, request }, info) => {
   const account = await createWarningAccount(request, info);
   await page.context().addCookies([{ name: "job_copilot_session", value: account.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);

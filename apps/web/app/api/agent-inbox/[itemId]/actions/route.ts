@@ -1,4 +1,5 @@
 import { AgentInboxActionCommandSchema } from "@job-copilot/contracts/agent-inbox";
+import { RunPreflightProblemSchema } from "@job-copilot/contracts/run-preflight";
 import { z } from "zod";
 import { api } from "@/lib/server/api-client";
 import { readSessionToken } from "@/lib/server/session-cookie";
@@ -18,8 +19,15 @@ export async function POST(request: Request, { params }: RouteContext): Promise<
   try {
     return Response.json(await api.actOnAgentInboxItem(sessionToken, itemId, command.data), { headers: noStore });
   } catch (error) {
+    const preflight = runPreflightProblem(error);
+    if (preflight) return Response.json(preflight, { status: 409, headers: noStore });
     return emptyResponse(safeStatus(error));
   }
+}
+
+function runPreflightProblem(error: unknown) {
+  if (!error || typeof error !== "object" || !("status" in error) || error.status !== 409 || !("problem" in error)) return null;
+  return RunPreflightProblemSchema.safeParse(error.problem).data ?? null;
 }
 
 function safeStatus(error: unknown): number {

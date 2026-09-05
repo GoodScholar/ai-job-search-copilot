@@ -3,7 +3,7 @@
 import type { RunPreflightEvidence, RunPreflightReport, RunPreflightSuggestedAction } from "@job-copilot/contracts/run-preflight";
 import Link from "next/link";
 
-export type RunPreflightPanelProps = { report: RunPreflightReport | null; unavailable: boolean; onReportChange: (report: RunPreflightReport) => void };
+export type RunPreflightPanelProps = { report: RunPreflightReport | null; unavailable: boolean };
 
 const actionLabels: Record<RunPreflightSuggestedAction, string> = {
   review_profile: "完善求职画像", review_job_targets: "查看求职目标", review_source_capabilities: "查看来源能力", review_source_health: "查看来源健康", run_model_diagnostic: "检查模型连接", review_account_run_policy: "管理运行策略",

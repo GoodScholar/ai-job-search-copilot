@@ -86,7 +86,7 @@ export function fingerprintRunPreflightWarnings(input: {
   targetId: string | null;
   warnings: ReadonlyArray<Pick<RunPreflightItem, "code" | "evidence" | "suggestedActions">>;
 }): string {
-  const warnings = input.warnings.map(({ code, evidence, suggestedActions }) => ({ code, evidence: fingerprintEvidence(evidence), suggestedActions: [...suggestedActions].sort() }));
+  const warnings = input.warnings.map(({ code, evidence, suggestedActions }) => ({ code, evidence: fingerprintEvidence(evidence), suggestedActions: [...suggestedActions].sort() })).sort((left, right) => canonical(left).localeCompare(canonical(right)));
   return createHash("sha256").update(canonical({ version: "run-preflight-v1", workflow: input.workflow, trigger: input.trigger, targetId: input.targetId, warnings })).digest("hex");
 }
 function fingerprint(input: { workflow: RunPreflightInput["workflow"]; trigger: RunPreflightInput["trigger"]; targetId: string | null; items: RunPreflightItem[] }): string | null {
@@ -172,7 +172,7 @@ export function createRunPreflightEvaluator(deps: { capabilityAdapter: SourceCap
       // It is indistinguishable from a missing request and falls back to the owner's primary target.
       const safeRequestedTargetId = requested?.targetId ?? (input.targetId ? null : primary?.targetId ?? null);
       const targetId = requested?.state === "active" ? requested.targetId : primary?.targetId ?? null;
-      const realSources = await sources(db, input.userId, targetId);
+      const realSources = (await sources(db, input.userId, targetId)).slice(0, policy.effective.discovery.trustedSourceLimit);
       const model = await deps.modelDiagnosticReader.get(db, checkedAt);
       const items: RunPreflightItem[] = [];
       items.push(item(facts.count ? "PROFILE_EVIDENCE_READY" : "PROFILE_EVIDENCE_MISSING", facts.count ? "informational" : "blocking", { kind: "profile", activeTrustedFactCount: facts.count, latestFactRevisionId: facts.latestRevisionId, checkedAt: checkedAt.toISOString() }, false, facts.count ? [] : ["review_profile"]));

@@ -127,6 +127,7 @@ async function startControlledNestDev({ mode, exitCode } = {}) {
     cwd,
     env: {
       ...process.env,
+      LOCAL_E2E_NEST_TS_ENTRY: "1",
       NEST_DEV_TEST_EXIT_CODE: String(exitCode ?? 0),
       NEST_DEV_TEST_MODE: mode ?? "wait-for-signal",
       NEST_DEV_TEST_PID_FILE: pidPath,
@@ -394,14 +395,15 @@ test("API and Worker dev commands launch the cross-platform Nest loader", async 
   }
 });
 
-test("Nest 开发监督直接 watch API 与 Worker 的 TypeScript 入口，不解析 ESM 的无扩展 dist/main", () => {
+test("普通 Nest 开发保持 CLI 监督；仅 local E2E runtime 直接 watch TypeScript 入口", () => {
   for (const cwd of ["/workspace/apps/api", "/workspace/apps/worker"]) {
     const command = createNestDevCommand({ cwd, nodeExecutable: "node", env: {} });
     assert.deepEqual(command, {
       nodeExecutable: "node",
-      args: ["--import=tsx", "--watch", `${cwd}/src/main.ts`],
+      args: ["--import=tsx", `${cwd}/node_modules/@nestjs/cli/bin/nest.js`, "start", "--watch"],
       env: { NODE_OPTIONS: "--import=tsx" },
     });
+    assert.deepEqual(createNestDevCommand({ cwd, nodeExecutable: "node", env: { LOCAL_E2E_NEST_TS_ENTRY: "1" } }).args, ["--import=tsx", "--watch", `${cwd}/src/main.ts`]);
   }
 });
 
@@ -412,11 +414,7 @@ test("Nest dev loader explicitly imports tsx and preserves existing Node options
     env: { NODE_OPTIONS: "--trace-warnings" },
   });
 
-  assert.deepEqual(command.args, [
-    "--import=tsx",
-    "--watch",
-    "/workspace/apps/api/src/main.ts",
-  ]);
+  assert.deepEqual(command.args, ["--import=tsx", "/workspace/apps/api/node_modules/@nestjs/cli/bin/nest.js", "start", "--watch"]);
   assert.equal(command.env.NODE_OPTIONS, "--trace-warnings --import=tsx");
 });
 

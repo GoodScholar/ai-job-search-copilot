@@ -34,6 +34,12 @@ describe("agent inbox contracts", () => {
     expect(AgentInboxListSchema.parse({ items: [] })).toEqual({ items: [] });
   });
 
+  it("仅 restart_run 可携带当前预检警告 fingerprint", () => {
+    const warningFingerprint = "a".repeat(64);
+    expect(AgentInboxActionCommandSchema.parse({ actionId, action: "restart_run", warningFingerprint })).toEqual({ actionId, action: "restart_run", warningFingerprint });
+    expect(AgentInboxActionCommandSchema.safeParse({ actionId, action: "dismiss", warningFingerprint }).success).toBe(false);
+  });
+
   it("rejects free-form targets, cross-kind targets, inconsistent timestamps, and the former open status", () => {
     const candidate = { itemId, runId: null, kind: "candidate_fact", status: "unread", reasonCode: "CANDIDATE_FACT_PENDING", budgetDimension: null, ...copy, availableActions: ["mark_read", "dismiss"], target: { type: "candidate_fact", candidateFactId, href: "/profile#candidate-facts" }, createdAt, readAt: null, resolvedAt: null };
     expect(AgentInboxItemSchema.safeParse({ ...candidate, target: { type: "candidate_fact", candidateFactId, href: "https://example.test" } }).success).toBe(false);

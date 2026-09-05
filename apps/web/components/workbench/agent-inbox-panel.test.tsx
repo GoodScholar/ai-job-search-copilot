@@ -27,6 +27,27 @@ it("用语义 article 呈现依据、影响、建议与可追溯目标", () => {
   expect(screen.getByText("核对后确认、修改或拒绝这条事实。")).toBeVisible();
 });
 
+it("restart 收到 warning 预检后只允许以同一 actionId 明确确认", async () => {
+  const user = userEvent.setup();
+  const failed: AgentInboxItem = { ...item, runId: "7a1b0207-b852-4f86-8b1f-3b9615655ed8", kind: "run_failed", reasonCode: "AGENT_RUN_ADAPTER_FAILED", title: "岗位发现未完成", target: { type: "agent_run", runId: "7a1b0207-b852-4f86-8b1f-3b9615655ed8", href: "/home?runId=7a1b0207-b852-4f86-8b1f-3b9615655ed8#agent-run" }, availableActions: ["mark_read", "restart_run", "dismiss"] };
+  const fingerprint = "a".repeat(64);
+  const preflight = { code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED", message: "请确认当前运行前检查提示", preflight: { version: "run-preflight-v1", workflow: "discovery", trigger: "manual", targetId: "8a1b0207-b852-4f86-8b1f-3b9615655ed8", status: "ready_with_warnings", warningFingerprint: fingerprint, checkedAt: now, items: [{ code: "SOURCE_HEALTH_UNCHECKED", severity: "warning", summary: "来源尚未完成健康检查", impact: "运行可以继续，建议稍后查看来源健康状态。", retryable: true, suggestedActions: ["review_source_health"], evidence: { kind: "source_health", checkedSourceCount: 0, healthySourceCount: 0, degradedSourceCount: 0, uncheckedSourceCount: 1, latestCheckedAt: null } }] } };
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(Response.json(preflight, { status: 409 }))
+    .mockResolvedValueOnce(Response.json({ applied: true, item: { ...failed, status: "resolved", availableActions: [], resolvedAt: now }, run: null })));
+  render(<AgentInboxPanel items={[failed]} onResolved={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "重新开始岗位发现：岗位发现未完成" }));
+  expect(await screen.findByText("来源尚未完成健康检查")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "重新开始岗位发现：岗位发现未完成" })).not.toBeInTheDocument();
+  const confirm = screen.getByRole("button", { name: "确认当前提示并重新开始岗位发现" });
+  await user.click(confirm);
+
+  const requests = (fetch as ReturnType<typeof vi.fn>).mock.calls;
+  expect(JSON.parse(String(requests[0]![1]?.body))).toEqual({ actionId, action: "restart_run" });
+  expect(JSON.parse(String(requests[1]![1]?.body))).toEqual({ actionId, action: "restart_run", warningFingerprint: fingerprint });
+});
+
 it("隔离各状态缓存并忽略乱序响应，往返后仍显示权威 pending 项", async () => {
   const user = userEvent.setup();
   let resolveUnread!: (response: Response) => void;

@@ -321,12 +321,16 @@ describe("agent run controls", () => {
 
   it("计划触发在启动事务内复核同次策略窗口，手动运行不受该窗口限制", async () => {
     const { userId, targetId } = await activeTarget();
+    await addConfirmedSkills(userId, ["TypeScript"]);
+    await addGreenhouseWatchlistSource(userId, targetId);
     const settings = structuredClone(systemAccountRunPolicy().effective);
     settings.backgroundWindow = { start: "19:00", end: "21:00", timeZone: "Asia/Shanghai" };
     await createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now }).save({ userId, command: { expectedVersion: 0, settings } });
-    const runtime = commands(new MemoryQueue());
-    await expect(runtime.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() }, trigger: { kind: "schedule", occurrenceId: crypto.randomUUID(), scheduledFor: new Date("2026-08-29T16:00:00.000Z") } })).rejects.toMatchObject({ code: "AGENT_RUN_UNAVAILABLE" });
-    await expect(runtime.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() }, trigger: { kind: "manual" } })).resolves.toMatchObject({ accountPolicyRevisionNumber: 1 });
+    const preflight = await realEvaluator(userId);
+    const runtime = realCommands(new MemoryQueue(), preflight);
+    await expect(runtime.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() }, trigger: { kind: "schedule", occurrenceId: crypto.randomUUID(), scheduledFor: new Date("2026-08-29T16:00:00.000Z") } })).rejects.toMatchObject({ code: "RUN_PREFLIGHT_BLOCKED" });
+    const manual = await preflight.evaluate(database, { userId, targetId, workflow: "discovery", trigger: "manual" });
+    await expect(runtime.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID(), warningFingerprint: manual.report.warningFingerprint }, trigger: { kind: "manual" } })).resolves.toMatchObject({ accountPolicyRevisionNumber: 1 });
   });
 
   it("等待账户锁跨越窗口边界后，以取得锁后的时刻校验计划触发", async () => {
@@ -566,7 +570,7 @@ describe("agent run controls", () => {
     await expect(database.select({ revision: agentRuns.accountPolicyRevisionNumber, budget: agentRuns.budgetSnapshot }).from(agentRuns).where(eq(agentRuns.id, first.runId))).resolves.toEqual([{ revision: 1, budget: expect.objectContaining({ maxResults: 1, maxModelCalls: 1 }) }]);
     const secondSettings = structuredClone(firstSettings); secondSettings.budgets.deepMatch.maxResults = 2; secondSettings.budgets.deepMatch.maxModelCalls = 2;
     await policies.save({ userId, command: { expectedVersion: 1, settings: secondSettings } });
-    await expect(starter.start({ userId, targetId, opportunityId: crypto.randomUUID(), idempotencyKey: key, trigger: "manual" })).resolves.toEqual({ runId: first.runId, reused: true });
+    await expect(starter.start({ userId, targetId, opportunityId: crypto.randomUUID(), idempotencyKey: key, trigger: "manual" })).resolves.toEqual({ kind: "created", runId: first.runId, reused: true });
     const second = await starter.start({ userId, targetId, opportunityId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID(), trigger: "manual" });
     await expect(database.select({ revision: agentRuns.accountPolicyRevisionNumber, budget: agentRuns.budgetSnapshot }).from(agentRuns).where(eq(agentRuns.id, second.runId))).resolves.toEqual([{ revision: 2, budget: expect.objectContaining({ maxResults: 2, maxModelCalls: 2 }) }]);
 
@@ -575,7 +579,7 @@ describe("agent run controls", () => {
     await expect(database.select({ revision: agentRuns.accountPolicyRevisionNumber, budget: agentRuns.budgetSnapshot }).from(agentRuns).where(eq(agentRuns.id, automatic.runId))).resolves.toEqual([{ revision: 2, budget: expect.objectContaining({ maxResults: 2, maxModelCalls: 2 }) }]);
     const thirdSettings = structuredClone(secondSettings); thirdSettings.budgets.deepMatch.maxResults = 1; thirdSettings.budgets.deepMatch.maxModelCalls = 1;
     await policies.save({ userId, command: { expectedVersion: 2, settings: thirdSettings } });
-    await expect(starter.start({ userId, targetId, discoveryRunId: crypto.randomUUID(), idempotencyKey: automaticKey, trigger: "automatic" })).resolves.toEqual({ runId: automatic.runId, reused: true });
+    await expect(starter.start({ userId, targetId, discoveryRunId: crypto.randomUUID(), idempotencyKey: automaticKey, trigger: "automatic" })).resolves.toEqual({ kind: "created", runId: automatic.runId, reused: true });
     const laterAutomatic = await starter.start({ userId, targetId, discoveryRunId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID(), trigger: "automatic" });
     await expect(database.select({ revision: agentRuns.accountPolicyRevisionNumber, budget: agentRuns.budgetSnapshot }).from(agentRuns).where(eq(agentRuns.id, laterAutomatic.runId))).resolves.toEqual([{ revision: 3, budget: expect.objectContaining({ maxResults: 1, maxModelCalls: 1 }) }]);
   });

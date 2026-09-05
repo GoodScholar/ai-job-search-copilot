@@ -99,6 +99,13 @@ describe("统一运行前检查", () => {
     expect(fingerprintRunPreflightWarnings({ workflow: "discovery", trigger: "manual", targetId: "11111111-1111-4111-8111-111111111111", warnings: [{ ...warning, code: "SOURCE_HEALTH_DEGRADED" }] })).not.toBe(base);
   });
 
+  it("warning fingerprint 按安全语义稳定排序，不受 warning 输入顺序影响", () => {
+    const source = { code: "SOURCE_HEALTH_UNCHECKED" as const, evidence: { kind: "source_health" as const, checkedSourceCount: 0, healthySourceCount: 0, degradedSourceCount: 0, uncheckedSourceCount: 1, latestCheckedAt: null }, suggestedActions: ["review_source_health" as const] };
+    const capability = { code: "SOURCE_CAPABILITY_PARTIAL" as const, evidence: { kind: "source_capability" as const, enabledSourceCount: 2, capableSourceCount: 1, status: "partial" as const, checkedAt: now.toISOString() }, suggestedActions: ["review_source_capabilities" as const] };
+    const input = { workflow: "discovery" as const, trigger: "manual" as const, targetId: "11111111-1111-4111-8111-111111111111" };
+    expect(fingerprintRunPreflightWarnings({ ...input, warnings: [source, capability] })).toBe(fingerprintRunPreflightWarnings({ ...input, warnings: [capability, source] }));
+  });
+
   it("当前账户的职业文本、URL、域名和原始错误不会泄漏到安全投影", async () => {
     const owner = await account({ source: "greenhouse" }); await addFact(owner.userId, "removed"); const other = await account({ fact: true, source: "greenhouse" });
     const report = await get({ userId: owner.userId, workflow: "discovery", trigger: "manual" });
@@ -146,6 +153,24 @@ describe("统一运行前检查", () => {
     const partialEvaluator = createRunPreflightEvaluator({ capabilityAdapter: partialAdapter, modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: fingerprint }), discoveryExecutionMode: "greenhouse", id: randomUUID, clock: () => now });
     const mixed = await get({ userId: partial.userId, workflow: "discovery", trigger: "schedule", scheduledFor: now }, partialEvaluator);
     expect(mixed.items[3]).toMatchObject({ code: "SOURCE_CAPABILITY_PARTIAL", severity: "warning", evidence: { enabledSourceCount: 2, capableSourceCount: 1 } });
+  });
+
+  it("effective trustedSourceLimit 在能力和健康检查前截断已排序的真实 Greenhouse 来源", async () => {
+    const owner = await account({ fact: true, source: "greenhouse" });
+    await addSecondGreenhouseSource(owner.userId, owner.targetId);
+    const settings = structuredClone(systemAccountRunPolicy().effective);
+    settings.discovery.trustedSourceLimit = 0;
+    await database.insert(accountRunPolicyRevisions).values({ id: randomUUID(), userId: owner.userId, revisionNumber: 1, settings, createdAt: now });
+    await database.insert(accountRunPolicies).values({ userId: owner.userId, currentRevisionNumber: 1, version: 1, updatedAt: now });
+
+    const zero = await get({ userId: owner.userId, workflow: "discovery", trigger: "manual" });
+    expect(zero.items[3]).toMatchObject({ code: "SOURCE_CAPABILITY_UNAVAILABLE", evidence: { enabledSourceCount: 0, capableSourceCount: 0 } });
+    expect(zero.items[4]).toMatchObject({ code: "SOURCE_HEALTH_READY", evidence: { uncheckedSourceCount: 0 } });
+    settings.discovery.trustedSourceLimit = 1;
+    await database.update(accountRunPolicyRevisions).set({ settings }).where(and(eq(accountRunPolicyRevisions.userId, owner.userId), eq(accountRunPolicyRevisions.revisionNumber, 1)));
+    const one = await get({ userId: owner.userId, workflow: "discovery", trigger: "manual" });
+    expect(one.items[3]).toMatchObject({ code: "SOURCE_CAPABILITY_READY", evidence: { enabledSourceCount: 1, capableSourceCount: 1 } });
+    expect(one.items[4]).toMatchObject({ code: "SOURCE_HEALTH_UNCHECKED", evidence: { uncheckedSourceCount: 1 } });
   });
 
   it("健康检查未检查和退化均非阻塞，并且只按 owner/target/item/source 采用最新记录", async () => {

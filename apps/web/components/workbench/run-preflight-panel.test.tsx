@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { expect, it, vi } from "vitest";
+import { expect, it } from "vitest";
 import type { RunPreflightReport } from "@job-copilot/contracts/run-preflight";
 import { RunPreflightPanel } from "./run-preflight-panel";
 
@@ -18,7 +18,7 @@ function report(status: RunPreflightReport["status"]): RunPreflightReport {
 }
 
 it.each(["blocked", "ready_with_warnings", "ready"] as const)("以文字、证据和固定修复链接呈现 %s 状态", (status) => {
-  render(<RunPreflightPanel onReportChange={vi.fn()} report={report(status)} unavailable={false} />);
+  render(<RunPreflightPanel report={report(status)} unavailable={false} />);
 
   expect(screen.getByRole("status")).toHaveTextContent(status === "blocked" ? "暂不能启动" : status === "ready_with_warnings" ? "启动前需要你确认" : "可以启动");
   expect(screen.getByText(status === "blocked" ? "阻塞项" : status === "ready_with_warnings" ? "需要确认" : "信息")).toBeVisible();
@@ -30,7 +30,7 @@ it.each(["blocked", "ready_with_warnings", "ready"] as const)("以文字、证�
 
 it("没有目标时将来源修复降级到求职目标页，并在局部失败时保持明确说明", () => {
   const value = report("ready_with_warnings");
-  render(<RunPreflightPanel onReportChange={vi.fn()} report={{ ...value, targetId: null }} unavailable />);
+  render(<RunPreflightPanel report={{ ...value, targetId: null }} unavailable />);
   expect(screen.getByRole("status")).toHaveTextContent("正在刷新启动条件，仍显示上次成功结果");
   expect(screen.getByRole("link", { name: "查看来源健康" })).toHaveAttribute("href", "/profile/targets");
 });

@@ -398,7 +398,7 @@ export function AgentRunPanel({ targets, initialRun, currentReport, onPreflightC
           <p>岗位发现 · 尚未启用</p>
           <h2 id="agent-run-title">先确认求职目标</h2>
         </div>
-        {currentReport !== undefined ? <RunPreflightPanel onReportChange={applyPreflight} report={preflight ?? null} unavailable={preflightIsUnavailable} /> : null}
+        {currentReport !== undefined ? <RunPreflightPanel report={preflight ?? null} unavailable={preflightIsUnavailable} /> : null}
         <div className="workbench-ledger-row">
           <div><h3>告诉 Copilot 你在找什么</h3><p>确认岗位方向、地点和不可接受条件后，才能开始发现岗位。</p></div>
           <Link className="workbench-ledger-link workbench-touch-target" href="/profile/targets">确认求职目标</Link>
@@ -413,7 +413,7 @@ export function AgentRunPanel({ targets, initialRun, currentReport, onPreflightC
         <p>{runNoun} · 运行记录</p>
         <h2 id="agent-run-title">{isDeepMatchRun(run) ? "评估候选岗位匹配" : "发现新的岗位机会"}</h2>
       </div>
-      {currentReport !== undefined ? <RunPreflightPanel onReportChange={applyPreflight} report={preflight ?? null} unavailable={preflightIsUnavailable} /> : null}
+      {currentReport !== undefined ? <RunPreflightPanel report={preflight ?? null} unavailable={preflightIsUnavailable} /> : null}
       <div className="agent-run-controls">
         {!canStartRun ? <div><p>{targetsUnavailable ? "求职目标暂时无法读取；以下仅显示已成功读取的本次运行记录。" : "当前没有可用的求职目标；以下仅显示已成功读取的本次运行记录。"}</p></div> : <><label htmlFor="agent-run-target">用于发现岗位的求职目标</label>
         <div>

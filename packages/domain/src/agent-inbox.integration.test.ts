@@ -5,6 +5,8 @@ import { agentInboxItemActions, agentInboxItems, agentRunEvents, agentRuns, audi
 import { createAuditTrail } from "./audit-trail";
 import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
 import { createAgentInbox, createAgentRunCommands, type AgentRunQueue } from "./agent-runs";
+import { RunPreflightRejectedError } from "./run-preflight";
+import { RunPreflightReportSchema } from "@job-copilot/contracts/run-preflight";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
 const constraints = {
@@ -193,6 +195,36 @@ describe("agent inbox", () => {
     expect(replay).toEqual(first);
     const runs = await database.select().from(agentRuns).where(eq(agentRuns.userId, owner.userId));
     expect(runs.filter((run) => run.retryOfRunId === runId)).toEqual([expect.objectContaining({ targetVersion: 2 })]);
+  });
+
+  it("restart 的预检 warning 保留 claim，并用同一 actionId 的当前 fingerprint 重放", async () => {
+    const owner = await activeTarget();
+    const failed = await openItem({ ...owner, kind: "run_failed", reasonCode: "AGENT_RUN_ADAPTER_FAILED" });
+    await database.update(agentRuns).set({ status: "failed", currentStep: "failed", startedAt: now, failedAt: now, failureCode: "AGENT_RUN_ADAPTER_FAILED", terminationKind: "source_failed", usageComplete: true }).where(and(eq(agentRuns.userId, owner.userId), eq(agentRuns.id, failed.runId)));
+    const warningFingerprint = "b".repeat(64);
+    const report = RunPreflightReportSchema.parse({ version: "run-preflight-v1", workflow: "discovery", trigger: "manual", targetId: owner.targetId, status: "ready_with_warnings", warningFingerprint, checkedAt: now.toISOString(), items: [
+      { code: "SOURCE_HEALTH_UNCHECKED", severity: "warning", summary: "来源尚未完成健康检查", impact: "运行可以继续，建议稍后查看来源健康状态。", retryable: true, suggestedActions: ["review_source_health"], evidence: { kind: "source_health", checkedSourceCount: 0, healthySourceCount: 0, degradedSourceCount: 0, uncheckedSourceCount: 1, latestCheckedAt: null } },
+    ] });
+    const commandService = commands();
+    const received: Array<{ warningFingerprint: string | null }> = [];
+    const guardedInbox = createAgentInbox({
+      db: database,
+      commands: {
+        async start(input) {
+          received.push({ warningFingerprint: input.command.warningFingerprint });
+          if (input.command.warningFingerprint !== warningFingerprint) throw new RunPreflightRejectedError("RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED", report);
+          return commandService.start(input);
+        },
+        control: commandService.control,
+      },
+      auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+    const actionId = crypto.randomUUID();
+
+    await expect(guardedInbox.act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: failed.itemId, command: { actionId, action: "restart_run" } })).rejects.toMatchObject({ code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED", report });
+    await expect(database.select({ outcome: agentInboxItemActions.outcome }).from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, owner.userId), eq(agentInboxItemActions.itemId, failed.itemId), eq(agentInboxItemActions.actionId, actionId)))).resolves.toEqual([{ outcome: "pending" }]);
+    await expect(guardedInbox.act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: failed.itemId, command: { actionId, action: "restart_run", warningFingerprint } })).resolves.toMatchObject({ applied: true, item: { status: "resolved" }, run: { status: "queued" } });
+    expect(received).toEqual([{ warningFingerprint: null }, { warningFingerprint }]);
   });
 
   it("拒绝跨账户、非法动作，并让 dismiss 解决失败或预算事项", async () => {
