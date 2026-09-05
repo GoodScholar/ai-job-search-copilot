@@ -553,7 +553,7 @@ describe("岗位发现 Agent Run Worker", () => {
     } finally {
       releaseLock.resolve();
       await lock.catch(() => undefined);
-      await scheduler.onModuleDestroy();
+      await scheduler.close();
     }
   }, 10_000);
 
@@ -589,7 +589,7 @@ describe("岗位发现 Agent Run Worker", () => {
     } finally {
       releaseLock.resolve();
       await lock.catch(() => undefined);
-      await scheduler.onModuleDestroy();
+      await scheduler.close();
     }
   }, 10_000);
 
@@ -660,7 +660,7 @@ describe("岗位发现 Agent Run Worker", () => {
     } finally {
       releaseLock.resolve();
       await holder.catch(() => undefined);
-      await scheduler.onModuleDestroy();
+      await scheduler.close();
     }
   }, 12_000);
 

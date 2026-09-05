@@ -19,8 +19,9 @@ const second = {
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((accept) => { resolve = accept; });
-  return { promise, resolve };
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((accept, refuse) => { resolve = accept; reject = refuse; });
+  return { promise, resolve, reject };
 }
 
 function memoryReporter(failures: AgentRunRecoveryFailure[]) {
@@ -46,7 +47,7 @@ describe("AgentRunReconciler", () => {
     await vi.advanceTimersByTimeAsync(1_000);
     expect(enqueued).toEqual([first, second]);
 
-    reconciler.onModuleDestroy();
+    reconciler.close();
     await vi.advanceTimersByTimeAsync(2_000);
     expect(enqueued).toEqual([first, second]);
     expect(failures).toEqual([]);
@@ -72,7 +73,7 @@ describe("AgentRunReconciler", () => {
     expect(scans).toBe(2);
     pending.resolve([]);
     await vi.runAllTicks();
-    reconciler.onModuleDestroy();
+    reconciler.close();
   });
 
   it("一个 run 入队失败时仍继续补发同批其他可恢复 run", async () => {
@@ -97,7 +98,7 @@ describe("AgentRunReconciler", () => {
       userId: first.userId,
     }]);
     expect(JSON.stringify(failures)).not.toContain("secret");
-    reconciler.onModuleDestroy();
+    reconciler.close();
   });
 
   it("整体扫描失败只报告稳定故障码，并在下一轮继续扫描", async () => {
@@ -121,7 +122,7 @@ describe("AgentRunReconciler", () => {
     expect(JSON.stringify(failures)).not.toContain("private-password");
     await vi.advanceTimersByTimeAsync(1_000);
     expect(scans).toBe(2);
-    reconciler.onModuleDestroy();
+    reconciler.close();
   });
 
   it("队列任务固定 runId、三次尝试，并让 backoff 越过处理租约", () => {
@@ -147,7 +148,7 @@ describe("AgentRunReconciler", () => {
     await vi.advanceTimersByTimeAsync(5_000);
     await initializing;
     expect(failures).toEqual([{ failureCode: "AGENT_RUN_RECOVERY_ENQUEUE_FAILED", runId: first.runId, userId: first.userId }]);
-    await reconciler.onModuleDestroy();
+    await reconciler.close();
   });
 
   it("恢复查询永不 settle 时在 scan 总预算内结束启动", async () => {
@@ -164,7 +165,47 @@ describe("AgentRunReconciler", () => {
     await vi.advanceTimersByTimeAsync(50);
     await initializing;
     expect(failures).toEqual([{ failureCode: "AGENT_RUN_RECOVERY_SCAN_FAILED" }]);
-    await reconciler.onModuleDestroy();
+    const closing = reconciler.close();
+    await vi.advanceTimersByTimeAsync(50);
+    await closing;
+  });
+
+  it("恢复查询超过 deadline 后保持单飞，并消费迟到的 PostgreSQL 拒绝", async () => {
+    vi.useFakeTimers();
+    const pending = deferred<typeof first[]>();
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+    process.on("unhandledRejection", onUnhandled);
+    let scans = 0;
+    const reconciler = new AgentRunReconciler({
+      recoveryQueries: {
+        listRecoverable: async () => {
+          scans += 1;
+          return scans === 1 ? pending.promise : [];
+        },
+      },
+      queue: { enqueue: async () => undefined },
+      reporter: memoryReporter([]),
+      scanTimeoutMs: 50,
+    });
+
+    try {
+      const initializing = reconciler.onModuleInit();
+      await vi.advanceTimersByTimeAsync(50);
+      await initializing;
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(scans).toBe(1);
+
+      pending.reject(new Error("write CONNECTION_ENDED"));
+      await vi.runAllTicks();
+      expect(unhandled).toEqual([]);
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(scans).toBe(2);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+      await reconciler.close();
+    }
   });
 
   it("每轮总预算限制住大量挂起入队，并在下一轮从最旧 run 重新尝试", async () => {
@@ -191,6 +232,6 @@ describe("AgentRunReconciler", () => {
     firstFails = false;
     await vi.advanceTimersByTimeAsync(1_000);
     expect(observed[beforeRetry]).toBe(jobs[0]!.runId);
-    await reconciler.onModuleDestroy();
+    await reconciler.close();
   });
 });

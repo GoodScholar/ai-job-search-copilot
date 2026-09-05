@@ -311,10 +311,10 @@ export class AgentRunModule implements OnModuleDestroy {
   ) {}
 
   async onModuleDestroy(): Promise<void> {
-    try { await this.scheduler.onModuleDestroy(); } catch { /* 其余资源仍需关闭。 */ }
-    try { await this.reconciler.onModuleDestroy(); } catch { /* 其余资源仍需关闭。 */ }
+    try { await this.scheduler.close(); } catch { /* 其余资源仍需关闭。 */ }
+    try { await this.reconciler.close(); } catch { /* 其余资源仍需关闭。 */ }
     try { await this.consumer.close(); } catch { /* 其余资源仍需关闭。 */ }
-    try { await this.queue.onModuleDestroy(); } catch { /* PostgreSQL cleanup 仍需执行。 */ }
+    try { await this.queue.close(); } catch { /* PostgreSQL cleanup 仍需执行。 */ }
     try { await this.database.close(); } catch { /* postgres-js timeout 是最终强制释放边界。 */ }
   }
 }

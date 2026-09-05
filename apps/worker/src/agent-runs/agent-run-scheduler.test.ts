@@ -7,8 +7,9 @@ import {
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((accept) => { resolve = accept; });
-  return { promise, resolve };
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((accept, refuse) => { resolve = accept; reject = refuse; });
+  return { promise, resolve, reject };
 }
 
 function reporter(failures: AgentRunScheduleFailure[]) {
@@ -33,7 +34,7 @@ describe("AgentRunScheduler", () => {
     expect(calls).toEqual(["materialize", "dispatch"]);
     await vi.advanceTimersByTimeAsync(1_000);
     expect(calls).toEqual(["materialize", "dispatch", "materialize", "dispatch"]);
-    await scheduler.onModuleDestroy();
+    await scheduler.close();
   });
 
   it("上一次扫描未结束时跳过后续 tick，避免并发物化或派发", async () => {
@@ -57,7 +58,7 @@ describe("AgentRunScheduler", () => {
     expect(materializations).toBe(2);
     pending.resolve();
     await vi.runAllTicks();
-    await scheduler.onModuleDestroy();
+    await scheduler.close();
   });
 
   it("物化查询超时报告稳定码，并保持单飞直到原查询结束", async () => {
@@ -82,7 +83,7 @@ describe("AgentRunScheduler", () => {
     expect(failures).toEqual([{ failureCode: "JOB_DISCOVERY_SCHEDULE_MATERIALIZE_FAILED" }]);
     await vi.advanceTimersByTimeAsync(1_000);
     expect(materializations).toBe(1);
-    const destroying = scheduler.onModuleDestroy();
+    const destroying = scheduler.close();
     await vi.advanceTimersByTimeAsync(50);
     await destroying;
   });
@@ -103,7 +104,7 @@ describe("AgentRunScheduler", () => {
     await vi.advanceTimersByTimeAsync(50);
     await initializing;
     expect(failures).toEqual([{ failureCode: "JOB_DISCOVERY_SCHEDULE_DISPATCH_FAILED" }]);
-    const destroying = scheduler.onModuleDestroy();
+    const destroying = scheduler.close();
     await vi.advanceTimersByTimeAsync(50);
     await destroying;
   });
@@ -122,11 +123,42 @@ describe("AgentRunScheduler", () => {
     });
 
     const initializing = scheduler.onModuleInit();
-    const destroying = scheduler.onModuleDestroy();
+    const destroying = scheduler.close();
     await vi.advanceTimersByTimeAsync(50);
     await destroying;
     await initializing;
     await vi.advanceTimersByTimeAsync(2_000);
     expect(materializations).toBe(1);
+  });
+
+  it("有界关闭后仍消费迟到的 PostgreSQL 查询拒绝", async () => {
+    vi.useFakeTimers();
+    const pending = deferred<never>();
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => { unhandled.push(reason); };
+    process.on("unhandledRejection", onUnhandled);
+    const scheduler = new AgentRunScheduler({
+      schedules: {
+        materializeDue: async () => pending.promise,
+        dispatchPending: async () => undefined,
+      },
+      reporter: reporter([]),
+      scanTimeoutMs: 50,
+    });
+
+    try {
+      const initializing = scheduler.onModuleInit();
+      await vi.advanceTimersByTimeAsync(50);
+      await initializing;
+      const closing = scheduler.close();
+      await vi.advanceTimersByTimeAsync(50);
+      await closing;
+
+      pending.reject(new Error("write CONNECTION_ENDED"));
+      await vi.runAllTicks();
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 });
