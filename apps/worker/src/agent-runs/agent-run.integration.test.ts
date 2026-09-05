@@ -35,11 +35,11 @@ import { createReadyRunPreflightEvaluator } from "../../../../packages/domain/sr
 import { createCompanyWatchlistCommands } from "@job-copilot/domain/company-watchlists";
 import { createJobDiscoverySchedules } from "@job-copilot/domain/job-discovery-schedules";
 import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-policies";
-import { createFakeModelDiagnosticAdapter } from "@job-copilot/model-access/testing";
+import { createFakeModelDiagnosticAdapter, TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED } from "@job-copilot/model-access/testing";
 import type { RunPreflightEvaluator } from "@job-copilot/domain/run-preflight";
 
 import { AppModule } from "../app.module.js";
-import { AGENT_RUN_CONSUMER, AGENT_RUN_PREFLIGHT, TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED, createConfiguredJobDiscoveryExecutionMode, createWorkerRunPreflight } from "./agent-run.module.js";
+import { AGENT_RUN_CONSUMER, AGENT_RUN_PREFLIGHT, createConfiguredJobDiscoveryExecutionMode, createWorkerRunPreflight } from "./agent-run.module.js";
 import type { AgentRunConsumer } from "./agent-run-consumer.js";
 import { agentRunQueueJobOptions } from "./agent-run-reconciler.js";
 import { AgentRunScheduler, type AgentRunScheduleFailure } from "./agent-run-scheduler.js";
@@ -508,6 +508,36 @@ describe("岗位发现 Agent Run Worker", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+
+  it("Worker 在 test deployment 读取 provider unavailable 的共享诊断投影", async () => {
+    await stopWorker();
+    const diagnosticUserId = randomUUID();
+    const diagnosticTargetId = randomUUID();
+    const profileId = randomUUID();
+    const factId = randomUUID();
+    await database.insert(jobAccounts).values({ id: diagnosticUserId });
+    await database.insert(jobProfiles).values({ id: profileId, userId: diagnosticUserId, version: 1 });
+    await database.insert(profileFacts).values({ id: factId, userId: diagnosticUserId, profileId, factType: "skill" });
+    await database.insert(profileFactRevisions).values({ id: randomUUID(), userId: diagnosticUserId, profileFactId: factId, revisionNumber: 1, factType: "skill", factValue: { name: "TypeScript" }, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1 });
+    await database.insert(jobTargets).values({ id: diagnosticTargetId, userId: diagnosticUserId, version: 1, priority: "primary", state: "active", activeSlot: null });
+    await database.insert(jobTargetRevisions).values({ id: randomUUID(), userId: diagnosticUserId, targetId: diagnosticTargetId, version: 1, priority: "primary", state: "active", constraints });
+    await database.insert(modelDiagnosticResults).values({
+      configurationFingerprint: createFakeModelDiagnosticAdapter({ kind: "provider_unavailable" }, TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED).configurationFingerprint,
+      status: "temporarily_unavailable",
+      checks: { authentication: "not_verified", modelAvailability: "not_verified", structuredOutput: "not_verified", timeout: "passed" },
+      reasonCode: "MODEL_DIAGNOSTIC_PROVIDER_UNAVAILABLE",
+      latencyBucket: "under_1s",
+      checkedAt: new Date(),
+    });
+
+    const evaluator = createWorkerRunPreflight({ environment: { APP_ENV: "test" }, executionMode: createConfiguredJobDiscoveryExecutionMode({ APP_ENV: "test" }) });
+    const evaluation = await database.transaction((transaction) => evaluator.evaluate(transaction, { userId: diagnosticUserId, targetId: diagnosticTargetId, workflow: "deep_match", trigger: "automatic" }));
+
+    expect(evaluation.report.items.find((item) => item.code === "MODEL_DIAGNOSTIC_UNAVAILABLE")).toMatchObject({
+      severity: "blocking",
+      evidence: { kind: "model_diagnostic", status: "temporarily_unavailable" },
+    });
   });
 
   it("计划扫描的真实 PostgreSQL 锁超时会清理查询，并在下一个 tick 恢复", async () => {

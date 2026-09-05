@@ -11,7 +11,7 @@ import { createModelDiagnosticProjectionReader } from "@job-copilot/domain/model
 import type { VerifiedJobEvidenceStore } from "@job-copilot/domain/verified-job-source-gate";
 import { SecureJobPageFetcher } from "@job-copilot/source-access";
 import { createOpenAiModelDiagnosticAdapter } from "@job-copilot/model-access";
-import { createFakeModelDiagnosticAdapter } from "@job-copilot/model-access/testing";
+import { createFakeModelDiagnosticAdapter, TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED } from "@job-copilot/model-access/testing";
 
 import { AgentRunConsumer } from "./agent-run-consumer.js";
 import {
@@ -42,7 +42,6 @@ export const AGENT_RUN_SCHEDULE_REPORTER = Symbol("AGENT_RUN_SCHEDULE_REPORTER")
 export const AGENT_RUN_EXECUTION_MODE = Symbol("AGENT_RUN_EXECUTION_MODE");
 export const AGENT_RUN_PREFLIGHT = Symbol("AGENT_RUN_PREFLIGHT");
 const MAX_QUERY_POLICY_REJECTED_CANDIDATES = 5;
-export const TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED = "job-copilot-test-deployment-v1";
 
 /** 只读模型诊断投影；此装配从不主动运行外部诊断。 */
 export function createWorkerRunPreflight(input: { environment?: NodeJS.ProcessEnv; executionMode: ReturnType<typeof createConfiguredJobDiscoveryExecutionMode> }) {

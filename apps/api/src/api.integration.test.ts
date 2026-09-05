@@ -34,8 +34,7 @@ import { createConfiguredRunPreflightEvaluator } from "./run-preflight/run-prefl
 import { JOB_TRIAGE_COMMANDS, JOB_TRIAGE_QUERIES } from "./job-triage/job-triage.tokens.js";
 import { RECOMMENDATION_FEEDBACK_COMMANDS, RECOMMENDATION_FEEDBACK_QUERIES } from "./recommendations/recommendations.tokens.js";
 import { MODEL_DIAGNOSTICS } from "./model-diagnostics/model-diagnostics.tokens.js";
-import { TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED } from "./model-diagnostics/model-diagnostics.module.js";
-import { createFakeModelDiagnosticAdapter } from "@job-copilot/model-access/testing";
+import { createFakeModelDiagnosticAdapter, TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED } from "@job-copilot/model-access/testing";
 import { z } from "zod";
 
 const testSecret = "test-dev-auth-shared-secret-must-be-at-least-32-characters";
