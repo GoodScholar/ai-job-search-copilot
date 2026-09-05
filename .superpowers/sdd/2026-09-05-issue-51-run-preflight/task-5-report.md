@@ -20,7 +20,7 @@ Web：ApiClient 缺 getRunPreflight；BFF 缺 route；409 和 server-action 判�
 ### GREEN
 
 ```text
-API 定点：6 files / 87 tests passed
+API 定点：6 files / 88 tests passed
 Web 定点：5 files / 41 tests passed
 ```
 
@@ -63,3 +63,43 @@ git diff --check
 本任务变更位于 `apps/api/src/run-preflight/`、Model Diagnostics/API controller/filter/module、Web ApiClient/BFF/action 及相应测试。为保持已有页面 action 的 void prop 约束，页面只 await action 结果；不展示 blocker/warning UI（Task 6 范围）。
 
 工作树原有 `task-4-report.md` 未提交改动已保留且不会纳入本任务 commit。
+
+## 真实 API journey 补充（Task 5 修复）
+
+`api.integration.test.ts` 的默认旧用例继续用测试专用 evaluator；新增旅程则通过同一 Nest provider proxy 显式切换到 `RunPreflightModule` 自己导出的 `createConfiguredRunPreflightEvaluator`（Greenhouse adapter、真实 model-diagnostic projection、真实 PostgreSQL）。它创建两个账户的 profile、watchlist、diagnostic、health 行，并通过 HTTP 证明：
+
+- 请求 Account B 的 target 时只返回 Account A 主 target 与 `REQUESTED_JOB_TARGET_MISSING`，不回显 B 的 target、watchlist item、公司、来源 URL、profile 或 note。
+- source health 从 unchecked 到 rate_limited 后，旧 fingerprint 得到带 `requestId` 和新 report 的严格 409，且 DB run 数不变；当前 fingerprint 才创建 run。
+- 创建后的 run detail 持久化此次 real evaluator 的 warning fingerprint/source-health item/policy revision；将已构造行的 `preflight_snapshot` 置为 legacy `null` 后，detail 原样返回 null、不会回算。
+- recommendations deep-match 经同一 gate 覆盖 blocked（无 profile）与 ready 成功快照；同 idempotency key 在另一账户不会复用 owner run。
+
+### 真实 RED
+
+```text
+pnpm --filter api exec vitest run --no-file-parallelism src/api.integration.test.ts -t '以真实 production preflight'
+# RED: foreign target UUID 出现在安全报告，断言 failed。
+```
+
+修复 `run-preflight.ts`：外部/缺失 target 不再回显到 report/evidence，回退 owner primary target 并保留 `REQUESTED_JOB_TARGET_MISSING`。
+
+### 真实 GREEN
+
+```text
+pnpm --filter api exec vitest run --no-file-parallelism src/api.integration.test.ts -t '以真实 production preflight'
+# 1 passed / 55 skipped / exit 0
+
+# mutation: temporarily replace productionPreflight() with the ready evaluator
+pnpm --filter api exec vitest run --no-file-parallelism src/api.integration.test.ts -t '以真实 production preflight'
+# 1 failed / 55 skipped / exit 1; expected ready_with_warnings but received ready, warningFingerprint null
+# restore productionPreflight(), then the focused command again: 1 passed / 55 skipped / exit 0
+
+pnpm --filter @job-copilot/domain exec vitest run --no-file-parallelism src/run-preflight.integration.test.ts
+# 1 file / 12 passed / exit 0
+pnpm --filter @job-copilot/domain typecheck
+# exit 0
+
+Task 5 final serial rerun:
+# API 6 files / 88 passed / exit 0
+# Web 5 files / 41 passed / exit 0
+# api, web, worker typecheck; git diff --check: exit 0
+```

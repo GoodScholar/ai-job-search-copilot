@@ -168,14 +168,17 @@ export function createRunPreflightEvaluator(deps: { capabilityAdapter: SourceCap
       ]);
       const primary = allTargets.find((value) => value.priority === "primary" && value.state === "active") ?? null;
       const requested = input.targetId ? allTargets.find((value) => value.targetId === input.targetId) ?? null : primary;
-      const targetId = requested?.state === "active" ? requested.targetId : input.targetId ?? primary?.targetId ?? null;
+      // A foreign/missing caller-supplied id is never reflected in the public report.
+      // It is indistinguishable from a missing request and falls back to the owner's primary target.
+      const safeRequestedTargetId = requested?.targetId ?? (input.targetId ? null : primary?.targetId ?? null);
+      const targetId = requested?.state === "active" ? requested.targetId : primary?.targetId ?? null;
       const realSources = await sources(db, input.userId, targetId);
       const model = await deps.modelDiagnosticReader.get(db, checkedAt);
       const items: RunPreflightItem[] = [];
       items.push(item(facts.count ? "PROFILE_EVIDENCE_READY" : "PROFILE_EVIDENCE_MISSING", facts.count ? "informational" : "blocking", { kind: "profile", activeTrustedFactCount: facts.count, latestFactRevisionId: facts.latestRevisionId, checkedAt: checkedAt.toISOString() }, false, facts.count ? [] : ["review_profile"]));
-      items.push(item(primary ? "PRIMARY_JOB_TARGET_READY" : "PRIMARY_JOB_TARGET_MISSING", primary ? "informational" : "blocking", { kind: "job_target", primaryTargetId: primary?.targetId ?? null, primaryTargetVersion: primary?.version ?? null, requestedTargetId: input.targetId ?? primary?.targetId ?? null, requestedTargetVersion: requested?.version ?? null, requestedTargetState: requested?.state ?? "missing", checkedAt: checkedAt.toISOString() }, false, primary ? [] : ["review_job_targets"]));
+      items.push(item(primary ? "PRIMARY_JOB_TARGET_READY" : "PRIMARY_JOB_TARGET_MISSING", primary ? "informational" : "blocking", { kind: "job_target", primaryTargetId: primary?.targetId ?? null, primaryTargetVersion: primary?.version ?? null, requestedTargetId: safeRequestedTargetId, requestedTargetVersion: requested?.version ?? null, requestedTargetState: requested?.state ?? "missing", checkedAt: checkedAt.toISOString() }, false, primary ? [] : ["review_job_targets"]));
       const requestedCode = !requested ? "REQUESTED_JOB_TARGET_MISSING" : requested.state !== "active" ? "REQUESTED_JOB_TARGET_INACTIVE" : "REQUESTED_JOB_TARGET_READY";
-      items.push(item(requestedCode, requestedCode === "REQUESTED_JOB_TARGET_READY" ? "informational" : "blocking", { kind: "job_target", primaryTargetId: primary?.targetId ?? null, primaryTargetVersion: primary?.version ?? null, requestedTargetId: input.targetId ?? primary?.targetId ?? null, requestedTargetVersion: requested?.version ?? null, requestedTargetState: requested?.state ?? "missing", checkedAt: checkedAt.toISOString() }, false, requestedCode === "REQUESTED_JOB_TARGET_READY" ? [] : ["review_job_targets"]));
+      items.push(item(requestedCode, requestedCode === "REQUESTED_JOB_TARGET_READY" ? "informational" : "blocking", { kind: "job_target", primaryTargetId: primary?.targetId ?? null, primaryTargetVersion: primary?.version ?? null, requestedTargetId: safeRequestedTargetId, requestedTargetVersion: requested?.version ?? null, requestedTargetState: requested?.state ?? "missing", checkedAt: checkedAt.toISOString() }, false, requestedCode === "REQUESTED_JOB_TARGET_READY" ? [] : ["review_job_targets"]));
       if (input.workflow === "deep_match") {
         items.push(item("SOURCE_CAPABILITY_NOT_REQUIRED", "informational", { kind: "source_capability", enabledSourceCount: 0, capableSourceCount: 0, status: "not_required", checkedAt: checkedAt.toISOString() }, false, []));
         items.push(item("SOURCE_HEALTH_NOT_REQUIRED", "informational", { kind: "source_health", checkedSourceCount: 0, healthySourceCount: 0, degradedSourceCount: 0, uncheckedSourceCount: 0, latestCheckedAt: null }, false, []));

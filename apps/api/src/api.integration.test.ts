@@ -4,7 +4,7 @@ import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fa
 import { Test } from "@nestjs/testing";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { auditEvents, candidateFactEvidence, candidateFacts, careerDocuments, careerFactConflicts, careerImports, createDatabase, migrateDatabase, type Database } from "@job-copilot/database";
+import { agentRuns, auditEvents, candidateFactEvidence, candidateFacts, careerDocuments, careerFactConflicts, careerImports, companyWatchlistRevisions, companyWatchlists, createDatabase, jobProfiles, jobSourceHealthChecks, modelDiagnosticResults, migrateDatabase, profileFactRevisions, profileFacts, type Database } from "@job-copilot/database";
 import type { CareerDocumentStore, CareerImportQueue } from "@job-copilot/domain/career-imports";
 import type { JobContentStore, JobImportQueue } from "@job-copilot/domain/job-imports";
 import { createAgentRunCommands, type AgentRunQueue } from "@job-copilot/domain/agent-runs";
@@ -13,6 +13,8 @@ import { createAuditTrail } from "@job-copilot/domain/audit-trail";
 import { createCompanyWatchlistCommands } from "@job-copilot/domain/company-watchlists";
 import { createJobDiscoverySchedules } from "@job-copilot/domain/job-discovery-schedules";
 import { createModelDiagnostics } from "@job-copilot/domain/model-diagnostics";
+import { createModelDiagnosticProjectionReader } from "@job-copilot/domain/model-diagnostics";
+import type { RunPreflightEvaluator } from "@job-copilot/domain/run-preflight";
 import type { RuntimeConfig } from "@job-copilot/domain/runtime-config";
 import type { ModelDiagnosticAdapter } from "@job-copilot/contracts/model-diagnostics";
 import { JobTriageError } from "@job-copilot/domain/job-triage-persistence";
@@ -27,9 +29,12 @@ import { createMinimalDocx } from "./career-import/minimal-docx.test-support.js"
 import { CAREER_FACT_CONFLICT_REVIEW_COMMANDS, PROFILE_REVIEW_COMMANDS, type ProfileReviewCommands } from "./profile-review/profile-review.tokens.js";
 import { AGENT_RUN_QUEUE_PORT } from "./agent-runs/agent-runs.tokens.js";
 import { RUN_PREFLIGHT_EVALUATOR } from "./run-preflight/run-preflight.tokens.js";
+import { createConfiguredRunPreflightEvaluator } from "./run-preflight/run-preflight.module.js";
 import { JOB_TRIAGE_COMMANDS, JOB_TRIAGE_QUERIES } from "./job-triage/job-triage.tokens.js";
 import { RECOMMENDATION_FEEDBACK_COMMANDS, RECOMMENDATION_FEEDBACK_QUERIES } from "./recommendations/recommendations.tokens.js";
 import { MODEL_DIAGNOSTICS } from "./model-diagnostics/model-diagnostics.tokens.js";
+import { TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED } from "./model-diagnostics/model-diagnostics.module.js";
+import { createFakeModelDiagnosticAdapter } from "@job-copilot/model-access/testing";
 import { z } from "zod";
 
 const testSecret = "test-dev-auth-shared-secret-must-be-at-least-32-characters";
@@ -51,6 +56,8 @@ describe("authenticated workbench HTTP API", () => {
   let app: NestFastifyApplication;
   let container: StartedPostgreSqlContainer;
   let database: Database;
+  let activeRunPreflight: RunPreflightEvaluator = createReadyRunPreflightEvaluator();
+  const runPreflightProxy: RunPreflightEvaluator = { evaluate: (db, input) => activeRunPreflight.evaluate(db, input) };
   let diagnosticAdapterCalls = 0;
   let diagnosticAdapterInput: { apiKey?: string; endpoint?: string; organization?: string; project?: string; lowCostModel: string; highQualityModel: string } | undefined;
   const triageVersionId = "90000000-0000-4000-8000-000000000001";
@@ -237,7 +244,7 @@ describe("authenticated workbench HTTP API", () => {
           return createModelDiagnostics({ db, adapter, clock: () => new Date() });
         },
       })
-      .overrideProvider(RUN_PREFLIGHT_EVALUATOR).useValue(createReadyRunPreflightEvaluator())
+      .overrideProvider(RUN_PREFLIGHT_EVALUATOR).useValue(runPreflightProxy)
       .setLogger(testLogger as never)
       .compile();
     app = module.createNestApplication<NestFastifyApplication>(new FastifyAdapter({ loggerInstance: testLogger as never }));
@@ -257,6 +264,29 @@ describe("authenticated workbench HTTP API", () => {
     await container?.stop();
     Object.assign(process.env, originalEnvironment);
   });
+
+  const productionPreflight = () => createConfiguredRunPreflightEvaluator(
+    createModelDiagnosticProjectionReader({ configurationFingerprint: createFakeModelDiagnosticAdapter({ kind: "success" }, TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED).configurationFingerprint }),
+  );
+
+  async function prepareRealPreflightAccount(subject: string) {
+    const session = await createSession(app, subject);
+    const targetId = await createActiveTarget(app, session.sessionToken, `${subject}-角色`);
+    const now = new Date(); const profileId = randomUUID(); const factId = randomUUID(); const watchlistId = randomUUID(); const watchlistItemId = randomUUID();
+    await database.insert(jobProfiles).values({ id: profileId, userId: session.account.userId, version: 1, createdAt: now, updatedAt: now });
+    await database.insert(profileFacts).values({ id: factId, userId: session.account.userId, profileId, factType: "skill", createdAt: now });
+    await database.insert(profileFactRevisions).values({ id: randomUUID(), userId: session.account.userId, profileFactId: factId, revisionNumber: 1, factType: "skill", factValue: { name: "private-profile-sentinel" }, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1, createdAt: now });
+    await database.insert(companyWatchlists).values({ id: watchlistId, userId: session.account.userId, targetId, version: 1, createdAt: now, updatedAt: now });
+    await database.insert(companyWatchlistRevisions).values({ id: randomUUID(), userId: session.account.userId, watchlistId, targetId, version: 1, createdAt: now, items: [{ itemId: watchlistItemId, canonicalCompanyName: "private-company-sentinel", careersUrl: "https://boards.greenhouse.io/private-board-sentinel", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: "private-source-note", state: "enabled", position: 1 }] });
+    await database.insert(modelDiagnosticResults).values({ configurationFingerprint: createFakeModelDiagnosticAdapter({ kind: "success" }, TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED).configurationFingerprint, status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket: "under_1s", checkedAt: now });
+    return { session, targetId, watchlistItemId };
+  }
+
+  async function insertHealthCarrier(userId: string, targetId: string, itemId: string) {
+    const now = new Date(); const runId = randomUUID();
+    await database.insert(agentRuns).values({ id: runId, userId, targetId, idempotencyKey: randomUUID(), targetVersion: 1, targetSnapshot: { targetId }, sourceScope: {}, budgetSnapshot: {}, workflowVersion: "job-discovery-workflow-v1", ruleVersion: "fake-job-discovery-rules-v1", adapter: "fake", adapterVersion: "fake-job-discovery-v1", outputSchemaVersion: "job-discovery-result-v1", toolAllowlist: [], queuedAt: now, createdAt: now, updatedAt: now });
+    await database.insert(jobSourceHealthChecks).values({ id: randomUUID(), userId, runId, targetId, watchlistItemId: itemId, sourceId: "greenhouse:private-board-sentinel", status: "rate_limited", reasonCodes: ["SOURCE_RATE_LIMITED"], impactScope: "entire_source", impactAffectedCount: null, observedPostingCount: 0, selectedDetailCount: 0, validDetailCount: 0, requestAttemptCount: 1, checkedAt: now });
+  }
 
   it("expands Error values before checking captured logger output", () => {
     const messageSentinel = "message-sentinel";
@@ -339,6 +369,59 @@ describe("authenticated workbench HTTP API", () => {
     expect(anonymous.statusCode).toBe(401); expect(anonymous.headers["cache-control"]).toBe("no-store");
     expect(report.statusCode).toBe(200); expect(report.headers["cache-control"]).toBe("no-store"); expect(report.json()).toMatchObject({ workflow: "discovery", trigger: "manual", targetId });
     for (const response of [scheduledFor, unknown]) { expect(response.statusCode).toBe(400); expect(response.headers["cache-control"]).toBe("no-store"); expect(response.body).not.toContain("secret"); }
+  });
+
+  it("以真实 production preflight 在 HTTP 中隔离账户、重检 warning，并冻结运行快照", async () => {
+    activeRunPreflight = productionPreflight();
+    try {
+      const owner = await prepareRealPreflightAccount(`preflight-owner-${randomUUID()}`);
+      const other = await prepareRealPreflightAccount(`preflight-other-${randomUUID()}`);
+      const headers = { ...bearer(owner.session.sessionToken), "content-type": "application/json" };
+      const first = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/run-preflight?workflow=discovery&trigger=manual&targetId=${owner.targetId}`, headers });
+      expect(first.statusCode).toBe(200);
+      expect(first.json()).toMatchObject({ status: "ready_with_warnings", warningFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/u) });
+      const firstReport = first.json();
+
+      const foreign = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/run-preflight?workflow=discovery&trigger=manual&targetId=${other.targetId}`, headers });
+      expect(foreign.statusCode).toBe(200); expect(foreign.json()).toMatchObject({ status: "blocked", targetId: owner.targetId, items: expect.arrayContaining([expect.objectContaining({ code: "REQUESTED_JOB_TARGET_MISSING", evidence: expect.objectContaining({ requestedTargetId: null, requestedTargetState: "missing" }) })]) });
+      const foreignText = foreign.body;
+      for (const secret of [other.targetId, other.watchlistItemId, "private-company-sentinel", "private-board-sentinel", "private-profile-sentinel", "private-source-note"]) expect(foreignText).not.toContain(secret);
+
+      await insertHealthCarrier(owner.session.account.userId, owner.targetId, owner.watchlistItemId);
+      const refreshed = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/run-preflight?workflow=discovery&trigger=manual&targetId=${owner.targetId}`, headers });
+      expect(refreshed.statusCode).toBe(200); expect(refreshed.json()).toMatchObject({ status: "ready_with_warnings", items: expect.arrayContaining([expect.objectContaining({ code: "SOURCE_HEALTH_DEGRADED" })]) });
+      const currentReport = refreshed.json(); expect(currentReport.warningFingerprint).not.toBe(firstReport.warningFingerprint);
+
+      const before = (await database.select({ id: agentRuns.id, userId: agentRuns.userId, targetId: agentRuns.targetId }).from(agentRuns)).filter((run) => run.userId === owner.session.account.userId && run.targetId === owner.targetId);
+      const stale = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/agent-runs", headers, payload: { targetId: owner.targetId, idempotencyKey: randomUUID(), warningFingerprint: firstReport.warningFingerprint } });
+      expect(stale.statusCode).toBe(409); expect(stale.json()).toMatchObject({ code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED", message: expect.any(String), requestId: expect.any(String), preflight: { status: "ready_with_warnings", warningFingerprint: currentReport.warningFingerprint, items: expect.arrayContaining([expect.objectContaining({ code: "SOURCE_HEALTH_DEGRADED" })]) } });
+      const staleReport = stale.json().preflight;
+      const afterStale = (await database.select({ id: agentRuns.id, userId: agentRuns.userId, targetId: agentRuns.targetId }).from(agentRuns)).filter((run) => run.userId === owner.session.account.userId && run.targetId === owner.targetId);
+      expect(afterStale).toEqual(before);
+
+      const started = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/agent-runs", headers, payload: { targetId: owner.targetId, idempotencyKey: randomUUID(), warningFingerprint: staleReport.warningFingerprint } });
+      expect(started.statusCode).toBe(201);
+      const detail = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/agent-runs/${started.json().runId}`, headers: bearer(owner.session.sessionToken) });
+      expect(detail.statusCode).toBe(200); expect(detail.json()).toMatchObject({ preflightSnapshot: { status: "ready_with_warnings", warningFingerprint: staleReport.warningFingerprint, items: expect.arrayContaining([expect.objectContaining({ code: "SOURCE_HEALTH_DEGRADED" })]) }, accountPolicyRevisionNumber: staleReport.items.find((item: { evidence: { kind: string } }) => item.evidence.kind === "account_run_policy")?.evidence.revisionNumber });
+
+      await database.$client`update agent_runs set preflight_snapshot = null where id = ${started.json().runId}::uuid`;
+      const legacy = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/agent-runs/${started.json().runId}`, headers: bearer(owner.session.sessionToken) });
+      expect(legacy.statusCode).toBe(200); expect(legacy.json().preflightSnapshot).toBeNull();
+
+      const blockedOwner = await createSession(app, `preflight-blocked-${randomUUID()}`);
+      const blockedTarget = await createActiveTarget(app, blockedOwner.sessionToken, `preflight-blocked-target-${randomUUID()}`);
+      const blocked = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/recommendations/runs", headers: { ...bearer(blockedOwner.sessionToken), "content-type": "application/json" }, payload: { targetId: blockedTarget, opportunityId: randomUUID(), idempotencyKey: randomUUID(), warningFingerprint: null } });
+      expect(blocked.statusCode).toBe(409); expect(blocked.json()).toMatchObject({ code: "RUN_PREFLIGHT_BLOCKED", preflight: expect.objectContaining({ workflow: "deep_match", status: "blocked" }), requestId: expect.any(String) });
+      const deep = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/recommendations/runs", headers, payload: { targetId: owner.targetId, opportunityId: randomUUID(), idempotencyKey: randomUUID(), warningFingerprint: null } });
+      expect(deep.statusCode).toBe(201); expect((await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/agent-runs/${deep.json().runId}`, headers: bearer(owner.session.sessionToken) })).json().preflightSnapshot).toMatchObject({ workflow: "deep_match" });
+
+      const key = randomUUID();
+      const ownerKey = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/agent-runs", headers, payload: { targetId: owner.targetId, idempotencyKey: key, warningFingerprint: staleReport.warningFingerprint } });
+      const otherKey = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/agent-runs", headers: { ...bearer(other.session.sessionToken), "content-type": "application/json" }, payload: { targetId: other.targetId, idempotencyKey: key, warningFingerprint: null } });
+      expect(ownerKey.statusCode).toBe(201); expect(otherKey.statusCode).toBe(409); expect(otherKey.json().preflight.runId).toBeUndefined();
+    } finally {
+      activeRunPreflight = createReadyRunPreflightEvaluator();
+    }
   });
 
   it("hides dev auth behind the server secret", async () => {

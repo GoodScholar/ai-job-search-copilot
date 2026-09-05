@@ -10,11 +10,21 @@ import { MODEL_DIAGNOSTIC_PROJECTION_READER, type ModelDiagnosticProjection } fr
 import { RunPreflightController } from "./run-preflight.controller.js";
 import { RUN_PREFLIGHT_EVALUATOR, RUN_PREFLIGHT_QUERIES, type RunPreflightEvaluator } from "./run-preflight.tokens.js";
 
+export function createConfiguredRunPreflightEvaluator(modelDiagnosticReader: ModelDiagnosticProjection, environment: NodeJS.ProcessEnv = process.env): RunPreflightEvaluator {
+  return createRunPreflightEvaluator({
+    capabilityAdapter: new GreenhouseSourceCapabilityAdapter(),
+    modelDiagnosticReader,
+    discoveryExecutionMode: resolveJobDiscoveryExecutionMode(environment),
+    id: () => crypto.randomUUID(),
+    clock: () => new Date(),
+  });
+}
+
 @Module({
   imports: [RuntimeConfigModule, AuthModule, ModelDiagnosticsModule],
   controllers: [RunPreflightController],
   providers: [
-    { provide: RUN_PREFLIGHT_EVALUATOR, inject: [MODEL_DIAGNOSTIC_PROJECTION_READER], useFactory: (modelDiagnosticReader: ModelDiagnosticProjection): RunPreflightEvaluator => createRunPreflightEvaluator({ capabilityAdapter: new GreenhouseSourceCapabilityAdapter(), modelDiagnosticReader, discoveryExecutionMode: resolveJobDiscoveryExecutionMode(process.env), id: () => crypto.randomUUID(), clock: () => new Date() }) },
+    { provide: RUN_PREFLIGHT_EVALUATOR, inject: [MODEL_DIAGNOSTIC_PROJECTION_READER], useFactory: (modelDiagnosticReader: ModelDiagnosticProjection): RunPreflightEvaluator => createConfiguredRunPreflightEvaluator(modelDiagnosticReader) },
     { provide: RUN_PREFLIGHT_QUERIES, inject: [DATABASE, RUN_PREFLIGHT_EVALUATOR], useFactory: (db: Database, evaluator: RunPreflightEvaluator) => createRunPreflightQueries({ db, evaluator }) },
   ],
   exports: [RUN_PREFLIGHT_EVALUATOR, RUN_PREFLIGHT_QUERIES],
