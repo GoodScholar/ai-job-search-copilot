@@ -6,6 +6,7 @@ const sourceHealthSpec = "source-health.spec.ts";
 const workbenchInboxSpec = "workbench-inbox.spec.ts";
 const anysearchSpec = "anysearch-public-job-discovery.spec.ts";
 const modelDiagnosticsSpec = "model-diagnostics.spec.ts";
+const playwrightProjects = ["Desktop Chrome", "Mobile Safari"];
 const phases = ["ordinary", "source-health", "workbench-inbox"];
 const require = createRequire(import.meta.url);
 const playwrightCli = require.resolve("@playwright/test/cli");
@@ -17,11 +18,15 @@ export function normalizeE2EArguments(arguments_) {
 }
 
 function initialProject(args) {
+  const selectors = [];
   for (let index = 0; index < args.length; index += 1) {
-    if (args[index] === "--project") return args[index + 1] ?? "Desktop Chrome";
-    if (args[index]?.startsWith("--project=")) return args[index].slice("--project=".length) || "Desktop Chrome";
+    if (args[index]?.startsWith("--project=")) selectors.push(args[index].slice("--project=".length));
+    if (args[index] === "--project") {
+      while (args[index + 1] && !args[index + 1].startsWith("-")) selectors.push(args[++index]);
+    }
   }
-  return "Desktop Chrome";
+  const matches = (project, selector) => new RegExp(`^${selector.split("*").map((part) => part.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")).join(".*")}$`, "u").test(project);
+  return playwrightProjects.find((project) => selectors.some((selector) => matches(project, selector))) ?? "Desktop Chrome";
 }
 
 function phaseEnvironment(phase, environment, args = []) {

@@ -51,7 +51,7 @@ describe("E2E runner", () => {
     expect(await selectE2EPhases(["e2e/model-diagnostics.spec.ts", "--project", "Mobile Safari"])).toEqual(["model-diagnostics-success", "model-diagnostics-failed", "model-diagnostics-temporarily-unavailable"]);
   });
 
-  it("模型诊断 phase 从实际 --project 参数注入初始项目，并覆盖遗留值", async () => {
+  it("模型诊断 phase 从 Playwright selector 按配置顺序注入初始项目，并覆盖遗留值", async () => {
     const calls: RunnerCall[] = [];
     await executeE2E(["e2e/model-diagnostics.spec.ts", "--project", "Mobile Safari"], { environment: { ...baseEnvironment, E2E_MODEL_DIAGNOSTIC_INITIAL_PROJECT: "stale" }, run: async (call: RunnerCall) => { calls.push(call); return { code: 0, stdout: "" }; } });
     expect(calls).toHaveLength(3);
@@ -59,6 +59,11 @@ describe("E2E runner", () => {
     const defaultCalls: RunnerCall[] = [];
     await executeE2E(["e2e/model-diagnostics.spec.ts"], { environment: baseEnvironment, run: async (call: RunnerCall) => { defaultCalls.push(call); return { code: 0, stdout: "" }; } });
     expect(defaultCalls.map((call) => call.environment.E2E_MODEL_DIAGNOSTIC_INITIAL_PROJECT)).toEqual(["Desktop Chrome", "Desktop Chrome", "Desktop Chrome"]);
+    for (const [args, expected] of [[ ["--project", "Mobile Safari"], "Mobile Safari" ], [["--project", "Mobile Safari", "Desktop Chrome"], "Desktop Chrome"], [["--project=Mobile*"], "Mobile Safari"], [["--project", "*"], "Desktop Chrome"], [["--project=Mobile Safari", "--project", "Desktop Chrome"], "Desktop Chrome"]] as const) {
+      const selected: RunnerCall[] = [];
+      await executeE2E(["e2e/model-diagnostics.spec.ts", ...args], { environment: baseEnvironment, run: async (call: RunnerCall) => { selected.push(call); return { code: 0, stdout: "" }; } });
+      expect(selected[0]!.environment.E2E_MODEL_DIAGNOSTIC_INITIAL_PROJECT).toBe(expected);
+    }
   });
 
   it.each([
