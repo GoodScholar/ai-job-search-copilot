@@ -26,6 +26,9 @@ importers:
       '@job-copilot/domain':
         specifier: workspace:*
         version: link:../../packages/domain
+      '@job-copilot/model-access':
+        specifier: workspace:*
+        version: link:../../packages/model-access
       '@job-copilot/source-access':
         specifier: workspace:*
         version: link:../../packages/source-access

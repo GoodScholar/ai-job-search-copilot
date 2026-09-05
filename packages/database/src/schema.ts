@@ -8,6 +8,22 @@ export const jobAccounts = pgTable("job_accounts", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/** 部署级脱敏诊断历史；不与求职账户或职业资料建立关联。 */
+export const modelDiagnosticResults = pgTable("model_diagnostic_results", {
+  configurationFingerprint: varchar("configuration_fingerprint", { length: 128 }).notNull(),
+  status: varchar("status", { length: 32 }).notNull(),
+  checks: jsonb("checks").notNull(),
+  reasonCode: varchar("reason_code", { length: 80 }).notNull(),
+  checkedAt: timestamp("checked_at", { withTimezone: true }).notNull(),
+  latencyBucket: varchar("latency_bucket", { length: 16 }).notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.configurationFingerprint, table.checkedAt], name: "model_diagnostic_results_pk" }),
+  index("model_diagnostic_results_fingerprint_checked_at_idx").on(table.configurationFingerprint, table.checkedAt),
+  check("model_diagnostic_results_status_check", sql`${table.status} in ('available', 'failed', 'temporarily_unavailable')`),
+  check("model_diagnostic_results_reason_code_check", sql`${table.reasonCode} in ('MODEL_DIAGNOSTIC_AVAILABLE', 'MODEL_DIAGNOSTIC_CONFIGURATION_MISSING', 'MODEL_DIAGNOSTIC_AUTHENTICATION_FAILED', 'MODEL_DIAGNOSTIC_ACCESS_RESTRICTED', 'MODEL_DIAGNOSTIC_LOW_COST_MODEL_UNAVAILABLE', 'MODEL_DIAGNOSTIC_HIGH_QUALITY_MODEL_UNAVAILABLE', 'MODEL_DIAGNOSTIC_STRICT_OUTPUT_UNSUPPORTED', 'MODEL_DIAGNOSTIC_TIMEOUT', 'MODEL_DIAGNOSTIC_RATE_LIMITED', 'MODEL_DIAGNOSTIC_PROVIDER_UNAVAILABLE', 'MODEL_DIAGNOSTIC_FAILED')`),
+  check("model_diagnostic_results_latency_bucket_check", sql`${table.latencyBucket} in ('under_1s', '1_to_5s', '5_to_10s', '10_to_20s', 'timeout')`),
+]);
+
 export const accountRunPolicyRevisions = pgTable("account_run_policy_revisions", {
   id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id),
   revisionNumber: integer("revision_number").notNull(), settings: jsonb("settings").notNull(),

@@ -21,6 +21,10 @@ function getDatabaseUrl(): string {
         APP_ENV: process.env.APP_ENV,
         AUTH_MODE: process.env.AUTH_MODE,
         DEV_AUTH_SHARED_SECRET: process.env.DEV_AUTH_SHARED_SECRET,
+        OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+        OPENAI_ENDPOINT: process.env.OPENAI_ENDPOINT,
+        OPENAI_ORGANIZATION: process.env.OPENAI_ORGANIZATION,
+        OPENAI_PROJECT: process.env.OPENAI_PROJECT,
       }),
     },
     {

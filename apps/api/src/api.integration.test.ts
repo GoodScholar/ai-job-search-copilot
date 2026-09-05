@@ -267,6 +267,21 @@ describe("authenticated workbench HTTP API", () => {
     expect(second.json().sessionToken).not.toBe(first.json().sessionToken);
   });
 
+  it("仅允许已认证会话读取或运行脱敏模型诊断，并禁止 HTTP 缓存", async () => {
+    const anonymous = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/model-diagnostics" });
+    expect(anonymous.statusCode).toBe(401);
+    const session = await createSession(app, `model-diagnostic-${crypto.randomUUID()}`);
+    const get = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/model-diagnostics", headers: bearer(session.sessionToken) });
+    expect(get.statusCode).toBe(200); expect(get.headers["cache-control"]).toBe("no-store"); expect(get.json()).toMatchObject({ status: "unverified", checks: { authentication: "not_verified" } });
+    const post = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/model-diagnostics", headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: {} });
+    expect(post.statusCode).toBe(201); expect(post.headers["cache-control"]).toBe("no-store"); expect(post.json()).toMatchObject({ status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" } });
+    const noBody = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/model-diagnostics", headers: bearer(session.sessionToken) });
+    expect(noBody.statusCode).toBe(201); expect(noBody.headers["cache-control"]).toBe("no-store");
+    expect(Object.keys(post.json())).not.toEqual(expect.arrayContaining(["configurationFingerprint", "apiKey", "providerResponse", "organization", "project", "model"]));
+    const invalid = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/model-diagnostics", headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: { ignored: true } });
+    expect(invalid.statusCode).toBe(400);
+  });
+
   it("hides dev auth behind the server secret", async () => {
     const response = await app.getHttpAdapter().getInstance().inject({
       method: "POST",

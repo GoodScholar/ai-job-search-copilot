@@ -4,6 +4,10 @@ const RuntimeConfigSchema = z.object({
   APP_ENV: z.enum(["local", "test", "production"]),
   AUTH_MODE: z.enum(["dev", "wechat"]),
   DEV_AUTH_SHARED_SECRET: z.string().min(32).optional(),
+  OPENAI_API_KEY: z.string().min(1).optional(),
+  OPENAI_ENDPOINT: z.string().url().optional(),
+  OPENAI_ORGANIZATION: z.string().min(1).optional(),
+  OPENAI_PROJECT: z.string().min(1).optional(),
 }).strict().superRefine((config, context) => {
   if (config.APP_ENV === "production" && config.AUTH_MODE === "dev") {
     context.addIssue({
@@ -22,12 +26,18 @@ const RuntimeConfigSchema = z.object({
   }
 });
 
-export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
+export type RuntimeConfig = Omit<z.infer<typeof RuntimeConfigSchema>, "OPENAI_API_KEY" | "OPENAI_ENDPOINT" | "OPENAI_ORGANIZATION" | "OPENAI_PROJECT"> & { openAi: { apiKey?: string; endpoint?: string; organization?: string; project?: string } };
 
 export function parseRuntimeConfig(input: {
   APP_ENV?: unknown;
   AUTH_MODE?: unknown;
   DEV_AUTH_SHARED_SECRET?: unknown;
+  OPENAI_API_KEY?: unknown;
+  OPENAI_ENDPOINT?: unknown;
+  OPENAI_ORGANIZATION?: unknown;
+  OPENAI_PROJECT?: unknown;
 }): RuntimeConfig {
-  return RuntimeConfigSchema.parse(input);
+  const parsed = RuntimeConfigSchema.parse(input);
+  const { OPENAI_API_KEY: apiKey, OPENAI_ENDPOINT: endpoint, OPENAI_ORGANIZATION: organization, OPENAI_PROJECT: project, ...safe } = parsed;
+  return { ...safe, openAi: { apiKey, endpoint, organization, project } };
 }
