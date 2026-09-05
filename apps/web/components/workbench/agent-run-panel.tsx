@@ -46,6 +46,18 @@ const sourceLabels: Record<string, string> = {
   company_careers: "公司招聘官网",
 };
 
+const triggerLabels = {
+  manual: "手动启动",
+  schedule: "计划启动",
+  automatic: "自动触发",
+} satisfies Record<RunPreflightSnapshot["trigger"], string>;
+
+const warningSummaries = {
+  manual: "手动启动时已确认提示",
+  schedule: "计划启动时带提示自动继续",
+  automatic: "自动触发时带提示自动继续",
+} satisfies Record<RunPreflightSnapshot["trigger"], string>;
+
 function isDeepMatchRun(run: AgentRunDetail | null | undefined): boolean {
   return run?.workflowVersion === "deep-match-v1";
 }
@@ -119,14 +131,12 @@ async function fetchRunDetail(runId: string): Promise<AgentRunDetail> {
 function RunPreflightHistory({ snapshot }: { snapshot: RunPreflightSnapshot }) {
   const policy = snapshot.items.find((item) => item.evidence.kind === "account_run_policy");
   const policyRevision = policy?.evidence.kind === "account_run_policy" ? policy.evidence.revisionNumber : "未记录";
-  const triggerLabel = snapshot.trigger === "manual" ? "手动启动" : snapshot.trigger === "schedule" ? "计划启动" : "自动触发";
+  const triggerLabel = triggerLabels[snapshot.trigger];
   const summary = snapshot.status === "blocked"
     ? "启动时存在阻塞"
     : snapshot.status === "ready"
       ? "启动时条件已满足"
-      : snapshot.trigger === "manual"
-        ? "手动启动时已确认提示"
-        : `${triggerLabel}时带提示自动继续`;
+      : warningSummaries[snapshot.trigger];
   return <><p>{summary}</p><dl><div><dt>触发方式</dt><dd>{triggerLabel}</dd></div><div><dt>检查时间</dt><dd>{snapshot.checkedAt}</dd></div><div><dt>账户策略版本</dt><dd>{policyRevision}</dd></div></dl>{snapshot.items.filter((item) => item.severity !== "blocking").map((item) => <p key={item.code}>{item.summary}：{item.impact}</p>)}</>;
 }
 
