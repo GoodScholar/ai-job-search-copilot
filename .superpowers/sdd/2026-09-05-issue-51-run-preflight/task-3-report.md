@@ -54,3 +54,12 @@ git diff --check
 - 手动路径的 policy 只取 evaluator 返回值，避免第二次读取与快照不一致；schedule 路径刻意保持既有策略读取与 null snapshot，留给 Task 4。
 - migration 用真实 PostgreSQL 检查 null、对象、数组/字符串/数字和 occurrence outcome 组合。
 - 现有 SQL-shape 回归因新增 preflight JSON 参数将上限从 34 调整到 35，仍验证常数形状。
+
+## Fix round 1/5
+
+- RED：`ready preflight fixture 将报告中的策略证据与返回策略保持同一修订` 在 revision 1 policy 下失败，报告证据错误固定为 revision 0。
+- GREEN：ready evaluator 先物化/读取 policy，再构造报告；账户策略 evidence revision、返回 revision 与 snapshot 现在来自同一次读取。
+- 新增真实 PostgreSQL + `createRunPreflightEvaluator` 覆盖：blocked 无 run/step/event；未确认 warning 被拒绝、当前 fingerprint 成功；成功行原子保存 evaluator report 和 policy；页面预读后 target 停用会在启动事务重检并拒绝；成功运行随后变 blocked 时，相同 idempotency key 的无 fingerprint 重放仍优先复用。
+- 新增 checkpoint 回归：历史宽松 budget/source scope/preflight 快照保持原文，`toolCalls: 11` 仍被 fake workflow 当前硬上限 10 拒绝。
+- mutation check：若移除 helper 的 policy-first 读取或再次固定 evidence revision，fixture consistency test 失败；若将 checkpoint 改为直接使用历史 budget snapshot，宽松快照测试不再返回 `tool_calls` exhausted；若将 preflight 移至幂等查询前，停用 target 后重放测试失败。
+- 定点证据：fixture consistency + real preflight test 2 passed；hard-limit test 1 passed（首次容器启动端口等待超时，确认无测试遗留进程后串行重跑通过）；`pnpm --filter @job-copilot/domain typecheck` 与 `git diff --check` 通过。
