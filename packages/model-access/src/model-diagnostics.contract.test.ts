@@ -72,6 +72,24 @@ const expectedByScenario: Record<ModelDiagnosticFakeScenario["kind"], ModelDiagn
     reasonCode: "MODEL_DIAGNOSTIC_STRICT_OUTPUT_UNSUPPORTED",
     latencyBucket: "under_1s",
   },
+  in_progress: {
+    status: "failed",
+    checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "failed", timeout: "passed" },
+    reasonCode: "MODEL_DIAGNOSTIC_STRICT_OUTPUT_UNSUPPORTED",
+    latencyBucket: "under_1s",
+  },
+  malformed_output: {
+    status: "failed",
+    checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "failed", timeout: "passed" },
+    reasonCode: "MODEL_DIAGNOSTIC_STRICT_OUTPUT_UNSUPPORTED",
+    latencyBucket: "under_1s",
+  },
+  missing_output: {
+    status: "failed",
+    checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "failed", timeout: "passed" },
+    reasonCode: "MODEL_DIAGNOSTIC_STRICT_OUTPUT_UNSUPPORTED",
+    latencyBucket: "under_1s",
+  },
   timeout: {
     status: "temporarily_unavailable",
     checks: { authentication: "not_verified", modelAvailability: "not_verified", structuredOutput: "not_verified", timeout: "failed" },
@@ -90,7 +108,23 @@ const expectedByScenario: Record<ModelDiagnosticFakeScenario["kind"], ModelDiagn
     reasonCode: "MODEL_DIAGNOSTIC_PROVIDER_UNAVAILABLE",
     latencyBucket: "under_1s",
   },
+  generic_failure: {
+    status: "failed",
+    checks: { authentication: "not_verified", modelAvailability: "not_verified", structuredOutput: "not_verified", timeout: "passed" },
+    reasonCode: "MODEL_DIAGNOSTIC_FAILED",
+    latencyBucket: "under_1s",
+  },
+  generic_redirect: {
+    status: "failed",
+    checks: { authentication: "not_verified", modelAvailability: "not_verified", structuredOutput: "not_verified", timeout: "passed" },
+    reasonCode: "MODEL_DIAGNOSTIC_FAILED",
+    latencyBucket: "under_1s",
+  },
 };
+
+function completedWireResponse(content: unknown): Response {
+  return Response.json({ status: "completed", output: [{ type: "message", content: [content] }] });
+}
 
 function responseFor(scenario: ModelDiagnosticFakeScenario, model: string): Response {
   if (scenario.kind === "authentication_failed") return new Response("provider body must not escape", { status: 401 });
@@ -100,11 +134,16 @@ function responseFor(scenario: ModelDiagnosticFakeScenario, model: string): Resp
   if (scenario.kind === "timeout") return new Response("provider body must not escape", { status: 408 });
   if (scenario.kind === "rate_limited") return new Response("provider body must not escape", { status: 429 });
   if (scenario.kind === "provider_unavailable") return new Response("provider body must not escape", { status: 503 });
+  if (scenario.kind === "generic_failure") return new Response("provider body must not escape", { status: 418 });
+  if (scenario.kind === "generic_redirect") return new Response("provider body must not escape", { status: 302 });
   if (scenario.kind === "incomplete") return Response.json({ status: "incomplete", output: [] });
-  if (scenario.kind === "refusal") return Response.json({ status: "completed", output: [{ content: [{ type: "refusal", refusal: "no" }] }] });
-  if (scenario.kind === "queued") return Response.json({ status: "queued", output_text: "{\"probe\":\"ok\"}" });
-  if (scenario.kind === "strict_output_unsupported") return Response.json({ status: "completed", output_text: "{\"probe\":\"wrong\"}" });
-  return Response.json({ status: "completed", output_text: "{\"probe\":\"ok\"}" });
+  if (scenario.kind === "refusal") return completedWireResponse({ type: "refusal", refusal: "no" });
+  if (scenario.kind === "queued") return Response.json({ status: "queued", output: [] });
+  if (scenario.kind === "in_progress") return Response.json({ status: "in_progress", output: [] });
+  if (scenario.kind === "strict_output_unsupported") return completedWireResponse({ type: "output_text", text: "{\"probe\":\"wrong\"}" });
+  if (scenario.kind === "malformed_output") return Response.json({ status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: "{\"probe\":\"ok\"}" }, { type: "output_text", text: "{\"probe\":\"ok\"}" }] }] });
+  if (scenario.kind === "missing_output") return Response.json({ status: "completed", output_text: "{\"probe\":\"ok\"}" });
+  return completedWireResponse({ type: "output_text", text: "{\"probe\":\"ok\"}" });
 }
 
 function controlledTransport(scenario: ModelDiagnosticFakeScenario, calls: Array<{ url: string; init: RequestInit }>): ModelDiagnosticTestTransport {
@@ -166,6 +205,67 @@ describe("OpenAI 模型诊断 adapter", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it.each([
+    [999, "under_1s"],
+    [1_000, "1_to_5s"],
+    [5_000, "5_to_10s"],
+    [10_000, "10_to_20s"],
+  ] as const)("按整轮真实耗时 %dms 归入 %s", async (elapsedMs, latencyBucket) => {
+    let now = 0;
+    const adapter = createOpenAiModelDiagnosticAdapterForTest(configuration, async () => {
+      now = elapsedMs;
+      return responseFor({ kind: "success" }, "gpt-5.6-luna");
+    }, { now: () => now });
+
+    await expect(adapter.diagnose({ signal: new AbortController().signal })).resolves.toEqual({ ...available, latencyBucket });
+  });
+
+  it.each([
+    [{ kind: "low_cost_model_unavailable" }, { kind: "timeout" }, {
+      status: "failed", checks: { authentication: "not_verified", modelAvailability: "failed", structuredOutput: "not_verified", timeout: "failed" }, reasonCode: "MODEL_DIAGNOSTIC_LOW_COST_MODEL_UNAVAILABLE", latencyBucket: "timeout",
+    }],
+    [{ kind: "strict_output_unsupported" }, { kind: "timeout" }, {
+      status: "failed", checks: { authentication: "not_verified", modelAvailability: "not_verified", structuredOutput: "failed", timeout: "failed" }, reasonCode: "MODEL_DIAGNOSTIC_STRICT_OUTPUT_UNSUPPORTED", latencyBucket: "timeout",
+    }],
+    [{ kind: "success" }, { kind: "rate_limited" }, {
+      status: "temporarily_unavailable", checks: { authentication: "not_verified", modelAvailability: "not_verified", structuredOutput: "not_verified", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_RATE_LIMITED", latencyBucket: "under_1s",
+    }],
+  ] as const)("混合结果 %o / %o 只报告已证实的检查", async (lowCost, highQuality, expected) => {
+    const adapter = createOpenAiModelDiagnosticAdapterForTest(configuration, async ({ init }) => {
+      const model = (JSON.parse(String(init.body)) as { model: string }).model;
+      return responseFor(model === "gpt-5.6-luna" ? lowCost : highQuality, model);
+    });
+    await expect(adapter.diagnose({ signal: new AbortController().signal })).resolves.toEqual(expected);
+  });
+
+  it("已取消的父 signal 零请求并立即收敛为稳定超时", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const transport = vi.fn<ModelDiagnosticTestTransport>();
+    const adapter = createOpenAiModelDiagnosticAdapterForTest(configuration, transport);
+
+    await expect(adapter.diagnose({ signal: controller.signal })).resolves.toEqual(expectedByScenario.timeout);
+    expect(transport).not.toHaveBeenCalled();
+  });
+
+  it("诊断中父 signal 取消后不等待无视 signal 的 transport", async () => {
+    const controller = new AbortController();
+    const transport: ModelDiagnosticTestTransport = () => new Promise<Response>(() => undefined);
+    const adapter = createOpenAiModelDiagnosticAdapterForTest(configuration, transport);
+    const pending = adapter.diagnose({ signal: controller.signal });
+    controller.abort();
+    await expect(pending).resolves.toEqual(expectedByScenario.timeout);
+  });
+
+  it("抛出携带秘密的 transport 错误只返回稳定临时失败", async () => {
+    const secret = "provider-body-and-secret";
+    const adapter = createOpenAiModelDiagnosticAdapterForTest(configuration, async () => { throw new Error(secret); });
+    const result = await adapter.diagnose({ signal: new AbortController().signal });
+
+    expect(result).toEqual(expectedByScenario.provider_unavailable);
+    expect(JSON.stringify(result)).not.toContain(secret);
   });
 
   it("指纹覆盖全部有效配置和秘密，但生产构造入口不接收受控 transport", () => {

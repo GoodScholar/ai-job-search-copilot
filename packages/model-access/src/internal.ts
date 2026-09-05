@@ -31,18 +31,22 @@ export type OpenAiModelDiagnosticConfig = {
 
 export type ModelDiagnosticTestTransport = (input: { url: string; init: RequestInit; signal: AbortSignal }) => Promise<Response>;
 
-type AttemptKind = "success" | "authentication_failed" | "access_restricted" | "low_cost_model_unavailable" | "high_quality_model_unavailable" | "strict_output_unsupported" | "timeout" | "rate_limited" | "provider_unavailable";
-type Attempt = { kind: AttemptKind };
+type AttemptKind = "success" | "authentication_failed" | "access_restricted" | "low_cost_model_unavailable" | "high_quality_model_unavailable" | "strict_output_unsupported" | "timeout" | "rate_limited" | "provider_unavailable" | "generic_failure";
+type Attempt = { kind: AttemptKind; checks: ModelDiagnosticChecks };
+export type ModelDiagnosticTestOptions = { now?: () => number };
 
-export function createInternalOpenAiModelDiagnosticAdapter(config: OpenAiModelDiagnosticConfig, transport: ModelDiagnosticTestTransport = fetchTransport): ModelDiagnosticAdapter {
+export function createInternalOpenAiModelDiagnosticAdapter(config: OpenAiModelDiagnosticConfig, transport: ModelDiagnosticTestTransport = fetchTransport, options: ModelDiagnosticTestOptions = {}): ModelDiagnosticAdapter {
   const normalized = normalizeConfig(config);
   const configurationFingerprint = fingerprint(normalized);
+  const now = options.now ?? Date.now;
 
   return {
     configurationFingerprint,
     async diagnose({ signal }) {
       if (!normalized.valid) return result("failed", notVerifiedChecks(), "MODEL_DIAGNOSTIC_CONFIGURATION_MISSING", "under_1s");
+      if (signal.aborted) return result("temporarily_unavailable", notVerifiedChecks("timeout"), "MODEL_DIAGNOSTIC_TIMEOUT", "timeout");
 
+      const startedAt = now();
       const deadline = new AbortController();
       const timeout = setTimeout(() => deadline.abort(), DIAGNOSTIC_TIMEOUT_MS);
       const abort = () => deadline.abort();
@@ -52,7 +56,7 @@ export function createInternalOpenAiModelDiagnosticAdapter(config: OpenAiModelDi
           probe({ model: normalized.lowCostModel, kind: "low_cost_model_unavailable", config: normalized, signal: deadline.signal, transport }),
           probe({ model: normalized.highQualityModel, kind: "high_quality_model_unavailable", config: normalized, signal: deadline.signal, transport }),
         ]);
-        return aggregate(attempts);
+        return aggregate(attempts, latencyBucket(now() - startedAt, attempts));
       } finally {
         clearTimeout(timeout);
         signal.removeEventListener("abort", abort);
@@ -75,17 +79,18 @@ async function probe(input: {
       init: { ...requestFor(input.model, input.config), signal: input.signal },
       signal: input.signal,
     }), input.signal);
-    if (response.status === 401) return { kind: "authentication_failed" };
-    if (response.status === 403) return { kind: "access_restricted" };
-    if (response.status === 404) return { kind: input.kind };
-    if (response.status === 408) return { kind: "timeout" };
-    if (response.status === 429) return { kind: "rate_limited" };
-    if (response.status < 200 || response.status >= 300) return { kind: "provider_unavailable" };
+    if (response.status === 401) return attempt("authentication_failed");
+    if (response.status === 403) return attempt("access_restricted");
+    if (response.status === 404) return attempt(input.kind);
+    if (response.status === 408) return attempt("timeout");
+    if (response.status === 429) return attempt("rate_limited");
+    if (response.status >= 500) return attempt("provider_unavailable");
+    if (response.status < 200 || response.status >= 300) return attempt("generic_failure");
 
     const body = await beforeDeadline(response.text(), input.signal);
-    return validCompletedResponse(body) ? { kind: "success" } : { kind: "strict_output_unsupported" };
+    return attempt(validCompletedResponse(body) ? "success" : "strict_output_unsupported");
   } catch {
-    return { kind: input.signal.aborted ? "timeout" : "provider_unavailable" };
+    return attempt(input.signal.aborted ? "timeout" : "provider_unavailable");
   }
 }
 
@@ -112,34 +117,62 @@ function requestFor(model: string, config: NormalizedConfig): RequestInit {
 
 function validCompletedResponse(body: string): boolean {
   try {
-    const parsed = JSON.parse(body) as { status?: unknown; output_text?: unknown; output?: unknown };
-    if (parsed.status !== "completed" || typeof parsed.output_text !== "string") return false;
-    if (Array.isArray(parsed.output) && parsed.output.some((item) => hasRefusal(item))) return false;
-    const output = JSON.parse(parsed.output_text) as unknown;
+    const parsed = JSON.parse(body) as { status?: unknown; output?: unknown };
+    if (parsed.status !== "completed" || !Array.isArray(parsed.output) || parsed.output.length !== 1) return false;
+    const [message] = parsed.output;
+    if (!message || typeof message !== "object" || (message as { type?: unknown }).type !== "message") return false;
+    const content = (message as { content?: unknown }).content;
+    if (!Array.isArray(content) || content.length !== 1) return false;
+    const [part] = content;
+    if (!part || typeof part !== "object" || (part as { type?: unknown }).type !== "output_text" || typeof (part as { text?: unknown }).text !== "string") return false;
+    const output = JSON.parse((part as { text: string }).text) as unknown;
     return Boolean(output && typeof output === "object" && Object.keys(output).length === 1 && (output as { probe?: unknown }).probe === "ok");
   } catch {
     return false;
   }
 }
 
-function hasRefusal(value: unknown): boolean {
-  if (!value || typeof value !== "object") return false;
-  const content = (value as { content?: unknown }).content;
-  return Array.isArray(content) && content.some((part) => part && typeof part === "object" && (part as { type?: unknown }).type === "refusal");
+function attempt(kind: AttemptKind): Attempt {
+  switch (kind) {
+    case "success": return { kind, checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" } };
+    case "authentication_failed": return { kind, checks: { authentication: "failed", modelAvailability: "not_verified", structuredOutput: "not_verified", timeout: "not_verified" } };
+    case "access_restricted": return { kind, checks: { authentication: "passed", modelAvailability: "not_verified", structuredOutput: "not_verified", timeout: "passed" } };
+    case "low_cost_model_unavailable":
+    case "high_quality_model_unavailable": return { kind, checks: { authentication: "passed", modelAvailability: "failed", structuredOutput: "not_verified", timeout: "passed" } };
+    case "strict_output_unsupported": return { kind, checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "failed", timeout: "passed" } };
+    case "timeout": return { kind, checks: notVerifiedChecks("timeout") };
+    case "rate_limited":
+    case "provider_unavailable":
+    case "generic_failure": return { kind, checks: notVerifiedChecks("timeout_passed") };
+  }
 }
 
-function aggregate(attempts: readonly Attempt[]): ModelDiagnosticProbeResult {
+function aggregate(attempts: readonly Attempt[], latencyBucket: ModelDiagnosticLatencyBucket): ModelDiagnosticProbeResult {
   const kinds = new Set(attempts.map((attempt) => attempt.kind));
-  const latencyBucket: ModelDiagnosticLatencyBucket = kinds.has("timeout") ? "timeout" : "under_1s";
-  if (kinds.has("authentication_failed")) return result("failed", { authentication: "failed", modelAvailability: "not_verified", structuredOutput: "not_verified", timeout: "not_verified" }, "MODEL_DIAGNOSTIC_AUTHENTICATION_FAILED", latencyBucket);
-  if (kinds.has("access_restricted")) return result("failed", { authentication: "passed", modelAvailability: "not_verified", structuredOutput: "not_verified", timeout: "passed" }, "MODEL_DIAGNOSTIC_ACCESS_RESTRICTED", latencyBucket);
-  if (kinds.has("low_cost_model_unavailable")) return result("failed", { authentication: "passed", modelAvailability: "failed", structuredOutput: "not_verified", timeout: "passed" }, "MODEL_DIAGNOSTIC_LOW_COST_MODEL_UNAVAILABLE", latencyBucket);
-  if (kinds.has("high_quality_model_unavailable")) return result("failed", { authentication: "passed", modelAvailability: "failed", structuredOutput: "not_verified", timeout: "passed" }, "MODEL_DIAGNOSTIC_HIGH_QUALITY_MODEL_UNAVAILABLE", latencyBucket);
-  if (kinds.has("strict_output_unsupported")) return result("failed", { authentication: "passed", modelAvailability: "passed", structuredOutput: "failed", timeout: "passed" }, "MODEL_DIAGNOSTIC_STRICT_OUTPUT_UNSUPPORTED", latencyBucket);
-  if (kinds.has("timeout")) return result("temporarily_unavailable", notVerifiedChecks("timeout"), "MODEL_DIAGNOSTIC_TIMEOUT", latencyBucket);
-  if (kinds.has("rate_limited")) return result("temporarily_unavailable", notVerifiedChecks("timeout_passed"), "MODEL_DIAGNOSTIC_RATE_LIMITED", latencyBucket);
-  if (kinds.has("provider_unavailable")) return result("temporarily_unavailable", notVerifiedChecks("timeout_passed"), "MODEL_DIAGNOSTIC_PROVIDER_UNAVAILABLE", latencyBucket);
-  return result("available", { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" }, "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket);
+  const checks = combineChecks(attempts);
+  if (kinds.has("authentication_failed")) return result("failed", checks, "MODEL_DIAGNOSTIC_AUTHENTICATION_FAILED", latencyBucket);
+  if (kinds.has("access_restricted")) return result("failed", checks, "MODEL_DIAGNOSTIC_ACCESS_RESTRICTED", latencyBucket);
+  if (kinds.has("low_cost_model_unavailable")) return result("failed", checks, "MODEL_DIAGNOSTIC_LOW_COST_MODEL_UNAVAILABLE", latencyBucket);
+  if (kinds.has("high_quality_model_unavailable")) return result("failed", checks, "MODEL_DIAGNOSTIC_HIGH_QUALITY_MODEL_UNAVAILABLE", latencyBucket);
+  if (kinds.has("strict_output_unsupported")) return result("failed", checks, "MODEL_DIAGNOSTIC_STRICT_OUTPUT_UNSUPPORTED", latencyBucket);
+  if (kinds.has("generic_failure")) return result("failed", checks, "MODEL_DIAGNOSTIC_FAILED", latencyBucket);
+  if (kinds.has("timeout")) return result("temporarily_unavailable", checks, "MODEL_DIAGNOSTIC_TIMEOUT", latencyBucket);
+  if (kinds.has("rate_limited")) return result("temporarily_unavailable", checks, "MODEL_DIAGNOSTIC_RATE_LIMITED", latencyBucket);
+  if (kinds.has("provider_unavailable")) return result("temporarily_unavailable", checks, "MODEL_DIAGNOSTIC_PROVIDER_UNAVAILABLE", latencyBucket);
+  return result("available", checks, "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket);
+}
+
+function combineChecks(attempts: readonly Attempt[]): ModelDiagnosticChecks {
+  const combine = (key: keyof ModelDiagnosticChecks) => attempts.some((attempt) => attempt.checks[key] === "failed") ? "failed" : attempts.every((attempt) => attempt.checks[key] === "passed") ? "passed" : "not_verified";
+  return { authentication: combine("authentication"), modelAvailability: combine("modelAvailability"), structuredOutput: combine("structuredOutput"), timeout: combine("timeout") };
+}
+
+function latencyBucket(elapsedMs: number, attempts: readonly Attempt[]): ModelDiagnosticLatencyBucket {
+  if (attempts.some((attempt) => attempt.kind === "timeout")) return "timeout";
+  if (elapsedMs < 1_000) return "under_1s";
+  if (elapsedMs < 5_000) return "1_to_5s";
+  if (elapsedMs < 10_000) return "5_to_10s";
+  return "10_to_20s";
 }
 
 function notVerifiedChecks(timeout: "timeout" | "timeout_passed" | undefined = undefined): ModelDiagnosticChecks {
