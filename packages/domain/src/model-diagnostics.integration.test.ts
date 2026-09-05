@@ -111,6 +111,34 @@ describe("模型连接诊断持久化协调", () => {
     release!(); await first;
   });
 
+  it("GET 缓存读取挂起期间 RUN 取得共享 gate 后，GET 不进入第二个事务", async () => {
+    fresh(); const fingerprint = `get-race-${crypto.randomUUID()}`;
+    let releaseSelect: (() => void) | undefined; let entered: (() => void) | undefined; let releaseProbe: (() => void) | undefined;
+    const blocked: ModelDiagnosticAdapter = { configurationFingerprint: fingerprint, diagnose: () => new Promise((resolve) => { entered = () => {}; releaseProbe = () => resolve(available); }) };
+    const originalSelect = database.select.bind(database); const originalTransaction = database.transaction.bind(database); let selects = 0; let transactions = 0;
+    const tracked = Object.assign(Object.create(database), {
+      select: (...args: Parameters<Database["select"]>) => {
+        const query = originalSelect(...args); selects += 1;
+        if (selects !== 1) return query;
+        const wrap = (value: any): any => new Proxy(value, { get(target, property, receiver) {
+          const member = Reflect.get(target, property, receiver);
+          if (property === "limit") return (...limit: unknown[]) => {
+            const result = member.apply(target, limit) as Promise<unknown>;
+            return new Promise((resolve, reject) => { releaseSelect = () => { void result.then(resolve, reject); }; });
+          };
+          return typeof member === "function" ? (...items: unknown[]) => wrap(member.apply(target, items)) : member;
+        } });
+        return wrap(query);
+      },
+      transaction: (...args: Parameters<Database["transaction"]>) => { transactions += 1; return originalTransaction(...args); },
+    }) as Database;
+    const diagnostics = createModelDiagnostics({ db: tracked, adapter: blocked, clock: () => now }); const get = diagnostics.get();
+    while (!releaseSelect) await new Promise((resolve) => setTimeout(resolve, 1));
+    const run = diagnostics.run(); while (!entered) await new Promise((resolve) => setTimeout(resolve, 1));
+    releaseSelect(); await expect(get).resolves.toMatchObject({ status: "checking" }); expect(transactions).toBe(1);
+    releaseProbe!(); await run;
+  });
+
   it("意外异常被净化为稳定失败，不把 Error 内容带入响应", async () => {
     fresh(); const secret = "api-key-secret-sentinel";
     const broken: ModelDiagnosticAdapter = { configurationFingerprint: `broken-${crypto.randomUUID()}`, async diagnose() { throw new Error(secret); } };
