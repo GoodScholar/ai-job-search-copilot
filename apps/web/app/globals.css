@@ -8,7 +8,7 @@
   --color-primary-foreground: var(--primary-foreground);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
+  --color-muted: var(--muted-surface);
   --color-muted-foreground: var(--muted-foreground);
   --color-border: var(--border);
   --color-input: var(--input);
@@ -28,6 +28,7 @@
   --surface: #fffefa;
   --ink: #15211d;
   --muted: #657069;
+  --muted-surface: #e8ede8;
   --emerald: #246a49;
   --emerald-strong: #18553a;
   --amber: #c98532;
