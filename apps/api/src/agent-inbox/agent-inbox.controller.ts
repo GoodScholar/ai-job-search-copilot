@@ -15,7 +15,7 @@ import { ApiProblem } from "../auth/auth.controller.js";
 import { SessionGuard } from "../auth/session.guard.js";
 import { ApiException } from "../common/api-problem.filter.js";
 import { getRequestId } from "../common/request-id.hook.js";
-import { RunPreflightController } from "../run-preflight/run-preflight.controller.js";
+import { runPreflightConflict } from "../run-preflight/run-preflight-error.js";
 import { AGENT_INBOX, type AgentInbox } from "./agent-inbox.tokens.js";
 
 class AgentInboxListDto extends createZodDto(AgentInboxListSchema) {}
@@ -70,7 +70,7 @@ export class AgentInboxController {
         command: AgentInboxActionCommandSchema.parse(command),
       });
     } catch (error) {
-      if (error instanceof RunPreflightRejectedError) throw RunPreflightController.preflightConflict(error);
+      if (error instanceof RunPreflightRejectedError) throw runPreflightConflict(error);
       if (error instanceof AgentInboxError) throw inboxProblem(error);
       throw error;
     }

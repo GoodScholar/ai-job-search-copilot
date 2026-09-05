@@ -5,14 +5,13 @@ import {
   type Database,
 } from "@job-copilot/database";
 import { type AccountRunPolicySettings } from "@job-copilot/contracts/account-run-policies";
-import { CompanyWatchlistItemSchema } from "@job-copilot/contracts/company-watchlists";
-import { classifyGreenhousePublicSource } from "@job-copilot/contracts/job-discovery-schedules";
 import {
   RunPreflightReportSchema, type RunPreflightCheckCode, type RunPreflightItem,
   type RunPreflightReport, type RunPreflightSuggestedAction,
 } from "@job-copilot/contracts/run-preflight";
 import { resolveEffectiveAccountRunPolicy } from "./account-run-policies";
 import { isDateInBackgroundWindow } from "./account-run-policy-window";
+import { analyzePublicJobDiscoverySources } from "./public-job-discovery-sources";
 import type { JobDiscoveryExecutionMode } from "./job-discovery-execution-mode";
 import { type ModelDiagnosticProjectionReader, createModelDiagnosticProjectionReader } from "./model-diagnostics";
 import type { SourceCapabilityAdapter } from "./source-capabilities";
@@ -114,10 +113,8 @@ async function sources(db: Pick<Database, "select">, userId: string, targetId: s
     eq(companyWatchlistRevisions.userId, companyWatchlists.userId), eq(companyWatchlistRevisions.watchlistId, companyWatchlists.id), eq(companyWatchlistRevisions.version, companyWatchlists.version),
   )).where(and(eq(companyWatchlists.userId, userId), eq(companyWatchlists.targetId, targetId)));
   if (!watchlist) return [];
-  return CompanyWatchlistItemSchema.array().parse(watchlist.items).filter((value) => value.state === "enabled").flatMap((value) => {
-    const classified = classifyGreenhousePublicSource({ itemId: value.itemId, canonicalCompanyName: value.canonicalCompanyName, careersUrl: value.careersUrl, allowedDomains: value.allowedDomains });
-    return classified.kind === "supported" ? [{ itemId: value.itemId, sourceId: classified.source.sourceId }] : [];
-  }).sort((a, b) => a.itemId.localeCompare(b.itemId) || a.sourceId.localeCompare(b.sourceId));
+  const analysis = analyzePublicJobDiscoverySources(watchlist);
+  return analysis.status === "executable" ? analysis.sources.map((source) => ({ itemId: source.watchlistItemId, sourceId: source.sourceId })) : [];
 }
 function capabilities(adapter: SourceCapabilityAdapter, input: RunPreflightInput, sources: Source[]) {
   const required: Array<"active_discovery" | "read_details" | "continuous_monitoring"> = input.trigger === "schedule" ? ["active_discovery", "read_details", "continuous_monitoring"] : ["active_discovery", "read_details"];

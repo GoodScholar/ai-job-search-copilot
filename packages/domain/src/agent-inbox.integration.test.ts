@@ -197,7 +197,7 @@ describe("agent inbox", () => {
     expect(runs.filter((run) => run.retryOfRunId === runId)).toEqual([expect.objectContaining({ targetVersion: 2 })]);
   });
 
-  it("restart 的预检 warning 保留 claim，并用同一 actionId 的当前 fingerprint 重放", async () => {
+  it("restart 的预检 warning 释放 claim，使同一或新 actionId 可在确认后重试", async () => {
     const owner = await activeTarget();
     const failed = await openItem({ ...owner, kind: "run_failed", reasonCode: "AGENT_RUN_ADAPTER_FAILED" });
     await database.update(agentRuns).set({ status: "failed", currentStep: "failed", startedAt: now, failedAt: now, failureCode: "AGENT_RUN_ADAPTER_FAILED", terminationKind: "source_failed", usageComplete: true }).where(and(eq(agentRuns.userId, owner.userId), eq(agentRuns.id, failed.runId)));
@@ -222,8 +222,8 @@ describe("agent inbox", () => {
     const actionId = crypto.randomUUID();
 
     await expect(guardedInbox.act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: failed.itemId, command: { actionId, action: "restart_run" } })).rejects.toMatchObject({ code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED", report });
-    await expect(database.select({ outcome: agentInboxItemActions.outcome }).from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, owner.userId), eq(agentInboxItemActions.itemId, failed.itemId), eq(agentInboxItemActions.actionId, actionId)))).resolves.toEqual([{ outcome: "pending" }]);
-    await expect(guardedInbox.act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: failed.itemId, command: { actionId, action: "restart_run", warningFingerprint } })).resolves.toMatchObject({ applied: true, item: { status: "resolved" }, run: { status: "queued" } });
+    await expect(database.select({ outcome: agentInboxItemActions.outcome }).from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, owner.userId), eq(agentInboxItemActions.itemId, failed.itemId), eq(agentInboxItemActions.actionId, actionId)))).resolves.toEqual([]);
+    await expect(guardedInbox.act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: failed.itemId, command: { actionId: crypto.randomUUID(), action: "restart_run", warningFingerprint } })).resolves.toMatchObject({ applied: true, item: { status: "resolved" }, run: { status: "queued" } });
     expect(received).toEqual([{ warningFingerprint: null }, { warningFingerprint }]);
   });
 

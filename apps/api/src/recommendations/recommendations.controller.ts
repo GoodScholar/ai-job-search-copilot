@@ -9,7 +9,7 @@ import { ApiException } from "../common/api-problem.filter.js";
 import { RECOMMENDATION_FEEDBACK_COMMANDS, RECOMMENDATION_FEEDBACK_QUERIES, RECOMMENDATION_QUERIES, type RecommendationFeedbackCommands, type RecommendationFeedbackQueries, type RecommendationQueries } from "./recommendations.tokens.js";
 import { RECOMMENDATION_RUN_STARTER, type RecommendationRunStarter } from "./recommendations.tokens.js";
 import { RunPreflightRejectedError } from "@job-copilot/domain/run-preflight";
-import { RunPreflightController } from "../run-preflight/run-preflight.controller.js";
+import { runPreflightConflict } from "../run-preflight/run-preflight-error.js";
 
 class RecommendationListDto extends createZodDto(RecommendationListSchema) {}
 class RecommendationTargetQueryDto extends createZodDto(z.object({ targetId: z.uuid() }).strict()) {}
@@ -53,7 +53,7 @@ export class RecommendationsController {
   @ApiConflictResponse()
   async reevaluate(@Req() request: FastifyRequest, @Body() body: StartRecommendationReevaluationDto) {
     try { return await this.starter.start({ userId: request.authenticatedAccount!.userId, targetId: body.targetId, opportunityId: body.opportunityId, idempotencyKey: body.idempotencyKey, warningFingerprint: body.warningFingerprint, trigger: "manual" }); }
-    catch (error) { if (error instanceof RunPreflightRejectedError) throw RunPreflightController.preflightConflict(error); throw error; }
+    catch (error) { if (error instanceof RunPreflightRejectedError) throw runPreflightConflict(error); throw error; }
   }
 
   @Post("lists/:listId/items/:itemId/decisions")

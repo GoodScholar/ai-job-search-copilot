@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { RunPreflightRejectedError } from "@job-copilot/domain/run-preflight";
+import { runPreflightConflict } from "./run-preflight-error.js";
 import { RunPreflightController } from "./run-preflight.controller.js";
 
 const targetId = "4f8c6eb3-2b92-4d91-aad4-959b7d4cd7a3";
@@ -28,6 +29,6 @@ describe("运行预检控制器", () => {
 
   it("保留可公开的预检报告，不暴露原始异常", () => {
     const rejection = new RunPreflightRejectedError("RUN_PREFLIGHT_BLOCKED", report);
-    expect(RunPreflightController.preflightConflict(rejection)).toMatchObject({ code: "RUN_PREFLIGHT_BLOCKED", status: 409, details: { preflight: report } });
+    expect(runPreflightConflict(rejection)).toMatchObject({ code: "RUN_PREFLIGHT_BLOCKED", status: 409, details: { preflight: report } });
   });
 });
