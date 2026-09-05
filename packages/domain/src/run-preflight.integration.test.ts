@@ -11,7 +11,7 @@ import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-polic
 import type { SourceCapabilityAdapter } from "./source-capabilities";
 import {
   RunPreflightRejectedError, authorizeRunPreflight, createRunPreflightEvaluator,
-  createRunPreflightQueries, createModelDiagnosticProjectionReader,
+  createRunPreflightQueries, createModelDiagnosticProjectionReader, fingerprintRunPreflightWarnings,
 } from "./run-preflight";
 
 const now = new Date("2026-09-05T12:00:00.000Z");
@@ -86,6 +86,18 @@ describe("统一运行前检查", () => {
     return createRunPreflightEvaluator({ capabilityAdapter: capabilityAdapter(input.capabilities ?? completeCapabilities), modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: input.modelFingerprint ?? fingerprint }), discoveryExecutionMode: input.mode ?? "greenhouse", id: randomUUID, clock: () => now });
   }
   const get = async (input: Parameters<ReturnType<typeof createRunPreflightQueries>["get"]>[0], value = evaluator()) => createRunPreflightQueries({ db: database, evaluator: value }).get(input);
+
+  it("warning fingerprint 的 workflow、targetId 与 code 各自独立参与哈希", () => {
+    const warning = {
+      code: "SOURCE_HEALTH_UNCHECKED" as const,
+      evidence: { kind: "source_health" as const, checkedSourceCount: 1, healthySourceCount: 1, degradedSourceCount: 0, uncheckedSourceCount: 1, latestCheckedAt: "2026-09-05T12:00:00.000Z" },
+      suggestedActions: ["review_source_health" as const],
+    };
+    const base = fingerprintRunPreflightWarnings({ workflow: "discovery", trigger: "manual", targetId: "11111111-1111-4111-8111-111111111111", warnings: [warning] });
+    expect(fingerprintRunPreflightWarnings({ workflow: "deep_match", trigger: "manual", targetId: "11111111-1111-4111-8111-111111111111", warnings: [warning] })).not.toBe(base);
+    expect(fingerprintRunPreflightWarnings({ workflow: "discovery", trigger: "manual", targetId: "22222222-2222-4222-8222-222222222222", warnings: [warning] })).not.toBe(base);
+    expect(fingerprintRunPreflightWarnings({ workflow: "discovery", trigger: "manual", targetId: "11111111-1111-4111-8111-111111111111", warnings: [{ ...warning, code: "SOURCE_HEALTH_DEGRADED" }] })).not.toBe(base);
+  });
 
   it("当前账户的职业文本、URL、域名和原始错误不会泄漏到安全投影", async () => {
     const owner = await account({ source: "greenhouse" }); await addFact(owner.userId, "removed"); const other = await account({ fact: true, source: "greenhouse" });

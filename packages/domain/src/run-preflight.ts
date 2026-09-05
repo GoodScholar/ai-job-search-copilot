@@ -79,9 +79,19 @@ function fingerprintEvidence(value: unknown): unknown {
     .map(([key, nested]) => [key, fingerprintEvidence(nested)]));
   return value;
 }
+/** 警告确认使用的最小、稳定安全投影；不接受展示文案或执行元数据。 */
+export function fingerprintRunPreflightWarnings(input: {
+  workflow: RunPreflightInput["workflow"];
+  trigger: RunPreflightInput["trigger"];
+  targetId: string | null;
+  warnings: ReadonlyArray<Pick<RunPreflightItem, "code" | "evidence" | "suggestedActions">>;
+}): string {
+  const warnings = input.warnings.map(({ code, evidence, suggestedActions }) => ({ code, evidence: fingerprintEvidence(evidence), suggestedActions: [...suggestedActions].sort() }));
+  return createHash("sha256").update(canonical({ version: "run-preflight-v1", workflow: input.workflow, trigger: input.trigger, targetId: input.targetId, warnings })).digest("hex");
+}
 function fingerprint(input: { workflow: RunPreflightInput["workflow"]; trigger: RunPreflightInput["trigger"]; targetId: string | null; items: RunPreflightItem[] }): string | null {
-  const warnings = input.items.filter((value) => value.severity === "warning").map(({ code, evidence, suggestedActions }) => ({ code, evidence: fingerprintEvidence(evidence), suggestedActions: [...suggestedActions].sort() }));
-  return warnings.length ? createHash("sha256").update(canonical({ version: "run-preflight-v1", workflow: input.workflow, trigger: input.trigger, targetId: input.targetId, warnings })).digest("hex") : null;
+  const warnings = input.items.filter((value) => value.severity === "warning").map(({ code, evidence, suggestedActions }) => ({ code, evidence, suggestedActions }));
+  return warnings.length ? fingerprintRunPreflightWarnings({ workflow: input.workflow, trigger: input.trigger, targetId: input.targetId, warnings }) : null;
 }
 
 async function targets(db: Pick<Database, "select">, userId: string): Promise<Target[]> {

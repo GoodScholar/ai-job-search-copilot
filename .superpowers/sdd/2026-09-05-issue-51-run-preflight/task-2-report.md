@@ -124,3 +124,28 @@ pnpm --filter @job-copilot/domain typecheck
 git diff --check
 # passed
 ```
+
+## 审查修复 round 2/5（追加）
+
+上一轮集成矩阵通过真实数据库覆盖了变化，但 `workflow`、`targetId`、`code` 的 fingerprint 变更仍带有其他状态变化。为消除该证据缺口，新增了窄的 `fingerprintRunPreflightWarnings()` 纯投影 seam：生产 evaluator 使用它；输入只允许 workflow、trigger、targetId 以及 warning 的 code/evidence/actions，不能传入 summary、impact、severity 或 retryable。这不是规则 DSL，而是已经存在的确认 hash 的最小安全投影边界。
+
+### RED
+
+```sh
+pnpm --filter @job-copilot/domain exec vitest run --no-file-parallelism src/run-preflight.integration.test.ts
+```
+
+结果：新增测试按预期失败，`fingerprintRunPreflightWarnings is not a function`。测试用完全相同的单条 warning fixture，逐一只修改 workflow、targetId 或 code，要求每次 hash 改变；因此删除任一字段的 hash 输入会被捕获。
+
+### GREEN
+
+以下命令串行通过：
+
+```sh
+pnpm --filter @job-copilot/domain exec vitest run --no-file-parallelism src/run-preflight.integration.test.ts src/model-diagnostics.integration.test.ts
+# 2 files / 25 tests passed
+pnpm --filter @job-copilot/domain typecheck
+# tsc --noEmit passed
+git diff --check
+# passed
+```
