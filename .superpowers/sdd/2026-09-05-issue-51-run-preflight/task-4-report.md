@@ -122,6 +122,22 @@ git diff --check
 exit 0
 ```
 
+## Task 4 fix round 2：新 HEAD Worker 证据
+
+当前 HEAD `4c6c408`。运行前与运行后均未发现 96d4 的残留 Vitest/worker 测试进程（`pgrep` 仅命中检查命令自身）；未触碰其他仓库的 Playwright。
+
+```text
+pnpm --filter worker exec vitest run --no-file-parallelism src/agent-runs/agent-run.integration.test.ts
+Test Files  1 passed (1)
+Tests       11 passed (11)
+exit 0
+
+pnpm --filter worker exec vitest run --no-file-parallelism src/agent-runs/agent-run.module.test.ts src/agent-runs/agent-run.integration.test.ts src/agent-runs/agent-run-scheduler.test.ts
+Test Files  3 passed (3)
+Tests       53 passed (53)
+exit 0
+```
+
 ## 修复轮 1（2026-09-05）
 
 - 移除了 `agent-runs.ts` 与 `deep-match-agent-runs.ts` 的生产 ready fallback；processor facade 与 deep-match starter 的 `runPreflight` 均为必传依赖。旧测试仅在各自测试文件中显式构造 ready evaluator。
@@ -163,6 +179,15 @@ Domain Step6: 4 files passed; 148 tests passed; exit 0
 Worker module: 1 file; 37 tests passed; exit 0
 Worker scheduler: 1 file; 5 tests passed; exit 0
 domain typecheck; worker typecheck; git diff --check: exit 0
+```
+
+## 修复轮 5：区分 transaction / compensation / replay
+
+两个新入口用例以独立 PostgreSQL client 在 evaluator 执行瞬间观察 parent 的已提交状态。warning 的 transaction `afterCompleted` trace 严格为 `running`，随后通过正式 `triggerDeepMatchAfterDiscovery` replay（当前 evaluator 已切为 blocked）仍复用 child 而不增加 trace，证明先查幂等。blocker trace 严格为 `[running, completed]`：前者是 transaction callback，后者是 post-commit compensation；父 result/event 已提交且 child 始终为零。
+
+```text
+pnpm --filter @job-copilot/domain exec vitest run --no-file-parallelism src/agent-run-processor.integration.test.ts
+1 file passed; 105 tests passed; exit 0
 ```
 
 本轮 `rg -n '\\.insert\\(agentRuns\\)' packages apps` 仍只有两处非测试生产插入：`agent-run-control.ts` 和 `deep-match-agent-runs.ts`，均先调用统一 preflight gate；其余命中为 integration fixture。

@@ -126,16 +126,20 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(database.select().from(agentRuns).where(and(eq(agentRuns.userId, parent.userId), eq(agentRuns.idempotencyKey, key)))).resolves.toHaveLength(1);
   });
 
-  it("automatic blocker 保留父完成，且只吞已知 preflight rejection", async () => {
+  it("automatic blocker 在 afterCompleted 与提交后补偿均重检，父结果仍完成", async () => {
     const parent = await run();
-    const processor = createAgentRunProcessor({ db: database, adapterResolver: resolver(successAdapter()), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, runPreflight: createRunPreflightEvaluator({ capabilityAdapter: { adapter: "greenhouse", adapterVersion: "test", declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: [] }) }, modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: crypto.randomUUID() }), discoveryExecutionMode: "greenhouse", id: () => crypto.randomUUID(), clock: () => now }) });
-    await expect(processor.process({ version: 1, ...parent, finalAttempt: true })).resolves.toBe("completed");
+    const observer = createDatabase(container.getConnectionUri()); const trace: string[] = [];
+    const blocked = createRunPreflightEvaluator({ capabilityAdapter: { adapter: "greenhouse", adapterVersion: "test", declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: [] }) }, modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: crypto.randomUUID() }), discoveryExecutionMode: "greenhouse", id: () => crypto.randomUUID(), clock: () => now });
+    const evaluator = { evaluate: async (tx: Database, input: any) => { const [seen] = await observer.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, parent.runId)); trace.push(seen!.status); return blocked.evaluate(tx, input); } };
+    const processor = createAgentRunProcessor({ db: database, adapterResolver: resolver(successAdapter()), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, runPreflight: evaluator as any });
+    try { await expect(processor.process({ version: 1, ...parent, finalAttempt: true })).resolves.toBe("completed"); } finally { await observer.$client.end(); }
+    expect(trace).toEqual(["running", "completed"]);
     await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, parent.runId))).resolves.toEqual([{ status: "completed" }]);
     await expect(database.select().from(agentRunEvents).where(and(eq(agentRunEvents.runId, parent.runId), eq(agentRunEvents.eventType, "run.completed")))).resolves.toHaveLength(1);
     await expect(database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, parent.runId))).resolves.toHaveLength(1);
     await expect(database.select().from(agentRuns).where(eq(agentRuns.userId, parent.userId))).resolves.toHaveLength(1);
     await expect(database.transaction((tx) => ensureDeepMatchRunInTransaction({ transaction: tx, id: () => crypto.randomUUID(), clock: () => now, runPreflight: { evaluate: async () => { throw new Error("unexpected-preflight"); } } as any, userId: parent.userId, targetId: parent.targetId, idempotencyKey: crypto.randomUUID(), trigger: "automatic", discoveryRunId: parent.runId }))).rejects.toThrow("unexpected-preflight");
-  });
+  }, 15_000);
 
   async function layeredRun() {
     const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const runId = crypto.randomUUID(); const queryId = crypto.randomUUID(); const watchlistItemId = crypto.randomUUID(); const sourcePostingId = crypto.randomUUID(); const sourcePostingVersionId = crypto.randomUUID();
@@ -1868,16 +1872,17 @@ describe("AgentRunProcessor checkpoints", () => {
     });
   });
 
-  it("processor transaction afterCompleted/提交后补偿创建 child；恢复重放在当前 blocker 前复用快照", async () => {
-    const parent = await run(); const real = await realDeepMatchPreflight(parent.userId); const trace: Array<{ workflow: string; trigger: string }> = []; let currentlyBlocked = false;
+  it("processor transaction afterCompleted warning 在 running 创建 child；trigger replay 在当前 blocker 前复用快照", async () => {
+    const parent = await run(); const real = await realDeepMatchPreflight(parent.userId); const observer = createDatabase(container.getConnectionUri()); const trace: Array<{ workflow: string; trigger: string; status: string }> = []; let currentlyBlocked = false;
     const warning = { evaluate: async (tx: Database, input: any) => {
-      trace.push({ workflow: input.workflow, trigger: input.trigger }); const evaluation = await real.evaluate(tx, input);
+      const [seen] = await observer.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, parent.runId)); trace.push({ workflow: input.workflow, trigger: input.trigger, status: seen!.status }); const evaluation = await real.evaluate(tx, input);
       return currentlyBlocked ? { ...evaluation, report: { ...evaluation.report, status: "blocked" as const, warningFingerprint: null, items: [...evaluation.report.items, { code: "MODEL_DIAGNOSTIC_UNAVAILABLE", severity: "blocking" as const, summary: "blocked", impact: "blocked", retryable: false, suggestedActions: ["run_model_diagnostic"], evidence: { kind: "model_diagnostic", status: "unverified", checkedAt: null } }] } } : { ...evaluation, report: { ...evaluation.report, status: "ready_with_warnings" as const, warningFingerprint: "c".repeat(64), items: [...evaluation.report.items, { code: "SOURCE_HEALTH_UNCHECKED", severity: "warning" as const, summary: "warning", impact: "warning", retryable: true, suggestedActions: ["review_source_health"], evidence: { kind: "source_health", checkedSourceCount: 0, healthySourceCount: 0, degradedSourceCount: 0, uncheckedSourceCount: 1, latestCheckedAt: null } }] } };
     } };
     const processor = createAgentRunProcessor({ db: database, adapterResolver: resolver(successAdapter()), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, runPreflight: warning as any });
-    await expect(processor.process({ version: 1, ...parent, finalAttempt: true })).resolves.toBe("completed"); currentlyBlocked = true;
-    await expect(processor.process({ version: 1, ...parent, finalAttempt: true })).resolves.toBe("stale");
-    expect(trace).toEqual([{ workflow: "deep_match", trigger: "automatic" }]);
+    try { await expect(processor.process({ version: 1, ...parent, finalAttempt: true })).resolves.toBe("completed"); currentlyBlocked = true;
+      await expect(triggerDeepMatchAfterDiscovery({ db: database, id: () => crypto.randomUUID(), clock: () => now, runPreflight: warning as any, queue: new Queue(), userId: parent.userId, targetId: parent.targetId, discoveryRunId: parent.runId })).resolves.toMatchObject({ kind: "created", reused: true });
+    } finally { await observer.$client.end(); }
+    expect(trace).toEqual([{ workflow: "deep_match", trigger: "automatic", status: "running" }]);
     const children = await database.select({ preflight: agentRuns.preflightSnapshot, policy: agentRuns.accountPolicySnapshot }).from(agentRuns).where(and(eq(agentRuns.userId, parent.userId), eq(agentRuns.workflowVersion, "deep-match-v1")));
     expect(children).toEqual([{ preflight: expect.objectContaining({ status: "ready_with_warnings", warningFingerprint: "c".repeat(64) }), policy: (await real.evaluate(database, { userId: parent.userId, targetId: parent.targetId, workflow: "deep_match", trigger: "automatic" })).policy.snapshot }]);
   });
