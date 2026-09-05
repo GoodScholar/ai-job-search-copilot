@@ -24,7 +24,8 @@
     "./profile-review": "./src/profile-review.ts",
     "./workbench": "./src/workbench.ts",
     "./runtime": "./src/runtime.ts",
-    "./model-diagnostics": "./src/model-diagnostics.ts"
+    "./model-diagnostics": "./src/model-diagnostics.ts",
+    "./run-preflight": "./src/run-preflight.ts"
   },
   "scripts": {
     "test": "vitest run",

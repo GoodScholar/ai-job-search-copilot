@@ -7,6 +7,7 @@ import {
   RecommendationDecisionCommandSchema,
   RecommendationDecisionSchema,
   RecommendationRuleConfigSchema,
+  StartRecommendationReevaluationCommandSchema,
 } from "./recommendations";
 import { DeepMatchAgentRunSourceScopeSchema } from "./agent-runs";
 
@@ -18,6 +19,18 @@ describe("推荐反馈契约", () => {
     expect(RecommendationDecisionCommandSchema.safeParse({
       decision: "saved", idempotencyKey: "00000000-0000-4000-8000-000000000001", expectedVersion: 0, applicationStatus: "submitted",
     }).success).toBe(false);
+  });
+
+  it("深度匹配重评携带与启动相同的警告确认字段", () => {
+    const command = {
+      targetId: "00000000-0000-4000-8000-000000000010",
+      opportunityId: "00000000-0000-4000-8000-000000000011",
+      idempotencyKey: "00000000-0000-4000-8000-000000000012",
+      warningFingerprint: null,
+    };
+    expect(StartRecommendationReevaluationCommandSchema.parse(command)).toEqual(command);
+    expect(StartRecommendationReevaluationCommandSchema.safeParse({ ...command, warningFingerprint: "A".repeat(64) }).success).toBe(false);
+    expect(StartRecommendationReevaluationCommandSchema.safeParse({ ...command, warningFingerprint: undefined }).success).toBe(false);
   });
 
   it("忽略允许跳过原因与备注，但限制备注长度和原因码", () => {

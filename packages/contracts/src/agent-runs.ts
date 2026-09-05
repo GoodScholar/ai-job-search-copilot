@@ -17,6 +17,7 @@ import {
 } from "./job-discovery";
 import { JobTargetConstraintsSchema } from "./job-targets";
 import { RecommendationRuleConfigSchema } from "./recommendations";
+import { RunPreflightSnapshotSchema, RunPreflightWarningFingerprintSchema } from "./run-preflight";
 
 export const AGENT_RUN_QUEUE = "agent-runs";
 export const AGENT_RUN_JOB_NAME = "discover-jobs";
@@ -405,6 +406,7 @@ export const AgentRunTerminationSchema = z.discriminatedUnion("kind", [
 
 export const StartAgentRunCommandSchema = z.object({
   targetId: z.uuid(), idempotencyKey: z.uuid(),
+  warningFingerprint: RunPreflightWarningFingerprintSchema.nullable().default(null),
 }).strict();
 export const ControlAgentRunCommandSchema = z.object({
   commandId: z.uuid(), action: AgentRunControlActionSchema,
@@ -472,6 +474,7 @@ export const AgentRunResultSchema = z.object({
 const AgentRunSummaryFields = {
   runId: z.uuid(), targetId: z.uuid(), targetVersion: positiveInteger, targetSnapshot: AgentRunTargetSnapshotSchema,
   accountPolicyRevisionNumber: nonnegativeInteger.nullable(),
+  preflightSnapshot: RunPreflightSnapshotSchema.nullable(),
   status: AgentRunStatusSchema, currentStep: AgentRunCurrentStepSchema, version: positiveInteger,
   attemptCount: nonnegativeInteger, failureCode: AgentRunFailureCodeSchema.nullable(), queuedAt: z.iso.datetime(),
   startedAt: z.iso.datetime().nullable(), completedAt: z.iso.datetime().nullable(), failedAt: z.iso.datetime().nullable(), cancelledAt: z.iso.datetime().nullable(),

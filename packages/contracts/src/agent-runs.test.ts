@@ -103,6 +103,7 @@ const publicSourceScope = {
 const runTargetSnapshot = { targetId, version: 1, priority: "primary", state: "active", constraints: targetSnapshot };
 const queuedSummary = {
   runId, targetId, targetVersion: 1, accountPolicyRevisionNumber: null, targetSnapshot: runTargetSnapshot, sourceScope,
+  preflightSnapshot: null,
   workflowVersion: FAKE_JOB_DISCOVERY_WORKFLOW_VERSION,
   adapter: FAKE_JOB_DISCOVERY_ADAPTER, adapterVersion: FAKE_JOB_DISCOVERY_ADAPTER_VERSION,
   outputSchemaVersion: "job-discovery-result-v1", budget: AGENT_RUN_BUDGET,
@@ -114,6 +115,15 @@ const executionSpec = {
   ruleVersion: AGENT_RUN_RULE_VERSION, adapter: FAKE_JOB_DISCOVERY_ADAPTER,
   adapterVersion: FAKE_JOB_DISCOVERY_ADAPTER_VERSION, outputSchemaVersion: "job-discovery-result-v1",
   toolAllowlist: AGENT_RUN_TOOL_ALLOWLIST, model: null, budget: AGENT_RUN_BUDGET,
+};
+const readyPreflightSnapshot = {
+  version: "run-preflight-v1", workflow: "discovery", trigger: "manual", targetId, status: "ready",
+  items: [{
+    code: "PROFILE_EVIDENCE_READY", severity: "informational", summary: "当前画像证据已就绪",
+    evidence: { kind: "profile", activeTrustedFactCount: 1, latestFactRevisionId: "1e764df5-19f3-49f3-b16e-512147298baa", checkedAt: now },
+    impact: "可以继续执行运行前检查。", retryable: false, suggestedActions: [],
+  }],
+  warningFingerprint: null, checkedAt: now,
 };
 const usage = {
   activeDurationMs: 0, attempts: 0, toolCalls: 0, sourceRequests: 0, modelCalls: 0,
@@ -518,11 +528,14 @@ describe("agent run contracts", () => {
 
   it("parses the strict start command and queued run detail", () => {
     expect(StartAgentRunCommandSchema.parse({ targetId, idempotencyKey: "08614f5c-b5cb-4c1d-8fca-3777105b5f19" }))
-      .toEqual({ targetId, idempotencyKey: "08614f5c-b5cb-4c1d-8fca-3777105b5f19" });
+      .toEqual({ targetId, idempotencyKey: "08614f5c-b5cb-4c1d-8fca-3777105b5f19", warningFingerprint: null });
+    expect(StartAgentRunCommandSchema.safeParse({ targetId, idempotencyKey: "08614f5c-b5cb-4c1d-8fca-3777105b5f19", warningFingerprint: "A".repeat(64) }).success).toBe(false);
     expect(AgentRunDetailSchema.parse({ ...detail, steps: [], events: [], results: [] }))
       .toMatchObject({ runId, targetId, status: "queued", currentStep: "queued" });
     expect(StartAgentRunResponseSchema.parse({ ...queuedSummary, reused: false }))
       .toMatchObject({ runId, targetId, reused: false });
+    expect(StartAgentRunResponseSchema.parse({ ...queuedSummary, preflightSnapshot: readyPreflightSnapshot, reused: false }))
+      .toMatchObject({ preflightSnapshot: readyPreflightSnapshot });
   });
 
   it("locks queue, lease, scan, budget, and fake discovery identities", () => {
