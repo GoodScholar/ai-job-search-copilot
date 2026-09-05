@@ -269,7 +269,7 @@ describe("authenticated workbench HTTP API", () => {
 
   it("仅允许已认证会话读取或运行脱敏模型诊断，并禁止 HTTP 缓存", async () => {
     const anonymous = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/model-diagnostics" });
-    expect(anonymous.statusCode).toBe(401);
+    expect(anonymous.statusCode).toBe(401); expect(anonymous.headers["cache-control"]).toBe("no-store");
     const session = await createSession(app, `model-diagnostic-${crypto.randomUUID()}`);
     const get = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/model-diagnostics", headers: bearer(session.sessionToken) });
     expect(get.statusCode).toBe(200); expect(get.headers["cache-control"]).toBe("no-store"); expect(get.json()).toMatchObject({ status: "unverified", checks: { authentication: "not_verified" } });
@@ -279,7 +279,9 @@ describe("authenticated workbench HTTP API", () => {
     expect(noBody.statusCode).toBe(201); expect(noBody.headers["cache-control"]).toBe("no-store");
     expect(Object.keys(post.json())).not.toEqual(expect.arrayContaining(["configurationFingerprint", "apiKey", "providerResponse", "organization", "project", "model"]));
     const invalid = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/model-diagnostics", headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: { ignored: true } });
-    expect(invalid.statusCode).toBe(400);
+    expect(invalid.statusCode).toBe(400); expect(invalid.headers["cache-control"]).toBe("no-store");
+    const postAnonymous = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/model-diagnostics" });
+    expect(postAnonymous.statusCode).toBe(401); expect(postAnonymous.headers["cache-control"]).toBe("no-store");
   });
 
   it("hides dev auth behind the server secret", async () => {

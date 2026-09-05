@@ -8,6 +8,8 @@ const RuntimeConfigSchema = z.object({
   OPENAI_ENDPOINT: z.string().url().optional(),
   OPENAI_ORGANIZATION: z.string().min(1).optional(),
   OPENAI_PROJECT: z.string().min(1).optional(),
+  OPENAI_LOW_COST_MODEL: z.string().min(1).optional(),
+  OPENAI_HIGH_QUALITY_MODEL: z.string().min(1).optional(),
 }).strict().superRefine((config, context) => {
   if (config.APP_ENV === "production" && config.AUTH_MODE === "dev") {
     context.addIssue({
@@ -26,7 +28,7 @@ const RuntimeConfigSchema = z.object({
   }
 });
 
-export type RuntimeConfig = Omit<z.infer<typeof RuntimeConfigSchema>, "OPENAI_API_KEY" | "OPENAI_ENDPOINT" | "OPENAI_ORGANIZATION" | "OPENAI_PROJECT"> & { openAi: { apiKey?: string; endpoint?: string; organization?: string; project?: string } };
+export type RuntimeConfig = Omit<z.infer<typeof RuntimeConfigSchema>, "OPENAI_API_KEY" | "OPENAI_ENDPOINT" | "OPENAI_ORGANIZATION" | "OPENAI_PROJECT" | "OPENAI_LOW_COST_MODEL" | "OPENAI_HIGH_QUALITY_MODEL"> & { openAi: { apiKey?: string; endpoint?: string; organization?: string; project?: string; lowCostModel: string; highQualityModel: string } };
 
 export function parseRuntimeConfig(input: {
   APP_ENV?: unknown;
@@ -36,8 +38,10 @@ export function parseRuntimeConfig(input: {
   OPENAI_ENDPOINT?: unknown;
   OPENAI_ORGANIZATION?: unknown;
   OPENAI_PROJECT?: unknown;
+  OPENAI_LOW_COST_MODEL?: unknown;
+  OPENAI_HIGH_QUALITY_MODEL?: unknown;
 }): RuntimeConfig {
   const parsed = RuntimeConfigSchema.parse(input);
-  const { OPENAI_API_KEY: apiKey, OPENAI_ENDPOINT: endpoint, OPENAI_ORGANIZATION: organization, OPENAI_PROJECT: project, ...safe } = parsed;
-  return { ...safe, openAi: { apiKey, endpoint, organization, project } };
+  const { OPENAI_API_KEY: apiKey, OPENAI_ENDPOINT: endpoint, OPENAI_ORGANIZATION: organization, OPENAI_PROJECT: project, OPENAI_LOW_COST_MODEL: lowCostModel = "gpt-5.6-luna", OPENAI_HIGH_QUALITY_MODEL: highQualityModel = "gpt-5.6-terra", ...safe } = parsed;
+  return { ...safe, openAi: { apiKey, endpoint, organization, project, lowCostModel, highQualityModel } };
 }

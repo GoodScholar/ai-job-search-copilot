@@ -31,7 +31,7 @@ describe("模型连接诊断持久化协调", () => {
     await migrateDatabase(database);
   }, 60_000);
   afterAll(async () => { await database?.$client.end(); await container?.stop(); });
-  const service = (model: ModelDiagnosticAdapter) => createModelDiagnostics({ db: database, adapter: model, clock: () => now });
+  const service = (model: ModelDiagnosticAdapter, timeoutMs?: number) => createModelDiagnostics({ db: database, adapter: model, clock: () => now, timeoutMs });
   const fresh = () => { now = new Date(`2026-09-05T00:00:${String(Math.floor(Math.random() * 59)).padStart(2, "0")}.000Z`); };
 
   it("当前指纹从未检查时读取 unverified，运行后只保存安全稳定字段", async () => {
@@ -93,5 +93,26 @@ describe("模型连接诊断持久化协调", () => {
     const result = await service(broken).run();
     expect(result).toMatchObject({ status: "failed", reasonCode: "MODEL_DIAGNOSTIC_FAILED" });
     expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
+  it("Adapter 忽略取消并永不结束时仍在总截止后持久化超时并释放锁", async () => {
+    fresh(); const fingerprint = `never-settles-${crypto.randomUUID()}`;
+    const never: ModelDiagnosticAdapter = { configurationFingerprint: fingerprint, diagnose: async () => new Promise<ModelDiagnosticProbeResult>(() => undefined) };
+    await expect(service(never, 1).run()).resolves.toMatchObject({ status: "temporarily_unavailable", reasonCode: "MODEL_DIAGNOSTIC_TIMEOUT", latencyBucket: "timeout", checks: { timeout: "failed" } });
+    const next = adapter(fingerprint);
+    await expect(service(next.value, 1).run()).resolves.not.toMatchObject({ status: "checking" });
+  });
+
+  it("成功会重置连续失败退避，全部稳定原因码都有受限中文投影", async () => {
+    now = new Date("2026-09-05T02:00:00.000Z"); const fingerprint = `reset-${crypto.randomUUID()}`;
+    const failing = adapter(fingerprint, unavailable); await service(failing.value).run();
+    now = new Date("2026-09-05T02:00:30.000Z"); const succeeding = adapter(fingerprint); await service(succeeding.value).run();
+    now = new Date("2026-09-05T02:10:30.000Z"); const failingAgain = adapter(fingerprint, unavailable); const reset = await service(failingAgain.value).run();
+    expect(reset.retryAt).toBe("2026-09-05T02:11:00.000Z");
+    const reasons: ModelDiagnosticProbeResult["reasonCode"][] = ["MODEL_DIAGNOSTIC_AVAILABLE", "MODEL_DIAGNOSTIC_CONFIGURATION_MISSING", "MODEL_DIAGNOSTIC_AUTHENTICATION_FAILED", "MODEL_DIAGNOSTIC_ACCESS_RESTRICTED", "MODEL_DIAGNOSTIC_LOW_COST_MODEL_UNAVAILABLE", "MODEL_DIAGNOSTIC_HIGH_QUALITY_MODEL_UNAVAILABLE", "MODEL_DIAGNOSTIC_STRICT_OUTPUT_UNSUPPORTED", "MODEL_DIAGNOSTIC_TIMEOUT", "MODEL_DIAGNOSTIC_RATE_LIMITED", "MODEL_DIAGNOSTIC_PROVIDER_UNAVAILABLE", "MODEL_DIAGNOSTIC_FAILED"];
+    for (const reasonCode of reasons) {
+      const projected = await service(adapter(`reason-${reasonCode}-${crypto.randomUUID()}`, { ...unavailable, reasonCode }).value).run();
+      expect(projected.reasonSummary).toMatch(/[\u4e00-\u9fff]/u); expect(projected.impact).toMatch(/[\u4e00-\u9fff]/u); expect(projected.suggestedActions.length).toBeLessThanOrEqual(3);
+    }
   });
 });

@@ -299,9 +299,17 @@ describe("OpenAI 模型诊断 adapter", () => {
     const first = createOpenAiModelDiagnosticAdapter(configuration);
     const changedKey = createOpenAiModelDiagnosticAdapter({ ...configuration, apiKey: "sk-replaced" });
     const changedModel = createOpenAiModelDiagnosticAdapter({ ...configuration, lowCostModel: "gpt-5.6-luna-variant" });
+    const changedEndpoint = createOpenAiModelDiagnosticAdapter({ ...configuration, endpoint: "https://other.example.test/v1" });
+    const changedOrganization = createOpenAiModelDiagnosticAdapter({ ...configuration, organization: "org_other" });
+    const changedProject = createOpenAiModelDiagnosticAdapter({ ...configuration, project: "project_other" });
+    const changedHighQualityModel = createOpenAiModelDiagnosticAdapter({ ...configuration, highQualityModel: "gpt-5.6-terra-variant" });
 
     expect(first.configurationFingerprint).not.toBe(changedKey.configurationFingerprint);
     expect(first.configurationFingerprint).not.toBe(changedModel.configurationFingerprint);
+    expect(first.configurationFingerprint).not.toBe(changedEndpoint.configurationFingerprint);
+    expect(first.configurationFingerprint).not.toBe(changedOrganization.configurationFingerprint);
+    expect(first.configurationFingerprint).not.toBe(changedProject.configurationFingerprint);
+    expect(first.configurationFingerprint).not.toBe(changedHighQualityModel.configurationFingerprint);
     expect(first.configurationFingerprint).not.toContain(configuration.apiKey);
   });
 

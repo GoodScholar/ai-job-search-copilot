@@ -25,6 +25,8 @@ function getDatabaseUrl(): string {
         OPENAI_ENDPOINT: process.env.OPENAI_ENDPOINT,
         OPENAI_ORGANIZATION: process.env.OPENAI_ORGANIZATION,
         OPENAI_PROJECT: process.env.OPENAI_PROJECT,
+        OPENAI_LOW_COST_MODEL: process.env.OPENAI_LOW_COST_MODEL,
+        OPENAI_HIGH_QUALITY_MODEL: process.env.OPENAI_HIGH_QUALITY_MODEL,
       }),
     },
     {

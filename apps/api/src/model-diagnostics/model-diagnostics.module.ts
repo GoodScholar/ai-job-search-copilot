@@ -1,4 +1,4 @@
-import { Module } from "@nestjs/common";
+import { MiddlewareConsumer, Module, NestModule } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import type { ModelDiagnosticAdapter } from "@job-copilot/contracts/model-diagnostics";
 import type { Database } from "@job-copilot/database";
@@ -10,7 +10,8 @@ import { DATABASE, RUNTIME_CONFIG, RuntimeConfigModule } from "../config/runtime
 import { ModelDiagnosticsController } from "./model-diagnostics.controller.js";
 import { MODEL_DIAGNOSTICS } from "./model-diagnostics.tokens.js";
 
-function configurationMissingAdapter(config: { endpoint?: string; organization?: string; project?: string }): ModelDiagnosticAdapter {
+type OpenAiConfig = { apiKey?: string; endpoint?: string; organization?: string; project?: string; lowCostModel: string; highQualityModel: string };
+function configurationMissingAdapter(config: Omit<OpenAiConfig, "apiKey">): ModelDiagnosticAdapter {
   const configurationFingerprint = createHash("sha256").update(JSON.stringify({ version: "model-diagnostic-v1", ...config, missingApiKey: true })).digest("hex");
   return { configurationFingerprint, async diagnose() { return { status: "failed", reasonCode: "MODEL_DIAGNOSTIC_CONFIGURATION_MISSING", latencyBucket: "under_1s", checks: { authentication: "not_verified", modelAvailability: "not_verified", structuredOutput: "not_verified", timeout: "not_verified" } }; } };
 }
@@ -19,9 +20,11 @@ function configurationMissingAdapter(config: { endpoint?: string; organization?:
   imports: [RuntimeConfigModule, AuthModule], controllers: [ModelDiagnosticsController],
   providers: [{
     provide: MODEL_DIAGNOSTICS, inject: [DATABASE, RUNTIME_CONFIG],
-    useFactory: (db: Database, config: { APP_ENV: string; openAi: { apiKey?: string; endpoint?: string; organization?: string; project?: string } }) => createModelDiagnostics({
-      db, clock: () => new Date(), adapter: config.APP_ENV === "test" ? createFakeModelDiagnosticAdapter({ kind: "success" }) : config.openAi.apiKey ? createOpenAiModelDiagnosticAdapter(config.openAi as { apiKey: string; endpoint?: string; organization?: string; project?: string }) : configurationMissingAdapter(config.openAi),
+    useFactory: (db: Database, config: { APP_ENV: string; openAi: OpenAiConfig }) => createModelDiagnostics({
+      db, clock: () => new Date(), adapter: config.APP_ENV === "test" ? createFakeModelDiagnosticAdapter({ kind: "success" }) : config.openAi.apiKey ? createOpenAiModelDiagnosticAdapter(config.openAi as OpenAiConfig & { apiKey: string }) : configurationMissingAdapter(config.openAi),
     }),
   }], exports: [MODEL_DIAGNOSTICS],
 })
-export class ModelDiagnosticsModule {}
+export class ModelDiagnosticsModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) { consumer.apply((_request: unknown, response: { setHeader(name: string, value: string): void }, next: () => void) => { response.setHeader("Cache-Control", "no-store"); next(); }).forRoutes(ModelDiagnosticsController); }
+}

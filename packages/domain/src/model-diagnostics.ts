@@ -5,7 +5,7 @@ import { ModelDiagnosticChecksSchema, ModelDiagnosticPublicResponseSchema, type 
 
 type Stored = { status: "available" | "failed" | "temporarily_unavailable"; checks: ModelDiagnosticChecks; reasonCode: ModelDiagnosticReasonCode; checkedAt: Date; latencyBucket: ModelDiagnosticLatencyBucket };
 type DatabaseLike = Pick<Database, "select" | "insert" | "transaction">;
-type Dependencies = { db: DatabaseLike; adapter: ModelDiagnosticAdapter; clock: () => Date };
+type Dependencies = { db: DatabaseLike; adapter: ModelDiagnosticAdapter; clock: () => Date; timeoutMs?: number };
 const tenMinutes = 10 * 60_000;
 const backoff = [30_000, 60_000, 120_000, 240_000, 480_000, 600_000];
 const unknownChecks: ModelDiagnosticChecks = { authentication: "not_verified", modelAvailability: "not_verified", structuredOutput: "not_verified", timeout: "not_verified" };
@@ -37,7 +37,7 @@ async function latest(db: Pick<Database, "select">, fingerprint: string): Promis
   return { status: row.status as Stored["status"], checks: ModelDiagnosticChecksSchema.parse(row.checks), reasonCode: row.reasonCode as ModelDiagnosticReasonCode, checkedAt: row.checkedAt, latencyBucket: row.latencyBucket as ModelDiagnosticLatencyBucket };
 }
 async function failureCount(db: Pick<Database, "select">, fingerprint: string): Promise<number> {
-  const rows = await db.select({ status: modelDiagnosticResults.status }).from(modelDiagnosticResults).where(eq(modelDiagnosticResults.configurationFingerprint, fingerprint)).orderBy(desc(modelDiagnosticResults.checkedAt));
+  const rows = await db.select({ status: modelDiagnosticResults.status }).from(modelDiagnosticResults).where(eq(modelDiagnosticResults.configurationFingerprint, fingerprint)).orderBy(desc(modelDiagnosticResults.checkedAt)).limit(backoff.length);
   let count = 0; for (const row of rows) { if (row.status === "available") break; count += 1; } return count;
 }
 function current(row: Stored | undefined, now: Date, failures: number) {
@@ -47,6 +47,20 @@ function current(row: Stored | undefined, now: Date, failures: number) {
   return undefined;
 }
 function sanitizedFailure(): ModelDiagnosticProbeResult { return { status: "failed", checks: unknownChecks, reasonCode: "MODEL_DIAGNOSTIC_FAILED", latencyBucket: "under_1s" }; }
+function timeoutFailure(): ModelDiagnosticProbeResult { return { status: "temporarily_unavailable", checks: { ...unknownChecks, timeout: "failed" }, reasonCode: "MODEL_DIAGNOSTIC_TIMEOUT", latencyBucket: "timeout" }; }
+async function diagnoseWithinDeadline(adapter: ModelDiagnosticAdapter, timeoutMs: number): Promise<ModelDiagnosticProbeResult> {
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const probe = Promise.resolve().then(() => adapter.diagnose({ signal: controller.signal }));
+  // Attach a terminal handler immediately so an Adapter that rejects after the timeout cannot become an unhandled rejection.
+  void probe.catch(() => undefined);
+  const deadline = new Promise<ModelDiagnosticProbeResult>((resolve) => {
+    timeout = setTimeout(() => { controller.abort(); resolve(timeoutFailure()); }, timeoutMs);
+  });
+  try { return await Promise.race([probe, deadline]); }
+  catch { return sanitizedFailure(); }
+  finally { if (timeout) clearTimeout(timeout); controller.abort(); }
+}
 
 export function createModelDiagnostics(deps: Dependencies): { get(): Promise<ModelDiagnosticPublicResponse>; run(): Promise<ModelDiagnosticPublicResponse> } {
   const fingerprint = deps.adapter.configurationFingerprint;
@@ -67,8 +81,7 @@ export function createModelDiagnostics(deps: Dependencies): { get(): Promise<Mod
         const [lock] = await tx.execute(sql`select pg_try_advisory_xact_lock(hashtextextended(${fingerprint}, 50)) as locked`) as unknown as Array<{ locked: boolean }>;
         if (!lock?.locked) return response("checking");
         const doubleCheck = await cached(tx, now); if (doubleCheck) return doubleCheck;
-        let result: ModelDiagnosticProbeResult;
-        try { result = await deps.adapter.diagnose({ signal: AbortSignal.timeout(20_000) }); } catch { result = sanitizedFailure(); }
+        const result = await diagnoseWithinDeadline(deps.adapter, deps.timeoutMs ?? 20_000);
         const checkedAt = deps.clock();
         await tx.insert(modelDiagnosticResults).values({ configurationFingerprint: fingerprint, status: result.status, checks: result.checks, reasonCode: result.reasonCode, checkedAt, latencyBucket: result.latencyBucket });
         const row: Stored = { ...result, checkedAt };
