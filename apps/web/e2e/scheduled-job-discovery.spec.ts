@@ -36,6 +36,14 @@ async function createActiveTarget(request: APIRequestContext, token: string): Pr
   return (await response.json() as { targets: Array<{ targetId: string; priority: string }> }).targets.find((target) => target.priority === "primary")!.targetId;
 }
 
+async function addProfileEvidence(request: APIRequestContext, token: string): Promise<void> {
+  const response = await request.post(`${apiBaseUrl}/v1/profile/facts`, {
+    headers: { authorization: `Bearer ${token}` },
+    data: { expectedVersion: 0, factType: "skill", factValue: { name: "TypeScript" } },
+  });
+  expect(response.status()).toBe(201);
+}
+
 async function ensureScheduleWindow(request: APIRequestContext, token: string): Promise<void> {
   const current = await request.get(`${apiBaseUrl}/v1/account/run-policy`, { headers: { authorization: `Bearer ${token}` } });
   expect(current.status()).toBe(200);
@@ -78,10 +86,27 @@ async function latest(page: Page): Promise<LatestResponse> {
   return await response.json() as LatestResponse;
 }
 
+async function runPreflightSnapshot(runId: string): Promise<{ status: string; trigger: string; warningFingerprint: string | null }> {
+  const client = new Client({ connectionString: databaseUrl });
+  await client.connect();
+  try {
+    const result = await client.query("select preflight_snapshot from agent_runs where id = $1", [runId]);
+    return result.rows[0]!.preflight_snapshot as { status: string; trigger: string; warningFingerprint: string | null };
+  } finally {
+    await client.end();
+  }
+}
+
 test("每日检查通过 Fake Worker 交付一组岗位，并抵抗重复 Worker delivery", async ({ page, request }, testInfo) => {
   test.setTimeout(60_000);
   const session = await createSession(request, `scheduled-job-discovery-${testInfo.project.name}-${runSuffix}`);
+  await addProfileEvidence(request, session.token);
   const targetId = await createActiveTarget(request, session.token);
+  const diagnostic = await request.post(`${apiBaseUrl}/v1/model-diagnostics`, {
+    headers: { authorization: `Bearer ${session.token}` }, data: {},
+  });
+  expect(diagnostic.status()).toBe(201);
+  await expect(diagnostic.json()).resolves.toMatchObject({ status: "available" });
   await ensureScheduleWindow(request, session.token);
   await addExecutableWatchlistSource(request, session.token, targetId);
   await page.context().addCookies([{ name: "job_copilot_session", value: session.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
@@ -123,15 +148,19 @@ test("每日检查通过 Fake Worker 交付一组岗位，并抵抗重复 Worker
       return current.run?.status;
     }, { timeout: 25_000 }).toBe("queued");
     expect(queued).toMatchObject({ adapter: "fake" });
+    // 未做来源健康检查是正式 preflight warning；计划运行无需人工确认，仍会创建这次 run。
+    await expect.poll(() => runPreflightSnapshot(queued.runId), { timeout: 10_000 }).toMatchObject({
+      status: "ready_with_warnings", trigger: "schedule", warningFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
 
     const sseRequest = page.waitForRequest((request) => request.url().includes(`/api/agent-runs/${queued.runId}/events?afterEventId=`));
     await page.reload();
     expect((await sseRequest).url()).toContain(`/api/agent-runs/${queued.runId}/events?afterEventId=`);
-    await expect(page.locator(".agent-run-panel [role=status]")).toContainText("岗位发现已排队");
+    await expect(page.locator(".agent-run-panel .agent-run-live")).toContainText("岗位发现已排队");
     await queue.resume();
 
     // 恢复队列后由同一 SSE 页面推进完成；此处不 reload。
-    await expect(page.locator(".agent-run-panel [role=status]")).toContainText("岗位发现完成", { timeout: 25_000 });
+    await expect(page.locator(".agent-run-panel .agent-run-live")).toContainText("岗位发现完成", { timeout: 25_000 });
     await expect(page.getByRole("heading", { name: "本次发现的岗位" })).toBeVisible();
     await expect(page.locator(".agent-run-results li")).toHaveCount(2);
     await expect(page.locator(".agent-run-results")).toContainText("AI 应用工程师");
@@ -154,4 +183,54 @@ test("每日检查通过 Fake Worker 交付一组岗位，并抵抗重复 Worker
   expect(await controls.evaluateAll((elements) => elements.every((element) => element.getBoundingClientRect().height >= 44))).toBe(true);
   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+});
+
+test("计划 occurrence 遇到运行前阻塞会跳过且绝不创建岗位发现 run", async ({ request }, testInfo) => {
+  test.setTimeout(60_000);
+  const session = await createSession(request, `scheduled-preflight-blocked-${testInfo.project.name}-${runSuffix}`);
+  // 先用完整的正式配置创建计划，再在 occurrence 发生前撤销唯一画像事实。
+  // 因而跳过来自运行时的真实 preflight，而非计划配置校验。
+  const targetId = await createActiveTarget(request, session.token);
+  const profile = await request.post(`${apiBaseUrl}/v1/profile/facts`, {
+    headers: { authorization: `Bearer ${session.token}` },
+    data: { expectedVersion: 0, factType: "skill", factValue: { name: "TypeScript" } },
+  });
+  expect(profile.status()).toBe(201);
+  const profileSnapshot = await profile.json() as { version: number; facts: Array<{ factId: string }> };
+  const diagnostic = await request.post(`${apiBaseUrl}/v1/model-diagnostics`, {
+    headers: { authorization: `Bearer ${session.token}` }, data: {},
+  });
+  expect(diagnostic.status()).toBe(201);
+  await expect(diagnostic.json()).resolves.toMatchObject({ status: "available" });
+  await ensureScheduleWindow(request, session.token);
+  await addExecutableWatchlistSource(request, session.token, targetId);
+  const scheduleResponse = await request.put(`${apiBaseUrl}/v1/job-targets/${targetId}/discovery-schedule`, {
+    headers: { authorization: `Bearer ${session.token}` },
+    data: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" },
+  });
+  expect(scheduleResponse.status()).toBe(200);
+  const schedule = await scheduleResponse.json() as { schedule: { scheduleId: string } | null };
+  expect(schedule.schedule).not.toBeNull();
+  const removed = await request.post(`${apiBaseUrl}/v1/profile/facts/${profileSnapshot.facts[0]!.factId}/removals`, {
+    headers: { authorization: `Bearer ${session.token}` },
+    data: { expectedVersion: profileSnapshot.version, reason: "验证计划运行前阻塞" },
+  });
+  expect(removed.status()).toBe(201);
+  await fastForwardSchedule(schedule.schedule!.scheduleId);
+
+  const client = new Client({ connectionString: databaseUrl });
+  await client.connect();
+  try {
+    await expect.poll(async () => {
+      const result = await client.query(
+        "select status, run_id, skip_reason from job_discovery_schedule_occurrences where schedule_id = $1 order by created_at desc limit 1",
+        [schedule.schedule!.scheduleId],
+      );
+      return result.rows[0] ?? null;
+    }, { timeout: 30_000 }).toEqual({ status: "skipped", run_id: null, skip_reason: "RUN_PREFLIGHT_BLOCKED" });
+    const runs = await client.query("select id from agent_runs where user_id = $1 and target_id = $2", [session.userId, targetId]);
+    expect(runs.rows).toEqual([]);
+  } finally {
+    await client.end();
+  }
 });

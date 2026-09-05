@@ -610,6 +610,13 @@ it("仅将严格预检冲突保留为 409，畸形上游 409 统一降级为安�
   await expect(client.startDeepMatchRun(sessionToken, targetId, "00000000-0000-4000-8000-000000000003", "00000000-0000-4000-8000-000000000004")).rejects.toMatchObject({ kind: "api", status: 502, problem: undefined });
 });
 
+it("严格读取 recommendations deep-match 创建响应并忽略其服务端判别字段", async () => {
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ kind: "created", runId: "00000000-0000-4000-8000-000000000005", reused: false }), { status: 201 }));
+  const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+
+  await expect(client.startDeepMatchRun(sessionToken, targetId, "00000000-0000-4000-8000-000000000003", "00000000-0000-4000-0000-000000000004")).resolves.toEqual({ runId: "00000000-0000-4000-8000-000000000005", reused: false });
+});
+
 it("拒绝不符合 Agent Run 契约的成功 JSON", async () => {
   const fetchImpl = vi.fn<typeof fetch>()
     .mockResolvedValueOnce(new Response(JSON.stringify({ ...agentRunSummary, reused: false, rawPayload: "secret" }), { status: 201 }))

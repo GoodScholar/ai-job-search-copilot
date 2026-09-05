@@ -24,7 +24,7 @@ function scenarioFor(testInfo: TestInfo, scenario: keyof typeof desktopScenarios
   return (testInfo.project.name === "Mobile Safari" ? mobileScenarios : desktopScenarios)[scenario];
 }
 
-async function signIn(page: Page, testInfo: TestInfo, idempotencyKey: string): Promise<void> {
+async function signIn(page: Page, testInfo: TestInfo, idempotencyKey: string): Promise<string> {
   const sessionResponse = await page.request.post(`${apiBaseUrl}/v1/auth/dev/sessions`, {
     headers: { "x-dev-auth-secret": testDevAuthSecret },
     data: { subject: `agent-runs-${testInfo.project.name}-${idempotencyKey}` },
@@ -39,8 +39,19 @@ async function signIn(page: Page, testInfo: TestInfo, idempotencyKey: string): P
     httpOnly: true,
     sameSite: "Lax",
   }]);
+  const profile = await page.request.post(`${apiBaseUrl}/v1/profile/facts`, {
+    headers: { authorization: `Bearer ${sessionToken}` },
+    data: { expectedVersion: 0, factType: "skill", factValue: { name: "TypeScript" } },
+  });
+  expect(profile.status()).toBe(201);
+  const diagnostic = await page.request.post(`${apiBaseUrl}/v1/model-diagnostics`, {
+    headers: { authorization: `Bearer ${sessionToken}` }, data: {},
+  });
+  expect(diagnostic.status()).toBe(201);
+  await expect(diagnostic.json()).resolves.toMatchObject({ status: "available" });
   await page.goto("/profile/targets");
   await expect(page).toHaveURL(/\/profile\/targets$/);
+  return sessionToken;
 }
 
 async function replaceActiveTarget(page: Page): Promise<void> {
@@ -75,16 +86,26 @@ async function installFirstRandomUuid(page: Page, value: string): Promise<void> 
 }
 
 async function startScenario(page: Page, testInfo: TestInfo, idempotencyKey: string): Promise<string> {
-  await signIn(page, testInfo, idempotencyKey);
+  const sessionToken = await signIn(page, testInfo, idempotencyKey);
   await replaceActiveTarget(page);
+  const targets = await page.request.get(`${apiBaseUrl}/v1/job-targets`, { headers: { authorization: `Bearer ${sessionToken}` } });
+  expect(targets.status()).toBe(200);
+  const targetId = (await targets.json() as { targets: Array<{ targetId: string; priority: string }> }).targets.find((target) => target.priority === "primary")!.targetId;
+  const source = await page.request.post(`${apiBaseUrl}/v1/job-targets/${targetId}/company-watchlist/items`, {
+    headers: { authorization: `Bearer ${sessionToken}` },
+    data: { expectedVersion: 0, canonicalCompanyName: "Agent Run Fake Fixture", careersUrl: "https://boards.greenhouse.io/agent-run-fake-fixture", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null },
+  });
+  expect(source.status()).toBe(201);
   await installFirstRandomUuid(page, idempotencyKey);
   await page.getByRole("link", { name: "AI Job Search Copilot" }).click();
   await expect(page).toHaveURL(/\/home$/);
-  const requestPromise = page.waitForRequest((request) => request.url().endsWith("/api/agent-runs") && request.method() === "POST");
-  const responsePromise = page.waitForResponse((response) => response.url().endsWith("/api/agent-runs") && response.request().method() === "POST");
   const start = page.getByRole("button", { name: "发现岗位" });
   if (testInfo.project.name === "Mobile Safari") await start.tap();
   else await start.click();
+  await expect(page.getByRole("button", { name: "我已了解，仍要启动" })).toBeVisible();
+  const requestPromise = page.waitForRequest((request) => request.url().endsWith("/api/agent-runs") && request.method() === "POST");
+  const responsePromise = page.waitForResponse((response) => response.url().endsWith("/api/agent-runs") && response.request().method() === "POST");
+  await page.getByRole("button", { name: "我已了解，仍要启动" }).click();
   expect((await requestPromise).postDataJSON()).toMatchObject({ idempotencyKey });
   return ((await (await responsePromise).json()) as { runId: string }).runId;
 }
@@ -102,12 +123,14 @@ async function getOpenInbox(page: Page): Promise<AgentInboxItem[]> {
 }
 
 function runStatus(page: Page) {
-  return page.locator(".agent-run-panel [role=status]");
+  return page.locator(".agent-run-panel .agent-run-live");
 }
 
 function assertExecutionEvidence(run: AgentRunDetail): void {
   expect(run.targetSnapshot.constraints.roleFamily).toBe("AI 应用工程师");
-  expect("sources" in run.executionSpec.sourceScope ? run.executionSpec.sourceScope.sources : []).toEqual(["fake:aurora-careers", "fake:orbit-careers"]);
+  expect("sources" in run.executionSpec.sourceScope ? run.executionSpec.sourceScope.sources : []).toEqual(expect.arrayContaining([
+    "fake:aurora-careers", "fake:orbit-careers", "https://boards.greenhouse.io/agent-run-fake-fixture",
+  ]));
   expect(run.executionSpec.ruleVersion).toBe("fake-job-discovery-rules-v1");
   expect(run.executionSpec.budget).toMatchObject({ maxAttempts: 3, maxToolCalls: 10, maxResults: 5 });
   expect(run.usage.complete).toBe(true);

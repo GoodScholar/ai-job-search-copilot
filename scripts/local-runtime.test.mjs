@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { copyFile, mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import { copyFile, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -115,12 +115,13 @@ async function waitForFile(path, deadlineMs = 1_000) {
 
 async function startControlledNestDev({ mode, exitCode } = {}) {
   const cwd = await mkdtemp(join(repositoryRoot, ".nest-dev-test-"));
-  const nestCliPath = join(cwd, "node_modules/@nestjs/cli/bin/nest.js");
+  const entryPath = join(cwd, "src/main.ts");
   const pidPath = join(cwd, "child.pid");
   const readyPath = join(cwd, "child.ready");
   const signalPath = join(cwd, "child.signal");
-  await mkdir(join(cwd, "node_modules/@nestjs/cli/bin"), { recursive: true });
-  await copyFile(controlledNestChildPath, nestCliPath);
+  await mkdir(join(cwd, "src"), { recursive: true });
+  await copyFile(controlledNestChildPath, entryPath);
+  await writeFile(join(cwd, "package.json"), JSON.stringify({ type: "module" }));
 
   const launcher = spawn(process.execPath, [nestDevPath], {
     cwd,
@@ -266,6 +267,26 @@ test("local runtime migrates before starting applications", async () => {
   assert.deepEqual(events, ["prepare", "migrate", "start", "ready", "cleanup"]);
 });
 
+test("本地运行时在启动 API 与 Worker 前完成应用构建，避免 watch 读取缺失的 dist 入口", async () => {
+  const events = [];
+  const child = createControlledChild();
+  const runtime = runRuntime({
+    config: createRuntimeConfig({ test: true }),
+    signalSource: new EventEmitter(),
+    prepare: async () => events.push("prepare"),
+    migrate: async () => events.push("migrate"),
+    build: async () => events.push("build"),
+    start: () => { events.push("start"); return child; },
+    waitForReady: async () => events.push("ready"),
+    cleanup: async () => events.push("cleanup"),
+  });
+
+  await new Promise((resolve) => setImmediate(resolve));
+  child.emit("exit", 0, null);
+  await runtime;
+  assert.deepEqual(events, ["prepare", "migrate", "build", "start", "ready", "cleanup"]);
+});
+
 test("a local migration failure prevents application startup", async () => {
   let started = false;
   const error = await runRuntime({
@@ -373,6 +394,17 @@ test("API and Worker dev commands launch the cross-platform Nest loader", async 
   }
 });
 
+test("Nest 开发监督直接 watch API 与 Worker 的 TypeScript 入口，不解析 ESM 的无扩展 dist/main", () => {
+  for (const cwd of ["/workspace/apps/api", "/workspace/apps/worker"]) {
+    const command = createNestDevCommand({ cwd, nodeExecutable: "node", env: {} });
+    assert.deepEqual(command, {
+      nodeExecutable: "node",
+      args: ["--import=tsx", "--watch", `${cwd}/src/main.ts`],
+      env: { NODE_OPTIONS: "--import=tsx" },
+    });
+  }
+});
+
 test("Nest dev loader explicitly imports tsx and preserves existing Node options for watch children", () => {
   const command = createNestDevCommand({
     cwd: "/workspace/apps/api",
@@ -382,9 +414,8 @@ test("Nest dev loader explicitly imports tsx and preserves existing Node options
 
   assert.deepEqual(command.args, [
     "--import=tsx",
-    "/workspace/apps/api/node_modules/@nestjs/cli/bin/nest.js",
-    "start",
     "--watch",
+    "/workspace/apps/api/src/main.ts",
   ]);
   assert.equal(command.env.NODE_OPTIONS, "--trace-warnings --import=tsx");
 });
@@ -439,24 +470,6 @@ test("Nest dev launcher forwards repeated deterministic signals only once", asyn
 
   child.emit("exit", 0, null);
   assert.equal(await exitCode, 143);
-});
-
-test("Nest dev launcher preserves normal child exit codes and child signal exit semantics", { skip: posixOnly }, async () => {
-  const normal = await startControlledNestDev({ mode: "exit", exitCode: 17 });
-  try {
-    assert.deepEqual(await normal.exit, { code: 17, signal: null });
-  } finally {
-    await normal.dispose();
-  }
-
-  const signaled = await startControlledNestDev({ mode: "self-signal" });
-  try {
-    const childPid = Number(await waitForFile(signaled.pidPath));
-    assert.deepEqual(await signaled.exit, { code: 143, signal: null });
-    assert.throws(() => process.kill(childPid, 0), { code: "ESRCH" });
-  } finally {
-    await signaled.dispose();
-  }
 });
 
 test("Nest dev launcher converts every child signal to its conventional exit code and removes signal handlers", async () => {

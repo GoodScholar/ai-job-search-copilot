@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  getWorkbenchHome: vi.fn(), getJobTargets: vi.fn(), getLatestAgentRun: vi.fn(), getAgentRun: vi.fn(), getOpenAgentInbox: vi.fn(),
+  getWorkbenchHome: vi.fn(), getJobTargets: vi.fn(), getLatestAgentRun: vi.fn(), getAgentRun: vi.fn(), getOpenAgentInbox: vi.fn(), getRunPreflight: vi.fn(),
   unstableRethrow: vi.fn<(error: unknown) => void>(),
 }));
 
@@ -9,6 +9,7 @@ vi.mock("@/lib/server/workbench", () => ({ getWorkbenchHome: mocks.getWorkbenchH
 vi.mock("@/lib/server/job-targets", () => ({ getJobTargets: mocks.getJobTargets }));
 vi.mock("@/lib/server/agent-runs", () => ({ getLatestAgentRun: mocks.getLatestAgentRun, getAgentRun: mocks.getAgentRun }));
 vi.mock("@/lib/server/agent-inbox", () => ({ getOpenAgentInbox: mocks.getOpenAgentInbox }));
+vi.mock("@/lib/server/run-preflight", () => ({ getRunPreflight: mocks.getRunPreflight }));
 vi.mock("next/navigation", () => ({ unstable_rethrow: mocks.unstableRethrow }));
 
 import WorkbenchHomePage, { metadata } from "./page";
@@ -56,4 +57,17 @@ it("不把认证重定向转成局部错误", async () => {
   mocks.getOpenAgentInbox.mockResolvedValue({ items: [] });
   await expect(WorkbenchHomePage()).rejects.toThrow("NEXT_REDIRECT:/login?returnTo=%2Fhome");
   expect(mocks.unstableRethrow).toHaveBeenCalledWith(redirectError);
+});
+
+it("与其他首页投影并行读取主目标的运行前检查，检查失败不隐藏成功区域", async () => {
+  const targets = { suggestions: [], targets: [{ targetId: "4f8c6eb3-2b92-4d91-aad4-959b7d4cd7a3", priority: "primary", state: "active" }] };
+  mocks.getWorkbenchHome.mockResolvedValue(home);
+  mocks.getJobTargets.mockResolvedValue(targets);
+  mocks.getLatestAgentRun.mockResolvedValue({ run: null });
+  mocks.getOpenAgentInbox.mockResolvedValue({ items: [] });
+  mocks.getRunPreflight.mockRejectedValue(new Error("preflight unavailable"));
+
+  const page = await WorkbenchHomePage();
+  expect(mocks.getRunPreflight).toHaveBeenCalledWith(targets.targets[0].targetId);
+  expect(page.props).toMatchObject({ home, targets, initialRun: null, unavailableSections: ["preflight"], preflight: null });
 });

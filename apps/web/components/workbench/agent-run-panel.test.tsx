@@ -1,6 +1,7 @@
 import type { AgentRunDetail } from "@job-copilot/contracts/agent-runs";
 import type { AgentInboxItem } from "@job-copilot/contracts/agent-inbox";
 import type { JobTarget } from "@job-copilot/contracts/job-targets";
+import type { RunPreflightReport } from "@job-copilot/contracts/run-preflight";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
@@ -14,6 +15,12 @@ const targetId = "d194d0ce-fc7e-45db-9425-e8ff4eaf8c08";
 const secondTargetId = "de8f94ae-e5ca-4112-b2e8-00cc2920bc80";
 const idempotencyKey = "355eec35-befa-44ee-ac34-1e3614975d4f";
 const now = "2026-08-29T08:00:00.000Z";
+const warningFingerprint = "a".repeat(64);
+
+const warningReport: RunPreflightReport = {
+  version: "run-preflight-v1", workflow: "discovery", trigger: "manual", targetId, status: "ready_with_warnings", warningFingerprint, checkedAt: now,
+  items: [{ code: "SOURCE_HEALTH_UNCHECKED", severity: "warning", summary: "来源尚未检查", evidence: { kind: "source_health", checkedSourceCount: 0, healthySourceCount: 0, degradedSourceCount: 0, uncheckedSourceCount: 1, latestCheckedAt: null }, impact: "可能遗漏新岗位", retryable: true, suggestedActions: ["review_source_health"] }],
+};
 
 function target(id = targetId, roleFamily = "AI 应用工程师", priority: JobTarget["priority"] = "primary"): JobTarget {
   return {
@@ -494,7 +501,7 @@ it("reuses one idempotency UUID while the same start submission is retried", asy
 
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
-    { targetId, idempotencyKey }, { targetId, idempotencyKey },
+    { targetId, idempotencyKey, warningFingerprint: null }, { targetId, idempotencyKey, warningFingerprint: null },
   ]);
   expect(crypto.randomUUID).toHaveBeenCalledTimes(1);
 });
@@ -518,7 +525,7 @@ it("rotates the idempotency UUID when changing the target starts a new submissio
 
   await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   expect(fetchMock.mock.calls.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
-    { targetId, idempotencyKey }, { targetId: secondTargetId, idempotencyKey: secondKey },
+    { targetId, idempotencyKey, warningFingerprint: null }, { targetId: secondTargetId, idempotencyKey: secondKey, warningFingerprint: null },
   ]);
 });
 
@@ -549,7 +556,7 @@ it("recovers the created run detail without posting a second run or rotating its
   expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
     "/api/agent-runs", `/api/agent-runs/${runId}`, `/api/agent-runs/${runId}`,
   ]);
-  expect(JSON.parse(String(fetchMock.mock.calls[0]![1]?.body))).toEqual({ targetId, idempotencyKey });
+  expect(JSON.parse(String(fetchMock.mock.calls[0]![1]?.body))).toEqual({ targetId, idempotencyKey, warningFingerprint: null });
   expect(crypto.randomUUID).toHaveBeenCalledTimes(1);
 });
 
@@ -618,4 +625,16 @@ it("closes an unmounted stream and ignores an already queued late event", () => 
 
   expect(source.closed).toBe(true);
   expect(window.sessionStorage.getItem(`job-copilot:agent-run:${runId}:cursor`)).toBe("2");
+});
+
+it("警告首次点击只展示知情确认，确认后才用当前 fingerprint 启动", async () => {
+  const user = userEvent.setup();
+  const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json({ runId, reused: false }));
+  vi.stubGlobal("fetch", fetchMock);
+  render(<AgentRunPanel currentReport={warningReport} initialRun={null} targets={[target()]} />);
+
+  await user.click(screen.getByRole("button", { name: "发现岗位" }));
+  expect(fetchMock).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "我已了解，仍要启动" }));
+  expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ targetId, warningFingerprint });
 });

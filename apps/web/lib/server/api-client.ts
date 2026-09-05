@@ -231,7 +231,7 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
         const problem = await readProblem(response);
         throw new ApiClientError("api", problem?.message ?? "无法开始重新评估", response.status, problem ?? undefined);
       }
-      return parseSuccess(response, z.object({ runId: z.uuid(), reused: z.boolean() }).strict());
+      return parseSuccess(response, z.object({ kind: z.literal("created"), runId: z.uuid(), reused: z.boolean() }).strict().transform(({ runId, reused }) => ({ runId, reused })));
     },
     async getLatestRecommendations(sessionToken: string, targetId: string): Promise<RecommendationList> {
       const response = await request(`/v1/recommendations/latest?targetId=${encodeURIComponent(targetId)}`, { method: "GET", headers: { authorization: `Bearer ${sessionToken}` } });
