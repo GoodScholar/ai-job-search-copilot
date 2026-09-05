@@ -202,6 +202,10 @@ test("每日检查通过 Fake Worker 交付一组岗位，并抵抗重复 Worker
     await queue.close();
   }
   await page.goto(`/home?runId=${queued.runId}#agent-run`);
+  const history = page.getByRole("region", { name: "本次启动条件" });
+  await expect(history).toContainText("触发方式计划启动");
+  await expect(history).toContainText("计划启动时带提示自动继续");
+  await expect(history).not.toContainText("已确认提示");
   await expect(page.getByRole("heading", { name: "发现新的岗位机会" })).toBeVisible();
   await expect(page.locator(".agent-run-results li")).toHaveCount(2);
 

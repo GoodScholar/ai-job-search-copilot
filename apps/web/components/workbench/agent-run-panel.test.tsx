@@ -1,7 +1,7 @@
 import type { AgentRunDetail } from "@job-copilot/contracts/agent-runs";
 import type { AgentInboxItem } from "@job-copilot/contracts/agent-inbox";
 import type { JobTarget } from "@job-copilot/contracts/job-targets";
-import type { RunPreflightReport } from "@job-copilot/contracts/run-preflight";
+import type { RunPreflightReport, RunPreflightSnapshot } from "@job-copilot/contracts/run-preflight";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
@@ -28,6 +28,10 @@ const readyReport: RunPreflightReport = {
   warningFingerprint: null,
   items: [{ code: "MODEL_DIAGNOSTIC_READY", severity: "informational", summary: "模型连接可用", evidence: { kind: "model_diagnostic", status: "available", checkedAt: now }, impact: "可以开始岗位发现", retryable: false, suggestedActions: [] }],
 };
+
+function historySnapshot(trigger: RunPreflightSnapshot["trigger"]): RunPreflightSnapshot {
+  return { ...warningReport, trigger };
+}
 
 function target(id = targetId, roleFamily = "AI 应用工程师", priority: JobTarget["priority"] = "primary"): JobTarget {
   return {
@@ -228,6 +232,18 @@ it("没有活动目标时仍展示已完成历史运行，但不渲染空选择�
   expect(screen.getByText("岗位发现完成，共保存 1 个岗位机会")).toBeVisible();
   expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "发现岗位" })).not.toBeInTheDocument();
+});
+
+it.each([
+  ["manual", "手动启动", "手动启动时已确认提示"],
+  ["schedule", "计划启动", "计划启动时带提示自动继续"],
+  ["automatic", "自动触发", "自动触发时带提示自动继续"],
+] as const)("历史运行按 %s 说明 warning 启动方式", (trigger, triggerLabel, warningSummary) => {
+  render(<AgentRunPanel initialRun={{ ...detail("completed"), preflightSnapshot: historySnapshot(trigger) }} targets={[target()]} />);
+
+  const history = screen.getByRole("region", { name: "本次启动条件" });
+  expect(history).toHaveTextContent(`触发方式${triggerLabel}`);
+  expect(history).toHaveTextContent(warningSummary);
 });
 
 it("lets the user choose an active target and exposes a touch-sized discovery action", async () => {
