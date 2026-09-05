@@ -121,6 +121,9 @@ export function runDatabaseMigrations({ runProcess = run, config }) {
 
 function applicationEnv(config, env) {
   const inheritedEnvironment = { ...env };
+  if (config.test) {
+    for (const key of ["OPENAI_API_KEY", "OPENAI_ENDPOINT", "OPENAI_ORGANIZATION", "OPENAI_PROJECT", "OPENAI_LOW_COST_MODEL", "OPENAI_HIGH_QUALITY_MODEL"]) delete inheritedEnvironment[key];
+  }
   if (config.anysearchPublicJobPhase) {
     for (const key of ["ANYSEARCH_API_KEY", "ANYSEARCH_BASE_URL", "ANYSEARCH_PROVIDER_BASE_URL", "E2E_AGENT_RUN_SCENARIOS", "E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS", "E2E_SOURCE_HEALTH_ONLY", "JOB_PAGE_FETCHER_TEST_ORIGIN"]) delete inheritedEnvironment[key];
   }

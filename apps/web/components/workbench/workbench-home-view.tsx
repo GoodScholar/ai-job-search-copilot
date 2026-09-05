@@ -104,6 +104,7 @@ function WorkbenchHomeContent({ home, targets, initialRun, inbox, unavailableSec
       <section aria-labelledby="run-policy-entry-title" className="workbench-ledger">
         <div className="workbench-ledger-heading"><p>运行设置 · 账户级</p><h2 id="run-policy-entry-title">管理运行策略</h2></div>
         <div className="workbench-ledger-row"><div><h3>控制后台运行范围</h3><p>查看系统默认和硬上限，设置每次运行的额度与后台运行时间。</p></div><Link className="workbench-ledger-link workbench-touch-target" href="/profile/run-policy">管理运行策略</Link></div>
+        <div className="workbench-ledger-row"><div><h3>检查模型连接</h3><p>确认当前模型功能是否可用，并查看下一步建议。</p></div><Link className="workbench-ledger-link workbench-touch-target" href="/profile/model-connection">检查模型连接</Link></div>
       </section>
 
       <section aria-labelledby="ledger-title" className="workbench-ledger">

@@ -57,6 +57,7 @@ import {
   type JobTriageVersion,
 } from "@job-copilot/contracts/job-triage";
 import { WorkbenchHomeSchema, type WorkbenchHome } from "@job-copilot/contracts/workbench";
+import { ModelDiagnosticPublicResponseSchema, type ModelDiagnosticPublicResponse } from "@job-copilot/contracts/model-diagnostics";
 import { SourceCapabilityProjectionOverviewSchema, type SourceCapabilityProjectionOverview } from "@job-copilot/contracts/source-capabilities";
 import {
   AgentRunDetailSchema,
@@ -630,6 +631,16 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
       const response = await request("/v1/account/run-policy", { method: "GET", headers: { authorization: `Bearer ${sessionToken}` }, cache: "no-store" });
       if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法读取账户运行策略", response.status, problem ?? undefined); }
       return parseSuccess(response, AccountRunPolicyResponseSchema);
+    },
+    async getModelDiagnostics(sessionToken: string): Promise<ModelDiagnosticPublicResponse> {
+      const response = await request("/v1/model-diagnostics", { method: "GET", headers: { authorization: `Bearer ${sessionToken}` }, cache: "no-store" });
+      if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法读取模型连接状态", response.status, problem ?? undefined); }
+      return parseSuccess(response, ModelDiagnosticPublicResponseSchema);
+    },
+    async runModelDiagnostics(sessionToken: string): Promise<ModelDiagnosticPublicResponse> {
+      const response = await request("/v1/model-diagnostics", { method: "POST", headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" }, body: "{}", cache: "no-store" });
+      if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法检查模型连接", response.status, problem ?? undefined); }
+      return parseSuccess(response, ModelDiagnosticPublicResponseSchema);
     },
     async saveAccountRunPolicy(sessionToken: string, command: { expectedVersion: number; settings: AccountRunPolicySettings }): Promise<AccountRunPolicyResponse> {
       const response = await request("/v1/account/run-policy", { method: "PUT", headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" }, body: JSON.stringify(AccountRunPolicyCommandSchema.parse(command)) });

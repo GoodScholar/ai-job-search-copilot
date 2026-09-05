@@ -160,3 +160,10 @@ it("刷新后的 Inbox props 到达时保留 mark-read 自动恢复的稳定焦�
   view.rerender(<WorkbenchHomeView home={{ ...home, summary: { ...home.summary } }} inbox={{ items: [readItem] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
   expect(document.activeElement).toBe(target);
 });
+
+it("运行设置同时提供模型连接和运行策略入口", () => {
+  render(<WorkbenchHomeView home={home} inbox={{ items: [] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
+
+  expect(screen.getByRole("link", { name: "检查模型连接" })).toHaveAttribute("href", "/profile/model-connection");
+  expect(screen.getByRole("link", { name: "管理运行策略" })).toHaveAttribute("href", "/profile/run-policy");
+});

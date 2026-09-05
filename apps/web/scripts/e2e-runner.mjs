@@ -5,6 +5,7 @@ import { fakeAnysearchPublicJobMissingKeyPhase, fakeAnysearchPublicJobPhase } fr
 const sourceHealthSpec = "source-health.spec.ts";
 const workbenchInboxSpec = "workbench-inbox.spec.ts";
 const anysearchSpec = "anysearch-public-job-discovery.spec.ts";
+const modelDiagnosticsSpec = "model-diagnostics.spec.ts";
 const phases = ["ordinary", "source-health", "workbench-inbox"];
 const require = createRequire(import.meta.url);
 const playwrightCli = require.resolve("@playwright/test/cli");
@@ -17,6 +18,7 @@ export function normalizeE2EArguments(arguments_) {
 
 function phaseEnvironment(phase, environment) {
   const baseEnvironment = { ...environment };
+  delete baseEnvironment.E2E_MODEL_DIAGNOSTIC_SCENARIO;
   delete baseEnvironment.E2E_ANYSEARCH_PUBLIC_JOB_PHASE;
   delete baseEnvironment.ANYSEARCH_BASE_URL;
   delete baseEnvironment.ANYSEARCH_PROVIDER_BASE_URL;
@@ -27,6 +29,9 @@ function phaseEnvironment(phase, environment) {
   }
   delete baseEnvironment.E2E_SOURCE_HEALTH_ONLY;
   if (phase === "source-health") return { ...baseEnvironment, E2E_SOURCE_HEALTH_ONLY: "1" };
+  if (phase === "model-diagnostics-success") return { ...baseEnvironment, E2E_MODEL_DIAGNOSTIC_SCENARIO: "success" };
+  if (phase === "model-diagnostics-failed") return { ...baseEnvironment, E2E_MODEL_DIAGNOSTIC_SCENARIO: "authentication_failed" };
+  if (phase === "model-diagnostics-temporarily-unavailable") return { ...baseEnvironment, E2E_MODEL_DIAGNOSTIC_SCENARIO: "provider_unavailable" };
   return phase === "workbench-inbox" ? { ...baseEnvironment, E2E_WORKBENCH_INBOX_SOURCE_ONLY: "1" } : baseEnvironment;
 }
 
@@ -36,11 +41,13 @@ function explicitSpecPhase(arguments_) {
   const anysearch = specs.some((spec) => spec.includes(anysearchSpec));
   const sourceHealth = specs.some((spec) => spec.includes(sourceHealthSpec));
   const workbenchInbox = specs.some((spec) => spec.includes(workbenchInboxSpec));
+  const modelDiagnostics = specs.some((spec) => spec.includes(modelDiagnosticsSpec));
   const ordinary = specs.some((spec) => !spec.includes(sourceHealthSpec) && !spec.includes(workbenchInboxSpec) && !spec.includes(anysearchSpec));
   return [
     ...(anysearch ? ["anysearch-configured", "anysearch-missing-key"] : []),
     ...((ordinary || workbenchInbox) ? ["ordinary"] : []),
     ...(sourceHealth ? ["source-health"] : []),
+    ...(modelDiagnostics ? ["model-diagnostics-success", "model-diagnostics-failed", "model-diagnostics-temporarily-unavailable"] : []),
     ...(workbenchInbox ? ["workbench-inbox"] : []),
   ];
 }
