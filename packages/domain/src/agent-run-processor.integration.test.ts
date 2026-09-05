@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { and, asc, eq } from "drizzle-orm";
-import { agentInboxItems, agentRunEvents, agentRunJobResults, agentRunSteps, agentRunUsageEntries, agentRuns, auditEvents, createDatabase, deepMatchRunCandidates, jobAccounts, jobDiscoveryAttributions, jobDiscoveryDiagnostics, jobDiscoveryLeads, jobDiscoveryRunResults, jobDiscoverySourceIssues, jobMatchVersions, jobOpportunities, jobOpportunitySources, jobProfiles, jobSourceHealthChecks, jobSourcePostings, jobSourcePostingVersions, jobTargetRevisions, jobTargets, jobTriageVersions, migrateDatabase, profileFactRevisions, profileFacts, recommendationListItems, recommendationLists, type Database } from "@job-copilot/database";
+import { agentInboxItems, agentRunEvents, agentRunJobResults, agentRunSteps, agentRunUsageEntries, agentRuns, auditEvents, createDatabase, deepMatchRunCandidates, jobAccounts, jobDiscoveryAttributions, jobDiscoveryDiagnostics, jobDiscoveryLeads, jobDiscoveryRunResults, jobDiscoverySourceIssues, jobMatchVersions, jobOpportunities, jobOpportunitySources, jobProfiles, jobSourceHealthChecks, jobSourcePostings, jobSourcePostingVersions, jobTargetRevisions, jobTargets, jobTriageVersions, migrateDatabase, modelDiagnosticResults, profileFactRevisions, profileFacts, recommendationListItems, recommendationLists, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
 import { createAgentRunCheckpoint, createAgentRunCommands, createAgentRunProcessor as createDomainAgentRunProcessor, createAgentRunQueries, type AgentRunCheckpoint, type AgentRunQueue, type DiscoveryContentStore, type JobDiscoveryAdapter, type JobDiscoveryAdapterResolver } from "./agent-runs";
 import { createCompanyWatchlistCommands } from "./company-watchlists";
@@ -11,12 +11,14 @@ import { LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER, LAYERED_PUBLIC_JOB_DISCOVERY_ADAP
 import { createLayeredPublicJobDiscoveryWorkflow, LayeredPublicWorkflowInterruption } from "./layered-public-job-discovery-workflow";
 import { createLayeredPublicJobDiscoveryRuntime } from "./layered-public-job-discovery-runtime";
 import { createJobDiscoveryPersistence } from "./job-discovery-persistence";
-import { createDeepMatchRunStarter as createDomainDeepMatchRunStarter } from "./deep-match-agent-runs";
+import { createDeepMatchRunStarter as createDomainDeepMatchRunStarter, ensureDeepMatchRunInTransaction, triggerDeepMatchAfterDiscovery } from "./deep-match-agent-runs";
 import { DeepMatchAdapterError, FakeDeepMatchAdapter } from "@job-copilot/contracts/deep-match";
 import { createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
 import { createAccountRunPolicies } from "./account-run-policies";
 import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-policies";
 import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
+import { createRunPreflightEvaluator } from "./run-preflight";
+import { createModelDiagnosticProjectionReader } from "./model-diagnostics";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
 const constraints = { roleFamily: "AI 应用工程师", seniority: null, locations: [], workModes: [], relocation: "unknown" as const, salary: null, industries: [], dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] } };
@@ -100,6 +102,39 @@ describe("AgentRunProcessor checkpoints", () => {
       .start({ userId, targetId, idempotencyKey: crypto.randomUUID(), trigger: "automatic", discoveryRunId: crypto.randomUUID() });
     return { userId, targetId, runId: started.runId, opportunityIds };
   }
+
+  async function realDeepMatchPreflight(userId: string) {
+    const profileId = crypto.randomUUID(); const factId = crypto.randomUUID(); const fingerprint = crypto.randomUUID();
+    await database.insert(jobProfiles).values({ id: profileId, userId, version: 1, createdAt: now, updatedAt: now });
+    await database.insert(profileFacts).values({ id: factId, userId, profileId, factType: "skill", createdAt: now });
+    await database.insert(profileFactRevisions).values({ id: crypto.randomUUID(), userId, profileFactId: factId, revisionNumber: 1, factType: "skill", factValue: { name: "TypeScript" }, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1, createdAt: now });
+    await database.insert(modelDiagnosticResults).values({ configurationFingerprint: fingerprint, status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket: "under_1s", checkedAt: now });
+    return createRunPreflightEvaluator({ capabilityAdapter: { adapter: "greenhouse", adapterVersion: "test", declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring"] }) }, modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: fingerprint }), discoveryExecutionMode: "greenhouse", id: () => crypto.randomUUID(), clock: () => now });
+  }
+
+  it("automatic child 使用真实 evaluator 的 policy；warning 无需确认且重放至多一个 child", async () => {
+    const parent = await run(); const real = await realDeepMatchPreflight(parent.userId);
+    const warning = { evaluate: async (tx: Database, input: any) => {
+      const evaluation = await real.evaluate(tx, input);
+      return { ...evaluation, report: { ...evaluation.report, status: "ready_with_warnings" as const, warningFingerprint: "b".repeat(64), items: [...evaluation.report.items, { code: "SOURCE_HEALTH_UNCHECKED", severity: "warning" as const, summary: "warning", impact: "warning", retryable: true, suggestedActions: ["review_source_health"], evidence: { kind: "source_health", checkedSourceCount: 0, healthySourceCount: 0, degradedSourceCount: 0, uncheckedSourceCount: 1, latestCheckedAt: null } }] } };
+    } };
+    const key = crypto.randomUUID();
+    const first = await database.transaction((tx) => ensureDeepMatchRunInTransaction({ transaction: tx, id: () => crypto.randomUUID(), clock: () => now, runPreflight: warning as any, userId: parent.userId, targetId: parent.targetId, idempotencyKey: key, trigger: "automatic", discoveryRunId: parent.runId }));
+    const replay = await database.transaction((tx) => ensureDeepMatchRunInTransaction({ transaction: tx, id: () => crypto.randomUUID(), clock: () => now, runPreflight: warning as any, userId: parent.userId, targetId: parent.targetId, idempotencyKey: key, trigger: "automatic", discoveryRunId: parent.runId }));
+    expect(first).toMatchObject({ kind: "created", reused: false }); expect(replay).toMatchObject({ kind: "created", reused: true });
+    await expect(database.select({ preflight: agentRuns.preflightSnapshot, policy: agentRuns.accountPolicySnapshot }).from(agentRuns).where(eq(agentRuns.id, (first as any).run.id))).resolves.toEqual([{ preflight: expect.objectContaining({ status: "ready_with_warnings", warningFingerprint: "b".repeat(64) }), policy: (await real.evaluate(database, { userId: parent.userId, targetId: parent.targetId, workflow: "deep_match", trigger: "automatic" })).policy.snapshot }]);
+    await expect(database.select().from(agentRuns).where(and(eq(agentRuns.userId, parent.userId), eq(agentRuns.idempotencyKey, key)))).resolves.toHaveLength(1);
+  });
+
+  it("automatic blocker 保留父完成，且只吞已知 preflight rejection", async () => {
+    const parent = await run();
+    const processor = createAgentRunProcessor({ db: database, adapterResolver: resolver(successAdapter()), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, runPreflight: createRunPreflightEvaluator({ capabilityAdapter: { adapter: "greenhouse", adapterVersion: "test", declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: [] }) }, modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: crypto.randomUUID() }), discoveryExecutionMode: "greenhouse", id: () => crypto.randomUUID(), clock: () => now }) });
+    await expect(processor.process({ version: 1, ...parent, finalAttempt: true })).resolves.toBe("completed");
+    await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, parent.runId))).resolves.toEqual([{ status: "completed" }]);
+    await expect(database.select().from(agentRunEvents).where(and(eq(agentRunEvents.runId, parent.runId), eq(agentRunEvents.eventType, "run.completed")))).resolves.toHaveLength(1);
+    await expect(database.select().from(agentRuns).where(eq(agentRuns.userId, parent.userId))).resolves.toHaveLength(1);
+    await expect(database.transaction((tx) => ensureDeepMatchRunInTransaction({ transaction: tx, id: () => crypto.randomUUID(), clock: () => now, runPreflight: { evaluate: async () => { throw new Error("unexpected-preflight"); } } as any, userId: parent.userId, targetId: parent.targetId, idempotencyKey: crypto.randomUUID(), trigger: "automatic", discoveryRunId: parent.runId }))).rejects.toThrow("unexpected-preflight");
+  });
 
   async function layeredRun() {
     const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const runId = crypto.randomUUID(); const queryId = crypto.randomUUID(); const watchlistItemId = crypto.randomUUID(); const sourcePostingId = crypto.randomUUID(); const sourcePostingVersionId = crypto.randomUUID();

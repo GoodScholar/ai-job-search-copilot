@@ -154,3 +154,14 @@ all exit 0
 ```
 
 本轮 `rg -n '\\.insert\\(agentRuns\\)' packages apps` 仍只有两处非测试生产插入：`agent-run-control.ts` 和 `deep-match-agent-runs.ts`，均先调用统一 preflight gate；其余命中为 integration fixture。
+
+## 修复轮 2
+
+`agent-run-processor.integration.test.ts` 新增真实 PostgreSQL preflight 基线：写入 active profile fact 与 available diagnostic 后由 `createRunPreflightEvaluator` 读取。automatic warning 在该真实 evaluation 上受控增加 warning 投影，证明 automatic 不需要 fingerprint、child 写入 snapshot/policy、重复事务调用只保留一个 child。另一个用例以真实 evaluator 的 unverified projection 形成 blocker，证明父 discovery 已完成及 `run.completed` event 保留、child 为零；并以非 `RunPreflightRejectedError` 的 evaluator 错误验证该错误继续抛出。
+
+```text
+pnpm --filter @job-copilot/domain exec vitest run --no-file-parallelism src/agent-run-processor.integration.test.ts
+1 file passed; 103 tests passed; exit 0
+pnpm --filter @job-copilot/domain typecheck && git diff --check
+exit 0
+```
