@@ -3,13 +3,12 @@ import { ApiBadRequestResponse, ApiBearerAuth, ApiConflictResponse, ApiNotFoundR
 import {
   AgentInboxActionCommandSchema,
   AgentInboxActionResponseSchema,
-  AgentInboxActionSchema,
   AgentInboxListSchema,
 } from "@job-copilot/contracts/agent-inbox";
 import { AgentInboxError } from "@job-copilot/domain/agent-runs";
 import { RunPreflightRejectedError } from "@job-copilot/domain/run-preflight";
 import type { FastifyRequest } from "fastify";
-import { createZodDto, ZodResponse } from "nestjs-zod";
+import { createZodDto, ZodResponse, ZodValidationPipe } from "nestjs-zod";
 import { z } from "zod";
 import { ApiProblem } from "../auth/auth.controller.js";
 import { SessionGuard } from "../auth/session.guard.js";
@@ -19,9 +18,7 @@ import { runPreflightConflict } from "../run-preflight/run-preflight-error.js";
 import { AGENT_INBOX, type AgentInbox } from "./agent-inbox.tokens.js";
 
 class AgentInboxListDto extends createZodDto(AgentInboxListSchema) {}
-class AgentInboxActionCommandDto extends createZodDto(z.object({
-  actionId: z.uuid(), action: AgentInboxActionSchema, warningFingerprint: z.string().min(1).nullable().optional(),
-}).strict()) {}
+const AgentInboxActionCommandDto = createZodDto(AgentInboxActionCommandSchema);
 class AgentInboxActionResponseDto extends createZodDto(AgentInboxActionResponseSchema) {}
 class AgentInboxPathDto extends createZodDto(z.object({ itemId: z.uuid() }).strict()) {}
 class AgentInboxListQueryDto extends createZodDto(z.object({ status: z.enum(["unread", "read", "resolved", "pending"]).default("pending") }).strict()) {}
@@ -60,7 +57,7 @@ export class AgentInboxController {
   async act(
     @Req() request: FastifyRequest,
     @Param() params: AgentInboxPathDto,
-    @Body() command: AgentInboxActionCommandDto,
+    @Body(new ZodValidationPipe(AgentInboxActionCommandDto)) command: z.infer<typeof AgentInboxActionCommandSchema>,
   ) {
     try {
       return await this.inbox.act({

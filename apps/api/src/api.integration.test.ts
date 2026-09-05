@@ -1347,6 +1347,30 @@ describe("authenticated workbench HTTP API", () => {
     const afterFailures = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-inbox?status=pending", headers: bearer(primary.sessionToken) });
     const restartItemId = afterFailures.json().items.find((item: { runId: string }) => item.runId === failedRunId).itemId as string;
     const dismissItemId = afterFailures.json().items.find((item: { runId: string }) => item.runId === budgetRunId).itemId as string;
+    const invalidDismissActionId = randomUUID();
+    const invalidRestartActionId = randomUUID();
+    const dismissedFingerprint = "a".repeat(64);
+    const invalidRestartFingerprint = "invalid-fingerprint-sentinel";
+    const logStart = capturedLogs.length;
+    const invalidDismiss = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-inbox/${dismissItemId}/actions`, headers: bearer(primary.sessionToken),
+      payload: { actionId: invalidDismissActionId, action: "dismiss", warningFingerprint: dismissedFingerprint },
+    });
+    const invalidRestart = await app.getHttpAdapter().getInstance().inject({
+      method: "POST", url: `/v1/agent-inbox/${restartItemId}/actions`, headers: bearer(primary.sessionToken),
+      payload: { actionId: invalidRestartActionId, action: "restart_run", warningFingerprint: invalidRestartFingerprint },
+    });
+    expect(invalidDismiss.statusCode).toBe(400);
+    expect(invalidRestart.statusCode).toBe(400);
+    expect(invalidDismiss.json()).toMatchObject({ code: "INVALID_REQUEST", message: "请求无效", requestId: expect.any(String) });
+    expect(invalidRestart.json()).toMatchObject({ code: "INVALID_REQUEST", message: "请求无效", requestId: expect.any(String) });
+    const invalidResponseAndLogs = `${invalidDismiss.body}${invalidRestart.body}${normalizedLogText(capturedLogs.slice(logStart))}`;
+    for (const secret of [dismissedFingerprint, invalidRestartFingerprint, "ZodError", "warningFingerprint"]) expect(invalidResponseAndLogs).not.toContain(secret);
+    await expect(database.$client`
+      select action_id as "actionId" from agent_inbox_item_actions
+      where user_id = ${primary.account.userId} and item_id in (${dismissItemId}, ${restartItemId})
+        and action_id in (${invalidDismissActionId}, ${invalidRestartActionId})
+    `).resolves.toEqual([]);
     await database.$client`
       update job_targets set state = 'inactive', active_slot = null
       where id = ${targetId} and user_id = ${primary.account.userId}
