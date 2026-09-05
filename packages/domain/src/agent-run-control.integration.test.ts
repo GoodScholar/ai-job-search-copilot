@@ -50,12 +50,12 @@ describe("agent run controls", () => {
     return createAgentRunCommands({ db: database, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) });
   }
 
-  async function realEvaluatorWithFingerprint() {
+  async function realEvaluatorWithFingerprint(clock: () => Date = () => now) {
     const fingerprint = crypto.randomUUID();
     await database.insert(modelDiagnosticResults).values({ configurationFingerprint: fingerprint, status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket: "under_1s", checkedAt: now });
     return { fingerprint, evaluator: createRunPreflightEvaluator({
       capabilityAdapter: { adapter: "greenhouse", adapterVersion: "test", declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring"] }) },
-      modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: fingerprint }), discoveryExecutionMode: "greenhouse", id: () => crypto.randomUUID(), clock: () => now,
+      modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: fingerprint }), discoveryExecutionMode: "greenhouse", id: () => crypto.randomUUID(), clock,
     }) };
   }
 
@@ -238,8 +238,12 @@ describe("agent run controls", () => {
     const owner = await activeTarget();
     await addConfirmedSkills(owner.userId, ["TypeScript"]);
     await addGreenhouseWatchlistSource(owner.userId, owner.targetId);
-    const evaluator = await realEvaluator(owner.userId);
+    const beforeLock = now;
+    const afterLock = new Date(now.getTime() + 1_000);
+    let lockReleased = false;
+    const { evaluator } = await realEvaluatorWithFingerprint(() => lockReleased ? afterLock : beforeLock);
     const page = await evaluator.evaluate(database, { userId: owner.userId, targetId: owner.targetId, workflow: "discovery", trigger: "manual" });
+    expect(page.report.checkedAt).toBe(beforeLock.toISOString());
     let release!: () => void; let locked!: () => void;
     const held = new Promise<void>((resolve) => { release = resolve; });
     const acquired = new Promise<void>((resolve) => { locked = resolve; });
@@ -253,12 +257,15 @@ describe("agent run controls", () => {
       const [watchlist] = await database.select({ id: companyWatchlists.id, items: companyWatchlistRevisions.items }).from(companyWatchlists).innerJoin(companyWatchlistRevisions, and(eq(companyWatchlistRevisions.watchlistId, companyWatchlists.id), eq(companyWatchlistRevisions.version, companyWatchlists.version))).where(eq(companyWatchlists.targetId, owner.targetId));
       await database.update(companyWatchlists).set({ version: 2, updatedAt: now }).where(eq(companyWatchlists.id, watchlist!.id));
       await database.insert(companyWatchlistRevisions).values({ id: crypto.randomUUID(), userId: owner.userId, watchlistId: watchlist!.id, targetId: owner.targetId, version: 2, items: [...watchlist!.items as object[], { itemId: crypto.randomUUID(), canonicalCompanyName: "Second", careersUrl: "https://boards.greenhouse.io/second", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null, state: "enabled", position: 2 }], createdAt: now });
-      release(); await holder;
-      await expect(start).rejects.toMatchObject({ code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED" } satisfies Partial<RunPreflightRejectedError>);
-      const latest = await evaluator.evaluate(database, { userId: owner.userId, targetId: owner.targetId, workflow: "discovery", trigger: "manual" });
-      expect(latest.report.warningFingerprint).not.toBe(page.report.warningFingerprint);
-      expect(latest.report.checkedAt).toBe(now.toISOString());
-      expect(latest.report.items.find((item) => item.code === "SOURCE_HEALTH_UNCHECKED")?.evidence).toMatchObject({ uncheckedSourceCount: 2 });
+      lockReleased = true; release(); await holder;
+      const rejection = await start.then(() => null, (error: unknown) => error);
+      expect(rejection).toBeInstanceOf(RunPreflightRejectedError);
+      const report = (rejection as RunPreflightRejectedError).report;
+      expect((rejection as RunPreflightRejectedError).code).toBe("RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED");
+      expect(report.targetId).toBe(owner.targetId);
+      expect(report.checkedAt).toBe(afterLock.toISOString());
+      expect(report.warningFingerprint).not.toBe(page.report.warningFingerprint);
+      expect(report.items).toEqual(expect.arrayContaining([expect.objectContaining({ code: "SOURCE_CAPABILITY_READY", evidence: expect.objectContaining({ kind: "source_capability", enabledSourceCount: 2, capableSourceCount: 2, status: "ready", checkedAt: afterLock.toISOString() }) }), expect.objectContaining({ code: "SOURCE_HEALTH_UNCHECKED", evidence: expect.objectContaining({ kind: "source_health", uncheckedSourceCount: 2 }) })]));
       await expect(database.select().from(agentRuns).where(eq(agentRuns.userId, owner.userId))).resolves.toHaveLength(0);
       await expect(database.select().from(agentRunSteps).where(eq(agentRunSteps.userId, owner.userId))).resolves.toHaveLength(0);
       await expect(database.select().from(agentRunEvents).where(eq(agentRunEvents.userId, owner.userId))).resolves.toHaveLength(0);

@@ -9,6 +9,8 @@ import { createAgentRunCommands, createAgentRunProcessor as createDomainAgentRun
 import { createCompanyWatchlistCommands } from "./company-watchlists";
 import { createJobTargetCommands } from "./job-targets";
 import { createAgentRunCheckpoint } from "./agent-run-checkpoint";
+import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-policies";
+import { RunPreflightSnapshotSchema } from "@job-copilot/contracts/run-preflight";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
 const constraints = {
@@ -107,11 +109,14 @@ describe("agent runs", () => {
     const started = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
     const wideBudget = { maxActiveDurationMs: 600_000, maxAttempts: 30, maxToolCalls: 999, maxResults: 99, maxModelCalls: 0, maxTokens: 0 };
     const wideScope = { kind: "company_watchlist", adapter: "fake", adapterVersion: "fake-job-discovery-v1", watchlistVersion: 99, sources: ["fake:aurora-careers", "fake:orbit-careers"] };
+    const wideAccountPolicy = structuredClone(systemAccountRunPolicy().effective);
+    wideAccountPolicy.budgets.fake = wideBudget;
+    const widePreflight = RunPreflightSnapshotSchema.parse(started.preflightSnapshot);
     const token = crypto.randomUUID();
-    await database.update(agentRuns).set({ budgetSnapshot: wideBudget, sourceScope: wideScope, status: "running", currentStep: "batch_search", claimToken: token, claimExpiresAt: new Date(now.getTime() + 30_000), activeSliceStartedAt: now, startedAt: now, attemptCount: 1 }).where(eq(agentRuns.id, started.runId));
+    await database.update(agentRuns).set({ budgetSnapshot: wideBudget, sourceScope: wideScope, accountPolicySnapshot: wideAccountPolicy, preflightSnapshot: widePreflight, status: "running", currentStep: "batch_search", claimToken: token, claimExpiresAt: new Date(now.getTime() + 30_000), activeSliceStartedAt: now, startedAt: now, attemptCount: 1 }).where(eq(agentRuns.id, started.runId));
     const checkpoint = createAgentRunCheckpoint({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
     await expect(checkpoint.check({ userId, runId: started.runId, claimToken: token, checkpointKey: `${token}:wide`, reserve: { toolCalls: 11 } })).resolves.toMatchObject({ kind: "budget_exhausted", budgetDimension: "tool_calls" });
-    await expect(database.select({ budgetSnapshot: agentRuns.budgetSnapshot, sourceScope: agentRuns.sourceScope, preflightSnapshot: agentRuns.preflightSnapshot }).from(agentRuns).where(eq(agentRuns.id, started.runId))).resolves.toEqual([{ budgetSnapshot: wideBudget, sourceScope: wideScope, preflightSnapshot: expect.any(Object) }]);
+    await expect(database.select({ budgetSnapshot: agentRuns.budgetSnapshot, sourceScope: agentRuns.sourceScope, accountPolicySnapshot: agentRuns.accountPolicySnapshot, preflightSnapshot: agentRuns.preflightSnapshot }).from(agentRuns).where(eq(agentRuns.id, started.runId))).resolves.toEqual([{ budgetSnapshot: wideBudget, sourceScope: wideScope, accountPolicySnapshot: wideAccountPolicy, preflightSnapshot: widePreflight }]);
   });
 
   it("快照活动目标、原子创建待处理步骤和首个事件，并按账户幂等唤醒队列", async () => {

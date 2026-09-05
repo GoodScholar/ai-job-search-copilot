@@ -110,3 +110,32 @@ $ pnpm --filter @job-copilot/domain typecheck
 $ git diff --check
 all exit 0
 ```
+
+## Fix round 3/5：收紧持久化 preflight 证据
+
+- 锁等待回归不再在拒绝后另行 evaluate。测试使用可区分的 lock 前/后 clock，直接捕获 `RunPreflightRejectedError`，并验证异常报告的 target、`checkedAt`、warning fingerprint 与锁后两条来源的 capability/health evidence；`checkedAt` 必须为锁后时刻，不能等于页面预读时刻。
+- checkpoint 硬上限 fixture 现在实际写入高于当前 fake 硬上限的合法 `accountPolicySnapshot`，并用 `RunPreflightSnapshotSchema` 解析、保存合法 `preflightSnapshot`。checkpoint 仍因当前 `tool_calls` 硬上限拒绝；随后从数据库重读，断言 policy 与 preflight 两份原始 JSON 均未被改写。
+- 删除 `testing/run-preflight.ts` 中已无使用方的 `systemAccountRunPolicy` import。
+- RED/补证据：锁后报告的新断言初次因 `toMatchObject` 的嵌套数组 matcher 形状不正确而失败，这是测试 matcher 错误而非生产 RED；改为独立 `arrayContaining` + `objectContaining` 后，现有生产实现直接通过，故本轮为补覆盖而非伪造 RED。
+- mutation check：临时令 `effectiveAgentRunBudget` 直接返回宽松快照，`agent-runs.integration.test.ts` 以 exit 1 失败（34 项中 1 项失败，checkpoint 错误返回 `continue`）；临时把手动 evaluator 挪到账户 advisory lock 之前，`agent-run-control.integration.test.ts` 以 exit 1 失败（24 项中 1 项失败，异常报告 `checkedAt` 错误回退至 lock 前页面时刻）。两次变异均立即恢复。
+
+### Fix round 3 验证（全部 exit 0，除上述预期 mutation run）
+
+```text
+$ pnpm --filter @job-copilot/domain exec vitest run --no-file-parallelism src/agent-run-control.integration.test.ts src/agent-runs.integration.test.ts
+Test Files  2 passed (2)
+Tests       58 passed (58)
+
+$ pnpm --filter @job-copilot/database exec vitest run --no-file-parallelism src/migrate.integration.test.ts
+Test Files  1 passed (1)
+Tests       27 passed (27)
+
+$ pnpm --filter @job-copilot/domain exec vitest run --no-file-parallelism src/agent-run-control.integration.test.ts src/agent-runs.test.ts src/agent-runs.integration.test.ts src/agent-inbox.integration.test.ts src/company-watchlists.integration.test.ts src/job-discovery-persistence.integration.test.ts src/recommendation-feedback.integration.test.ts
+Test Files  7 passed (7)
+Tests       146 passed (146)
+
+$ pnpm --filter @job-copilot/database typecheck
+$ pnpm --filter @job-copilot/domain typecheck
+$ git diff --check
+all exit 0
+```
