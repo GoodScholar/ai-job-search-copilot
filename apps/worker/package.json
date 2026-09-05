@@ -12,6 +12,7 @@
     "@job-copilot/contracts": "workspace:*",
     "@job-copilot/database": "workspace:*",
     "@job-copilot/domain": "workspace:*",
+    "@job-copilot/model-access": "workspace:*",
     "@job-copilot/source-access": "workspace:*",
     "@nestjs/common": "11.2.3",
     "@nestjs/core": "11.2.3",

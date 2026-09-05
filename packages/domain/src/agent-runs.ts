@@ -2,6 +2,7 @@ import { type Database } from "@job-copilot/database";
 import type { AuditTrail } from "./audit-trail";
 import { createAgentRunCheckpoint, type AgentRunCheckpoint } from "./agent-run-checkpoint";
 import { createAgentRunProcessor as createDomainAgentRunProcessor, type AgentRunProcessorDependencies, type DiscoveryContentStore, type JobDiscoveryAdapter, type JobDiscoveryAdapterResolver } from "./agent-run-processor";
+import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
 
 /** Agent run public facade. Execution stays in `agent-run-processor`. */
 export {
@@ -35,11 +36,12 @@ export type {
 } from "./layered-public-job-discovery-workflow";
 export { createLayeredPublicJobDiscoveryRuntime, type LayeredTrustedSourceAdapter } from "./layered-public-job-discovery-runtime";
 
-type FacadeProcessorDependencies = Omit<AgentRunProcessorDependencies, "checkpoint"> & {
+type FacadeProcessorDependencies = Omit<AgentRunProcessorDependencies, "checkpoint" | "runPreflight"> & {
   checkpoint?: AgentRunCheckpoint;
+  runPreflight?: AgentRunProcessorDependencies["runPreflight"];
 };
 
 export function createAgentRunProcessor(deps: FacadeProcessorDependencies) {
   const checkpoint = deps.checkpoint ?? createAgentRunCheckpoint({ db: deps.db as Database, auditTrail: deps.auditTrail as AuditTrail, id: deps.id, clock: deps.clock });
-  return createDomainAgentRunProcessor({ ...deps, checkpoint });
+  return createDomainAgentRunProcessor({ ...deps, checkpoint, runPreflight: deps.runPreflight ?? createReadyRunPreflightEvaluator({ clock: deps.clock }) });
 }

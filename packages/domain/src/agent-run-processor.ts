@@ -18,6 +18,7 @@ import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { createJobDiscoveryPersistence, discoverySourceIdentifier, type DiscoveryDetail } from "./job-discovery-persistence";
 import { persistJobOpportunity } from "./job-opportunity-persistence";
 import { deepMatchDiscoveryIdempotencyKey, ensureDeepMatchRunInTransaction, triggerDeepMatchAfterDiscovery } from "./deep-match-agent-runs";
+import type { RunPreflightEvaluator } from "./run-preflight";
 import type { DeepMatchRunQueue } from "./deep-match-agent-runs";
 import { DeepMatchClaimLostError, createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
 import { decideRetry } from "./agent-run-state";
@@ -136,6 +137,7 @@ export type AgentRunProcessorDependencies = {
   auditTrail: AuditTrail;
   id: () => string;
   clock: () => Date;
+  runPreflight: RunPreflightEvaluator;
   cleanupTimeoutMs?: number;
   heartbeatIntervalMs?: number;
   heartbeatStopTimeoutMs?: number;
@@ -452,7 +454,7 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
     const version = run.version + 1;
     // The durable child is part of the discovery completion transaction. Queue delivery
     // remains deliberately best-effort and is performed only after commit.
-    await ensureDeepMatchRunInTransaction({ transaction, id: deps.id, clock: deps.clock, userId: input.userId, targetId: run.targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(run.id), trigger: "automatic", discoveryRunId: run.id });
+    await ensureDeepMatchRunInTransaction({ transaction, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight, userId: input.userId, targetId: run.targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(run.id), trigger: "automatic", discoveryRunId: run.id });
     await transaction.update(agentRunSteps).set({ status: "completed", completedAt: input.now, failedAt: null, failureCode: null }).where(and(
       eq(agentRunSteps.userId, input.userId), eq(agentRunSteps.runId, input.runId), eq(agentRunSteps.status, "running"),
     ));
@@ -689,11 +691,11 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         const commitBefore = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_before", ordinal: 1 });
         if (commitBefore) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return commitBefore; }
         let persisted: { cleanupObjectKeys: string[]; completed: boolean };
-        try { persisted = await runTransaction(deps, deadline, (transaction) => createJobDiscoveryPersistence({ db: deps.db, id: deps.id, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({ run: { ...claimed.run, sourceScope: executionSourceScope, claimToken: claimed.claimToken }, details: input.details, scans: input.scans, storedObjects: stored.map((item) => ({ sourceId: item.detail.sourceId, detailId: item.detail.detailId, objectKey: item.objectKey, rawContentSha256: item.rawContentSha256 })), sourceChecks: input.sourceChecks, sourceIssues: input.sourceIssues, terminal: input.terminal, now: deps.clock(), transaction, afterCompleted: async ({ transaction: completedTransaction, userId, targetId, discoveryRunId }) => { await ensureDeepMatchRunInTransaction({ transaction: completedTransaction, id: deps.id, clock: deps.clock, userId, targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(discoveryRunId), trigger: "automatic", discoveryRunId }); } })); }
+        try { persisted = await runTransaction(deps, deadline, (transaction) => createJobDiscoveryPersistence({ db: deps.db, id: deps.id, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({ run: { ...claimed.run, sourceScope: executionSourceScope, claimToken: claimed.claimToken }, details: input.details, scans: input.scans, storedObjects: stored.map((item) => ({ sourceId: item.detail.sourceId, detailId: item.detail.detailId, objectKey: item.objectKey, rawContentSha256: item.rawContentSha256 })), sourceChecks: input.sourceChecks, sourceIssues: input.sourceIssues, terminal: input.terminal, now: deps.clock(), transaction, afterCompleted: async ({ transaction: completedTransaction, userId, targetId, discoveryRunId }) => { await ensureDeepMatchRunInTransaction({ transaction: completedTransaction, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight, userId, targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(discoveryRunId), trigger: "automatic", discoveryRunId }); } })); }
         catch { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_PERSIST_FAILED", retryable: true, category: "source" }, deadline }); }
         await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), persisted.cleanupObjectKeys); if (!persisted.completed) return "stale";
         // PostgreSQL queued state is authoritative; the shared queue wakes it immediately and reconciler repairs delivery failures.
-        await triggerDeepMatchAfterDiscovery({ db: deps.db, id: deps.id, clock: deps.clock, queue: deps.matchingQueue, userId: job.userId, targetId: claimed.run.targetId, discoveryRunId: job.runId });
+        await triggerDeepMatchAfterDiscovery({ db: deps.db, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight, queue: deps.matchingQueue, userId: job.userId, targetId: claimed.run.targetId, discoveryRunId: job.runId });
         await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_after", ordinal: 1 });
         return input.terminal === "source_failed" ? "failed" : "completed";
       };
@@ -754,7 +756,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           const detailsComplete = await transition("fetch_details", true); if (detailsComplete) return detailsComplete;
           const persistStart = await transition("persist_results", false); if (persistStart) return persistStart;
           const persisted = await persistLayeredPublicOutcome(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), deadline, diagnostics: outcome.diagnostics, sourceIssues: outcome.sourceIssues ?? [], sourcePostingVersionIds: outcome.sourcePostingVersionIds ?? [], trustedSourcePostingVersionIds: outcome.trustedSourcePostingVersionIds ?? [], trustedSourceIds: layeredExecutionSpec.sourceScope.trustedSources.map(({ source }) => source.sourceId) });
-          if (persisted === "completed") await triggerDeepMatchAfterDiscovery({ db: deps.db, id: deps.id, clock: deps.clock, queue: deps.matchingQueue, userId: job.userId, targetId: claimed.run.targetId, discoveryRunId: job.runId });
+          if (persisted === "completed") await triggerDeepMatchAfterDiscovery({ db: deps.db, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight, queue: deps.matchingQueue, userId: job.userId, targetId: claimed.run.targetId, discoveryRunId: job.runId });
           return persisted === "facts" ? "stale" : persisted;
         } catch (error) {
           const heartbeatControl = await persistHeartbeatControl(latestDiagnostics);

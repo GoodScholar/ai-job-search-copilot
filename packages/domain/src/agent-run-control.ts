@@ -203,8 +203,14 @@ function createAgentRunStarter(deps: CommandDependencies): AgentRunStarter {
         await acquireAccountAdvisoryLock(transaction, input.userId);
         const [existing] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.idempotencyKey, command.idempotencyKey)));
         if (existing) { reused = true; return existing; }
-        const evaluation = input.trigger?.kind === "schedule" ? null : await deps.runPreflight.evaluate(transaction, { userId: input.userId, workflow: "discovery", trigger: "manual", targetId: command.targetId });
-        if (evaluation) authorizeRunPreflight({ evaluation, warningFingerprint: command.warningFingerprint });
+        const evaluation = await deps.runPreflight.evaluate(transaction, {
+          userId: input.userId,
+          workflow: "discovery",
+          trigger: input.trigger?.kind === "schedule" ? "schedule" : "manual",
+          targetId: command.targetId,
+          ...(input.trigger?.kind === "schedule" ? { scheduledFor: input.trigger.scheduledFor } : {}),
+        });
+        authorizeRunPreflight({ evaluation, warningFingerprint: command.warningFingerprint });
         // 账户锁等待可能跨越后台窗口边界；仅在确定不是幂等重放后读取当前时刻。
         const now = deps.clock();
         const [target] = await transaction.select({ id: jobTargets.id, version: jobTargets.version, priority: jobTargets.priority, state: jobTargets.state, constraints: jobTargetRevisions.constraints })
@@ -223,10 +229,7 @@ function createAgentRunStarter(deps: CommandDependencies): AgentRunStarter {
           eq(companyWatchlistRevisions.version, companyWatchlists.version),
         )).where(and(eq(companyWatchlists.userId, input.userId), eq(companyWatchlists.targetId, target.id)));
         const executionMode = deps.executionMode ?? "fake";
-        const policy = evaluation
-          ? { revisionNumber: evaluation.policy.revisionNumber, effective: evaluation.policy.snapshot }
-          : await resolveEffectiveAccountRunPolicy(transaction, input.userId, { id: deps.id, clock: deps.clock });
-        if (input.trigger?.kind === "schedule" && (!isDateInBackgroundWindow(now, policy.effective.backgroundWindow) || !isDateInBackgroundWindow(input.trigger.scheduledFor, policy.effective.backgroundWindow))) throw new AgentRunError("AGENT_RUN_UNAVAILABLE");
+        const policy = { revisionNumber: evaluation.policy.revisionNumber, effective: evaluation.policy.snapshot };
         const discoveryPolicy = policy.effective.discovery;
         const canUseAnySearch = discoveryPolicy.enabledProviders.includes("anysearch") && discoveryPolicy.publicQueryLimit > 0;
         const layeredSpec = executionMode === "layered_public"
@@ -259,7 +262,7 @@ function createAgentRunStarter(deps: CommandDependencies): AgentRunStarter {
         const [created] = await transaction.insert(agentRuns).values({
           id: runId, userId: input.userId, targetId: target.id, idempotencyKey: command.idempotencyKey, targetVersion: target.version,
           targetSnapshot, ...(layeredSpec ? { profileSnapshot: layeredSpec.profileSnapshot, watchlistSnapshot: layeredSpec.watchlistSnapshot } : {}),
-          sourceScope: runSourceScope, budgetSnapshot: execution.budget, accountPolicyRevisionNumber: policy.revisionNumber, accountPolicySnapshot: policy.effective, preflightSnapshot: evaluation?.report ?? null, workflowVersion: execution.workflowVersion,
+          sourceScope: runSourceScope, budgetSnapshot: execution.budget, accountPolicyRevisionNumber: policy.revisionNumber, accountPolicySnapshot: policy.effective, preflightSnapshot: evaluation.report, workflowVersion: execution.workflowVersion,
           ruleVersion: execution.ruleVersion, toolAllowlist: executionMode === "layered_public" ? LAYERED_PUBLIC_JOB_DISCOVERY_TOOL_ALLOWLIST : executionMode === "greenhouse" ? GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST : AGENT_RUN_TOOL_ALLOWLIST, modelSnapshot: null,
           adapter: execution.adapter, adapterVersion: execution.adapterVersion, outputSchemaVersion: execution.outputSchemaVersion,
           status: "queued", currentStep: "queued", controlState: "none", version: 1, attemptCount: 0,

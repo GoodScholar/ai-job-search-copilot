@@ -22,6 +22,8 @@ import { JobDiscoveryScheduleError, createJobDiscoverySchedules } from "./job-di
 import { createAccountRunPolicies } from "./account-run-policies";
 import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-policies";
 import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
+import type { RunPreflightEvaluator } from "./run-preflight";
+import { RunPreflightReportSchema } from "@job-copilot/contracts/run-preflight";
 
 const now = new Date("2026-08-30T01:31:00.000Z");
 const constraints = {
@@ -95,6 +97,19 @@ describe("job discovery schedules", () => {
     };
   }
 
+  async function preflightWith(input: { status: "ready_with_warnings" | "blocked" }): Promise<RunPreflightEvaluator> {
+    const ready = createReadyRunPreflightEvaluator({ clock: () => now });
+    return {
+      async evaluate(db, request) {
+        const evaluation = await ready.evaluate(db, request);
+        const item = input.status === "blocked"
+          ? { ...evaluation.report.items[0]!, code: "PROFILE_EVIDENCE_MISSING" as const, severity: "blocking" as const, suggestedActions: ["review_profile"], evidence: { kind: "profile" as const, activeTrustedFactCount: 0, latestFactRevisionId: null, checkedAt: now.toISOString() } }
+          : { ...evaluation.report.items[4]!, code: "SOURCE_HEALTH_UNCHECKED" as const, severity: "warning" as const, suggestedActions: ["review_source_health"], retryable: true, evidence: { kind: "source_health" as const, checkedSourceCount: 0, healthySourceCount: 0, degradedSourceCount: 0, uncheckedSourceCount: 1, latestCheckedAt: null } };
+        return { ...evaluation, report: RunPreflightReportSchema.parse({ ...evaluation.report, status: input.status, warningFingerprint: input.status === "ready_with_warnings" ? "a".repeat(64) : null, items: evaluation.report.items.map((value, index) => index === (input.status === "blocked" ? 0 : 4) ? item : value) }) };
+      },
+    };
+  }
+
   async function addWatchlistSource(input: { userId: string; targetId: string; careersUrl: string; allowedDomains: string[]; expectedVersion?: number; companyName?: string }) {
     await createCompanyWatchlistCommands({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).addItem({
       userId: input.userId, targetId: input.targetId, requestId: crypto.randomUUID(),
@@ -163,7 +178,7 @@ describe("job discovery schedules", () => {
     await expect(set(crossDayClosed, new Date("2026-08-30T15:00:00.000Z"), "12:00")).rejects.toMatchObject({ code: "ACCOUNT_RUN_POLICY_WINDOW_CLOSED" }); // 夜间不能配置跨日窗口外 12:00
   });
 
-  it("派发读取当前窗口收紧策略，但重派已冻结的运行", async () => {
+  it("既有运行优先回填 dispatched，不以过时页面策略重新授权", async () => {
     const policy = createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now });
     const tightenedSettings = {
       discovery: { trustedSourceLimit: 50, publicQueryLimit: 5, verificationCandidateLimit: 10, enabledProviders: ["anysearch"] as ["anysearch"] },
@@ -182,7 +197,7 @@ describe("job discovery schedules", () => {
     const [skippedOccurrence] = await skipService.materializeDue({ limit: 1 });
     await policy.save({ userId: skippedOwner.userId, command: { expectedVersion: 0, settings: tightenedSettings } });
     await skipService.dispatchPending({ limit: 1 });
-    await expect(database.select({ status: jobDiscoveryScheduleOccurrences.status, skipReason: jobDiscoveryScheduleOccurrences.skipReason }).from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, skippedOccurrence!.occurrenceId))).resolves.toEqual([{ status: "skipped", skipReason: "ACCOUNT_RUN_POLICY_WINDOW_CLOSED" }]);
+    await expect(database.select({ status: jobDiscoveryScheduleOccurrences.status, skipReason: jobDiscoveryScheduleOccurrences.skipReason }).from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, skippedOccurrence!.occurrenceId))).resolves.toEqual([{ status: "dispatched", skipReason: null }]);
 
     const retryOwner = await target();
     await addWatchlistSource({ userId: retryOwner.userId, targetId: retryOwner.targetId, careersUrl: "https://boards.greenhouse.io/window-retry", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
@@ -269,6 +284,20 @@ describe("job discovery schedules", () => {
       sourceScope: expect.objectContaining({ sources: [expect.objectContaining({ watchlistItemId: expect.any(String), canonicalCompanyName: "Example AI", careersUrl: "https://boards.greenhouse.io/example", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], boardToken: "example" })] }),
     })]);
     await expect(database.select().from(auditEvents).where(eq(auditEvents.userId, owner.userId))).resolves.toSatisfy((events) => !JSON.stringify(events).includes("boards.greenhouse.io"));
+  });
+
+  it("计划派发在运行创建事务内重检 blocker，标记 occurrence 且不创建 run", async () => {
+    const owner = await target();
+    await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/preflight-blocked", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
+    const occurrence = await dueOccurrence(owner);
+    const auditTrail = createAuditTrail({ db: database, clock: () => now });
+    const runs = createAgentRunCommands({ db: database, queue: new Queue(), auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse", runPreflight: await preflightWith({ status: "blocked" }) });
+    const service = createJobDiscoverySchedules({ db: database, runs, auditTrail, id: () => crypto.randomUUID(), clock: () => now });
+
+    await service.dispatchPending({ limit: 1 });
+
+    await expect(database.select({ status: jobDiscoveryScheduleOccurrences.status, runId: jobDiscoveryScheduleOccurrences.runId, skipReason: jobDiscoveryScheduleOccurrences.skipReason }).from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, occurrence.occurrenceId))).resolves.toEqual([{ status: "skipped", runId: null, skipReason: "RUN_PREFLIGHT_BLOCKED" }]);
+    await expect(database.select({ id: agentRuns.id }).from(agentRuns).where(and(eq(agentRuns.userId, owner.userId), eq(agentRuns.idempotencyKey, occurrence.occurrenceId)))).resolves.toEqual([]);
   });
 
   it("v4 无 Watchlist 的 occurrence 仍派发一个冻结五条 general/site query 的 run，重放不重复创建", async () => {

@@ -11,6 +11,9 @@ import { JobTargetConstraintsSchema } from "@job-copilot/contracts/job-targets";
 import { createDeepMatchRunStarter } from "./deep-match-agent-runs";
 import { createAgentRunRecoveryQueries } from "./agent-run-processor";
 import { createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
+import { RunPreflightRejectedError, type RunPreflightEvaluator } from "./run-preflight";
+import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
+import { RunPreflightReportSchema } from "@job-copilot/contracts/run-preflight";
 
 const now = new Date("2026-09-01T02:00:00.000Z");
 const hash = "a".repeat(64);
@@ -65,6 +68,32 @@ describe("deep match persistence", () => {
     await db.insert(jobTriageVersions).values({ id: triageVersionId, userId, opportunityId, sourcePostingVersionId, profileId, profileVersion: 1, targetId, targetVersion: 1, qualificationRuleVersion: "q1", coarseRuleVersion: "c1", overallVerdict: verdict, gateResults: {}, pendingItems: [], deadlineStatus: input.deadlineStatus ?? "valid", confidenceBasisPoints: 10_000, dimensionScores: scored ? {} : null, overallScore: scored ? (input.score ?? 80) : null, threshold: scored ? 70 : null, sequence: 1, createdAt: now });
     return { userId, profileId, targetId, opportunityId, sourcePostingVersionId, triageVersionId, factRevisionId };
   }
+
+  async function preflight(status: "ready_with_warnings" | "blocked"): Promise<RunPreflightEvaluator> {
+    const ready = createReadyRunPreflightEvaluator({ clock: () => now });
+    return {
+      async evaluate(database, request) {
+        const evaluation = await ready.evaluate(database, request);
+        const changed = status === "blocked"
+          ? { ...evaluation.report.items[0]!, code: "PROFILE_EVIDENCE_MISSING" as const, severity: "blocking" as const, suggestedActions: ["review_profile"], evidence: { kind: "profile" as const, activeTrustedFactCount: 0, latestFactRevisionId: null, checkedAt: now.toISOString() } }
+          : { ...evaluation.report.items[4]!, code: "SOURCE_HEALTH_UNCHECKED" as const, severity: "warning" as const, retryable: true, suggestedActions: ["review_source_health"], evidence: { kind: "source_health" as const, checkedSourceCount: 0, healthySourceCount: 0, degradedSourceCount: 0, uncheckedSourceCount: 1, latestCheckedAt: null } };
+        return { ...evaluation, report: RunPreflightReportSchema.parse({ ...evaluation.report, status, warningFingerprint: status === "ready_with_warnings" ? "b".repeat(64) : null, items: evaluation.report.items.map((item, index) => index === (status === "blocked" ? 0 : 4) ? changed : item) }) };
+      },
+    };
+  }
+
+  it("手动 deep-match 仅接受当前 warning，automatic blocker 不创建 child", async () => {
+    const input = await fixture();
+    const warning = await preflight("ready_with_warnings");
+    const manual = createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now, runPreflight: warning });
+    await expect(manual.start({ userId: input.userId, trigger: "manual", command: { targetId: input.targetId, opportunityId: input.opportunityId, idempotencyKey: crypto.randomUUID(), warningFingerprint: null } })).rejects.toMatchObject({ code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED" } satisfies Partial<RunPreflightRejectedError>);
+    await expect(manual.start({ userId: input.userId, trigger: "manual", command: { targetId: input.targetId, opportunityId: input.opportunityId, idempotencyKey: crypto.randomUUID(), warningFingerprint: "a".repeat(64) } })).rejects.toMatchObject({ code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED" } satisfies Partial<RunPreflightRejectedError>);
+    const created = await manual.start({ userId: input.userId, trigger: "manual", command: { targetId: input.targetId, opportunityId: input.opportunityId, idempotencyKey: crypto.randomUUID(), warningFingerprint: "b".repeat(64) } });
+    await expect(db.select({ snapshot: agentRuns.preflightSnapshot }).from(agentRuns).where(eq(agentRuns.id, created.runId))).resolves.toEqual([{ snapshot: expect.objectContaining({ status: "ready_with_warnings", warningFingerprint: "b".repeat(64) }) }]);
+
+    const blocked = createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now, runPreflight: await preflight("blocked") });
+    await expect(blocked.start({ userId: input.userId, trigger: "automatic", targetId: input.targetId, discoveryRunId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID() })).resolves.toMatchObject({ kind: "blocked", preflight: { status: "blocked" } });
+  });
 
   it("selects only owner-bound latest passing, valid and above-threshold triage candidates in stable score order", async () => {
     const eligible = await fixture({ score: 90 });

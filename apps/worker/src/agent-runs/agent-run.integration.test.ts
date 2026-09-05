@@ -15,22 +15,28 @@ import {
   jobDiscoveryScheduleOccurrences,
   jobDiscoverySchedules,
   jobAccounts,
+  jobProfiles,
+  modelDiagnosticResults,
   jobOpportunities,
   jobSourcePostingVersions,
   jobSourcePostings,
   jobTargetRevisions,
   jobTargets,
   migrateDatabase,
+  profileFactRevisions,
+  profileFacts,
   type Database,
 } from "@job-copilot/database";
 import { AGENT_RUN_JOB_NAME, AGENT_RUN_QUEUE } from "@job-copilot/contracts/agent-runs";
 import { createAgentRunCommands, createAgentRunProcessor, createAgentRunQueries, createAgentRunRecoveryQueries } from "@job-copilot/domain/agent-runs";
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
+import { createReadyRunPreflightEvaluator } from "../../../../packages/domain/src/testing/run-preflight.js";
 import { createCompanyWatchlistCommands } from "@job-copilot/domain/company-watchlists";
 import { createJobDiscoverySchedules } from "@job-copilot/domain/job-discovery-schedules";
+import { createFakeModelDiagnosticAdapter } from "@job-copilot/model-access/testing";
 
 import { AppModule } from "../app.module.js";
-import { AGENT_RUN_CONSUMER } from "./agent-run.module.js";
+import { AGENT_RUN_CONSUMER, TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED } from "./agent-run.module.js";
 import type { AgentRunConsumer } from "./agent-run-consumer.js";
 import { agentRunQueueJobOptions } from "./agent-run-reconciler.js";
 import { AgentRunScheduler, type AgentRunScheduleFailure } from "./agent-run-scheduler.js";
@@ -175,6 +181,7 @@ describe("岗位发现 Agent Run Worker", () => {
       auditTrail: createAuditTrail({ db: database, clock: () => new Date() }),
       id: randomUUID,
       clock: () => new Date(),
+      runPreflight: createReadyRunPreflightEvaluator({ clock: () => new Date() }),
     });
   }
 
@@ -327,6 +334,12 @@ describe("岗位发现 Agent Run Worker", () => {
     const scheduledUserId = randomUUID();
     const scheduledTargetId = randomUUID();
     await database.insert(jobAccounts).values({ id: scheduledUserId });
+    const profileId = randomUUID();
+    const factId = randomUUID();
+    await database.insert(jobProfiles).values({ id: profileId, userId: scheduledUserId, version: 1 });
+    await database.insert(profileFacts).values({ id: factId, userId: scheduledUserId, profileId, factType: "skill" });
+    await database.insert(profileFactRevisions).values({ id: randomUUID(), userId: scheduledUserId, profileFactId: factId, revisionNumber: 1, factType: "skill", factValue: { name: "TypeScript" }, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1 });
+    await database.insert(modelDiagnosticResults).values({ configurationFingerprint: createFakeModelDiagnosticAdapter({ kind: "success" }, TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED).configurationFingerprint, status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket: "under_1s", checkedAt: new Date() });
     await database.insert(jobTargets).values({ id: scheduledTargetId, userId: scheduledUserId, version: 1, priority: "primary", state: "active", activeSlot: null });
     await database.insert(jobTargetRevisions).values({ id: randomUUID(), userId: scheduledUserId, targetId: scheduledTargetId, version: 1, priority: "primary", state: "active", constraints });
     const auditTrail = createAuditTrail({ db: database, clock: () => new Date() });
@@ -396,7 +409,7 @@ describe("岗位发现 Agent Run Worker", () => {
     await expect.poll(async () => Promise.all([inactive, unsupported, policy].map(async ({ scheduleId }) => {
       const [occurrence] = await database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.scheduleId, scheduleId));
       return occurrence?.skipReason;
-    }))).toEqual(["TARGET_INACTIVE", "NO_SUPPORTED_SOURCE", "SOURCE_POLICY_REQUIRED"]);
+    }))).toEqual(["RUN_PREFLIGHT_BLOCKED", "RUN_PREFLIGHT_BLOCKED", "RUN_PREFLIGHT_BLOCKED"]);
     await expect(Promise.all([inactive, unsupported, policy].map(({ userId }) => database.select().from(agentRuns).where(eq(agentRuns.userId, userId))))).resolves.toEqual([[], [], []]);
   }, 45_000);
 
