@@ -1,6 +1,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import { agentInboxItems, agentRunEvents, agentRunUsageEntries, agentRuns, type Database } from "@job-copilot/database";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
+import { effectiveAgentRunBudget, type AgentRunBudget } from "./effective-agent-run-budget";
 import type { AuditTrail } from "./audit-trail";
 import { agentRunUsageSnapshot, appendBudgetFacts, settleActiveSlice, terminateBudgetRun, type BudgetDimension } from "./agent-run-lifecycle";
 
@@ -46,7 +47,7 @@ async function appendEvent(db: any, input: { id: () => string; userId: string; r
 
 function amount(value: number | undefined) { return value ?? 0; }
 function exhausted(run: typeof agentRuns.$inferSelect, reserve: Reserve, activeDurationMs: number): BudgetDimension | null {
-  const budget = run.budgetSnapshot as { maxActiveDurationMs: number; maxAttempts: number; maxToolCalls: number; maxModelCalls: number; maxTokens: number };
+  const budget = effectiveAgentRunBudget(run.workflowVersion, run.budgetSnapshot as AgentRunBudget);
   // attempt 是领取时预增的；第 3 次已合法领取，预算只阻止第 4 次领取。
   if (run.attemptCount > budget.maxAttempts) return "attempts";
   if (run.activeDurationMs + activeDurationMs >= budget.maxActiveDurationMs) return "active_duration";

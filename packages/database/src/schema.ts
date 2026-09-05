@@ -8,6 +8,22 @@ export const jobAccounts = pgTable("job_accounts", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+export const accountRunPolicyRevisions = pgTable("account_run_policy_revisions", {
+  id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  revisionNumber: integer("revision_number").notNull(), settings: jsonb("settings").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("account_run_policy_revisions_user_number_unique").on(table.userId, table.revisionNumber), unique("account_run_policy_revisions_user_id_id_unique").on(table.userId, table.id), index("account_run_policy_revisions_owner_created_idx").on(table.userId, table.revisionNumber),
+  check("account_run_policy_revisions_number_positive", sql`${table.revisionNumber} >= 0`), check("account_run_policy_revisions_settings_object", sql`jsonb_typeof(${table.settings}) = 'object'`),
+]);
+
+export const accountRunPolicies = pgTable("account_run_policies", {
+  userId: uuid("user_id").primaryKey().references(() => jobAccounts.id), currentRevisionNumber: integer("current_revision_number").notNull(), version: integer("version").notNull().default(0), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  foreignKey({ columns: [table.userId, table.currentRevisionNumber], foreignColumns: [accountRunPolicyRevisions.userId, accountRunPolicyRevisions.revisionNumber], name: "account_run_policies_owner_revision_fk" }),
+  check("account_run_policies_version_nonnegative", sql`${table.version} >= 0`), check("account_run_policies_revision_positive", sql`${table.currentRevisionNumber} >= 0`),
+]);
+
 export const externalIdentities = pgTable("external_identities", {
   provider: varchar("provider", { length: 32 }).notNull(),
   subject: varchar("subject", { length: 128 }).notNull(),
@@ -574,6 +590,8 @@ export const agentRuns = pgTable("agent_runs", {
   watchlistSnapshot: jsonb("watchlist_snapshot"),
   sourceScope: jsonb("source_scope").notNull(),
   budgetSnapshot: jsonb("budget_snapshot").notNull(),
+  accountPolicyRevisionNumber: integer("account_policy_revision_number"),
+  accountPolicySnapshot: jsonb("account_policy_snapshot"),
   workflowVersion: varchar("workflow_version", { length: 64 }).notNull(),
   ruleVersion: varchar("rule_version", { length: 64 }).notNull(),
   adapter: varchar("adapter", { length: 64 }).notNull(),
@@ -631,6 +649,10 @@ export const agentRuns = pgTable("agent_runs", {
   )`),
   check("agent_runs_source_scope_object", sql`jsonb_typeof(${table.sourceScope}) = 'object'`),
   check("agent_runs_budget_snapshot_object", sql`jsonb_typeof(${table.budgetSnapshot}) = 'object'`),
+  foreignKey({ columns: [table.userId, table.accountPolicyRevisionNumber], foreignColumns: [accountRunPolicyRevisions.userId, accountRunPolicyRevisions.revisionNumber], name: "agent_runs_policy_owner_revision_fk" }),
+  check("agent_runs_policy_revision_nonnegative", sql`${table.accountPolicyRevisionNumber} >= 0`),
+  check("agent_runs_policy_snapshot_object", sql`jsonb_typeof(${table.accountPolicySnapshot}) = 'object'`),
+  check("agent_runs_policy_columns_paired", sql`(${table.accountPolicyRevisionNumber} is null) = (${table.accountPolicySnapshot} is null)`),
   check("agent_runs_status_check", sql`${table.status} in ('queued', 'running', 'paused', 'completed', 'failed', 'cancelled')`),
   check("agent_runs_current_step_check", sql`${table.currentStep} in ('queued', 'batch_search', 'fetch_details', 'persist_results', 'select_candidates', 'assess_matches', 'create_recommendations', 'completed', 'failed', 'cancelled')`),
   check("agent_runs_control_state_check", sql`${table.controlState} in ('none', 'pause_requested', 'cancel_requested')`),
@@ -861,7 +883,7 @@ export const jobDiscoveryScheduleOccurrences = pgTable("job_discovery_schedule_o
     name: "job_discovery_schedule_occurrences_owner_run_fk",
   }),
   check("job_discovery_schedule_occurrences_status_check", sql`${table.status} in ('pending', 'dispatched', 'skipped')`),
-  check("job_discovery_schedule_occurrences_skip_reason_check", sql`${table.skipReason} is null or ${table.skipReason} in ('TARGET_INACTIVE', 'NO_SUPPORTED_SOURCE', 'SOURCE_POLICY_REQUIRED')`),
+  check("job_discovery_schedule_occurrences_skip_reason_check", sql`${table.skipReason} is null or ${table.skipReason} in ('TARGET_INACTIVE', 'NO_SUPPORTED_SOURCE', 'SOURCE_POLICY_REQUIRED', 'PROFILE_UNAVAILABLE', 'ACCOUNT_RUN_POLICY_WINDOW_CLOSED')`),
   check("job_discovery_schedule_occurrences_outcome_check", sql`
     (${table.status} = 'pending' and ${table.runId} is null and ${table.skipReason} is null)
     or (${table.status} = 'dispatched' and ${table.runId} is not null and ${table.skipReason} is null)

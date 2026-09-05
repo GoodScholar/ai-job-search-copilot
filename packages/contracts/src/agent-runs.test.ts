@@ -102,7 +102,7 @@ const publicSourceScope = {
 };
 const runTargetSnapshot = { targetId, version: 1, priority: "primary", state: "active", constraints: targetSnapshot };
 const queuedSummary = {
-  runId, targetId, targetVersion: 1, targetSnapshot: runTargetSnapshot, sourceScope,
+  runId, targetId, targetVersion: 1, accountPolicyRevisionNumber: null, targetSnapshot: runTargetSnapshot, sourceScope,
   workflowVersion: FAKE_JOB_DISCOVERY_WORKFLOW_VERSION,
   adapter: FAKE_JOB_DISCOVERY_ADAPTER, adapterVersion: FAKE_JOB_DISCOVERY_ADAPTER_VERSION,
   outputSchemaVersion: "job-discovery-result-v1", budget: AGENT_RUN_BUDGET,

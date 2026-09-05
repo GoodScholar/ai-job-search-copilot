@@ -17,6 +17,7 @@
     "./job-discovery": "./src/job-discovery.ts",
     "./source-capabilities": "./src/source-capabilities.ts",
     "./agent-runs": "./src/agent-runs.ts",
+    "./account-run-policies": "./src/account-run-policies.ts",
     "./agent-inbox": "./src/agent-inbox.ts",
     "./job-targets": "./src/job-targets.ts",
     "./pdf-career-processing": "./src/pdf-career-processing.ts",

@@ -80,6 +80,7 @@ import {
   type JobDiscoveryScheduleResponse,
   type SetJobDiscoveryScheduleCommand,
 } from "@job-copilot/contracts/job-discovery-schedules";
+import { AccountRunPolicyCommandSchema, AccountRunPolicyHistorySchema, AccountRunPolicyProblemSchema, AccountRunPolicyResponseSchema, type AccountRunPolicyProblem, type AccountRunPolicyResponse, type AccountRunPolicySettings } from "@job-copilot/contracts/account-run-policies";
 import {
   AgentInboxActionCommandSchema,
   AgentInboxActionResponseSchema,
@@ -104,7 +105,7 @@ export class ApiClientError extends Error {
     public readonly kind: ApiErrorKind,
     message: string,
     public readonly status?: number,
-    public readonly problem?: ApiProblem,
+    public readonly problem?: ApiProblem | AccountRunPolicyProblem,
   ) {
     super(message);
   }
@@ -139,6 +140,13 @@ async function readProblem(response: Response): Promise<ApiProblem | null> {
   });
 
   return payload === null ? null : ApiProblemSchema.safeParse(payload).data ?? null;
+}
+async function readAccountRunPolicyProblem(response: Response): Promise<AccountRunPolicyProblem | null> {
+  const payload = await parseJson(response).catch(() => null);
+  if (!payload || typeof payload !== "object") return null;
+  const problem = { ...(payload as Record<string, unknown>) };
+  delete problem.requestId;
+  return AccountRunPolicyProblemSchema.safeParse(problem).data ?? null;
 }
 
 async function parseSuccess<T extends z.ZodType>(response: Response, schema: T): Promise<z.output<T>> {
@@ -617,6 +625,26 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
         throw new ApiClientError("api", problem?.message ?? "无法读取每日检查", response.status, problem ?? undefined);
       }
       return parseSuccess(response, JobDiscoveryScheduleResponseSchema);
+    },
+    async getAccountRunPolicy(sessionToken: string): Promise<AccountRunPolicyResponse> {
+      const response = await request("/v1/account/run-policy", { method: "GET", headers: { authorization: `Bearer ${sessionToken}` }, cache: "no-store" });
+      if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法读取账户运行策略", response.status, problem ?? undefined); }
+      return parseSuccess(response, AccountRunPolicyResponseSchema);
+    },
+    async saveAccountRunPolicy(sessionToken: string, command: { expectedVersion: number; settings: AccountRunPolicySettings }): Promise<AccountRunPolicyResponse> {
+      const response = await request("/v1/account/run-policy", { method: "PUT", headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" }, body: JSON.stringify(AccountRunPolicyCommandSchema.parse(command)) });
+      if (!response.ok) { const problem = await readAccountRunPolicyProblem(response); throw new ApiClientError("api", problem?.message ?? "无法保存账户运行策略", response.status, problem ?? undefined); }
+      return parseSuccess(response, AccountRunPolicyResponseSchema);
+    },
+    async getAccountRunPolicyHistory(sessionToken: string) {
+      const response = await request("/v1/account/run-policy/history", { method: "GET", headers: { authorization: `Bearer ${sessionToken}` }, cache: "no-store" });
+      if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法读取账户运行策略历史", response.status, problem ?? undefined); }
+      return parseSuccess(response, AccountRunPolicyHistorySchema);
+    },
+    async getAccountRunPolicyRevision(sessionToken: string, revisionNumber: number): Promise<AccountRunPolicyResponse> {
+      const response = await request(`/v1/account/run-policy/history/${revisionNumber}`, { method: "GET", headers: { authorization: `Bearer ${sessionToken}` }, cache: "no-store" });
+      if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法读取账户运行策略修订", response.status, problem ?? undefined); }
+      return parseSuccess(response, AccountRunPolicyResponseSchema);
     },
 
     async setJobDiscoverySchedule(sessionToken: string, targetId: string, command: SetJobDiscoveryScheduleCommand): Promise<JobDiscoveryScheduleResponse> {

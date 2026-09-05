@@ -101,6 +101,11 @@ function WorkbenchHomeContent({ home, targets, initialRun, inbox, unavailableSec
       {runUnavailable && <section aria-labelledby="run-unavailable-title" className="workbench-ledger"><h2 id="run-unavailable-title">运行状态暂时无法读取</h2><p>已成功读取的求职目标仍可继续使用。请稍后刷新重试。</p></section>}
       {(!targetsUnavailable || !runUnavailable) && <AgentRunPanel initialRun={initialRun} onInboxRefresh={refreshInbox} refreshVersion={runRefreshVersion} showDiscoverySchedule targets={targetsUnavailable ? null : targets?.targets ?? []} />}
 
+      <section aria-labelledby="run-policy-entry-title" className="workbench-ledger">
+        <div className="workbench-ledger-heading"><p>运行设置 · 账户级</p><h2 id="run-policy-entry-title">管理运行策略</h2></div>
+        <div className="workbench-ledger-row"><div><h3>控制后台运行范围</h3><p>查看系统默认和硬上限，设置每次运行的额度与后台运行时间。</p></div><Link className="workbench-ledger-link workbench-touch-target" href="/profile/run-policy">管理运行策略</Link></div>
+      </section>
+
       <section aria-labelledby="ledger-title" className="workbench-ledger">
         <div className="workbench-ledger-heading"><p>档案纸 · 当前状态</p><h2 id="ledger-title">{hasPendingFacts ? "职业资料等待确认" : "当前无待确认事实"}</h2></div>
         <div className="workbench-ledger-row"><div><h3>下一步</h3><p>{hasPendingFacts ? "检查候选事实的来源和证据，确认后再让它们进入求职画像。" : "你可以查看或导入职业资料，继续完善求职画像。"}</p></div><Link className="workbench-ledger-link workbench-touch-target" href="/profile">{hasPendingFacts ? "查看待确认事实" : "查看职业资料"}</Link></div>

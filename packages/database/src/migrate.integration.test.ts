@@ -1188,6 +1188,8 @@ describe("database migrations", () => {
         unlink(join(migrationsFolder, "0041_thankful_lethal_legion.sql")),
         unlink(join(migrationsFolder, "0042_mighty_malcolm_colcord.sql")),
         unlink(join(migrationsFolder, "0043_task_control_agent_inbox.sql")),
+        unlink(join(migrationsFolder, "0044_account_run_policies.sql")),
+        unlink(join(migrationsFolder, "0045_account_run_policy_schedule_window.sql")),
         unlink(join(migrationsFolder, "meta", "0023_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0024_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0025_snapshot.json")),
@@ -1204,7 +1206,7 @@ describe("database migrations", () => {
       const journalPath = join(migrationsFolder, "meta", "_journal.json");
       const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
       await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter((entry) => ![
-        "0023_source_attention_inbox", "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_job_triage_versions", "0029_heavy_devos", "0030_deep_match_recommendations", "0031_deep_match_agent_runs", "0032_recommendation_highlight_limit", "0033_deep_match_usage_entries", "0034_recommendation_highlight_limit_lock", "0035_agent_run_step_model_failures", "0036_recommendation_exclusion_list_ownership", "0037_deep_match_run_staging", "0038_recommendation_feedback_calibration", "0039_boring_sleepwalker", "0040_loud_northstar", "0041_thankful_lethal_legion", "0042_mighty_malcolm_colcord", "0043_task_control_agent_inbox",
+        "0023_source_attention_inbox", "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_job_triage_versions", "0029_heavy_devos", "0030_deep_match_recommendations", "0031_deep_match_agent_runs", "0032_recommendation_highlight_limit", "0033_deep_match_usage_entries", "0034_recommendation_highlight_limit_lock", "0035_agent_run_step_model_failures", "0036_recommendation_exclusion_list_ownership", "0037_deep_match_run_staging", "0038_recommendation_feedback_calibration", "0039_boring_sleepwalker", "0040_loud_northstar", "0041_thankful_lethal_legion", "0042_mighty_malcolm_colcord", "0043_task_control_agent_inbox", "0044_account_run_policies", "0045_account_run_policy_schedule_window",
       ].includes(entry.tag)) }, null, 2));
       await migrate(upgradeDatabase, { migrationsFolder });
       const userId = "a9f4da20-e9e9-44c4-a6a5-fc2cf5b9ed93"; const targetId = "f1e7a7a6-a3e6-458e-9f53-33cdbbf2d6ea"; const runId = "833f4544-376c-4f8d-81af-16e50df78624";
@@ -1418,10 +1420,10 @@ describe("database migrations", () => {
     try {
       const migrationSource = fileURLToPath(new URL("../migrations", import.meta.url));
       await cp(migrationSource, migrationsFolder, { recursive: true });
-      await unlink(join(migrationsFolder, "0043_task_control_agent_inbox.sql")).catch(() => undefined);
+      await Promise.all(["0043_task_control_agent_inbox.sql", "0044_account_run_policies.sql", "0045_account_run_policy_schedule_window.sql"].map((file) => unlink(join(migrationsFolder, file)).catch(() => undefined)));
       const journalPath = join(migrationsFolder, "meta", "_journal.json");
       const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
-      await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter((entry) => entry.tag !== "0043_task_control_agent_inbox") }, null, 2));
+      await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter((entry) => !["0043_task_control_agent_inbox", "0044_account_run_policies", "0045_account_run_policy_schedule_window"].includes(entry.tag)) }, null, 2));
       await migrate(upgradeDatabase, { migrationsFolder });
       await upgradeDatabase.execute(sql`insert into job_accounts (id) values (${userId})`);
       await upgradeDatabase.execute(sql`insert into job_targets (id, user_id, version, priority, state) values (${targetId}, ${userId}, 1, 'primary', 'active')`);

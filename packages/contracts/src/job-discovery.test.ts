@@ -206,7 +206,7 @@ describe("AnySearch job discovery contracts", () => {
 
     expect(LayeredPublicJobDiscoveryQueryPlanSchema.parse(queryPlan)).toEqual(queryPlan);
     expect(LayeredPublicJobDiscoveryQueryPlanSchema.safeParse({ ...queryPlan, queries: [{ ...queryPlan.queries[0], ordinal: 2 }] }).success).toBe(false);
-    expect(LayeredPublicJobDiscoveryQueryPlanSchema.safeParse({ ...queryPlan, queries: [] }).success).toBe(false);
+    expect(LayeredPublicJobDiscoveryQueryPlanSchema.safeParse({ ...queryPlan, queries: [] }).success).toBe(true);
     expect(LayeredPublicJobDiscoveryQueryPlanSchema.safeParse({
       ...queryPlan,
       queries: [

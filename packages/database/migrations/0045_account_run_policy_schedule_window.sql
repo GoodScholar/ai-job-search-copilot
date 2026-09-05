@@ -1,0 +1,2 @@
+ALTER TABLE "job_discovery_schedule_occurrences" DROP CONSTRAINT "job_discovery_schedule_occurrences_skip_reason_check";--> statement-breakpoint
+ALTER TABLE "job_discovery_schedule_occurrences" ADD CONSTRAINT "job_discovery_schedule_occurrences_skip_reason_check" CHECK ("skip_reason" is null or "skip_reason" in ('TARGET_INACTIVE', 'NO_SUPPORTED_SOURCE', 'SOURCE_POLICY_REQUIRED', 'PROFILE_UNAVAILABLE', 'ACCOUNT_RUN_POLICY_WINDOW_CLOSED'));

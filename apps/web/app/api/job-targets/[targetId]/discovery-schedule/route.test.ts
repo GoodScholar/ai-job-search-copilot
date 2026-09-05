@@ -45,6 +45,11 @@ it("以 Bearer session 代理严格的无缓存计划响应与 CAS 状态", asyn
   const put = await PUT(new Request("http://localhost", { method: "PUT", body: JSON.stringify({ expectedVersion: 0, state: "enabled", dailyTime: "09:30" }) }), context());
   expect(put.status).toBe(409);
   expect(await put.json()).toEqual({ code: "SOURCE_POLICY_REQUIRED" });
+
+  mocks.setJobDiscoverySchedule.mockRejectedValue({ status: 409, problem: { code: "ACCOUNT_RUN_POLICY_WINDOW_CLOSED", message: "private window detail" } });
+  const windowClosed = await PUT(new Request("http://localhost", { method: "PUT", body: JSON.stringify({ expectedVersion: 0, state: "enabled", dailyTime: "23:00" }) }), context());
+  expect(windowClosed.status).toBe(409);
+  expect(await windowClosed.json()).toEqual({ code: "ACCOUNT_RUN_POLICY_WINDOW_CLOSED" });
 });
 
 it("遮蔽未知上游 code、畸形成功响应，并重新抛出 Next 控制流异常", async () => {

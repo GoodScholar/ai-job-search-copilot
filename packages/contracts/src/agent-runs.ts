@@ -233,9 +233,10 @@ export function isAgentRunTerminalEvent(eventType: AgentRunEventType): boolean {
   return (AGENT_RUN_TERMINAL_EVENT_TYPES as readonly AgentRunEventType[]).includes(eventType);
 }
 
+/** 历史运行快照可超过今天的系统硬上限；执行层会逐维取最小值。 */
 export const AgentRunBudgetSchema = z.object({
-  maxActiveDurationMs: z.literal(60_000), maxAttempts: z.literal(3), maxToolCalls: z.literal(10),
-  maxResults: z.literal(5), maxModelCalls: z.literal(0), maxTokens: z.literal(0),
+  maxActiveDurationMs: z.int().nonnegative(), maxAttempts: z.int().nonnegative(), maxToolCalls: z.int().nonnegative(),
+  maxResults: z.int().nonnegative(), maxModelCalls: z.int().nonnegative(), maxTokens: z.int().nonnegative(),
 }).strict();
 
 export const AgentRunTargetSnapshotSchema = z.object({
@@ -289,13 +290,13 @@ const FakeAgentRunExecutionSpecSchema = z.object({
 }).strict();
 
 const PublicAgentRunBudgetSchema = z.object({
-  maxActiveDurationMs: z.literal(180_000), maxAttempts: z.literal(3), maxToolCalls: z.literal(60),
-  maxResults: z.literal(5), maxModelCalls: z.literal(0), maxTokens: z.literal(0),
+  maxActiveDurationMs: z.int().nonnegative(), maxAttempts: z.int().nonnegative(), maxToolCalls: z.int().nonnegative(),
+  maxResults: z.int().nonnegative(), maxModelCalls: z.int().nonnegative(), maxTokens: z.int().nonnegative(),
 }).strict();
 
 export const DeepMatchAgentRunBudgetSchema = z.object({
-  maxActiveDurationMs: z.literal(180_000), maxAttempts: z.literal(3), maxToolCalls: z.literal(0),
-  maxResults: z.literal(10), maxModelCalls: z.literal(10), maxTokens: z.literal(20_000),
+  maxActiveDurationMs: z.int().nonnegative(), maxAttempts: z.int().nonnegative(), maxToolCalls: z.int().nonnegative(),
+  maxResults: z.int().nonnegative(), maxModelCalls: z.int().nonnegative(), maxTokens: z.int().nonnegative(),
 }).strict();
 export const DeepMatchAgentRunSourceScopeSchema = z.object({ kind: z.literal("deep_match"), trigger: z.enum(["automatic", "manual"]), opportunityId: z.uuid().nullable(), discoveryRunId: z.uuid().nullable(),
   recommendationRuleConfig: RecommendationRuleConfigSchema.default({ minimumOverallScore: 0, minimumEvidenceDimensions: 0, requiredEvidenceDimensions: [], excludedOpportunityIds: [] }),
@@ -470,6 +471,7 @@ export const AgentRunResultSchema = z.object({
 
 const AgentRunSummaryFields = {
   runId: z.uuid(), targetId: z.uuid(), targetVersion: positiveInteger, targetSnapshot: AgentRunTargetSnapshotSchema,
+  accountPolicyRevisionNumber: nonnegativeInteger.nullable(),
   status: AgentRunStatusSchema, currentStep: AgentRunCurrentStepSchema, version: positiveInteger,
   attemptCount: nonnegativeInteger, failureCode: AgentRunFailureCodeSchema.nullable(), queuedAt: z.iso.datetime(),
   startedAt: z.iso.datetime().nullable(), completedAt: z.iso.datetime().nullable(), failedAt: z.iso.datetime().nullable(), cancelledAt: z.iso.datetime().nullable(),

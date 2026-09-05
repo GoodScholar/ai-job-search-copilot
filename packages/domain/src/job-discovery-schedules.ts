@@ -26,9 +26,11 @@ import type { AuditTrail } from "./audit-trail";
 import { analyzePublicJobDiscoverySources } from "./public-job-discovery-sources";
 import { applyTransactionDeadline } from "./transaction-deadline";
 import type { JobDiscoveryExecutionMode } from "./job-discovery-execution-mode";
+import { resolveEffectiveAccountRunPolicy } from "./account-run-policies";
+import { isDateInBackgroundWindow, isInBackgroundWindow } from "./account-run-policy-window";
 
 export class JobDiscoveryScheduleError extends Error {
-  constructor(public readonly code: "JOB_DISCOVERY_SCHEDULE_TARGET_NOT_FOUND" | "JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE" | "JOB_DISCOVERY_SCHEDULE_VERSION_CONFLICT" | "SOURCE_POLICY_REQUIRED" | "NO_SUPPORTED_SOURCE" | "PROFILE_UNAVAILABLE") { super(code); }
+  constructor(public readonly code: "JOB_DISCOVERY_SCHEDULE_TARGET_NOT_FOUND" | "JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE" | "JOB_DISCOVERY_SCHEDULE_VERSION_CONFLICT" | "SOURCE_POLICY_REQUIRED" | "NO_SUPPORTED_SOURCE" | "PROFILE_UNAVAILABLE" | "ACCOUNT_RUN_POLICY_WINDOW_CLOSED") { super(code); }
 }
 
 type Dependencies = { db: Database; runs: AgentRunStarter; auditTrail: AuditTrail; id: () => string; clock: () => Date; executionMode?: JobDiscoveryExecutionMode };
@@ -74,13 +76,27 @@ async function scheduleTarget(db: Pick<Database, "select">, userId: string, targ
   return target;
 }
 
-async function dispatchReason(db: Pick<Database, "select">, userId: string, targetId: string, executionMode?: JobDiscoveryExecutionMode): Promise<"TARGET_INACTIVE" | "NO_SUPPORTED_SOURCE" | "SOURCE_POLICY_REQUIRED" | "PROFILE_UNAVAILABLE" | null> {
+async function dispatchReason(db: Pick<Database, "select" | "insert" | "update">, userId: string, targetId: string, executionMode?: JobDiscoveryExecutionMode, now?: Date, scheduledFor?: Date, context?: { id: () => string; clock: () => Date }): Promise<"TARGET_INACTIVE" | "NO_SUPPORTED_SOURCE" | "SOURCE_POLICY_REQUIRED" | "PROFILE_UNAVAILABLE" | "ACCOUNT_RUN_POLICY_WINDOW_CLOSED" | null> {
+  const policy = await resolveEffectiveAccountRunPolicy(db, userId, context);
+  if (now) {
+    const window = policy.effective.backgroundWindow;
+    if (!isDateInBackgroundWindow(now, window) || (scheduledFor && !isDateInBackgroundWindow(scheduledFor, window))) return "ACCOUNT_RUN_POLICY_WINDOW_CLOSED";
+  }
   const target = await scheduleTarget(db, userId, targetId);
   if (target.state !== "active") return "TARGET_INACTIVE";
   // v4 总会冻结 general/site public discovery；Greenhouse 仅是可选 trusted branch。
   if (executionMode === "layered_public") {
     const [profile] = await db.select({ version: jobProfiles.version }).from(jobProfiles).where(eq(jobProfiles.userId, userId)).limit(1);
-    return profile && profile.version > 0 ? null : "PROFILE_UNAVAILABLE";
+    if (!profile || profile.version <= 0) return "PROFILE_UNAVAILABLE";
+    const [watchlist] = await db.select({ items: companyWatchlistRevisions.items }).from(companyWatchlists).innerJoin(companyWatchlistRevisions, and(
+      eq(companyWatchlistRevisions.userId, companyWatchlists.userId),
+      eq(companyWatchlistRevisions.watchlistId, companyWatchlists.id),
+      eq(companyWatchlistRevisions.version, companyWatchlists.version),
+    )).where(and(eq(companyWatchlists.userId, userId), eq(companyWatchlists.targetId, targetId)));
+    const analysis = analyzePublicJobDiscoverySources(watchlist);
+    const trustedAvailable = analysis.status === "executable" && analysis.sources.slice(0, policy.effective.discovery.trustedSourceLimit).length > 0;
+    const publicAvailable = policy.effective.discovery.enabledProviders.includes("anysearch") && policy.effective.discovery.publicQueryLimit > 0;
+    return trustedAvailable || publicAvailable ? null : "NO_SUPPORTED_SOURCE";
   }
   const [watchlist] = await db.select({ items: companyWatchlistRevisions.items }).from(companyWatchlists).innerJoin(companyWatchlistRevisions, and(
     eq(companyWatchlistRevisions.userId, companyWatchlists.userId),
@@ -88,19 +104,24 @@ async function dispatchReason(db: Pick<Database, "select">, userId: string, targ
     eq(companyWatchlistRevisions.version, companyWatchlists.version),
   )).where(and(eq(companyWatchlists.userId, userId), eq(companyWatchlists.targetId, targetId)));
   const analysis = analyzePublicJobDiscoverySources(watchlist);
-  return analysis.status === "policy_required" ? "SOURCE_POLICY_REQUIRED" : analysis.status === "unsupported" ? "NO_SUPPORTED_SOURCE" : null;
+  return analysis.status === "policy_required" ? "SOURCE_POLICY_REQUIRED" : analysis.status === "unsupported" || analysis.sources.slice(0, policy.effective.discovery.trustedSourceLimit).length === 0 ? "NO_SUPPORTED_SOURCE" : null;
 }
 
-async function sourceSupport(db: Pick<Database, "select">, userId: string, targetId: string, executionMode?: JobDiscoveryExecutionMode): Promise<JobDiscoverySourceSupport> {
+async function sourceSupport(db: Pick<Database, "select" | "insert">, userId: string, targetId: string, executionMode?: JobDiscoveryExecutionMode, context?: { id: () => string; clock: () => Date }): Promise<JobDiscoverySourceSupport> {
   const [watchlist] = await db.select({ items: companyWatchlistRevisions.items }).from(companyWatchlists).innerJoin(companyWatchlistRevisions, and(
     eq(companyWatchlistRevisions.userId, companyWatchlists.userId),
     eq(companyWatchlistRevisions.watchlistId, companyWatchlists.id),
     eq(companyWatchlistRevisions.version, companyWatchlists.version),
   )).where(and(eq(companyWatchlists.userId, userId), eq(companyWatchlists.targetId, targetId)));
   const analysis = analyzePublicJobDiscoverySources(watchlist);
-  if (executionMode === "layered_public") return { status: "executable", supportedSourceCount: analysis.status === "executable" ? analysis.sources.length : 0 };
+  const policy = await resolveEffectiveAccountRunPolicy(db, userId, context);
+  const supportedSourceCount = analysis.status === "executable" ? analysis.sources.slice(0, policy.effective.discovery.trustedSourceLimit).length : 0;
+  if (executionMode === "layered_public") {
+    const publicAvailable = policy.effective.discovery.enabledProviders.includes("anysearch") && policy.effective.discovery.publicQueryLimit > 0;
+    return supportedSourceCount > 0 || publicAvailable ? { status: "executable", supportedSourceCount } : { status: "unsupported" };
+  }
   if (analysis.status === "policy_required") return { status: "policy_required", message: "需允许 boards-api.greenhouse.io" };
-  return analysis.status === "unsupported" ? { status: "unsupported" } : { status: "executable", supportedSourceCount: analysis.sources.length };
+  return analysis.status === "unsupported" || supportedSourceCount === 0 ? { status: "unsupported" } : { status: "executable", supportedSourceCount };
 }
 
 async function appendScheduleAudit(auditTrail: AuditTrail, input: {
@@ -131,7 +152,7 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
         throw error;
       }
       const [schedule] = await deps.db.select().from(jobDiscoverySchedules).where(and(eq(jobDiscoverySchedules.userId, input.userId), eq(jobDiscoverySchedules.targetId, input.targetId)));
-      return JobDiscoveryScheduleResponseSchema.parse({ schedule: schedule ? scheduleView(schedule) : null, sourceSupport: await sourceSupport(deps.db, input.userId, input.targetId, deps.executionMode) });
+      return JobDiscoveryScheduleResponseSchema.parse({ schedule: schedule ? scheduleView(schedule) : null, sourceSupport: await sourceSupport(deps.db, input.userId, input.targetId, deps.executionMode, { id: deps.id, clock: deps.clock }) });
     },
     async set(input) {
       const command = SetJobDiscoveryScheduleCommandSchema.parse(input.command);
@@ -141,10 +162,13 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
         const target = await scheduleTarget(transaction, input.userId, input.targetId);
         if (command.state === "enabled" && target.state !== "active") throw new JobDiscoveryScheduleError("JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE");
         if (command.state === "enabled") {
-          const reason = await dispatchReason(transaction, input.userId, input.targetId, deps.executionMode);
+          const policy = await resolveEffectiveAccountRunPolicy(transaction, input.userId, { id: deps.id, clock: deps.clock });
+          if (!isInBackgroundWindow(command.dailyTime, policy.effective.backgroundWindow)) throw new JobDiscoveryScheduleError("ACCOUNT_RUN_POLICY_WINDOW_CLOSED");
+          const reason = await dispatchReason(transaction, input.userId, input.targetId, deps.executionMode, undefined, undefined, { id: deps.id, clock: deps.clock });
           if (reason === "SOURCE_POLICY_REQUIRED") throw new JobDiscoveryScheduleError("SOURCE_POLICY_REQUIRED");
           if (reason === "NO_SUPPORTED_SOURCE") throw new JobDiscoveryScheduleError("NO_SUPPORTED_SOURCE");
           if (reason === "PROFILE_UNAVAILABLE") throw new JobDiscoveryScheduleError("PROFILE_UNAVAILABLE");
+          if (reason === "ACCOUNT_RUN_POLICY_WINDOW_CLOSED") throw new JobDiscoveryScheduleError("ACCOUNT_RUN_POLICY_WINDOW_CLOSED");
         }
         const [current] = await transaction.select().from(jobDiscoverySchedules).where(and(eq(jobDiscoverySchedules.userId, input.userId), eq(jobDiscoverySchedules.targetId, input.targetId)));
         const currentVersion = current?.version ?? 0;
@@ -217,7 +241,7 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
               .where(and(eq(jobDiscoveryScheduleOccurrences.id, occurrence.id), eq(jobDiscoveryScheduleOccurrences.status, "pending"))).returning();
             if (dispatched) await appendScheduleAudit(auditTrail, { userId: dispatched.userId, requestId: deps.id(), eventType: "occurrence_dispatched", scheduleId: dispatched.scheduleId, targetId: dispatched.targetId, occurrenceId: dispatched.id, runId, scheduledFor: dispatched.scheduledFor, state: "dispatched", now });
           };
-          const skip = async (reason: "TARGET_INACTIVE" | "NO_SUPPORTED_SOURCE" | "SOURCE_POLICY_REQUIRED" | "PROFILE_UNAVAILABLE") => {
+          const skip = async (reason: "TARGET_INACTIVE" | "NO_SUPPORTED_SOURCE" | "SOURCE_POLICY_REQUIRED" | "PROFILE_UNAVAILABLE" | "ACCOUNT_RUN_POLICY_WINDOW_CLOSED") => {
             const [skipped] = await transaction.update(jobDiscoveryScheduleOccurrences).set({ status: "skipped", runId: null, skipReason: reason })
               .where(and(eq(jobDiscoveryScheduleOccurrences.id, occurrence.id), eq(jobDiscoveryScheduleOccurrences.status, "pending"))).returning();
             if (skipped) await appendScheduleAudit(auditTrail, { userId: skipped.userId, requestId: deps.id(), eventType: "occurrence_skipped", scheduleId: skipped.scheduleId, targetId: skipped.targetId, occurrenceId: skipped.id, scheduledFor: skipped.scheduledFor, state: "skipped", now });
@@ -232,7 +256,7 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
           }
 
           let reason: Awaited<ReturnType<typeof dispatchReason>>;
-          try { reason = await dispatchReason(transaction, occurrence.userId, occurrence.targetId, deps.executionMode); } catch (error) {
+          try { reason = await dispatchReason(transaction, occurrence.userId, occurrence.targetId, deps.executionMode, now, occurrence.scheduledFor, { id: deps.id, clock: deps.clock }); } catch (error) {
             if (!(error instanceof JobDiscoveryScheduleError)) throw error;
             reason = "TARGET_INACTIVE";
           }
@@ -244,8 +268,13 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
             const run = await deps.runs.start({ userId: occurrence.userId, requestId: deps.id(), command: { targetId: occurrence.targetId, idempotencyKey: occurrence.id }, trigger: { kind: "schedule", occurrenceId: occurrence.id, scheduledFor: occurrence.scheduledFor }, deadline });
             await dispatch(run.runId);
           } catch (error) {
-            if (!(error instanceof AgentRunError) || error.code !== "AGENT_RUN_TARGET_INACTIVE") throw error;
-            await skip("TARGET_INACTIVE");
+            if (!(error instanceof AgentRunError)) throw error;
+            if (error.code === "AGENT_RUN_TARGET_INACTIVE") { await skip("TARGET_INACTIVE"); continue; }
+            if (error.code === "AGENT_RUN_UNAVAILABLE") {
+              const retryReason = await dispatchReason(transaction, occurrence.userId, occurrence.targetId, deps.executionMode, deps.clock(), occurrence.scheduledFor, { id: deps.id, clock: deps.clock });
+              if (retryReason) { await skip(retryReason); continue; }
+            }
+            throw error;
           }
         }
       });

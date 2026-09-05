@@ -19,6 +19,8 @@ import { createAuditTrail, type AuditTrail } from "./audit-trail";
 import { createAgentRunCommands, createAgentRunQueries, type AgentRunQueue, type AgentRunStarter } from "./agent-runs";
 import { createCompanyWatchlistCommands } from "./company-watchlists";
 import { JobDiscoveryScheduleError, createJobDiscoverySchedules } from "./job-discovery-schedules";
+import { createAccountRunPolicies } from "./account-run-policies";
+import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-policies";
 
 const now = new Date("2026-08-30T01:31:00.000Z");
 const constraints = {
@@ -121,6 +123,81 @@ describe("job discovery schedules", () => {
 
     const inactive = await target("inactive");
     await expect(service.set({ userId: inactive.userId, targetId: inactive.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } })).rejects.toMatchObject({ code: "JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE" } satisfies Partial<JobDiscoveryScheduleError>);
+  });
+
+  it("仅在账户后台窗口内启用每日检查，并支持跨日窗口", async () => {
+    const policy = createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now });
+    const crossDaySettings = {
+      discovery: { trustedSourceLimit: 50, publicQueryLimit: 5, verificationCandidateLimit: 10, enabledProviders: ["anysearch"] as ["anysearch"] },
+      budgets: {
+        publicDiscovery: { maxActiveDurationMs: 180_000, maxAttempts: 3, maxToolCalls: 60, maxResults: 5, maxModelCalls: 0, maxTokens: 0 },
+        deepMatch: { maxActiveDurationMs: 180_000, maxAttempts: 3, maxToolCalls: 0, maxResults: 10, maxModelCalls: 10, maxTokens: 20_000 },
+        fake: { maxActiveDurationMs: 60_000, maxAttempts: 3, maxToolCalls: 10, maxResults: 5, maxModelCalls: 0, maxTokens: 0 },
+      },
+      backgroundWindow: { start: "22:00", end: "02:00", timeZone: "Asia/Shanghai" as const },
+    };
+    const addExecutableTarget = async (suffix: string) => {
+      const owner = await target();
+      await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: `https://boards.greenhouse.io/window-${suffix}`, allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
+      return owner;
+    };
+    const set = (owner: { userId: string; targetId: string }, at: Date, dailyTime: string) => schedules(new Queue(), at).service.set({
+      userId: owner.userId, targetId: owner.targetId, requestId: crypto.randomUUID(),
+      command: { expectedVersion: 0, state: "enabled", dailyTime },
+    });
+
+    const defaultAllowed = await addExecutableTarget("default-allowed");
+    await expect(set(defaultAllowed, new Date("2026-08-30T14:00:00.000Z"), "09:30")).resolves.toMatchObject({ state: "enabled" }); // 夜间保存明日 09:30 仍可配置
+    const defaultClosed = await addExecutableTarget("default-closed");
+    await expect(set(defaultClosed, new Date("2026-08-30T00:00:00.000Z"), "23:00")).rejects.toMatchObject({ code: "ACCOUNT_RUN_POLICY_WINDOW_CLOSED" }); // 白天不能配置窗口外 23:00
+
+    const crossDayAllowed = await addExecutableTarget("cross-day-allowed");
+    await policy.save({ userId: crossDayAllowed.userId, command: { expectedVersion: 0, settings: crossDaySettings } });
+    await expect(set(crossDayAllowed, new Date("2026-08-30T04:00:00.000Z"), "23:00")).resolves.toMatchObject({ state: "enabled" }); // 中午保存夜间 23:00 仍可配置
+    const crossDayEarlyAllowed = await addExecutableTarget("cross-day-early-allowed");
+    await policy.save({ userId: crossDayEarlyAllowed.userId, command: { expectedVersion: 0, settings: crossDaySettings } });
+    await expect(set(crossDayEarlyAllowed, new Date("2026-08-30T04:00:00.000Z"), "01:00")).resolves.toMatchObject({ state: "enabled" });
+    const crossDayClosed = await addExecutableTarget("cross-day-closed");
+    await policy.save({ userId: crossDayClosed.userId, command: { expectedVersion: 0, settings: crossDaySettings } });
+    await expect(set(crossDayClosed, new Date("2026-08-30T15:00:00.000Z"), "12:00")).rejects.toMatchObject({ code: "ACCOUNT_RUN_POLICY_WINDOW_CLOSED" }); // 夜间不能配置跨日窗口外 12:00
+  });
+
+  it("派发读取当前窗口收紧策略，但重派已冻结的运行", async () => {
+    const policy = createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now });
+    const tightenedSettings = {
+      discovery: { trustedSourceLimit: 50, publicQueryLimit: 5, verificationCandidateLimit: 10, enabledProviders: ["anysearch"] as ["anysearch"] },
+      budgets: {
+        publicDiscovery: { maxActiveDurationMs: 180_000, maxAttempts: 3, maxToolCalls: 60, maxResults: 5, maxModelCalls: 0, maxTokens: 0 },
+        deepMatch: { maxActiveDurationMs: 180_000, maxAttempts: 3, maxToolCalls: 0, maxResults: 10, maxModelCalls: 10, maxTokens: 20_000 },
+        fake: { maxActiveDurationMs: 60_000, maxAttempts: 3, maxToolCalls: 10, maxResults: 5, maxModelCalls: 0, maxTokens: 0 },
+      },
+      backgroundWindow: { start: "22:00", end: "02:00", timeZone: "Asia/Shanghai" as const },
+    };
+    const skippedOwner = await target();
+    await addWatchlistSource({ userId: skippedOwner.userId, targetId: skippedOwner.targetId, careersUrl: "https://boards.greenhouse.io/window-current-policy", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
+    const { service: skipService } = schedules(new Queue(), now); // 上海 09:31，基线窗口内
+    const skipSchedule = await skipService.set({ userId: skippedOwner.userId, targetId: skippedOwner.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
+    await database.update(jobDiscoverySchedules).set({ nextRunAt: new Date("2026-08-27T01:30:00.000Z") }).where(eq(jobDiscoverySchedules.id, skipSchedule.scheduleId));
+    const [skippedOccurrence] = await skipService.materializeDue({ limit: 1 });
+    await policy.save({ userId: skippedOwner.userId, command: { expectedVersion: 0, settings: tightenedSettings } });
+    await skipService.dispatchPending({ limit: 1 });
+    await expect(database.select({ status: jobDiscoveryScheduleOccurrences.status, skipReason: jobDiscoveryScheduleOccurrences.skipReason }).from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, skippedOccurrence!.occurrenceId))).resolves.toEqual([{ status: "skipped", skipReason: "ACCOUNT_RUN_POLICY_WINDOW_CLOSED" }]);
+
+    const retryOwner = await target();
+    await addWatchlistSource({ userId: retryOwner.userId, targetId: retryOwner.targetId, careersUrl: "https://boards.greenhouse.io/window-retry", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
+    const queue = new Queue();
+    const { service: retryService } = schedules(queue, now);
+    const retrySchedule = await retryService.set({ userId: retryOwner.userId, targetId: retryOwner.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
+    await database.update(jobDiscoverySchedules).set({ nextRunAt: new Date("2026-08-27T01:30:00.000Z") }).where(eq(jobDiscoverySchedules.id, retrySchedule.scheduleId));
+    const [retryOccurrence] = await retryService.materializeDue({ limit: 1 });
+    await retryService.dispatchPending({ limit: 1 });
+    const [frozenRun] = await database.select({ id: agentRuns.id, revision: agentRuns.accountPolicyRevisionNumber }).from(agentRuns).where(and(eq(agentRuns.userId, retryOwner.userId), eq(agentRuns.idempotencyKey, retryOccurrence!.occurrenceId)));
+    expect(frozenRun).toMatchObject({ revision: 0 });
+    await policy.save({ userId: retryOwner.userId, command: { expectedVersion: 0, settings: tightenedSettings } });
+    await database.update(jobDiscoveryScheduleOccurrences).set({ status: "pending", runId: null, skipReason: null }).where(eq(jobDiscoveryScheduleOccurrences.id, retryOccurrence!.occurrenceId));
+    await retryService.dispatchPending({ limit: 1 });
+    await expect(database.select({ status: jobDiscoveryScheduleOccurrences.status, runId: jobDiscoveryScheduleOccurrences.runId }).from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, retryOccurrence!.occurrenceId))).resolves.toEqual([{ status: "dispatched", runId: frozenRun!.id }]);
+    await expect(database.select({ revision: agentRuns.accountPolicyRevisionNumber }).from(agentRuns).where(and(eq(agentRuns.userId, retryOwner.userId), eq(agentRuns.idempotencyKey, retryOccurrence!.occurrenceId)))).resolves.toEqual([{ revision: 0 }]);
   });
 
   it("停机跨越多个时点只物化一个 occurrence，并把下一时点推进到当前之后", async () => {
@@ -268,6 +345,51 @@ describe("job discovery schedules", () => {
       .rejects.toMatchObject({ code: "PROFILE_UNAVAILABLE" });
     await database.insert(jobProfiles).values({ id: crypto.randomUUID(), userId: owner.userId, version: 1, createdAt: now, updatedAt: now });
     await expect(service.set({ userId: owner.userId, targetId: owner.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } })).resolves.toMatchObject({ state: "enabled" });
+  });
+
+  it("既有分层计划在账户关闭全部来源后稳定跳过 occurrence", async () => {
+    const owner = await target();
+    await database.insert(jobProfiles).values({ id: crypto.randomUUID(), userId: owner.userId, version: 1, createdAt: now, updatedAt: now });
+    const queue = new Queue();
+    const auditTrail = createAuditTrail({ db: database, clock: () => now });
+    const service = createJobDiscoverySchedules({
+      db: database,
+      runs: createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public" }),
+      auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public",
+    });
+    const schedule = await service.set({ userId: owner.userId, targetId: owner.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
+    await database.update(jobDiscoverySchedules).set({ nextRunAt: new Date("2026-08-27T01:30:00.000Z") }).where(eq(jobDiscoverySchedules.id, schedule.scheduleId));
+    const [occurrence] = await service.materializeDue({ limit: 1 });
+    const settings = structuredClone(systemAccountRunPolicy().effective);
+    settings.discovery = { trustedSourceLimit: 0, publicQueryLimit: 0, verificationCandidateLimit: 0, enabledProviders: [] };
+    await createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now }).save({ userId: owner.userId, command: { expectedVersion: 0, settings } });
+
+    await service.dispatchPending({ limit: 1 });
+    await expect(database.select({ status: jobDiscoveryScheduleOccurrences.status, skipReason: jobDiscoveryScheduleOccurrences.skipReason, runId: jobDiscoveryScheduleOccurrences.runId }).from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, occurrence!.occurrenceId)))
+      .resolves.toEqual([{ status: "skipped", skipReason: "NO_SUPPORTED_SOURCE", runId: null }]);
+  });
+
+  it("Greenhouse 计划在可信来源额度收紧为零后跳过，并向 UI 报告不可执行", async () => {
+    const owner = await target();
+    await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/zero-limit", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
+    await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/second-limit", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], expectedVersion: 1, companyName: "Second Limit" });
+    const { service } = schedules();
+    const oneSource = structuredClone(systemAccountRunPolicy().effective);
+    oneSource.discovery.trustedSourceLimit = 1;
+    const policies = createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now });
+    await policies.save({ userId: owner.userId, command: { expectedVersion: 0, settings: oneSource } });
+    await expect(service.get(owner)).resolves.toMatchObject({ sourceSupport: { status: "executable", supportedSourceCount: 1 } });
+    const schedule = await service.set({ userId: owner.userId, targetId: owner.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
+    await database.update(jobDiscoverySchedules).set({ nextRunAt: new Date("2026-08-27T01:30:00.000Z") }).where(eq(jobDiscoverySchedules.id, schedule.scheduleId));
+    const [occurrence] = await service.materializeDue({ limit: 1 });
+    const settings = structuredClone(oneSource);
+    settings.discovery.trustedSourceLimit = 0;
+    await policies.save({ userId: owner.userId, command: { expectedVersion: 1, settings } });
+
+    await service.dispatchPending({ limit: 1 });
+    await expect(database.select({ status: jobDiscoveryScheduleOccurrences.status, skipReason: jobDiscoveryScheduleOccurrences.skipReason }).from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, occurrence!.occurrenceId)))
+      .resolves.toEqual([{ status: "skipped", skipReason: "NO_SUPPORTED_SOURCE" }]);
+    await expect(service.get(owner)).resolves.toMatchObject({ sourceSupport: { status: "unsupported" } });
   });
 
   it("派发状态与绑定事务中的审计写入在审计失败时一起回滚", async () => {

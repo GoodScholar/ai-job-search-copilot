@@ -9,7 +9,7 @@ export class ApiException extends HttpException {
     public readonly code: string,
     status: HttpStatus,
     public readonly publicMessage: string,
-    public readonly details?: { dependencies: Record<string, "ready" | "not_ready"> },
+    public readonly details?: { dependencies?: Record<string, "ready" | "not_ready">; issues?: Array<{ reasonCode: string; path: string[]; maximum: number | null; suggestedAction: string }> },
   ) {
     super(code, status);
   }
@@ -19,7 +19,7 @@ function getProblem(exception: unknown): {
   status: HttpStatus;
   code: string;
   message: string;
-  details?: { dependencies: Record<string, "ready" | "not_ready"> };
+  details?: { dependencies?: Record<string, "ready" | "not_ready">; issues?: Array<{ reasonCode: string; path: string[]; maximum: number | null; suggestedAction: string }> };
 } {
   if (typeof exception === "object" && exception !== null && "code" in exception) {
     const code = (exception as { code?: unknown }).code;

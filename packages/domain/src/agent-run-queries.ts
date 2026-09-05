@@ -23,6 +23,7 @@ function summary(row: RunRow): StartAgentRunResponse {
     : normalizeAgentRunSourceScope(row.sourceScope);
   return StartAgentRunResponseSchema.parse({
     runId: row.id, targetId: row.targetId, targetVersion: row.targetVersion,
+    accountPolicyRevisionNumber: row.accountPolicyRevisionNumber,
     targetSnapshot: row.targetSnapshot, sourceScope,
     workflowVersion: row.workflowVersion, adapter: row.adapter,
     adapterVersion: row.adapterVersion, outputSchemaVersion: row.outputSchemaVersion,

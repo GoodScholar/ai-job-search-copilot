@@ -25,6 +25,8 @@ const QueryPlannerInputSchema = z.object({
   targetSnapshot: LayeredPublicJobDiscoveryTargetSnapshotSchema,
   profileSnapshot: LayeredPublicJobDiscoveryProfileSnapshotSchema,
   watchlistSnapshot: LayeredPublicJobDiscoveryWatchlistSnapshotSchema,
+  publicQueryLimit: z.int().nonnegative().max(10).optional(),
+  verificationCandidateLimit: z.int().nonnegative().max(10).optional(),
 }).strict();
 
 const QueryAuditInputSchema = z.object({
@@ -162,13 +164,13 @@ export function createAnySearchQueryPlan(input: unknown) {
       watchlistItemId: company.watchlistItemId,
       watchlistVersion: watchlistSnapshot.version,
     })),
-  ].map((query, index) => ({ ...query, ordinal: index + 1 }));
+  ].slice(0, snapshots.publicQueryLimit ?? 10).map((query, index) => ({ ...query, ordinal: index + 1 }));
 
   return LayeredPublicJobDiscoveryQueryPlanSchema.parse({
     provider: "anysearch",
     queries,
     batchSize: 5,
-    maxVerificationCandidates: 10,
+    maxVerificationCandidates: snapshots.verificationCandidateLimit ?? 10,
   });
 }
 

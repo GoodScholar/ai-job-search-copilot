@@ -133,6 +133,13 @@ async function configureAccount(request: APIRequestContext, scenario: { subject:
     headers: { authorization: "Bearer " + token }, data: { expectedVersion: 0, factType: "skill", factValue: { name: "TypeScript" } },
   });
   expect(profile.status()).toBe(201);
+  const currentPolicy = await request.get(apiBaseUrl + "/v1/account/run-policy", { headers: { authorization: "Bearer " + token } });
+  expect(currentPolicy.status()).toBe(200);
+  const policy = await currentPolicy.json() as { revision: { revisionNumber: number }; effective: { discovery: { publicQueryLimit: number } } & Record<string, unknown> };
+  const settings = structuredClone(policy.effective);
+  settings.discovery.publicQueryLimit = 6;
+  const savedPolicy = await request.put(apiBaseUrl + "/v1/account/run-policy", { headers: { authorization: "Bearer " + token }, data: { expectedVersion: policy.revision.revisionNumber, settings } });
+  expect(savedPolicy.status()).toBe(200);
   return { token, userId: sessionBody.account.userId, targetId };
 }
 

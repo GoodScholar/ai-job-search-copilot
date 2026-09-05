@@ -17,14 +17,17 @@ import {
 } from "@job-copilot/database";
 import type { AuditTrail } from "./audit-trail";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
+import { effectiveAgentRunBudget, type AgentRunBudget } from "./effective-agent-run-budget";
 import { agentRunUsageSnapshot, appendBudgetFacts, settleActiveSlice } from "./agent-run-lifecycle";
 import { discoveryNormalizedData, persistJobOpportunity } from "./job-opportunity-persistence";
 import { deriveSourceHealthTerminal } from "./source-health-terminal";
 import type { SourceHealthTerminal } from "./source-health-terminal";
 import { GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, JobSourceHealthCheckSchema, PublicAgentRunSourceScopeSchema, PublicSourceHealthAgentRunSourceScopeSchema, type JobSourceHealthCheck } from "@job-copilot/contracts/agent-runs";
 import { LayeredPublicJobDiscoverySourceScopeSchema } from "@job-copilot/contracts/job-discovery";
+import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-policies";
 import { SourceCapabilityRejectionReasonCodeSchema } from "@job-copilot/contracts/source-capabilities";
 import { SourceExecutionActionSchema, type SourceExecutionAction } from "./source-capabilities";
+import { narrowGreenhouseSourceScope } from "./agent-run-source-scope";
 import { z } from "zod";
 
 const PersistedCapabilityIssueSchema = z.object({
@@ -34,6 +37,7 @@ const PersistedCapabilityIssueSchema = z.object({
   action: SourceExecutionActionSchema,
   affectedCount: z.literal(1),
 }).strict();
+const currentTrustedSourceLimit = systemAccountRunPolicy().system.hardLimits.discovery.trustedSourceLimit;
 
 export type DiscoveryDetail = {
   sourceId: string;
@@ -374,8 +378,8 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
           }
           if (run.workflowVersion === GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION || run.workflowVersion === "job-discovery-workflow-v2") {
             const frozenSources = (run.workflowVersion === GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION
-              ? PublicSourceHealthAgentRunSourceScopeSchema.parse(run.sourceScope)
-              : PublicAgentRunSourceScopeSchema.parse(run.sourceScope)).sources;
+              ? PublicSourceHealthAgentRunSourceScopeSchema.parse(narrowGreenhouseSourceScope(run.sourceScope, currentTrustedSourceLimit))
+              : PublicAgentRunSourceScopeSchema.parse(narrowGreenhouseSourceScope(run.sourceScope, currentTrustedSourceLimit))).sources;
             const frozenSourceIds = new Set(frozenSources.map((source) => source.sourceId));
             if ([...sourceIds].some((sourceId) => !frozenSourceIds.has(sourceId))
               || (sourceIds.size !== frozenSourceIds.size && (input.sourceIssues?.length ?? 0) === 0)) {
@@ -390,7 +394,7 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
         }) ?? [];
         if (sourceChecks.some((check) => check.runId !== run.id || check.targetId !== run.targetId) || new Set(sourceChecks.map((check) => check.sourceId)).size !== sourceChecks.length) throw new Error("AGENT_RUN_PERSIST_FAILED");
         if (run.workflowVersion === GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION) {
-          const frozenSources = PublicSourceHealthAgentRunSourceScopeSchema.parse(run.sourceScope).sources;
+          const frozenSources = PublicSourceHealthAgentRunSourceScopeSchema.parse(narrowGreenhouseSourceScope(run.sourceScope, currentTrustedSourceLimit)).sources;
           const sourceById = new Map(frozenSources.map((source) => [source.sourceId, source.watchlistItemId]));
           let validIssues: Array<z.infer<typeof PersistedCapabilityIssueSchema>>;
           try { validIssues = (input.sourceIssues ?? []).map((issue) => PersistedCapabilityIssueSchema.parse(issue)); }
@@ -487,17 +491,20 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
         if (sourceType) for (const scan of input.scans) (await closeMissingSourcePostings(transaction, { id: deps.id, userId: run.userId, sourceType, scan, now: input.now })).forEach((opportunityId) => opportunityIds.add(opportunityId));
         const openOpportunityIds = await recomputeOpportunityAvailability(transaction, { userId: run.userId, opportunityIds, now: input.now });
         let resultCount = 0;
-        const [lastResult] = await transaction.select({ ordinal: agentRunJobResults.ordinal }).from(agentRunJobResults)
+        const existingResults = await transaction.select({ ordinal: agentRunJobResults.ordinal }).from(agentRunJobResults)
           .where(and(eq(agentRunJobResults.userId, run.userId), eq(agentRunJobResults.runId, run.id)))
-          .orderBy(desc(agentRunJobResults.ordinal)).limit(1);
-        let nextOrdinal = (lastResult?.ordinal ?? 0) + 1;
+          .orderBy(desc(agentRunJobResults.ordinal));
+        const maxResults = effectiveAgentRunBudget(run.workflowVersion, run.budgetSnapshot as AgentRunBudget).maxResults;
+        let nextOrdinal = (existingResults[0]?.ordinal ?? 0) + 1;
+        let remainingResults = Math.max(0, maxResults - existingResults.length);
         for (const result of resultRows) {
           // reconciliation can close an item selected earlier in this batch; only
           // the final, transaction-visible availability may produce a result.
-          if (!openOpportunityIds.has(result.opportunityId)) continue;
+          if (!openOpportunityIds.has(result.opportunityId) || remainingResults === 0) continue;
           const inserted = await transaction.insert(agentRunJobResults).values({ id: deps.id(), userId: run.userId, runId: run.id, opportunityId: result.opportunityId, sourcePostingVersionId: result.sourcePostingVersionId, ordinal: nextOrdinal, createdAt: input.now }).onConflictDoNothing().returning({ id: agentRunJobResults.id });
           if (!inserted[0]) continue;
           resultCount += 1;
+          remainingResults -= 1;
           nextOrdinal += 1;
           await transaction.insert(agentRunUsageEntries).values({ id: deps.id(), userId: run.userId, runId: run.id, usageKey: `${run.claimToken}:result:${result.sourcePostingVersionId}`, category: "result", amount: 1, stepKey: "persist_results", attemptCount: run.attemptCount, createdAt: input.now }).onConflictDoNothing();
         }
@@ -506,8 +513,8 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
         const budgetChanged = elapsed > 0 || resultCount > 0;
         const budgetVersion = budgetChanged ? run.version + 1 : run.version;
         if (budgetChanged) {
-          const usage = agentRunUsageSnapshot(run, { activeDurationMs, resultCount: run.resultCount + resultCount });
-          await transaction.update(agentRuns).set({ activeDurationMs, resultCount: run.resultCount + resultCount, version: budgetVersion, updatedAt: input.now }).where(and(eq(agentRuns.userId, run.userId), eq(agentRuns.id, run.id), eq(agentRuns.claimToken, run.claimToken)));
+          const usage = agentRunUsageSnapshot(run, { activeDurationMs, resultCount: existingResults.length + resultCount });
+          await transaction.update(agentRuns).set({ activeDurationMs, resultCount: existingResults.length + resultCount, version: budgetVersion, updatedAt: input.now }).where(and(eq(agentRuns.userId, run.userId), eq(agentRuns.id, run.id), eq(agentRuns.claimToken, run.claimToken)));
           await appendBudgetFacts(transaction, { id: deps.id, auditTrail: deps.auditTrail, userId: run.userId, requestId: run.id, runId: run.id, version: budgetVersion, currentStep: "persist_results", usage, consumed: { activeDurationMs: elapsed, toolCalls: 0, sourceRequests: 0, modelCalls: 0 }, now: input.now });
         }
         const stepVersion = budgetVersion + 1;
@@ -516,17 +523,17 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
         await appendEvent(transaction, { id: deps.id, userId: run.userId, runId: run.id, version: stepVersion, eventType: "step.completed", data: { eventType: "step.completed", status: "running", currentStep: "persist_results", stepKey: "persist_results", attemptCount: run.attemptCount }, now: input.now });
         const terminalVersion = stepVersion + 1;
         const failed = terminal === "source_failed";
-        await transaction.update(agentRuns).set({ status: failed ? "failed" : "completed", currentStep: failed ? "failed" : "completed", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, activeDurationMs, ...(failed ? { failedAt: input.now, failureCode: "AGENT_RUN_ADAPTER_FAILED", terminationKind: "source_failed" } : { completedAt: input.now, failureCode: null, terminationKind: terminal }), terminationBudgetDimension: null, resultCount: run.resultCount + resultCount, version: terminalVersion, updatedAt: input.now }).where(and(eq(agentRuns.userId, run.userId), eq(agentRuns.id, run.id), eq(agentRuns.claimToken, run.claimToken), eq(agentRuns.controlState, "none")));
+        await transaction.update(agentRuns).set({ status: failed ? "failed" : "completed", currentStep: failed ? "failed" : "completed", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, activeDurationMs, ...(failed ? { failedAt: input.now, failureCode: "AGENT_RUN_ADAPTER_FAILED", terminationKind: "source_failed" } : { completedAt: input.now, failureCode: null, terminationKind: terminal }), terminationBudgetDimension: null, resultCount: existingResults.length + resultCount, version: terminalVersion, updatedAt: input.now }).where(and(eq(agentRuns.userId, run.userId), eq(agentRuns.id, run.id), eq(agentRuns.claimToken, run.claimToken), eq(agentRuns.controlState, "none")));
         const terminalSequence = await appendEvent(transaction, {
           id: deps.id, userId: run.userId, runId: run.id, version: terminalVersion,
           eventType: failed ? "run.failed" : "run.completed",
           data: failed
             ? { eventType: "run.failed", status: "failed", currentStep: "failed", attemptCount: run.attemptCount, failureCode: "AGENT_RUN_ADAPTER_FAILED" }
-            : { eventType: "run.completed", status: "completed", currentStep: "completed", attemptCount: run.attemptCount, resultCount: run.resultCount + resultCount },
+            : { eventType: "run.completed", status: "completed", currentStep: "completed", attemptCount: run.attemptCount, resultCount: existingResults.length + resultCount },
           now: input.now,
         });
         if (failed) await deps.auditTrail.bind(transaction).append({ userId: run.userId, actorUserId: run.userId, eventType: "agent.run_failed", occurredAt: input.now, requestId: run.id, outcome: "failure", reasonCode: "AGENT_RUN_ADAPTER_FAILED", resourceType: "agent_run", resourceId: run.id, metadata: { runId: run.id, targetId: run.targetId, attemptCount: run.attemptCount, failureCode: "AGENT_RUN_ADAPTER_FAILED" } });
-        else await deps.auditTrail.bind(transaction).append({ userId: run.userId, actorUserId: run.userId, eventType: "agent.run_completed", occurredAt: input.now, requestId: run.id, outcome: "success", reasonCode: "AGENT_RUN_COMPLETED", resourceType: "agent_run", resourceId: run.id, metadata: { runId: run.id, targetId: run.targetId, attemptCount: run.attemptCount, resultCount: run.resultCount + resultCount } });
+        else await deps.auditTrail.bind(transaction).append({ userId: run.userId, actorUserId: run.userId, eventType: "agent.run_completed", occurredAt: input.now, requestId: run.id, outcome: "success", reasonCode: "AGENT_RUN_COMPLETED", resourceType: "agent_run", resourceId: run.id, metadata: { runId: run.id, targetId: run.targetId, attemptCount: run.attemptCount, resultCount: existingResults.length + resultCount } });
         for (const check of sourceChecks.filter((item) => item.status === "parser_degraded" || item.status === "rate_limited" || item.status === "hard_failed")) {
           const [item] = await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: run.userId, runId: run.id, triggerEventSequence: null, watchlistItemId: check.watchlistItemId, sourceHealthCheckId: persistedCheckIds.get(check.sourceId)!, kind: "source_attention", status: "unread", reasonCode: "SOURCE_HEALTH_ATTENTION", budgetDimension: null, createdAt: input.now }).onConflictDoNothing().returning({ id: agentInboxItems.id });
           if (item) await deps.auditTrail.bind(transaction).append({ userId: run.userId, actorUserId: run.userId, eventType: "agent.inbox_opened", occurredAt: input.now, requestId: run.id, outcome: "success", reasonCode: "SOURCE_HEALTH_ATTENTION", resourceType: "agent_inbox_item", resourceId: item.id, metadata: { runId: run.id, kind: "source_attention", reasonCode: "SOURCE_HEALTH_ATTENTION", budgetDimension: null } });

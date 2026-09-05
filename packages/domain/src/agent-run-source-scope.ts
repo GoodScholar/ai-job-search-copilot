@@ -8,6 +8,15 @@ import {
   FAKE_JOB_DISCOVERY_SOURCE_IDS,
 } from "@job-copilot/contracts/agent-runs";
 
+/** 历史冻结来源只在执行时收窄，原快照仍用于审计。 */
+export function narrowGreenhouseSourceScope(sourceScope: unknown, trustedSourceLimit: number): unknown {
+  if (!sourceScope || typeof sourceScope !== "object" || Array.isArray(sourceScope)) return sourceScope;
+  const scope = sourceScope as Record<string, unknown>;
+  return scope.adapter === "greenhouse" && Array.isArray(scope.sources)
+    ? { ...scope, sources: scope.sources.slice(0, trustedSourceLimit) }
+    : sourceScope;
+}
+
 function isLegacySourceScope(value: unknown): value is {
   kind: "company_watchlist";
   adapter: "fake";

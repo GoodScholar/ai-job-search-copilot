@@ -107,7 +107,7 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
     trusted = await deps.trustedSources.discover({ userId: value.userId, runId: value.runId, claimToken: value.claimToken, now: value.now, executionSpec: spec, signal: value.signal, beforeRequest: (watchlistItemId) => value.beforePhysicalOperation({ kind: "search", identity: watchlistItemId }) });
     sourcePostingVersionIds.push(...trusted.verifiedSourcePostingVersionIds);
     sourceIssues.push(...(trusted.sourceIssues?.map((issue) => ({ provider: "greenhouse" as const, ...issue })) ?? []));
-    if (deps.anySearch.isConfigured?.() === false) {
+    if (spec.sourceScope.publicDiscovery.queries.length > 0 && deps.anySearch.isConfigured?.() === false) {
       const code = "ANYSEARCH_NOT_CONFIGURED";
       recordDiagnostic({ scope: "provider", code, retryable: false, affectedCount: 1 });
       sourceIssues.push({ provider: "anysearch", code, affectedCount: 1 });

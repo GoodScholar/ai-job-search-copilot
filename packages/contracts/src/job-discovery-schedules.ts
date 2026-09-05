@@ -49,7 +49,7 @@ export const JobDiscoveryScheduleOccurrenceSchema = z.object({
   scheduledFor: z.iso.datetime(),
   status: z.enum(["pending", "dispatched", "skipped"]),
   runId: z.uuid().nullable(),
-  skipReason: z.enum(["TARGET_INACTIVE", "NO_SUPPORTED_SOURCE", "SOURCE_POLICY_REQUIRED", "PROFILE_UNAVAILABLE"]).nullable(),
+  skipReason: z.enum(["TARGET_INACTIVE", "NO_SUPPORTED_SOURCE", "SOURCE_POLICY_REQUIRED", "PROFILE_UNAVAILABLE", "ACCOUNT_RUN_POLICY_WINDOW_CLOSED"]).nullable(),
 }).strict().superRefine((occurrence, context) => {
   const validOutcome = (occurrence.status === "pending" && occurrence.runId === null && occurrence.skipReason === null)
     || (occurrence.status === "dispatched" && occurrence.runId !== null && occurrence.skipReason === null)

@@ -121,7 +121,7 @@ export const LayeredPublicJobDiscoveryQuerySchema = z.object({
 
 export const LayeredPublicJobDiscoveryQueryPlanSchema = z.object({
   provider: z.literal("anysearch"),
-  queries: z.array(LayeredPublicJobDiscoveryQuerySchema).min(1).max(10).refine(
+  queries: z.array(LayeredPublicJobDiscoveryQuerySchema).max(10).refine(
     (queries) => new Set(queries.map((query) => query.queryId)).size === queries.length,
     { message: "query IDs must be unique" },
   ).refine(
@@ -129,7 +129,7 @@ export const LayeredPublicJobDiscoveryQueryPlanSchema = z.object({
     { message: "query stable fingerprints must be unique" },
   ),
   batchSize: z.literal(5),
-  maxVerificationCandidates: z.literal(10),
+  maxVerificationCandidates: nonnegativeInteger.max(10),
 }).strict().superRefine((plan, context) => {
   if (plan.queries.some((query, index) => query.ordinal !== index + 1)) {
     context.addIssue({ code: "custom", path: ["queries"], message: "queries must have contiguous deterministic ordinals" });

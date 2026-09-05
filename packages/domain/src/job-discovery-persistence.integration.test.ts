@@ -505,6 +505,23 @@ describe("job discovery persistence lifecycle", () => {
     await expect(database.select({ metadata: auditEvents.metadata }).from(auditEvents).where(and(eq(auditEvents.resourceId, run.id), eq(auditEvents.eventType, "agent.run_completed")))).resolves.toEqual([{ metadata: expect.objectContaining({ resultCount: 2 }) }]);
   });
 
+  it("结果额度耗尽时仍保存来源事实，但不追加运行结果或夸大完成报告", async () => {
+    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID();
+    await database.insert(jobAccounts).values({ id: userId });
+    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: firstSeen, updatedAt: firstSeen });
+    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: firstSeen });
+    const persistence = createJobDiscoveryPersistence({ db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => firstSeen }) });
+    const run = await claimRun(userId, targetId, firstSeen);
+    const budgetSnapshot = { maxActiveDurationMs: 60_000, maxAttempts: 3, maxToolCalls: 10, maxResults: 1, maxModelCalls: 0, maxTokens: 0 };
+    await database.update(agentRuns).set({ budgetSnapshot }).where(eq(agentRuns.id, run.id));
+    const details = ["first", "second"].map((detailId) => ({ sourceId: "greenhouse:limited", detailId, company: "Fictional", title: `Limited ${detailId}`, location: null, postedAt: null, deadline: null, sourceType: "company_careers" as const, isOfficial: true as const, rawPayload: { detailId } }));
+
+    await expect(persistence.persistSuccessfulDiscovery({ run: { ...run, budgetSnapshot }, details, scans: [{ sourceId: "greenhouse:limited", observedDetailIds: details.map((detail) => detail.detailId), complete: true }], storedObjects: details.map((detail) => ({ sourceId: detail.sourceId, detailId: detail.detailId, objectKey: `${detail.detailId}.json`, rawContentSha256: detail.detailId === "first" ? "a".repeat(64) : "b".repeat(64) })), now: firstSeen })).resolves.toMatchObject({ completed: true, resultCount: 1 });
+    await expect(database.select().from(jobSourcePostings).where(eq(jobSourcePostings.userId, userId))).resolves.toHaveLength(2);
+    await expect(database.select({ resultCount: agentRuns.resultCount, status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, run.id))).resolves.toEqual([{ resultCount: 1, status: "completed" }]);
+    await expect(database.select({ resultCount: sql`(${agentRunEvents.data}->>'resultCount')::int` }).from(agentRunEvents).where(and(eq(agentRunEvents.runId, run.id), eq(agentRunEvents.eventType, "run.completed")))).resolves.toEqual([{ resultCount: 1 }]);
+  });
+
   it("持久化失败回滚详情与完整扫描 reconciliation", async () => {
     const userId = crypto.randomUUID();
     const targetId = crypto.randomUUID();
@@ -670,7 +687,8 @@ describe("job discovery persistence lifecycle", () => {
     expect(statementCount).toBeLessThanOrEqual(35);
     expect(observedStatements.find((statement) => statement.query.startsWith('insert into "agent_runs"'))?.query)
       .toMatch(/\$6, default, default, \$7/u);
-    expect(Math.max(...observedStatements.map((statement) => statement.params.length))).toBeLessThanOrEqual(32);
+    // 新运行记录携带策略修订和快照，固定 SQL 形状增加两个参数。
+    expect(Math.max(...observedStatements.map((statement) => statement.params.length))).toBeLessThanOrEqual(34);
     expect(observedStatements.some((statement) => statement.query.includes("jsonb_to_recordset"))).toBe(true);
     expect(observedStatements.some((statement) => /\bin\s*\(\s*\$\d+\s*,\s*\$\d+/.test(statement.query))).toBe(false);
   });

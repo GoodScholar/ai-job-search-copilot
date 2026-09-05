@@ -64,6 +64,15 @@ it("TARGET_INACTIVE 冲突后显示目标停用且禁止继续保存", async () 
   await waitFor(() => expect(screen.getByRole("button", { name: "保存每日检查" })).toBeDisabled());
 });
 
+it("后台窗口关闭时说明应调整检查时间或运行策略", async () => {
+  const fetchMock = load();
+  render(<DiscoverySchedulePanel targetId={targetId} targetState="active" />);
+  await screen.findByText("可每日检查 2 个岗位来源");
+  fetchMock.mockResolvedValueOnce(response({ code: "ACCOUNT_RUN_POLICY_WINDOW_CLOSED" }, 400));
+  fireEvent.click(screen.getByRole("button", { name: "保存每日检查" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("该检查时间不在账户允许的后台时段内，请调整检查时间或账户运行策略。");
+});
+
 it.each([
   ["policy_required", { status: "policy_required", message: "需允许 boards-api.greenhouse.io" }],
   ["unsupported", { status: "unsupported" }],

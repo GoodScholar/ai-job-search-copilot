@@ -9,6 +9,7 @@ import type {
 } from "@job-copilot/contracts/agent-runs";
 import type { AgentInboxActionResponse, AgentInboxItem } from "@job-copilot/contracts/agent-inbox";
 import type { JobTriageVersion } from "@job-copilot/contracts/job-triage";
+import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-policies";
 
 vi.mock("server-only", () => ({}));
 
@@ -96,6 +97,7 @@ const agentRunSummary = {
   runId: agentRunId,
   targetId,
   targetVersion: 1,
+  accountPolicyRevisionNumber: null,
   targetSnapshot: { targetId, version: 1, priority: "primary", state: "active", constraints: jobTargetOverview.targets[0].constraints },
   sourceScope: {
     kind: "company_watchlist", adapter: "fake", adapterVersion: "fake-job-discovery-v1",
@@ -731,4 +733,24 @@ it("按 cursor 读取一页推荐历史，不在 BFF 抽干后续历史或排除
     items: [historyItem(firstListId, 2)], nextCursor: firstListId,
   });
   expect(fetchImpl).toHaveBeenCalledTimes(1);
+});
+
+it("账户策略客户端保留严格问题体，供 BFF 安全投影", async () => {
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+    code: "ACCOUNT_RUN_POLICY_HARD_LIMIT_EXCEEDED", message: "运行策略超过系统硬上限", requestId: "00000000-0000-4000-8000-000000000001",
+    issues: [{ reasonCode: "ACCOUNT_RUN_POLICY_HARD_LIMIT_EXCEEDED", path: ["settings", "discovery", "publicQueryLimit"], maximum: 10, suggestedAction: "reduce_to_system_hard_limit" }],
+  }), { status: 400, headers: { "content-type": "application/json" } }));
+  const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+  const command = { expectedVersion: 0, settings: systemAccountRunPolicy().effective };
+  await expect(client.saveAccountRunPolicy("a".repeat(43), command)).rejects.toMatchObject({
+    status: 400, problem: { code: "ACCOUNT_RUN_POLICY_HARD_LIMIT_EXCEEDED", issues: [expect.objectContaining({ maximum: 10 })] },
+  });
+  expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+  fetchImpl.mockResolvedValueOnce(new Response(JSON.stringify({
+    code: "ACCOUNT_RUN_POLICY_VERSION_CONFLICT", message: "账户运行策略已在其他位置更新，请刷新后重试", requestId: "00000000-0000-4000-8000-000000000002", issues: [],
+  }), { status: 409, headers: { "content-type": "application/json" } }));
+  await expect(client.saveAccountRunPolicy("a".repeat(43), command)).rejects.toMatchObject({
+    status: 409, problem: { code: "ACCOUNT_RUN_POLICY_VERSION_CONFLICT", issues: [] },
+  });
 });

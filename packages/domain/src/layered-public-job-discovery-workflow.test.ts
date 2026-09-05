@@ -98,6 +98,20 @@ describe("layered public job discovery workflow", () => {
     expect(adapterCalls).toBe(0);
   });
 
+  it("禁用公开查询时不因未配置 AnySearch 报来源问题，可信分支仍成功", async () => {
+    let searchCalls = 0;
+    const workflow = createLayeredPublicJobDiscoveryWorkflow({
+      trustedSources: { discover: async () => ({ succeeded: true, verifiedSourcePostingVersionIds: ["44444444-4444-8444-8444-444444444444"] }) },
+      anySearch: { isConfigured: () => false, search: async () => { searchCalls += 1; return { candidates: [] }; }, extract: async () => { throw new Error("UNUSED"); } },
+      preflight: async () => null, leads: { recordPendingForClaim: async () => { throw new Error("UNUSED"); } }, fetcher: { fetch: async () => { throw new Error("UNUSED"); } }, gate: { verifyForClaim: async () => { throw new Error("UNUSED"); }, rejectForClaim: async () => undefined },
+    });
+    await expect(workflow.run({
+      userId: targetId, runId, claimToken: "99999999-9999-8999-8999-999999999999", now: new Date(), attemptCount: 1,
+      executionSpec: executionSpecFor([], []) as never, beforePhysicalOperation: async () => undefined, onDiagnostics: () => undefined, signal: new AbortController().signal,
+    })).resolves.toMatchObject({ branchOutcome: { trusted: "succeeded", publicDiscovery: "failed" }, sourcePostingVersionIds: ["44444444-4444-8444-8444-444444444444"], diagnostics: [], sourceIssues: [] });
+    expect(searchCalls).toBe(0);
+  });
+
   it("缺少主动发现能力时跳过该来源并保留其它分支结果", async () => {
     let adapterCalls = 0;
     const unsupported = "greenhouse:unsupported";

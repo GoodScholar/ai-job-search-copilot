@@ -465,6 +465,7 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
         <p className="workbench-kicker">职业资料 · 候选事实</p>
         <h1 id="profile-title">从职业资料建立求职画像</h1>
         <p>系统只会提取带原文证据的候选事实；它们需要你的确认后才会进入求职画像。</p>
+        <Link className="profile-target-link workbench-touch-target" href="/profile/run-policy">管理账户运行策略</Link>
       </section>
 
       <section aria-labelledby="profile-upload-title" className="profile-upload">

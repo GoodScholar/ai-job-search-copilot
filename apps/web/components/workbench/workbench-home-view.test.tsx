@@ -50,6 +50,11 @@ it("待确认事实为零时不推断职业资料尚未建立", () => {
   expect(screen.queryByText("职业资料尚未建立")).not.toBeInTheDocument();
 });
 
+it("从首页运行区域可进入账户运行策略", () => {
+  render(<WorkbenchHomeView home={home} inbox={{ items: [] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
+  expect(screen.getByRole("link", { name: "管理运行策略" })).toHaveAttribute("href", "/profile/run-policy");
+});
+
 it("待确认事实大于零时保留确认工作流", () => {
   render(<WorkbenchHomeView home={home} inbox={{ items: [] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
   expect(screen.getByRole("heading", { name: "职业资料等待确认" })).toBeVisible();

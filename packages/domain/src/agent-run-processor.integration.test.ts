@@ -14,6 +14,8 @@ import { createJobDiscoveryPersistence } from "./job-discovery-persistence";
 import { createDeepMatchRunStarter } from "./deep-match-agent-runs";
 import { DeepMatchAdapterError, FakeDeepMatchAdapter } from "@job-copilot/contracts/deep-match";
 import { createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
+import { createAccountRunPolicies } from "./account-run-policies";
+import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-policies";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
 const constraints = { roleFamily: "AI 应用工程师", seniority: null, locations: [], workModes: [], relocation: "unknown" as const, salary: null, industries: [], dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] } };
@@ -41,18 +43,25 @@ describe("AgentRunProcessor checkpoints", () => {
   }, 60_000);
   afterAll(async () => { await database?.$client.end(); await container?.stop(); });
 
-  async function run() {
+  async function run(input: { maxResults?: number; maxAttempts?: number } = {}) {
     const userId = crypto.randomUUID();
     const targetId = crypto.randomUUID();
     await database.insert(jobAccounts).values({ id: userId });
     await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: now, updatedAt: now });
     await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: now });
+    if (input.maxResults !== undefined || input.maxAttempts !== undefined) {
+      const settings = structuredClone(systemAccountRunPolicy().effective);
+      if (input.maxResults !== undefined) settings.budgets.fake.maxResults = input.maxResults;
+      if (input.maxAttempts !== undefined) settings.budgets.fake.maxAttempts = input.maxAttempts;
+      await createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now })
+        .save({ userId, command: { expectedVersion: 0, settings } });
+    }
     const started = await createAgentRunCommands({ db: database, queue: new Queue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
       .start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
     return { userId, targetId, runId: started.runId };
   }
 
-  async function deepMatchRun() {
+  async function deepMatchRun(input: { maxCandidates?: number } = {}) {
     const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const profileId = crypto.randomUUID();
     await database.insert(jobAccounts).values({ id: userId });
     await database.insert(jobProfiles).values({ id: profileId, userId, version: 1, createdAt: now, updatedAt: now });
@@ -70,6 +79,13 @@ describe("AgentRunProcessor checkpoints", () => {
       await database.insert(jobOpportunities).values({ id: opportunityId, userId, importId: null, sourcePostingVersionId, canonicalOpportunityId: null, dedupKey: sourceHash, company: "示例科技", title: `前端工程师 ${index}`, location: "上海", postedAt: null, deadline: new Date("2026-09-20T00:00:00.000Z"), description: "需要 TypeScript", normalizedData: {}, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
       await database.insert(jobOpportunitySources).values({ id: crypto.randomUUID(), userId, opportunityId, sourcePostingVersionId, createdAt: now });
       await database.insert(jobTriageVersions).values({ id: crypto.randomUUID(), userId, opportunityId, sourcePostingVersionId, profileId, profileVersion: 1, targetId, targetVersion: 1, qualificationRuleVersion: "q1", coarseRuleVersion: "c1", overallVerdict: "pass", gateResults: {}, pendingItems: [], deadlineStatus: "valid", confidenceBasisPoints: 10_000, dimensionScores: {}, overallScore: 90 - index, threshold: 70, sequence: 1, createdAt: now });
+    }
+    if (input.maxCandidates !== undefined) {
+      const settings = structuredClone(systemAccountRunPolicy().effective);
+      settings.budgets.deepMatch.maxResults = input.maxCandidates;
+      settings.budgets.deepMatch.maxModelCalls = input.maxCandidates;
+      await createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now })
+        .save({ userId, command: { expectedVersion: 0, settings } });
     }
     const started = await createDeepMatchRunStarter({ db: database, queue: new Queue(), id: () => crypto.randomUUID(), clock: () => now })
       .start({ userId, targetId, idempotencyKey: crypto.randomUUID(), trigger: "automatic", discoveryRunId: crypto.randomUUID() });
@@ -114,6 +130,137 @@ describe("AgentRunProcessor checkpoints", () => {
       getDetail: async () => { calls.detail += 1; return { ok: true, data: { ...summary, sourceType: "company_careers", isOfficial: true, rawPayload: { source: "aurora" } } }; },
     };
   }
+
+  it("旧的超硬上限预算快照仍可读取，并按当前系统上限执行", async () => {
+    const job = await run();
+    await database.update(agentRuns).set({
+      budgetSnapshot: { maxActiveDurationMs: 600_000, maxAttempts: 99, maxToolCalls: 99, maxResults: 99, maxModelCalls: 99, maxTokens: 99_999 },
+    }).where(eq(agentRuns.id, job.runId));
+    const calls = { search: 0, detail: 0 };
+    const summaries = Array.from({ length: 5 }, (_, index) => ({ sourceId: "fake:aurora-careers", detailId: `legacy-${index}`, company: "示例科技", title: `AI 工程师 ${index}`, location: "上海", postedAt: null, deadline: null }));
+    const adapter: JobDiscoveryAdapter = {
+      adapter: "fake", adapterVersion: "test",
+      declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "fake", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
+      search: async () => ({ ok: false, error: { code: "UNUSED", retryable: false } }),
+      searchBatch: async () => { calls.search += 1; return { ok: true, data: summaries }; },
+      getDetail: async (request) => { calls.detail += 1; const summary = summaries.find((item) => item.sourceId === request.sourceId && item.detailId === request.detailId)!; return { ok: true, data: { ...summary, sourceType: "company_careers", isOfficial: true, rawPayload: {} } }; },
+    };
+    const processor = createAgentRunProcessor({
+      db: database, adapterResolver: resolver(adapter), checkpoint: checkpoint(), contentStore: new Store(),
+      auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("completed");
+    expect(calls).toEqual({ search: 1, detail: 5 });
+    await expect(database.select({ resultCount: agentRuns.resultCount, status: agentRuns.status, snapshot: agentRuns.budgetSnapshot }).from(agentRuns).where(eq(agentRuns.id, job.runId))).resolves.toEqual([
+      expect.objectContaining({ status: "completed", resultCount: 5, snapshot: expect.objectContaining({ maxResults: 99, maxAttempts: 99 }) }),
+    ]);
+  });
+
+  it("旧分层来源范围按当前 hard 上限收窄后才交给执行器", async () => {
+    const job = await layeredRun();
+    const [stored] = await database.select({ sourceScope: agentRuns.sourceScope }).from(agentRuns).where(eq(agentRuns.id, job.runId));
+    const original = stored!.sourceScope as any;
+    const trustedSources = Array.from({ length: 51 }, (_, index) => ({
+      ...original.trustedSources[0],
+      source: { ...original.trustedSources[0].source, sourceId: `greenhouse:legacy-${index}`, boardToken: `legacy-${index}`, careersUrl: `https://boards.greenhouse.io/legacy-${index}` },
+    }));
+    await database.update(agentRuns).set({ sourceScope: { ...original, trustedSources, publicDiscovery: { ...original.publicDiscovery, maxVerificationCandidates: 99 } } }).where(eq(agentRuns.id, job.runId));
+    let received: { trustedSources: unknown[]; publicDiscovery: { maxVerificationCandidates: number } } | undefined;
+    const processor = createAgentRunProcessor({
+      db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
+      layeredPublicWorkflowResolver: { resolve: (input) => { received = input.executionSpec.sourceScope; return { run: async () => ({ branchOutcome: { trusted: "succeeded", publicDiscovery: "clean_zero" }, diagnostics: [] }) }; } },
+      contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("completed");
+    expect(received).toMatchObject({ trustedSources: Array.from({ length: 50 }, () => expect.anything()), publicDiscovery: { maxVerificationCandidates: 10 } });
+  });
+
+  it("低结果额度的 fake 运行只读取并发布允许的一条详情", async () => {
+    const job = await run({ maxResults: 1 });
+    const calls = { search: 0, detail: 0 };
+    const summaries = Array.from({ length: 3 }, (_, index) => ({ sourceId: "fake:aurora-careers", detailId: `limited-${index}`, company: "示例科技", title: `AI 工程师 ${index}`, location: "上海", postedAt: null, deadline: null }));
+    const adapter: JobDiscoveryAdapter = {
+      adapter: "fake", adapterVersion: "test",
+      declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "fake", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
+      search: async () => ({ ok: false, error: { code: "UNUSED", retryable: false } }),
+      searchBatch: async () => { calls.search += 1; return { ok: true, data: summaries }; },
+      getDetail: async (request) => { calls.detail += 1; const summary = summaries.find((item) => item.sourceId === request.sourceId && item.detailId === request.detailId)!; return { ok: true, data: { ...summary, sourceType: "company_careers", isOfficial: true, rawPayload: {} } }; },
+    };
+    const processor = createAgentRunProcessor({ db: database, adapterResolver: resolver(adapter), checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("completed");
+    expect(calls).toEqual({ search: 1, detail: 1 });
+    await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({ accountPolicyRevisionNumber: 1, budget: { maxResults: 1 }, usage: { results: 1 }, results: [expect.anything()] });
+  });
+
+  it("零结果额度安全完成，不读取详情也不报告结果", async () => {
+    const job = await run({ maxResults: 0 });
+    let details = 0;
+    const adapter: JobDiscoveryAdapter = {
+      adapter: "fake", adapterVersion: "test",
+      declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "fake", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
+      search: async () => ({ ok: false, error: { code: "UNUSED", retryable: false } }),
+      searchBatch: async () => ({ ok: true, data: [{ sourceId: "fake:aurora-careers", detailId: "zero", company: "示例科技", title: "AI 工程师", location: "上海", postedAt: null, deadline: null }] }),
+      getDetail: async () => { details += 1; return { ok: false, error: { code: "UNUSED", retryable: false } }; },
+    };
+    const processor = createAgentRunProcessor({ db: database, adapterResolver: resolver(adapter), checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("completed");
+    expect(details).toBe(0);
+    await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({ status: "completed", budget: { maxResults: 0 }, usage: { results: 0 }, results: [] });
+  });
+
+  it("历史运行缺少账户策略引用时，detail 与 latest 保持 null 而不伪造新修订", async () => {
+    const job = await run();
+    await database.update(agentRuns).set({ accountPolicyRevisionNumber: null, accountPolicySnapshot: null }).where(eq(agentRuns.id, job.runId));
+    const queries = createAgentRunQueries({ db: database });
+    await expect(queries.get(job)).resolves.toMatchObject({ accountPolicyRevisionNumber: null });
+    await expect(queries.latest({ userId: job.userId })).resolves.toMatchObject({ run: { runId: job.runId, accountPolicyRevisionNumber: null } });
+  });
+
+  it("数据库拒绝半个策略引用和跨修订引用，同时允许历史双空引用", async () => {
+    const job = await run();
+    const [stored] = await database.select({ snapshot: agentRuns.accountPolicySnapshot }).from(agentRuns).where(eq(agentRuns.id, job.runId));
+    await expect(database.update(agentRuns).set({ accountPolicySnapshot: null }).where(eq(agentRuns.id, job.runId))).rejects.toMatchObject({ cause: { constraint_name: "agent_runs_policy_columns_paired" } });
+    await expect(database.update(agentRuns).set({ accountPolicyRevisionNumber: 999, accountPolicySnapshot: stored!.snapshot }).where(eq(agentRuns.id, job.runId))).rejects.toMatchObject({ cause: { constraint_name: "agent_runs_policy_owner_revision_fk" } });
+    await expect(database.update(agentRuns).set({ accountPolicyRevisionNumber: null, accountPolicySnapshot: null }).where(eq(agentRuns.id, job.runId))).resolves.toBeDefined();
+  });
+
+  it("maxAttempts 为一时，首次可重试失败后不会再次调用来源", async () => {
+    const job = await run({ maxAttempts: 1 });
+    let searches = 0;
+    const adapter: JobDiscoveryAdapter = {
+      adapter: "fake", adapterVersion: "test",
+      declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "fake", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
+      search: async () => ({ ok: false, error: { code: "UNUSED", retryable: false } }),
+      searchBatch: async () => { searches += 1; return { ok: false, error: { code: "TEMPORARY", retryable: true } }; },
+      getDetail: async () => ({ ok: false, error: { code: "UNUSED", retryable: false } }),
+    };
+    const processor = createAgentRunProcessor({ db: database, adapterResolver: resolver(adapter), checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: false })).resolves.toBe("budget_exhausted");
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: false })).resolves.toBe("budget_exhausted");
+    expect(searches).toBe(1);
+  });
+
+  it("恢复运行只使用剩余 active-duration，阻塞来源调用在累计额度耗尽时终止", async () => {
+    const job = await run();
+    await database.update(agentRuns).set({ activeDurationMs: 59_000 }).where(eq(agentRuns.id, job.runId));
+    let searches = 0;
+    const adapter: JobDiscoveryAdapter = {
+      adapter: "fake", adapterVersion: "test",
+      declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "fake", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
+      search: async () => ({ ok: false, error: { code: "UNUSED", retryable: false } }),
+      searchBatch: async () => { searches += 1; await new Promise((resolve) => setTimeout(resolve, 1_500)); return { ok: true as const, data: [] }; },
+      getDetail: async () => ({ ok: false, error: { code: "UNUSED", retryable: false } }),
+    };
+    const clock = () => new Date();
+    const processor = createAgentRunProcessor({ db: database, adapterResolver: resolver(adapter), checkpoint: createAgentRunCheckpoint({ db: database, auditTrail: createAuditTrail({ db: database, clock }), id: () => crypto.randomUUID(), clock }), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock }), id: () => crypto.randomUUID(), clock });
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: false })).resolves.toBe("budget_exhausted");
+    expect(searches).toBe(1);
+    await expect(database.select({ status: agentRuns.status, terminationBudgetDimension: agentRuns.terminationBudgetDimension }).from(agentRuns).where(eq(agentRuns.id, job.runId))).resolves.toEqual([{ status: "failed", terminationBudgetDimension: "active_duration" }]);
+  });
 
   it("matching recovery reuses staged frozen candidates and settles actual usage exactly once per candidate", async () => {
     const job = await deepMatchRun();
@@ -163,6 +310,33 @@ describe("AgentRunProcessor checkpoints", () => {
       .resolves.toEqual([{ modelCalls: 2, inputTokens: 20, outputTokens: 28, totalTokens: 48 }]);
     await expect(database.select({ adapterUsage: deepMatchRunCandidates.adapterUsage }).from(deepMatchRunCandidates).where(eq(deepMatchRunCandidates.runId, job.runId)).orderBy(deepMatchRunCandidates.ordinal))
       .resolves.toEqual([{ adapterUsage: { inputTokens: 7, outputTokens: 11, latencyMs: 19 } }, { adapterUsage: { inputTokens: 13, outputTokens: 17, latencyMs: 23 } }]);
+  });
+
+  it("自动深度匹配冻结低策略候选并只发布允许数量的模型结果", async () => {
+    const job = await deepMatchRun({ maxCandidates: 1 });
+    let calls = 0;
+    const fake = new FakeDeepMatchAdapter();
+    const adapter = { ...fake, async assess(input: Parameters<FakeDeepMatchAdapter["assess"]>[0], call: Parameters<FakeDeepMatchAdapter["assess"]>[1]) { calls += 1; return fake.assess(input, call); } };
+    const processor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: adapter, checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("completed");
+    expect(calls).toBe(1);
+    await expect(database.select({ revision: agentRuns.accountPolicyRevisionNumber, resultCount: agentRuns.resultCount, modelCalls: agentRuns.modelCallCount }).from(agentRuns).where(eq(agentRuns.id, job.runId))).resolves.toEqual([{ revision: 1, resultCount: 1, modelCalls: 1 }]);
+    await expect(database.select().from(deepMatchRunCandidates).where(eq(deepMatchRunCandidates.runId, job.runId))).resolves.toHaveLength(1);
+  });
+
+  it("收紧既有深度匹配预算后只发布允许候选，并记录其余 CANDIDATE_LIMIT", async () => {
+    const job = await deepMatchRun();
+    await database.update(agentRuns).set({ budgetSnapshot: { maxActiveDurationMs: 180_000, maxAttempts: 3, maxToolCalls: 0, maxResults: 1, maxModelCalls: 1, maxTokens: 20_000 } }).where(eq(agentRuns.id, job.runId));
+    let calls = 0;
+    const fake = new FakeDeepMatchAdapter();
+    const adapter = { ...fake, async assess(input: Parameters<FakeDeepMatchAdapter["assess"]>[0], call: Parameters<FakeDeepMatchAdapter["assess"]>[1]) { calls += 1; return fake.assess(input, call); } };
+    const processor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: adapter, checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("completed");
+    expect(calls).toBe(1);
+    await expect(database.select({ resultCount: agentRuns.resultCount }).from(agentRuns).where(eq(agentRuns.id, job.runId))).resolves.toEqual([{ resultCount: 1 }]);
+    await expect(createDeepMatchQueries({ db: database }).getLatestList({ userId: job.userId, targetId: job.targetId })).resolves.toMatchObject({ exclusions: expect.arrayContaining([expect.objectContaining({ opportunityId: job.opportunityIds[1], reasonCode: "CANDIDATE_LIMIT" })]) });
   });
 
   it("handoff after a successful usage checkpoint leaves the old output unstaged and lets the replacement publish", async () => {
@@ -777,6 +951,7 @@ describe("AgentRunProcessor checkpoints", () => {
 
   it("v4 result 复原既有 ordinal，稳定截断为五条并保持 detail/resultCount 一致", async () => {
     const job = await layeredRun();
+    await database.update(agentRuns).set({ budgetSnapshot: { maxActiveDurationMs: 180_000, maxAttempts: 3, maxToolCalls: 60, maxResults: 1, maxModelCalls: 0, maxTokens: 0 } }).where(eq(agentRuns.id, job.runId));
     const extra = await Promise.all([1, 2, 3, 4, 5].map((index) => extraTrustedVersion(job, index)));
     await database.insert(jobDiscoveryRunResults).values({ id: crypto.randomUUID(), userId: job.userId, runId: job.runId, sourcePostingVersionId: job.sourcePostingVersionId, ordinal: 1, createdAt: now });
     const processor = createAgentRunProcessor({
@@ -786,13 +961,10 @@ describe("AgentRunProcessor checkpoints", () => {
       contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
     });
     await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("completed");
-    await expect(database.select({ resultCount: agentRuns.resultCount }).from(agentRuns).where(eq(agentRuns.id, job.runId))).resolves.toEqual([{ resultCount: 5 }]);
+    await expect(database.select({ resultCount: agentRuns.resultCount }).from(agentRuns).where(eq(agentRuns.id, job.runId))).resolves.toEqual([{ resultCount: 1 }]);
+    await expect(database.select({ metadata: auditEvents.metadata }).from(auditEvents).where(and(eq(auditEvents.resourceId, job.runId), eq(auditEvents.eventType, "agent.run_completed")))).resolves.toEqual([{ metadata: expect.objectContaining({ resultCount: 1 }) }]);
     await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({ results: [
       { sourcePostingVersionId: job.sourcePostingVersionId },
-      { sourcePostingVersionId: extra[0] },
-      { sourcePostingVersionId: extra[1] },
-      { sourcePostingVersionId: extra[2] },
-      { sourcePostingVersionId: extra[3] },
     ] });
   });
 
@@ -1490,7 +1662,7 @@ describe("AgentRunProcessor checkpoints", () => {
 
   it("v3 将跨来源有效详情按冻结顺序截断到总 maxResults，同时保留每来源健康事实", async () => {
     const job = await run();
-    const sources = Array.from({ length: 6 }, (_, index) => ({
+    const sources = Array.from({ length: 5 }, (_, index) => ({
       sourceId: `greenhouse:cap-${index}`, watchlistItemId: crypto.randomUUID(), canonicalCompanyName: `Cap ${index}`,
       careersUrl: `https://boards.greenhouse.io/cap-${index}`, allowedDomains: ["boards-api.greenhouse.io"], boardToken: `cap-${index}`,
     }));
@@ -1517,6 +1689,41 @@ describe("AgentRunProcessor checkpoints", () => {
     const projection = await createAgentRunQueries({ db: database }).get(job);
     expect(projection).toMatchObject({ usage: { results: 5 } });
     expect(projection!.results).toHaveLength(5);
+  });
+
+  it("v3 低结果额度在详情读取前停止，并保留每个已检查来源的健康记录", async () => {
+    const job = await run();
+    const sources = ["one", "two"].map((boardToken) => ({ sourceId: `greenhouse:${boardToken}`, watchlistItemId: crypto.randomUUID(), canonicalCompanyName: boardToken, careersUrl: `https://boards.greenhouse.io/${boardToken}`, allowedDomains: ["boards-api.greenhouse.io"], boardToken }));
+    await database.update(agentRuns).set({ adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER, adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, workflowVersion: GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, ruleVersion: GREENHOUSE_SOURCE_HEALTH_RULE_VERSION, outputSchemaVersion: GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION, toolAllowlist: GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST, budgetSnapshot: { maxActiveDurationMs: 180_000, maxAttempts: 3, maxToolCalls: 60, maxResults: 1, maxModelCalls: 0, maxTokens: 0 }, sourceScope: { kind: "company_watchlist", adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, watchlistVersion: 1, sources } }).where(eq(agentRuns.id, job.runId));
+    let detailCalls = 0;
+    const sourceHealthAdapter = {
+      adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
+      declareCapabilities: ({ sourceId }: { sourceId: string }) => ({ sourceId, adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, contractVersion: "source-capabilities-v1" as const, capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
+      listSource: async ({ source }: any) => ({ ok: true as const, attemptCount: 1, data: { sourceId: source.sourceId, observedDetailIds: ["1"], candidates: [{ sourceId: source.sourceId, detailId: "1", company: null, title: "AI Engineer", location: "Shanghai" }] } }),
+      getSourceDetail: async ({ source }: any) => { detailCalls += 1; return { ok: true as const, attemptCount: 1, data: { sourceId: source.sourceId, detailId: "1", company: source.canonicalCompanyName, title: "AI Engineer", location: "Shanghai", postedAt: "2026-08-20T00:00:00.000Z", deadline: null, sourceType: "company_careers" as const, isOfficial: true as const, absoluteUrl: `https://boards.greenhouse.io/${source.boardToken}/jobs/1`, rawPayload: {} } }; },
+    };
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(successAdapter()), sourceHealthAdapterResolver: { resolve: () => sourceHealthAdapter as any }, checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("completed");
+    expect(detailCalls).toBe(1);
+    await expect(database.select({ resultCount: agentRuns.resultCount }).from(agentRuns).where(eq(agentRuns.id, job.runId))).resolves.toEqual([{ resultCount: 1 }]);
+    await expect(database.select().from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, job.runId))).resolves.toHaveLength(2);
+  });
+
+  it("旧 Greenhouse 来源范围在执行前按当前 trusted hard 上限收窄", async () => {
+    const job = await run();
+    const sources = Array.from({ length: 51 }, (_, index) => ({ sourceId: `greenhouse:legacy-${index}`, watchlistItemId: crypto.randomUUID(), canonicalCompanyName: `Legacy ${index}`, careersUrl: `https://boards.greenhouse.io/legacy-${index}`, allowedDomains: ["boards-api.greenhouse.io"], boardToken: `legacy-${index}` }));
+    await database.update(agentRuns).set({ adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER, adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, workflowVersion: GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, ruleVersion: GREENHOUSE_SOURCE_HEALTH_RULE_VERSION, outputSchemaVersion: GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION, toolAllowlist: GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST, budgetSnapshot: { ...PUBLIC_JOB_DISCOVERY_BUDGET, maxResults: 0 }, sourceScope: { kind: "company_watchlist", adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, watchlistVersion: 1, sources } }).where(eq(agentRuns.id, job.runId));
+    let resolvedSources = 0;
+    let listed = 0;
+    const sourceHealthAdapter = {
+      adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
+      declareCapabilities: ({ sourceId }: { sourceId: string }) => ({ sourceId, adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, contractVersion: "source-capabilities-v1" as const, capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
+      listSource: async ({ source }: any) => { listed += 1; return { ok: true as const, attemptCount: 1, data: { sourceId: source.sourceId, observedDetailIds: [], candidates: [] } }; },
+      getSourceDetail: async () => { throw new Error("UNUSED"); },
+    };
+    const processor = createAgentRunProcessor({ db: database, adapterResolver: resolver(successAdapter()), sourceHealthAdapterResolver: { resolve: (input) => { resolvedSources = ((input.executionSpec as { sourceScope: { sources: unknown[] } }).sourceScope).sources.length; return sourceHealthAdapter as any; } }, checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("completed");
+    expect({ resolvedSources, listed }).toEqual({ resolvedSources: 50, listed: 50 });
   });
 
   it("v3 runtime malformed adapter output 仍走既有全局失败而不伪造来源健康", async () => {

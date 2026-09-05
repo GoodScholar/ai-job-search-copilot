@@ -36,6 +36,16 @@ async function createActiveTarget(request: APIRequestContext, token: string): Pr
   return (await response.json() as { targets: Array<{ targetId: string; priority: string }> }).targets.find((target) => target.priority === "primary")!.targetId;
 }
 
+async function ensureScheduleWindow(request: APIRequestContext, token: string): Promise<void> {
+  const current = await request.get(`${apiBaseUrl}/v1/account/run-policy`, { headers: { authorization: `Bearer ${token}` } });
+  expect(current.status()).toBe(200);
+  const policy = await current.json() as { revision: { revisionNumber: number }; effective: Record<string, unknown> };
+  const settings = structuredClone(policy.effective) as { backgroundWindow: { start: string; end: string; timeZone: string } };
+  settings.backgroundWindow = { start: "00:00", end: "23:59", timeZone: "Asia/Shanghai" };
+  const saved = await request.put(`${apiBaseUrl}/v1/account/run-policy`, { headers: { authorization: `Bearer ${token}` }, data: { expectedVersion: policy.revision.revisionNumber, settings } });
+  expect(saved.status()).toBe(200);
+}
+
 async function addExecutableWatchlistSource(request: APIRequestContext, token: string, targetId: string): Promise<void> {
   const response = await request.post(`${apiBaseUrl}/v1/job-targets/${targetId}/company-watchlist/items`, {
     headers: { authorization: `Bearer ${token}` },
@@ -72,6 +82,7 @@ test("每日检查通过 Fake Worker 交付一组岗位，并抵抗重复 Worker
   test.setTimeout(60_000);
   const session = await createSession(request, `scheduled-job-discovery-${testInfo.project.name}-${runSuffix}`);
   const targetId = await createActiveTarget(request, session.token);
+  await ensureScheduleWindow(request, session.token);
   await addExecutableWatchlistSource(request, session.token, targetId);
   await page.context().addCookies([{ name: "job_copilot_session", value: session.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
   await page.goto("/home");

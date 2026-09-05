@@ -915,6 +915,35 @@ describe("authenticated workbench HTTP API", () => {
     expect(detail.json()).toMatchObject({ adapter: "greenhouse", executionSpec: { adapter: "greenhouse" } });
   });
 
+  it("以认证账户读写、追溯并安全映射账户运行策略", async () => {
+    const primary = await createSession(app, "run-policy-primary");
+    const other = await createSession(app, "run-policy-other");
+    const path = "/v1/account/run-policy";
+    const settings = { discovery: { trustedSourceLimit: 50, publicQueryLimit: 5, verificationCandidateLimit: 10, enabledProviders: ["anysearch"] }, budgets: { publicDiscovery: { maxActiveDurationMs: 180000, maxAttempts: 3, maxToolCalls: 60, maxResults: 5, maxModelCalls: 0, maxTokens: 0 }, deepMatch: { maxActiveDurationMs: 180000, maxAttempts: 3, maxToolCalls: 0, maxResults: 10, maxModelCalls: 10, maxTokens: 20000 }, fake: { maxActiveDurationMs: 60000, maxAttempts: 3, maxToolCalls: 10, maxResults: 5, maxModelCalls: 0, maxTokens: 0 } }, backgroundWindow: { start: "08:00", end: "22:00", timeZone: "Asia/Shanghai" } };
+    const headers = { ...bearer(primary.sessionToken), "content-type": "application/json" };
+    expect((await app.getHttpAdapter().getInstance().inject({ method: "GET", url: path, headers: bearer(primary.sessionToken) })).json()).toMatchObject({ revision: { revisionNumber: 0, isSystemBaseline: true } });
+    const saved = await app.getHttpAdapter().getInstance().inject({ method: "PUT", url: path, headers, payload: { expectedVersion: 0, settings, userId: other.account.userId } });
+    expect(saved.statusCode).toBe(400);
+    const own = await app.getHttpAdapter().getInstance().inject({ method: "PUT", url: path, headers, payload: { expectedVersion: 0, settings } });
+    expect(own.statusCode).toBe(200); expect(own.json()).toMatchObject({ revision: { revisionNumber: 1, isSystemBaseline: false } });
+    const [ownedRevision, foreignRevision, missingRevision] = await Promise.all([
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: `${path}/history/1`, headers: bearer(primary.sessionToken) }),
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: `${path}/history/1`, headers: bearer(other.sessionToken) }),
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: `${path}/history/2`, headers: bearer(primary.sessionToken) }),
+    ]);
+    expect(ownedRevision.statusCode).toBe(200); expect(ownedRevision.json()).toMatchObject({ revision: { revisionNumber: 1 } });
+    expect(foreignRevision.statusCode).toBe(404); expect(missingRevision.statusCode).toBe(404);
+    const conflict = await app.getHttpAdapter().getInstance().inject({ method: "PUT", url: path, headers, payload: { expectedVersion: 0, settings } });
+    expect(conflict.statusCode).toBe(409); expect(conflict.json()).toMatchObject({ code: "ACCOUNT_RUN_POLICY_VERSION_CONFLICT", issues: [] });
+    const hard = structuredClone(settings); hard.discovery.publicQueryLimit = 11;
+    const rejected = await app.getHttpAdapter().getInstance().inject({ method: "PUT", url: path, headers, payload: { expectedVersion: 1, settings: hard } });
+    expect(rejected.statusCode).toBe(400); expect(rejected.json()).toMatchObject({ code: "ACCOUNT_RUN_POLICY_HARD_LIMIT_EXCEEDED", issues: [expect.objectContaining({ path: ["settings", "discovery", "publicQueryLimit"], maximum: 10 })] });
+    const emptyWindow = structuredClone(settings); emptyWindow.backgroundWindow.end = emptyWindow.backgroundWindow.start;
+    const invalidWindow = await app.getHttpAdapter().getInstance().inject({ method: "PUT", url: path, headers, payload: { expectedVersion: 1, settings: emptyWindow } });
+    expect(invalidWindow.statusCode).toBe(400); expect(invalidWindow.json()).toMatchObject({ code: "ACCOUNT_RUN_POLICY_BACKGROUND_WINDOW_INVALID", issues: [expect.objectContaining({ path: ["settings", "backgroundWindow", "end"], maximum: null })] });
+    expect((await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `${path}/history`, headers: bearer(other.sessionToken) })).json()).toEqual({ revisions: [expect.objectContaining({ revisionNumber: 0 })] });
+  });
+
   it("以认证账户暴露严格的每日检查计划，并脱敏来源策略问题", async () => {
     const primary = await createSession(app, "daily-schedule-primary");
     const other = await createSession(app, "daily-schedule-other");

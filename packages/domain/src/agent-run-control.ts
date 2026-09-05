@@ -28,6 +28,8 @@ import { analyzePublicJobDiscoverySources } from "./public-job-discovery-sources
 import { createAnySearchQueryPlan } from "./anysearch-query-plan";
 import { applyTransactionDeadline } from "./transaction-deadline";
 import type { JobDiscoveryExecutionMode } from "./job-discovery-execution-mode";
+import { resolveEffectiveAccountRunPolicy } from "./account-run-policies";
+import { isDateInBackgroundWindow } from "./account-run-policy-window";
 
 export interface AgentRunQueue { enqueue(job: AgentRunJob): Promise<void>; }
 
@@ -61,6 +63,7 @@ type RunRow = typeof agentRuns.$inferSelect;
 type ControlSnapshot = ControlAgentRunResponse["run"];
 const stepKeys = ["batch_search", "fetch_details", "persist_results"] as const;
 
+
 function sourceScope(watchlist: { version: number; items: unknown } | undefined) {
   const items = watchlist ? CompanyWatchlistItemSchema.array().parse(watchlist.items) : [];
   const disabled = new Set(items.filter((item) => item.state === "disabled").map((item) => item.careersUrl));
@@ -74,15 +77,17 @@ function sourceScope(watchlist: { version: number; items: unknown } | undefined)
   };
 }
 
-function publicSourceScope(watchlist: { version: number; items: unknown } | undefined) {
+function publicSourceScope(watchlist: { version: number; items: unknown } | undefined, trustedSourceLimit: number) {
   const analysis = analyzePublicJobDiscoverySources(watchlist);
   if (analysis.status !== "executable") throw new AgentRunError("AGENT_RUN_UNAVAILABLE");
+  const sources = analysis.sources.slice(0, trustedSourceLimit);
+  if (sources.length === 0) throw new AgentRunError("AGENT_RUN_UNAVAILABLE");
   return PublicSourceHealthAgentRunSourceScopeSchema.parse({
     kind: "company_watchlist" as const,
     adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER,
     adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
     watchlistVersion: watchlist?.version ?? 0,
-    sources: analysis.sources,
+    sources,
   });
 }
 
@@ -90,6 +95,7 @@ async function layeredPublicDiscoverySpec(transaction: any, input: {
   userId: string;
   targetSnapshot: { targetId: string; version: number; priority: string; state: string; constraints: unknown };
   watchlist: { version: number; items: unknown } | undefined;
+  policy: { trustedSourceLimit: number; publicQueryLimit: number; verificationCandidateLimit: number };
 }) {
   const [profile] = await transaction.select({ id: jobProfiles.id, version: jobProfiles.version })
     .from(jobProfiles).where(eq(jobProfiles.userId, input.userId));
@@ -117,7 +123,7 @@ async function layeredPublicDiscoverySpec(transaction: any, input: {
   };
   const trustedSourceAnalysis = analyzePublicJobDiscoverySources(input.watchlist);
   const trustedSources = trustedSourceAnalysis.status === "executable"
-    ? trustedSourceAnalysis.sources.map((source) => ({ kind: "greenhouse_trusted_source" as const, source }))
+    ? trustedSourceAnalysis.sources.slice(0, input.policy.trustedSourceLimit).map((source) => ({ kind: "greenhouse_trusted_source" as const, source }))
     : [];
   const profileSnapshot = { targetId: input.targetSnapshot.targetId, version: profile.version, confirmedActiveSkillNames };
   return {
@@ -126,7 +132,7 @@ async function layeredPublicDiscoverySpec(transaction: any, input: {
     sourceScope: {
       kind: "layered_public" as const,
       trustedSources,
-      publicDiscovery: createAnySearchQueryPlan({ targetSnapshot: input.targetSnapshot, profileSnapshot, watchlistSnapshot }),
+      publicDiscovery: createAnySearchQueryPlan({ targetSnapshot: input.targetSnapshot, profileSnapshot, watchlistSnapshot, publicQueryLimit: input.policy.publicQueryLimit, verificationCandidateLimit: input.policy.verificationCandidateLimit }),
     },
   };
 }
@@ -137,6 +143,7 @@ function summary(row: RunRow, reused: boolean): StartAgentRunResponse {
     : normalizeAgentRunSourceScope(row.sourceScope);
   return StartAgentRunResponseSchema.parse({
     runId: row.id, targetId: row.targetId, targetVersion: row.targetVersion,
+    accountPolicyRevisionNumber: row.accountPolicyRevisionNumber,
     targetSnapshot: row.targetSnapshot, sourceScope,
     workflowVersion: row.workflowVersion, adapter: row.adapter,
     adapterVersion: row.adapterVersion, outputSchemaVersion: row.outputSchemaVersion,
@@ -186,13 +193,14 @@ function createAgentRunStarter(deps: CommandDependencies): AgentRunStarter {
   return {
     async start(input) {
       const command = StartAgentRunCommandSchema.parse(input.command);
-      const now = deps.clock();
       let reused = false;
       const run = await deps.db.transaction(async (transaction) => {
         if (input.deadline) await applyTransactionDeadline(transaction, { deadline: input.deadline, clock: deps.clock });
         await acquireAccountAdvisoryLock(transaction, input.userId);
         const [existing] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.idempotencyKey, command.idempotencyKey)));
         if (existing) { reused = true; return existing; }
+        // 账户锁等待可能跨越后台窗口边界；仅在确定不是幂等重放后读取当前时刻。
+        const now = deps.clock();
         const [target] = await transaction.select({ id: jobTargets.id, version: jobTargets.version, priority: jobTargets.priority, state: jobTargets.state, constraints: jobTargetRevisions.constraints })
           .from(jobTargets).innerJoin(jobTargetRevisions, and(eq(jobTargetRevisions.userId, jobTargets.userId), eq(jobTargetRevisions.targetId, jobTargets.id), eq(jobTargetRevisions.version, jobTargets.version)))
           .where(and(eq(jobTargets.userId, input.userId), eq(jobTargets.id, command.targetId)));
@@ -209,26 +217,31 @@ function createAgentRunStarter(deps: CommandDependencies): AgentRunStarter {
           eq(companyWatchlistRevisions.version, companyWatchlists.version),
         )).where(and(eq(companyWatchlists.userId, input.userId), eq(companyWatchlists.targetId, target.id)));
         const executionMode = deps.executionMode ?? "fake";
+        const policy = await resolveEffectiveAccountRunPolicy(transaction, input.userId, { id: deps.id, clock: deps.clock });
+        if (input.trigger?.kind === "schedule" && (!isDateInBackgroundWindow(now, policy.effective.backgroundWindow) || !isDateInBackgroundWindow(input.trigger.scheduledFor, policy.effective.backgroundWindow))) throw new AgentRunError("AGENT_RUN_UNAVAILABLE");
+        const discoveryPolicy = policy.effective.discovery;
+        const canUseAnySearch = discoveryPolicy.enabledProviders.includes("anysearch") && discoveryPolicy.publicQueryLimit > 0;
         const layeredSpec = executionMode === "layered_public"
-          ? await layeredPublicDiscoverySpec(transaction, { userId: input.userId, targetSnapshot, watchlist })
+          ? await layeredPublicDiscoverySpec(transaction, { userId: input.userId, targetSnapshot, watchlist, policy: { ...discoveryPolicy, publicQueryLimit: canUseAnySearch ? discoveryPolicy.publicQueryLimit : 0 } })
           : null;
-        const runSourceScope = layeredSpec?.sourceScope ?? (executionMode === "greenhouse" ? publicSourceScope(watchlist) : sourceScope(watchlist));
+        if (layeredSpec && !layeredSpec.sourceScope.trustedSources.length && !layeredSpec.sourceScope.publicDiscovery.queries.length) throw new AgentRunError("AGENT_RUN_UNAVAILABLE");
+        const runSourceScope = layeredSpec?.sourceScope ?? (executionMode === "greenhouse" ? publicSourceScope(watchlist, discoveryPolicy.trustedSourceLimit) : sourceScope(watchlist));
         const execution = executionMode === "layered_public" ? {
-          budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+          budget: policy.effective.budgets.publicDiscovery,
           workflowVersion: LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION,
           ruleVersion: LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION,
           adapter: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER,
           adapterVersion: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION,
           outputSchemaVersion: LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
         } : executionMode === "greenhouse" ? {
-          budget: PUBLIC_JOB_DISCOVERY_BUDGET,
+          budget: policy.effective.budgets.publicDiscovery,
           workflowVersion: GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION,
           ruleVersion: GREENHOUSE_SOURCE_HEALTH_RULE_VERSION,
           adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER,
           adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
           outputSchemaVersion: GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION,
         } : {
-          budget: AGENT_RUN_BUDGET,
+          budget: policy.effective.budgets.fake,
           workflowVersion: FAKE_JOB_DISCOVERY_WORKFLOW_VERSION,
           ruleVersion: AGENT_RUN_RULE_VERSION,
           adapter: FAKE_JOB_DISCOVERY_ADAPTER,
@@ -238,7 +251,7 @@ function createAgentRunStarter(deps: CommandDependencies): AgentRunStarter {
         const [created] = await transaction.insert(agentRuns).values({
           id: runId, userId: input.userId, targetId: target.id, idempotencyKey: command.idempotencyKey, targetVersion: target.version,
           targetSnapshot, ...(layeredSpec ? { profileSnapshot: layeredSpec.profileSnapshot, watchlistSnapshot: layeredSpec.watchlistSnapshot } : {}),
-          sourceScope: runSourceScope, budgetSnapshot: execution.budget, workflowVersion: execution.workflowVersion,
+          sourceScope: runSourceScope, budgetSnapshot: execution.budget, accountPolicyRevisionNumber: policy.revisionNumber, accountPolicySnapshot: policy.effective, workflowVersion: execution.workflowVersion,
           ruleVersion: execution.ruleVersion, toolAllowlist: executionMode === "layered_public" ? LAYERED_PUBLIC_JOB_DISCOVERY_TOOL_ALLOWLIST : executionMode === "greenhouse" ? GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST : AGENT_RUN_TOOL_ALLOWLIST, modelSnapshot: null,
           adapter: execution.adapter, adapterVersion: execution.adapterVersion, outputSchemaVersion: execution.outputSchemaVersion,
           status: "queued", currentStep: "queued", controlState: "none", version: 1, attemptCount: 0,

@@ -6,6 +6,8 @@ import { createAuditTrail } from "./audit-trail";
 import { AgentRunControlError, createAgentRunCheckpoint, createAgentRunCommands, type AgentRunQueue } from "./agent-runs";
 import { createCompanyWatchlistCommands } from "./company-watchlists";
 import { createDeepMatchRunStarter } from "./deep-match-agent-runs";
+import { createAccountRunPolicies } from "./account-run-policies";
+import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-policies";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
 const constraints = {
@@ -100,6 +102,100 @@ describe("agent run controls", () => {
 
     expect(manual).toMatchObject({ adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2", workflowVersion: "job-discovery-workflow-v3", outputSchemaVersion: "job-discovery-result-v3" });
     expect(scheduled).toMatchObject({ adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2", workflowVersion: "job-discovery-workflow-v3", outputSchemaVersion: "job-discovery-result-v3" });
+  });
+
+  it("Greenhouse 手动启动在可信来源额度为零时稳定拒绝", async () => {
+    const { userId, targetId } = await activeTarget();
+    await addGreenhouseWatchlistSource(userId, targetId);
+    const settings = structuredClone(systemAccountRunPolicy().effective);
+    settings.discovery.trustedSourceLimit = 0;
+    await createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now }).save({ userId, command: { expectedVersion: 0, settings } });
+    const runtime = createAgentRunCommands({ db: database, queue: new MemoryQueue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse" });
+    await expect(runtime.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } })).rejects.toMatchObject({ code: "AGENT_RUN_UNAVAILABLE" });
+  });
+
+  it("计划触发在启动事务内复核同次策略窗口，手动运行不受该窗口限制", async () => {
+    const { userId, targetId } = await activeTarget();
+    const settings = structuredClone(systemAccountRunPolicy().effective);
+    settings.backgroundWindow = { start: "19:00", end: "21:00", timeZone: "Asia/Shanghai" };
+    await createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now }).save({ userId, command: { expectedVersion: 0, settings } });
+    const runtime = commands(new MemoryQueue());
+    await expect(runtime.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() }, trigger: { kind: "schedule", occurrenceId: crypto.randomUUID(), scheduledFor: new Date("2026-08-29T16:00:00.000Z") } })).rejects.toMatchObject({ code: "AGENT_RUN_UNAVAILABLE" });
+    await expect(runtime.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() }, trigger: { kind: "manual" } })).resolves.toMatchObject({ accountPolicyRevisionNumber: 1 });
+  });
+
+  it("等待账户锁跨越窗口边界后，以取得锁后的时刻校验计划触发", async () => {
+    const { userId, targetId } = await activeTarget();
+    const settings = structuredClone(systemAccountRunPolicy().effective);
+    settings.backgroundWindow = { start: "19:00", end: "21:00", timeZone: "Asia/Shanghai" };
+    await createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now }).save({ userId, command: { expectedVersion: 0, settings } });
+    const beforeLock = new Date("2026-08-29T16:00:00.000Z"); // Asia/Shanghai 00:00，窗口外
+    const afterLock = new Date("2026-08-29T12:00:00.000Z"); // Asia/Shanghai 20:00，窗口内
+    let released = false;
+    let release!: () => void;
+    let locked!: () => void;
+    const releaseLock = new Promise<void>((resolve) => { release = resolve; });
+    const lockHeld = new Promise<void>((resolve) => { locked = resolve; });
+    const holder = database.$client.begin(async (connection) => {
+      await connection.unsafe("select pg_advisory_xact_lock(hashtextextended($1, 0))", [userId]);
+      locked();
+      await releaseLock;
+    });
+    await lockHeld;
+    const runtime = createAgentRunCommands({
+      db: database, queue: new MemoryQueue(), auditTrail: createAuditTrail({ db: database, clock: () => released ? afterLock : beforeLock }),
+      id: () => crypto.randomUUID(), clock: () => released ? afterLock : beforeLock,
+    });
+    const start = runtime.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() }, trigger: { kind: "schedule", occurrenceId: crypto.randomUUID(), scheduledFor: afterLock } });
+    released = true;
+    release();
+    await holder;
+    await expect(start).resolves.toMatchObject({ accountPolicyRevisionNumber: 1 });
+  });
+
+  it("策略修订冻结启动范围，重放幂等键保留旧修订而新运行使用新修订", async () => {
+    const { userId, targetId } = await activeTarget();
+    const watchlists = createCompanyWatchlistCommands({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    await watchlists.addItem({ userId, targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, canonicalCompanyName: "First", careersUrl: "https://boards.greenhouse.io/first", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null } });
+    await watchlists.addItem({ userId, targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 1, canonicalCompanyName: "Second", careersUrl: "https://boards.greenhouse.io/second", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null } });
+    const policies = createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now });
+    const firstSettings = structuredClone(systemAccountRunPolicy().effective); firstSettings.discovery.trustedSourceLimit = 1;
+    await policies.save({ userId, command: { expectedVersion: 0, settings: firstSettings } });
+    const greenhouse = (queue: AgentRunQueue) => createAgentRunCommands({ db: database, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse" });
+    const key = crypto.randomUUID();
+    const first = await greenhouse(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: key } });
+    expect(first).toMatchObject({ accountPolicyRevisionNumber: 1, sourceScope: { sources: [expect.objectContaining({ sourceId: "greenhouse:first" })] } });
+
+    const secondSettings = structuredClone(firstSettings); secondSettings.discovery.trustedSourceLimit = 2;
+    await policies.save({ userId, command: { expectedVersion: 1, settings: secondSettings } });
+    await expect(greenhouse(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: key } })).resolves.toMatchObject({ runId: first.runId, reused: true, accountPolicyRevisionNumber: 1, budget: first.budget, sourceScope: first.sourceScope });
+    const second = await greenhouse(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    expect(second).toMatchObject({ accountPolicyRevisionNumber: 2, sourceScope: { sources: [expect.objectContaining({ sourceId: "greenhouse:first" }), expect.objectContaining({ sourceId: "greenhouse:second" })] } });
+  });
+
+  it("分层公开发现冻结三类来源额度，禁用 provider 仍允许受信任来源", async () => {
+    const { userId, targetId } = await activeTarget();
+    const watchlists = createCompanyWatchlistCommands({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    await watchlists.addItem({ userId, targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, canonicalCompanyName: "First", careersUrl: "https://boards.greenhouse.io/first", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null } });
+    await watchlists.addItem({ userId, targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 1, canonicalCompanyName: "Second", careersUrl: "https://boards.greenhouse.io/second", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null } });
+    await addConfirmedSkills(userId, ["TypeScript"]);
+    const settings = structuredClone(systemAccountRunPolicy().effective);
+    settings.discovery.trustedSourceLimit = 1;
+    settings.discovery.publicQueryLimit = 1;
+    settings.discovery.verificationCandidateLimit = 2;
+    settings.discovery.enabledProviders = [];
+    await createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now }).save({ userId, command: { expectedVersion: 0, settings } });
+    const layered = createAgentRunCommands({ db: database, queue: new MemoryQueue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public" });
+
+    await expect(layered.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } })).resolves.toMatchObject({
+      accountPolicyRevisionNumber: 1,
+      sourceScope: { trustedSources: [expect.anything()], publicDiscovery: { queries: [], maxVerificationCandidates: 2 } },
+    });
+
+    const unavailable = await activeTarget();
+    await addConfirmedSkills(unavailable.userId, ["TypeScript"]);
+    await createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now }).save({ userId: unavailable.userId, command: { expectedVersion: 0, settings } });
+    await expect(layered.start({ userId: unavailable.userId, requestId: crypto.randomUUID(), command: { targetId: unavailable.targetId, idempotencyKey: crypto.randomUUID() } })).rejects.toMatchObject({ code: "AGENT_RUN_UNAVAILABLE" });
   });
 
   it("v4 手动与计划触发冻结等价的无 Watchlist 分层公开发现规格", async () => {
@@ -252,6 +348,31 @@ describe("agent run controls", () => {
     await database.update(agentRuns).set({ status: "running", controlState: "none", claimToken: secondToken, claimExpiresAt: new Date(resumedAt.getTime() + 30_000), activeSliceStartedAt: resumedAt, startedAt: now }).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)));
     await expect(checkpoints(new Date(resumedAt.getTime() + 100)).check({ userId, runId: run.runId, claimToken: secondToken, checkpointKey: `${secondToken}:model`, reserve: { modelCalls: 1 } })).resolves.toMatchObject({ kind: "budget_exhausted", budgetDimension: "model_calls" });
     await expect(database.select({ activeDurationMs: agentRuns.activeDurationMs, modelCallCount: agentRuns.modelCallCount }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, run.runId)))).resolves.toEqual([{ activeDurationMs: 200, modelCallCount: 0 }]);
+  });
+
+  it("手动深度匹配也冻结账户策略修订，并在同一幂等键重放时保留原快照", async () => {
+    const { userId, targetId } = await activeTarget();
+    const policies = createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now });
+    const firstSettings = structuredClone(systemAccountRunPolicy().effective); firstSettings.budgets.deepMatch.maxResults = 1; firstSettings.budgets.deepMatch.maxModelCalls = 1;
+    await policies.save({ userId, command: { expectedVersion: 0, settings: firstSettings } });
+    const starter = createDeepMatchRunStarter({ db: database, queue: new MemoryQueue(), id: () => crypto.randomUUID(), clock: () => now });
+    const key = crypto.randomUUID();
+    const first = await starter.start({ userId, targetId, opportunityId: crypto.randomUUID(), idempotencyKey: key, trigger: "manual" });
+    await expect(database.select({ revision: agentRuns.accountPolicyRevisionNumber, budget: agentRuns.budgetSnapshot }).from(agentRuns).where(eq(agentRuns.id, first.runId))).resolves.toEqual([{ revision: 1, budget: expect.objectContaining({ maxResults: 1, maxModelCalls: 1 }) }]);
+    const secondSettings = structuredClone(firstSettings); secondSettings.budgets.deepMatch.maxResults = 2; secondSettings.budgets.deepMatch.maxModelCalls = 2;
+    await policies.save({ userId, command: { expectedVersion: 1, settings: secondSettings } });
+    await expect(starter.start({ userId, targetId, opportunityId: crypto.randomUUID(), idempotencyKey: key, trigger: "manual" })).resolves.toEqual({ runId: first.runId, reused: true });
+    const second = await starter.start({ userId, targetId, opportunityId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID(), trigger: "manual" });
+    await expect(database.select({ revision: agentRuns.accountPolicyRevisionNumber, budget: agentRuns.budgetSnapshot }).from(agentRuns).where(eq(agentRuns.id, second.runId))).resolves.toEqual([{ revision: 2, budget: expect.objectContaining({ maxResults: 2, maxModelCalls: 2 }) }]);
+
+    const automaticKey = crypto.randomUUID();
+    const automatic = await starter.start({ userId, targetId, discoveryRunId: crypto.randomUUID(), idempotencyKey: automaticKey, trigger: "automatic" });
+    await expect(database.select({ revision: agentRuns.accountPolicyRevisionNumber, budget: agentRuns.budgetSnapshot }).from(agentRuns).where(eq(agentRuns.id, automatic.runId))).resolves.toEqual([{ revision: 2, budget: expect.objectContaining({ maxResults: 2, maxModelCalls: 2 }) }]);
+    const thirdSettings = structuredClone(secondSettings); thirdSettings.budgets.deepMatch.maxResults = 1; thirdSettings.budgets.deepMatch.maxModelCalls = 1;
+    await policies.save({ userId, command: { expectedVersion: 2, settings: thirdSettings } });
+    await expect(starter.start({ userId, targetId, discoveryRunId: crypto.randomUUID(), idempotencyKey: automaticKey, trigger: "automatic" })).resolves.toEqual({ runId: automatic.runId, reused: true });
+    const laterAutomatic = await starter.start({ userId, targetId, discoveryRunId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID(), trigger: "automatic" });
+    await expect(database.select({ revision: agentRuns.accountPolicyRevisionNumber, budget: agentRuns.budgetSnapshot }).from(agentRuns).where(eq(agentRuns.id, laterAutomatic.runId))).resolves.toEqual([{ revision: 3, budget: expect.objectContaining({ maxResults: 1, maxModelCalls: 1 }) }]);
   });
 
   it("模型调用先原子记入 input，严格输出后才以独立稳定键记入 output", async () => {

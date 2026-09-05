@@ -46,6 +46,7 @@ function detail(status: AgentRunDetail["status"] = "running"): AgentRunDetail {
     runId,
     targetId,
     targetVersion: 1,
+    accountPolicyRevisionNumber: null,
     targetSnapshot: { targetId, version: 1, priority: "primary", state: "active", constraints: target().constraints },
     sourceScope: {
       kind: "company_watchlist", adapter: "fake", adapterVersion: "fake-job-discovery-v1",
