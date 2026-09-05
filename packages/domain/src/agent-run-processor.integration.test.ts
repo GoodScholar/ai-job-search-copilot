@@ -4,14 +4,14 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { and, asc, eq } from "drizzle-orm";
 import { agentInboxItems, agentRunEvents, agentRunJobResults, agentRunSteps, agentRunUsageEntries, agentRuns, auditEvents, createDatabase, deepMatchRunCandidates, jobAccounts, jobDiscoveryAttributions, jobDiscoveryDiagnostics, jobDiscoveryLeads, jobDiscoveryRunResults, jobDiscoverySourceIssues, jobMatchVersions, jobOpportunities, jobOpportunitySources, jobProfiles, jobSourceHealthChecks, jobSourcePostings, jobSourcePostingVersions, jobTargetRevisions, jobTargets, jobTriageVersions, migrateDatabase, profileFactRevisions, profileFacts, recommendationListItems, recommendationLists, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
-import { createAgentRunCheckpoint, createAgentRunCommands, createAgentRunProcessor, createAgentRunQueries, type AgentRunCheckpoint, type AgentRunQueue, type DiscoveryContentStore, type JobDiscoveryAdapter, type JobDiscoveryAdapterResolver } from "./agent-runs";
+import { createAgentRunCheckpoint, createAgentRunCommands, createAgentRunProcessor as createDomainAgentRunProcessor, createAgentRunQueries, type AgentRunCheckpoint, type AgentRunQueue, type DiscoveryContentStore, type JobDiscoveryAdapter, type JobDiscoveryAdapterResolver } from "./agent-runs";
 import { createCompanyWatchlistCommands } from "./company-watchlists";
 import { AgentRunDetailSchema, AgentRunEventSchema, GREENHOUSE_JOB_DISCOVERY_ADAPTER, GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION, GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, GREENHOUSE_JOB_DISCOVERY_RULE_VERSION, GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION, GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION, GREENHOUSE_SOURCE_HEALTH_RULE_VERSION, GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST, GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, PUBLIC_JOB_DISCOVERY_BUDGET } from "@job-copilot/contracts/agent-runs";
 import { LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER, LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_TOOL_ALLOWLIST, LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION } from "@job-copilot/contracts/job-discovery";
 import { createLayeredPublicJobDiscoveryWorkflow, LayeredPublicWorkflowInterruption } from "./layered-public-job-discovery-workflow";
 import { createLayeredPublicJobDiscoveryRuntime } from "./layered-public-job-discovery-runtime";
 import { createJobDiscoveryPersistence } from "./job-discovery-persistence";
-import { createDeepMatchRunStarter } from "./deep-match-agent-runs";
+import { createDeepMatchRunStarter as createDomainDeepMatchRunStarter } from "./deep-match-agent-runs";
 import { DeepMatchAdapterError, FakeDeepMatchAdapter } from "@job-copilot/contracts/deep-match";
 import { createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
 import { createAccountRunPolicies } from "./account-run-policies";
@@ -31,6 +31,14 @@ class Store implements DiscoveryContentStore {
     if (bytes) this.payloads.set(objectKey, bytes);
   }
   async delete({ objectKey }: { objectKey: string }) { this.deletes.push(objectKey); }
+}
+
+function createAgentRunProcessor(deps: Omit<Parameters<typeof createDomainAgentRunProcessor>[0], "runPreflight"> & { runPreflight?: Parameters<typeof createDomainAgentRunProcessor>[0]["runPreflight"] }) {
+  return createDomainAgentRunProcessor({ ...deps, runPreflight: deps.runPreflight ?? createReadyRunPreflightEvaluator({ clock: deps.clock }) });
+}
+
+function createDeepMatchRunStarter(deps: Omit<Parameters<typeof createDomainDeepMatchRunStarter>[0], "runPreflight"> & { runPreflight?: Parameters<typeof createDomainDeepMatchRunStarter>[0]["runPreflight"] }) {
+  return createDomainDeepMatchRunStarter({ ...deps, runPreflight: deps.runPreflight ?? createReadyRunPreflightEvaluator({ clock: deps.clock }) });
 }
 
 describe("AgentRunProcessor checkpoints", () => {

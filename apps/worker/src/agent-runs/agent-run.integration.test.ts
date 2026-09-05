@@ -179,9 +179,9 @@ describe("岗位发现 Agent Run Worker", () => {
       db: database,
       queue: { enqueue: async () => { throw new Error("API queue wakeup unavailable"); } },
       auditTrail: createAuditTrail({ db: database, clock: () => new Date() }),
+      runPreflight: createReadyRunPreflightEvaluator({ clock: () => new Date() }),
       id: randomUUID,
       clock: () => new Date(),
-      runPreflight: createReadyRunPreflightEvaluator({ clock: () => new Date() }),
     });
   }
 
@@ -603,6 +603,7 @@ describe("岗位发现 Agent Run Worker", () => {
       adapterResolver: createJobDiscoveryAdapterResolver({ APP_ENV: "production" }),
       contentStore: new MinioDiscoveryContentStore(minio, minioBucket),
       auditTrail: createAuditTrail({ db: database, clock: () => new Date() }),
+      runPreflight: createReadyRunPreflightEvaluator({ clock: () => new Date() }),
       id: randomUUID,
       clock: () => new Date(),
     });

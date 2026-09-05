@@ -5,7 +5,7 @@ import { agentInboxItems, agentRunControlCommands, agentRunEvents, agentRunSteps
 import { createAuditTrail } from "./audit-trail";
 import { AgentRunControlError, createAgentRunCheckpoint, createAgentRunCommands, type AgentRunQueue } from "./agent-runs";
 import { createCompanyWatchlistCommands } from "./company-watchlists";
-import { createDeepMatchRunStarter } from "./deep-match-agent-runs";
+import { createDeepMatchRunStarter as createDomainDeepMatchRunStarter } from "./deep-match-agent-runs";
 import { createAccountRunPolicies } from "./account-run-policies";
 import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-policies";
 import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
@@ -25,6 +25,10 @@ class MemoryQueue implements AgentRunQueue {
     if (this.fail) throw new Error("queue unavailable");
     this.jobs.push(job);
   }
+}
+
+function createDeepMatchRunStarter(deps: Omit<Parameters<typeof createDomainDeepMatchRunStarter>[0], "runPreflight"> & { runPreflight?: Parameters<typeof createDomainDeepMatchRunStarter>[0]["runPreflight"] }) {
+  return createDomainDeepMatchRunStarter({ ...deps, runPreflight: deps.runPreflight ?? createReadyRunPreflightEvaluator({ clock: deps.clock }) });
 }
 
 describe("agent run controls", () => {

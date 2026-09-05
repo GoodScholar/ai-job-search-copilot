@@ -8,7 +8,6 @@ import { resolveEffectiveAccountRunPolicy } from "./account-run-policies";
 import { authorizeRunPreflight, RunPreflightRejectedError, type RunPreflightEvaluator } from "./run-preflight";
 import { StartRecommendationReevaluationCommandSchema } from "@job-copilot/contracts/recommendations";
 import type { z } from "zod";
-import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
 
 export type DeepMatchRunQueue = { enqueue(job: AgentRunJob): Promise<void> };
 type StartRecommendationReevaluationCommand = z.infer<typeof StartRecommendationReevaluationCommandSchema>;
@@ -63,14 +62,14 @@ export async function triggerDeepMatchAfterDiscovery(input: { db: Database; id: 
   return starter.start({ userId: input.userId, targetId: input.targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(input.discoveryRunId), trigger: "automatic", discoveryRunId: input.discoveryRunId });
 }
 
-export function createDeepMatchRunStarter(deps: { db: Database; queue: DeepMatchRunQueue; id: () => string; clock: () => Date; runPreflight?: RunPreflightEvaluator }) {
+export function createDeepMatchRunStarter(deps: { db: Database; queue: DeepMatchRunQueue; id: () => string; clock: () => Date; runPreflight: RunPreflightEvaluator }) {
   return {
     async start(input: { userId: string; trigger: "automatic"; targetId: string; discoveryRunId: string; idempotencyKey: string } | { userId: string; trigger: "manual"; command: StartRecommendationReevaluationCommand } | { userId: string; trigger: "manual"; targetId: string; opportunityId: string; idempotencyKey: string; warningFingerprint?: string | null }): Promise<any> {
       const normalized = input.trigger === "manual"
         ? { userId: input.userId, trigger: input.trigger, ...("command" in input ? input.command : input) }
         : input;
       const run = await deps.db.transaction(async (tx) => {
-        return ensureDeepMatchRunInTransaction({ transaction: tx, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight ?? createReadyRunPreflightEvaluator({ clock: deps.clock }), ...normalized });
+        return ensureDeepMatchRunInTransaction({ transaction: tx, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight, ...normalized });
       });
       if (run.kind === "blocked") return run;
       if (run.run.status === "queued") { try { await deps.queue.enqueue({ version: 1, runId: run.run.id, userId: input.userId }); } catch { /* reconciler reads the persisted queued row */ } }

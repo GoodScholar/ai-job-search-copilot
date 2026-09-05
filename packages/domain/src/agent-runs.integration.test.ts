@@ -45,12 +45,15 @@ function adapter(result: { retryable?: boolean } = {}): JobDiscoveryAdapter {
   };
 }
 
-type TestProcessorInput = Omit<Parameters<typeof createDomainAgentRunProcessor>[0], "adapterResolver"> & { adapter: JobDiscoveryAdapter };
+type TestProcessorInput = Omit<Parameters<typeof createDomainAgentRunProcessor>[0], "adapterResolver" | "runPreflight"> & {
+  adapter: JobDiscoveryAdapter;
+  runPreflight?: Parameters<typeof createDomainAgentRunProcessor>[0]["runPreflight"];
+};
 
 function createAgentRunProcessor(input: TestProcessorInput) {
   const { adapter: testAdapter, ...deps } = input;
   const adapterResolver: JobDiscoveryAdapterResolver = { resolve: () => testAdapter };
-  return createDomainAgentRunProcessor({ ...deps, adapterResolver });
+  return createDomainAgentRunProcessor({ ...deps, adapterResolver, runPreflight: input.runPreflight ?? createReadyRunPreflightEvaluator({ clock: input.clock }) });
 }
 
 function twoSourceAdapter(): JobDiscoveryAdapter {

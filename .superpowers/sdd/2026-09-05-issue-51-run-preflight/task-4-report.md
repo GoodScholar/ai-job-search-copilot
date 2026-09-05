@@ -121,3 +121,36 @@ exit 0
 git diff --check
 exit 0
 ```
+
+## 修复轮 1（2026-09-05）
+
+- 移除了 `agent-runs.ts` 与 `deep-match-agent-runs.ts` 的生产 ready fallback；processor facade 与 deep-match starter 的 `runPreflight` 均为必传依赖。旧测试仅在各自测试文件中显式构造 ready evaluator。
+- schedule 的 #51 覆盖改为真实 PostgreSQL evaluator：无既有 run 的当前 blocker 记录 `RUN_PREFLIGHT_BLOCKED`；既有 idempotent run 在策略收紧后仍回填 dispatched；真实 source-health warning 自动创建 run，并精确比对持久化的 preflight snapshot 与同次 evaluation 的 policy。
+- Worker integration 曾 RED：legacy processor fixture 未显式注入 required preflight，结果为 `retry`（exit 1，9 tests 中 1 failed）；补入测试专用 ready evaluator 后 GREEN。
+
+### 本轮串行验证
+
+```text
+pnpm --filter @job-copilot/domain exec vitest run --no-file-parallelism src/job-discovery-schedules.integration.test.ts
+1 file passed; 19 tests passed; exit 0
+
+pnpm --filter @job-copilot/domain exec vitest run --no-file-parallelism src/agent-run-processor.integration.test.ts
+1 file passed; 101 tests passed; exit 0
+
+pnpm --filter worker exec vitest run --no-file-parallelism src/agent-runs/agent-run.module.test.ts
+1 file passed; 37 tests passed; exit 0
+
+pnpm --filter worker exec vitest run --no-file-parallelism src/agent-runs/agent-run.integration.test.ts
+1 file passed; 9 tests passed; exit 0
+
+pnpm --filter worker exec vitest run --no-file-parallelism src/agent-runs/agent-run-scheduler.test.ts
+1 file passed; 5 tests passed; exit 0
+
+pnpm --filter @job-copilot/domain exec vitest run --no-file-parallelism src/job-discovery-schedules.integration.test.ts src/deep-match-trigger.test.ts src/deep-match-persistence.integration.test.ts src/agent-run-processor.integration.test.ts
+4 files passed; 144 tests passed; exit 0
+
+pnpm --filter @job-copilot/domain typecheck && pnpm --filter worker typecheck && git diff --check
+all exit 0
+```
+
+本轮 `rg -n '\\.insert\\(agentRuns\\)' packages apps` 仍只有两处非测试生产插入：`agent-run-control.ts` 和 `deep-match-agent-runs.ts`，均先调用统一 preflight gate；其余命中为 integration fixture。

@@ -8,7 +8,7 @@ import {
 import { and, eq, sql } from "drizzle-orm";
 import { DeepMatchCandidateSchema, FakeDeepMatchAdapter } from "@job-copilot/contracts/deep-match";
 import { JobTargetConstraintsSchema } from "@job-copilot/contracts/job-targets";
-import { createDeepMatchRunStarter } from "./deep-match-agent-runs";
+import { createDeepMatchRunStarter as createDomainDeepMatchRunStarter } from "./deep-match-agent-runs";
 import { createAgentRunRecoveryQueries } from "./agent-run-processor";
 import { createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
 import { RunPreflightRejectedError, type RunPreflightEvaluator } from "./run-preflight";
@@ -18,6 +18,10 @@ import { RunPreflightReportSchema } from "@job-copilot/contracts/run-preflight";
 const now = new Date("2026-09-01T02:00:00.000Z");
 const hash = "a".repeat(64);
 const modelCall = () => ({ signal: new AbortController().signal, usageKey: "test-model-call", budget: { maxTokens: 20_000, reservedInputTokens: 32, reservedOutputTokens: 48 } });
+
+function createDeepMatchRunStarter(deps: Omit<Parameters<typeof createDomainDeepMatchRunStarter>[0], "runPreflight"> & { runPreflight?: Parameters<typeof createDomainDeepMatchRunStarter>[0]["runPreflight"] }) {
+  return createDomainDeepMatchRunStarter({ ...deps, runPreflight: deps.runPreflight ?? createReadyRunPreflightEvaluator({ clock: deps.clock }) });
+}
 
 describe("deep match persistence", () => {
   let container: StartedPostgreSqlContainer;
