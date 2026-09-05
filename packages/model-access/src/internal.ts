@@ -13,6 +13,9 @@ const DIAGNOSTIC_TIMEOUT_MS = 20_000;
 const LOW_COST_MODEL = "gpt-5.6-luna";
 const HIGH_QUALITY_MODEL = "gpt-5.6-terra";
 const PROBE_NAME = "model_diagnostic_probe";
+const PROBE_INPUT_TEXT = "Return the requested JSON object.";
+const PROBE_REASONING_EFFORT = "none";
+const PROBE_MAX_OUTPUT_TOKENS = 256;
 const PROBE_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -109,9 +112,9 @@ function requestFor(model: string, config: NormalizedConfig): RequestInit {
     body: JSON.stringify({
       model,
       store: false,
-      input: [{ role: "user", content: [{ type: "input_text", text: "Return the requested JSON object." }] }],
-      reasoning: { effort: "none" },
-      max_output_tokens: 256,
+      input: [{ role: "user", content: [{ type: "input_text", text: PROBE_INPUT_TEXT }] }],
+      reasoning: { effort: PROBE_REASONING_EFFORT },
+      max_output_tokens: PROBE_MAX_OUTPUT_TOKENS,
       text: { format: { type: "json_schema", name: PROBE_NAME, strict: true, schema: PROBE_SCHEMA } },
     }),
   };
@@ -249,7 +252,7 @@ function fingerprint(config: NormalizedConfig, diagnosticVersion: string): strin
     project: config.project,
     lowCostModel: config.lowCostModel,
     highQualityModel: config.highQualityModel,
-    probe: { name: PROBE_NAME, schema: PROBE_SCHEMA, reasoning: "none", maxOutputTokens: 256, timeoutMs: DIAGNOSTIC_TIMEOUT_MS },
+    probe: { name: PROBE_NAME, schema: PROBE_SCHEMA, inputText: PROBE_INPUT_TEXT, reasoning: PROBE_REASONING_EFFORT, maxOutputTokens: PROBE_MAX_OUTPUT_TOKENS, timeoutMs: DIAGNOSTIC_TIMEOUT_MS },
     apiKey: config.apiKey,
   })).digest("hex");
 }

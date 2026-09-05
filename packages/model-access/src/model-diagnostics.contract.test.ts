@@ -320,6 +320,14 @@ describe("OpenAI 模型诊断 adapter", () => {
     expect(v1.configurationFingerprint).not.toBe(v2.configurationFingerprint);
   });
 
+  it("指纹结构覆盖实际发送的固定探针输入和请求常量", async () => {
+    const source = await import("node:fs/promises").then((fs) => fs.readFile(new URL("./internal.ts", import.meta.url), "utf8"));
+    expect(source).toContain("const PROBE_INPUT_TEXT =");
+    expect(source).toContain("inputText: PROBE_INPUT_TEXT");
+    expect(source).toContain("PROBE_REASONING_EFFORT");
+    expect(source).toContain("PROBE_MAX_OUTPUT_TOKENS");
+  });
+
   it.each([{ apiKey: "" }, { endpoint: "not-a-url" }, { lowCostModel: "" }, { highQualityModel: "" }])("配置 %o 无效时以稳定失败返回且不发出外部请求", async (invalid) => {
     const calls: unknown[] = [];
     const adapter = createOpenAiModelDiagnosticAdapterForTest({ ...configuration, ...invalid }, async (request) => {

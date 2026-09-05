@@ -354,6 +354,16 @@ test("forces local Dev Auth and preserves caller Node options when spawning appl
   assert.equal(options.env.UNRELATED_VALUE, "preserved");
 });
 
+test("test runtime 清除任意 OPENAI_ 前缀变量后再启动 Web、API 与 Worker", () => {
+  let spawnCall;
+  startApplications({
+    config: createRuntimeConfig({ test: true, env: { OPENAI_UNDOCUMENTED_SENTINEL: "must-not-reach-child" } }),
+    env: { OPENAI_UNDOCUMENTED_SENTINEL: "must-not-reach-child" },
+    spawnProcess: (...args) => { spawnCall = args; return {}; },
+  });
+  assert.equal(spawnCall[2].env.OPENAI_UNDOCUMENTED_SENTINEL, undefined);
+});
+
 test("API and Worker dev commands launch the cross-platform Nest loader", async () => {
   for (const packagePath of ["../apps/api/package.json", "../apps/worker/package.json"]) {
     const packageJson = JSON.parse(await readFile(new URL(packagePath, import.meta.url), "utf8"));

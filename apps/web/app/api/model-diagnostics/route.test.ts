@@ -42,6 +42,13 @@ it("BFF 拒绝非空 POST 正文，且不触发上游检查", async () => {
   expect(mocks.runModelDiagnostics).not.toHaveBeenCalled();
 });
 
+it("BFF 对无 Content-Length 的超限流式正文在读取上限后取消且不触发上游", async () => {
+  mocks.readSessionToken.mockResolvedValue("a".repeat(43)); let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({ pull(controller) { controller.enqueue(new TextEncoder().encode("x".repeat(65))); }, cancel() { cancelled = true; } });
+  const request = new Request("http://localhost/api/model-diagnostics", { method: "POST", body, duplex: "half" } as RequestInit);
+  await expect(POST(request)).resolves.toMatchObject({ status: 400 }); expect(mocks.runModelDiagnostics).not.toHaveBeenCalled(); expect(cancelled).toBe(true);
+});
+
 it("BFF 对无正文与空对象 POST 只转发当前会话", async () => {
   mocks.readSessionToken.mockResolvedValue("a".repeat(43));
   mocks.runModelDiagnostics.mockResolvedValue(response);

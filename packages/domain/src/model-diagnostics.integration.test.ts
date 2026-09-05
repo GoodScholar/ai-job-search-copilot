@@ -53,6 +53,13 @@ describe("模型连接诊断持久化协调", () => {
     const changed = adapter(`changed-${crypto.randomUUID()}`); await service(changed.value).run(); expect(changed.calls()).toBe(1);
   });
 
+  it("GET 在成功复用边界后仍显示最近稳定结果，POST 才重新探针", async () => {
+    now = new Date("2026-09-05T03:00:00.000Z"); const fake = adapter(`get-success-${crypto.randomUUID()}`); const diagnostics = service(fake.value);
+    await diagnostics.run(); now = new Date("2026-09-05T03:10:00.000Z");
+    await expect(diagnostics.get()).resolves.toMatchObject({ status: "available", retryAt: null }); expect(fake.calls()).toBe(1);
+    await diagnostics.run(); expect(fake.calls()).toBe(2);
+  });
+
   it("连续稳定失败按上限指数退避，结束后允许新的探针", async () => {
     now = new Date("2026-09-05T01:00:00.000Z"); const fake = adapter(`failure-${crypto.randomUUID()}`, unavailable); const diagnostics = service(fake.value);
     const first = await diagnostics.run(); expect(first.retryAt).toBe("2026-09-05T01:00:30.000Z");
@@ -63,6 +70,12 @@ describe("模型连接诊断持久化协调", () => {
     now = new Date("2026-09-05T01:07:30.000Z"); await diagnostics.run();
     now = new Date("2026-09-05T01:15:30.000Z"); const capped = await diagnostics.run();
     expect(capped.retryAt).toBe("2026-09-05T01:25:30.000Z");
+  });
+
+  it("GET 在失败退避边界后保留失败结果但允许重试", async () => {
+    now = new Date("2026-09-05T04:00:00.000Z"); const fake = adapter(`get-failure-${crypto.randomUUID()}`, unavailable); const diagnostics = service(fake.value);
+    await diagnostics.run(); now = new Date("2026-09-05T04:00:30.000Z");
+    await expect(diagnostics.get()).resolves.toMatchObject({ status: "temporarily_unavailable", retryAt: null }); expect(fake.calls()).toBe(1);
   });
 
   it("锁竞争不会等待或外呼：GET 与 POST 都返回 checking", async () => {
@@ -85,6 +98,17 @@ describe("模型连接诊断持久化协调", () => {
       expect(outcomes.filter((value) => value.status === "available" || value.status === "checking")).toHaveLength(20);
       expect(fake.calls()).toBeLessThanOrEqual(1);
     } finally { await Promise.all(clients.map((db) => db.$client.end())); }
+  });
+
+  it("同一 service 的进行中探针使重复 GET 和 POST 不进入第二个事务", async () => {
+    fresh(); const fingerprint = `in-flight-${crypto.randomUUID()}`; let release: (() => void) | undefined; let entered: (() => void) | undefined;
+    const blocked: ModelDiagnosticAdapter = { configurationFingerprint: fingerprint, diagnose: () => new Promise((resolve) => { entered = () => resolve(available); release = entered; }) };
+    let transactions = 0; const original = database.transaction.bind(database);
+    const tracked = Object.assign(Object.create(database), { transaction: (...args: Parameters<Database["transaction"]>) => { transactions += 1; return original(...args); } }) as Database;
+    const diagnostics = createModelDiagnostics({ db: tracked, adapter: blocked, clock: () => now }); const first = diagnostics.run();
+    while (!entered) await new Promise((resolve) => setTimeout(resolve, 1));
+    await expect(diagnostics.get()).resolves.toMatchObject({ status: "checking" }); await expect(diagnostics.run()).resolves.toMatchObject({ status: "checking" }); expect(transactions).toBe(1);
+    release!(); await first;
   });
 
   it("意外异常被净化为稳定失败，不把 Error 内容带入响应", async () => {

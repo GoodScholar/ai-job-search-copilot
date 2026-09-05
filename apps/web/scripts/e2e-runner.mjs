@@ -42,7 +42,7 @@ function explicitSpecPhase(arguments_) {
   const sourceHealth = specs.some((spec) => spec.includes(sourceHealthSpec));
   const workbenchInbox = specs.some((spec) => spec.includes(workbenchInboxSpec));
   const modelDiagnostics = specs.some((spec) => spec.includes(modelDiagnosticsSpec));
-  const ordinary = specs.some((spec) => !spec.includes(sourceHealthSpec) && !spec.includes(workbenchInboxSpec) && !spec.includes(anysearchSpec));
+  const ordinary = specs.some((spec) => !spec.includes(sourceHealthSpec) && !spec.includes(workbenchInboxSpec) && !spec.includes(anysearchSpec) && !spec.includes(modelDiagnosticsSpec));
   return [
     ...(anysearch ? ["anysearch-configured", "anysearch-missing-key"] : []),
     ...((ordinary || workbenchInbox) ? ["ordinary"] : []),

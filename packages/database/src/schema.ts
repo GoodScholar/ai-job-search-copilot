@@ -22,6 +22,13 @@ export const modelDiagnosticResults = pgTable("model_diagnostic_results", {
   check("model_diagnostic_results_status_check", sql`${table.status} in ('available', 'failed', 'temporarily_unavailable')`),
   check("model_diagnostic_results_reason_code_check", sql`${table.reasonCode} in ('MODEL_DIAGNOSTIC_AVAILABLE', 'MODEL_DIAGNOSTIC_CONFIGURATION_MISSING', 'MODEL_DIAGNOSTIC_AUTHENTICATION_FAILED', 'MODEL_DIAGNOSTIC_ACCESS_RESTRICTED', 'MODEL_DIAGNOSTIC_LOW_COST_MODEL_UNAVAILABLE', 'MODEL_DIAGNOSTIC_HIGH_QUALITY_MODEL_UNAVAILABLE', 'MODEL_DIAGNOSTIC_STRICT_OUTPUT_UNSUPPORTED', 'MODEL_DIAGNOSTIC_TIMEOUT', 'MODEL_DIAGNOSTIC_RATE_LIMITED', 'MODEL_DIAGNOSTIC_PROVIDER_UNAVAILABLE', 'MODEL_DIAGNOSTIC_FAILED')`),
   check("model_diagnostic_results_latency_bucket_check", sql`${table.latencyBucket} in ('under_1s', '1_to_5s', '5_to_10s', '10_to_20s', 'timeout')`),
+  check("model_diagnostic_results_checks_check", sql`jsonb_typeof(${table.checks}) = 'object'
+    AND ${table.checks} ?& array['authentication', 'modelAvailability', 'structuredOutput', 'timeout']
+    AND ${table.checks} = jsonb_build_object('authentication', ${table.checks} -> 'authentication', 'modelAvailability', ${table.checks} -> 'modelAvailability', 'structuredOutput', ${table.checks} -> 'structuredOutput', 'timeout', ${table.checks} -> 'timeout')
+    AND ${table.checks} ->> 'authentication' in ('passed', 'failed', 'not_verified')
+    AND ${table.checks} ->> 'modelAvailability' in ('passed', 'failed', 'not_verified')
+    AND ${table.checks} ->> 'structuredOutput' in ('passed', 'failed', 'not_verified')
+    AND ${table.checks} ->> 'timeout' in ('passed', 'failed', 'not_verified')`),
 ]);
 
 export const accountRunPolicyRevisions = pgTable("account_run_policy_revisions", {

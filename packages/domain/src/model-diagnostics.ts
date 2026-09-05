@@ -46,6 +46,12 @@ function current(row: Stored | undefined, now: Date, failures: number) {
   if (row.status !== "available") { const retryAt = new Date(row.checkedAt.getTime() + backoff[Math.min(Math.max(failures, 1) - 1, backoff.length - 1)]!); if (retryAt.getTime() > now.getTime()) return response(row.status, row, retryAt); }
   return undefined;
 }
+function latestStable(row: Stored | undefined, now: Date, failures: number) {
+  if (!row) return undefined;
+  if (row.status === "available") return response(row.status, row);
+  const retryAt = new Date(row.checkedAt.getTime() + backoff[Math.min(Math.max(failures, 1) - 1, backoff.length - 1)]!);
+  return response(row.status, row, retryAt.getTime() > now.getTime() ? retryAt : null);
+}
 function sanitizedFailure(): ModelDiagnosticProbeResult { return { status: "failed", checks: unknownChecks, reasonCode: "MODEL_DIAGNOSTIC_FAILED", latencyBucket: "under_1s" }; }
 function timeoutFailure(): ModelDiagnosticProbeResult { return { status: "temporarily_unavailable", checks: { ...unknownChecks, timeout: "failed" }, reasonCode: "MODEL_DIAGNOSTIC_TIMEOUT", latencyBucket: "timeout" }; }
 async function diagnoseWithinDeadline(adapter: ModelDiagnosticAdapter, timeoutMs: number): Promise<ModelDiagnosticProbeResult> {
@@ -65,9 +71,12 @@ async function diagnoseWithinDeadline(adapter: ModelDiagnosticAdapter, timeoutMs
 export function createModelDiagnostics(deps: Dependencies): { get(): Promise<ModelDiagnosticPublicResponse>; run(): Promise<ModelDiagnosticPublicResponse> } {
   const fingerprint = deps.adapter.configurationFingerprint;
   const cached = async (db: Pick<Database, "select">, now: Date) => { const row = await latest(db, fingerprint); return current(row, now, row?.status === "available" ? 0 : await failureCount(db, fingerprint)); };
+  const stable = async (db: Pick<Database, "select">, now: Date) => { const row = await latest(db, fingerprint); return latestStable(row, now, row?.status === "available" ? 0 : await failureCount(db, fingerprint)); };
+  let inFlight = false;
   return {
     async get() {
-      const now = deps.clock(); const existing = await cached(deps.db, now); if (existing) return existing;
+      if (inFlight) return response("checking");
+      const now = deps.clock(); const existing = await stable(deps.db, now); if (existing) return existing;
       const active = await deps.db.transaction(async (tx) => {
         const [row] = await tx.execute(sql`select pg_try_advisory_xact_lock(hashtextextended(${fingerprint}, 50)) as locked`) as unknown as Array<{ locked: boolean }>;
         if (!row?.locked) return true;
@@ -76,8 +85,11 @@ export function createModelDiagnostics(deps: Dependencies): { get(): Promise<Mod
       return active ? response("checking") : response("unverified");
     },
     async run() {
+      if (inFlight) return response("checking");
       const now = deps.clock(); const existing = await cached(deps.db, now); if (existing) return existing;
-      return deps.db.transaction(async (tx) => {
+      if (inFlight) return response("checking");
+      inFlight = true;
+      try { return await deps.db.transaction(async (tx) => {
         const [lock] = await tx.execute(sql`select pg_try_advisory_xact_lock(hashtextextended(${fingerprint}, 50)) as locked`) as unknown as Array<{ locked: boolean }>;
         if (!lock?.locked) return response("checking");
         const doubleCheck = await cached(tx, now); if (doubleCheck) return doubleCheck;
@@ -87,7 +99,7 @@ export function createModelDiagnostics(deps: Dependencies): { get(): Promise<Mod
         const row: Stored = { ...result, checkedAt };
         const retryAt = result.status === "available" ? null : new Date(checkedAt.getTime() + backoff[Math.min((await failureCount(tx, fingerprint)) - 1, backoff.length - 1)]!);
         return response(result.status, row, retryAt);
-      });
+      }); } finally { inFlight = false; }
     },
   };
 }

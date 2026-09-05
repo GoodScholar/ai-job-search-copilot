@@ -48,6 +48,7 @@ describe("E2E runner", () => {
     expect(await selectE2EPhases(["e2e/auth-workbench.spec.ts", "--list"])).toEqual(["ordinary"]);
     expect(await selectE2EPhases(["e2e/source-health.spec.ts", "--project", "Mobile Safari"])).toEqual(["source-health"]);
     expect(await selectE2EPhases(["e2e/workbench-inbox.spec.ts", "--project", "Mobile Safari"])).toEqual(["ordinary", "workbench-inbox"]);
+    expect(await selectE2EPhases(["e2e/model-diagnostics.spec.ts", "--project", "Mobile Safari"])).toEqual(["model-diagnostics-success", "model-diagnostics-failed", "model-diagnostics-temporarily-unavailable"]);
   });
 
   it.each([

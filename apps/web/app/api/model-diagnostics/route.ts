@@ -3,6 +3,7 @@ import { api } from "@/lib/server/api-client";
 import { readSessionToken } from "@/lib/server/session-cookie";
 
 const noStore = { "Cache-Control": "no-store" };
+const maxBodyBytes = 64;
 const empty = (status: number) => new Response(null, { status, headers: noStore });
 
 export async function GET(): Promise<Response> {
@@ -27,7 +28,22 @@ export async function POST(request: Request): Promise<Response> {
 }
 
 async function isEmptyBody(request: Request): Promise<boolean> {
-  const raw = await request.text();
+  const contentLength = request.headers.get("content-length");
+  if (contentLength && (!/^\d+$/u.test(contentLength) || Number(contentLength) > maxBodyBytes)) return false;
+  let raw = "";
+  try {
+    if (request.body) {
+      const reader = request.body.getReader(); const decoder = new TextDecoder(); let size = 0;
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        size += chunk.value.byteLength;
+        if (size > maxBodyBytes) { await reader.cancel(); return false; }
+        raw += decoder.decode(chunk.value, { stream: true });
+      }
+      raw += decoder.decode();
+    }
+  } catch { return false; }
   if (!raw.trim()) return true;
   const parsed = (() => { try { return JSON.parse(raw) as unknown; } catch { return null; } })();
   return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) && Object.keys(parsed).length === 0;
