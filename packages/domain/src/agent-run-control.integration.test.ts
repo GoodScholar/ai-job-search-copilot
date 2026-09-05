@@ -133,6 +133,28 @@ describe("agent run controls", () => {
     await expect(database.select().from(agentRuns).where(eq(agentRuns.userId, stale.userId))).resolves.toHaveLength(0);
   });
 
+  it("真实 preflight 以账户边界隔离 target、warning fingerprint 和 idempotency key", async () => {
+    const owner = await activeTarget();
+    await addConfirmedSkills(owner.userId, ["TypeScript"]);
+    await addGreenhouseWatchlistSource(owner.userId, owner.targetId);
+    const ownerEvaluator = await realEvaluator(owner.userId);
+    const ownerReport = await ownerEvaluator.evaluate(database, { userId: owner.userId, targetId: owner.targetId, workflow: "discovery", trigger: "manual" });
+    const key = crypto.randomUUID();
+    const ownerRun = await realCommands(new MemoryQueue(), ownerEvaluator).start({ userId: owner.userId, requestId: crypto.randomUUID(), command: { targetId: owner.targetId, idempotencyKey: key, warningFingerprint: ownerReport.report.warningFingerprint } });
+
+    const other = await activeTarget();
+    await addConfirmedSkills(other.userId, ["TypeScript"]);
+    await addGreenhouseWatchlistSource(other.userId, other.targetId);
+    const otherEvaluator = await realEvaluator(other.userId);
+    const otherRuntime = realCommands(new MemoryQueue(), otherEvaluator);
+    await expect(otherRuntime.start({ userId: other.userId, requestId: crypto.randomUUID(), command: { targetId: owner.targetId, idempotencyKey: key, warningFingerprint: ownerReport.report.warningFingerprint } })).rejects.toMatchObject({ code: "RUN_PREFLIGHT_BLOCKED" } satisfies Partial<RunPreflightRejectedError>);
+    const otherReport = await otherEvaluator.evaluate(database, { userId: other.userId, targetId: other.targetId, workflow: "discovery", trigger: "manual" });
+    await expect(otherRuntime.start({ userId: other.userId, requestId: crypto.randomUUID(), command: { targetId: other.targetId, idempotencyKey: key, warningFingerprint: ownerReport.report.warningFingerprint } })).rejects.toMatchObject({ code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED", report: otherReport.report } satisfies Partial<RunPreflightRejectedError>);
+    const otherRun = await otherRuntime.start({ userId: other.userId, requestId: crypto.randomUUID(), command: { targetId: other.targetId, idempotencyKey: key, warningFingerprint: otherReport.report.warningFingerprint } });
+    expect(otherRun.runId).not.toBe(ownerRun.runId);
+    await expect(database.select().from(agentRuns).where(eq(agentRuns.idempotencyKey, key))).resolves.toHaveLength(2);
+  });
+
   it("重放同一暂停命令时返回首次快照且只写一次事件、控制记录和审计", async () => {
     const { userId, targetId } = await activeTarget();
     const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });

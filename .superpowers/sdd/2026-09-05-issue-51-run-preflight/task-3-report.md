@@ -63,3 +63,22 @@ git diff --check
 - 新增 checkpoint 回归：历史宽松 budget/source scope/preflight 快照保持原文，`toolCalls: 11` 仍被 fake workflow 当前硬上限 10 拒绝。
 - mutation check：若移除 helper 的 policy-first 读取或再次固定 evidence revision，fixture consistency test 失败；若将 checkpoint 改为直接使用历史 budget snapshot，宽松快照测试不再返回 `tool_calls` exhausted；若将 preflight 移至幂等查询前，停用 target 后重放测试失败。
 - 定点证据：fixture consistency + real preflight test 2 passed；hard-limit test 1 passed（首次容器启动端口等待超时，确认无测试遗留进程后串行重跑通过）；`pnpm --filter @job-copilot/domain typecheck` 与 `git diff --check` 通过。
+
+## Fix round 1 完整复跑（exit 0）
+
+```text
+$ pnpm --filter @job-copilot/database exec vitest run --no-file-parallelism src/migrate.integration.test.ts
+Test Files  1 passed (1)
+Tests       27 passed (27)
+
+$ pnpm --filter @job-copilot/domain exec vitest run --no-file-parallelism src/agent-run-control.integration.test.ts src/agent-runs.test.ts src/agent-runs.integration.test.ts src/agent-inbox.integration.test.ts src/company-watchlists.integration.test.ts src/job-discovery-persistence.integration.test.ts src/recommendation-feedback.integration.test.ts
+Test Files  7 passed (7)
+Tests       144 passed (144)
+
+$ pnpm --filter @job-copilot/database typecheck
+$ pnpm --filter @job-copilot/domain typecheck
+$ git diff --check
+all exit 0
+```
+
+新增 owner-bound 独立用例验证：账户 B 不能使用 A 的 targetId 取得/重放 A 的运行；即便 idempotency key 相同，B 的旧 warning fingerprint 也会收到 B 自己的最新 warning 报告，使用 B 当前 fingerprint 后只创建 B 自己的 run。mutation check：若去掉 owner `userId` 条件，测试会错误复用 A run；若 fingerprint 不包含 target/账户状态，B 旧 fingerprint 拒绝断言会失效。
