@@ -23,7 +23,8 @@
     "./pdf-career-processing": "./src/pdf-career-processing.ts",
     "./profile-review": "./src/profile-review.ts",
     "./workbench": "./src/workbench.ts",
-    "./runtime": "./src/runtime.ts"
+    "./runtime": "./src/runtime.ts",
+    "./model-diagnostics": "./src/model-diagnostics.ts"
   },
   "scripts": {
     "test": "vitest run",
