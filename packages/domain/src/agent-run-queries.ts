@@ -4,6 +4,7 @@ import {
   type Database,
 } from "@job-copilot/database";
 import { AgentRunDetailSchema, AgentRunExecutionSpecSchema, StartAgentRunResponseSchema, type AgentRunDetail, type StartAgentRunResponse } from "@job-copilot/contracts/agent-runs";
+import { RunPreflightSnapshotSchema } from "@job-copilot/contracts/run-preflight";
 import { mismatchedSourceCapabilityDeclaration, unsupportedSourceCapability } from "@job-copilot/contracts/source-capabilities";
 import { normalizeAgentRunSourceScope } from "./agent-run-source-scope";
 
@@ -24,6 +25,7 @@ function summary(row: RunRow): StartAgentRunResponse {
   return StartAgentRunResponseSchema.parse({
     runId: row.id, targetId: row.targetId, targetVersion: row.targetVersion,
     accountPolicyRevisionNumber: row.accountPolicyRevisionNumber,
+    preflightSnapshot: row.preflightSnapshot === null ? null : RunPreflightSnapshotSchema.parse(row.preflightSnapshot),
     targetSnapshot: row.targetSnapshot, sourceScope,
     workflowVersion: row.workflowVersion, adapter: row.adapter,
     adapterVersion: row.adapterVersion, outputSchemaVersion: row.outputSchemaVersion,

@@ -16,6 +16,7 @@ import { DeepMatchAdapterError, FakeDeepMatchAdapter } from "@job-copilot/contra
 import { createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
 import { createAccountRunPolicies } from "./account-run-policies";
 import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-policies";
+import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
 const constraints = { roleFamily: "AI 应用工程师", seniority: null, locations: [], workModes: [], relocation: "unknown" as const, salary: null, industries: [], dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] } };
@@ -56,7 +57,7 @@ describe("AgentRunProcessor checkpoints", () => {
       await createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now })
         .save({ userId, command: { expectedVersion: 0, settings } });
     }
-    const started = await createAgentRunCommands({ db: database, queue: new Queue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+    const started = await createAgentRunCommands({ db: database, queue: new Queue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) })
       .start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
     return { userId, targetId, runId: started.runId };
   }
@@ -1566,7 +1567,7 @@ describe("AgentRunProcessor checkpoints", () => {
     await watchlists.addItem({ userId: seed.userId, targetId: seed.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, canonicalCompanyName: "Enabled", careersUrl: "https://boards.greenhouse.io/enabled", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null } });
     const withDisabled = await watchlists.addItem({ userId: seed.userId, targetId: seed.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 1, canonicalCompanyName: "Disabled", careersUrl: "https://boards.greenhouse.io/disabled", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null } });
     await watchlists.setItemState({ userId: seed.userId, targetId: seed.targetId, requestId: crypto.randomUUID(), itemId: withDisabled.items[1]!.itemId, command: { expectedVersion: 2, state: "disabled" } });
-    const started = await createAgentRunCommands({ db: database, queue: new Queue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse" }).start({ userId: seed.userId, requestId: crypto.randomUUID(), command: { targetId: seed.targetId, idempotencyKey: crypto.randomUUID() } });
+    const started = await createAgentRunCommands({ db: database, queue: new Queue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse", runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) }).start({ userId: seed.userId, requestId: crypto.randomUUID(), command: { targetId: seed.targetId, idempotencyKey: crypto.randomUUID() } });
     const [frozen] = await database.select({ sourceScope: agentRuns.sourceScope }).from(agentRuns).where(eq(agentRuns.id, started.runId));
     const [enabled] = (frozen!.sourceScope as { sources: Array<{ sourceId: string; watchlistItemId: string; canonicalCompanyName: string }> }).sources;
     expect(frozen!.sourceScope).toMatchObject({ sources: [{ canonicalCompanyName: "Enabled" }] });

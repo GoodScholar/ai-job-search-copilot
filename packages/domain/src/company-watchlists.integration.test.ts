@@ -13,6 +13,7 @@ import {
   type Database,
 } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
+import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
 import { createAgentRunCommands } from "./agent-run-control";
 import { createCompanyWatchlistCommands, createCompanyWatchlistQueries } from "./company-watchlists";
 import { createSourceHealthQueries } from "./source-health";
@@ -256,7 +257,7 @@ describe("company watchlists", () => {
       expectedVersion: 0, canonicalCompanyName: "Stale Board", careersUrl: "https://boards.greenhouse.io/stale-board", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null,
     } });
     const item = initial.items[0]!;
-    const started = await createAgentRunCommands({ db: database, queue: { enqueue: async () => {} }, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+    const started = await createAgentRunCommands({ db: database, queue: { enqueue: async () => {} }, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) })
       .start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
     await database.insert(jobSourceHealthChecks).values({ id: crypto.randomUUID(), userId, runId: started.runId, targetId, watchlistItemId: item.itemId, sourceId: "greenhouse:stale-board", status: "healthy", reasonCodes: [], impactScope: "none", impactAffectedCount: null, observedPostingCount: 1, selectedDetailCount: 1, validDetailCount: 1, requestAttemptCount: 1, checkedAt: now });
     const revised = await commands().reviseItem({ userId, targetId, itemId: item.itemId, requestId: crypto.randomUUID(), command: {
@@ -276,7 +277,7 @@ describe("company watchlists", () => {
       adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2",
       declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2", contractVersion: "source-capabilities-v1", capabilities: ["continuous_monitoring"] }),
     } });
-    const started = await createAgentRunCommands({ db: database, queue: { enqueue: async () => {} }, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+    const started = await createAgentRunCommands({ db: database, queue: { enqueue: async () => {} }, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) })
       .start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
     await database.insert(jobSourceHealthChecks).values({ id: crypto.randomUUID(), userId, runId: started.runId, targetId, watchlistItemId: item.itemId, sourceId: "greenhouse:capability-board", status: "rate_limited", reasonCodes: ["SOURCE_RATE_LIMITED"], impactScope: "entire_source", impactAffectedCount: null, observedPostingCount: 0, selectedDetailCount: 0, validDetailCount: 0, requestAttemptCount: 1, checkedAt: now });
     await expect(projection.get({ userId, targetId })).resolves.toMatchObject({

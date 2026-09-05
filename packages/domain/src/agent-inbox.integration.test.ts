@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { agentInboxItemActions, agentInboxItems, agentRunEvents, agentRuns, auditEvents, calibrationProposals, candidateFacts, careerDocuments, careerImports, createDatabase, jobAccounts, jobSourceHealthChecks, jobTargetRevisions, jobTargets, migrateDatabase, recommendationLists, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
+import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
 import { createAgentInbox, createAgentRunCommands, type AgentRunQueue } from "./agent-runs";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
@@ -36,7 +37,7 @@ describe("agent inbox", () => {
   }
 
   const queue = new MemoryQueue();
-  const commands = () => createAgentRunCommands({ db: database, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+  const commands = () => createAgentRunCommands({ db: database, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) });
   const inbox = () => createAgentInbox({ db: database, commands: commands(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
 
   async function openItem(input: { userId: string; targetId: string; kind: "decision_required" | "run_failed" | "budget_exhausted" | "source_attention"; reasonCode: "AGENT_RUN_PAUSED" | "AGENT_RUN_ADAPTER_FAILED" | "AGENT_RUN_BUDGET_EXCEEDED" | "SOURCE_HEALTH_ATTENTION"; budgetDimension?: "tool_calls" }) {

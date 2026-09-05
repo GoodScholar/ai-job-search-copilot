@@ -615,6 +615,7 @@ export const agentRuns = pgTable("agent_runs", {
   budgetSnapshot: jsonb("budget_snapshot").notNull(),
   accountPolicyRevisionNumber: integer("account_policy_revision_number"),
   accountPolicySnapshot: jsonb("account_policy_snapshot"),
+  preflightSnapshot: jsonb("preflight_snapshot"),
   workflowVersion: varchar("workflow_version", { length: 64 }).notNull(),
   ruleVersion: varchar("rule_version", { length: 64 }).notNull(),
   adapter: varchar("adapter", { length: 64 }).notNull(),
@@ -676,6 +677,7 @@ export const agentRuns = pgTable("agent_runs", {
   check("agent_runs_policy_revision_nonnegative", sql`${table.accountPolicyRevisionNumber} >= 0`),
   check("agent_runs_policy_snapshot_object", sql`jsonb_typeof(${table.accountPolicySnapshot}) = 'object'`),
   check("agent_runs_policy_columns_paired", sql`(${table.accountPolicyRevisionNumber} is null) = (${table.accountPolicySnapshot} is null)`),
+  check("agent_runs_preflight_snapshot_object", sql`${table.preflightSnapshot} is null or jsonb_typeof(${table.preflightSnapshot}) = 'object'`),
   check("agent_runs_status_check", sql`${table.status} in ('queued', 'running', 'paused', 'completed', 'failed', 'cancelled')`),
   check("agent_runs_current_step_check", sql`${table.currentStep} in ('queued', 'batch_search', 'fetch_details', 'persist_results', 'select_candidates', 'assess_matches', 'create_recommendations', 'completed', 'failed', 'cancelled')`),
   check("agent_runs_control_state_check", sql`${table.controlState} in ('none', 'pause_requested', 'cancel_requested')`),
@@ -906,7 +908,7 @@ export const jobDiscoveryScheduleOccurrences = pgTable("job_discovery_schedule_o
     name: "job_discovery_schedule_occurrences_owner_run_fk",
   }),
   check("job_discovery_schedule_occurrences_status_check", sql`${table.status} in ('pending', 'dispatched', 'skipped')`),
-  check("job_discovery_schedule_occurrences_skip_reason_check", sql`${table.skipReason} is null or ${table.skipReason} in ('TARGET_INACTIVE', 'NO_SUPPORTED_SOURCE', 'SOURCE_POLICY_REQUIRED', 'PROFILE_UNAVAILABLE', 'ACCOUNT_RUN_POLICY_WINDOW_CLOSED')`),
+  check("job_discovery_schedule_occurrences_skip_reason_check", sql`${table.skipReason} is null or ${table.skipReason} in ('TARGET_INACTIVE', 'NO_SUPPORTED_SOURCE', 'SOURCE_POLICY_REQUIRED', 'PROFILE_UNAVAILABLE', 'ACCOUNT_RUN_POLICY_WINDOW_CLOSED', 'RUN_PREFLIGHT_BLOCKED')`),
   check("job_discovery_schedule_occurrences_outcome_check", sql`
     (${table.status} = 'pending' and ${table.runId} is null and ${table.skipReason} is null)
     or (${table.status} = 'dispatched' and ${table.runId} is not null and ${table.skipReason} is null)

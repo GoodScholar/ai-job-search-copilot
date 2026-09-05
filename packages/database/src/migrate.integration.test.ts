@@ -990,6 +990,7 @@ describe("database migrations", () => {
       "job_discovery_schedule_occurrences_status_check",
       "job_discovery_schedule_occurrences_skip_reason_check",
       "job_discovery_schedule_occurrences_outcome_check",
+      "agent_runs_preflight_snapshot_object",
       "job_source_postings_availability_check",
       "job_source_posting_versions_availability_check",
       "job_opportunities_availability_check",
@@ -1002,6 +1003,7 @@ describe("database migrations", () => {
       { table_name: "job_discovery_schedules", column_name: "next_run_at", data_type: "timestamp with time zone" },
       { table_name: "job_discovery_schedule_occurrences", column_name: "scheduled_for", data_type: "timestamp with time zone" },
       { table_name: "job_discovery_schedule_occurrences", column_name: "skip_reason", data_type: "character varying" },
+      { table_name: "agent_runs", column_name: "preflight_snapshot", data_type: "jsonb" },
       { table_name: "job_source_postings", column_name: "availability", data_type: "character varying" },
       { table_name: "job_source_postings", column_name: "availability_updated_at", data_type: "timestamp with time zone" },
       { table_name: "job_source_postings", column_name: "source_id", data_type: "character varying" },
@@ -1044,6 +1046,17 @@ describe("database migrations", () => {
         '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 'workflow-v1', 'fake-job-discovery-rules-v1', 'fake', 'fake-v1', 'result-v1', '[]'::jsonb, 'queued', 'queued'
       )
     `);
+    await expect(migratedDatabase.execute(sql`
+      select preflight_snapshot from agent_runs where id = ${runId}
+    `)).resolves.toEqual([{ preflight_snapshot: null }]);
+    await migratedDatabase.execute(sql`
+      update agent_runs set preflight_snapshot = '{"version":"run-preflight-v1"}'::jsonb where id = ${runId}
+    `);
+    for (const invalidSnapshot of ["[]", "\"not-an-object\"", "1"]) {
+      await expect(migratedDatabase.execute(sql`
+        update agent_runs set preflight_snapshot = ${invalidSnapshot}::jsonb where id = ${runId}
+      `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    }
     await migratedDatabase.execute(sql`
       insert into job_discovery_schedule_occurrences (
         id, user_id, schedule_id, target_id, scheduled_for, status, run_id, skip_reason
@@ -1065,6 +1078,20 @@ describe("database migrations", () => {
         'dceff33a-259a-4b9c-bc81-966866e45fbb', ${userId}, ${scheduleId}, ${targetId}, now() + interval '2 days', 'skipped', ${runId}, 'NO_SUPPORTED_SOURCE'
       )
     `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await migratedDatabase.execute(sql`
+      insert into job_discovery_schedule_occurrences (
+        id, user_id, schedule_id, target_id, scheduled_for, status, run_id, skip_reason
+      ) values (
+        '46fe0861-7a2a-4684-b5cd-a66d26d0eb94', ${userId}, ${scheduleId}, ${targetId}, now() + interval '3 days', 'skipped', null, 'RUN_PREFLIGHT_BLOCKED'
+      )
+    `);
+    await expect(migratedDatabase.execute(sql`
+      insert into job_discovery_schedule_occurrences (
+        id, user_id, schedule_id, target_id, scheduled_for, status, run_id, skip_reason
+      ) values (
+        '7d7f93d8-1f78-4604-a1f9-1e245070a267', ${userId}, ${scheduleId}, ${targetId}, now() + interval '4 days', 'skipped', ${runId}, 'RUN_PREFLIGHT_BLOCKED'
+      )
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
 
     const indexes = await migratedDatabase.execute(sql`
       select indexname from pg_indexes
@@ -1075,6 +1102,13 @@ describe("database migrations", () => {
       ) order by indexname
     `);
     expect(indexes).toHaveLength(8);
+  });
+
+  it("registers the 0047 preflight snapshot migration exactly", async () => {
+    const journal = JSON.parse(await readFile(fileURLToPath(new URL("../migrations/meta/_journal.json", import.meta.url)), "utf8")) as {
+      entries: Array<{ idx: number; tag: string }>;
+    };
+    expect(journal.entries.at(-1)).toEqual({ idx: 47, version: "7", when: expect.any(Number), tag: "0047_agent_run_preflight_snapshot", breakpoints: true });
   });
 
   it("upgrades a 0020 snapshot with open lifecycle defaults without changing stored run JSON", async () => {
@@ -1191,6 +1225,7 @@ describe("database migrations", () => {
         unlink(join(migrationsFolder, "0044_account_run_policies.sql")),
         unlink(join(migrationsFolder, "0045_account_run_policy_schedule_window.sql")),
         unlink(join(migrationsFolder, "0046_model_diagnostic_results.sql")),
+        unlink(join(migrationsFolder, "0047_agent_run_preflight_snapshot.sql")),
         unlink(join(migrationsFolder, "meta", "0023_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0024_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0025_snapshot.json")),
@@ -1207,7 +1242,7 @@ describe("database migrations", () => {
       const journalPath = join(migrationsFolder, "meta", "_journal.json");
       const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
       await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter((entry) => ![
-        "0023_source_attention_inbox", "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_job_triage_versions", "0029_heavy_devos", "0030_deep_match_recommendations", "0031_deep_match_agent_runs", "0032_recommendation_highlight_limit", "0033_deep_match_usage_entries", "0034_recommendation_highlight_limit_lock", "0035_agent_run_step_model_failures", "0036_recommendation_exclusion_list_ownership", "0037_deep_match_run_staging", "0038_recommendation_feedback_calibration", "0039_boring_sleepwalker", "0040_loud_northstar", "0041_thankful_lethal_legion", "0042_mighty_malcolm_colcord", "0043_task_control_agent_inbox", "0044_account_run_policies", "0045_account_run_policy_schedule_window", "0046_model_diagnostic_results",
+        "0023_source_attention_inbox", "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_job_triage_versions", "0029_heavy_devos", "0030_deep_match_recommendations", "0031_deep_match_agent_runs", "0032_recommendation_highlight_limit", "0033_deep_match_usage_entries", "0034_recommendation_highlight_limit_lock", "0035_agent_run_step_model_failures", "0036_recommendation_exclusion_list_ownership", "0037_deep_match_run_staging", "0038_recommendation_feedback_calibration", "0039_boring_sleepwalker", "0040_loud_northstar", "0041_thankful_lethal_legion", "0042_mighty_malcolm_colcord", "0043_task_control_agent_inbox", "0044_account_run_policies", "0045_account_run_policy_schedule_window", "0046_model_diagnostic_results", "0047_agent_run_preflight_snapshot",
       ].includes(entry.tag)) }, null, 2));
       await migrate(upgradeDatabase, { migrationsFolder });
       const userId = "a9f4da20-e9e9-44c4-a6a5-fc2cf5b9ed93"; const targetId = "f1e7a7a6-a3e6-458e-9f53-33cdbbf2d6ea"; const runId = "833f4544-376c-4f8d-81af-16e50df78624";
@@ -1421,10 +1456,10 @@ describe("database migrations", () => {
     try {
       const migrationSource = fileURLToPath(new URL("../migrations", import.meta.url));
       await cp(migrationSource, migrationsFolder, { recursive: true });
-      await Promise.all(["0043_task_control_agent_inbox.sql", "0044_account_run_policies.sql", "0045_account_run_policy_schedule_window.sql", "0046_model_diagnostic_results.sql"].map((file) => unlink(join(migrationsFolder, file)).catch(() => undefined)));
+      await Promise.all(["0043_task_control_agent_inbox.sql", "0044_account_run_policies.sql", "0045_account_run_policy_schedule_window.sql", "0046_model_diagnostic_results.sql", "0047_agent_run_preflight_snapshot.sql"].map((file) => unlink(join(migrationsFolder, file)).catch(() => undefined)));
       const journalPath = join(migrationsFolder, "meta", "_journal.json");
       const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
-      await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter((entry) => !["0043_task_control_agent_inbox", "0044_account_run_policies", "0045_account_run_policy_schedule_window", "0046_model_diagnostic_results"].includes(entry.tag)) }, null, 2));
+      await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter((entry) => !["0043_task_control_agent_inbox", "0044_account_run_policies", "0045_account_run_policy_schedule_window", "0046_model_diagnostic_results", "0047_agent_run_preflight_snapshot"].includes(entry.tag)) }, null, 2));
       await migrate(upgradeDatabase, { migrationsFolder });
       await upgradeDatabase.execute(sql`insert into job_accounts (id) values (${userId})`);
       await upgradeDatabase.execute(sql`insert into job_targets (id, user_id, version, priority, state) values (${targetId}, ${userId}, 1, 'primary', 'active')`);

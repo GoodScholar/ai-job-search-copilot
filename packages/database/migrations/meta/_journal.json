@@ -330,6 +330,13 @@
       "when": 1788683400000,
       "tag": "0046_model_diagnostic_results",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1788684000000,
+      "tag": "0047_agent_run_preflight_snapshot",
+      "breakpoints": true
     }
   ]
 }

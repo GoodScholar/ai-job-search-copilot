@@ -21,6 +21,7 @@ import { createCompanyWatchlistCommands } from "./company-watchlists";
 import { JobDiscoveryScheduleError, createJobDiscoverySchedules } from "./job-discovery-schedules";
 import { createAccountRunPolicies } from "./account-run-policies";
 import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-policies";
+import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
 
 const now = new Date("2026-08-30T01:31:00.000Z");
 const constraints = {
@@ -83,10 +84,10 @@ describe("job discovery schedules", () => {
     const auditTrail = createAuditTrail({ db: database, clock: () => at });
     return {
       queue,
-      commands: createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => at, executionMode: "greenhouse" }),
+      commands: createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => at, executionMode: "greenhouse", runPreflight: createReadyRunPreflightEvaluator({ clock: () => at }) }),
       service: createJobDiscoverySchedules({
         db: database,
-        runs: createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => at, executionMode: "greenhouse" }),
+        runs: createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => at, executionMode: "greenhouse", runPreflight: createReadyRunPreflightEvaluator({ clock: () => at }) }),
         auditTrail,
         id: () => crypto.randomUUID(),
         clock: () => at,
@@ -282,6 +283,7 @@ describe("job discovery schedules", () => {
       id: () => crypto.randomUUID(),
       clock: () => now,
       executionMode: "layered_public",
+      runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }),
     });
     const service = createJobDiscoverySchedules({
       db: database,
@@ -337,7 +339,7 @@ describe("job discovery schedules", () => {
     const auditTrail = createAuditTrail({ db: database, clock: () => now });
     const service = createJobDiscoverySchedules({
       db: database,
-      runs: createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public" }),
+      runs: createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public", runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) }),
       auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public",
     });
     await expect(service.get(owner)).resolves.toMatchObject({ sourceSupport: { status: "executable", supportedSourceCount: 0 } });
@@ -354,7 +356,7 @@ describe("job discovery schedules", () => {
     const auditTrail = createAuditTrail({ db: database, clock: () => now });
     const service = createJobDiscoverySchedules({
       db: database,
-      runs: createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public" }),
+      runs: createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public", runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) }),
       auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public",
     });
     const schedule = await service.set({ userId: owner.userId, targetId: owner.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
@@ -415,7 +417,7 @@ describe("job discovery schedules", () => {
     const queue = new Queue();
     const service = createJobDiscoverySchedules({
       db: database,
-      runs: createAgentRunCommands({ db: database, queue, auditTrail: realAuditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse" }),
+      runs: createAgentRunCommands({ db: database, queue, auditTrail: realAuditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse", runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) }),
       auditTrail,
       id: () => crypto.randomUUID(),
       clock: () => now,
@@ -460,7 +462,7 @@ describe("job discovery schedules", () => {
     const occurrence = await dueOccurrence(owner);
     const queue = new Queue();
     const auditTrail = createAuditTrail({ db: database, clock: () => now });
-    const real = createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse" });
+    const real = createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse", runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) });
     let failAfterCommit = true;
     const runs: AgentRunStarter = { start: async (input) => {
       const started = await real.start(input);
@@ -484,7 +486,7 @@ describe("job discovery schedules", () => {
     const occurrence = await dueOccurrence(owner);
     const queue = new Queue();
     const auditTrail = createAuditTrail({ db: database, clock: () => now });
-    const real = createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse" });
+    const real = createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse", runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) });
     let startCalls = 0;
     let firstStartCommitted!: () => void;
     let releaseFirstBind!: () => void;

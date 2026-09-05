@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-policies";
 import { RunPreflightReportSchema, type RunPreflightReport } from "@job-copilot/contracts/run-preflight";
+import { resolveEffectiveAccountRunPolicy } from "../account-run-policies";
 import type { RunPreflightEvaluator, RunPreflightInput } from "../run-preflight";
 
 /** 仅供未覆盖 #51 规则的旧领域夹具显式注入；生产装配不得使用。 */
 export function createReadyRunPreflightEvaluator(input: { clock?: () => Date } = {}): RunPreflightEvaluator {
   const clock = input.clock ?? (() => new Date());
   return {
-    async evaluate(_db, request: RunPreflightInput) {
+    async evaluate(db, request: RunPreflightInput) {
       const checkedAt = clock().toISOString();
       const targetId = request.targetId ?? randomUUID();
       const report: RunPreflightReport = RunPreflightReportSchema.parse({
@@ -22,7 +23,8 @@ export function createReadyRunPreflightEvaluator(input: { clock?: () => Date } =
           { code: "ACCOUNT_RUN_POLICY_READY", severity: "informational", summary: "账户运行策略已就绪", impact: "当前预算和时间窗口允许本次运行。", retryable: false, suggestedActions: [], evidence: { kind: "account_run_policy", revisionNumber: 0, status: "ready", checkedAt } },
         ],
       });
-      return { report, policy: { revisionNumber: 0, snapshot: systemAccountRunPolicy().effective } };
+      const policy = await resolveEffectiveAccountRunPolicy(db, request.userId, { id: () => randomUUID(), clock });
+      return { report, policy: { revisionNumber: policy.revisionNumber, snapshot: policy.effective } };
     },
   };
 }

@@ -8,6 +8,7 @@ import { createCompanyWatchlistCommands } from "./company-watchlists";
 import { createDeepMatchRunStarter } from "./deep-match-agent-runs";
 import { createAccountRunPolicies } from "./account-run-policies";
 import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-policies";
+import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
 const constraints = {
@@ -44,7 +45,7 @@ describe("agent run controls", () => {
   }
 
   function commands(queue: AgentRunQueue) {
-    return createAgentRunCommands({ db: database, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    return createAgentRunCommands({ db: database, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) });
   }
 
   async function addGreenhouseWatchlistSource(userId: string, targetId: string): Promise<void> {
@@ -90,7 +91,7 @@ describe("agent run controls", () => {
     await addGreenhouseWatchlistSource(userId, targetId);
     const runtimeCommands = createAgentRunCommands({
       db: database, queue: new MemoryQueue(), auditTrail: createAuditTrail({ db: database, clock: () => now }),
-      id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse",
+      id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse", runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }),
     });
     const manual = await runtimeCommands.start({
       userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() },
@@ -110,7 +111,7 @@ describe("agent run controls", () => {
     const settings = structuredClone(systemAccountRunPolicy().effective);
     settings.discovery.trustedSourceLimit = 0;
     await createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now }).save({ userId, command: { expectedVersion: 0, settings } });
-    const runtime = createAgentRunCommands({ db: database, queue: new MemoryQueue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse" });
+    const runtime = createAgentRunCommands({ db: database, queue: new MemoryQueue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse", runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) });
     await expect(runtime.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } })).rejects.toMatchObject({ code: "AGENT_RUN_UNAVAILABLE" });
   });
 
@@ -144,7 +145,7 @@ describe("agent run controls", () => {
     await lockHeld;
     const runtime = createAgentRunCommands({
       db: database, queue: new MemoryQueue(), auditTrail: createAuditTrail({ db: database, clock: () => released ? afterLock : beforeLock }),
-      id: () => crypto.randomUUID(), clock: () => released ? afterLock : beforeLock,
+      id: () => crypto.randomUUID(), clock: () => released ? afterLock : beforeLock, runPreflight: createReadyRunPreflightEvaluator({ clock: () => released ? afterLock : beforeLock }),
     });
     const start = runtime.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() }, trigger: { kind: "schedule", occurrenceId: crypto.randomUUID(), scheduledFor: afterLock } });
     released = true;
@@ -161,7 +162,7 @@ describe("agent run controls", () => {
     const policies = createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now });
     const firstSettings = structuredClone(systemAccountRunPolicy().effective); firstSettings.discovery.trustedSourceLimit = 1;
     await policies.save({ userId, command: { expectedVersion: 0, settings: firstSettings } });
-    const greenhouse = (queue: AgentRunQueue) => createAgentRunCommands({ db: database, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse" });
+    const greenhouse = (queue: AgentRunQueue) => createAgentRunCommands({ db: database, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse", runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) });
     const key = crypto.randomUUID();
     const first = await greenhouse(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: key } });
     expect(first).toMatchObject({ accountPolicyRevisionNumber: 1, sourceScope: { sources: [expect.objectContaining({ sourceId: "greenhouse:first" })] } });
@@ -185,7 +186,7 @@ describe("agent run controls", () => {
     settings.discovery.verificationCandidateLimit = 2;
     settings.discovery.enabledProviders = [];
     await createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now }).save({ userId, command: { expectedVersion: 0, settings } });
-    const layered = createAgentRunCommands({ db: database, queue: new MemoryQueue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public" });
+    const layered = createAgentRunCommands({ db: database, queue: new MemoryQueue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public", runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) });
 
     await expect(layered.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } })).resolves.toMatchObject({
       accountPolicyRevisionNumber: 1,
@@ -203,7 +204,7 @@ describe("agent run controls", () => {
     await addConfirmedSkills(userId, ["TypeScript", "React"]);
     const runtimeCommands = createAgentRunCommands({
       db: database, queue: new MemoryQueue(), auditTrail: createAuditTrail({ db: database, clock: () => now }),
-      id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public",
+      id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public", runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }),
     });
 
     const manual = await runtimeCommands.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });

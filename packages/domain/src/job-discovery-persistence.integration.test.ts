@@ -24,6 +24,7 @@ import {
   type Database,
 } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
+import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
 import { createAgentRunCommands, type AgentRunQueue } from "./agent-run-control";
 import { createJobDiscoveryPersistence, discoverySourceIdentifier } from "./job-discovery-persistence";
 import { persistJobOpportunity } from "./job-opportunity-persistence";
@@ -52,7 +53,7 @@ describe("job discovery persistence lifecycle", () => {
   afterAll(async () => { await database?.$client.end(); await container?.stop(); });
 
   async function claimRun(userId: string, targetId: string, now: Date) {
-    const started = await createAgentRunCommands({ db: database, queue: new Queue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+    const started = await createAgentRunCommands({ db: database, queue: new Queue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) })
       .start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
     const claimToken = crypto.randomUUID();
     const [run] = await database.update(agentRuns).set({ status: "running", currentStep: "persist_results", adapter: "greenhouse", claimToken, attemptCount: 1, startedAt: now, activeSliceStartedAt: now, claimExpiresAt: new Date(now.getTime() + 30_000) })
@@ -687,8 +688,8 @@ describe("job discovery persistence lifecycle", () => {
     expect(statementCount).toBeLessThanOrEqual(35);
     expect(observedStatements.find((statement) => statement.query.startsWith('insert into "agent_runs"'))?.query)
       .toMatch(/\$6, default, default, \$7/u);
-    // 新运行记录携带策略修订和快照，固定 SQL 形状增加两个参数。
-    expect(Math.max(...observedStatements.map((statement) => statement.params.length))).toBeLessThanOrEqual(34);
+    // 新运行记录携带策略修订、策略快照与 preflight 快照，固定 SQL 形状增加三个参数。
+    expect(Math.max(...observedStatements.map((statement) => statement.params.length))).toBeLessThanOrEqual(35);
     expect(observedStatements.some((statement) => statement.query.includes("jsonb_to_recordset"))).toBe(true);
     expect(observedStatements.some((statement) => /\bin\s*\(\s*\$\d+\s*,\s*\$\d+/.test(statement.query))).toBe(false);
   });
