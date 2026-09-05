@@ -36,7 +36,7 @@ it("targets 失败不伪造成空数组，并保留成功的运行结果", async
   expect(mocks.getJobTargets).toHaveBeenCalledOnce();
   expect(mocks.getLatestAgentRun).toHaveBeenCalledOnce();
   expect(mocks.getOpenAgentInbox).toHaveBeenCalledOnce();
-  expect(page.props).toMatchObject({ home, targets: null, initialRun: run, inbox: { items: [] }, unavailableSections: ["targets"] });
+  expect(page.props).toMatchObject({ home, targets: null, initialRun: run, inbox: { items: [] }, unavailableSections: ["targets", "preflight"] });
 });
 
 it("运行读取失败不隐藏成功的 targets", async () => {

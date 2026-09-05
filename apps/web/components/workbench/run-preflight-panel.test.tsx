@@ -21,6 +21,7 @@ it.each(["blocked", "ready_with_warnings", "ready"] as const)("以文字、证�
   render(<RunPreflightPanel onReportChange={vi.fn()} report={report(status)} unavailable={false} />);
 
   expect(screen.getByRole("status")).toHaveTextContent(status === "blocked" ? "暂不能启动" : status === "ready_with_warnings" ? "启动前需要你确认" : "可以启动");
+  expect(screen.getByText(status === "blocked" ? "阻塞项" : status === "ready_with_warnings" ? "需要确认" : "信息")).toBeVisible();
   expect(screen.getByText("这是安全的检查摘要")).toBeVisible();
   expect(screen.getByText(/这项检查会影响本次岗位发现/u)).toBeVisible();
   if (status === "blocked") expect(screen.getByRole("link", { name: "完善求职画像" })).toHaveAttribute("href", "/profile");
@@ -30,6 +31,6 @@ it.each(["blocked", "ready_with_warnings", "ready"] as const)("以文字、证�
 it("没有目标时将来源修复降级到求职目标页，并在局部失败时保持明确说明", () => {
   const value = report("ready_with_warnings");
   render(<RunPreflightPanel onReportChange={vi.fn()} report={{ ...value, targetId: null }} unavailable />);
-  expect(screen.getByRole("status")).toHaveTextContent("检查暂时无法刷新");
+  expect(screen.getByRole("status")).toHaveTextContent("正在刷新启动条件，仍显示上次成功结果");
   expect(screen.getByRole("link", { name: "查看来源健康" })).toHaveAttribute("href", "/profile/targets");
 });

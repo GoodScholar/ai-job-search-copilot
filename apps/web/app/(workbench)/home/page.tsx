@@ -29,7 +29,7 @@ export default async function WorkbenchHomePage({ searchParams }: WorkbenchHomeP
     ? getAgentRun(requestedRunId)
     : hasRequestedRun ? Promise.resolve(null) : getLatestAgentRun().then((response) => response.run);
   const targetsPromise = getJobTargets();
-  const preflightPromise = targetsPromise.then((targets) => getRunPreflight(targets.targets.find((target) => target.state === "active" && target.priority === "primary")?.targetId), () => null);
+  const preflightPromise = targetsPromise.then((targets) => getRunPreflight(targets.targets.find((target) => target.state === "active" && target.priority === "primary")?.targetId));
   const [homeResult, targetsResult, runResult, inboxResult, preflightResult] = await Promise.allSettled([
     getWorkbenchHome(), targetsPromise, runPromise, getOpenAgentInbox(), preflightPromise,
   ]);

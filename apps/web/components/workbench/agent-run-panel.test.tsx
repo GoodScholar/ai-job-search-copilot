@@ -22,6 +22,13 @@ const warningReport: RunPreflightReport = {
   items: [{ code: "SOURCE_HEALTH_UNCHECKED", severity: "warning", summary: "来源尚未检查", evidence: { kind: "source_health", checkedSourceCount: 0, healthySourceCount: 0, degradedSourceCount: 0, uncheckedSourceCount: 1, latestCheckedAt: null }, impact: "可能遗漏新岗位", retryable: true, suggestedActions: ["review_source_health"] }],
 };
 
+const readyReport: RunPreflightReport = {
+  ...warningReport,
+  status: "ready",
+  warningFingerprint: null,
+  items: [{ code: "MODEL_DIAGNOSTIC_READY", severity: "informational", summary: "模型连接可用", evidence: { kind: "model_diagnostic", status: "available", checkedAt: now }, impact: "可以开始岗位发现", retryable: false, suggestedActions: [] }],
+};
+
 function target(id = targetId, roleFamily = "AI 应用工程师", priority: JobTarget["priority"] = "primary"): JobTarget {
   return {
     targetId: id,
@@ -231,6 +238,48 @@ it("lets the user choose an active target and exposes a touch-sized discovery ac
   expect(screen.getByRole("combobox", { name: "用于发现岗位的求职目标" })).toHaveValue(targetId);
   await userEvent.selectOptions(screen.getByRole("combobox", { name: "用于发现岗位的求职目标" }), secondTargetId);
   expect(screen.getByRole("button", { name: "发现岗位" })).toHaveClass("workbench-touch-target");
+});
+
+it("即使历史运行属于次目标，初始选择仍固定为活动主目标", () => {
+  render(<AgentRunPanel initialRun={{ ...detail("completed"), targetId: secondTargetId }} targets={[
+    target(), target(secondTargetId, "前端工程师", "secondary"),
+  ]} />);
+
+  expect(screen.getByRole("combobox", { name: "用于发现岗位的求职目标" })).toHaveValue(targetId);
+});
+
+it("切换目标时保留上次报告、标明刷新中并禁用启动，直到目标匹配的报告返回", async () => {
+  let resolve!: (value: Response) => void;
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockReturnValue(new Promise((done) => { resolve = done; })));
+  const user = userEvent.setup();
+  render(<AgentRunPanel currentReport={readyReport} initialRun={null} targets={[
+    target(), target(secondTargetId, "前端工程师", "secondary"),
+  ]} />);
+
+  await user.selectOptions(screen.getByRole("combobox", { name: "用于发现岗位的求职目标" }), secondTargetId);
+  expect(screen.getByRole("region", { name: "运行前检查" })).toHaveTextContent("正在刷新启动条件，仍显示上次成功结果");
+  expect(screen.getByText("模型连接可用")).toBeVisible();
+  expect(screen.getByRole("button", { name: "发现岗位" })).toBeDisabled();
+  resolve(Response.json({ ...readyReport, targetId: secondTargetId }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "发现岗位" })).toBeEnabled());
+});
+
+it("目标不匹配或网络失败时不把旧报告误作新目标的可启动条件", async () => {
+  const user = userEvent.setup();
+  const fetchMock = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(Response.json(readyReport))
+    .mockRejectedValueOnce(new Error("network unavailable"));
+  vi.stubGlobal("fetch", fetchMock);
+  render(<AgentRunPanel currentReport={readyReport} initialRun={null} targets={[
+    target(), target(secondTargetId, "前端工程师", "secondary"),
+  ]} />);
+
+  await user.selectOptions(screen.getByRole("combobox", { name: "用于发现岗位的求职目标" }), secondTargetId);
+  await waitFor(() => expect(screen.getByRole("button", { name: "发现岗位" })).toBeDisabled());
+  expect(screen.getByText("模型连接可用")).toBeVisible();
+  await user.selectOptions(screen.getByRole("combobox", { name: "用于发现岗位的求职目标" }), targetId);
+  await waitFor(() => expect(screen.getByRole("button", { name: "发现岗位" })).toBeDisabled());
+  expect(screen.getByText("模型连接可用")).toBeVisible();
 });
 
 it("按稳定失败码解释固定预算，而不泄露异常正文或误导为稍后重试", () => {

@@ -135,9 +135,7 @@ export function AgentRunPanel({ targets, initialRun, currentReport, onPreflightC
   const activeTargets = targets?.filter((target) => target.state === "active") ?? [];
   const targetsUnavailable = targets === null;
   const canStartRun = !targetsUnavailable && activeTargets.length > 0;
-  const initialTargetId = activeTargets.some((target) => target.targetId === initialRun?.targetId)
-    ? initialRun!.targetId
-    : activeTargets.find((target) => target.priority === "primary")?.targetId ?? activeTargets[0]?.targetId ?? "";
+  const initialTargetId = activeTargets.find((target) => target.priority === "primary")?.targetId ?? activeTargets[0]?.targetId ?? "";
   const [selectedTargetId, setSelectedTargetId] = useState(initialTargetId);
   const [preflight, setPreflight] = useState<RunPreflightReport | null | undefined>(currentReport);
   const [preflightIsUnavailable, setPreflightIsUnavailable] = useState(preflightUnavailable);
@@ -168,12 +166,15 @@ export function AgentRunPanel({ targets, initialRun, currentReport, onPreflightC
     const controller = new AbortController();
     const sequence = ++preflightSequence.current;
     preflightRequest.current = { controller, sequence };
+    setPreflightIsUnavailable(true);
+    setWarningConfirmation(false);
+    setMessage("正在刷新所选求职目标的启动条件。");
     try {
       const response = await fetch(`/api/run-preflight?targetId=${encodeURIComponent(targetId)}`, { cache: "no-store", signal: controller.signal });
       if (controller.signal.aborted || sequence !== preflightSequence.current) return;
       if (!response.ok) { setPreflightIsUnavailable(true); setMessage("运行前检查暂时无法读取，请稍后重试。"); return; }
       const parsed = RunPreflightReportSchema.safeParse(await response.json().catch(() => null));
-      if (!parsed.success) { setPreflightIsUnavailable(true); setMessage("运行前检查暂时无法读取，请稍后重试。"); return; }
+      if (!parsed.success || parsed.data.targetId !== targetId) { setPreflightIsUnavailable(true); setMessage("运行前检查暂时无法读取，请稍后重试。"); return; }
       applyPreflight(parsed.data);
     } catch {
       if (!controller.signal.aborted && sequence === preflightSequence.current) { setPreflightIsUnavailable(true); setMessage("运行前检查暂时无法读取，请稍后重试。"); }
