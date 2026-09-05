@@ -1962,6 +1962,39 @@ describe("authenticated workbench HTTP API", () => {
       });
     const responses = document.paths["/v1/career-documents/imports"].post.responses;
     expect(responses["200"].content["application/json"].schema).toEqual(responses["202"].content["application/json"].schema);
+    const inboxActionRequestSchema = document.paths["/v1/agent-inbox/{itemId}/actions"].post.requestBody
+      .content["application/json"].schema as Record<string, unknown>;
+    const resolveSchema = (schema: Record<string, unknown>): Record<string, unknown> => {
+      const reference = schema.$ref;
+      if (typeof reference !== "string") return schema;
+      expect(reference).toMatch(/^#\/components\/schemas\//);
+      return resolveSchema(document.components.schemas[reference.slice("#/components/schemas/".length)] as Record<string, unknown>);
+    };
+    const schemaVariants = (schema: Record<string, unknown>): Record<string, unknown>[] => {
+      const variants = schema.oneOf ?? schema.anyOf;
+      return Array.isArray(variants) ? variants as Record<string, unknown>[] : [schema];
+    };
+    const inboxActionSchema = resolveSchema(inboxActionRequestSchema);
+    const actionBranches = schemaVariants(inboxActionSchema).map(resolveSchema);
+    const actionBranchByName = new Map<string, Record<string, unknown>>(actionBranches.map((branch) => {
+      const action = (branch.properties as Record<string, Record<string, unknown>>).action;
+      const name = typeof action.const === "string"
+        ? action.const
+        : Array.isArray(action.enum) && typeof action.enum[0] === "string" ? action.enum[0] : "";
+      return [name, branch] as const;
+    }));
+    expect([...actionBranchByName.keys()].sort()).toEqual(["mark_read", "dismiss", "resume_run", "cancel_run", "restart_run"].sort());
+    for (const action of ["mark_read", "dismiss", "resume_run", "cancel_run"] as const) {
+      expect((actionBranchByName.get(action)?.properties as Record<string, unknown>).warningFingerprint).toBeUndefined();
+    }
+    const restartProperties = actionBranchByName.get("restart_run")?.properties as Record<string, Record<string, unknown>>;
+    const warningFingerprintSchema = restartProperties.warningFingerprint;
+    expect(warningFingerprintSchema).toBeDefined();
+    const warningFingerprintVariants = schemaVariants(warningFingerprintSchema).map(resolveSchema);
+    expect(warningFingerprintVariants.some((variant) => variant.type === "null" || variant.nullable === true)).toBe(true);
+    expect(warningFingerprintVariants).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "string", pattern: "^[a-f0-9]{64}$" }),
+    ]));
     const jobTargetResponseSchema = document.paths["/v1/job-targets"].get.responses["200"].content["application/json"].schema;
     expect(document.paths["/v1/job-targets"].post.responses["201"].content["application/json"].schema).toEqual(jobTargetResponseSchema);
     expect(document.paths["/v1/job-targets/{targetId}/revisions"].post.responses["201"].content["application/json"].schema).toEqual(jobTargetResponseSchema);

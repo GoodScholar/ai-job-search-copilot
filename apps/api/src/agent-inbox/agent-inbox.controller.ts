@@ -1,5 +1,5 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Inject, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
-import { ApiBadRequestResponse, ApiBearerAuth, ApiConflictResponse, ApiNotFoundResponse, ApiUnauthorizedResponse } from "@nestjs/swagger";
+import { ApiBadRequestResponse, ApiBearerAuth, ApiBody, ApiConflictResponse, ApiNotFoundResponse, ApiUnauthorizedResponse } from "@nestjs/swagger";
 import {
   AgentInboxActionCommandSchema,
   AgentInboxActionResponseSchema,
@@ -19,6 +19,7 @@ import { AGENT_INBOX, type AgentInbox } from "./agent-inbox.tokens.js";
 
 class AgentInboxListDto extends createZodDto(AgentInboxListSchema) {}
 const AgentInboxActionCommandDto = createZodDto(AgentInboxActionCommandSchema);
+Object.defineProperty(AgentInboxActionCommandDto, "name", { value: "AgentInboxActionCommandDto" });
 class AgentInboxActionResponseDto extends createZodDto(AgentInboxActionResponseSchema) {}
 class AgentInboxPathDto extends createZodDto(z.object({ itemId: z.uuid() }).strict()) {}
 class AgentInboxListQueryDto extends createZodDto(z.object({ status: z.enum(["unread", "read", "resolved", "pending"]).default("pending") }).strict()) {}
@@ -48,6 +49,7 @@ export class AgentInboxController {
   }
 
   @Post(":itemId/actions")
+  @ApiBody({ type: AgentInboxActionCommandDto })
   @HttpCode(HttpStatus.OK)
   @ZodResponse({ type: AgentInboxActionResponseDto })
   @ApiBadRequestResponse({ type: ApiProblem })
