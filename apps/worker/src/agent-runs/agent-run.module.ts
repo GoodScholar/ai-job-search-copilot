@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Injectable, Module, type OnModuleDestroy } from "@nestjs/common";
+import { Inject, Injectable, Module, type OnModuleDestroy } from "@nestjs/common";
 import { Client as MinioClient } from "minio";
 import { createDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
@@ -196,14 +196,16 @@ export function createConfiguredLayeredPublicJobDiscoveryWorkflowResolver(input:
 }
 
 @Injectable()
-class AgentRunDatabase implements OnModuleDestroy {
+class AgentRunDatabase {
   readonly db: Database = createDatabase(required(
     "DATABASE_URL",
     "postgresql://job_copilot:local_only_job_copilot@127.0.0.1:54320/job_copilot",
   ));
+  private closePromise: Promise<void> | undefined;
 
-  async onModuleDestroy(): Promise<void> {
-    await this.db.$client.end({ timeout: 5 });
+  close(): Promise<void> {
+    this.closePromise ??= this.db.$client.end({ timeout: 5 });
+    return this.closePromise;
   }
 }
 
@@ -299,4 +301,20 @@ class AgentRunDatabase implements OnModuleDestroy {
   ],
   exports: [AGENT_RUN_CONSUMER, AGENT_RUN_SCHEDULER],
 })
-export class AgentRunModule {}
+export class AgentRunModule implements OnModuleDestroy {
+  constructor(
+    @Inject(AGENT_RUN_SCHEDULER) private readonly scheduler: AgentRunScheduler,
+    @Inject(AGENT_RUN_RECONCILER) private readonly reconciler: AgentRunReconciler,
+    @Inject(AGENT_RUN_CONSUMER) private readonly consumer: AgentRunConsumer,
+    @Inject(AGENT_RUN_QUEUE) private readonly queue: BullmqAgentRunQueue,
+    @Inject(AGENT_RUN_DATABASE) private readonly database: AgentRunDatabase,
+  ) {}
+
+  async onModuleDestroy(): Promise<void> {
+    try { await this.scheduler.onModuleDestroy(); } catch { /* 其余资源仍需关闭。 */ }
+    try { await this.reconciler.onModuleDestroy(); } catch { /* 其余资源仍需关闭。 */ }
+    try { await this.consumer.close(); } catch { /* 其余资源仍需关闭。 */ }
+    try { await this.queue.onModuleDestroy(); } catch { /* PostgreSQL cleanup 仍需执行。 */ }
+    try { await this.database.close(); } catch { /* postgres-js timeout 是最终强制释放边界。 */ }
+  }
+}

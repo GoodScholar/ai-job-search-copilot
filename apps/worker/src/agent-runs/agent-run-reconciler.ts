@@ -80,6 +80,7 @@ export class AgentRunReconciler implements OnModuleInit, OnModuleDestroy {
   private destroyed = false;
   private scanPromise: Promise<void> | undefined;
   private abortScan: (() => void) | undefined;
+  private destroyPromise: Promise<void> | undefined;
 
   constructor(private readonly input: {
     recoveryQueries: AgentRunRecoveryQueries;
@@ -93,7 +94,12 @@ export class AgentRunReconciler implements OnModuleInit, OnModuleDestroy {
     this.timer = setInterval(() => { void this.scan(); }, AGENT_RUN_SCAN_INTERVAL_MS);
   }
 
-  async onModuleDestroy(): Promise<void> {
+  onModuleDestroy(): Promise<void> {
+    this.destroyPromise ??= this.destroy();
+    return this.destroyPromise;
+  }
+
+  private async destroy(): Promise<void> {
     this.destroyed = true;
     this.abortScan?.();
     if (this.timer) clearInterval(this.timer);

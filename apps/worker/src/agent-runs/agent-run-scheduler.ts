@@ -31,6 +31,7 @@ export class AgentRunScheduler implements OnModuleInit, OnModuleDestroy {
   private timer: ReturnType<typeof setInterval> | undefined;
   private destroyed = false;
   private scanPromise: Promise<void> | undefined;
+  private destroyPromise: Promise<void> | undefined;
 
   constructor(private readonly input: {
     schedules: JobDiscoverySchedules;
@@ -43,7 +44,12 @@ export class AgentRunScheduler implements OnModuleInit, OnModuleDestroy {
     if (!this.destroyed) this.timer = setInterval(() => { void this.scan(); }, AGENT_RUN_SCAN_INTERVAL_MS);
   }
 
-  async onModuleDestroy(): Promise<void> {
+  onModuleDestroy(): Promise<void> {
+    this.destroyPromise ??= this.destroy();
+    return this.destroyPromise;
+  }
+
+  private async destroy(): Promise<void> {
     this.destroyed = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = undefined;
