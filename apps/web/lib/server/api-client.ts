@@ -166,6 +166,20 @@ async function throwRunPreflightConflict(response: Response, fallbackMessage: st
   throw new ApiClientError("api", problem.message ?? fallbackMessage, 409, problem);
 }
 
+async function throwAgentInboxRestartConflict(response: Response, fallbackMessage: string): Promise<never> {
+  const payload = await parseJson(response).catch(() => null);
+  if (!payload || typeof payload !== "object") {
+    throw new ApiClientError("api", "上游运行前检查冲突响应无效", 502);
+  }
+  const problem = { ...(payload as Record<string, unknown>) };
+  delete problem.requestId;
+  const preflight = RunPreflightProblemSchema.safeParse(problem).data;
+  if (preflight) throw new ApiClientError("api", preflight.message ?? fallbackMessage, 409, preflight);
+  const apiProblem = ApiProblemSchema.safeParse(payload).data;
+  if (apiProblem) throw new ApiClientError("api", apiProblem.message ?? fallbackMessage, 409, apiProblem);
+  throw new ApiClientError("api", "上游运行前检查冲突响应无效", 502);
+}
+
 async function parseSuccess<T extends z.ZodType>(response: Response, schema: T): Promise<z.output<T>> {
   const payload = await parseJson(response);
   const parsed = schema.safeParse(payload);
@@ -754,7 +768,7 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
         body: JSON.stringify(requestBody),
       });
       if (!response.ok) {
-        if (response.status === 409 && requestBody.action === "restart_run") return throwRunPreflightConflict(response, "无法处理 Agent Inbox");
+        if (response.status === 409 && requestBody.action === "restart_run") return throwAgentInboxRestartConflict(response, "无法处理 Agent Inbox");
         const problem = await readProblem(response);
         throw new ApiClientError("api", problem?.message ?? "无法处理 Agent Inbox", response.status, problem ?? undefined);
       }

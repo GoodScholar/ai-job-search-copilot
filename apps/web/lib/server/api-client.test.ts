@@ -10,6 +10,7 @@ import type {
 import type { AgentInboxActionResponse, AgentInboxItem } from "@job-copilot/contracts/agent-inbox";
 import type { JobTriageVersion } from "@job-copilot/contracts/job-triage";
 import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-policies";
+import { ApiProblemSchema } from "@job-copilot/contracts/api-problem";
 import { RunPreflightProblemSchema } from "@job-copilot/contracts/run-preflight";
 
 vi.mock("server-only", () => ({}));
@@ -47,6 +48,11 @@ const restartBlockedProblem = RunPreflightProblemSchema.parse({
       suggestedActions: ["review_job_targets"], evidence: { kind: "job_target", primaryTargetId: null, primaryTargetVersion: null, requestedTargetId: null, requestedTargetVersion: null, requestedTargetState: "missing", checkedAt: "2026-09-05T00:00:00.000Z" },
     }],
   },
+});
+const restartConflictProblem = ApiProblemSchema.parse({
+  code: "AGENT_INBOX_ACTION_CONFLICT",
+  message: "该事项当前不能重新启动",
+  requestId: "c7a6aa9c-5cec-4681-a5f4-a017ed3ad5d0",
 });
 
 const queuedImport = {
@@ -692,6 +698,14 @@ it("restart Agent Inbox 原样保留共享契约的运行前检查 409", async (
 
   await expect(client.actOnAgentInboxItem(sessionToken, inboxItem.itemId, action)).rejects.toMatchObject({ kind: "api", status: 409, problem: restartWarningProblem });
   await expect(client.actOnAgentInboxItem(sessionToken, inboxItem.itemId, { ...action, actionId: "69d2bfbf-7e40-49fc-86c8-3a15d7ad4f98" })).rejects.toMatchObject({ kind: "api", status: 409, problem: restartBlockedProblem });
+});
+
+it("restart Agent Inbox 原样保留普通动作冲突 409", async () => {
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify(restartConflictProblem), { status: 409 }));
+  const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+  const action = { actionId: "59d2bfbf-7e40-49fc-86c8-3a15d7ad4f98", action: "restart_run" as const };
+
+  await expect(client.actOnAgentInboxItem(sessionToken, inboxItem.itemId, action)).rejects.toMatchObject({ kind: "api", status: 409, problem: restartConflictProblem });
 });
 
 it("restart Agent Inbox 将畸形或恶意运行前检查 409 降级为安全 502", async () => {
