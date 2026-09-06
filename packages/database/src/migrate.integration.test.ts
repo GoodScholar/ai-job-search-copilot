@@ -1104,11 +1104,12 @@ describe("database migrations", () => {
     expect(indexes).toHaveLength(8);
   });
 
-  it("registers the 0047 preflight snapshot migration exactly", async () => {
+  it("registers the 0047 preflight snapshot migration before 0048", async () => {
     const journal = JSON.parse(await readFile(fileURLToPath(new URL("../migrations/meta/_journal.json", import.meta.url)), "utf8")) as {
       entries: Array<{ idx: number; tag: string }>;
     };
-    expect(journal.entries.at(-1)).toEqual({ idx: 47, version: "7", when: expect.any(Number), tag: "0047_agent_run_preflight_snapshot", breakpoints: true });
+    expect(journal.entries.at(-2)).toEqual({ idx: 47, version: "7", when: expect.any(Number), tag: "0047_agent_run_preflight_snapshot", breakpoints: true });
+    expect(journal.entries.at(-1)).toEqual({ idx: 48, version: "7", when: 1788685000000, tag: "0048_first_recommendation_journey", breakpoints: true });
   });
 
   it("upgrades a 0020 snapshot with open lifecycle defaults without changing stored run JSON", async () => {
@@ -1226,6 +1227,7 @@ describe("database migrations", () => {
         unlink(join(migrationsFolder, "0045_account_run_policy_schedule_window.sql")),
         unlink(join(migrationsFolder, "0046_model_diagnostic_results.sql")),
         unlink(join(migrationsFolder, "0047_agent_run_preflight_snapshot.sql")),
+        unlink(join(migrationsFolder, "0048_first_recommendation_journey.sql")),
         unlink(join(migrationsFolder, "meta", "0023_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0024_snapshot.json")),
         unlink(join(migrationsFolder, "meta", "0025_snapshot.json")),
@@ -1242,7 +1244,7 @@ describe("database migrations", () => {
       const journalPath = join(migrationsFolder, "meta", "_journal.json");
       const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
       await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter((entry) => ![
-        "0023_source_attention_inbox", "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_job_triage_versions", "0029_heavy_devos", "0030_deep_match_recommendations", "0031_deep_match_agent_runs", "0032_recommendation_highlight_limit", "0033_deep_match_usage_entries", "0034_recommendation_highlight_limit_lock", "0035_agent_run_step_model_failures", "0036_recommendation_exclusion_list_ownership", "0037_deep_match_run_staging", "0038_recommendation_feedback_calibration", "0039_boring_sleepwalker", "0040_loud_northstar", "0041_thankful_lethal_legion", "0042_mighty_malcolm_colcord", "0043_task_control_agent_inbox", "0044_account_run_policies", "0045_account_run_policy_schedule_window", "0046_model_diagnostic_results", "0047_agent_run_preflight_snapshot",
+        "0023_source_attention_inbox", "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_job_triage_versions", "0029_heavy_devos", "0030_deep_match_recommendations", "0031_deep_match_agent_runs", "0032_recommendation_highlight_limit", "0033_deep_match_usage_entries", "0034_recommendation_highlight_limit_lock", "0035_agent_run_step_model_failures", "0036_recommendation_exclusion_list_ownership", "0037_deep_match_run_staging", "0038_recommendation_feedback_calibration", "0039_boring_sleepwalker", "0040_loud_northstar", "0041_thankful_lethal_legion", "0042_mighty_malcolm_colcord", "0043_task_control_agent_inbox", "0044_account_run_policies", "0045_account_run_policy_schedule_window", "0046_model_diagnostic_results", "0047_agent_run_preflight_snapshot", "0048_first_recommendation_journey",
       ].includes(entry.tag)) }, null, 2));
       await migrate(upgradeDatabase, { migrationsFolder });
       const userId = "a9f4da20-e9e9-44c4-a6a5-fc2cf5b9ed93"; const targetId = "f1e7a7a6-a3e6-458e-9f53-33cdbbf2d6ea"; const runId = "833f4544-376c-4f8d-81af-16e50df78624";
@@ -1456,10 +1458,10 @@ describe("database migrations", () => {
     try {
       const migrationSource = fileURLToPath(new URL("../migrations", import.meta.url));
       await cp(migrationSource, migrationsFolder, { recursive: true });
-      await Promise.all(["0043_task_control_agent_inbox.sql", "0044_account_run_policies.sql", "0045_account_run_policy_schedule_window.sql", "0046_model_diagnostic_results.sql", "0047_agent_run_preflight_snapshot.sql"].map((file) => unlink(join(migrationsFolder, file)).catch(() => undefined)));
+      await Promise.all(["0043_task_control_agent_inbox.sql", "0044_account_run_policies.sql", "0045_account_run_policy_schedule_window.sql", "0046_model_diagnostic_results.sql", "0047_agent_run_preflight_snapshot.sql", "0048_first_recommendation_journey.sql"].map((file) => unlink(join(migrationsFolder, file)).catch(() => undefined)));
       const journalPath = join(migrationsFolder, "meta", "_journal.json");
       const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
-      await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter((entry) => !["0043_task_control_agent_inbox", "0044_account_run_policies", "0045_account_run_policy_schedule_window", "0046_model_diagnostic_results", "0047_agent_run_preflight_snapshot"].includes(entry.tag)) }, null, 2));
+      await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter((entry) => !["0043_task_control_agent_inbox", "0044_account_run_policies", "0045_account_run_policy_schedule_window", "0046_model_diagnostic_results", "0047_agent_run_preflight_snapshot", "0048_first_recommendation_journey"].includes(entry.tag)) }, null, 2));
       await migrate(upgradeDatabase, { migrationsFolder });
       await upgradeDatabase.execute(sql`insert into job_accounts (id) values (${userId})`);
       await upgradeDatabase.execute(sql`insert into job_targets (id, user_id, version, priority, state) values (${targetId}, ${userId}, 1, 'primary', 'active')`);
@@ -1531,6 +1533,133 @@ describe("database migrations", () => {
       values ('ba514f51-7a0a-4fdd-a1b0-a0ef534711fc', ${userId}, ${runId}, 2, ${foreignWatchlistItemId}, ${foreignSourceHealthCheckId}, 'source_attention', 'unread', 'SOURCE_HEALTH_ATTENTION', null)
     `)).rejects.toMatchObject({ cause: { code: "23503" } });
   });
+
+  it("backfills only the earliest nonempty recommendation list and protects first-journey completion facts", async () => {
+    const upgradeContainer = await new PostgreSqlContainer("postgres:17-alpine").start();
+    const upgradeDatabase = createDatabase(upgradeContainer.getConnectionUri());
+    const migrationsFolder = await mkdtemp(join(tmpdir(), "job-copilot-0048-"));
+    const accountA = "ea8006e1-e1a7-4131-a97f-12f2d99d3978";
+    const accountB = "a1173966-3160-44ae-9056-e830293b8f32";
+    const accountC = "4661b65b-4be4-4dcf-ae98-6b06f86350dd";
+    const targetA = "55bbda9b-d6fb-4864-a0a6-d1cfe934060e";
+    const targetB = "2f91d10d-6d8f-4b77-b482-a69c3facb4e0";
+    const profileA = "a480a460-9964-4eb1-86f9-e6e5e5612ccc";
+    const postingA = "79d574af-a572-40a0-a21b-b0c221a0b97f";
+    const postingVersionA = "c57746a4-9ddc-431e-8ca4-3a19e0a7294c";
+    const opportunityA = "2d009605-2181-4eb9-9679-bf395c777a0d";
+    const triageA = "1dd93d60-8fa6-4a40-8966-428912df8a92";
+    const matchA = "d1f2aa77-f41f-4d7c-b066-273c43dc9bf7";
+    const earliestNonemptyListA = "4216e499-3475-4ea0-b832-6c63ee90c99f";
+    const laterNonemptyListA = "ba2b3818-a220-47fd-b67f-c3670866b149";
+    const emptyListB = "0af3c4a4-f39a-42a0-af9a-091db2ebf60c";
+    const migrationSource = fileURLToPath(new URL("../migrations", import.meta.url));
+
+    try {
+      await cp(migrationSource, migrationsFolder, { recursive: true });
+      const journalPath = join(migrationsFolder, "meta", "_journal.json");
+      const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: unknown[] };
+      journal.entries = journal.entries.slice(0, 48);
+      await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
+      await migrate(upgradeDatabase, { migrationsFolder });
+
+      await upgradeDatabase.execute(sql`insert into job_accounts (id) values (${accountA}), (${accountB}), (${accountC})`);
+      await upgradeDatabase.execute(sql`
+        insert into job_targets (id, user_id, version, priority, state) values
+          (${targetA}, ${accountA}, 1, 'primary', 'active'),
+          (${targetB}, ${accountB}, 1, 'primary', 'active')
+      `);
+      await upgradeDatabase.execute(sql`insert into job_profiles (id, user_id, version) values (${profileA}, ${accountA}, 1)`);
+      await upgradeDatabase.execute(sql`
+        insert into job_source_postings (id, user_id, source_type, source_identifier, source_identity)
+        values (${postingA}, ${accountA}, 'fake', 'first-journey-history', '{}'::jsonb)
+      `);
+      await upgradeDatabase.execute(sql`
+        insert into job_source_posting_versions (
+          id, user_id, source_posting_id, version, content_sha256, raw_content_sha256, raw_object_reference, retrieved_at
+        ) values (${postingVersionA}, ${accountA}, ${postingA}, 1, ${"a".repeat(64)}, ${"b".repeat(64)}, '{}'::jsonb, now())
+      `);
+      await upgradeDatabase.execute(sql`
+        insert into job_opportunities (id, user_id, source_posting_version_id, dedup_key, normalized_data)
+        values (${opportunityA}, ${accountA}, ${postingVersionA}, ${"c".repeat(64)}, '{}'::jsonb)
+      `);
+      await upgradeDatabase.execute(sql`
+        insert into job_triage_versions (
+          id, user_id, opportunity_id, source_posting_version_id, profile_id, profile_version, target_id, target_version,
+          qualification_rule_version, coarse_rule_version, overall_verdict, gate_results, pending_items, deadline_status,
+          confidence_basis_points, dimension_scores, overall_score, threshold, sequence
+        ) values (
+          ${triageA}, ${accountA}, ${opportunityA}, ${postingVersionA}, ${profileA}, 1, ${targetA}, 1,
+          'qualification-v1', 'coarse-v1', 'pass', '{}'::jsonb, '[]'::jsonb, 'valid', 10000, '{}'::jsonb, 90, 70, 1
+        )
+      `);
+      await upgradeDatabase.execute(sql`
+        insert into job_match_versions (
+          id, user_id, opportunity_id, source_posting_version_id, triage_version_id, profile_id, profile_version, target_id,
+          target_version, rule_version, prompt_version, adapter, adapter_version, model, output_schema_version, overall_score,
+          display_band, assessment, sequence
+        ) values (
+          ${matchA}, ${accountA}, ${opportunityA}, ${postingVersionA}, ${triageA}, ${profileA}, 1, ${targetA}, 1,
+          'rules-v1', 'prompt-v1', 'fake', 'fake-v1', 'fake-model', 'result-v1', 90, 'highly_matched', '{}'::jsonb, 1
+        )
+      `);
+      await upgradeDatabase.execute(sql`
+        insert into recommendation_lists (id, user_id, target_id, local_date, sequence, created_at) values
+          (${earliestNonemptyListA}, ${accountA}, ${targetA}, '2026-01-01', 1, '2026-01-01T00:00:00.000Z'),
+          (${laterNonemptyListA}, ${accountA}, ${targetA}, '2026-01-02', 1, '2026-01-02T00:00:00.000Z'),
+          (${emptyListB}, ${accountB}, ${targetB}, '2026-01-01', 1, '2026-01-01T00:00:00.000Z')
+      `);
+      await upgradeDatabase.execute(sql`
+        insert into recommendation_list_items (id, user_id, recommendation_list_id, match_version_id, ordinal) values
+          ('e7c7242c-2461-4cbb-ae27-2743103055f6', ${accountA}, ${earliestNonemptyListA}, ${matchA}, 1),
+          ('f1e26990-3e61-4331-9f5b-340ffcd8a85b', ${accountA}, ${laterNonemptyListA}, ${matchA}, 1)
+      `);
+
+      await migrateDatabase(upgradeDatabase);
+      const completionFor = async (userId: string) => (await upgradeDatabase.execute(sql`
+        select user_id as "userId", result_kind as "resultKind", result_id as "resultId"
+        from first_recommendation_journey_completions where user_id = ${userId}
+      `) as unknown as Array<{ userId: string; resultKind: string; resultId: string | null }>)[0] ?? null;
+
+      expect(await completionFor(accountA)).toMatchObject({ resultKind: "recommendation_list", resultId: earliestNonemptyListA });
+      expect(await completionFor(accountB)).toBeNull();
+      expect(await completionFor(accountC)).toBeNull();
+      await expect(upgradeDatabase.execute(sql`
+        update first_recommendation_journey_completions set completed_at = now() where user_id = ${accountA}
+      `)).rejects.toMatchObject({ cause: { message: "FIRST_RECOMMENDATION_JOURNEY_COMPLETION_IMMUTABLE" } });
+      await expect(upgradeDatabase.execute(sql`
+        delete from first_recommendation_journey_completions where user_id = ${accountA}
+      `)).rejects.toMatchObject({ cause: { message: "FIRST_RECOMMENDATION_JOURNEY_COMPLETION_IMMUTABLE" } });
+
+      await expect(upgradeDatabase.execute(sql`
+        insert into first_recommendation_journey_interactions (user_id, version) values (${accountB}, -1)
+      `)).rejects.toMatchObject({ cause: { code: "23514" } });
+      await expect(upgradeDatabase.execute(sql`
+        insert into first_recommendation_journey_interactions (user_id, last_visited_step) values (${accountB}, 'unknown_step')
+      `)).rejects.toMatchObject({ cause: { code: "23514" } });
+      await upgradeDatabase.execute(sql`
+        insert into first_recommendation_journey_interactions (user_id, last_visited_step) values (${accountB}, 'job_sources')
+      `);
+      await expect(upgradeDatabase.execute(sql`
+        insert into first_recommendation_journey_completions (user_id, result_kind, result_id) values (${accountB}, 'unknown_result', null)
+      `)).rejects.toMatchObject({ cause: { code: "23514" } });
+      await expect(upgradeDatabase.execute(sql`
+        insert into first_recommendation_journey_completions (user_id, result_kind, result_id)
+        values (${accountB}, 'recommendation_list', ${earliestNonemptyListA})
+      `)).rejects.toMatchObject({ cause: { code: "23503" } });
+      await upgradeDatabase.execute(sql`
+        insert into first_recommendation_journey_completions (user_id, result_kind, result_id)
+        values (${accountC}, 'no_recommendations', null)
+      `);
+      await expect(upgradeDatabase.execute(sql`
+        insert into first_recommendation_journey_completions (user_id, result_kind, result_id)
+        values (${accountC}, 'no_recommendations', null)
+      `)).rejects.toMatchObject({ cause: { code: "23505" } });
+    } finally {
+      await upgradeDatabase.$client.end();
+      await upgradeContainer.stop();
+      await rm(migrationsFolder, { recursive: true, force: true });
+    }
+  }, 60_000);
 });
 
 describe("模型诊断迁移", () => {

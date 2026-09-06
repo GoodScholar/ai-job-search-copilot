@@ -337,6 +337,13 @@
       "when": 1788684000000,
       "tag": "0047_agent_run_preflight_snapshot",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1788685000000,
+      "tag": "0048_first_recommendation_journey",
+      "breakpoints": true
     }
   ]
 }

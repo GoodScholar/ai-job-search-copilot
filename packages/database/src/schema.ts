@@ -1177,6 +1177,33 @@ export const recommendationListItems = pgTable("recommendation_list_items", {
   unique("recommendation_list_items_user_id_id_unique").on(table.userId, table.id), unique("recommendation_list_items_list_match_unique").on(table.recommendationListId, table.matchVersionId), unique("recommendation_list_items_list_ordinal_unique").on(table.recommendationListId, table.ordinal), foreignKey({ columns: [table.userId, table.recommendationListId], foreignColumns: [recommendationLists.userId, recommendationLists.id], name: "recommendation_list_items_owner_list_fk" }), foreignKey({ columns: [table.userId, table.matchVersionId], foreignColumns: [jobMatchVersions.userId, jobMatchVersions.id], name: "recommendation_list_items_owner_match_fk" }), check("recommendation_list_items_ordinal_range", sql`${table.ordinal} between 1 and 10`),
 ]);
 
+/** 用户可变的首份推荐引导交互状态；缺行即表示默认的未访问、未忽略状态。 */
+export const firstRecommendationJourneyInteractions = pgTable("first_recommendation_journey_interactions", {
+  userId: uuid("user_id").primaryKey().references(() => jobAccounts.id),
+  version: integer("version").notNull().default(0),
+  dismissedAt: timestamp("dismissed_at", { withTimezone: true }),
+  lastVisitedStep: varchar("last_visited_step", { length: 32 }),
+}, (table) => [
+  check("first_recommendation_journey_interactions_version_nonnegative", sql`${table.version} >= 0`),
+  check("first_recommendation_journey_interactions_last_visited_step_check", sql`${table.lastVisitedStep} is null or ${table.lastVisitedStep} in ('career_materials', 'profile_evidence', 'primary_target', 'job_sources', 'run_readiness', 'first_result')`),
+]);
+
+/** 用户首份推荐结果的不可变完成事实；result_id 始终绑定同一账户的推荐清单。 */
+export const firstRecommendationJourneyCompletions = pgTable("first_recommendation_journey_completions", {
+  userId: uuid("user_id").primaryKey().references(() => jobAccounts.id),
+  resultKind: varchar("result_kind", { length: 32 }).notNull(),
+  resultId: uuid("result_id"),
+  completedAt: timestamp("completed_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  foreignKey({
+    columns: [table.userId, table.resultId],
+    foreignColumns: [recommendationLists.userId, recommendationLists.id],
+    name: "first_recommendation_journey_completions_owner_result_fk",
+  }),
+  check("first_recommendation_journey_completions_result_kind_check", sql`${table.resultKind} in ('recommendation_list', 'no_recommendations')`),
+  check("first_recommendation_journey_completions_result_check", sql`(${table.resultKind} = 'recommendation_list' and ${table.resultId} is not null) or (${table.resultKind} = 'no_recommendations' and ${table.resultId} is null)`),
+]);
+
 export const recommendationDecisionEvents = pgTable("recommendation_decision_events", {
   id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id), targetId: uuid("target_id").notNull().references(() => jobTargets.id), recommendationListId: uuid("recommendation_list_id").notNull().references(() => recommendationLists.id), recommendationListItemId: uuid("recommendation_list_item_id").notNull().references(() => recommendationListItems.id), matchVersionId: uuid("match_version_id").notNull().references(() => jobMatchVersions.id), decision: varchar("decision", { length: 16 }).notNull(), reason: varchar("reason", { length: 32 }), note: text("note"), idempotencyKey: uuid("idempotency_key").notNull(), commandSummary: varchar("command_summary", { length: 64 }).notNull(), expectedVersion: integer("expected_version").notNull(), version: integer("version").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
