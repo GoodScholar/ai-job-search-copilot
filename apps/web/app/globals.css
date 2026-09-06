@@ -1018,6 +1018,11 @@ summary.workbench-touch-target:focus-visible,
 .first-recommendation-journey-state { color: var(--emerald-strong) !important; font-size: 0.82rem; font-weight: 700; margin-top: 0.45rem !important; }
 .first-recommendation-journey-list > li[data-status="needs_action"] .first-recommendation-journey-state { color: var(--amber-ink) !important; }
 .first-recommendation-journey-list .workbench-touch-target { justify-self: start; padding-inline: 0; text-decoration: underline; }
+@media (max-width: 720px) {
+  .first-recommendation-journey-heading { display: grid; }
+  .first-recommendation-journey-dismiss { justify-self: start; }
+  .first-recommendation-journey-list { grid-template-columns: minmax(0, 1fr); }
+}
 .model-connection-main { max-width: 62rem; }
 .model-connection-ledger { max-width: 44rem; }
 .model-connection-live { color: var(--emerald-strong) !important; font-weight: 700; margin: 1rem 0 !important; min-height: 1.5rem; }
@@ -1252,10 +1257,6 @@ summary.workbench-touch-target:focus-visible,
   .workbench-ledger-row {
     grid-template-columns: minmax(0, 1fr);
   }
-
-  .first-recommendation-journey-heading { display: grid; }
-  .first-recommendation-journey-dismiss { justify-self: start; }
-  .first-recommendation-journey-list { grid-template-columns: minmax(0, 1fr); }
 
   .agent-run-controls > div,
   .discovery-schedule-controls,

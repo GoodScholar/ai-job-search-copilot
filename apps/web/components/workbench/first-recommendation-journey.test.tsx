@@ -59,6 +59,33 @@ it("步骤入口用权威版本后台保存访问，但保留链接导航", asyn
   await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
 });
 
+it.each([
+  ["网络失败", () => Promise.reject(new TypeError("offline"))],
+  ["非 2xx 响应", () => Promise.resolve(new Response(null, { status: 500 }))],
+])("步骤入口在%s时仍保留真实链接默认导航", async (_scenario, response) => {
+  const user = userEvent.setup();
+  const refresh = vi.fn();
+  const fetchMock = vi.fn<typeof fetch>().mockImplementation(response);
+  vi.stubGlobal("fetch", fetchMock);
+  render(<FirstRecommendationJourneyPanel journey={activeJourney(12)} onAuthoritativeRefresh={refresh} />);
+
+  const link = screen.getByRole("link", { name: "导入职业资料" });
+  let defaultWasPrevented: boolean | null = null;
+  const preserveNavigation = (event: MouseEvent) => {
+    defaultWasPrevented = event.defaultPrevented;
+    event.preventDefault();
+  };
+  document.addEventListener("click", preserveNavigation);
+  await user.click(link);
+  document.removeEventListener("click", preserveNavigation);
+
+  expect(link).toHaveAttribute("href", "/profile");
+  expect(defaultWasPrevented).toBe(false);
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
+  await Promise.resolve();
+  expect(refresh).not.toHaveBeenCalled();
+});
+
 it("关闭成功后才隐藏并播报，409 刷新权威投影", async () => {
   const user = userEvent.setup();
   const refresh = vi.fn();
@@ -77,21 +104,71 @@ it("关闭成功后才隐藏并播报，409 刷新权威投影", async () => {
   expect(screen.getByRole("region", { name: "首次推荐旅程" })).toBeVisible();
 });
 
-it("关闭网络失败时保留旅程并提供中文重试，权威新投影清除旧错误", async () => {
+it("关闭网络失败后保留旅程并可重试，第二次成功才隐藏和播报", async () => {
   const user = userEvent.setup();
   const refresh = vi.fn();
   const fetchMock = vi.fn<typeof fetch>()
     .mockRejectedValueOnce(new TypeError("offline"))
     .mockResolvedValueOnce(new Response(null, { status: 204 }));
   vi.stubGlobal("fetch", fetchMock);
-  const view = render(<FirstRecommendationJourneyPanel journey={activeJourney(3)} onAuthoritativeRefresh={refresh} />);
+  render(<FirstRecommendationJourneyPanel journey={activeJourney(3)} onAuthoritativeRefresh={refresh} />);
 
   await user.click(screen.getByRole("button", { name: "暂时关闭引导" }));
   expect(screen.getByRole("alert")).toHaveTextContent("暂时无法关闭引导，请重试。");
   expect(screen.getByRole("region", { name: "首次推荐旅程" })).toBeVisible();
-  view.rerender(<FirstRecommendationJourneyPanel journey={{ ...activeJourney(4), currentStepId: "profile_evidence" }} onAuthoritativeRefresh={refresh} />);
+
+  await user.click(screen.getByRole("button", { name: "暂时关闭引导" }));
+  await waitFor(() => expect(screen.queryByRole("region", { name: "首次推荐旅程" })).not.toBeInTheDocument());
+  expect(screen.getByRole("status")).toHaveTextContent("已暂时关闭首次推荐旅程。");
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+  expect(refresh).toHaveBeenCalledOnce();
+});
+
+it("同一版本的新权威投影清除旧关闭错误", async () => {
+  const user = userEvent.setup();
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockRejectedValue(new TypeError("offline")));
+  const view = render(<FirstRecommendationJourneyPanel journey={activeJourney(3)} onAuthoritativeRefresh={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "暂时关闭引导" }));
+  expect(screen.getByRole("alert")).toBeVisible();
+  const refreshedJourney = {
+    ...activeJourney(3),
+    currentStepId: "profile_evidence" as const,
+    steps: activeJourney(3).steps.map((step) => step.id === "career_materials" ? { ...step, impact: "这是新的权威影响说明。" } : step),
+  };
+  view.rerender(<FirstRecommendationJourneyPanel journey={refreshedJourney} onAuthoritativeRefresh={vi.fn()} />);
+
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "建立可信求职画像" }).closest("li")).toHaveAttribute("aria-current", "step");
+  expect(screen.getByText("这是新的权威影响说明。")).toBeVisible();
+});
+
+it("旧关闭成功完成后不会隐藏新的同版本投影", async () => {
+  const user = userEvent.setup();
+  let resolveRequest: (response: Response) => void = () => undefined;
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockImplementation(() => new Promise<Response>((resolve) => { resolveRequest = resolve; })));
+  const view = render(<FirstRecommendationJourneyPanel journey={activeJourney(3)} onAuthoritativeRefresh={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "暂时关闭引导" }));
+  view.rerender(<FirstRecommendationJourneyPanel journey={{ ...activeJourney(3), currentStepId: "profile_evidence" }} onAuthoritativeRefresh={vi.fn()} />);
+  resolveRequest(new Response(null, { status: 204 }));
+
+  await waitFor(() => expect(screen.getByRole("region", { name: "首次推荐旅程" })).toBeVisible());
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+});
+
+it("旧关闭失败完成后不会向新的同版本投影报告错误", async () => {
+  const user = userEvent.setup();
+  let resolveRequest: (response: Response) => void = () => undefined;
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockImplementation(() => new Promise<Response>((resolve) => { resolveRequest = resolve; })));
+  const view = render(<FirstRecommendationJourneyPanel journey={activeJourney(3)} onAuthoritativeRefresh={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "暂时关闭引导" }));
+  view.rerender(<FirstRecommendationJourneyPanel journey={{ ...activeJourney(3), currentStepId: "profile_evidence" }} onAuthoritativeRefresh={vi.fn()} />);
+  resolveRequest(new Response(null, { status: 500 }));
+
+  await waitFor(() => expect(screen.getByRole("region", { name: "首次推荐旅程" })).toBeVisible());
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });
 
 it("仅在旅程局部不可用时显示局部错误，关闭或完成投影不渲染", () => {
