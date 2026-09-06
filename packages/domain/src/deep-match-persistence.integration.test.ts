@@ -19,6 +19,26 @@ const now = new Date("2026-09-01T02:00:00.000Z");
 const hash = "a".repeat(64);
 const modelCall = () => ({ signal: new AbortController().signal, usageKey: "test-model-call", budget: { maxTokens: 20_000, reservedInputTokens: 32, reservedOutputTokens: 48 } });
 
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((next) => { resolve = next; });
+  return { promise, resolve };
+}
+
+async function waitUntilAConnectionIsWaitingForAccountAdvisoryLock(database: Database) {
+  await expect.poll(async () => {
+    const [row] = await database.execute<{ waiting: boolean }>(sql`
+      select exists(
+        select 1 from pg_stat_activity
+        where wait_event_type = 'Lock'
+          and wait_event = 'advisory'
+          and query like '%pg_advisory_xact_lock%'
+      ) as waiting
+    `);
+    return row?.waiting ?? false;
+  }, { timeout: 2_000, interval: 10 }).toBe(true);
+}
+
 function createDeepMatchRunStarter(deps: Omit<Parameters<typeof createDomainDeepMatchRunStarter>[0], "runPreflight"> & { runPreflight?: Parameters<typeof createDomainDeepMatchRunStarter>[0]["runPreflight"] }) {
   return createDomainDeepMatchRunStarter({ ...deps, runPreflight: deps.runPreflight ?? createReadyRunPreflightEvaluator({ clock: deps.clock }) });
 }
@@ -73,12 +93,10 @@ describe("deep match persistence", () => {
     return { userId, profileId, targetId, opportunityId, sourcePostingVersionId, triageVersionId, factRevisionId };
   }
 
-  async function publishStagedFixture(
+  async function stageFixture(
     input: Awaited<ReturnType<typeof fixture>>,
     options: {
       clock?: Date;
-      ruleConfig?: { minimumOverallScore: number; minimumEvidenceDimensions: number; requiredEvidenceDimensions: string[]; excludedOpportunityIds: string[] };
-      onPublished?: (transaction: any, result: { resultCount: number }) => Promise<void>;
     } = {},
   ) {
     const publishedAt = options.clock ?? now;
@@ -93,12 +111,24 @@ describe("deep match persistence", () => {
     const candidate = (await createDeepMatchQueries({ db }).getFrozenCandidates({ userId: input.userId, runId: started.runId }))[0]!;
     const staged = await commands.invokeAndValidate({ userId: input.userId, runId: started.runId, candidate, modelCall: modelCall() });
     await commands.stageValidatedAssessment({ userId: input.userId, runId: started.runId, claimToken, candidate, assessment: staged.assessment, usage: staged.usage });
-    const published = await commands.publishStagedRun({
-      userId: input.userId, targetId: input.targetId, runId: started.runId, fence: { claimToken }, selectionExclusions: [],
+    return { input, commands, runId: started.runId, claimToken, publishedAt };
+  }
+
+  async function publishStagedFixture(
+    input: Awaited<ReturnType<typeof fixture>>,
+    options: {
+      clock?: Date;
+      ruleConfig?: { minimumOverallScore: number; minimumEvidenceDimensions: number; requiredEvidenceDimensions: string[]; excludedOpportunityIds: string[] };
+      onPublished?: (transaction: any, result: { resultCount: number }) => Promise<void>;
+    } = {},
+  ) {
+    const staged = await stageFixture(input, options);
+    const published = await staged.commands.publishStagedRun({
+      userId: input.userId, targetId: input.targetId, runId: staged.runId, fence: { claimToken: staged.claimToken }, selectionExclusions: [],
       ...(options.ruleConfig ? { ruleConfig: options.ruleConfig } : {}),
       ...(options.onPublished ? { onPublished: options.onPublished } : {}),
     });
-    return { ...published, runId: started.runId };
+    return { ...published, runId: staged.runId, claimToken: staged.claimToken };
   }
 
   async function preflight(status: "ready_with_warnings" | "blocked"): Promise<RunPreflightEvaluator> {
@@ -496,23 +526,61 @@ describe("deep match persistence", () => {
     await expect(db.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, input.userId))).resolves.toEqual([]);
   });
 
-  it("重试与真实并发的非空发布都不覆盖首个完成事实", async () => {
+  it("两个首次发布竞争时保留先提交者的完成事实，稳定身份重试也不覆盖它", async () => {
     const firstInput = await fixture();
     const owner = { userId: firstInput.userId, profileId: firstInput.profileId, targetId: firstInput.targetId };
-    const retryInput = await fixture({ owner });
-    const concurrentInputs = await Promise.all([fixture({ owner }), fixture({ owner })]);
+    const secondInput = await fixture({ owner });
     const firstCompletedAt = new Date("2026-09-01T02:00:00.000Z");
-    const first = await publishStagedFixture(firstInput, { clock: firstCompletedAt });
-    const [firstCompletion] = await db.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, owner.userId));
-    expect(firstCompletion).toEqual(expect.objectContaining({ resultId: first.recommendationListId, completedAt: firstCompletedAt }));
+    const secondCompletedAt = new Date("2026-09-01T02:01:00.000Z");
+    const first = await stageFixture(firstInput, { clock: firstCompletedAt });
+    const second = await stageFixture(secondInput, { clock: secondCompletedAt });
+    const firstPublishInput = { userId: owner.userId, targetId: owner.targetId, runId: first.runId, fence: { claimToken: first.claimToken }, selectionExclusions: [] as const };
+    const secondPublishInput = { userId: owner.userId, targetId: owner.targetId, runId: second.runId, fence: { claimToken: second.claimToken }, selectionExclusions: [] as const };
+    const firstPausedBeforeCommit = deferred();
+    const releaseFirstCommit = deferred();
+    const firstPublishing = first.commands.publishStagedRun({
+      ...firstPublishInput,
+      onPublished: async () => { firstPausedBeforeCommit.resolve(); await releaseFirstCommit.promise; },
+    });
+    await firstPausedBeforeCommit.promise;
 
-    await publishStagedFixture(retryInput, { clock: new Date("2026-09-01T02:01:00.000Z") });
-    await Promise.all(concurrentInputs.map((input, index) => publishStagedFixture(input, {
-      clock: new Date(`2026-09-01T02:0${index + 2}:00.000Z`),
-    })));
+    const competingDatabase = createDatabase(container.getConnectionUri());
+    const observerDatabase = createDatabase(container.getConnectionUri());
+    let secondPublishing: Promise<Awaited<ReturnType<typeof first.commands.publishStagedRun>>> | undefined;
+    try {
+      const competingCommands = createDeepMatchCommands({ db: competingDatabase, id: () => crypto.randomUUID(), clock: () => secondCompletedAt });
+      let secondSettled = false;
+      secondPublishing = competingCommands.publishStagedRun(secondPublishInput).finally(() => { secondSettled = true; });
+      await waitUntilAConnectionIsWaitingForAccountAdvisoryLock(observerDatabase);
+      expect(secondSettled).toBe(false);
 
-    await expect(db.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, owner.userId)))
-      .resolves.toEqual([firstCompletion]);
+      releaseFirstCommit.resolve();
+      const [firstPublished, secondPublished] = await Promise.all([firstPublishing, secondPublishing]);
+      expect(firstPublished.items).toHaveLength(1);
+      expect(secondPublished.items).toHaveLength(1);
+      await expect(db.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, owner.userId)))
+        .resolves.toEqual([{
+          userId: owner.userId,
+          resultKind: "recommendation_list",
+          resultId: firstPublished.recommendationListId,
+          completedAt: firstCompletedAt,
+        }]);
+
+      const retried = await first.commands.publishStagedRun(firstPublishInput);
+      expect(retried.items).toHaveLength(1);
+      await expect(db.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, owner.userId)))
+        .resolves.toEqual([{
+          userId: owner.userId,
+          resultKind: "recommendation_list",
+          resultId: firstPublished.recommendationListId,
+          completedAt: firstCompletedAt,
+        }]);
+    } finally {
+      releaseFirstCommit.resolve();
+      await Promise.allSettled([firstPublishing, ...(secondPublishing ? [secondPublishing] : [])]);
+      await competingDatabase.$client.end();
+      await observerDatabase.$client.end();
+    }
   }, 60_000);
 
   it("onPublished 失败时回滚推荐清单、Inbox、运行完成写入与旅程完成事实", async () => {
