@@ -72,7 +72,7 @@ function ActiveFirstRecommendationJourneyPanel({ journey, onAuthoritativeRefresh
     {currentDismissal.error && <p className="first-recommendation-journey-error" role="alert">暂时无法关闭引导，请重试。</p>}
     <ol className="first-recommendation-journey-list">
       {journey.steps.map((step) => <li aria-current={step.id === journey.currentStepId ? "step" : undefined} data-status={step.status} key={step.id}>
-        <div className="first-recommendation-journey-step-copy"><span aria-hidden="true" className="first-recommendation-journey-status-icon" data-status={step.status} /><h3>{step.title}</h3><p className="first-recommendation-journey-state">{step.stateLabel}</p><p>{step.impact}</p></div>
+        <div className="first-recommendation-journey-step-copy"><h3><span aria-hidden="true" className="first-recommendation-journey-status-icon" data-status={step.status} />{step.title}</h3><p className="first-recommendation-journey-state">{step.stateLabel}</p><p>{step.impact}</p></div>
         <Link className="workbench-ledger-link workbench-touch-target" href={step.action.href} onClick={() => saveVisit(step.id)}>{step.action.label}</Link>
       </li>)}
     </ol>
