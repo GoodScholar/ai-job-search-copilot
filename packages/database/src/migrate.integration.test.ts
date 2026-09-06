@@ -1541,17 +1541,38 @@ describe("database migrations", () => {
     const accountA = "ea8006e1-e1a7-4131-a97f-12f2d99d3978";
     const accountB = "a1173966-3160-44ae-9056-e830293b8f32";
     const accountC = "4661b65b-4be4-4dcf-ae98-6b06f86350dd";
+    const accountD = "d605d3d4-35e4-44ea-bd8b-78f48707cdf2";
+    const accountE = "e075cb5d-0f34-44ab-a460-186c678c2c1b";
     const targetA = "55bbda9b-d6fb-4864-a0a6-d1cfe934060e";
     const targetB = "2f91d10d-6d8f-4b77-b482-a69c3facb4e0";
+    const targetD = "22b24d30-3c68-4bd9-b818-a32dd01d1559";
+    const targetEFirst = "f307682a-bb13-4e0a-a4d2-7d7c08f16fc7";
+    const targetESecond = "e61d1ca6-7a50-496d-9c5c-6f65e460b0f7";
     const profileA = "a480a460-9964-4eb1-86f9-e6e5e5612ccc";
+    const profileD = "119a000d-24e1-497e-9a24-3c2f74d4fd13";
+    const profileE = "d5c3a8dc-a09e-47ef-abcb-7fdc26bcc17f";
     const postingA = "79d574af-a572-40a0-a21b-b0c221a0b97f";
+    const postingD = "06c0550b-5d6f-4c9a-8be6-58bc3f1bc3a6";
+    const postingE = "3ceb4cf1-64f9-4793-a4ff-5d94c3aa3cfb";
     const postingVersionA = "c57746a4-9ddc-431e-8ca4-3a19e0a7294c";
+    const postingVersionD = "66895c61-0b2a-4f15-937c-2d009bcfbe80";
+    const postingVersionE = "8824031a-0e53-47c3-a9d2-48a0c1b1d14d";
     const opportunityA = "2d009605-2181-4eb9-9679-bf395c777a0d";
+    const opportunityD = "54d7aafa-898e-482c-b3bf-0dc84e9278c8";
+    const opportunityE = "c47023c7-aa03-4f14-a14b-6bd9ab4d2f7f";
     const triageA = "1dd93d60-8fa6-4a40-8966-428912df8a92";
+    const triageD = "5bddbde4-bec6-4885-a3a6-19d4110f3661";
+    const triageE = "d9eb9d35-6b7a-49c4-8022-8d5d69df7ae4";
     const matchA = "d1f2aa77-f41f-4d7c-b066-273c43dc9bf7";
+    const matchD = "dd8955cf-b748-4ba9-9c52-8ff5ec6d0c1f";
+    const matchE = "e795f29f-10b9-4a18-a7fa-f24ef82f7c18";
     const earliestNonemptyListA = "4216e499-3475-4ea0-b832-6c63ee90c99f";
     const laterNonemptyListA = "ba2b3818-a220-47fd-b67f-c3670866b149";
     const emptyListB = "0af3c4a4-f39a-42a0-af9a-091db2ebf60c";
+    const higherSequenceListD = "d1111111-1111-4111-8111-111111111111";
+    const lowerSequenceListD = "d5555555-5555-4555-8555-555555555555";
+    const higherIdListE = "f9999999-9999-4999-8999-999999999999";
+    const lowerIdListE = "00000000-0000-4000-8000-000000000001";
     const migrationSource = fileURLToPath(new URL("../migrations", import.meta.url));
 
     try {
@@ -1562,25 +1583,40 @@ describe("database migrations", () => {
       await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
       await migrate(upgradeDatabase, { migrationsFolder });
 
-      await upgradeDatabase.execute(sql`insert into job_accounts (id) values (${accountA}), (${accountB}), (${accountC})`);
+      await upgradeDatabase.execute(sql`insert into job_accounts (id) values (${accountA}), (${accountB}), (${accountC}), (${accountD}), (${accountE})`);
       await upgradeDatabase.execute(sql`
         insert into job_targets (id, user_id, version, priority, state) values
           (${targetA}, ${accountA}, 1, 'primary', 'active'),
-          (${targetB}, ${accountB}, 1, 'primary', 'active')
+          (${targetB}, ${accountB}, 1, 'primary', 'active'),
+          (${targetD}, ${accountD}, 1, 'primary', 'active'),
+          (${targetEFirst}, ${accountE}, 1, 'primary', 'active'),
+          (${targetESecond}, ${accountE}, 1, 'secondary', 'inactive')
       `);
-      await upgradeDatabase.execute(sql`insert into job_profiles (id, user_id, version) values (${profileA}, ${accountA}, 1)`);
+      await upgradeDatabase.execute(sql`
+        insert into job_profiles (id, user_id, version) values
+          (${profileA}, ${accountA}, 1), (${profileD}, ${accountD}, 1), (${profileE}, ${accountE}, 1)
+      `);
       await upgradeDatabase.execute(sql`
         insert into job_source_postings (id, user_id, source_type, source_identifier, source_identity)
-        values (${postingA}, ${accountA}, 'fake', 'first-journey-history', '{}'::jsonb)
+        values
+          (${postingA}, ${accountA}, 'fake', 'first-journey-history-a', '{}'::jsonb),
+          (${postingD}, ${accountD}, 'fake', 'first-journey-history-d', '{}'::jsonb),
+          (${postingE}, ${accountE}, 'fake', 'first-journey-history-e', '{}'::jsonb)
       `);
       await upgradeDatabase.execute(sql`
         insert into job_source_posting_versions (
           id, user_id, source_posting_id, version, content_sha256, raw_content_sha256, raw_object_reference, retrieved_at
-        ) values (${postingVersionA}, ${accountA}, ${postingA}, 1, ${"a".repeat(64)}, ${"b".repeat(64)}, '{}'::jsonb, now())
+        ) values
+          (${postingVersionA}, ${accountA}, ${postingA}, 1, ${"a".repeat(64)}, ${"b".repeat(64)}, '{}'::jsonb, now()),
+          (${postingVersionD}, ${accountD}, ${postingD}, 1, ${"d".repeat(64)}, ${"e".repeat(64)}, '{}'::jsonb, now()),
+          (${postingVersionE}, ${accountE}, ${postingE}, 1, ${"f".repeat(64)}, ${"0".repeat(64)}, '{}'::jsonb, now())
       `);
       await upgradeDatabase.execute(sql`
         insert into job_opportunities (id, user_id, source_posting_version_id, dedup_key, normalized_data)
-        values (${opportunityA}, ${accountA}, ${postingVersionA}, ${"c".repeat(64)}, '{}'::jsonb)
+        values
+          (${opportunityA}, ${accountA}, ${postingVersionA}, ${"c".repeat(64)}, '{}'::jsonb),
+          (${opportunityD}, ${accountD}, ${postingVersionD}, ${"1".repeat(64)}, '{}'::jsonb),
+          (${opportunityE}, ${accountE}, ${postingVersionE}, ${"2".repeat(64)}, '{}'::jsonb)
       `);
       await upgradeDatabase.execute(sql`
         insert into job_triage_versions (
@@ -1589,6 +1625,12 @@ describe("database migrations", () => {
           confidence_basis_points, dimension_scores, overall_score, threshold, sequence
         ) values (
           ${triageA}, ${accountA}, ${opportunityA}, ${postingVersionA}, ${profileA}, 1, ${targetA}, 1,
+          'qualification-v1', 'coarse-v1', 'pass', '{}'::jsonb, '[]'::jsonb, 'valid', 10000, '{}'::jsonb, 90, 70, 1
+        ), (
+          ${triageD}, ${accountD}, ${opportunityD}, ${postingVersionD}, ${profileD}, 1, ${targetD}, 1,
+          'qualification-v1', 'coarse-v1', 'pass', '{}'::jsonb, '[]'::jsonb, 'valid', 10000, '{}'::jsonb, 90, 70, 1
+        ), (
+          ${triageE}, ${accountE}, ${opportunityE}, ${postingVersionE}, ${profileE}, 1, ${targetEFirst}, 1,
           'qualification-v1', 'coarse-v1', 'pass', '{}'::jsonb, '[]'::jsonb, 'valid', 10000, '{}'::jsonb, 90, 70, 1
         )
       `);
@@ -1600,18 +1642,32 @@ describe("database migrations", () => {
         ) values (
           ${matchA}, ${accountA}, ${opportunityA}, ${postingVersionA}, ${triageA}, ${profileA}, 1, ${targetA}, 1,
           'rules-v1', 'prompt-v1', 'fake', 'fake-v1', 'fake-model', 'result-v1', 90, 'highly_matched', '{}'::jsonb, 1
+        ), (
+          ${matchD}, ${accountD}, ${opportunityD}, ${postingVersionD}, ${triageD}, ${profileD}, 1, ${targetD}, 1,
+          'rules-v1', 'prompt-v1', 'fake', 'fake-v1', 'fake-model', 'result-v1', 90, 'highly_matched', '{}'::jsonb, 1
+        ), (
+          ${matchE}, ${accountE}, ${opportunityE}, ${postingVersionE}, ${triageE}, ${profileE}, 1, ${targetEFirst}, 1,
+          'rules-v1', 'prompt-v1', 'fake', 'fake-v1', 'fake-model', 'result-v1', 90, 'highly_matched', '{}'::jsonb, 1
         )
       `);
       await upgradeDatabase.execute(sql`
         insert into recommendation_lists (id, user_id, target_id, local_date, sequence, created_at) values
           (${earliestNonemptyListA}, ${accountA}, ${targetA}, '2026-01-01', 1, '2026-01-01T00:00:00.000Z'),
           (${laterNonemptyListA}, ${accountA}, ${targetA}, '2026-01-02', 1, '2026-01-02T00:00:00.000Z'),
-          (${emptyListB}, ${accountB}, ${targetB}, '2026-01-01', 1, '2026-01-01T00:00:00.000Z')
+          (${emptyListB}, ${accountB}, ${targetB}, '2026-01-01', 1, '2026-01-01T00:00:00.000Z'),
+          (${higherSequenceListD}, ${accountD}, ${targetD}, '2026-02-01', 2, '2026-02-01T00:00:00.000Z'),
+          (${lowerSequenceListD}, ${accountD}, ${targetD}, '2026-02-01', 1, '2026-02-01T00:00:00.000Z'),
+          (${higherIdListE}, ${accountE}, ${targetEFirst}, '2026-03-01', 1, '2026-03-01T00:00:00.000Z'),
+          (${lowerIdListE}, ${accountE}, ${targetESecond}, '2026-03-01', 1, '2026-03-01T00:00:00.000Z')
       `);
       await upgradeDatabase.execute(sql`
         insert into recommendation_list_items (id, user_id, recommendation_list_id, match_version_id, ordinal) values
           ('e7c7242c-2461-4cbb-ae27-2743103055f6', ${accountA}, ${earliestNonemptyListA}, ${matchA}, 1),
-          ('f1e26990-3e61-4331-9f5b-340ffcd8a85b', ${accountA}, ${laterNonemptyListA}, ${matchA}, 1)
+          ('f1e26990-3e61-4331-9f5b-340ffcd8a85b', ${accountA}, ${laterNonemptyListA}, ${matchA}, 1),
+          ('a31ddfbe-a0c0-401f-b5d2-2351e562a13d', ${accountD}, ${higherSequenceListD}, ${matchD}, 1),
+          ('b0dbf17c-dc86-43d5-bfd9-ae58716b8a30', ${accountD}, ${lowerSequenceListD}, ${matchD}, 1),
+          ('c6785cf2-dd4d-4476-8664-2e1b12a16c9a', ${accountE}, ${higherIdListE}, ${matchE}, 1),
+          ('d18c7285-a729-4e2d-8129-2dd4b72306d7', ${accountE}, ${lowerIdListE}, ${matchE}, 1)
       `);
 
       await migrateDatabase(upgradeDatabase);
@@ -1623,6 +1679,8 @@ describe("database migrations", () => {
       expect(await completionFor(accountA)).toMatchObject({ resultKind: "recommendation_list", resultId: earliestNonemptyListA });
       expect(await completionFor(accountB)).toBeNull();
       expect(await completionFor(accountC)).toBeNull();
+      expect(await completionFor(accountD)).toMatchObject({ resultKind: "recommendation_list", resultId: lowerSequenceListD });
+      expect(await completionFor(accountE)).toMatchObject({ resultKind: "recommendation_list", resultId: lowerIdListE });
       await expect(upgradeDatabase.execute(sql`
         update first_recommendation_journey_completions set completed_at = now() where user_id = ${accountA}
       `)).rejects.toMatchObject({ cause: { message: "FIRST_RECOMMENDATION_JOURNEY_COMPLETION_IMMUTABLE" } });
@@ -1642,6 +1700,14 @@ describe("database migrations", () => {
       await expect(upgradeDatabase.execute(sql`
         insert into first_recommendation_journey_completions (user_id, result_kind, result_id) values (${accountB}, 'unknown_result', null)
       `)).rejects.toMatchObject({ cause: { code: "23514" } });
+      await expect(upgradeDatabase.execute(sql`
+        insert into first_recommendation_journey_completions (user_id, result_kind, result_id)
+        values (${accountB}, 'recommendation_list', null)
+      `)).rejects.toMatchObject({ cause: { code: "23514", constraint_name: "first_recommendation_journey_completions_result_check" } });
+      await expect(upgradeDatabase.execute(sql`
+        insert into first_recommendation_journey_completions (user_id, result_kind, result_id)
+        values (${accountB}, 'no_recommendations', ${emptyListB})
+      `)).rejects.toMatchObject({ cause: { code: "23514", constraint_name: "first_recommendation_journey_completions_result_check" } });
       await expect(upgradeDatabase.execute(sql`
         insert into first_recommendation_journey_completions (user_id, result_kind, result_id)
         values (${accountB}, 'recommendation_list', ${earliestNonemptyListA})
