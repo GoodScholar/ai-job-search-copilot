@@ -86,3 +86,7 @@ git diff --check
 新增真实 PostgreSQL 覆盖：`processing`/失败导入、画像/目标/来源的独立投影、模型与账户策略阻塞入口、三种活动运行状态的稳定锚点，以及其他账户的导入、运行和完成事实隔离。新用例使用 `RunPreflightReportSchema.parse` 构造合法报告；没有暴露新的生产缺陷，因此未修改 Task 3 生产行为。
 
 新增测试可捕获的错误包括：把处理中的导入错误标为完成、把来源 partial 当作未完成、将模型/策略建议映射到非白名单入口、从其他账户读取运行或完成状态。最终领域定点验证：2 文件、15 测试通过；领域 typecheck 与 `git diff --check` 通过。
+
+## 独立审查第 3 轮：完成后真实退化
+
+新增真实 PostgreSQL 场景创建活动画像事实、主目标和启用来源，并在完成前确认三步均完成；写入完成事实后，追加 `removed` 画像 revision、停用目标并将 watchlist 更新为禁用 revision。完成后的读取注入会抛 sentinel 的 evaluator，仍严格返回 completed 空步骤，证明完成事实在任何动态 preflight 或聚合之前短路。最终：2 文件、16 测试通过，domain typecheck 和 `git diff --check` 通过。

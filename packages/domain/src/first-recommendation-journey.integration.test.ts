@@ -8,7 +8,12 @@ import {
   createDatabase,
   firstRecommendationJourneyCompletions,
   firstRecommendationJourneyInteractions,
+  companyWatchlists,
+  companyWatchlistRevisions,
   jobAccounts,
+  jobProfiles,
+  profileFacts,
+  profileFactRevisions,
   jobTargets,
   migrateDatabase,
   recommendationLists,
@@ -156,6 +161,28 @@ describe("first recommendation journey", () => {
     await recordFirstRecommendationJourneyCompletion(db, { userId: otherId, result: { kind: "no_recommendations", resultId: crypto.randomUUID() }, completedAt: now });
     currentReport = report();
     await expect(reader().get({ userId })).resolves.toMatchObject({ status: "active", steps: expect.arrayContaining([expect.objectContaining({ id: "career_materials", status: "needs_action" }), expect.objectContaining({ id: "first_result", status: "waiting" })]) });
+  });
+
+  it("完成后真实画像、目标和来源退化不会重新打开旅程", async () => {
+    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const profileId = crypto.randomUUID(); const factId = crypto.randomUUID(); const watchlistId = crypto.randomUUID(); const listId = crypto.randomUUID();
+    await db.insert(jobAccounts).values({ id: userId, status: "active" });
+    await db.insert(jobProfiles).values({ id: profileId, userId, version: 1 });
+    await db.insert(profileFacts).values({ id: factId, userId, profileId, factType: "skill" });
+    await db.insert(profileFactRevisions).values({ id: crypto.randomUUID(), userId, profileFactId: factId, revisionNumber: 1, factType: "skill", factValue: { name: "TypeScript" }, state: "active", source: "user_confirmed", profileVersion: 1 });
+    await db.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null });
+    await db.insert(companyWatchlists).values({ id: watchlistId, userId, targetId, version: 1 });
+    await db.insert(companyWatchlistRevisions).values({ id: crypto.randomUUID(), userId, watchlistId, targetId, version: 1, items: [{ itemId: crypto.randomUUID(), canonicalCompanyName: "示例公司", careersUrl: "https://boards.greenhouse.io/example", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null, state: "enabled", position: 1 }] });
+    await db.insert(recommendationLists).values({ id: listId, userId, targetId, localDate: "2026-09-06", sequence: 1, createdAt: now });
+    currentReport = report({ profile: true, targetId, capableSources: 1, status: "ready" });
+    await expect(reader().get({ userId })).resolves.toMatchObject({ steps: expect.arrayContaining([expect.objectContaining({ id: "profile_evidence", status: "completed" }), expect.objectContaining({ id: "primary_target", status: "completed" }), expect.objectContaining({ id: "job_sources", status: "completed" })]) });
+    await recordFirstRecommendationJourneyCompletion(db, { userId, result: { kind: "recommendation_list", resultId: listId }, completedAt: now });
+    await db.insert(profileFactRevisions).values({ id: crypto.randomUUID(), userId, profileFactId: factId, revisionNumber: 2, factType: "skill", factValue: { name: "TypeScript" }, state: "removed", source: "user_confirmed", profileVersion: 2 });
+    await db.update(jobTargets).set({ state: "inactive" }).where(eq(jobTargets.id, targetId));
+    await db.insert(companyWatchlistRevisions).values({ id: crypto.randomUUID(), userId, watchlistId, targetId, version: 2, items: [{ itemId: crypto.randomUUID(), canonicalCompanyName: "示例公司", careersUrl: "https://boards.greenhouse.io/example", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null, state: "disabled", position: 1 }] });
+    await db.update(companyWatchlists).set({ version: 2 }).where(eq(companyWatchlists.id, watchlistId));
+    const sentinel = new Error("完成读取不得调用动态 preflight");
+    const completedReader = createFirstRecommendationJourneyReader({ db, runPreflight: { evaluate: async () => { throw sentinel; } } });
+    await expect(completedReader.get({ userId })).resolves.toEqual({ status: "completed", steps: [], currentStepId: null, completedAt: now.toISOString() });
   });
 
   it("交互以账户、未完成状态与乐观版本保护，并跨读取恢复", async () => {
