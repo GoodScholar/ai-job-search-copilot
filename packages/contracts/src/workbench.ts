@@ -87,7 +87,7 @@ export const WorkbenchHomeSchema = z.object({
     applications: z.literal(0),
     applicationsAvailable: z.literal(false),
   }).strict(),
-  firstRecommendationJourney: FirstRecommendationJourneySchema,
+  firstRecommendationJourney: FirstRecommendationJourneySchema.nullable(),
 }).strict();
 
 export type FirstRecommendationJourneyStepId = z.infer<typeof FirstRecommendationJourneyStepIdSchema>;

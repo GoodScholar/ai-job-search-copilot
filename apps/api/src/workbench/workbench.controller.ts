@@ -43,7 +43,7 @@ export class WorkbenchController {
 
   @Put("first-recommendation-journey")
   @ApiBody({ type: FirstRecommendationJourneyInteractionCommandDto })
-  @ZodResponse({ type: FirstRecommendationJourneyInteractionDto })
+  @ZodResponse({ type: FirstRecommendationJourneyInteractionDto, status: HttpStatus.OK })
   @ApiBadRequestResponse({ type: ApiProblem })
   @ApiConflictResponse({ type: ApiProblem })
   @ApiNotFoundResponse({ type: ApiProblem })

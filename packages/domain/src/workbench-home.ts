@@ -101,7 +101,7 @@ export function createWorkbenchHome(input: { db: Database; clock: () => Date; fi
       countTodayRecommendationItems(input.db, userId, shanghaiDate(input.clock)),
       input.db.select({ count: count() }).from(agentInboxItems).where(and(eq(agentInboxItems.userId, userId), inArray(agentInboxItems.status, ["unread", "read"]))),
       countLatestEnabledSourceFailures(input.db, userId),
-      input.firstRecommendationJourney.get({ userId }),
+      input.firstRecommendationJourney.get({ userId }).catch(() => null),
     ]);
     return WorkbenchHomeSchema.parse({
       account,

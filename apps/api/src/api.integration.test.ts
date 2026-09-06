@@ -712,11 +712,34 @@ describe("authenticated workbench HTTP API", () => {
     expect(response.headers["cache-control"]).toBe("no-store");
   });
 
+  it("旅程读取不可用时保留首页摘要并以局部不可读标记响应", async () => {
+    const previousPreflight = activeRunPreflight;
+    activeRunPreflight = { evaluate: async () => { throw new Error("journey evaluator unavailable"); } };
+    try {
+      const session = await createSession(app, `journey-unavailable-${randomUUID()}`);
+      const response = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/workbench/home", headers: bearer(session.sessionToken) });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.headers["cache-control"]).toBe("no-store");
+      expect(response.json()).toEqual({
+        account: { userId: session.account.userId },
+        summary: { todayRecommendations: 0, pendingFacts: 0, activeAgentRuns: 0, failedAgentRuns: 0, sourceFailures: 0, pendingDecisions: 0, applications: 0, applicationsAvailable: false },
+        firstRecommendationJourney: null,
+      });
+    } finally {
+      activeRunPreflight = previousPreflight;
+    }
+  });
+
   it("通过单一首页读取入口隔离首次推荐旅程，并在重新登录后恢复关闭状态", async () => {
+    const previousPreflight = activeRunPreflight;
+    activeRunPreflight = productionPreflight();
+    try {
     const ownerSubject = `journey-owner-${randomUUID()}`;
-    const firstAccount = await createSession(app, ownerSubject);
-    const secondAccount = await createSession(app, `journey-other-${randomUUID()}`);
-    const ownerHeaders = { ...bearer(firstAccount.sessionToken), "content-type": "application/json" };
+    const firstAccount = await prepareRealPreflightAccount(ownerSubject);
+    const secondAccount = await prepareRealPreflightAccount(`journey-other-${randomUUID()}`);
+    const ownerHeaders = { ...bearer(firstAccount.session.sessionToken), "content-type": "application/json" };
+    const otherHeaders = { ...bearer(secondAccount.session.sessionToken), "content-type": "application/json" };
     const endpoint = "/v1/workbench/first-recommendation-journey";
     const [anonymousHome, anonymousUpdate] = await Promise.all([
       app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/workbench/home" }),
@@ -729,29 +752,37 @@ describe("authenticated workbench HTTP API", () => {
       method: "PUT", url: endpoint, headers: ownerHeaders,
       payload: { action: "visit_step", stepId: "first_result", expectedVersion: 0 },
     });
+    const dismissedOther = await app.getHttpAdapter().getInstance().inject({
+      method: "PUT", url: endpoint, headers: otherHeaders,
+      payload: { action: "dismiss", expectedVersion: 0 },
+    });
     expect(visited.statusCode).toBe(200);
     expect(visited.headers["cache-control"]).toBe("no-store");
     expect(visited.json()).toEqual({ version: 1, dismissedAt: null, lastVisitedStep: "first_result" });
+    expect(dismissedOther.statusCode).toBe(200);
+    expect(dismissedOther.json()).toMatchObject({ version: 1, dismissedAt: expect.any(String), lastVisitedStep: null });
 
-    const [ownerHome, otherHome, invalidOwner, invalidUnknown, stale] = await Promise.all([
-      app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/workbench/home", headers: bearer(firstAccount.sessionToken) }),
-      app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/workbench/home", headers: bearer(secondAccount.sessionToken) }),
-      app.getHttpAdapter().getInstance().inject({ method: "PUT", url: endpoint, headers: ownerHeaders, payload: { action: "dismiss", expectedVersion: 1, userId: secondAccount.account.userId } }),
+    const beforeForeignInjection = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/workbench/home", headers: bearer(secondAccount.session.sessionToken) });
+    const [ownerHome, invalidOwner, invalidUnknown, stale] = await Promise.all([
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/workbench/home", headers: bearer(firstAccount.session.sessionToken) }),
+      app.getHttpAdapter().getInstance().inject({ method: "PUT", url: endpoint, headers: ownerHeaders, payload: { action: "dismiss", expectedVersion: 1, userId: secondAccount.session.account.userId } }),
       app.getHttpAdapter().getInstance().inject({ method: "PUT", url: endpoint, headers: ownerHeaders, payload: { action: "dismiss", expectedVersion: 1, ignored: "untrusted" } }),
       app.getHttpAdapter().getInstance().inject({ method: "PUT", url: endpoint, headers: ownerHeaders, payload: { action: "dismiss", expectedVersion: 0 } }),
     ]);
     expect(ownerHome.statusCode).toBe(200);
     expect(ownerHome.headers["cache-control"]).toBe("no-store");
-    expect(ownerHome.json()).toMatchObject({ account: { userId: firstAccount.account.userId }, firstRecommendationJourney: { status: "active", currentStepId: "first_result" } });
-    expect(otherHome.statusCode).toBe(200);
-    expect(otherHome.json()).toMatchObject({ account: { userId: secondAccount.account.userId }, firstRecommendationJourney: { status: "active", currentStepId: "career_materials" } });
+    expect(ownerHome.json()).toMatchObject({ account: { userId: firstAccount.session.account.userId }, firstRecommendationJourney: { status: "active", currentStepId: "first_result" } });
     for (const response of [invalidOwner, invalidUnknown]) {
       expect(response.statusCode).toBe(400);
       expect(response.json()).toMatchObject({ code: "INVALID_REQUEST" });
-      expect(response.body).not.toContain(secondAccount.account.userId);
+      expect(response.body).not.toContain(secondAccount.session.account.userId);
     }
     expect(stale.statusCode).toBe(409);
     expect(stale.json()).toMatchObject({ code: "VERSION_CONFLICT" });
+    const afterForeignInjection = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/workbench/home", headers: bearer(secondAccount.session.sessionToken) });
+    expect(beforeForeignInjection.statusCode).toBe(200);
+    expect(afterForeignInjection.json()).toEqual(beforeForeignInjection.json());
+    expect(afterForeignInjection.json()).toMatchObject({ account: { userId: secondAccount.session.account.userId }, firstRecommendationJourney: { status: "dismissed", currentStepId: "career_materials" } });
 
     const dismissed = await app.getHttpAdapter().getInstance().inject({ method: "PUT", url: endpoint, headers: ownerHeaders, payload: { action: "dismiss", expectedVersion: 1 } });
     expect(dismissed.statusCode).toBe(200);
@@ -760,7 +791,10 @@ describe("authenticated workbench HTTP API", () => {
     const restoredSession = await createSession(app, ownerSubject);
     const restored = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/workbench/home", headers: bearer(restoredSession.sessionToken) });
     expect(restored.statusCode).toBe(200);
-    expect(restored.json()).toMatchObject({ account: { userId: firstAccount.account.userId }, firstRecommendationJourney: { status: "dismissed", currentStepId: "first_result" } });
+    expect(restored.json()).toMatchObject({ account: { userId: firstAccount.session.account.userId }, firstRecommendationJourney: { status: "dismissed", currentStepId: "first_result" } });
+    } finally {
+      activeRunPreflight = previousPreflight;
+    }
   });
 
   it("将已完成旅程的交互拒绝映射为稳定冲突", async () => {
@@ -2096,6 +2130,45 @@ describe("authenticated workbench HTTP API", () => {
     }
     expect(document.paths["/v1/career-documents/imports/{importId}"].get.responses["400"])
       .toEqual(expect.objectContaining({ description: expect.any(String) }));
+  });
+
+  it("为首次推荐旅程发布严格判别命令、交互响应和问题响应 OpenAPI 契约", async () => {
+    const response = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/openapi.json" });
+    const document = response.json();
+    const resolveSchema = (schema: Record<string, unknown>): Record<string, unknown> => {
+      const reference = schema.$ref;
+      if (typeof reference !== "string") return schema;
+      expect(reference).toMatch(/^#\/components\/schemas\//);
+      return resolveSchema(document.components.schemas[reference.slice("#/components/schemas/".length)] as Record<string, unknown>);
+    };
+    const branchesOf = (schema: Record<string, unknown>) => {
+      const branches = schema.oneOf ?? schema.anyOf;
+      return Array.isArray(branches) ? branches.map((branch) => resolveSchema(branch as Record<string, unknown>)) : [schema];
+    };
+    const operation = document.paths["/v1/workbench/first-recommendation-journey"].put;
+    const requestSchema = resolveSchema(operation.requestBody.content["application/json"].schema as Record<string, unknown>);
+    const branches = new Map(branchesOf(requestSchema).map((branch) => {
+      const action = (branch.properties as Record<string, Record<string, unknown>>).action;
+      const enumValues = Array.isArray(action.enum) ? action.enum : [];
+      const value = typeof action.const === "string" ? action.const : enumValues[0];
+      return [value, branch] as const;
+    }));
+
+    expect([...branches.keys()].sort()).toEqual(["dismiss", "visit_step"]);
+    const visit = branches.get("visit_step")!;
+    const dismiss = branches.get("dismiss")!;
+    expect(visit).toMatchObject({ additionalProperties: false, required: ["action", "stepId", "expectedVersion"] });
+    expect(dismiss).toMatchObject({ additionalProperties: false, required: ["action", "expectedVersion"] });
+    const visitProperties = visit.properties as Record<string, Record<string, unknown>>;
+    expect(visitProperties.stepId.enum).toEqual(["career_materials", "profile_evidence", "primary_target", "job_sources", "run_readiness", "first_result"]);
+    expect(visitProperties.expectedVersion).toMatchObject({ minimum: 0 });
+    expect((dismiss.properties as Record<string, unknown>).stepId).toBeUndefined();
+
+    const interactionResponse = resolveSchema(operation.responses["200"].content["application/json"].schema as Record<string, unknown>);
+    expect(interactionResponse).toMatchObject({ additionalProperties: false, required: ["version", "dismissedAt", "lastVisitedStep"] });
+    for (const status of ["400", "401", "404", "409"]) {
+      expect(operation.responses[status].content["application/json"].schema).toEqual({ $ref: "#/components/schemas/ApiProblem" });
+    }
   });
 
   it("refuses to bootstrap Dev Auth in production", async () => {

@@ -92,6 +92,20 @@ describe("workbench home", () => {
     await expect(getWorkbenchHome({ userId: activeUserId })).rejects.toMatchObject({ name: "ZodError" });
   });
 
+  it("旅程读取器不可用时保留摘要并返回局部不可读标记", async () => {
+    const getWorkbenchHome = createWorkbenchHome({
+      db: database,
+      clock,
+      firstRecommendationJourney: { get: async () => { throw new Error("journey reader unavailable"); } },
+    });
+
+    await expect(getWorkbenchHome({ userId: activeUserId })).resolves.toMatchObject({
+      account: { userId: activeUserId },
+      summary: { todayRecommendations: 0, pendingFacts: 0, activeAgentRuns: 0, failedAgentRuns: 0, sourceFailures: 0, pendingDecisions: 0, applications: 0, applicationsAvailable: false },
+      firstRecommendationJourney: null,
+    });
+  });
+
   it("uses the domain account-not-found code for missing or inactive accounts", async () => {
     const getWorkbenchHome = createHome({ db: database, clock });
     await expect(getWorkbenchHome({

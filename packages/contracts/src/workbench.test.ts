@@ -160,10 +160,11 @@ describe("首次推荐旅程契约", () => {
     expect(interactionSchema.safeParse({ version: 0, dismissedAt: null, lastVisitedStep: null, userId: "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3" }).success).toBe(false);
   });
 
-  it("要求工作台首页始终包含首次推荐旅程", () => {
+  it("要求工作台首页包含首次推荐旅程或局部不可读标记", () => {
     const homeSchema = schema("WorkbenchHomeSchema");
 
     expect(homeSchema.parse(home(activeJourney))).toEqual(home(activeJourney));
+    expect(homeSchema.parse(home(null))).toEqual(home(null));
     expect(homeSchema.safeParse({
       account: home(activeJourney).account,
       summary: home(activeJourney).summary,
