@@ -704,6 +704,7 @@ describe("authenticated workbench HTTP API", () => {
       summary: { todayRecommendations: 0, pendingFacts: 0, activeAgentRuns: 0, failedAgentRuns: 0, sourceFailures: 0, pendingDecisions: 0, applications: 0, applicationsAvailable: false },
       firstRecommendationJourney: expect.objectContaining({
         status: "active",
+        interactionVersion: 0,
         currentStepId: "career_materials",
         completedAt: null,
         steps: expect.arrayContaining([expect.objectContaining({ id: "career_materials", status: "needs_action" })]),

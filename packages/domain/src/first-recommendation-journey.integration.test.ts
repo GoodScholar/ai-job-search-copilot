@@ -73,7 +73,7 @@ describe("first recommendation journey", () => {
 
   it("从权威事实推导步骤，且已访问的未完成步骤优先成为当前步骤", async () => {
     const initial = await reader().get({ userId: ownerId });
-    expect(initial).toMatchObject({ status: "active", currentStepId: "career_materials" });
+    expect(initial).toMatchObject({ status: "active", interactionVersion: 0, currentStepId: "career_materials" });
     expect(initial.steps.map((step) => [step.id, step.status, step.action.href])).toEqual([
       ["career_materials", "needs_action", "/profile"], ["profile_evidence", "needs_action", "/profile"], ["primary_target", "needs_action", "/profile/targets"],
       ["job_sources", "needs_action", "/profile/targets"], ["run_readiness", "needs_action", "/profile"], ["first_result", "waiting", "/home"],
@@ -93,7 +93,7 @@ describe("first recommendation journey", () => {
     const commands = createFirstRecommendationJourneyCommands({ db, clock: () => now });
     await commands.updateInteraction({ userId: ownerId, command: { action: "visit_step", stepId: "first_result", expectedVersion: 0 } });
     const progressed = await reader().get({ userId: ownerId });
-    expect(progressed).toMatchObject({ currentStepId: "first_result" });
+    expect(progressed).toMatchObject({ interactionVersion: 1, currentStepId: "first_result" });
     expect(progressed.steps).toMatchObject(expect.arrayContaining([
       expect.objectContaining({ id: "career_materials", status: "completed" }),
       expect.objectContaining({ id: "profile_evidence", status: "completed" }),

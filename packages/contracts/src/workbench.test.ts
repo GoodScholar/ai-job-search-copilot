@@ -64,6 +64,7 @@ const steps = [
 
 const activeJourney = {
   status: "active",
+  interactionVersion: 0,
   steps,
   currentStepId: "career_materials",
   completedAt: null,
@@ -119,7 +120,7 @@ describe("首次推荐旅程契约", () => {
     const journeySchema = schema("FirstRecommendationJourneySchema");
 
     expect(journeySchema.parse(activeJourney)).toEqual(activeJourney);
-    expect(journeySchema.parse({ ...activeJourney, status: "dismissed" })).toEqual({ ...activeJourney, status: "dismissed" });
+    expect(journeySchema.parse({ ...activeJourney, status: "dismissed", interactionVersion: 3 })).toEqual({ ...activeJourney, status: "dismissed", interactionVersion: 3 });
     expect(journeySchema.parse({ status: "completed", steps: [], currentStepId: null, completedAt: "2026-09-06T12:00:00.000Z" }))
       .toEqual({ status: "completed", steps: [], currentStepId: null, completedAt: "2026-09-06T12:00:00.000Z" });
 
@@ -132,6 +133,8 @@ describe("首次推荐旅程契约", () => {
       { status: "completed", steps: [], currentStepId: null, completedAt: null },
       { status: "completed", steps, currentStepId: null, completedAt: "2026-09-06T12:00:00.000Z" },
       { ...activeJourney, completedAt: "2026-09-06T12:00:00.000Z" },
+      (() => { const { interactionVersion: _interactionVersion, ...journey } = activeJourney; return journey; })(),
+      { status: "completed", interactionVersion: 0, steps: [], currentStepId: null, completedAt: "2026-09-06T12:00:00.000Z" },
       { ...activeJourney, extra: true },
     ]) {
       expect(journeySchema.safeParse(invalid).success).toBe(false);

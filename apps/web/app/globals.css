@@ -989,6 +989,35 @@ summary.workbench-touch-target:focus-visible,
 }
 
 .workbench-job-import-entry { margin-top: 1.5rem; }
+.first-recommendation-journey {
+  margin-top: clamp(2rem, 5vw, 3.5rem);
+  max-width: 45rem;
+  min-width: 0;
+}
+
+.first-recommendation-journey-unavailable h2,
+.first-recommendation-journey-heading h2,
+.first-recommendation-journey-step-copy h3 { margin: 0; }
+.first-recommendation-journey-unavailable > p,
+.first-recommendation-journey-heading p,
+.first-recommendation-journey-step-copy > p { overflow-wrap: anywhere; }
+.first-recommendation-journey-heading { align-items: start; border-bottom: 1px solid var(--rule); display: flex; gap: 1rem; justify-content: space-between; padding-bottom: 1rem; }
+.first-recommendation-journey-heading > div { min-width: 0; }
+.first-recommendation-journey-heading h2 { font-size: 1.35rem; letter-spacing: -0.03em; }
+.first-recommendation-journey-heading p { margin-top: 0.5rem !important; max-width: 42rem; }
+.first-recommendation-journey-dismiss { background: transparent; border: 1px solid var(--rule); color: var(--emerald-strong); cursor: pointer; flex: 0 0 auto; font: inherit; font-size: 0.82rem; font-weight: 700; }
+.first-recommendation-journey-dismiss:hover:not(:disabled) { background: var(--ground); text-decoration: underline; }
+.first-recommendation-journey-dismiss:disabled { cursor: wait; opacity: 0.62; }
+.first-recommendation-journey-error { color: var(--amber-ink) !important; font-size: 0.9rem; font-weight: 700; margin-top: 1rem !important; }
+.first-recommendation-journey-live { color: var(--emerald-strong); font-weight: 700; margin: clamp(2rem, 5vw, 3.5rem) 0 0; min-height: 2.75rem; }
+.first-recommendation-journey-list { display: grid; gap: 0 1.5rem; grid-template-columns: repeat(2, minmax(0, 1fr)); list-style: none; margin: 0; padding: 0; }
+.first-recommendation-journey-list > li { border-bottom: 1px solid var(--rule); display: grid; gap: 1rem; min-width: 0; padding: 1.25rem 0; }
+.first-recommendation-journey-list > li[aria-current="step"] { border-top: 1px solid var(--emerald); }
+.first-recommendation-journey-step-copy { min-width: 0; }
+.first-recommendation-journey-step-copy h3 { font-size: 1rem; line-height: 1.45; }
+.first-recommendation-journey-state { color: var(--emerald-strong) !important; font-size: 0.82rem; font-weight: 700; margin-top: 0.45rem !important; }
+.first-recommendation-journey-list > li[data-status="needs_action"] .first-recommendation-journey-state { color: var(--amber-ink) !important; }
+.first-recommendation-journey-list .workbench-touch-target { justify-self: start; padding-inline: 0; text-decoration: underline; }
 .model-connection-main { max-width: 62rem; }
 .model-connection-ledger { max-width: 44rem; }
 .model-connection-live { color: var(--emerald-strong) !important; font-weight: 700; margin: 1rem 0 !important; min-height: 1.5rem; }
@@ -1223,6 +1252,10 @@ summary.workbench-touch-target:focus-visible,
   .workbench-ledger-row {
     grid-template-columns: minmax(0, 1fr);
   }
+
+  .first-recommendation-journey-heading { display: grid; }
+  .first-recommendation-journey-dismiss { justify-self: start; }
+  .first-recommendation-journey-list { grid-template-columns: minmax(0, 1fr); }
 
   .agent-run-controls > div,
   .discovery-schedule-controls,

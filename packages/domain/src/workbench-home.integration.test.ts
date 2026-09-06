@@ -30,6 +30,7 @@ import type { FirstRecommendationJourney } from "@job-copilot/contracts/workbenc
 
 const journeyForHome = {
   status: "active" as const,
+  interactionVersion: 0,
   currentStepId: "career_materials" as const,
   completedAt: null,
   steps: [

@@ -4,6 +4,7 @@ import { renderToString } from "react-dom/server";
 import { afterEach, expect, it, vi } from "vitest";
 import type { AgentInboxItem } from "@job-copilot/contracts/agent-inbox";
 import type { AgentRunDetail } from "@job-copilot/contracts/agent-runs";
+import type { FirstRecommendationJourney } from "@job-copilot/contracts/workbench";
 
 const refresh = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
@@ -41,6 +42,26 @@ it("把需要决定的事项放在首页标题，并完整呈现真实摘要和�
   for (const label of ["今日推荐", "待确认事实", "运行中的求职代理", "失败的求职代理", "需要关注的来源", "待决定事项"]) expect(screen.getByText(label)).toBeVisible();
   expect(screen.getByText("投递记录（尚未启用）")).toBeVisible();
   expect(screen.getByText("投递记录功能尚未启用，当前不会保存或显示投递数据。")).toBeVisible();
+});
+
+it("在工作台导语之后、摘要之前原样交给首次推荐旅程区域", () => {
+  const journey = {
+    status: "active" as const,
+    interactionVersion: 4,
+    currentStepId: "career_materials" as const,
+    completedAt: null,
+    steps: [
+      ["career_materials", "准备可用职业资料"], ["profile_evidence", "建立可信求职画像"], ["primary_target", "明确主要求职方向"],
+      ["job_sources", "接通真实岗位来源"], ["run_readiness", "确认今天可以开始"], ["first_result", "获得第一份推荐结果"],
+    ].map(([id, title]) => ({ id, title, status: id === "career_materials" ? "needs_action" as const : "waiting" as const, stateLabel: id === "career_materials" ? "需要处理" : "等待开始", impact: "请完成当前准备事项。", action: { label: "继续准备", href: "/profile" } })),
+  } as FirstRecommendationJourney;
+  const { container } = render(<WorkbenchHomeView home={{ ...home, firstRecommendationJourney: journey }} inbox={{ items: [] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
+
+  const intro = container.querySelector(".workbench-intro");
+  const journeyRegion = screen.getByRole("region", { name: "首次推荐旅程" });
+  const summary = screen.getByLabelText("当前求职记录摘要");
+  expect(intro?.compareDocumentPosition(journeyRegion) ?? 0).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  expect(journeyRegion.compareDocumentPosition(summary)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
 });
 
 it("待确认事实为零时不推断职业资料尚未建立", () => {

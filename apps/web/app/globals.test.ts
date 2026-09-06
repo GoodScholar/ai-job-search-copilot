@@ -21,3 +21,10 @@ it("keeps loading summary density aligned with seven summary facts and preserves
   expect(css).toMatch(/\.workbench-loading-summary \{[^}]*grid-template-columns:\s*repeat\(7, minmax\(0, 1fr\)\);/);
   expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)/);
 });
+
+it("keeps the first recommendation journey compact on desktop and single-column on narrow screens", async () => {
+  const css = await readFile(resolve(process.cwd(), "app/globals.css"), "utf8");
+
+  expect(css).toMatch(/\.first-recommendation-journey \{[^}]*max-width:\s*45rem;/);
+  expect(css).toMatch(/@media \(max-width: 640px\) \{[\s\S]*?\.first-recommendation-journey-list \{[^}]*grid-template-columns:\s*minmax\(0, 1fr\);/);
+});

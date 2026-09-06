@@ -42,8 +42,9 @@ const activeJourneyStepsSchema = z.array(FirstRecommendationJourneyStepSchema)
     }
   });
 
-const activeJourneySchema = (status: "active" | "dismissed") => z.object({
+const activeJourneySchema = <Status extends "active" | "dismissed">(status: Status) => z.object({
   status: z.literal(status),
+  interactionVersion: z.int().nonnegative(),
   steps: activeJourneyStepsSchema,
   currentStepId: FirstRecommendationJourneyStepIdSchema,
   completedAt: z.null(),

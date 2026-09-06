@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { AgentRunPanel } from "./agent-run-panel";
 import { AgentInboxPanel, loadAgentInbox } from "./agent-inbox-panel";
+import { FirstRecommendationJourneyPanel } from "./first-recommendation-journey";
 
 type UnavailableSection = "summary" | "targets" | "run" | "inbox" | "preflight";
 type WorkbenchHomeViewProps = {
@@ -85,6 +86,8 @@ function WorkbenchHomeContent({ home, targets, initialRun, preflight: initialPre
         <h1 id="workbench-home-title">{summaryUnavailable ? "待决定事项暂时无法读取" : pendingDecisions > 0 ? "先处理需要你决定的事项" : "今天暂无待决定事项"}</h1>
         <p>{summaryUnavailable ? "今日摘要暂时无法读取，其余可用内容仍会保留。" : pendingDecisions > 0 ? "先完成待决定事项，再查看今天的推荐、运行和来源状态。" : "当前没有等待你确认的事项；新的确认、异常或推荐会显示在这里。"}</p>
       </section>
+
+      {home && <FirstRecommendationJourneyPanel journey={home.firstRecommendationJourney} onAuthoritativeRefresh={() => router.refresh()} />}
 
       {summaryUnavailable ? <section aria-label="今日摘要不可用" className="workbench-summary workbench-summary-unavailable"><p>今日摘要暂时无法读取。请稍后刷新重试。</p></section> : <>
         <dl aria-label="当前求职记录摘要" className="workbench-summary">

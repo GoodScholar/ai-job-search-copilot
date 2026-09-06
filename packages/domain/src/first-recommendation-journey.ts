@@ -122,7 +122,7 @@ export function createFirstRecommendationJourneyReader(deps: { db: Database; run
         deps.runPreflight.evaluate(deps.db, { userId, workflow: "discovery", trigger: "manual" }),
       ]);
       const steps = await stepsFor({ db: deps.db, userId, report: evaluation.report });
-      return { status: state.dismissedAt ? "dismissed" : "active", steps, currentStepId: currentStep(steps, state.lastVisitedStep), completedAt: null };
+      return { status: state.dismissedAt ? "dismissed" : "active", interactionVersion: state.version, steps, currentStepId: currentStep(steps, state.lastVisitedStep), completedAt: null };
     },
   };
 }
