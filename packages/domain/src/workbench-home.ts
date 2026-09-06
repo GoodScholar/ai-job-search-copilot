@@ -1,5 +1,5 @@
 import { and, count, desc, eq, inArray, notExists, or } from "drizzle-orm";
-import type { WorkbenchHome } from "@job-copilot/contracts/workbench";
+import { WorkbenchHomeSchema, type WorkbenchHome } from "@job-copilot/contracts/workbench";
 import { CompanyWatchlistItemSchema } from "@job-copilot/contracts/company-watchlists";
 import { classifyGreenhousePublicSource } from "@job-copilot/contracts/job-discovery-schedules";
 import { agentInboxItems, agentRuns, candidateFactDecisions, candidateFacts, companyWatchlistRevisions, companyWatchlists, jobAccounts, jobSourceHealthChecks, recommendationListItems, recommendationLists, type Database } from "@job-copilot/database";
@@ -103,7 +103,7 @@ export function createWorkbenchHome(input: { db: Database; clock: () => Date; fi
       countLatestEnabledSourceFailures(input.db, userId),
       input.firstRecommendationJourney.get({ userId }),
     ]);
-    return {
+    return WorkbenchHomeSchema.parse({
       account,
       summary: {
         todayRecommendations: recommendations,
@@ -116,6 +116,6 @@ export function createWorkbenchHome(input: { db: Database; clock: () => Date; fi
         applicationsAvailable: false,
       },
       firstRecommendationJourney,
-    };
+    });
   };
 }

@@ -58,3 +58,25 @@ git diff --check
 
 - Task 4 仍需在非空推荐发布事务内调用完成记录器；本 Task 刻意未接入该事务。
 - Task 5 必须为 API 的 `createWorkbenchHome` 装配真实旅程读取器和运行前检查评估器；本 Task 只收紧领域构造函数并更新领域集成夹具。
+
+## 独立审查第 1 轮修复
+
+### RED 证据
+
+补充迁移测试后，首次运行迁移套件失败：`recommendation_list` 缺少 ID 的断言与旧的无条件复合外键/空 `no_recommendations` 模型不一致。补充旅程测试后，旧实现也缺少 warning impact、就绪后首结果 `needs_action`、活动运行锚点和首页严格 schema 边界。
+
+### 修复
+
+- `ready_with_warnings` 的就绪步骤展示首个 warning 的安全影响；部分来源能力仍完成来源步骤。
+- 首结果按前置条件区分 `waiting` 与 `needs_action`；活动运行按 `queued_at,id` 稳定排序并链接到 `/home?runId=…#agent-run`。
+- 工作台首页在领域返回边界执行 `WorkbenchHomeSchema.parse`。
+- 完成事实两种 kind 都保存非空稳定 UUID。迁移移除无法表达多态 UUID 的无条件复合外键，新增只在 `recommendation_list` 时验证同账户清单归属的插入触发器；历史回填保持不变。
+- 增加合法 partial preflight、活动运行、完成并发首写、完成后交互拒绝、评估器 workflow/trigger 与数据库错误原样传播断言。
+
+### GREEN 证据
+
+串行执行并通过：数据库迁移测试 28 项、数据库 typecheck；领域目标测试 12 项、领域 typecheck；`git diff --check`。
+
+### 自审
+
+完成记录器仍没有发布事务调用点，未扩展到 Task 4。`no_recommendations` 的 UUID 在本 Issue 仅作为可信发布器未来提供的稳定证据 ID，不创建 #53 证据表。

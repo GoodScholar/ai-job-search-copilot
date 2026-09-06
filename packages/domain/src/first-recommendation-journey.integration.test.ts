@@ -14,7 +14,7 @@ import {
   recommendationLists,
   type Database,
 } from "@job-copilot/database";
-import type { RunPreflightReport } from "@job-copilot/contracts/run-preflight";
+import { RunPreflightReportSchema, type RunPreflightReport } from "@job-copilot/contracts/run-preflight";
 import {
   createFirstRecommendationJourneyCommands,
   createFirstRecommendationJourneyReader,
@@ -25,31 +25,32 @@ const now = new Date("2026-09-06T01:00:00.000Z");
 const ownerId = "9525a518-8b2c-4c76-98b6-1e2c4e5081bb";
 const otherOwnerId = "3eac5e66-8eea-4bf1-9473-38ebed2aa1d9";
 
-function report(input: { profile?: boolean; targetId?: string | null; capableSources?: number; status?: "blocked" | "ready" | "ready_with_warnings"; actions?: string[] } = {}): RunPreflightReport {
+function report(input: { profile?: boolean; targetId?: string | null; capableSources?: number; status?: "blocked" | "ready" | "ready_with_warnings" } = {}): RunPreflightReport {
   const checkedAt = now.toISOString();
   const profile = input.profile ?? false;
   const targetId = input.targetId ?? null;
   const capableSources = input.capableSources ?? 0;
   const status = input.status ?? "blocked";
-  const actions = input.actions ?? (profile ? [] : ["review_profile"]);
-  return {
-    version: "run-preflight-v1", workflow: "discovery", trigger: "manual", targetId, status, warningFingerprint: null, checkedAt,
+  const partial = status === "ready_with_warnings";
+  return RunPreflightReportSchema.parse({
+    version: "run-preflight-v1", workflow: "discovery", trigger: "manual", targetId, status, warningFingerprint: partial ? "a".repeat(64) : null, checkedAt,
     items: [
       { code: profile ? "PROFILE_EVIDENCE_READY" : "PROFILE_EVIDENCE_MISSING", severity: profile ? "informational" : "blocking", summary: "画像", impact: "请补全画像。", retryable: false, suggestedActions: profile ? [] : ["review_profile"], evidence: { kind: "profile", activeTrustedFactCount: profile ? 1 : 0, latestFactRevisionId: null, checkedAt } },
       { code: targetId ? "PRIMARY_JOB_TARGET_READY" : "PRIMARY_JOB_TARGET_MISSING", severity: targetId ? "informational" : "blocking", summary: "目标", impact: "请明确方向。", retryable: false, suggestedActions: targetId ? [] : ["review_job_targets"], evidence: { kind: "job_target", primaryTargetId: targetId, primaryTargetVersion: targetId ? 1 : null, requestedTargetId: targetId, requestedTargetVersion: targetId ? 1 : null, requestedTargetState: targetId ? "active" : "missing", checkedAt } },
       { code: targetId ? "REQUESTED_JOB_TARGET_READY" : "REQUESTED_JOB_TARGET_MISSING", severity: targetId ? "informational" : "blocking", summary: "请求目标", impact: "请明确方向。", retryable: false, suggestedActions: targetId ? [] : ["review_job_targets"], evidence: { kind: "job_target", primaryTargetId: targetId, primaryTargetVersion: targetId ? 1 : null, requestedTargetId: targetId, requestedTargetVersion: targetId ? 1 : null, requestedTargetState: targetId ? "active" : "missing", checkedAt } },
-      { code: capableSources ? "SOURCE_CAPABILITY_READY" : "SOURCE_CAPABILITY_UNAVAILABLE", severity: capableSources ? "informational" : "blocking", summary: "来源", impact: "请接通来源。", retryable: false, suggestedActions: capableSources ? [] : ["review_job_sources"], evidence: { kind: "source_capability", enabledSourceCount: capableSources, capableSourceCount: capableSources, status: capableSources ? "ready" : "unavailable", checkedAt } },
+      { code: capableSources ? partial ? "SOURCE_CAPABILITY_PARTIAL" : "SOURCE_CAPABILITY_READY" : "SOURCE_CAPABILITY_UNAVAILABLE", severity: capableSources ? partial ? "warning" : "informational" : "blocking", summary: "来源", impact: partial ? "部分来源能力不足，请检查来源设置。" : "请接通来源。", retryable: false, suggestedActions: capableSources ? partial ? ["review_source_capabilities"] : [] : ["review_source_capabilities"], evidence: { kind: "source_capability", enabledSourceCount: capableSources + (partial ? 1 : 0), capableSourceCount: capableSources, status: capableSources ? partial ? "partial" : "ready" : "unavailable", checkedAt } },
       { code: "SOURCE_HEALTH_READY", severity: "informational", summary: "来源健康", impact: "来源可用。", retryable: false, suggestedActions: [], evidence: { kind: "source_health", checkedSourceCount: 0, healthySourceCount: 0, degradedSourceCount: 0, uncheckedSourceCount: 0, latestCheckedAt: null } },
       { code: "MODEL_DIAGNOSTIC_READY", severity: "informational", summary: "模型", impact: "模型可用。", retryable: false, suggestedActions: [], evidence: { kind: "model_diagnostic", status: "available", checkedAt } },
       { code: "ACCOUNT_RUN_POLICY_READY", severity: "informational", summary: "策略", impact: "策略可用。", retryable: false, suggestedActions: [], evidence: { kind: "account_run_policy", revisionNumber: 0, status: "ready", checkedAt } },
     ],
-  } as RunPreflightReport;
+  });
 }
 
 describe("first recommendation journey", () => {
   let container: StartedPostgreSqlContainer;
   let db: Database;
   let currentReport = report();
+  const evaluations: Array<{ workflow: string; trigger: string }> = [];
 
   beforeAll(async () => {
     container = await new PostgreSqlContainer("postgres:17-alpine").start();
@@ -62,7 +63,7 @@ describe("first recommendation journey", () => {
 
   const reader = () => createFirstRecommendationJourneyReader({
     db,
-    runPreflight: { evaluate: async () => ({ report: currentReport, policy: { revisionNumber: 0, snapshot: {} as never } }) },
+    runPreflight: { evaluate: async (_db, input) => { evaluations.push({ workflow: input.workflow, trigger: input.trigger }); return { report: currentReport, policy: { revisionNumber: 0, snapshot: {} as never } }; } },
   });
 
   it("从权威事实推导步骤，且已访问的未完成步骤优先成为当前步骤", async () => {
@@ -72,6 +73,7 @@ describe("first recommendation journey", () => {
       ["career_materials", "needs_action", "/profile"], ["profile_evidence", "needs_action", "/profile"], ["primary_target", "needs_action", "/profile/targets"],
       ["job_sources", "needs_action", "/profile/targets"], ["run_readiness", "needs_action", "/profile"], ["first_result", "waiting", "/home"],
     ]);
+    expect(evaluations).toContainEqual({ workflow: "discovery", trigger: "manual" });
 
     const documentId = crypto.randomUUID();
     const importId = crypto.randomUUID();
@@ -93,7 +95,23 @@ describe("first recommendation journey", () => {
       expect.objectContaining({ id: "primary_target", status: "completed" }),
       expect.objectContaining({ id: "job_sources", status: "completed", action: expect.objectContaining({ href: `/profile/targets/${targetId}/watchlist` }) }),
       expect.objectContaining({ id: "run_readiness", status: "completed" }),
+      expect.objectContaining({ id: "first_result", status: "needs_action" }),
     ]));
+    expect(progressed.steps.find((value) => value.id === "run_readiness")).toMatchObject({ impact: "部分来源能力不足，请检查来源设置。" });
+    await commands.updateInteraction({ userId: ownerId, command: { action: "visit_step", stepId: "job_sources", expectedVersion: 1 } });
+    await expect(reader().get({ userId: ownerId })).resolves.toMatchObject({ currentStepId: "first_result" });
+  });
+
+  it("活动运行优先显示确定性的运行锚点，未满足前置条件则等待", async () => {
+    const targetId = crypto.randomUUID();
+    const userId = crypto.randomUUID();
+    await db.insert(jobAccounts).values({ id: userId, status: "active" });
+    await db.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null });
+    currentReport = report({ profile: true, targetId, capableSources: 1, status: "ready" });
+    const runIds = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
+    await db.insert(agentRuns).values(runIds.map((id, index) => ({ id, userId, targetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1, targetSnapshot: {}, sourceScope: {}, budgetSnapshot: {}, workflowVersion: "v", ruleVersion: "v", adapter: "a", adapterVersion: "v", outputSchemaVersion: "v", toolAllowlist: [], status: (["queued", "running", "paused"] as const)[index]!, currentStep: "queued", queuedAt: new Date(now.getTime() + index), ...(index === 1 ? { startedAt: new Date(now.getTime() + index) } : {}) })));
+    const journey = await reader().get({ userId });
+    expect(journey.steps.find((value) => value.id === "first_result")).toMatchObject({ status: "in_progress", action: { href: `/home?runId=${runIds[0]}#agent-run` } });
   });
 
   it("交互以账户、未完成状态与乐观版本保护，并跨读取恢复", async () => {
@@ -112,16 +130,22 @@ describe("first recommendation journey", () => {
   it("只接受内部完成记录器的可信事实，并永久优先于动态条件", async () => {
     const targetId = crypto.randomUUID();
     const listId = crypto.randomUUID();
+    const secondListId = crypto.randomUUID();
     await db.insert(jobTargets).values({ id: targetId, userId: otherOwnerId, version: 1, priority: "primary", state: "active", activeSlot: null });
-    await db.insert(recommendationLists).values({ id: listId, userId: otherOwnerId, targetId, localDate: "2026-09-06", sequence: 1, createdAt: now });
+    await db.insert(recommendationLists).values([{ id: listId, userId: otherOwnerId, targetId, localDate: "2026-09-06", sequence: 1, createdAt: now }, { id: secondListId, userId: otherOwnerId, targetId, localDate: "2026-09-06", sequence: 2, createdAt: now }]);
     await db.insert(agentRuns).values({ id: crypto.randomUUID(), userId: otherOwnerId, targetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1, targetSnapshot: {}, sourceScope: {}, budgetSnapshot: {}, workflowVersion: "v", ruleVersion: "v", adapter: "a", adapterVersion: "v", outputSchemaVersion: "v", toolAllowlist: [], status: "failed", currentStep: "failed", startedAt: now, failedAt: now });
     await expect(reader().get({ userId: otherOwnerId })).resolves.toMatchObject({ status: "dismissed", steps: expect.arrayContaining([expect.objectContaining({ id: "first_result", status: "waiting" })]) });
 
-    await recordFirstRecommendationJourneyCompletion(db, { userId: otherOwnerId, result: { kind: "recommendation_list", resultId: listId }, completedAt: now });
-    await recordFirstRecommendationJourneyCompletion(db, { userId: otherOwnerId, result: { kind: "recommendation_list", resultId: crypto.randomUUID() }, completedAt: new Date(now.getTime() + 1) });
-    await expect(db.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, otherOwnerId)))
-      .resolves.toEqual([expect.objectContaining({ resultId: listId, completedAt: now })]);
-    await expect(reader().get({ userId: otherOwnerId })).resolves.toEqual({ status: "completed", steps: [], currentStepId: null, completedAt: now.toISOString() });
+    await Promise.all([
+      recordFirstRecommendationJourneyCompletion(db, { userId: otherOwnerId, result: { kind: "recommendation_list", resultId: listId }, completedAt: now }),
+      recordFirstRecommendationJourneyCompletion(db, { userId: otherOwnerId, result: { kind: "recommendation_list", resultId: secondListId }, completedAt: new Date(now.getTime() + 1) }),
+    ]);
+    const [completion] = await db.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, otherOwnerId));
+    expect(completion).toEqual(expect.objectContaining({ resultId: expect.stringMatching(new RegExp(`^(${listId}|${secondListId})$`)) }));
+    await expect(reader().get({ userId: otherOwnerId })).resolves.toEqual({ status: "completed", steps: [], currentStepId: null, completedAt: completion!.completedAt.toISOString() });
+    await expect(createFirstRecommendationJourneyCommands({ db, clock: () => now }).updateInteraction({ userId: otherOwnerId, command: { action: "dismiss", expectedVersion: 2 } })).rejects.toMatchObject({ code: "JOURNEY_COMPLETED" });
     await expect(db.select().from(firstRecommendationJourneyInteractions).where(and(eq(firstRecommendationJourneyInteractions.userId, otherOwnerId), eq(firstRecommendationJourneyInteractions.version, 2)))).resolves.toHaveLength(1);
+    const sentinel = new Error("不可变数据库错误");
+    await expect(recordFirstRecommendationJourneyCompletion({ insert: () => { throw sentinel; } } as never, { userId: otherOwnerId, result: { kind: "no_recommendations", resultId: crypto.randomUUID() }, completedAt: now })).rejects.toBe(sentinel);
   });
 });

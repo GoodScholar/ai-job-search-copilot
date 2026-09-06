@@ -1698,27 +1698,31 @@ describe("database migrations", () => {
         insert into first_recommendation_journey_interactions (user_id, last_visited_step) values (${accountB}, 'job_sources')
       `);
       await expect(upgradeDatabase.execute(sql`
-        insert into first_recommendation_journey_completions (user_id, result_kind, result_id) values (${accountB}, 'unknown_result', null)
+        insert into first_recommendation_journey_completions (user_id, result_kind, result_id) values (${accountB}, 'unknown_result', 'bda39007-95aa-4435-b4d1-e21c257c86ba')
       `)).rejects.toMatchObject({ cause: { code: "23514" } });
       await expect(upgradeDatabase.execute(sql`
         insert into first_recommendation_journey_completions (user_id, result_kind, result_id)
         values (${accountB}, 'recommendation_list', null)
-      `)).rejects.toMatchObject({ cause: { code: "23514", constraint_name: "first_recommendation_journey_completions_result_check" } });
-      await expect(upgradeDatabase.execute(sql`
-        insert into first_recommendation_journey_completions (user_id, result_kind, result_id)
-        values (${accountB}, 'no_recommendations', ${emptyListB})
-      `)).rejects.toMatchObject({ cause: { code: "23514", constraint_name: "first_recommendation_journey_completions_result_check" } });
-      await expect(upgradeDatabase.execute(sql`
-        insert into first_recommendation_journey_completions (user_id, result_kind, result_id)
-        values (${accountB}, 'recommendation_list', ${earliestNonemptyListA})
       `)).rejects.toMatchObject({ cause: { code: "23503" } });
-      await upgradeDatabase.execute(sql`
+      await expect(upgradeDatabase.execute(sql`
+        insert into first_recommendation_journey_completions (user_id, result_kind, result_id)
+        values (${accountB}, 'no_recommendations', '81d5d82e-26dc-4cf2-b2e0-3e9b02f3cb51')
+      `)).resolves.toBeDefined();
+      await expect(upgradeDatabase.execute(sql`
+        insert into first_recommendation_journey_completions (user_id, result_kind, result_id)
+        values (${accountC}, 'recommendation_list', ${earliestNonemptyListA})
+      `)).rejects.toMatchObject({ cause: { code: "23503" } });
+      await expect(upgradeDatabase.execute(sql`
         insert into first_recommendation_journey_completions (user_id, result_kind, result_id)
         values (${accountC}, 'no_recommendations', null)
+      `)).rejects.toMatchObject({ cause: { code: "23502" } });
+      await upgradeDatabase.execute(sql`
+        insert into first_recommendation_journey_completions (user_id, result_kind, result_id)
+        values (${accountC}, 'no_recommendations', '4ba7b4f3-20e3-4cce-9569-1d9f6d25745b')
       `);
       await expect(upgradeDatabase.execute(sql`
         insert into first_recommendation_journey_completions (user_id, result_kind, result_id)
-        values (${accountC}, 'no_recommendations', null)
+        values (${accountC}, 'no_recommendations', '4ba7b4f3-20e3-4cce-9569-1d9f6d25745b')
       `)).rejects.toMatchObject({ cause: { code: "23505" } });
     } finally {
       await upgradeDatabase.$client.end();

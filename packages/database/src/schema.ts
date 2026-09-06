@@ -1192,16 +1192,10 @@ export const firstRecommendationJourneyInteractions = pgTable("first_recommendat
 export const firstRecommendationJourneyCompletions = pgTable("first_recommendation_journey_completions", {
   userId: uuid("user_id").primaryKey().references(() => jobAccounts.id),
   resultKind: varchar("result_kind", { length: 32 }).notNull(),
-  resultId: uuid("result_id"),
+  resultId: uuid("result_id").notNull(),
   completedAt: timestamp("completed_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
-  foreignKey({
-    columns: [table.userId, table.resultId],
-    foreignColumns: [recommendationLists.userId, recommendationLists.id],
-    name: "first_recommendation_journey_completions_owner_result_fk",
-  }),
   check("first_recommendation_journey_completions_result_kind_check", sql`${table.resultKind} in ('recommendation_list', 'no_recommendations')`),
-  check("first_recommendation_journey_completions_result_check", sql`(${table.resultKind} = 'recommendation_list' and ${table.resultId} is not null) or (${table.resultKind} = 'no_recommendations' and ${table.resultId} is null)`),
 ]);
 
 export const recommendationDecisionEvents = pgTable("recommendation_decision_events", {

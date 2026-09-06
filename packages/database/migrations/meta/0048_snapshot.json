@@ -4237,7 +4237,7 @@
           "name": "result_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "completed_at": {
           "name": "completed_at",
@@ -4261,21 +4261,6 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
-        },
-        "first_recommendation_journey_completions_owner_result_fk": {
-          "name": "first_recommendation_journey_completions_owner_result_fk",
-          "tableFrom": "first_recommendation_journey_completions",
-          "tableTo": "recommendation_lists",
-          "columnsFrom": [
-            "user_id",
-            "result_id"
-          ],
-          "columnsTo": [
-            "user_id",
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -4285,10 +4270,6 @@
         "first_recommendation_journey_completions_result_kind_check": {
           "name": "first_recommendation_journey_completions_result_kind_check",
           "value": "\"first_recommendation_journey_completions\".\"result_kind\" in ('recommendation_list', 'no_recommendations')"
-        },
-        "first_recommendation_journey_completions_result_check": {
-          "name": "first_recommendation_journey_completions_result_check",
-          "value": "(\"first_recommendation_journey_completions\".\"result_kind\" = 'recommendation_list' and \"first_recommendation_journey_completions\".\"result_id\" is not null) or (\"first_recommendation_journey_completions\".\"result_kind\" = 'no_recommendations' and \"first_recommendation_journey_completions\".\"result_id\" is null)"
         }
       },
       "isRLSEnabled": false

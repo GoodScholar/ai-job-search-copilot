@@ -83,6 +83,15 @@ describe("workbench home", () => {
     });
   });
 
+  it("拒绝旅程读取器返回的非法首页投影", async () => {
+    const getWorkbenchHome = createWorkbenchHome({
+      db: database,
+      clock,
+      firstRecommendationJourney: { get: async () => ({ status: "active" } as never) },
+    });
+    await expect(getWorkbenchHome({ userId: activeUserId })).rejects.toMatchObject({ name: "ZodError" });
+  });
+
   it("uses the domain account-not-found code for missing or inactive accounts", async () => {
     const getWorkbenchHome = createHome({ db: database, clock });
     await expect(getWorkbenchHome({
