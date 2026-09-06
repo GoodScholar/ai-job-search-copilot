@@ -127,6 +127,8 @@ describe("首次推荐旅程契约", () => {
       { ...activeJourney, steps: [...steps].reverse() },
       { ...activeJourney, steps: steps.slice(0, 5) },
       { ...activeJourney, currentStepId: null },
+      { ...activeJourney, currentStepId: "first_result" },
+      { ...activeJourney, steps: steps.map((step) => ({ ...step, status: "completed" })) },
       { status: "completed", steps: [], currentStepId: null, completedAt: null },
       { status: "completed", steps, currentStepId: null, completedAt: "2026-09-06T12:00:00.000Z" },
       { ...activeJourney, completedAt: "2026-09-06T12:00:00.000Z" },

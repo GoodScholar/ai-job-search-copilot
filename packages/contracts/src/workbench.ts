@@ -47,7 +47,11 @@ const activeJourneySchema = (status: "active" | "dismissed") => z.object({
   steps: activeJourneyStepsSchema,
   currentStepId: FirstRecommendationJourneyStepIdSchema,
   completedAt: z.null(),
-}).strict();
+}).strict().superRefine((journey, context) => {
+  if (!journey.steps.some((step) => step.id === journey.currentStepId && step.status !== "completed")) {
+    context.addIssue({ code: "custom", path: ["currentStepId"], message: "current step must be unfinished" });
+  }
+});
 
 export const FirstRecommendationJourneySchema = z.discriminatedUnion("status", [
   activeJourneySchema("active"),
