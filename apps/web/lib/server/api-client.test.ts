@@ -246,6 +246,7 @@ it("reads the authenticated empty workbench through the shared DTO", async () =>
     new Response(JSON.stringify({
       account: { userId },
       summary: { todayRecommendations: 0, pendingFacts: 0, activeAgentRuns: 0, failedAgentRuns: 0, sourceFailures: 0, pendingDecisions: 0, applications: 0, applicationsAvailable: false },
+      firstRecommendationJourney: null,
     }), { status: 200 }),
   );
   const api = createApiClient({
@@ -257,12 +258,74 @@ it("reads the authenticated empty workbench through the shared DTO", async () =>
   await expect(api.getWorkbenchHome(sessionToken)).resolves.toEqual({
     account: { userId },
     summary: { todayRecommendations: 0, pendingFacts: 0, activeAgentRuns: 0, failedAgentRuns: 0, sourceFailures: 0, pendingDecisions: 0, applications: 0, applicationsAvailable: false },
+    firstRecommendationJourney: null,
   });
 
   const [url, init] = fetchImpl.mock.calls[0]!;
   expect(url).toBe("http://127.0.0.1:3021/v1/workbench/home");
   expect(init).toMatchObject({ method: "GET", cache: "no-store" });
   expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${sessionToken}`);
+});
+
+it("以严格命令和响应契约更新首次推荐旅程交互", async () => {
+  const interaction = { version: 1, dismissedAt: null, lastVisitedStep: "career_materials" };
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify(interaction), { status: 200 }));
+  const api = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+
+  await expect(api.updateFirstRecommendationJourneyInteraction(sessionToken, {
+    action: "visit_step", stepId: "career_materials", expectedVersion: 0,
+  })).resolves.toEqual(interaction);
+
+  const [url, init] = fetchImpl.mock.calls[0]!;
+  expect(url).toBe("http://127.0.0.1:3021/v1/workbench/first-recommendation-journey");
+  expect(init).toMatchObject({ method: "PUT", cache: "no-store", body: JSON.stringify({ action: "visit_step", stepId: "career_materials", expectedVersion: 0 }) });
+  expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${sessionToken}`);
+});
+
+it("接受符合最新版严格契约的已完成首次推荐旅程首页投影", async () => {
+  const home = {
+    account: { userId },
+    summary: { todayRecommendations: 0, pendingFacts: 0, activeAgentRuns: 0, failedAgentRuns: 0, sourceFailures: 0, pendingDecisions: 0, applications: 0, applicationsAvailable: false },
+    firstRecommendationJourney: { status: "completed", steps: [], currentStepId: null, completedAt: "2026-09-06T00:00:00.000Z" },
+  };
+  const api = createApiClient({
+    apiInternalUrl: "http://127.0.0.1:3021",
+    devAuthSharedSecret: "secret",
+    fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify(home), { status: 200 })),
+  });
+
+  await expect(api.getWorkbenchHome(sessionToken)).resolves.toEqual(home);
+});
+
+it("拒绝含未知字段或非法投影的首次推荐旅程首页响应", async () => {
+  const home = {
+    account: { userId },
+    summary: { todayRecommendations: 0, pendingFacts: 0, activeAgentRuns: 0, failedAgentRuns: 0, sourceFailures: 0, pendingDecisions: 0, applications: 0, applicationsAvailable: false },
+  };
+  const completedJourney = { status: "completed", steps: [], currentStepId: null, completedAt: "2026-09-06T00:00:00.000Z" };
+  const fetchImpl = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response(JSON.stringify({ ...home, firstRecommendationJourney: { ...completedJourney, unexpected: true } }), { status: 200 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ ...home, firstRecommendationJourney: { status: "completed", steps: [], currentStepId: "first_result", completedAt: null } }), { status: 200 }));
+  const api = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+
+  await expect(api.getWorkbenchHome(sessionToken)).rejects.toMatchObject({ kind: "invalid_response" });
+  await expect(api.getWorkbenchHome(sessionToken)).rejects.toMatchObject({ kind: "invalid_response" });
+});
+
+it("拒绝注入 owner 的旅程命令以及不符合严格响应契约的成功体", async () => {
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+    version: 1, dismissedAt: null, lastVisitedStep: "career_materials", unexpected: true,
+  }), { status: 200 }));
+  const api = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+
+  await expect(api.updateFirstRecommendationJourneyInteraction(sessionToken, {
+    action: "visit_step", stepId: "career_materials", expectedVersion: 0, userId,
+  } as never)).rejects.toThrow();
+  expect(fetchImpl).not.toHaveBeenCalled();
+
+  await expect(api.updateFirstRecommendationJourneyInteraction(sessionToken, {
+    action: "visit_step", stepId: "career_materials", expectedVersion: 0,
+  })).rejects.toMatchObject({ kind: "invalid_response" });
 });
 
 it("creates and reloads a triage version through owner-bound API paths", async () => {

@@ -31,10 +31,12 @@ it("reads only the current authenticated account workbench", async () => {
   mocks.getWorkbenchHome.mockResolvedValue({
     account: { userId: "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3" },
     summary: { todayRecommendations: 0, pendingFacts: 0, activeAgentRuns: 0, failedAgentRuns: 0, sourceFailures: 0, pendingDecisions: 0, applications: 0, applicationsAvailable: false },
+    firstRecommendationJourney: null,
   });
 
   await expect(getWorkbenchHome()).resolves.toMatchObject({
     account: { userId: "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3" },
+    firstRecommendationJourney: null,
   });
   expect(mocks.getWorkbenchHome).toHaveBeenCalledWith("a".repeat(43));
 });

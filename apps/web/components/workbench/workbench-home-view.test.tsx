@@ -13,6 +13,7 @@ import { WorkbenchHomeView } from "./workbench-home-view";
 const home = {
   account: { userId: "3d4c8eb3-2b92-4d91-aad4-959b7d4cd7a3" },
   summary: { todayRecommendations: 2, pendingFacts: 1, activeAgentRuns: 1, failedAgentRuns: 1, sourceFailures: 1, pendingDecisions: 2, applications: 0 as const, applicationsAvailable: false as const },
+  firstRecommendationJourney: null,
 };
 
 const completedRun = {

@@ -57,7 +57,14 @@ import {
   type CreateJobTriageVersionCommand,
   type JobTriageVersion,
 } from "@job-copilot/contracts/job-triage";
-import { WorkbenchHomeSchema, type WorkbenchHome } from "@job-copilot/contracts/workbench";
+import {
+  FirstRecommendationJourneyInteractionCommandSchema,
+  FirstRecommendationJourneyInteractionSchema,
+  WorkbenchHomeSchema,
+  type FirstRecommendationJourneyInteraction,
+  type FirstRecommendationJourneyInteractionCommand,
+  type WorkbenchHome,
+} from "@job-copilot/contracts/workbench";
 import { ModelDiagnosticPublicResponseSchema, type ModelDiagnosticPublicResponse } from "@job-copilot/contracts/model-diagnostics";
 import { SourceCapabilityProjectionOverviewSchema, type SourceCapabilityProjectionOverview } from "@job-copilot/contracts/source-capabilities";
 import {
@@ -311,6 +318,24 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
         throw new ApiClientError("api", problem?.message ?? "无法读取求职工作台", response.status, problem ?? undefined);
       }
       return parseSuccess(response, WorkbenchHomeSchema);
+    },
+
+    async updateFirstRecommendationJourneyInteraction(
+      sessionToken: string,
+      command: FirstRecommendationJourneyInteractionCommand,
+    ): Promise<FirstRecommendationJourneyInteraction> {
+      const requestBody = FirstRecommendationJourneyInteractionCommandSchema.parse(command);
+      const response = await request("/v1/workbench/first-recommendation-journey", {
+        method: "PUT",
+        headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" },
+        body: JSON.stringify(requestBody),
+        cache: "no-store",
+      });
+      if (!response.ok) {
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法更新首次推荐旅程", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, FirstRecommendationJourneyInteractionSchema);
     },
 
     async getProfile(sessionToken: string): Promise<ProfileSnapshot> {
