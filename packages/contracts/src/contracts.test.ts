@@ -42,6 +42,7 @@ describe("shared contracts", () => {
         applications: 0,
         applicationsAvailable: false,
       },
+      firstRecommendationJourney: { status: "completed", steps: [], currentStepId: null, completedAt: "2026-09-06T12:00:00.000Z" },
     }).summary.todayRecommendations).toBe(2);
 
     for (const todayRecommendations of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
@@ -57,6 +58,7 @@ describe("shared contracts", () => {
           applications: 0,
           applicationsAvailable: false,
         },
+        firstRecommendationJourney: { status: "completed", steps: [], currentStepId: null, completedAt: "2026-09-06T12:00:00.000Z" },
       }).success).toBe(false);
     }
   });
