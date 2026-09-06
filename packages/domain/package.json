@@ -10,6 +10,7 @@
     "./audit-trail": "./src/audit-trail.ts",
     "./account-sessions": "./src/account-sessions.ts",
     "./workbench-home": "./src/workbench-home.ts",
+    "./first-recommendation-journey": "./src/first-recommendation-journey.ts",
     "./career-imports": "./src/career-imports.ts",
     "./profile-review": "./src/profile-review.ts",
     "./career-fact-conflict-review": "./src/career-fact-conflict-review.ts",

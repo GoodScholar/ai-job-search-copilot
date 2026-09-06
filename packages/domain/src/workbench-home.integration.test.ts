@@ -26,6 +26,21 @@ import {
   type Database,
 } from "@job-copilot/database";
 import { createWorkbenchHome } from "./workbench-home";
+import type { FirstRecommendationJourney } from "@job-copilot/contracts/workbench";
+
+const journeyForHome = {
+  status: "active" as const,
+  currentStepId: "career_materials" as const,
+  completedAt: null,
+  steps: [
+    ["career_materials", "准备可用职业资料"], ["profile_evidence", "建立可信求职画像"], ["primary_target", "明确主要求职方向"],
+    ["job_sources", "接通真实岗位来源"], ["run_readiness", "确认今天可以开始"], ["first_result", "获得第一份推荐结果"],
+  ].map(([id, title]) => ({ id, title, status: id === "career_materials" ? "needs_action" as const : "waiting" as const, stateLabel: id === "career_materials" ? "需要处理" : "等待开始", impact: "请完成当前准备事项。", action: { label: "继续准备", href: "/profile" } })),
+} as FirstRecommendationJourney;
+
+function createHome(input: { db: Database; clock: () => Date }) {
+  return createWorkbenchHome({ ...input, firstRecommendationJourney: { get: async () => journeyForHome } });
+}
 
 const activeUserId = "a3f3eb12-c92c-4582-b73c-8f2bf764b444";
 const inactiveUserId = "af4ff7c6-4b16-46d3-afc2-e9d4a93e8a9e";
@@ -53,15 +68,23 @@ describe("workbench home", () => {
   });
 
   it("returns the real empty workbench only for an active account", async () => {
-    const getWorkbenchHome = createWorkbenchHome({ db: database, clock });
-    await expect(getWorkbenchHome({ userId: activeUserId })).resolves.toEqual({
+    const getWorkbenchHome = createHome({ db: database, clock });
+    await expect(getWorkbenchHome({ userId: activeUserId })).resolves.toMatchObject({
       account: { userId: activeUserId },
       summary: { todayRecommendations: 0, pendingFacts: 0, activeAgentRuns: 0, failedAgentRuns: 0, sourceFailures: 0, pendingDecisions: 0, applications: 0, applicationsAvailable: false },
     });
   });
 
+  it("将首次推荐旅程与既有摘要并行作为首页领域投影返回", async () => {
+    const getWorkbenchHome = createHome({ db: database, clock });
+    await expect(getWorkbenchHome({ userId: activeUserId })).resolves.toMatchObject({
+      account: { userId: activeUserId },
+      firstRecommendationJourney: { status: "active", currentStepId: "career_materials" },
+    });
+  });
+
   it("uses the domain account-not-found code for missing or inactive accounts", async () => {
-    const getWorkbenchHome = createWorkbenchHome({ db: database, clock });
+    const getWorkbenchHome = createHome({ db: database, clock });
     await expect(getWorkbenchHome({
       userId: "65c0528e-4046-49d5-a056-8b7d3888192a",
     })).rejects.toMatchObject({ code: "ACCOUNT_NOT_FOUND" });
@@ -91,12 +114,12 @@ describe("workbench home", () => {
     await database.insert(jobProfiles).values({ id: profileId, userId: activeUserId, version: 1 });
     await database.insert(candidateFactDecisions).values({ id: crypto.randomUUID(), userId: activeUserId, profileId, candidateFactId: "f1b7e4fc-1b4f-4c64-85a2-4fc4bc5f4473", decision: "rejected", profileFactRevisionId: null, profileVersion: 1 });
 
-    const getWorkbenchHome = createWorkbenchHome({ db: database, clock });
-    await expect(getWorkbenchHome({ userId: activeUserId })).resolves.toEqual({
+    const getWorkbenchHome = createHome({ db: database, clock });
+    await expect(getWorkbenchHome({ userId: activeUserId })).resolves.toMatchObject({
       account: { userId: activeUserId },
       summary: { todayRecommendations: 0, pendingFacts: 1, activeAgentRuns: 0, failedAgentRuns: 0, sourceFailures: 0, pendingDecisions: 0, applications: 0, applicationsAvailable: false },
     });
-    await expect(getWorkbenchHome({ userId: secondActiveUserId })).resolves.toEqual({
+    await expect(getWorkbenchHome({ userId: secondActiveUserId })).resolves.toMatchObject({
       account: { userId: secondActiveUserId },
       summary: { todayRecommendations: 0, pendingFacts: 1, activeAgentRuns: 0, failedAgentRuns: 0, sourceFailures: 0, pendingDecisions: 0, applications: 0, applicationsAvailable: false },
     });
@@ -114,7 +137,7 @@ describe("workbench home", () => {
       { id: crypto.randomUUID(), userId: activeUserId, targetId: activeTargetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1, targetSnapshot: {}, sourceScope: {}, budgetSnapshot: {}, workflowVersion: "v", ruleVersion: "v", adapter: "a", adapterVersion: "v", outputSchemaVersion: "v", toolAllowlist: [], status: "paused", currentStep: "queued" },
       { id: crypto.randomUUID(), userId: secondActiveUserId, targetId: otherTargetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1, targetSnapshot: {}, sourceScope: {}, budgetSnapshot: {}, workflowVersion: "v", ruleVersion: "v", adapter: "a", adapterVersion: "v", outputSchemaVersion: "v", toolAllowlist: [], status: "queued", currentStep: "queued" },
     ]);
-    await expect(createWorkbenchHome({ db: database, clock })({ userId: activeUserId })).resolves.toMatchObject({ summary: { activeAgentRuns: 2 } });
+    await expect(createHome({ db: database, clock })({ userId: activeUserId })).resolves.toMatchObject({ summary: { activeAgentRuns: 2 } });
   });
 
   it("以 Asia/Shanghai 当日、每目标最新序列、最新启用来源和未解决 Inbox 聚合账户工作台", async () => {
@@ -197,7 +220,7 @@ describe("workbench home", () => {
       { id: crypto.randomUUID(), userId, calibrationProposalId: resolvedProposalId, kind: "calibration_proposal", status: "resolved", reasonCode: "CALIBRATION_PROPOSAL_CREATED", createdAt: earlier, resolvedAt: now },
     ]);
 
-    await expect(createWorkbenchHome({ db: database, clock: () => now })({ userId })).resolves.toEqual({
+    await expect(createHome({ db: database, clock: () => now })({ userId })).resolves.toMatchObject({
       account: { userId },
       summary: { todayRecommendations: 0, pendingFacts: 1, activeAgentRuns: 3, failedAgentRuns: 1, sourceFailures: 2, pendingDecisions: 2, applications: 0, applicationsAvailable: false },
     });
@@ -261,6 +284,6 @@ describe("workbench home", () => {
       recommendationItem(otherListId!, otherMatchId, 1, otherUserId),
     ]);
 
-    await expect(createWorkbenchHome({ db: database, clock: () => now })({ userId })).resolves.toMatchObject({ summary: { todayRecommendations: 4 } });
+    await expect(createHome({ db: database, clock: () => now })({ userId })).resolves.toMatchObject({ summary: { todayRecommendations: 4 } });
   });
 });

@@ -3,6 +3,7 @@ import type { WorkbenchHome } from "@job-copilot/contracts/workbench";
 import { CompanyWatchlistItemSchema } from "@job-copilot/contracts/company-watchlists";
 import { classifyGreenhousePublicSource } from "@job-copilot/contracts/job-discovery-schedules";
 import { agentInboxItems, agentRuns, candidateFactDecisions, candidateFacts, companyWatchlistRevisions, companyWatchlists, jobAccounts, jobSourceHealthChecks, recommendationListItems, recommendationLists, type Database } from "@job-copilot/database";
+import type { FirstRecommendationJourneyReader } from "./first-recommendation-journey";
 
 export class DomainError extends Error {
   constructor(public readonly code: "ACCOUNT_NOT_FOUND") {
@@ -77,7 +78,7 @@ async function countTodayRecommendationItems(db: Database, userId: string, local
   return countFromDatabase(items?.count ?? 0, "今日推荐");
 }
 
-export function createWorkbenchHome(input: { db: Database; clock: () => Date }): GetWorkbenchHome {
+export function createWorkbenchHome(input: { db: Database; clock: () => Date; firstRecommendationJourney: FirstRecommendationJourneyReader }): GetWorkbenchHome {
   return async ({ userId }) => {
     const [account] = await input.db.select({ userId: jobAccounts.id })
       .from(jobAccounts)
@@ -87,7 +88,7 @@ export function createWorkbenchHome(input: { db: Database; clock: () => Date }):
       throw new DomainError("ACCOUNT_NOT_FOUND");
     }
 
-    const [facts, activeRuns, failedRuns, recommendations, pendingInbox, sourceFailures] = await Promise.all([
+    const [facts, activeRuns, failedRuns, recommendations, pendingInbox, sourceFailures, firstRecommendationJourney] = await Promise.all([
       input.db.select({ count: count() }).from(candidateFacts).where(and(
         eq(candidateFacts.userId, userId),
         notExists(input.db.select({ id: candidateFactDecisions.id }).from(candidateFactDecisions).where(and(
@@ -100,6 +101,7 @@ export function createWorkbenchHome(input: { db: Database; clock: () => Date }):
       countTodayRecommendationItems(input.db, userId, shanghaiDate(input.clock)),
       input.db.select({ count: count() }).from(agentInboxItems).where(and(eq(agentInboxItems.userId, userId), inArray(agentInboxItems.status, ["unread", "read"]))),
       countLatestEnabledSourceFailures(input.db, userId),
+      input.firstRecommendationJourney.get({ userId }),
     ]);
     return {
       account,
@@ -113,6 +115,7 @@ export function createWorkbenchHome(input: { db: Database; clock: () => Date }):
         applications: 0,
         applicationsAvailable: false,
       },
+      firstRecommendationJourney,
     };
   };
 }
