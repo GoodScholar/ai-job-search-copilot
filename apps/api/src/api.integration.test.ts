@@ -4,7 +4,7 @@ import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fa
 import { Test } from "@nestjs/testing";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { agentRuns, auditEvents, candidateFactEvidence, candidateFacts, careerDocuments, careerFactConflicts, careerImports, companyWatchlistRevisions, companyWatchlists, createDatabase, jobProfiles, jobSourceHealthChecks, modelDiagnosticResults, migrateDatabase, profileFactRevisions, profileFacts, type Database } from "@job-copilot/database";
+import { agentRuns, auditEvents, candidateFactEvidence, candidateFacts, careerDocuments, careerFactConflicts, careerImports, companyWatchlistRevisions, companyWatchlists, createDatabase, firstRecommendationJourneyCompletions, jobProfiles, jobSourceHealthChecks, modelDiagnosticResults, migrateDatabase, profileFactRevisions, profileFacts, type Database } from "@job-copilot/database";
 import type { CareerDocumentStore, CareerImportQueue } from "@job-copilot/domain/career-imports";
 import type { JobContentStore, JobImportQueue } from "@job-copilot/domain/job-imports";
 import { createAgentRunCommands, type AgentRunQueue } from "@job-copilot/domain/agent-runs";
@@ -689,7 +689,7 @@ describe("authenticated workbench HTTP API", () => {
     });
   });
 
-  it("returns only the authenticated account workbench", async () => {
+  it("returns only the authenticated account workbench and its authoritative journey", async () => {
     const primary = await createSession(app, "local-primary");
     const response = await app.getHttpAdapter().getInstance().inject({
       method: "GET",
@@ -702,8 +702,85 @@ describe("authenticated workbench HTTP API", () => {
     expect(response.json()).toEqual({
       account: { userId: primary.account.userId },
       summary: { todayRecommendations: 0, pendingFacts: 0, activeAgentRuns: 0, failedAgentRuns: 0, sourceFailures: 0, pendingDecisions: 0, applications: 0, applicationsAvailable: false },
+      firstRecommendationJourney: expect.objectContaining({
+        status: "active",
+        currentStepId: "career_materials",
+        completedAt: null,
+        steps: expect.arrayContaining([expect.objectContaining({ id: "career_materials", status: "needs_action" })]),
+      }),
     });
     expect(response.headers["cache-control"]).toBe("no-store");
+  });
+
+  it("通过单一首页读取入口隔离首次推荐旅程，并在重新登录后恢复关闭状态", async () => {
+    const ownerSubject = `journey-owner-${randomUUID()}`;
+    const firstAccount = await createSession(app, ownerSubject);
+    const secondAccount = await createSession(app, `journey-other-${randomUUID()}`);
+    const ownerHeaders = { ...bearer(firstAccount.sessionToken), "content-type": "application/json" };
+    const endpoint = "/v1/workbench/first-recommendation-journey";
+    const [anonymousHome, anonymousUpdate] = await Promise.all([
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/workbench/home" }),
+      app.getHttpAdapter().getInstance().inject({ method: "PUT", url: endpoint, payload: { action: "dismiss", expectedVersion: 0 } }),
+    ]);
+    expect(anonymousHome.statusCode).toBe(401);
+    expect(anonymousUpdate.statusCode).toBe(401);
+
+    const visited = await app.getHttpAdapter().getInstance().inject({
+      method: "PUT", url: endpoint, headers: ownerHeaders,
+      payload: { action: "visit_step", stepId: "first_result", expectedVersion: 0 },
+    });
+    expect(visited.statusCode).toBe(200);
+    expect(visited.headers["cache-control"]).toBe("no-store");
+    expect(visited.json()).toEqual({ version: 1, dismissedAt: null, lastVisitedStep: "first_result" });
+
+    const [ownerHome, otherHome, invalidOwner, invalidUnknown, stale] = await Promise.all([
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/workbench/home", headers: bearer(firstAccount.sessionToken) }),
+      app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/workbench/home", headers: bearer(secondAccount.sessionToken) }),
+      app.getHttpAdapter().getInstance().inject({ method: "PUT", url: endpoint, headers: ownerHeaders, payload: { action: "dismiss", expectedVersion: 1, userId: secondAccount.account.userId } }),
+      app.getHttpAdapter().getInstance().inject({ method: "PUT", url: endpoint, headers: ownerHeaders, payload: { action: "dismiss", expectedVersion: 1, ignored: "untrusted" } }),
+      app.getHttpAdapter().getInstance().inject({ method: "PUT", url: endpoint, headers: ownerHeaders, payload: { action: "dismiss", expectedVersion: 0 } }),
+    ]);
+    expect(ownerHome.statusCode).toBe(200);
+    expect(ownerHome.headers["cache-control"]).toBe("no-store");
+    expect(ownerHome.json()).toMatchObject({ account: { userId: firstAccount.account.userId }, firstRecommendationJourney: { status: "active", currentStepId: "first_result" } });
+    expect(otherHome.statusCode).toBe(200);
+    expect(otherHome.json()).toMatchObject({ account: { userId: secondAccount.account.userId }, firstRecommendationJourney: { status: "active", currentStepId: "career_materials" } });
+    for (const response of [invalidOwner, invalidUnknown]) {
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({ code: "INVALID_REQUEST" });
+      expect(response.body).not.toContain(secondAccount.account.userId);
+    }
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json()).toMatchObject({ code: "VERSION_CONFLICT" });
+
+    const dismissed = await app.getHttpAdapter().getInstance().inject({ method: "PUT", url: endpoint, headers: ownerHeaders, payload: { action: "dismiss", expectedVersion: 1 } });
+    expect(dismissed.statusCode).toBe(200);
+    expect(dismissed.json()).toMatchObject({ version: 2, dismissedAt: expect.any(String), lastVisitedStep: "first_result" });
+
+    const restoredSession = await createSession(app, ownerSubject);
+    const restored = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/workbench/home", headers: bearer(restoredSession.sessionToken) });
+    expect(restored.statusCode).toBe(200);
+    expect(restored.json()).toMatchObject({ account: { userId: firstAccount.account.userId }, firstRecommendationJourney: { status: "dismissed", currentStepId: "first_result" } });
+  });
+
+  it("将已完成旅程的交互拒绝映射为稳定冲突", async () => {
+    const session = await createSession(app, `journey-completed-${randomUUID()}`);
+    await database.insert(firstRecommendationJourneyCompletions).values({
+      userId: session.account.userId,
+      resultKind: "no_recommendations",
+      resultId: randomUUID(),
+      completedAt: new Date(),
+    });
+
+    const response = await app.getHttpAdapter().getInstance().inject({
+      method: "PUT", url: "/v1/workbench/first-recommendation-journey",
+      headers: { ...bearer(session.sessionToken), "content-type": "application/json" },
+      payload: { action: "dismiss", expectedVersion: 0 },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.json()).toMatchObject({ code: "JOURNEY_COMPLETED" });
   });
 
   it("creates one manual profile fact and rejects a stale profile version", async () => {
@@ -1887,6 +1964,7 @@ describe("authenticated workbench HTTP API", () => {
       "/v1/auth/sessions/current": expect.anything(),
       "/v1/accounts/{userId}": expect.anything(),
       "/v1/workbench/home": expect.anything(),
+      "/v1/workbench/first-recommendation-journey": expect.anything(),
       "/v1/job-targets": expect.anything(),
       "/v1/job-targets/{targetId}/revisions": expect.anything(),
       "/v1/job-targets/{targetId}/deactivations": expect.anything(),
@@ -1929,6 +2007,7 @@ describe("authenticated workbench HTTP API", () => {
       ["/v1/auth/sessions/current", "delete"],
       ["/v1/accounts/{userId}", "get"],
       ["/v1/workbench/home", "get"],
+      ["/v1/workbench/first-recommendation-journey", "put"],
       ["/v1/job-targets", "get"],
       ["/v1/job-targets", "post"],
       ["/v1/job-targets/{targetId}/revisions", "post"],
@@ -1946,6 +2025,10 @@ describe("authenticated workbench HTTP API", () => {
     ] as const) {
       expect(document.paths[path][method].security).toEqual([{ bearerAuth: [] }]);
     }
+    const journeyCommandSchema = document.paths["/v1/workbench/first-recommendation-journey"].put.requestBody
+      .content["application/json"].schema as Record<string, unknown>;
+    expect(JSON.stringify(journeyCommandSchema)).toContain("FirstRecommendationJourneyInteractionCommandDto");
+    expect(JSON.stringify(journeyCommandSchema)).not.toContain("userId");
     const scheduleResponses = document.paths["/v1/job-targets/{targetId}/discovery-schedule"];
     expect(scheduleResponses.get.responses["200"].content["application/json"].schema)
       .toEqual(scheduleResponses.put.responses["200"].content["application/json"].schema);
