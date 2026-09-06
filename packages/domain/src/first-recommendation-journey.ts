@@ -16,6 +16,12 @@ import type {
   FirstRecommendationJourneyStepStatus,
 } from "@job-copilot/contracts/workbench";
 import type { RunPreflightItem, RunPreflightReport, RunPreflightSuggestedAction } from "@job-copilot/contracts/run-preflight";
+import {
+  DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION,
+  FAKE_JOB_DISCOVERY_WORKFLOW_VERSION,
+  GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION,
+} from "@job-copilot/contracts/agent-runs";
+import { LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION } from "@job-copilot/contracts/job-discovery";
 import type { RunPreflightEvaluator } from "./run-preflight";
 
 export class FirstRecommendationJourneyError extends Error {
@@ -25,6 +31,14 @@ export class FirstRecommendationJourneyError extends Error {
 type InteractionCommandInput = { userId: string; command: FirstRecommendationJourneyInteractionCommand };
 type CompletionResult = { kind: "recommendation_list" | "no_recommendations"; resultId: string };
 type Action = FirstRecommendationJourneyStep["action"];
+type CompletionTransaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
+
+const recommendationWorkflowVersions = [
+  FAKE_JOB_DISCOVERY_WORKFLOW_VERSION,
+  GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION,
+  LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION,
+  DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION,
+] as const;
 
 export type FirstRecommendationJourneyReader = { get(input: { userId: string }): Promise<FirstRecommendationJourney> };
 
@@ -80,7 +94,11 @@ async function interaction(db: Pick<Database, "select">, userId: string): Promis
 async function stepsFor(input: { db: Database; userId: string; report: RunPreflightReport }): Promise<FirstRecommendationJourneyStep[]> {
   const [imports, activeRuns] = await Promise.all([
     input.db.select({ status: careerImports.status }).from(careerImports).where(eq(careerImports.userId, input.userId)),
-    input.db.select({ id: agentRuns.id }).from(agentRuns).where(and(eq(agentRuns.userId, input.userId), inArray(agentRuns.status, ["queued", "running", "paused"]))).orderBy(asc(agentRuns.queuedAt), asc(agentRuns.id)),
+    input.db.select({ id: agentRuns.id }).from(agentRuns).where(and(
+      eq(agentRuns.userId, input.userId),
+      inArray(agentRuns.status, ["queued", "running", "paused"]),
+      inArray(agentRuns.workflowVersion, recommendationWorkflowVersions),
+    )).orderBy(asc(agentRuns.queuedAt), asc(agentRuns.id)),
   ]);
   const materials = imports.some((value) => value.status === "completed") ? "completed" : imports.some((value) => value.status === "queued" || value.status === "processing") ? "in_progress" : "needs_action";
   const profile = item(input.report, "PROFILE_EVIDENCE_READY") ? "completed" : "needs_action";
@@ -139,10 +157,12 @@ export function createFirstRecommendationJourneyCommands(deps: { db: Database; c
           .where(eq(firstRecommendationJourneyInteractions.userId, input.userId));
         const version = current?.version ?? 0;
         if (version !== input.command.expectedVersion) throw new FirstRecommendationJourneyError("VERSION_CONFLICT");
+        const updatedAt = deps.clock();
         const next = {
           version: version + 1,
-          dismissedAt: input.command.action === "dismiss" ? deps.clock() : current?.dismissedAt ?? null,
+          dismissedAt: input.command.action === "dismiss" ? updatedAt : current?.dismissedAt ?? null,
           lastVisitedStep: input.command.action === "visit_step" ? input.command.stepId : current?.lastVisitedStep ?? null,
+          updatedAt,
         };
         const [written] = current
           ? await transaction.update(firstRecommendationJourneyInteractions).set(next).where(and(
@@ -157,7 +177,7 @@ export function createFirstRecommendationJourneyCommands(deps: { db: Database; c
 }
 
 export async function recordFirstRecommendationJourneyCompletion(
-  transaction: Pick<Database, "insert">,
+  transaction: CompletionTransaction,
   input: { userId: string; result: CompletionResult; completedAt: Date },
 ): Promise<void> {
   await transaction.insert(firstRecommendationJourneyCompletions).values({

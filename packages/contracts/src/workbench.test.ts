@@ -109,6 +109,12 @@ describe("首次推荐旅程契约", () => {
       { ...steps[0], impact: "x".repeat(501) },
       { ...steps[0], action: { label: "导入职业资料", href: "//example.test" } },
       { ...steps[0], action: { label: "导入职业资料", href: "https://example.test" } },
+      { ...steps[0], action: { label: "", href: "/profile" } },
+      { ...steps[0], action: { label: "   ", href: "/profile" } },
+      { ...steps[0], action: { label: "Import profile", href: "/profile" } },
+      { ...steps[0], action: { label: "中".repeat(81), href: "/profile" } },
+      { ...steps[0], action: { label: "导入职业资料", href: "/\\profile" } },
+      { ...steps[0], action: { label: "导入职业资料", href: "/profile\nnext" } },
       { ...steps[0], action: { label: "导入", href: "/profile", extra: true } },
       { ...steps[0], extra: true },
     ]) {

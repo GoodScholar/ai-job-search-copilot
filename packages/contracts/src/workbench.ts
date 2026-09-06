@@ -2,6 +2,10 @@ import { z } from "zod";
 
 const summaryCount = z.int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const chineseDisplayText = (maxLength: number) => z.string().trim().min(1).max(maxLength).regex(/[\u3400-\u9fff]/u);
+const internalHref = z.string().refine((href) => {
+  if (!/^\/(?!\/)/u.test(href) || /[\\\x00-\x1F\x7F]/u.test(href)) return false;
+  return new URL(href, "https://job-copilot.invalid").origin === "https://job-copilot.invalid";
+}, "must be a same-origin internal path");
 const firstRecommendationJourneyStepIds = [
   "career_materials", "profile_evidence", "primary_target", "job_sources", "run_readiness", "first_result",
 ] as const;
@@ -11,7 +15,7 @@ export const FirstRecommendationJourneyStepStatusSchema = z.enum(["completed", "
 
 const firstRecommendationJourneyActionSchema = z.object({
   label: chineseDisplayText(80),
-  href: z.string().regex(/^\/(?!\/)/u),
+  href: internalHref,
 }).strict();
 
 const stepFor = (id: z.infer<typeof FirstRecommendationJourneyStepIdSchema>, title: string) => z.object({

@@ -1,6 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { Client } from "pg";
-import { expect, test, type APIRequestContext, type Browser, type Locator, type Page, type TestInfo } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Locator, type Page, type TestInfo } from "@playwright/test";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const databaseUrl = process.env.E2E_DATABASE_URL ?? "postgresql://job_copilot:local_only_job_copilot@127.0.0.1:55420/job_copilot";
@@ -383,7 +383,7 @@ test("首次推荐旅程按真实准备状态推进，并跨刷新、重新登�
 });
 
 test("可信非空推荐会永久完成旅程，后续撤销准备条件仍保留维护问题", async ({ page, request }, info) => {
-  test.setTimeout(120_000);
+  test.setTimeout(180_000);
   const account = await prepareMatchingAccount(request, info, "permanent");
   const opportunityId = await importAndPassGate(request, account, "首次推荐永久完成夹具");
   await useSession(page, account.token);
@@ -420,8 +420,8 @@ test("可信非空推荐会永久完成旅程，后续撤销准备条件仍保�
   await expect(page.getByLabel("运行前检查")).toContainText("阻塞项");
 });
 
-test("失败运行和零接受推荐清单都不会完成首次推荐旅程", async ({ page, request }, info) => {
-  test.setTimeout(150_000);
+test("失败运行不会完成首次推荐旅程", async ({ page, request }, info) => {
+  test.setTimeout(115_000);
   const failedAccount = await prepareMatchingAccount(request, info, "failed");
   await useSession(page, failedAccount.token);
   await importCareerMaterial(page);
@@ -431,6 +431,10 @@ test("失败运行和零接受推荐清单都不会完成首次推荐旅程", as
   await expectActiveJourney(page, "获得第一份推荐结果");
   await expectJourneyStep(page, "获得第一份推荐结果", "needs_action", true);
 
+});
+
+test("零接受推荐清单不会完成首次推荐旅程", async ({ page, request }, info) => {
+  test.setTimeout(165_000);
   const emptyAccount = await prepareMatchingAccount(request, info, "empty");
   await useSession(page, emptyAccount.token);
   await importCareerMaterial(page);

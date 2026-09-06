@@ -4302,6 +4302,13 @@
           "type": "varchar(32)",
           "primaryKey": false,
           "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
         }
       },
       "indexes": {},

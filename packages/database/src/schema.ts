@@ -1183,12 +1183,13 @@ export const firstRecommendationJourneyInteractions = pgTable("first_recommendat
   version: integer("version").notNull().default(0),
   dismissedAt: timestamp("dismissed_at", { withTimezone: true }),
   lastVisitedStep: varchar("last_visited_step", { length: 32 }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   check("first_recommendation_journey_interactions_version_nonnegative", sql`${table.version} >= 0`),
   check("first_recommendation_journey_interactions_last_visited_step_check", sql`${table.lastVisitedStep} is null or ${table.lastVisitedStep} in ('career_materials', 'profile_evidence', 'primary_target', 'job_sources', 'run_readiness', 'first_result')`),
 ]);
 
-/** 用户首份推荐结果的不可变完成事实；result_id 始终绑定同一账户的推荐清单。 */
+/** 用户首份推荐结果的不可变完成事实；result_id 是对应结果的稳定 UUID。 */
 export const firstRecommendationJourneyCompletions = pgTable("first_recommendation_journey_completions", {
   userId: uuid("user_id").primaryKey().references(() => jobAccounts.id),
   resultKind: varchar("result_kind", { length: 32 }).notNull(),

@@ -34,6 +34,9 @@ it("以语义化步骤显示六个结果导向标题、状态、影响与站内�
     expect(screen.getByRole("link", { name: label })).toHaveAttribute("href", href);
   }
   expect(screen.getByRole("heading", { name: "准备可用职业资料" }).closest("li")).toHaveAttribute("aria-current", "step");
+  for (const [, title, status] of steps) {
+    expect(screen.getByRole("heading", { name: title }).closest("li")?.querySelector(`[aria-hidden="true"][data-status="${status}"]`)).toBeTruthy();
+  }
 });
 
 it("步骤入口用权威版本后台保存访问，但保留链接导航", async () => {

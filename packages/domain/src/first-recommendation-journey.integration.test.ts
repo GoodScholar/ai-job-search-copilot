@@ -21,6 +21,11 @@ import {
 } from "@job-copilot/database";
 import { RunPreflightReportSchema, type RunPreflightReport } from "@job-copilot/contracts/run-preflight";
 import {
+  DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION,
+  FAKE_JOB_DISCOVERY_WORKFLOW_VERSION,
+  GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION,
+} from "@job-copilot/contracts/agent-runs";
+import {
   createFirstRecommendationJourneyCommands,
   createFirstRecommendationJourneyReader,
   recordFirstRecommendationJourneyCompletion,
@@ -29,6 +34,11 @@ import {
 const now = new Date("2026-09-06T01:00:00.000Z");
 const ownerId = "9525a518-8b2c-4c76-98b6-1e2c4e5081bb";
 const otherOwnerId = "3eac5e66-8eea-4bf1-9473-38ebed2aa1d9";
+
+type CompletionTransaction = Parameters<typeof recordFirstRecommendationJourneyCompletion>[0];
+type RootDatabaseIsCompletionTransaction = Database extends CompletionTransaction ? true : false;
+const rootDatabaseIsNotCompletionTransaction: RootDatabaseIsCompletionTransaction = false;
+void rootDatabaseIsNotCompletionTransaction;
 
 function report(input: { profile?: boolean; targetId?: string | null; capableSources?: number; status?: "blocked" | "ready" | "ready_with_warnings"; blockedBy?: "model" | "policy" } = {}): RunPreflightReport {
   const checkedAt = now.toISOString();
@@ -114,9 +124,18 @@ describe("first recommendation journey", () => {
     await db.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null });
     currentReport = report({ profile: true, targetId, capableSources: 1, status: "ready" });
     const runIds = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
-    await db.insert(agentRuns).values(runIds.map((id, index) => ({ id, userId, targetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1, targetSnapshot: {}, sourceScope: {}, budgetSnapshot: {}, workflowVersion: "v", ruleVersion: "v", adapter: "a", adapterVersion: "v", outputSchemaVersion: "v", toolAllowlist: [], status: (["queued", "running", "paused"] as const)[index]!, currentStep: "queued", queuedAt: new Date(now.getTime() + index), ...(index === 1 ? { startedAt: new Date(now.getTime() + index) } : {}) })));
+    await db.insert(agentRuns).values(runIds.map((id, index) => ({ id, userId, targetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1, targetSnapshot: {}, sourceScope: {}, budgetSnapshot: {}, workflowVersion: index === 2 ? DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION : FAKE_JOB_DISCOVERY_WORKFLOW_VERSION, ruleVersion: "v", adapter: "a", adapterVersion: "v", outputSchemaVersion: "v", toolAllowlist: [], status: (["queued", "running", "paused"] as const)[index]!, currentStep: "queued", queuedAt: new Date(now.getTime() + index), ...(index === 1 ? { startedAt: new Date(now.getTime() + index) } : {}) })));
     const journey = await reader().get({ userId });
     expect(journey.steps.find((value) => value.id === "first_result")).toMatchObject({ status: "in_progress", action: { href: `/home?runId=${runIds[0]}#agent-run` } });
+  });
+
+  it("来源健康检查运行不会显示为正在生成推荐", async () => {
+    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID();
+    await db.insert(jobAccounts).values({ id: userId, status: "active" });
+    await db.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null });
+    currentReport = report({ profile: true, targetId, capableSources: 1, status: "ready" });
+    await db.insert(agentRuns).values({ id: crypto.randomUUID(), userId, targetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1, targetSnapshot: {}, sourceScope: {}, budgetSnapshot: {}, workflowVersion: GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, ruleVersion: "v", adapter: "a", adapterVersion: "v", outputSchemaVersion: "v", toolAllowlist: [], status: "queued", currentStep: "queued", queuedAt: now });
+    await expect(reader().get({ userId })).resolves.toMatchObject({ steps: expect.arrayContaining([expect.objectContaining({ id: "first_result", status: "waiting" })]) });
   });
 
   it("processing 导入进行中，失败导入不构成完成", async () => {
@@ -157,8 +176,8 @@ describe("first recommendation journey", () => {
     await db.insert(jobTargets).values({ id: targetId, userId: otherId, version: 1, priority: "primary", state: "active", activeSlot: null });
     await db.insert(careerDocuments).values({ id: documentId, userId: otherId, checksumSha256: "c".repeat(64), objectKey: `accounts/${otherId}/resume.md`, originalFilename: "resume.md", mediaType: "text/markdown", byteSize: 1 });
     await db.insert(careerImports).values({ id: crypto.randomUUID(), userId: otherId, careerDocumentId: documentId, originatingRequestId: crypto.randomUUID(), status: "completed", completedAt: now });
-    await db.insert(agentRuns).values({ id: crypto.randomUUID(), userId: otherId, targetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1, targetSnapshot: {}, sourceScope: {}, budgetSnapshot: {}, workflowVersion: "v", ruleVersion: "v", adapter: "a", adapterVersion: "v", outputSchemaVersion: "v", toolAllowlist: [], status: "queued", currentStep: "queued" });
-    await recordFirstRecommendationJourneyCompletion(db, { userId: otherId, result: { kind: "no_recommendations", resultId: crypto.randomUUID() }, completedAt: now });
+    await db.insert(agentRuns).values({ id: crypto.randomUUID(), userId: otherId, targetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1, targetSnapshot: {}, sourceScope: {}, budgetSnapshot: {}, workflowVersion: FAKE_JOB_DISCOVERY_WORKFLOW_VERSION, ruleVersion: "v", adapter: "a", adapterVersion: "v", outputSchemaVersion: "v", toolAllowlist: [], status: "queued", currentStep: "queued" });
+    await db.transaction((transaction) => recordFirstRecommendationJourneyCompletion(transaction, { userId: otherId, result: { kind: "no_recommendations", resultId: crypto.randomUUID() }, completedAt: now }));
     currentReport = report();
     await expect(reader().get({ userId })).resolves.toMatchObject({ status: "active", steps: expect.arrayContaining([expect.objectContaining({ id: "career_materials", status: "needs_action" }), expect.objectContaining({ id: "first_result", status: "waiting" })]) });
   });
@@ -175,7 +194,7 @@ describe("first recommendation journey", () => {
     await db.insert(recommendationLists).values({ id: listId, userId, targetId, localDate: "2026-09-06", sequence: 1, createdAt: now });
     currentReport = report({ profile: true, targetId, capableSources: 1, status: "ready" });
     await expect(reader().get({ userId })).resolves.toMatchObject({ steps: expect.arrayContaining([expect.objectContaining({ id: "profile_evidence", status: "completed" }), expect.objectContaining({ id: "primary_target", status: "completed" }), expect.objectContaining({ id: "job_sources", status: "completed" })]) });
-    await recordFirstRecommendationJourneyCompletion(db, { userId, result: { kind: "recommendation_list", resultId: listId }, completedAt: now });
+    await db.transaction((transaction) => recordFirstRecommendationJourneyCompletion(transaction, { userId, result: { kind: "recommendation_list", resultId: listId }, completedAt: now }));
     await db.insert(profileFactRevisions).values({ id: crypto.randomUUID(), userId, profileFactId: factId, revisionNumber: 2, factType: "skill", factValue: { name: "TypeScript" }, state: "removed", source: "user_confirmed", profileVersion: 2 });
     await db.update(jobTargets).set({ state: "inactive" }).where(eq(jobTargets.id, targetId));
     await db.insert(companyWatchlistRevisions).values({ id: crypto.randomUUID(), userId, watchlistId, targetId, version: 2, items: [{ itemId: crypto.randomUUID(), canonicalCompanyName: "示例公司", careersUrl: "https://boards.greenhouse.io/example", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null, state: "disabled", position: 1 }] });
@@ -198,25 +217,40 @@ describe("first recommendation journey", () => {
       .rejects.toMatchObject({ code: "ACCOUNT_NOT_FOUND" });
   });
 
+  it("同一交互版本并发更新时恰有一个写入，另一个返回版本冲突", async () => {
+    const userId = crypto.randomUUID();
+    await db.insert(jobAccounts).values({ id: userId, status: "active" });
+    const commands = createFirstRecommendationJourneyCommands({ db, clock: () => now });
+    const settled = await Promise.allSettled([
+      commands.updateInteraction({ userId, command: { action: "visit_step", stepId: "career_materials", expectedVersion: 0 } }),
+      commands.updateInteraction({ userId, command: { action: "visit_step", stepId: "profile_evidence", expectedVersion: 0 } }),
+    ]);
+    expect(settled.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(settled.filter((result) => result.status === "rejected").map((result) => (result as PromiseRejectedResult).reason)).toEqual([
+      expect.objectContaining({ code: "VERSION_CONFLICT" }),
+    ]);
+    await expect(db.select().from(firstRecommendationJourneyInteractions).where(eq(firstRecommendationJourneyInteractions.userId, userId)))
+      .resolves.toEqual([expect.objectContaining({ version: 1, updatedAt: now })]);
+  });
+
   it("只接受内部完成记录器的可信事实，并永久优先于动态条件", async () => {
     const targetId = crypto.randomUUID();
     const listId = crypto.randomUUID();
     const secondListId = crypto.randomUUID();
     await db.insert(jobTargets).values({ id: targetId, userId: otherOwnerId, version: 1, priority: "primary", state: "active", activeSlot: null });
     await db.insert(recommendationLists).values([{ id: listId, userId: otherOwnerId, targetId, localDate: "2026-09-06", sequence: 1, createdAt: now }, { id: secondListId, userId: otherOwnerId, targetId, localDate: "2026-09-06", sequence: 2, createdAt: now }]);
-    await db.insert(agentRuns).values({ id: crypto.randomUUID(), userId: otherOwnerId, targetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1, targetSnapshot: {}, sourceScope: {}, budgetSnapshot: {}, workflowVersion: "v", ruleVersion: "v", adapter: "a", adapterVersion: "v", outputSchemaVersion: "v", toolAllowlist: [], status: "failed", currentStep: "failed", startedAt: now, failedAt: now });
+    await db.insert(agentRuns).values({ id: crypto.randomUUID(), userId: otherOwnerId, targetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1, targetSnapshot: {}, sourceScope: {}, budgetSnapshot: {}, workflowVersion: FAKE_JOB_DISCOVERY_WORKFLOW_VERSION, ruleVersion: "v", adapter: "a", adapterVersion: "v", outputSchemaVersion: "v", toolAllowlist: [], status: "failed", currentStep: "failed", startedAt: now, failedAt: now });
     await expect(reader().get({ userId: otherOwnerId })).resolves.toMatchObject({ status: "dismissed", steps: expect.arrayContaining([expect.objectContaining({ id: "first_result", status: "waiting" })]) });
 
     await Promise.all([
-      recordFirstRecommendationJourneyCompletion(db, { userId: otherOwnerId, result: { kind: "recommendation_list", resultId: listId }, completedAt: now }),
-      recordFirstRecommendationJourneyCompletion(db, { userId: otherOwnerId, result: { kind: "recommendation_list", resultId: secondListId }, completedAt: new Date(now.getTime() + 1) }),
+      db.transaction((transaction) => recordFirstRecommendationJourneyCompletion(transaction, { userId: otherOwnerId, result: { kind: "recommendation_list", resultId: listId }, completedAt: now })),
+      db.transaction((transaction) => recordFirstRecommendationJourneyCompletion(transaction, { userId: otherOwnerId, result: { kind: "recommendation_list", resultId: secondListId }, completedAt: new Date(now.getTime() + 1) })),
     ]);
     const [completion] = await db.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, otherOwnerId));
     expect(completion).toEqual(expect.objectContaining({ resultId: expect.stringMatching(new RegExp(`^(${listId}|${secondListId})$`)) }));
     await expect(reader().get({ userId: otherOwnerId })).resolves.toEqual({ status: "completed", steps: [], currentStepId: null, completedAt: completion!.completedAt.toISOString() });
     await expect(createFirstRecommendationJourneyCommands({ db, clock: () => now }).updateInteraction({ userId: otherOwnerId, command: { action: "dismiss", expectedVersion: 2 } })).rejects.toMatchObject({ code: "JOURNEY_COMPLETED" });
     await expect(db.select().from(firstRecommendationJourneyInteractions).where(and(eq(firstRecommendationJourneyInteractions.userId, otherOwnerId), eq(firstRecommendationJourneyInteractions.version, 2)))).resolves.toHaveLength(1);
-    const sentinel = new Error("不可变数据库错误");
-    await expect(recordFirstRecommendationJourneyCompletion({ insert: () => { throw sentinel; } } as never, { userId: otherOwnerId, result: { kind: "no_recommendations", resultId: crypto.randomUUID() }, completedAt: now })).rejects.toBe(sentinel);
+    await expect(db.transaction((transaction) => recordFirstRecommendationJourneyCompletion(transaction, { userId: crypto.randomUUID(), result: { kind: "no_recommendations", resultId: crypto.randomUUID() }, completedAt: now }))).rejects.toMatchObject({ cause: { code: "23503" } });
   });
 });

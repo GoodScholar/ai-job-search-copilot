@@ -1014,6 +1014,11 @@ summary.workbench-touch-target:focus-visible,
 .first-recommendation-journey-list > li { border-bottom: 1px solid var(--rule); display: grid; gap: 1rem; min-width: 0; padding: 1.25rem 0; }
 .first-recommendation-journey-list > li[aria-current="step"] { border-top: 1px solid var(--emerald); }
 .first-recommendation-journey-step-copy { min-width: 0; }
+.first-recommendation-journey-status-icon { border: 2px solid currentColor; border-radius: 999px; color: var(--muted-ink); display: inline-block; height: 0.8rem; margin-right: 0.45rem; vertical-align: 0.02rem; width: 0.8rem; }
+.first-recommendation-journey-status-icon[data-status="completed"] { background: var(--emerald); color: var(--emerald-strong); }
+.first-recommendation-journey-status-icon[data-status="in_progress"] { border-style: dashed; color: var(--emerald-strong); }
+.first-recommendation-journey-status-icon[data-status="needs_action"] { border-radius: 0; color: var(--amber-ink); transform: rotate(45deg); }
+.first-recommendation-journey-status-icon[data-status="waiting"] { background: transparent; }
 .first-recommendation-journey-step-copy h3 { font-size: 1rem; line-height: 1.45; }
 .first-recommendation-journey-state { color: var(--emerald-strong) !important; font-size: 0.82rem; font-weight: 700; margin-top: 0.45rem !important; }
 .first-recommendation-journey-list > li[data-status="needs_action"] .first-recommendation-journey-state { color: var(--amber-ink) !important; }

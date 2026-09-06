@@ -87,6 +87,7 @@ describe("database migrations", () => {
     expect(columns).toEqual(expect.arrayContaining([
       { table_name: "job_accounts", column_name: "status", data_type: "character varying" },
       { table_name: "job_accounts", column_name: "updated_at", data_type: "timestamp with time zone" },
+      { table_name: "first_recommendation_journey_interactions", column_name: "updated_at", data_type: "timestamp with time zone" },
       { table_name: "audit_events", column_name: "occurred_at", data_type: "timestamp with time zone" },
       { table_name: "audit_events", column_name: "request_id", data_type: "uuid" },
       { table_name: "audit_events", column_name: "outcome", data_type: "character varying" },
@@ -1697,6 +1698,10 @@ describe("database migrations", () => {
       await upgradeDatabase.execute(sql`
         insert into first_recommendation_journey_interactions (user_id, last_visited_step) values (${accountB}, 'job_sources')
       `);
+      const interactionTimestamp = await upgradeDatabase.execute(sql`
+        select updated_at from first_recommendation_journey_interactions where user_id = ${accountB}
+      `) as unknown as Array<{ updated_at: string }>;
+      expect(interactionTimestamp[0]?.updated_at).toMatch(/^\d{4}-\d{2}-\d{2} /u);
       await expect(upgradeDatabase.execute(sql`
         insert into first_recommendation_journey_completions (user_id, result_kind, result_id) values (${accountB}, 'unknown_result', 'bda39007-95aa-4435-b4d1-e21c257c86ba')
       `)).rejects.toMatchObject({ cause: { code: "23514" } });

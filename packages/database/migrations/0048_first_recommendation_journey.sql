@@ -11,6 +11,7 @@ CREATE TABLE "first_recommendation_journey_interactions" (
   "version" integer DEFAULT 0 NOT NULL,
   "dismissed_at" timestamp with time zone,
   "last_visited_step" varchar(32),
+  "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
   CONSTRAINT "first_recommendation_journey_interactions_version_nonnegative" CHECK ("version" >= 0),
   CONSTRAINT "first_recommendation_journey_interactions_last_visited_step_check" CHECK ("last_visited_step" is null or "last_visited_step" in ('career_materials', 'profile_evidence', 'primary_target', 'job_sources', 'run_readiness', 'first_result'))
 );
