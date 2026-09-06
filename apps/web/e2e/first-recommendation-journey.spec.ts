@@ -17,6 +17,11 @@ const runKeys = {
 
 type Account = { token: string; userId: string; subject: string };
 type PreparedAccount = Account & { targetId: string };
+type JourneyStatus = "completed" | "in_progress" | "needs_action" | "waiting";
+
+const journeySteps = [
+  "准备可用职业资料", "建立可信求职画像", "明确主要求职方向", "接通真实岗位来源", "确认今天可以开始", "获得第一份推荐结果",
+] as const;
 
 function auth(token: string) { return { authorization: `Bearer ${token}` }; }
 function keyFor(info: TestInfo) { return runKeys[info.project.name as keyof typeof runKeys]; }
@@ -45,11 +50,37 @@ function journeyStep(page: Page, title: string) {
   return journey(page).getByRole("heading", { name: title }).locator("xpath=ancestor::li");
 }
 
-async function expectJourneyStep(page: Page, title: string, status: "completed" | "in_progress" | "needs_action" | "waiting", current = false): Promise<void> {
+async function expectJourneyStep(page: Page, title: string, status: JourneyStatus, current = false): Promise<void> {
   const step = journeyStep(page, title);
   await expect(step).toHaveAttribute("data-status", status);
   await expect(step.getByText({ completed: "已完成", in_progress: "进行中", needs_action: "需要处理", waiting: "等待开始" }[status], { exact: true })).toBeVisible();
   if (current) await expect(step).toHaveAttribute("aria-current", "step");
+}
+
+async function expectJourneyVector(page: Page, expected: JourneyStatus[]): Promise<void> {
+  await expect(journey(page)).toBeVisible();
+  const actual = await journey(page).getByRole("listitem").evaluateAll((steps) => steps.map((step) => ({
+    title: step.querySelector("h3")?.textContent,
+    status: step.getAttribute("data-status"),
+  })));
+  expect(actual.map((step) => step.title)).toEqual(journeySteps);
+  expect(actual.map((step) => step.status)).toEqual(expected);
+}
+
+async function authoritativeHome(request: APIRequestContext, token: string) {
+  const response = await request.get(`${apiBaseUrl}/v1/workbench/home`, { headers: auth(token) });
+  expect(response.status()).toBe(200);
+  return await response.json() as {
+    firstRecommendationJourney: { status: "active" | "dismissed" | "completed"; currentStepId: string | null; steps: Array<{ status: JourneyStatus }> };
+  };
+}
+
+async function readinessVector(request: APIRequestContext, token: string, targetId: string): Promise<JourneyStatus[]> {
+  const response = await request.get(`${apiBaseUrl}/v1/run-preflight?workflow=discovery&trigger=manual&targetId=${targetId}`, { headers: auth(token) });
+  expect(response.status()).toBe(200);
+  const report = await response.json() as { status: "blocked" | "ready" | "ready_with_warnings" };
+  const readiness: JourneyStatus = report.status === "blocked" ? "needs_action" : "completed";
+  return ["completed", "completed", "completed", "completed", readiness, readiness === "completed" ? "needs_action" : "waiting"];
 }
 
 async function expectActiveJourney(page: Page, currentTitle: string): Promise<void> {
@@ -277,25 +308,26 @@ test("首次推荐旅程按真实准备状态推进，并跨刷新、重新登�
   await useSession(page, account.token);
   await page.goto("/home");
   await expectActiveJourney(page, "准备可用职业资料");
-  await expectJourneyStep(page, "准备可用职业资料", "needs_action", true);
+  await expectJourneyVector(page, ["needs_action", "needs_action", "needs_action", "needs_action", "needs_action", "waiting"]);
 
   await importCareerMaterial(page);
   await page.goto("/home");
-  await expectJourneyStep(page, "准备可用职业资料", "completed");
-  await expectJourneyStep(page, "建立可信求职画像", "needs_action", true);
+  await expectJourneyVector(page, ["completed", "needs_action", "needs_action", "needs_action", "needs_action", "waiting"]);
+  await expectActiveJourney(page, "建立可信求职画像");
 
   await addTrustedFact(request, account.token, 0, "skill", { name: "TypeScript" });
   await page.goto("/home");
-  await expectJourneyStep(page, "建立可信求职画像", "completed");
-  await expectJourneyStep(page, "明确主要求职方向", "needs_action", true);
+  await expectJourneyVector(page, ["completed", "completed", "needs_action", "needs_action", "needs_action", "waiting"]);
+  await expectActiveJourney(page, "明确主要求职方向");
 
-  const targetEntry = journeyStep(page, "明确主要求职方向").getByRole("link", { name: "查看求职目标" });
+  const sourceEntry = journeyStep(page, "接通真实岗位来源").getByRole("link", { name: "查看求职目标" });
   const visitSaved = page.waitForResponse((response) => response.url().endsWith("/api/workbench/first-recommendation-journey") && response.request().method() === "PUT");
-  await activate(page, targetEntry, info);
+  await activate(page, sourceEntry, info);
   await expect(page).toHaveURL(/\/profile\/targets$/u);
   expect((await visitSaved).status()).toBe(200);
   await page.goto("/home");
-  await expectJourneyStep(page, "明确主要求职方向", "needs_action", true);
+  await expectJourneyVector(page, ["completed", "completed", "needs_action", "needs_action", "needs_action", "waiting"]);
+  await expectJourneyStep(page, "接通真实岗位来源", "needs_action", true);
 
   await page.getByRole("button", { name: "退出" }).click();
   await expect(page).toHaveURL(/\/login$/u);
@@ -303,29 +335,29 @@ test("首次推荐旅程按真实准备状态推进，并跨刷新、重新登�
   expect(relogin.userId).toBe(account.userId);
   await useSession(page, relogin.token);
   await page.goto("/home");
-  await expectJourneyStep(page, "明确主要求职方向", "needs_action", true);
+  await expectJourneyStep(page, "接通真实岗位来源", "needs_action", true);
 
   const resumedContext = await browser.newContext();
   try {
     const resumedPage = await resumedContext.newPage();
     await useSession(resumedPage, relogin.token);
     await resumedPage.goto("http://127.0.0.1:3120/home");
-    await expectJourneyStep(resumedPage, "明确主要求职方向", "needs_action", true);
+    await expectJourneyStep(resumedPage, "接通真实岗位来源", "needs_action", true);
   } finally { await resumedContext.close(); }
 
   const targetId = await createPrimaryTarget(request, relogin.token);
   await page.goto("/home");
-  await expectJourneyStep(page, "明确主要求职方向", "completed");
-  await expectJourneyStep(page, "接通真实岗位来源", "needs_action", true);
+  await expectJourneyVector(page, ["completed", "completed", "completed", "needs_action", "needs_action", "waiting"]);
+  await expectActiveJourney(page, "接通真实岗位来源");
 
   await enableExecutableSource(request, relogin.token, targetId, "First Journey Resume Fixture");
   await page.goto("/home");
-  await expectJourneyStep(page, "接通真实岗位来源", "completed");
+  await expectJourneyVector(page, await readinessVector(request, relogin.token, targetId));
 
   await runModelDiagnostic(request, relogin.token);
   await page.goto("/home");
-  await expectJourneyStep(page, "确认今天可以开始", "completed");
-  await expectJourneyStep(page, "获得第一份推荐结果", "needs_action", true);
+  await expectJourneyVector(page, ["completed", "completed", "completed", "completed", "completed", "needs_action"]);
+  await expectActiveJourney(page, "获得第一份推荐结果");
   await assertJourneyAccessibility(page);
 
   const dismiss = page.getByRole("button", { name: "暂时关闭引导" });
@@ -364,9 +396,13 @@ test("可信非空推荐会永久完成旅程，后续撤销准备条件仍保�
     await waitForRun(page, matchRunId);
   } finally { await removeMatchingFixture(); }
 
+  await page.reload();
+  const recommendations = page.getByRole("list", { name: "推荐岗位" });
+  await expect(recommendations).toContainText("首次推荐永久完成夹具");
+  expect((await authoritativeHome(request, account.token)).firstRecommendationJourney.status).toBe("completed");
   await page.goto("/home");
   await expect(page.getByRole("heading", { name: "首次推荐旅程" })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "推荐" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "首次推荐旅程暂时无法读取" })).toHaveCount(0);
 
   await removeProfileFacts(request, account.token);
   const targets = await request.get(`${apiBaseUrl}/v1/job-targets`, { headers: auth(account.token) });
@@ -407,7 +443,13 @@ test("失败运行和零接受推荐清单都不会完成首次推荐旅程", as
     const matchRunId = await automaticMatchRun(emptyAccount.userId, discoveryRunId);
     await waitForRun(page, matchRunId);
   } finally { await removeMatchingFixture(); }
+  await page.reload();
+  const emptyRecommendations = page.getByRole("list", { name: "推荐岗位" });
+  await expect(emptyRecommendations.getByRole("listitem")).toHaveCount(0);
+  await expect(page.getByText("稳定排除 1 项岗位：匹配证据不足", { exact: true })).toBeVisible();
+  expect((await authoritativeHome(request, emptyAccount.token)).firstRecommendationJourney.status).toBe("active");
   await page.goto("/home");
   await expectActiveJourney(page, "获得第一份推荐结果");
-  await expectJourneyStep(page, "获得第一份推荐结果", "needs_action", true);
+  await expectJourneyVector(page, ["completed", "completed", "completed", "completed", "completed", "needs_action"]);
+  await expect(page.getByRole("heading", { name: "首次推荐旅程暂时无法读取" })).toHaveCount(0);
 });
