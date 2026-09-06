@@ -25,12 +25,12 @@ const now = new Date("2026-09-06T01:00:00.000Z");
 const ownerId = "9525a518-8b2c-4c76-98b6-1e2c4e5081bb";
 const otherOwnerId = "3eac5e66-8eea-4bf1-9473-38ebed2aa1d9";
 
-function report(input: { profile?: boolean; targetId?: string | null; capableSources?: number; status?: "blocked" | "ready" | "ready_with_warnings" } = {}): RunPreflightReport {
+function report(input: { profile?: boolean; targetId?: string | null; capableSources?: number; status?: "blocked" | "ready" | "ready_with_warnings"; blockedBy?: "model" | "policy" } = {}): RunPreflightReport {
   const checkedAt = now.toISOString();
   const profile = input.profile ?? false;
   const targetId = input.targetId ?? null;
   const capableSources = input.capableSources ?? 0;
-  const status = input.status ?? "blocked";
+  const status = input.blockedBy ? "blocked" : input.status ?? "blocked";
   const partial = status === "ready_with_warnings";
   return RunPreflightReportSchema.parse({
     version: "run-preflight-v1", workflow: "discovery", trigger: "manual", targetId, status, warningFingerprint: partial ? "a".repeat(64) : null, checkedAt,
@@ -40,8 +40,8 @@ function report(input: { profile?: boolean; targetId?: string | null; capableSou
       { code: targetId ? "REQUESTED_JOB_TARGET_READY" : "REQUESTED_JOB_TARGET_MISSING", severity: targetId ? "informational" : "blocking", summary: "请求目标", impact: "请明确方向。", retryable: false, suggestedActions: targetId ? [] : ["review_job_targets"], evidence: { kind: "job_target", primaryTargetId: targetId, primaryTargetVersion: targetId ? 1 : null, requestedTargetId: targetId, requestedTargetVersion: targetId ? 1 : null, requestedTargetState: targetId ? "active" : "missing", checkedAt } },
       { code: capableSources ? partial ? "SOURCE_CAPABILITY_PARTIAL" : "SOURCE_CAPABILITY_READY" : "SOURCE_CAPABILITY_UNAVAILABLE", severity: capableSources ? partial ? "warning" : "informational" : "blocking", summary: "来源", impact: partial ? "部分来源能力不足，请检查来源设置。" : "请接通来源。", retryable: false, suggestedActions: capableSources ? partial ? ["review_source_capabilities"] : [] : ["review_source_capabilities"], evidence: { kind: "source_capability", enabledSourceCount: capableSources + (partial ? 1 : 0), capableSourceCount: capableSources, status: capableSources ? partial ? "partial" : "ready" : "unavailable", checkedAt } },
       { code: "SOURCE_HEALTH_READY", severity: "informational", summary: "来源健康", impact: "来源可用。", retryable: false, suggestedActions: [], evidence: { kind: "source_health", checkedSourceCount: 0, healthySourceCount: 0, degradedSourceCount: 0, uncheckedSourceCount: 0, latestCheckedAt: null } },
-      { code: "MODEL_DIAGNOSTIC_READY", severity: "informational", summary: "模型", impact: "模型可用。", retryable: false, suggestedActions: [], evidence: { kind: "model_diagnostic", status: "available", checkedAt } },
-      { code: "ACCOUNT_RUN_POLICY_READY", severity: "informational", summary: "策略", impact: "策略可用。", retryable: false, suggestedActions: [], evidence: { kind: "account_run_policy", revisionNumber: 0, status: "ready", checkedAt } },
+      { code: input.blockedBy === "model" ? "MODEL_DIAGNOSTIC_UNAVAILABLE" : "MODEL_DIAGNOSTIC_READY", severity: input.blockedBy === "model" ? "blocking" : "informational", summary: "模型", impact: "请先检查模型连接。", retryable: false, suggestedActions: input.blockedBy === "model" ? ["run_model_diagnostic"] : [], evidence: { kind: "model_diagnostic", status: input.blockedBy === "model" ? "failed" : "available", checkedAt } },
+      { code: input.blockedBy === "policy" ? "ACCOUNT_RUN_POLICY_BLOCKED" : "ACCOUNT_RUN_POLICY_READY", severity: input.blockedBy === "policy" ? "blocking" : "informational", summary: "策略", impact: "请检查账户运行策略。", retryable: false, suggestedActions: input.blockedBy === "policy" ? ["review_account_run_policy"] : [], evidence: { kind: "account_run_policy", revisionNumber: 0, status: input.blockedBy === "policy" ? "blocked" : "ready", checkedAt } },
     ],
   });
 }
@@ -112,6 +112,50 @@ describe("first recommendation journey", () => {
     await db.insert(agentRuns).values(runIds.map((id, index) => ({ id, userId, targetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1, targetSnapshot: {}, sourceScope: {}, budgetSnapshot: {}, workflowVersion: "v", ruleVersion: "v", adapter: "a", adapterVersion: "v", outputSchemaVersion: "v", toolAllowlist: [], status: (["queued", "running", "paused"] as const)[index]!, currentStep: "queued", queuedAt: new Date(now.getTime() + index), ...(index === 1 ? { startedAt: new Date(now.getTime() + index) } : {}) })));
     const journey = await reader().get({ userId });
     expect(journey.steps.find((value) => value.id === "first_result")).toMatchObject({ status: "in_progress", action: { href: `/home?runId=${runIds[0]}#agent-run` } });
+  });
+
+  it("processing 导入进行中，失败导入不构成完成", async () => {
+    const userId = crypto.randomUUID(); const documentId = crypto.randomUUID(); const importId = crypto.randomUUID();
+    await db.insert(jobAccounts).values({ id: userId, status: "active" });
+    await db.insert(careerDocuments).values({ id: documentId, userId, checksumSha256: "b".repeat(64), objectKey: `accounts/${userId}/resume.md`, originalFilename: "resume.md", mediaType: "text/markdown", byteSize: 1 });
+    await db.insert(careerImports).values({ id: importId, userId, careerDocumentId: documentId, originatingRequestId: crypto.randomUUID(), status: "processing", processingStartedAt: now });
+    currentReport = report();
+    await expect(reader().get({ userId })).resolves.toMatchObject({ steps: expect.arrayContaining([expect.objectContaining({ id: "career_materials", status: "in_progress" })]) });
+    await db.update(careerImports).set({ status: "failed", failedAt: now }).where(eq(careerImports.id, importId));
+    await expect(reader().get({ userId })).resolves.toMatchObject({ steps: expect.arrayContaining([expect.objectContaining({ id: "career_materials", status: "needs_action" })]) });
+  });
+
+  it("画像、目标、来源和阻塞动作分别投影到对应步骤", async () => {
+    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID();
+    await db.insert(jobAccounts).values({ id: userId, status: "active" });
+    currentReport = report();
+    let journey = await reader().get({ userId });
+    expect(journey.steps.find((value) => value.id === "profile_evidence")?.status).toBe("needs_action");
+    currentReport = report({ profile: true }); journey = await reader().get({ userId });
+    expect(journey.steps.find((value) => value.id === "profile_evidence")?.status).toBe("completed");
+    expect(journey.steps.find((value) => value.id === "primary_target")?.status).toBe("needs_action");
+    currentReport = report({ profile: true, targetId }); journey = await reader().get({ userId });
+    expect(journey.steps.find((value) => value.id === "primary_target")?.status).toBe("completed");
+    expect(journey.steps.find((value) => value.id === "job_sources")?.status).toBe("needs_action");
+    currentReport = report({ profile: true, targetId, capableSources: 1, status: "ready" }); journey = await reader().get({ userId });
+    expect(journey.steps.find((value) => value.id === "job_sources")?.status).toBe("completed");
+    for (const [blockedBy, href] of [["model", "/profile/model-connection"], ["policy", "/profile/run-policy"]] as const) {
+      currentReport = report({ profile: true, targetId, capableSources: 1, blockedBy });
+      journey = await reader().get({ userId });
+      expect(journey.steps.find((value) => value.id === "run_readiness")).toMatchObject({ status: "needs_action", action: { href } });
+    }
+  });
+
+  it("其他账户的导入、活动运行和完成事实不会影响当前账户", async () => {
+    const userId = crypto.randomUUID(); const otherId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const documentId = crypto.randomUUID();
+    await db.insert(jobAccounts).values([{ id: userId, status: "active" }, { id: otherId, status: "active" }]);
+    await db.insert(jobTargets).values({ id: targetId, userId: otherId, version: 1, priority: "primary", state: "active", activeSlot: null });
+    await db.insert(careerDocuments).values({ id: documentId, userId: otherId, checksumSha256: "c".repeat(64), objectKey: `accounts/${otherId}/resume.md`, originalFilename: "resume.md", mediaType: "text/markdown", byteSize: 1 });
+    await db.insert(careerImports).values({ id: crypto.randomUUID(), userId: otherId, careerDocumentId: documentId, originatingRequestId: crypto.randomUUID(), status: "completed", completedAt: now });
+    await db.insert(agentRuns).values({ id: crypto.randomUUID(), userId: otherId, targetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1, targetSnapshot: {}, sourceScope: {}, budgetSnapshot: {}, workflowVersion: "v", ruleVersion: "v", adapter: "a", adapterVersion: "v", outputSchemaVersion: "v", toolAllowlist: [], status: "queued", currentStep: "queued" });
+    await recordFirstRecommendationJourneyCompletion(db, { userId: otherId, result: { kind: "no_recommendations", resultId: crypto.randomUUID() }, completedAt: now });
+    currentReport = report();
+    await expect(reader().get({ userId })).resolves.toMatchObject({ status: "active", steps: expect.arrayContaining([expect.objectContaining({ id: "career_materials", status: "needs_action" }), expect.objectContaining({ id: "first_result", status: "waiting" })]) });
   });
 
   it("交互以账户、未完成状态与乐观版本保护，并跨读取恢复", async () => {
