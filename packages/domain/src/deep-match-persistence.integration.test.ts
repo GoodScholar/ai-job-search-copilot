@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   agentInboxItems, agentRuns, createDatabase, deepMatchRunCandidates, jobAccounts, jobMatchVersions, jobOpportunities, jobOpportunitySources, jobProfiles, jobSourcePostingVersions, jobSourcePostings, recommendationListItems, recommendationLists,
-  jobTargetRevisions, jobTargets, jobTriageVersions, migrateDatabase, profileFactRevisions, profileFacts, recommendationExclusions, type Database,
+  firstRecommendationJourneyCompletions, jobTargetRevisions, jobTargets, jobTriageVersions, migrateDatabase, profileFactRevisions, profileFacts, recommendationExclusions, type Database,
 } from "@job-copilot/database";
 import { and, eq, sql } from "drizzle-orm";
 import { DeepMatchCandidateSchema, FakeDeepMatchAdapter } from "@job-copilot/contracts/deep-match";
@@ -71,6 +71,34 @@ describe("deep match persistence", () => {
     const triageVersionId = crypto.randomUUID();
     await db.insert(jobTriageVersions).values({ id: triageVersionId, userId, opportunityId, sourcePostingVersionId, profileId, profileVersion: 1, targetId, targetVersion: 1, qualificationRuleVersion: "q1", coarseRuleVersion: "c1", overallVerdict: verdict, gateResults: {}, pendingItems: [], deadlineStatus: input.deadlineStatus ?? "valid", confidenceBasisPoints: 10_000, dimensionScores: scored ? {} : null, overallScore: scored ? (input.score ?? 80) : null, threshold: scored ? 70 : null, sequence: 1, createdAt: now });
     return { userId, profileId, targetId, opportunityId, sourcePostingVersionId, triageVersionId, factRevisionId };
+  }
+
+  async function publishStagedFixture(
+    input: Awaited<ReturnType<typeof fixture>>,
+    options: {
+      clock?: Date;
+      ruleConfig?: { minimumOverallScore: number; minimumEvidenceDimensions: number; requiredEvidenceDimensions: string[]; excludedOpportunityIds: string[] };
+      onPublished?: (transaction: any, result: { resultCount: number }) => Promise<void>;
+    } = {},
+  ) {
+    const publishedAt = options.clock ?? now;
+    const starter = createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => publishedAt });
+    const started = await starter.start({ userId: input.userId, targetId: input.targetId, opportunityId: input.opportunityId, idempotencyKey: crypto.randomUUID(), trigger: "manual" });
+    const claimToken = crypto.randomUUID();
+    await db.update(agentRuns).set({
+      status: "running", currentStep: "assess_matches", attemptCount: 1, startedAt: publishedAt, activeSliceStartedAt: publishedAt,
+      claimToken, claimExpiresAt: new Date(publishedAt.getTime() + 30_000), controlState: "none",
+    }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, started.runId)));
+    const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => publishedAt });
+    const candidate = (await createDeepMatchQueries({ db }).getFrozenCandidates({ userId: input.userId, runId: started.runId }))[0]!;
+    const staged = await commands.invokeAndValidate({ userId: input.userId, runId: started.runId, candidate, modelCall: modelCall() });
+    await commands.stageValidatedAssessment({ userId: input.userId, runId: started.runId, claimToken, candidate, assessment: staged.assessment, usage: staged.usage });
+    const published = await commands.publishStagedRun({
+      userId: input.userId, targetId: input.targetId, runId: started.runId, fence: { claimToken }, selectionExclusions: [],
+      ...(options.ruleConfig ? { ruleConfig: options.ruleConfig } : {}),
+      ...(options.onPublished ? { onPublished: options.onPublished } : {}),
+    });
+    return { ...published, runId: started.runId };
   }
 
   async function preflight(status: "ready_with_warnings" | "blocked"): Promise<RunPreflightEvaluator> {
@@ -434,6 +462,90 @@ describe("deep match persistence", () => {
       await expect(db.select().from(recommendationListItems).where(eq(recommendationListItems.recommendationListId, listId))).resolves.toHaveLength(3);
     }
   }, 60_000);
+
+  it("在插入非空推荐项目后，以可信发布时钟冻结 recommendation_list 完成事实", async () => {
+    const input = await fixture();
+    const published = await publishStagedFixture(input);
+
+    expect(published.items).toHaveLength(1);
+    await expect(db.select().from(recommendationListItems).where(and(
+      eq(recommendationListItems.userId, input.userId), eq(recommendationListItems.recommendationListId, published.recommendationListId),
+    ))).resolves.toHaveLength(1);
+    await expect(db.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, input.userId)))
+      .resolves.toEqual([expect.objectContaining({
+        userId: input.userId,
+        resultKind: "recommendation_list",
+        resultId: published.recommendationListId,
+        completedAt: now,
+      })]);
+  });
+
+  it("零 accepted 即使生成空清单和排除记录也不完成首次推荐旅程", async () => {
+    const input = await fixture();
+    const published = await publishStagedFixture(input, {
+      ruleConfig: { minimumOverallScore: 100, minimumEvidenceDimensions: 0, requiredEvidenceDimensions: [], excludedOpportunityIds: [] },
+    });
+
+    expect(published.items).toEqual([]);
+    await expect(db.select().from(recommendationLists).where(and(
+      eq(recommendationLists.userId, input.userId), eq(recommendationLists.id, published.recommendationListId),
+    ))).resolves.toHaveLength(1);
+    await expect(db.select().from(recommendationExclusions).where(and(
+      eq(recommendationExclusions.userId, input.userId), eq(recommendationExclusions.recommendationListId, published.recommendationListId),
+    ))).resolves.toHaveLength(1);
+    await expect(db.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, input.userId))).resolves.toEqual([]);
+  });
+
+  it("重试与真实并发的非空发布都不覆盖首个完成事实", async () => {
+    const firstInput = await fixture();
+    const owner = { userId: firstInput.userId, profileId: firstInput.profileId, targetId: firstInput.targetId };
+    const retryInput = await fixture({ owner });
+    const concurrentInputs = await Promise.all([fixture({ owner }), fixture({ owner })]);
+    const firstCompletedAt = new Date("2026-09-01T02:00:00.000Z");
+    const first = await publishStagedFixture(firstInput, { clock: firstCompletedAt });
+    const [firstCompletion] = await db.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, owner.userId));
+    expect(firstCompletion).toEqual(expect.objectContaining({ resultId: first.recommendationListId, completedAt: firstCompletedAt }));
+
+    await publishStagedFixture(retryInput, { clock: new Date("2026-09-01T02:01:00.000Z") });
+    await Promise.all(concurrentInputs.map((input, index) => publishStagedFixture(input, {
+      clock: new Date(`2026-09-01T02:0${index + 2}:00.000Z`),
+    })));
+
+    await expect(db.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, owner.userId)))
+      .resolves.toEqual([firstCompletion]);
+  }, 60_000);
+
+  it("onPublished 失败时回滚推荐清单、Inbox、运行完成写入与旅程完成事实", async () => {
+    const input = await fixture();
+    await expect(publishStagedFixture(input, {
+      onPublished: async (transaction) => {
+        await transaction.update(agentRuns).set({
+          status: "completed", currentStep: "completed", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null,
+          completedAt: now, terminationKind: "completed", usageComplete: true, updatedAt: now,
+        }).where(eq(agentRuns.userId, input.userId));
+        throw new Error("PUBLISHED_CALLBACK_FAILED");
+      },
+    })).rejects.toThrow("PUBLISHED_CALLBACK_FAILED");
+
+    await expect(Promise.all([
+      db.select().from(recommendationLists).where(eq(recommendationLists.userId, input.userId)),
+      db.select().from(recommendationListItems).where(eq(recommendationListItems.userId, input.userId)),
+      db.select().from(agentInboxItems).where(eq(agentInboxItems.userId, input.userId)),
+      db.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, input.userId)),
+      db.select({ status: agentRuns.status, currentStep: agentRuns.currentStep }).from(agentRuns).where(eq(agentRuns.userId, input.userId)),
+    ])).resolves.toEqual([[], [], [], [], [{ status: "running", currentStep: "assess_matches" }]]);
+  });
+
+  it("可信发布完成事实按账户隔离", async () => {
+    const owner = await fixture();
+    const other = await fixture();
+    await publishStagedFixture(owner);
+
+    await expect(db.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, owner.userId)))
+      .resolves.toHaveLength(1);
+    await expect(db.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, other.userId)))
+      .resolves.toEqual([]);
+  });
 
   it("keyset-paginates fixture histories and exclusions without duplicate cursor rows", async () => {
     const input = await fixture();

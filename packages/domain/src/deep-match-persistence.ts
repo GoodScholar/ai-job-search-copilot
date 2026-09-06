@@ -11,6 +11,7 @@ import { JobQualificationsSchema } from "@job-copilot/contracts/job-imports";
 import { JobTargetConstraintsSchema } from "@job-copilot/contracts/job-targets";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { effectiveAgentRunBudget, type AgentRunBudget } from "./effective-agent-run-budget";
+import { recordFirstRecommendationJourneyCompletion } from "./first-recommendation-journey";
 
 export const DEEP_MATCH_RULE_VERSION = "deep-match-rules-v1";
 export const DEEP_MATCH_PROMPT_VERSION = "deep-match-prompt-v1";
@@ -414,6 +415,11 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
         const exclusions = [...input.selectionExclusions, ...limitedExclusions, ...matches.filter((match) => !accepted.some((item) => item.id === match.id)).map((match) => ({ opportunityId: match.opportunityId, reasonCode: "MATCH_QUALITY_INSUFFICIENT" as const }))];
         if (exclusions.length) await transaction.insert(recommendationExclusions).values(exclusions.map((exclusion) => ({ id: deps.id(), userId: input.userId, targetId: input.targetId, opportunityId: exclusion.opportunityId, recommendationListId: list.id, reasonCode: exclusion.reasonCode, createdAt: deps.clock() })));
         if (accepted.length) await transaction.insert(recommendationListItems).values(accepted.map((match, index) => ({ id: deps.id(), userId: input.userId, recommendationListId: list.id, matchVersionId: match.id, ordinal: index + 1, highlighted: index < 3, createdAt: deps.clock() })));
+        if (accepted.length) await recordFirstRecommendationJourneyCompletion(transaction, {
+          userId: input.userId,
+          result: { kind: "recommendation_list", resultId: list.id },
+          completedAt: deps.clock(),
+        });
         const result = { recommendationListId: list.id, items: accepted.map((match, index) => ({ matchVersionId: match.id, ordinal: index + 1, highlighted: index < 3 })) };
         await input.onPublished?.(transaction, { resultCount: result.items.length });
         return result;
