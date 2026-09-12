@@ -558,6 +558,37 @@ describe("agent run controls", () => {
     await expect(database.select({ status: agentRuns.status, claimToken: agentRuns.claimToken, activeSliceStartedAt: agentRuns.activeSliceStartedAt }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, cancelling.runId)))).resolves.toEqual([{ status: "cancelled", claimToken: null, activeSliceStartedAt: null }]);
   });
 
+  it("账户停止且 run pause 标记丢失时 checkpoint 不新增 reservation", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const claimToken = crypto.randomUUID();
+    await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", attemptCount: 1, startedAt: now, claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), activeSliceStartedAt: now, controlState: "none" }).where(eq(agentRuns.id, run.runId));
+    await createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .control({ userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+    await database.update(agentRuns).set({ controlState: "none" }).where(eq(agentRuns.id, run.runId));
+
+    await expect(checkpoints(new Date(now.getTime() + 100)).check({ userId, runId: run.runId, claimToken, checkpointKey: `${claimToken}:stopped-reserve`, reserve: { toolCalls: 1, sourceRequests: 1 } })).resolves.toEqual({ kind: "paused" });
+    await expect(Promise.all([
+      database.select({ status: agentRuns.status, toolCallCount: agentRuns.toolCallCount, sourceRequestCount: agentRuns.sourceRequestCount }).from(agentRuns).where(eq(agentRuns.id, run.runId)),
+      database.select({ category: agentRunUsageEntries.category }).from(agentRunUsageEntries).where(eq(agentRunUsageEntries.runId, run.runId)),
+    ])).resolves.toEqual([[{ status: "paused", toolCallCount: 0, sourceRequestCount: 0 }], [{ category: "active_duration" }]]);
+  });
+
+  it("账户停止且 run pause 标记丢失时 checkpoint 以过期 lease 截止结算后暂停", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const claimToken = crypto.randomUUID();
+    const leaseExpiry = new Date(now.getTime() - 1);
+    await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", attemptCount: 1, startedAt: new Date(now.getTime() - 30_000), claimToken, claimExpiresAt: leaseExpiry, activeSliceStartedAt: new Date(now.getTime() - 30_000), controlState: "none" }).where(eq(agentRuns.id, run.runId));
+    await createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .control({ userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+    await database.update(agentRuns).set({ controlState: "none" }).where(eq(agentRuns.id, run.runId));
+
+    await expect(checkpoints().check({ userId, runId: run.runId, claimToken, checkpointKey: `${claimToken}:stopped-expired` })).resolves.toEqual({ kind: "paused" });
+    await expect(database.select({ status: agentRuns.status, activeDurationMs: agentRuns.activeDurationMs, claimToken: agentRuns.claimToken }).from(agentRuns).where(eq(agentRuns.id, run.runId)))
+      .resolves.toEqual([{ status: "paused", activeDurationMs: 29_999, claimToken: null }]);
+  });
+
   it("模型零预算在调用前拒绝，且暂停区间不计入 active time", async () => {
     const { userId, targetId } = await activeTarget();
     const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });

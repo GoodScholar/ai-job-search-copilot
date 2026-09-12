@@ -201,6 +201,7 @@ async function renewClaim(deps: AgentRunProcessorDependencies, input: { userId: 
     const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.claimToken)));
     if (!run) return [];
     if (run.controlState === "cancel_requested") return [{ outcome: "cancelled" }];
+    if ((await readAccountRunControlInTransaction(transaction, input.userId)).stoppedAt !== null) return [{ outcome: "paused" }];
     if (run.controlState === "pause_requested") return [{ outcome: "paused" }];
     const elapsed = await settleActiveSlice(transaction, { id: deps.id, userId: input.userId, run, now });
     const activeDurationMs = run.activeDurationMs + elapsed;
@@ -268,12 +269,17 @@ async function appendEvent(db: any, input: { id: () => string; userId: string; r
   return sequence;
 }
 
-async function stepTransition(deps: AgentRunProcessorDependencies, input: { userId: string; runId: string; claimToken: string; stepKey: typeof stepKeys[number]; complete: boolean; attemptCount: number; deadline: Date }) {
+async function stepTransition(deps: AgentRunProcessorDependencies, input: { userId: string; runId: string; claimToken: string; stepKey: typeof stepKeys[number]; complete: boolean; attemptCount: number; deadline: Date }): Promise<boolean | "control"> {
   const now = deps.clock();
   return runTransaction(deps, input.deadline, async (transaction) => {
     await acquireAccountAdvisoryLock(transaction, input.userId);
     const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.claimToken)));
     if (!run) return false;
+    const accountControl = await readAccountRunControlInTransaction(transaction, input.userId);
+    if (run.controlState !== "none" || accountControl.stoppedAt !== null) {
+      if (run.controlState === "none" && accountControl.stoppedAt !== null) await applyAgentRunControlInTransaction(transaction, { userId: input.userId, requestId: input.runId, runId: input.runId, command: { commandId: deps.id(), action: "pause" } }, deps);
+      return "control";
+    }
     const version = run.version + 1;
     if (input.complete) {
       await transaction.update(agentRunSteps).set({ status: "completed", completedAt: now, failedAt: null, failureCode: null }).where(and(eq(agentRunSteps.userId, input.userId), eq(agentRunSteps.runId, input.runId), eq(agentRunSteps.stepKey, input.stepKey)));
@@ -286,14 +292,19 @@ async function stepTransition(deps: AgentRunProcessorDependencies, input: { user
   });
 }
 
-async function failOrRetry(deps: AgentRunProcessorDependencies, input: { userId: string; runId: string; claimToken: string; attemptCount: number; failure: Failure; deadline: Date; discoveryIssues?: Array<{ provider: "anysearch" | "greenhouse"; code: string; affectedCount: number }> }): Promise<"retry" | "budget_exhausted" | "failed" | "stale"> {
+async function failOrRetry(deps: AgentRunProcessorDependencies, input: { userId: string; runId: string; claimToken: string; attemptCount: number; failure: Failure; deadline: Date; discoveryIssues?: Array<{ provider: "anysearch" | "greenhouse"; code: string; affectedCount: number }> }): Promise<ProcessorOutcome> {
   const now = deps.clock();
   // 预算到点后仍要用极短、可取消的控制事务写出明确终态，不能让运行悬空。
   const controlDeadline = remainingBudget(deps.clock, input.deadline) <= 0 ? new Date(now.getTime() + 1_000) : input.deadline;
-  return runTransaction(deps, controlDeadline, async (transaction) => {
+  const outcome = await runTransaction<ProcessorOutcome | "pending_control">(deps, controlDeadline, async (transaction) => {
     await acquireAccountAdvisoryLock(transaction, input.userId);
     const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.claimToken)));
     if (!run) return "stale";
+    const accountControl = await readAccountRunControlInTransaction(transaction, input.userId);
+    if (run.controlState !== "none" || accountControl.stoppedAt !== null) {
+      if (run.controlState === "none" && accountControl.stoppedAt !== null) await applyAgentRunControlInTransaction(transaction, { userId: input.userId, requestId: input.runId, runId: input.runId, command: { commandId: deps.id(), action: "pause" } }, deps);
+      return "pending_control";
+    }
     const elapsed = await settleActiveSlice(transaction, { id: deps.id, userId: input.userId, run, now });
     const activeDurationMs = run.activeDurationMs + elapsed;
     const reserve = input.failure.category === "source" ? { toolCalls: 1, sourceRequests: 1 }
@@ -336,6 +347,8 @@ async function failOrRetry(deps: AgentRunProcessorDependencies, input: { userId:
     if (item) await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.inbox_opened", occurredAt: now, requestId: input.runId, outcome: "success", reasonCode: nonBudgetFailureCode, resourceType: "agent_inbox_item", resourceId: item.id, metadata: { runId: input.runId, kind: "run_failed", reasonCode: nonBudgetFailureCode, budgetDimension: null } });
     return "failed";
   });
+  if (outcome !== "pending_control") return outcome;
+  return (await checkPoint(deps.checkpoint, { userId: input.userId, runId: input.runId, claimToken: input.claimToken, operation: "failure_control", ordinal: 1 })) ?? "stale";
 }
 
 type ProcessorOutcome = "completed" | "retry" | "paused" | "cancelled" | "budget_exhausted" | "failed" | "stale";
@@ -603,7 +616,9 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         return after ? { outcome: after } : { value };
       };
       const transition = async (stepKey: typeof stepKeys[number], complete: boolean): Promise<ProcessorOutcome | null> => {
-        if (!await stepTransition(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, stepKey, complete, attemptCount: claimed.attemptCount, deadline })) return "stale";
+        const transitioned = await stepTransition(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, stepKey, complete, attemptCount: claimed.attemptCount, deadline });
+        if (!transitioned) return "stale";
+        if (transitioned === "control") return checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: `step_${stepKey}_control`, ordinal: 1 });
         return checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: `step_${stepKey}_${complete ? "complete" : "start"}`, ordinal: 1 });
       };
       if (claimed.run.workflowVersion === "deep-match-v1") {

@@ -108,7 +108,7 @@ export function createAgentRunCheckpoint(deps: Dependencies): AgentRunCheckpoint
         // an already incurred model call merely because it pushes the budget over its limit.
         // A completed model call is an immutable accounting fact even if a control request
         // lands between the response and this checkpoint.  Record it once, then transition.
-        const chargedReserve = prior.length === 0 && (reserve.settleActual || (run.controlState === "none" && preflightDimension === null)) ? reserve : {};
+        const chargedReserve = prior.length === 0 && (reserve.settleActual || (accountControl.stoppedAt === null && run.controlState === "none" && preflightDimension === null)) ? reserve : {};
         const usageEntries = prior.length === 0 ? await writeUsage(transaction, { id: deps.id, userId: input.userId, runId: input.runId, checkpointKey: input.checkpointKey, attemptCount: reserve.invocationAttemptCount ?? run.attemptCount, reserve: chargedReserve, now }) : [];
         const inputTokens = amount(chargedReserve.inputTokens);
         const outputTokens = amount(chargedReserve.outputTokens);
@@ -120,7 +120,7 @@ export function createAgentRunCheckpoint(deps: Dependencies): AgentRunCheckpoint
           await transaction.update(agentRuns).set({ ...usageUpdate, version: usageVersion }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId)));
           await appendBudgetFacts(transaction, { id: deps.id, auditTrail: deps.auditTrail, userId: input.userId, requestId: input.runId, runId: input.runId, version: usageVersion, currentStep: run.currentStep, usage, consumed: { activeDurationMs: elapsed, toolCalls: amount(chargedReserve.toolCalls), sourceRequests: amount(chargedReserve.sourceRequests), modelCalls: amount(chargedReserve.modelCalls) }, now });
         }
-        if (!ownsClaim || (expired && run.controlState === "none")) return { kind: "stale" };
+        if (!ownsClaim || (expired && run.controlState === "none" && accountControl.stoppedAt === null)) return { kind: "stale" };
         if (run.controlState === "cancel_requested") {
           const version = usageVersion + 1;
           await transaction.update(agentRuns).set({ ...usageUpdate, status: "cancelled", currentStep: "cancelled", controlState: "none", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, cancelledAt: now, terminationKind: "cancelled_by_user", terminationBudgetDimension: null, failureCode: null, usageComplete: run.usageComplete, version }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId)));

@@ -1942,4 +1942,73 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(database.select({ status: agentRuns.status, attemptCount: agentRuns.attemptCount, claimToken: agentRuns.claimToken }).from(agentRuns).where(eq(agentRuns.id, job.runId)))
       .resolves.toEqual([{ status: controlState === "cancel_requested" ? "cancelled" : "paused", attemptCount: 1, claimToken: null }]);
   });
+
+  it("账户停止且 run pause 标记丢失后 stepTransition 不再推进步骤", async () => {
+    const job = await run(); const calls = { search: 0, detail: 0 }; let stopped = false;
+    const control = createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    const durable = checkpoint();
+    const controlled: AgentRunCheckpoint = { check: async (input) => {
+      const outcome = await durable.check(input);
+      if (!stopped && input.checkpointKey.endsWith(":claim:1")) {
+        stopped = true;
+        await control.control({ userId: job.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+        await database.update(agentRuns).set({ controlState: "none" }).where(eq(agentRuns.id, job.runId));
+      }
+      return outcome;
+    } };
+
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(successAdapter(calls)), checkpoint: controlled, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, heartbeatRenew: async () => true })
+      .process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("paused");
+    expect(calls).toEqual({ search: 0, detail: 0 });
+    await expect(Promise.all([
+      database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, job.runId)),
+      database.select({ eventType: agentRunEvents.eventType }).from(agentRunEvents).where(and(eq(agentRunEvents.runId, job.runId), eq(agentRunEvents.eventType, "step.started"))),
+    ])).resolves.toEqual([[{ status: "paused" }], []]);
+  });
+
+  it("账户停止且 run pause 标记丢失后 failOrRetry 不重新入队", async () => {
+    const job = await run(); let stopped = false;
+    const control = createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    const durable = checkpoint();
+    const controlled: AgentRunCheckpoint = { check: async (input) => {
+      const outcome = await durable.check(input);
+      if (!stopped && input.checkpointKey.includes(":source_search_batch:1")) {
+        stopped = true;
+        await control.control({ userId: job.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+        await database.update(agentRuns).set({ controlState: "none" }).where(eq(agentRuns.id, job.runId));
+      }
+      return outcome;
+    } };
+    const retryableFailure = { ...successAdapter(), searchBatch: async () => { throw new Error("TEMPORARY"); } };
+
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(retryableFailure), checkpoint: controlled, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, heartbeatRenew: async () => true })
+      .process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("paused");
+    await expect(Promise.all([
+      database.select({ status: agentRuns.status, attemptCount: agentRuns.attemptCount }).from(agentRuns).where(eq(agentRuns.id, job.runId)),
+      database.select({ eventType: agentRunEvents.eventType }).from(agentRunEvents).where(and(eq(agentRunEvents.runId, job.runId), eq(agentRunEvents.eventType, "run.retry_scheduled"))),
+    ])).resolves.toEqual([[{ status: "paused", attemptCount: 1 }], []]);
+  });
+
+  it("账户停止且 run pause 标记丢失时 renewClaim 中止在途物理调用", async () => {
+    const job = await layeredRun(); let reachedPhysicalCall!: () => void; let signal: AbortSignal | undefined;
+    const physicalCallStarted = new Promise<void>((resolve) => { reachedPhysicalCall = resolve; });
+    const processor = createAgentRunProcessor({
+      db: database, heartbeatIntervalMs: 50, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
+      layeredPublicWorkflowResolver: { resolve: () => ({ run: async ({ signal: receivedSignal, beforePhysicalOperation }) => {
+        signal = receivedSignal;
+        await beforePhysicalOperation({ kind: "search", identity: job.queryId });
+        reachedPhysicalCall();
+        await Promise.race([new Promise<void>((resolve) => receivedSignal.addEventListener("abort", () => resolve(), { once: true })), new Promise<void>((resolve) => setTimeout(resolve, 200))]);
+        return { branchOutcome: { trusted: "succeeded" as const, publicDiscovery: "clean_zero" as const }, diagnostics: [] };
+      } }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+    const processing = processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true });
+    await physicalCallStarted;
+    const control = createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    await control.control({ userId: job.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+    await database.update(agentRuns).set({ controlState: "none" }).where(eq(agentRuns.id, job.runId));
+
+    await vi.waitFor(() => expect(signal?.aborted).toBe(true), { timeout: 150 });
+    await expect(processing).resolves.toBe("paused");
+  });
 });

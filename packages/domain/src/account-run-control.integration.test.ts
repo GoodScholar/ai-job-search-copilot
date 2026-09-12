@@ -98,6 +98,19 @@ describe("账户运行停止控制", () => {
     await expect(database.select().from(auditEvents).where(and(eq(auditEvents.userId, owner.userId), eq(auditEvents.eventType, "account.run_stopped")))).resolves.toHaveLength(1);
   });
 
+  it("释放账户停止不清除 running run 的 pending pause 请求", async () => {
+    const target = await activeTarget(); const runtime = commands();
+    const started = await runtime.start({ userId: target.userId, requestId: randomUUID(), command: { targetId: target.targetId, idempotencyKey: randomUUID() } });
+    await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", claimToken: randomUUID(), claimExpiresAt: new Date(now.getTime() + 30_000), activeSliceStartedAt: now, startedAt: now, attemptCount: 1, controlState: "none" }).where(eq(agentRuns.id, started.runId));
+    const service = controls();
+    await service.control({ userId: target.userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 0, action: "stop" } });
+    await expect(database.select({ status: agentRuns.status, controlState: agentRuns.controlState }).from(agentRuns).where(eq(agentRuns.id, started.runId)))
+      .resolves.toEqual([{ status: "running", controlState: "pause_requested" }]);
+    await service.control({ userId: target.userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 1, action: "release" } });
+    await expect(database.select({ status: agentRuns.status, controlState: agentRuns.controlState }).from(agentRuns).where(eq(agentRuns.id, started.runId)))
+      .resolves.toEqual([{ status: "running", controlState: "pause_requested" }]);
+  });
+
   it("同一账户命令并发仅施加一次，no-op 不重复审计", async () => {
     const userId = await account(); const service = controls(); const command = { commandId: randomUUID(), expectedVersion: 0, action: "stop" as const };
     const results = await Promise.all([service.control({ userId, requestId: randomUUID(), command }), service.control({ userId, requestId: randomUUID(), command })]);
