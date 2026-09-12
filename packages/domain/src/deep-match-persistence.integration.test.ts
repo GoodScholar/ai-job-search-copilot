@@ -12,7 +12,7 @@ import { createDeepMatchRunStarter as createDomainDeepMatchRunStarter } from "./
 import { createAgentRunRecoveryQueries } from "./agent-run-processor";
 import { createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
 import { createAccountRunControl } from "./account-run-control";
-import { createAuditTrail } from "./audit-trail";
+import { createAuditTrail, type AuditTrail } from "./audit-trail";
 import { RunPreflightRejectedError, type RunPreflightEvaluator } from "./run-preflight";
 import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
 import { RunPreflightReportSchema } from "@job-copilot/contracts/run-preflight";
@@ -581,6 +581,94 @@ describe("deep match persistence", () => {
       releaseFirstCommit.resolve();
       await Promise.allSettled([firstPublishing, ...(secondPublishing ? [secondPublishing] : [])]);
       await competingDatabase.$client.end();
+      await observerDatabase.$client.end();
+    }
+  }, 60_000);
+
+  it("publication 先取得账户锁时，随后 stop 等待并保留已提交推荐事实", async () => {
+    const input = await fixture();
+    const staged = await stageFixture(input);
+    const enteredPublication = deferred(); const releasePublication = deferred();
+    const publication = staged.commands.publishStagedRun({
+      userId: input.userId, targetId: input.targetId, runId: staged.runId, fence: { claimToken: staged.claimToken }, selectionExclusions: [],
+      onPublished: async () => { enteredPublication.resolve(); await releasePublication.promise; },
+    });
+    const stopDatabase = createDatabase(container.getConnectionUri());
+    const observerDatabase = createDatabase(container.getConnectionUri());
+    let stop: Promise<unknown> | undefined;
+    try {
+      await enteredPublication.promise;
+      const controls = createAccountRunControl({ db: stopDatabase, auditTrail: createAuditTrail({ db: stopDatabase, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+      let stopSettled = false;
+      stop = controls.control({ userId: input.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } }).finally(() => { stopSettled = true; });
+      await waitUntilAConnectionIsWaitingForAccountAdvisoryLock(observerDatabase);
+      expect(stopSettled).toBe(false);
+
+      releasePublication.resolve();
+      const [published, stopped] = await Promise.all([publication, stop]);
+      expect(published.items).toHaveLength(1);
+      expect(stopped).toMatchObject({ applied: true, state: { stoppedAt: expect.any(String) } });
+      await expect(Promise.all([
+        db.select().from(recommendationLists).where(eq(recommendationLists.userId, input.userId)),
+        db.select().from(recommendationListItems).where(eq(recommendationListItems.userId, input.userId)),
+        db.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, input.userId)),
+        db.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, input.userId)),
+      ])).resolves.toEqual([[expect.any(Object)], [expect.any(Object)], [expect.any(Object)], [expect.objectContaining({ resultKind: "recommendation_list", resultId: published.recommendationListId })]]);
+    } finally {
+      releasePublication.resolve();
+      await Promise.allSettled([publication, ...(stop ? [stop] : [])]);
+      await stopDatabase.$client.end();
+      await observerDatabase.$client.end();
+    }
+  }, 60_000);
+
+  it("stop 先取得账户锁时，publication 等待后拒绝且不新增推荐事实", async () => {
+    const input = await fixture();
+    const staged = await stageFixture(input);
+    const stopFactWritten = deferred(); const releaseStop = deferred();
+    const stopDatabase = createDatabase(container.getConnectionUri());
+    const publicationDatabase = createDatabase(container.getConnectionUri());
+    const observerDatabase = createDatabase(container.getConnectionUri());
+    const baseAuditTrail = createAuditTrail({ db: stopDatabase, clock: () => now });
+    const heldStopAuditTrail: AuditTrail = {
+      append: (event) => baseAuditTrail.append(event),
+      bind(transaction) {
+        const bound = baseAuditTrail.bind(transaction);
+        return {
+          append: async (event) => {
+            await bound.append(event);
+            if (event.eventType === "account.run_stopped") { stopFactWritten.resolve(); await releaseStop.promise; }
+          },
+          bind: bound.bind,
+          query: bound.query,
+        };
+      },
+      query: (input) => baseAuditTrail.query(input),
+    };
+    const controls = createAccountRunControl({ db: stopDatabase, auditTrail: heldStopAuditTrail, id: () => crypto.randomUUID(), clock: () => now });
+    const stop = controls.control({ userId: input.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+    let publication: Promise<unknown> | undefined;
+    try {
+      await stopFactWritten.promise;
+      const commands = createDeepMatchCommands({ db: publicationDatabase, id: () => crypto.randomUUID(), clock: () => now });
+      publication = commands.publishStagedRun({ userId: input.userId, targetId: input.targetId, runId: staged.runId, fence: { claimToken: staged.claimToken }, selectionExclusions: [] });
+      const publicationResult = publication.then(() => ({ rejected: false as const }), (error) => ({ rejected: true as const, error }));
+      await waitUntilAConnectionIsWaitingForAccountAdvisoryLock(observerDatabase);
+
+      releaseStop.resolve();
+      await expect(stop).resolves.toMatchObject({ applied: true, state: { stoppedAt: expect.any(String) } });
+      await expect(publicationResult).resolves.toMatchObject({ rejected: true, error: expect.objectContaining({ message: "DEEP_MATCH_CLAIM_LOST" }) });
+      await expect(Promise.all([
+        db.select().from(recommendationLists).where(eq(recommendationLists.userId, input.userId)),
+        db.select().from(recommendationListItems).where(eq(recommendationListItems.userId, input.userId)),
+        db.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, input.userId)),
+        db.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, input.userId)),
+      ])).resolves.toEqual([[], [], [], []]);
+    } finally {
+      releaseStop.resolve();
+      await Promise.allSettled([stop, ...(publication ? [publication] : [])]);
+      await stopDatabase.$client.end();
+      await publicationDatabase.$client.end();
       await observerDatabase.$client.end();
     }
   }, 60_000);
