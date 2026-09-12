@@ -1,0 +1,173 @@
+import { cp, mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
+import { sql } from "drizzle-orm";
+import { migrate } from "drizzle-orm/postgres-js/migrator";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { createDatabase, type Database } from "./client";
+import { migrateDatabase } from "./migrate";
+
+const recommendationContext = {
+  version: "recommendation-context-v1",
+  profile: { profileId: "11111111-1111-4111-8111-111111111111", profileVersion: 1 },
+  budgets: { discovery: {}, deepMatch: {} },
+  preflight: {},
+  accountPolicyRevisionNumber: 0,
+};
+
+async function insertRun(database: Database, input: {
+  id?: string; userId: string; targetId: string; purpose: "job_discovery" | "opportunity_reevaluation" | "recommendation";
+  workflow?: "layered-public-job-discovery-v1" | "deep-match-v1" | "workflow-v4"; parentRunId?: string | null; trigger?: "manual" | "automatic"; context?: unknown;
+}) {
+  const id = input.id ?? crypto.randomUUID();
+  const workflow = input.workflow ?? "layered-public-job-discovery-v1";
+  await database.execute(sql`
+    insert into agent_runs (
+      id, user_id, target_id, idempotency_key, target_version, target_snapshot, profile_snapshot, watchlist_snapshot,
+      source_scope, budget_snapshot, workflow_version, rule_version, adapter, adapter_version, output_schema_version,
+      tool_allowlist, model_snapshot, status, current_step, run_purpose, parent_run_id, recommendation_context
+    ) values (
+      ${id}, ${input.userId}, ${input.targetId}, ${crypto.randomUUID()}, 1,
+      ${JSON.stringify({ targetId: input.targetId })}::jsonb,
+      ${workflow === "layered-public-job-discovery-v1" ? JSON.stringify({ targetId: input.targetId }) : null}::jsonb,
+      ${workflow === "layered-public-job-discovery-v1" ? JSON.stringify({ targetId: input.targetId }) : null}::jsonb,
+      ${JSON.stringify({ trigger: input.trigger ?? "manual" })}::jsonb, '{}'::jsonb, ${workflow}, 'rules-v1', 'adapter', 'v1', 'result-v1', '[]'::jsonb,
+      ${workflow === "deep-match-v1" ? "{}" : null}::jsonb, 'queued', 'queued', ${input.purpose}, ${input.parentRunId ?? null}, ${input.context === undefined ? null : JSON.stringify(input.context)}::jsonb
+    )
+  `);
+  return id;
+}
+
+describe("recommendation run persistence migration", () => {
+  let container: StartedPostgreSqlContainer;
+  let database: Database;
+  const ownerId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const otherOwnerId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const targetId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const otherTargetId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+
+  beforeAll(async () => {
+    container = await new PostgreSqlContainer("postgres:17-alpine").start();
+    database = createDatabase(container.getConnectionUri());
+    await migrateDatabase(database);
+    await database.execute(sql`insert into job_accounts (id) values (${ownerId}), (${otherOwnerId})`);
+    await database.execute(sql`
+      insert into job_targets (id, user_id, version, priority, state) values
+      (${targetId}, ${ownerId}, 1, 'primary', 'active'), (${otherTargetId}, ${otherOwnerId}, 1, 'primary', 'active')
+    `);
+  }, 60_000);
+
+  afterAll(async () => {
+    await database?.$client.end();
+    await container?.stop();
+  });
+
+  it("enforces recommendation root and child topology without changing legacy automatic runs", async () => {
+    const legacyAutomatic = await insertRun(database, { userId: ownerId, targetId, purpose: "job_discovery", workflow: "deep-match-v1", trigger: "automatic" });
+    const legacy = await database.execute(sql`select run_purpose, parent_run_id from agent_runs where id = ${legacyAutomatic}`) as unknown as Array<{ run_purpose: string; parent_run_id: string | null }>;
+    expect(legacy).toEqual([{ run_purpose: "job_discovery", parent_run_id: null }]);
+
+    const rootId = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", context: recommendationContext });
+    const childId = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "automatic", parentRunId: rootId });
+    await expect(insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "automatic", parentRunId: rootId })).rejects.toMatchObject({ cause: { code: "23505" } });
+    await expect(insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "manual", parentRunId: rootId })).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "workflow-v4", parentRunId: rootId })).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", context: null })).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "automatic", parentRunId: rootId, context: recommendationContext })).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(insertRun(database, { userId: otherOwnerId, targetId: otherTargetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "automatic", parentRunId: rootId })).rejects.toMatchObject({ cause: { code: "23503" } });
+    await expect(database.execute(sql`update agent_runs set parent_run_id = ${childId} where id = ${rootId}`)).rejects.toMatchObject({ cause: { code: "23514" } });
+  });
+
+  it("requires a bounded recommendation context and preserves immutable command facts", async () => {
+    await expect(insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", context: [] })).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", context: { ...recommendationContext, version: "wrong" } })).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", context: { ...recommendationContext, preflight: "x".repeat(32_768) } })).rejects.toMatchObject({ cause: { code: "23514" } });
+    const rootId = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", context: recommendationContext });
+    const commandId = crypto.randomUUID();
+    await database.execute(sql`
+      insert into recommendation_run_start_commands (user_id, idempotency_key, root_run_id, command_fingerprint)
+      values (${ownerId}, ${commandId}, ${rootId}, ${"a".repeat(64)})
+    `);
+    await expect(database.execute(sql`
+      insert into recommendation_run_start_commands (user_id, idempotency_key, root_run_id, command_fingerprint)
+      values (${ownerId}, ${commandId}, ${rootId}, ${"a".repeat(64)})
+    `)).rejects.toMatchObject({ cause: { code: "23505" } });
+    await expect(database.execute(sql`update recommendation_run_start_commands set command_fingerprint = ${"b".repeat(64)} where user_id = ${ownerId} and idempotency_key = ${commandId}`)).rejects.toMatchObject({ cause: { code: "P0001" } });
+    await expect(database.execute(sql`delete from recommendation_run_start_commands where user_id = ${ownerId} and idempotency_key = ${commandId}`)).rejects.toMatchObject({ cause: { code: "P0001" } });
+    await database.execute(sql`
+      insert into recommendation_run_control_commands (user_id, root_run_id, command_id, physical_run_id, action, command_fingerprint, result_snapshot)
+      values (${ownerId}, ${rootId}, ${crypto.randomUUID()}, ${rootId}, 'pause', ${"c".repeat(64)}, ${JSON.stringify({ runId: rootId, status: "queued", currentStep: "queued", controlState: "none", version: 1 })}::jsonb)
+    `);
+    await expect(database.execute(sql`update recommendation_run_control_commands set action = 'cancel' where user_id = ${ownerId} and root_run_id = ${rootId}`)).rejects.toMatchObject({ cause: { code: "P0001" } });
+    await expect(database.execute(sql`delete from recommendation_run_control_commands where user_id = ${ownerId} and root_run_id = ${rootId}`)).rejects.toMatchObject({ cause: { code: "P0001" } });
+  });
+
+  it("stores deep-match current steps in existing physical control snapshots", async () => {
+    const rootId = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", context: recommendationContext });
+    const childId = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "automatic", parentRunId: rootId });
+    await database.execute(sql`update agent_runs set status = 'running', current_step = 'select_candidates', started_at = now() where id = ${childId}`);
+    await database.execute(sql`
+      insert into agent_run_control_commands (user_id, run_id, command_id, action, applied, result_run_version, result_snapshot)
+      values (${ownerId}, ${childId}, ${crypto.randomUUID()}, 'pause', true, 1, ${JSON.stringify({ runId: childId, status: "running", currentStep: "select_candidates", controlState: "none", version: 1 })}::jsonb)
+    `);
+  });
+
+  it("accepts only owner-bound published results and safe no-recommendations inbox references", async () => {
+    const rootId = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", context: recommendationContext });
+    const childId = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "automatic", parentRunId: rootId });
+    const listId = crypto.randomUUID();
+    await database.execute(sql`insert into recommendation_lists (id, user_id, target_id, local_date, sequence) values (${listId}, ${ownerId}, ${targetId}, '2026-09-12', 1)`);
+    await expect(database.execute(sql`
+      insert into recommendation_results (id, user_id, target_id, root_run_id, producer_run_id, kind, recommendation_list_id, item_count, evidence)
+      values (${listId}, ${ownerId}, ${targetId}, ${rootId}, ${childId}, 'recommendation_list', ${listId}, 1, '{}'::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    const noResultRoot = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", context: recommendationContext });
+    const noResultChild = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "automatic", parentRunId: noResultRoot });
+    const noResultId = crypto.randomUUID();
+    await database.execute(sql`
+      insert into recommendation_results (id, user_id, target_id, root_run_id, producer_run_id, kind, recommendation_list_id, item_count, evidence)
+      values (${noResultId}, ${ownerId}, ${targetId}, ${noResultRoot}, ${noResultChild}, 'no_recommendations', null, 0, '{}'::jsonb)
+    `);
+    await database.execute(sql`
+      insert into agent_inbox_items (id, user_id, recommendation_result_id, kind, status, reason_code)
+      values (${crypto.randomUUID()}, ${ownerId}, ${noResultId}, 'recommendation_result', 'unread', 'NO_RECOMMENDATIONS_PUBLISHED')
+    `);
+    await expect(database.execute(sql`update recommendation_results set evidence = '{"changed":true}'::jsonb where id = ${noResultId}`)).rejects.toMatchObject({ cause: { code: "P0001" } });
+    await expect(database.execute(sql`delete from recommendation_results where id = ${noResultId}`)).rejects.toMatchObject({ cause: { code: "P0001" } });
+  });
+
+  it("maps only historical manual deep-match runs to opportunity reevaluation", async () => {
+    const legacyContainer = await new PostgreSqlContainer("postgres:17-alpine").start();
+    const legacyDatabase = createDatabase(legacyContainer.getConnectionUri());
+    const migrationsFolder = await mkdtemp(join(tmpdir(), "job-copilot-0048-"));
+    try {
+      const migrationSource = fileURLToPath(new URL("../migrations", import.meta.url));
+      await cp(migrationSource, migrationsFolder, { recursive: true });
+      await unlink(join(migrationsFolder, "0049_recommendation_runs.sql"));
+      await unlink(join(migrationsFolder, "meta", "0049_snapshot.json"));
+      const journalPath = join(migrationsFolder, "meta", "_journal.json");
+      const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
+      journal.entries = journal.entries.filter(({ tag }) => tag !== "0049_recommendation_runs");
+      await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
+      await migrate(legacyDatabase, { migrationsFolder });
+      const legacyOwnerId = crypto.randomUUID(); const legacyTargetId = crypto.randomUUID();
+      await legacyDatabase.execute(sql`insert into job_accounts (id) values (${legacyOwnerId})`);
+      await legacyDatabase.execute(sql`insert into job_targets (id, user_id, version, priority, state) values (${legacyTargetId}, ${legacyOwnerId}, 1, 'primary', 'active')`);
+      for (const trigger of ["manual", "automatic"] as const) {
+        await legacyDatabase.execute(sql`
+          insert into agent_runs (id, user_id, target_id, idempotency_key, target_version, target_snapshot, source_scope, budget_snapshot, workflow_version, rule_version, adapter, adapter_version, output_schema_version, tool_allowlist, model_snapshot, status, current_step)
+          values (${crypto.randomUUID()}, ${legacyOwnerId}, ${legacyTargetId}, ${crypto.randomUUID()}, 1, ${JSON.stringify({ targetId: legacyTargetId })}::jsonb, ${JSON.stringify({ trigger })}::jsonb, '{}'::jsonb, 'deep-match-v1', 'rules-v1', 'adapter', 'v1', 'result-v1', '[]'::jsonb, '{}'::jsonb, 'queued', 'queued')
+        `);
+      }
+      await migrate(legacyDatabase, { migrationsFolder: migrationSource });
+      const purposes = await legacyDatabase.execute(sql`select run_purpose, parent_run_id from agent_runs order by source_scope ->> 'trigger'`) as unknown as Array<{ run_purpose: string; parent_run_id: string | null }>;
+      expect(purposes).toEqual([{ run_purpose: "job_discovery", parent_run_id: null }, { run_purpose: "opportunity_reevaluation", parent_run_id: null }]);
+    } finally {
+      await legacyDatabase.$client.end();
+      await legacyContainer.stop();
+      await rm(migrationsFolder, { recursive: true, force: true });
+    }
+  }, 60_000);
+});

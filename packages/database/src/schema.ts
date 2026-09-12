@@ -606,6 +606,9 @@ export const agentRuns = pgTable("agent_runs", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").notNull().references(() => jobAccounts.id),
   targetId: uuid("target_id").notNull().references(() => jobTargets.id),
+  parentRunId: uuid("parent_run_id"),
+  runPurpose: varchar("run_purpose", { length: 32 }).notNull().default("job_discovery"),
+  recommendationContext: jsonb("recommendation_context"),
   idempotencyKey: uuid("idempotency_key").notNull(),
   targetVersion: integer("target_version").notNull(),
   targetSnapshot: jsonb("target_snapshot").notNull(),
@@ -657,8 +660,25 @@ export const agentRuns = pgTable("agent_runs", {
   unique("agent_runs_user_idempotency_unique").on(table.userId, table.idempotencyKey),
   index("agent_runs_recovery_status_expiry_idx").on(table.status, table.claimExpiresAt, table.queuedAt, table.id),
   foreignKey({ columns: [table.userId, table.targetId], foreignColumns: [jobTargets.userId, jobTargets.id], name: "agent_runs_owner_target_fk" }),
+  foreignKey({ columns: [table.userId, table.parentRunId, table.targetId], foreignColumns: [table.userId, table.id, table.targetId], name: "agent_runs_owner_parent_target_fk" }),
   foreignKey({ columns: [table.userId, table.retryOfRunId], foreignColumns: [table.userId, table.id], name: "agent_runs_owner_retry_fk" }),
   check("agent_runs_target_version_positive", sql`${table.targetVersion} >= 1`),
+  check("agent_runs_purpose_check", sql`${table.runPurpose} in ('job_discovery', 'opportunity_reevaluation', 'recommendation')`),
+  check("agent_runs_parent_not_self_check", sql`${table.parentRunId} is null or ${table.parentRunId} <> ${table.id}`),
+  check("agent_runs_recommendation_context_check", sql`
+    (${table.runPurpose} <> 'recommendation' and ${table.recommendationContext} is null)
+    or (${table.runPurpose} = 'recommendation' and ${table.parentRunId} is null
+      and jsonb_typeof(${table.recommendationContext}) = 'object'
+      and ${table.recommendationContext} ?& array['version', 'profile', 'budgets', 'preflight', 'accountPolicyRevisionNumber']
+      and ${table.recommendationContext} ->> 'version' = 'recommendation-context-v1'
+      and jsonb_typeof(${table.recommendationContext} -> 'profile') = 'object'
+      and ${table.recommendationContext} -> 'profile' ?& array['profileId', 'profileVersion']
+      and jsonb_typeof(${table.recommendationContext} -> 'budgets') = 'object'
+      and ${table.recommendationContext} -> 'budgets' ?& array['discovery', 'deepMatch']
+      and jsonb_typeof(${table.recommendationContext} -> 'preflight') = 'object'
+      and octet_length(${table.recommendationContext}::text) <= 32768)
+    or (${table.runPurpose} = 'recommendation' and ${table.parentRunId} is not null and ${table.recommendationContext} is null)
+  `),
   check("agent_runs_target_snapshot_object", sql`jsonb_typeof(${table.targetSnapshot}) = 'object'`),
   check("agent_runs_v4_snapshot_pair_check", sql`(
     ${table.workflowVersion} = 'layered-public-job-discovery-v1'
@@ -936,13 +956,37 @@ export const agentRunControlCommands = pgTable("agent_run_control_commands", {
     and jsonb_typeof(${table.resultSnapshot} -> 'status') = 'string'
     and ${table.resultSnapshot} ->> 'status' in ('queued', 'running', 'paused', 'completed', 'failed', 'cancelled')
     and jsonb_typeof(${table.resultSnapshot} -> 'currentStep') = 'string'
-    and ${table.resultSnapshot} ->> 'currentStep' in ('queued', 'batch_search', 'fetch_details', 'persist_results', 'completed', 'failed', 'cancelled')
+    and ${table.resultSnapshot} ->> 'currentStep' in ('queued', 'batch_search', 'fetch_details', 'persist_results', 'select_candidates', 'assess_matches', 'create_recommendations', 'completed', 'failed', 'cancelled')
     and ((${table.resultSnapshot} ->> 'status' = 'cancelled') = (${table.resultSnapshot} ->> 'currentStep' = 'cancelled'))
     and jsonb_typeof(${table.resultSnapshot} -> 'controlState') = 'string'
     and ${table.resultSnapshot} ->> 'controlState' in ('none', 'pause_requested', 'cancel_requested')
     and jsonb_typeof(${table.resultSnapshot} -> 'version') = 'number'
     and ${table.resultSnapshot} -> 'version' = to_jsonb(${table.resultRunVersion})
   `),
+]);
+
+export const recommendationRunStartCommands = pgTable("recommendation_run_start_commands", {
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id), idempotencyKey: uuid("idempotency_key").notNull(),
+  rootRunId: uuid("root_run_id").notNull().references(() => agentRuns.id), commandFingerprint: varchar("command_fingerprint", { length: 64 }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  primaryKey({ columns: [table.userId, table.idempotencyKey], name: "recommendation_run_start_commands_user_key_pk" }),
+  foreignKey({ columns: [table.userId, table.rootRunId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "recommendation_run_start_commands_owner_root_fk" }),
+  check("recommendation_run_start_commands_fingerprint_check", sql`${table.commandFingerprint} ~ '^[0-9a-f]{64}$'`),
+]);
+
+export const recommendationRunControlCommands = pgTable("recommendation_run_control_commands", {
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id), rootRunId: uuid("root_run_id").notNull().references(() => agentRuns.id),
+  commandId: uuid("command_id").notNull(), physicalRunId: uuid("physical_run_id").notNull().references(() => agentRuns.id),
+  action: varchar("action", { length: 16 }).notNull(), commandFingerprint: varchar("command_fingerprint", { length: 64 }).notNull(), resultSnapshot: jsonb("result_snapshot").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  primaryKey({ columns: [table.userId, table.rootRunId, table.commandId], name: "recommendation_run_control_commands_pk" }),
+  foreignKey({ columns: [table.userId, table.rootRunId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "recommendation_run_control_commands_owner_root_fk" }),
+  foreignKey({ columns: [table.userId, table.physicalRunId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "recommendation_run_control_commands_owner_physical_fk" }),
+  check("recommendation_run_control_commands_action_check", sql`${table.action} in ('pause', 'resume', 'cancel')`),
+  check("recommendation_run_control_commands_fingerprint_check", sql`${table.commandFingerprint} ~ '^[0-9a-f]{64}$'`),
+  check("recommendation_run_control_commands_snapshot_object", sql`jsonb_typeof(${table.resultSnapshot}) = 'object'`),
 ]);
 
 export const agentRunUsageEntries = pgTable("agent_run_usage_entries", {
@@ -963,7 +1007,7 @@ export const agentInboxItems = pgTable("agent_inbox_items", {
   id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id),
   runId: uuid("run_id").references(() => agentRuns.id), triggerEventSequence: integer("trigger_event_sequence"),
   candidateFactId: uuid("candidate_fact_id").references(() => candidateFacts.id), watchlistItemId: uuid("watchlist_item_id"), sourceHealthCheckId: uuid("source_health_check_id"),
-  recommendationListId: uuid("recommendation_list_id").references(() => recommendationLists.id), calibrationProposalId: uuid("calibration_proposal_id").references(() => calibrationProposals.id),
+  recommendationListId: uuid("recommendation_list_id").references(() => recommendationLists.id), recommendationResultId: uuid("recommendation_result_id"), calibrationProposalId: uuid("calibration_proposal_id").references(() => calibrationProposals.id),
   kind: varchar("kind", { length: 32 }).notNull(), status: varchar("status", { length: 16 }).notNull().default("unread"),
   reasonCode: varchar("reason_code", { length: 64 }).notNull(), budgetDimension: varchar("budget_dimension", { length: 32 }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(), readAt: timestamp("read_at", { withTimezone: true }), resolvedAt: timestamp("resolved_at", { withTimezone: true }),
@@ -973,18 +1017,20 @@ export const agentInboxItems = pgTable("agent_inbox_items", {
   index("agent_inbox_items_open_lookup_idx").on(table.userId, table.status, table.createdAt),
   uniqueIndex("agent_inbox_items_candidate_fact_unique_idx").on(table.candidateFactId).where(sql`${table.candidateFactId} is not null`),
   uniqueIndex("agent_inbox_items_recommendation_list_unique_idx").on(table.recommendationListId).where(sql`${table.recommendationListId} is not null`),
+  uniqueIndex("agent_inbox_items_recommendation_result_unique_idx").on(table.recommendationResultId).where(sql`${table.recommendationResultId} is not null`),
   uniqueIndex("agent_inbox_items_calibration_proposal_unique_idx").on(table.calibrationProposalId).where(sql`${table.calibrationProposalId} is not null`),
   uniqueIndex("agent_inbox_items_source_run_source_health_check_unique_idx").on(table.runId, table.sourceHealthCheckId).where(sql`${table.kind} = 'source_attention'`),
   foreignKey({ columns: [table.userId, table.runId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "agent_inbox_items_owner_run_fk" }),
   foreignKey({ columns: [table.userId, table.candidateFactId], foreignColumns: [candidateFacts.userId, candidateFacts.id], name: "agent_inbox_items_owner_candidate_fact_fk" }),
   foreignKey({ columns: [table.userId, table.recommendationListId], foreignColumns: [recommendationLists.userId, recommendationLists.id], name: "agent_inbox_items_owner_recommendation_list_fk" }),
+  foreignKey({ columns: [table.userId, table.recommendationResultId], foreignColumns: [recommendationResults.userId, recommendationResults.id], name: "agent_inbox_items_owner_recommendation_result_fk" }),
   foreignKey({ columns: [table.userId, table.calibrationProposalId], foreignColumns: [calibrationProposals.userId, calibrationProposals.id], name: "agent_inbox_items_owner_calibration_proposal_fk" }),
   foreignKey({ columns: [table.userId, table.runId, table.watchlistItemId, table.sourceHealthCheckId], foreignColumns: [jobSourceHealthChecks.userId, jobSourceHealthChecks.runId, jobSourceHealthChecks.watchlistItemId, jobSourceHealthChecks.id], name: "agent_inbox_items_owner_source_health_check_fk" }),
   check("agent_inbox_items_trigger_event_positive", sql`${table.triggerEventSequence} >= 1`),
-  check("agent_inbox_items_kind_check", sql`${table.kind} in ('run_failed', 'budget_exhausted', 'decision_required', 'source_attention', 'discovery_attention', 'candidate_fact', 'recommendation_list', 'calibration_proposal')`),
+  check("agent_inbox_items_kind_check", sql`${table.kind} in ('run_failed', 'budget_exhausted', 'decision_required', 'source_attention', 'discovery_attention', 'candidate_fact', 'recommendation_list', 'recommendation_result', 'calibration_proposal')`),
   check("agent_inbox_items_status_check", sql`${table.status} in ('unread', 'read', 'resolved')`),
-  check("agent_inbox_items_reason_check", sql`${table.reasonCode} in ('AGENT_RUN_PAUSED', 'SOURCE_HEALTH_ATTENTION', 'DISCOVERY_ATTENTION', 'CANDIDATE_FACT_PENDING', 'RECOMMENDATION_LIST_PUBLISHED', 'CALIBRATION_PROPOSAL_CREATED', 'AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_CONTENT_STORAGE_FAILED', 'AGENT_RUN_PERSIST_FAILED', 'AGENT_RUN_BUDGET_EXCEEDED', 'AGENT_RUN_MODEL_RETRYABLE', 'AGENT_RUN_MODEL_AUTH_FAILED', 'AGENT_RUN_MODEL_POLICY_REJECTED', 'AGENT_RUN_MODEL_INVALID_RESPONSE')`),
-  check("agent_inbox_items_kind_reason_pair_check", sql`(${table.kind} = 'source_attention') = (${table.reasonCode} = 'SOURCE_HEALTH_ATTENTION') and (${table.kind} = 'discovery_attention') = (${table.reasonCode} = 'DISCOVERY_ATTENTION') and (${table.kind} = 'candidate_fact') = (${table.reasonCode} = 'CANDIDATE_FACT_PENDING') and (${table.kind} = 'recommendation_list') = (${table.reasonCode} = 'RECOMMENDATION_LIST_PUBLISHED') and (${table.kind} = 'calibration_proposal') = (${table.reasonCode} = 'CALIBRATION_PROPOSAL_CREATED')`),
+  check("agent_inbox_items_reason_check", sql`${table.reasonCode} in ('AGENT_RUN_PAUSED', 'SOURCE_HEALTH_ATTENTION', 'DISCOVERY_ATTENTION', 'CANDIDATE_FACT_PENDING', 'RECOMMENDATION_LIST_PUBLISHED', 'NO_RECOMMENDATIONS_PUBLISHED', 'CALIBRATION_PROPOSAL_CREATED', 'AGENT_RUN_ADAPTER_RETRYABLE', 'AGENT_RUN_ADAPTER_FAILED', 'AGENT_RUN_CONTENT_STORAGE_FAILED', 'AGENT_RUN_PERSIST_FAILED', 'AGENT_RUN_BUDGET_EXCEEDED', 'AGENT_RUN_MODEL_RETRYABLE', 'AGENT_RUN_MODEL_AUTH_FAILED', 'AGENT_RUN_MODEL_POLICY_REJECTED', 'AGENT_RUN_MODEL_INVALID_RESPONSE')`),
+  check("agent_inbox_items_kind_reason_pair_check", sql`(${table.kind} = 'source_attention') = (${table.reasonCode} = 'SOURCE_HEALTH_ATTENTION') and (${table.kind} = 'discovery_attention') = (${table.reasonCode} = 'DISCOVERY_ATTENTION') and (${table.kind} = 'candidate_fact') = (${table.reasonCode} = 'CANDIDATE_FACT_PENDING') and (${table.kind} = 'recommendation_list') = (${table.reasonCode} = 'RECOMMENDATION_LIST_PUBLISHED') and (${table.kind} = 'recommendation_result') = (${table.reasonCode} = 'NO_RECOMMENDATIONS_PUBLISHED') and (${table.kind} = 'calibration_proposal') = (${table.reasonCode} = 'CALIBRATION_PROPOSAL_CREATED')`),
   check("agent_inbox_items_dimension_check", sql`${table.budgetDimension} is null or ${table.budgetDimension} in ('active_duration', 'attempts', 'tool_calls', 'model_calls', 'tokens')`),
   check("agent_inbox_items_lifecycle_check", sql`
     (${table.status} = 'unread' and ${table.readAt} is null and ${table.resolvedAt} is null)
@@ -992,11 +1038,12 @@ export const agentInboxItems = pgTable("agent_inbox_items", {
     or (${table.status} = 'resolved' and ${table.resolvedAt} is not null and ${table.resolvedAt} >= ${table.createdAt} and (${table.readAt} is null or (${table.readAt} >= ${table.createdAt} and ${table.resolvedAt} >= ${table.readAt})))
   `),
   check("agent_inbox_items_reference_combination_check", sql`
-    (${table.kind} in ('run_failed', 'budget_exhausted', 'decision_required', 'discovery_attention') and ${table.runId} is not null and ${table.triggerEventSequence} is not null and ${table.candidateFactId} is null and ${table.watchlistItemId} is null and ${table.sourceHealthCheckId} is null and ${table.recommendationListId} is null and ${table.calibrationProposalId} is null)
-    or (${table.kind} = 'source_attention' and ${table.runId} is not null and ${table.watchlistItemId} is not null and ${table.sourceHealthCheckId} is not null and ${table.candidateFactId} is null and ${table.recommendationListId} is null and ${table.calibrationProposalId} is null)
-    or (${table.kind} = 'candidate_fact' and ${table.runId} is null and ${table.triggerEventSequence} is null and ${table.candidateFactId} is not null and ${table.watchlistItemId} is null and ${table.sourceHealthCheckId} is null and ${table.recommendationListId} is null and ${table.calibrationProposalId} is null)
-    or (${table.kind} = 'recommendation_list' and ${table.runId} is null and ${table.triggerEventSequence} is null and ${table.candidateFactId} is null and ${table.watchlistItemId} is null and ${table.sourceHealthCheckId} is null and ${table.recommendationListId} is not null and ${table.calibrationProposalId} is null)
-    or (${table.kind} = 'calibration_proposal' and ${table.runId} is null and ${table.triggerEventSequence} is null and ${table.candidateFactId} is null and ${table.watchlistItemId} is null and ${table.sourceHealthCheckId} is null and ${table.recommendationListId} is null and ${table.calibrationProposalId} is not null)
+    (${table.kind} in ('run_failed', 'budget_exhausted', 'decision_required', 'discovery_attention') and ${table.runId} is not null and ${table.triggerEventSequence} is not null and ${table.candidateFactId} is null and ${table.watchlistItemId} is null and ${table.sourceHealthCheckId} is null and ${table.recommendationListId} is null and ${table.recommendationResultId} is null and ${table.calibrationProposalId} is null)
+    or (${table.kind} = 'source_attention' and ${table.runId} is not null and ${table.watchlistItemId} is not null and ${table.sourceHealthCheckId} is not null and ${table.candidateFactId} is null and ${table.recommendationListId} is null and ${table.recommendationResultId} is null and ${table.calibrationProposalId} is null)
+    or (${table.kind} = 'candidate_fact' and ${table.runId} is null and ${table.triggerEventSequence} is null and ${table.candidateFactId} is not null and ${table.watchlistItemId} is null and ${table.sourceHealthCheckId} is null and ${table.recommendationListId} is null and ${table.recommendationResultId} is null and ${table.calibrationProposalId} is null)
+    or (${table.kind} = 'recommendation_list' and ${table.runId} is null and ${table.triggerEventSequence} is null and ${table.candidateFactId} is null and ${table.watchlistItemId} is null and ${table.sourceHealthCheckId} is null and ${table.recommendationListId} is not null and ${table.recommendationResultId} is null and ${table.calibrationProposalId} is null)
+    or (${table.kind} = 'recommendation_result' and ${table.runId} is null and ${table.triggerEventSequence} is null and ${table.candidateFactId} is null and ${table.watchlistItemId} is null and ${table.sourceHealthCheckId} is null and ${table.recommendationListId} is null and ${table.recommendationResultId} is not null and ${table.calibrationProposalId} is null)
+    or (${table.kind} = 'calibration_proposal' and ${table.runId} is null and ${table.triggerEventSequence} is null and ${table.candidateFactId} is null and ${table.watchlistItemId} is null and ${table.sourceHealthCheckId} is null and ${table.recommendationListId} is null and ${table.recommendationResultId} is null and ${table.calibrationProposalId} is not null)
   `),
 ]);
 
@@ -1168,7 +1215,22 @@ export const jobMatchVersions = pgTable("job_match_versions", {
 export const recommendationLists = pgTable("recommendation_lists", {
   id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id), targetId: uuid("target_id").notNull().references(() => jobTargets.id), localDate: varchar("local_date", { length: 10 }).notNull(), sequence: integer("sequence").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
-  unique("recommendation_lists_user_id_id_unique").on(table.userId, table.id), unique("recommendation_lists_target_date_sequence_unique").on(table.userId, table.targetId, table.localDate, table.sequence), foreignKey({ columns: [table.userId, table.targetId], foreignColumns: [jobTargets.userId, jobTargets.id], name: "recommendation_lists_owner_target_fk" }), check("recommendation_lists_sequence_positive", sql`${table.sequence} >= 1`), check("recommendation_lists_local_date_format", sql`${table.localDate} ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'`),
+  unique("recommendation_lists_user_id_id_unique").on(table.userId, table.id), unique("recommendation_lists_user_id_id_target_id_unique").on(table.userId, table.id, table.targetId), unique("recommendation_lists_target_date_sequence_unique").on(table.userId, table.targetId, table.localDate, table.sequence), foreignKey({ columns: [table.userId, table.targetId], foreignColumns: [jobTargets.userId, jobTargets.id], name: "recommendation_lists_owner_target_fk" }), check("recommendation_lists_sequence_positive", sql`${table.sequence} >= 1`), check("recommendation_lists_local_date_format", sql`${table.localDate} ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'`),
+]);
+
+export const recommendationResults = pgTable("recommendation_results", {
+  id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id), targetId: uuid("target_id").notNull(),
+  rootRunId: uuid("root_run_id").notNull().references(() => agentRuns.id), producerRunId: uuid("producer_run_id").notNull().references(() => agentRuns.id),
+  kind: varchar("kind", { length: 32 }).notNull(), recommendationListId: uuid("recommendation_list_id"), itemCount: integer("item_count").notNull(), evidence: jsonb("evidence").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("recommendation_results_user_id_id_unique").on(table.userId, table.id), unique("recommendation_results_owner_root_unique").on(table.userId, table.rootRunId), unique("recommendation_results_owner_producer_unique").on(table.userId, table.producerRunId),
+  foreignKey({ columns: [table.userId, table.targetId], foreignColumns: [jobTargets.userId, jobTargets.id], name: "recommendation_results_owner_target_fk" }),
+  foreignKey({ columns: [table.userId, table.rootRunId, table.targetId], foreignColumns: [agentRuns.userId, agentRuns.id, agentRuns.targetId], name: "recommendation_results_owner_root_target_fk" }),
+  foreignKey({ columns: [table.userId, table.producerRunId, table.targetId], foreignColumns: [agentRuns.userId, agentRuns.id, agentRuns.targetId], name: "recommendation_results_owner_producer_target_fk" }),
+  foreignKey({ columns: [table.userId, table.recommendationListId, table.targetId], foreignColumns: [recommendationLists.userId, recommendationLists.id, recommendationLists.targetId], name: "recommendation_results_owner_list_target_fk" }),
+  check("recommendation_results_kind_check", sql`${table.kind} in ('recommendation_list', 'no_recommendations')`), check("recommendation_results_evidence_object", sql`jsonb_typeof(${table.evidence}) = 'object'`),
+  check("recommendation_results_kind_shape_check", sql`(${table.kind} = 'recommendation_list' and ${table.id} = ${table.recommendationListId} and ${table.itemCount} > 0) or (${table.kind} = 'no_recommendations' and ${table.recommendationListId} is null and ${table.itemCount} = 0)`),
 ]);
 
 export const recommendationListItems = pgTable("recommendation_list_items", {
