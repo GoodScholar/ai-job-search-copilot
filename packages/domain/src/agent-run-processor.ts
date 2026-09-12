@@ -224,13 +224,14 @@ async function renewClaim(deps: AgentRunProcessorDependencies, input: { userId: 
 
 function startClaimHeartbeat(deps: AgentRunProcessorDependencies, input: { userId: string; runId: string; claimToken: string; deadline: Date; onLeaseLost?(): void; onControl?(outcome: "paused" | "cancelled"): void; onDeadline?(): void }) {
   let stopped = false;
+  let controlled = false;
   let inFlight: Promise<void> | undefined;
   const tick = () => {
-    if (stopped || inFlight) return;
+    if (stopped || controlled || inFlight) return;
     if (deps.clock().getTime() >= input.deadline.getTime()) { input.onDeadline?.(); return; }
     const renew = deps.heartbeatRenew ?? ((renewInput) => renewClaim(deps, renewInput));
     inFlight = renew(input).then((renewed) => {
-      if (renewed === "paused" || renewed === "cancelled") input.onControl?.(renewed);
+      if (renewed === "paused" || renewed === "cancelled") { controlled = true; input.onControl?.(renewed); }
       else if (!renewed) input.onLeaseLost?.();
     }, () => { input.onLeaseLost?.(); }).finally(() => { inFlight = undefined; });
   };
@@ -653,12 +654,24 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
               if (modelController!.signal.aborted) abort();
               else modelController!.signal.addEventListener("abort", abort, { once: true });
             });
-            const staged = await Promise.race([commands.invokeAndValidate({ userId: job.userId, runId: job.runId, candidate, modelCall: {
+            let abortedBeforeInvocationSettled = modelController!.signal.aborted;
+            modelController!.signal.addEventListener("abort", () => { abortedBeforeInvocationSettled = true; }, { once: true });
+            const invocation = commands.invokeAndValidate({ userId: job.userId, runId: job.runId, candidate, modelCall: {
               signal: modelController!.signal,
               usageKey: invocationUsageKey,
               budget: { maxTokens: effectiveAgentRunBudget(claimed.run.workflowVersion, claimed.run.budgetSnapshot as AgentRunBudget).maxTokens, reservedInputTokens: deepMatchAdapter.reservedUsage.inputTokens, reservedOutputTokens: deepMatchAdapter.reservedUsage.outputTokens },
               ...(scope.testFixture ? { fixture: scope.testFixture } : {}),
-            } }), abortBoundary]);
+            } });
+            void invocation.then(async (late) => {
+              if (!abortedBeforeInvocationSettled || late.reused) return;
+              try {
+                await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "deep_match_model_late_usage", ordinal: index + 1, checkpointKey: invocationUsageKey, reserve: { modelCalls: 1, inputTokens: late.usage.inputTokens, outputTokens: late.usage.outputTokens, invocationAttemptCount: claimed.attemptCount, settleActual: true } });
+              } catch {
+                // 迟到结算不能重开已经退出的 processor；只记录稳定、无敏感正文的错误码。
+                console.error("AGENT_RUN_LATE_USAGE_SETTLEMENT_FAILED");
+              }
+            }, () => undefined);
+            const staged = await Promise.race([invocation, abortBoundary]);
             const outputCheckpointOutcome = staged.reused ? null : await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "deep_match_model_usage", ordinal: index + 1, checkpointKey: invocationUsageKey, reserve: {
               modelCalls: 1, inputTokens: staged.usage.inputTokens, outputTokens: staged.usage.outputTokens, invocationAttemptCount: claimed.attemptCount,
               settleActual: true,
@@ -694,7 +707,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
               userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "deep_match_model_aborted", ordinal: 1,
               ...(trustedStop === "budget_exhausted" ? { reserve: { budgetTokens: Number(effectiveAgentRunBudget(claimed.run.workflowVersion, claimed.run.budgetSnapshot as AgentRunBudget).maxTokens) + 1 } } : {}),
             });
-            return stopped ?? trustedStop ?? "stale";
+            return stopped === "stale" ? trustedStop ?? "stale" : stopped ?? trustedStop ?? "stale";
           }
           if (error instanceof DeepMatchClaimLostError) {
             return await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "deep_match_stage_fence", ordinal: 1 }) ?? "stale";

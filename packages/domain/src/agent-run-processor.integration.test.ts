@@ -555,6 +555,117 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(database.select().from(recommendationLists).where(eq(recommendationLists.userId, job.userId))).resolves.toEqual([]);
   });
 
+  it.each([
+    ["释放账户停止", "paused", false],
+    ["取消优先", "cancelled", false],
+    ["旧 claim 被替换", "paused", true],
+  ] as const)("账户停止后 deferred 模型调用在%s再迟到返回时，只结算旧 invocation usage", async (_scenario, expectedStatus, replaceClaim) => {
+    const job = await deepMatchRun(); const fake = new FakeDeepMatchAdapter(); let entered!: () => void; let release!: () => void; let calls = 0;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const returned = new Promise<void>((resolve) => { release = resolve; });
+    const adapter = { ...fake, async assess(input: Parameters<FakeDeepMatchAdapter["assess"]>[0], call: Parameters<FakeDeepMatchAdapter["assess"]>[1]) {
+      calls += 1; entered(); await returned;
+      const result = await fake.assess(input, { ...call, signal: new AbortController().signal });
+      return { ...result, usage: { inputTokens: 7, outputTokens: 11, latencyMs: 1 } };
+    } };
+    const auditTrail = createAuditTrail({ db: database, clock: () => now });
+    const durable = checkpoint();
+    const control = createAccountRunControl({ db: database, auditTrail, id: () => crypto.randomUUID(), clock: () => now });
+    const runCommands = createAgentRunCommands({ db: database, queue: new Queue(), auditTrail, id: () => crypto.randomUUID(), clock: () => now, runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) });
+    const processor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: adapter, checkpoint: durable, contentStore: new Store(), auditTrail, id: () => crypto.randomUUID(), clock: () => now, heartbeatIntervalMs: 1, heartbeatRenew: async (input) => {
+      await started;
+      await control.control({ userId: job.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+      if (expectedStatus === "cancelled") await runCommands.control({ userId: job.userId, requestId: crypto.randomUUID(), runId: job.runId, command: { commandId: crypto.randomUUID(), action: "cancel" } });
+      const decision = await durable.check({ userId: input.userId, runId: input.runId, claimToken: input.claimToken, checkpointKey: `${input.claimToken}:test_account_stop:1` });
+      return decision.kind === "paused" || decision.kind === "cancelled" ? decision.kind : false;
+    } });
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe(expectedStatus);
+    await control.control({ userId: job.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 1, action: "release" } });
+    if (replaceClaim) await database.update(agentRuns).set({ status: "running", currentStep: "assess_matches", controlState: "none", claimToken: crypto.randomUUID(), claimExpiresAt: new Date(now.getTime() + 30_000), activeSliceStartedAt: now, attemptCount: 2, modelCallCount: 3, inputTokenCount: 17, outputTokenCount: 19, totalTokenCount: 36 }).where(eq(agentRuns.id, job.runId));
+    release();
+    const usageKey = `deep_match_model:${job.opportunityIds[0]}:attempt:1`;
+    await vi.waitFor(async () => expect(await database.select({ category: agentRunUsageEntries.category, amount: agentRunUsageEntries.amount }).from(agentRunUsageEntries).where(and(eq(agentRunUsageEntries.runId, job.runId), eq(agentRunUsageEntries.usageKey, usageKey))).orderBy(agentRunUsageEntries.category)).toEqual([{ category: "input_tokens", amount: 7 }, { category: "model_call", amount: 1 }, { category: "output_tokens", amount: 11 }]));
+    expect(calls).toBe(1);
+    await expect(Promise.all([database.select({ assessment: deepMatchRunCandidates.assessment }).from(deepMatchRunCandidates).where(eq(deepMatchRunCandidates.runId, job.runId)), database.select().from(recommendationLists).where(eq(recommendationLists.userId, job.userId)), database.select({ status: agentRuns.status, attemptCount: agentRuns.attemptCount, modelCallCount: agentRuns.modelCallCount, inputTokenCount: agentRuns.inputTokenCount, outputTokenCount: agentRuns.outputTokenCount, totalTokenCount: agentRuns.totalTokenCount }).from(agentRuns).where(eq(agentRuns.id, job.runId))])).resolves.toEqual([[{ assessment: null }, { assessment: null }], [], replaceClaim ? [{ status: "running", attemptCount: 2, modelCallCount: 3, inputTokenCount: 17, outputTokenCount: 19, totalTokenCount: 36 }] : [expect.objectContaining({ status: expectedStatus })]]);
+  });
+
+  it("同一轮 abort 和 adapter resolve 时仍只结算一次 usage 且不暂存或发布", async () => {
+    const job = await deepMatchRun(); const fake = new FakeDeepMatchAdapter(); let entered!: () => void; let calls = 0;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const adapter = { ...fake, async assess(input: Parameters<FakeDeepMatchAdapter["assess"]>[0], call: Parameters<FakeDeepMatchAdapter["assess"]>[1]) {
+      calls += 1; entered();
+      await new Promise<void>((resolve) => call.signal.addEventListener("abort", () => resolve(), { once: true }));
+      const result = await fake.assess(input, { ...call, signal: new AbortController().signal });
+      return { ...result, usage: { inputTokens: 7, outputTokens: 11, latencyMs: 1 } };
+    } };
+    const auditTrail = createAuditTrail({ db: database, clock: () => now }); const durable = checkpoint();
+    const control = createAccountRunControl({ db: database, auditTrail, id: () => crypto.randomUUID(), clock: () => now });
+    const processor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: adapter, checkpoint: durable, contentStore: new Store(), auditTrail, id: () => crypto.randomUUID(), clock: () => now, heartbeatIntervalMs: 1, heartbeatRenew: async (input) => {
+      await started;
+      await control.control({ userId: job.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+      const decision = await durable.check({ userId: input.userId, runId: input.runId, claimToken: input.claimToken, checkpointKey: `${input.claimToken}:test_account_stop:1` });
+      return decision.kind === "paused" ? "paused" : false;
+    } });
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("paused");
+    const usageKey = `deep_match_model:${job.opportunityIds[0]}:attempt:1`;
+    await vi.waitFor(async () => expect(await database.select({ category: agentRunUsageEntries.category, amount: agentRunUsageEntries.amount }).from(agentRunUsageEntries).where(and(eq(agentRunUsageEntries.runId, job.runId), eq(agentRunUsageEntries.usageKey, usageKey))).orderBy(agentRunUsageEntries.category)).toEqual([{ category: "input_tokens", amount: 7 }, { category: "model_call", amount: 1 }, { category: "output_tokens", amount: 11 }]));
+    expect(calls).toBe(1);
+    await expect(Promise.all([database.select({ assessment: deepMatchRunCandidates.assessment }).from(deepMatchRunCandidates).where(eq(deepMatchRunCandidates.runId, job.runId)), database.select().from(recommendationLists).where(eq(recommendationLists.userId, job.userId)), database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, job.runId))])).resolves.toEqual([[{ assessment: null }, { assessment: null }], [], [{ status: "paused" }]]);
+  });
+
+  it("迟到模型 usage 的 checkpoint 失败只记录固定错误码，不把正常 abort 误报为结算失败", async () => {
+    const job = await deepMatchRun(); const fake = new FakeDeepMatchAdapter(); let entered!: () => void; let release!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const returned = new Promise<void>((resolve) => { release = resolve; });
+    const adapter = { ...fake, async assess(input: Parameters<FakeDeepMatchAdapter["assess"]>[0], call: Parameters<FakeDeepMatchAdapter["assess"]>[1]) {
+      entered(); await returned;
+      const result = await fake.assess(input, { ...call, signal: new AbortController().signal });
+      return { ...result, usage: { inputTokens: 7, outputTokens: 11, latencyMs: 1 } };
+    } };
+    const auditTrail = createAuditTrail({ db: database, clock: () => now }); const durable = checkpoint();
+    const control = createAccountRunControl({ db: database, auditTrail, id: () => crypto.randomUUID(), clock: () => now });
+    const injected: AgentRunCheckpoint = { check: async (input) => {
+      if (input.checkpointKey.startsWith("deep_match_model:")) throw new Error("INJECTED_LATE_CHECKPOINT_FAILURE");
+      return durable.check(input);
+    } };
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const processor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: adapter, checkpoint: injected, contentStore: new Store(), auditTrail, id: () => crypto.randomUUID(), clock: () => now, heartbeatIntervalMs: 1, heartbeatRenew: async (input) => {
+        await started;
+        await control.control({ userId: job.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+        const decision = await durable.check({ userId: input.userId, runId: input.runId, claimToken: input.claimToken, checkpointKey: `${input.claimToken}:test_account_stop:1` });
+        return decision.kind === "paused" ? "paused" : false;
+      } });
+      await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("paused");
+      release();
+      await vi.waitFor(() => expect(error).toHaveBeenCalledWith("AGENT_RUN_LATE_USAGE_SETTLEMENT_FAILED"));
+      expect(error).toHaveBeenCalledTimes(1);
+    } finally { error.mockRestore(); }
+  });
+
+  it("被 abort 拒绝的模型调用不标记迟到 usage 结算失败", async () => {
+    const job = await deepMatchRun(); const fake = new FakeDeepMatchAdapter(); let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const adapter = { ...fake, async assess(_input: Parameters<FakeDeepMatchAdapter["assess"]>[0], call: Parameters<FakeDeepMatchAdapter["assess"]>[1]) {
+      entered();
+      await new Promise<void>((resolve) => call.signal.addEventListener("abort", () => resolve(), { once: true }));
+      throw new DeepMatchAdapterError("retryable");
+    } };
+    const auditTrail = createAuditTrail({ db: database, clock: () => now }); const durable = checkpoint();
+    const control = createAccountRunControl({ db: database, auditTrail, id: () => crypto.randomUUID(), clock: () => now });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      const processor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: adapter, checkpoint: durable, contentStore: new Store(), auditTrail, id: () => crypto.randomUUID(), clock: () => now, heartbeatIntervalMs: 1, heartbeatRenew: async (input) => {
+        await started;
+        await control.control({ userId: job.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+        const decision = await durable.check({ userId: input.userId, runId: input.runId, claimToken: input.claimToken, checkpointKey: `${input.claimToken}:test_account_stop:1` });
+        return decision.kind === "paused" ? "paused" : false;
+      } });
+      await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("paused");
+      expect(error).not.toHaveBeenCalled();
+    } finally { error.mockRestore(); }
+  });
+
   it.each([["pause_requested", "paused"], ["cancel_requested", "cancelled"]] as const)("settles one actual model usage before post-call %s transition", async (controlState, expected) => {
     const job = await deepMatchRun(); const fake = new FakeDeepMatchAdapter(); let injected = false;
     const adapter = { ...fake, async assess(input: Parameters<FakeDeepMatchAdapter["assess"]>[0], call: Parameters<FakeDeepMatchAdapter["assess"]>[1]) {
