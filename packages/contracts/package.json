@@ -13,6 +13,7 @@
     "./job-triage": "./src/job-triage.ts",
     "./deep-match": "./src/deep-match.ts",
     "./recommendations": "./src/recommendations.ts",
+    "./recommendation-runs": "./src/recommendation-runs.ts",
     "./job-discovery-schedules": "./src/job-discovery-schedules.ts",
     "./job-discovery": "./src/job-discovery.ts",
     "./source-capabilities": "./src/source-capabilities.ts",

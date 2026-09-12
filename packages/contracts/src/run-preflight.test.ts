@@ -8,6 +8,7 @@ import {
   RunPreflightSeveritySchema,
   RunPreflightSuggestedActionSchema,
   RunPreflightStatusSchema,
+  RunPreflightWorkflowSchema,
 } from "./run-preflight";
 
 const targetId = "87a0d3ac-4aed-4bd5-a703-68bf82cc6c49";
@@ -63,6 +64,11 @@ const readyReport = {
 } as const;
 
 describe("运行前检查契约", () => {
+  it("将逻辑推荐运行作为独立的运行前检查工作流", () => {
+    expect(RunPreflightWorkflowSchema.options).toEqual(["discovery", "deep_match", "recommendation"]);
+    expect(RunPreflightReportSchema.parse({ ...readyReport, workflow: "recommendation" }).workflow).toBe("recommendation");
+  });
+
   it("接受三种严重级和三种聚合状态", () => {
     expect(RunPreflightSeveritySchema.options).toEqual(["blocking", "warning", "informational"]);
     expect(RunPreflightStatusSchema.options).toEqual(["blocked", "ready_with_warnings", "ready"]);

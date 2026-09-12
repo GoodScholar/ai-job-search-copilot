@@ -4,7 +4,7 @@ const nonnegativeInteger = z.int().nonnegative();
 const nullableUuid = z.uuid().nullable();
 const safeChineseCopy = (maxLength: number) => z.string().trim().min(1).max(maxLength).regex(/\p{Script=Han}/u, "必须包含中文安全文案");
 
-export const RunPreflightWorkflowSchema = z.enum(["discovery", "deep_match"]);
+export const RunPreflightWorkflowSchema = z.enum(["discovery", "deep_match", "recommendation"]);
 export const RunPreflightTriggerSchema = z.enum(["manual", "schedule", "automatic"]);
 export const RunPreflightSeveritySchema = z.enum(["blocking", "warning", "informational"]);
 export const RunPreflightStatusSchema = z.enum(["blocked", "ready_with_warnings", "ready"]);
