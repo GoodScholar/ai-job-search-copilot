@@ -32,7 +32,7 @@ import type { JobDiscoveryExecutionMode } from "./job-discovery-execution-mode";
 import { resolveEffectiveAccountRunPolicy } from "./account-run-policies";
 import { isDateInBackgroundWindow } from "./account-run-policy-window";
 import { authorizeRunPreflight, type RunPreflightEvaluator } from "./run-preflight";
-import { accountRunAdmissionReason, readAccountRunControlInTransaction } from "./account-run-admission";
+import { AccountRunAdmissionError, accountRunAdmissionReason, readAccountRunControlInTransaction } from "./account-run-admission";
 
 export interface AgentRunQueue { enqueue(job: AgentRunJob): Promise<void>; }
 
@@ -297,6 +297,9 @@ export async function applyAgentRunControlInTransaction(
   if (prior) {
     if (prior.action !== command.action) throw new AgentRunControlError("AGENT_RUN_COMMAND_ID_CONFLICT");
     return { response: { applied: prior.applied, run: prior.resultSnapshot as ControlSnapshot }, wake: false };
+  }
+  if (command.action === "resume" && (await readAccountRunControlInTransaction(transaction, input.userId)).stoppedAt !== null) {
+    throw new AccountRunAdmissionError("ACCOUNT_RUN_STOPPED");
   }
   const transition = reduceControl({ status: run.status as "queued" | "running" | "paused" | "completed" | "failed" | "cancelled", controlState: run.controlState as "none" | "pause_requested" | "cancel_requested" }, command.action);
   if (transition.kind === "conflict") throw new AgentRunControlError(transition.code);

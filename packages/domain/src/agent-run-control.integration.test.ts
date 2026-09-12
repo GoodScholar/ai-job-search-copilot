@@ -11,6 +11,7 @@ import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-polic
 import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
 import { RunPreflightRejectedError, createRunPreflightEvaluator } from "./run-preflight";
 import { createModelDiagnosticProjectionReader } from "./model-diagnostics";
+import { createAccountRunControl } from "./account-run-control";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
 const constraints = {
@@ -474,6 +475,18 @@ describe("agent run controls", () => {
     await expect(commands(queue).control({ userId, requestId: crypto.randomUUID(), runId: queued.runId, command: { commandId: crypto.randomUUID(), action: "resume" } })).resolves.toMatchObject({ applied: true, run: { status: "queued", currentStep: "queued", controlState: "none" } });
     await expect(database.select({ status: agentRuns.status, controlState: agentRuns.controlState }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, queued.runId)))).resolves.toEqual([{ status: "queued", controlState: "none" }]);
     await expect(database.select({ eventType: auditEvents.eventType }).from(auditEvents).where(and(eq(auditEvents.userId, userId), eq(auditEvents.resourceId, queued.runId), eq(auditEvents.eventType, "agent.run_resumed")))).resolves.toHaveLength(1);
+  });
+
+  it("账户停止后拒绝恢复已暂停运行且保留暂停事实", async () => {
+    const { userId, targetId } = await activeTarget();
+    const queue = new MemoryQueue();
+    const started = await commands(queue).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    await createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .control({ userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+    await expect(commands(queue).control({ userId, requestId: crypto.randomUUID(), runId: started.runId, command: { commandId: crypto.randomUUID(), action: "resume" } }))
+      .rejects.toMatchObject({ code: "ACCOUNT_RUN_STOPPED" });
+    await expect(database.select({ status: agentRuns.status, controlState: agentRuns.controlState }).from(agentRuns).where(eq(agentRuns.id, started.runId)))
+      .resolves.toEqual([{ status: "paused", controlState: "none" }]);
   });
 
   it("直接恢复或取消暂停运行时也解决对应 decision Inbox 项", async () => {

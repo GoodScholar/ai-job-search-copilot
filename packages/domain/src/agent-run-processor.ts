@@ -15,6 +15,8 @@ import { AnySearchProviderErrorCodeSchema } from "@job-copilot/contracts/job-dis
 import { DeepMatchAdapterError, FakeDeepMatchAdapter, type DeepMatchAdapter } from "@job-copilot/contracts/deep-match";
 import type { AuditTrail } from "./audit-trail";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
+import { readAccountRunControlInTransaction } from "./account-run-admission";
+import { applyAgentRunControlInTransaction } from "./agent-run-control";
 import { createJobDiscoveryPersistence, discoverySourceIdentifier, type DiscoveryDetail } from "./job-discovery-persistence";
 import { persistJobOpportunity } from "./job-opportunity-persistence";
 import { deepMatchDiscoveryIdempotencyKey, ensureDeepMatchRunInTransaction, triggerDeepMatchAfterDiscovery } from "./deep-match-agent-runs";
@@ -198,8 +200,8 @@ async function renewClaim(deps: AgentRunProcessorDependencies, input: { userId: 
     if (remainingBudget(deps.clock, input.deadline) <= 0) throw new AgentRunBudgetError("active_duration");
     const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.claimToken)));
     if (!run) return [];
-    if (run.controlState === "pause_requested") return [{ outcome: "paused" }];
     if (run.controlState === "cancel_requested") return [{ outcome: "cancelled" }];
+    if (run.controlState === "pause_requested") return [{ outcome: "paused" }];
     const elapsed = await settleActiveSlice(transaction, { id: deps.id, userId: input.userId, run, now });
     const activeDurationMs = run.activeDurationMs + elapsed;
     const version = elapsed > 0 ? run.version + 1 : run.version;
@@ -489,6 +491,15 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         if (current.status === "failed") return { kind: current.terminationKind === "budget_exhausted" ? "budget_exhausted" as const : "failed" as const };
         if (current.status === "paused") return { kind: "paused" as const };
         if (current.status === "cancelled") return { kind: "cancelled" as const };
+        const accountStopped = (await readAccountRunControlInTransaction(transaction, job.userId)).stoppedAt !== null;
+        if (accountStopped && current.status === "queued") {
+          await applyAgentRunControlInTransaction(transaction, { userId: job.userId, requestId: job.runId, runId: job.runId, command: { commandId: deps.id(), action: "pause" } }, deps);
+          return { kind: "paused" as const };
+        }
+        if (accountStopped && current.status === "running" && current.claimToken) {
+          if (current.controlState === "none") await applyAgentRunControlInTransaction(transaction, { userId: job.userId, requestId: job.runId, runId: job.runId, command: { commandId: deps.id(), action: "pause" } }, deps);
+          return { kind: "pending_control" as const, claimToken: current.claimToken };
+        }
         if (current.status === "running" && current.claimExpiresAt && current.claimExpiresAt > claimNow) return { kind: "retry" as const };
         if (current.status === "running" && current.claimExpiresAt && current.claimExpiresAt <= claimNow) {
           if (current.controlState !== "none" && current.claimToken) return { kind: "pending_control" as const, claimToken: current.claimToken };

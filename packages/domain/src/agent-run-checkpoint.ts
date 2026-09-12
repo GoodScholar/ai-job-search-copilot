@@ -94,7 +94,7 @@ export function createAgentRunCheckpoint(deps: Dependencies): AgentRunCheckpoint
         // already taken over.  Ordinary preflight/checkpoints remain claim-fenced; only
         // `settleActual` may record this immutable, run+candidate-keyed cost first.
         const ownsClaim = Boolean(run && run.claimToken === input.claimToken);
-        if (!run || (!reserve.settleActual && (run.status !== "running" || !run.claimExpiresAt || !ownsClaim || (expired && run.controlState === "none")))) return { kind: "stale" };
+        if (!run || (!reserve.settleActual && (run.status !== "running" || !run.claimExpiresAt || !ownsClaim || (expired && run.controlState === "none" && accountControl.stoppedAt === null)))) return { kind: "stale" };
         const prior = await transaction.select({ category: agentRunUsageEntries.category, amount: agentRunUsageEntries.amount }).from(agentRunUsageEntries)
           .where(and(eq(agentRunUsageEntries.runId, input.runId), eq(agentRunUsageEntries.usageKey, input.checkpointKey)));
         if (run.controlState === "none" && prior.length > 0 && !sameReserve(prior, reserve)) throw new AgentRunCheckpointError("AGENT_RUN_CHECKPOINT_CONFLICT");
