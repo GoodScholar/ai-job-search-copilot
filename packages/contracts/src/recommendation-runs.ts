@@ -52,6 +52,8 @@ export const RecommendationResultEvidenceSchema = z.object({
   if (coarseRanking.eligibleCount !== coarseRanking.belowThresholdCount + coarseRanking.candidateLimitExcludedCount + coarseRanking.deepMatchCandidateCount) context.addIssue({ code: "custom", path: ["coarseRanking"], message: "粗排数量必须闭合" });
   if (deepMatching.evaluatedCount !== coarseRanking.deepMatchCandidateCount || deepMatching.evaluatedCount !== deepMatching.qualityInsufficientCount + deepMatching.finalRecommendationCount) context.addIssue({ code: "custom", path: ["deepMatching"], message: "深度匹配数量必须闭合" });
   if (sourceCoverage.credibleBranchCount < 1) context.addIssue({ code: "custom", path: ["sourceCoverage", "credibleBranchCount"], message: "可信结果至少需要一个可信发现分支" });
+  if (sourceCoverage.checkedBranchCount > sourceCoverage.plannedTrustedSourceCount + sourceCoverage.plannedPublicQueryCount) context.addIssue({ code: "custom", path: ["sourceCoverage", "checkedBranchCount"], message: "已检查分支不能超过计划来源范围" });
+  if (sourceCoverage.credibleBranchCount > sourceCoverage.checkedBranchCount) context.addIssue({ code: "custom", path: ["sourceCoverage", "credibleBranchCount"], message: "可信分支不能超过已检查分支" });
   if (sourceCoverage.verifiedJobCount !== discovery.discoveredJobCount) context.addIssue({ code: "custom", path: ["sourceCoverage", "verifiedJobCount"], message: "已验证岗位与发现岗位必须使用同一去重口径" });
 });
 
@@ -98,13 +100,26 @@ export const RecommendationRunSchema = z.object({
   if (run.preflightSnapshot.workflow !== "recommendation" || run.preflightSnapshot.targetId !== run.target.targetId) context.addIssue({ code: "custom", path: ["preflightSnapshot"], message: "已启动推荐运行必须绑定推荐检查和主求职目标" });
   if (!run.stages.every((stage, index) => stage.key === RECOMMENDATION_RUN_STAGE_KEYS[index])) context.addIssue({ code: "custom", path: ["stages"], message: "阶段必须恰好按固定顺序出现一次" });
   const current = run.currentStage === null ? null : run.stages.find((stage) => stage.key === run.currentStage);
+  const currentIndex = run.currentStage === null ? -1 : RECOMMENDATION_RUN_STAGE_KEYS.indexOf(run.currentStage);
+  const hasActiveTopology = currentIndex >= 0 && run.stages.every((stage, index) => (
+    index < currentIndex ? stage.status === "completed" : index === currentIndex ? stage.status === "pending" || stage.status === "running" : stage.status === "pending"
+  ));
+  const hasTerminalTopology = (terminalIndex: number, terminalStatus: "failed" | "cancelled") => terminalIndex >= 0 && run.stages.every((stage, index) => (
+    index < terminalIndex ? stage.status === "completed" : index === terminalIndex ? stage.status === terminalStatus : stage.status === "pending"
+  ));
+  if (run.result !== null && (run.sourceScope.trustedSourceCount !== run.result.evidence.sourceCoverage.plannedTrustedSourceCount || run.sourceScope.publicQueryCount !== run.result.evidence.sourceCoverage.plannedPublicQueryCount)) {
+    context.addIssue({ code: "custom", path: ["sourceScope"], message: "运行来源范围必须与发布结果中的计划来源一致" });
+  }
   if (run.status === "completed") {
     if (run.currentStage !== null || run.result === null || run.failure !== null || run.stages.some((stage) => stage.status !== "completed")) context.addIssue({ code: "custom", message: "完成运行必须完成全部阶段并且只具有结果" });
   } else if (run.status === "failed") {
-    if (run.currentStage === null || run.result !== null || run.failure === null || run.failure.stage !== run.currentStage || current?.status !== "failed") context.addIssue({ code: "custom", message: "失败运行必须绑定失败阶段和失败详情" });
+    if (run.currentStage === null || run.result !== null || run.failure === null || run.failure.stage !== run.currentStage || current?.status !== "failed" || !hasTerminalTopology(currentIndex, "failed")) context.addIssue({ code: "custom", message: "失败运行必须绑定失败阶段和失败详情" });
   } else if (run.status === "cancelled") {
-    if (run.currentStage !== null || run.result !== null || run.failure !== null || !run.stages.some((stage) => stage.status === "cancelled")) context.addIssue({ code: "custom", message: "取消运行不能发布结果或失败详情" });
-  } else if (run.currentStage === null || run.result !== null || run.failure !== null || current?.status === "completed") {
+    const cancelledIndex = run.stages.findIndex((stage) => stage.status === "cancelled");
+    if (run.currentStage !== null || run.result !== null || run.failure !== null || !hasTerminalTopology(cancelledIndex, "cancelled")) context.addIssue({ code: "custom", message: "取消运行不能发布结果或失败详情" });
+  } else if (run.status === "queued") {
+    if (run.currentStage !== "discovery" || run.result !== null || run.failure !== null || !hasActiveTopology) context.addIssue({ code: "custom", message: "排队运行只能在发现阶段等待或开始" });
+  } else if (run.currentStage === null || run.result !== null || run.failure !== null || !hasActiveTopology) {
     context.addIssue({ code: "custom", message: "非终态运行必须停留在未完成阶段且没有最终结果" });
   }
 });

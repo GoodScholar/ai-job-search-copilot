@@ -83,4 +83,50 @@ describe("逻辑推荐运行契约", () => {
     expect(RecommendationRunFailureSchema.parse(failure)).toEqual(failure);
     expect(RecommendationRunFailureSchema.safeParse({ ...failure, code: "li@example.com" }).success).toBe(false);
   });
+
+  it("拒绝运行中、失败和取消运行的矛盾阶段拓扑", () => {
+    const failure = { code: "RECOMMENDATION_HANDOFF_FAILED", stage: "qualification", summary: "资格门槛交接失败", impact: "本次推荐无法继续发布。", retryable: true, suggestedActions: ["restart_discovery"] } as const;
+    const baseRun = { runId, target, sourceScope: { trustedSourceCount: 2, publicQueryCount: 1 }, accountPolicyRevisionNumber: 1, budgets: { discovery: budget, deepMatch: deepMatchBudget }, preflightSnapshot: readyPreflight, result: null, failure: null, createdAt: publishedAt, updatedAt: publishedAt } as const;
+    expect(RecommendationRunSchema.safeParse({
+      ...baseRun, status: "running", currentStage: "coarse_ranking",
+      stages: [
+        completedStages[0],
+        { key: "qualification", status: "failed", startedAt: publishedAt, completedAt: publishedAt },
+        { key: "coarse_ranking", status: "running", startedAt: publishedAt, completedAt: null },
+        { key: "deep_matching", status: "pending", startedAt: null, completedAt: null },
+        { key: "result_publication", status: "pending", startedAt: null, completedAt: null },
+      ],
+    }).success).toBe(false);
+    expect(RecommendationRunSchema.safeParse({
+      ...baseRun, status: "failed", currentStage: "qualification", failure,
+      stages: [
+        completedStages[0],
+        { key: "qualification", status: "failed", startedAt: publishedAt, completedAt: publishedAt },
+        { key: "coarse_ranking", status: "running", startedAt: publishedAt, completedAt: null },
+        { key: "deep_matching", status: "pending", startedAt: null, completedAt: null },
+        { key: "result_publication", status: "pending", startedAt: null, completedAt: null },
+      ],
+    }).success).toBe(false);
+    expect(RecommendationRunSchema.safeParse({
+      ...baseRun, status: "cancelled", currentStage: null,
+      stages: [
+        { key: "discovery", status: "cancelled", startedAt: publishedAt, completedAt: publishedAt },
+        { key: "qualification", status: "running", startedAt: publishedAt, completedAt: null },
+        { key: "coarse_ranking", status: "pending", startedAt: null, completedAt: null },
+        { key: "deep_matching", status: "pending", startedAt: null, completedAt: null },
+        { key: "result_publication", status: "pending", startedAt: null, completedAt: null },
+      ],
+    }).success).toBe(false);
+  });
+
+  it("拒绝超过计划来源范围的覆盖计数和不一致的运行来源范围", () => {
+    const result = { kind: "recommendation_list", resultId, recommendationListId: resultId, itemCount: 1, evidence: closingEvidence, publishedAt } as const;
+    expect(RecommendationResultSchema.safeParse({ ...result, evidence: { ...closingEvidence, sourceCoverage: { ...closingEvidence.sourceCoverage, checkedBranchCount: 4 } } }).success).toBe(false);
+    expect(RecommendationResultSchema.safeParse({ ...result, evidence: { ...closingEvidence, sourceCoverage: { ...closingEvidence.sourceCoverage, credibleBranchCount: 3, checkedBranchCount: 2 } } }).success).toBe(false);
+    expect(RecommendationRunSchema.safeParse({
+      runId, status: "completed", currentStage: null, stages: completedStages, target,
+      sourceScope: { trustedSourceCount: 1, publicQueryCount: 1 }, accountPolicyRevisionNumber: 1,
+      budgets: { discovery: budget, deepMatch: deepMatchBudget }, preflightSnapshot: readyPreflight, result, failure: null, createdAt: publishedAt, updatedAt: publishedAt,
+    }).success).toBe(false);
+  });
 });
