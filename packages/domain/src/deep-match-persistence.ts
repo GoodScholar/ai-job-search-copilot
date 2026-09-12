@@ -10,6 +10,7 @@ import { acceptsRecommendationRule, RecommendationRuleConfigSchema } from "@job-
 import { JobQualificationsSchema } from "@job-copilot/contracts/job-imports";
 import { JobTargetConstraintsSchema } from "@job-copilot/contracts/job-targets";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
+import { readAccountRunControlInTransaction } from "./account-run-admission";
 import { effectiveAgentRunBudget, type AgentRunBudget } from "./effective-agent-run-budget";
 import { recordFirstRecommendationJourneyCompletion } from "./first-recommendation-journey";
 
@@ -316,6 +317,7 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
     async stageValidatedAssessment(input: { userId: string; runId: string; claimToken: string; candidate: SelectedDeepMatchCandidate; assessment: ReturnType<typeof DeepMatchAssessmentSchema.parse>; usage: ReturnType<typeof DeepMatchAdapterResultSchema.parse>["usage"] }) {
       return deps.db.transaction(async (transaction) => {
         await acquireAccountAdvisoryLock(transaction, input.userId);
+        if ((await readAccountRunControlInTransaction(transaction, input.userId)).stoppedAt !== null) throw new DeepMatchClaimLostError();
         const [run] = await transaction.select({ id: agentRuns.id, ruleVersion: agentRuns.ruleVersion, workflowVersion: agentRuns.workflowVersion, budgetSnapshot: agentRuns.budgetSnapshot }).from(agentRuns).where(and(
           eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"),
           eq(agentRuns.claimToken, input.claimToken), eq(agentRuns.controlState, "none"), gt(agentRuns.claimExpiresAt, deps.clock()),
@@ -363,6 +365,7 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
     async publishStagedRun(input: { userId: string; targetId: string; runId: string; fence: { claimToken: string }; selectionExclusions: readonly { opportunityId: string; reasonCode: RecommendationExclusionReason }[]; ruleConfig?: { minimumOverallScore: number; minimumEvidenceDimensions: number; requiredEvidenceDimensions: string[]; excludedOpportunityIds: string[] }; onPublished?: (transaction: any, result: { resultCount: number }) => Promise<void> }) {
       return deps.db.transaction(async (transaction) => {
         await acquireAccountAdvisoryLock(transaction, input.userId);
+        if ((await readAccountRunControlInTransaction(transaction, input.userId)).stoppedAt !== null) throw new DeepMatchClaimLostError();
         const [run] = await transaction.select({ id: agentRuns.id, ruleVersion: agentRuns.ruleVersion, workflowVersion: agentRuns.workflowVersion, budgetSnapshot: agentRuns.budgetSnapshot }).from(agentRuns).where(and(
           eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"),
           eq(agentRuns.claimToken, input.fence.claimToken), eq(agentRuns.controlState, "none"), gt(agentRuns.claimExpiresAt, deps.clock()),

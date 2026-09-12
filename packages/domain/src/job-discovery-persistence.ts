@@ -17,6 +17,7 @@ import {
 } from "@job-copilot/database";
 import type { AuditTrail } from "./audit-trail";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
+import { readAccountRunControlInTransaction } from "./account-run-admission";
 import { effectiveAgentRunBudget, type AgentRunBudget } from "./effective-agent-run-budget";
 import { agentRunUsageSnapshot, appendBudgetFacts, settleActiveSlice } from "./agent-run-lifecycle";
 import { discoveryNormalizedData, persistJobOpportunity } from "./job-opportunity-persistence";
@@ -307,6 +308,10 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
     }): Promise<{ sourcePostingVersionIds: string[]; cleanupObjectKeys: string[] }> {
       return deps.db.transaction(async (transaction) => {
         await acquireAccountAdvisoryLock(transaction, input.userId);
+        if ((await readAccountRunControlInTransaction(transaction, input.userId)).stoppedAt !== null) {
+          const error = Object.assign(new Error("JOB_DISCOVERY_CLAIM_STALE"), { code: "JOB_DISCOVERY_CLAIM_STALE" });
+          throw error;
+        }
         const [run] = await transaction.select().from(agentRuns).where(and(
           eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"),
           eq(agentRuns.controlState, "none"), eq(agentRuns.claimToken, input.claimToken), gt(agentRuns.claimExpiresAt, sql`current_timestamp`),
@@ -360,6 +365,7 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
       const objectBySource = new Map(input.storedObjects.map((item) => [`${item.sourceId}:${item.detailId}`, item]));
       const persist = async (transaction: any) => {
         await acquireAccountAdvisoryLock(transaction, input.run.userId);
+        if ((await readAccountRunControlInTransaction(transaction, input.run.userId)).stoppedAt !== null) return { resultCount: 0, cleanupObjectKeys: input.storedObjects.map((item) => item.objectKey), completed: false };
         const [run] = await transaction.select().from(agentRuns).where(and(
           eq(agentRuns.userId, input.run.userId), eq(agentRuns.id, input.run.id), eq(agentRuns.status, "running"),
           eq(agentRuns.claimToken, input.run.claimToken), eq(agentRuns.controlState, "none"),

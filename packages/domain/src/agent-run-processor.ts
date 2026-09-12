@@ -383,6 +383,7 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
 }): Promise<"completed" | "stale" | "facts"> {
   return runTransaction(deps, input.deadline, async (transaction) => {
     await acquireAccountAdvisoryLock(transaction, input.userId);
+    const accountStopped = (await readAccountRunControlInTransaction(transaction, input.userId)).stoppedAt !== null;
     const [run] = await transaction.select().from(agentRuns).where(input.interrupted
       ? and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId))
       : and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.claimToken), eq(agentRuns.controlState, "none")));
@@ -418,6 +419,7 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
         set: { affectedCount: sql`greatest(${jobDiscoverySourceIssues.affectedCount}, excluded.affected_count)` },
       });
     }
+    if (accountStopped) return "facts";
     if (input.complete === false) {
       if (input.sourceIssues.length > 0) {
         const [existing] = await transaction.select({ id: agentInboxItems.id }).from(agentInboxItems).where(and(eq(agentInboxItems.userId, input.userId), eq(agentInboxItems.runId, input.runId), eq(agentInboxItems.kind, "discovery_attention"))).limit(1);

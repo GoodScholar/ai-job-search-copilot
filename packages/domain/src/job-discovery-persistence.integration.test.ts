@@ -26,6 +26,7 @@ import {
 import { createAuditTrail } from "./audit-trail";
 import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
 import { createAgentRunCommands, type AgentRunQueue } from "./agent-run-control";
+import { createAccountRunControl } from "./account-run-control";
 import { createJobDiscoveryPersistence, discoverySourceIdentifier } from "./job-discovery-persistence";
 import { persistJobOpportunity } from "./job-opportunity-persistence";
 import { GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION } from "@job-copilot/contracts/agent-runs";
@@ -686,7 +687,7 @@ describe("job discovery persistence lifecycle", () => {
     await expect(database.execute(sql`select count(*)::int as count from job_source_posting_versions where user_id = ${userId}::uuid`)).resolves.toEqual([{ count: count * 2 }]);
     await expect(database.execute(sql`select count(*)::int as count from job_opportunity_sources where user_id = ${userId}::uuid`)).resolves.toEqual([{ count: count * 2 }]);
     // 新运行的账户停止准入额外读取一次账户控制行，仍保持与明细数无关的常数 SQL 形状。
-    expect(statementCount).toBeLessThanOrEqual(36);
+    expect(statementCount).toBeLessThanOrEqual(37);
     expect(observedStatements.find((statement) => statement.query.startsWith('insert into "agent_runs"'))?.query)
       .toMatch(/\$6, default, default, \$7/u);
     // 新运行记录携带策略修订、策略快照与 preflight 快照，固定 SQL 形状增加三个参数。
@@ -857,4 +858,20 @@ describe("job discovery persistence lifecycle", () => {
     await expect(Promise.all([database.select().from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, run.id)), database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, run.id)), database.select().from(agentRunEvents).where(eq(agentRunEvents.runId, run.id)), database.select().from(agentInboxItems).where(eq(agentInboxItems.runId, run.id)), database.select().from(auditEvents).where(eq(auditEvents.resourceId, run.id))])).resolves.toEqual(before);
     await expect(database.select({ availability: jobSourcePostings.availability }).from(jobSourcePostings).where(and(eq(jobSourcePostings.userId, userId), eq(jobSourcePostings.sourceId, outsideId)))).resolves.toEqual([{ availability: "open" }]);
   });
+  it.each(["fake", "greenhouse"] as const)("账户停止且 run pause 标记丢失后 %s persistSuccessfulDiscovery 不写业务结果", async (adapter) => {
+    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID();
+    await database.insert(jobAccounts).values({ id: userId });
+    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: firstSeen, updatedAt: firstSeen });
+    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: firstSeen });
+    const run = await claimRun(userId, targetId, later);
+    await database.update(agentRuns).set({ adapter }).where(eq(agentRuns.id, run.id));
+    await createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => later }), id: () => crypto.randomUUID(), clock: () => later })
+      .control({ userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+    await database.update(agentRuns).set({ controlState: "none" }).where(eq(agentRuns.id, run.id));
+    const persistence = createJobDiscoveryPersistence({ db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => later }) });
+    const result = await persistence.persistSuccessfulDiscovery({ run, details: [{ sourceId: "greenhouse:stopped", detailId: "1", company: "Stopped", title: "AI Engineer", location: null, postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true, rawPayload: {} }], scans: [{ sourceId: "greenhouse:stopped", observedDetailIds: ["1"], complete: true }], storedObjects: [{ sourceId: "greenhouse:stopped", detailId: "1", objectKey: "stopped.json", rawContentSha256: "a".repeat(64) }], now: later });
+    expect(result).toMatchObject({ completed: false, cleanupObjectKeys: ["stopped.json"] });
+    await expect(Promise.all([database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, run.id)), database.select().from(jobOpportunities).where(eq(jobOpportunities.userId, userId))])).resolves.toEqual([[], []]);
+  });
+
 });

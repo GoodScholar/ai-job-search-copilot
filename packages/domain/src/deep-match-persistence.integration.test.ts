@@ -11,6 +11,8 @@ import { JobTargetConstraintsSchema } from "@job-copilot/contracts/job-targets";
 import { createDeepMatchRunStarter as createDomainDeepMatchRunStarter } from "./deep-match-agent-runs";
 import { createAgentRunRecoveryQueries } from "./agent-run-processor";
 import { createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
+import { createAccountRunControl } from "./account-run-control";
+import { createAuditTrail } from "./audit-trail";
 import { RunPreflightRejectedError, type RunPreflightEvaluator } from "./run-preflight";
 import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
 import { RunPreflightReportSchema } from "@job-copilot/contracts/run-preflight";
@@ -634,5 +636,37 @@ describe("deep match persistence", () => {
     expect(latest?.exclusions).toHaveLength(25);
     await expect(queries.getListExclusionsPage({ userId: input.userId, targetId: input.targetId, recommendationListId: listIds[20]!, cursor: latest!.exclusionsNextCursor!, limit: 25 })).resolves.toMatchObject({ items: [expect.any(Object)], nextCursor: null });
   }, 60_000);
+
+  it("账户停止且 run pause 标记丢失后 publishStagedRun 不发布 recommendation", async () => {
+    const input = await fixture();
+    const staged = await stageFixture(input);
+    await createAccountRunControl({ db, auditTrail: createAuditTrail({ db, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .control({ userId: input.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+    await db.update(agentRuns).set({ controlState: "none" }).where(eq(agentRuns.id, staged.runId));
+
+    await expect(staged.commands.publishStagedRun({ userId: input.userId, targetId: input.targetId, runId: staged.runId, fence: { claimToken: staged.claimToken }, selectionExclusions: [] })).rejects.toThrow("DEEP_MATCH_CLAIM_LOST");
+    await expect(Promise.all([
+      db.select().from(recommendationLists).where(eq(recommendationLists.userId, input.userId)),
+      db.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, input.userId)),
+    ])).resolves.toEqual([[], []]);
+  });
+
+  it("账户停止且 run pause 标记丢失后 stageValidatedAssessment 不暂存模型结果", async () => {
+    const input = await fixture();
+    const starter = createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now });
+    const started = await starter.start({ userId: input.userId, targetId: input.targetId, opportunityId: input.opportunityId, idempotencyKey: crypto.randomUUID(), trigger: "manual" });
+    const claimToken = crypto.randomUUID();
+    await db.update(agentRuns).set({ status: "running", currentStep: "assess_matches", attemptCount: 1, startedAt: now, activeSliceStartedAt: now, claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), controlState: "none" }).where(eq(agentRuns.id, started.runId));
+    const commands = createDeepMatchCommands({ db, id: () => crypto.randomUUID(), clock: () => now });
+    const candidate = (await createDeepMatchQueries({ db }).getFrozenCandidates({ userId: input.userId, runId: started.runId }))[0]!;
+    const result = await commands.invokeAndValidate({ userId: input.userId, runId: started.runId, candidate, modelCall: modelCall() });
+    await createAccountRunControl({ db, auditTrail: createAuditTrail({ db, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .control({ userId: input.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+    await db.update(agentRuns).set({ controlState: "none" }).where(eq(agentRuns.id, started.runId));
+
+    await expect(commands.stageValidatedAssessment({ userId: input.userId, runId: started.runId, claimToken, candidate, assessment: result.assessment, usage: result.usage })).rejects.toThrow("DEEP_MATCH_CLAIM_LOST");
+    await expect(db.select({ assessment: deepMatchRunCandidates.assessment }).from(deepMatchRunCandidates).where(and(eq(deepMatchRunCandidates.runId, started.runId), eq(deepMatchRunCandidates.opportunityId, candidate.opportunityId))))
+      .resolves.toEqual([{ assessment: null }]);
+  });
 
 });

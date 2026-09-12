@@ -721,6 +721,17 @@ describe("AgentRunProcessor checkpoints", () => {
       .resolves.toEqual([{ status: "running", currentStep: "batch_search", claimToken }]);
   });
 
+  it("账户停止且 run pause 标记丢失后 trusted bridge 不写 Opportunity", async () => {
+    const job = await layeredRun(); const claimToken = crypto.randomUUID();
+    await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", startedAt: now, claimToken, claimExpiresAt: new Date(Date.now() + 30_000), activeSliceStartedAt: now, attemptCount: 1, controlState: "none" }).where(eq(agentRuns.id, job.runId));
+    const control = createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    await control.control({ userId: job.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+    await database.update(agentRuns).set({ controlState: "none" }).where(eq(agentRuns.id, job.runId));
+    const persistence = createJobDiscoveryPersistence({ db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => now }) });
+    await expect(persistence.persistTrustedLayeredDiscovery({ userId: job.userId, runId: job.runId, claimToken, sourceId: "greenhouse:example", now, details: [{ sourceId: "greenhouse:example", detailId: "stopped", company: "Example", title: "AI", location: null, postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true, rawPayload: {} }], storedObjects: [{ sourceId: "greenhouse:example", detailId: "stopped", objectKey: "stopped.json", rawContentSha256: "d".repeat(64) }] })).rejects.toMatchObject({ code: "JOB_DISCOVERY_CLAIM_STALE" });
+    await expect(database.select().from(jobOpportunities).where(eq(jobOpportunities.userId, job.userId))).resolves.toEqual([]);
+  });
+
   it("v4 runtime 逐次 checkpoint 同一 signal 地包装冻结 Greenhouse，并只经 claim bridge 写入", async () => {
     const job = await layeredRun();
     const claimToken = crypto.randomUUID();
@@ -2010,5 +2021,27 @@ describe("AgentRunProcessor checkpoints", () => {
 
     await vi.waitFor(() => expect(signal?.aborted).toBe(true), { timeout: 150 });
     await expect(processing).resolves.toBe("paused");
+  });
+
+  it("账户停止且 run pause 标记丢失后 layered outcome 不写结果或 child", async () => {
+    const job = await layeredRun(); let stopped = false;
+    const control = createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    const durable = checkpoint();
+    const controlled: AgentRunCheckpoint = { check: async (input) => {
+      const outcome = await durable.check(input);
+      if (!stopped && input.checkpointKey.includes(":step_persist_results_start:1")) {
+        stopped = true;
+        await control.control({ userId: job.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+        await database.update(agentRuns).set({ controlState: "none" }).where(eq(agentRuns.id, job.runId));
+      }
+      return outcome;
+    } };
+    await expect(createAgentRunProcessor({ db: database, checkpoint: controlled, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({ branchOutcome: { trusted: "succeeded" as const, publicDiscovery: "clean_zero" as const }, diagnostics: [], sourcePostingVersionIds: [job.sourcePostingVersionId], trustedSourcePostingVersionIds: [job.sourcePostingVersionId] }) }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, heartbeatRenew: async () => true })
+      .process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("stale");
+    await expect(Promise.all([
+      database.select().from(jobDiscoveryRunResults).where(eq(jobDiscoveryRunResults.runId, job.runId)),
+      database.select().from(agentRuns).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.workflowVersion, "deep-match-v1"))),
+      database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, job.runId)),
+    ])).resolves.toEqual([[], [], [{ status: "running" }]]);
   });
 });
