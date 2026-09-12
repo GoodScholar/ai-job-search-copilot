@@ -324,6 +324,24 @@ type RecommendationResult =
 
 ## 逻辑控制与恢复
 
+### 账户全局停止（2026-09-12 用户已批准）
+
+“停止全部运行”作用于当前账户全部 AgentRun，包括旧手动发现、每日计划、单岗位重新评估、既有自动匹配和本 Issue 推荐根/子运行。历史已发布结果保留且可读；暂停、取消仍可执行。停止状态持久化，页面关闭或 Worker 重启不解除。
+
+- 停止事务把 queued 运行立即改为 paused，running 运行设置 pause_requested；已有 cancel_requested 优先，不能降级为暂停。原 paused 和终态保持不变。复用既有逐运行事件、审计、暂停 Inbox 和 checkpoint 收敛，不新建生命周期框架。
+- 停止提交后不得授权新外部动作、新运行、恢复、领取/重新领取或结果发布。创建、恢复、claim、checkpoint、heartbeat、发现完成/自动 child 创建、深匹配暂存和所有发布入口必须在同一账户锁事务内重读当前停止状态；继承旧 preflight 或预算快照不能绕过。
+- 这是安全检查点停止，不承诺撤回已授权的在途 HTTP/模型请求。返回后仍须以原 invocation attempt 和 usage key 幂等结算真实消耗，保留 settleActual 的失去 claim 结算例外；不得因此发布结果、启动下一动作或改写新 claimant 的账本。heartbeat 可中断本地等待；取消始终先于暂停收敛。
+- “解除全局停止”仅开放未来新运行，不自动恢复 queued/running 在停止时转成的 paused 运行，也不清除仍待 checkpoint 收敛的 pause_requested；旧运行由用户逐个继续。不得清空用量、预算、步骤、claim 历史或重新发布历史结果。
+- 停止期间到期及解除时仍未启动的定时机会跳过、不补跑。持久化最近一次解除的 scheduleResumeAfter；scheduledFor 不晚于此时刻且尚无持久运行的 occurrence 必须 skipped，即使 Worker 在整个停止期间离线、解除后才物化旧 nextRunAt。之后按现有规则计算未来 nextRunAt，不改变每日计划配置。已存在运行的 occurrence 仅补记 dispatched，不复活该运行。
+
+停止字段放在 account_run_policies 当前行，独立于 settings 修订：stoppedAt、controlVersion、scheduleResumeAfter。普通保存、查看/回放历史策略不能修改这些字段；policy.version 继续只跟随 settings revision。窄表 account_run_control_commands 以 (user_id, command_id) 保存 action、expectedVersion、applied 和不可变响应，保证旧 stop 命令在解除后重放不会再次停止。
+
+新增 `GET /v1/account/run-policy/control` 和 `POST /v1/account/run-policy/controls`，BFF 为对应 `/api/account/run-policy/...`。请求严格为 `{ commandId, expectedVersion, action: "stop" | "release" }`；响应控制状态为 `{ stoppedAt, controlVersion, scheduleResumeAfter }`，命令额外返回 applied。先匹配已有 command，再校验独立 controlVersion；同键异义或新命令旧版本返回安全 409，同义重放返回原响应。页面在重放后重新 GET 当前状态，不能用旧响应覆盖新状态。
+
+入口位于既有“账户运行策略”页面，显示停止状态及“停止全部运行”/“解除全局停止”，说明在途调用可能产生费用、解除不会自动恢复旧运行和补跑错过计划。服务端会话唯一决定账户；响应与错误 no-store，仅输出稳定中文和上述有限字段。
+
+账户停止、运行控制、claim 和发布均沿用 acquireAccountAdvisoryLock(userId)。stop/release 事务不锁或更新 schedule/occurrence 行；调度现有 occurrence 行锁 → 独立 starter 账户锁顺序保持不变，禁止外围持有账户锁再调用另开事务的 starter。调度在 starter 内账户锁下执行停止/cutoff 判定，再由外层记录 skipped，避免反向锁死锁和离线补跑。
+
 `control` 在账户锁内解析当前活动物理运行：
 
 - 发现阶段控制根运行；
@@ -392,6 +410,7 @@ Web BFF 提供同源对应路由，只从会话读取账户身份，严格拒绝
 - 推荐清单与“暂无推荐”发布都与 Inbox、运行终态和首次推荐旅程完成保持原子；
 - 队列 enqueue 失败、至少一次重复投递、过期 lease、Worker 重启和每个物理阶段崩溃恢复不重复领域副作用；
 - 暂停、继续、取消、全局停止、claim 丢失和预算耗尽不能越过发布 fence；
+- 全局停止覆盖 legacy 与推荐根/子运行，取消优先，在途真实消耗幂等结算；解除不自动恢复旧运行，重复控制命令不重施加；停止和发布并发按账户锁串行；Worker 离线跨停止/解除后旧定时机会仍 skipped；
 - 所有查询、命令、父子关系和结果保持跨账户隔离。
 
 ### API 与 Web
