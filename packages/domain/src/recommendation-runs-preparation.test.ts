@@ -12,6 +12,7 @@ import { createAuditTrail } from "./audit-trail";
 import { createAccountRunControl } from "./account-run-control";
 import { createModelDiagnosticProjectionReader, createRunPreflightEvaluator } from "./run-preflight";
 import { createRecommendationRunPreparationQueries, prepareRecommendationRunInTransaction } from "./recommendation-runs-preparation";
+import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import type { SourceCapabilityAdapter } from "./source-capabilities";
 
 const now = new Date("2026-09-13T12:00:00.000Z");
@@ -24,6 +25,12 @@ const capabilityAdapter: SourceCapabilityAdapter = {
   adapter: "greenhouse", adapterVersion: "test-v1",
   declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test-v1", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring"] }),
 };
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((accept) => { resolve = accept; });
+  return { promise, resolve };
+}
 
 describe("推荐运行准备", () => {
   let container: StartedPostgreSqlContainer;
@@ -94,6 +101,86 @@ describe("推荐运行准备", () => {
 
     expect(result).toMatchObject({ preparation: { target: null, preflight: { workflow: "recommendation", targetId: null, status: "blocked" }, sourceScope: { trustedSourceCount: 0, publicQueryCount: 0 } }, startSpec: null, recommendationContext: null });
     expect(result.preparation.preflight.items.map((item) => item.code)).toContain("PRIMARY_JOB_TARGET_MISSING");
+  });
+
+  it("没有可执行 Greenhouse 来源时仍返回阻塞摘要，且不泄漏可启动私有结果", async () => {
+    const owner = await account();
+    const [watchlist] = await database.select({ id: companyWatchlists.id }).from(companyWatchlists).where(and(eq(companyWatchlists.userId, owner.userId), eq(companyWatchlists.targetId, owner.targetId)));
+    await database.update(companyWatchlists).set({ version: 2, updatedAt: now }).where(eq(companyWatchlists.id, watchlist!.id));
+    await database.insert(companyWatchlistRevisions).values({ id: randomUUID(), userId: owner.userId, watchlistId: watchlist!.id, targetId: owner.targetId, version: 2, items: [], createdAt: now });
+
+    await expect(createRecommendationRunPreparationQueries({ db: database, runPreflight: evaluator("greenhouse", owner.fingerprint), executionMode: "greenhouse", id: randomUUID, clock: () => now }).prepare({ userId: owner.userId })).resolves.toMatchObject({
+      preflight: { status: "blocked" }, sourceScope: { trustedSourceCount: 0, publicQueryCount: 0 },
+    });
+    const internal = await database.transaction((transaction) => prepareRecommendationRunInTransaction(transaction, { userId: owner.userId, executionMode: "greenhouse" }, { runPreflight: evaluator("greenhouse", owner.fingerprint), id: randomUUID, clock: () => now }));
+    expect(internal).toMatchObject({ startSpec: null, recommendationContext: null });
+  });
+
+  it("模型诊断阻塞时保留安全的来源摘要，但不返回可启动私有结果", async () => {
+    const owner = await account();
+    await database.update(modelDiagnosticResults).set({ status: "failed", reasonCode: "MODEL_DIAGNOSTIC_FAILED" }).where(eq(modelDiagnosticResults.configurationFingerprint, owner.fingerprint));
+    const internal = await database.transaction((transaction) => prepareRecommendationRunInTransaction(transaction, { userId: owner.userId, executionMode: "greenhouse" }, { runPreflight: evaluator("greenhouse", owner.fingerprint), id: randomUUID, clock: () => now }));
+
+    expect(internal.preparation).toMatchObject({ preflight: { status: "blocked" }, sourceScope: { trustedSourceCount: 1, publicQueryCount: 0 } });
+    expect(internal).toMatchObject({ startSpec: null, recommendationContext: null });
+  });
+
+  it("有效主目标缺少画像时保留安全来源摘要并阻塞私有启动结果", async () => {
+    const owner = await account();
+    await database.delete(profileFactRevisions).where(eq(profileFactRevisions.userId, owner.userId));
+    await database.delete(profileFacts).where(eq(profileFacts.userId, owner.userId));
+    await database.delete(jobProfiles).where(eq(jobProfiles.userId, owner.userId));
+    const internal = await database.transaction((transaction) => prepareRecommendationRunInTransaction(transaction, { userId: owner.userId, executionMode: "greenhouse" }, { runPreflight: evaluator("greenhouse", owner.fingerprint), id: randomUUID, clock: () => now }));
+
+    expect(internal.preparation).toMatchObject({ target: { targetId: owner.targetId }, preflight: { status: "blocked" }, sourceScope: { trustedSourceCount: 1, publicQueryCount: 0 } });
+    expect(internal.preparation.preflight.items.map((item) => item.code)).toContain("PROFILE_EVIDENCE_MISSING");
+    expect(internal).toMatchObject({ startSpec: null, recommendationContext: null });
+  });
+
+  it("recommendation 忽略非主目标请求，始终绑定当前活动主目标", async () => {
+    const owner = await account(); const secondaryTargetId = randomUUID();
+    await database.insert(jobTargets).values({ id: secondaryTargetId, userId: owner.userId, version: 1, priority: "secondary", state: "active", activeSlot: 1, createdAt: now, updatedAt: now });
+    await database.insert(jobTargetRevisions).values({ id: randomUUID(), userId: owner.userId, targetId: secondaryTargetId, version: 1, priority: "secondary", state: "active", constraints: { ...constraints, roleFamily: "不应使用" }, createdAt: now });
+    const evaluation = await evaluator("greenhouse", owner.fingerprint).evaluate(database, { userId: owner.userId, targetId: secondaryTargetId, workflow: "recommendation", trigger: "manual" });
+
+    expect(evaluation.report).toMatchObject({ targetId: owner.targetId });
+    expect(evaluation.report.items.find((item) => item.code === "REQUESTED_JOB_TARGET_READY")?.evidence).toMatchObject({ requestedTargetId: owner.targetId });
+  });
+
+  it("layered public 在仅 AnySearch 查询可规划时将来源降级为 warning，而不是 blocking", async () => {
+    const owner = await account();
+    const [watchlist] = await database.select({ id: companyWatchlists.id }).from(companyWatchlists).where(and(eq(companyWatchlists.userId, owner.userId), eq(companyWatchlists.targetId, owner.targetId)));
+    await database.update(companyWatchlists).set({ version: 2, updatedAt: now }).where(eq(companyWatchlists.id, watchlist!.id));
+    await database.insert(companyWatchlistRevisions).values({ id: randomUUID(), userId: owner.userId, watchlistId: watchlist!.id, targetId: owner.targetId, version: 2, items: [{ itemId: randomUUID(), canonicalCompanyName: "Public only", careersUrl: "https://careers.example.com/jobs", allowedDomains: ["example.com"], sourceNote: null, state: "enabled", position: 1 }], createdAt: now });
+    const settings = structuredClone(systemAccountRunPolicy().effective);
+    settings.discovery.enabledProviders = ["anysearch"];
+    settings.discovery.publicQueryLimit = 1;
+    await createAccountRunPolicies({ db: database, id: randomUUID, clock: () => now }).save({ userId: owner.userId, command: { expectedVersion: 0, settings } });
+
+    const preparation = await createRecommendationRunPreparationQueries({ db: database, runPreflight: evaluator("layered_public", owner.fingerprint), executionMode: "layered_public", id: randomUUID, clock: () => now }).prepare({ userId: owner.userId });
+    expect(preparation.preflight.status).toBe("ready_with_warnings");
+    expect(preparation.preflight.items.find((item) => item.code === "SOURCE_CAPABILITY_PARTIAL")).toMatchObject({ severity: "warning" });
+    expect(preparation.sourceScope).toEqual({ trustedSourceCount: 0, publicQueryCount: 1 });
+  });
+
+  it("公开 prepare 在账户锁中线性化 evaluator 与主目标快照", async () => {
+    const owner = await account();
+    const entered = deferred(); const releaseEvaluation = deferred();
+    const base = evaluator("greenhouse", owner.fingerprint);
+    const delayed = { evaluate: async (...args: Parameters<typeof base.evaluate>) => { entered.resolve(); await releaseEvaluation.promise; return base.evaluate(...args); } };
+    const queries = createRecommendationRunPreparationQueries({ db: database, runPreflight: delayed, executionMode: "greenhouse", id: randomUUID, clock: () => now });
+    const preparing = queries.prepare({ userId: owner.userId });
+    await entered.promise;
+    const deactivate = database.transaction(async (transaction) => {
+      await acquireAccountAdvisoryLock(transaction, owner.userId);
+      await transaction.update(jobTargets).set({ state: "inactive" }).where(eq(jobTargets.id, owner.targetId));
+    });
+    releaseEvaluation.resolve();
+    const preparation = await preparing;
+    await deactivate;
+
+    expect(preparation).toMatchObject({ target: { targetId: owner.targetId }, preflight: { targetId: owner.targetId } });
+    expect(preparation.preflight.status).not.toBe("blocked");
   });
 
   it.each([

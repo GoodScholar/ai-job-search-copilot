@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import {
-  companyWatchlistRevisions, companyWatchlists, jobSourceHealthChecks, jobTargets, profileFactRevisions, profileFacts,
+  companyWatchlistRevisions, companyWatchlists, jobProfiles, jobSourceHealthChecks, jobTargetRevisions, jobTargets, profileFactRevisions, profileFacts,
   type Database,
 } from "@job-copilot/database";
 import { type AccountRunPolicySettings } from "@job-copilot/contracts/account-run-policies";
@@ -13,6 +13,8 @@ import { resolveEffectiveAccountRunPolicy } from "./account-run-policies";
 import { readAccountRunControlInTransaction } from "./account-run-admission";
 import { isDateInBackgroundWindow } from "./account-run-policy-window";
 import { analyzePublicJobDiscoverySources } from "./public-job-discovery-sources";
+import { createAnySearchQueryPlan } from "./anysearch-query-plan";
+import { CompanyWatchlistItemSchema } from "@job-copilot/contracts/company-watchlists";
 import type { JobDiscoveryExecutionMode } from "./job-discovery-execution-mode";
 import { type ModelDiagnosticProjectionReader, createModelDiagnosticProjectionReader } from "./model-diagnostics";
 import type { SourceCapabilityAdapter } from "./source-capabilities";
@@ -117,6 +119,25 @@ async function sources(db: Pick<Database, "select">, userId: string, targetId: s
   const analysis = analyzePublicJobDiscoverySources(watchlist);
   return analysis.status === "executable" ? analysis.sources.map((source) => ({ itemId: source.watchlistItemId, sourceId: source.sourceId })) : [];
 }
+async function layeredPublicQueryCount(db: Pick<Database, "select">, input: { userId: string; targetId: string | null; publicQueryLimit: number; verificationCandidateLimit: number }): Promise<number> {
+  if (!input.targetId || input.publicQueryLimit <= 0) return 0;
+  const [[target], [profile], [watchlist]] = await Promise.all([
+    db.select({ version: jobTargets.version, priority: jobTargets.priority, state: jobTargets.state, constraints: jobTargetRevisions.constraints }).from(jobTargets).innerJoin(jobTargetRevisions, and(eq(jobTargetRevisions.userId, jobTargets.userId), eq(jobTargetRevisions.targetId, jobTargets.id), eq(jobTargetRevisions.version, jobTargets.version))).where(and(eq(jobTargets.userId, input.userId), eq(jobTargets.id, input.targetId))),
+    db.select({ id: jobProfiles.id, version: jobProfiles.version }).from(jobProfiles).where(eq(jobProfiles.userId, input.userId)),
+    db.select({ version: companyWatchlists.version, items: companyWatchlistRevisions.items }).from(companyWatchlists).innerJoin(companyWatchlistRevisions, and(eq(companyWatchlistRevisions.userId, companyWatchlists.userId), eq(companyWatchlistRevisions.watchlistId, companyWatchlists.id), eq(companyWatchlistRevisions.version, companyWatchlists.version))).where(and(eq(companyWatchlists.userId, input.userId), eq(companyWatchlists.targetId, input.targetId))),
+  ]);
+  if (!target || !profile || profile.version < 1) return 0;
+  const revisions = await db.select({ profileFactId: profileFacts.id, factType: profileFactRevisions.factType, factValue: profileFactRevisions.factValue, state: profileFactRevisions.state, revisionNumber: profileFactRevisions.revisionNumber }).from(profileFacts).innerJoin(profileFactRevisions, and(eq(profileFactRevisions.userId, profileFacts.userId), eq(profileFactRevisions.profileFactId, profileFacts.id))).where(and(eq(profileFacts.userId, input.userId), eq(profileFacts.profileId, profile.id))).orderBy(desc(profileFactRevisions.revisionNumber));
+  const current = new Map<string, typeof revisions[number]>();
+  for (const revision of revisions) if (!current.has(revision.profileFactId)) current.set(revision.profileFactId, revision);
+  const confirmedActiveSkillNames = [...new Set([...current.values()].filter((revision) => revision.factType === "skill" && revision.state === "active").flatMap((revision) => {
+    const value = revision.factValue;
+    return value && typeof value === "object" && !Array.isArray(value) && "name" in value && typeof value.name === "string" && value.name.trim() ? [value.name.trim()] : [];
+  }))].sort((left, right) => left.localeCompare(right, "zh-CN")).slice(0, 10);
+  const items = watchlist ? CompanyWatchlistItemSchema.array().parse(watchlist.items) : [];
+  const companies = items.filter((item) => item.state === "enabled").sort((left, right) => left.position - right.position).map((item) => ({ watchlistItemId: item.itemId, canonicalCompanyName: item.canonicalCompanyName, allowedDomains: item.allowedDomains }));
+  return createAnySearchQueryPlan({ targetSnapshot: { targetId: input.targetId, version: target.version, priority: target.priority, state: target.state, constraints: target.constraints }, profileSnapshot: { targetId: input.targetId, version: profile.version, confirmedActiveSkillNames }, watchlistSnapshot: { targetId: input.targetId, version: watchlist?.version ?? 0, companies }, publicQueryLimit: input.publicQueryLimit, verificationCandidateLimit: input.verificationCandidateLimit }).queries.length;
+}
 function capabilities(adapter: SourceCapabilityAdapter, input: RunPreflightInput, sources: Source[]) {
   const required: Array<"active_discovery" | "read_details" | "continuous_monitoring"> = input.trigger === "schedule" ? ["active_discovery", "read_details", "continuous_monitoring"] : ["active_discovery", "read_details"];
   let count = 0;
@@ -173,6 +194,9 @@ export function createRunPreflightEvaluator(deps: { capabilityAdapter: SourceCap
       const safeRequestedTargetId = requested?.targetId ?? (input.targetId ? null : primary?.targetId ?? null);
       const targetId = requested?.state === "active" ? requested.targetId : primary?.targetId ?? null;
       const realSources = (await sources(db, input.userId, targetId)).slice(0, policy.effective.discovery.trustedSourceLimit);
+      const publicQueryCount = input.workflow === "recommendation" && deps.discoveryExecutionMode === "layered_public" && policy.effective.discovery.enabledProviders.includes("anysearch")
+        ? await layeredPublicQueryCount(db, { userId: input.userId, targetId, publicQueryLimit: policy.effective.discovery.publicQueryLimit, verificationCandidateLimit: policy.effective.discovery.verificationCandidateLimit })
+        : 0;
       const model = await deps.modelDiagnosticReader.get(db, checkedAt);
       const items: RunPreflightItem[] = [];
       items.push(item(facts.count ? "PROFILE_EVIDENCE_READY" : "PROFILE_EVIDENCE_MISSING", facts.count ? "informational" : "blocking", { kind: "profile", activeTrustedFactCount: facts.count, latestFactRevisionId: facts.latestRevisionId, checkedAt: checkedAt.toISOString() }, false, facts.count ? [] : ["review_profile"]));
@@ -184,7 +208,9 @@ export function createRunPreflightEvaluator(deps: { capabilityAdapter: SourceCap
         items.push(item("SOURCE_HEALTH_NOT_REQUIRED", "informational", { kind: "source_health", checkedSourceCount: 0, healthySourceCount: 0, degradedSourceCount: 0, uncheckedSourceCount: 0, latestCheckedAt: null }, false, []));
       } else {
         const capable = capabilities(deps.capabilityAdapter, input, realSources);
-        const capabilityCode = realSources.length === 0 || capable === 0 ? "SOURCE_CAPABILITY_UNAVAILABLE" : capable === realSources.length ? "SOURCE_CAPABILITY_READY" : "SOURCE_CAPABILITY_PARTIAL";
+        const capabilityCode = realSources.length === 0 || capable === 0
+          ? publicQueryCount > 0 ? "SOURCE_CAPABILITY_PARTIAL" : "SOURCE_CAPABILITY_UNAVAILABLE"
+          : capable === realSources.length ? "SOURCE_CAPABILITY_READY" : "SOURCE_CAPABILITY_PARTIAL";
         items.push(item(capabilityCode, capabilityCode === "SOURCE_CAPABILITY_UNAVAILABLE" ? "blocking" : capabilityCode === "SOURCE_CAPABILITY_PARTIAL" ? "warning" : "informational", { kind: "source_capability", enabledSourceCount: realSources.length, capableSourceCount: capable, status: capabilityCode === "SOURCE_CAPABILITY_UNAVAILABLE" ? "unavailable" : capabilityCode === "SOURCE_CAPABILITY_PARTIAL" ? "partial" : "ready", checkedAt: checkedAt.toISOString() }, capabilityCode !== "SOURCE_CAPABILITY_READY", capabilityCode === "SOURCE_CAPABILITY_READY" ? [] : sourceActions));
         const sourceHealth = await health(db, input.userId, targetId, realSources);
         const healthCode = sourceHealth.degraded ? "SOURCE_HEALTH_DEGRADED" : sourceHealth.unchecked ? "SOURCE_HEALTH_UNCHECKED" : "SOURCE_HEALTH_READY";
