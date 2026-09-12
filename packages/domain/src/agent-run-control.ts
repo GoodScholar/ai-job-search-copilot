@@ -32,6 +32,7 @@ import type { JobDiscoveryExecutionMode } from "./job-discovery-execution-mode";
 import { resolveEffectiveAccountRunPolicy } from "./account-run-policies";
 import { isDateInBackgroundWindow } from "./account-run-policy-window";
 import { authorizeRunPreflight, type RunPreflightEvaluator } from "./run-preflight";
+import { accountRunAdmissionReason, readAccountRunControlInTransaction } from "./account-run-admission";
 
 export interface AgentRunQueue { enqueue(job: AgentRunJob): Promise<void>; }
 
@@ -203,6 +204,8 @@ function createAgentRunStarter(deps: CommandDependencies): AgentRunStarter {
         await acquireAccountAdvisoryLock(transaction, input.userId);
         const [existing] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.idempotencyKey, command.idempotencyKey)));
         if (existing) { reused = true; return existing; }
+        const admission = accountRunAdmissionReason(await readAccountRunControlInTransaction(transaction, input.userId), input.trigger?.kind === "schedule" ? input.trigger.scheduledFor : undefined);
+        if (admission) throw new AgentRunError(admission);
         const evaluation = await deps.runPreflight.evaluate(transaction, {
           userId: input.userId,
           workflow: "discovery",

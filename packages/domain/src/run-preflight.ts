@@ -10,6 +10,7 @@ import {
   type RunPreflightReport, type RunPreflightSuggestedAction,
 } from "@job-copilot/contracts/run-preflight";
 import { resolveEffectiveAccountRunPolicy } from "./account-run-policies";
+import { readAccountRunControlInTransaction } from "./account-run-admission";
 import { isDateInBackgroundWindow } from "./account-run-policy-window";
 import { analyzePublicJobDiscoverySources } from "./public-job-discovery-sources";
 import type { JobDiscoveryExecutionMode } from "./job-discovery-execution-mode";
@@ -160,8 +161,9 @@ export function createRunPreflightEvaluator(deps: { capabilityAdapter: SourceCap
   return {
     async evaluate(db, input) {
       const checkedAt = deps.clock();
-      const [facts, allTargets, policy] = await Promise.all([
+      const [facts, allTargets, policy, control] = await Promise.all([
         activeFacts(db, input.userId), targets(db, input.userId), resolveEffectiveAccountRunPolicy(db, input.userId, { id: deps.id, clock: deps.clock }),
+        readAccountRunControlInTransaction(db, input.userId),
       ]);
       const primary = allTargets.find((value) => value.priority === "primary" && value.state === "active") ?? null;
       const requested = input.targetId ? allTargets.find((value) => value.targetId === input.targetId) ?? null : primary;
@@ -188,8 +190,9 @@ export function createRunPreflightEvaluator(deps: { capabilityAdapter: SourceCap
         items.push(item(healthCode, healthCode === "SOURCE_HEALTH_READY" ? "informational" : "warning", { kind: "source_health", checkedSourceCount: sourceHealth.checked, healthySourceCount: sourceHealth.healthy, degradedSourceCount: sourceHealth.degraded, uncheckedSourceCount: sourceHealth.unchecked, latestCheckedAt: sourceHealth.latest?.toISOString() ?? null }, true, healthCode === "SOURCE_HEALTH_READY" ? [] : ["review_source_health"]));
       }
       items.push(item(model.status === "available" ? "MODEL_DIAGNOSTIC_READY" : "MODEL_DIAGNOSTIC_UNAVAILABLE", model.status === "available" ? "informational" : "blocking", { kind: "model_diagnostic", status: model.status, checkedAt: model.checkedAt }, model.status !== "available", model.status === "available" ? [] : ["run_model_diagnostic"]));
-      const policyReady = usableBudget(policy.effective, input, deps.discoveryExecutionMode, checkedAt);
-      items.push(item(policyReady ? "ACCOUNT_RUN_POLICY_READY" : "ACCOUNT_RUN_POLICY_BLOCKED", policyReady ? "informational" : "blocking", { kind: "account_run_policy", revisionNumber: policy.revisionNumber, status: policyReady ? "ready" : "blocked", checkedAt: checkedAt.toISOString() }, false, policyReady ? [] : ["review_account_run_policy"]));
+      const policyReady = usableBudget(policy.effective, input, deps.discoveryExecutionMode, checkedAt) && control.stoppedAt === null;
+      const policyItem = item(policyReady ? "ACCOUNT_RUN_POLICY_READY" : "ACCOUNT_RUN_POLICY_BLOCKED", policyReady ? "informational" : "blocking", { kind: "account_run_policy", revisionNumber: policy.revisionNumber, status: policyReady ? "ready" : "blocked", checkedAt: checkedAt.toISOString() }, false, policyReady ? [] : ["review_account_run_policy"]);
+      items.push(control.stoppedAt === null ? policyItem : { ...policyItem, summary: "账户已停止全部运行" });
       const report = RunPreflightReportSchema.parse({ version: "run-preflight-v1", workflow: input.workflow, trigger: input.trigger, targetId, status: status(items), items, warningFingerprint: fingerprint({ workflow: input.workflow, trigger: input.trigger, targetId, items }), checkedAt: checkedAt.toISOString() });
       return { report, policy: { revisionNumber: policy.revisionNumber, snapshot: policy.effective } };
     },

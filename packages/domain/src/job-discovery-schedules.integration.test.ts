@@ -27,6 +27,7 @@ import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-polic
 import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
 import { createRunPreflightEvaluator } from "./run-preflight";
 import { createModelDiagnosticProjectionReader } from "./model-diagnostics";
+import { createAccountRunControl } from "./account-run-control";
 
 const now = new Date("2026-08-30T01:31:00.000Z");
 const constraints = {
@@ -590,5 +591,17 @@ describe("job discovery schedules", () => {
     expect(run!.sourceScope).toMatchObject({ sources: [expect.objectContaining({ sourceId: "greenhouse:shared", canonicalCompanyName: "Example AI" })] });
     expect((run!.sourceScope as { sources: unknown[] }).sources).toHaveLength(1);
     await expect(createAgentRunQueries({ db: database }).get({ userId: owner.userId, runId: run!.id })).resolves.toMatchObject({ adapter: "greenhouse", sourceScope: expect.objectContaining({ sources: [expect.any(Object)] }) });
+  });
+
+  it("账户停止后把已物化的计划 occurrence 标记为停止跳过且不创建运行", async () => {
+    const owner = await target();
+    await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/stopped", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
+    const occurrence = await dueOccurrence(owner);
+    await createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: crypto.randomUUID, clock: () => now })
+      .control({ userId: owner.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+    await schedules().service.dispatchPending({ limit: 10 });
+    await expect(database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, occurrence.occurrenceId)))
+      .resolves.toEqual([expect.objectContaining({ status: "skipped", skipReason: "ACCOUNT_RUN_STOPPED", runId: null })]);
+    await expect(database.select().from(agentRuns).where(and(eq(agentRuns.userId, owner.userId), eq(agentRuns.idempotencyKey, occurrence.occurrenceId)))).resolves.toEqual([]);
   });
 });

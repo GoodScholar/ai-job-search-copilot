@@ -4,7 +4,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { and, eq, inArray } from "drizzle-orm";
 import { accountRunPolicies, agentRunEvents, agentRuns, auditEvents, createDatabase, jobAccounts, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
-import { createAccountRunControl } from "./account-run-control";
+import { accountRunAdmissionReason, createAccountRunControl } from "./account-run-control";
 import { AccountRunControlError } from "./account-run-control";
 import { createAgentRunCommands, type AgentRunQueue } from "./agent-run-control";
 import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
@@ -22,6 +22,14 @@ describe("账户运行停止控制", () => {
   function controls() { return createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: randomUUID, clock: () => now }); }
   async function activeTarget(userId?: string) { const ownerId = userId ?? await account(); const targetId = randomUUID(); await database.insert(jobTargets).values({ id: targetId, userId: ownerId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: now, updatedAt: now }); await database.insert(jobTargetRevisions).values({ id: randomUUID(), userId: ownerId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: now }); return { userId: ownerId, targetId }; }
   const commands = () => createAgentRunCommands({ db: database, queue: new MemoryQueue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: randomUUID, clock: () => now, runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) });
+
+  it("以停止和持久化释放截点决定运行准入", () => {
+    const control = { stoppedAt: null, controlVersion: 2, scheduleResumeAfter: new Date("2026-09-12T02:00:00Z") };
+    expect(accountRunAdmissionReason(control, new Date("2026-09-12T01:00:00Z"))).toBe("ACCOUNT_RUN_SCHEDULE_SKIPPED");
+    expect(accountRunAdmissionReason(control, new Date("2026-09-12T02:00:00Z"))).toBe("ACCOUNT_RUN_SCHEDULE_SKIPPED");
+    expect(accountRunAdmissionReason(control, new Date("2026-09-12T03:00:00Z"))).toBeNull();
+    expect(accountRunAdmissionReason({ ...control, stoppedAt: now })).toBe("ACCOUNT_RUN_STOPPED");
+  });
 
   it("停止、释放与重放保留账户控制版本，读取不物化策略基线", async () => {
     const userId = await account();
@@ -52,6 +60,14 @@ describe("账户运行停止控制", () => {
     await expect(database.select().from(accountRunPolicies).where(eq(accountRunPolicies.userId, userId))).resolves.toEqual([]);
     await expect(controls().get({ userId })).resolves.toEqual({ stoppedAt: null, controlVersion: 0, scheduleResumeAfter: null });
     await expect(database.select().from(accountRunPolicies).where(eq(accountRunPolicies.userId, userId))).resolves.toEqual([]);
+  });
+
+  it("账户停止后拒绝新的手动发现运行且不创建运行", async () => {
+    const target = await activeTarget();
+    await controls().control({ userId: target.userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 0, action: "stop" } });
+    await expect(commands().start({ userId: target.userId, requestId: randomUUID(), command: { targetId: target.targetId, idempotencyKey: randomUUID() } }))
+      .rejects.toMatchObject({ code: "ACCOUNT_RUN_STOPPED" });
+    await expect(database.select().from(agentRuns).where(eq(agentRuns.userId, target.userId))).resolves.toEqual([]);
   });
 
   it("停止只暂停所属 queued/running 运行并保留取消、终态和其他账户，释放不恢复运行", async () => {

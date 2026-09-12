@@ -685,7 +685,8 @@ describe("job discovery persistence lifecycle", () => {
     await expect(database.execute(sql`select count(*)::int as count from job_source_postings where user_id = ${userId}::uuid and availability = 'closed'`)).resolves.toEqual([{ count }]);
     await expect(database.execute(sql`select count(*)::int as count from job_source_posting_versions where user_id = ${userId}::uuid`)).resolves.toEqual([{ count: count * 2 }]);
     await expect(database.execute(sql`select count(*)::int as count from job_opportunity_sources where user_id = ${userId}::uuid`)).resolves.toEqual([{ count: count * 2 }]);
-    expect(statementCount).toBeLessThanOrEqual(35);
+    // 新运行的账户停止准入额外读取一次账户控制行，仍保持与明细数无关的常数 SQL 形状。
+    expect(statementCount).toBeLessThanOrEqual(36);
     expect(observedStatements.find((statement) => statement.query.startsWith('insert into "agent_runs"'))?.query)
       .toMatch(/\$6, default, default, \$7/u);
     // 新运行记录携带策略修订、策略快照与 preflight 快照，固定 SQL 形状增加三个参数。

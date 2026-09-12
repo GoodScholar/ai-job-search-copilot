@@ -1,6 +1,7 @@
 import { and, desc, eq } from "drizzle-orm";
 import { agentInboxItems, agentRunEvents, agentRunUsageEntries, agentRuns, type Database } from "@job-copilot/database";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
+import { readAccountRunControlInTransaction } from "./account-run-admission";
 import { effectiveAgentRunBudget, type AgentRunBudget } from "./effective-agent-run-budget";
 import type { AuditTrail } from "./audit-trail";
 import { agentRunUsageSnapshot, appendBudgetFacts, settleActiveSlice, terminateBudgetRun, type BudgetDimension } from "./agent-run-lifecycle";
@@ -86,6 +87,7 @@ export function createAgentRunCheckpoint(deps: Dependencies): AgentRunCheckpoint
       return deps.db.transaction(async (transaction) => {
         await acquireAccountAdvisoryLock(transaction, input.userId);
         const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId)));
+        const accountControl = await readAccountRunControlInTransaction(transaction, input.userId);
         const now = deps.clock();
         const expired = Boolean(run?.claimExpiresAt && run.claimExpiresAt <= now);
         // A returned model response is an accounting fact even when a new claimant has
@@ -126,7 +128,7 @@ export function createAgentRunCheckpoint(deps: Dependencies): AgentRunCheckpoint
           await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.run_cancelled", occurredAt: now, requestId: input.runId, outcome: "success", reasonCode: "AGENT_RUN_CANCELLED", resourceType: "agent_run", resourceId: input.runId, metadata: { runId: input.runId, version, action: "cancel", attemptCount: run.attemptCount } });
           return { kind: "cancelled" };
         }
-        if (run.controlState === "pause_requested") {
+        if (run.controlState === "pause_requested" || accountControl.stoppedAt !== null) {
           const version = usageVersion + 1;
           await transaction.update(agentRuns).set({ ...usageUpdate, status: "paused", controlState: "none", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, version }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId)));
           const sequence = await appendEvent(transaction, { id: deps.id, userId: input.userId, runId: input.runId, version, eventType: "run.paused", data: { eventType: "run.paused", status: "paused", currentStep: run.currentStep, attemptCount: run.attemptCount }, now });

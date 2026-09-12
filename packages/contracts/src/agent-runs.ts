@@ -426,6 +426,8 @@ export const AgentRunStartErrorCodeSchema = z.enum([
   "AGENT_RUN_TARGET_NOT_FOUND",
   "AGENT_RUN_TARGET_INACTIVE",
   "AGENT_RUN_UNAVAILABLE",
+  "ACCOUNT_RUN_STOPPED",
+  "ACCOUNT_RUN_SCHEDULE_SKIPPED",
 ]);
 
 export const AgentRunStepSchema = z.object({

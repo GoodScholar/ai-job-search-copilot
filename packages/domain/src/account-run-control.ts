@@ -5,15 +5,13 @@ import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import type { AuditTrail } from "./audit-trail";
 import { ensureAccountRunPolicyBaselineInTransaction } from "./account-run-policies";
 import { applyAgentRunControlInTransaction } from "./agent-run-control";
+export { accountRunAdmissionReason, AccountRunAdmissionError, readAccountRunControlInTransaction } from "./account-run-admission";
+import { readAccountRunControlInTransaction, type AccountRunAdmissionControl } from "./account-run-admission";
 
 export class AccountRunControlError extends Error { constructor(public readonly code: "ACCOUNT_RUN_CONTROL_COMMAND_ID_CONFLICT" | "ACCOUNT_RUN_CONTROL_VERSION_CONFLICT") { super(code); } }
-export type AccountRunControlRow = { stoppedAt: Date | null; controlVersion: number; scheduleResumeAfter: Date | null };
+export type AccountRunControlRow = AccountRunAdmissionControl;
 type Dependencies = { db: Database; auditTrail: AuditTrail; id: () => string; clock: () => Date };
 function state(row: AccountRunControlRow): AccountRunControlState { return AccountRunControlStateSchema.parse({ stoppedAt: row.stoppedAt?.toISOString() ?? null, controlVersion: row.controlVersion, scheduleResumeAfter: row.scheduleResumeAfter?.toISOString() ?? null }); }
-export async function readAccountRunControlInTransaction(tx: Pick<Database, "select">, userId: string): Promise<AccountRunControlRow> {
-  const [row] = await tx.select({ stoppedAt: accountRunPolicies.stoppedAt, controlVersion: accountRunPolicies.controlVersion, scheduleResumeAfter: accountRunPolicies.scheduleResumeAfter }).from(accountRunPolicies).where(eq(accountRunPolicies.userId, userId));
-  return row ?? { stoppedAt: null, controlVersion: 0, scheduleResumeAfter: null };
-}
 export function createAccountRunControl(deps: Dependencies): { get(input: { userId: string }): Promise<AccountRunControlState>; control(input: { userId: string; requestId: string; command: AccountRunControlCommand }): Promise<AccountRunControlResponse>; } {
   return {
     async get({ userId }) { return state(await readAccountRunControlInTransaction(deps.db, userId)); },

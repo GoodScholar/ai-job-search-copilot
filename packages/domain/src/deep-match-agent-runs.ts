@@ -7,6 +7,7 @@ import { createDeepMatchQueries } from "./deep-match-persistence";
 import { resolveEffectiveAccountRunPolicy } from "./account-run-policies";
 import { authorizeRunPreflight, RunPreflightRejectedError, type RunPreflightEvaluator } from "./run-preflight";
 import { StartRecommendationReevaluationCommandSchema } from "@job-copilot/contracts/recommendations";
+import { accountRunAdmissionReason, readAccountRunControlInTransaction } from "./account-run-admission";
 import type { z } from "zod";
 
 export type DeepMatchRunQueue = { enqueue(job: AgentRunJob): Promise<void> };
@@ -16,6 +17,8 @@ export async function ensureDeepMatchRunInTransaction(input: { transaction: any;
   await acquireAccountAdvisoryLock(input.transaction, input.userId);
   const [existing] = await input.transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.idempotencyKey, input.idempotencyKey)));
   if (existing) return { kind: "created", run: existing, reused: true };
+  const admission = accountRunAdmissionReason(await readAccountRunControlInTransaction(input.transaction, input.userId));
+  if (admission) throw Object.assign(new Error(admission), { code: admission });
   const evaluation = await input.runPreflight.evaluate(input.transaction, { userId: input.userId, targetId: input.targetId, workflow: "deep_match", trigger: input.trigger });
   try { authorizeRunPreflight({ evaluation, warningFingerprint: input.warningFingerprint ?? null }); }
   catch (error) {

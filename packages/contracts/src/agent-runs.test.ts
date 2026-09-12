@@ -553,6 +553,7 @@ describe("agent run contracts", () => {
     expect(AgentRunJobSchema.parse({ version: 1, runId, userId })).toEqual({ version: 1, runId, userId });
     expect(AgentRunStartErrorCodeSchema.options).toEqual([
       "AGENT_RUN_TARGET_NOT_FOUND", "AGENT_RUN_TARGET_INACTIVE", "AGENT_RUN_UNAVAILABLE",
+      "ACCOUNT_RUN_STOPPED", "ACCOUNT_RUN_SCHEDULE_SKIPPED",
     ]);
   });
 

@@ -29,6 +29,7 @@ import type { JobDiscoveryExecutionMode } from "./job-discovery-execution-mode";
 import { resolveEffectiveAccountRunPolicy } from "./account-run-policies";
 import { isDateInBackgroundWindow, isInBackgroundWindow } from "./account-run-policy-window";
 import { RunPreflightRejectedError } from "./run-preflight";
+import { AccountRunAdmissionError } from "./account-run-admission";
 
 export class JobDiscoveryScheduleError extends Error {
   constructor(public readonly code: "JOB_DISCOVERY_SCHEDULE_TARGET_NOT_FOUND" | "JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE" | "JOB_DISCOVERY_SCHEDULE_VERSION_CONFLICT" | "SOURCE_POLICY_REQUIRED" | "NO_SUPPORTED_SOURCE" | "PROFILE_UNAVAILABLE" | "ACCOUNT_RUN_POLICY_WINDOW_CLOSED") { super(code); }
@@ -237,7 +238,7 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
               .where(and(eq(jobDiscoveryScheduleOccurrences.id, occurrence.id), eq(jobDiscoveryScheduleOccurrences.status, "pending"))).returning();
             if (dispatched) await appendScheduleAudit(auditTrail, { userId: dispatched.userId, requestId: deps.id(), eventType: "occurrence_dispatched", scheduleId: dispatched.scheduleId, targetId: dispatched.targetId, occurrenceId: dispatched.id, runId, scheduledFor: dispatched.scheduledFor, state: "dispatched", now });
           };
-          const skip = async (reason: "TARGET_INACTIVE" | "NO_SUPPORTED_SOURCE" | "SOURCE_POLICY_REQUIRED" | "PROFILE_UNAVAILABLE" | "ACCOUNT_RUN_POLICY_WINDOW_CLOSED" | "RUN_PREFLIGHT_BLOCKED") => {
+          const skip = async (reason: "TARGET_INACTIVE" | "NO_SUPPORTED_SOURCE" | "SOURCE_POLICY_REQUIRED" | "PROFILE_UNAVAILABLE" | "ACCOUNT_RUN_POLICY_WINDOW_CLOSED" | "RUN_PREFLIGHT_BLOCKED" | "ACCOUNT_RUN_STOPPED" | "ACCOUNT_RUN_SCHEDULE_SKIPPED") => {
             const [skipped] = await transaction.update(jobDiscoveryScheduleOccurrences).set({ status: "skipped", runId: null, skipReason: reason })
               .where(and(eq(jobDiscoveryScheduleOccurrences.id, occurrence.id), eq(jobDiscoveryScheduleOccurrences.status, "pending"))).returning();
             if (skipped) await appendScheduleAudit(auditTrail, { userId: skipped.userId, requestId: deps.id(), eventType: "occurrence_skipped", scheduleId: skipped.scheduleId, targetId: skipped.targetId, occurrenceId: skipped.id, scheduledFor: skipped.scheduledFor, state: "skipped", now });
@@ -255,6 +256,8 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
             const run = await deps.runs.start({ userId: occurrence.userId, requestId: deps.id(), command: { targetId: occurrence.targetId, idempotencyKey: occurrence.id }, trigger: { kind: "schedule", occurrenceId: occurrence.id, scheduledFor: occurrence.scheduledFor }, deadline });
             await dispatch(run.runId);
           } catch (error) {
+            if (error instanceof AgentRunError && (error.code === "ACCOUNT_RUN_STOPPED" || error.code === "ACCOUNT_RUN_SCHEDULE_SKIPPED")) { await skip(error.code); continue; }
+            if (error instanceof AccountRunAdmissionError) { await skip(error.code); continue; }
             if (error instanceof RunPreflightRejectedError && error.code === "RUN_PREFLIGHT_BLOCKED") { await skip("RUN_PREFLIGHT_BLOCKED"); continue; }
             if (!(error instanceof AgentRunError)) throw error;
             if (error.code === "AGENT_RUN_TARGET_INACTIVE") { await skip("TARGET_INACTIVE"); continue; }
