@@ -129,4 +129,19 @@ describe("逻辑推荐运行契约", () => {
       budgets: { discovery: budget, deepMatch: deepMatchBudget }, preflightSnapshot: readyPreflight, result, failure: null, createdAt: publishedAt, updatedAt: publishedAt,
     }).success).toBe(false);
   });
+
+  it("拒绝已开始发现阶段的排队运行", () => {
+    expect(RecommendationRunSchema.safeParse({
+      runId, status: "queued", currentStage: "discovery",
+      stages: [
+        { key: "discovery", status: "running", startedAt: publishedAt, completedAt: null },
+        { key: "qualification", status: "pending", startedAt: null, completedAt: null },
+        { key: "coarse_ranking", status: "pending", startedAt: null, completedAt: null },
+        { key: "deep_matching", status: "pending", startedAt: null, completedAt: null },
+        { key: "result_publication", status: "pending", startedAt: null, completedAt: null },
+      ],
+      target, sourceScope: { trustedSourceCount: 2, publicQueryCount: 1 }, accountPolicyRevisionNumber: 1,
+      budgets: { discovery: budget, deepMatch: deepMatchBudget }, preflightSnapshot: readyPreflight, result: null, failure: null, createdAt: publishedAt, updatedAt: publishedAt,
+    }).success).toBe(false);
+  });
 });

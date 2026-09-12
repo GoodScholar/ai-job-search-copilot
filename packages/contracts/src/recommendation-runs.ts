@@ -104,6 +104,7 @@ export const RecommendationRunSchema = z.object({
   const hasActiveTopology = currentIndex >= 0 && run.stages.every((stage, index) => (
     index < currentIndex ? stage.status === "completed" : index === currentIndex ? stage.status === "pending" || stage.status === "running" : stage.status === "pending"
   ));
+  const hasQueuedTopology = run.stages.every((stage) => stage.status === "pending");
   const hasTerminalTopology = (terminalIndex: number, terminalStatus: "failed" | "cancelled") => terminalIndex >= 0 && run.stages.every((stage, index) => (
     index < terminalIndex ? stage.status === "completed" : index === terminalIndex ? stage.status === terminalStatus : stage.status === "pending"
   ));
@@ -118,7 +119,7 @@ export const RecommendationRunSchema = z.object({
     const cancelledIndex = run.stages.findIndex((stage) => stage.status === "cancelled");
     if (run.currentStage !== null || run.result !== null || run.failure !== null || !hasTerminalTopology(cancelledIndex, "cancelled")) context.addIssue({ code: "custom", message: "取消运行不能发布结果或失败详情" });
   } else if (run.status === "queued") {
-    if (run.currentStage !== "discovery" || run.result !== null || run.failure !== null || !hasActiveTopology) context.addIssue({ code: "custom", message: "排队运行只能在发现阶段等待或开始" });
+    if (run.currentStage !== "discovery" || run.result !== null || run.failure !== null || !hasQueuedTopology) context.addIssue({ code: "custom", message: "排队运行只能在尚未开始的发现阶段等待" });
   } else if (run.currentStage === null || run.result !== null || run.failure !== null || !hasActiveTopology) {
     context.addIssue({ code: "custom", message: "非终态运行必须停留在未完成阶段且没有最终结果" });
   }
