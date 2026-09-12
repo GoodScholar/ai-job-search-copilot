@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq, lt, sql } from "drizzle-orm";
 import {
   agentRuns,
+  accountRunPolicies,
   auditEvents,
   createDatabase,
   jobAccounts,
@@ -603,5 +604,110 @@ describe("job discovery schedules", () => {
     await expect(database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, occurrence.occurrenceId)))
       .resolves.toEqual([expect.objectContaining({ status: "skipped", skipReason: "ACCOUNT_RUN_STOPPED", runId: null })]);
     await expect(database.select().from(agentRuns).where(and(eq(agentRuns.userId, owner.userId), eq(agentRuns.idempotencyKey, occurrence.occurrenceId)))).resolves.toEqual([]);
+  });
+
+  it("离线期间停止再释放后，旧到期计划只记录停止跳过并推进到未来", async () => {
+    const stoppedAt = new Date("2026-08-30T00:00:00.000Z");
+    const releasedAt = new Date("2026-08-30T02:00:00.000Z");
+    const workerAt = new Date("2026-08-30T03:00:00.000Z");
+    const staleScheduledFor = new Date("2026-08-30T01:00:00.000Z");
+    const owner = await target();
+    const other = await target();
+    await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/offline-owner", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
+    await addWatchlistSource({ userId: other.userId, targetId: other.targetId, careersUrl: "https://boards.greenhouse.io/offline-other", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
+    const queue = new Queue();
+    const setup = schedules(queue, stoppedAt);
+    const ownerSchedule = await setup.service.set({ userId: owner.userId, targetId: owner.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:00" } });
+    const otherSchedule = await setup.service.set({ userId: other.userId, targetId: other.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:00" } });
+    await database.update(jobDiscoverySchedules).set({ nextRunAt: staleScheduledFor }).where(eq(jobDiscoverySchedules.id, ownerSchedule.scheduleId));
+    await database.update(jobDiscoverySchedules).set({ nextRunAt: staleScheduledFor }).where(eq(jobDiscoverySchedules.id, otherSchedule.scheduleId));
+    const control = createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => stoppedAt }), id: crypto.randomUUID, clock: () => stoppedAt });
+    await control.control({ userId: owner.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+    await createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => releasedAt }), id: crypto.randomUUID, clock: () => releasedAt })
+      .control({ userId: owner.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 1, action: "release" } });
+
+    const worker = schedules(queue, workerAt).service;
+    const created = await worker.materializeDue({ limit: 10 });
+    await worker.dispatchPending({ limit: 10 });
+
+    const ownerOccurrence = created.find((item) => item.scheduleId === ownerSchedule.scheduleId)!;
+    const otherOccurrence = created.find((item) => item.scheduleId === otherSchedule.scheduleId)!;
+    await expect(database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, ownerOccurrence.occurrenceId)))
+      .resolves.toEqual([expect.objectContaining({ status: "skipped", skipReason: "ACCOUNT_RUN_SCHEDULE_SKIPPED", runId: null, scheduledFor: staleScheduledFor })]);
+    await expect(database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, otherOccurrence.occurrenceId)))
+      .resolves.toEqual([expect.objectContaining({ status: "dispatched", skipReason: null, runId: expect.any(String) })]);
+    await expect(database.select({ nextRunAt: jobDiscoverySchedules.nextRunAt }).from(jobDiscoverySchedules).where(eq(jobDiscoverySchedules.id, ownerSchedule.scheduleId)))
+      .resolves.toEqual([expect.objectContaining({ nextRunAt: expect.any(Date) })]);
+    const [ownerScheduleAfter] = await database.select().from(jobDiscoverySchedules).where(eq(jobDiscoverySchedules.id, ownerSchedule.scheduleId));
+    expect(ownerScheduleAfter!.nextRunAt!.getTime()).toBeGreaterThan(workerAt.getTime());
+    await expect(database.select().from(agentRuns).where(eq(agentRuns.userId, owner.userId))).resolves.toEqual([]);
+  });
+
+  it("重复停止释放后的 cutoff 阻止早于或恰在 cutoff 的待派发 occurrence，且不影响另一账户", async () => {
+    const stoppedAt = new Date("2026-08-30T00:00:00.000Z");
+    const firstReleaseAt = new Date("2026-08-30T02:00:00.000Z");
+    const secondStopAt = new Date("2026-08-30T02:30:00.000Z");
+    const secondReleaseAt = new Date("2026-08-30T03:00:00.000Z");
+    const workerAt = new Date("2026-08-30T04:00:00.000Z");
+    const owner = await target();
+    const other = await target();
+    await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/cutoff-owner", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
+    await addWatchlistSource({ userId: other.userId, targetId: other.targetId, careersUrl: "https://boards.greenhouse.io/cutoff-other", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
+    const setup = schedules(new Queue(), stoppedAt);
+    const ownerSchedule = await setup.service.set({ userId: owner.userId, targetId: owner.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:00" } });
+    const otherSchedule = await setup.service.set({ userId: other.userId, targetId: other.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:00" } });
+    const beforeCutoffId = crypto.randomUUID();
+    const atCutoffId = crypto.randomUUID();
+    const otherOccurrenceId = crypto.randomUUID();
+    await database.insert(jobDiscoveryScheduleOccurrences).values([
+      { id: beforeCutoffId, userId: owner.userId, targetId: owner.targetId, scheduleId: ownerSchedule.scheduleId, scheduledFor: new Date("2026-08-30T01:00:00.000Z"), status: "pending" as const, runId: null, skipReason: null, createdAt: stoppedAt },
+      { id: atCutoffId, userId: owner.userId, targetId: owner.targetId, scheduleId: ownerSchedule.scheduleId, scheduledFor: secondReleaseAt, status: "pending" as const, runId: null, skipReason: null, createdAt: stoppedAt },
+      { id: otherOccurrenceId, userId: other.userId, targetId: other.targetId, scheduleId: otherSchedule.scheduleId, scheduledFor: secondReleaseAt, status: "pending" as const, runId: null, skipReason: null, createdAt: stoppedAt },
+    ]);
+    const firstControl = createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => stoppedAt }), id: crypto.randomUUID, clock: () => stoppedAt });
+    await firstControl.control({ userId: owner.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+    const release = createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => firstReleaseAt }), id: crypto.randomUUID, clock: () => firstReleaseAt });
+    await release.control({ userId: owner.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 1, action: "release" } });
+    await release.control({ userId: owner.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 2, action: "release" } });
+    const secondControl = createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => secondStopAt }), id: crypto.randomUUID, clock: () => secondStopAt });
+    await secondControl.control({ userId: owner.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 2, action: "stop" } });
+    await createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => secondReleaseAt }), id: crypto.randomUUID, clock: () => secondReleaseAt })
+      .control({ userId: owner.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 3, action: "release" } });
+
+    await schedules(new Queue(), workerAt).service.dispatchPending({ limit: 10 });
+
+    const [controlState] = await database.select().from(accountRunPolicies).where(eq(accountRunPolicies.userId, owner.userId));
+    expect(controlState!.scheduleResumeAfter).toEqual(secondReleaseAt);
+    await expect(database.select().from(jobDiscoveryScheduleOccurrences).where(and(eq(jobDiscoveryScheduleOccurrences.userId, owner.userId), eq(jobDiscoveryScheduleOccurrences.status, "skipped"))))
+      .resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: beforeCutoffId, skipReason: "ACCOUNT_RUN_SCHEDULE_SKIPPED", runId: null }),
+        expect.objectContaining({ id: atCutoffId, skipReason: "ACCOUNT_RUN_SCHEDULE_SKIPPED", runId: null }),
+      ]));
+    await expect(database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, otherOccurrenceId)))
+      .resolves.toEqual([expect.objectContaining({ status: "dispatched", skipReason: null, runId: expect.any(String) })]);
+  });
+
+  it("停止释放不会复活已关联 occurrence 的暂停幂等运行，回放只补 dispatched", async () => {
+    const stoppedAt = new Date("2026-08-30T00:00:00.000Z");
+    const releasedAt = new Date("2026-08-30T02:00:00.000Z");
+    const workerAt = new Date("2026-08-30T03:00:00.000Z");
+    const owner = await target();
+    await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/idempotent-paused", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
+    const setup = schedules(new Queue(), stoppedAt);
+    const schedule = await setup.service.set({ userId: owner.userId, targetId: owner.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:00" } });
+    const occurrenceId = crypto.randomUUID();
+    await database.insert(jobDiscoveryScheduleOccurrences).values({ id: occurrenceId, userId: owner.userId, targetId: owner.targetId, scheduleId: schedule.scheduleId, scheduledFor: new Date("2026-08-30T01:00:00.000Z"), status: "pending", runId: null, skipReason: null, createdAt: stoppedAt });
+    const started = await setup.commands.start({ userId: owner.userId, requestId: crypto.randomUUID(), command: { targetId: owner.targetId, idempotencyKey: occurrenceId }, trigger: { kind: "schedule", occurrenceId, scheduledFor: new Date("2026-08-30T01:00:00.000Z") } });
+    await createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => stoppedAt }), id: () => crypto.randomUUID(), clock: () => stoppedAt })
+      .control({ userId: owner.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+    await createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => releasedAt }), id: () => crypto.randomUUID(), clock: () => releasedAt })
+      .control({ userId: owner.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 1, action: "release" } });
+
+    await schedules(new Queue(), workerAt).service.dispatchPending({ limit: 10 });
+
+    await expect(database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, occurrenceId)))
+      .resolves.toEqual([expect.objectContaining({ status: "dispatched", runId: started.runId, skipReason: null })]);
+    await expect(database.select().from(agentRuns).where(and(eq(agentRuns.userId, owner.userId), eq(agentRuns.idempotencyKey, occurrenceId))))
+      .resolves.toEqual([expect.objectContaining({ id: started.runId, status: "paused" })]);
   });
 });

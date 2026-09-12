@@ -757,4 +757,26 @@ describe("deep match persistence", () => {
       .resolves.toEqual([{ assessment: null }]);
   });
 
+  it("账户停止拒绝新的手动与 automatic deep-match child，已存幂等事实只回放且不复活", async () => {
+    const input = await fixture();
+    const starter = createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now });
+    const manualKey = crypto.randomUUID();
+    const automaticKey = crypto.randomUUID();
+    const existingManual = await starter.start({ userId: input.userId, targetId: input.targetId, opportunityId: input.opportunityId, idempotencyKey: manualKey, trigger: "manual" });
+    const existingAutomatic = await starter.start({ userId: input.userId, targetId: input.targetId, discoveryRunId: crypto.randomUUID(), idempotencyKey: automaticKey, trigger: "automatic" });
+    await createAccountRunControl({ db, auditTrail: createAuditTrail({ db, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .control({ userId: input.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+
+    await expect(starter.start({ userId: input.userId, targetId: input.targetId, opportunityId: input.opportunityId, idempotencyKey: crypto.randomUUID(), trigger: "manual" }))
+      .rejects.toMatchObject({ code: "ACCOUNT_RUN_STOPPED" });
+    await expect(starter.start({ userId: input.userId, targetId: input.targetId, discoveryRunId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID(), trigger: "automatic" }))
+      .rejects.toMatchObject({ code: "ACCOUNT_RUN_STOPPED" });
+    await expect(starter.start({ userId: input.userId, targetId: input.targetId, opportunityId: input.opportunityId, idempotencyKey: manualKey, trigger: "manual" }))
+      .resolves.toMatchObject({ kind: "created", runId: existingManual.runId, reused: true });
+    await expect(starter.start({ userId: input.userId, targetId: input.targetId, discoveryRunId: crypto.randomUUID(), idempotencyKey: automaticKey, trigger: "automatic" }))
+      .resolves.toMatchObject({ kind: "created", runId: existingAutomatic.runId, reused: true });
+    await expect(db.select({ id: agentRuns.id, status: agentRuns.status }).from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.status, "paused"))))
+      .resolves.toEqual(expect.arrayContaining([{ id: existingManual.runId, status: "paused" }, { id: existingAutomatic.runId, status: "paused" }]));
+  });
+
 });

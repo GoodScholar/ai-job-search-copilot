@@ -8,6 +8,8 @@ import {
   migrateDatabase, modelDiagnosticResults, profileFactRevisions, profileFacts, type Database,
 } from "@job-copilot/database";
 import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-policies";
+import { createAuditTrail } from "./audit-trail";
+import { createAccountRunControl } from "./account-run-control";
 import type { SourceCapabilityAdapter } from "./source-capabilities";
 import {
   RunPreflightRejectedError, authorizeRunPreflight, createRunPreflightEvaluator,
@@ -222,6 +224,26 @@ describe("统一运行前检查", () => {
     expect(currentOutside.items[6]?.code).toBe("ACCOUNT_RUN_POLICY_BLOCKED");
     const missingScheduledFor = await get({ userId: owner.userId, workflow: "discovery", trigger: "schedule" });
     expect(missingScheduledFor.items[6]?.code).toBe("ACCOUNT_RUN_POLICY_BLOCKED");
+  });
+
+  it("账户停止只新增一项 account policy blocker，释放后恢复原策略修订的正常预检", async () => {
+    const owner = await account({ fact: true, source: "greenhouse" });
+    await database.insert(modelDiagnosticResults).values({ configurationFingerprint: fingerprint, status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket: "under_1s", checkedAt: now });
+    const controls = createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: randomUUID, clock: () => now });
+    await controls.control({ userId: owner.userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 0, action: "stop" } });
+
+    const stopped = await get({ userId: owner.userId, workflow: "discovery", trigger: "manual" });
+    expect(stopped.items).toHaveLength(7);
+    expect(stopped.items.filter((item) => item.severity === "blocking")).toEqual([
+      expect.objectContaining({ code: "ACCOUNT_RUN_POLICY_BLOCKED", summary: "账户已停止全部运行", suggestedActions: ["review_account_run_policy"] }),
+    ]);
+    const stoppedPolicy = stopped.items[6]!;
+    await controls.control({ userId: owner.userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 1, action: "release" } });
+
+    const released = await get({ userId: owner.userId, workflow: "discovery", trigger: "manual" });
+    expect(released.items).toHaveLength(7);
+    expect(released.items[6]).toMatchObject({ code: "ACCOUNT_RUN_POLICY_READY", severity: "informational", evidence: { revisionNumber: (stoppedPolicy.evidence as { revisionNumber: number }).revisionNumber } });
+    expect(released.items.filter((item) => item.severity === "blocking")).toEqual([]);
   });
 
   it("fingerprint 只由安全警告状态决定，报告顺序和 JSON 稳定，授权矩阵精确执行", async () => {

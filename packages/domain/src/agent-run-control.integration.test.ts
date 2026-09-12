@@ -489,6 +489,28 @@ describe("agent run controls", () => {
       .resolves.toEqual([{ status: "paused", controlState: "none" }]);
   });
 
+  it("账户停止在 fake、Greenhouse 与分层公开三种 discovery 启动器之前拒绝新建，幂等重放不丢失", async () => {
+    const { userId, targetId } = await activeTarget();
+    await addGreenhouseWatchlistSource(userId, targetId);
+    await addConfirmedSkills(userId, ["TypeScript"]);
+    const fake = commands(new MemoryQueue());
+    const existingKey = crypto.randomUUID();
+    const existing = await fake.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: existingKey } });
+    await createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .control({ userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+    const greenhouse = createAgentRunCommands({ db: database, queue: new MemoryQueue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse", runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) });
+    const layered = createAgentRunCommands({ db: database, queue: new MemoryQueue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, executionMode: "layered_public", runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) });
+
+    for (const starter of [fake, greenhouse, layered]) {
+      await expect(starter.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } }))
+        .rejects.toMatchObject({ code: "ACCOUNT_RUN_STOPPED" });
+    }
+    await expect(fake.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: existingKey } }))
+      .resolves.toMatchObject({ runId: existing.runId, reused: true });
+    await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, existing.runId)))
+      .resolves.toEqual([{ status: "paused" }]);
+  });
+
   it("直接恢复或取消暂停运行时也解决对应 decision Inbox 项", async () => {
     const { userId, targetId } = await activeTarget();
     const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
