@@ -253,7 +253,7 @@ describe("recommendation run persistence migration", () => {
         while not (select is_called from recommendation_list_delete_barrier_release) loop perform pg_sleep(0.01); end loop;
         return old;
       end; $$;
-      create trigger zzz_recommendation_list_delete_test_barrier before delete on recommendation_list_items
+      create trigger aaa_recommendation_list_delete_test_barrier before delete on recommendation_list_items
       for each row execute function recommendation_list_delete_test_barrier();
     `));
     const firstUrl = new URL(databaseUrl); firstUrl.searchParams.set("application_name", "recommendation-list-delete-first");
@@ -268,26 +268,29 @@ describe("recommendation run persistence migration", () => {
       const [{ first_pid: firstPid }] = await firstClient`select pg_backend_pid() as first_pid` as unknown as Array<{ first_pid: number }>;
       const [{ second_pid: secondPid }] = await secondClient`select pg_backend_pid() as second_pid` as unknown as Array<{ second_pid: number }>;
       expect(firstPid).not.toBe(secondPid);
-      const deletes = [
-        (async () => firstClient`delete from recommendation_list_items where id = ${first.itemId}`)(),
-        (async () => secondClient`delete from recommendation_list_items where id = ${second.itemId}`)(),
-      ];
-      let barrierState: "both_arrived" | "second_waiting_on_list" | null = null;
-      for (let attempts = 0; attempts < 200 && !barrierState; attempts += 1) {
-        const [{ arrivals }] = await database.execute(sql`select last_value::integer as arrivals from recommendation_list_delete_barrier_arrival`) as unknown as Array<{ arrivals: number }>;
-        if (Number(arrivals) >= 2) barrierState = "both_arrived";
-        const [{ second_waiting: secondWaiting }] = await database.execute(sql`
-          select exists(select 1 from pg_stat_activity where pid = ${secondPid} and wait_event_type = 'Lock') as second_waiting
-        `) as unknown as Array<{ second_waiting: boolean }>;
-        if (secondWaiting) barrierState = "second_waiting_on_list";
-        if (!barrierState) await new Promise((resolve) => setTimeout(resolve, 10));
+      const outcomes = Promise.allSettled([
+        (async () => await firstClient`delete from recommendation_list_items where id = ${first.itemId}`)(),
+        (async () => await secondClient`delete from recommendation_list_items where id = ${second.itemId}`)(),
+      ]);
+      let released = false;
+      try {
+        let arrivals = 0;
+        for (let attempts = 0; attempts < 200 && arrivals < 2; attempts += 1) {
+          const [{ arrivals: currentArrivals }] = await database.execute(sql`select last_value::integer as arrivals from recommendation_list_delete_barrier_arrival`) as unknown as Array<{ arrivals: number }>;
+          arrivals = Number(currentArrivals);
+          if (arrivals < 2) await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        expect(arrivals).toBeGreaterThanOrEqual(2);
+        await database.execute(sql`select nextval('recommendation_list_delete_barrier_release')`);
+        released = true;
+        const settled = await outcomes;
+        expect(settled.filter((outcome) => outcome.status === "rejected")).toHaveLength(1);
+        const remaining = await database.execute(sql`select id from recommendation_list_items where recommendation_list_id = ${listId}`) as unknown as Array<{ id: string }>;
+        expect(remaining).toHaveLength(1);
+      } finally {
+        if (!released) await database.execute(sql`select nextval('recommendation_list_delete_barrier_release')`).catch(() => undefined);
+        await outcomes;
       }
-      await database.execute(sql`select nextval('recommendation_list_delete_barrier_release')`);
-      expect(barrierState).toBe("second_waiting_on_list");
-      const outcomes = await Promise.allSettled(deletes);
-      expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(1);
-      const remaining = await database.execute(sql`select id from recommendation_list_items where recommendation_list_id = ${listId}`) as unknown as Array<{ id: string }>;
-      expect(remaining).toHaveLength(1);
     } finally {
       firstClient.release();
       secondClient.release();
