@@ -38,7 +38,7 @@ it("拒绝浏览器伪造账户、设置、原因及无效命令", async () => {
 it("只公开两种控制冲突，畸形上游响应降级为无正文 502", async () => {
   mocks.token.mockResolvedValue("a".repeat(43));
   for (const code of ["ACCOUNT_RUN_CONTROL_COMMAND_ID_CONFLICT", "ACCOUNT_RUN_CONTROL_VERSION_CONFLICT"] as const) {
-    mocks.control.mockRejectedValueOnce(Object.assign(new Error("safe"), { status: 409, problem: { code, message: "账户运行控制已变化，请刷新后重试", requestId: "00000000-0000-4000-8000-000000000002" } }));
+    mocks.control.mockRejectedValueOnce(Object.assign(new Error("safe"), { status: 409, problem: { code, message: "upstream-secret", requestId: "00000000-0000-4000-8000-000000000002" } }));
     const response = await POST(new Request("http://localhost", { method: "POST", body: JSON.stringify(command) }));
     expect(response.status).toBe(409);
     expect(response.headers.get("cache-control")).toBe("no-store");

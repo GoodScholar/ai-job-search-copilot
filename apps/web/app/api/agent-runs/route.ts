@@ -37,7 +37,7 @@ export async function POST(request: Request): Promise<Response> {
 function accountRunStoppedProblem(error: unknown): { code: "ACCOUNT_RUN_STOPPED"; message: string } | null {
   if (!error || typeof error !== "object" || !("status" in error) || error.status !== 409 || !("problem" in error)) return null;
   const parsed = ApiProblemSchema.safeParse(error.problem);
-  return parsed.success && parsed.data.code === "ACCOUNT_RUN_STOPPED" ? { code: parsed.data.code, message: parsed.data.message } : null;
+  return parsed.success && parsed.data.code === "ACCOUNT_RUN_STOPPED" ? { code: parsed.data.code, message: "账户已停止全部运行，请先解除全局停止" } : null;
 }
 
 function runPreflightProblem(error: unknown) {

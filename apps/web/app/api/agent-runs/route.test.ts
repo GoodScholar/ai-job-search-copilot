@@ -68,8 +68,8 @@ it("仅将严格预检 409 原样返回；未知 409 仍为 502", async () => {
 
 it("账户停止的安全 409 不会被降级为上游错误", async () => {
   mocks.readSessionToken.mockResolvedValue("a".repeat(43));
-  mocks.startAgentRun.mockRejectedValueOnce(Object.assign(new Error("账户已停止全部运行，请先解除全局停止"), {
-    status: 409, problem: { code: "ACCOUNT_RUN_STOPPED", message: "账户已停止全部运行，请先解除全局停止", requestId: "00000000-0000-4000-8000-000000000001" },
+  mocks.startAgentRun.mockRejectedValueOnce(Object.assign(new Error("upstream-secret"), {
+    status: 409, problem: { code: "ACCOUNT_RUN_STOPPED", message: "upstream-secret", requestId: "00000000-0000-4000-8000-000000000001" },
   }));
 
   const response = await POST(new Request("http://localhost/api/agent-runs", { method: "POST", body: JSON.stringify(command) }));

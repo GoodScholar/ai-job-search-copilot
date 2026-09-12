@@ -4,6 +4,7 @@ import { api } from "@/lib/server/api-client";
 import { readSessionToken } from "@/lib/server/session-cookie";
 
 const noStore = { "Cache-Control": "no-store" };
+const controlConflictMessage = "账户运行控制已变化，请刷新后重试";
 
 export async function POST(request: Request): Promise<Response> {
   const token = await readSessionToken();
@@ -23,7 +24,7 @@ function publicControlConflict(error: unknown): { code: "ACCOUNT_RUN_CONTROL_COM
   if (!error || typeof error !== "object" || !("status" in error) || error.status !== 409 || !("problem" in error)) return null;
   const parsed = ApiProblemSchema.safeParse(error.problem);
   if (!parsed.success || (parsed.data.code !== "ACCOUNT_RUN_CONTROL_COMMAND_ID_CONFLICT" && parsed.data.code !== "ACCOUNT_RUN_CONTROL_VERSION_CONFLICT")) return null;
-  return { code: parsed.data.code, message: parsed.data.message };
+  return { code: parsed.data.code, message: controlConflictMessage };
 }
 
 function safeStatus(error: unknown): number {

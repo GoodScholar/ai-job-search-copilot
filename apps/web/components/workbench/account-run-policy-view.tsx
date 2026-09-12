@@ -268,6 +268,7 @@ export function AccountRunPolicyView({ initialControl = null, initialPolicy }: {
       {control?.stoppedAt !== null && control ? <p>已停止新动作，正在运行的任务将在安全检查点暂停。已发出的请求可能仍产生费用</p> : null}
       {control?.stoppedAt !== null && control ? <p>全局停止已生效。解除不会自动恢复旧运行，旧运行需逐个继续，错过的计划不会补跑</p> : <p>解除全局停止只开放未来新运行，不会恢复旧运行或补跑错过的计划。</p>}
       <div className="run-policy-actions"><Button className="workbench-touch-target" disabled={controlUnavailable || !control || controlling} onClick={() => void controlAllRuns()} size="lg" type="button" variant="outline">{controlling ? "正在更新…" : !control || control.stoppedAt === null ? "停止全部运行" : "解除全局停止"}</Button></div>
+      {controlUnavailable && !controlMessage ? <p>运行控制暂不可用</p> : null}
       {controlMessage ? <p aria-live="polite" className="run-policy-status" role="status">{controlMessage}</p> : null}
     </section>
     <section aria-labelledby="run-policy-comparison-title" className="job-targets-section">

@@ -121,7 +121,77 @@ it("未停止时仅说明停止效果，不把当前状态说成已停止", () =
 it("控制状态不可用时禁用按钮，不阻塞既有策略编辑", () => {
   render(<AccountRunPolicyView initialControl={null} initialPolicy={initialPolicy} />);
   expect(screen.getByRole("button", { name: "停止全部运行" })).toBeDisabled();
+  expect(screen.getByText("运行控制暂不可用")).toBeVisible();
   expect(screen.getByRole("button", { name: "保存运行策略" })).toBeEnabled();
+});
+
+it("控制请求尚未完成时禁用停止按钮", async () => {
+  const user = userEvent.setup();
+  let resolveControl: (response: Response) => void;
+  const pendingControl = new Promise<Response>((resolve) => { resolveControl = resolve; });
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockReturnValueOnce(pendingControl)
+    .mockResolvedValueOnce(Response.json({ stoppedAt: "2026-09-12T00:00:00.000Z", controlVersion: 1, scheduleResumeAfter: null }));
+
+  render(<AccountRunPolicyView initialControl={activeControl} initialPolicy={initialPolicy} />);
+  await user.click(screen.getByRole("button", { name: "停止全部运行" }));
+
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+  expect(screen.getByRole("button", { name: "正在更新…" })).toBeDisabled();
+  resolveControl!(Response.json({ applied: true, state: { stoppedAt: "2026-09-12T00:00:00.000Z", controlVersion: 1, scheduleResumeAfter: null } }));
+  expect(await screen.findByRole("button", { name: "解除全局停止" })).toBeEnabled();
+  expect(fetchMock.mock.calls[1]).toEqual(["/api/account/run-policy/control", { cache: "no-store" }]);
+});
+
+it("控制网络失败重试时复用完整命令", async () => {
+  const user = userEvent.setup();
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockRejectedValueOnce(new Error("NETWORK"))
+    .mockResolvedValueOnce(Response.json({ applied: true, state: { stoppedAt: "2026-09-12T00:00:00.000Z", controlVersion: 1, scheduleResumeAfter: null } }))
+    .mockResolvedValueOnce(Response.json({ stoppedAt: "2026-09-12T00:00:00.000Z", controlVersion: 1, scheduleResumeAfter: null }));
+
+  render(<AccountRunPolicyView initialControl={activeControl} initialPolicy={initialPolicy} />);
+  await user.click(screen.getByRole("button", { name: "停止全部运行" }));
+  expect(await screen.findByRole("status")).toHaveTextContent("暂时无法更新运行控制，请稍后重试。");
+  await user.click(screen.getByRole("button", { name: "停止全部运行" }));
+
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+  const firstCommand = JSON.parse(String((fetchMock.mock.calls[0]![1] as RequestInit).body));
+  const retriedCommand = JSON.parse(String((fetchMock.mock.calls[1]![1] as RequestInit).body));
+  expect(retriedCommand).toEqual(firstCommand);
+  expect(fetchMock.mock.calls[2]).toEqual(["/api/account/run-policy/control", { cache: "no-store" }]);
+});
+
+it("控制 409 后读取当前权威状态", async () => {
+  const user = userEvent.setup();
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json({ code: "ACCOUNT_RUN_CONTROL_VERSION_CONFLICT" }, { status: 409 }))
+    .mockResolvedValueOnce(Response.json({ stoppedAt: "2026-09-12T00:00:00.000Z", controlVersion: 1, scheduleResumeAfter: null }));
+
+  render(<AccountRunPolicyView initialControl={activeControl} initialPolicy={initialPolicy} />);
+  await user.click(screen.getByRole("button", { name: "停止全部运行" }));
+
+  expect(await screen.findByRole("button", { name: "解除全局停止" })).toBeEnabled();
+  expect(fetchMock.mock.calls).toHaveLength(2);
+  expect(fetchMock.mock.calls[1]).toEqual(["/api/account/run-policy/control", { cache: "no-store" }]);
+});
+
+it("保存策略不改变独立控制状态", async () => {
+  const user = userEvent.setup();
+  const stopped = { stoppedAt: "2026-09-12T00:00:00.000Z", controlVersion: 1, scheduleResumeAfter: null } as const;
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(initialPolicy));
+
+  render(<AccountRunPolicyView initialControl={stopped} initialPolicy={initialPolicy} />);
+  await user.click(screen.getByRole("button", { name: "保存运行策略" }));
+
+  expect(await screen.findByRole("status")).toHaveTextContent("运行策略已保存。");
+  expect(fetchMock.mock.calls).toEqual([["/api/account/run-policy", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ expectedVersion: 4, settings: initialPolicy.effective }),
+  }]]);
+  expect(screen.getByRole("button", { name: "解除全局停止" })).toBeEnabled();
+  expect(screen.getByText("已停止新动作，正在运行的任务将在安全检查点暂停。已发出的请求可能仍产生费用")).toBeVisible();
 });
 
 it("保存更保守的可信来源上限时携带完整设置和当前修订，并显示新修订", async () => {
