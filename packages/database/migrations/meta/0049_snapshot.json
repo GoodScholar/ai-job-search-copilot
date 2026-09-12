@@ -1,5 +1,5 @@
 {
-  "id": "9aaa2bea-d8cb-402f-9673-3cc2523d51b8",
+  "id": "01e20158-69bf-48f6-85b1-da97cda8f103",
   "prevId": "4d2122bf-f0d4-4b9a-b99e-5dca22925cf2",
   "version": "7",
   "dialect": "postgresql",
@@ -1899,6 +1899,22 @@
         }
       },
       "indexes": {
+        "agent_runs_recommendation_child_parent_unique": {
+          "name": "agent_runs_recommendation_child_parent_unique",
+          "columns": [
+            {
+              "expression": "parent_run_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"agent_runs\".\"run_purpose\" = 'recommendation' and \"agent_runs\".\"parent_run_id\" is not null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "agent_runs_recovery_status_expiry_idx": {
           "name": "agent_runs_recovery_status_expiry_idx",
           "columns": [
@@ -2067,7 +2083,7 @@
         },
         "agent_runs_recommendation_context_check": {
           "name": "agent_runs_recommendation_context_check",
-          "value": "\n    (\"agent_runs\".\"run_purpose\" <> 'recommendation' and \"agent_runs\".\"recommendation_context\" is null)\n    or (\"agent_runs\".\"run_purpose\" = 'recommendation' and \"agent_runs\".\"parent_run_id\" is null\n      and jsonb_typeof(\"agent_runs\".\"recommendation_context\") = 'object'\n      and \"agent_runs\".\"recommendation_context\" ?& array['version', 'profile', 'budgets', 'preflight', 'accountPolicyRevisionNumber']\n      and \"agent_runs\".\"recommendation_context\" ->> 'version' = 'recommendation-context-v1'\n      and jsonb_typeof(\"agent_runs\".\"recommendation_context\" -> 'profile') = 'object'\n      and \"agent_runs\".\"recommendation_context\" -> 'profile' ?& array['profileId', 'profileVersion']\n      and jsonb_typeof(\"agent_runs\".\"recommendation_context\" -> 'budgets') = 'object'\n      and \"agent_runs\".\"recommendation_context\" -> 'budgets' ?& array['discovery', 'deepMatch']\n      and jsonb_typeof(\"agent_runs\".\"recommendation_context\" -> 'preflight') = 'object'\n      and octet_length(\"agent_runs\".\"recommendation_context\"::text) <= 32768)\n    or (\"agent_runs\".\"run_purpose\" = 'recommendation' and \"agent_runs\".\"parent_run_id\" is not null and \"agent_runs\".\"recommendation_context\" is null)\n  "
+          "value": "\n    (\"agent_runs\".\"run_purpose\" <> 'recommendation' and \"agent_runs\".\"recommendation_context\" is null)\n    or (\"agent_runs\".\"run_purpose\" = 'recommendation' and \"agent_runs\".\"parent_run_id\" is null\n      and \"agent_runs\".\"recommendation_context\" is not null\n      and jsonb_typeof(\"agent_runs\".\"recommendation_context\") = 'object'\n      and \"agent_runs\".\"recommendation_context\" ?& array['version', 'profile', 'budgets', 'preflight', 'accountPolicyRevisionNumber']\n      and \"agent_runs\".\"recommendation_context\" ->> 'version' = 'recommendation-context-v1'\n      and jsonb_typeof(\"agent_runs\".\"recommendation_context\" -> 'profile') = 'object'\n      and \"agent_runs\".\"recommendation_context\" -> 'profile' ?& array['profileId', 'profileVersion']\n      and jsonb_typeof(\"agent_runs\".\"recommendation_context\" -> 'budgets') = 'object'\n      and \"agent_runs\".\"recommendation_context\" -> 'budgets' ?& array['discovery', 'deepMatch']\n      and jsonb_typeof(\"agent_runs\".\"recommendation_context\" -> 'preflight') = 'object'\n      and octet_length(\"agent_runs\".\"recommendation_context\"::text) <= 32768)\n    or (\"agent_runs\".\"run_purpose\" = 'recommendation' and \"agent_runs\".\"parent_run_id\" is not null and \"agent_runs\".\"recommendation_context\" is null)\n  "
         },
         "agent_runs_target_snapshot_object": {
           "name": "agent_runs_target_snapshot_object",
@@ -9586,32 +9602,6 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "recommendation_results_root_run_id_agent_runs_id_fk": {
-          "name": "recommendation_results_root_run_id_agent_runs_id_fk",
-          "tableFrom": "recommendation_results",
-          "tableTo": "agent_runs",
-          "columnsFrom": [
-            "root_run_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "recommendation_results_producer_run_id_agent_runs_id_fk": {
-          "name": "recommendation_results_producer_run_id_agent_runs_id_fk",
-          "tableFrom": "recommendation_results",
-          "tableTo": "agent_runs",
-          "columnsFrom": [
-            "producer_run_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
         "recommendation_results_owner_target_fk": {
           "name": "recommendation_results_owner_target_fk",
           "tableFrom": "recommendation_results",
@@ -9714,7 +9704,7 @@
         },
         "recommendation_results_evidence_object": {
           "name": "recommendation_results_evidence_object",
-          "value": "jsonb_typeof(\"recommendation_results\".\"evidence\") = 'object'"
+          "value": "\n    jsonb_typeof(\"recommendation_results\".\"evidence\") = 'object'\n    and octet_length(\"recommendation_results\".\"evidence\"::text) <= 32768\n    and \"recommendation_results\".\"evidence\" ?& array['discovery', 'sourceCoverage', 'coverageLosses', 'qualification', 'coarseRanking', 'deepMatching', 'suggestedActions']\n    and (\"recommendation_results\".\"evidence\" - array['discovery', 'sourceCoverage', 'coverageLosses', 'qualification', 'coarseRanking', 'deepMatching', 'suggestedActions']) = '{}'::jsonb\n    and jsonb_typeof(\"recommendation_results\".\"evidence\" -> 'discovery') = 'object'\n    and jsonb_typeof(\"recommendation_results\".\"evidence\" -> 'sourceCoverage') = 'object'\n    and jsonb_typeof(\"recommendation_results\".\"evidence\" -> 'coverageLosses') = 'array'\n    and jsonb_typeof(\"recommendation_results\".\"evidence\" -> 'qualification') = 'object'\n    and jsonb_typeof(\"recommendation_results\".\"evidence\" -> 'coarseRanking') = 'object'\n    and jsonb_typeof(\"recommendation_results\".\"evidence\" -> 'deepMatching') = 'object'\n    and jsonb_typeof(\"recommendation_results\".\"evidence\" -> 'suggestedActions') = 'array'\n  "
         },
         "recommendation_results_kind_shape_check": {
           "name": "recommendation_results_kind_shape_check",
@@ -9980,32 +9970,6 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "recommendation_run_control_commands_root_run_id_agent_runs_id_fk": {
-          "name": "recommendation_run_control_commands_root_run_id_agent_runs_id_fk",
-          "tableFrom": "recommendation_run_control_commands",
-          "tableTo": "agent_runs",
-          "columnsFrom": [
-            "root_run_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "recommendation_run_control_commands_physical_run_id_agent_runs_id_fk": {
-          "name": "recommendation_run_control_commands_physical_run_id_agent_runs_id_fk",
-          "tableFrom": "recommendation_run_control_commands",
-          "tableTo": "agent_runs",
-          "columnsFrom": [
-            "physical_run_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
         "recommendation_run_control_commands_owner_root_fk": {
           "name": "recommendation_run_control_commands_owner_root_fk",
           "tableFrom": "recommendation_run_control_commands",
@@ -10058,9 +10022,9 @@
           "name": "recommendation_run_control_commands_fingerprint_check",
           "value": "\"recommendation_run_control_commands\".\"command_fingerprint\" ~ '^[0-9a-f]{64}$'"
         },
-        "recommendation_run_control_commands_snapshot_object": {
-          "name": "recommendation_run_control_commands_snapshot_object",
-          "value": "jsonb_typeof(\"recommendation_run_control_commands\".\"result_snapshot\") = 'object'"
+        "recommendation_run_control_commands_snapshot_check": {
+          "name": "recommendation_run_control_commands_snapshot_check",
+          "value": "\n    jsonb_typeof(\"recommendation_run_control_commands\".\"result_snapshot\") = 'object'\n    and \"recommendation_run_control_commands\".\"result_snapshot\" ?& array['runId', 'status', 'currentStep', 'controlState', 'version']\n    and (\"recommendation_run_control_commands\".\"result_snapshot\" - array['runId', 'status', 'currentStep', 'controlState', 'version']) = '{}'::jsonb\n    and \"recommendation_run_control_commands\".\"result_snapshot\" -> 'runId' = to_jsonb(\"recommendation_run_control_commands\".\"physical_run_id\"::text)\n    and \"recommendation_run_control_commands\".\"result_snapshot\" ->> 'status' in ('queued', 'running', 'paused', 'completed', 'failed', 'cancelled')\n    and \"recommendation_run_control_commands\".\"result_snapshot\" ->> 'currentStep' in ('queued', 'batch_search', 'fetch_details', 'persist_results', 'select_candidates', 'assess_matches', 'create_recommendations', 'completed', 'failed', 'cancelled')\n    and (\"recommendation_run_control_commands\".\"result_snapshot\" ->> 'status' = 'cancelled') = (\"recommendation_run_control_commands\".\"result_snapshot\" ->> 'currentStep' = 'cancelled')\n    and \"recommendation_run_control_commands\".\"result_snapshot\" ->> 'controlState' in ('none', 'pause_requested', 'cancel_requested')\n    and jsonb_typeof(\"recommendation_run_control_commands\".\"result_snapshot\" -> 'version') = 'number'\n  "
         }
       },
       "isRLSEnabled": false
@@ -10109,19 +10073,6 @@
           "tableTo": "job_accounts",
           "columnsFrom": [
             "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "recommendation_run_start_commands_root_run_id_agent_runs_id_fk": {
-          "name": "recommendation_run_start_commands_root_run_id_agent_runs_id_fk",
-          "tableFrom": "recommendation_run_start_commands",
-          "tableTo": "agent_runs",
-          "columnsFrom": [
-            "root_run_id"
           ],
           "columnsTo": [
             "id"

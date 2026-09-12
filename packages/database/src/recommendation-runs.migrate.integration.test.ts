@@ -17,9 +17,13 @@ const recommendationContext = {
   accountPolicyRevisionNumber: 0,
 };
 
+const safeEvidence = {
+  discovery: {}, sourceCoverage: {}, coverageLosses: [], qualification: {}, coarseRanking: {}, deepMatching: {}, suggestedActions: [],
+};
+
 async function insertRun(database: Database, input: {
   id?: string; userId: string; targetId: string; purpose: "job_discovery" | "opportunity_reevaluation" | "recommendation";
-  workflow?: "layered-public-job-discovery-v1" | "deep-match-v1" | "workflow-v4"; parentRunId?: string | null; trigger?: "manual" | "automatic"; context?: unknown;
+  workflow?: "layered-public-job-discovery-v1" | "deep-match-v1" | "workflow-v4"; parentRunId?: string | null; trigger?: "manual" | "automatic" | null; context?: unknown;
 }) {
   const id = input.id ?? crypto.randomUUID();
   const workflow = input.workflow ?? "layered-public-job-discovery-v1";
@@ -33,11 +37,28 @@ async function insertRun(database: Database, input: {
       ${JSON.stringify({ targetId: input.targetId })}::jsonb,
       ${workflow === "layered-public-job-discovery-v1" ? JSON.stringify({ targetId: input.targetId }) : null}::jsonb,
       ${workflow === "layered-public-job-discovery-v1" ? JSON.stringify({ targetId: input.targetId }) : null}::jsonb,
-      ${JSON.stringify({ trigger: input.trigger ?? "manual" })}::jsonb, '{}'::jsonb, ${workflow}, 'rules-v1', 'adapter', 'v1', 'result-v1', '[]'::jsonb,
+      ${JSON.stringify(input.trigger === null ? {} : { trigger: input.trigger ?? "manual" })}::jsonb, '{}'::jsonb, ${workflow}, 'rules-v1', 'adapter', 'v1', 'result-v1', '[]'::jsonb,
       ${workflow === "deep-match-v1" ? "{}" : null}::jsonb, 'queued', 'queued', ${input.purpose}, ${input.parentRunId ?? null}, ${input.context === undefined ? null : JSON.stringify(input.context)}::jsonb
     )
   `);
   return id;
+}
+
+async function insertListItem(database: Database, userId: string, targetId: string, listId: string, existingMatchId?: string) {
+  if (existingMatchId) {
+    const itemId = crypto.randomUUID();
+    await database.execute(sql`insert into recommendation_list_items (id, user_id, recommendation_list_id, match_version_id, ordinal) values (${itemId}, ${userId}, ${listId}, ${existingMatchId}, 1)`);
+    return { itemId, matchId: existingMatchId };
+  }
+  const [profileId, postingId, postingVersionId, opportunityId, triageId, matchId, itemId] = Array.from({ length: 7 }, () => crypto.randomUUID());
+  await database.execute(sql`insert into job_profiles (id, user_id, version) values (${profileId}, ${userId}, 1)`);
+  await database.execute(sql`insert into job_source_postings (id, user_id, source_type, source_identifier, source_identity) values (${postingId}, ${userId}, 'fake', ${postingId}, '{}'::jsonb)`);
+  await database.execute(sql`insert into job_source_posting_versions (id, user_id, source_posting_id, version, content_sha256, raw_content_sha256, raw_object_reference, retrieved_at) values (${postingVersionId}, ${userId}, ${postingId}, 1, ${"a".repeat(64)}, ${"b".repeat(64)}, '{}'::jsonb, now())`);
+  await database.execute(sql`insert into job_opportunities (id, user_id, source_posting_version_id, dedup_key, normalized_data) values (${opportunityId}, ${userId}, ${postingVersionId}, ${"c".repeat(64)}, '{}'::jsonb)`);
+  await database.execute(sql`insert into job_triage_versions (id, user_id, opportunity_id, source_posting_version_id, profile_id, profile_version, target_id, target_version, qualification_rule_version, coarse_rule_version, overall_verdict, gate_results, pending_items, deadline_status, confidence_basis_points, dimension_scores, overall_score, threshold, sequence) values (${triageId}, ${userId}, ${opportunityId}, ${postingVersionId}, ${profileId}, 1, ${targetId}, 1, 'qualification-v1', 'coarse-v1', 'pass', '{}'::jsonb, '[]'::jsonb, 'valid', 10000, '{}'::jsonb, 90, 70, 1)`);
+  await database.execute(sql`insert into job_match_versions (id, user_id, opportunity_id, source_posting_version_id, triage_version_id, profile_id, profile_version, target_id, target_version, rule_version, prompt_version, adapter, adapter_version, model, output_schema_version, overall_score, display_band, assessment, sequence) values (${matchId}, ${userId}, ${opportunityId}, ${postingVersionId}, ${triageId}, ${profileId}, 1, ${targetId}, 1, 'rules-v1', 'prompt-v1', 'fake', 'fake-v1', 'fake-model', 'result-v1', 90, 'highly_matched', '{}'::jsonb, 1)`);
+  await database.execute(sql`insert into recommendation_list_items (id, user_id, recommendation_list_id, match_version_id, ordinal) values (${itemId}, ${userId}, ${listId}, ${matchId}, 1)`);
+  return { itemId, matchId };
 }
 
 describe("recommendation run persistence migration", () => {
@@ -80,6 +101,20 @@ describe("recommendation run persistence migration", () => {
     await expect(database.execute(sql`update agent_runs set parent_run_id = ${childId} where id = ${rootId}`)).rejects.toMatchObject({ cause: { code: "23514" } });
   });
 
+  it("rejects SQL NULL context, missing automatic trigger, and an invalid recommendation root workflow", async () => {
+    await expect(insertRun(database, { userId: ownerId, targetId, purpose: "recommendation" })).rejects.toMatchObject({ cause: { code: "23514" } });
+    const rootId = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", context: recommendationContext });
+    await expect(insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "deep-match-v1", parentRunId: rootId, trigger: null })).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "workflow-v4", context: recommendationContext })).rejects.toMatchObject({ cause: { code: "23514" } });
+  });
+
+  it("freezes recommendation association identity after a child is created", async () => {
+    const rootId = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", context: recommendationContext });
+    const childId = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "automatic", parentRunId: rootId });
+    await expect(database.execute(sql`update agent_runs set run_purpose = 'job_discovery' where id = ${rootId}`)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(database.execute(sql`update agent_runs set run_purpose = 'job_discovery' where id = ${childId}`)).rejects.toMatchObject({ cause: { code: "23514" } });
+  });
+
   it("requires a bounded recommendation context and preserves immutable command facts", async () => {
     await expect(insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", context: [] })).rejects.toMatchObject({ cause: { code: "23514" } });
     await expect(insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", context: { ...recommendationContext, version: "wrong" } })).rejects.toMatchObject({ cause: { code: "23514" } });
@@ -96,10 +131,16 @@ describe("recommendation run persistence migration", () => {
     `)).rejects.toMatchObject({ cause: { code: "23505" } });
     await expect(database.execute(sql`update recommendation_run_start_commands set command_fingerprint = ${"b".repeat(64)} where user_id = ${ownerId} and idempotency_key = ${commandId}`)).rejects.toMatchObject({ cause: { code: "P0001" } });
     await expect(database.execute(sql`delete from recommendation_run_start_commands where user_id = ${ownerId} and idempotency_key = ${commandId}`)).rejects.toMatchObject({ cause: { code: "P0001" } });
+    const controlCommandId = crypto.randomUUID();
     await database.execute(sql`
       insert into recommendation_run_control_commands (user_id, root_run_id, command_id, physical_run_id, action, command_fingerprint, result_snapshot)
-      values (${ownerId}, ${rootId}, ${crypto.randomUUID()}, ${rootId}, 'pause', ${"c".repeat(64)}, ${JSON.stringify({ runId: rootId, status: "queued", currentStep: "queued", controlState: "none", version: 1 })}::jsonb)
+      values (${ownerId}, ${rootId}, ${controlCommandId}, ${rootId}, 'pause', ${"c".repeat(64)}, ${JSON.stringify({ runId: rootId, status: "queued", currentStep: "queued", controlState: "none", version: 1 })}::jsonb)
     `);
+    const childId = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "automatic", parentRunId: rootId });
+    await expect(database.execute(sql`
+      insert into recommendation_run_control_commands (user_id, root_run_id, command_id, physical_run_id, action, command_fingerprint, result_snapshot)
+      values (${ownerId}, ${rootId}, ${controlCommandId}, ${childId}, 'pause', ${"c".repeat(64)}, ${JSON.stringify({ runId: childId, status: "queued", currentStep: "queued", controlState: "none", version: 1 })}::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23505" } });
     await expect(database.execute(sql`update recommendation_run_control_commands set action = 'cancel' where user_id = ${ownerId} and root_run_id = ${rootId}`)).rejects.toMatchObject({ cause: { code: "P0001" } });
     await expect(database.execute(sql`delete from recommendation_run_control_commands where user_id = ${ownerId} and root_run_id = ${rootId}`)).rejects.toMatchObject({ cause: { code: "P0001" } });
   });
@@ -121,14 +162,14 @@ describe("recommendation run persistence migration", () => {
     await database.execute(sql`insert into recommendation_lists (id, user_id, target_id, local_date, sequence) values (${listId}, ${ownerId}, ${targetId}, '2026-09-12', 1)`);
     await expect(database.execute(sql`
       insert into recommendation_results (id, user_id, target_id, root_run_id, producer_run_id, kind, recommendation_list_id, item_count, evidence)
-      values (${listId}, ${ownerId}, ${targetId}, ${rootId}, ${childId}, 'recommendation_list', ${listId}, 1, '{}'::jsonb)
+      values (${listId}, ${ownerId}, ${targetId}, ${rootId}, ${childId}, 'recommendation_list', ${listId}, 1, ${JSON.stringify(safeEvidence)}::jsonb)
     `)).rejects.toMatchObject({ cause: { code: "23514" } });
     const noResultRoot = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", context: recommendationContext });
     const noResultChild = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "automatic", parentRunId: noResultRoot });
     const noResultId = crypto.randomUUID();
     await database.execute(sql`
       insert into recommendation_results (id, user_id, target_id, root_run_id, producer_run_id, kind, recommendation_list_id, item_count, evidence)
-      values (${noResultId}, ${ownerId}, ${targetId}, ${noResultRoot}, ${noResultChild}, 'no_recommendations', null, 0, '{}'::jsonb)
+      values (${noResultId}, ${ownerId}, ${targetId}, ${noResultRoot}, ${noResultChild}, 'no_recommendations', null, 0, ${JSON.stringify(safeEvidence)}::jsonb)
     `);
     await database.execute(sql`
       insert into agent_inbox_items (id, user_id, recommendation_result_id, kind, status, reason_code)
@@ -136,6 +177,48 @@ describe("recommendation run persistence migration", () => {
     `);
     await expect(database.execute(sql`update recommendation_results set evidence = '{"changed":true}'::jsonb where id = ${noResultId}`)).rejects.toMatchObject({ cause: { code: "P0001" } });
     await expect(database.execute(sql`delete from recommendation_results where id = ${noResultId}`)).rejects.toMatchObject({ cause: { code: "P0001" } });
+  });
+
+  it("rejects non-child producers, mismatched parent targets, duplicate results, and oversized evidence", async () => {
+    const rootId = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", context: recommendationContext });
+    const childId = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "automatic", parentRunId: rootId });
+    await expect(insertRun(database, { userId: ownerId, targetId: otherTargetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "automatic", parentRunId: rootId })).rejects.toMatchObject({ cause: { code: "23503" } });
+    await expect(database.execute(sql`
+      insert into recommendation_results (id, user_id, target_id, root_run_id, producer_run_id, kind, item_count, evidence)
+      values (${crypto.randomUUID()}, ${ownerId}, ${targetId}, ${rootId}, ${rootId}, 'no_recommendations', 0, ${JSON.stringify(safeEvidence)}::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
+    const resultId = crypto.randomUUID();
+    await database.execute(sql`
+      insert into recommendation_results (id, user_id, target_id, root_run_id, producer_run_id, kind, item_count, evidence)
+      values (${resultId}, ${ownerId}, ${targetId}, ${rootId}, ${childId}, 'no_recommendations', 0, ${JSON.stringify(safeEvidence)}::jsonb)
+    `);
+    await expect(database.execute(sql`
+      insert into recommendation_results (id, user_id, target_id, root_run_id, producer_run_id, kind, item_count, evidence)
+      values (${crypto.randomUUID()}, ${ownerId}, ${targetId}, ${rootId}, ${childId}, 'no_recommendations', 0, ${JSON.stringify(safeEvidence)}::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23505" } });
+    const oversizedRootId = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", context: recommendationContext });
+    const oversizedChildId = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "automatic", parentRunId: oversizedRootId });
+    await expect(database.execute(sql`
+      insert into recommendation_results (id, user_id, target_id, root_run_id, producer_run_id, kind, item_count, evidence)
+      values (${crypto.randomUUID()}, ${ownerId}, ${targetId}, ${oversizedRootId}, ${oversizedChildId}, 'no_recommendations', 0, ${JSON.stringify({ ...safeEvidence, discovery: { padding: "x".repeat(32_768) } })}::jsonb)
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
+  });
+
+  it("keeps a published recommendation list nonempty while leaving unpublished lists mutable", async () => {
+    const rootId = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", context: recommendationContext });
+    const childId = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "automatic", parentRunId: rootId });
+    const publishedListId = crypto.randomUUID();
+    await database.execute(sql`insert into recommendation_lists (id, user_id, target_id, local_date, sequence) values (${publishedListId}, ${ownerId}, ${targetId}, '2026-09-12', 100)`);
+    const { itemId, matchId } = await insertListItem(database, ownerId, targetId, publishedListId);
+    await database.execute(sql`
+      insert into recommendation_results (id, user_id, target_id, root_run_id, producer_run_id, kind, recommendation_list_id, item_count, evidence)
+      values (${publishedListId}, ${ownerId}, ${targetId}, ${rootId}, ${childId}, 'recommendation_list', ${publishedListId}, 1, ${JSON.stringify(safeEvidence)}::jsonb)
+    `);
+    await expect(database.execute(sql`delete from recommendation_list_items where id = ${itemId}`)).rejects.toMatchObject({ cause: { code: "23514" } });
+    const unpublishedListId = crypto.randomUUID();
+    await database.execute(sql`insert into recommendation_lists (id, user_id, target_id, local_date, sequence) values (${unpublishedListId}, ${ownerId}, ${targetId}, '2026-09-12', 101)`);
+    const { itemId: unpublishedItemId } = await insertListItem(database, ownerId, targetId, unpublishedListId, matchId);
+    await expect(database.execute(sql`delete from recommendation_list_items where id = ${unpublishedItemId}`)).resolves.toBeDefined();
   });
 
   it("maps only historical manual deep-match runs to opportunity reevaluation", async () => {

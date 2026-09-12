@@ -14,6 +14,7 @@ ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_parent_not_self_check" CHECK
 ALTER TABLE "agent_runs" ADD CONSTRAINT "agent_runs_recommendation_context_check" CHECK (
   ("run_purpose" <> 'recommendation' AND "recommendation_context" is null)
   OR ("run_purpose" = 'recommendation' AND "parent_run_id" is null
+    AND "recommendation_context" IS NOT NULL
     AND jsonb_typeof("recommendation_context") = 'object'
     AND "recommendation_context" ?& array['version', 'profile', 'budgets', 'preflight', 'accountPolicyRevisionNumber']
     AND "recommendation_context" ->> 'version' = 'recommendation-context-v1'
@@ -31,6 +32,17 @@ CREATE FUNCTION validate_recommendation_run_topology()
 RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE parent_purpose varchar(32);
 BEGIN
+  IF TG_OP = 'UPDATE' AND OLD.run_purpose = 'recommendation' AND (
+    NEW.user_id IS DISTINCT FROM OLD.user_id
+    OR NEW.target_id IS DISTINCT FROM OLD.target_id
+    OR NEW.run_purpose IS DISTINCT FROM OLD.run_purpose
+    OR NEW.parent_run_id IS DISTINCT FROM OLD.parent_run_id
+    OR NEW.workflow_version IS DISTINCT FROM OLD.workflow_version
+    OR NEW.source_scope IS DISTINCT FROM OLD.source_scope
+    OR NEW.recommendation_context IS DISTINCT FROM OLD.recommendation_context
+  ) THEN
+    RAISE EXCEPTION 'RECOMMENDATION_RUN_IDENTITY_IMMUTABLE' USING ERRCODE = 'check_violation';
+  END IF;
   IF NEW.run_purpose <> 'recommendation' THEN RETURN NEW; END IF;
   IF NEW.parent_run_id IS NULL THEN
     IF NEW.workflow_version <> 'layered-public-job-discovery-v1' THEN
@@ -38,7 +50,7 @@ BEGIN
     END IF;
     RETURN NEW;
   END IF;
-  IF NEW.workflow_version <> 'deep-match-v1' OR NEW.source_scope ->> 'trigger' <> 'automatic' THEN
+  IF NEW.workflow_version <> 'deep-match-v1' OR NEW.source_scope ->> 'trigger' IS DISTINCT FROM 'automatic' THEN
     RAISE EXCEPTION 'RECOMMENDATION_CHILD_WORKFLOW_INVALID' USING ERRCODE = 'check_violation';
   END IF;
   SELECT run_purpose INTO parent_purpose FROM agent_runs
@@ -108,7 +120,19 @@ CREATE TABLE "recommendation_results" (
   CONSTRAINT "recommendation_results_owner_root_unique" UNIQUE("user_id", "root_run_id"),
   CONSTRAINT "recommendation_results_owner_producer_unique" UNIQUE("user_id", "producer_run_id"),
   CONSTRAINT "recommendation_results_kind_check" CHECK ("kind" in ('recommendation_list', 'no_recommendations')),
-  CONSTRAINT "recommendation_results_evidence_object" CHECK (jsonb_typeof("evidence") = 'object'),
+  CONSTRAINT "recommendation_results_evidence_object" CHECK (
+    jsonb_typeof("evidence") = 'object'
+    AND octet_length("evidence"::text) <= 32768
+    AND "evidence" ?& array['discovery', 'sourceCoverage', 'coverageLosses', 'qualification', 'coarseRanking', 'deepMatching', 'suggestedActions']
+    AND ("evidence" - array['discovery', 'sourceCoverage', 'coverageLosses', 'qualification', 'coarseRanking', 'deepMatching', 'suggestedActions']) = '{}'::jsonb
+    AND jsonb_typeof("evidence" -> 'discovery') = 'object'
+    AND jsonb_typeof("evidence" -> 'sourceCoverage') = 'object'
+    AND jsonb_typeof("evidence" -> 'coverageLosses') = 'array'
+    AND jsonb_typeof("evidence" -> 'qualification') = 'object'
+    AND jsonb_typeof("evidence" -> 'coarseRanking') = 'object'
+    AND jsonb_typeof("evidence" -> 'deepMatching') = 'object'
+    AND jsonb_typeof("evidence" -> 'suggestedActions') = 'array'
+  ),
   CONSTRAINT "recommendation_results_kind_shape_check" CHECK (("kind" = 'recommendation_list' and "id" = "recommendation_list_id" and "item_count" > 0) or ("kind" = 'no_recommendations' and "recommendation_list_id" is null and "item_count" = 0))
 );--> statement-breakpoint
 ALTER TABLE "recommendation_results" ADD CONSTRAINT "recommendation_results_owner_target_fk" FOREIGN KEY ("user_id", "target_id") REFERENCES "job_targets"("user_id", "id");--> statement-breakpoint
@@ -131,6 +155,20 @@ BEGIN
   RETURN NEW;
 END;$$;--> statement-breakpoint
 CREATE TRIGGER recommendation_results_validate_insert BEFORE INSERT ON "recommendation_results" FOR EACH ROW EXECUTE FUNCTION validate_recommendation_result();--> statement-breakpoint
+
+CREATE FUNCTION protect_published_recommendation_list_items()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF (TG_OP = 'DELETE' OR NEW.recommendation_list_id IS DISTINCT FROM OLD.recommendation_list_id)
+    AND EXISTS (SELECT 1 FROM recommendation_results WHERE kind = 'recommendation_list' AND recommendation_list_id = OLD.recommendation_list_id)
+    AND NOT EXISTS (SELECT 1 FROM recommendation_list_items WHERE recommendation_list_id = OLD.recommendation_list_id AND id <> OLD.id) THEN
+    RAISE EXCEPTION 'PUBLISHED_RECOMMENDATION_LIST_MUST_NOT_BE_EMPTY' USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN COALESCE(NEW, OLD);
+END;$$;--> statement-breakpoint
+CREATE TRIGGER recommendation_list_items_preserve_published_nonempty
+BEFORE DELETE OR UPDATE OF "recommendation_list_id" ON "recommendation_list_items"
+FOR EACH ROW EXECUTE FUNCTION protect_published_recommendation_list_items();--> statement-breakpoint
 
 CREATE FUNCTION reject_recommendation_fact_mutation()
 RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'RECOMMENDATION_FACT_IMMUTABLE'; END;$$;--> statement-breakpoint

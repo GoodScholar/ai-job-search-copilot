@@ -658,6 +658,7 @@ export const agentRuns = pgTable("agent_runs", {
   unique("agent_runs_user_id_id_unique").on(table.userId, table.id),
   unique("agent_runs_user_id_id_target_id_unique").on(table.userId, table.id, table.targetId),
   unique("agent_runs_user_idempotency_unique").on(table.userId, table.idempotencyKey),
+  uniqueIndex("agent_runs_recommendation_child_parent_unique").on(table.parentRunId).where(sql`${table.runPurpose} = 'recommendation' and ${table.parentRunId} is not null`),
   index("agent_runs_recovery_status_expiry_idx").on(table.status, table.claimExpiresAt, table.queuedAt, table.id),
   foreignKey({ columns: [table.userId, table.targetId], foreignColumns: [jobTargets.userId, jobTargets.id], name: "agent_runs_owner_target_fk" }),
   foreignKey({ columns: [table.userId, table.parentRunId, table.targetId], foreignColumns: [table.userId, table.id, table.targetId], name: "agent_runs_owner_parent_target_fk" }),
@@ -668,6 +669,7 @@ export const agentRuns = pgTable("agent_runs", {
   check("agent_runs_recommendation_context_check", sql`
     (${table.runPurpose} <> 'recommendation' and ${table.recommendationContext} is null)
     or (${table.runPurpose} = 'recommendation' and ${table.parentRunId} is null
+      and ${table.recommendationContext} is not null
       and jsonb_typeof(${table.recommendationContext}) = 'object'
       and ${table.recommendationContext} ?& array['version', 'profile', 'budgets', 'preflight', 'accountPolicyRevisionNumber']
       and ${table.recommendationContext} ->> 'version' = 'recommendation-context-v1'
@@ -967,7 +969,7 @@ export const agentRunControlCommands = pgTable("agent_run_control_commands", {
 
 export const recommendationRunStartCommands = pgTable("recommendation_run_start_commands", {
   userId: uuid("user_id").notNull().references(() => jobAccounts.id), idempotencyKey: uuid("idempotency_key").notNull(),
-  rootRunId: uuid("root_run_id").notNull().references(() => agentRuns.id), commandFingerprint: varchar("command_fingerprint", { length: 64 }).notNull(),
+  rootRunId: uuid("root_run_id").notNull(), commandFingerprint: varchar("command_fingerprint", { length: 64 }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   primaryKey({ columns: [table.userId, table.idempotencyKey], name: "recommendation_run_start_commands_user_key_pk" }),
@@ -976,8 +978,8 @@ export const recommendationRunStartCommands = pgTable("recommendation_run_start_
 ]);
 
 export const recommendationRunControlCommands = pgTable("recommendation_run_control_commands", {
-  userId: uuid("user_id").notNull().references(() => jobAccounts.id), rootRunId: uuid("root_run_id").notNull().references(() => agentRuns.id),
-  commandId: uuid("command_id").notNull(), physicalRunId: uuid("physical_run_id").notNull().references(() => agentRuns.id),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id), rootRunId: uuid("root_run_id").notNull(),
+  commandId: uuid("command_id").notNull(), physicalRunId: uuid("physical_run_id").notNull(),
   action: varchar("action", { length: 16 }).notNull(), commandFingerprint: varchar("command_fingerprint", { length: 64 }).notNull(), resultSnapshot: jsonb("result_snapshot").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
@@ -986,7 +988,17 @@ export const recommendationRunControlCommands = pgTable("recommendation_run_cont
   foreignKey({ columns: [table.userId, table.physicalRunId], foreignColumns: [agentRuns.userId, agentRuns.id], name: "recommendation_run_control_commands_owner_physical_fk" }),
   check("recommendation_run_control_commands_action_check", sql`${table.action} in ('pause', 'resume', 'cancel')`),
   check("recommendation_run_control_commands_fingerprint_check", sql`${table.commandFingerprint} ~ '^[0-9a-f]{64}$'`),
-  check("recommendation_run_control_commands_snapshot_object", sql`jsonb_typeof(${table.resultSnapshot}) = 'object'`),
+  check("recommendation_run_control_commands_snapshot_check", sql`
+    jsonb_typeof(${table.resultSnapshot}) = 'object'
+    and ${table.resultSnapshot} ?& array['runId', 'status', 'currentStep', 'controlState', 'version']
+    and (${table.resultSnapshot} - array['runId', 'status', 'currentStep', 'controlState', 'version']) = '{}'::jsonb
+    and ${table.resultSnapshot} -> 'runId' = to_jsonb(${table.physicalRunId}::text)
+    and ${table.resultSnapshot} ->> 'status' in ('queued', 'running', 'paused', 'completed', 'failed', 'cancelled')
+    and ${table.resultSnapshot} ->> 'currentStep' in ('queued', 'batch_search', 'fetch_details', 'persist_results', 'select_candidates', 'assess_matches', 'create_recommendations', 'completed', 'failed', 'cancelled')
+    and (${table.resultSnapshot} ->> 'status' = 'cancelled') = (${table.resultSnapshot} ->> 'currentStep' = 'cancelled')
+    and ${table.resultSnapshot} ->> 'controlState' in ('none', 'pause_requested', 'cancel_requested')
+    and jsonb_typeof(${table.resultSnapshot} -> 'version') = 'number'
+  `),
 ]);
 
 export const agentRunUsageEntries = pgTable("agent_run_usage_entries", {
@@ -1220,7 +1232,7 @@ export const recommendationLists = pgTable("recommendation_lists", {
 
 export const recommendationResults = pgTable("recommendation_results", {
   id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id), targetId: uuid("target_id").notNull(),
-  rootRunId: uuid("root_run_id").notNull().references(() => agentRuns.id), producerRunId: uuid("producer_run_id").notNull().references(() => agentRuns.id),
+  rootRunId: uuid("root_run_id").notNull(), producerRunId: uuid("producer_run_id").notNull(),
   kind: varchar("kind", { length: 32 }).notNull(), recommendationListId: uuid("recommendation_list_id"), itemCount: integer("item_count").notNull(), evidence: jsonb("evidence").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
@@ -1229,7 +1241,19 @@ export const recommendationResults = pgTable("recommendation_results", {
   foreignKey({ columns: [table.userId, table.rootRunId, table.targetId], foreignColumns: [agentRuns.userId, agentRuns.id, agentRuns.targetId], name: "recommendation_results_owner_root_target_fk" }),
   foreignKey({ columns: [table.userId, table.producerRunId, table.targetId], foreignColumns: [agentRuns.userId, agentRuns.id, agentRuns.targetId], name: "recommendation_results_owner_producer_target_fk" }),
   foreignKey({ columns: [table.userId, table.recommendationListId, table.targetId], foreignColumns: [recommendationLists.userId, recommendationLists.id, recommendationLists.targetId], name: "recommendation_results_owner_list_target_fk" }),
-  check("recommendation_results_kind_check", sql`${table.kind} in ('recommendation_list', 'no_recommendations')`), check("recommendation_results_evidence_object", sql`jsonb_typeof(${table.evidence}) = 'object'`),
+  check("recommendation_results_kind_check", sql`${table.kind} in ('recommendation_list', 'no_recommendations')`), check("recommendation_results_evidence_object", sql`
+    jsonb_typeof(${table.evidence}) = 'object'
+    and octet_length(${table.evidence}::text) <= 32768
+    and ${table.evidence} ?& array['discovery', 'sourceCoverage', 'coverageLosses', 'qualification', 'coarseRanking', 'deepMatching', 'suggestedActions']
+    and (${table.evidence} - array['discovery', 'sourceCoverage', 'coverageLosses', 'qualification', 'coarseRanking', 'deepMatching', 'suggestedActions']) = '{}'::jsonb
+    and jsonb_typeof(${table.evidence} -> 'discovery') = 'object'
+    and jsonb_typeof(${table.evidence} -> 'sourceCoverage') = 'object'
+    and jsonb_typeof(${table.evidence} -> 'coverageLosses') = 'array'
+    and jsonb_typeof(${table.evidence} -> 'qualification') = 'object'
+    and jsonb_typeof(${table.evidence} -> 'coarseRanking') = 'object'
+    and jsonb_typeof(${table.evidence} -> 'deepMatching') = 'object'
+    and jsonb_typeof(${table.evidence} -> 'suggestedActions') = 'array'
+  `),
   check("recommendation_results_kind_shape_check", sql`(${table.kind} = 'recommendation_list' and ${table.id} = ${table.recommendationListId} and ${table.itemCount} > 0) or (${table.kind} = 'no_recommendations' and ${table.recommendationListId} is null and ${table.itemCount} = 0)`),
 ]);
 
