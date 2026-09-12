@@ -2,13 +2,16 @@
 
 import {
   AccountRunPolicyCommandSchema,
+  AccountRunControlResponseSchema,
+  AccountRunControlStateSchema,
   AccountRunPolicyHistorySchema,
+  type AccountRunControlState,
   AccountRunPolicyResponseSchema,
   type AccountRunPolicyResponse,
   type AccountRunPolicyRevision,
   type AccountRunPolicySettings,
 } from "@job-copilot/contracts/account-run-policies";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 
 type BudgetKind = "publicDiscovery" | "deepMatch";
@@ -62,7 +65,7 @@ function revisionDetails(revision: AccountRunPolicyRevision) {
   </div></details>;
 }
 
-export function AccountRunPolicyView({ initialPolicy }: { initialPolicy: AccountRunPolicyResponse }) {
+export function AccountRunPolicyView({ initialControl = null, initialPolicy }: { initialControl?: AccountRunControlState | null; initialPolicy: AccountRunPolicyResponse }) {
   const [policy, setPolicy] = useState(initialPolicy);
   const [settings, setSettings] = useState(initialPolicy.effective);
   const [message, setMessage] = useState("");
@@ -72,6 +75,11 @@ export function AccountRunPolicyView({ initialPolicy }: { initialPolicy: Account
   const [hasConflict, setHasConflict] = useState(false);
   const [history, setHistory] = useState<AccountRunPolicyRevision[] | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [control, setControl] = useState(initialControl);
+  const [controlUnavailable, setControlUnavailable] = useState(initialControl === null);
+  const [controlling, setControlling] = useState(false);
+  const [controlMessage, setControlMessage] = useState("");
+  const pendingControlCommand = useRef<{ commandId: string; expectedVersion: number; action: "stop" | "release" } | null>(null);
   const { defaults, hardLimits } = policy.system;
 
   function fieldLabel(key: string): string {
@@ -199,8 +207,69 @@ export function AccountRunPolicyView({ initialPolicy }: { initialPolicy: Account
     }
   }
 
+  async function refreshControl(): Promise<AccountRunControlState | null> {
+    try {
+      const response = await fetch("/api/account/run-policy/control", { cache: "no-store" });
+      const parsed = AccountRunControlStateSchema.safeParse(await response.json().catch(() => null));
+      if (!response.ok || !parsed.success) {
+        setControlUnavailable(true);
+        setControlMessage("运行控制暂不可用");
+        return null;
+      }
+      setControl(parsed.data);
+      setControlUnavailable(false);
+      return parsed.data;
+    } catch {
+      setControlUnavailable(true);
+      setControlMessage("运行控制暂不可用");
+      return null;
+    }
+  }
+
+  async function controlAllRuns() {
+    if (!control || controlling) return;
+    const command = pendingControlCommand.current ?? {
+      commandId: crypto.randomUUID(), expectedVersion: control.controlVersion,
+      action: control.stoppedAt === null ? "stop" as const : "release" as const,
+    };
+    pendingControlCommand.current = command;
+    setControlling(true);
+    setControlMessage("");
+    try {
+      const response = await fetch("/api/account/run-policy/controls", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(command) });
+      const payload = await response.json().catch(() => null);
+      if (response.status === 409) {
+        pendingControlCommand.current = null;
+        setControlMessage("运行控制已在其他位置更新，已重新读取当前状态。");
+        await refreshControl();
+        return;
+      }
+      if (!response.ok || !AccountRunControlResponseSchema.safeParse(payload).success) {
+        setControlMessage("暂时无法更新运行控制，请稍后重试。");
+        return;
+      }
+      pendingControlCommand.current = null;
+      const refreshed = await refreshControl();
+      if (refreshed) {
+        setControlMessage(refreshed.stoppedAt === null ? "已解除全局停止。旧运行需逐个继续，错过的计划不会补跑" : "已停止全部运行。");
+      }
+    } catch {
+      setControlMessage("暂时无法更新运行控制，请稍后重试。");
+    } finally {
+      setControlling(false);
+    }
+  }
+
   return <main className="container profile-main">
     <section className="profile-intro"><p className="workbench-kicker">求职画像 · 运行策略</p><h1>账户运行策略</h1><p>系统硬上限保护每次运行。你可以保存更保守的额度；手动运行不受后台窗口限制。</p></section>
+    <section aria-labelledby="account-run-control-title" className="job-targets-section">
+      <h2 id="account-run-control-title">账户运行控制</h2>
+      <p>停止后将阻止新的运行和外部动作，正在运行的任务会在安全检查点暂停；已发出的请求可能仍产生费用。</p>
+      {control?.stoppedAt !== null && control ? <p>已停止新动作，正在运行的任务将在安全检查点暂停。已发出的请求可能仍产生费用</p> : null}
+      {control?.stoppedAt !== null && control ? <p>全局停止已生效。解除不会自动恢复旧运行，旧运行需逐个继续，错过的计划不会补跑</p> : <p>解除全局停止只开放未来新运行，不会恢复旧运行或补跑错过的计划。</p>}
+      <div className="run-policy-actions"><Button className="workbench-touch-target" disabled={controlUnavailable || !control || controlling} onClick={() => void controlAllRuns()} size="lg" type="button" variant="outline">{controlling ? "正在更新…" : !control || control.stoppedAt === null ? "停止全部运行" : "解除全局停止"}</Button></div>
+      {controlMessage ? <p aria-live="polite" className="run-policy-status" role="status">{controlMessage}</p> : null}
+    </section>
     <section aria-labelledby="run-policy-comparison-title" className="job-targets-section">
       <h2 id="run-policy-comparison-title">当前策略对照</h2>
       <div aria-label="当前策略对照表，可横向滚动" className="run-policy-table-wrap" tabIndex={0}><table><thead><tr><th scope="col">设置</th><th scope="col">系统默认</th><th scope="col">硬上限</th><th scope="col">你的设置</th><th scope="col">最终生效</th></tr></thead><tbody>

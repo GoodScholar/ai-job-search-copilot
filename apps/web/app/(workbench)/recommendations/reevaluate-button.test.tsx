@@ -84,6 +84,19 @@ it("阻塞结果展示完整安全检查和修复链接，且没有任何继续�
   expect(screen.queryByRole("button")).not.toBeInTheDocument();
 });
 
+it("账户全局停止时指向账户运行策略，且不提交重新评估", async () => {
+  const user = userEvent.setup();
+  const action = vi.fn(() => ({ kind: "account_run_stopped" as const }));
+  render(<ReevaluationForm action={action} />);
+
+  await user.click(screen.getByRole("button", { name: "重新评估此岗位" }));
+
+  expect(screen.getByText("账户已停止全部运行，请先解除全局停止。")).toBeVisible();
+  expect(screen.getByRole("link", { name: "管理运行策略" })).toHaveAttribute("href", "/profile/run-policy");
+  expect(screen.queryByRole("button", { name: "重新评估此岗位" })).not.toBeInTheDocument();
+  expect(action).toHaveBeenCalledOnce();
+});
+
 it("过期确认用最新报告和 fingerprint 替换卡片，但保留同一个幂等键", async () => {
   const user = userEvent.setup();
   const firstFingerprint = "a".repeat(64);

@@ -6,7 +6,7 @@ import { api, ApiClientError } from "@/lib/server/api-client";
 import { readSessionToken } from "@/lib/server/session-cookie";
 import { RunPreflightProblemSchema, RunPreflightWarningFingerprintSchema, type RunPreflightReport } from "@job-copilot/contracts/run-preflight";
 
-export type RecommendationReevaluationActionResult = { kind: "started" } | { kind: "blocked"; preflight: RunPreflightReport } | { kind: "warning_confirmation_required"; preflight: RunPreflightReport };
+export type RecommendationReevaluationActionResult = { kind: "started" } | { kind: "account_run_stopped" } | { kind: "blocked"; preflight: RunPreflightReport } | { kind: "warning_confirmation_required"; preflight: RunPreflightReport };
 
 /** Starts the durable matching workflow; this action never evaluates a model in the HTTP request. */
 export async function requestRecommendationReevaluationAction(targetId: string, opportunityId: string, formData: FormData): Promise<RecommendationReevaluationActionResult> {
@@ -22,6 +22,7 @@ export async function requestRecommendationReevaluationAction(targetId: string, 
     return { kind: "started" };
   } catch (error) {
     const problem = error instanceof ApiClientError && error.status === 409 ? RunPreflightProblemSchema.safeParse(error.problem).data : null;
+    if (error instanceof ApiClientError && error.status === 409 && error.problem?.code === "ACCOUNT_RUN_STOPPED") return { kind: "account_run_stopped" };
     if (problem?.code === "RUN_PREFLIGHT_BLOCKED") return { kind: "blocked", preflight: problem.preflight };
     if (problem?.code === "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED") return { kind: "warning_confirmation_required", preflight: problem.preflight };
     throw error;

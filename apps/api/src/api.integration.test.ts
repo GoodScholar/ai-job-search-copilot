@@ -1293,6 +1293,31 @@ describe("authenticated workbench HTTP API", () => {
     expect((await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `${path}/history`, headers: bearer(other.sessionToken) })).json()).toEqual({ revisions: [expect.objectContaining({ revisionNumber: 0 })] });
   });
 
+  it("以 no-store 暴露账户全局停止控制，并覆盖鉴权、严格请求与并发冲突", async () => {
+    const session = await createSession(app, "account-run-control");
+    const path = "/v1/account/run-policy/control";
+    const commandPath = "/v1/account/run-policy/controls";
+    const headers = { ...bearer(session.sessionToken), "content-type": "application/json" };
+
+    const anonymous = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: path });
+    expect(anonymous.statusCode).toBe(401); expect(anonymous.headers["cache-control"]).toBe("no-store");
+
+    const initial = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: path, headers: bearer(session.sessionToken) });
+    expect(initial.statusCode).toBe(200); expect(initial.headers["cache-control"]).toBe("no-store");
+    expect(initial.json()).toEqual({ stoppedAt: null, controlVersion: 0, scheduleResumeAfter: null });
+
+    const invalid = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: commandPath, headers, payload: { commandId: randomUUID(), expectedVersion: 0, action: "stop", userId: session.account.userId } });
+    expect(invalid.statusCode).toBe(400); expect(invalid.headers["cache-control"]).toBe("no-store");
+
+    const stopped = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: commandPath, headers, payload: { commandId: randomUUID(), expectedVersion: 0, action: "stop" } });
+    expect(stopped.statusCode).toBe(200); expect(stopped.headers["cache-control"]).toBe("no-store");
+    expect(stopped.json()).toMatchObject({ applied: true, state: { controlVersion: 1, scheduleResumeAfter: null } });
+
+    const conflict = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: commandPath, headers, payload: { commandId: randomUUID(), expectedVersion: 0, action: "release" } });
+    expect(conflict.statusCode).toBe(409); expect(conflict.headers["cache-control"]).toBe("no-store");
+    expect(conflict.json()).toMatchObject({ code: "ACCOUNT_RUN_CONTROL_VERSION_CONFLICT" });
+  });
+
   it("以认证账户暴露严格的每日检查计划，并脱敏来源策略问题", async () => {
     const primary = await createSession(app, "daily-schedule-primary");
     const other = await createSession(app, "daily-schedule-other");

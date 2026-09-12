@@ -89,7 +89,7 @@ import {
   type JobDiscoveryScheduleResponse,
   type SetJobDiscoveryScheduleCommand,
 } from "@job-copilot/contracts/job-discovery-schedules";
-import { AccountRunPolicyCommandSchema, AccountRunPolicyHistorySchema, AccountRunPolicyProblemSchema, AccountRunPolicyResponseSchema, type AccountRunPolicyProblem, type AccountRunPolicyResponse, type AccountRunPolicySettings } from "@job-copilot/contracts/account-run-policies";
+import { AccountRunControlCommandSchema, AccountRunControlResponseSchema, AccountRunControlStateSchema, AccountRunPolicyCommandSchema, AccountRunPolicyHistorySchema, AccountRunPolicyProblemSchema, AccountRunPolicyResponseSchema, type AccountRunControlCommand, type AccountRunControlResponse, type AccountRunControlState, type AccountRunPolicyProblem, type AccountRunPolicyResponse, type AccountRunPolicySettings } from "@job-copilot/contracts/account-run-policies";
 import {
   AgentInboxActionCommandSchema,
   AgentInboxActionResponseSchema,
@@ -157,6 +157,13 @@ async function readAccountRunPolicyProblem(response: Response): Promise<AccountR
   delete problem.requestId;
   return AccountRunPolicyProblemSchema.safeParse(problem).data ?? null;
 }
+async function throwAccountRunControlConflict(response: Response): Promise<never> {
+  const problem = await readProblem(response);
+  if (problem && (problem.code === "ACCOUNT_RUN_CONTROL_COMMAND_ID_CONFLICT" || problem.code === "ACCOUNT_RUN_CONTROL_VERSION_CONFLICT")) {
+    throw new ApiClientError("api", problem.message, 409, problem);
+  }
+  throw new ApiClientError("api", "上游账户运行控制冲突响应无效", 502);
+}
 async function readRunPreflightProblem(response: Response): Promise<RunPreflightProblem | null> {
   const payload = await parseJson(response).catch(() => null);
   if (!payload || typeof payload !== "object") return null;
@@ -166,11 +173,15 @@ async function readRunPreflightProblem(response: Response): Promise<RunPreflight
 }
 
 async function throwRunPreflightConflict(response: Response, fallbackMessage: string): Promise<never> {
-  const problem = await readRunPreflightProblem(response);
-  if (!problem) {
-    throw new ApiClientError("api", "上游运行前检查冲突响应无效", 502);
-  }
-  throw new ApiClientError("api", problem.message ?? fallbackMessage, 409, problem);
+  const payload = await parseJson(response).catch(() => null);
+  if (!payload || typeof payload !== "object") throw new ApiClientError("api", "上游运行前检查冲突响应无效", 502);
+  const withoutRequestId = { ...(payload as Record<string, unknown>) };
+  delete withoutRequestId.requestId;
+  const preflight = RunPreflightProblemSchema.safeParse(withoutRequestId).data;
+  if (preflight) throw new ApiClientError("api", preflight.message ?? fallbackMessage, 409, preflight);
+  const problem = ApiProblemSchema.safeParse(payload).data;
+  if (problem?.code === "ACCOUNT_RUN_STOPPED") throw new ApiClientError("api", problem.message, 409, problem);
+  throw new ApiClientError("api", "上游运行前检查冲突响应无效", 502);
 }
 
 async function throwAgentInboxRestartConflict(response: Response, fallbackMessage: string): Promise<never> {
@@ -695,6 +706,20 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
       const response = await request("/v1/account/run-policy", { method: "GET", headers: { authorization: `Bearer ${sessionToken}` }, cache: "no-store" });
       if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法读取账户运行策略", response.status, problem ?? undefined); }
       return parseSuccess(response, AccountRunPolicyResponseSchema);
+    },
+    async getAccountRunControl(sessionToken: string): Promise<AccountRunControlState> {
+      const response = await request("/v1/account/run-policy/control", { method: "GET", headers: { authorization: `Bearer ${sessionToken}` }, cache: "no-store" });
+      if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法读取账户运行控制", response.status, problem ?? undefined); }
+      return parseSuccess(response, AccountRunControlStateSchema);
+    },
+    async controlAccountRuns(sessionToken: string, command: AccountRunControlCommand): Promise<AccountRunControlResponse> {
+      const response = await request("/v1/account/run-policy/controls", { method: "POST", headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" }, body: JSON.stringify(AccountRunControlCommandSchema.parse(command)) });
+      if (!response.ok) {
+        if (response.status === 409) return throwAccountRunControlConflict(response);
+        const problem = await readProblem(response);
+        throw new ApiClientError("api", problem?.message ?? "无法更新账户运行控制", response.status, problem ?? undefined);
+      }
+      return parseSuccess(response, AccountRunControlResponseSchema);
     },
     async getModelDiagnostics(sessionToken: string): Promise<ModelDiagnosticPublicResponse> {
       const response = await request("/v1/model-diagnostics", { method: "GET", headers: { authorization: `Bearer ${sessionToken}` }, cache: "no-store" });

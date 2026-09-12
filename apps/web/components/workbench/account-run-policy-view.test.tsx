@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import type { AccountRunPolicyResponse } from "@job-copilot/contracts/account-run-policies";
+import type { AccountRunControlState, AccountRunPolicyResponse } from "@job-copilot/contracts/account-run-policies";
 import { AccountRunPolicyView } from "./account-run-policy-view";
 
 const publicDiscoveryBudget = {
@@ -66,7 +66,63 @@ const initialPolicy: AccountRunPolicyResponse = {
   },
 };
 
+const activeControl: AccountRunControlState = { stoppedAt: null, controlVersion: 0, scheduleResumeAfter: null };
+
 afterEach(() => vi.restoreAllMocks());
+
+it("停止全部运行后重新读取权威状态，并说明安全检查点与在途费用", async () => {
+  const user = userEvent.setup();
+  const fetchMock = vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json({ applied: true, state: { stoppedAt: "2026-09-12T00:00:00.000Z", controlVersion: 1, scheduleResumeAfter: null } }))
+    .mockResolvedValueOnce(Response.json({ stoppedAt: "2026-09-12T00:00:00.000Z", controlVersion: 1, scheduleResumeAfter: null }));
+
+  render(<AccountRunPolicyView initialControl={activeControl} initialPolicy={initialPolicy} />);
+  const button = screen.getByRole("button", { name: "停止全部运行" });
+  expect(button).toBeEnabled();
+  await user.click(button);
+
+  await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/account/run-policy/controls", expect.objectContaining({ method: "POST" })));
+  expect(await screen.findByRole("button", { name: "解除全局停止" })).toBeEnabled();
+  expect(screen.getByText(/已停止新动作，正在运行的任务将在安全检查点暂停。已发出的请求可能仍产生费用/u)).toBeInTheDocument();
+});
+
+it("解除后说明旧运行需逐个继续且错过的计划不会补跑", async () => {
+  const user = userEvent.setup();
+  const stopped: AccountRunControlState = { stoppedAt: "2026-09-12T00:00:00.000Z", controlVersion: 1, scheduleResumeAfter: null };
+  vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json({ applied: true, state: { stoppedAt: null, controlVersion: 2, scheduleResumeAfter: "2026-09-12T00:01:00.000Z" } }))
+    .mockResolvedValueOnce(Response.json({ stoppedAt: null, controlVersion: 2, scheduleResumeAfter: "2026-09-12T00:01:00.000Z" }));
+
+  render(<AccountRunPolicyView initialControl={stopped} initialPolicy={initialPolicy} />);
+  await user.click(screen.getByRole("button", { name: "解除全局停止" }));
+
+  expect(await screen.findByText(/旧运行需逐个继续，错过的计划不会补跑/u)).toBeInTheDocument();
+});
+
+it("旧停止命令重放后以重新读取的解除状态为准", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json({ applied: true, state: { stoppedAt: "2026-09-12T00:00:00.000Z", controlVersion: 1, scheduleResumeAfter: null } }))
+    .mockResolvedValueOnce(Response.json({ stoppedAt: null, controlVersion: 2, scheduleResumeAfter: "2026-09-12T00:01:00.000Z" }));
+  render(<AccountRunPolicyView initialControl={activeControl} initialPolicy={initialPolicy} />);
+
+  await user.click(screen.getByRole("button", { name: "停止全部运行" }));
+
+  expect(await screen.findByRole("button", { name: "停止全部运行" })).toBeEnabled();
+  expect(screen.getByRole("status")).toHaveTextContent("已解除全局停止。旧运行需逐个继续，错过的计划不会补跑");
+});
+
+it("未停止时仅说明停止效果，不把当前状态说成已停止", () => {
+  render(<AccountRunPolicyView initialControl={activeControl} initialPolicy={initialPolicy} />);
+  expect(screen.queryByText("已停止新动作，正在运行的任务将在安全检查点暂停。已发出的请求可能仍产生费用")).not.toBeInTheDocument();
+  expect(screen.getByText("停止后将阻止新的运行和外部动作，正在运行的任务会在安全检查点暂停；已发出的请求可能仍产生费用。")).toBeInTheDocument();
+});
+
+it("控制状态不可用时禁用按钮，不阻塞既有策略编辑", () => {
+  render(<AccountRunPolicyView initialControl={null} initialPolicy={initialPolicy} />);
+  expect(screen.getByRole("button", { name: "停止全部运行" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "保存运行策略" })).toBeEnabled();
+});
 
 it("保存更保守的可信来源上限时携带完整设置和当前修订，并显示新修订", async () => {
   const user = userEvent.setup();

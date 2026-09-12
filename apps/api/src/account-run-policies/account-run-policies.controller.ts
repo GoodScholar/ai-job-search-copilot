@@ -1,17 +1,21 @@
-import { Body, Controller, Get, HttpStatus, Inject, Param, Put, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, HttpStatus, Inject, Param, Post, Put, Req, UseGuards } from "@nestjs/common";
 import { ApiBearerAuth, ApiConflictResponse, ApiUnauthorizedResponse } from "@nestjs/swagger";
-import { accountRunPolicyProblemFromZodIssues, AccountRunPolicyCommandSchema, AccountRunPolicyHistorySchema, AccountRunPolicyResponseSchema } from "@job-copilot/contracts/account-run-policies";
+import { accountRunPolicyProblemFromZodIssues, AccountRunControlCommandSchema, AccountRunControlResponseSchema, AccountRunControlStateSchema, AccountRunPolicyCommandSchema, AccountRunPolicyHistorySchema, AccountRunPolicyResponseSchema } from "@job-copilot/contracts/account-run-policies";
 import { AccountRunPolicyError } from "@job-copilot/domain/account-run-policies";
+import { AccountRunControlError } from "@job-copilot/domain/account-run-control";
 import type { FastifyRequest } from "fastify";
 import { createZodDto, ZodResponse } from "nestjs-zod";
 import { ZodError } from "zod";
 import { ApiProblem } from "../auth/auth.controller.js";
 import { SessionGuard } from "../auth/session.guard.js";
 import { ApiException } from "../common/api-problem.filter.js";
-import { ACCOUNT_RUN_POLICIES, type AccountRunPolicies } from "./account-run-policies.tokens.js";
+import { getRequestId } from "../common/request-id.hook.js";
+import { ACCOUNT_RUN_CONTROL, ACCOUNT_RUN_POLICIES, type AccountRunControl, type AccountRunPolicies } from "./account-run-policies.tokens.js";
 
 class PolicyResponseDto extends createZodDto(AccountRunPolicyResponseSchema) {}
 class PolicyHistoryDto extends createZodDto(AccountRunPolicyHistorySchema) {}
+class ControlStateDto extends createZodDto(AccountRunControlStateSchema) {}
+class ControlResponseDto extends createZodDto(AccountRunControlResponseSchema) {}
 const revisionPath = /^[0-9]+$/u;
 function policyProblem(error: unknown): never {
   if (error instanceof AccountRunPolicyError) throw new ApiException(error.code, HttpStatus.CONFLICT, "账户运行策略已在其他位置更新，请刷新后重试", { issues: [] });
@@ -20,14 +24,21 @@ function policyProblem(error: unknown): never {
   if (!problem) throw new ApiException("INVALID_REQUEST", HttpStatus.BAD_REQUEST, "请求无效");
   throw new ApiException(problem.code, HttpStatus.BAD_REQUEST, problem.message, { issues: problem.issues });
 }
+function controlProblem(error: unknown): never {
+  if (error instanceof AccountRunControlError) throw new ApiException(error.code, HttpStatus.CONFLICT, "账户运行控制已变化，请刷新后重试");
+  if (error instanceof ZodError) throw new ApiException("INVALID_REQUEST", HttpStatus.BAD_REQUEST, "请求无效");
+  throw error;
+}
 
 @Controller("v1/account/run-policy")
 @UseGuards(SessionGuard)
 @ApiBearerAuth("bearerAuth")
 export class AccountRunPoliciesController {
-  constructor(@Inject(ACCOUNT_RUN_POLICIES) private readonly policies: AccountRunPolicies) {}
+  constructor(@Inject(ACCOUNT_RUN_POLICIES) private readonly policies: AccountRunPolicies, @Inject(ACCOUNT_RUN_CONTROL) private readonly controls: AccountRunControl) {}
   @Get() @ZodResponse({ type: PolicyResponseDto }) @ApiUnauthorizedResponse({ type: ApiProblem })
   async get(@Req() request: FastifyRequest) { return this.policies.get({ userId: request.authenticatedAccount!.userId }); }
+  @Get("control") @ZodResponse({ type: ControlStateDto }) @ApiUnauthorizedResponse({ type: ApiProblem })
+  async getControl(@Req() request: FastifyRequest) { return this.controls.get({ userId: request.authenticatedAccount!.userId }); }
   @Get("history") @ZodResponse({ type: PolicyHistoryDto }) @ApiUnauthorizedResponse({ type: ApiProblem })
   async history(@Req() request: FastifyRequest) { return this.policies.history({ userId: request.authenticatedAccount!.userId }); }
   @Get("history/:revisionNumber") @ZodResponse({ type: PolicyResponseDto })
@@ -41,5 +52,10 @@ export class AccountRunPoliciesController {
   async save(@Req() request: FastifyRequest, @Body() command: unknown) {
     try { return await this.policies.save({ userId: request.authenticatedAccount!.userId, command: AccountRunPolicyCommandSchema.parse(command) }); }
     catch (error) { return policyProblem(error); }
+  }
+  @Post("controls") @HttpCode(HttpStatus.OK) @ZodResponse({ type: ControlResponseDto }) @ApiConflictResponse({ type: ApiProblem }) @ApiUnauthorizedResponse({ type: ApiProblem })
+  async control(@Req() request: FastifyRequest, @Body() command: unknown) {
+    try { return await this.controls.control({ userId: request.authenticatedAccount!.userId, requestId: getRequestId(request), command: AccountRunControlCommandSchema.parse(command) }); }
+    catch (error) { return controlProblem(error); }
   }
 }

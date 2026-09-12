@@ -6,3 +6,7 @@ export async function getAccountRunPolicy() {
   const token = await readSessionToken(); if (!token) redirect("/login?returnTo=%2Fprofile%2Frun-policy");
   return api.getAccountRunPolicy(token);
 }
+export async function getAccountRunControl() {
+  const token = await readSessionToken(); if (!token) redirect("/login?returnTo=%2Fprofile%2Frun-policy");
+  return api.getAccountRunControl(token);
+}

@@ -12,6 +12,7 @@ import {
   type AgentRunDetail,
 } from "@job-copilot/contracts/agent-runs";
 import { AgentRunControlError, AgentRunError } from "@job-copilot/domain/agent-runs";
+import { AccountRunAdmissionError } from "@job-copilot/domain/account-run-control";
 import { RunPreflightRejectedError } from "@job-copilot/domain/run-preflight";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { createZodDto, ZodResponse } from "nestjs-zod";
@@ -40,6 +41,9 @@ function notFound(code = "AGENT_RUN_NOT_FOUND", message = "Agent 运行不存在
 }
 
 function mapStartError(error: AgentRunError): ApiException {
+  if (error.code === "ACCOUNT_RUN_STOPPED") {
+    return new ApiException(error.code, HttpStatus.CONFLICT, "账户已停止全部运行，请先解除全局停止");
+  }
   if (error.code === "AGENT_RUN_UNAVAILABLE") {
     return new ApiException(error.code, HttpStatus.SERVICE_UNAVAILABLE, "Agent 运行暂时不可用，请稍后重试");
   }
@@ -117,6 +121,7 @@ export class AgentRunsController {
       });
     } catch (error) {
       if (error instanceof AgentRunControlError) throw mapControlError(error);
+      if (error instanceof AccountRunAdmissionError && error.code === "ACCOUNT_RUN_STOPPED") throw new ApiException(error.code, HttpStatus.CONFLICT, "账户已停止全部运行，请先解除全局停止");
       throw error;
     }
   }

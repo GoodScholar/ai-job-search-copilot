@@ -72,6 +72,14 @@ it("未知重评错误不被当作预检冲突", async () => {
   await expect(requestRecommendationReevaluationAction("00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003", form)).rejects.toMatchObject({ status: 502 });
 });
 
+it("账户全局停止返回策略页修复结果，而不是把安全 409 当作未知错误", async () => {
+  mocks.readSessionToken.mockResolvedValue("session");
+  const form = new FormData(); form.set("idempotencyKey", "00000000-0000-4000-8000-000000000001");
+  mocks.startDeepMatchRun.mockRejectedValueOnce(new mocks.ApiClientError("api", "账户已停止全部运行，请先解除全局停止", 409, { code: "ACCOUNT_RUN_STOPPED", message: "账户已停止全部运行，请先解除全局停止" }));
+
+  await expect(requestRecommendationReevaluationAction("00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000003", form)).resolves.toEqual({ kind: "account_run_stopped" });
+});
+
 it("大写 warning fingerprint 不会穿过 action 边界", async () => {
   mocks.readSessionToken.mockResolvedValue("session");
   const form = new FormData(); form.set("idempotencyKey", "00000000-0000-4000-8000-000000000001"); form.set("warningFingerprint", "A".repeat(64));

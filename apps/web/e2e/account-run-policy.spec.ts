@@ -39,6 +39,12 @@ async function getHistory(request: APIRequestContext, token: string): Promise<Po
   return response.json() as Promise<PolicyHistory>;
 }
 
+async function getControl(request: APIRequestContext, token: string) {
+  const response = await request.get(`${apiBaseUrl}/v1/account/run-policy/control`, { headers: { authorization: `Bearer ${token}` } });
+  expect(response.status()).toBe(200);
+  return response.json() as Promise<{ stoppedAt: string | null; controlVersion: number; scheduleResumeAfter: string | null }>;
+}
+
 function commandFor(policy: AccountRunPolicyResponse, mutate: (settings: AccountRunPolicySettings) => void) {
   const settings = structuredClone(policy.effective);
   mutate(settings);
@@ -187,4 +193,30 @@ test("账户运行策略按会话隔离，并拒绝未认证或伪造 userId 的
   });
   expect(forged.status()).toBe(400);
   await expect(forged.json()).resolves.toMatchObject({ code: "INVALID_REQUEST" });
+});
+
+test("账户全局停止持久化到刷新后，解除不恢复任何旧运行", async ({ page, request }, testInfo) => {
+  const session = await createSession(request, `account-run-control-${testInfo.project.name}-${runSuffix}`);
+  await useSession(page, session);
+  const resumedRequests: string[] = [];
+  page.on("request", (candidate) => {
+    if (candidate.method() === "POST" && /\/api\/agent-runs\/[^/]+\/controls$/u.test(new URL(candidate.url()).pathname) && candidate.postData()?.includes("resume")) resumedRequests.push(candidate.url());
+  });
+
+  await page.goto("/profile/run-policy");
+  const stop = page.getByRole("button", { name: "停止全部运行" });
+  const stopResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/account/run-policy/controls" && response.request().method() === "POST");
+  await stop.click();
+  expect((await stopResponse).status()).toBe(200);
+  await expect.poll(() => getControl(request, session.token)).toMatchObject({ stoppedAt: expect.any(String), controlVersion: 1 });
+
+  await page.reload();
+  const release = page.getByRole("button", { name: "解除全局停止" });
+  await expect(release).toBeVisible();
+  const releaseResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/account/run-policy/controls" && response.request().method() === "POST");
+  await release.click();
+  expect((await releaseResponse).status()).toBe(200);
+  await expect(page.getByRole("status")).toContainText("旧运行需逐个继续，错过的计划不会补跑");
+  await expect.poll(() => getControl(request, session.token)).toMatchObject({ stoppedAt: null, controlVersion: 2 });
+  expect(resumedRequests).toEqual([]);
 });

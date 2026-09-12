@@ -9,6 +9,7 @@ import { ApiException } from "../common/api-problem.filter.js";
 import { RECOMMENDATION_FEEDBACK_COMMANDS, RECOMMENDATION_FEEDBACK_QUERIES, RECOMMENDATION_QUERIES, type RecommendationFeedbackCommands, type RecommendationFeedbackQueries, type RecommendationQueries } from "./recommendations.tokens.js";
 import { RECOMMENDATION_RUN_STARTER, type RecommendationRunStarter } from "./recommendations.tokens.js";
 import { RunPreflightRejectedError } from "@job-copilot/domain/run-preflight";
+import { AccountRunAdmissionError } from "@job-copilot/domain/account-run-control";
 import { runPreflightConflict } from "../run-preflight/run-preflight-error.js";
 
 class RecommendationListDto extends createZodDto(RecommendationListSchema) {}
@@ -53,7 +54,11 @@ export class RecommendationsController {
   @ApiConflictResponse()
   async reevaluate(@Req() request: FastifyRequest, @Body() body: StartRecommendationReevaluationDto) {
     try { return await this.starter.start({ userId: request.authenticatedAccount!.userId, targetId: body.targetId, opportunityId: body.opportunityId, idempotencyKey: body.idempotencyKey, warningFingerprint: body.warningFingerprint, trigger: "manual" }); }
-    catch (error) { if (error instanceof RunPreflightRejectedError) throw runPreflightConflict(error); throw error; }
+    catch (error) {
+      if (error instanceof RunPreflightRejectedError) throw runPreflightConflict(error);
+      if ((error instanceof AccountRunAdmissionError || (typeof error === "object" && error !== null && "code" in error)) && error.code === "ACCOUNT_RUN_STOPPED") throw new ApiException("ACCOUNT_RUN_STOPPED", HttpStatus.CONFLICT, "账户已停止全部运行，请先解除全局停止");
+      throw error;
+    }
   }
 
   @Post("lists/:listId/items/:itemId/decisions")

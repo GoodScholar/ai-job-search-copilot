@@ -1,5 +1,6 @@
 import { StartAgentRunCommandSchema } from "@job-copilot/contracts/agent-runs";
 import { RunPreflightProblemSchema } from "@job-copilot/contracts/run-preflight";
+import { ApiProblemSchema } from "@job-copilot/contracts/api-problem";
 import { api } from "@/lib/server/api-client";
 import { readSessionToken } from "@/lib/server/session-cookie";
 
@@ -27,8 +28,16 @@ export async function POST(request: Request): Promise<Response> {
   } catch (error) {
     const preflight = runPreflightProblem(error);
     if (preflight) return Response.json(preflight, { status: 409, headers: noStore });
+    const stopped = accountRunStoppedProblem(error);
+    if (stopped) return Response.json(stopped, { status: 409, headers: noStore });
     return emptyResponse(safeStatus(error));
   }
+}
+
+function accountRunStoppedProblem(error: unknown): { code: "ACCOUNT_RUN_STOPPED"; message: string } | null {
+  if (!error || typeof error !== "object" || !("status" in error) || error.status !== 409 || !("problem" in error)) return null;
+  const parsed = ApiProblemSchema.safeParse(error.problem);
+  return parsed.success && parsed.data.code === "ACCOUNT_RUN_STOPPED" ? { code: parsed.data.code, message: parsed.data.message } : null;
 }
 
 function runPreflightProblem(error: unknown) {

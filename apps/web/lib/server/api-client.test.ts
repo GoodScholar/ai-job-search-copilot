@@ -897,3 +897,16 @@ it("账户策略客户端保留严格问题体，供 BFF 安全投影", async ()
     status: 409, problem: { code: "ACCOUNT_RUN_POLICY_VERSION_CONFLICT", issues: [] },
   });
 });
+
+it("账户全局控制客户端严格解析状态、命令和两类可公开的 409", async () => {
+  const command = { commandId: "00000000-0000-4000-8000-000000000001", expectedVersion: 0, action: "stop" } as const;
+  const fetchImpl = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(Response.json({ stoppedAt: null, controlVersion: 0, scheduleResumeAfter: null }))
+    .mockResolvedValueOnce(Response.json({ applied: true, state: { stoppedAt: "2026-09-12T00:00:00.000Z", controlVersion: 1, scheduleResumeAfter: null } }));
+  const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+
+  await expect((client as any).getAccountRunControl(sessionToken)).resolves.toEqual({ stoppedAt: null, controlVersion: 0, scheduleResumeAfter: null });
+  await expect((client as any).controlAccountRuns(sessionToken, command)).resolves.toEqual({ applied: true, state: { stoppedAt: "2026-09-12T00:00:00.000Z", controlVersion: 1, scheduleResumeAfter: null } });
+  expect(fetchImpl).toHaveBeenNthCalledWith(1, "http://127.0.0.1:3021/v1/account/run-policy/control", expect.objectContaining({ method: "GET" }));
+  expect(fetchImpl).toHaveBeenNthCalledWith(2, "http://127.0.0.1:3021/v1/account/run-policy/controls", expect.objectContaining({ method: "POST", body: JSON.stringify(command) }));
+});
