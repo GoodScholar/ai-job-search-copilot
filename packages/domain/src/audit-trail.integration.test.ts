@@ -37,6 +37,12 @@ describe("audit trail", () => {
     })).rejects.toThrow(/字段白名单/);
   });
 
+  it("账户停止审计仅保存命令、控制版本和动作", async () => {
+    const auditTrail = createAuditTrail({ db: database, clock: () => now }); const commandId = crypto.randomUUID();
+    await auditTrail.append({ userId, actorUserId: userId, eventType: "account.run_stopped", occurredAt: now, requestId: crypto.randomUUID(), outcome: "success", reasonCode: "ACCOUNT_RUN_STOPPED", resourceType: "account_run_control", resourceId: userId, metadata: { commandId, controlVersion: 1, action: "stop" } });
+    await expect(auditTrail.append({ userId, actorUserId: userId, eventType: "account.run_stopped", occurredAt: now, requestId: crypto.randomUUID(), outcome: "success", reasonCode: "ACCOUNT_RUN_STOPPED", resourceType: "account_run_control", resourceId: userId, metadata: { commandId, controlVersion: 1, action: "stop", reason: "free text" } as never })).rejects.toThrow(/字段白名单/);
+  });
+
   it("accepts only the metadata shape assigned to each approved event", async () => {
     const auditTrail = createAuditTrail({ db: database, clock: () => now });
 

@@ -41,10 +41,10 @@ export const accountRunPolicyRevisions = pgTable("account_run_policy_revisions",
 ]);
 
 export const accountRunPolicies = pgTable("account_run_policies", {
-  userId: uuid("user_id").primaryKey().references(() => jobAccounts.id), currentRevisionNumber: integer("current_revision_number").notNull(), version: integer("version").notNull().default(0), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  userId: uuid("user_id").primaryKey().references(() => jobAccounts.id), currentRevisionNumber: integer("current_revision_number").notNull(), version: integer("version").notNull().default(0), stoppedAt: timestamp("stopped_at", { withTimezone: true }), controlVersion: integer("control_version").notNull().default(0), scheduleResumeAfter: timestamp("schedule_resume_after", { withTimezone: true }), updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   foreignKey({ columns: [table.userId, table.currentRevisionNumber], foreignColumns: [accountRunPolicyRevisions.userId, accountRunPolicyRevisions.revisionNumber], name: "account_run_policies_owner_revision_fk" }),
-  check("account_run_policies_version_nonnegative", sql`${table.version} >= 0`), check("account_run_policies_revision_positive", sql`${table.currentRevisionNumber} >= 0`),
+  check("account_run_policies_version_nonnegative", sql`${table.version} >= 0`), check("account_run_policies_revision_positive", sql`${table.currentRevisionNumber} >= 0`), check("account_run_policies_control_version_nonnegative", sql`${table.controlVersion} >= 0`),
 ]);
 
 export const externalIdentities = pgTable("external_identities", {
@@ -930,7 +930,7 @@ export const jobDiscoveryScheduleOccurrences = pgTable("job_discovery_schedule_o
     name: "job_discovery_schedule_occurrences_owner_run_fk",
   }),
   check("job_discovery_schedule_occurrences_status_check", sql`${table.status} in ('pending', 'dispatched', 'skipped')`),
-  check("job_discovery_schedule_occurrences_skip_reason_check", sql`${table.skipReason} is null or ${table.skipReason} in ('TARGET_INACTIVE', 'NO_SUPPORTED_SOURCE', 'SOURCE_POLICY_REQUIRED', 'PROFILE_UNAVAILABLE', 'ACCOUNT_RUN_POLICY_WINDOW_CLOSED', 'RUN_PREFLIGHT_BLOCKED')`),
+  check("job_discovery_schedule_occurrences_skip_reason_check", sql`${table.skipReason} is null or ${table.skipReason} in ('TARGET_INACTIVE', 'NO_SUPPORTED_SOURCE', 'SOURCE_POLICY_REQUIRED', 'PROFILE_UNAVAILABLE', 'ACCOUNT_RUN_POLICY_WINDOW_CLOSED', 'RUN_PREFLIGHT_BLOCKED', 'ACCOUNT_RUN_STOPPED', 'ACCOUNT_RUN_SCHEDULE_SKIPPED')`),
   check("job_discovery_schedule_occurrences_outcome_check", sql`
     (${table.status} = 'pending' and ${table.runId} is null and ${table.skipReason} is null)
     or (${table.status} = 'dispatched' and ${table.runId} is not null and ${table.skipReason} is null)
@@ -965,6 +965,16 @@ export const agentRunControlCommands = pgTable("agent_run_control_commands", {
     and jsonb_typeof(${table.resultSnapshot} -> 'version') = 'number'
     and ${table.resultSnapshot} -> 'version' = to_jsonb(${table.resultRunVersion})
   `),
+]);
+
+export const accountRunControlCommands = pgTable("account_run_control_commands", {
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id), commandId: uuid("command_id").notNull(),
+  action: varchar("action", { length: 8 }).notNull(), expectedVersion: integer("expected_version").notNull(), applied: boolean("applied").notNull(), resultSnapshot: jsonb("result_snapshot").notNull(), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  primaryKey({ columns: [table.userId, table.commandId], name: "account_run_control_commands_pk" }),
+  check("account_run_control_commands_action_check", sql`${table.action} in ('stop', 'release')`),
+  check("account_run_control_commands_expected_version_nonnegative", sql`${table.expectedVersion} >= 0`),
+  check("account_run_control_commands_snapshot_check", sql`jsonb_typeof(${table.resultSnapshot}) = 'object' and octet_length(${table.resultSnapshot}::text) <= 2048 and ${table.resultSnapshot} ?& array['applied', 'state'] and (${table.resultSnapshot} - array['applied', 'state']) = '{}'::jsonb and jsonb_typeof(${table.resultSnapshot} -> 'applied') = 'boolean' and jsonb_typeof(${table.resultSnapshot} -> 'state') = 'object' and (${table.resultSnapshot} -> 'state') ?& array['stoppedAt', 'controlVersion', 'scheduleResumeAfter'] and ((${table.resultSnapshot} -> 'state') - array['stoppedAt', 'controlVersion', 'scheduleResumeAfter']) = '{}'::jsonb and jsonb_typeof(${table.resultSnapshot} -> 'state' -> 'controlVersion') = 'number' and (${table.resultSnapshot} -> 'state' -> 'stoppedAt' = 'null'::jsonb or jsonb_typeof(${table.resultSnapshot} -> 'state' -> 'stoppedAt') = 'string') and (${table.resultSnapshot} -> 'state' -> 'scheduleResumeAfter' = 'null'::jsonb or jsonb_typeof(${table.resultSnapshot} -> 'state' -> 'scheduleResumeAfter') = 'string')`),
 ]);
 
 export const recommendationRunStartCommands = pgTable("recommendation_run_start_commands", {

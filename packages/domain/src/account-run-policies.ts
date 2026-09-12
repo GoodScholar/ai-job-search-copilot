@@ -12,6 +12,9 @@ async function current(db: PolicyDatabase, userId: string): Promise<StoredRevisi
   const [row] = await db.select({ revisionNumber: accountRunPolicies.currentRevisionNumber, settings: accountRunPolicyRevisions.settings, createdAt: accountRunPolicyRevisions.createdAt }).from(accountRunPolicies).innerJoin(accountRunPolicyRevisions, and(eq(accountRunPolicyRevisions.userId, accountRunPolicies.userId), eq(accountRunPolicyRevisions.revisionNumber, accountRunPolicies.currentRevisionNumber))).where(eq(accountRunPolicies.userId, userId));
   return row;
 }
+export async function ensureAccountRunPolicyBaselineInTransaction(db: PolicyDatabase, input: { userId: string; id: () => string; clock: () => Date }): Promise<void> {
+  await ensureBaseline(db, input.userId, input.id, input.clock);
+}
 async function ensureBaseline(db: PolicyDatabase, userId: string, id: () => string, clock: () => Date): Promise<StoredRevision> {
   const existing = await current(db, userId); if (existing) return existing;
   const now = clock(); const settings = systemAccountRunPolicy().system.defaults;

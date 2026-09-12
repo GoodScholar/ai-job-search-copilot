@@ -41,7 +41,7 @@ describe("job discovery schedule contracts", () => {
     expect(JobDiscoveryScheduleOccurrenceSchema.parse({
       occurrenceId, scheduleId, targetId, scheduledFor: now, status: "dispatched", runId, skipReason: null,
     })).toMatchObject({ occurrenceId, status: "dispatched", runId });
-    for (const skipReason of ["TARGET_INACTIVE", "NO_SUPPORTED_SOURCE", "SOURCE_POLICY_REQUIRED", "PROFILE_UNAVAILABLE", "ACCOUNT_RUN_POLICY_WINDOW_CLOSED", "RUN_PREFLIGHT_BLOCKED"]) {
+    for (const skipReason of ["TARGET_INACTIVE", "NO_SUPPORTED_SOURCE", "SOURCE_POLICY_REQUIRED", "PROFILE_UNAVAILABLE", "ACCOUNT_RUN_POLICY_WINDOW_CLOSED", "RUN_PREFLIGHT_BLOCKED", "ACCOUNT_RUN_STOPPED", "ACCOUNT_RUN_SCHEDULE_SKIPPED"]) {
       expect(JobDiscoveryScheduleOccurrenceSchema.safeParse({
         occurrenceId, scheduleId, targetId, scheduledFor: now, status: "skipped", runId: null, skipReason,
       }).success).toBe(true);

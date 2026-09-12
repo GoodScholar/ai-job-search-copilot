@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AccountRunPolicyCommandSchema, AccountRunPolicyResponseSchema, systemAccountRunPolicy } from "./account-run-policies";
+import { AccountRunControlCommandSchema, AccountRunControlResponseSchema, AccountRunPolicyCommandSchema, AccountRunPolicyResponseSchema, systemAccountRunPolicy } from "./account-run-policies";
 
 const settings = () => ({
   discovery: { trustedSourceLimit: 50, publicQueryLimit: 5, verificationCandidateLimit: 10, enabledProviders: ["anysearch"] },
@@ -28,5 +28,14 @@ describe("账户运行策略契约", () => {
     const toolError = AccountRunPolicyCommandSchema.safeParse({ expectedVersion: 0, settings: { ...settings(), budgets: { ...settings().budgets, publicDiscovery: { ...settings().budgets.publicDiscovery, maxToolCalls: 61 } } } });
     expect(toolError.success).toBe(false);
     expect(toolError.error?.issues).toContainEqual(expect.objectContaining({ path: ["settings", "budgets", "publicDiscovery", "maxToolCalls"], params: { reasonCode: "ACCOUNT_RUN_POLICY_HARD_LIMIT_EXCEEDED", maximum: 60, suggestedAction: "reduce_to_system_hard_limit" } }));
+  });
+
+  it("账户停止控制命令与响应严格验证版本、时间和未知字段", () => {
+    const commandId = "e71ea476-78cf-4f0d-9a22-71844c35f2e6";
+    expect(AccountRunControlCommandSchema.parse({ commandId, expectedVersion: 0, action: "stop" })).toEqual({ commandId, expectedVersion: 0, action: "stop" });
+    expect(AccountRunControlResponseSchema.parse({ applied: true, state: { stoppedAt: "2026-09-11T00:00:00.000Z", controlVersion: 1, scheduleResumeAfter: null } })).toMatchObject({ applied: true, state: { controlVersion: 1 } });
+    expect(AccountRunControlCommandSchema.safeParse({ commandId, expectedVersion: -1, action: "stop" }).success).toBe(false);
+    expect(AccountRunControlCommandSchema.safeParse({ commandId, expectedVersion: 0, action: "stop", extra: true }).success).toBe(false);
+    expect(AccountRunControlResponseSchema.safeParse({ applied: true, state: { stoppedAt: "not-a-date", controlVersion: 1, scheduleResumeAfter: null } }).success).toBe(false);
   });
 });

@@ -282,6 +282,37 @@ function createAgentRunStarter(deps: CommandDependencies): AgentRunStarter {
   };
 }
 
+export async function applyAgentRunControlInTransaction(
+  transaction: any,
+  input: { userId: string; requestId: string; runId: string; command: { commandId: string; action: "pause" | "resume" | "cancel" } },
+  deps: Pick<CommandDependencies, "auditTrail" | "id" | "clock">,
+): Promise<{ response: ControlAgentRunResponse; wake: boolean }> {
+  const command = ControlAgentRunCommandSchema.parse(input.command);
+  const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId)));
+  if (!run) throw new AgentRunControlError("AGENT_RUN_NOT_FOUND");
+  const [prior] = await transaction.select().from(agentRunControlCommands).where(and(eq(agentRunControlCommands.userId, input.userId), eq(agentRunControlCommands.runId, input.runId), eq(agentRunControlCommands.commandId, command.commandId)));
+  if (prior) {
+    if (prior.action !== command.action) throw new AgentRunControlError("AGENT_RUN_COMMAND_ID_CONFLICT");
+    return { response: { applied: prior.applied, run: prior.resultSnapshot as ControlSnapshot }, wake: false };
+  }
+  const transition = reduceControl({ status: run.status as "queued" | "running" | "paused" | "completed" | "failed" | "cancelled", controlState: run.controlState as "none" | "pause_requested" | "cancel_requested" }, command.action);
+  if (transition.kind === "conflict") throw new AgentRunControlError(transition.code);
+  const now = deps.clock();
+  let snapshot: ControlSnapshot = { runId: run.id, status: run.status as ControlSnapshot["status"], currentStep: run.currentStep as ControlSnapshot["currentStep"], controlState: run.controlState as ControlSnapshot["controlState"], version: run.version };
+  if (transition.kind === "transition") {
+    const version = run.version + 1;
+    const immediateCancel = transition.eventType === "run.cancelled";
+    snapshot = { runId: run.id, status: transition.status, currentStep: immediateCancel ? "cancelled" : transition.eventType === "run.resumed" ? "queued" : run.currentStep as ControlSnapshot["currentStep"], controlState: transition.controlState, version };
+    await transaction.update(agentRuns).set({ status: snapshot.status, currentStep: snapshot.currentStep, controlState: snapshot.controlState, version, claimToken: immediateCancel || transition.eventType === "run.paused" ? null : run.claimToken, claimExpiresAt: immediateCancel || transition.eventType === "run.paused" ? null : run.claimExpiresAt, activeSliceStartedAt: immediateCancel || transition.eventType === "run.paused" ? null : run.activeSliceStartedAt, cancelledAt: immediateCancel ? now : run.cancelledAt, terminationKind: immediateCancel ? "cancelled_by_user" : run.terminationKind, terminationBudgetDimension: immediateCancel ? null : run.terminationBudgetDimension, usageComplete: run.usageComplete, updatedAt: now }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId)));
+    const sequence = await appendEvent(transaction, { id: deps.id, userId: input.userId, runId: input.runId, version, eventType: transition.eventType, data: { eventType: transition.eventType, status: snapshot.status, currentStep: snapshot.currentStep, attemptCount: run.attemptCount }, now });
+    if (transition.eventType === "run.paused") await openDecisionItem(transaction, deps.auditTrail.bind(transaction), { id: deps.id, userId: input.userId, runId: input.runId, sequence, requestId: input.requestId, now });
+    if (transition.eventType === "run.resumed" || transition.eventType === "run.cancelled") await resolveDecisionItems(transaction, deps.auditTrail.bind(transaction), { userId: input.userId, requestId: input.requestId, runId: input.runId, action: transition.eventType === "run.resumed" ? "resume_run" : "cancel_run", now });
+  }
+  await transaction.insert(agentRunControlCommands).values({ id: deps.id(), userId: input.userId, runId: input.runId, commandId: command.commandId, action: command.action, applied: transition.kind === "transition", resultRunVersion: snapshot.version, resultSnapshot: snapshot, createdAt: now });
+  if (transition.kind === "transition") await appendControlAudit(deps.auditTrail.bind(transaction), { userId: input.userId, requestId: input.requestId, runId: input.runId, eventType: transition.eventType, version: snapshot.version, action: command.action, attemptCount: run.attemptCount, now });
+  return { response: { applied: transition.kind === "transition", run: snapshot }, wake: transition.kind === "transition" && transition.eventType === "run.resumed" };
+}
+
 export function createAgentRunCommands(deps: CommandDependencies): {
   start: AgentRunStarter["start"];
   control(input: { userId: string; requestId: string; runId: string; command: { commandId: string; action: "pause" | "resume" | "cancel" } }): Promise<ControlAgentRunResponse>;
@@ -293,29 +324,7 @@ export function createAgentRunCommands(deps: CommandDependencies): {
       const command = ControlAgentRunCommandSchema.parse(input.command);
       const result = await deps.db.transaction(async (transaction) => {
         await acquireAccountAdvisoryLock(transaction, input.userId);
-        const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId)));
-        if (!run) throw new AgentRunControlError("AGENT_RUN_NOT_FOUND");
-        const [prior] = await transaction.select().from(agentRunControlCommands).where(and(eq(agentRunControlCommands.userId, input.userId), eq(agentRunControlCommands.runId, input.runId), eq(agentRunControlCommands.commandId, command.commandId)));
-        if (prior) {
-          if (prior.action !== command.action) throw new AgentRunControlError("AGENT_RUN_COMMAND_ID_CONFLICT");
-          return { response: { applied: prior.applied, run: prior.resultSnapshot as ControlSnapshot }, wake: false };
-        }
-        const transition = reduceControl({ status: run.status as "queued" | "running" | "paused" | "completed" | "failed" | "cancelled", controlState: run.controlState as "none" | "pause_requested" | "cancel_requested" }, command.action);
-        if (transition.kind === "conflict") throw new AgentRunControlError(transition.code);
-        const now = deps.clock();
-        let snapshot: ControlSnapshot = { runId: run.id, status: run.status as ControlSnapshot["status"], currentStep: run.currentStep as ControlSnapshot["currentStep"], controlState: run.controlState as ControlSnapshot["controlState"], version: run.version };
-        if (transition.kind === "transition") {
-          const version = run.version + 1;
-          const immediateCancel = transition.eventType === "run.cancelled";
-          snapshot = { runId: run.id, status: transition.status, currentStep: immediateCancel ? "cancelled" : transition.eventType === "run.resumed" ? "queued" : run.currentStep as ControlSnapshot["currentStep"], controlState: transition.controlState, version };
-          await transaction.update(agentRuns).set({ status: snapshot.status, currentStep: snapshot.currentStep, controlState: snapshot.controlState, version, claimToken: immediateCancel || transition.eventType === "run.paused" ? null : run.claimToken, claimExpiresAt: immediateCancel || transition.eventType === "run.paused" ? null : run.claimExpiresAt, activeSliceStartedAt: immediateCancel || transition.eventType === "run.paused" ? null : run.activeSliceStartedAt, cancelledAt: immediateCancel ? now : run.cancelledAt, terminationKind: immediateCancel ? "cancelled_by_user" : run.terminationKind, terminationBudgetDimension: immediateCancel ? null : run.terminationBudgetDimension, usageComplete: run.usageComplete, updatedAt: now }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId)));
-          const sequence = await appendEvent(transaction, { id: deps.id, userId: input.userId, runId: input.runId, version, eventType: transition.eventType, data: { eventType: transition.eventType, status: snapshot.status, currentStep: snapshot.currentStep, attemptCount: run.attemptCount }, now });
-          if (transition.eventType === "run.paused") await openDecisionItem(transaction, deps.auditTrail.bind(transaction), { id: deps.id, userId: input.userId, runId: input.runId, sequence, requestId: input.requestId, now });
-          if (transition.eventType === "run.resumed" || transition.eventType === "run.cancelled") await resolveDecisionItems(transaction, deps.auditTrail.bind(transaction), { userId: input.userId, requestId: input.requestId, runId: input.runId, action: transition.eventType === "run.resumed" ? "resume_run" : "cancel_run", now });
-        }
-        await transaction.insert(agentRunControlCommands).values({ id: deps.id(), userId: input.userId, runId: input.runId, commandId: command.commandId, action: command.action, applied: transition.kind === "transition", resultRunVersion: snapshot.version, resultSnapshot: snapshot, createdAt: now });
-        if (transition.kind === "transition") await appendControlAudit(deps.auditTrail.bind(transaction), { userId: input.userId, requestId: input.requestId, runId: input.runId, eventType: transition.eventType, version: snapshot.version, action: command.action, attemptCount: run.attemptCount, now });
-        return { response: { applied: transition.kind === "transition", run: snapshot }, wake: transition.kind === "transition" && transition.eventType === "run.resumed" };
+        return applyAgentRunControlInTransaction(transaction, { ...input, command }, deps);
       });
       if (result.wake) { try { await deps.queue.enqueue({ version: AGENT_RUN_JOB_VERSION, runId: input.runId, userId: input.userId }); } catch { /* recovery scan is authoritative */ } }
       return result.response;

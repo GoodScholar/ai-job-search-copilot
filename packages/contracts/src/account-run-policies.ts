@@ -101,9 +101,26 @@ export const AccountRunPolicyResponseSchema = z.object({
 
 export const AccountRunPolicyHistorySchema = z.object({ revisions: z.array(AccountRunPolicyRevisionSchema).max(100) }).strict();
 
+export const AccountRunControlStateSchema = z.object({
+  stoppedAt: z.iso.datetime().nullable(),
+  controlVersion: nonnegativeInteger,
+  scheduleResumeAfter: z.iso.datetime().nullable(),
+}).strict();
+export const AccountRunControlCommandSchema = z.object({
+  commandId: z.uuid(),
+  expectedVersion: nonnegativeInteger,
+  action: z.enum(["stop", "release"]),
+}).strict();
+export const AccountRunControlResponseSchema = z.object({
+  applied: z.boolean(), state: AccountRunControlStateSchema,
+}).strict();
+
 export type AccountRunPolicySettings = z.infer<typeof AccountRunPolicySettingsSchema>;
 export type AccountRunPolicyResponse = z.infer<typeof AccountRunPolicyResponseSchema>;
 export type AccountRunPolicyRevision = z.infer<typeof AccountRunPolicyRevisionSchema>;
+export type AccountRunControlState = z.infer<typeof AccountRunControlStateSchema>;
+export type AccountRunControlCommand = z.infer<typeof AccountRunControlCommandSchema>;
+export type AccountRunControlResponse = z.infer<typeof AccountRunControlResponseSchema>;
 
 export function systemAccountRunPolicy(): AccountRunPolicyResponse {
   const settings = structuredClone(baselineSettings);

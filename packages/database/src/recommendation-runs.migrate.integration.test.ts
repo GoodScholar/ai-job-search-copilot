@@ -304,10 +304,11 @@ describe("recommendation run persistence migration", () => {
       const migrationSource = fileURLToPath(new URL("../migrations", import.meta.url));
       await cp(migrationSource, migrationsFolder, { recursive: true });
       await unlink(join(migrationsFolder, "0049_recommendation_runs.sql"));
+      await unlink(join(migrationsFolder, "0050_account_run_control.sql"));
       await unlink(join(migrationsFolder, "meta", "0049_snapshot.json"));
       const journalPath = join(migrationsFolder, "meta", "_journal.json");
       const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
-      journal.entries = journal.entries.filter(({ tag }) => tag !== "0049_recommendation_runs");
+      journal.entries = journal.entries.filter(({ tag }) => tag !== "0049_recommendation_runs" && tag !== "0050_account_run_control");
       await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
       await migrate(legacyDatabase, { migrationsFolder });
       const legacyOwnerId = crypto.randomUUID(); const legacyTargetId = crypto.randomUUID();
