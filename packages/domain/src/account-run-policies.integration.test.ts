@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { createDatabase, jobAccounts, migrateDatabase, type Database } from "@job-copilot/database";
+import { accountRunPolicies, createDatabase, jobAccounts, migrateDatabase, type Database } from "@job-copilot/database";
+import { eq } from "drizzle-orm";
 import { createAccountRunPolicies, AccountRunPolicyError } from "./account-run-policies";
+import { createAccountRunControl } from "./account-run-control";
+import { createAuditTrail } from "./audit-trail";
 
 describe("账户运行策略", () => {
   let container: StartedPostgreSqlContainer;
@@ -73,5 +76,18 @@ describe("账户运行策略", () => {
     expect(outcomes.filter((outcome) => outcome.status === "rejected")[0]).toMatchObject({ reason: { code: "ACCOUNT_RUN_POLICY_VERSION_CONFLICT" } });
     await expect(service.get({ userId })).resolves.toMatchObject({ revision: { revisionNumber: 1 } });
     await expect(service.history({ userId })).resolves.toMatchObject({ revisions: [{ revisionNumber: 1 }, { revisionNumber: 0 }] });
+  });
+
+  it("停止与策略保存串行且分别保留控制版本和策略修订", async () => {
+    const userId = await account(); const clock = () => new Date("2026-09-07T00:00:00.000Z");
+    const policies = createAccountRunPolicies({ db: database, id: randomUUID, clock });
+    const controls = createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock }), id: randomUUID, clock });
+    const [stop, saved] = await Promise.all([
+      controls.control({ userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 0, action: "stop" } }),
+      policies.save({ userId, command: { expectedVersion: 0, settings: settings(2) } }),
+    ]);
+    expect(stop).toMatchObject({ applied: true, state: { controlVersion: 1, stoppedAt: clock().toISOString() } });
+    expect(saved).toMatchObject({ revision: { revisionNumber: 1 }, effective: { discovery: { publicQueryLimit: 2 } } });
+    await expect(database.select({ version: accountRunPolicies.version, currentRevisionNumber: accountRunPolicies.currentRevisionNumber, controlVersion: accountRunPolicies.controlVersion, stoppedAt: accountRunPolicies.stoppedAt }).from(accountRunPolicies).where(eq(accountRunPolicies.userId, userId))).resolves.toEqual([{ version: 1, currentRevisionNumber: 1, controlVersion: 1, stoppedAt: clock() }]);
   });
 });

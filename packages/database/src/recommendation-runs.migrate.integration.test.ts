@@ -253,7 +253,7 @@ describe("recommendation run persistence migration", () => {
         while not (select is_called from recommendation_list_delete_barrier_release) loop perform pg_sleep(0.01); end loop;
         return old;
       end; $$;
-      create trigger aaa_recommendation_list_delete_test_barrier before delete on recommendation_list_items
+      create trigger zzz_recommendation_list_delete_test_barrier before delete on recommendation_list_items
       for each row execute function recommendation_list_delete_test_barrier();
     `));
     const firstUrl = new URL(databaseUrl); firstUrl.searchParams.set("application_name", "recommendation-list-delete-first");
@@ -274,13 +274,20 @@ describe("recommendation run persistence migration", () => {
       ]);
       let released = false;
       try {
-        let arrivals = 0;
-        for (let attempts = 0; attempts < 200 && arrivals < 2; attempts += 1) {
+        let arrivals = 0; let waitingPids: number[] = []; let barrierPids: number[] = [];
+        for (let attempts = 0; attempts < 200 && (arrivals < 1 || waitingPids.length !== 1 || barrierPids.length !== 1); attempts += 1) {
           const [{ arrivals: currentArrivals }] = await database.execute(sql`select last_value::integer as arrivals from recommendation_list_delete_barrier_arrival`) as unknown as Array<{ arrivals: number }>;
           arrivals = Number(currentArrivals);
-          if (arrivals < 2) await new Promise((resolve) => setTimeout(resolve, 10));
+          const locks = await database.execute(sql`select pid from pg_stat_activity where pid in (${firstPid}, ${secondPid}) and wait_event_type = 'Lock'`) as unknown as Array<{ pid: number }>;
+          waitingPids = locks.map(({ pid }) => pid);
+          const barriers = await database.execute(sql`select pid from pg_stat_activity where pid in (${firstPid}, ${secondPid}) and wait_event_type = 'Timeout'`) as unknown as Array<{ pid: number }>;
+          barrierPids = barriers.map(({ pid }) => pid);
+          if (arrivals < 1 || waitingPids.length !== 1 || barrierPids.length !== 1) await new Promise((resolve) => setTimeout(resolve, 10));
         }
-        expect(arrivals).toBeGreaterThanOrEqual(2);
+        expect(arrivals).toBe(1);
+        expect(waitingPids).toHaveLength(1);
+        expect(barrierPids).toHaveLength(1);
+        expect(waitingPids[0]).not.toBe(barrierPids[0]);
         await database.execute(sql`select nextval('recommendation_list_delete_barrier_release')`);
         released = true;
         const settled = await outcomes;
