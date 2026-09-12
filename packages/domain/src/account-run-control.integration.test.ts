@@ -40,6 +40,7 @@ describe("账户运行停止控制", () => {
     const userId = await account(); const service = controls();
     const commandId = randomUUID();
     await service.control({ userId, requestId: randomUUID(), command: { commandId, expectedVersion: 0, action: "stop" } });
+    await expect(service.control({ userId, requestId: randomUUID(), command: { commandId, expectedVersion: 1, action: "stop" } })).rejects.toMatchObject({ code: "ACCOUNT_RUN_CONTROL_COMMAND_ID_CONFLICT" } satisfies Partial<AccountRunControlError>);
     await expect(service.control({ userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 0, action: "stop" } })).rejects.toMatchObject({ code: "ACCOUNT_RUN_CONTROL_VERSION_CONFLICT" } satisfies Partial<AccountRunControlError>);
     await expect(service.control({ userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 1, action: "release" } })).resolves.toMatchObject({ applied: true, state: { controlVersion: 2 } });
     await expect(service.control({ userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 2, action: "release" } })).resolves.toEqual({ applied: false, state: { stoppedAt: null, controlVersion: 2, scheduleResumeAfter: now.toISOString() } });
@@ -56,19 +57,23 @@ describe("账户运行停止控制", () => {
   it("停止只暂停所属 queued/running 运行并保留取消、终态和其他账户，释放不恢复运行", async () => {
     const owner = await activeTarget(); const other = await activeTarget(); const runtime = commands();
     const queued = await runtime.start({ userId: owner.userId, requestId: randomUUID(), command: { targetId: owner.targetId, idempotencyKey: randomUUID() } });
+    const paused = await runtime.start({ userId: owner.userId, requestId: randomUUID(), command: { targetId: owner.targetId, idempotencyKey: randomUUID() } });
     const running = await runtime.start({ userId: owner.userId, requestId: randomUUID(), command: { targetId: owner.targetId, idempotencyKey: randomUUID() } });
     const cancelling = await runtime.start({ userId: owner.userId, requestId: randomUUID(), command: { targetId: owner.targetId, idempotencyKey: randomUUID() } });
     const terminal = await runtime.start({ userId: owner.userId, requestId: randomUUID(), command: { targetId: owner.targetId, idempotencyKey: randomUUID() } });
     const foreign = await runtime.start({ userId: other.userId, requestId: randomUUID(), command: { targetId: other.targetId, idempotencyKey: randomUUID() } });
+    await runtime.control({ userId: owner.userId, requestId: randomUUID(), runId: paused.runId, command: { commandId: randomUUID(), action: "pause" } });
     await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", controlState: "none", startedAt: now }).where(eq(agentRuns.id, running.runId));
     await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", controlState: "cancel_requested", startedAt: now }).where(eq(agentRuns.id, cancelling.runId));
     await database.update(agentRuns).set({ status: "completed", currentStep: "completed", controlState: "none", startedAt: now, completedAt: now, terminationKind: "completed" }).where(eq(agentRuns.id, terminal.runId));
+    const pausedBeforeStop = await database.select().from(agentRuns).where(eq(agentRuns.id, paused.runId));
     const service = controls();
     await expect(service.control({ userId: owner.userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 0, action: "stop" } })).resolves.toMatchObject({ applied: true, state: { controlVersion: 1 } });
-    const rows = await database.select({ id: agentRuns.id, status: agentRuns.status, controlState: agentRuns.controlState }).from(agentRuns).where(and(eq(agentRuns.userId, owner.userId), inArray(agentRuns.id, [queued.runId, running.runId, cancelling.runId, terminal.runId])));
+    const rows = await database.select({ id: agentRuns.id, status: agentRuns.status, controlState: agentRuns.controlState }).from(agentRuns).where(and(eq(agentRuns.userId, owner.userId), inArray(agentRuns.id, [queued.runId, paused.runId, running.runId, cancelling.runId, terminal.runId])));
     expect(rows).toEqual(expect.arrayContaining([
-      { id: queued.runId, status: "paused", controlState: "none" }, { id: running.runId, status: "running", controlState: "pause_requested" }, { id: cancelling.runId, status: "running", controlState: "cancel_requested" }, { id: terminal.runId, status: "completed", controlState: "none" },
+      { id: queued.runId, status: "paused", controlState: "none" }, { id: paused.runId, status: "paused", controlState: "none" }, { id: running.runId, status: "running", controlState: "pause_requested" }, { id: cancelling.runId, status: "running", controlState: "cancel_requested" }, { id: terminal.runId, status: "completed", controlState: "none" },
     ]));
+    await expect(database.select().from(agentRuns).where(eq(agentRuns.id, paused.runId))).resolves.toEqual(pausedBeforeStop);
     await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, foreign.runId))).resolves.toEqual([{ status: "queued" }]);
     const beforeRelease = await database.select({ id: agentRuns.id, status: agentRuns.status, controlState: agentRuns.controlState }).from(agentRuns).where(eq(agentRuns.userId, owner.userId));
     await service.control({ userId: owner.userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 1, action: "release" } });
