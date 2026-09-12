@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import {
   companyWatchlistRevisions, companyWatchlists, createDatabase, jobAccounts, jobProfiles, jobTargets, jobTargetRevisions,
   migrateDatabase, modelDiagnosticResults, profileFactRevisions, profileFacts, type Database,
@@ -30,6 +30,20 @@ function deferred() {
   let resolve!: () => void;
   const promise = new Promise<void>((accept) => { resolve = accept; });
   return { promise, resolve };
+}
+
+async function waitUntilAConnectionIsWaitingForAccountAdvisoryLock(database: Database) {
+  await expect.poll(async () => {
+    const [row] = await database.execute<{ waiting: boolean }>(sql`
+      select exists(
+        select 1 from pg_stat_activity
+        where wait_event_type = 'Lock'
+          and wait_event = 'advisory'
+          and query like '%pg_advisory_xact_lock%'
+      ) as waiting
+    `);
+    return row?.waiting ?? false;
+  }, { timeout: 2_000, interval: 10 }).toBe(true);
 }
 
 describe("推荐运行准备", () => {
@@ -137,6 +151,36 @@ describe("推荐运行准备", () => {
     expect(internal).toMatchObject({ startSpec: null, recommendationContext: null });
   });
 
+  it("layered public 缺少画像时返回阻塞摘要而不构造私有启动结果", async () => {
+    const owner = await account();
+    await database.delete(profileFactRevisions).where(eq(profileFactRevisions.userId, owner.userId));
+    await database.delete(profileFacts).where(eq(profileFacts.userId, owner.userId));
+    await database.delete(jobProfiles).where(eq(jobProfiles.userId, owner.userId));
+
+    const internal = await database.transaction((transaction) => prepareRecommendationRunInTransaction(transaction, { userId: owner.userId, executionMode: "layered_public" }, { runPreflight: evaluator("layered_public", owner.fingerprint), id: randomUUID, clock: () => now }));
+
+    expect(internal.preparation).toMatchObject({ target: { targetId: owner.targetId }, preflight: { status: "blocked" } });
+    expect(internal.preparation.preflight.items.map((item) => item.code)).toContain("PROFILE_EVIDENCE_MISSING");
+    expect(internal).toMatchObject({ startSpec: null, recommendationContext: null });
+  });
+
+  it("layered public 的可信与公开分支均不可用时返回阻塞摘要而不抛错", async () => {
+    const owner = await account();
+    const [watchlist] = await database.select({ id: companyWatchlists.id }).from(companyWatchlists).where(and(eq(companyWatchlists.userId, owner.userId), eq(companyWatchlists.targetId, owner.targetId)));
+    await database.update(companyWatchlists).set({ version: 2, updatedAt: now }).where(eq(companyWatchlists.id, watchlist!.id));
+    await database.insert(companyWatchlistRevisions).values({ id: randomUUID(), userId: owner.userId, watchlistId: watchlist!.id, targetId: owner.targetId, version: 2, items: [], createdAt: now });
+    const settings = structuredClone(systemAccountRunPolicy().effective);
+    settings.discovery.enabledProviders = [];
+    settings.discovery.publicQueryLimit = 0;
+    await createAccountRunPolicies({ db: database, id: randomUUID, clock: () => now }).save({ userId: owner.userId, command: { expectedVersion: 0, settings } });
+
+    const internal = await database.transaction((transaction) => prepareRecommendationRunInTransaction(transaction, { userId: owner.userId, executionMode: "layered_public" }, { runPreflight: evaluator("layered_public", owner.fingerprint), id: randomUUID, clock: () => now }));
+
+    expect(internal.preparation).toMatchObject({ target: { targetId: owner.targetId }, preflight: { status: "blocked" }, sourceScope: { trustedSourceCount: 0, publicQueryCount: 0 } });
+    expect(internal.preparation.preflight.items.map((item) => item.code)).toContain("SOURCE_CAPABILITY_UNAVAILABLE");
+    expect(internal).toMatchObject({ startSpec: null, recommendationContext: null });
+  });
+
   it("recommendation 忽略非主目标请求，始终绑定当前活动主目标", async () => {
     const owner = await account(); const secondaryTargetId = randomUUID();
     await database.insert(jobTargets).values({ id: secondaryTargetId, userId: owner.userId, version: 1, priority: "secondary", state: "active", activeSlot: 1, createdAt: now, updatedAt: now });
@@ -163,24 +207,42 @@ describe("推荐运行准备", () => {
     expect(preparation.sourceScope).toEqual({ trustedSourceCount: 0, publicQueryCount: 1 });
   });
 
-  it("公开 prepare 在账户锁中线性化 evaluator 与主目标快照", async () => {
+  it("公开 prepare 在账户锁中冻结 evaluator 后的主目标快照", async () => {
     const owner = await account();
-    const entered = deferred(); const releaseEvaluation = deferred();
+    const evaluationFinished = deferred(); const releasePreparation = deferred();
     const base = evaluator("greenhouse", owner.fingerprint);
-    const delayed = { evaluate: async (...args: Parameters<typeof base.evaluate>) => { entered.resolve(); await releaseEvaluation.promise; return base.evaluate(...args); } };
+    const delayed = { evaluate: async (...args: Parameters<typeof base.evaluate>) => {
+      const result = await base.evaluate(...args);
+      evaluationFinished.resolve();
+      await releasePreparation.promise;
+      return result;
+    } };
     const queries = createRecommendationRunPreparationQueries({ db: database, runPreflight: delayed, executionMode: "greenhouse", id: randomUUID, clock: () => now });
     const preparing = queries.prepare({ userId: owner.userId });
-    await entered.promise;
-    const deactivate = database.transaction(async (transaction) => {
+    await evaluationFinished.promise;
+    const competingDatabase = createDatabase(container.getConnectionUri());
+    const observerDatabase = createDatabase(container.getConnectionUri());
+    const reachedAccountLock = deferred();
+    const deactivate = competingDatabase.transaction(async (transaction) => {
+      reachedAccountLock.resolve();
       await acquireAccountAdvisoryLock(transaction, owner.userId);
       await transaction.update(jobTargets).set({ state: "inactive" }).where(eq(jobTargets.id, owner.targetId));
     });
-    releaseEvaluation.resolve();
-    const preparation = await preparing;
-    await deactivate;
+    try {
+      await reachedAccountLock.promise;
+      await waitUntilAConnectionIsWaitingForAccountAdvisoryLock(observerDatabase);
+      releasePreparation.resolve();
+      const preparation = await preparing;
+      await deactivate;
 
-    expect(preparation).toMatchObject({ target: { targetId: owner.targetId }, preflight: { targetId: owner.targetId } });
-    expect(preparation.preflight.status).not.toBe("blocked");
+      expect(preparation).toMatchObject({ target: { targetId: owner.targetId }, preflight: { targetId: owner.targetId } });
+      expect(preparation.preflight.status).not.toBe("blocked");
+    } finally {
+      releasePreparation.resolve();
+      await Promise.allSettled([preparing, deactivate]);
+      await competingDatabase.$client.end();
+      await observerDatabase.$client.end();
+    }
   });
 
   it.each([

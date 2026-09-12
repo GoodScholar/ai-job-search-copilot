@@ -1,14 +1,13 @@
 import { Buffer } from "node:buffer";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import { jobProfiles, jobTargetRevisions, jobTargets, type Database } from "@job-copilot/database";
+import { jobProfiles, type Database } from "@job-copilot/database";
 import { AgentRunBudgetSchema, AgentRunExecutionSpecSchema } from "@job-copilot/contracts/agent-runs";
 import { RecommendationRunPreparationSchema, type RecommendationRunPreparation } from "@job-copilot/contracts/recommendation-runs";
 import { RunPreflightReportSchema } from "@job-copilot/contracts/run-preflight";
 import { JobTargetConstraintsSchema } from "@job-copilot/contracts/job-targets";
-import { buildDiscoveryRunSpecInTransaction, readDiscoveryWatchlistInTransaction, type DiscoveryTargetSnapshot } from "./agent-run-discovery-spec";
+import { discoverySourceScopeCounts, type DiscoveryTargetSnapshot } from "./agent-run-discovery-spec";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
-import { AgentRunError } from "./agent-run-errors";
 import type { JobDiscoveryExecutionMode } from "./job-discovery-execution-mode";
 import type { RunPreflightEvaluator } from "./run-preflight";
 
@@ -27,32 +26,20 @@ export type RecommendationRunStartSpec = { targetId: string; targetVersion: numb
 export type RecommendationRunContext = z.infer<typeof RecommendationContextSchema>;
 export type RecommendationRunPreparationResult = { preparation: RecommendationRunPreparation; startSpec: RecommendationRunStartSpec | null; recommendationContext: RecommendationRunContext | null };
 
-function sourceScopeCounts(scope: unknown, mode: JobDiscoveryExecutionMode): { trustedSourceCount: number; publicQueryCount: number } {
-  const value = scope as { sources?: unknown[]; trustedSources?: unknown[]; publicDiscovery?: { queries?: unknown[] } };
-  return mode === "layered_public" ? { trustedSourceCount: value.trustedSources?.length ?? 0, publicQueryCount: value.publicDiscovery?.queries?.length ?? 0 } : { trustedSourceCount: value.sources?.length ?? 0, publicQueryCount: 0 };
-}
-
 export async function prepareRecommendationRunInTransaction(transaction: any, input: { userId: string; executionMode: JobDiscoveryExecutionMode }, deps: { runPreflight: RunPreflightEvaluator; id: () => string; clock: () => Date }): Promise<RecommendationRunPreparationResult> {
   const evaluation = await deps.runPreflight.evaluate(transaction, { userId: input.userId, workflow: "recommendation", trigger: "manual" });
   const budgets = { discovery: input.executionMode === "fake" ? evaluation.policy.snapshot.budgets.fake : evaluation.policy.snapshot.budgets.publicDiscovery, deepMatch: evaluation.policy.snapshot.budgets.deepMatch };
-  const [target] = await transaction.select({ id: jobTargets.id, version: jobTargets.version, priority: jobTargets.priority, state: jobTargets.state, constraints: jobTargetRevisions.constraints }).from(jobTargets).innerJoin(jobTargetRevisions, and(eq(jobTargetRevisions.userId, jobTargets.userId), eq(jobTargetRevisions.targetId, jobTargets.id), eq(jobTargetRevisions.version, jobTargets.version))).where(and(eq(jobTargets.userId, input.userId), eq(jobTargets.priority, "primary"), eq(jobTargets.state, "active")));
-  if (!target) return { preparation: RecommendationRunPreparationSchema.parse({ target: null, sourceScope: { trustedSourceCount: 0, publicQueryCount: 0 }, accountPolicyRevisionNumber: evaluation.policy.revisionNumber, budgets, preflight: evaluation.report }), startSpec: null, recommendationContext: null };
-  const targetSnapshot: DiscoveryTargetSnapshot = { targetId: target.id, version: target.version, priority: target.priority, state: target.state, constraints: target.constraints };
-  const watchlist = await readDiscoveryWatchlistInTransaction(transaction, { userId: input.userId, targetId: target.id });
-  let spec: Awaited<ReturnType<typeof buildDiscoveryRunSpecInTransaction>> | null = null;
-  try {
-    spec = await buildDiscoveryRunSpecInTransaction(transaction, { userId: input.userId, targetSnapshot, watchlist, policy: evaluation.policy.snapshot, executionMode: input.executionMode });
-  } catch (error) {
-    if (!(error instanceof AgentRunError) || error.code !== "AGENT_RUN_UNAVAILABLE") throw error;
-  }
-  const constraints = JobTargetConstraintsSchema.parse(target.constraints);
-  const preparation = RecommendationRunPreparationSchema.parse({ target: { targetId: target.id, targetVersion: target.version, roleFamily: constraints.roleFamily }, sourceScope: spec ? sourceScopeCounts(spec.sourceScope, input.executionMode) : { trustedSourceCount: 0, publicQueryCount: 0 }, accountPolicyRevisionNumber: evaluation.policy.revisionNumber, budgets, preflight: evaluation.report });
+  const plan = evaluation.recommendationPlan;
+  if (!plan) return { preparation: RecommendationRunPreparationSchema.parse({ target: null, sourceScope: { trustedSourceCount: 0, publicQueryCount: 0 }, accountPolicyRevisionNumber: evaluation.policy.revisionNumber, budgets, preflight: evaluation.report }), startSpec: null, recommendationContext: null };
+  const { targetSnapshot, discoverySpec: spec } = plan;
+  const constraints = JobTargetConstraintsSchema.parse(targetSnapshot.constraints);
+  const preparation = RecommendationRunPreparationSchema.parse({ target: { targetId: targetSnapshot.targetId, targetVersion: targetSnapshot.version, roleFamily: constraints.roleFamily }, sourceScope: spec ? discoverySourceScopeCounts(spec.sourceScope, input.executionMode) : { trustedSourceCount: 0, publicQueryCount: 0 }, accountPolicyRevisionNumber: evaluation.policy.revisionNumber, budgets, preflight: evaluation.report });
   if (evaluation.report.status === "blocked" || !spec) return { preparation, startSpec: null, recommendationContext: null };
   const [profile] = await transaction.select({ id: jobProfiles.id, version: jobProfiles.version }).from(jobProfiles).where(eq(jobProfiles.userId, input.userId));
   if (!profile || profile.version < 1) return { preparation, startSpec: null, recommendationContext: null };
   const executionSpec = AgentRunExecutionSpecSchema.parse({ targetSnapshot, ...(spec.profileSnapshot ? { profileSnapshot: spec.profileSnapshot, watchlistSnapshot: spec.watchlistSnapshot } : {}), sourceScope: spec.sourceScope, workflowVersion: spec.execution.workflowVersion, ruleVersion: spec.execution.ruleVersion, adapter: spec.execution.adapter, adapterVersion: spec.execution.adapterVersion, outputSchemaVersion: spec.execution.outputSchemaVersion, toolAllowlist: spec.toolAllowlist, model: null, budget: spec.execution.budget });
   const recommendationContext = RecommendationContextSchema.parse({ version: "recommendation-context-v1", profile: { profileId: profile.id, profileVersion: profile.version }, budgets, preflight: evaluation.report, accountPolicyRevisionNumber: evaluation.policy.revisionNumber });
-  return { preparation, startSpec: { targetId: target.id, targetVersion: target.version, targetSnapshot, executionSpec }, recommendationContext };
+  return { preparation, startSpec: { targetId: targetSnapshot.targetId, targetVersion: targetSnapshot.version, targetSnapshot, executionSpec }, recommendationContext };
 }
 
 export function createRecommendationRunPreparationQueries(deps: { db: Database; runPreflight: RunPreflightEvaluator; executionMode: JobDiscoveryExecutionMode; id: () => string; clock: () => Date }): { prepare(input: { userId: string }): Promise<RecommendationRunPreparation> } {

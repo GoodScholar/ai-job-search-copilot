@@ -1,9 +1,6 @@
 import { createHash } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
-import {
-  companyWatchlistRevisions, companyWatchlists, jobProfiles, jobSourceHealthChecks, jobTargetRevisions, jobTargets, profileFactRevisions, profileFacts,
-  type Database,
-} from "@job-copilot/database";
+import { companyWatchlistRevisions, companyWatchlists, jobSourceHealthChecks, jobTargets, profileFactRevisions, profileFacts, type Database } from "@job-copilot/database";
 import { type AccountRunPolicySettings } from "@job-copilot/contracts/account-run-policies";
 import {
   RunPreflightReportSchema, type RunPreflightCheckCode, type RunPreflightItem,
@@ -13,11 +10,11 @@ import { resolveEffectiveAccountRunPolicy } from "./account-run-policies";
 import { readAccountRunControlInTransaction } from "./account-run-admission";
 import { isDateInBackgroundWindow } from "./account-run-policy-window";
 import { analyzePublicJobDiscoverySources } from "./public-job-discovery-sources";
-import { createAnySearchQueryPlan } from "./anysearch-query-plan";
-import { CompanyWatchlistItemSchema } from "@job-copilot/contracts/company-watchlists";
 import type { JobDiscoveryExecutionMode } from "./job-discovery-execution-mode";
 import { type ModelDiagnosticProjectionReader, createModelDiagnosticProjectionReader } from "./model-diagnostics";
 import type { SourceCapabilityAdapter } from "./source-capabilities";
+import { buildDiscoveryRunSpecInTransaction, discoverySourceScopeCounts, readDiscoveryTargetInTransaction, readDiscoveryWatchlistInTransaction, type DiscoveryRunSpec, type DiscoveryTargetSnapshot } from "./agent-run-discovery-spec";
+import { AgentRunError } from "./agent-run-errors";
 
 export type { ModelDiagnosticProjectionReader } from "./model-diagnostics";
 
@@ -31,6 +28,7 @@ export type RunPreflightInput = {
 export type RunPreflightEvaluation = {
   report: RunPreflightReport;
   policy: { revisionNumber: number; snapshot: AccountRunPolicySettings };
+  recommendationPlan?: { targetSnapshot: DiscoveryTargetSnapshot; discoverySpec: DiscoveryRunSpec | null };
 };
 export type RunPreflightDatabase = Pick<Database, "select" | "insert" | "execute">;
 export type RunPreflightEvaluator = { evaluate(db: RunPreflightDatabase, input: RunPreflightInput): Promise<RunPreflightEvaluation> };
@@ -119,25 +117,6 @@ async function sources(db: Pick<Database, "select">, userId: string, targetId: s
   const analysis = analyzePublicJobDiscoverySources(watchlist);
   return analysis.status === "executable" ? analysis.sources.map((source) => ({ itemId: source.watchlistItemId, sourceId: source.sourceId })) : [];
 }
-async function layeredPublicQueryCount(db: Pick<Database, "select">, input: { userId: string; targetId: string | null; publicQueryLimit: number; verificationCandidateLimit: number }): Promise<number> {
-  if (!input.targetId || input.publicQueryLimit <= 0) return 0;
-  const [[target], [profile], [watchlist]] = await Promise.all([
-    db.select({ version: jobTargets.version, priority: jobTargets.priority, state: jobTargets.state, constraints: jobTargetRevisions.constraints }).from(jobTargets).innerJoin(jobTargetRevisions, and(eq(jobTargetRevisions.userId, jobTargets.userId), eq(jobTargetRevisions.targetId, jobTargets.id), eq(jobTargetRevisions.version, jobTargets.version))).where(and(eq(jobTargets.userId, input.userId), eq(jobTargets.id, input.targetId))),
-    db.select({ id: jobProfiles.id, version: jobProfiles.version }).from(jobProfiles).where(eq(jobProfiles.userId, input.userId)),
-    db.select({ version: companyWatchlists.version, items: companyWatchlistRevisions.items }).from(companyWatchlists).innerJoin(companyWatchlistRevisions, and(eq(companyWatchlistRevisions.userId, companyWatchlists.userId), eq(companyWatchlistRevisions.watchlistId, companyWatchlists.id), eq(companyWatchlistRevisions.version, companyWatchlists.version))).where(and(eq(companyWatchlists.userId, input.userId), eq(companyWatchlists.targetId, input.targetId))),
-  ]);
-  if (!target || !profile || profile.version < 1) return 0;
-  const revisions = await db.select({ profileFactId: profileFacts.id, factType: profileFactRevisions.factType, factValue: profileFactRevisions.factValue, state: profileFactRevisions.state, revisionNumber: profileFactRevisions.revisionNumber }).from(profileFacts).innerJoin(profileFactRevisions, and(eq(profileFactRevisions.userId, profileFacts.userId), eq(profileFactRevisions.profileFactId, profileFacts.id))).where(and(eq(profileFacts.userId, input.userId), eq(profileFacts.profileId, profile.id))).orderBy(desc(profileFactRevisions.revisionNumber));
-  const current = new Map<string, typeof revisions[number]>();
-  for (const revision of revisions) if (!current.has(revision.profileFactId)) current.set(revision.profileFactId, revision);
-  const confirmedActiveSkillNames = [...new Set([...current.values()].filter((revision) => revision.factType === "skill" && revision.state === "active").flatMap((revision) => {
-    const value = revision.factValue;
-    return value && typeof value === "object" && !Array.isArray(value) && "name" in value && typeof value.name === "string" && value.name.trim() ? [value.name.trim()] : [];
-  }))].sort((left, right) => left.localeCompare(right, "zh-CN")).slice(0, 10);
-  const items = watchlist ? CompanyWatchlistItemSchema.array().parse(watchlist.items) : [];
-  const companies = items.filter((item) => item.state === "enabled").sort((left, right) => left.position - right.position).map((item) => ({ watchlistItemId: item.itemId, canonicalCompanyName: item.canonicalCompanyName, allowedDomains: item.allowedDomains }));
-  return createAnySearchQueryPlan({ targetSnapshot: { targetId: input.targetId, version: target.version, priority: target.priority, state: target.state, constraints: target.constraints }, profileSnapshot: { targetId: input.targetId, version: profile.version, confirmedActiveSkillNames }, watchlistSnapshot: { targetId: input.targetId, version: watchlist?.version ?? 0, companies }, publicQueryLimit: input.publicQueryLimit, verificationCandidateLimit: input.verificationCandidateLimit }).queries.length;
-}
 function capabilities(adapter: SourceCapabilityAdapter, input: RunPreflightInput, sources: Source[]) {
   const required: Array<"active_discovery" | "read_details" | "continuous_monitoring"> = input.trigger === "schedule" ? ["active_discovery", "read_details", "continuous_monitoring"] : ["active_discovery", "read_details"];
   let count = 0;
@@ -194,8 +173,22 @@ export function createRunPreflightEvaluator(deps: { capabilityAdapter: SourceCap
       const safeRequestedTargetId = requested?.targetId ?? (input.targetId ? null : primary?.targetId ?? null);
       const targetId = requested?.state === "active" ? requested.targetId : primary?.targetId ?? null;
       const realSources = (await sources(db, input.userId, targetId)).slice(0, policy.effective.discovery.trustedSourceLimit);
-      const publicQueryCount = input.workflow === "recommendation" && deps.discoveryExecutionMode === "layered_public" && policy.effective.discovery.enabledProviders.includes("anysearch")
-        ? await layeredPublicQueryCount(db, { userId: input.userId, targetId, publicQueryLimit: policy.effective.discovery.publicQueryLimit, verificationCandidateLimit: policy.effective.discovery.verificationCandidateLimit })
+      let recommendationPlan: RunPreflightEvaluation["recommendationPlan"];
+      if (input.workflow === "recommendation" && targetId) {
+        const targetSnapshot = await readDiscoveryTargetInTransaction(db, { userId: input.userId, targetId });
+        if (targetSnapshot?.state === "active" && targetSnapshot.priority === "primary") {
+          const watchlist = await readDiscoveryWatchlistInTransaction(db, { userId: input.userId, targetId });
+          let discoverySpec: DiscoveryRunSpec | null = null;
+          try {
+            discoverySpec = await buildDiscoveryRunSpecInTransaction(db, { userId: input.userId, targetSnapshot, watchlist, policy: policy.effective, executionMode: deps.discoveryExecutionMode });
+          } catch (error) {
+            if (!(error instanceof AgentRunError) || error.code !== "AGENT_RUN_UNAVAILABLE") throw error;
+          }
+          recommendationPlan = { targetSnapshot, discoverySpec };
+        }
+      }
+      const publicQueryCount = recommendationPlan?.discoverySpec && deps.discoveryExecutionMode === "layered_public"
+        ? discoverySourceScopeCounts(recommendationPlan.discoverySpec.sourceScope, deps.discoveryExecutionMode).publicQueryCount
         : 0;
       const model = await deps.modelDiagnosticReader.get(db, checkedAt);
       const items: RunPreflightItem[] = [];
@@ -221,7 +214,7 @@ export function createRunPreflightEvaluator(deps: { capabilityAdapter: SourceCap
       const policyItem = item(policyReady ? "ACCOUNT_RUN_POLICY_READY" : "ACCOUNT_RUN_POLICY_BLOCKED", policyReady ? "informational" : "blocking", { kind: "account_run_policy", revisionNumber: policy.revisionNumber, status: policyReady ? "ready" : "blocked", checkedAt: checkedAt.toISOString() }, false, policyReady ? [] : ["review_account_run_policy"]);
       items.push(control.stoppedAt === null ? policyItem : { ...policyItem, summary: "账户已停止全部运行" });
       const report = RunPreflightReportSchema.parse({ version: "run-preflight-v1", workflow: input.workflow, trigger: input.trigger, targetId, status: status(items), items, warningFingerprint: fingerprint({ workflow: input.workflow, trigger: input.trigger, targetId, items }), checkedAt: checkedAt.toISOString() });
-      return { report, policy: { revisionNumber: policy.revisionNumber, snapshot: policy.effective } };
+      return { report, policy: { revisionNumber: policy.revisionNumber, snapshot: policy.effective }, ...(recommendationPlan ? { recommendationPlan } : {}) };
     },
   };
 }

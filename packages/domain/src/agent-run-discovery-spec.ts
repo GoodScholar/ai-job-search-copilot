@@ -1,5 +1,5 @@
 import { and, desc, eq } from "drizzle-orm";
-import { companyWatchlistRevisions, companyWatchlists, jobProfiles, profileFactRevisions, profileFacts } from "@job-copilot/database";
+import { companyWatchlistRevisions, companyWatchlists, jobProfiles, jobTargetRevisions, jobTargets, profileFactRevisions, profileFacts } from "@job-copilot/database";
 import {
   AGENT_RUN_RULE_VERSION, AGENT_RUN_TOOL_ALLOWLIST, FAKE_JOB_DISCOVERY_ADAPTER, FAKE_JOB_DISCOVERY_ADAPTER_VERSION,
   FAKE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, FAKE_JOB_DISCOVERY_SOURCE_IDS, FAKE_JOB_DISCOVERY_WORKFLOW_VERSION,
@@ -31,6 +31,20 @@ export type DiscoveryRunSpec = {
   profileSnapshot?: unknown;
   watchlistSnapshot?: unknown;
 };
+
+export function discoverySourceScopeCounts(scope: unknown, executionMode: JobDiscoveryExecutionMode): { trustedSourceCount: number; publicQueryCount: number } {
+  const value = scope as { sources?: unknown[]; trustedSources?: unknown[]; publicDiscovery?: { queries?: unknown[] } };
+  return executionMode === "layered_public"
+    ? { trustedSourceCount: value.trustedSources?.length ?? 0, publicQueryCount: value.publicDiscovery?.queries?.length ?? 0 }
+    : { trustedSourceCount: value.sources?.length ?? 0, publicQueryCount: 0 };
+}
+
+export async function readDiscoveryTargetInTransaction(transaction: any, input: { userId: string; targetId: string }): Promise<DiscoveryTargetSnapshot | null> {
+  const [target] = await transaction.select({ id: jobTargets.id, version: jobTargets.version, priority: jobTargets.priority, state: jobTargets.state, constraints: jobTargetRevisions.constraints })
+    .from(jobTargets).innerJoin(jobTargetRevisions, and(eq(jobTargetRevisions.userId, jobTargets.userId), eq(jobTargetRevisions.targetId, jobTargets.id), eq(jobTargetRevisions.version, jobTargets.version)))
+    .where(and(eq(jobTargets.userId, input.userId), eq(jobTargets.id, input.targetId)));
+  return target ? { targetId: target.id, version: target.version, priority: target.priority, state: target.state, constraints: target.constraints } : null;
+}
 
 function sourceScope(watchlist: DiscoveryWatchlist) {
   const items = watchlist ? CompanyWatchlistItemSchema.array().parse(watchlist.items) : [];
