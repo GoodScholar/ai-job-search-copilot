@@ -15,7 +15,9 @@ export {
   type JobDiscoveryAdapterResolver,
   type PublicDiscoveryBatchSearchInput,
 } from "./agent-run-processor";
-export { AgentRunControlError, AgentRunError, createAgentRunCommands, type AgentRunQueue, type AgentRunStarter } from "./agent-run-control";
+export { AgentRunControlError, createAgentRunCommands, type AgentRunQueue, type AgentRunStarter } from "./agent-run-control";
+export { AgentRunError } from "./agent-run-errors";
+export { createRecommendationRunPreparationQueries, prepareRecommendationRunInTransaction, type RecommendationRunContext, type RecommendationRunPreparationResult, type RecommendationRunStartSpec } from "./recommendation-runs-preparation";
 export { createAgentRunCheckpoint, type AgentRunCheckpoint, type AgentRunCheckpointDecision } from "./agent-run-checkpoint";
 export { createAgentRunQueries } from "./agent-run-queries";
 export { AgentInboxActionError, AgentInboxError, createAgentInbox } from "./agent-inbox";

@@ -22,7 +22,7 @@ export type { ModelDiagnosticProjectionReader } from "./model-diagnostics";
 export type RunPreflightInput = {
   userId: string;
   targetId?: string;
-  workflow: "discovery" | "deep_match";
+  workflow: "discovery" | "deep_match" | "recommendation";
   trigger: "manual" | "schedule" | "automatic";
   scheduledFor?: Date;
 };
@@ -146,10 +146,11 @@ async function health(db: Pick<Database, "select">, userId: string, targetId: st
   };
 }
 function usableBudget(settings: AccountRunPolicySettings, input: RunPreflightInput, mode: JobDiscoveryExecutionMode, now: Date): boolean {
-  const budget = input.workflow === "deep_match" ? settings.budgets.deepMatch : mode === "fake" ? settings.budgets.fake : settings.budgets.publicDiscovery;
-  const required = input.workflow === "deep_match"
-    ? [budget.maxActiveDurationMs, budget.maxAttempts, budget.maxResults, budget.maxModelCalls, budget.maxTokens]
-    : [budget.maxActiveDurationMs, budget.maxAttempts, budget.maxToolCalls, budget.maxResults];
+  const discoveryBudget = mode === "fake" ? settings.budgets.fake : settings.budgets.publicDiscovery;
+  const discoveryRequired = [discoveryBudget.maxActiveDurationMs, discoveryBudget.maxAttempts, discoveryBudget.maxToolCalls, discoveryBudget.maxResults];
+  const deepMatchBudget = settings.budgets.deepMatch;
+  const deepMatchRequired = [deepMatchBudget.maxActiveDurationMs, deepMatchBudget.maxAttempts, deepMatchBudget.maxResults, deepMatchBudget.maxModelCalls, deepMatchBudget.maxTokens];
+  const required = input.workflow === "deep_match" ? deepMatchRequired : input.workflow === "recommendation" ? [...discoveryRequired, ...deepMatchRequired] : discoveryRequired;
   if (required.some((value) => value <= 0)) return false;
   if (input.trigger !== "schedule") return true;
   return input.scheduledFor !== undefined
@@ -166,7 +167,7 @@ export function createRunPreflightEvaluator(deps: { capabilityAdapter: SourceCap
         readAccountRunControlInTransaction(db, input.userId),
       ]);
       const primary = allTargets.find((value) => value.priority === "primary" && value.state === "active") ?? null;
-      const requested = input.targetId ? allTargets.find((value) => value.targetId === input.targetId) ?? null : primary;
+      const requested = input.workflow === "recommendation" ? primary : input.targetId ? allTargets.find((value) => value.targetId === input.targetId) ?? null : primary;
       // A foreign/missing caller-supplied id is never reflected in the public report.
       // It is indistinguishable from a missing request and falls back to the owner's primary target.
       const safeRequestedTargetId = requested?.targetId ?? (input.targetId ? null : primary?.targetId ?? null);
