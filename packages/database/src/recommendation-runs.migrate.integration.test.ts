@@ -44,39 +44,45 @@ async function insertRun(database: Database, input: {
   return id;
 }
 
-async function insertListItem(database: Database, userId: string, targetId: string, listId: string, existingMatchId?: string) {
+async function insertListItem(database: Database, userId: string, targetId: string, listId: string, existingMatchId?: string, existingProfileId?: string, ordinal = 1) {
   if (existingMatchId) {
     const itemId = crypto.randomUUID();
-    await database.execute(sql`insert into recommendation_list_items (id, user_id, recommendation_list_id, match_version_id, ordinal) values (${itemId}, ${userId}, ${listId}, ${existingMatchId}, 1)`);
+    await database.execute(sql`insert into recommendation_list_items (id, user_id, recommendation_list_id, match_version_id, ordinal) values (${itemId}, ${userId}, ${listId}, ${existingMatchId}, ${ordinal})`);
     return { itemId, matchId: existingMatchId };
   }
-  const [profileId, postingId, postingVersionId, opportunityId, triageId, matchId, itemId] = Array.from({ length: 7 }, () => crypto.randomUUID());
-  await database.execute(sql`insert into job_profiles (id, user_id, version) values (${profileId}, ${userId}, 1)`);
+  const [postingId, postingVersionId, opportunityId, triageId, matchId, itemId] = Array.from({ length: 6 }, () => crypto.randomUUID());
+  const profileId = existingProfileId ?? crypto.randomUUID();
+  const dedupKey = crypto.randomUUID().replaceAll("-", "").repeat(2);
+  if (!existingProfileId) await database.execute(sql`insert into job_profiles (id, user_id, version) values (${profileId}, ${userId}, 1)`);
   await database.execute(sql`insert into job_source_postings (id, user_id, source_type, source_identifier, source_identity) values (${postingId}, ${userId}, 'fake', ${postingId}, '{}'::jsonb)`);
   await database.execute(sql`insert into job_source_posting_versions (id, user_id, source_posting_id, version, content_sha256, raw_content_sha256, raw_object_reference, retrieved_at) values (${postingVersionId}, ${userId}, ${postingId}, 1, ${"a".repeat(64)}, ${"b".repeat(64)}, '{}'::jsonb, now())`);
-  await database.execute(sql`insert into job_opportunities (id, user_id, source_posting_version_id, dedup_key, normalized_data) values (${opportunityId}, ${userId}, ${postingVersionId}, ${"c".repeat(64)}, '{}'::jsonb)`);
+  await database.execute(sql`insert into job_opportunities (id, user_id, source_posting_version_id, dedup_key, normalized_data) values (${opportunityId}, ${userId}, ${postingVersionId}, ${dedupKey}, '{}'::jsonb)`);
   await database.execute(sql`insert into job_triage_versions (id, user_id, opportunity_id, source_posting_version_id, profile_id, profile_version, target_id, target_version, qualification_rule_version, coarse_rule_version, overall_verdict, gate_results, pending_items, deadline_status, confidence_basis_points, dimension_scores, overall_score, threshold, sequence) values (${triageId}, ${userId}, ${opportunityId}, ${postingVersionId}, ${profileId}, 1, ${targetId}, 1, 'qualification-v1', 'coarse-v1', 'pass', '{}'::jsonb, '[]'::jsonb, 'valid', 10000, '{}'::jsonb, 90, 70, 1)`);
   await database.execute(sql`insert into job_match_versions (id, user_id, opportunity_id, source_posting_version_id, triage_version_id, profile_id, profile_version, target_id, target_version, rule_version, prompt_version, adapter, adapter_version, model, output_schema_version, overall_score, display_band, assessment, sequence) values (${matchId}, ${userId}, ${opportunityId}, ${postingVersionId}, ${triageId}, ${profileId}, 1, ${targetId}, 1, 'rules-v1', 'prompt-v1', 'fake', 'fake-v1', 'fake-model', 'result-v1', 90, 'highly_matched', '{}'::jsonb, 1)`);
-  await database.execute(sql`insert into recommendation_list_items (id, user_id, recommendation_list_id, match_version_id, ordinal) values (${itemId}, ${userId}, ${listId}, ${matchId}, 1)`);
-  return { itemId, matchId };
+  await database.execute(sql`insert into recommendation_list_items (id, user_id, recommendation_list_id, match_version_id, ordinal) values (${itemId}, ${userId}, ${listId}, ${matchId}, ${ordinal})`);
+  return { itemId, matchId, profileId };
 }
 
 describe("recommendation run persistence migration", () => {
   let container: StartedPostgreSqlContainer;
   let database: Database;
+  let databaseUrl: string;
   const ownerId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
   const otherOwnerId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
   const targetId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
   const otherTargetId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+  const ownerOtherTargetId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 
   beforeAll(async () => {
     container = await new PostgreSqlContainer("postgres:17-alpine").start();
-    database = createDatabase(container.getConnectionUri());
+    databaseUrl = container.getConnectionUri();
+    database = createDatabase(databaseUrl);
     await migrateDatabase(database);
     await database.execute(sql`insert into job_accounts (id) values (${ownerId}), (${otherOwnerId})`);
     await database.execute(sql`
       insert into job_targets (id, user_id, version, priority, state) values
-      (${targetId}, ${ownerId}, 1, 'primary', 'active'), (${otherTargetId}, ${otherOwnerId}, 1, 'primary', 'active')
+      (${targetId}, ${ownerId}, 1, 'primary', 'active'), (${ownerOtherTargetId}, ${ownerId}, 1, 'secondary', 'inactive'),
+      (${otherTargetId}, ${otherOwnerId}, 1, 'primary', 'active')
     `);
   }, 60_000);
 
@@ -113,6 +119,12 @@ describe("recommendation run persistence migration", () => {
     const childId = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "automatic", parentRunId: rootId });
     await expect(database.execute(sql`update agent_runs set run_purpose = 'job_discovery' where id = ${rootId}`)).rejects.toMatchObject({ cause: { code: "23514" } });
     await expect(database.execute(sql`update agent_runs set run_purpose = 'job_discovery' where id = ${childId}`)).rejects.toMatchObject({ cause: { code: "23514" } });
+  });
+
+  it("freezes a recommendation root's owner and target even without children or results", async () => {
+    const rootId = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", context: recommendationContext });
+    await expect(database.execute(sql`update agent_runs set target_id = ${ownerOtherTargetId} where id = ${rootId}`)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(database.execute(sql`update agent_runs set user_id = ${otherOwnerId}, target_id = ${otherTargetId} where id = ${rootId}`)).rejects.toMatchObject({ cause: { code: "23514" } });
   });
 
   it("requires a bounded recommendation context and preserves immutable command facts", async () => {
@@ -182,7 +194,7 @@ describe("recommendation run persistence migration", () => {
   it("rejects non-child producers, mismatched parent targets, duplicate results, and oversized evidence", async () => {
     const rootId = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", context: recommendationContext });
     const childId = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "automatic", parentRunId: rootId });
-    await expect(insertRun(database, { userId: ownerId, targetId: otherTargetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "automatic", parentRunId: rootId })).rejects.toMatchObject({ cause: { code: "23503" } });
+    await expect(insertRun(database, { userId: ownerId, targetId: ownerOtherTargetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "automatic", parentRunId: rootId })).rejects.toMatchObject({ cause: { code: "23503" } });
     await expect(database.execute(sql`
       insert into recommendation_results (id, user_id, target_id, root_run_id, producer_run_id, kind, item_count, evidence)
       values (${crypto.randomUUID()}, ${ownerId}, ${targetId}, ${rootId}, ${rootId}, 'no_recommendations', 0, ${JSON.stringify(safeEvidence)}::jsonb)
@@ -219,6 +231,69 @@ describe("recommendation run persistence migration", () => {
     await database.execute(sql`insert into recommendation_lists (id, user_id, target_id, local_date, sequence) values (${unpublishedListId}, ${ownerId}, ${targetId}, '2026-09-12', 101)`);
     const { itemId: unpublishedItemId } = await insertListItem(database, ownerId, targetId, unpublishedListId, matchId);
     await expect(database.execute(sql`delete from recommendation_list_items where id = ${unpublishedItemId}`)).resolves.toBeDefined();
+  });
+
+  it("serializes concurrent last-item deletes for a published recommendation list", async () => {
+    const rootId = await insertRun(database, { userId: otherOwnerId, targetId: otherTargetId, purpose: "recommendation", context: recommendationContext });
+    const childId = await insertRun(database, { userId: otherOwnerId, targetId: otherTargetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "automatic", parentRunId: rootId });
+    const listId = crypto.randomUUID();
+    await database.execute(sql`insert into recommendation_lists (id, user_id, target_id, local_date, sequence) values (${listId}, ${otherOwnerId}, ${otherTargetId}, '2026-09-12', 102)`);
+    const first = await insertListItem(database, otherOwnerId, otherTargetId, listId);
+    const second = await insertListItem(database, otherOwnerId, otherTargetId, listId, undefined, first.profileId, 2);
+    await database.execute(sql`
+      insert into recommendation_results (id, user_id, target_id, root_run_id, producer_run_id, kind, recommendation_list_id, item_count, evidence)
+      values (${listId}, ${otherOwnerId}, ${otherTargetId}, ${rootId}, ${childId}, 'recommendation_list', ${listId}, 2, ${JSON.stringify(safeEvidence)}::jsonb)
+    `);
+    await database.execute(sql.raw(`
+      create sequence recommendation_list_delete_barrier_arrival;
+      create sequence recommendation_list_delete_barrier_release minvalue 0 start 0;
+      create function recommendation_list_delete_test_barrier() returns trigger language plpgsql as $$
+      begin
+        perform nextval('recommendation_list_delete_barrier_arrival');
+        while not (select is_called from recommendation_list_delete_barrier_release) loop perform pg_sleep(0.01); end loop;
+        return old;
+      end; $$;
+      create trigger zzz_recommendation_list_delete_test_barrier before delete on recommendation_list_items
+      for each row execute function recommendation_list_delete_test_barrier();
+    `));
+    const firstUrl = new URL(databaseUrl); firstUrl.searchParams.set("application_name", "recommendation-list-delete-first");
+    const secondUrl = new URL(databaseUrl); secondUrl.searchParams.set("application_name", "recommendation-list-delete-second");
+    const firstConnection = createDatabase(firstUrl.toString());
+    const secondConnection = createDatabase(secondUrl.toString());
+    const firstClient = await firstConnection.$client.reserve();
+    const secondClient = await secondConnection.$client.reserve();
+    try {
+      await firstClient`select set_config('application_name', 'recommendation-list-delete-first', false)`;
+      await secondClient`select set_config('application_name', 'recommendation-list-delete-second', false)`;
+      const [{ first_pid: firstPid }] = await firstClient`select pg_backend_pid() as first_pid` as unknown as Array<{ first_pid: number }>;
+      const [{ second_pid: secondPid }] = await secondClient`select pg_backend_pid() as second_pid` as unknown as Array<{ second_pid: number }>;
+      expect(firstPid).not.toBe(secondPid);
+      const deletes = [
+        (async () => firstClient`delete from recommendation_list_items where id = ${first.itemId}`)(),
+        (async () => secondClient`delete from recommendation_list_items where id = ${second.itemId}`)(),
+      ];
+      let barrierState: "both_arrived" | "second_waiting_on_list" | null = null;
+      for (let attempts = 0; attempts < 200 && !barrierState; attempts += 1) {
+        const [{ arrivals }] = await database.execute(sql`select last_value::integer as arrivals from recommendation_list_delete_barrier_arrival`) as unknown as Array<{ arrivals: number }>;
+        if (Number(arrivals) >= 2) barrierState = "both_arrived";
+        const [{ second_waiting: secondWaiting }] = await database.execute(sql`
+          select exists(select 1 from pg_stat_activity where pid = ${secondPid} and wait_event_type = 'Lock') as second_waiting
+        `) as unknown as Array<{ second_waiting: boolean }>;
+        if (secondWaiting) barrierState = "second_waiting_on_list";
+        if (!barrierState) await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      await database.execute(sql`select nextval('recommendation_list_delete_barrier_release')`);
+      expect(barrierState).toBe("second_waiting_on_list");
+      const outcomes = await Promise.allSettled(deletes);
+      expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(1);
+      const remaining = await database.execute(sql`select id from recommendation_list_items where recommendation_list_id = ${listId}`) as unknown as Array<{ id: string }>;
+      expect(remaining).toHaveLength(1);
+    } finally {
+      firstClient.release();
+      secondClient.release();
+      await firstConnection.$client.end();
+      await secondConnection.$client.end();
+    }
   });
 
   it("maps only historical manual deep-match runs to opportunity reevaluation", async () => {

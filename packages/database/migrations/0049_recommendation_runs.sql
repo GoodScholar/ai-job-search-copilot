@@ -61,7 +61,7 @@ BEGIN
   RETURN NEW;
 END;$$;--> statement-breakpoint
 CREATE TRIGGER agent_runs_recommendation_topology
-BEFORE INSERT OR UPDATE OF "run_purpose", "parent_run_id", "workflow_version", "source_scope", "recommendation_context" ON "agent_runs"
+BEFORE INSERT OR UPDATE OF "user_id", "target_id", "run_purpose", "parent_run_id", "workflow_version", "source_scope", "recommendation_context" ON "agent_runs"
 FOR EACH ROW EXECUTE FUNCTION validate_recommendation_run_topology();--> statement-breakpoint
 
 CREATE TABLE "recommendation_run_start_commands" (
@@ -149,8 +149,11 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM agent_runs WHERE id = NEW.producer_run_id AND user_id = NEW.user_id AND target_id = NEW.target_id AND run_purpose = 'recommendation' AND parent_run_id = NEW.root_run_id) THEN
     RAISE EXCEPTION 'RECOMMENDATION_RESULT_PRODUCER_INVALID' USING ERRCODE = 'foreign_key_violation';
   END IF;
-  IF NEW.kind = 'recommendation_list' AND NOT EXISTS (SELECT 1 FROM recommendation_list_items WHERE user_id = NEW.user_id AND recommendation_list_id = NEW.recommendation_list_id) THEN
-    RAISE EXCEPTION 'RECOMMENDATION_LIST_EMPTY' USING ERRCODE = 'check_violation';
+  IF NEW.kind = 'recommendation_list' THEN
+    PERFORM 1 FROM recommendation_lists WHERE id = NEW.recommendation_list_id AND user_id = NEW.user_id AND target_id = NEW.target_id FOR UPDATE;
+    IF NOT EXISTS (SELECT 1 FROM recommendation_list_items WHERE user_id = NEW.user_id AND recommendation_list_id = NEW.recommendation_list_id) THEN
+      RAISE EXCEPTION 'RECOMMENDATION_LIST_EMPTY' USING ERRCODE = 'check_violation';
+    END IF;
   END IF;
   RETURN NEW;
 END;$$;--> statement-breakpoint
@@ -159,10 +162,12 @@ CREATE TRIGGER recommendation_results_validate_insert BEFORE INSERT ON "recommen
 CREATE FUNCTION protect_published_recommendation_list_items()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-  IF (TG_OP = 'DELETE' OR NEW.recommendation_list_id IS DISTINCT FROM OLD.recommendation_list_id)
-    AND EXISTS (SELECT 1 FROM recommendation_results WHERE kind = 'recommendation_list' AND recommendation_list_id = OLD.recommendation_list_id)
-    AND NOT EXISTS (SELECT 1 FROM recommendation_list_items WHERE recommendation_list_id = OLD.recommendation_list_id AND id <> OLD.id) THEN
-    RAISE EXCEPTION 'PUBLISHED_RECOMMENDATION_LIST_MUST_NOT_BE_EMPTY' USING ERRCODE = 'check_violation';
+  IF TG_OP = 'DELETE' OR NEW.recommendation_list_id IS DISTINCT FROM OLD.recommendation_list_id THEN
+    PERFORM 1 FROM recommendation_lists WHERE id = OLD.recommendation_list_id AND user_id = OLD.user_id FOR UPDATE;
+    IF EXISTS (SELECT 1 FROM recommendation_results WHERE kind = 'recommendation_list' AND recommendation_list_id = OLD.recommendation_list_id)
+      AND NOT EXISTS (SELECT 1 FROM recommendation_list_items WHERE recommendation_list_id = OLD.recommendation_list_id AND id <> OLD.id) THEN
+      RAISE EXCEPTION 'PUBLISHED_RECOMMENDATION_LIST_MUST_NOT_BE_EMPTY' USING ERRCODE = 'check_violation';
+    END IF;
   END IF;
   RETURN COALESCE(NEW, OLD);
 END;$$;--> statement-breakpoint

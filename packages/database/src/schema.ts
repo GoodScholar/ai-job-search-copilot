@@ -968,7 +968,7 @@ export const agentRunControlCommands = pgTable("agent_run_control_commands", {
 ]);
 
 export const recommendationRunStartCommands = pgTable("recommendation_run_start_commands", {
-  userId: uuid("user_id").notNull().references(() => jobAccounts.id), idempotencyKey: uuid("idempotency_key").notNull(),
+  userId: uuid("user_id").notNull(), idempotencyKey: uuid("idempotency_key").notNull(),
   rootRunId: uuid("root_run_id").notNull(), commandFingerprint: varchar("command_fingerprint", { length: 64 }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
@@ -978,7 +978,7 @@ export const recommendationRunStartCommands = pgTable("recommendation_run_start_
 ]);
 
 export const recommendationRunControlCommands = pgTable("recommendation_run_control_commands", {
-  userId: uuid("user_id").notNull().references(() => jobAccounts.id), rootRunId: uuid("root_run_id").notNull(),
+  userId: uuid("user_id").notNull(), rootRunId: uuid("root_run_id").notNull(),
   commandId: uuid("command_id").notNull(), physicalRunId: uuid("physical_run_id").notNull(),
   action: varchar("action", { length: 16 }).notNull(), commandFingerprint: varchar("command_fingerprint", { length: 64 }).notNull(), resultSnapshot: jsonb("result_snapshot").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -1231,7 +1231,7 @@ export const recommendationLists = pgTable("recommendation_lists", {
 ]);
 
 export const recommendationResults = pgTable("recommendation_results", {
-  id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull().references(() => jobAccounts.id), targetId: uuid("target_id").notNull(),
+  id: uuid("id").primaryKey().defaultRandom(), userId: uuid("user_id").notNull(), targetId: uuid("target_id").notNull(),
   rootRunId: uuid("root_run_id").notNull(), producerRunId: uuid("producer_run_id").notNull(),
   kind: varchar("kind", { length: 32 }).notNull(), recommendationListId: uuid("recommendation_list_id"), itemCount: integer("item_count").notNull(), evidence: jsonb("evidence").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

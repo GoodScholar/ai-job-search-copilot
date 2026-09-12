@@ -1,5 +1,5 @@
 {
-  "id": "01e20158-69bf-48f6-85b1-da97cda8f103",
+  "id": "7fc50065-e03f-4ba4-b888-d63258b5881f",
   "prevId": "4d2122bf-f0d4-4b9a-b99e-5dca22925cf2",
   "version": "7",
   "dialect": "postgresql",
@@ -9589,19 +9589,6 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "recommendation_results_user_id_job_accounts_id_fk": {
-          "name": "recommendation_results_user_id_job_accounts_id_fk",
-          "tableFrom": "recommendation_results",
-          "tableTo": "job_accounts",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
         "recommendation_results_owner_target_fk": {
           "name": "recommendation_results_owner_target_fk",
           "tableFrom": "recommendation_results",
@@ -9957,19 +9944,6 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "recommendation_run_control_commands_user_id_job_accounts_id_fk": {
-          "name": "recommendation_run_control_commands_user_id_job_accounts_id_fk",
-          "tableFrom": "recommendation_run_control_commands",
-          "tableTo": "job_accounts",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
         "recommendation_run_control_commands_owner_root_fk": {
           "name": "recommendation_run_control_commands_owner_root_fk",
           "tableFrom": "recommendation_run_control_commands",
@@ -10067,19 +10041,6 @@
       },
       "indexes": {},
       "foreignKeys": {
-        "recommendation_run_start_commands_user_id_job_accounts_id_fk": {
-          "name": "recommendation_run_start_commands_user_id_job_accounts_id_fk",
-          "tableFrom": "recommendation_run_start_commands",
-          "tableTo": "job_accounts",
-          "columnsFrom": [
-            "user_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
         "recommendation_run_start_commands_owner_root_fk": {
           "name": "recommendation_run_start_commands_owner_root_fk",
           "tableFrom": "recommendation_run_start_commands",
