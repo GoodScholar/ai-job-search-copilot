@@ -6,7 +6,7 @@ import {
 import { AgentRunDetailSchema, AgentRunExecutionSpecSchema, StartAgentRunResponseSchema, type AgentRunDetail, type StartAgentRunResponse } from "@job-copilot/contracts/agent-runs";
 import { RunPreflightSnapshotSchema } from "@job-copilot/contracts/run-preflight";
 import { mismatchedSourceCapabilityDeclaration, unsupportedSourceCapability } from "@job-copilot/contracts/source-capabilities";
-import { normalizeAgentRunSourceScope } from "./agent-run-source-scope";
+import { normalizeAgentRunSourceScope, projectPublicAgentRunSourceScope } from "./agent-run-source-scope";
 
 type RunRow = typeof agentRuns.$inferSelect;
 
@@ -21,7 +21,7 @@ function sourceIssueSummary(issue: { provider: string; code: string; affectedCou
 function summary(row: RunRow): StartAgentRunResponse {
   const sourceScope = row.workflowVersion === "layered-public-job-discovery-v1"
     ? AgentRunExecutionSpecSchema.parse({ targetSnapshot: row.targetSnapshot, profileSnapshot: row.profileSnapshot, watchlistSnapshot: row.watchlistSnapshot, sourceScope: row.sourceScope, workflowVersion: row.workflowVersion, ruleVersion: row.ruleVersion, adapter: row.adapter, adapterVersion: row.adapterVersion, outputSchemaVersion: row.outputSchemaVersion, toolAllowlist: row.toolAllowlist, model: row.modelSnapshot, budget: row.budgetSnapshot }).sourceScope
-    : normalizeAgentRunSourceScope(row.sourceScope);
+    : projectPublicAgentRunSourceScope(row.sourceScope);
   return StartAgentRunResponseSchema.parse({
     runId: row.id, targetId: row.targetId, targetVersion: row.targetVersion,
     accountPolicyRevisionNumber: row.accountPolicyRevisionNumber,
@@ -56,7 +56,7 @@ async function detail(db: Database, userId: string, runId: string): Promise<Agen
   const termination = run.terminationKind === null ? null : { kind: run.terminationKind, failureCode: run.failureCode, budgetDimension: run.terminationBudgetDimension };
   const sourceScope = run.workflowVersion === "layered-public-job-discovery-v1"
     ? AgentRunExecutionSpecSchema.parse({ targetSnapshot: run.targetSnapshot, profileSnapshot: run.profileSnapshot, watchlistSnapshot: run.watchlistSnapshot, sourceScope: run.sourceScope, workflowVersion: run.workflowVersion, ruleVersion: run.ruleVersion, adapter: run.adapter, adapterVersion: run.adapterVersion, outputSchemaVersion: run.outputSchemaVersion, toolAllowlist: run.toolAllowlist, model: run.modelSnapshot, budget: run.budgetSnapshot }).sourceScope
-    : normalizeAgentRunSourceScope(run.sourceScope);
+    : projectPublicAgentRunSourceScope(run.sourceScope);
   const { reused: _reused, ...runSummary } = summary(run);
   const base = { ...runSummary, executionSpec: { targetSnapshot: run.targetSnapshot, sourceScope, workflowVersion: run.workflowVersion, ruleVersion: run.ruleVersion, adapter: run.adapter, adapterVersion: run.adapterVersion, outputSchemaVersion: run.outputSchemaVersion, toolAllowlist: run.toolAllowlist, model: run.modelSnapshot, budget: run.budgetSnapshot }, controlState: run.controlState, usage, termination, retryOfRunId: run.retryOfRunId, steps: steps.map((step) => ({ stepKey: step.stepKey, ordinal: step.ordinal, status: step.status, attemptCount: step.attemptCount, startedAt: step.startedAt?.toISOString() ?? null, completedAt: step.completedAt?.toISOString() ?? null, failedAt: step.failedAt?.toISOString() ?? null, failureCode: step.failureCode })), events: events.map((event) => ({ sequence: event.sequence, runVersion: event.runVersion, eventType: event.eventType, data: event.data, createdAt: event.createdAt.toISOString() })), results: results.map(({ normalizedData, ...result }) => {
     const snapshot = normalizedData as { company?: string | null; title?: string | null; location?: string | null; postedAt?: string | null; deadline?: string | null };

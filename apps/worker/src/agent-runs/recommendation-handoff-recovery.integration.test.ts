@@ -154,8 +154,16 @@ describe("推荐 handoff 的 Worker 恢复", () => {
       db: database,
       adapterResolver: { resolve: () => { throw new Error("layered root does not resolve a direct discovery adapter"); } },
       layeredPublicWorkflowResolver: {
-        resolve: () => ({
-          run: async () => ({ branchOutcome: { trusted: "succeeded" as const, publicDiscovery: "clean_zero" as const }, diagnostics: [] }),
+        resolve: (input) => ({
+          run: async () => ({
+            branchOutcome: { trusted: "succeeded" as const, publicDiscovery: "clean_zero" as const },
+            diagnostics: [],
+            discoveryFacts: {
+              version: "recommendation-discovery-facts-v1" as const,
+              trusted: input.executionSpec.sourceScope.trustedSources.map(({ source }) => ({ sourceId: source.sourceId, checked: true as const, outcome: "credible_zero" as const, losses: [] })),
+              publicQueries: input.executionSpec.sourceScope.publicDiscovery.queries.map((query) => ({ queryId: query.queryId, checked: true as const, outcome: "credible_zero" as const, losses: [] })),
+            },
+          }),
         }),
       },
       checkpoint: createAgentRunCheckpoint({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: randomUUID, clock: () => now }),

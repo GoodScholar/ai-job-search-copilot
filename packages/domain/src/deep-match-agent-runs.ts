@@ -7,16 +7,36 @@ import { createDeepMatchQueries } from "./deep-match-persistence";
 import { resolveEffectiveAccountRunPolicy } from "./account-run-policies";
 import { authorizeRunPreflight, RunPreflightRejectedError, type RunPreflightEvaluator } from "./run-preflight";
 import { StartRecommendationReevaluationCommandSchema } from "@job-copilot/contracts/recommendations";
+import type { FrozenRecommendationEvidence } from "@job-copilot/contracts/recommendation-discovery-facts";
 import { accountRunAdmissionReason, readAccountRunControlInTransaction } from "./account-run-admission";
 import type { z } from "zod";
 
 export type DeepMatchRunQueue = { enqueue(job: AgentRunJob): Promise<void> };
 type StartRecommendationReevaluationCommand = z.infer<typeof StartRecommendationReevaluationCommandSchema>;
 
-export async function ensureDeepMatchRunInTransaction(input: { transaction: any; id: () => string; clock: () => Date; runPreflight: RunPreflightEvaluator; userId: string; targetId: string; idempotencyKey: string; trigger: "automatic" | "manual"; warningFingerprint?: string | null; opportunityId?: string; discoveryRunId?: string; recommendation?: { parentRunId: string; profileId: string; profileVersion: number; targetSnapshot: any; budgetSnapshot: any; accountPolicyRevisionNumber: number; accountPolicySnapshot: any; preflightSnapshot: any; frozenTriageVersionIds: readonly string[] } }): Promise<{ kind: "created"; run: typeof agentRuns.$inferSelect; reused: boolean } | { kind: "blocked"; preflight: Awaited<ReturnType<RunPreflightEvaluator["evaluate"]>>["report"] }> {
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "undefined";
+}
+
+export async function ensureDeepMatchRunInTransaction(input: { transaction: any; id: () => string; clock: () => Date; runPreflight: RunPreflightEvaluator; userId: string; targetId: string; idempotencyKey: string; trigger: "automatic" | "manual"; warningFingerprint?: string | null; opportunityId?: string; discoveryRunId?: string; recommendation?: { parentRunId: string; profileId: string; profileVersion: number; targetSnapshot: any; budgetSnapshot: any; accountPolicyRevisionNumber: number; accountPolicySnapshot: any; preflightSnapshot: any; frozenTriageVersionIds: readonly string[]; frozenRecommendationEvidence: FrozenRecommendationEvidence } }): Promise<{ kind: "created"; run: typeof agentRuns.$inferSelect; reused: boolean } | { kind: "blocked"; preflight: Awaited<ReturnType<RunPreflightEvaluator["evaluate"]>>["report"] }> {
   await acquireAccountAdvisoryLock(input.transaction, input.userId);
   const [existing] = await input.transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.idempotencyKey, input.idempotencyKey)));
-  if (existing) return { kind: "created", run: existing, reused: true };
+  if (existing) {
+    if (input.recommendation) {
+      const existingScope = existing.sourceScope as { frozenRecommendationEvidence?: unknown };
+      if (
+        existing.runPurpose !== "recommendation"
+        || existing.parentRunId !== input.recommendation.parentRunId
+        || existing.targetId !== input.targetId
+        || stableJson(existingScope.frozenRecommendationEvidence) !== stableJson(input.recommendation.frozenRecommendationEvidence)
+      ) throw new Error("DEEP_MATCH_RECOMMENDATION_REPLAY_CONFLICT");
+    }
+    return { kind: "created", run: existing, reused: true };
+  }
   const admission = accountRunAdmissionReason(await readAccountRunControlInTransaction(input.transaction, input.userId));
   if (admission) throw Object.assign(new Error(admission), { code: admission });
   const evaluation = input.recommendation ? null : await input.runPreflight.evaluate(input.transaction, { userId: input.userId, targetId: input.targetId, workflow: "deep_match", trigger: input.trigger });
@@ -43,7 +63,7 @@ export async function ensureDeepMatchRunInTransaction(input: { transaction: any;
   const candidates = selection.candidates.slice(0, candidateLimit);
   const selectionExclusions = [...selection.exclusions, ...selection.candidates.slice(candidateLimit).map((candidate) => ({ opportunityId: candidate.opportunityId, reasonCode: "CANDIDATE_LIMIT" as const }))];
   const now = input.clock(); const id = input.id();
-  const [run] = await input.transaction.insert(agentRuns).values({ id, userId: input.userId, targetId: target.id, idempotencyKey: input.idempotencyKey, targetVersion: target.version, targetSnapshot: { targetId: target.id, version: target.version, priority: target.priority, state: target.state, constraints: target.constraints }, profileSnapshot: null, watchlistSnapshot: null, sourceScope: { kind: "deep_match", trigger: input.trigger, opportunityId: input.opportunityId ?? null, discoveryRunId: input.discoveryRunId ?? null, recommendationRuleConfig, initialized: true, selectionExclusions }, budgetSnapshot: input.recommendation ? input.recommendation.budgetSnapshot : policy.effective.budgets.deepMatch, accountPolicyRevisionNumber: policy.revisionNumber, accountPolicySnapshot: policy.effective, preflightSnapshot: input.recommendation?.preflightSnapshot ?? evaluation!.report, workflowVersion: DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION, ruleVersion: latestRule ? `recommendation-rule-v${latestRule.version}` : "deep-match-rules-v1", adapter: "fake-deep-match", adapterVersion: "fake-deep-match-v1", outputSchemaVersion: "deep-match-result-v1", toolAllowlist: [], modelSnapshot: { provider: "fake", model: "fake-deep-match-model-v1" }, ...(input.recommendation ? { parentRunId: input.recommendation.parentRunId, runPurpose: "recommendation" as const } : {}), status: "queued", currentStep: "queued", controlState: "none", version: 1, attemptCount: 0, activeDurationMs: 0, toolCallCount: 0, sourceRequestCount: 0, modelCallCount: 0, inputTokenCount: 0, outputTokenCount: 0, totalTokenCount: 0, resultCount: 0, usageComplete: false, queuedAt: now, createdAt: now, updatedAt: now }).returning();
+  const [run] = await input.transaction.insert(agentRuns).values({ id, userId: input.userId, targetId: target.id, idempotencyKey: input.idempotencyKey, targetVersion: target.version, targetSnapshot: { targetId: target.id, version: target.version, priority: target.priority, state: target.state, constraints: target.constraints }, profileSnapshot: null, watchlistSnapshot: null, sourceScope: { kind: "deep_match", trigger: input.trigger, opportunityId: input.opportunityId ?? null, discoveryRunId: input.discoveryRunId ?? null, recommendationRuleConfig, initialized: true, selectionExclusions, ...(input.recommendation ? { frozenRecommendationEvidence: input.recommendation.frozenRecommendationEvidence } : {}) }, budgetSnapshot: input.recommendation ? input.recommendation.budgetSnapshot : policy.effective.budgets.deepMatch, accountPolicyRevisionNumber: policy.revisionNumber, accountPolicySnapshot: policy.effective, preflightSnapshot: input.recommendation?.preflightSnapshot ?? evaluation!.report, workflowVersion: DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION, ruleVersion: latestRule ? `recommendation-rule-v${latestRule.version}` : "deep-match-rules-v1", adapter: "fake-deep-match", adapterVersion: "fake-deep-match-v1", outputSchemaVersion: "deep-match-result-v1", toolAllowlist: [], modelSnapshot: { provider: "fake", model: "fake-deep-match-model-v1" }, ...(input.recommendation ? { parentRunId: input.recommendation.parentRunId, runPurpose: "recommendation" as const } : {}), status: "queued", currentStep: "queued", controlState: "none", version: 1, attemptCount: 0, activeDurationMs: 0, toolCallCount: 0, sourceRequestCount: 0, modelCallCount: 0, inputTokenCount: 0, outputTokenCount: 0, totalTokenCount: 0, resultCount: 0, usageComplete: false, queuedAt: now, createdAt: now, updatedAt: now }).returning();
   if (!run) throw new Error("DEEP_MATCH_RUN_PERSIST_FAILED");
   if (candidates.length) await input.transaction.insert(deepMatchRunCandidates).values(candidates.map((candidate, index) => ({
     id: input.id(), userId: input.userId, runId: id, opportunityId: candidate.opportunityId, sourcePostingVersionId: candidate.sourcePostingVersionId,

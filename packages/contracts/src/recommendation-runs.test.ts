@@ -64,6 +64,7 @@ describe("逻辑推荐运行契约", () => {
     expect(RecommendationResultEvidenceWriteSchema.safeParse({ ...next, coarseRanking: { ...next.coarseRanking, ruleExcludedCount: null } }).success).toBe(false);
     expect(RecommendationResultEvidenceWriteSchema.safeParse({ ...next, coarseRanking: { ...next.coarseRanking, ruleExcludedCount: 2 } }).success).toBe(false);
     expect(RecommendationResultEvidenceWriteSchema.safeParse({ ...next, coarseRanking: { ...next.coarseRanking, deepMatchCandidateCount: 1 } }).success).toBe(false);
+    expect(RecommendationResultEvidenceWriteSchema.safeParse(next).success).toBe(true);
   });
 
   it("接受可信的非空推荐清单并拒绝空清单和不闭合证据", () => {

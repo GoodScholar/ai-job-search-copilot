@@ -21,6 +21,8 @@ import {
   AgentRunResultSchema,
   AgentRunStartErrorCodeSchema,
   AgentRunSourceScopeSchema,
+  DeepMatchAgentRunPublicSourceScopeSchema,
+  DeepMatchAgentRunSourceScopeSchema,
   AgentRunSseEventSchema,
   AgentRunStepSchema,
   AgentRunSummarySchema,
@@ -555,6 +557,24 @@ describe("agent run contracts", () => {
       "AGENT_RUN_TARGET_NOT_FOUND", "AGENT_RUN_TARGET_INACTIVE", "AGENT_RUN_UNAVAILABLE",
       "ACCOUNT_RUN_STOPPED", "ACCOUNT_RUN_SCHEDULE_SKIPPED",
     ]);
+  });
+
+  it("内部深匹配范围可冻结推荐证据，但公共范围拒绝该私有字段", () => {
+    const scope = {
+      kind: "deep_match", trigger: "automatic", opportunityId: null, discoveryRunId: runId,
+      recommendationRuleConfig: { minimumOverallScore: 60, minimumEvidenceDimensions: 2, requiredEvidenceDimensions: [], excludedOpportunityIds: [] },
+      initialized: true, selectionExclusions: [],
+      frozenRecommendationEvidence: {
+        version: "recommendation-evidence-v1",
+        plannedTrustedSourceCount: 1,
+        plannedPublicQueryCount: 0,
+        discoveryFacts: { version: "recommendation-discovery-facts-v1", trusted: [{ sourceId: "fake:aurora-careers", checked: true, outcome: "credible_zero", losses: [] }], publicQueries: [] },
+        frozenTriageVersionIds: [],
+      },
+    } as const;
+
+    expect(DeepMatchAgentRunSourceScopeSchema.safeParse(scope).success).toBe(true);
+    expect(DeepMatchAgentRunPublicSourceScopeSchema.safeParse(scope).success).toBe(false);
   });
 
   it("serializes versioned strict SSE envelopes with decimal cursors", () => {

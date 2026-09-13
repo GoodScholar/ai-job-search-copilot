@@ -76,17 +76,29 @@ describe("FakeJobDiscoveryAdapter", () => {
 
     expect(broad).toMatchObject({ ok: true });
     if (!broad.ok) throw new Error("expected successful fake search");
-    expect(broad.data).toHaveLength(5);
-    expect(broad.data.map(({ sourceId, detailId }) => `${sourceId}/${detailId}`)).toEqual([
+    if (Array.isArray(broad.data)) throw new Error("fake batch search must include source receipts");
+    expect(broad.data.items).toHaveLength(5);
+    expect(broad.data.items.map(({ sourceId, detailId }) => `${sourceId}/${detailId}`)).toEqual([
       "fake:aurora-careers/aurora-ai-001",
       "fake:aurora-careers/aurora-frontend-001",
       "fake:aurora-careers/aurora-fullstack-001",
       "fake:orbit-careers/orbit-agent-001",
       "fake:orbit-careers/orbit-ai-001",
     ]);
+    expect(broad.data.sourceReceipts).toEqual([
+      { sourceId: "fake:aurora-careers", checked: true, candidateCount: 3 },
+      { sourceId: "fake:orbit-careers", checked: true, candidateCount: 2 },
+    ]);
+    if (!filtered.ok || Array.isArray(filtered.data)) throw new Error("fake batch search must include source receipts");
     expect(filtered).toEqual({
       ok: true,
-      data: [expect.objectContaining({ sourceId: "fake:orbit-careers", detailId: "orbit-ai-001", location: "深圳" })],
+      data: {
+        items: [expect.objectContaining({ sourceId: "fake:orbit-careers", detailId: "orbit-ai-001", location: "深圳" })],
+        sourceReceipts: [
+          { sourceId: "fake:aurora-careers", checked: true, candidateCount: 0 },
+          { sourceId: "fake:orbit-careers", checked: true, candidateCount: 1 },
+        ],
+      },
     });
   });
 
@@ -100,7 +112,7 @@ describe("FakeJobDiscoveryAdapter", () => {
         kind: "company_watchlist", adapter: "fake", adapterVersion: "fake-job-discovery-v1", watchlistVersion: 2,
         sources: [customUrl],
       },
-    })).resolves.toEqual({ ok: true, data: [] });
+    })).resolves.toEqual({ ok: true, data: { items: [], sourceReceipts: [{ sourceId: customUrl, checked: true, candidateCount: 0 }] } });
 
     const mixed = await adapter.searchBatch({
       targetSnapshot,
@@ -111,12 +123,18 @@ describe("FakeJobDiscoveryAdapter", () => {
     });
     expect(mixed).toMatchObject({ ok: true });
     if (!mixed.ok) throw new Error("expected successful fake search");
-    expect(mixed.data.map(({ sourceId, detailId }) => `${sourceId}/${detailId}`)).toEqual([
+    if (Array.isArray(mixed.data)) throw new Error("fake batch search must include source receipts");
+    expect(mixed.data.items.map(({ sourceId, detailId }) => `${sourceId}/${detailId}`)).toEqual([
       "fake:orbit-careers/orbit-agent-001",
       "fake:orbit-careers/orbit-ai-001",
       "fake:orbit-careers/orbit-platform-001",
       "fake:aurora-careers/aurora-ai-001",
       "fake:aurora-careers/aurora-frontend-001",
+    ]);
+    expect(mixed.data.sourceReceipts).toEqual([
+      { sourceId: customUrl, checked: true, candidateCount: 0 },
+      { sourceId: "fake:orbit-careers", checked: true, candidateCount: 3 },
+      { sourceId: "fake:aurora-careers", checked: true, candidateCount: 2 },
     ]);
   });
 

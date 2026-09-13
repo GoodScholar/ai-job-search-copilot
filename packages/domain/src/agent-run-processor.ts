@@ -41,6 +41,7 @@ import {
   isLayeredPublicWorkflowInterruption,
   type LayeredPublicWorkflowDiagnostic,
 } from "./layered-public-job-discovery-workflow";
+import { FrozenRecommendationEvidenceSchema, RecommendationDiscoveryFactsSchema, type RecommendationDiscoveryFacts } from "@job-copilot/contracts/recommendation-discovery-facts";
 
 export interface DiscoveryContentStore {
   put(input: { objectKey: string; bytes: Uint8Array; mediaType: "application/json"; runId: string }): Promise<void>;
@@ -372,18 +373,25 @@ async function checkPoint(checkpoint: AgentRunCheckpoint, input: { userId: strin
   }
 }
 
-async function handoffRecommendationDiscoveryInTransaction(deps: AgentRunProcessorDependencies, transaction: any, root: typeof agentRuns.$inferSelect) {
+async function handoffRecommendationDiscoveryInTransaction(deps: AgentRunProcessorDependencies, transaction: any, root: typeof agentRuns.$inferSelect, discoveryFacts?: RecommendationDiscoveryFacts) {
   if (root.runPurpose !== "recommendation" || root.parentRunId !== null) return;
   const context = root.recommendationContext as { profile: { profileId: string; profileVersion: number }; budgets: { deepMatch: unknown } } | null;
   const targetSnapshot = root.targetSnapshot as { targetId: string; version: number; constraints: unknown };
   if (!context?.profile || !targetSnapshot) throw new Error("RECOMMENDATION_CONTEXT_INVALID");
+  if (!discoveryFacts) throw new Error("RECOMMENDATION_DISCOVERY_FACTS_MISSING");
+  const rootScope = root.sourceScope as { trustedSources?: Array<{ source: { sourceId: string } }>; sources?: Array<string | { sourceId: string }>; publicDiscovery?: { queries?: Array<{ queryId: string }> } };
+  const trustedSourceIds = new Set((rootScope.trustedSources ?? []).map(({ source }) => source.sourceId).concat((rootScope.sources ?? []).map((source) => typeof source === "string" ? source : source.sourceId)));
+  const publicQueryIds = new Set((rootScope.publicDiscovery?.queries ?? []).map((query) => query.queryId));
+  const parsedFacts = RecommendationDiscoveryFactsSchema.parse(discoveryFacts);
+  if (parsedFacts.trusted.some((fact) => !trustedSourceIds.has(fact.sourceId)) || parsedFacts.publicQueries.some((fact) => !publicQueryIds.has(fact.queryId))) throw new Error("RECOMMENDATION_DISCOVERY_FACTS_SCOPE_INVALID");
   const tuples = await readDiscoveryResultCandidatesInTransaction(transaction, { userId: root.userId, targetId: root.targetId, rootRunId: root.id });
   const frozenTriageVersionIds: string[] = [];
   for (const tuple of tuples as Array<{ opportunityId: string; sourcePostingVersionId: string }>) {
     const triage = await createFrozenJobTriageInTransaction({ transaction, auditTrail: deps.auditTrail, id: deps.id, clock: deps.clock, userId: root.userId, requestId: root.id, opportunityId: tuple.opportunityId, sourcePostingVersionId: tuple.sourcePostingVersionId, profileId: context.profile.profileId, profileVersion: context.profile.profileVersion, targetId: root.targetId, targetVersion: targetSnapshot.version, targetConstraints: targetSnapshot.constraints });
     frozenTriageVersionIds.push(triage.triageVersionId);
   }
-  await ensureDeepMatchRunInTransaction({ transaction, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight, userId: root.userId, targetId: root.targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(root.id), trigger: "automatic", discoveryRunId: root.id, recommendation: { parentRunId: root.id, profileId: context.profile.profileId, profileVersion: context.profile.profileVersion, targetSnapshot, budgetSnapshot: context.budgets.deepMatch, accountPolicyRevisionNumber: root.accountPolicyRevisionNumber!, accountPolicySnapshot: root.accountPolicySnapshot, preflightSnapshot: root.preflightSnapshot, frozenTriageVersionIds } });
+  const frozenRecommendationEvidence = FrozenRecommendationEvidenceSchema.parse({ version: "recommendation-evidence-v1", plannedTrustedSourceCount: trustedSourceIds.size, plannedPublicQueryCount: publicQueryIds.size, discoveryFacts: parsedFacts, frozenTriageVersionIds });
+  await ensureDeepMatchRunInTransaction({ transaction, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight, userId: root.userId, targetId: root.targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(root.id), trigger: "automatic", discoveryRunId: root.id, recommendation: { parentRunId: root.id, profileId: context.profile.profileId, profileVersion: context.profile.profileVersion, targetSnapshot, budgetSnapshot: context.budgets.deepMatch, accountPolicyRevisionNumber: root.accountPolicyRevisionNumber!, accountPolicySnapshot: root.accountPolicySnapshot, preflightSnapshot: root.preflightSnapshot, frozenTriageVersionIds, frozenRecommendationEvidence } });
 }
 
 /** v4 终态只持久化脱敏 diagnostic facts；页面、URL、query 正文和 provider body 均留在 adapter 生命周期内。 */
@@ -394,6 +402,7 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
   sourcePostingVersionIds: readonly string[];
   trustedSourcePostingVersionIds: readonly string[];
   trustedSourceIds: readonly string[];
+  discoveryFacts?: RecommendationDiscoveryFacts;
   complete?: boolean;
   interrupted?: "paused" | "cancelled" | "budget_exhausted" | "stale";
 }): Promise<"completed" | "stale" | "facts"> {
@@ -487,7 +496,7 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
     const version = run.version + 1;
     // The durable child is part of the discovery completion transaction. Queue delivery
     // remains deliberately best-effort and is performed only after commit.
-    if (run.runPurpose === "recommendation") await handoffRecommendationDiscoveryInTransaction(deps, transaction, run);
+    if (run.runPurpose === "recommendation") await handoffRecommendationDiscoveryInTransaction(deps, transaction, run, input.discoveryFacts);
     else await ensureDeepMatchRunInTransaction({ transaction, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight, userId: input.userId, targetId: run.targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(run.id), trigger: "automatic", discoveryRunId: run.id });
     await transaction.update(agentRunSteps).set({ status: "completed", completedAt: input.now, failedAt: null, failureCode: null }).where(and(
       eq(agentRunSteps.userId, input.userId), eq(agentRunSteps.runId, input.runId), eq(agentRunSteps.status, "running"),
@@ -731,7 +740,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
         }
       }
-      const persistDiscoveryOutcome = async (input: { details: DiscoveryDetail[]; scans: Array<{ sourceId: string; observedDetailIds: string[]; complete: boolean }>; sourceChecks?: JobSourceHealthCheck[]; sourceIssues?: Array<{ provider: "greenhouse"; code: "SOURCE_CAPABILITY_UNSUPPORTED" | "SOURCE_CAPABILITY_DECLARATION_MISMATCH"; sourceId: string; action: SourceExecutionAction; affectedCount: 1 }>; terminal?: SourceHealthTerminal }) => {
+      const persistDiscoveryOutcome = async (input: { details: DiscoveryDetail[]; scans: Array<{ sourceId: string; observedDetailIds: string[]; complete: boolean }>; sourceChecks?: JobSourceHealthCheck[]; sourceIssues?: Array<{ provider: "greenhouse"; code: "SOURCE_CAPABILITY_UNSUPPORTED" | "SOURCE_CAPABILITY_DECLARATION_MISMATCH"; sourceId: string; action: SourceExecutionAction; affectedCount: 1 }>; terminal?: SourceHealthTerminal; discoveryFacts?: RecommendationDiscoveryFacts }) => {
         const stored = input.details.map((detail) => {
           const bytes = canonicalJsonBytes(detail.rawPayload); const sourceIdentifier = discoverySourceIdentifier(detail.sourceId, detail.detailId); const rawContentSha256 = createHash("sha256").update(bytes).digest("hex");
           return { detail, bytes, rawContentSha256, objectKey: `accounts/${job.userId}/agent-runs/${job.runId}/sources/${sourceIdentifier}/${claimed.claimToken}/${rawContentSha256}.json` };
@@ -748,7 +757,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         const commitBefore = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_before", ordinal: 1 });
         if (commitBefore) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return commitBefore; }
         let persisted: { cleanupObjectKeys: string[]; completed: boolean };
-        try { persisted = await runTransaction(deps, deadline, (transaction) => createJobDiscoveryPersistence({ db: deps.db, id: deps.id, clock: deps.clock, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({ run: { ...claimed.run, sourceScope: executionSourceScope, claimToken: claimed.claimToken }, details: input.details, scans: input.scans, storedObjects: stored.map((item) => ({ sourceId: item.detail.sourceId, detailId: item.detail.detailId, objectKey: item.objectKey, rawContentSha256: item.rawContentSha256 })), sourceChecks: input.sourceChecks, sourceIssues: input.sourceIssues, terminal: input.terminal, now: deps.clock(), transaction, afterCompleted: async ({ transaction: completedTransaction, userId, targetId, discoveryRunId }) => { if (claimed.run.runPurpose === "recommendation") await handoffRecommendationDiscoveryInTransaction(deps, completedTransaction, claimed.run); else await ensureDeepMatchRunInTransaction({ transaction: completedTransaction, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight, userId, targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(discoveryRunId), trigger: "automatic", discoveryRunId }); } })); }
+        try { persisted = await runTransaction(deps, deadline, (transaction) => createJobDiscoveryPersistence({ db: deps.db, id: deps.id, clock: deps.clock, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({ run: { ...claimed.run, sourceScope: executionSourceScope, claimToken: claimed.claimToken }, details: input.details, scans: input.scans, storedObjects: stored.map((item) => ({ sourceId: item.detail.sourceId, detailId: item.detail.detailId, objectKey: item.objectKey, rawContentSha256: item.rawContentSha256 })), sourceChecks: input.sourceChecks, sourceIssues: input.sourceIssues, terminal: input.terminal, now: deps.clock(), transaction, afterCompleted: async ({ transaction: completedTransaction, userId, targetId, discoveryRunId }) => { if (claimed.run.runPurpose === "recommendation") await handoffRecommendationDiscoveryInTransaction(deps, completedTransaction, claimed.run, input.discoveryFacts); else await ensureDeepMatchRunInTransaction({ transaction: completedTransaction, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight, userId, targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(discoveryRunId), trigger: "automatic", discoveryRunId }); } })); }
         catch { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_PERSIST_FAILED", retryable: true, category: "source" }, deadline }); }
         await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), persisted.cleanupObjectKeys); if (!persisted.completed) return "stale";
         // PostgreSQL queued state is authoritative; the shared queue wakes it immediately and reconciler repairs delivery failures.
@@ -812,7 +821,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           const detailsStart = await transition("fetch_details", false); if (detailsStart) return detailsStart;
           const detailsComplete = await transition("fetch_details", true); if (detailsComplete) return detailsComplete;
           const persistStart = await transition("persist_results", false); if (persistStart) return persistStart;
-          const persisted = await persistLayeredPublicOutcome(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), deadline, diagnostics: outcome.diagnostics, sourceIssues: outcome.sourceIssues ?? [], sourcePostingVersionIds: outcome.sourcePostingVersionIds ?? [], trustedSourcePostingVersionIds: outcome.trustedSourcePostingVersionIds ?? [], trustedSourceIds: layeredExecutionSpec.sourceScope.trustedSources.map(({ source }) => source.sourceId) });
+          const persisted = await persistLayeredPublicOutcome(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), deadline, diagnostics: outcome.diagnostics, sourceIssues: outcome.sourceIssues ?? [], sourcePostingVersionIds: outcome.sourcePostingVersionIds ?? [], trustedSourcePostingVersionIds: outcome.trustedSourcePostingVersionIds ?? [], trustedSourceIds: layeredExecutionSpec.sourceScope.trustedSources.map(({ source }) => source.sourceId), discoveryFacts: outcome.discoveryFacts });
           if (persisted === "completed") await triggerDeepMatchAfterDiscovery({ db: deps.db, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight, queue: deps.matchingQueue, userId: job.userId, targetId: claimed.run.targetId, discoveryRunId: job.runId });
           return persisted === "facts" ? "stale" : persisted;
         } catch (error) {
@@ -843,7 +852,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
       if (claimed.run.workflowVersion === GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION) {
         const v3Scope = sourceScope as import("@job-copilot/contracts/agent-runs").PublicSourceHealthAgentRunSourceScope;
         const batchStart = await transition("batch_search", false); if (batchStart) return batchStart;
-        const sourceStates: Array<{ source: typeof v3Scope.sources[number]; observedDetailIds: string[]; candidates: Array<{ sourceId: string; detailId: string }>; requestAttemptCount: number; capabilityDenied?: boolean; failure?: Extract<import("@job-copilot/contracts/agent-runs").SourceHealthListResult, { ok: false }>["failure"] }> = [];
+        const sourceStates: Array<{ source: typeof v3Scope.sources[number]; observedDetailIds: string[]; candidates: Array<{ sourceId: string; detailId: string }>; requestAttemptCount: number; detailAttemptedCount: number; budgetTruncated: boolean; capabilityDenied?: boolean; failure?: Extract<import("@job-copilot/contracts/agent-runs").SourceHealthListResult, { ok: false }>["failure"] }> = [];
         const sourceIssues: Array<{ provider: "greenhouse"; code: "SOURCE_CAPABILITY_UNSUPPORTED" | "SOURCE_CAPABILITY_DECLARATION_MISMATCH"; sourceId: string; action: SourceExecutionAction; affectedCount: 1 }> = [];
         try {
           for (const [index, source] of v3Scope.sources.entries()) {
@@ -855,8 +864,8 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
             const called = await adapterCall("source_list", index + 1, () => sourceHealthAdapter.listSource({ targetSnapshot: snapshot, source }));
             if (called.outcome) return called.outcome;
             const list = parseSourceHealthListResult(called.value, source.sourceId);
-            if (!list.ok) { sourceStates.push({ source, observedDetailIds: [], candidates: [], requestAttemptCount: list.failure.attemptCount, failure: list.failure }); continue; }
-            sourceStates.push({ source, observedDetailIds: list.data.observedDetailIds, candidates: list.data.candidates.map((candidate) => ({ sourceId: candidate.sourceId, detailId: candidate.detailId })), requestAttemptCount: list.attemptCount });
+            if (!list.ok) { sourceStates.push({ source, observedDetailIds: [], candidates: [], requestAttemptCount: list.failure.attemptCount, detailAttemptedCount: 0, budgetTruncated: false, failure: list.failure }); continue; }
+            sourceStates.push({ source, observedDetailIds: list.data.observedDetailIds, candidates: list.data.candidates.map((candidate) => ({ sourceId: candidate.sourceId, detailId: candidate.detailId })), requestAttemptCount: list.attemptCount, detailAttemptedCount: 0, budgetTruncated: false });
           }
         } catch (error) { return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline }); }
         const batchComplete = await transition("batch_search", true); if (batchComplete) return batchComplete;
@@ -869,9 +878,10 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
             if (state.failure || state.capabilityDenied) continue;
             const sourceDetails: typeof details = [];
             for (const candidate of state.candidates) {
-              if (remainingDetailSlots === 0) break;
+              if (remainingDetailSlots === 0) { state.budgetTruncated = true; break; }
               const authorization = authorizeSourceAction({ declaration: sourceHealthAdapter.declareCapabilities({ sourceId: state.source.sourceId }), action: "read_details", expected: { sourceId: state.source.sourceId, adapter: v3Scope.adapter, adapterVersion: v3Scope.adapterVersion } });
               if (!authorization.allowed) { sourceIssues.push({ provider: "greenhouse", code: authorization.failure.reasonCode, sourceId: state.source.sourceId, action: "read_details", affectedCount: 1 }); state.capabilityDenied = true; break; }
+              state.detailAttemptedCount += 1;
               const called = await adapterCall("source_get_detail", ++detailOrdinal, () => sourceHealthAdapter.getSourceDetail({ source: state.source, detailId: candidate.detailId }));
               if (called.outcome) return called.outcome;
               const detail = parseSourceHealthDetailResult(called.value, candidate);
@@ -903,19 +913,43 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         const detailsForPersistence = details.slice(0, effectiveAgentRunBudget(claimed.run.workflowVersion, claimed.run.budgetSnapshot as AgentRunBudget).maxResults);
         const baseTerminal = deriveSourceHealthTerminal(checks);
         const terminal = sourceIssues.length && baseTerminal !== "source_failed" ? "completed_with_source_issues" : baseTerminal;
-        return persistDiscoveryOutcome({ details: detailsForPersistence, scans: sourceStates.filter((state) => !state.capabilityDenied).map((state) => ({ sourceId: state.source.sourceId, observedDetailIds: state.observedDetailIds, complete: !state.failure })), sourceChecks: checks, sourceIssues, terminal });
+        const discoveryFacts: RecommendationDiscoveryFacts = { version: "recommendation-discovery-facts-v1", trusted: [
+          ...sourceStates.filter((state) => !state.capabilityDenied).map((state) => {
+            const validDetailCount = details.filter((detail) => detail.sourceId === state.source.sourceId).length;
+            const losses = [
+              ...(state.failure ? [{ code: "SOURCE_HEALTH_DEGRADED" as const, retryable: state.failure.retryable }] : []),
+              ...(state.budgetTruncated ? [{ code: "DISCOVERY_BUDGET_EXCEEDED" as const, retryable: false }] : []),
+            ];
+            if (validDetailCount > 0) return { sourceId: state.source.sourceId, checked: true, outcome: "credible_results" as const, losses };
+            if (!state.failure && !state.budgetTruncated && state.observedDetailIds.length === 0) return { sourceId: state.source.sourceId, checked: true, outcome: "credible_zero" as const, losses: [] };
+            return { sourceId: state.source.sourceId, checked: true, outcome: state.observedDetailIds.length ? "verification_failed" as const : "failed" as const, losses: losses.length ? losses : [{ code: state.observedDetailIds.length ? "VERIFICATION_FAILED" as const : "SOURCE_HEALTH_DEGRADED" as const, retryable: false }] };
+          }),
+          ...sourceIssues.map((issue) => ({ sourceId: issue.sourceId, checked: true, outcome: "failed" as const, losses: [{ code: "SOURCE_CAPABILITY_UNAVAILABLE" as const, retryable: false }] })),
+        ], publicQueries: [] };
+        return persistDiscoveryOutcome({ details: detailsForPersistence, scans: sourceStates.filter((state) => !state.capabilityDenied).map((state) => ({ sourceId: state.source.sourceId, observedDetailIds: state.observedDetailIds, complete: !state.failure })), sourceChecks: checks, sourceIssues, terminal, discoveryFacts });
       }
       const batchStart = await transition("batch_search", false); if (batchStart) return batchStart;
       let summaries: Array<{ sourceId: string; detailId: string }>;
       let scans: Array<{ sourceId: string; observedDetailIds: string[]; complete: boolean }> = [];
+      let discoveryFacts: RecommendationDiscoveryFacts | undefined;
+      let sourceReceipts: Array<{ sourceId: string; checked: true; candidateCount: number }> | undefined;
       try {
         if (sourceScope.adapter === "fake") {
           const called = await adapterCall("source_search_batch", 1, () => adapter.searchBatch({ targetSnapshot: snapshot, sourceScope }));
           if (called.outcome) return called.outcome;
           const batch = DiscoveryBatchSearchResultSchema.parse(called.value);
           if (!batch.ok) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: batch.error.retryable ? "AGENT_RUN_ADAPTER_RETRYABLE" : "AGENT_RUN_ADAPTER_FAILED", retryable: batch.error.retryable, category: "source" }, deadline });
-          if (batch.data.some((item) => !sourceScope.sources.includes(item.sourceId))) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "source" }, deadline });
-          summaries = batch.data.slice(0, effectiveAgentRunBudget(claimed.run.workflowVersion, claimed.run.budgetSnapshot as AgentRunBudget).maxResults);
+          const batchItems = Array.isArray(batch.data) ? batch.data : batch.data.items;
+          const batchItemKeys = new Set(batchItems.map((item) => discoverySourceIdentifier(item.sourceId, item.detailId)));
+          if (batchItems.some((item) => !sourceScope.sources.includes(item.sourceId)) || batchItemKeys.size !== batchItems.length) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "source" }, deadline });
+          summaries = batchItems.slice(0, effectiveAgentRunBudget(claimed.run.workflowVersion, claimed.run.budgetSnapshot as AgentRunBudget).maxResults);
+          if (!Array.isArray(batch.data)) {
+            const receipts = batch.data.sourceReceipts;
+            const itemCounts = new Map(sourceScope.sources.map((sourceId) => [sourceId, 0]));
+            for (const item of batchItems) itemCounts.set(item.sourceId, (itemCounts.get(item.sourceId) ?? 0) + 1);
+            if (receipts.some((receipt) => !sourceScope.sources.includes(receipt.sourceId) || receipt.candidateCount !== itemCounts.get(receipt.sourceId)) || new Set(receipts.map((receipt) => receipt.sourceId)).size !== sourceScope.sources.length) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "source" }, deadline });
+            sourceReceipts = receipts;
+          }
         } else {
           const publicScope = sourceScope as import("@job-copilot/contracts/agent-runs").PublicAgentRunSourceScope;
           const ordinals = new Map(publicScope.sources.map((source, index) => [source.sourceId, index + 1]));
@@ -952,8 +986,20 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         details.push(detail.data);
       }
       const detailsComplete = await transition("fetch_details", true); if (detailsComplete) return detailsComplete;
+      if (sourceReceipts) {
+        discoveryFacts = {
+          version: "recommendation-discovery-facts-v1",
+          trusted: sourceReceipts.map((receipt) => {
+            const validDetailCount = details.filter((detail) => detail.sourceId === receipt.sourceId).length;
+            if (receipt.candidateCount === 0) return { sourceId: receipt.sourceId, checked: true, outcome: "credible_zero" as const, losses: [] };
+            if (validDetailCount > 0) return { sourceId: receipt.sourceId, checked: true, outcome: "credible_results" as const, losses: validDetailCount < receipt.candidateCount ? [{ code: "DISCOVERY_BUDGET_EXCEEDED" as const, retryable: false }] : [] };
+            return { sourceId: receipt.sourceId, checked: true, outcome: "verification_failed" as const, losses: [{ code: receipt.candidateCount > summaries.filter((summary) => summary.sourceId === receipt.sourceId).length ? "DISCOVERY_BUDGET_EXCEEDED" as const : "VERIFICATION_FAILED" as const, retryable: false }] };
+          }),
+          publicQueries: [],
+        };
+      }
       const persistStart = await transition("persist_results", false); if (persistStart) return persistStart;
-      return persistDiscoveryOutcome({ details, scans });
+      return persistDiscoveryOutcome({ details, scans, discoveryFacts });
       } finally {
         await stopHeartbeat().catch(() => undefined);
       }

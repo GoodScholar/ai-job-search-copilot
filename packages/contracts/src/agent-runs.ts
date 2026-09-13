@@ -17,6 +17,7 @@ import {
 } from "./job-discovery";
 import { JobTargetConstraintsSchema } from "./job-targets";
 import { RecommendationRuleConfigSchema } from "./recommendations";
+import { FrozenRecommendationEvidenceSchema } from "./recommendation-discovery-facts";
 import { RunPreflightSnapshotSchema, RunPreflightWarningFingerprintSchema } from "./run-preflight";
 
 export const AGENT_RUN_QUEUE = "agent-runs";
@@ -299,21 +300,34 @@ export const DeepMatchAgentRunBudgetSchema = z.object({
   maxActiveDurationMs: z.int().nonnegative(), maxAttempts: z.int().nonnegative(), maxToolCalls: z.int().nonnegative(),
   maxResults: z.int().nonnegative(), maxModelCalls: z.int().nonnegative(), maxTokens: z.int().nonnegative(),
 }).strict();
-export const DeepMatchAgentRunSourceScopeSchema = z.object({ kind: z.literal("deep_match"), trigger: z.enum(["automatic", "manual"]), opportunityId: z.uuid().nullable(), discoveryRunId: z.uuid().nullable(),
+const DeepMatchAgentRunSourceScopeFields = { kind: z.literal("deep_match"), trigger: z.enum(["automatic", "manual"]), opportunityId: z.uuid().nullable(), discoveryRunId: z.uuid().nullable(),
   recommendationRuleConfig: RecommendationRuleConfigSchema.default({ minimumOverallScore: 0, minimumEvidenceDimensions: 0, requiredEvidenceDimensions: [], excludedOpportunityIds: [] }),
   /** The child is claimable only after its candidates and exclusions are durably frozen. */
   initialized: z.literal(true),
   selectionExclusions: z.array(z.object({ opportunityId: z.uuid(), reasonCode: z.enum(["TRIAGE_NOT_PASS", "DEADLINE_EXPIRED", "SCORE_BELOW_THRESHOLD", "CANDIDATE_LIMIT", "MATCH_QUALITY_INSUFFICIENT", "RULE_EXCLUDED"]) }).strict()),
-  testFixture: z.object({ qualityInsufficientOpportunityIds: z.array(z.uuid()).max(10).optional(), overallScoresByOpportunityId: z.record(z.uuid(), z.int().min(0).max(100)).optional() }).strict().optional() }).strict().superRefine((scope, context) => {
+  testFixture: z.object({ qualityInsufficientOpportunityIds: z.array(z.uuid()).max(10).optional(), overallScoresByOpportunityId: z.record(z.uuid(), z.int().min(0).max(100)).optional() }).strict().optional() };
+const refineDeepMatchAgentRunSourceScope = (scope: { trigger: "automatic" | "manual"; opportunityId: string | null; discoveryRunId: string | null }, context: z.RefinementCtx) => {
   if (scope.trigger === "manual" && scope.opportunityId === null) context.addIssue({ code: "custom", path: ["opportunityId"], message: "manual matching must bind one opportunity" });
   if (scope.trigger === "automatic" && scope.opportunityId !== null) context.addIssue({ code: "custom", path: ["opportunityId"], message: "automatic matching evaluates discovery candidates" });
   if (scope.trigger === "automatic" && scope.discoveryRunId === null) context.addIssue({ code: "custom", path: ["discoveryRunId"], message: "automatic matching must bind its completed discovery run" });
   if (scope.trigger === "manual" && scope.discoveryRunId !== null) context.addIssue({ code: "custom", path: ["discoveryRunId"], message: "manual matching does not claim discovery provenance" });
-});
+};
+export const DeepMatchAgentRunSourceScopeSchema = z.object({
+  ...DeepMatchAgentRunSourceScopeFields,
+  /** 推荐发现完成事务首次冻结；公共运行投影不得返回此字段。 */
+  frozenRecommendationEvidence: FrozenRecommendationEvidenceSchema.optional(),
+}).strict().superRefine(refineDeepMatchAgentRunSourceScope);
+export const DeepMatchAgentRunPublicSourceScopeSchema = z.object(DeepMatchAgentRunSourceScopeFields).strict().superRefine(refineDeepMatchAgentRunSourceScope);
 export type AgentRunSourceScope = z.infer<typeof AgentRunSourceScopeSchema>;
 export type DeepMatchAgentRunSourceScope = z.infer<typeof DeepMatchAgentRunSourceScopeSchema>;
 export const DeepMatchAgentRunExecutionSpecSchema = z.object({
   targetSnapshot: AgentRunTargetSnapshotSchema, sourceScope: DeepMatchAgentRunSourceScopeSchema,
+  workflowVersion: z.literal(DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION), ruleVersion: z.string().min(1).max(64),
+  adapter: z.literal("fake-deep-match"), adapterVersion: z.literal("fake-deep-match-v1"), outputSchemaVersion: z.literal("deep-match-result-v1"),
+  toolAllowlist: z.tuple([]), model: z.object({ provider: z.literal("fake"), model: z.literal("fake-deep-match-model-v1") }).strict(), budget: DeepMatchAgentRunBudgetSchema,
+}).strict();
+const DeepMatchAgentRunPublicExecutionSpecSchema = z.object({
+  targetSnapshot: AgentRunTargetSnapshotSchema, sourceScope: DeepMatchAgentRunPublicSourceScopeSchema,
   workflowVersion: z.literal(DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION), ruleVersion: z.string().min(1).max(64),
   adapter: z.literal("fake-deep-match"), adapterVersion: z.literal("fake-deep-match-v1"), outputSchemaVersion: z.literal("deep-match-result-v1"),
   toolAllowlist: z.tuple([]), model: z.object({ provider: z.literal("fake"), model: z.literal("fake-deep-match-model-v1") }).strict(), budget: DeepMatchAgentRunBudgetSchema,
@@ -509,7 +523,7 @@ const LayeredPublicAgentRunSummarySchema = z.object({
   budget: PublicAgentRunBudgetSchema,
 }).strict();
 const DeepMatchAgentRunSummarySchema = z.object({
-  ...AgentRunSummaryFields, sourceScope: DeepMatchAgentRunSourceScopeSchema, workflowVersion: z.literal(DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION),
+  ...AgentRunSummaryFields, sourceScope: DeepMatchAgentRunPublicSourceScopeSchema, workflowVersion: z.literal(DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION),
   adapter: z.literal("fake-deep-match"), adapterVersion: z.literal("fake-deep-match-v1"), outputSchemaVersion: z.literal("deep-match-result-v1"), budget: DeepMatchAgentRunBudgetSchema,
 }).strict();
 export const AgentRunSummarySchema = z.union([FakeAgentRunSummarySchema, PublicAgentRunSummarySchema, PublicSourceHealthAgentRunSummarySchema, LayeredPublicAgentRunSummarySchema, DeepMatchAgentRunSummarySchema]).superRefine((summary, context) => {
@@ -534,7 +548,7 @@ export const AgentRunDetailSchema = z.union([
     discoveryDiagnostics: z.array(DiscoveryDiagnosticSchema).max(50),
     sourceIssues: z.array(DiscoverySourceIssueSummarySchema).max(10),
   }).strict(),
-  DeepMatchAgentRunSummarySchema.extend({ ...AgentRunDetailFields, executionSpec: DeepMatchAgentRunExecutionSpecSchema, results: z.array(AgentRunResultSchema).max(0) }).strict(),
+  DeepMatchAgentRunSummarySchema.extend({ ...AgentRunDetailFields, executionSpec: DeepMatchAgentRunPublicExecutionSpecSchema, results: z.array(AgentRunResultSchema).max(0) }).strict(),
 ]).superRefine((detail, context) => {
   const terminal = detail.status === "completed" || detail.status === "failed" || detail.status === "cancelled";
   if (!terminal && detail.termination !== null) context.addIssue({ code: "custom", path: ["termination"], message: "nonterminal runs have no termination" });
@@ -627,7 +641,18 @@ export const DiscoveryDetailSchema = DiscoverySearchSummarySchema.extend({
   sourceType: z.string().trim().min(1).max(32), isOfficial: z.boolean(), rawPayload: jsonObject,
 }).strict();
 export const DiscoverySearchResultSchema = adapterResult(DiscoverySearchSummarySchema);
-export const DiscoveryBatchSearchResultSchema = adapterResult(z.array(DiscoverySearchSummarySchema).max(AGENT_RUN_BUDGET.maxResults));
+export const FakeDiscoverySourceReceiptSchema = z.object({
+  sourceId: z.string().trim().min(1).max(2_048),
+  checked: z.literal(true),
+  candidateCount: nonnegativeInteger,
+}).strict();
+export const DiscoveryBatchSearchResultSchema = adapterResult(z.union([
+  z.array(DiscoverySearchSummarySchema).max(AGENT_RUN_BUDGET.maxResults),
+  z.object({
+    items: z.array(DiscoverySearchSummarySchema).max(AGENT_RUN_BUDGET.maxResults),
+    sourceReceipts: z.array(FakeDiscoverySourceReceiptSchema).max(50).refine((receipts) => new Set(receipts.map((receipt) => receipt.sourceId)).size === receipts.length, "source receipt identities must be unique"),
+  }).strict(),
+]));
 export const PublicDiscoveryListCandidateSchema = z.object({
   sourceId: z.string().trim().regex(/^greenhouse:[A-Za-z0-9_-]+$/u),
   detailId: z.string().trim().min(1).max(256),

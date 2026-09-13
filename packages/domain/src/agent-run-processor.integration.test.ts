@@ -206,6 +206,13 @@ describe("AgentRunProcessor checkpoints", () => {
   }
 
   function resolver(adapter: JobDiscoveryAdapter): JobDiscoveryAdapterResolver { return { resolve: () => adapter }; }
+  function plannedLayeredDiscoveryFacts(executionSpec: any) {
+    return {
+      version: "recommendation-discovery-facts-v1" as const,
+      trusted: executionSpec.sourceScope.trustedSources.map(({ source }: any) => ({ sourceId: source.sourceId, checked: true as const, outcome: "credible_zero" as const, losses: [] })),
+      publicQueries: executionSpec.sourceScope.publicDiscovery.queries.map((query: any) => ({ queryId: query.queryId, checked: true as const, outcome: "credible_zero" as const, losses: [] })),
+    };
+  }
   function checkpoint(): AgentRunCheckpoint {
     return createAgentRunCheckpoint({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
   }
@@ -239,7 +246,7 @@ describe("AgentRunProcessor checkpoints", () => {
       adapter: input.executionMode === "greenhouse" ? "greenhouse" : "fake", adapterVersion: "test",
       declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: input.executionMode === "greenhouse" ? "greenhouse" : "fake", adapterVersion: "test", contractVersion: "source-capabilities-v1" as const, capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
       search: async () => ({ ok: false as const, error: { code: "UNUSED", retryable: false } }),
-      searchBatch: async () => ({ ok: true as const, data: [{ sourceId: detail.sourceId, detailId: detail.detailId, company: detail.company, title: detail.title, location: detail.location, postedAt: detail.postedAt, deadline: detail.deadline }] }),
+      searchBatch: async ({ sourceScope }: any) => ({ ok: true as const, data: { items: [{ sourceId: detail.sourceId, detailId: detail.detailId, company: detail.company, title: detail.title, location: detail.location, postedAt: detail.postedAt, deadline: detail.deadline }], sourceReceipts: sourceScope.sources.map((sourceId: string) => ({ sourceId, checked: true as const, candidateCount: sourceId === detail.sourceId ? 1 : 0 })) } }),
       getDetail: async () => { await waitAtCollection(); return { ok: true as const, data: detail }; },
     };
     const sourceHealthAdapter: SourceHealthDiscoveryAdapter = {
@@ -251,7 +258,7 @@ describe("AgentRunProcessor checkpoints", () => {
     return createAgentRunProcessor({
       db: database, auditTrail: input.auditTrail, id: () => crypto.randomUUID(), clock: input.clock ?? (() => now), contentStore: new Store(), checkpoint: input.checkpoint ?? checkpoint(), matchingQueue: input.matchingQueue,
       ...(input.executionMode === "layered_public"
-        ? { adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => { await waitAtCollection(); return { branchOutcome: { trusted: "succeeded" as const, publicDiscovery: "clean_zero" as const }, diagnostics: [] }; } }) } }
+        ? { adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: (input) => ({ run: async () => { await waitAtCollection(); return { branchOutcome: { trusted: "succeeded" as const, publicDiscovery: "clean_zero" as const }, diagnostics: [], discoveryFacts: plannedLayeredDiscoveryFacts(input.executionSpec) }; } }) } }
         : { adapterResolver: resolver(adapter), ...(input.executionMode === "greenhouse" ? { sourceHealthAdapterResolver: { resolve: () => sourceHealthAdapter } } : {}) }),
     });
   }
@@ -382,7 +389,7 @@ describe("AgentRunProcessor checkpoints", () => {
     const preparation = await preflight.evaluate(database, { userId, workflow: "recommendation", trigger: "manual" });
     const started = await service.start({ userId, requestId: crypto.randomUUID(), command: { idempotencyKey: crypto.randomUUID(), warningFingerprint: preparation.report.warningFingerprint } });
     const rootId = started.run.runId;
-    const outcome = await createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({ branchOutcome: { trusted: "succeeded", publicDiscovery: "clean_zero" }, diagnostics: [] }) }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+    const outcome = await createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: (input) => ({ run: async () => ({ branchOutcome: { trusted: "succeeded", publicDiscovery: "clean_zero" }, diagnostics: [], discoveryFacts: plannedLayeredDiscoveryFacts(input.executionSpec) }) }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
       .process({ version: 1, userId, runId: rootId, finalAttempt: true });
     const [terminal] = await database.select({ failureCode: agentRuns.failureCode }).from(agentRuns).where(eq(agentRuns.id, rootId));
     expect({ outcome, terminal }).toEqual({ outcome: "completed", terminal: { failureCode: null } });
@@ -411,7 +418,7 @@ describe("AgentRunProcessor checkpoints", () => {
     const queryId = crypto.randomUUID(); const leadId = crypto.randomUUID();
     await database.insert(jobDiscoveryLeads).values({ id: leadId, userId, runId: started.run.runId, targetId, provider: "anysearch", queryId, queryKind: "general", queryFingerprint: sourceHash, normalizedUrl: "https://fixture.invalid/metadata", stableFingerprint: "e".repeat(64), expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000), state: "verified", sourcePostingVersionId, verifiedFinalUrl: "https://fixture.invalid/metadata", rejectionCode: null, createdAt: now, updatedAt: now });
     await database.insert(jobDiscoveryAttributions).values({ id: crypto.randomUUID(), userId, runId: started.run.runId, leadId, queryId, provider: "anysearch", sourcePostingVersionId, createdAt: now });
-    const outcome = await createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({ branchOutcome: { trusted: "succeeded", publicDiscovery: "clean_zero" }, diagnostics: [], sourcePostingVersionIds: [sourcePostingVersionId], trustedSourcePostingVersionIds: [sourcePostingVersionId] }) }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+    const outcome = await createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: (input) => ({ run: async () => ({ branchOutcome: { trusted: "succeeded", publicDiscovery: "clean_zero" }, diagnostics: [], sourcePostingVersionIds: [sourcePostingVersionId], trustedSourcePostingVersionIds: [sourcePostingVersionId], discoveryFacts: plannedLayeredDiscoveryFacts(input.executionSpec) }) }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
       .process({ version: 1, userId, runId: started.run.runId, finalAttempt: true });
 
     const [rootTerminal] = await database.select({ status: agentRuns.status, failureCode: agentRuns.failureCode }).from(agentRuns).where(eq(agentRuns.id, started.run.runId));
@@ -448,7 +455,7 @@ describe("AgentRunProcessor checkpoints", () => {
     const queryId = crypto.randomUUID(); const leadId = crypto.randomUUID();
     await database.insert(jobDiscoveryLeads).values({ id: leadId, userId, runId: started.run.runId, targetId, provider: "anysearch", queryId, queryKind: "general", queryFingerprint: sourceHash, normalizedUrl: "https://fixture.invalid/qualified", stableFingerprint: "d".repeat(64), expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000), state: "verified", sourcePostingVersionId, verifiedFinalUrl: "https://fixture.invalid/qualified", rejectionCode: null, createdAt: now, updatedAt: now });
     await database.insert(jobDiscoveryAttributions).values({ id: crypto.randomUUID(), userId, runId: started.run.runId, leadId, queryId, provider: "anysearch", sourcePostingVersionId, createdAt: now });
-    const outcome = await createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({ branchOutcome: { trusted: "succeeded", publicDiscovery: "clean_zero" }, diagnostics: [], sourcePostingVersionIds: [sourcePostingVersionId], trustedSourcePostingVersionIds: [sourcePostingVersionId] }) }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+    const outcome = await createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: (input) => ({ run: async () => ({ branchOutcome: { trusted: "succeeded", publicDiscovery: "clean_zero" }, diagnostics: [], sourcePostingVersionIds: [sourcePostingVersionId], trustedSourcePostingVersionIds: [sourcePostingVersionId], discoveryFacts: plannedLayeredDiscoveryFacts(input.executionSpec) }) }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
       .process({ version: 1, userId, runId: started.run.runId, finalAttempt: true });
 
     expect(outcome).toBe("completed");
@@ -477,7 +484,7 @@ describe("AgentRunProcessor checkpoints", () => {
     const detail = { sourceId, detailId: "1", company: "Metadata Co", title: "AI Engineer", location: "上海", postedAt: now.toISOString(), deadline: null, sourceType: "company_careers" as const, isOfficial: true as const, rawPayload: {} };
     const summary = { sourceId: detail.sourceId, detailId: detail.detailId, company: detail.company, title: detail.title, location: detail.location, postedAt: detail.postedAt, deadline: detail.deadline };
     const calls: string[] = [];
-    const adapter: JobDiscoveryAdapter = { adapter: executionMode, adapterVersion: "test", declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: executionMode, adapterVersion: "test", contractVersion: "source-capabilities-v1" as const, capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }), search: async () => ({ ok: false, error: { code: "UNUSED", retryable: false } }), searchBatch: async () => { calls.push("searchBatch"); return { ok: true, data: [summary] }; }, getDetail: async () => { calls.push("getDetail"); return { ok: true, data: detail }; } };
+    const adapter: JobDiscoveryAdapter = { adapter: executionMode, adapterVersion: "test", declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: executionMode, adapterVersion: "test", contractVersion: "source-capabilities-v1" as const, capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }), search: async () => ({ ok: false, error: { code: "UNUSED", retryable: false } }), searchBatch: async (input: any) => { calls.push("searchBatch"); return { ok: true, data: executionMode === "fake" ? { items: [summary], sourceReceipts: input.sourceScope.sources.map((receiptSourceId: string) => ({ sourceId: receiptSourceId, checked: true as const, candidateCount: receiptSourceId === sourceId ? 1 : 0 })) } : [summary] }; }, getDetail: async () => { calls.push("getDetail"); return { ok: true, data: detail }; } };
     const sourceHealthAdapter: SourceHealthDiscoveryAdapter = {
       adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
       declareCapabilities: ({ sourceId }: { sourceId: string }) => ({ sourceId, adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, contractVersion: "source-capabilities-v1" as const, capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
@@ -1214,7 +1221,7 @@ describe("AgentRunProcessor checkpoints", () => {
     } as any);
     const outcome = await runtime.run({ userId: job.userId, runId: job.runId, claimToken, now, executionSpec: spec as never, attemptCount: 1, beforePhysicalOperation: async () => undefined, onDiagnostics: () => undefined, signal: new AbortController().signal });
 
-    expect(outcome).toMatchObject({ branchOutcome: { trusted: "succeeded", publicDiscovery: "clean_zero" }, trustedSourcePostingVersionIds: [], sourceIssues: [
+    expect(outcome).toMatchObject({ branchOutcome: { trusted: "failed", publicDiscovery: "clean_zero" }, trustedSourcePostingVersionIds: [], sourceIssues: [
       { provider: "greenhouse", code: "GREENHOUSE_DETAIL_IDENTITY_INVALID", affectedCount: 1 },
       { provider: "greenhouse", code: "GREENHOUSE_TIMEOUT", affectedCount: 1 },
     ] });

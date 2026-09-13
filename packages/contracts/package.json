@@ -14,6 +14,7 @@
     "./deep-match": "./src/deep-match.ts",
     "./recommendations": "./src/recommendations.ts",
     "./recommendation-runs": "./src/recommendation-runs.ts",
+    "./recommendation-discovery-facts": "./src/recommendation-discovery-facts.ts",
     "./job-discovery-schedules": "./src/job-discovery-schedules.ts",
     "./job-discovery": "./src/job-discovery.ts",
     "./source-capabilities": "./src/source-capabilities.ts",

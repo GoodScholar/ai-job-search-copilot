@@ -127,7 +127,17 @@ export class FakeJobDiscoveryAdapter implements JobDiscoveryAdapter {
       })
       .slice(0, AGENT_RUN_BUDGET.maxResults)
       .map(summary);
-    return { ok: true, data };
+    return {
+      ok: true,
+      data: {
+        items: data,
+        sourceReceipts: input.sourceScope.sources.map((sourceId) => ({
+          sourceId,
+          checked: true as const,
+          candidateCount: data.filter((item) => item.sourceId === sourceId).length,
+        })),
+      },
+    };
   }
 
   async getDetail(input: DiscoveryDetailInput): Promise<DiscoveryDetailResult> {

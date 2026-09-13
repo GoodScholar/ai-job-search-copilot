@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Database } from "@job-copilot/database";
 import { GREENHOUSE_JOB_DISCOVERY_ADAPTER, GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION } from "@job-copilot/contracts/agent-runs";
+import type { RecommendationDiscoveryFacts } from "@job-copilot/contracts/recommendation-discovery-facts";
 
 import type { AuditTrail } from "./audit-trail";
 import { canonicalJsonBytes, type DiscoveryContentStore } from "./agent-run-processor";
@@ -62,21 +63,23 @@ export function createLayeredPublicJobDiscoveryRuntime(input: Omit<WorkflowDepen
   const trustedSources: WorkflowDependencies["trustedSources"] = {
     discover: async ({ userId, runId, claimToken, now, executionSpec, signal, beforeRequest }) => {
       const frozenSources = executionSpec.sourceScope.trustedSources;
-      if (frozenSources.length === 0) return { succeeded: false, verifiedSourcePostingVersionIds: [] };
+      if (frozenSources.length === 0) return { succeeded: false, verifiedSourcePostingVersionIds: [], discoveryFacts: [] };
       const sourceIssues: Array<{ code: string; affectedCount: number }> = [];
       const verifiedSourcePostingVersionIds: string[] = [];
-      let listedSourceCount = 0;
+      const discoveryFacts: RecommendationDiscoveryFacts["trusted"] = [];
       for (const trusted of frozenSources) {
         const source = trusted.source;
         const discoveryAuthorization = authorizeSourceAction({ declaration: input.trustedSourceAdapter.declareCapabilities({ sourceId: source.sourceId }), action: "active_discovery", expected: { sourceId: source.sourceId, adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER, adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION } });
         if (!discoveryAuthorization.allowed) {
           sourceIssues.push({ code: discoveryAuthorization.failure.reasonCode, affectedCount: 1 });
+          discoveryFacts.push({ sourceId: source.sourceId, checked: true, outcome: "failed", losses: [{ code: "SOURCE_CAPABILITY_UNAVAILABLE", retryable: false }] });
           continue;
         }
         await beforeRequest(source.watchlistItemId);
         const listed = await input.trustedSourceAdapter.listSource({ targetSnapshot: executionSpec.targetSnapshot, source, signal });
         if (!listed.ok) {
           sourceIssues.push({ code: sourceIssueCode(listed.error.code, "GREENHOUSE_LIST_FAILED"), affectedCount: 1 });
+          discoveryFacts.push({ sourceId: source.sourceId, checked: true, outcome: "failed", losses: [{ code: "TRUSTED_SOURCE_UNAVAILABLE", retryable: true }] });
           continue;
         }
         const candidateKeys = new Set<string>();
@@ -86,30 +89,41 @@ export function createLayeredPublicJobDiscoveryRuntime(input: Omit<WorkflowDepen
           && listed.data.candidates.every((candidate) => candidate.sourceId === source.sourceId && observed.has(candidate.detailId) && !candidateKeys.has(candidate.detailId) && (candidateKeys.add(candidate.detailId), true));
         if (!validList) {
           sourceIssues.push({ code: "GREENHOUSE_LIST_IDENTITY_INVALID", affectedCount: 1 });
+          discoveryFacts.push({ sourceId: source.sourceId, checked: true, outcome: "failed", losses: [{ code: "TRUSTED_SOURCE_UNAVAILABLE", retryable: false }] });
           continue;
         }
-        listedSourceCount += 1;
+        if (listed.data.candidates.length === 0 && listed.data.observedDetailIds.length === 0) {
+          discoveryFacts.push({ sourceId: source.sourceId, checked: true, outcome: "credible_zero", losses: [] });
+          continue;
+        }
         const details: DiscoveryDetail[] = [];
+        let detailFailure = false;
         for (const candidate of listed.data.candidates) {
           const detailAuthorization = authorizeSourceAction({ declaration: input.trustedSourceAdapter.declareCapabilities({ sourceId: source.sourceId }), action: "read_details", expected: { sourceId: source.sourceId, adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER, adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION } });
           if (!detailAuthorization.allowed) {
             sourceIssues.push({ code: detailAuthorization.failure.reasonCode, affectedCount: 1 });
+            detailFailure = true;
             break;
           }
           await beforeRequest(source.watchlistItemId);
           const detailed = await input.trustedSourceAdapter.getSourceDetail({ source, detailId: candidate.detailId, signal });
           if (!detailed.ok) {
             sourceIssues.push({ code: sourceIssueCode(detailed.error.code, "GREENHOUSE_DETAIL_FAILED"), affectedCount: 1 });
+            detailFailure = true;
             continue;
           }
           const detail = detailed.data;
           if (detail.sourceId !== source.sourceId || detail.detailId !== candidate.detailId || detail.sourceType !== "company_careers" || !detail.isOfficial) {
             sourceIssues.push({ code: "GREENHOUSE_DETAIL_IDENTITY_INVALID", affectedCount: 1 });
+            detailFailure = true;
             continue;
           }
           details.push(detail);
         }
-        if (details.length === 0) continue;
+        if (details.length === 0) {
+          discoveryFacts.push({ sourceId: source.sourceId, checked: true, outcome: "verification_failed", losses: [{ code: "VERIFICATION_FAILED", retryable: false }] });
+          continue;
+        }
         const storedDetails = details.map((detail) => ({ detail, stored: rawObject({ id: input.id, userId, runId, sourceId: source.sourceId, detail }) }));
         const storedObjects = storedDetails.map(({ stored }) => stored);
         try {
@@ -120,13 +134,14 @@ export function createLayeredPublicJobDiscoveryRuntime(input: Omit<WorkflowDepen
             userId, runId, claimToken, sourceId: source.sourceId, details, storedObjects, now,
           });
           verifiedSourcePostingVersionIds.push(...persisted.sourcePostingVersionIds);
+          discoveryFacts.push({ sourceId: source.sourceId, checked: true, outcome: "credible_results", losses: detailFailure ? [{ code: "VERIFICATION_FAILED", retryable: false }] : [] });
           await cleanup(input.contentStore, persisted.cleanupObjectKeys);
         } catch (error) {
           await cleanup(input.contentStore, storedObjects.map((stored) => stored.objectKey));
           throw error;
         }
       }
-      return { succeeded: listedSourceCount > 0, verifiedSourcePostingVersionIds: [...new Set(verifiedSourcePostingVersionIds)], sourceIssues };
+      return { succeeded: discoveryFacts.some((fact) => fact.outcome === "credible_results" || fact.outcome === "credible_zero"), verifiedSourcePostingVersionIds: [...new Set(verifiedSourcePostingVersionIds)], sourceIssues, discoveryFacts };
     },
   };
   const { db: _db, id: _id, auditTrail: _auditTrail, contentStore: _contentStore, evidenceStore: _evidenceStore, trustedSourceAdapter: _trustedSourceAdapter, afterVerifiedPersistence: _afterVerifiedPersistence, ...workflowDependencies } = input;

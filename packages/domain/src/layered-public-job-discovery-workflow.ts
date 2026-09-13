@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { AgentRunExecutionSpecSchema } from "@job-copilot/contracts/agent-runs";
 import { LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION, LayeredPublicJobDiscoveryQuerySchema, SafeNormalizedPublicJobUrlSchema, type AnySearchProviderError } from "@job-copilot/contracts/job-discovery";
+import type { RecommendationDiscoveryFacts } from "@job-copilot/contracts/recommendation-discovery-facts";
 
 const LayeredPublicOperationKindSchema = z.enum(["search", "extract", "fetch", "record_pending", "gate_reject", "gate_verify"]);
 const RunInputSchema = z.object({ userId: z.uuid(), runId: z.uuid(), claimToken: z.uuid(), now: z.date(), executionSpec: AgentRunExecutionSpecSchema, attemptCount: z.int().min(1).max(3), beforePhysicalOperation: z.function({ input: [z.object({ kind: LayeredPublicOperationKindSchema, identity: z.uuid() }).strict()], output: z.promise(z.void()) }), onDiagnostics: z.function({ input: [z.array(z.unknown())], output: z.void() }), signal: z.instanceof(AbortSignal) }).strict();
@@ -41,6 +42,7 @@ export type LayeredPublicWorkflowOutcome = {
   trustedSourcePostingVersionIds?: string[];
   sourceIssues?: Array<{ provider: "anysearch" | "greenhouse"; code: string; affectedCount: number }>;
   diagnostics: LayeredPublicWorkflowDiagnostic[];
+  discoveryFacts?: RecommendationDiscoveryFacts;
   interruption?: "paused" | "cancelled" | "budget_exhausted" | "stale";
 };
 export interface LayeredPublicJobDiscoveryWorkflow { run(input: { userId: string; runId: string; claimToken: string; now: Date; executionSpec: LayeredSpec; attemptCount: number; beforePhysicalOperation(operation: LayeredPublicPhysicalOperation): Promise<void>; onDiagnostics(snapshot: readonly LayeredPublicWorkflowDiagnostic[]): void; signal: AbortSignal }): Promise<LayeredPublicWorkflowOutcome>; }
@@ -79,7 +81,7 @@ function boundedRejectedCandidateCount(value: unknown): number { return typeof v
 
 /** v4 安全链路；Slice 8 只组装 provider/config，不能改变 pending → extract → fetch → gate 的顺序。 */
 export function createLayeredPublicJobDiscoveryWorkflow(deps: {
-  trustedSources: { discover(input: { userId: string; runId: string; claimToken: string; now: Date; executionSpec: LayeredSpec; signal: AbortSignal; beforeRequest(watchlistItemId: string): Promise<void> }): Promise<{ succeeded: boolean; verifiedSourcePostingVersionIds: string[]; sourceIssues?: Array<{ code: string; affectedCount: number }> }> };
+  trustedSources: { discover(input: { userId: string; runId: string; claimToken: string; now: Date; executionSpec: LayeredSpec; signal: AbortSignal; beforeRequest(watchlistItemId: string): Promise<void> }): Promise<{ succeeded: boolean; verifiedSourcePostingVersionIds: string[]; sourceIssues?: Array<{ code: string; affectedCount: number }>; discoveryFacts?: RecommendationDiscoveryFacts["trusted"] }> };
   anySearch: { isConfigured?(): boolean; search(input: { runId: string; executionSpec: LayeredSpec; query: Query; signal: AbortSignal; beforeRequest(): Promise<void> }): Promise<{ candidates: Candidate[]; rejectedCandidateCount?: number } | { error: AnySearchProviderError }>; extract(input: { candidate: RecoveredCandidateCapability; signal: AbortSignal; beforeRequest(): Promise<void>; authorizeRecoveredCandidate(input: { queryId: string; candidateFingerprint: string; identity: string; operationIdentity: string }): Promise<boolean> }): Promise<{ normalizedUrl: string } | { error: AnySearchProviderError }> };
   preflight(input: { candidate: IssuedCandidateCapability }): Promise<{ normalizedUrl: string } | null>;
   leads: {
@@ -93,16 +95,31 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
   return { async run(input) {
     const value = RunInputSchema.parse(input);
     if (value.executionSpec.workflowVersion !== LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION || value.executionSpec.sourceScope.kind !== "layered_public") throw new Error("LAYERED_PUBLIC_WORKFLOW_SPEC_REQUIRED");
-    const spec = value.executionSpec; const diagnostics: LayeredPublicWorkflowDiagnostic[] = []; const sourceIssues: Array<{ provider: "anysearch" | "greenhouse"; code: string; affectedCount: number }> = []; const sourcePostingVersionIds: string[] = []; const seen = new Set<string>(); let trusted: { succeeded: boolean; verifiedSourcePostingVersionIds: string[]; sourceIssues?: Array<{ code: string; affectedCount: number }> } = { succeeded: false, verifiedSourcePostingVersionIds: [] }; let verificationCandidates = 0; let publicSearchSucceeded = false; let publicCandidateCount = 0; let publicVerifiedCount = 0;
+    const spec = value.executionSpec; const diagnostics: LayeredPublicWorkflowDiagnostic[] = []; const sourceIssues: Array<{ provider: "anysearch" | "greenhouse"; code: string; affectedCount: number }> = []; const sourcePostingVersionIds: string[] = []; const seen = new Set<string>(); let trusted: { succeeded: boolean; verifiedSourcePostingVersionIds: string[]; sourceIssues?: Array<{ code: string; affectedCount: number }>; discoveryFacts?: RecommendationDiscoveryFacts["trusted"] } = { succeeded: false, verifiedSourcePostingVersionIds: [] }; let verificationCandidates = 0; let publicSearchSucceeded = false; let publicCandidateCount = 0; let publicVerifiedCount = 0;
+    const publicStates = new Map(spec.sourceScope.publicDiscovery.queries.map((query) => [query.queryId, { checked: false, candidateSeen: false, verified: false, budgetSkipped: false, losses: [] as Array<{ code: "PUBLIC_DISCOVERY_UNAVAILABLE" | "VERIFICATION_FAILED" | "DISCOVERY_BUDGET_EXCEEDED"; retryable: boolean }> }]));
+    const verifiedFingerprints = new Set<string>();
+    const recordPublicFailure = (state: { losses: Array<{ code: "PUBLIC_DISCOVERY_UNAVAILABLE" | "VERIFICATION_FAILED" | "DISCOVERY_BUDGET_EXCEEDED"; retryable: boolean }> }, retryable: boolean) => {
+      if (!state.losses.some((loss) => loss.code === "VERIFICATION_FAILED" && loss.retryable === retryable)) state.losses.push({ code: "VERIFICATION_FAILED", retryable });
+    };
     const recordDiagnostic = (diagnostic: LayeredPublicWorkflowDiagnostic) => { diagnostics.push(diagnostic); value.onDiagnostics(aggregateDiagnostics(diagnostics)); };
-    const result = () => ({
+    const result = () => {
+      const publicQueries = spec.sourceScope.publicDiscovery.queries.map((query) => {
+        const state = publicStates.get(query.queryId)!;
+        if (state.verified) return { queryId: query.queryId, checked: true, outcome: "credible_results" as const, losses: state.losses };
+        if (state.checked && !state.candidateSeen) return { queryId: query.queryId, checked: true, outcome: state.losses.some((loss) => loss.code === "PUBLIC_DISCOVERY_UNAVAILABLE") ? "failed" as const : "credible_zero" as const, losses: state.losses };
+        if (state.checked) return { queryId: query.queryId, checked: true, outcome: "verification_failed" as const, losses: state.losses.length ? state.losses : [{ code: state.budgetSkipped ? "DISCOVERY_BUDGET_EXCEEDED" as const : "VERIFICATION_FAILED" as const, retryable: false }] };
+        return { queryId: query.queryId, checked: false, outcome: "failed" as const, losses: state.losses.length ? state.losses : [{ code: "PUBLIC_DISCOVERY_UNAVAILABLE" as const, retryable: false }] };
+      });
+      return {
       branchOutcome: {
         trusted: trusted.succeeded ? "succeeded" as const : "failed" as const,
         publicDiscovery: publicVerifiedCount > 0 ? "verified" as const : publicCandidateCount > 0 ? "candidate_failures" as const : publicSearchSucceeded ? "clean_zero" as const : "failed" as const,
       },
       sourcePostingVersionIds: [...new Set(sourcePostingVersionIds)], trustedSourcePostingVersionIds: trusted.verifiedSourcePostingVersionIds,
       sourceIssues: aggregateSourceIssues(sourceIssues), diagnostics: aggregateDiagnostics(diagnostics),
-    });
+      discoveryFacts: { version: "recommendation-discovery-facts-v1" as const, trusted: trusted.discoveryFacts ?? [], publicQueries },
+    };
+    };
     try {
     trusted = await deps.trustedSources.discover({ userId: value.userId, runId: value.runId, claimToken: value.claimToken, now: value.now, executionSpec: spec, signal: value.signal, beforeRequest: (watchlistItemId) => value.beforePhysicalOperation({ kind: "search", identity: watchlistItemId }) });
     sourcePostingVersionIds.push(...trusted.verifiedSourcePostingVersionIds);
@@ -111,53 +128,71 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
       const code = "ANYSEARCH_NOT_CONFIGURED";
       recordDiagnostic({ scope: "provider", code, retryable: false, affectedCount: 1 });
       sourceIssues.push({ provider: "anysearch", code, affectedCount: 1 });
+      for (const state of publicStates.values()) state.losses.push({ code: "PUBLIC_DISCOVERY_UNAVAILABLE", retryable: false });
       return result();
     }
     for (const query of spec.sourceScope.publicDiscovery.queries) {
+      const publicState = publicStates.get(query.queryId)!;
       const recoveredPending = deps.anySearch.isConfigured?.() === false ? [] : await deps.leads.recoverPendingForClaim?.({ userId: value.userId, runId: value.runId, queryId: query.queryId, queryFingerprint: query.stableFingerprint, claimToken: value.claimToken, now: value.now }) ?? [];
+      if (recoveredPending.length) publicState.candidateSeen = true;
       for (const recovered of recoveredPending) {
-        if (seen.has(recovered.stableFingerprint) || verificationCandidates >= spec.sourceScope.publicDiscovery.maxVerificationCandidates) continue;
+        if (seen.has(recovered.stableFingerprint)) continue;
+        if (verificationCandidates >= spec.sourceScope.publicDiscovery.maxVerificationCandidates) { publicState.budgetSkipped = true; if (!publicState.losses.some((loss) => loss.code === "DISCOVERY_BUDGET_EXCEEDED")) publicState.losses.push({ code: "DISCOVERY_BUDGET_EXCEEDED", retryable: false }); continue; }
         seen.add(recovered.stableFingerprint); verificationCandidates += 1; publicCandidateCount += 1;
         const candidate: RecoveredCandidateCapability = { ...recovered, allowedSiteDomains: query.allowedSiteDomains };
         try {
           const extract = await deps.anySearch.extract({ candidate, signal: value.signal, beforeRequest: () => value.beforePhysicalOperation({ kind: "extract", identity: candidate.leadId }), authorizeRecoveredCandidate: (authorization) => deps.leads.authorizeRecoveredCandidateForClaim?.({ userId: candidate.userId, runId: candidate.runId, queryId: authorization.queryId, candidateFingerprint: authorization.candidateFingerprint, leadId: authorization.identity, claimToken: value.claimToken, now: value.now }) ?? Promise.resolve(false) });
-          if ("error" in extract) { recordDiagnostic({ scope: "lead", leadId: candidate.leadId, code: extract.error.code, retryable: extract.error.retryable, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: extract.error.code, affectedCount: 1 }); continue; }
+          if ("error" in extract) { recordDiagnostic({ scope: "lead", leadId: candidate.leadId, code: extract.error.code, retryable: extract.error.retryable, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: extract.error.code, affectedCount: 1 }); recordPublicFailure(publicState, extract.error.retryable); continue; }
           if (extract.normalizedUrl !== candidate.normalizedUrl) {
             await value.beforePhysicalOperation({ kind: "gate_reject", identity: candidate.leadId });
             await deps.gate.rejectForClaim({ candidate, code: "JOB_PAGE_URL_INVALID", claimToken: value.claimToken, now: value.now });
-            recordDiagnostic({ scope: "lead", leadId: candidate.leadId, code: "JOB_PAGE_URL_INVALID", retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: "JOB_PAGE_URL_INVALID", affectedCount: 1 }); continue;
+            recordDiagnostic({ scope: "lead", leadId: candidate.leadId, code: "JOB_PAGE_URL_INVALID", retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: "JOB_PAGE_URL_INVALID", affectedCount: 1 }); recordPublicFailure(publicState, false); continue;
           }
           await value.beforePhysicalOperation({ kind: "fetch", identity: candidate.leadId }); const page = await deps.fetcher.fetch({ candidate, signal: value.signal });
           await value.beforePhysicalOperation({ kind: "gate_verify", identity: candidate.leadId });
-          const verified = await deps.gate.verifyForClaim({ candidate, candidateFingerprint: candidateFingerprint(candidate.normalizedUrl), extract, page, claimToken: value.claimToken, now: value.now }); sourcePostingVersionIds.push(verified.sourcePostingVersionId); publicVerifiedCount += 1;
+          const verified = await deps.gate.verifyForClaim({ candidate, candidateFingerprint: candidateFingerprint(candidate.normalizedUrl), extract, page, claimToken: value.claimToken, now: value.now }); sourcePostingVersionIds.push(verified.sourcePostingVersionId); publicVerifiedCount += 1; publicState.verified = true; verifiedFingerprints.add(candidate.stableFingerprint);
         } catch (error) {
           const code = rejection(error);
-          if (code) { await value.beforePhysicalOperation({ kind: "gate_reject", identity: candidate.leadId }); await deps.gate.rejectForClaim({ candidate, code, claimToken: value.claimToken, now: value.now }); recordDiagnostic({ scope: "lead", leadId: candidate.leadId, code, retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code, affectedCount: 1 }); }
-          else { const retryable = retryablePageCode(error); if (retryable) { recordDiagnostic({ scope: "lead", leadId: candidate.leadId, code: retryable, retryable: true, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: retryable, affectedCount: 1 }); } else throw error; }
+          if (code) { await value.beforePhysicalOperation({ kind: "gate_reject", identity: candidate.leadId }); await deps.gate.rejectForClaim({ candidate, code, claimToken: value.claimToken, now: value.now }); recordDiagnostic({ scope: "lead", leadId: candidate.leadId, code, retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code, affectedCount: 1 }); recordPublicFailure(publicState, false); }
+          else { const retryable = retryablePageCode(error); if (retryable) { recordDiagnostic({ scope: "lead", leadId: candidate.leadId, code: retryable, retryable: true, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: retryable, affectedCount: 1 }); recordPublicFailure(publicState, true); } else throw error; }
         }
       }
+      publicState.checked = true;
       const searched = await deps.anySearch.search({ runId: value.runId, executionSpec: spec, query, signal: value.signal, beforeRequest: () => value.beforePhysicalOperation({ kind: "search", identity: query.queryId }) });
-      if ("error" in searched) { recordDiagnostic({ scope: "provider", code: searched.error.code, retryable: searched.error.retryable, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: searched.error.code, affectedCount: 1 }); continue; }
+      if ("error" in searched) { recordDiagnostic({ scope: "provider", code: searched.error.code, retryable: searched.error.retryable, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: searched.error.code, affectedCount: 1 }); publicState.losses.push({ code: "PUBLIC_DISCOVERY_UNAVAILABLE", retryable: searched.error.retryable }); continue; }
       publicSearchSucceeded = true;
+      publicState.checked = true;
       const rejectedCandidateCount = boundedRejectedCandidateCount(searched.rejectedCandidateCount);
       if (rejectedCandidateCount > 0) {
+        publicState.candidateSeen = true;
+        publicState.losses.push({ code: "VERIFICATION_FAILED", retryable: false });
         recordDiagnostic({ scope: "query", queryId: query.queryId, kind: query.kind, stableFingerprint: query.stableFingerprint, code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: rejectedCandidateCount });
         sourceIssues.push({ provider: "anysearch", code: "ANYSEARCH_POLICY_REJECTED", affectedCount: rejectedCandidateCount });
       }
       publicCandidateCount += searched.candidates.length;
+      if (searched.candidates.length) publicState.candidateSeen = true;
       for (const candidate of searched.candidates.slice(0, query.resultLimit)) {
-        if (!fingerprint.safeParse(candidate.stableFingerprint).success || seen.has(candidate.stableFingerprint)) continue;
-        if (verificationCandidates >= spec.sourceScope.publicDiscovery.maxVerificationCandidates) continue;
+        if (!fingerprint.safeParse(candidate.stableFingerprint).success) { recordPublicFailure(publicState, false); continue; }
+        if (seen.has(candidate.stableFingerprint)) {
+          if (verifiedFingerprints.has(candidate.stableFingerprint)) {
+            const issued: IssuedCandidateCapability = { userId: value.userId, runId: value.runId, queryId: query.queryId, queryFingerprint: query.stableFingerprint, normalizedUrl: candidate.normalizedUrl, stableFingerprint: candidate.stableFingerprint, allowedSiteDomains: query.allowedSiteDomains };
+            const safe = await deps.preflight({ candidate: issued });
+            if (safe?.normalizedUrl === candidate.normalizedUrl && SafeNormalizedPublicJobUrlSchema.safeParse(safe.normalizedUrl).success && matchesAllowedDomain(safe.normalizedUrl, query.allowedSiteDomains)) publicState.verified = true;
+            else recordPublicFailure(publicState, false);
+          }
+          continue;
+        }
+        if (verificationCandidates >= spec.sourceScope.publicDiscovery.maxVerificationCandidates) { publicState.budgetSkipped = true; if (!publicState.losses.some((loss) => loss.code === "DISCOVERY_BUDGET_EXCEEDED")) publicState.losses.push({ code: "DISCOVERY_BUDGET_EXCEEDED", retryable: false }); continue; }
         seen.add(candidate.stableFingerprint);
         const issued: IssuedCandidateCapability = { userId: value.userId, runId: value.runId, queryId: query.queryId, queryFingerprint: query.stableFingerprint, normalizedUrl: candidate.normalizedUrl, stableFingerprint: candidate.stableFingerprint, allowedSiteDomains: query.allowedSiteDomains };
         const safe = await deps.preflight({ candidate: issued });
-        if (!safe || safe.normalizedUrl !== candidate.normalizedUrl || !SafeNormalizedPublicJobUrlSchema.safeParse(safe.normalizedUrl).success) { recordDiagnostic({ scope: "query", queryId: query.queryId, kind: query.kind, stableFingerprint: query.stableFingerprint, code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: "ANYSEARCH_POLICY_REJECTED", affectedCount: 1 }); continue; }
+        if (!safe || safe.normalizedUrl !== candidate.normalizedUrl || !SafeNormalizedPublicJobUrlSchema.safeParse(safe.normalizedUrl).success) { recordDiagnostic({ scope: "query", queryId: query.queryId, kind: query.kind, stableFingerprint: query.stableFingerprint, code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: "ANYSEARCH_POLICY_REJECTED", affectedCount: 1 }); recordPublicFailure(publicState, false); continue; }
         if (!matchesAllowedDomain(safe.normalizedUrl, query.allowedSiteDomains)) {
           await value.beforePhysicalOperation({ kind: "record_pending", identity: issued.queryId });
           const pending = await deps.leads.recordPendingForClaim({ targetId: spec.targetSnapshot.targetId, queryKind: query.kind, candidate: issued, claimToken: value.claimToken, now: value.now });
           await value.beforePhysicalOperation({ kind: "gate_reject", identity: pending.leadId });
           await deps.gate.rejectForClaim({ candidate: { ...issued, leadId: pending.leadId }, code: "POLICY_REJECTED", claimToken: value.claimToken, now: value.now });
-          recordDiagnostic({ scope: "query", queryId: query.queryId, kind: query.kind, stableFingerprint: query.stableFingerprint, code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: "ANYSEARCH_POLICY_REJECTED", affectedCount: 1 }); continue;
+          recordDiagnostic({ scope: "query", queryId: query.queryId, kind: query.kind, stableFingerprint: query.stableFingerprint, code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: "ANYSEARCH_POLICY_REJECTED", affectedCount: 1 }); recordPublicFailure(publicState, false); continue;
         }
         verificationCandidates += 1;
         await value.beforePhysicalOperation({ kind: "record_pending", identity: issued.queryId });
@@ -165,23 +200,24 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
         const recovered: RecoveredCandidateCapability = { ...issued, leadId: pending.leadId };
         try {
           const extract = await deps.anySearch.extract({ candidate: recovered, signal: value.signal, beforeRequest: () => value.beforePhysicalOperation({ kind: "extract", identity: pending.leadId }), authorizeRecoveredCandidate: (authorization) => deps.leads.authorizeRecoveredCandidateForClaim?.({ userId: recovered.userId, runId: recovered.runId, queryId: authorization.queryId, candidateFingerprint: authorization.candidateFingerprint, leadId: authorization.identity, claimToken: value.claimToken, now: value.now }) ?? Promise.resolve(false) });
-          if ("error" in extract) { recordDiagnostic({ scope: "lead", leadId: pending.leadId, code: extract.error.code, retryable: extract.error.retryable, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: extract.error.code, affectedCount: 1 }); continue; }
+          if ("error" in extract) { recordDiagnostic({ scope: "lead", leadId: pending.leadId, code: extract.error.code, retryable: extract.error.retryable, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: extract.error.code, affectedCount: 1 }); recordPublicFailure(publicState, extract.error.retryable); continue; }
           if (extract.normalizedUrl !== safe.normalizedUrl) {
             await value.beforePhysicalOperation({ kind: "gate_reject", identity: pending.leadId });
             await deps.gate.rejectForClaim({ candidate: recovered, code: "JOB_PAGE_URL_INVALID", claimToken: value.claimToken, now: value.now });
             recordDiagnostic({ scope: "lead", leadId: pending.leadId, code: "JOB_PAGE_URL_INVALID", retryable: false, affectedCount: 1 });
             sourceIssues.push({ provider: "anysearch", code: "JOB_PAGE_URL_INVALID", affectedCount: 1 });
+            recordPublicFailure(publicState, false);
             continue;
           }
           await value.beforePhysicalOperation({ kind: "fetch", identity: pending.leadId }); const page = await deps.fetcher.fetch({ candidate: recovered, signal: value.signal });
           await value.beforePhysicalOperation({ kind: "gate_verify", identity: pending.leadId });
-          const verified = await deps.gate.verifyForClaim({ candidate: recovered, candidateFingerprint: candidateFingerprint(safe.normalizedUrl), extract, page, claimToken: value.claimToken, now: value.now }); sourcePostingVersionIds.push(verified.sourcePostingVersionId); publicVerifiedCount += 1;
+          const verified = await deps.gate.verifyForClaim({ candidate: recovered, candidateFingerprint: candidateFingerprint(safe.normalizedUrl), extract, page, claimToken: value.claimToken, now: value.now }); sourcePostingVersionIds.push(verified.sourcePostingVersionId); publicVerifiedCount += 1; publicState.verified = true; verifiedFingerprints.add(recovered.stableFingerprint);
         } catch (error) {
           const code = rejection(error);
-          if (code) { await value.beforePhysicalOperation({ kind: "gate_reject", identity: pending.leadId }); await deps.gate.rejectForClaim({ candidate: recovered, code, claimToken: value.claimToken, now: value.now }); recordDiagnostic({ scope: "lead", leadId: pending.leadId, code, retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code, affectedCount: 1 }); }
+          if (code) { await value.beforePhysicalOperation({ kind: "gate_reject", identity: pending.leadId }); await deps.gate.rejectForClaim({ candidate: recovered, code, claimToken: value.claimToken, now: value.now }); recordDiagnostic({ scope: "lead", leadId: pending.leadId, code, retryable: false, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code, affectedCount: 1 }); recordPublicFailure(publicState, false); }
           else {
             const retryable = retryablePageCode(error);
-            if (retryable) { recordDiagnostic({ scope: "lead", leadId: pending.leadId, code: retryable, retryable: true, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: retryable, affectedCount: 1 }); }
+            if (retryable) { recordDiagnostic({ scope: "lead", leadId: pending.leadId, code: retryable, retryable: true, affectedCount: 1 }); sourceIssues.push({ provider: "anysearch", code: retryable, affectedCount: 1 }); recordPublicFailure(publicState, true); }
             else throw error;
           }
         }

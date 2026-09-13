@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { AgentRunBudgetSchema, AgentRunFailureCodeSchema, AgentRunStatusSchema } from "./agent-runs";
 import { RunPreflightReportSchema, RunPreflightSnapshotSchema, RunPreflightWarningFingerprintSchema } from "./run-preflight";
+import { RecommendationCoverageLossCodeSchema } from "./recommendation-discovery-facts";
+
+export { RecommendationCoverageLossCodeSchema } from "./recommendation-discovery-facts";
 
 const nonnegativeInteger = z.int().nonnegative();
 const positiveInteger = z.int().positive();
@@ -12,9 +15,6 @@ export const RecommendationRunStageStatusSchema = z.enum(["pending", "running", 
 export const RecommendationRunSuggestedActionSchema = z.enum(["restart_discovery", "review_source_health", "review_profile", "review_primary_target"]);
 export const RecommendationRunFailureSuggestedActionSchema = z.enum([
   "restart_discovery", "review_source_health", "review_profile", "review_primary_target", "run_model_diagnostic", "review_account_run_policy",
-]);
-export const RecommendationCoverageLossCodeSchema = z.enum([
-  "TRUSTED_SOURCE_UNAVAILABLE", "PUBLIC_DISCOVERY_UNAVAILABLE", "SOURCE_HEALTH_DEGRADED", "SOURCE_CAPABILITY_UNAVAILABLE", "VERIFICATION_FAILED", "DISCOVERY_BUDGET_EXCEEDED",
 ]);
 export const RecommendationRunFailureCodeSchema = z.union([
   AgentRunFailureCodeSchema,

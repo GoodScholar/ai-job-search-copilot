@@ -287,12 +287,12 @@ describe("deep match persistence", () => {
     const created = await db.transaction((transaction) => ensureDeepMatchRunInTransaction({
       transaction, id: () => crypto.randomUUID(), clock: () => now, runPreflight: { evaluate: async () => { throw new Error("recommendation child skips preflight"); } } as any,
       userId: input.userId, targetId: input.targetId, idempotencyKey: crypto.randomUUID(), trigger: "automatic", discoveryRunId: parentRunId,
-      recommendation: { parentRunId, profileId: input.profileId, profileVersion: 1, targetSnapshot: template!.targetSnapshot, budgetSnapshot: template!.budgetSnapshot, accountPolicyRevisionNumber: template!.accountPolicyRevisionNumber!, accountPolicySnapshot: template!.accountPolicySnapshot, preflightSnapshot: template!.preflightSnapshot, frozenTriageVersionIds: [input.triageVersionId] },
+      recommendation: { parentRunId, profileId: input.profileId, profileVersion: 1, targetSnapshot: template!.targetSnapshot, budgetSnapshot: template!.budgetSnapshot, accountPolicyRevisionNumber: template!.accountPolicyRevisionNumber!, accountPolicySnapshot: template!.accountPolicySnapshot, preflightSnapshot: template!.preflightSnapshot, frozenTriageVersionIds: [input.triageVersionId], frozenRecommendationEvidence: { version: "recommendation-evidence-v1", plannedTrustedSourceCount: 1, plannedPublicQueryCount: 0, discoveryFacts: { version: "recommendation-discovery-facts-v1", trusted: [{ sourceId: "fake:aurora-careers", checked: true, outcome: "credible_results", losses: [] }], publicQueries: [] }, frozenTriageVersionIds: [input.triageVersionId] } },
     }));
 
     expect(created).toMatchObject({ kind: "created", reused: false, run: { ruleVersion: "recommendation-rule-v1" } });
     const [child] = await db.select({ sourceScope: agentRuns.sourceScope }).from(agentRuns).where(eq(agentRuns.id, (created as { kind: "created"; run: { id: string } }).run.id));
-    expect(child!.sourceScope).toMatchObject({ recommendationRuleConfig: ruleConfig, selectionExclusions: [] });
+    expect(child!.sourceScope).toMatchObject({ recommendationRuleConfig: ruleConfig, selectionExclusions: [], frozenRecommendationEvidence: { version: "recommendation-evidence-v1", frozenTriageVersionIds: [input.triageVersionId] } });
     await expect(db.select().from(deepMatchRunCandidates).where(eq(deepMatchRunCandidates.runId, (created as { kind: "created"; run: { id: string } }).run.id))).resolves.toHaveLength(1);
   });
 

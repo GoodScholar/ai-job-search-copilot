@@ -11,7 +11,7 @@ import { LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION } from "@job-copilot/cont
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import type { AuditTrail } from "./audit-trail";
 import { reduceControl } from "./agent-run-state";
-import { normalizeAgentRunSourceScope } from "./agent-run-source-scope";
+import { normalizeAgentRunSourceScope, projectPublicAgentRunSourceScope } from "./agent-run-source-scope";
 import { applyTransactionDeadline } from "./transaction-deadline";
 import type { JobDiscoveryExecutionMode } from "./job-discovery-execution-mode";
 import { resolveEffectiveAccountRunPolicy } from "./account-run-policies";
@@ -57,7 +57,7 @@ const stepKeys = ["batch_search", "fetch_details", "persist_results"] as const;
 function summary(row: RunRow, reused: boolean): StartAgentRunResponse {
   const sourceScope = row.workflowVersion === LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION
     ? AgentRunExecutionSpecSchema.parse({ targetSnapshot: row.targetSnapshot, profileSnapshot: row.profileSnapshot, watchlistSnapshot: row.watchlistSnapshot, sourceScope: row.sourceScope, workflowVersion: row.workflowVersion, ruleVersion: row.ruleVersion, adapter: row.adapter, adapterVersion: row.adapterVersion, outputSchemaVersion: row.outputSchemaVersion, toolAllowlist: row.toolAllowlist, model: row.modelSnapshot, budget: row.budgetSnapshot }).sourceScope
-    : normalizeAgentRunSourceScope(row.sourceScope);
+    : projectPublicAgentRunSourceScope(row.sourceScope);
   return StartAgentRunResponseSchema.parse({
     runId: row.id, targetId: row.targetId, targetVersion: row.targetVersion,
     accountPolicyRevisionNumber: row.accountPolicyRevisionNumber,

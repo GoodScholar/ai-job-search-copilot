@@ -3,6 +3,7 @@ import {
   PublicAgentRunSourceScopeSchema,
   PublicSourceHealthAgentRunSourceScopeSchema,
   DeepMatchAgentRunSourceScopeSchema,
+  DeepMatchAgentRunPublicSourceScopeSchema,
   FAKE_JOB_DISCOVERY_ADAPTER,
   FAKE_JOB_DISCOVERY_ADAPTER_VERSION,
   FAKE_JOB_DISCOVERY_SOURCE_IDS,
@@ -43,4 +44,12 @@ export function normalizeAgentRunSourceScope(value: unknown) {
   if (publicV2.success) return publicV2.data;
   const deepMatch = DeepMatchAgentRunSourceScopeSchema.safeParse(value);
   return deepMatch.success ? deepMatch.data : PublicSourceHealthAgentRunSourceScopeSchema.parse(value);
+}
+
+/** 内部深匹配范围可含发布证据；面向 API 的运行投影必须剥离它。 */
+export function projectPublicAgentRunSourceScope(value: unknown) {
+  const deepMatch = DeepMatchAgentRunSourceScopeSchema.safeParse(value);
+  if (!deepMatch.success) return normalizeAgentRunSourceScope(value);
+  const { frozenRecommendationEvidence: _frozenRecommendationEvidence, ...publicScope } = deepMatch.data;
+  return DeepMatchAgentRunPublicSourceScopeSchema.parse(publicScope);
 }
