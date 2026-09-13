@@ -229,7 +229,7 @@ describe("AgentRunProcessor checkpoints", () => {
     return { userId, targetId, runId: started.run.runId };
   }
 
-  function recommendationProcessor(input: { executionMode: "fake" | "greenhouse" | "layered_public"; auditTrail: any; matchingQueue?: DeepMatchRunQueue; collectionEntered?: ReturnType<typeof deferred>; releaseCollection?: ReturnType<typeof deferred>; clock?: () => Date }) {
+  function recommendationProcessor(input: { executionMode: "fake" | "greenhouse" | "layered_public"; auditTrail: any; matchingQueue?: DeepMatchRunQueue; collectionEntered?: ReturnType<typeof deferred>; releaseCollection?: ReturnType<typeof deferred>; clock?: () => Date; checkpoint?: AgentRunCheckpoint }) {
     const waitAtCollection = async () => {
       input.collectionEntered?.resolve();
       if (input.releaseCollection) await input.releaseCollection.promise;
@@ -249,7 +249,7 @@ describe("AgentRunProcessor checkpoints", () => {
       getSourceDetail: async ({ source }: { source: { sourceId: string; boardToken: string } }) => ({ ok: true as const, attemptCount: 1, data: { ...detail, sourceId: source.sourceId, absoluteUrl: `https://boards.greenhouse.io/${source.boardToken}/jobs/${detail.detailId}` } }),
     };
     return createAgentRunProcessor({
-      db: database, auditTrail: input.auditTrail, id: () => crypto.randomUUID(), clock: input.clock ?? (() => now), contentStore: new Store(), checkpoint: checkpoint(), matchingQueue: input.matchingQueue,
+      db: database, auditTrail: input.auditTrail, id: () => crypto.randomUUID(), clock: input.clock ?? (() => now), contentStore: new Store(), checkpoint: input.checkpoint ?? checkpoint(), matchingQueue: input.matchingQueue,
       ...(input.executionMode === "layered_public"
         ? { adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => { await waitAtCollection(); return { branchOutcome: { trusted: "succeeded" as const, publicDiscovery: "clean_zero" as const }, diagnostics: [] }; } }) } }
         : { adapterResolver: resolver(adapter), ...(input.executionMode === "greenhouse" ? { sourceHealthAdapterResolver: { resolve: () => sourceHealthAdapter } } : {}) }),
@@ -2398,24 +2398,42 @@ describe("AgentRunProcessor checkpoints", () => {
     ])).resolves.toEqual([[], [], [{ status: "running" }]]);
   });
 
-  it.each(["fake", "greenhouse", "layered_public"] as const)("%s 推荐根在账户锁等待后 lease 过期时不写完成事实", async (executionMode) => {
+  it.each(["fake", "greenhouse", "layered_public"] as const)("%s 推荐根在最后 checkpoint 后等待账户锁且 lease 过期时不写完成事实", async (executionMode) => {
     const root = await recommendationRoot(executionMode);
     const lockDatabase = createDatabase(container.getConnectionUri());
-    const collectionEntered = deferred(); const releaseCollection = deferred(); const locked = deferred(); const release = deferred();
+    const finalCheckpointEntered = deferred(); const releaseFinalCheckpoint = deferred(); const locked = deferred(); const release = deferred();
     let clockNow = now;
-    const processing = recommendationProcessor({ executionMode, auditTrail: createAuditTrail({ db: database, clock: () => now }), clock: () => clockNow, collectionEntered, releaseCollection })
+    let finalCheckpointReturned = false;
+    const durable = checkpoint();
+    const controlled: AgentRunCheckpoint = { check: async (input) => {
+      const outcome = await durable.check(input);
+      const isFinalCheckpoint = executionMode === "layered_public"
+        ? input.checkpointKey.includes(":step_persist_results_start:1")
+        : input.checkpointKey.includes(":domain_commit_before:1");
+      if (isFinalCheckpoint) {
+        expect(outcome.kind).toBe("continue");
+        finalCheckpointEntered.resolve();
+        await releaseFinalCheckpoint.promise;
+        finalCheckpointReturned = true;
+      }
+      return outcome;
+    } };
+    const processing = recommendationProcessor({ executionMode, auditTrail: createAuditTrail({ db: database, clock: () => now }), clock: () => clockNow, checkpoint: controlled })
       .process({ version: 1, userId: root.userId, runId: root.runId, finalAttempt: true });
     let lock: Promise<unknown> | undefined;
     try {
-      await waitForBarrier({ barrier: collectionEntered.promise, operation: processing, name: `${executionMode} lease completion collection` });
+      await waitForBarrier({ barrier: finalCheckpointEntered.promise, operation: processing, name: `${executionMode} final completion checkpoint` });
       lock = lockDatabase.transaction(async (transaction) => {
         await transaction.execute(sql`select pg_advisory_xact_lock(hashtextextended(${root.userId}, 0))`);
         locked.resolve();
         await release.promise;
       });
       await locked.promise;
-      releaseCollection.resolve();
+      releaseFinalCheckpoint.resolve();
+      await vi.waitFor(() => expect(finalCheckpointReturned).toBe(true), { timeout: 2_000 });
       await waitUntilAConnectionIsWaitingForAccountAdvisoryLock(database);
+      const [beforeCompletion] = await database.select({ claimToken: agentRuns.claimToken }).from(agentRuns).where(eq(agentRuns.id, root.runId));
+      expect(beforeCompletion?.claimToken).toEqual(expect.any(String));
       clockNow = new Date(now.getTime() + 30_001);
       release.resolve();
       await lock;
@@ -2426,11 +2444,13 @@ describe("AgentRunProcessor checkpoints", () => {
         database.select().from(jobTriageVersions).where(eq(jobTriageVersions.userId, root.userId)),
         database.select({ status: agentRuns.status, claimToken: agentRuns.claimToken }).from(agentRuns).where(eq(agentRuns.id, root.runId)),
         database.select().from(agentRuns).where(and(eq(agentRuns.parentRunId, root.runId), eq(agentRuns.runPurpose, "recommendation"))),
-      ])).resolves.toEqual([[], [], [], [{ status: "running", claimToken: expect.any(String) }], []]);
+        database.select().from(agentRunEvents).where(and(eq(agentRunEvents.runId, root.runId), eq(agentRunEvents.eventType, "run.completed"))),
+      ])).resolves.toEqual([[], [], [], [{ status: "running", claimToken: beforeCompletion!.claimToken }], [], []]);
     } finally {
-      releaseCollection.resolve();
+      releaseFinalCheckpoint.resolve();
       release.resolve();
       await lock?.catch(() => undefined);
+      await processing.catch(() => undefined);
       await lockDatabase.$client.end();
     }
   });

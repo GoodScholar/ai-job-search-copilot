@@ -39,7 +39,7 @@ async function migrateAt0050(database: Database) {
   await cp(migrationSource, migrationsFolder, { recursive: true });
   await Promise.all(["0051_recommendation_rule_exclusions", "0052_recommendation_root_discovery_workflows", "0053_recommendation_child_parent_root"].flatMap((migration) => [
     rm(join(migrationsFolder, `${migration}.sql`), { force: true }),
-    rm(join(migrationsFolder, "meta", `${migration}_snapshot.json`), { force: true }),
+    rm(join(migrationsFolder, "meta", `${migration.slice(0, 4)}_snapshot.json`), { force: true }),
   ]));
   const journalPath = join(migrationsFolder, "meta", "_journal.json");
   const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ idx: number }> };
