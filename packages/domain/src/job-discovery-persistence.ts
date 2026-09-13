@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq, gt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, sql } from "drizzle-orm";
 import {
   agentRunEvents,
+  jobDiscoveryRunResults,
   agentRunJobResults,
   agentRunSteps,
   agentRunUsageEntries,
@@ -30,6 +31,29 @@ import { SourceCapabilityRejectionReasonCodeSchema } from "@job-copilot/contract
 import { SourceExecutionActionSchema, type SourceExecutionAction } from "./source-capabilities";
 import { narrowGreenhouseSourceScope } from "./agent-run-source-scope";
 import { z } from "zod";
+
+/** Reads the immutable result tuples owned by one completed discovery root. */
+export async function readDiscoveryResultCandidatesInTransaction(transaction: any, input: { userId: string; targetId: string; rootRunId: string }) {
+  const [root] = await transaction.select({ id: agentRuns.id, workflowVersion: agentRuns.workflowVersion }).from(agentRuns).where(and(
+    eq(agentRuns.userId, input.userId), eq(agentRuns.targetId, input.targetId), eq(agentRuns.id, input.rootRunId),
+  )).limit(1);
+  if (!root) throw new Error("DISCOVERY_ROOT_NOT_FOUND");
+  const rows = root.workflowVersion === "layered-public-job-discovery-v1"
+    ? await transaction.select({ opportunityId: jobOpportunitySources.opportunityId, sourcePostingVersionId: jobDiscoveryRunResults.sourcePostingVersionId, ordinal: jobDiscoveryRunResults.ordinal })
+      .from(jobDiscoveryRunResults).innerJoin(jobOpportunitySources, and(
+        eq(jobOpportunitySources.userId, jobDiscoveryRunResults.userId), eq(jobOpportunitySources.sourcePostingVersionId, jobDiscoveryRunResults.sourcePostingVersionId),
+      )).where(and(eq(jobDiscoveryRunResults.userId, input.userId), eq(jobDiscoveryRunResults.runId, root.id)))
+      .orderBy(asc(jobDiscoveryRunResults.ordinal), asc(jobDiscoveryRunResults.sourcePostingVersionId), asc(jobOpportunitySources.opportunityId))
+    : await transaction.select({ opportunityId: agentRunJobResults.opportunityId, sourcePostingVersionId: agentRunJobResults.sourcePostingVersionId, ordinal: agentRunJobResults.ordinal })
+      .from(agentRunJobResults).where(and(eq(agentRunJobResults.userId, input.userId), eq(agentRunJobResults.runId, root.id)))
+      .orderBy(asc(agentRunJobResults.ordinal), asc(agentRunJobResults.sourcePostingVersionId), asc(agentRunJobResults.opportunityId));
+  const seen = new Set<string>();
+  return rows.flatMap((row: { opportunityId: string; sourcePostingVersionId: string }) => {
+    if (seen.has(row.opportunityId)) return [];
+    seen.add(row.opportunityId);
+    return [{ opportunityId: row.opportunityId, sourcePostingVersionId: row.sourcePostingVersionId }];
+  });
+}
 
 const PersistedCapabilityIssueSchema = z.object({
   provider: z.literal("greenhouse"),
@@ -527,6 +551,7 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
         await transaction.update(agentRunSteps).set({ status: "completed", completedAt: input.now }).where(and(eq(agentRunSteps.userId, run.userId), eq(agentRunSteps.runId, run.id), eq(agentRunSteps.stepKey, "persist_results")));
         await transaction.update(agentRuns).set({ currentStep: "persist_results", version: stepVersion, updatedAt: input.now }).where(and(eq(agentRuns.userId, run.userId), eq(agentRuns.id, run.id), eq(agentRuns.claimToken, run.claimToken), eq(agentRuns.controlState, "none")));
         await appendEvent(transaction, { id: deps.id, userId: run.userId, runId: run.id, version: stepVersion, eventType: "step.completed", data: { eventType: "step.completed", status: "running", currentStep: "persist_results", stepKey: "persist_results", attemptCount: run.attemptCount }, now: input.now });
+        if (terminal !== "source_failed" && run.runPurpose === "recommendation") await input.afterCompleted?.({ transaction, userId: run.userId, targetId: run.targetId, discoveryRunId: run.id });
         const terminalVersion = stepVersion + 1;
         const failed = terminal === "source_failed";
         await transaction.update(agentRuns).set({ status: failed ? "failed" : "completed", currentStep: failed ? "failed" : "completed", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, activeDurationMs, ...(failed ? { failedAt: input.now, failureCode: "AGENT_RUN_ADAPTER_FAILED", terminationKind: "source_failed" } : { completedAt: input.now, failureCode: null, terminationKind: terminal }), terminationBudgetDimension: null, resultCount: existingResults.length + resultCount, version: terminalVersion, updatedAt: input.now }).where(and(eq(agentRuns.userId, run.userId), eq(agentRuns.id, run.id), eq(agentRuns.claimToken, run.claimToken), eq(agentRuns.controlState, "none")));
@@ -555,7 +580,7 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
           const [item] = await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: run.userId, runId: run.id, triggerEventSequence: terminalSequence, kind: "run_failed", status: "unread", reasonCode: "AGENT_RUN_ADAPTER_FAILED", budgetDimension: null, createdAt: input.now }).onConflictDoNothing().returning({ id: agentInboxItems.id });
           if (item) await deps.auditTrail.bind(transaction).append({ userId: run.userId, actorUserId: run.userId, eventType: "agent.inbox_opened", occurredAt: input.now, requestId: run.id, outcome: "success", reasonCode: "AGENT_RUN_ADAPTER_FAILED", resourceType: "agent_inbox_item", resourceId: item.id, metadata: { runId: run.id, kind: "run_failed", reasonCode: "AGENT_RUN_ADAPTER_FAILED", budgetDimension: null } });
         }
-        if (!failed) await input.afterCompleted?.({ transaction, userId: run.userId, targetId: run.targetId, discoveryRunId: run.id });
+        if (!failed && run.runPurpose !== "recommendation") await input.afterCompleted?.({ transaction, userId: run.userId, targetId: run.targetId, discoveryRunId: run.id });
         return { resultCount, cleanupObjectKeys, completed: true };
       };
       return input.transaction

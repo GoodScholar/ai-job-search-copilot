@@ -12,6 +12,7 @@ import {
   auditEvents,
   createDatabase,
   jobAccounts,
+  jobDiscoveryRunResults,
   jobDiscoverySourceIssues,
   jobOpportunities,
   jobSourceHealthChecks,
@@ -27,9 +28,10 @@ import { createAuditTrail } from "./audit-trail";
 import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
 import { createAgentRunCommands, type AgentRunQueue } from "./agent-run-control";
 import { createAccountRunControl } from "./account-run-control";
-import { createJobDiscoveryPersistence, discoverySourceIdentifier } from "./job-discovery-persistence";
+import { createJobDiscoveryPersistence, discoverySourceIdentifier, readDiscoveryResultCandidatesInTransaction } from "./job-discovery-persistence";
 import { persistJobOpportunity } from "./job-opportunity-persistence";
-import { GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION } from "@job-copilot/contracts/agent-runs";
+import { FAKE_JOB_DISCOVERY_WORKFLOW_VERSION, GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION, GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION } from "@job-copilot/contracts/agent-runs";
+import { LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION } from "@job-copilot/contracts/job-discovery";
 
 const firstSeen = new Date("2026-08-30T00:00:00.000Z");
 const later = new Date("2026-08-31T00:00:00.000Z");
@@ -64,6 +66,50 @@ describe("job discovery persistence lifecycle", () => {
       .where(and(eq(agentRunSteps.userId, userId), eq(agentRunSteps.runId, started.runId), eq(agentRunSteps.stepKey, "persist_results")));
     return { ...run, claimToken };
   }
+
+  it.each([
+    ["fake", FAKE_JOB_DISCOVERY_WORKFLOW_VERSION],
+    ["greenhouse", GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION],
+    ["layered_public", LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION],
+  ] as const)("%s root adapter 只读取本 root 的关联版本并按 ordinal 去重", async (_mode, workflowVersion) => {
+    const userId = crypto.randomUUID();
+    const targetId = crypto.randomUUID();
+    await database.insert(jobAccounts).values({ id: userId });
+    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: firstSeen, updatedAt: firstSeen });
+    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: firstSeen });
+    const freezeRoot = async () => {
+      const run = await claimRun(userId, targetId, later);
+      await database.update(agentRuns).set({ workflowVersion, ...(workflowVersion === LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION ? { profileSnapshot: { targetId }, watchlistSnapshot: { targetId } } : {}) }).where(eq(agentRuns.id, run.id));
+      return run;
+    };
+    const createOpportunity = async () => {
+      const sourcePostingId = crypto.randomUUID(); const firstVersionId = crypto.randomUUID(); const secondVersionId = crypto.randomUUID(); const opportunityId = crypto.randomUUID();
+      const sourceHash = sourcePostingId.replaceAll("-", "").padEnd(64, "a");
+      await database.insert(jobSourcePostings).values({ id: sourcePostingId, userId, sourceType: "company_careers", sourceIdentifier: sourceHash, sourceIdentity: { sourcePostingId }, isOfficial: true, availability: "open", availabilityUpdatedAt: later, createdAt: later, updatedAt: later });
+      await database.insert(jobSourcePostingVersions).values([
+        { id: firstVersionId, userId, sourcePostingId, version: 1, contentSha256: sourceHash, rawContentSha256: sourceHash, rawObjectReference: { objectKey: "first" }, normalizedData: { title: "first" }, retrievedAt: later, availability: "open", createdAt: later },
+        { id: secondVersionId, userId, sourcePostingId, version: 2, contentSha256: "b".repeat(64), rawContentSha256: "b".repeat(64), rawObjectReference: { objectKey: "second" }, normalizedData: { title: "second" }, retrievedAt: later, availability: "open", createdAt: later },
+      ]);
+      await database.insert(jobOpportunities).values({ id: opportunityId, userId, importId: null, sourcePostingVersionId: secondVersionId, canonicalOpportunityId: null, dedupKey: sourceHash, company: null, title: "current", location: null, postedAt: null, deadline: null, description: null, normalizedData: {}, availability: "open", availabilityUpdatedAt: later, createdAt: later, updatedAt: later });
+      await database.insert(jobOpportunitySources).values([
+        { id: crypto.randomUUID(), userId, opportunityId, sourcePostingVersionId: firstVersionId, createdAt: later },
+        { id: crypto.randomUUID(), userId, opportunityId, sourcePostingVersionId: secondVersionId, createdAt: later },
+      ]);
+      return { opportunityId, firstVersionId, secondVersionId };
+    };
+    const writeResult = async (runId: string, opportunityId: string, sourcePostingVersionId: string, ordinal: number) => {
+      if (workflowVersion === LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION) await database.insert(jobDiscoveryRunResults).values({ id: crypto.randomUUID(), userId, runId, sourcePostingVersionId, ordinal, createdAt: later });
+      else await database.insert(agentRunJobResults).values({ id: crypto.randomUUID(), userId, runId, opportunityId, sourcePostingVersionId, ordinal, createdAt: later });
+    };
+    const root = await freezeRoot(); const selected = await createOpportunity();
+    await writeResult(root.id, selected.opportunityId, selected.firstVersionId, 1);
+    await writeResult(root.id, selected.opportunityId, selected.secondVersionId, 2);
+    const history = await freezeRoot(); const historical = await createOpportunity();
+    await writeResult(history.id, historical.opportunityId, historical.firstVersionId, 1);
+
+    await expect(database.transaction((transaction) => readDiscoveryResultCandidatesInTransaction(transaction, { userId, targetId, rootRunId: root.id })))
+      .resolves.toEqual([{ opportunityId: selected.opportunityId, sourcePostingVersionId: selected.firstVersionId }]);
+  });
 
   it("旧机会键保持六字段哈希，v4 无展示字段时才按来源身份分隔", async () => {
     const userId = crypto.randomUUID();
@@ -688,10 +734,12 @@ describe("job discovery persistence lifecycle", () => {
     await expect(database.execute(sql`select count(*)::int as count from job_opportunity_sources where user_id = ${userId}::uuid`)).resolves.toEqual([{ count: count * 2 }]);
     // 新运行的账户停止准入额外读取一次账户控制行，仍保持与明细数无关的常数 SQL 形状。
     expect(statementCount).toBeLessThanOrEqual(37);
-    expect(observedStatements.find((statement) => statement.query.startsWith('insert into "agent_runs"'))?.query)
-      .toMatch(/\$6, default, default, \$7/u);
-    // 新运行记录携带策略修订、策略快照与 preflight 快照，固定 SQL 形状增加三个参数。
-    expect(Math.max(...observedStatements.map((statement) => statement.params.length))).toBeLessThanOrEqual(35);
+    const agentRunInsert = observedStatements.find((statement) => statement.query.startsWith('insert into "agent_runs"'));
+    expect(agentRunInsert?.query).toContain('"parent_run_id", "run_purpose", "recommendation_context"');
+    // 既有发现运行仍写固定 legacy topology；Task 4 新增的不可变列不能恢复旧参数布局。
+    expect(agentRunInsert?.params.slice(3, 6)).toEqual([null, "job_discovery", null]);
+    expect(agentRunInsert?.params.slice(9, 11)).toEqual([null, null]);
+    expect(Math.max(...observedStatements.map((statement) => statement.params.length))).toBeLessThanOrEqual(40);
     expect(observedStatements.some((statement) => statement.query.includes("jsonb_to_recordset"))).toBe(true);
     expect(observedStatements.some((statement) => /\bin\s*\(\s*\$\d+\s*,\s*\$\d+/.test(statement.query))).toBe(false);
   });

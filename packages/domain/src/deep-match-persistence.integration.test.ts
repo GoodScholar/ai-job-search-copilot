@@ -2,13 +2,13 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  agentInboxItems, agentRuns, createDatabase, deepMatchRunCandidates, jobAccounts, jobMatchVersions, jobOpportunities, jobOpportunitySources, jobProfiles, jobSourcePostingVersions, jobSourcePostings, recommendationListItems, recommendationLists,
+  agentInboxItems, agentRuns, calibrationProposalRevisions, calibrationProposals, createDatabase, deepMatchRunCandidates, jobAccounts, jobMatchVersions, jobOpportunities, jobOpportunitySources, jobProfiles, jobSourcePostingVersions, jobSourcePostings, recommendationListItems, recommendationLists, recommendationRuleVersions,
   firstRecommendationJourneyCompletions, jobTargetRevisions, jobTargets, jobTriageVersions, migrateDatabase, profileFactRevisions, profileFacts, recommendationExclusions, type Database,
 } from "@job-copilot/database";
 import { and, eq, sql } from "drizzle-orm";
 import { DeepMatchCandidateSchema, FakeDeepMatchAdapter } from "@job-copilot/contracts/deep-match";
 import { JobTargetConstraintsSchema } from "@job-copilot/contracts/job-targets";
-import { createDeepMatchRunStarter as createDomainDeepMatchRunStarter } from "./deep-match-agent-runs";
+import { createDeepMatchRunStarter as createDomainDeepMatchRunStarter, ensureDeepMatchRunInTransaction } from "./deep-match-agent-runs";
 import { createAgentRunRecoveryQueries } from "./agent-run-processor";
 import { createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
 import { createAccountRunControl } from "./account-run-control";
@@ -177,6 +177,81 @@ describe("deep match persistence", () => {
       expect.objectContaining({ reasonCode: "DEADLINE_EXPIRED" }),
       expect.objectContaining({ reasonCode: "TRIAGE_NOT_PASS" }),
     ]));
+  });
+
+  it("推荐 selection 使用本 root 冻结的来源版本，而不是当前机会指针或内容", async () => {
+    const input = await fixture({ score: 90 });
+    const [source] = await db.select({ sourcePostingId: jobSourcePostingVersions.sourcePostingId }).from(jobSourcePostingVersions)
+      .where(eq(jobSourcePostingVersions.id, input.sourcePostingVersionId));
+    const frozenNormalizedData = { company: "冻结公司", title: "冻结前端工程师", location: "杭州", deadline: "2026-09-20T00:00:00.000Z", qualifications: {
+      workMode: null, relocationRequired: null, salary: null, seniority: null, education: null, languages: null,
+      workEligibility: null, industry: null, employmentType: null,
+      requiredSkills: { value: ["TypeScript"], evidence: { field: "requiredSkills", path: "技能", value: "TypeScript" } },
+    } };
+    const currentSourcePostingVersionId = crypto.randomUUID();
+    await db.update(jobSourcePostingVersions).set({ normalizedData: frozenNormalizedData }).where(eq(jobSourcePostingVersions.id, input.sourcePostingVersionId));
+    await db.insert(jobSourcePostingVersions).values({ id: currentSourcePostingVersionId, userId: input.userId, sourcePostingId: source!.sourcePostingId, version: 2, contentSha256: "b".repeat(64), rawContentSha256: "b".repeat(64), rawObjectReference: { key: "current" }, normalizedData: { company: "当前公司", title: "当前后端工程师", location: "北京" }, retrievedAt: now, availability: "open", createdAt: now });
+    await db.insert(jobOpportunitySources).values({ id: crypto.randomUUID(), userId: input.userId, opportunityId: input.opportunityId, sourcePostingVersionId: currentSourcePostingVersionId, createdAt: now });
+    await db.update(jobOpportunities).set({ sourcePostingVersionId: currentSourcePostingVersionId, company: "当前公司", title: "当前后端工程师", location: "北京", description: "当前岗位描述", normalizedData: { company: "当前公司", title: "当前后端工程师", location: "北京" }, updatedAt: now }).where(eq(jobOpportunities.id, input.opportunityId));
+
+    const selection = await createDeepMatchQueries({ db }).selectCandidateSelection({
+      userId: input.userId, targetId: input.targetId, targetVersion: 1,
+      sourcePostingVersionIds: [input.sourcePostingVersionId], profileId: input.profileId, profileVersion: 1,
+    });
+
+    expect(selection).toMatchObject({ exclusions: [], candidates: [expect.objectContaining({
+      opportunityId: input.opportunityId, sourcePostingVersionId: input.sourcePostingVersionId,
+      opportunitySnapshot: { company: "冻结公司", title: "冻结前端工程师", location: "杭州" },
+    })] });
+    expect(selection.candidates[0]!.jobEvidence.map((item) => item.value)).toEqual(expect.arrayContaining(["冻结前端工程师", "杭州"]));
+    expect(selection.candidates[0]!.jobEvidence.map((item) => item.value)).not.toEqual(expect.arrayContaining(["当前后端工程师", "北京", "当前岗位描述"]));
+  });
+
+  it("推荐 selection 在冻结来源缺少 qualifications 时不回退当前机会数据", async () => {
+    const input = await fixture({ score: 90 });
+    await db.update(jobSourcePostingVersions).set({ normalizedData: {} }).where(eq(jobSourcePostingVersions.id, input.sourcePostingVersionId));
+    await db.update(jobOpportunities).set({ normalizedData: { qualifications: {
+      workMode: null, relocationRequired: null, salary: null, seniority: null, education: null, languages: null,
+      workEligibility: null, industry: null, employmentType: null,
+      requiredSkills: { value: ["CurrentOnly"], evidence: { field: "requiredSkills", path: "技能", value: "CurrentOnly" } },
+    } } }).where(eq(jobOpportunities.id, input.opportunityId));
+
+    await expect(createDeepMatchQueries({ db }).selectCandidateSelection({
+      userId: input.userId, targetId: input.targetId, targetVersion: 1,
+      sourcePostingVersionIds: [input.sourcePostingVersionId], profileId: input.profileId, profileVersion: 1,
+    })).resolves.toEqual({ candidates: [], exclusions: [{ opportunityId: input.opportunityId, reasonCode: "MATCH_QUALITY_INSUFFICIENT" }] });
+  });
+
+  it("推荐 child 冻结当前非默认规则及其版本而不改变粗排语义", async () => {
+    const input = await fixture({ score: 90 });
+    const automatic = createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now });
+    const ordinary = await automatic.start({ userId: input.userId, targetId: input.targetId, trigger: "automatic", discoveryRunId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID() });
+    const [template] = await db.select().from(agentRuns).where(eq(agentRuns.id, ordinary.runId));
+    const parentRunId = crypto.randomUUID();
+    await db.insert(agentRuns).values({
+      id: parentRunId, userId: input.userId, targetId: input.targetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1,
+      targetSnapshot: template!.targetSnapshot, profileSnapshot: { targetId: input.targetId, version: 1, confirmedActiveSkillNames: ["TypeScript"] }, watchlistSnapshot: { targetId: input.targetId, version: 0, companies: [] },
+      sourceScope: { kind: "recommendation" }, budgetSnapshot: template!.budgetSnapshot, accountPolicyRevisionNumber: template!.accountPolicyRevisionNumber, accountPolicySnapshot: template!.accountPolicySnapshot, preflightSnapshot: template!.preflightSnapshot,
+      workflowVersion: "layered-public-job-discovery-v1", ruleVersion: "layered-public-job-discovery-rules-v1", adapter: "layered-public", adapterVersion: "test", outputSchemaVersion: "job-discovery-result-v1", toolAllowlist: [], modelSnapshot: null,
+      runPurpose: "recommendation", recommendationContext: { version: "recommendation-context-v1", profile: { profileId: input.profileId, profileVersion: 1 }, budgets: { discovery: template!.budgetSnapshot, deepMatch: template!.budgetSnapshot }, preflight: template!.preflightSnapshot, accountPolicyRevisionNumber: template!.accountPolicyRevisionNumber },
+      status: "queued", currentStep: "queued", controlState: "none", version: 1, attemptCount: 0, activeDurationMs: 0, toolCallCount: 0, sourceRequestCount: 0, modelCallCount: 0, inputTokenCount: 0, outputTokenCount: 0, totalTokenCount: 0, resultCount: 0, usageComplete: false, queuedAt: now, createdAt: now, updatedAt: now,
+    });
+    const proposalId = crypto.randomUUID(); const proposalRevisionId = crypto.randomUUID();
+    const ruleConfig = { minimumOverallScore: 95, minimumEvidenceDimensions: 0, requiredEvidenceDimensions: [], excludedOpportunityIds: [] };
+    await db.insert(calibrationProposals).values({ id: proposalId, userId: input.userId, targetId: input.targetId, reason: "SALARY", status: "approved", version: 2, createdAt: now, updatedAt: now });
+    await db.insert(calibrationProposalRevisions).values({ id: proposalRevisionId, userId: input.userId, proposalId, revisionNumber: 1, baseRuleVersion: 0, strategy: "raise_quality_bar", ruleConfig, impactPreview: { sampleSize: 1, estimatedAffectedCount: 1, ruleDiff: {} }, idempotencyKey: crypto.randomUUID(), commandSummary: hash, createdAt: now });
+    await db.insert(recommendationRuleVersions).values({ id: crypto.randomUUID(), userId: input.userId, targetId: input.targetId, proposalId, proposalRevisionId, version: 1, config: ruleConfig, createdAt: now });
+
+    const created = await db.transaction((transaction) => ensureDeepMatchRunInTransaction({
+      transaction, id: () => crypto.randomUUID(), clock: () => now, runPreflight: { evaluate: async () => { throw new Error("recommendation child skips preflight"); } } as any,
+      userId: input.userId, targetId: input.targetId, idempotencyKey: crypto.randomUUID(), trigger: "automatic", discoveryRunId: parentRunId,
+      recommendation: { parentRunId, profileId: input.profileId, profileVersion: 1, targetSnapshot: template!.targetSnapshot, budgetSnapshot: template!.budgetSnapshot, accountPolicyRevisionNumber: template!.accountPolicyRevisionNumber!, accountPolicySnapshot: template!.accountPolicySnapshot, preflightSnapshot: template!.preflightSnapshot, sourcePostingVersionIds: [input.sourcePostingVersionId] },
+    }));
+
+    expect(created).toMatchObject({ kind: "created", reused: false, run: { ruleVersion: "recommendation-rule-v1" } });
+    const [child] = await db.select({ sourceScope: agentRuns.sourceScope }).from(agentRuns).where(eq(agentRuns.id, (created as { kind: "created"; run: { id: string } }).run.id));
+    expect(child!.sourceScope).toMatchObject({ recommendationRuleConfig: ruleConfig, selectionExclusions: [] });
+    await expect(db.select().from(deepMatchRunCandidates).where(eq(deepMatchRunCandidates.runId, (created as { kind: "created"; run: { id: string } }).run.id))).resolves.toHaveLength(1);
   });
 
   it("freezes every structured qualification with its source-version evidence and normalized value", async () => {

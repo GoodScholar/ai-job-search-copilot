@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, isNull, lt, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import {
   agentInboxItems, deepMatchRunCandidates, agentRuns, jobMatchVersions, jobOpportunities, jobOpportunitySources, jobSourcePostingVersions, jobTargetRevisions, jobTriageVersions, profileFactRevisions, profileFacts,
   recommendationExclusions, recommendationListItems, recommendationLists, recommendationDecisionEvents, type Database,
@@ -102,6 +102,10 @@ function boundedEvidenceText(prefix: string, values: readonly string[], limit = 
   return appended > 0 ? result : null;
 }
 
+function normalizedText(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
 export function createDeepMatchQueries(deps: { db: Database }) {
   const readList = async (input: { userId: string; targetId: string; recommendationListId?: string; includeExclusions?: boolean; exclusionLimit?: number }) => {
     const [list] = await deps.db.select().from(recommendationLists).where(and(
@@ -133,22 +137,25 @@ export function createDeepMatchQueries(deps: { db: Database }) {
         };
       }) };
   };
-  const selectCandidateSelection = async (input: { userId: string; targetId: string; targetVersion: number; opportunityId?: string; ruleConfig?: { excludedOpportunityIds: string[] } }): Promise<CandidateSelection> => {
+  const selectCandidateSelection = async (input: { userId: string; targetId: string; targetVersion: number; opportunityId?: string; sourcePostingVersionIds?: readonly string[]; profileId?: string; profileVersion?: number; ruleConfig?: { excludedOpportunityIds: string[] } }): Promise<CandidateSelection> => {
       const triageRows = await deps.db.select({ triage: jobTriageVersions, opportunity: jobOpportunities, sourceVersion: jobSourcePostingVersions, targetRevisionId: jobTargetRevisions.id, targetConstraints: jobTargetRevisions.constraints })
         .from(jobTriageVersions).innerJoin(jobOpportunities, and(eq(jobOpportunities.userId, jobTriageVersions.userId), eq(jobOpportunities.id, jobTriageVersions.opportunityId)))
         .innerJoin(jobSourcePostingVersions, and(eq(jobSourcePostingVersions.userId, jobTriageVersions.userId), eq(jobSourcePostingVersions.id, jobTriageVersions.sourcePostingVersionId)))
         .innerJoin(jobTargetRevisions, and(eq(jobTargetRevisions.userId, jobTriageVersions.userId), eq(jobTargetRevisions.targetId, jobTriageVersions.targetId), eq(jobTargetRevisions.version, jobTriageVersions.targetVersion)))
-        .where(and(eq(jobTriageVersions.userId, input.userId), eq(jobTriageVersions.targetId, input.targetId)))
+        .where(and(eq(jobTriageVersions.userId, input.userId), eq(jobTriageVersions.targetId, input.targetId), ...(input.sourcePostingVersionIds ? [eq(jobTriageVersions.targetVersion, input.targetVersion), inArray(jobTriageVersions.sourcePostingVersionId, [...input.sourcePostingVersionIds])] : []), ...(input.profileId ? [eq(jobTriageVersions.profileId, input.profileId)] : []), ...(input.profileVersion === undefined ? [] : [eq(jobTriageVersions.profileVersion, input.profileVersion)])))
         .orderBy(desc(jobTriageVersions.sequence), asc(jobTriageVersions.opportunityId), asc(jobTriageVersions.id));
       const latest = new Map<string, typeof triageRows[number]>();
       for (const row of triageRows) if (!latest.has(row.triage.opportunityId)) latest.set(row.triage.opportunityId, row);
       const excluded = new Set(input.ruleConfig?.excludedOpportunityIds ?? []);
       const scoped = [...latest.values()].filter(({ opportunity }) => !excluded.has(opportunity.id) && (input.opportunityId === undefined || opportunity.id === input.opportunityId));
       const exclusions: CandidateSelection["exclusions"] = [];
-      const eligible = scoped.filter(({ triage, opportunity }) => {
-        const eligibleByPolicy = isDeepMatchTriageEligible({ sourcePostingVersionId: triage.sourcePostingVersionId, expectedSourcePostingVersionId: opportunity.sourcePostingVersionId, targetVersion: triage.targetVersion, expectedTargetVersion: input.targetVersion, overallVerdict: triage.overallVerdict, deadlineStatus: triage.deadlineStatus, availability: opportunity.availability, overallScore: triage.overallScore, threshold: triage.threshold });
+      const usesFrozenSourceVersion = input.sourcePostingVersionIds !== undefined;
+      const eligible = scoped.filter(({ triage, opportunity, sourceVersion }) => {
+        const expectedSourcePostingVersionId = usesFrozenSourceVersion ? triage.sourcePostingVersionId : opportunity.sourcePostingVersionId;
+        const availability = usesFrozenSourceVersion ? sourceVersion.availability : opportunity.availability;
+        const eligibleByPolicy = isDeepMatchTriageEligible({ sourcePostingVersionId: triage.sourcePostingVersionId, expectedSourcePostingVersionId, targetVersion: triage.targetVersion, expectedTargetVersion: input.targetVersion, overallVerdict: triage.overallVerdict, deadlineStatus: triage.deadlineStatus, availability, overallScore: triage.overallScore, threshold: triage.threshold });
         if (eligibleByPolicy) return true;
-        if (triage.sourcePostingVersionId !== opportunity.sourcePostingVersionId || triage.overallVerdict !== "pass" || opportunity.availability !== "open") { exclusions.push({ opportunityId: opportunity.id, reasonCode: "TRIAGE_NOT_PASS" }); return false; }
+        if (triage.sourcePostingVersionId !== expectedSourcePostingVersionId || triage.overallVerdict !== "pass" || availability !== "open") { exclusions.push({ opportunityId: opportunity.id, reasonCode: "TRIAGE_NOT_PASS" }); return false; }
         if (triage.deadlineStatus === "expired") { exclusions.push({ opportunityId: opportunity.id, reasonCode: "DEADLINE_EXPIRED" }); return false; }
         if (triage.overallScore === null || triage.threshold === null || triage.overallScore < triage.threshold) { exclusions.push({ opportunityId: opportunity.id, reasonCode: "SCORE_BELOW_THRESHOLD" }); return false; }
         exclusions.push({ opportunityId: opportunity.id, reasonCode: "TRIAGE_NOT_PASS" }); return false;
@@ -191,7 +198,11 @@ export function createDeepMatchQueries(deps: { db: Database }) {
         // opportunity normalization when it is non-empty (never an `{}` fallback).
         const sourceNormalized = sourceVersion.normalizedData as Record<string, unknown>;
         const opportunityNormalized = opportunity.normalizedData as Record<string, unknown>;
-        const normalized = Object.keys(sourceNormalized).length > 0 ? sourceNormalized : opportunityNormalized;
+        const normalized = usesFrozenSourceVersion || Object.keys(sourceNormalized).length > 0 ? sourceNormalized : opportunityNormalized;
+        const jobSourceContent = usesFrozenSourceVersion
+          ? { company: normalizedText(sourceNormalized.company), title: normalizedText(sourceNormalized.title), location: normalizedText(sourceNormalized.location), description: normalizedText(sourceNormalized.description) }
+          : { company: opportunity.company, title: opportunity.title, location: opportunity.location, description: opportunity.description };
+        const opportunitySnapshot = { company: jobSourceContent.company, title: jobSourceContent.title, location: jobSourceContent.location };
         const qualifications = JobQualificationsSchema.safeParse((normalized as { qualifications?: unknown }).qualifications).data;
         const requiredSkills = qualifications?.requiredSkills?.value ?? [];
         const requiredSkillsEvidence = qualifications?.requiredSkills ? boundedEvidenceText("岗位明确要求：", requiredSkills) : null;
@@ -211,14 +222,14 @@ export function createDeepMatchQueries(deps: { db: Database }) {
           ...(qualifications?.salary ? [jobEvidenceItem(`薪资：${qualifications.salary.value.currency} ${qualifications.salary.value.minimum ?? ""}${qualifications.salary.value.maximum === null ? "" : `-${qualifications.salary.value.maximum}`}/${qualifications.salary.value.period}`, ["qualification_risk"], sourceEvidence(qualifications.salary.evidence.field, qualifications.salary.evidence.path, qualifications.salary.evidence.value, JSON.stringify(qualifications.salary.value)))] : []),
           ...(qualifications?.industry ? [jobEvidenceItem(`行业：${qualifications.industry.value}`, ["career_direction"], sourceEvidence(qualifications.industry.evidence.field, qualifications.industry.evidence.path, qualifications.industry.evidence.value, qualifications.industry.value))] : []),
           ...(qualifications?.employmentType ? [jobEvidenceItem(`雇佣类型：${qualifications.employmentType.value}`, ["qualification_risk"], sourceEvidence(qualifications.employmentType.evidence.field, qualifications.employmentType.evidence.path, qualifications.employmentType.evidence.value, qualifications.employmentType.value))] : []),
-          ...(opportunity.title ? [jobEvidenceItem(opportunity.title, ["career_direction"], sourceEvidence("title", "title", opportunity.title, opportunity.title))] : []),
-          ...(opportunity.location ? [jobEvidenceItem(opportunity.location, ["location_logistics"], sourceEvidence("location", "location", opportunity.location, opportunity.location))] : []),
-          ...(opportunity.description ? [jobEvidenceItem(opportunity.description, ["experience"], sourceEvidence("description", "description", opportunity.description, opportunity.description))] : []),
+          ...(jobSourceContent.title ? [jobEvidenceItem(jobSourceContent.title, ["career_direction"], sourceEvidence("title", "title", jobSourceContent.title, jobSourceContent.title))] : []),
+          ...(jobSourceContent.location ? [jobEvidenceItem(jobSourceContent.location, ["location_logistics"], sourceEvidence("location", "location", jobSourceContent.location, jobSourceContent.location))] : []),
+          ...(jobSourceContent.description ? [jobEvidenceItem(jobSourceContent.description, ["experience"], sourceEvidence("description", "description", jobSourceContent.description, jobSourceContent.description))] : []),
         ];
         const jobEvidence: DeepMatchCandidate["jobEvidence"] = rawJobEvidence.filter((evidence) => evidence.value.length > 0).map((evidence, index) => ({ id: `job:${triage.sourcePostingVersionId}:${index + 1}`, ...evidence }));
         if (!jobEvidence.length) return null;
         const candidate = {
-          opportunityId: opportunity.id, sourcePostingVersionId: triage.sourcePostingVersionId, triageVersionId: triage.id, profileId: triage.profileId, profileVersion: triage.profileVersion, targetVersion: triage.targetVersion, overallScore: triage.overallScore!, opportunitySnapshot: { company: opportunity.company, title: opportunity.title, location: opportunity.location },
+          opportunityId: opportunity.id, sourcePostingVersionId: triage.sourcePostingVersionId, triageVersionId: triage.id, profileId: triage.profileId, profileVersion: triage.profileVersion, targetVersion: triage.targetVersion, overallScore: triage.overallScore!, opportunitySnapshot,
           jobEvidence, profileEvidence,
         } satisfies SelectedDeepMatchCandidate;
         const adapterCandidate = {
