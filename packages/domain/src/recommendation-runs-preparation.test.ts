@@ -79,7 +79,15 @@ describe("推荐运行准备", () => {
 
   it.each(["fake", "greenhouse", "layered_public"] as const)("%s 模式从冻结实际计划生成安全准备摘要与私有启动上下文", async (mode) => {
     const owner = await account();
-    const runPreflight = evaluator(mode, owner.fingerprint);
+    const settings = structuredClone(systemAccountRunPolicy().effective);
+    settings.budgets[mode === "fake" ? "fake" : "publicDiscovery"].maxResults = 4;
+    settings.budgets.deepMatch.maxModelCalls = 4;
+    await createAccountRunPolicies({ db: database, id: randomUUID, clock: () => now }).save({ userId: owner.userId, command: { expectedVersion: 0, settings } });
+    const baseRunPreflight = evaluator(mode, owner.fingerprint); let capturedEvaluation: Awaited<ReturnType<typeof baseRunPreflight.evaluate>> | null = null;
+    const runPreflight = { ...baseRunPreflight, evaluate: async (...args: Parameters<typeof baseRunPreflight.evaluate>) => {
+      capturedEvaluation = await baseRunPreflight.evaluate(...args);
+      return capturedEvaluation;
+    } };
     const queries = createRecommendationRunPreparationQueries({ db: database, runPreflight, executionMode: mode, id: randomUUID, clock: () => now });
     const preparation = await queries.prepare({ userId: owner.userId });
     const internal = await database.transaction((transaction) => prepareRecommendationRunInTransaction(transaction, { userId: owner.userId, executionMode: mode }, { runPreflight, id: randomUUID, clock: () => now }));
@@ -90,7 +98,9 @@ describe("推荐运行准备", () => {
       : { trustedSourceCount: (internal.startSpec!.executionSpec.sourceScope as { sources: unknown[] }).sources.length, publicQueryCount: 0 });
     expect(JSON.stringify(preparation)).not.toMatch(/profileId|profileVersion|must-not-project/);
     expect(internal.startSpec).toMatchObject({ targetId: owner.targetId, targetVersion: 2 });
-    expect(internal.startSpec!.accountPolicySnapshot).toEqual(internal.recommendationContext!.preflight.items.at(-1) ? expect.any(Object) : undefined);
+    expect(capturedEvaluation).not.toBeNull();
+    expect(internal.startSpec!.accountPolicySnapshot).toEqual(capturedEvaluation!.policy.snapshot);
+    expect(internal.startSpec!.accountPolicySnapshot).toMatchObject({ budgets: { [mode === "fake" ? "fake" : "publicDiscovery"]: { maxResults: 4 }, deepMatch: { maxModelCalls: 4 } } });
     expect(internal.recommendationContext).toMatchObject({ version: "recommendation-context-v1", profile: { profileVersion: 3 }, preflight: preparation.preflight });
   });
 

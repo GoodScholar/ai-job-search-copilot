@@ -1,18 +1,33 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { and, desc, eq } from "drizzle-orm";
-import { agentRunControlCommands, agentRunEvents, agentRunSteps, agentRuns, auditEvents, createDatabase, jobAccounts, jobProfiles, jobTargets, jobTargetRevisions, migrateDatabase, modelDiagnosticResults, profileFactRevisions, profileFacts, recommendationRunControlCommands, recommendationRunStartCommands, type Database } from "@job-copilot/database";
+import { and, desc, eq, sql } from "drizzle-orm";
+import { agentRunControlCommands, agentRunEvents, agentRunSteps, agentRuns, auditEvents, createDatabase, jobAccounts, jobProfiles, jobTargets, jobTargetRevisions, migrateDatabase, modelDiagnosticResults, profileFactRevisions, profileFacts, recommendationLists, recommendationResults, recommendationRunControlCommands, recommendationRunStartCommands, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
 import { createAccountRunControl } from "./account-run-control";
 import { createModelDiagnosticProjectionReader, createRunPreflightEvaluator } from "./run-preflight";
 import { createRecommendationRunCommands, createRecommendationRunQueries } from "./recommendation-runs";
 import { createAgentRunRecoveryQueries } from "./agent-run-processor";
+import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import type { SourceCapabilityAdapter } from "./source-capabilities";
 
 const now = new Date("2026-09-13T12:00:00.000Z");
 const constraints = { roleFamily: "AI 应用工程师", seniority: null, locations: [], workModes: [], relocation: "unknown" as const, salary: null, industries: [], dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] } };
 const capabilityAdapter: SourceCapabilityAdapter = { adapter: "greenhouse", adapterVersion: "test-v1", declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test-v1", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring"] }) };
+
+async function waitUntilAConnectionIsWaitingForAccountAdvisoryLock(database: Database) {
+  await expect.poll(async () => {
+    const [row] = await database.execute<{ waiting: boolean }>(sql`
+      select exists(
+        select 1 from pg_stat_activity
+        where wait_event_type = 'Lock'
+          and wait_event = 'advisory'
+          and query like '%pg_advisory_xact_lock%'
+      ) as waiting
+    `);
+    return row?.waiting ?? false;
+  }, { timeout: 2_000, interval: 10 }).toBe(true);
+}
 
 describe("推荐运行领域边界", () => {
   let container: StartedPostgreSqlContainer;
@@ -29,7 +44,7 @@ describe("推荐运行领域边界", () => {
     await database.insert(profileFacts).values({ id: factId, userId, profileId, factType: "skill", createdAt: now });
     await database.insert(profileFactRevisions).values({ id: randomUUID(), userId, profileFactId: factId, revisionNumber: 1, factType: "skill", factValue: { name: "TypeScript" }, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1, createdAt: now });
     await database.insert(modelDiagnosticResults).values({ configurationFingerprint: fingerprint, status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket: "under_1s", checkedAt: now });
-    return { userId, targetId, fingerprint };
+    return { userId, targetId, profileId, fingerprint };
   }
   function commands(fingerprint: string) {
     const preflight = createRunPreflightEvaluator({ capabilityAdapter, modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: fingerprint }), discoveryExecutionMode: "layered_public", id: randomUUID, clock: () => now });
@@ -39,6 +54,41 @@ describe("推荐运行领域边界", () => {
     const preflight = createRunPreflightEvaluator({ capabilityAdapter, modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: owner.fingerprint }), discoveryExecutionMode: mode, id: randomUUID, clock: () => now });
     const report = await preflight.evaluate(database, { userId: owner.userId, workflow: "recommendation", trigger: "manual" });
     return { idempotencyKey, warningFingerprint: report.report.warningFingerprint };
+  }
+  async function completeRootAndInsertChild(rootId: string, db: any = database) {
+    const [root] = await db.select().from(agentRuns).where(eq(agentRuns.id, rootId));
+    if (!root) throw new Error("missing root fixture");
+    const childId = randomUUID();
+    await db.update(agentRuns).set({ status: "completed", currentStep: "completed", controlState: "none", startedAt: now, completedAt: now, terminationKind: "completed", updatedAt: now }).where(eq(agentRuns.id, rootId));
+    await db.update(agentRunSteps).set({ status: "completed", startedAt: now, completedAt: now }).where(eq(agentRunSteps.runId, rootId));
+    await db.insert(agentRuns).values({
+      id: childId, userId: root.userId, targetId: root.targetId, parentRunId: root.id, runPurpose: "recommendation", recommendationContext: null, idempotencyKey: randomUUID(), targetVersion: root.targetVersion, targetSnapshot: root.targetSnapshot, profileSnapshot: null, watchlistSnapshot: null, sourceScope: { trigger: "automatic" }, budgetSnapshot: root.budgetSnapshot, accountPolicyRevisionNumber: root.accountPolicyRevisionNumber, accountPolicySnapshot: root.accountPolicySnapshot, preflightSnapshot: root.preflightSnapshot, workflowVersion: "deep-match-v1", ruleVersion: "deep-match-rules-v1", adapter: "fake-deep-match", adapterVersion: "fake-deep-match-v1", outputSchemaVersion: "deep-match-result-v1", toolAllowlist: [], modelSnapshot: { provider: "fake", model: "fake-deep-match-model-v1" }, status: "queued", currentStep: "queued", controlState: "none", version: 1, attemptCount: 0, activeDurationMs: 0, toolCallCount: 0, sourceRequestCount: 0, modelCallCount: 0, inputTokenCount: 0, outputTokenCount: 0, totalTokenCount: 0, resultCount: 0, usageComplete: false, queuedAt: now, createdAt: now, updatedAt: now,
+    });
+    await db.insert(agentRunSteps).values(["select_candidates", "assess_matches", "create_recommendations"].map((stepKey, index) => ({ id: randomUUID(), userId: root.userId, runId: childId, stepKey, ordinal: index + 1, status: "pending", attemptCount: 0 })));
+    return { root, childId };
+  }
+  function resultEvidence(root: typeof agentRuns.$inferSelect, count: number) {
+    const sourceScope = root.sourceScope as { trustedSources?: readonly unknown[]; publicDiscovery?: { queries?: readonly unknown[] } };
+    const plannedTrustedSourceCount = sourceScope.trustedSources?.length ?? 0;
+    const plannedPublicQueryCount = sourceScope.publicDiscovery?.queries?.length ?? 0;
+    return {
+      discovery: { discoveredJobCount: count },
+      sourceCoverage: { plannedTrustedSourceCount, plannedPublicQueryCount, checkedBranchCount: 1, credibleBranchCount: 1, verifiedJobCount: count },
+      coverageLosses: [],
+      qualification: { evaluatedCount: count, rejectedCount: 0, insufficientInformationCount: 0, expiredCount: 0 },
+      coarseRanking: { eligibleCount: count, belowThresholdCount: 0, candidateLimitExcludedCount: 0, deepMatchCandidateCount: count },
+      deepMatching: { evaluatedCount: count, qualityInsufficientCount: 0, finalRecommendationCount: count },
+      suggestedActions: [],
+    };
+  }
+  async function insertRecommendationListItem(owner: { userId: string; targetId: string; profileId: string }, listId: string) {
+    const [postingId, postingVersionId, opportunityId, triageId, matchId] = Array.from({ length: 5 }, randomUUID);
+    await database.execute(sql`insert into job_source_postings (id, user_id, source_type, source_identifier, source_identity) values (${postingId}, ${owner.userId}, 'fake', ${postingId}, '{}'::jsonb)`);
+    await database.execute(sql`insert into job_source_posting_versions (id, user_id, source_posting_id, version, content_sha256, raw_content_sha256, raw_object_reference, retrieved_at) values (${postingVersionId}, ${owner.userId}, ${postingId}, 1, ${"a".repeat(64)}, ${"b".repeat(64)}, '{}'::jsonb, now())`);
+    await database.execute(sql`insert into job_opportunities (id, user_id, source_posting_version_id, dedup_key, normalized_data) values (${opportunityId}, ${owner.userId}, ${postingVersionId}, ${randomUUID().replaceAll("-", "").repeat(2)}, '{}'::jsonb)`);
+    await database.execute(sql`insert into job_triage_versions (id, user_id, opportunity_id, source_posting_version_id, profile_id, profile_version, target_id, target_version, qualification_rule_version, coarse_rule_version, overall_verdict, gate_results, pending_items, deadline_status, confidence_basis_points, dimension_scores, overall_score, threshold, sequence) values (${triageId}, ${owner.userId}, ${opportunityId}, ${postingVersionId}, ${owner.profileId}, 1, ${owner.targetId}, 1, 'qualification-v1', 'coarse-v1', 'pass', '{}'::jsonb, '[]'::jsonb, 'valid', 10000, '{}'::jsonb, 90, 70, 1)`);
+    await database.execute(sql`insert into job_match_versions (id, user_id, opportunity_id, source_posting_version_id, triage_version_id, profile_id, profile_version, target_id, target_version, rule_version, prompt_version, adapter, adapter_version, model, output_schema_version, overall_score, display_band, assessment, sequence) values (${matchId}, ${owner.userId}, ${opportunityId}, ${postingVersionId}, ${triageId}, ${owner.profileId}, 1, ${owner.targetId}, 1, 'rules-v1', 'prompt-v1', 'fake', 'fake-v1', 'fake-model', 'result-v1', 90, 'highly_matched', '{}'::jsonb, 1)`);
+    await database.execute(sql`insert into recommendation_list_items (id, user_id, recommendation_list_id, match_version_id, ordinal, highlighted, created_at) values (${randomUUID()}, ${owner.userId}, ${listId}, ${matchId}, 1, true, now())`);
   }
 
   it("不同启动键并发时复用一个活动逻辑根运行", async () => {
@@ -113,6 +163,34 @@ describe("推荐运行领域边界", () => {
     await expect(database.select({ status: agentRuns.status, version: agentRuns.version }).from(agentRuns).where(eq(agentRuns.id, childId))).resolves.toEqual([{ status: "queued", version: 1 }]);
   });
 
+  it("账户锁竞争中的根到子切换会作用新子，终态子稳定拒绝新控制", async () => {
+    const owner = await account(); const service = commands(owner.fingerprint); const started = await service.start({ userId: owner.userId, requestId: randomUUID(), command: await command(owner, randomUUID()) });
+    const observerDatabase = createDatabase(container.getConnectionUri());
+    let entered!: () => void; const enteredBarrier = new Promise<void>((resolve) => { entered = resolve; });
+    let release!: () => void; const releaseBarrier = new Promise<void>((resolve) => { release = resolve; });
+    let childId = "";
+    const transition = database.transaction(async (transaction) => {
+      await acquireAccountAdvisoryLock(transaction, owner.userId); entered();
+      ({ childId } = await completeRootAndInsertChild(started.run.runId, transaction));
+      await releaseBarrier;
+    });
+    await enteredBarrier;
+    const control = service.control({ userId: owner.userId, requestId: randomUUID(), runId: started.run.runId, command: { commandId: randomUUID(), action: "pause" } });
+    try {
+      await waitUntilAConnectionIsWaitingForAccountAdvisoryLock(observerDatabase);
+      release(); await transition;
+      await expect(control).resolves.toMatchObject({ applied: true, run: { status: "paused", currentStage: "deep_matching" } });
+      await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, childId))).resolves.toEqual([{ status: "paused" }]);
+      await database.update(agentRuns).set({ status: "completed", currentStep: "completed", startedAt: now, completedAt: now, terminationKind: "completed", updatedAt: now }).where(eq(agentRuns.id, childId));
+      await database.update(agentRunSteps).set({ status: "completed", startedAt: now, completedAt: now }).where(eq(agentRunSteps.runId, childId));
+      await expect(service.control({ userId: owner.userId, requestId: randomUUID(), runId: started.run.runId, command: { commandId: randomUUID(), action: "resume" } })).rejects.toThrow("RECOMMENDATION_RUN_CONTROL_CONFLICT");
+    } finally {
+      release();
+      await Promise.allSettled([transition, control]);
+      await observerDatabase.$client.end();
+    }
+  });
+
   it("持久化的根完成而缺少子运行时读取稳定交接失败投影", async () => {
     const owner = await account(); const service = commands(owner.fingerprint); const started = await service.start({ userId: owner.userId, requestId: randomUUID(), command: await command(owner, randomUUID()) });
     await database.update(agentRuns).set({ status: "completed", currentStep: "completed", startedAt: now, completedAt: now, terminationKind: "completed", updatedAt: now }).where(eq(agentRuns.id, started.run.runId));
@@ -120,13 +198,100 @@ describe("推荐运行领域边界", () => {
     await expect(createRecommendationRunQueries({ db: database }).get({ userId: owner.userId, runId: started.run.runId })).resolves.toMatchObject({ status: "failed", currentStage: "qualification", failure: { code: "RECOMMENDATION_HANDOFF_FAILED", stage: "qualification", retryable: true } });
   });
 
+  it("合法的清单与暂无推荐结果均能由 get、latest 与启动重放投影", async () => {
+    const noRecommendationsOwner = await account(); const noRecommendationsService = commands(noRecommendationsOwner.fingerprint); const noRecommendationsKey = randomUUID();
+    const noRecommendationsStarted = await noRecommendationsService.start({ userId: noRecommendationsOwner.userId, requestId: randomUUID(), command: await command(noRecommendationsOwner, noRecommendationsKey) });
+    const noRecommendationsFacts = await completeRootAndInsertChild(noRecommendationsStarted.run.runId);
+    await database.update(agentRuns).set({ status: "completed", currentStep: "completed", startedAt: now, completedAt: now, terminationKind: "completed", updatedAt: now }).where(eq(agentRuns.id, noRecommendationsFacts.childId));
+    await database.update(agentRunSteps).set({ status: "completed", startedAt: now, completedAt: now }).where(eq(agentRunSteps.runId, noRecommendationsFacts.childId));
+    await database.insert(recommendationResults).values({ id: randomUUID(), userId: noRecommendationsOwner.userId, targetId: noRecommendationsOwner.targetId, rootRunId: noRecommendationsStarted.run.runId, producerRunId: noRecommendationsFacts.childId, kind: "no_recommendations", recommendationListId: null, itemCount: 0, evidence: resultEvidence(noRecommendationsFacts.root, 0), createdAt: now });
+    const noRecommendationsQueries = createRecommendationRunQueries({ db: database });
+    await expect(noRecommendationsQueries.get({ userId: noRecommendationsOwner.userId, runId: noRecommendationsStarted.run.runId })).resolves.toMatchObject({ status: "completed", result: { kind: "no_recommendations" } });
+    await expect(noRecommendationsQueries.latest({ userId: noRecommendationsOwner.userId })).resolves.toMatchObject({ runId: noRecommendationsStarted.run.runId, result: { kind: "no_recommendations" } });
+    await expect(noRecommendationsService.start({ userId: noRecommendationsOwner.userId, requestId: randomUUID(), command: await command(noRecommendationsOwner, noRecommendationsKey) })).resolves.toMatchObject({ reused: true, run: { result: { kind: "no_recommendations" } } });
+
+    const listOwner = await account(); const listService = commands(listOwner.fingerprint); const listKey = randomUUID();
+    const listStarted = await listService.start({ userId: listOwner.userId, requestId: randomUUID(), command: await command(listOwner, listKey) });
+    const listFacts = await completeRootAndInsertChild(listStarted.run.runId); const listId = randomUUID();
+    await database.update(agentRuns).set({ status: "completed", currentStep: "completed", startedAt: now, completedAt: now, terminationKind: "completed", updatedAt: now }).where(eq(agentRuns.id, listFacts.childId));
+    await database.update(agentRunSteps).set({ status: "completed", startedAt: now, completedAt: now }).where(eq(agentRunSteps.runId, listFacts.childId));
+    await database.insert(recommendationLists).values({ id: listId, userId: listOwner.userId, targetId: listOwner.targetId, localDate: "2026-09-13", sequence: 1, createdAt: now });
+    await insertRecommendationListItem(listOwner, listId);
+    await database.insert(recommendationResults).values({ id: listId, userId: listOwner.userId, targetId: listOwner.targetId, rootRunId: listStarted.run.runId, producerRunId: listFacts.childId, kind: "recommendation_list", recommendationListId: listId, itemCount: 1, evidence: resultEvidence(listFacts.root, 1), createdAt: now });
+    const listQueries = createRecommendationRunQueries({ db: database });
+    await expect(listQueries.get({ userId: listOwner.userId, runId: listStarted.run.runId })).resolves.toMatchObject({ status: "completed", result: { kind: "recommendation_list", resultId: listId, recommendationListId: listId, itemCount: 1 } });
+    await expect(listQueries.latest({ userId: listOwner.userId })).resolves.toMatchObject({ runId: listStarted.run.runId, result: { kind: "recommendation_list", recommendationListId: listId } });
+    await expect(listService.start({ userId: listOwner.userId, requestId: randomUUID(), command: await command(listOwner, listKey) })).resolves.toMatchObject({ reused: true, run: { result: { kind: "recommendation_list", recommendationListId: listId } } });
+  });
+
+  it.each(["running", "paused", "failed", "cancelled", "completed"] as const)("公开 get 为 create_recommendations 的 %s 持久事实输出严格闭合投影", async (publicationStatus) => {
+    const owner = await account(); const service = commands(owner.fingerprint); const started = await service.start({ userId: owner.userId, requestId: randomUUID(), command: await command(owner, randomUUID()) });
+    const { childId } = await completeRootAndInsertChild(started.run.runId);
+    await database.update(agentRunSteps).set({ status: "completed", startedAt: now, completedAt: now }).where(and(eq(agentRunSteps.runId, childId), sql`${agentRunSteps.stepKey} in ('select_candidates', 'assess_matches')`));
+    if (publicationStatus === "running" || publicationStatus === "paused") {
+      await database.update(agentRuns).set({ status: publicationStatus, currentStep: "create_recommendations", startedAt: now, updatedAt: now }).where(eq(agentRuns.id, childId));
+      await database.update(agentRunSteps).set({ status: "running", startedAt: now }).where(and(eq(agentRunSteps.runId, childId), eq(agentRunSteps.stepKey, "create_recommendations")));
+    } else if (publicationStatus === "failed") {
+      await database.update(agentRuns).set({ status: "failed", currentStep: "failed", startedAt: now, failedAt: now, failureCode: "AGENT_RUN_PERSIST_FAILED", terminationKind: "persistence_failed", usageComplete: true, updatedAt: now }).where(eq(agentRuns.id, childId));
+      await database.update(agentRunSteps).set({ status: "failed", startedAt: now, failedAt: now }).where(and(eq(agentRunSteps.runId, childId), eq(agentRunSteps.stepKey, "create_recommendations")));
+    } else if (publicationStatus === "cancelled") {
+      await database.update(agentRuns).set({ status: "cancelled", currentStep: "cancelled", cancelledAt: now, updatedAt: now }).where(eq(agentRuns.id, childId));
+    } else {
+      await database.update(agentRuns).set({ status: "completed", currentStep: "completed", startedAt: now, completedAt: now, terminationKind: "completed", updatedAt: now }).where(eq(agentRuns.id, childId));
+      await database.update(agentRunSteps).set({ status: "completed", startedAt: now, completedAt: now }).where(and(eq(agentRunSteps.runId, childId), eq(agentRunSteps.stepKey, "create_recommendations")));
+    }
+    const run = await createRecommendationRunQueries({ db: database }).get({ userId: owner.userId, runId: started.run.runId });
+    expect(run).not.toBeNull();
+    expect(run!.stages.map((stage) => stage.status)).toEqual(publicationStatus === "running" || publicationStatus === "paused"
+      ? ["completed", "completed", "completed", "completed", "running"]
+      : publicationStatus === "failed" || publicationStatus === "completed"
+        ? ["completed", "completed", "completed", "completed", "failed"]
+        : ["completed", "completed", "completed", "completed", "cancelled"]);
+    if (publicationStatus === "running" || publicationStatus === "paused") expect(run).toMatchObject({ status: publicationStatus, currentStage: "result_publication", failure: null });
+    if (publicationStatus === "failed") expect(run).toMatchObject({ status: "failed", currentStage: "result_publication", failure: { code: "AGENT_RUN_PERSIST_FAILED", stage: "result_publication" } });
+    if (publicationStatus === "cancelled") expect(run).toMatchObject({ status: "cancelled", currentStage: null, failure: null });
+    if (publicationStatus === "completed") expect(run).toMatchObject({ status: "failed", currentStage: "result_publication", failure: { code: "RECOMMENDATION_PUBLICATION_FAILED", stage: "result_publication" } });
+  });
+
+  it("恢复后的 queued root 保留已开始 discovery 阶段", async () => {
+    const owner = await account(); const service = commands(owner.fingerprint); const started = await service.start({ userId: owner.userId, requestId: randomUUID(), command: await command(owner, randomUUID()) });
+    await database.update(agentRuns).set({ status: "paused", currentStep: "fetch_details", startedAt: now, updatedAt: now }).where(eq(agentRuns.id, started.run.runId));
+    await database.update(agentRunSteps).set({ status: "completed", startedAt: now, completedAt: now }).where(and(eq(agentRunSteps.runId, started.run.runId), eq(agentRunSteps.stepKey, "batch_search")));
+    const resumed = await service.control({ userId: owner.userId, requestId: randomUUID(), runId: started.run.runId, command: { commandId: randomUUID(), action: "resume" } });
+    expect(resumed).toMatchObject({ applied: true, run: { status: "running", currentStage: "discovery" } });
+    expect(resumed.run.stages).toContainEqual(expect.objectContaining({ key: "discovery", status: "running" }));
+  });
+
   it.each(["fake", "greenhouse", "layered_public"] as const)("%s 模式中 prepare 后账户停止会阻止新启动且不创建运行", async (mode) => {
     const owner = await account();
     const preflight = createRunPreflightEvaluator({ capabilityAdapter, modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: owner.fingerprint }), discoveryExecutionMode: mode, id: randomUUID, clock: () => now });
     const service = createRecommendationRunCommands({ db: database, queue: { enqueue: async () => undefined }, auditTrail: createAuditTrail({ db: database, clock: () => now }), runPreflight: preflight, executionMode: mode, id: randomUUID, clock: () => now });
+    const preparedCommand = await command(owner, randomUUID(), mode);
     await createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: randomUUID, clock: () => now }).control({ userId: owner.userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 0, action: "stop" } });
-    await expect(service.start({ userId: owner.userId, requestId: randomUUID(), command: await command(owner, randomUUID(), mode) })).rejects.toThrow("RUN_PREFLIGHT_BLOCKED");
-    await expect(database.select().from(agentRuns).where(eq(agentRuns.userId, owner.userId))).resolves.toEqual([]);
+    await expect(service.start({ userId: owner.userId, requestId: randomUUID(), command: preparedCommand })).rejects.toThrow("RUN_PREFLIGHT_BLOCKED");
+    await expect(Promise.all([database.select().from(agentRuns).where(eq(agentRuns.userId, owner.userId)), database.select().from(recommendationRunStartCommands).where(eq(recommendationRunStartCommands.userId, owner.userId))])).resolves.toEqual([[], []]);
+  });
+
+  it("停止后仅旧启动键可重放，释放不自动恢复且可显式恢复", async () => {
+    const owner = await account(); const enqueued: string[] = [];
+    const preflight = createRunPreflightEvaluator({ capabilityAdapter, modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: owner.fingerprint }), discoveryExecutionMode: "layered_public", id: randomUUID, clock: () => now });
+    const service = createRecommendationRunCommands({ db: database, queue: { enqueue: async (job) => { enqueued.push(job.runId); } }, auditTrail: createAuditTrail({ db: database, clock: () => now }), runPreflight: preflight, executionMode: "layered_public", id: randomUUID, clock: () => now });
+    const oldKey = randomUUID(); const started = await service.start({ userId: owner.userId, requestId: randomUUID(), command: await command(owner, oldKey) });
+    const accountControl = createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: randomUUID, clock: () => now });
+    await accountControl.control({ userId: owner.userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 0, action: "stop" } });
+    await expect(service.start({ userId: owner.userId, requestId: randomUUID(), command: await command(owner, oldKey) })).resolves.toMatchObject({ reused: true, run: { runId: started.run.runId, status: "paused" } });
+    await expect(service.start({ userId: owner.userId, requestId: randomUUID(), command: await command(owner, randomUUID()) })).rejects.toThrow("RUN_PREFLIGHT_BLOCKED");
+    await accountControl.control({ userId: owner.userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 1, action: "release" } });
+    await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, started.run.runId))).resolves.toEqual([{ status: "paused" }]);
+    await expect(service.control({ userId: owner.userId, requestId: randomUUID(), runId: started.run.runId, command: { commandId: randomUUID(), action: "resume" } })).resolves.toMatchObject({ applied: true, run: { status: "queued", currentStage: "discovery" } });
+    expect(enqueued).toEqual([started.run.runId, started.run.runId]);
+  });
+
+  it("同一控制键的不同动作稳定冲突且不重放物理控制", async () => {
+    const owner = await account(); const service = commands(owner.fingerprint); const started = await service.start({ userId: owner.userId, requestId: randomUUID(), command: await command(owner, randomUUID()) }); const commandId = randomUUID();
+    await service.control({ userId: owner.userId, requestId: randomUUID(), runId: started.run.runId, command: { commandId, action: "pause" } });
+    await expect(service.control({ userId: owner.userId, requestId: randomUUID(), runId: started.run.runId, command: { commandId, action: "resume" } })).rejects.toThrow("RECOMMENDATION_RUN_COMMAND_ID_CONFLICT");
+    await expect(database.select().from(agentRunControlCommands).where(and(eq(agentRunControlCommands.runId, started.run.runId), eq(agentRunControlCommands.commandId, commandId)))).resolves.toHaveLength(1);
   });
 
   it("只投影所属账户的 recommendation 根运行", async () => {

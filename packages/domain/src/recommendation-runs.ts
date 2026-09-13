@@ -26,22 +26,30 @@ function fingerprint(value: unknown) { return createHash("sha256").update(JSON.s
 function physicalStage(run: PhysicalRun, steps: readonly PhysicalStep[]): StageStatus {
   if (run.status === "failed" || run.status === "cancelled") return run.status;
   if (steps.length > 0 && steps.every((step) => step.status === "completed")) return "completed";
-  return run.status === "queued" ? "pending" : "running";
+  return run.status === "queued" && !run.startedAt && !steps.some((step) => step.startedAt || step.completedAt) ? "pending" : "running";
 }
 
 /** Small pure seam for the five-stage projection contract. */
 export function projectRecommendationRun(facts: {
-  root: { status: PhysicalStatus; steps: readonly StageStatus[] }; qualificationCompleted: boolean; selectionCompleted: boolean;
-  child: { status: PhysicalStatus; steps: readonly StageStatus[] } | null; resultPublished: boolean;
+  root: { status: PhysicalStatus; steps: readonly StageStatus[]; started?: boolean }; qualificationCompleted: boolean; selectionCompleted: boolean;
+  child: { status: PhysicalStatus; steps: readonly StageStatus[]; started?: boolean } | null; resultPublished: boolean;
 }) {
-  const physical = (run: { status: PhysicalStatus; steps: readonly StageStatus[] }): StageStatus => run.status === "failed" || run.status === "cancelled" ? run.status : run.steps.length > 0 && run.steps.every((status) => status === "completed") ? "completed" : run.status === "queued" ? "pending" : "running";
+  const physical = (run: { status: PhysicalStatus; steps: readonly StageStatus[]; started?: boolean }): StageStatus => run.status === "failed" || run.status === "cancelled" ? run.status : run.steps.length > 0 && run.steps.every((status) => status === "completed") ? "completed" : run.status === "queued" && !run.started ? "pending" : "running";
   const handoffMissing = physical(facts.root) === "completed" && !facts.child && !facts.resultPublished;
+  const matchingSteps = facts.child?.steps.slice(0, 2) ?? [];
+  const matching = !facts.child ? "pending" : matchingSteps.length > 0 && matchingSteps.every((status) => status === "completed") ? "completed" : physical({ status: facts.child.status, steps: matchingSteps, started: facts.child.started });
+  const publication = facts.resultPublished ? "completed" as const
+    : !facts.child || matching !== "completed" ? "pending" as const
+      : facts.child.status === "failed" ? "failed" as const
+        : facts.child.status === "cancelled" ? "cancelled" as const
+          : facts.child.steps[2] === "completed" ? "failed" as const
+            : facts.child.steps[2] === "pending" && facts.child.status === "queued" && !facts.child.started ? "pending" as const : "running" as const;
   return [
     { key: "discovery" as const, status: physical(facts.root) },
     { key: "qualification" as const, status: handoffMissing ? "failed" as const : facts.qualificationCompleted ? "completed" as const : "pending" as const },
     { key: "coarse_ranking" as const, status: facts.selectionCompleted ? "completed" as const : "pending" as const },
-    { key: "deep_matching" as const, status: facts.child ? physical(facts.child) : "pending" as const },
-    { key: "result_publication" as const, status: facts.resultPublished ? "completed" as const : "pending" as const },
+    { key: "deep_matching" as const, status: matching },
+    { key: "result_publication" as const, status: publication },
   ];
 }
 
@@ -68,24 +76,28 @@ function projectFacts(facts: NonNullable<Awaited<ReturnType<typeof readLogicalFa
   const context = facts.root.recommendationContext as { budgets: RecommendationRun["budgets"]; preflight: RecommendationRun["preflightSnapshot"]; accountPolicyRevisionNumber: number };
   const target = JobTargetConstraintsSchema.parse((facts.root.targetSnapshot as { constraints: unknown }).constraints);
   const rootStage = physicalStage(facts.root, facts.rootSteps);
-  const childStage = facts.child ? physicalStage(facts.child, facts.childSteps) : "pending";
-  const statuses = projectRecommendationRun({ root: { status: facts.root.status as PhysicalStatus, steps: facts.rootSteps.map((step: PhysicalStep) => step.status as StageStatus) }, qualificationCompleted: facts.child !== null || facts.result !== null, selectionCompleted: facts.child !== null || facts.result !== null, child: facts.child ? { status: facts.child.status as PhysicalStatus, steps: facts.childSteps.map((step: PhysicalStep) => step.status as StageStatus) } : null, resultPublished: facts.result !== null });
+  const matchingSteps = facts.childSteps.filter((step: PhysicalStep) => step.stepKey === "select_candidates" || step.stepKey === "assess_matches");
+  const publicationStep = facts.childSteps.find((step: PhysicalStep) => step.stepKey === "create_recommendations");
+  const childStarted = Boolean(facts.child?.startedAt || facts.childSteps.some((step: PhysicalStep) => step.startedAt || step.completedAt));
+  const statuses = projectRecommendationRun({ root: { status: facts.root.status as PhysicalStatus, steps: facts.rootSteps.map((step: PhysicalStep) => step.status as StageStatus), started: Boolean(facts.root.startedAt) }, qualificationCompleted: facts.child !== null || facts.result !== null, selectionCompleted: facts.child !== null || facts.result !== null, child: facts.child ? { status: facts.child.status as PhysicalStatus, steps: [...matchingSteps, publicationStep].filter(Boolean).map((step: PhysicalStep) => step.status as StageStatus), started: childStarted } : null, resultPublished: facts.result !== null });
   const rootTerminal = facts.root.status === "failed" || facts.root.status === "cancelled";
   const handoffMissing = rootStage === "completed" && !facts.child && !facts.result;
-  const childTerminal = facts.child?.status === "failed" || facts.child?.status === "cancelled";
-  const terminalStage = rootTerminal ? "discovery" : handoffMissing ? "qualification" : childTerminal ? "deep_matching" : null;
-  const status = facts.result ? "completed" : rootTerminal ? facts.root.status : handoffMissing ? "failed" : childTerminal ? facts.child!.status : facts.root.status === "queued" ? "queued" : facts.child?.status === "paused" || facts.root.status === "paused" ? "paused" : "running";
-  const currentStage = facts.result || status === "cancelled" ? null : terminalStage ?? (rootStage !== "completed" ? "discovery" : facts.child ? "deep_matching" : "qualification");
+  const publicationMissing = Boolean(facts.child && facts.child.status === "completed" && !facts.result);
+  const terminalStage = rootTerminal ? "discovery" : handoffMissing ? "qualification" : publicationMissing ? "result_publication" : statuses.find((stage) => stage.status === "failed" || stage.status === "cancelled")?.key ?? null;
+  const terminalStatus = terminalStage ? statuses.find((stage) => stage.key === terminalStage)?.status : null;
+  const initiallyQueued = facts.root.status === "queued" && !facts.root.startedAt && facts.rootSteps.every((step: PhysicalStep) => step.status === "pending") && !facts.child;
+  const status = facts.result ? "completed" : rootTerminal ? facts.root.status : handoffMissing || publicationMissing ? "failed" : terminalStatus === "failed" || terminalStatus === "cancelled" ? terminalStatus : initiallyQueued ? "queued" : facts.child?.status === "paused" || facts.root.status === "paused" ? "paused" : "running";
+  const currentStage = facts.result || status === "cancelled" ? null : terminalStage ?? (rootStage !== "completed" ? "discovery" : facts.child ? statuses.find((stage) => stage.status !== "completed")?.key ?? "result_publication" : "qualification");
   const stages = statuses.map((stage) => {
-    const run = stage.key === "discovery" ? facts.root : stage.key === "deep_matching" ? facts.child : null;
-    const steps: PhysicalStep[] = stage.key === "discovery" ? facts.rootSteps : stage.key === "deep_matching" ? facts.childSteps : [];
+    const run = stage.key === "discovery" ? facts.root : stage.key === "deep_matching" || stage.key === "result_publication" ? facts.child : null;
+    const steps: PhysicalStep[] = stage.key === "discovery" ? facts.rootSteps : stage.key === "deep_matching" ? matchingSteps : stage.key === "result_publication" && publicationStep ? [publicationStep] : [];
     const step = steps.find((row: PhysicalStep) => row.status !== "completed") ?? steps.at(-1);
-    const fallback = stage.key === "deep_matching" ? facts.child?.updatedAt ?? facts.root.updatedAt : facts.root.updatedAt;
+    const fallback = stage.key === "deep_matching" || stage.key === "result_publication" ? facts.child?.updatedAt ?? facts.root.updatedAt : facts.root.updatedAt;
     return { key: stage.key, status: stage.status, ...stageTime(stage.status, run?.startedAt ?? step?.startedAt, stage.key === "result_publication" ? facts.result?.createdAt : run?.completedAt ?? step?.completedAt, fallback) };
   });
   if (facts.result) for (const stage of stages) Object.assign(stage, { status: "completed" }, stageTime("completed", facts.root.createdAt, facts.result.createdAt, facts.result.createdAt));
-  const result = facts.result ? RecommendationResultSchema.parse({ kind: facts.result.kind, resultId: facts.result.id, ...(facts.result.recommendationListId ? { recommendationListId: facts.result.recommendationListId } : {}), itemCount: facts.result.itemCount, evidence: facts.result.evidence, publishedAt: facts.result.createdAt.toISOString() }) : null;
-  const failure = status === "failed" ? { code: (handoffMissing ? "RECOMMENDATION_HANDOFF_FAILED" : facts.child?.failureCode ?? facts.root.failureCode ?? "AGENT_RUN_PERSIST_FAILED") as any, stage: terminalStage!, summary: handoffMissing ? "推荐运行交接未完成。" : "推荐运行未能完成。", impact: "本次推荐尚未生成可用结果。", retryable: true, suggestedActions: ["restart_discovery"] } : null;
+  const result = facts.result ? RecommendationResultSchema.parse(facts.result.kind === "recommendation_list" ? { kind: "recommendation_list", resultId: facts.result.id, recommendationListId: facts.result.recommendationListId, itemCount: facts.result.itemCount, evidence: facts.result.evidence, publishedAt: facts.result.createdAt.toISOString() } : { kind: "no_recommendations", resultId: facts.result.id, evidence: facts.result.evidence, publishedAt: facts.result.createdAt.toISOString() }) : null;
+  const failure = status === "failed" ? { code: (handoffMissing ? "RECOMMENDATION_HANDOFF_FAILED" : publicationMissing ? "RECOMMENDATION_PUBLICATION_FAILED" : facts.child?.failureCode ?? facts.root.failureCode ?? "AGENT_RUN_PERSIST_FAILED") as any, stage: terminalStage!, summary: handoffMissing ? "推荐运行交接未完成。" : publicationMissing ? "推荐结果发布未完成。" : "推荐运行未能完成。", impact: "本次推荐尚未生成可用结果。", retryable: true, suggestedActions: ["restart_discovery"] } : null;
   return RecommendationRunSchema.parse({ runId: facts.root.id, status, currentStage, stages, target: { targetId: facts.root.targetId, targetVersion: facts.root.targetVersion, roleFamily: target.roleFamily }, sourceScope: discoverySourceScopeCounts(facts.root.sourceScope, facts.root.workflowVersion === "layered-public-job-discovery-v1" ? "layered_public" : "greenhouse"), accountPolicyRevisionNumber: context.accountPolicyRevisionNumber, budgets: context.budgets, preflightSnapshot: context.preflight, result, failure, createdAt: facts.root.createdAt.toISOString(), updatedAt: (facts.result?.createdAt ?? facts.child?.updatedAt ?? facts.root.updatedAt).toISOString() });
 }
 
