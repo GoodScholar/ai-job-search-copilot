@@ -29,3 +29,15 @@ it("RSC 刷新为另一份清单时重置 exclusions 与 cursor", async () => {
   await waitFor(() => expect(screen.getByText("稳定排除 1 项岗位：匹配证据不足")).toBeInTheDocument());
   expect(screen.queryByRole("button", { name: "加载更多稳定排除" })).not.toBeInTheDocument();
 });
+
+it("显示规则排除的准确中文原因", () => {
+  const ruleExcludedList = {
+    ...list,
+    exclusions: [{ opportunityId: "10000000-0000-4000-8000-000000000027", reasonCode: "RULE_EXCLUDED" as const }],
+    exclusionsNextCursor: null,
+  } satisfies RecommendationList;
+
+  render(<LatestExclusions targetId={targetId} list={ruleExcludedList} />);
+
+  expect(screen.getByText("稳定排除 1 项岗位：被推荐规则排除")).toBeInTheDocument();
+});

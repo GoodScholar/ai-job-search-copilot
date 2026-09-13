@@ -29,7 +29,7 @@ export const RecommendationRunSourceScopeSchema = z.object({
   trustedSourceCount: nonnegativeInteger, publicQueryCount: nonnegativeInteger,
 }).strict();
 
-export const RecommendationResultEvidenceSchema = z.object({
+const RecommendationResultEvidenceBaseSchema = z.object({
   discovery: z.object({ discoveredJobCount: nonnegativeInteger }).strict(),
   sourceCoverage: z.object({
     plannedTrustedSourceCount: nonnegativeInteger, plannedPublicQueryCount: nonnegativeInteger, checkedBranchCount: nonnegativeInteger,
@@ -39,23 +39,34 @@ export const RecommendationResultEvidenceSchema = z.object({
   qualification: z.object({
     evaluatedCount: nonnegativeInteger, rejectedCount: nonnegativeInteger, insufficientInformationCount: nonnegativeInteger, expiredCount: nonnegativeInteger,
   }).strict(),
-  coarseRanking: z.object({
-    eligibleCount: nonnegativeInteger, belowThresholdCount: nonnegativeInteger, candidateLimitExcludedCount: nonnegativeInteger, deepMatchCandidateCount: nonnegativeInteger,
-  }).strict(),
   deepMatching: z.object({ evaluatedCount: nonnegativeInteger, qualityInsufficientCount: nonnegativeInteger, finalRecommendationCount: nonnegativeInteger }).strict(),
   suggestedActions: z.array(RecommendationRunSuggestedActionSchema).max(2).refine((actions) => new Set(actions).size === actions.length, "建议动作不可重复"),
-}).strict().superRefine((evidence, context) => {
+}).strict();
+
+const RecommendationCoarseRankingSchema = z.object({
+  eligibleCount: nonnegativeInteger, belowThresholdCount: nonnegativeInteger, candidateLimitExcludedCount: nonnegativeInteger, deepMatchCandidateCount: nonnegativeInteger,
+}).strict();
+
+const refineRecommendationResultEvidence = (evidence: z.infer<typeof RecommendationResultEvidenceBaseSchema> & { coarseRanking: z.infer<typeof RecommendationCoarseRankingSchema> & { ruleExcludedCount: number } }, context: z.RefinementCtx) => {
   const { discovery, qualification, coarseRanking, deepMatching, sourceCoverage } = evidence;
   const eligibleAfterQualification = discovery.discoveredJobCount - qualification.rejectedCount - qualification.insufficientInformationCount - qualification.expiredCount;
   if (qualification.evaluatedCount !== discovery.discoveredJobCount) context.addIssue({ code: "custom", path: ["qualification", "evaluatedCount"], message: "资格评估数量必须与发现岗位数量一致" });
   if (coarseRanking.eligibleCount !== eligibleAfterQualification) context.addIssue({ code: "custom", path: ["coarseRanking", "eligibleCount"], message: "粗排合格数量必须闭合资格门槛结果" });
-  if (coarseRanking.eligibleCount !== coarseRanking.belowThresholdCount + coarseRanking.candidateLimitExcludedCount + coarseRanking.deepMatchCandidateCount) context.addIssue({ code: "custom", path: ["coarseRanking"], message: "粗排数量必须闭合" });
+  if (coarseRanking.eligibleCount !== coarseRanking.belowThresholdCount + coarseRanking.ruleExcludedCount + coarseRanking.candidateLimitExcludedCount + coarseRanking.deepMatchCandidateCount) context.addIssue({ code: "custom", path: ["coarseRanking"], message: "粗排数量必须闭合" });
   if (deepMatching.evaluatedCount !== coarseRanking.deepMatchCandidateCount || deepMatching.evaluatedCount !== deepMatching.qualityInsufficientCount + deepMatching.finalRecommendationCount) context.addIssue({ code: "custom", path: ["deepMatching"], message: "深度匹配数量必须闭合" });
   if (sourceCoverage.credibleBranchCount < 1) context.addIssue({ code: "custom", path: ["sourceCoverage", "credibleBranchCount"], message: "可信结果至少需要一个可信发现分支" });
   if (sourceCoverage.checkedBranchCount > sourceCoverage.plannedTrustedSourceCount + sourceCoverage.plannedPublicQueryCount) context.addIssue({ code: "custom", path: ["sourceCoverage", "checkedBranchCount"], message: "已检查分支不能超过计划来源范围" });
   if (sourceCoverage.credibleBranchCount > sourceCoverage.checkedBranchCount) context.addIssue({ code: "custom", path: ["sourceCoverage", "credibleBranchCount"], message: "可信分支不能超过已检查分支" });
   if (sourceCoverage.verifiedJobCount !== discovery.discoveredJobCount) context.addIssue({ code: "custom", path: ["sourceCoverage", "verifiedJobCount"], message: "已验证岗位与发现岗位必须使用同一去重口径" });
-});
+};
+
+export const RecommendationResultEvidenceSchema = RecommendationResultEvidenceBaseSchema.extend({
+  coarseRanking: RecommendationCoarseRankingSchema.extend({ ruleExcludedCount: nonnegativeInteger.default(0) }).strict(),
+}).superRefine(refineRecommendationResultEvidence);
+
+export const RecommendationResultEvidenceWriteSchema = RecommendationResultEvidenceBaseSchema.extend({
+  coarseRanking: RecommendationCoarseRankingSchema.extend({ ruleExcludedCount: nonnegativeInteger }).strict(),
+}).superRefine(refineRecommendationResultEvidence);
 
 const RecommendationListResultSchema = z.object({
   kind: z.literal("recommendation_list"), resultId: z.uuid(), recommendationListId: z.uuid(), itemCount: positiveInteger, evidence: RecommendationResultEvidenceSchema, publishedAt: z.iso.datetime(),

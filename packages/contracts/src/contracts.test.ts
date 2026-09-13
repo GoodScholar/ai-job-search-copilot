@@ -4,7 +4,7 @@ import { StartDevSessionRequestSchema } from "./auth";
 import { ReadinessDependenciesSchema, RuntimeNotReadyProblemSchema, WorkerHeartbeatSchema } from "./runtime";
 import { WorkbenchHomeSchema } from "./workbench";
 import { parseFreshWorkerHeartbeat } from "./runtime";
-import { RecommendationExclusionPageSchema, RecommendationListHistoryPageSchema, RecommendationListSchema } from "./recommendations";
+import { RecommendationExclusionPageSchema, RecommendationExclusionSchema, RecommendationListHistoryPageSchema, RecommendationListSchema } from "./recommendations";
 
 describe("shared contracts", () => {
   it("retains every exclusion in a historical recommendation", () => {
@@ -22,6 +22,12 @@ describe("shared contracts", () => {
 
     expect(RecommendationListHistoryPageSchema.parse({ items: [item], nextCursor: item.recommendationListId })).toMatchObject({ nextCursor: item.recommendationListId });
     expect(RecommendationExclusionPageSchema.parse({ items: [{ opportunityId: "30000000-0000-4000-8000-000000000001", reasonCode: "TRIAGE_NOT_PASS" }], nextCursor: null })).toMatchObject({ nextCursor: null });
+  });
+
+  it("接受规则排除并拒绝未知稳定排除原因", () => {
+    const opportunityId = "30000000-0000-4000-8000-000000000001";
+    expect(RecommendationExclusionSchema.safeParse({ opportunityId, reasonCode: "RULE_EXCLUDED" }).success).toBe(true);
+    expect(RecommendationExclusionSchema.safeParse({ opportunityId, reasonCode: "UNKNOWN_EXCLUSION" }).success).toBe(false);
   });
 
   it("rejects error payloads without a request id", () => {

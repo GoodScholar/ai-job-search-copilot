@@ -1,0 +1,2 @@
+ALTER TABLE "recommendation_exclusions" DROP CONSTRAINT "recommendation_exclusions_reason_code_check";--> statement-breakpoint
+ALTER TABLE "recommendation_exclusions" ADD CONSTRAINT "recommendation_exclusions_reason_code_check" CHECK ("recommendation_exclusions"."reason_code" in ('TRIAGE_NOT_PASS', 'DEADLINE_EXPIRED', 'SCORE_BELOW_THRESHOLD', 'CANDIDATE_LIMIT', 'MATCH_QUALITY_INSUFFICIENT', 'RULE_EXCLUDED'));

@@ -358,6 +358,13 @@
       "when": 1789220394802,
       "tag": "0050_account_run_control",
       "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "7",
+      "when": 1789280528481,
+      "tag": "0051_recommendation_rule_exclusions",
+      "breakpoints": true
     }
   ]
 }

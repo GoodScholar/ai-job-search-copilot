@@ -6,4 +6,5 @@ export const exclusionReasonText: Record<RecommendationList["exclusions"][number
   SCORE_BELOW_THRESHOLD: "初步匹配度未达要求",
   CANDIDATE_LIMIT: "本次优先评估名额已满",
   MATCH_QUALITY_INSUFFICIENT: "匹配证据不足",
+  RULE_EXCLUDED: "被推荐规则排除",
 };

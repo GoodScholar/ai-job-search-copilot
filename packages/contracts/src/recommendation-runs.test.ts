@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   ControlRecommendationRunCommandSchema,
+  RecommendationResultEvidenceSchema,
+  RecommendationResultEvidenceWriteSchema,
   RecommendationResultSchema,
   RecommendationRunFailureSchema,
   RecommendationRunPreparationSchema,
@@ -27,7 +29,7 @@ const closingEvidence = {
   sourceCoverage: { plannedTrustedSourceCount: 2, plannedPublicQueryCount: 1, checkedBranchCount: 3, credibleBranchCount: 2, verifiedJobCount: 5 },
   coverageLosses: [{ code: "TRUSTED_SOURCE_UNAVAILABLE", affectedCount: 1, retryable: true }],
   qualification: { evaluatedCount: 5, rejectedCount: 1, insufficientInformationCount: 1, expiredCount: 0 },
-  coarseRanking: { eligibleCount: 3, belowThresholdCount: 1, candidateLimitExcludedCount: 0, deepMatchCandidateCount: 2 },
+  coarseRanking: { eligibleCount: 3, belowThresholdCount: 1, ruleExcludedCount: 0, candidateLimitExcludedCount: 0, deepMatchCandidateCount: 2 },
   deepMatching: { evaluatedCount: 2, qualityInsufficientCount: 1, finalRecommendationCount: 1 },
   suggestedActions: ["restart_discovery"],
 } as const;
@@ -40,6 +42,30 @@ const completedStages = [
 ] as const;
 
 describe("逻辑推荐运行契约", () => {
+  it("兼容读取旧粗排证据，并要求新写入显式闭合规则排除计数", () => {
+    const { ruleExcludedCount: _ruleExcludedCount, ...legacyCoarseRanking } = closingEvidence.coarseRanking;
+    const legacyEvidence = { ...closingEvidence, coarseRanking: legacyCoarseRanking };
+    const next = {
+      ...legacyEvidence,
+      coarseRanking: {
+        eligibleCount: 3,
+        belowThresholdCount: 0,
+        ruleExcludedCount: 1,
+        candidateLimitExcludedCount: 0,
+        deepMatchCandidateCount: 2,
+      },
+    };
+
+    expect(RecommendationResultEvidenceSchema.safeParse(next).success).toBe(true);
+    expect(RecommendationResultEvidenceWriteSchema.safeParse(legacyEvidence).success).toBe(false);
+    expect(RecommendationResultEvidenceSchema.parse(legacyEvidence).coarseRanking.ruleExcludedCount).toBe(0);
+    expect(RecommendationResultEvidenceWriteSchema.safeParse({ ...next, coarseRanking: { ...next.coarseRanking, ruleExcludedCount: -1 } }).success).toBe(false);
+    expect(RecommendationResultEvidenceWriteSchema.safeParse({ ...next, coarseRanking: { ...next.coarseRanking, ruleExcludedCount: 1.5 } }).success).toBe(false);
+    expect(RecommendationResultEvidenceWriteSchema.safeParse({ ...next, coarseRanking: { ...next.coarseRanking, ruleExcludedCount: null } }).success).toBe(false);
+    expect(RecommendationResultEvidenceWriteSchema.safeParse({ ...next, coarseRanking: { ...next.coarseRanking, ruleExcludedCount: 2 } }).success).toBe(false);
+    expect(RecommendationResultEvidenceWriteSchema.safeParse({ ...next, coarseRanking: { ...next.coarseRanking, deepMatchCandidateCount: 1 } }).success).toBe(false);
+  });
+
   it("接受可信的非空推荐清单并拒绝空清单和不闭合证据", () => {
     const result = { kind: "recommendation_list", resultId, recommendationListId: resultId, itemCount: 1, evidence: closingEvidence, publishedAt } as const;
     expect(RecommendationResultSchema.parse(result)).toEqual(result);

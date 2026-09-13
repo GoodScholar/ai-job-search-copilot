@@ -54,7 +54,7 @@ const RecommendationProfileEvidenceSchema = z.discriminatedUnion("kind", [
   z.object({ id: z.string().min(1), value: z.string().min(1), kind: z.literal("profile_fact"), profileFactRevisionId: z.uuid() }).strict(),
   z.object({ id: z.string().min(1), value: z.string().min(1), kind: z.literal("target_revision"), targetRevisionId: z.uuid() }).strict(),
 ]);
-export const RecommendationExclusionSchema = z.object({ opportunityId: z.uuid(), reasonCode: z.enum(["TRIAGE_NOT_PASS", "DEADLINE_EXPIRED", "SCORE_BELOW_THRESHOLD", "CANDIDATE_LIMIT", "MATCH_QUALITY_INSUFFICIENT"]) }).strict();
+export const RecommendationExclusionSchema = z.object({ opportunityId: z.uuid(), reasonCode: z.enum(["TRIAGE_NOT_PASS", "DEADLINE_EXPIRED", "SCORE_BELOW_THRESHOLD", "CANDIDATE_LIMIT", "MATCH_QUALITY_INSUFFICIENT", "RULE_EXCLUDED"]) }).strict();
 export const RecommendationItemSchema = z.object({
   recommendationListItemId: z.uuid().optional(),
   matchVersionId: z.uuid(), opportunityId: z.uuid(), company: z.string().nullable(), title: z.string().nullable(), location: z.string().nullable(),
