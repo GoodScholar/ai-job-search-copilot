@@ -95,7 +95,7 @@ describe("job triage persistence", () => {
     await database.update(jobProfiles).set({ version: 2, updatedAt: now }).where(eq(jobProfiles.id, frozenFixture.profileId));
     await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId: frozenFixture.userId, targetId: frozenFixture.targetId, version: 2, priority: "primary", state: "inactive", constraints: { ...frozenFixture.constraints, workModes: ["onsite"] }, createdAt: now });
     await database.update(jobTargets).set({ version: 2, state: "inactive", updatedAt: now }).where(eq(jobTargets.id, frozenFixture.targetId));
-    await database.update(jobOpportunities).set({ company: "当前公司", title: "current unrelated role", location: "北京", deadline: new Date("2026-08-01T00:00:00.000Z"), updatedAt: now }).where(eq(jobOpportunities.id, frozenFixture.opportunityId));
+    await database.update(jobOpportunities).set({ company: "当前公司", title: "current unrelated role", location: "北京", deadline: new Date("2026-08-01T00:00:00.000Z"), availability: "closed", updatedAt: now }).where(eq(jobOpportunities.id, frozenFixture.opportunityId));
 
     const auditTrail = createAuditTrail({ db: database, clock: () => now });
     const createFrozen = (userId = frozenFixture.userId, sourcePostingVersionId = frozenFixture.sourcePostingVersionId) => database.transaction((transaction) => createFrozenJobTriageInTransaction({

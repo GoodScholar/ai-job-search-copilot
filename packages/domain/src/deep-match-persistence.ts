@@ -22,7 +22,7 @@ export type SelectedDeepMatchCandidate = DeepMatchCandidate & {
   triageVersionId: string; profileId: string; profileVersion: number; targetVersion: number; overallScore: number;
   opportunitySnapshot: { company: string | null; title: string | null; location: string | null };
 };
-export type RecommendationExclusionReason = "TRIAGE_NOT_PASS" | "DEADLINE_EXPIRED" | "SCORE_BELOW_THRESHOLD" | "CANDIDATE_LIMIT" | "MATCH_QUALITY_INSUFFICIENT";
+export type RecommendationExclusionReason = "TRIAGE_NOT_PASS" | "DEADLINE_EXPIRED" | "SCORE_BELOW_THRESHOLD" | "CANDIDATE_LIMIT" | "MATCH_QUALITY_INSUFFICIENT" | "RULE_EXCLUDED";
 export type CandidateSelection = { candidates: SelectedDeepMatchCandidate[]; exclusions: Array<{ opportunityId: string; reasonCode: RecommendationExclusionReason }> };
 
 function profileDimensions(factType: string): DeepMatchCandidate["profileEvidence"][number]["dimensions"] {
@@ -147,14 +147,19 @@ export function createDeepMatchQueries(deps: { db: Database }) {
       const latest = new Map<string, typeof triageRows[number]>();
       for (const row of triageRows) if (!latest.has(row.triage.opportunityId)) latest.set(row.triage.opportunityId, row);
       const excluded = new Set(input.ruleConfig?.excludedOpportunityIds ?? []);
-      const scoped = [...latest.values()].filter(({ opportunity }) => !excluded.has(opportunity.id) && (input.opportunityId === undefined || opportunity.id === input.opportunityId));
       const exclusions: CandidateSelection["exclusions"] = [];
       const usesFrozenSourceVersion = input.sourcePostingVersionIds !== undefined;
+      // Legacy flows historically omit rule-excluded jobs without a persisted reason.
+      // Recommendation roots instead retain a frozen, publishable RULE_EXCLUDED fact.
+      const scoped = [...latest.values()].filter(({ opportunity }) => (usesFrozenSourceVersion || !excluded.has(opportunity.id)) && (input.opportunityId === undefined || opportunity.id === input.opportunityId));
       const eligible = scoped.filter(({ triage, opportunity, sourceVersion }) => {
         const expectedSourcePostingVersionId = usesFrozenSourceVersion ? triage.sourcePostingVersionId : opportunity.sourcePostingVersionId;
         const availability = usesFrozenSourceVersion ? sourceVersion.availability : opportunity.availability;
         const eligibleByPolicy = isDeepMatchTriageEligible({ sourcePostingVersionId: triage.sourcePostingVersionId, expectedSourcePostingVersionId, targetVersion: triage.targetVersion, expectedTargetVersion: input.targetVersion, overallVerdict: triage.overallVerdict, deadlineStatus: triage.deadlineStatus, availability, overallScore: triage.overallScore, threshold: triage.threshold });
-        if (eligibleByPolicy) return true;
+        if (eligibleByPolicy) {
+          if (usesFrozenSourceVersion && excluded.has(opportunity.id)) { exclusions.push({ opportunityId: opportunity.id, reasonCode: "RULE_EXCLUDED" }); return false; }
+          return true;
+        }
         if (triage.sourcePostingVersionId !== expectedSourcePostingVersionId || triage.overallVerdict !== "pass" || availability !== "open") { exclusions.push({ opportunityId: opportunity.id, reasonCode: "TRIAGE_NOT_PASS" }); return false; }
         if (triage.deadlineStatus === "expired") { exclusions.push({ opportunityId: opportunity.id, reasonCode: "DEADLINE_EXPIRED" }); return false; }
         if (triage.overallScore === null || triage.threshold === null || triage.overallScore < triage.threshold) { exclusions.push({ opportunityId: opportunity.id, reasonCode: "SCORE_BELOW_THRESHOLD" }); return false; }

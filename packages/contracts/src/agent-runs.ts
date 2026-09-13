@@ -303,7 +303,7 @@ export const DeepMatchAgentRunSourceScopeSchema = z.object({ kind: z.literal("de
   recommendationRuleConfig: RecommendationRuleConfigSchema.default({ minimumOverallScore: 0, minimumEvidenceDimensions: 0, requiredEvidenceDimensions: [], excludedOpportunityIds: [] }),
   /** The child is claimable only after its candidates and exclusions are durably frozen. */
   initialized: z.literal(true),
-  selectionExclusions: z.array(z.object({ opportunityId: z.uuid(), reasonCode: z.enum(["TRIAGE_NOT_PASS", "DEADLINE_EXPIRED", "SCORE_BELOW_THRESHOLD", "CANDIDATE_LIMIT", "MATCH_QUALITY_INSUFFICIENT"]) }).strict()),
+  selectionExclusions: z.array(z.object({ opportunityId: z.uuid(), reasonCode: z.enum(["TRIAGE_NOT_PASS", "DEADLINE_EXPIRED", "SCORE_BELOW_THRESHOLD", "CANDIDATE_LIMIT", "MATCH_QUALITY_INSUFFICIENT", "RULE_EXCLUDED"]) }).strict()),
   testFixture: z.object({ qualityInsufficientOpportunityIds: z.array(z.uuid()).max(10).optional(), overallScoresByOpportunityId: z.record(z.uuid(), z.int().min(0).max(100)).optional() }).strict().optional() }).strict().superRefine((scope, context) => {
   if (scope.trigger === "manual" && scope.opportunityId === null) context.addIssue({ code: "custom", path: ["opportunityId"], message: "manual matching must bind one opportunity" });
   if (scope.trigger === "automatic" && scope.opportunityId !== null) context.addIssue({ code: "custom", path: ["opportunityId"], message: "automatic matching evaluates discovery candidates" });

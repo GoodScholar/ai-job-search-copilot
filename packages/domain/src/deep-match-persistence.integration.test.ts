@@ -222,6 +222,21 @@ describe("deep match persistence", () => {
     })).resolves.toEqual({ candidates: [], exclusions: [{ opportunityId: input.opportunityId, reasonCode: "MATCH_QUALITY_INSUFFICIENT" }] });
   });
 
+  it("selection 只将通过资格与粗排门槛的规则排除岗位记录为 RULE_EXCLUDED", async () => {
+    const eligible = await fixture({ score: 90 });
+    const owner = { userId: eligible.userId, profileId: eligible.profileId, targetId: eligible.targetId };
+    const belowThreshold = await fixture({ owner, score: 60 });
+
+    await expect(createDeepMatchQueries({ db }).selectCandidateSelection({
+      userId: eligible.userId, targetId: eligible.targetId, targetVersion: 1,
+      sourcePostingVersionIds: [eligible.sourcePostingVersionId, belowThreshold.sourcePostingVersionId], profileId: eligible.profileId, profileVersion: 1,
+      ruleConfig: { excludedOpportunityIds: [eligible.opportunityId, belowThreshold.opportunityId] },
+    })).resolves.toEqual({ candidates: [], exclusions: expect.arrayContaining([
+      { opportunityId: eligible.opportunityId, reasonCode: "RULE_EXCLUDED" },
+      { opportunityId: belowThreshold.opportunityId, reasonCode: "SCORE_BELOW_THRESHOLD" },
+    ]) });
+  });
+
   it("推荐 child 冻结当前非默认规则及其版本而不改变粗排语义", async () => {
     const input = await fixture({ score: 90 });
     const automatic = createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now });

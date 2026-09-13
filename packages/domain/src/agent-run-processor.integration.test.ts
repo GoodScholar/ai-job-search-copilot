@@ -20,6 +20,8 @@ import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
 import { createRunPreflightEvaluator } from "./run-preflight";
 import { createModelDiagnosticProjectionReader } from "./model-diagnostics";
 import { createAccountRunControl } from "./account-run-control";
+import { createRecommendationRunCommands } from "./recommendation-runs";
+import type { SourceHealthDiscoveryAdapter } from "./source-health-discovery-adapter";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
 const constraints = { roleFamily: "AI 应用工程师", seniority: null, locations: [], workModes: [], relocation: "unknown" as const, salary: null, industries: [], dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] } };
@@ -262,6 +264,130 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({ status: "completed", budget: { maxResults: 0 }, usage: { results: 0 }, results: [] });
   });
 
+  it("推荐根完成时只冻结本根发现的岗位并创建唯一 deep-match 子运行", async () => {
+    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const profileId = crypto.randomUUID(); const factId = crypto.randomUUID();
+    await database.insert(jobAccounts).values({ id: userId });
+    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: now, updatedAt: now });
+    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: now });
+    await database.insert(jobProfiles).values({ id: profileId, userId, version: 1, createdAt: now, updatedAt: now });
+    await database.insert(profileFacts).values({ id: factId, userId, profileId, factType: "skill", createdAt: now });
+    await database.insert(profileFactRevisions).values({ id: crypto.randomUUID(), userId, profileFactId: factId, revisionNumber: 1, factType: "skill", factValue: { name: "TypeScript" }, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1, createdAt: now });
+    const fingerprint = crypto.randomUUID();
+    await database.insert(modelDiagnosticResults).values({ configurationFingerprint: fingerprint, status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket: "under_1s", checkedAt: now });
+    const preflight = createRunPreflightEvaluator({ capabilityAdapter: { adapter: "greenhouse", adapterVersion: "test", declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1" as const, capabilities: ["active_discovery", "read_details", "continuous_monitoring"] }) }, modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: fingerprint }), discoveryExecutionMode: "layered_public", id: () => crypto.randomUUID(), clock: () => now });
+    const service = createRecommendationRunCommands({ db: database, queue: new Queue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), runPreflight: preflight, executionMode: "layered_public", id: () => crypto.randomUUID(), clock: () => now });
+    const preparation = await preflight.evaluate(database, { userId, workflow: "recommendation", trigger: "manual" });
+    const started = await service.start({ userId, requestId: crypto.randomUUID(), command: { idempotencyKey: crypto.randomUUID(), warningFingerprint: preparation.report.warningFingerprint } });
+    const rootId = started.run.runId;
+    const outcome = await createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({ branchOutcome: { trusted: "succeeded", publicDiscovery: "clean_zero" }, diagnostics: [] }) }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .process({ version: 1, userId, runId: rootId, finalAttempt: true });
+    const [terminal] = await database.select({ failureCode: agentRuns.failureCode }).from(agentRuns).where(eq(agentRuns.id, rootId));
+    expect({ outcome, terminal }).toEqual({ outcome: "completed", terminal: { failureCode: null } });
+    const [root] = await database.select().from(agentRuns).where(eq(agentRuns.id, rootId));
+    await expect(database.select({ parentRunId: agentRuns.parentRunId, runPurpose: agentRuns.runPurpose, preflight: agentRuns.preflightSnapshot }).from(agentRuns).where(eq(agentRuns.parentRunId, rootId)))
+      .resolves.toEqual([expect.objectContaining({ parentRunId: rootId, runPurpose: "recommendation", preflight: root!.preflightSnapshot })]);
+  });
+
+  it("layered recommendation 根把真实非空 discovery tuple 保守冻结为 initialized 空 child", async () => {
+    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const profileId = crypto.randomUUID(); const factId = crypto.randomUUID();
+    await database.insert(jobAccounts).values({ id: userId });
+    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: now, updatedAt: now });
+    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: now });
+    await database.insert(jobProfiles).values({ id: profileId, userId, version: 1, createdAt: now, updatedAt: now });
+    await database.insert(profileFacts).values({ id: factId, userId, profileId, factType: "skill", createdAt: now });
+    await database.insert(profileFactRevisions).values({ id: crypto.randomUUID(), userId, profileFactId: factId, revisionNumber: 1, factType: "skill", factValue: { name: "TypeScript" }, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1, createdAt: now });
+    const fingerprint = crypto.randomUUID();
+    await database.insert(modelDiagnosticResults).values({ configurationFingerprint: fingerprint, status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket: "under_1s", checkedAt: now });
+    const preflight = createRunPreflightEvaluator({ capabilityAdapter: { adapter: "greenhouse", adapterVersion: "test", declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1" as const, capabilities: ["active_discovery", "read_details", "continuous_monitoring"] }) }, modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: fingerprint }), discoveryExecutionMode: "layered_public", id: () => crypto.randomUUID(), clock: () => now });
+    const service = createRecommendationRunCommands({ db: database, queue: new Queue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), runPreflight: preflight, executionMode: "layered_public", id: () => crypto.randomUUID(), clock: () => now });
+    const preparation = await preflight.evaluate(database, { userId, workflow: "recommendation", trigger: "manual" });
+    const started = await service.start({ userId, requestId: crypto.randomUUID(), command: { idempotencyKey: crypto.randomUUID(), warningFingerprint: preparation.report.warningFingerprint } });
+    const sourcePostingId = crypto.randomUUID(); const sourcePostingVersionId = crypto.randomUUID(); const sourceHash = "f".repeat(64);
+    await database.insert(jobSourcePostings).values({ id: sourcePostingId, userId, sourceType: "company_careers", sourceIdentifier: sourceHash, sourceIdentity: { sourceId: "greenhouse:metadata", detailId: "1" }, isOfficial: true, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
+    await database.insert(jobSourcePostingVersions).values({ id: sourcePostingVersionId, userId, sourcePostingId, version: 1, contentSha256: sourceHash, rawContentSha256: sourceHash, rawObjectReference: { key: "metadata" }, normalizedData: { sourceId: "greenhouse:metadata", detailId: "1", company: "Metadata Co", title: "AI Engineer", location: "上海", postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true }, retrievedAt: now, availability: "open", createdAt: now });
+    const queryId = crypto.randomUUID(); const leadId = crypto.randomUUID();
+    await database.insert(jobDiscoveryLeads).values({ id: leadId, userId, runId: started.run.runId, targetId, provider: "anysearch", queryId, queryKind: "general", queryFingerprint: sourceHash, normalizedUrl: "https://fixture.invalid/metadata", stableFingerprint: "e".repeat(64), expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000), state: "verified", sourcePostingVersionId, verifiedFinalUrl: "https://fixture.invalid/metadata", rejectionCode: null, createdAt: now, updatedAt: now });
+    await database.insert(jobDiscoveryAttributions).values({ id: crypto.randomUUID(), userId, runId: started.run.runId, leadId, queryId, provider: "anysearch", sourcePostingVersionId, createdAt: now });
+    const outcome = await createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({ branchOutcome: { trusted: "succeeded", publicDiscovery: "clean_zero" }, diagnostics: [], sourcePostingVersionIds: [sourcePostingVersionId], trustedSourcePostingVersionIds: [sourcePostingVersionId] }) }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .process({ version: 1, userId, runId: started.run.runId, finalAttempt: true });
+
+    const [rootTerminal] = await database.select({ status: agentRuns.status, failureCode: agentRuns.failureCode }).from(agentRuns).where(eq(agentRuns.id, started.run.runId));
+    expect({ outcome, rootTerminal }).toEqual({ outcome: "completed", rootTerminal: { status: "completed", failureCode: null } });
+    const [triage] = await database.select({ opportunityId: jobTriageVersions.opportunityId, overallVerdict: jobTriageVersions.overallVerdict, overallScore: jobTriageVersions.overallScore }).from(jobTriageVersions).where(eq(jobTriageVersions.sourcePostingVersionId, sourcePostingVersionId));
+    expect(triage).toMatchObject({ overallVerdict: "unknown", overallScore: null });
+    await expect(database.select({ parentRunId: agentRuns.parentRunId, runPurpose: agentRuns.runPurpose, sourceScope: agentRuns.sourceScope }).from(agentRuns).where(eq(agentRuns.parentRunId, started.run.runId)))
+      .resolves.toEqual([expect.objectContaining({ parentRunId: started.run.runId, runPurpose: "recommendation", sourceScope: expect.objectContaining({ initialized: true, selectionExclusions: [{ opportunityId: triage!.opportunityId, reasonCode: "TRIAGE_NOT_PASS" }] }) })]);
+  });
+
+  it("layered recommendation 根以完整冻结资格生成非空 child candidate", async () => {
+    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const profileId = crypto.randomUUID(); const factId = crypto.randomUUID();
+    const qualifiedConstraints = { roleFamily: "AI 应用工程师", seniority: "senior", locations: ["上海"], workModes: ["remote"], relocation: "willing" as const, salary: null, industries: [], dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] } };
+    await database.insert(jobAccounts).values({ id: userId });
+    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: now, updatedAt: now });
+    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints: qualifiedConstraints, createdAt: now });
+    await database.insert(jobProfiles).values({ id: profileId, userId, version: 1, createdAt: now, updatedAt: now });
+    await database.insert(profileFacts).values({ id: factId, userId, profileId, factType: "skill", createdAt: now });
+    await database.insert(profileFactRevisions).values({ id: crypto.randomUUID(), userId, profileFactId: factId, revisionNumber: 1, factType: "skill", factValue: { name: "TypeScript" }, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1, createdAt: now });
+    for (const [factType, factValue] of [["education", { summary: "本科" }], ["language", { name: "英语", level: "C1" }], ["work_eligibility", { summary: "中国工作许可" }]] as const) {
+      const completeFactId = crypto.randomUUID();
+      await database.insert(profileFacts).values({ id: completeFactId, userId, profileId, factType, createdAt: now });
+      await database.insert(profileFactRevisions).values({ id: crypto.randomUUID(), userId, profileFactId: completeFactId, revisionNumber: 1, factType, factValue, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1, createdAt: now });
+    }
+    const fingerprint = crypto.randomUUID();
+    await database.insert(modelDiagnosticResults).values({ configurationFingerprint: fingerprint, status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket: "under_1s", checkedAt: now });
+    const preflight = createRunPreflightEvaluator({ capabilityAdapter: { adapter: "greenhouse", adapterVersion: "test", declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1" as const, capabilities: ["active_discovery", "read_details", "continuous_monitoring"] }) }, modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: fingerprint }), discoveryExecutionMode: "layered_public", id: () => crypto.randomUUID(), clock: () => now });
+    const service = createRecommendationRunCommands({ db: database, queue: new Queue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), runPreflight: preflight, executionMode: "layered_public", id: () => crypto.randomUUID(), clock: () => now });
+    const preparation = await preflight.evaluate(database, { userId, workflow: "recommendation", trigger: "manual" });
+    const started = await service.start({ userId, requestId: crypto.randomUUID(), command: { idempotencyKey: crypto.randomUUID(), warningFingerprint: preparation.report.warningFingerprint } });
+    const sourcePostingId = crypto.randomUUID(); const sourcePostingVersionId = crypto.randomUUID(); const sourceHash = "c".repeat(64);
+    await database.insert(jobSourcePostings).values({ id: sourcePostingId, userId, sourceType: "company_careers", sourceIdentifier: sourceHash, sourceIdentity: { sourceId: "greenhouse:qualified", detailId: "1" }, isOfficial: true, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
+    await database.insert(jobSourcePostingVersions).values({ id: sourcePostingVersionId, userId, sourcePostingId, version: 1, contentSha256: sourceHash, rawContentSha256: sourceHash, rawObjectReference: { key: "qualified" }, normalizedData: { sourceId: "greenhouse:qualified", detailId: "1", company: "Qualified Co", title: "AI Engineer", location: "上海", postedAt: now.toISOString(), deadline: null, sourceType: "company_careers", isOfficial: true, qualifications: { workMode: { value: "remote", evidence: { field: "workMode", path: "工作方式", value: "远程" } }, relocationRequired: { value: true, evidence: { field: "relocationRequired", path: "是否需要搬迁", value: "是" } }, salary: null, seniority: { value: "senior", evidence: { field: "seniority", path: "级别", value: "senior" } }, education: { value: "本科", evidence: { field: "education", path: "学历", value: "本科" } }, languages: { value: [{ name: "英语", level: "C1" }], evidence: { field: "languages", path: "语言", value: "英语(C1)" } }, workEligibility: { value: "中国工作许可", evidence: { field: "workEligibility", path: "工作资格", value: "中国工作许可" } }, industry: null, employmentType: null, requiredSkills: { value: ["TypeScript"], evidence: { field: "requiredSkills", path: "技能", value: "TypeScript" } } } }, retrievedAt: now, availability: "open", createdAt: now });
+    const queryId = crypto.randomUUID(); const leadId = crypto.randomUUID();
+    await database.insert(jobDiscoveryLeads).values({ id: leadId, userId, runId: started.run.runId, targetId, provider: "anysearch", queryId, queryKind: "general", queryFingerprint: sourceHash, normalizedUrl: "https://fixture.invalid/qualified", stableFingerprint: "d".repeat(64), expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000), state: "verified", sourcePostingVersionId, verifiedFinalUrl: "https://fixture.invalid/qualified", rejectionCode: null, createdAt: now, updatedAt: now });
+    await database.insert(jobDiscoveryAttributions).values({ id: crypto.randomUUID(), userId, runId: started.run.runId, leadId, queryId, provider: "anysearch", sourcePostingVersionId, createdAt: now });
+    const outcome = await createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({ branchOutcome: { trusted: "succeeded", publicDiscovery: "clean_zero" }, diagnostics: [], sourcePostingVersionIds: [sourcePostingVersionId], trustedSourcePostingVersionIds: [sourcePostingVersionId] }) }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .process({ version: 1, userId, runId: started.run.runId, finalAttempt: true });
+
+    expect(outcome).toBe("completed");
+    const [triage] = await database.select({ overallVerdict: jobTriageVersions.overallVerdict, overallScore: jobTriageVersions.overallScore }).from(jobTriageVersions).where(eq(jobTriageVersions.sourcePostingVersionId, sourcePostingVersionId));
+    expect(triage).toMatchObject({ overallVerdict: "pass", overallScore: expect.any(Number) });
+    const [child] = await database.select({ id: agentRuns.id }).from(agentRuns).where(eq(agentRuns.parentRunId, started.run.runId));
+    await expect(database.select({ sourcePostingVersionId: deepMatchRunCandidates.sourcePostingVersionId }).from(deepMatchRunCandidates).where(eq(deepMatchRunCandidates.runId, child!.id))).resolves.toEqual([{ sourcePostingVersionId }]);
+  });
+
+  it.each(["fake", "greenhouse"] as const)("%s recommendation 根以真实非空 discovery metadata 创建保守 child", async (executionMode) => {
+    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const profileId = crypto.randomUUID(); const factId = crypto.randomUUID();
+    await database.insert(jobAccounts).values({ id: userId });
+    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: now, updatedAt: now });
+    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: now });
+    await database.insert(jobProfiles).values({ id: profileId, userId, version: 1, createdAt: now, updatedAt: now });
+    await database.insert(profileFacts).values({ id: factId, userId, profileId, factType: "skill", createdAt: now });
+    await database.insert(profileFactRevisions).values({ id: crypto.randomUUID(), userId, profileFactId: factId, revisionNumber: 1, factType: "skill", factValue: { name: "TypeScript" }, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1, createdAt: now });
+    await createCompanyWatchlistCommands({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).addItem({ userId, targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, canonicalCompanyName: "Metadata Co", careersUrl: "https://boards.greenhouse.io/metadata", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null } });
+    const fingerprint = crypto.randomUUID();
+    await database.insert(modelDiagnosticResults).values({ configurationFingerprint: fingerprint, status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket: "under_1s", checkedAt: now });
+    const preflight = createRunPreflightEvaluator({ capabilityAdapter: { adapter: "greenhouse", adapterVersion: "test", declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1" as const, capabilities: ["active_discovery", "read_details", "continuous_monitoring"] }) }, modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: fingerprint }), discoveryExecutionMode: executionMode, id: () => crypto.randomUUID(), clock: () => now });
+    const service = createRecommendationRunCommands({ db: database, queue: new Queue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), runPreflight: preflight, executionMode, id: () => crypto.randomUUID(), clock: () => now });
+    const preparation = await preflight.evaluate(database, { userId, workflow: "recommendation", trigger: "manual" });
+    const started = await service.start({ userId, requestId: crypto.randomUUID(), command: { idempotencyKey: crypto.randomUUID(), warningFingerprint: preparation.report.warningFingerprint } });
+    const sourceId = executionMode === "fake" ? "fake:aurora-careers" : "greenhouse:metadata";
+    const detail = { sourceId, detailId: "1", company: "Metadata Co", title: "AI Engineer", location: "上海", postedAt: now.toISOString(), deadline: null, sourceType: "company_careers" as const, isOfficial: true as const, rawPayload: {} };
+    const summary = { sourceId: detail.sourceId, detailId: detail.detailId, company: detail.company, title: detail.title, location: detail.location, postedAt: detail.postedAt, deadline: detail.deadline };
+    const calls: string[] = [];
+    const adapter: JobDiscoveryAdapter = { adapter: executionMode, adapterVersion: "test", declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: executionMode, adapterVersion: "test", contractVersion: "source-capabilities-v1" as const, capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }), search: async () => ({ ok: false, error: { code: "UNUSED", retryable: false } }), searchBatch: async () => { calls.push("searchBatch"); return { ok: true, data: [summary] }; }, getDetail: async () => { calls.push("getDetail"); return { ok: true, data: detail }; } };
+    const sourceHealthAdapter: SourceHealthDiscoveryAdapter = {
+      adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
+      declareCapabilities: ({ sourceId }: { sourceId: string }) => ({ sourceId, adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, contractVersion: "source-capabilities-v1" as const, capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
+      listSource: async ({ source }: { source: { sourceId: string } }) => { calls.push("listSource"); return { ok: true as const, attemptCount: 1, data: { sourceId: source.sourceId, observedDetailIds: [detail.detailId], candidates: [{ sourceId: source.sourceId, detailId: detail.detailId, company: null, title: detail.title, location: detail.location }] } }; },
+      getSourceDetail: async ({ source }: { source: { sourceId: string; boardToken: string } }) => { calls.push("getSourceDetail"); return { ok: true as const, attemptCount: 1, data: { ...detail, sourceId: source.sourceId, absoluteUrl: `https://boards.greenhouse.io/${source.boardToken}/jobs/${detail.detailId}` } }; },
+    };
+    const outcome = await createAgentRunProcessor({ db: database, adapterResolver: resolver(adapter), ...(executionMode === "greenhouse" ? { sourceHealthAdapterResolver: { resolve: () => sourceHealthAdapter } } : {}), checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).process({ version: 1, userId, runId: started.run.runId, finalAttempt: true });
+    const [rootTerminal] = await database.select({ status: agentRuns.status, failureCode: agentRuns.failureCode }).from(agentRuns).where(eq(agentRuns.id, started.run.runId));
+    expect({ outcome, rootTerminal, calls }).toEqual({ outcome: "completed", rootTerminal: { status: "completed", failureCode: null }, calls: executionMode === "fake" ? ["searchBatch", "getDetail"] : ["listSource", "getSourceDetail"] });
+    await expect(database.select({ overallVerdict: jobTriageVersions.overallVerdict }).from(jobTriageVersions).where(eq(jobTriageVersions.userId, userId))).resolves.toEqual([{ overallVerdict: "unknown" }]);
+    await expect(database.select({ parentRunId: agentRuns.parentRunId }).from(agentRuns).where(eq(agentRuns.parentRunId, started.run.runId))).resolves.toHaveLength(1);
+  });
+
   it("历史运行缺少账户策略引用时，detail 与 latest 保持 null 而不伪造新修订", async () => {
     const job = await run();
     await database.update(agentRuns).set({ accountPolicyRevisionNumber: null, accountPolicySnapshot: null }).where(eq(agentRuns.id, job.runId));
@@ -276,6 +402,19 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(database.update(agentRuns).set({ accountPolicySnapshot: null }).where(eq(agentRuns.id, job.runId))).rejects.toMatchObject({ cause: { constraint_name: "agent_runs_policy_columns_paired" } });
     await expect(database.update(agentRuns).set({ accountPolicyRevisionNumber: 999, accountPolicySnapshot: stored!.snapshot }).where(eq(agentRuns.id, job.runId))).rejects.toMatchObject({ cause: { constraint_name: "agent_runs_policy_owner_revision_fk" } });
     await expect(database.update(agentRuns).set({ accountPolicyRevisionNumber: null, accountPolicySnapshot: null }).where(eq(agentRuns.id, job.runId))).resolves.toBeDefined();
+  });
+
+  it("deep-match child 安全解析 RULE_EXCLUDED 冻结事实且不调用模型", async () => {
+    const job = await deepMatchRun();
+    const [run] = await database.select({ sourceScope: agentRuns.sourceScope }).from(agentRuns).where(eq(agentRuns.id, job.runId));
+    await database.delete(deepMatchRunCandidates).where(eq(deepMatchRunCandidates.runId, job.runId));
+    await database.update(agentRuns).set({ sourceScope: { ...(run!.sourceScope as object), selectionExclusions: [{ opportunityId: job.opportunityIds[0]!, reasonCode: "RULE_EXCLUDED" }] } }).where(eq(agentRuns.id, job.runId));
+    let modelCalls = 0;
+    const fake = new FakeDeepMatchAdapter();
+    const processor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: { ...fake, assess: async (...args) => { modelCalls += 1; return fake.assess(...args); } }, checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("completed");
+    expect(modelCalls).toBe(0);
   });
 
   it("maxAttempts 为一时，首次可重试失败后不会再次调用来源", async () => {

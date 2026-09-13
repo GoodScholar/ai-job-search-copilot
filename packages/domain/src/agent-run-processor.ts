@@ -17,7 +17,8 @@ import type { AuditTrail } from "./audit-trail";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { readAccountRunControlInTransaction } from "./account-run-admission";
 import { applyAgentRunControlInTransaction } from "./agent-run-control";
-import { createJobDiscoveryPersistence, discoverySourceIdentifier, type DiscoveryDetail } from "./job-discovery-persistence";
+import { createJobDiscoveryPersistence, discoverySourceIdentifier, readDiscoveryResultCandidatesInTransaction, type DiscoveryDetail } from "./job-discovery-persistence";
+import { createFrozenJobTriageInTransaction } from "./job-triage-persistence";
 import { persistJobOpportunity } from "./job-opportunity-persistence";
 import { deepMatchDiscoveryIdempotencyKey, ensureDeepMatchRunInTransaction, triggerDeepMatchAfterDiscovery } from "./deep-match-agent-runs";
 import type { RunPreflightEvaluator } from "./run-preflight";
@@ -371,6 +372,16 @@ async function checkPoint(checkpoint: AgentRunCheckpoint, input: { userId: strin
   }
 }
 
+async function handoffRecommendationDiscoveryInTransaction(deps: AgentRunProcessorDependencies, transaction: any, root: typeof agentRuns.$inferSelect) {
+  if (root.runPurpose !== "recommendation" || root.parentRunId !== null) return;
+  const context = root.recommendationContext as { profile: { profileId: string; profileVersion: number }; budgets: { deepMatch: unknown } } | null;
+  const targetSnapshot = root.targetSnapshot as { targetId: string; version: number; constraints: unknown };
+  if (!context?.profile || !targetSnapshot) throw new Error("RECOMMENDATION_CONTEXT_INVALID");
+  const tuples = await readDiscoveryResultCandidatesInTransaction(transaction, { userId: root.userId, targetId: root.targetId, rootRunId: root.id });
+  for (const tuple of tuples) await createFrozenJobTriageInTransaction({ transaction, auditTrail: deps.auditTrail, id: deps.id, clock: deps.clock, userId: root.userId, requestId: root.id, opportunityId: tuple.opportunityId, sourcePostingVersionId: tuple.sourcePostingVersionId, profileId: context.profile.profileId, profileVersion: context.profile.profileVersion, targetId: root.targetId, targetVersion: targetSnapshot.version, targetConstraints: targetSnapshot.constraints });
+  await ensureDeepMatchRunInTransaction({ transaction, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight, userId: root.userId, targetId: root.targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(root.id), trigger: "automatic", discoveryRunId: root.id, recommendation: { parentRunId: root.id, profileId: context.profile.profileId, profileVersion: context.profile.profileVersion, targetSnapshot, budgetSnapshot: context.budgets.deepMatch, accountPolicyRevisionNumber: root.accountPolicyRevisionNumber!, accountPolicySnapshot: root.accountPolicySnapshot, preflightSnapshot: root.preflightSnapshot, sourcePostingVersionIds: tuples.map((tuple: { sourcePostingVersionId: string }) => tuple.sourcePostingVersionId) } });
+}
+
 /** v4 终态只持久化脱敏 diagnostic facts；页面、URL、query 正文和 provider body 均留在 adapter 生命周期内。 */
 async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, input: {
   userId: string; runId: string; claimToken: string; now: Date; deadline: Date;
@@ -472,7 +483,8 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
     const version = run.version + 1;
     // The durable child is part of the discovery completion transaction. Queue delivery
     // remains deliberately best-effort and is performed only after commit.
-    await ensureDeepMatchRunInTransaction({ transaction, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight, userId: input.userId, targetId: run.targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(run.id), trigger: "automatic", discoveryRunId: run.id });
+    if (run.runPurpose === "recommendation") await handoffRecommendationDiscoveryInTransaction(deps, transaction, run);
+    else await ensureDeepMatchRunInTransaction({ transaction, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight, userId: input.userId, targetId: run.targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(run.id), trigger: "automatic", discoveryRunId: run.id });
     await transaction.update(agentRunSteps).set({ status: "completed", completedAt: input.now, failedAt: null, failureCode: null }).where(and(
       eq(agentRunSteps.userId, input.userId), eq(agentRunSteps.runId, input.runId), eq(agentRunSteps.status, "running"),
     ));
@@ -732,7 +744,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         const commitBefore = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_before", ordinal: 1 });
         if (commitBefore) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return commitBefore; }
         let persisted: { cleanupObjectKeys: string[]; completed: boolean };
-        try { persisted = await runTransaction(deps, deadline, (transaction) => createJobDiscoveryPersistence({ db: deps.db, id: deps.id, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({ run: { ...claimed.run, sourceScope: executionSourceScope, claimToken: claimed.claimToken }, details: input.details, scans: input.scans, storedObjects: stored.map((item) => ({ sourceId: item.detail.sourceId, detailId: item.detail.detailId, objectKey: item.objectKey, rawContentSha256: item.rawContentSha256 })), sourceChecks: input.sourceChecks, sourceIssues: input.sourceIssues, terminal: input.terminal, now: deps.clock(), transaction, afterCompleted: async ({ transaction: completedTransaction, userId, targetId, discoveryRunId }) => { await ensureDeepMatchRunInTransaction({ transaction: completedTransaction, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight, userId, targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(discoveryRunId), trigger: "automatic", discoveryRunId }); } })); }
+        try { persisted = await runTransaction(deps, deadline, (transaction) => createJobDiscoveryPersistence({ db: deps.db, id: deps.id, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({ run: { ...claimed.run, sourceScope: executionSourceScope, claimToken: claimed.claimToken }, details: input.details, scans: input.scans, storedObjects: stored.map((item) => ({ sourceId: item.detail.sourceId, detailId: item.detail.detailId, objectKey: item.objectKey, rawContentSha256: item.rawContentSha256 })), sourceChecks: input.sourceChecks, sourceIssues: input.sourceIssues, terminal: input.terminal, now: deps.clock(), transaction, afterCompleted: async ({ transaction: completedTransaction, userId, targetId, discoveryRunId }) => { if (claimed.run.runPurpose === "recommendation") await handoffRecommendationDiscoveryInTransaction(deps, completedTransaction, claimed.run); else await ensureDeepMatchRunInTransaction({ transaction: completedTransaction, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight, userId, targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(discoveryRunId), trigger: "automatic", discoveryRunId }); } })); }
         catch { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_PERSIST_FAILED", retryable: true, category: "source" }, deadline }); }
         await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), persisted.cleanupObjectKeys); if (!persisted.completed) return "stale";
         // PostgreSQL queued state is authoritative; the shared queue wakes it immediately and reconciler repairs delivery failures.
