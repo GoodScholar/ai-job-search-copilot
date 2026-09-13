@@ -266,6 +266,7 @@ describe("deep match persistence", () => {
 
   it("推荐 child 冻结当前非默认规则及其版本而不改变粗排语义", async () => {
     const input = await fixture({ score: 90 });
+    const conflictingSelection = await fixture({ owner: { userId: input.userId, profileId: input.profileId, targetId: input.targetId }, score: 90 });
     const automatic = createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now });
     const ordinary = await automatic.start({ userId: input.userId, targetId: input.targetId, trigger: "automatic", discoveryRunId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID() });
     const [template] = await db.select().from(agentRuns).where(eq(agentRuns.id, ordinary.runId));
@@ -285,10 +286,16 @@ describe("deep match persistence", () => {
     await db.insert(recommendationRuleVersions).values({ id: crypto.randomUUID(), userId: input.userId, targetId: input.targetId, proposalId, proposalRevisionId, version: 1, config: ruleConfig, createdAt: now });
 
     const idempotencyKey = crypto.randomUUID();
+    const frozenEvidence = { version: "recommendation-evidence-v1" as const, plannedTrustedSourceCount: 1, plannedPublicQueryCount: 0, discoveryFacts: { version: "recommendation-discovery-facts-v1" as const, trusted: [{ sourceId: "fake:aurora-careers", checked: true, outcome: "credible_results" as const, losses: [] }], publicQueries: [] }, frozenTriageVersionIds: [input.triageVersionId] };
+    await expect(db.transaction((transaction) => ensureDeepMatchRunInTransaction({
+      transaction, id: () => crypto.randomUUID(), clock: () => now, runPreflight: { evaluate: async () => { throw new Error("mismatched selection must fail before preflight"); } } as any,
+      userId: input.userId, targetId: input.targetId, idempotencyKey, trigger: "automatic", discoveryRunId: parentRunId,
+      recommendation: { parentRunId, profileId: input.profileId, profileVersion: 1, targetSnapshot: template!.targetSnapshot, budgetSnapshot: template!.budgetSnapshot, accountPolicyRevisionNumber: template!.accountPolicyRevisionNumber!, accountPolicySnapshot: template!.accountPolicySnapshot, preflightSnapshot: template!.preflightSnapshot, frozenTriageVersionIds: [conflictingSelection.triageVersionId], frozenRecommendationEvidence: frozenEvidence },
+    }))).rejects.toThrow("DEEP_MATCH_RECOMMENDATION_TRIAGE_IDS_MISMATCH");
     const created = await db.transaction((transaction) => ensureDeepMatchRunInTransaction({
       transaction, id: () => crypto.randomUUID(), clock: () => now, runPreflight: { evaluate: async () => { throw new Error("recommendation child skips preflight"); } } as any,
       userId: input.userId, targetId: input.targetId, idempotencyKey, trigger: "automatic", discoveryRunId: parentRunId,
-      recommendation: { parentRunId, profileId: input.profileId, profileVersion: 1, targetSnapshot: template!.targetSnapshot, budgetSnapshot: template!.budgetSnapshot, accountPolicyRevisionNumber: template!.accountPolicyRevisionNumber!, accountPolicySnapshot: template!.accountPolicySnapshot, preflightSnapshot: template!.preflightSnapshot, frozenTriageVersionIds: [input.triageVersionId], frozenRecommendationEvidence: { version: "recommendation-evidence-v1", plannedTrustedSourceCount: 1, plannedPublicQueryCount: 0, discoveryFacts: { version: "recommendation-discovery-facts-v1", trusted: [{ sourceId: "fake:aurora-careers", checked: true, outcome: "credible_results", losses: [] }], publicQueries: [] }, frozenTriageVersionIds: [input.triageVersionId] } },
+      recommendation: { parentRunId, profileId: input.profileId, profileVersion: 1, targetSnapshot: template!.targetSnapshot, budgetSnapshot: template!.budgetSnapshot, accountPolicyRevisionNumber: template!.accountPolicyRevisionNumber!, accountPolicySnapshot: template!.accountPolicySnapshot, preflightSnapshot: template!.preflightSnapshot, frozenTriageVersionIds: [input.triageVersionId], frozenRecommendationEvidence: frozenEvidence },
     }));
 
     expect(created).toMatchObject({ kind: "created", reused: false, run: { ruleVersion: "recommendation-rule-v1" } });
@@ -307,6 +314,11 @@ describe("deep match persistence", () => {
       userId: input.userId, targetId: input.targetId, idempotencyKey, trigger: "automatic", discoveryRunId: parentRunId,
       recommendation: { parentRunId, profileId: input.profileId, profileVersion: 1, targetSnapshot: template!.targetSnapshot, budgetSnapshot: template!.budgetSnapshot, accountPolicyRevisionNumber: template!.accountPolicyRevisionNumber!, accountPolicySnapshot: template!.accountPolicySnapshot, preflightSnapshot: template!.preflightSnapshot, frozenTriageVersionIds: [input.triageVersionId], frozenRecommendationEvidence: { ...frozenRecommendationEvidence, plannedTrustedSourceCount: 2 } },
     }))).rejects.toThrow("DEEP_MATCH_RECOMMENDATION_REPLAY_CONFLICT");
+    await expect(db.transaction((transaction) => ensureDeepMatchRunInTransaction({
+      transaction, id: () => crypto.randomUUID(), clock: () => now, runPreflight: { evaluate: async () => { throw new Error("mismatched replay must fail before preflight"); } } as any,
+      userId: input.userId, targetId: input.targetId, idempotencyKey, trigger: "automatic", discoveryRunId: parentRunId,
+      recommendation: { parentRunId, profileId: input.profileId, profileVersion: 1, targetSnapshot: template!.targetSnapshot, budgetSnapshot: template!.budgetSnapshot, accountPolicyRevisionNumber: template!.accountPolicyRevisionNumber!, accountPolicySnapshot: template!.accountPolicySnapshot, preflightSnapshot: template!.preflightSnapshot, frozenTriageVersionIds: [conflictingSelection.triageVersionId], frozenRecommendationEvidence },
+    }))).rejects.toThrow("DEEP_MATCH_RECOMMENDATION_TRIAGE_IDS_MISMATCH");
     await expect(db.select({ sourceScope: agentRuns.sourceScope }).from(agentRuns).where(eq(agentRuns.id, (created as { kind: "created"; run: { id: string } }).run.id))).resolves.toEqual([{ sourceScope: child!.sourceScope }]);
   });
 

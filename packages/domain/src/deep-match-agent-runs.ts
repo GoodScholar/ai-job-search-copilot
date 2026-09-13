@@ -24,6 +24,9 @@ function stableJson(value: unknown): string {
 
 export async function ensureDeepMatchRunInTransaction(input: { transaction: any; id: () => string; clock: () => Date; runPreflight: RunPreflightEvaluator; userId: string; targetId: string; idempotencyKey: string; trigger: "automatic" | "manual"; warningFingerprint?: string | null; opportunityId?: string; discoveryRunId?: string; recommendation?: { parentRunId: string; profileId: string; profileVersion: number; targetSnapshot: any; budgetSnapshot: any; accountPolicyRevisionNumber: number; accountPolicySnapshot: any; preflightSnapshot: any; frozenTriageVersionIds: readonly string[]; frozenRecommendationEvidence: FrozenRecommendationEvidence } }): Promise<{ kind: "created"; run: typeof agentRuns.$inferSelect; reused: boolean } | { kind: "blocked"; preflight: Awaited<ReturnType<RunPreflightEvaluator["evaluate"]>>["report"] }> {
   await acquireAccountAdvisoryLock(input.transaction, input.userId);
+  if (input.recommendation && stableJson(input.recommendation.frozenTriageVersionIds) !== stableJson(input.recommendation.frozenRecommendationEvidence.frozenTriageVersionIds)) {
+    throw new Error("DEEP_MATCH_RECOMMENDATION_TRIAGE_IDS_MISMATCH");
+  }
   const [existing] = await input.transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.idempotencyKey, input.idempotencyKey)));
   if (existing) {
     if (input.recommendation) {
