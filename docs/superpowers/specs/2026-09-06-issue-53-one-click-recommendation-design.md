@@ -271,6 +271,7 @@ type RecommendationResult =
 + 信息不足数
 + 已过期数
 + 粗排淘汰数
++ 规则排除数
 + 候选上限数
 + 进入深度匹配数
 
@@ -278,6 +279,14 @@ type RecommendationResult =
 = 匹配质量不足数
 + 最终推荐数
 ```
+
+### 规则排除补充（2026-09-13 已确认）
+
+推荐运行继续遵守已生效的 `excludedOpportunityIds`，被排除岗位不调用模型。为避免计数遗漏，增加稳定排除原因 `RULE_EXCLUDED` 和 `coarseRanking.ruleExcludedCount`；不能借用低分、资格失败或模型证据不足原因。粗排闭合为 `eligibleCount = belowThresholdCount + ruleExcludedCount + candidateLimitExcludedCount + deepMatchCandidateCount`。
+
+同一岗位按资格淘汰／信息不足／过期／粗排阈值／规则排除／候选上限／深度匹配的确定顺序归属唯一类别。使用相同冻结选择事实生成候选、排除及最终证据，禁止重复计数。既有推荐规则的 `minimumOverallScore` 仍用于深匹配评估结果验收，不提前当作 triage 粗排阈值。
+
+追加数据库迁移扩展排除原因约束，不改写已应用迁移或不可变历史结果。旧结果缺少 `ruleExcludedCount` 时兼容读取为零；新发布必须显式提供该计数并通过完整闭合校验。既有历史结果不补造岗位级排除事实。
 
 “暂无推荐”还必须满足最终推荐数为零，并且至少一个发现分支成功或形成可信 clean-zero。全部来源失败、预算耗尽、模型失败、持久化失败、取消或未完成运行都不能发布“暂无推荐”。
 

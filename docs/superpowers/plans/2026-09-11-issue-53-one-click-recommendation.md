@@ -535,7 +535,63 @@ git add packages/domain/package.json packages/domain/src/recommendation-runs.ts 
 git commit -m "feat: orchestrate logical recommendation runs"
 ```
 
+### Task 14: 补齐规则排除原因与结果计数契约
+
+**批准：** 2026-09-13 用户确认；这是Task5继续实施前的独立契约切片，不重做已完成任务。使用Terra/high实施、Astra/medium独立审查；所有测试单进程串行。保留现有agent-run-processor两文件未提交改动，不将它们夹带进本任务。
+
+**Files:**
+- Modify: `packages/contracts/src/recommendations.ts`、`packages/contracts/src/recommendation-runs.ts` 及对应测试。
+- Modify: `packages/database/src/schema.ts`、`packages/database/migrations/meta/_journal.json`。
+- Create: `packages/database/migrations/0051_recommendation_rule_exclusions.sql`、对应生成的snapshot、`packages/database/src/recommendation-rule-exclusions.migrate.integration.test.ts`。
+- Modify: `apps/web/app/(workbench)/recommendations/exclusion-reasons.ts` 及对应文案测试（沿用现有测试文件）；不改版UI。
+
+**Interfaces:**
+- `RecommendationExclusionSchema` 增加 `RULE_EXCLUDED`，数据库同名check同步。
+- `RecommendationResultEvidenceSchema` 保持兼容读：`ruleExcludedCount` 缺省零，其他新旧严格约束不放松。
+- 导出 `RecommendationResultEvidenceWriteSchema`，写入必须显式包含非负整数 `coarseRanking.ruleExcludedCount`，与读取共用同一闭合校验，不复制两份完整schema或计数逻辑。Task6发布入口消费此schema，Task5冻结selection使用新增原因码。
+- 粗排闭合：eligible = belowThreshold + ruleExcluded + candidateLimit + deepMatch。旧不可变记录不回填。
+
+- [ ] **Step 1: RED 契约行为**
+
+沿用现有valid evidence fixture，加入精确断言：
+
+```ts
+expect(RecommendationExclusionSchema.safeParse({ opportunityId, reasonCode: 'RULE_EXCLUDED' }).success).toBe(true);
+const next = { ...evidence, coarseRanking: { eligibleCount: 3, belowThresholdCount: 0, ruleExcludedCount: 1, candidateLimitExcludedCount: 0, deepMatchCandidateCount: 2 } };
+expect(RecommendationResultEvidenceSchema.safeParse(next).success).toBe(true);
+expect(RecommendationResultEvidenceWriteSchema.safeParse(legacyEvidence).success).toBe(false);
+expect(RecommendationResultEvidenceSchema.parse(legacyEvidence).coarseRanking.ruleExcludedCount).toBe(0);
+```
+
+补负数、小数、重复计数/缺口、未知原因失败。先建立可导入最小seam，真实断言失败才是RED；缺export/TypeError不计业务RED。
+
+- [ ] **Step 2: 最小契约实现**
+
+共用基础结构和refinement，读取字段 `.default(0)`、写入字段必填；避免宽泛preprocess吞掉null/错误类型。更新明确中文文案“被推荐规则排除”。运行contracts定向测试；schema输出类型变化仅机械更新必要生产者/fixture，不扩大到Task5 Worker或Task6发布。
+
+- [ ] **Step 3: 真实PG迁移 RED→GREEN**
+
+使用现有migration integration测试惯例，从0050状态构造合法owner/target/opportunity/list。旧约束插入RULE_EXCLUDED失败；新增迁移后允许新增原因、保留全部旧原因、仍拒绝任意未知原因。历史记录保留，应用完整迁移到fresh数据库也通过。只在测试数据库执行；不接触生产数据。
+
+```sql
+ALTER TABLE recommendation_exclusions DROP CONSTRAINT recommendation_exclusions_reason_code_check;
+ALTER TABLE recommendation_exclusions ADD CONSTRAINT recommendation_exclusions_reason_code_check
+  CHECK (reason_code IN ('TRIAGE_NOT_PASS', 'DEADLINE_EXPIRED', 'SCORE_BELOW_THRESHOLD', 'CANDIDATE_LIMIT', 'MATCH_QUALITY_INSUFFICIENT', 'RULE_EXCLUDED'));
+```
+
+根据仓库现有生成命令同步schema/journal/new snapshot；不得修改旧migration/snapshot或手工批量重写历史。
+
+- [ ] **Step 4: 验证与提交**
+
+单一执行者使用 `pnpm --filter @job-copilot/contracts exec vitest run src/recommendations.test.ts src/recommendation-runs.test.ts --no-file-parallelism`（先核实实际测试文件名），数据库仅新migration测试及必要相关迁移回归，Web仅文案对应测试；修改包typecheck、git diff --check。保存完整RED/GREEN日志到本SDD目录test-logs/task-14-*，报告task-14-report.md。只提交准确任务文件，不force-add报告，不push/merge/close。
+
+- [ ] **Step 5: 独立双轴审查**
+
+fresh Astra/medium只读完整Task14 diff与验证日志，给spec和quality双判定。通过后直接继续Task5剩余链路与停止竞争；任务编号仍沿用既定计划，不新开Issue。
+
 ### Task 5: 在发现完成事务中冻结本次候选并创建子运行
+
+**2026-09-13 已批准补充：** Task5剩余实现前先完成Task14（规则排除契约）及独立审查，再继续三模式非空handoff与停止竞争。Task5最终审查BASE仍为6e15fcc，不能遗漏此前分段提交。Task6新发布使用显式ruleExcludedCount的严格写入校验；旧结果只在读取时默认零。
 
 **执行修正（2026-09-12，优先于本任务后续旧草图）：**
 
