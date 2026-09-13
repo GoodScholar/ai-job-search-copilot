@@ -318,7 +318,8 @@ async function recomputeOpportunityAvailability(db: any, input: { userId: string
   return new Set(updated.filter((opportunity) => opportunity.availability === "open").map((opportunity) => opportunity.id));
 }
 
-export function createJobDiscoveryPersistence(deps: { db: Database; id: () => string; auditTrail: AuditTrail }) {
+export function createJobDiscoveryPersistence(deps: { db: Database; id: () => string; clock?: () => Date; auditTrail: AuditTrail }) {
+  const clock = deps.clock ?? (() => new Date());
   return {
     /** v4 trusted wrapper only: claim-bound source/version/opportunity persistence, never run lifecycle or result facts. */
     async persistTrustedLayeredDiscovery(input: {
@@ -383,7 +384,7 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
       now: Date;
       /** Processor-only seam: caller has already started the bounded account transaction. */
       transaction?: any;
-      /** Runs in the same PostgreSQL transaction, after successful discovery becomes terminal. */
+      /** Runs in the same PostgreSQL transaction: before terminal root transition for recommendation, after it for legacy. */
       afterCompleted?: (input: { transaction: any; userId: string; targetId: string; discoveryRunId: string }) => Promise<void>;
     }): Promise<{ resultCount: number; cleanupObjectKeys: string[]; completed: boolean }> {
       const objectBySource = new Map(input.storedObjects.map((item) => [`${item.sourceId}:${item.detailId}`, item]));
@@ -393,6 +394,7 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
         const [run] = await transaction.select().from(agentRuns).where(and(
           eq(agentRuns.userId, input.run.userId), eq(agentRuns.id, input.run.id), eq(agentRuns.status, "running"),
           eq(agentRuns.claimToken, input.run.claimToken), eq(agentRuns.controlState, "none"),
+          gt(agentRuns.claimExpiresAt, clock()),
         ));
         if (!run || !run.claimToken) return { resultCount: 0, cleanupObjectKeys: input.storedObjects.map((item) => item.objectKey), completed: false };
         if (run.adapter === "greenhouse") {
@@ -551,6 +553,8 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
         await transaction.update(agentRunSteps).set({ status: "completed", completedAt: input.now }).where(and(eq(agentRunSteps.userId, run.userId), eq(agentRunSteps.runId, run.id), eq(agentRunSteps.stepKey, "persist_results")));
         await transaction.update(agentRuns).set({ currentStep: "persist_results", version: stepVersion, updatedAt: input.now }).where(and(eq(agentRuns.userId, run.userId), eq(agentRuns.id, run.id), eq(agentRuns.claimToken, run.claimToken), eq(agentRuns.controlState, "none")));
         await appendEvent(transaction, { id: deps.id, userId: run.userId, runId: run.id, version: stepVersion, eventType: "step.completed", data: { eventType: "step.completed", status: "running", currentStep: "persist_results", stepKey: "persist_results", attemptCount: run.attemptCount }, now: input.now });
+        // Recommendation handoff precedes its root terminal transition; legacy child
+        // creation follows it.  Both effects share this transaction with completion.
         if (terminal !== "source_failed" && run.runPurpose === "recommendation") await input.afterCompleted?.({ transaction, userId: run.userId, targetId: run.targetId, discoveryRunId: run.id });
         const terminalVersion = stepVersion + 1;
         const failed = terminal === "source_failed";

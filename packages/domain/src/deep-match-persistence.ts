@@ -137,27 +137,30 @@ export function createDeepMatchQueries(deps: { db: Database }) {
         };
       }) };
   };
-  const selectCandidateSelection = async (input: { userId: string; targetId: string; targetVersion: number; opportunityId?: string; sourcePostingVersionIds?: readonly string[]; profileId?: string; profileVersion?: number; ruleConfig?: { excludedOpportunityIds: string[] } }): Promise<CandidateSelection> => {
+  const selectCandidateSelection = async (input: { userId: string; targetId: string; targetVersion: number; opportunityId?: string; frozenTriageVersionIds?: readonly string[]; profileId?: string; profileVersion?: number; ruleConfig?: { excludedOpportunityIds: string[] } }): Promise<CandidateSelection> => {
+      const frozenTriageSelection = input.frozenTriageVersionIds === undefined ? [] : input.frozenTriageVersionIds.length
+        ? [eq(jobTriageVersions.targetVersion, input.targetVersion), inArray(jobTriageVersions.id, [...input.frozenTriageVersionIds])]
+        : [sql`false`];
       const triageRows = await deps.db.select({ triage: jobTriageVersions, opportunity: jobOpportunities, sourceVersion: jobSourcePostingVersions, targetRevisionId: jobTargetRevisions.id, targetConstraints: jobTargetRevisions.constraints })
         .from(jobTriageVersions).innerJoin(jobOpportunities, and(eq(jobOpportunities.userId, jobTriageVersions.userId), eq(jobOpportunities.id, jobTriageVersions.opportunityId)))
         .innerJoin(jobSourcePostingVersions, and(eq(jobSourcePostingVersions.userId, jobTriageVersions.userId), eq(jobSourcePostingVersions.id, jobTriageVersions.sourcePostingVersionId)))
         .innerJoin(jobTargetRevisions, and(eq(jobTargetRevisions.userId, jobTriageVersions.userId), eq(jobTargetRevisions.targetId, jobTriageVersions.targetId), eq(jobTargetRevisions.version, jobTriageVersions.targetVersion)))
-        .where(and(eq(jobTriageVersions.userId, input.userId), eq(jobTriageVersions.targetId, input.targetId), ...(input.sourcePostingVersionIds ? [eq(jobTriageVersions.targetVersion, input.targetVersion), inArray(jobTriageVersions.sourcePostingVersionId, [...input.sourcePostingVersionIds])] : []), ...(input.profileId ? [eq(jobTriageVersions.profileId, input.profileId)] : []), ...(input.profileVersion === undefined ? [] : [eq(jobTriageVersions.profileVersion, input.profileVersion)])))
+        .where(and(eq(jobTriageVersions.userId, input.userId), eq(jobTriageVersions.targetId, input.targetId), ...frozenTriageSelection, ...(input.profileId ? [eq(jobTriageVersions.profileId, input.profileId)] : []), ...(input.profileVersion === undefined ? [] : [eq(jobTriageVersions.profileVersion, input.profileVersion)])))
         .orderBy(desc(jobTriageVersions.sequence), asc(jobTriageVersions.opportunityId), asc(jobTriageVersions.id));
       const latest = new Map<string, typeof triageRows[number]>();
       for (const row of triageRows) if (!latest.has(row.triage.opportunityId)) latest.set(row.triage.opportunityId, row);
       const excluded = new Set(input.ruleConfig?.excludedOpportunityIds ?? []);
       const exclusions: CandidateSelection["exclusions"] = [];
-      const usesFrozenSourceVersion = input.sourcePostingVersionIds !== undefined;
+      const usesFrozenTriage = input.frozenTriageVersionIds !== undefined;
       // Legacy flows historically omit rule-excluded jobs without a persisted reason.
       // Recommendation roots instead retain a frozen, publishable RULE_EXCLUDED fact.
-      const scoped = [...latest.values()].filter(({ opportunity }) => (usesFrozenSourceVersion || !excluded.has(opportunity.id)) && (input.opportunityId === undefined || opportunity.id === input.opportunityId));
+      const scoped = [...latest.values()].filter(({ opportunity }) => (usesFrozenTriage || !excluded.has(opportunity.id)) && (input.opportunityId === undefined || opportunity.id === input.opportunityId));
       const eligible = scoped.filter(({ triage, opportunity, sourceVersion }) => {
-        const expectedSourcePostingVersionId = usesFrozenSourceVersion ? triage.sourcePostingVersionId : opportunity.sourcePostingVersionId;
-        const availability = usesFrozenSourceVersion ? sourceVersion.availability : opportunity.availability;
+        const expectedSourcePostingVersionId = usesFrozenTriage ? triage.sourcePostingVersionId : opportunity.sourcePostingVersionId;
+        const availability = usesFrozenTriage ? sourceVersion.availability : opportunity.availability;
         const eligibleByPolicy = isDeepMatchTriageEligible({ sourcePostingVersionId: triage.sourcePostingVersionId, expectedSourcePostingVersionId, targetVersion: triage.targetVersion, expectedTargetVersion: input.targetVersion, overallVerdict: triage.overallVerdict, deadlineStatus: triage.deadlineStatus, availability, overallScore: triage.overallScore, threshold: triage.threshold });
         if (eligibleByPolicy) {
-          if (usesFrozenSourceVersion && excluded.has(opportunity.id)) { exclusions.push({ opportunityId: opportunity.id, reasonCode: "RULE_EXCLUDED" }); return false; }
+          if (usesFrozenTriage && excluded.has(opportunity.id)) { exclusions.push({ opportunityId: opportunity.id, reasonCode: "RULE_EXCLUDED" }); return false; }
           return true;
         }
         if (triage.sourcePostingVersionId !== expectedSourcePostingVersionId || triage.overallVerdict !== "pass" || availability !== "open") { exclusions.push({ opportunityId: opportunity.id, reasonCode: "TRIAGE_NOT_PASS" }); return false; }
@@ -203,8 +206,8 @@ export function createDeepMatchQueries(deps: { db: Database }) {
         // opportunity normalization when it is non-empty (never an `{}` fallback).
         const sourceNormalized = sourceVersion.normalizedData as Record<string, unknown>;
         const opportunityNormalized = opportunity.normalizedData as Record<string, unknown>;
-        const normalized = usesFrozenSourceVersion || Object.keys(sourceNormalized).length > 0 ? sourceNormalized : opportunityNormalized;
-        const jobSourceContent = usesFrozenSourceVersion
+        const normalized = usesFrozenTriage || Object.keys(sourceNormalized).length > 0 ? sourceNormalized : opportunityNormalized;
+        const jobSourceContent = usesFrozenTriage
           ? { company: normalizedText(sourceNormalized.company), title: normalizedText(sourceNormalized.title), location: normalizedText(sourceNormalized.location), description: normalizedText(sourceNormalized.description) }
           : { company: opportunity.company, title: opportunity.title, location: opportunity.location, description: opportunity.description };
         const opportunitySnapshot = { company: jobSourceContent.company, title: jobSourceContent.title, location: jobSourceContent.location };

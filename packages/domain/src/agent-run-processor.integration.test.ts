@@ -229,7 +229,7 @@ describe("AgentRunProcessor checkpoints", () => {
     return { userId, targetId, runId: started.run.runId };
   }
 
-  function recommendationProcessor(input: { executionMode: "fake" | "greenhouse" | "layered_public"; auditTrail: any; matchingQueue?: DeepMatchRunQueue; collectionEntered?: ReturnType<typeof deferred>; releaseCollection?: ReturnType<typeof deferred> }) {
+  function recommendationProcessor(input: { executionMode: "fake" | "greenhouse" | "layered_public"; auditTrail: any; matchingQueue?: DeepMatchRunQueue; collectionEntered?: ReturnType<typeof deferred>; releaseCollection?: ReturnType<typeof deferred>; clock?: () => Date }) {
     const waitAtCollection = async () => {
       input.collectionEntered?.resolve();
       if (input.releaseCollection) await input.releaseCollection.promise;
@@ -249,7 +249,7 @@ describe("AgentRunProcessor checkpoints", () => {
       getSourceDetail: async ({ source }: { source: { sourceId: string; boardToken: string } }) => ({ ok: true as const, attemptCount: 1, data: { ...detail, sourceId: source.sourceId, absoluteUrl: `https://boards.greenhouse.io/${source.boardToken}/jobs/${detail.detailId}` } }),
     };
     return createAgentRunProcessor({
-      db: database, auditTrail: input.auditTrail, id: () => crypto.randomUUID(), clock: () => now, contentStore: new Store(), checkpoint: checkpoint(), matchingQueue: input.matchingQueue,
+      db: database, auditTrail: input.auditTrail, id: () => crypto.randomUUID(), clock: input.clock ?? (() => now), contentStore: new Store(), checkpoint: checkpoint(), matchingQueue: input.matchingQueue,
       ...(input.executionMode === "layered_public"
         ? { adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => { await waitAtCollection(); return { branchOutcome: { trusted: "succeeded" as const, publicDiscovery: "clean_zero" as const }, diagnostics: [] }; } }) } }
         : { adapterResolver: resolver(adapter), ...(input.executionMode === "greenhouse" ? { sourceHealthAdapterResolver: { resolve: () => sourceHealthAdapter } } : {}) }),
@@ -2396,6 +2396,43 @@ describe("AgentRunProcessor checkpoints", () => {
       database.select().from(agentRuns).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.workflowVersion, "deep-match-v1"))),
       database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, job.runId)),
     ])).resolves.toEqual([[], [], [{ status: "running" }]]);
+  });
+
+  it.each(["fake", "greenhouse", "layered_public"] as const)("%s 推荐根在账户锁等待后 lease 过期时不写完成事实", async (executionMode) => {
+    const root = await recommendationRoot(executionMode);
+    const lockDatabase = createDatabase(container.getConnectionUri());
+    const collectionEntered = deferred(); const releaseCollection = deferred(); const locked = deferred(); const release = deferred();
+    let clockNow = now;
+    const processing = recommendationProcessor({ executionMode, auditTrail: createAuditTrail({ db: database, clock: () => now }), clock: () => clockNow, collectionEntered, releaseCollection })
+      .process({ version: 1, userId: root.userId, runId: root.runId, finalAttempt: true });
+    let lock: Promise<unknown> | undefined;
+    try {
+      await waitForBarrier({ barrier: collectionEntered.promise, operation: processing, name: `${executionMode} lease completion collection` });
+      lock = lockDatabase.transaction(async (transaction) => {
+        await transaction.execute(sql`select pg_advisory_xact_lock(hashtextextended(${root.userId}, 0))`);
+        locked.resolve();
+        await release.promise;
+      });
+      await locked.promise;
+      releaseCollection.resolve();
+      await waitUntilAConnectionIsWaitingForAccountAdvisoryLock(database);
+      clockNow = new Date(now.getTime() + 30_001);
+      release.resolve();
+      await lock;
+      await expect(processing).resolves.toBe("stale");
+      await expect(Promise.all([
+        database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, root.runId)),
+        database.select().from(jobDiscoveryRunResults).where(eq(jobDiscoveryRunResults.runId, root.runId)),
+        database.select().from(jobTriageVersions).where(eq(jobTriageVersions.userId, root.userId)),
+        database.select({ status: agentRuns.status, claimToken: agentRuns.claimToken }).from(agentRuns).where(eq(agentRuns.id, root.runId)),
+        database.select().from(agentRuns).where(and(eq(agentRuns.parentRunId, root.runId), eq(agentRuns.runPurpose, "recommendation"))),
+      ])).resolves.toEqual([[], [], [], [{ status: "running", claimToken: expect.any(String) }], []]);
+    } finally {
+      releaseCollection.resolve();
+      release.resolve();
+      await lock?.catch(() => undefined);
+      await lockDatabase.$client.end();
+    }
   });
 
   it.each(["fake", "greenhouse", "layered_public"] as const)("%s 推荐根在 stop 先持有账户锁时不完成 root、冻结 triage 或创建 child", async (executionMode) => {

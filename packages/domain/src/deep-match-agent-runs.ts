@@ -13,7 +13,7 @@ import type { z } from "zod";
 export type DeepMatchRunQueue = { enqueue(job: AgentRunJob): Promise<void> };
 type StartRecommendationReevaluationCommand = z.infer<typeof StartRecommendationReevaluationCommandSchema>;
 
-export async function ensureDeepMatchRunInTransaction(input: { transaction: any; id: () => string; clock: () => Date; runPreflight: RunPreflightEvaluator; userId: string; targetId: string; idempotencyKey: string; trigger: "automatic" | "manual"; warningFingerprint?: string | null; opportunityId?: string; discoveryRunId?: string; recommendation?: { parentRunId: string; profileId: string; profileVersion: number; targetSnapshot: any; budgetSnapshot: any; accountPolicyRevisionNumber: number; accountPolicySnapshot: any; preflightSnapshot: any; sourcePostingVersionIds: readonly string[] } }): Promise<{ kind: "created"; run: typeof agentRuns.$inferSelect; reused: boolean } | { kind: "blocked"; preflight: Awaited<ReturnType<RunPreflightEvaluator["evaluate"]>>["report"] }> {
+export async function ensureDeepMatchRunInTransaction(input: { transaction: any; id: () => string; clock: () => Date; runPreflight: RunPreflightEvaluator; userId: string; targetId: string; idempotencyKey: string; trigger: "automatic" | "manual"; warningFingerprint?: string | null; opportunityId?: string; discoveryRunId?: string; recommendation?: { parentRunId: string; profileId: string; profileVersion: number; targetSnapshot: any; budgetSnapshot: any; accountPolicyRevisionNumber: number; accountPolicySnapshot: any; preflightSnapshot: any; frozenTriageVersionIds: readonly string[] } }): Promise<{ kind: "created"; run: typeof agentRuns.$inferSelect; reused: boolean } | { kind: "blocked"; preflight: Awaited<ReturnType<RunPreflightEvaluator["evaluate"]>>["report"] }> {
   await acquireAccountAdvisoryLock(input.transaction, input.userId);
   const [existing] = await input.transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.idempotencyKey, input.idempotencyKey)));
   if (existing) return { kind: "created", run: existing, reused: true };
@@ -37,7 +37,7 @@ export async function ensureDeepMatchRunInTransaction(input: { transaction: any;
   // therefore never exist without a complete candidate/exclusion snapshot, including a
   // legitimate empty selection.
   const selection = await createDeepMatchQueries({ db: input.transaction }).selectCandidateSelection({
-    userId: input.userId, targetId: input.targetId, targetVersion: target.version, ruleConfig: recommendationRuleConfig as any, ...(input.opportunityId ? { opportunityId: input.opportunityId } : {}), ...(input.recommendation ? { sourcePostingVersionIds: input.recommendation.sourcePostingVersionIds, profileId: input.recommendation.profileId, profileVersion: input.recommendation.profileVersion } : {}),
+    userId: input.userId, targetId: input.targetId, targetVersion: target.version, ruleConfig: recommendationRuleConfig as any, ...(input.opportunityId ? { opportunityId: input.opportunityId } : {}), ...(input.recommendation ? { frozenTriageVersionIds: input.recommendation.frozenTriageVersionIds, profileId: input.recommendation.profileId, profileVersion: input.recommendation.profileVersion } : {}),
   });
   const candidateLimit = Math.min(policy.effective.budgets.deepMatch.maxResults, policy.effective.budgets.deepMatch.maxModelCalls);
   const candidates = selection.candidates.slice(0, candidateLimit);

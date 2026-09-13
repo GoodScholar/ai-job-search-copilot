@@ -49,10 +49,12 @@ async function migrateAt0051(database: Database) {
   const migrationSource = fileURLToPath(new URL("../migrations", import.meta.url));
   await cp(migrationSource, migrationsFolder, { recursive: true });
   await unlink(join(migrationsFolder, "0052_recommendation_root_discovery_workflows.sql"));
+  await unlink(join(migrationsFolder, "0053_recommendation_child_parent_root.sql"));
   await unlink(join(migrationsFolder, "meta", "0052_snapshot.json"));
+  await unlink(join(migrationsFolder, "meta", "0053_snapshot.json"));
   const journalPath = join(migrationsFolder, "meta", "_journal.json");
-  const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
-  journal.entries = journal.entries.filter(({ tag }) => tag !== "0052_recommendation_root_discovery_workflows");
+  const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ idx: number }> };
+  journal.entries = journal.entries.filter(({ idx }) => idx <= 51);
   await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
   await migrate(database, { migrationsFolder });
   return migrationsFolder;
@@ -144,6 +146,13 @@ describe("recommendation run persistence migration", () => {
     await expect(insertRun(database, { userId: otherOwnerId, targetId: otherTargetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "automatic", parentRunId: roots[0] })).rejects.toMatchObject({ cause: { code: "23503" } });
     await expect(insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "automatic", parentRunId: roots[0] })).rejects.toMatchObject({ cause: { code: "23505" } });
     await expect(database.execute(sql`update agent_runs set workflow_version = 'job-discovery-workflow-v3' where id = ${roots[0]}`)).rejects.toMatchObject({ cause: { code: "23514" } });
+  });
+
+  it("拒绝把 recommendation child 再作为 automatic child 的 parent", async () => {
+    const rootId = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", context: recommendationContext });
+    const childId = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "automatic", parentRunId: rootId });
+
+    await expect(insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "automatic", parentRunId: childId })).rejects.toMatchObject({ cause: { code: "23503" } });
   });
 
   it("从真实 0051 升级后放宽当前发现根，且不接受未知根", async () => {
@@ -371,12 +380,14 @@ describe("recommendation run persistence migration", () => {
       await unlink(join(migrationsFolder, "0050_account_run_control.sql"));
       await unlink(join(migrationsFolder, "0051_recommendation_rule_exclusions.sql"));
       await unlink(join(migrationsFolder, "0052_recommendation_root_discovery_workflows.sql"));
+      await unlink(join(migrationsFolder, "0053_recommendation_child_parent_root.sql"));
       await unlink(join(migrationsFolder, "meta", "0049_snapshot.json"));
       await unlink(join(migrationsFolder, "meta", "0051_snapshot.json"));
       await unlink(join(migrationsFolder, "meta", "0052_snapshot.json"));
+      await unlink(join(migrationsFolder, "meta", "0053_snapshot.json"));
       const journalPath = join(migrationsFolder, "meta", "_journal.json");
-      const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
-      journal.entries = journal.entries.filter(({ tag }) => tag !== "0049_recommendation_runs" && tag !== "0050_account_run_control" && tag !== "0051_recommendation_rule_exclusions" && tag !== "0052_recommendation_root_discovery_workflows");
+      const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ idx: number }> };
+      journal.entries = journal.entries.filter(({ idx }) => idx <= 48);
       await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
       await migrate(legacyDatabase, { migrationsFolder });
       const legacyOwnerId = crypto.randomUUID(); const legacyTargetId = crypto.randomUUID();

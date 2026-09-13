@@ -196,7 +196,7 @@ describe("deep match persistence", () => {
 
     const selection = await createDeepMatchQueries({ db }).selectCandidateSelection({
       userId: input.userId, targetId: input.targetId, targetVersion: 1,
-      sourcePostingVersionIds: [input.sourcePostingVersionId], profileId: input.profileId, profileVersion: 1,
+      frozenTriageVersionIds: [input.triageVersionId], profileId: input.profileId, profileVersion: 1,
     });
 
     expect(selection).toMatchObject({ exclusions: [], candidates: [expect.objectContaining({
@@ -205,6 +205,33 @@ describe("deep match persistence", () => {
     })] });
     expect(selection.candidates[0]!.jobEvidence.map((item) => item.value)).toEqual(expect.arrayContaining(["冻结前端工程师", "杭州"]));
     expect(selection.candidates[0]!.jobEvidence.map((item) => item.value)).not.toEqual(expect.arrayContaining(["当前后端工程师", "北京", "当前岗位描述"]));
+  });
+
+  it("推荐 selection 仅使用 root 冻结的 triage tuple，不扩展到同一来源版本的其他机会", async () => {
+    const root = await fixture({ score: 90 });
+    const unrelatedOpportunityId = crypto.randomUUID();
+    const unrelatedTriageVersionId = crypto.randomUUID();
+    await db.insert(jobOpportunities).values({
+      id: unrelatedOpportunityId, userId: root.userId, importId: null, sourcePostingVersionId: root.sourcePostingVersionId,
+      canonicalOpportunityId: null, dedupKey: crypto.randomUUID().replaceAll("-", "").repeat(2), company: "无关公司", title: "无关岗位",
+      location: "上海", postedAt: null, deadline: null, description: "不属于本 root", normalizedData: {}, availability: "open",
+      availabilityUpdatedAt: now, createdAt: now, updatedAt: now,
+    });
+    await db.insert(jobOpportunitySources).values({ id: crypto.randomUUID(), userId: root.userId, opportunityId: unrelatedOpportunityId, sourcePostingVersionId: root.sourcePostingVersionId, createdAt: now });
+    await db.insert(jobTriageVersions).values({
+      id: unrelatedTriageVersionId, userId: root.userId, opportunityId: unrelatedOpportunityId, sourcePostingVersionId: root.sourcePostingVersionId,
+      profileId: root.profileId, profileVersion: 1, targetId: root.targetId, targetVersion: 1, qualificationRuleVersion: "q1", coarseRuleVersion: "c1",
+      overallVerdict: "fail", gateResults: {}, pendingItems: [], deadlineStatus: "valid", confidenceBasisPoints: 10_000,
+      dimensionScores: null, overallScore: null, threshold: null, sequence: 1, createdAt: now,
+    });
+
+    await expect(createDeepMatchQueries({ db }).selectCandidateSelection({
+      userId: root.userId, targetId: root.targetId, targetVersion: 1, frozenTriageVersionIds: [root.triageVersionId],
+      profileId: root.profileId, profileVersion: 1,
+    })).resolves.toEqual({
+      candidates: [expect.objectContaining({ opportunityId: root.opportunityId, sourcePostingVersionId: root.sourcePostingVersionId })],
+      exclusions: [],
+    });
   });
 
   it("推荐 selection 在冻结来源缺少 qualifications 时不回退当前机会数据", async () => {
@@ -218,7 +245,7 @@ describe("deep match persistence", () => {
 
     await expect(createDeepMatchQueries({ db }).selectCandidateSelection({
       userId: input.userId, targetId: input.targetId, targetVersion: 1,
-      sourcePostingVersionIds: [input.sourcePostingVersionId], profileId: input.profileId, profileVersion: 1,
+      frozenTriageVersionIds: [input.triageVersionId], profileId: input.profileId, profileVersion: 1,
     })).resolves.toEqual({ candidates: [], exclusions: [{ opportunityId: input.opportunityId, reasonCode: "MATCH_QUALITY_INSUFFICIENT" }] });
   });
 
@@ -229,7 +256,7 @@ describe("deep match persistence", () => {
 
     await expect(createDeepMatchQueries({ db }).selectCandidateSelection({
       userId: eligible.userId, targetId: eligible.targetId, targetVersion: 1,
-      sourcePostingVersionIds: [eligible.sourcePostingVersionId, belowThreshold.sourcePostingVersionId], profileId: eligible.profileId, profileVersion: 1,
+      frozenTriageVersionIds: [eligible.triageVersionId, belowThreshold.triageVersionId], profileId: eligible.profileId, profileVersion: 1,
       ruleConfig: { excludedOpportunityIds: [eligible.opportunityId, belowThreshold.opportunityId] },
     })).resolves.toEqual({ candidates: [], exclusions: expect.arrayContaining([
       { opportunityId: eligible.opportunityId, reasonCode: "RULE_EXCLUDED" },
@@ -260,7 +287,7 @@ describe("deep match persistence", () => {
     const created = await db.transaction((transaction) => ensureDeepMatchRunInTransaction({
       transaction, id: () => crypto.randomUUID(), clock: () => now, runPreflight: { evaluate: async () => { throw new Error("recommendation child skips preflight"); } } as any,
       userId: input.userId, targetId: input.targetId, idempotencyKey: crypto.randomUUID(), trigger: "automatic", discoveryRunId: parentRunId,
-      recommendation: { parentRunId, profileId: input.profileId, profileVersion: 1, targetSnapshot: template!.targetSnapshot, budgetSnapshot: template!.budgetSnapshot, accountPolicyRevisionNumber: template!.accountPolicyRevisionNumber!, accountPolicySnapshot: template!.accountPolicySnapshot, preflightSnapshot: template!.preflightSnapshot, sourcePostingVersionIds: [input.sourcePostingVersionId] },
+      recommendation: { parentRunId, profileId: input.profileId, profileVersion: 1, targetSnapshot: template!.targetSnapshot, budgetSnapshot: template!.budgetSnapshot, accountPolicyRevisionNumber: template!.accountPolicyRevisionNumber!, accountPolicySnapshot: template!.accountPolicySnapshot, preflightSnapshot: template!.preflightSnapshot, frozenTriageVersionIds: [input.triageVersionId] },
     }));
 
     expect(created).toMatchObject({ kind: "created", reused: false, run: { ruleVersion: "recommendation-rule-v1" } });

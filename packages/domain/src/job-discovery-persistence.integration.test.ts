@@ -59,7 +59,7 @@ describe("job discovery persistence lifecycle", () => {
     const started = await createAgentRunCommands({ db: database, queue: new Queue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }) })
       .start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
     const claimToken = crypto.randomUUID();
-    const [run] = await database.update(agentRuns).set({ status: "running", currentStep: "persist_results", adapter: "greenhouse", claimToken, attemptCount: 1, startedAt: now, activeSliceStartedAt: now, claimExpiresAt: new Date(now.getTime() + 30_000) })
+    const [run] = await database.update(agentRuns).set({ status: "running", currentStep: "persist_results", adapter: "greenhouse", claimToken, attemptCount: 1, startedAt: now, activeSliceStartedAt: now, claimExpiresAt: new Date(Date.now() + 30_000) })
       .where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, started.runId))).returning();
     if (!run) throw new Error("run was not claimed");
     await database.update(agentRunSteps).set({ status: "running", startedAt: now, attemptCount: 1 })

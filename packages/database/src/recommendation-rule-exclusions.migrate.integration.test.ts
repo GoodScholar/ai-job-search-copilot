@@ -37,11 +37,13 @@ async function migrateAt0050(database: Database) {
   const migrationsFolder = await mkdtemp(join(tmpdir(), "job-copilot-0050-rule-exclusions-"));
   const migrationSource = fileURLToPath(new URL("../migrations", import.meta.url));
   await cp(migrationSource, migrationsFolder, { recursive: true });
-  await rm(join(migrationsFolder, "0051_recommendation_rule_exclusions.sql"), { force: true });
-  await rm(join(migrationsFolder, "meta", "0051_snapshot.json"), { force: true });
+  await Promise.all(["0051_recommendation_rule_exclusions", "0052_recommendation_root_discovery_workflows", "0053_recommendation_child_parent_root"].flatMap((migration) => [
+    rm(join(migrationsFolder, `${migration}.sql`), { force: true }),
+    rm(join(migrationsFolder, "meta", `${migration}_snapshot.json`), { force: true }),
+  ]));
   const journalPath = join(migrationsFolder, "meta", "_journal.json");
-  const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
-  journal.entries = journal.entries.filter(({ tag }) => tag !== "0051_recommendation_rule_exclusions");
+  const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ idx: number }> };
+  journal.entries = journal.entries.filter(({ idx }) => idx <= 50);
   await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
   await migrate(database, { migrationsFolder });
   return migrationsFolder;
