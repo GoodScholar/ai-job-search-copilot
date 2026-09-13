@@ -23,7 +23,7 @@ const safeEvidence = {
 
 async function insertRun(database: Database, input: {
   id?: string; userId: string; targetId: string; purpose: "job_discovery" | "opportunity_reevaluation" | "recommendation";
-  workflow?: "layered-public-job-discovery-v1" | "deep-match-v1" | "workflow-v4"; parentRunId?: string | null; trigger?: "manual" | "automatic" | null; context?: unknown;
+  workflow?: "job-discovery-workflow-v1" | "job-discovery-workflow-v3" | "layered-public-job-discovery-v1" | "deep-match-v1" | "workflow-v2" | "workflow-v4"; parentRunId?: string | null; trigger?: "manual" | "automatic" | null; context?: unknown;
 }) {
   const id = input.id ?? crypto.randomUUID();
   const workflow = input.workflow ?? "layered-public-job-discovery-v1";
@@ -42,6 +42,20 @@ async function insertRun(database: Database, input: {
     )
   `);
   return id;
+}
+
+async function migrateAt0051(database: Database) {
+  const migrationsFolder = await mkdtemp(join(tmpdir(), "job-copilot-0051-recommendation-topology-"));
+  const migrationSource = fileURLToPath(new URL("../migrations", import.meta.url));
+  await cp(migrationSource, migrationsFolder, { recursive: true });
+  await unlink(join(migrationsFolder, "0052_recommendation_root_discovery_workflows.sql"));
+  await unlink(join(migrationsFolder, "meta", "0052_snapshot.json"));
+  const journalPath = join(migrationsFolder, "meta", "_journal.json");
+  const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
+  journal.entries = journal.entries.filter(({ tag }) => tag !== "0052_recommendation_root_discovery_workflows");
+  await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
+  await migrate(database, { migrationsFolder });
+  return migrationsFolder;
 }
 
 async function insertListItem(database: Database, userId: string, targetId: string, listId: string, existingMatchId?: string, existingProfileId?: string, ordinal = 1) {
@@ -113,6 +127,46 @@ describe("recommendation run persistence migration", () => {
     await expect(insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "deep-match-v1", parentRunId: rootId, trigger: null })).rejects.toMatchObject({ cause: { code: "23514" } });
     await expect(insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "workflow-v4", context: recommendationContext })).rejects.toMatchObject({ cause: { code: "23514" } });
   });
+
+  it("允许三种当前发现根并保留 automatic child 与非法拓扑拒绝", async () => {
+    const roots = await Promise.all([
+      "job-discovery-workflow-v1",
+      "job-discovery-workflow-v3",
+      "layered-public-job-discovery-v1",
+    ].map((workflow) => insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: workflow as "job-discovery-workflow-v1" | "job-discovery-workflow-v3" | "layered-public-job-discovery-v1", context: recommendationContext })));
+
+    for (const rootId of roots) {
+      await expect(insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "automatic", parentRunId: rootId })).resolves.toBeDefined();
+    }
+    await expect(insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "workflow-v2", context: recommendationContext })).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "deep-match-v1", context: recommendationContext })).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "manual", parentRunId: roots[0] })).rejects.toMatchObject({ cause: { code: "23514" } });
+    await expect(insertRun(database, { userId: otherOwnerId, targetId: otherTargetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "automatic", parentRunId: roots[0] })).rejects.toMatchObject({ cause: { code: "23503" } });
+    await expect(insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", workflow: "deep-match-v1", trigger: "automatic", parentRunId: roots[0] })).rejects.toMatchObject({ cause: { code: "23505" } });
+    await expect(database.execute(sql`update agent_runs set workflow_version = 'job-discovery-workflow-v3' where id = ${roots[0]}`)).rejects.toMatchObject({ cause: { code: "23514" } });
+  });
+
+  it("从真实 0051 升级后放宽当前发现根，且不接受未知根", async () => {
+    const legacyContainer = await new PostgreSqlContainer("postgres:17-alpine").start();
+    const legacyDatabase = createDatabase(legacyContainer.getConnectionUri());
+    let migrationsFolder: string | undefined;
+    const legacyOwnerId = crypto.randomUUID(); const legacyTargetId = crypto.randomUUID();
+    try {
+      migrationsFolder = await migrateAt0051(legacyDatabase);
+      await legacyDatabase.execute(sql`insert into job_accounts (id) values (${legacyOwnerId})`);
+      await legacyDatabase.execute(sql`insert into job_targets (id, user_id, version, priority, state) values (${legacyTargetId}, ${legacyOwnerId}, 1, 'primary', 'active')`);
+      await expect(insertRun(legacyDatabase, { userId: legacyOwnerId, targetId: legacyTargetId, purpose: "recommendation", workflow: "job-discovery-workflow-v1", context: recommendationContext })).rejects.toMatchObject({ cause: { code: "23514" } });
+
+      await migrateDatabase(legacyDatabase);
+
+      await expect(insertRun(legacyDatabase, { userId: legacyOwnerId, targetId: legacyTargetId, purpose: "recommendation", workflow: "job-discovery-workflow-v1", context: recommendationContext })).resolves.toBeDefined();
+      await expect(insertRun(legacyDatabase, { userId: legacyOwnerId, targetId: legacyTargetId, purpose: "recommendation", workflow: "workflow-v2", context: recommendationContext })).rejects.toMatchObject({ cause: { code: "23514" } });
+    } finally {
+      await legacyDatabase.$client.end();
+      await legacyContainer.stop();
+      if (migrationsFolder) await rm(migrationsFolder, { recursive: true, force: true });
+    }
+  }, 60_000);
 
   it("freezes recommendation association identity after a child is created", async () => {
     const rootId = await insertRun(database, { userId: ownerId, targetId, purpose: "recommendation", context: recommendationContext });
@@ -315,10 +369,14 @@ describe("recommendation run persistence migration", () => {
       await cp(migrationSource, migrationsFolder, { recursive: true });
       await unlink(join(migrationsFolder, "0049_recommendation_runs.sql"));
       await unlink(join(migrationsFolder, "0050_account_run_control.sql"));
+      await unlink(join(migrationsFolder, "0051_recommendation_rule_exclusions.sql"));
+      await unlink(join(migrationsFolder, "0052_recommendation_root_discovery_workflows.sql"));
       await unlink(join(migrationsFolder, "meta", "0049_snapshot.json"));
+      await unlink(join(migrationsFolder, "meta", "0051_snapshot.json"));
+      await unlink(join(migrationsFolder, "meta", "0052_snapshot.json"));
       const journalPath = join(migrationsFolder, "meta", "_journal.json");
       const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
-      journal.entries = journal.entries.filter(({ tag }) => tag !== "0049_recommendation_runs" && tag !== "0050_account_run_control");
+      journal.entries = journal.entries.filter(({ tag }) => tag !== "0049_recommendation_runs" && tag !== "0050_account_run_control" && tag !== "0051_recommendation_rule_exclusions" && tag !== "0052_recommendation_root_discovery_workflows");
       await writeFile(journalPath, `${JSON.stringify(journal, null, 2)}\n`);
       await migrate(legacyDatabase, { migrationsFolder });
       const legacyOwnerId = crypto.randomUUID(); const legacyTargetId = crypto.randomUUID();
