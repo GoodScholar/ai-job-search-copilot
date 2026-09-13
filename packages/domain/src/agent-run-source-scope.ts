@@ -27,6 +27,11 @@ function uniqueIds(ids: unknown[]) {
   return ids as string[];
 }
 
+/** 发布审计读取已持久化 root 的原计划身份；不得以当前执行 hardcap 收窄历史分支。 */
+export function readRecommendationDiscoveryPlanIdentity(value: unknown) {
+  return { trustedSourceIds: uniqueIds(scopeSourceIds(value)), publicQueryIds: uniqueIds(scopeQueryIds(value)) };
+}
+
 /** 将原冻结计划与本次实际执行范围对齐；执行范围内的缺失事实必须显式失败。 */
 export function completeRecommendationDiscoveryFacts(input: {
   plannedScope: unknown;

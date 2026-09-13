@@ -77,6 +77,16 @@ describe("recommendation publication evidence", () => {
     })).toThrow("RECOMMENDATION_PUBLICATION_STAGE_INCOMPLETE");
   });
 
+  it("已有写入 schema 拒绝全 failed/verification_failed 分支的 credibleBranchCount=0", () => {
+    expect(() => buildRecommendationPublicationEvidence({
+      frozen: frozen([], {
+        trusted: [{ sourceId: "fake:aurora", checked: false, outcome: "failed", losses: [{ code: "TRUSTED_SOURCE_UNAVAILABLE", retryable: true }] }],
+        publicQueries: [{ queryId: "20000000-0000-4000-8000-000000000001", checked: false, outcome: "verification_failed", losses: [{ code: "VERIFICATION_FAILED", retryable: false }] }],
+      }),
+      triages: [], selectionExclusions: [], stagedCandidates: [], acceptedOpportunityIds: [],
+    })).toThrow("可信结果至少需要一个可信发现分支");
+  });
+
   it.each(["unknown", "fail"] as const)("拒绝 %s triage 缺少冻结排除事实且不可忽略其 staging", (overallVerdict) => {
     const only = triage(0, { overallVerdict });
     const input = {

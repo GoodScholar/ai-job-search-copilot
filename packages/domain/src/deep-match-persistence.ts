@@ -1,22 +1,30 @@
 import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
+import { isDeepStrictEqual } from "node:util";
 import {
   agentInboxItems, deepMatchRunCandidates, agentRuns, jobMatchVersions, jobOpportunities, jobOpportunitySources, jobSourcePostingVersions, jobTargetRevisions, jobTriageVersions, profileFactRevisions, profileFacts,
-  recommendationExclusions, recommendationListItems, recommendationLists, recommendationDecisionEvents, type Database,
+  recommendationExclusions, recommendationListItems, recommendationLists, recommendationResults, recommendationDecisionEvents, type Database,
 } from "@job-copilot/database";
 import {
-  DEEP_MATCH_OUTPUT_SCHEMA_VERSION, DeepMatchAdapterError, DeepMatchAdapterInputSchema, DeepMatchAdapterResultSchema, DeepMatchAssessmentSchema, DeepMatchCandidateSchema, FakeDeepMatchAdapter, acceptsDeepMatchAssessment, isDeepMatchTriageEligible, validateDeepMatchEvidenceClosure, type DeepMatchAdapter, type DeepMatchAdapterCall, type DeepMatchCandidate,
+  DEEP_MATCH_OUTPUT_SCHEMA_VERSION, DeepMatchAdapterError, DeepMatchAdapterInputSchema, DeepMatchAdapterResultSchema, DeepMatchAdapterUsageSchema, DeepMatchAssessmentSchema, DeepMatchCandidateSchema, FakeDeepMatchAdapter, acceptsDeepMatchAssessment, isDeepMatchTriageEligible, validateDeepMatchEvidenceClosure, type DeepMatchAdapter, type DeepMatchAdapterCall, type DeepMatchCandidate,
 } from "@job-copilot/contracts/deep-match";
 import { acceptsRecommendationRule, RecommendationRuleConfigSchema } from "@job-copilot/contracts/recommendations";
+import { AgentRunTargetSnapshotSchema, DeepMatchAgentRunSourceScopeSchema } from "@job-copilot/contracts/agent-runs";
 import { JobQualificationsSchema } from "@job-copilot/contracts/job-imports";
 import { JobTargetConstraintsSchema } from "@job-copilot/contracts/job-targets";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { readAccountRunControlInTransaction } from "./account-run-admission";
-import { effectiveAgentRunBudget, type AgentRunBudget } from "./effective-agent-run-budget";
+import { effectiveAgentRunBudget, exhaustedAgentRunBudget, type AgentRunBudget } from "./effective-agent-run-budget";
 import { recordFirstRecommendationJourneyCompletion } from "./first-recommendation-journey";
+import { readDiscoveryResultCandidatesInTransaction } from "./job-discovery-persistence";
+import { buildRecommendationPublicationEvidence } from "./recommendation-publication-evidence";
+import { RecommendationContextSchema } from "./recommendation-runs-preparation";
+import { readRecommendationDiscoveryPlanIdentity } from "./agent-run-source-scope";
 
 export const DEEP_MATCH_RULE_VERSION = "deep-match-rules-v1";
 export const DEEP_MATCH_PROMPT_VERSION = "deep-match-prompt-v1";
 export class DeepMatchClaimLostError extends Error { constructor() { super("DEEP_MATCH_CLAIM_LOST"); } }
+export class DeepMatchPublicationError extends Error { constructor() { super("DEEP_MATCH_RECOMMENDATION_FACTS_INVALID"); } }
+export class DeepMatchPublicationBudgetError extends Error { constructor(readonly budgetDimension: import("./agent-run-lifecycle").BudgetDimension) { super("DEEP_MATCH_PUBLICATION_BUDGET_EXCEEDED"); } }
 
 export type SelectedDeepMatchCandidate = DeepMatchCandidate & {
   triageVersionId: string; profileId: string; profileVersion: number; targetVersion: number; overallScore: number;
@@ -24,6 +32,12 @@ export type SelectedDeepMatchCandidate = DeepMatchCandidate & {
 };
 export type RecommendationExclusionReason = "TRIAGE_NOT_PASS" | "DEADLINE_EXPIRED" | "SCORE_BELOW_THRESHOLD" | "CANDIDATE_LIMIT" | "MATCH_QUALITY_INSUFFICIENT" | "RULE_EXCLUDED";
 export type CandidateSelection = { candidates: SelectedDeepMatchCandidate[]; exclusions: Array<{ opportunityId: string; reasonCode: RecommendationExclusionReason }> };
+type PublicationInputBase = { userId: string; targetId: string; runId: string; fence: { claimToken: string }; selectionExclusions: readonly { opportunityId: string; reasonCode: RecommendationExclusionReason }[]; ruleConfig?: { minimumOverallScore: number; minimumEvidenceDimensions: number; requiredEvidenceDimensions: string[]; excludedOpportunityIds: string[] } };
+type LegacyPublicationInput = PublicationInputBase & { recommendation?: never; onPublished?: (transaction: any, result: { resultCount: number }) => Promise<void> };
+type RecommendationPublicationInput = PublicationInputBase & { recommendation: { rootRunId: string }; onPublished: (transaction: any, result: { resultCount: number }) => Promise<void> };
+type LegacyPublicationResult = { recommendationListId: string; items: Array<{ matchVersionId: string; ordinal: number; highlighted: boolean }> };
+type RecommendationPublicationResult = { kind: "no_recommendations"; resultId: string; evidence: ReturnType<typeof buildRecommendationPublicationEvidence> } | { kind: "recommendation_list"; resultId: string; recommendationListId: string; items: LegacyPublicationResult["items"]; evidence: ReturnType<typeof buildRecommendationPublicationEvidence> };
+type PublishStagedRun = { (input: RecommendationPublicationInput): Promise<RecommendationPublicationResult>; (input: LegacyPublicationInput): Promise<LegacyPublicationResult> };
 
 function profileDimensions(factType: string): DeepMatchCandidate["profileEvidence"][number]["dimensions"] {
   if (factType === "skill" || factType === "language") return ["skills"];
@@ -332,6 +346,103 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
       }
     }
   };
+  const assertRecommendationPublicationFacts = async (transaction: any, input: { run: typeof agentRuns.$inferSelect; userId: string; targetId: string; rootRunId: string; staged: Array<typeof deepMatchRunCandidates.$inferSelect> }) => {
+    try {
+      const scope = DeepMatchAgentRunSourceScopeSchema.parse(input.run.sourceScope);
+      if (!scope.frozenRecommendationEvidence || scope.discoveryRunId !== input.rootRunId) throw new DeepMatchPublicationError();
+      const [root] = await transaction.select().from(agentRuns).where(and(
+        eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.rootRunId), eq(agentRuns.targetId, input.targetId),
+      )).limit(1);
+      if (!root || root.runPurpose !== "recommendation" || root.parentRunId !== null || root.status !== "completed") throw new DeepMatchPublicationError();
+      const context = RecommendationContextSchema.parse(root.recommendationContext);
+      const rootTarget = AgentRunTargetSnapshotSchema.parse(root.targetSnapshot);
+      const rootSourceScope = root.sourceScope as { kind?: unknown };
+      if ((rootSourceScope.kind !== "layered_public" && rootSourceScope.kind !== "company_watchlist") || rootTarget.targetId !== input.targetId || rootTarget.version !== input.run.targetVersion || root.targetVersion !== input.run.targetVersion || !isDeepStrictEqual(root.targetSnapshot, input.run.targetSnapshot)) throw new DeepMatchPublicationError();
+      if (root.workflowVersion === "layered-public-job-discovery-v1") {
+        const profile = root.profileSnapshot as { targetId?: unknown; version?: unknown } | null;
+        if (!profile || profile.targetId !== input.targetId || profile.version !== context.profile.profileVersion) throw new DeepMatchPublicationError();
+      }
+      const { trustedSourceIds, publicQueryIds } = readRecommendationDiscoveryPlanIdentity(root.sourceScope);
+      const frozen = scope.frozenRecommendationEvidence;
+      if (
+        frozen.plannedTrustedSourceCount !== trustedSourceIds.length || frozen.plannedPublicQueryCount !== publicQueryIds.length ||
+        frozen.discoveryFacts.trusted.length !== trustedSourceIds.length || frozen.discoveryFacts.publicQueries.length !== publicQueryIds.length ||
+        new Set(frozen.discoveryFacts.trusted.map((fact) => fact.sourceId)).size !== trustedSourceIds.length ||
+        new Set(frozen.discoveryFacts.publicQueries.map((fact) => fact.queryId)).size !== publicQueryIds.length ||
+        frozen.discoveryFacts.trusted.some((fact) => !trustedSourceIds.includes(fact.sourceId)) ||
+        frozen.discoveryFacts.publicQueries.some((fact) => !publicQueryIds.includes(fact.queryId))
+      ) throw new DeepMatchPublicationError();
+      const tuples = await readDiscoveryResultCandidatesInTransaction(transaction, { userId: input.userId, targetId: input.targetId, rootRunId: root.id }) as Array<{ opportunityId: string; sourcePostingVersionId: string }>;
+      const tupleByOpportunity = new Map(tuples.map((tuple) => [tuple.opportunityId, tuple.sourcePostingVersionId]));
+      if (tupleByOpportunity.size !== tuples.length) throw new DeepMatchPublicationError();
+      const frozenTriageIds = frozen.frozenTriageVersionIds;
+      if (new Set(frozenTriageIds).size !== frozenTriageIds.length) throw new DeepMatchPublicationError();
+      const triages = await transaction.select({ id: jobTriageVersions.id, opportunityId: jobTriageVersions.opportunityId, sourcePostingVersionId: jobTriageVersions.sourcePostingVersionId, profileId: jobTriageVersions.profileId, profileVersion: jobTriageVersions.profileVersion, targetId: jobTriageVersions.targetId, targetVersion: jobTriageVersions.targetVersion, overallVerdict: jobTriageVersions.overallVerdict, deadlineStatus: jobTriageVersions.deadlineStatus }).from(jobTriageVersions)
+        .where(and(eq(jobTriageVersions.userId, input.userId), inArray(jobTriageVersions.id, frozenTriageIds))) as Array<{ id: string; opportunityId: string; sourcePostingVersionId: string; profileId: string; profileVersion: number; targetId: string; targetVersion: number; overallVerdict: string; deadlineStatus: string }>;
+      if (triages.length !== frozenTriageIds.length || tupleByOpportunity.size !== triages.length) throw new DeepMatchPublicationError();
+      const triageById = new Map(triages.map((triage) => [triage.id, triage]));
+      for (const triageId of frozenTriageIds) {
+        const triage = triageById.get(triageId);
+        if (!triage || triage.profileId !== context.profile.profileId || triage.profileVersion !== context.profile.profileVersion || triage.targetId !== input.targetId || triage.targetVersion !== root.targetVersion || tupleByOpportunity.get(triage.opportunityId) !== triage.sourcePostingVersionId) throw new DeepMatchPublicationError();
+      }
+      const stagedByOpportunity = new Map<string, { candidate: SelectedDeepMatchCandidate; assessment: ReturnType<typeof DeepMatchAssessmentSchema.parse> }>();
+      for (const row of input.staged) {
+        if (row.assessment === null || row.adapterUsage === null || stagedByOpportunity.has(row.opportunityId)) throw new DeepMatchPublicationError();
+        const candidate = row.candidateSnapshot as SelectedDeepMatchCandidate;
+        DeepMatchCandidateSchema.parse({ opportunityId: candidate.opportunityId, sourcePostingVersionId: candidate.sourcePostingVersionId, jobEvidence: candidate.jobEvidence, profileEvidence: candidate.profileEvidence });
+        if (candidate.opportunityId !== row.opportunityId || candidate.sourcePostingVersionId !== row.sourcePostingVersionId || !candidate.triageVersionId || candidate.profileId !== context.profile.profileId || candidate.profileVersion !== context.profile.profileVersion || candidate.targetVersion !== root.targetVersion) throw new DeepMatchPublicationError();
+        const triage = triageById.get(candidate.triageVersionId);
+        if (!triage || triage.opportunityId !== candidate.opportunityId || triage.sourcePostingVersionId !== candidate.sourcePostingVersionId) throw new DeepMatchPublicationError();
+        const assessment = DeepMatchAssessmentSchema.parse(row.assessment);
+        DeepMatchAdapterUsageSchema.parse(row.adapterUsage);
+        assertStagedAssessment(candidate, assessment);
+        await assertCandidateTuple(transaction, { userId: input.userId, targetId: input.targetId, candidate });
+        stagedByOpportunity.set(candidate.opportunityId, { candidate, assessment });
+      }
+      return { scope, triages, stagedByOpportunity };
+    } catch (error) {
+      if (error instanceof DeepMatchPublicationError) throw error;
+      throw new DeepMatchPublicationError();
+    }
+  };
+  const replayRecommendationPublication = async (transaction: any, input: RecommendationPublicationInput): Promise<RecommendationPublicationResult | null> => {
+    const results = await transaction.select().from(recommendationResults).where(and(
+      eq(recommendationResults.userId, input.userId),
+      or(eq(recommendationResults.rootRunId, input.recommendation.rootRunId), eq(recommendationResults.producerRunId, input.runId)),
+    )).limit(2);
+    if (!results.length) return null;
+    const [result] = results;
+    if (results.length !== 1 || !result || result.rootRunId !== input.recommendation.rootRunId || result.producerRunId !== input.runId || result.targetId !== input.targetId) throw new DeepMatchPublicationError();
+    const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId))).limit(1);
+    if (!run || run.runPurpose !== "recommendation" || run.parentRunId !== input.recommendation.rootRunId || run.targetId !== input.targetId || run.status !== "completed") throw new DeepMatchPublicationError();
+    const staged: Array<typeof deepMatchRunCandidates.$inferSelect> = await transaction.select().from(deepMatchRunCandidates).where(and(eq(deepMatchRunCandidates.userId, input.userId), eq(deepMatchRunCandidates.runId, input.runId))).orderBy(deepMatchRunCandidates.ordinal);
+    const facts = await assertRecommendationPublicationFacts(transaction, { run, userId: input.userId, targetId: input.targetId, rootRunId: input.recommendation.rootRunId, staged });
+    const completed = [...facts.stagedByOpportunity.values()].sort((left, right) => right.assessment.overallScore - left.assessment.overallScore || left.candidate.opportunityId.localeCompare(right.candidate.opportunityId));
+    const accepted = completed.filter((entry) => acceptsRecommendationRule(entry.assessment, RecommendationRuleConfigSchema.parse(facts.scope.recommendationRuleConfig))).map((entry) => entry.candidate.opportunityId);
+    const evidence = buildRecommendationPublicationEvidence({
+      frozen: facts.scope.frozenRecommendationEvidence!, triages: facts.triages.map((triage) => ({ triageVersionId: triage.id, opportunityId: triage.opportunityId, overallVerdict: triage.overallVerdict as "pass" | "fail" | "unknown", deadlineStatus: triage.deadlineStatus as "expired" | "closing_soon" | "valid" | "missing" | "invalid" })),
+      selectionExclusions: facts.scope.selectionExclusions, stagedCandidates: staged.map((row) => ({ opportunityId: (row.candidateSnapshot as SelectedDeepMatchCandidate).opportunityId, complete: row.assessment !== null && row.adapterUsage !== null })), acceptedOpportunityIds: accepted,
+    });
+    if (!isDeepStrictEqual(result.evidence, evidence)) throw new DeepMatchPublicationError();
+    if (result.kind === "no_recommendations") {
+      if (accepted.length !== 0 || result.recommendationListId !== null || result.itemCount !== 0) throw new DeepMatchPublicationError();
+      return { kind: "no_recommendations", resultId: result.id, evidence };
+    }
+    if (result.kind !== "recommendation_list" || !result.recommendationListId || result.id !== result.recommendationListId || result.itemCount !== accepted.length || accepted.length === 0) throw new DeepMatchPublicationError();
+    const [list] = await transaction.select({ id: recommendationLists.id }).from(recommendationLists).where(and(eq(recommendationLists.userId, input.userId), eq(recommendationLists.id, result.recommendationListId), eq(recommendationLists.targetId, input.targetId))).limit(1);
+    const items: Array<{ matchVersionId: string; ordinal: number; highlighted: boolean }> = await transaction.select({ matchVersionId: recommendationListItems.matchVersionId, ordinal: recommendationListItems.ordinal, highlighted: recommendationListItems.highlighted }).from(recommendationListItems)
+      .where(and(eq(recommendationListItems.userId, input.userId), eq(recommendationListItems.recommendationListId, result.recommendationListId))).orderBy(asc(recommendationListItems.ordinal));
+    if (!list || items.length !== accepted.length || items.some((item, index) => item.ordinal !== index + 1)) throw new DeepMatchPublicationError();
+    const matches: Array<{ id: string; opportunityId: string; sourcePostingVersionId: string; triageVersionId: string; profileId: string; profileVersion: number; targetId: string; targetVersion: number; ruleVersion: string; overallScore: number; displayBand: string; assessment: unknown }> = await transaction.select({ id: jobMatchVersions.id, opportunityId: jobMatchVersions.opportunityId, sourcePostingVersionId: jobMatchVersions.sourcePostingVersionId, triageVersionId: jobMatchVersions.triageVersionId, profileId: jobMatchVersions.profileId, profileVersion: jobMatchVersions.profileVersion, targetId: jobMatchVersions.targetId, targetVersion: jobMatchVersions.targetVersion, ruleVersion: jobMatchVersions.ruleVersion, overallScore: jobMatchVersions.overallScore, displayBand: jobMatchVersions.displayBand, assessment: jobMatchVersions.assessment }).from(jobMatchVersions)
+      .where(and(eq(jobMatchVersions.userId, input.userId), inArray(jobMatchVersions.id, items.map((item) => item.matchVersionId))));
+    const matchById = new Map(matches.map((match) => [match.id, match]));
+    for (const [index, item] of items.entries()) {
+      const entry = completed.find((candidate) => candidate.candidate.opportunityId === accepted[index]);
+      const match = matchById.get(item.matchVersionId);
+      if (!entry || !match || match.opportunityId !== entry.candidate.opportunityId || match.sourcePostingVersionId !== entry.candidate.sourcePostingVersionId || match.triageVersionId !== entry.candidate.triageVersionId || match.profileId !== entry.candidate.profileId || match.profileVersion !== entry.candidate.profileVersion || match.targetId !== input.targetId || match.targetVersion !== entry.candidate.targetVersion || match.ruleVersion !== run.ruleVersion || match.overallScore !== entry.assessment.overallScore || match.displayBand !== displayBand(entry.assessment) || !isDeepStrictEqual(match.assessment, entry.assessment)) throw new DeepMatchPublicationError();
+    }
+    return { kind: "recommendation_list", resultId: result.id, recommendationListId: list.id, items, evidence };
+  };
   return {
     async stageValidatedAssessment(input: { userId: string; runId: string; claimToken: string; candidate: SelectedDeepMatchCandidate; assessment: ReturnType<typeof DeepMatchAssessmentSchema.parse>; usage: ReturnType<typeof DeepMatchAdapterResultSchema.parse>["usage"] }) {
       return deps.db.transaction(async (transaction) => {
@@ -381,28 +492,80 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
     },
     /** Publishes a fully staged matching run in one fenced transaction.  Staging is private;
      * no match version or recommendation list becomes visible before every candidate is ready. */
-    async publishStagedRun(input: { userId: string; targetId: string; runId: string; fence: { claimToken: string }; selectionExclusions: readonly { opportunityId: string; reasonCode: RecommendationExclusionReason }[]; ruleConfig?: { minimumOverallScore: number; minimumEvidenceDimensions: number; requiredEvidenceDimensions: string[]; excludedOpportunityIds: string[] }; onPublished?: (transaction: any, result: { resultCount: number }) => Promise<void> }) {
+    publishStagedRun: (async (input: LegacyPublicationInput | RecommendationPublicationInput) => {
       return deps.db.transaction(async (transaction) => {
         await acquireAccountAdvisoryLock(transaction, input.userId);
+        if (input.recommendation) {
+          const replay = await replayRecommendationPublication(transaction, input);
+          if (replay) return replay;
+        }
         if ((await readAccountRunControlInTransaction(transaction, input.userId)).stoppedAt !== null) throw new DeepMatchClaimLostError();
-        const [run] = await transaction.select({ id: agentRuns.id, ruleVersion: agentRuns.ruleVersion, workflowVersion: agentRuns.workflowVersion, budgetSnapshot: agentRuns.budgetSnapshot }).from(agentRuns).where(and(
+        const [run] = await transaction.select().from(agentRuns).where(and(
           eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"),
           eq(agentRuns.claimToken, input.fence.claimToken), eq(agentRuns.controlState, "none"), gt(agentRuns.claimExpiresAt, deps.clock()),
         )).limit(1);
         if (!run) throw new DeepMatchClaimLostError();
+        const publicationBudgetDimension = exhaustedAgentRunBudget({ ...run, budgetSnapshot: run.budgetSnapshot as AgentRunBudget }, {}, run.activeSliceStartedAt ? Math.max(0, deps.clock().getTime() - run.activeSliceStartedAt.getTime()) : 0);
+        if (publicationBudgetDimension) throw new DeepMatchPublicationBudgetError(publicationBudgetDimension);
+        const assertRecommendationPublicationCompleted = async (expectedResultCount: number) => {
+          const [completed] = await transaction.select({
+            status: agentRuns.status,
+            currentStep: agentRuns.currentStep,
+            claimToken: agentRuns.claimToken,
+            claimExpiresAt: agentRuns.claimExpiresAt,
+            activeSliceStartedAt: agentRuns.activeSliceStartedAt,
+            resultCount: agentRuns.resultCount,
+            completedAt: agentRuns.completedAt,
+            failureCode: agentRuns.failureCode,
+            failedAt: agentRuns.failedAt,
+            cancelledAt: agentRuns.cancelledAt,
+            terminationKind: agentRuns.terminationKind,
+            usageComplete: agentRuns.usageComplete,
+          }).from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, run.id))).limit(1);
+          if (
+            completed?.status !== "completed" || completed.currentStep !== "completed" || completed.claimToken !== null ||
+            completed.claimExpiresAt !== null || completed.activeSliceStartedAt !== null || completed.resultCount !== expectedResultCount ||
+            completed.completedAt === null || completed.failureCode !== null || completed.failedAt !== null || completed.cancelledAt !== null ||
+            completed.terminationKind !== "completed" || completed.usageComplete !== true
+          ) throw new Error("DEEP_MATCH_RECOMMENDATION_CALLBACK_INCOMPLETE");
+        };
+        if (run.runPurpose === "recommendation" && (!input.recommendation || !input.onPublished)) throw new Error("DEEP_MATCH_RECOMMENDATION_CALLBACK_REQUIRED");
+        if (run.runPurpose !== "recommendation" && input.recommendation) throw new Error("DEEP_MATCH_RECOMMENDATION_OWNER_MISMATCH");
         const staged = await transaction.select().from(deepMatchRunCandidates).where(and(eq(deepMatchRunCandidates.userId, input.userId), eq(deepMatchRunCandidates.runId, input.runId))).orderBy(deepMatchRunCandidates.ordinal);
+        const recommendationFacts = input.recommendation ? await assertRecommendationPublicationFacts(transaction, { run, userId: input.userId, targetId: input.targetId, rootRunId: input.recommendation.rootRunId, staged }) : null;
         const budget = effectiveAgentRunBudget(run.workflowVersion, run.budgetSnapshot as AgentRunBudget);
         const candidateLimit = Math.min(budget.maxResults, budget.maxModelCalls);
+        if (input.recommendation && staged.length > candidateLimit) throw new DeepMatchPublicationError();
         const allowed = staged.slice(0, candidateLimit);
         const limitedExclusions = staged.slice(candidateLimit).map((row) => ({ opportunityId: (row.candidateSnapshot as SelectedDeepMatchCandidate).opportunityId, reasonCode: "CANDIDATE_LIMIT" as const }));
-        if (allowed.some((row) => row.assessment === null || row.adapterUsage === null)) throw new Error("DEEP_MATCH_STAGE_INCOMPLETE");
+        if (allowed.some((row) => row.assessment === null || row.adapterUsage === null)) throw input.recommendation ? new DeepMatchPublicationError() : new Error("DEEP_MATCH_STAGE_INCOMPLETE");
         const completed = allowed.map((row) => {
+          const validated = recommendationFacts?.stagedByOpportunity.get(row.opportunityId);
+          if (recommendationFacts) {
+            if (!validated) throw new DeepMatchPublicationError();
+            return validated;
+          }
           const candidate = row.candidateSnapshot as SelectedDeepMatchCandidate;
           const assessment = DeepMatchAssessmentSchema.parse(row.assessment);
           assertStagedAssessment(candidate, assessment);
           return { candidate, assessment };
         })
           .sort((left, right) => right.assessment.overallScore - left.assessment.overallScore || left.candidate.opportunityId.localeCompare(right.candidate.opportunityId));
+        let recommendationEvidence: ReturnType<typeof buildRecommendationPublicationEvidence> | null = null;
+        let publicationSelectionExclusions = input.selectionExclusions;
+        let publicationRuleConfig = input.ruleConfig;
+        let acceptedRecommendationOpportunityIds: Set<string> | null = null;
+        if (input.recommendation) {
+          if (run.runPurpose !== "recommendation" || run.parentRunId !== input.recommendation.rootRunId || run.targetId !== input.targetId) throw new Error("DEEP_MATCH_RECOMMENDATION_OWNER_MISMATCH");
+          const scope = recommendationFacts!.scope;
+          publicationSelectionExclusions = scope.selectionExclusions;
+          publicationRuleConfig = scope.recommendationRuleConfig;
+          acceptedRecommendationOpportunityIds = new Set(completed.filter((entry) => acceptsRecommendationRule(entry.assessment, RecommendationRuleConfigSchema.parse(publicationRuleConfig!))).map((entry) => entry.candidate.opportunityId));
+          recommendationEvidence = buildRecommendationPublicationEvidence({
+            frozen: scope.frozenRecommendationEvidence!, triages: recommendationFacts!.triages.map((triage) => ({ triageVersionId: triage.id, opportunityId: triage.opportunityId, overallVerdict: triage.overallVerdict as "pass" | "fail" | "unknown", deadlineStatus: triage.deadlineStatus as "expired" | "closing_soon" | "valid" | "missing" | "invalid" })),
+            selectionExclusions: publicationSelectionExclusions, stagedCandidates: staged.map((row) => ({ opportunityId: (row.candidateSnapshot as SelectedDeepMatchCandidate).opportunityId, complete: row.assessment !== null && row.adapterUsage !== null })), acceptedOpportunityIds: [...acceptedRecommendationOpportunityIds],
+          });
+        }
         const matches: Array<{ id: string; opportunityId: string; overallScore: number; displayBand: ReturnType<typeof displayBand> }> = [];
         for (const entry of completed) {
           const candidate = entry.candidate;
@@ -418,6 +581,21 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
           if (!match) throw new Error("DEEP_MATCH_PERSIST_FAILED");
           matches.push({ id: match.id, opportunityId: match.opportunityId, overallScore: match.overallScore, displayBand: match.displayBand as ReturnType<typeof displayBand> });
         }
+        const accepted = matches.filter((match) => {
+          if (acceptedRecommendationOpportunityIds) return acceptedRecommendationOpportunityIds.has(match.opportunityId);
+          const assessment = completed.find((entry) => entry.candidate.opportunityId === match.opportunityId)!.assessment;
+          const config = publicationRuleConfig;
+          return config ? acceptsRecommendationRule(assessment, RecommendationRuleConfigSchema.parse(config)) : acceptsDeepMatchAssessment(assessment);
+        });
+        if (input.recommendation && recommendationEvidence && !accepted.length) {
+          const resultId = deps.id();
+          await transaction.insert(recommendationResults).values({ id: resultId, userId: input.userId, targetId: input.targetId, rootRunId: input.recommendation.rootRunId, producerRunId: run.id, kind: "no_recommendations", recommendationListId: null, itemCount: 0, evidence: recommendationEvidence, createdAt: deps.clock() });
+          await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: input.userId, recommendationResultId: resultId, kind: "recommendation_result", status: "unread", reasonCode: "NO_RECOMMENDATIONS_PUBLISHED", budgetDimension: null, createdAt: deps.clock() });
+          await recordFirstRecommendationJourneyCompletion(transaction, { userId: input.userId, result: { kind: "no_recommendations", resultId }, completedAt: deps.clock() });
+          await input.onPublished!(transaction, { resultCount: 0 });
+          await assertRecommendationPublicationCompleted(0);
+          return { kind: "no_recommendations" as const, resultId, evidence: recommendationEvidence };
+        }
         const localDate = shanghaiDate(deps.clock());
         const [previousList] = await transaction.select({ sequence: recommendationLists.sequence }).from(recommendationLists).where(and(eq(recommendationLists.userId, input.userId), eq(recommendationLists.targetId, input.targetId), eq(recommendationLists.localDate, localDate))).orderBy(desc(recommendationLists.sequence)).limit(1);
         const [list] = await transaction.insert(recommendationLists).values({ id: deps.id(), userId: input.userId, targetId: input.targetId, localDate, sequence: (previousList?.sequence ?? 0) + 1, createdAt: deps.clock() }).returning();
@@ -429,14 +607,10 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
           target: agentInboxItems.recommendationListId,
           where: sql`${agentInboxItems.recommendationListId} is not null`,
         });
-        const accepted = matches.filter((match) => {
-          const assessment = completed.find((entry) => entry.candidate.opportunityId === match.opportunityId)!.assessment;
-          const config = input.ruleConfig;
-          return config ? acceptsRecommendationRule(assessment, RecommendationRuleConfigSchema.parse(config)) : acceptsDeepMatchAssessment(assessment);
-        });
-        const exclusions = [...input.selectionExclusions, ...limitedExclusions, ...matches.filter((match) => !accepted.some((item) => item.id === match.id)).map((match) => ({ opportunityId: match.opportunityId, reasonCode: "MATCH_QUALITY_INSUFFICIENT" as const }))];
+        const exclusions = [...publicationSelectionExclusions, ...limitedExclusions, ...matches.filter((match) => !accepted.some((item) => item.id === match.id)).map((match) => ({ opportunityId: match.opportunityId, reasonCode: "MATCH_QUALITY_INSUFFICIENT" as const }))];
         if (exclusions.length) await transaction.insert(recommendationExclusions).values(exclusions.map((exclusion) => ({ id: deps.id(), userId: input.userId, targetId: input.targetId, opportunityId: exclusion.opportunityId, recommendationListId: list.id, reasonCode: exclusion.reasonCode, createdAt: deps.clock() })));
         if (accepted.length) await transaction.insert(recommendationListItems).values(accepted.map((match, index) => ({ id: deps.id(), userId: input.userId, recommendationListId: list.id, matchVersionId: match.id, ordinal: index + 1, highlighted: index < 3, createdAt: deps.clock() })));
+        if (input.recommendation && recommendationEvidence && accepted.length) await transaction.insert(recommendationResults).values({ id: list.id, userId: input.userId, targetId: input.targetId, rootRunId: input.recommendation.rootRunId, producerRunId: run.id, kind: "recommendation_list", recommendationListId: list.id, itemCount: accepted.length, evidence: recommendationEvidence, createdAt: deps.clock() });
         if (accepted.length) await recordFirstRecommendationJourneyCompletion(transaction, {
           userId: input.userId,
           result: { kind: "recommendation_list", resultId: list.id },
@@ -444,9 +618,12 @@ export function createDeepMatchCommands(deps: { db: Database; id: () => string; 
         });
         const result = { recommendationListId: list.id, items: accepted.map((match, index) => ({ matchVersionId: match.id, ordinal: index + 1, highlighted: index < 3 })) };
         await input.onPublished?.(transaction, { resultCount: result.items.length });
-        return result;
+        if (input.recommendation) {
+          await assertRecommendationPublicationCompleted(result.items.length);
+        }
+        return input.recommendation ? { kind: "recommendation_list" as const, resultId: list.id, recommendationListId: list.id, items: result.items, evidence: recommendationEvidence! } : result;
       });
-    },
+    }) as PublishStagedRun,
   };
 }
 

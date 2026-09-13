@@ -2,11 +2,11 @@ import { createHash } from "node:crypto";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { and, asc, eq, sql } from "drizzle-orm";
-import { agentInboxItems, agentRunEvents, agentRunJobResults, agentRunSteps, agentRunUsageEntries, agentRuns, auditEvents, createDatabase, deepMatchRunCandidates, jobAccounts, jobDiscoveryAttributions, jobDiscoveryDiagnostics, jobDiscoveryLeads, jobDiscoveryRunResults, jobDiscoverySourceIssues, jobMatchVersions, jobOpportunities, jobOpportunitySources, jobProfiles, jobSourceHealthChecks, jobSourcePostings, jobSourcePostingVersions, jobTargetRevisions, jobTargets, jobTriageVersions, migrateDatabase, modelDiagnosticResults, profileFactRevisions, profileFacts, recommendationListItems, recommendationLists, type Database } from "@job-copilot/database";
+import { agentInboxItems, agentRunEvents, agentRunJobResults, agentRunSteps, agentRunUsageEntries, agentRuns, auditEvents, createDatabase, deepMatchRunCandidates, firstRecommendationJourneyCompletions, jobAccounts, jobDiscoveryAttributions, jobDiscoveryDiagnostics, jobDiscoveryLeads, jobDiscoveryRunResults, jobDiscoverySourceIssues, jobMatchVersions, jobOpportunities, jobOpportunitySources, jobProfiles, jobSourceHealthChecks, jobSourcePostings, jobSourcePostingVersions, jobTargetRevisions, jobTargets, jobTriageVersions, migrateDatabase, modelDiagnosticResults, profileFactRevisions, profileFacts, recommendationExclusions, recommendationListItems, recommendationLists, recommendationResults, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
 import { createAgentRunCheckpoint, createAgentRunCommands, createAgentRunProcessor as createDomainAgentRunProcessor, createAgentRunQueries, createAgentRunRecoveryQueries, type AgentRunCheckpoint, type AgentRunQueue, type DiscoveryContentStore, type JobDiscoveryAdapter, type JobDiscoveryAdapterResolver } from "./agent-runs";
 import { createCompanyWatchlistCommands } from "./company-watchlists";
-import { AgentRunDetailSchema, AgentRunEventSchema, ControlAgentRunResponseSchema, GREENHOUSE_JOB_DISCOVERY_ADAPTER, GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION, GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, GREENHOUSE_JOB_DISCOVERY_RULE_VERSION, GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION, GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION, GREENHOUSE_SOURCE_HEALTH_RULE_VERSION, GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST, GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, PUBLIC_JOB_DISCOVERY_BUDGET } from "@job-copilot/contracts/agent-runs";
+import { AgentRunDetailSchema, AgentRunEventSchema, ControlAgentRunResponseSchema, DEEP_MATCH_AGENT_RUN_BUDGET, GREENHOUSE_JOB_DISCOVERY_ADAPTER, GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION, GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, GREENHOUSE_JOB_DISCOVERY_RULE_VERSION, GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION, GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION, GREENHOUSE_SOURCE_HEALTH_RULE_VERSION, GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST, GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, PUBLIC_JOB_DISCOVERY_BUDGET } from "@job-copilot/contracts/agent-runs";
 import { LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER, LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_TOOL_ALLOWLIST, LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION } from "@job-copilot/contracts/job-discovery";
 import { createLayeredPublicJobDiscoveryWorkflow, LayeredPublicWorkflowInterruption } from "./layered-public-job-discovery-workflow";
 import { createLayeredPublicJobDiscoveryRuntime } from "./layered-public-job-discovery-runtime";
@@ -21,6 +21,8 @@ import { createRunPreflightEvaluator } from "./run-preflight";
 import { createModelDiagnosticProjectionReader } from "./model-diagnostics";
 import { createAccountRunControl } from "./account-run-control";
 import { createRecommendationRunCommands } from "./recommendation-runs";
+import { effectiveAgentRunBudget } from "./effective-agent-run-budget";
+import * as effectiveAgentRunBudgetModule from "./effective-agent-run-budget";
 import type { SourceHealthDiscoveryAdapter } from "./source-health-discovery-adapter";
 import type { SourceCapabilityAdapter } from "./source-capabilities";
 
@@ -217,6 +219,101 @@ describe("AgentRunProcessor checkpoints", () => {
     return createAgentRunCheckpoint({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
   }
 
+  async function createFullyQualifiedLayeredRecommendationFixture(input: { ownerUserId?: string; withFrontExclusion?: boolean; withQualityCandidate?: boolean; deepMatchMaxActiveDurationMs?: number; deepMatchMaxResults?: number; deepMatchMaxModelCalls?: number } = {}) {
+    const userId = input.ownerUserId ?? crypto.randomUUID(); const targetId = crypto.randomUUID(); const profileId = crypto.randomUUID(); const factId = crypto.randomUUID();
+    const qualifiedConstraints = { roleFamily: "AI 应用工程师", seniority: "senior", locations: ["上海"], workModes: ["remote"], relocation: "willing" as const, salary: null, industries: [], dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] } };
+    if (!input.ownerUserId) await database.insert(jobAccounts).values({ id: userId });
+    if (input.deepMatchMaxActiveDurationMs !== undefined || input.deepMatchMaxResults !== undefined || input.deepMatchMaxModelCalls !== undefined) {
+      const settings = structuredClone(systemAccountRunPolicy().effective);
+      if (input.deepMatchMaxActiveDurationMs !== undefined) settings.budgets.deepMatch.maxActiveDurationMs = input.deepMatchMaxActiveDurationMs;
+      if (input.deepMatchMaxResults !== undefined) settings.budgets.deepMatch.maxResults = input.deepMatchMaxResults;
+      if (input.deepMatchMaxModelCalls !== undefined) settings.budgets.deepMatch.maxModelCalls = input.deepMatchMaxModelCalls;
+      await createAccountRunPolicies({ db: database, id: () => crypto.randomUUID(), clock: () => now })
+        .save({ userId, command: { expectedVersion: 0, settings } });
+    }
+    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: now, updatedAt: now });
+    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints: qualifiedConstraints, createdAt: now });
+    if (!input.ownerUserId) {
+      await database.insert(jobProfiles).values({ id: profileId, userId, version: 1, createdAt: now, updatedAt: now });
+      await database.insert(profileFacts).values({ id: factId, userId, profileId, factType: "skill", createdAt: now });
+      await database.insert(profileFactRevisions).values({ id: crypto.randomUUID(), userId, profileFactId: factId, revisionNumber: 1, factType: "skill", factValue: { name: "TypeScript" }, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1, createdAt: now });
+      for (const [factType, factValue] of [["education", { summary: "本科" }], ["language", { name: "英语", level: "C1" }], ["work_eligibility", { summary: "中国工作许可" }]] as const) {
+        const completeFactId = crypto.randomUUID();
+        await database.insert(profileFacts).values({ id: completeFactId, userId, profileId, factType, createdAt: now });
+        await database.insert(profileFactRevisions).values({ id: crypto.randomUUID(), userId, profileFactId: completeFactId, revisionNumber: 1, factType, factValue, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1, createdAt: now });
+      }
+    }
+    const fingerprint = crypto.randomUUID();
+    await database.insert(modelDiagnosticResults).values({ configurationFingerprint: fingerprint, status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket: "under_1s", checkedAt: now });
+    const preflight = createRunPreflightEvaluator({ capabilityAdapter: { adapter: "greenhouse", adapterVersion: "test", declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1" as const, capabilities: ["active_discovery", "read_details", "continuous_monitoring"] }) }, modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: fingerprint }), discoveryExecutionMode: "layered_public", id: () => crypto.randomUUID(), clock: () => now });
+    const service = createRecommendationRunCommands({ db: database, queue: new Queue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), runPreflight: preflight, executionMode: "layered_public", id: () => crypto.randomUUID(), clock: () => now });
+    const preparation = await preflight.evaluate(database, { userId, workflow: "recommendation", trigger: "manual" });
+    const started = await service.start({ userId, requestId: crypto.randomUUID(), command: { idempotencyKey: crypto.randomUUID(), warningFingerprint: preparation.report.warningFingerprint } });
+    const [rootBeforeCompletion] = await database.select({ sourceScope: agentRuns.sourceScope, recommendationContext: agentRuns.recommendationContext }).from(agentRuns).where(eq(agentRuns.id, started.run.runId));
+    const plannedQuery = (rootBeforeCompletion!.sourceScope as any).publicDiscovery.queries[0]!;
+    const sourcePostingId = crypto.randomUUID(); const sourcePostingVersionId = crypto.randomUUID(); const sourceHash = createHash("sha256").update(targetId).digest("hex");
+    await database.insert(jobSourcePostings).values({ id: sourcePostingId, userId, sourceType: "company_careers", sourceIdentifier: sourceHash, sourceIdentity: { sourceId: "greenhouse:qualified", detailId: "1" }, isOfficial: true, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
+    await database.insert(jobSourcePostingVersions).values({ id: sourcePostingVersionId, userId, sourcePostingId, version: 1, contentSha256: sourceHash, rawContentSha256: sourceHash, rawObjectReference: { key: "qualified" }, normalizedData: { sourceId: "greenhouse:qualified", detailId: "1", company: "Qualified Co", title: "AI Engineer", location: "上海", postedAt: now.toISOString(), deadline: null, sourceType: "company_careers", isOfficial: true, qualifications: { workMode: { value: "remote", evidence: { field: "workMode", path: "工作方式", value: "远程" } }, relocationRequired: { value: true, evidence: { field: "relocationRequired", path: "是否需要搬迁", value: "是" } }, salary: null, seniority: { value: "senior", evidence: { field: "seniority", path: "级别", value: "senior" } }, education: { value: "本科", evidence: { field: "education", path: "学历", value: "本科" } }, languages: { value: [{ name: "英语", level: "C1" }], evidence: { field: "languages", path: "语言", value: "英语(C1)" } }, workEligibility: { value: "中国工作许可", evidence: { field: "workEligibility", path: "工作资格", value: "中国工作许可" } }, industry: null, employmentType: null, requiredSkills: { value: ["TypeScript"], evidence: { field: "requiredSkills", path: "技能", value: "TypeScript" } } } }, retrievedAt: now, availability: "open", createdAt: now });
+    const leadId = crypto.randomUUID();
+    await database.insert(jobDiscoveryLeads).values({ id: leadId, userId, runId: started.run.runId, targetId, provider: "anysearch", queryId: plannedQuery.queryId, queryKind: plannedQuery.kind, queryFingerprint: plannedQuery.stableFingerprint, normalizedUrl: "https://fixture.invalid/qualified", stableFingerprint: "d".repeat(64), expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000), state: "verified", sourcePostingVersionId, verifiedFinalUrl: "https://fixture.invalid/qualified", rejectionCode: null, createdAt: now, updatedAt: now });
+    await database.insert(jobDiscoveryAttributions).values({ id: crypto.randomUUID(), userId, runId: started.run.runId, leadId, queryId: plannedQuery.queryId, provider: "anysearch", sourcePostingVersionId, createdAt: now });
+    let qualitySourcePostingVersionId: string | undefined;
+    if (input.withQualityCandidate) {
+      const qualityPostingId = crypto.randomUUID(); qualitySourcePostingVersionId = crypto.randomUUID();
+      await database.insert(jobSourcePostings).values({ id: qualityPostingId, userId, sourceType: "company_careers", sourceIdentifier: "b".repeat(64), sourceIdentity: { sourceId: "greenhouse:quality", detailId: "1" }, isOfficial: true, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
+      const [qualifiedVersion] = await database.select({ normalizedData: jobSourcePostingVersions.normalizedData }).from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.id, sourcePostingVersionId));
+      await database.insert(jobSourcePostingVersions).values({ id: qualitySourcePostingVersionId, userId, sourcePostingId: qualityPostingId, version: 1, contentSha256: "b".repeat(64), rawContentSha256: "b".repeat(64), rawObjectReference: { key: "quality" }, normalizedData: qualifiedVersion!.normalizedData, retrievedAt: now, availability: "open", createdAt: now });
+      const qualityLeadId = crypto.randomUUID();
+      await database.insert(jobDiscoveryLeads).values({ id: qualityLeadId, userId, runId: started.run.runId, targetId, provider: "anysearch", queryId: plannedQuery.queryId, queryKind: plannedQuery.kind, queryFingerprint: plannedQuery.stableFingerprint, normalizedUrl: "https://fixture.invalid/quality", stableFingerprint: "a".repeat(64), expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000), state: "verified", sourcePostingVersionId: qualitySourcePostingVersionId, verifiedFinalUrl: "https://fixture.invalid/quality", rejectionCode: null, createdAt: now, updatedAt: now });
+      await database.insert(jobDiscoveryAttributions).values({ id: crypto.randomUUID(), userId, runId: started.run.runId, leadId: qualityLeadId, queryId: plannedQuery.queryId, provider: "anysearch", sourcePostingVersionId: qualitySourcePostingVersionId, createdAt: now });
+    }
+    let excludedSourcePostingVersionId: string | undefined;
+    if (input.withFrontExclusion) {
+      const excludedPostingId = crypto.randomUUID();
+      excludedSourcePostingVersionId = crypto.randomUUID();
+      await database.insert(jobSourcePostings).values({ id: excludedPostingId, userId, sourceType: "company_careers", sourceIdentifier: "e".repeat(64), sourceIdentity: { sourceId: "greenhouse:excluded", detailId: "1" }, isOfficial: true, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
+      await database.insert(jobSourcePostingVersions).values({ id: excludedSourcePostingVersionId, userId, sourcePostingId: excludedPostingId, version: 1, contentSha256: "e".repeat(64), rawContentSha256: "e".repeat(64), rawObjectReference: { key: "excluded" }, normalizedData: { sourceId: "greenhouse:excluded", detailId: "1", company: "Excluded Co", title: "AI Engineer", location: "上海", postedAt: now.toISOString(), deadline: null, sourceType: "company_careers", isOfficial: true }, retrievedAt: now, availability: "open", createdAt: now });
+      const excludedLeadId = crypto.randomUUID();
+      await database.insert(jobDiscoveryLeads).values({ id: excludedLeadId, userId, runId: started.run.runId, targetId, provider: "anysearch", queryId: plannedQuery.queryId, queryKind: plannedQuery.kind, queryFingerprint: plannedQuery.stableFingerprint, normalizedUrl: "https://fixture.invalid/excluded", stableFingerprint: "f".repeat(64), expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000), state: "verified", sourcePostingVersionId: excludedSourcePostingVersionId, verifiedFinalUrl: "https://fixture.invalid/excluded", rejectionCode: null, createdAt: now, updatedAt: now });
+      await database.insert(jobDiscoveryAttributions).values({ id: crypto.randomUUID(), userId, runId: started.run.runId, leadId: excludedLeadId, queryId: plannedQuery.queryId, provider: "anysearch", sourcePostingVersionId: excludedSourcePostingVersionId, createdAt: now });
+    }
+    const outcome = await createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: (input) => ({ run: async () => {
+      const facts = plannedLayeredDiscoveryFacts(input.executionSpec);
+      return { branchOutcome: { trusted: "succeeded", publicDiscovery: "verified" }, diagnostics: [], sourcePostingVersionIds: [sourcePostingVersionId, ...(qualitySourcePostingVersionId ? [qualitySourcePostingVersionId] : []), ...(excludedSourcePostingVersionId ? [excludedSourcePostingVersionId] : [])], trustedSourcePostingVersionIds: [], discoveryFacts: { ...facts, publicQueries: facts.publicQueries.map((fact: any) => fact.queryId === plannedQuery.queryId ? { ...fact, outcome: "credible_results" as const } : fact) } };
+    } }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .process({ version: 1, userId, runId: started.run.runId, finalAttempt: true });
+    const [triage] = await database.select({ id: jobTriageVersions.id, userId: jobTriageVersions.userId, opportunityId: jobTriageVersions.opportunityId, sourcePostingVersionId: jobTriageVersions.sourcePostingVersionId, profileId: jobTriageVersions.profileId, profileVersion: jobTriageVersions.profileVersion, targetId: jobTriageVersions.targetId, targetVersion: jobTriageVersions.targetVersion, overallVerdict: jobTriageVersions.overallVerdict, overallScore: jobTriageVersions.overallScore }).from(jobTriageVersions).where(eq(jobTriageVersions.sourcePostingVersionId, sourcePostingVersionId));
+    const [rootAfterCompletion] = await database.select({ sourceScope: agentRuns.sourceScope, recommendationContext: agentRuns.recommendationContext }).from(agentRuns).where(eq(agentRuns.id, started.run.runId));
+    const [child] = await database.select({ id: agentRuns.id, sourceScope: agentRuns.sourceScope }).from(agentRuns).where(eq(agentRuns.parentRunId, started.run.runId));
+    return { userId, targetId, profileId, sourcePostingVersionId, qualitySourcePostingVersionId, excludedSourcePostingVersionId, plannedQuery, rootRunId: started.run.runId, rootBeforeCompletion, rootAfterCompletion, outcome, triage: triage!, child: child! };
+  }
+
+  async function stageFullyQualifiedLayeredRecommendationFixture(input: { withFrontExclusion?: boolean } = {}) {
+    const fixture = await createFullyQualifiedLayeredRecommendationFixture(input);
+    const claimToken = crypto.randomUUID();
+    await database.update(agentRuns).set({ status: "running", currentStep: "assess_matches", attemptCount: 1, startedAt: now, activeSliceStartedAt: now, claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), controlState: "none" }).where(eq(agentRuns.id, fixture.child.id));
+    const commands = createDeepMatchCommands({ db: database, id: () => crypto.randomUUID(), clock: () => now, adapter: new FakeDeepMatchAdapter() });
+    const [candidate] = await createDeepMatchQueries({ db: database }).getFrozenCandidates({ userId: fixture.userId, runId: fixture.child.id });
+    const value = await commands.invokeAndValidate({ userId: fixture.userId, runId: fixture.child.id, candidate: candidate!, modelCall: { signal: new AbortController().signal, usageKey: crypto.randomUUID(), budget: { maxTokens: 20_000, reservedInputTokens: 32, reservedOutputTokens: 48 } } });
+    await commands.stageValidatedAssessment({ userId: fixture.userId, runId: fixture.child.id, claimToken, candidate: candidate!, assessment: value.assessment, usage: value.usage });
+    const publicationInput = { userId: fixture.userId, targetId: fixture.targetId, runId: fixture.child.id, fence: { claimToken }, selectionExclusions: [], ruleConfig: { minimumOverallScore: 0, minimumEvidenceDimensions: 0, requiredEvidenceDimensions: [], excludedOpportunityIds: [] }, recommendation: { rootRunId: fixture.rootRunId }, onPublished: async () => undefined };
+    return { ...fixture, commands, input: publicationInput };
+  }
+
+  async function expectPublicationStillUnwritten(input: { userId: string; childId: string }) {
+    await expect(Promise.all([
+      database.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, input.userId)),
+      database.select().from(recommendationLists).where(eq(recommendationLists.userId, input.userId)),
+      database.select().from(recommendationListItems).where(eq(recommendationListItems.userId, input.userId)),
+      database.select().from(recommendationExclusions).where(eq(recommendationExclusions.userId, input.userId)),
+      database.select().from(recommendationResults).where(eq(recommendationResults.producerRunId, input.childId)),
+      database.select().from(agentInboxItems).where(eq(agentInboxItems.userId, input.userId)),
+      database.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, input.userId)),
+      database.select().from(agentRunEvents).where(and(eq(agentRunEvents.runId, input.childId), eq(agentRunEvents.eventType, "run.completed"))),
+      database.select({ status: agentRuns.status, currentStep: agentRuns.currentStep, claimToken: agentRuns.claimToken }).from(agentRuns).where(eq(agentRuns.id, input.childId)),
+    ])).resolves.toEqual([[], [], [], [], [], [], [], [], [{ status: "running", currentStep: "assess_matches", claimToken: expect.any(String) }]]);
+  }
+
   async function recommendationRoot(executionMode: "fake" | "greenhouse" | "layered_public") {
     const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const profileId = crypto.randomUUID(); const factId = crypto.randomUUID();
     await database.insert(jobAccounts).values({ id: userId });
@@ -409,7 +506,7 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(processor.process({ version: 1, userId: templateRoot.userId, runId: historicalRunId, finalAttempt: true })).resolves.toBe("completed");
     expect(received.publicDiscovery.queries).toHaveLength(10);
     await expect(database.select({ sourceScope: agentRuns.sourceScope }).from(agentRuns).where(eq(agentRuns.id, historicalRunId))).resolves.toEqual([{ sourceScope: historicalScope }]);
-    const [child] = await database.select({ sourceScope: agentRuns.sourceScope }).from(agentRuns).where(eq(agentRuns.parentRunId, historicalRunId));
+    const [child] = await database.select({ id: agentRuns.id, sourceScope: agentRuns.sourceScope }).from(agentRuns).where(eq(agentRuns.parentRunId, historicalRunId));
     expect((child!.sourceScope as any).frozenRecommendationEvidence).toMatchObject({
       plannedTrustedSourceCount: historicalScope.trustedSources.length,
       plannedPublicQueryCount: 11,
@@ -425,6 +522,13 @@ describe("AgentRunProcessor checkpoints", () => {
       },
     });
     expect((child!.sourceScope as any).frozenRecommendationEvidence.discoveryFacts.publicQueries).toHaveLength(11);
+    const childOutcome = await createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: new FakeDeepMatchAdapter(), checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .process({ version: 1, userId: templateRoot.userId, runId: child!.id, finalAttempt: true });
+    expect(childOutcome).toBe("completed");
+    await expect(Promise.all([
+      database.select({ kind: recommendationResults.kind, evidence: recommendationResults.evidence }).from(recommendationResults).where(eq(recommendationResults.producerRunId, child!.id)),
+      database.select().from(recommendationLists).where(eq(recommendationLists.userId, templateRoot.userId)),
+    ])).resolves.toEqual([[expect.objectContaining({ kind: "no_recommendations", evidence: expect.objectContaining({ coverageLosses: expect.arrayContaining([expect.objectContaining({ code: "DISCOVERY_BUDGET_EXCEEDED", affectedCount: 1 })]) }) })], []]);
   });
 
   it("低结果额度的 fake 运行只读取并发布允许的一条详情", async () => {
@@ -462,7 +566,7 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({ status: "completed", budget: { maxResults: 0 }, usage: { results: 0 }, results: [] });
   });
 
-  it("推荐根完成时只冻结本根发现的岗位并创建唯一 deep-match 子运行", async () => {
+  it("推荐根可信空发现创建并原子发布 no_recommendations child", async () => {
     const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const profileId = crypto.randomUUID(); const factId = crypto.randomUUID();
     await database.insert(jobAccounts).values({ id: userId });
     await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: now, updatedAt: now });
@@ -482,8 +586,75 @@ describe("AgentRunProcessor checkpoints", () => {
     const [terminal] = await database.select({ failureCode: agentRuns.failureCode }).from(agentRuns).where(eq(agentRuns.id, rootId));
     expect({ outcome, terminal }).toEqual({ outcome: "completed", terminal: { failureCode: null } });
     const [root] = await database.select().from(agentRuns).where(eq(agentRuns.id, rootId));
-    await expect(database.select({ parentRunId: agentRuns.parentRunId, runPurpose: agentRuns.runPurpose, preflight: agentRuns.preflightSnapshot }).from(agentRuns).where(eq(agentRuns.parentRunId, rootId)))
-      .resolves.toEqual([expect.objectContaining({ parentRunId: rootId, runPurpose: "recommendation", preflight: root!.preflightSnapshot })]);
+    const [child] = await database.select({ id: agentRuns.id, parentRunId: agentRuns.parentRunId, runPurpose: agentRuns.runPurpose, preflight: agentRuns.preflightSnapshot }).from(agentRuns).where(eq(agentRuns.parentRunId, rootId));
+    expect(child).toEqual(expect.objectContaining({ parentRunId: rootId, runPurpose: "recommendation", preflight: root!.preflightSnapshot }));
+    const directClaimToken = crypto.randomUUID();
+    await database.update(agentRuns).set({ status: "running", currentStep: "create_recommendations", attemptCount: 1, startedAt: now, activeSliceStartedAt: now, claimToken: directClaimToken, claimExpiresAt: new Date(now.getTime() + 30_000), controlState: "none" }).where(eq(agentRuns.id, child!.id));
+    const commands = createDeepMatchCommands({ db: database, id: () => crypto.randomUUID(), clock: () => now });
+    const directInput = { userId, targetId, runId: child!.id, fence: { claimToken: directClaimToken }, selectionExclusions: [], ruleConfig: { minimumOverallScore: 0, minimumEvidenceDimensions: 0, requiredEvidenceDimensions: [], excludedOpportunityIds: [] } };
+    await expect(Reflect.apply(commands.publishStagedRun, commands, [{ ...directInput, onPublished: async () => undefined }])).rejects.toThrow("DEEP_MATCH_RECOMMENDATION_CALLBACK_REQUIRED");
+    await expect(commands.publishStagedRun({ ...directInput, recommendation: { rootRunId: rootId }, onPublished: async (transaction) => {
+      await transaction.update(agentRuns).set({ status: "completed", currentStep: "completed", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, completedAt: now, failedAt: null, cancelledAt: null, failureCode: null, terminationKind: null, terminationBudgetDimension: null, resultCount: 0, usageComplete: false }).where(eq(agentRuns.id, child!.id));
+    } })).rejects.toThrow("DEEP_MATCH_RECOMMENDATION_CALLBACK_INCOMPLETE");
+    await expect(commands.publishStagedRun({ ...directInput, recommendation: { rootRunId: rootId }, onPublished: async () => undefined })).rejects.toThrow("DEEP_MATCH_RECOMMENDATION_CALLBACK_INCOMPLETE");
+    await expect(commands.publishStagedRun({ ...directInput, recommendation: { rootRunId: rootId }, onPublished: async () => { throw new Error("callback failed"); } })).rejects.toThrow("callback failed");
+    const extraPostingId = crypto.randomUUID(); const extraVersionId = crypto.randomUUID(); const extraOpportunityId = crypto.randomUUID(); const extraHash = "e".repeat(64);
+    await database.insert(jobSourcePostings).values({ id: extraPostingId, userId, sourceType: "company_careers", sourceIdentifier: extraHash, sourceId: "greenhouse:unfrozen", sourceIdentity: { sourceId: "greenhouse:unfrozen", detailId: "unfrozen" }, applicationDeadline: null, isOfficial: true, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
+    await database.insert(jobSourcePostingVersions).values({ id: extraVersionId, userId, sourcePostingId: extraPostingId, version: 1, contentSha256: extraHash, rawContentSha256: extraHash, rawObjectReference: {}, normalizedData: {}, retrievedAt: now, availability: "open", createdAt: now });
+    await database.insert(jobOpportunities).values({ id: extraOpportunityId, userId, importId: null, sourcePostingVersionId: extraVersionId, canonicalOpportunityId: null, dedupKey: extraHash, company: "Unfrozen Co", title: "AI Engineer", location: "上海", postedAt: now, deadline: null, description: "TypeScript", normalizedData: {}, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
+    await database.insert(jobOpportunitySources).values({ id: crypto.randomUUID(), userId, opportunityId: extraOpportunityId, sourcePostingVersionId: extraVersionId, createdAt: now });
+    const extraRootResultId = crypto.randomUUID();
+    await database.insert(jobDiscoveryRunResults).values({ id: extraRootResultId, userId, runId: rootId, sourcePostingVersionId: extraVersionId, ordinal: 1, createdAt: now });
+    await expect(commands.publishStagedRun({ ...directInput, recommendation: { rootRunId: rootId }, onPublished: async () => undefined })).rejects.toThrow("DEEP_MATCH_RECOMMENDATION_FACTS_INVALID");
+    await database.delete(jobDiscoveryRunResults).where(eq(jobDiscoveryRunResults.id, extraRootResultId));
+    await expect(Promise.all([
+      database.select().from(recommendationResults).where(eq(recommendationResults.producerRunId, child!.id)),
+      database.select().from(recommendationLists).where(eq(recommendationLists.userId, userId)),
+      database.select().from(agentInboxItems).where(and(eq(agentInboxItems.userId, userId), eq(agentInboxItems.kind, "recommendation_result"))),
+    ])).resolves.toEqual([[], [], []]);
+    await database.update(agentRuns).set({ status: "queued", currentStep: "queued", attemptCount: 0, startedAt: null, activeSliceStartedAt: null, claimToken: null, claimExpiresAt: null }).where(eq(agentRuns.id, child!.id));
+    const childProcessor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: new FakeDeepMatchAdapter(), checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    await database.insert(jobDiscoveryRunResults).values({ id: extraRootResultId, userId, runId: rootId, sourcePostingVersionId: extraVersionId, ordinal: 1, createdAt: now });
+    await expect(childProcessor.process({ version: 1, userId, runId: child!.id, finalAttempt: true })).resolves.toBe("failed");
+    await expect(Promise.all([
+      database.select({ status: agentRuns.status, failureCode: agentRuns.failureCode, terminationKind: agentRuns.terminationKind }).from(agentRuns).where(eq(agentRuns.id, child!.id)),
+      database.select().from(recommendationResults).where(eq(recommendationResults.producerRunId, child!.id)),
+      database.select().from(recommendationLists).where(eq(recommendationLists.userId, userId)),
+      database.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, userId)),
+    ])).resolves.toEqual([[{ status: "failed", failureCode: "AGENT_RUN_PERSIST_FAILED", terminationKind: "persistence_failed" }], [], [], []]);
+    await database.delete(jobDiscoveryRunResults).where(eq(jobDiscoveryRunResults.id, extraRootResultId));
+    await database.update(agentRuns).set({ status: "queued", currentStep: "queued", attemptCount: 0, startedAt: null, activeSliceStartedAt: null, claimToken: null, claimExpiresAt: null, completedAt: null, failedAt: null, failureCode: null, terminationKind: null, terminationBudgetDimension: null, usageComplete: false, resultCount: 0 }).where(eq(agentRuns.id, child!.id));
+    await database.update(agentRunSteps).set({ status: "pending", attemptCount: 0, startedAt: null, completedAt: null, failedAt: null, failureCode: null }).where(eq(agentRunSteps.runId, child!.id));
+    const auditFailure = createAuditTrail({ db: database, clock: () => now });
+    const auditFailureProcessor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: new FakeDeepMatchAdapter(), checkpoint: checkpoint(), contentStore: new Store(), auditTrail: { ...auditFailure, bind: (transaction: any) => {
+      const bound = auditFailure.bind(transaction);
+      return { ...bound, append: async (event: any) => { if (event.eventType === "agent.run_completed") throw new Error("audit publication failed"); return bound.append(event); } };
+    } } as any, id: () => crypto.randomUUID(), clock: () => now });
+    await expect(auditFailureProcessor.process({ version: 1, userId, runId: child!.id, finalAttempt: true })).resolves.toBe("failed");
+    await expect(Promise.all([
+      database.select({ status: agentRuns.status, failureCode: agentRuns.failureCode, terminationKind: agentRuns.terminationKind }).from(agentRuns).where(eq(agentRuns.id, child!.id)),
+      database.select().from(recommendationResults).where(eq(recommendationResults.producerRunId, child!.id)),
+      database.select().from(recommendationLists).where(eq(recommendationLists.userId, userId)),
+      database.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, userId)),
+    ])).resolves.toEqual([[{ status: "failed", failureCode: "AGENT_RUN_PERSIST_FAILED", terminationKind: "persistence_failed" }], [], [], []]);
+    await database.update(agentRuns).set({ status: "queued", currentStep: "queued", attemptCount: 0, startedAt: null, activeSliceStartedAt: null, claimToken: null, claimExpiresAt: null, completedAt: null, failedAt: null, failureCode: null, terminationKind: null, terminationBudgetDimension: null, usageComplete: false, resultCount: 0 }).where(eq(agentRuns.id, child!.id));
+    await database.update(agentRunSteps).set({ status: "pending", attemptCount: 0, startedAt: null, completedAt: null, failedAt: null, failureCode: null }).where(eq(agentRunSteps.runId, child!.id));
+    const childOutcome = await childProcessor.process({ version: 1, userId, runId: child!.id, finalAttempt: true });
+    expect(childOutcome).toBe("completed");
+    await expect(Promise.all([
+      database.select({ id: recommendationResults.id, kind: recommendationResults.kind, itemCount: recommendationResults.itemCount, recommendationListId: recommendationResults.recommendationListId }).from(recommendationResults).where(eq(recommendationResults.producerRunId, child!.id)),
+      database.select().from(recommendationLists).where(eq(recommendationLists.userId, userId)),
+      database.select().from(recommendationListItems).where(eq(recommendationListItems.userId, userId)),
+      database.select({ recommendationResultId: agentInboxItems.recommendationResultId }).from(agentInboxItems).where(and(eq(agentInboxItems.userId, userId), eq(agentInboxItems.kind, "recommendation_result"))),
+      database.select().from(recommendationExclusions).where(eq(recommendationExclusions.userId, userId)),
+      database.select({ resultKind: firstRecommendationJourneyCompletions.resultKind }).from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, userId)),
+      database.select({ status: agentRuns.status, claimToken: agentRuns.claimToken, resultCount: agentRuns.resultCount }).from(agentRuns).where(eq(agentRuns.id, child!.id)),
+    ])).resolves.toEqual([
+      [expect.objectContaining({ kind: "no_recommendations", itemCount: 0, recommendationListId: null })], [], [], [expect.any(Object)], [], [{ resultKind: "no_recommendations" }], [{ status: "completed", claimToken: null, resultCount: 0 }],
+    ]);
+    const [zeroResult] = await database.select({ id: recommendationResults.id }).from(recommendationResults).where(eq(recommendationResults.producerRunId, child!.id));
+    const [zeroInbox] = await database.select({ recommendationResultId: agentInboxItems.recommendationResultId }).from(agentInboxItems).where(and(eq(agentInboxItems.userId, userId), eq(agentInboxItems.kind, "recommendation_result")));
+    expect(zeroInbox!.recommendationResultId).toBe(zeroResult!.id);
   });
 
   it("recommendation root 在成功发现但缺失 facts 时于 handoff 原子回滚", async () => {
@@ -575,49 +746,454 @@ describe("AgentRunProcessor checkpoints", () => {
       .resolves.toEqual([expect.objectContaining({ parentRunId: started.run.runId, runPurpose: "recommendation", sourceScope: expect.objectContaining({ initialized: true, selectionExclusions: [{ opportunityId: triage!.opportunityId, reasonCode: "TRIAGE_NOT_PASS" }] }) })]);
   });
 
-  it("layered recommendation 根以完整冻结资格生成非空 child candidate", async () => {
-    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const profileId = crypto.randomUUID(); const factId = crypto.randomUUID();
-    const qualifiedConstraints = { roleFamily: "AI 应用工程师", seniority: "senior", locations: ["上海"], workModes: ["remote"], relocation: "willing" as const, salary: null, industries: [], dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] } };
-    await database.insert(jobAccounts).values({ id: userId });
-    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: now, updatedAt: now });
-    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints: qualifiedConstraints, createdAt: now });
-    await database.insert(jobProfiles).values({ id: profileId, userId, version: 1, createdAt: now, updatedAt: now });
-    await database.insert(profileFacts).values({ id: factId, userId, profileId, factType: "skill", createdAt: now });
-    await database.insert(profileFactRevisions).values({ id: crypto.randomUUID(), userId, profileFactId: factId, revisionNumber: 1, factType: "skill", factValue: { name: "TypeScript" }, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1, createdAt: now });
-    for (const [factType, factValue] of [["education", { summary: "本科" }], ["language", { name: "英语", level: "C1" }], ["work_eligibility", { summary: "中国工作许可" }]] as const) {
-      const completeFactId = crypto.randomUUID();
-      await database.insert(profileFacts).values({ id: completeFactId, userId, profileId, factType, createdAt: now });
-      await database.insert(profileFactRevisions).values({ id: crypto.randomUUID(), userId, profileFactId: completeFactId, revisionNumber: 1, factType, factValue, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1, createdAt: now });
-    }
-    const fingerprint = crypto.randomUUID();
-    await database.insert(modelDiagnosticResults).values({ configurationFingerprint: fingerprint, status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket: "under_1s", checkedAt: now });
-    const preflight = createRunPreflightEvaluator({ capabilityAdapter: { adapter: "greenhouse", adapterVersion: "test", declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1" as const, capabilities: ["active_discovery", "read_details", "continuous_monitoring"] }) }, modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: fingerprint }), discoveryExecutionMode: "layered_public", id: () => crypto.randomUUID(), clock: () => now });
-    const service = createRecommendationRunCommands({ db: database, queue: new Queue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), runPreflight: preflight, executionMode: "layered_public", id: () => crypto.randomUUID(), clock: () => now });
-    const preparation = await preflight.evaluate(database, { userId, workflow: "recommendation", trigger: "manual" });
-    const started = await service.start({ userId, requestId: crypto.randomUUID(), command: { idempotencyKey: crypto.randomUUID(), warningFingerprint: preparation.report.warningFingerprint } });
-    const [rootBeforeCompletion] = await database.select({ sourceScope: agentRuns.sourceScope, recommendationContext: agentRuns.recommendationContext }).from(agentRuns).where(eq(agentRuns.id, started.run.runId));
-    const plannedQuery = (rootBeforeCompletion!.sourceScope as any).publicDiscovery.queries[0]!;
-    const sourcePostingId = crypto.randomUUID(); const sourcePostingVersionId = crypto.randomUUID(); const sourceHash = "c".repeat(64);
-    await database.insert(jobSourcePostings).values({ id: sourcePostingId, userId, sourceType: "company_careers", sourceIdentifier: sourceHash, sourceIdentity: { sourceId: "greenhouse:qualified", detailId: "1" }, isOfficial: true, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
-    await database.insert(jobSourcePostingVersions).values({ id: sourcePostingVersionId, userId, sourcePostingId, version: 1, contentSha256: sourceHash, rawContentSha256: sourceHash, rawObjectReference: { key: "qualified" }, normalizedData: { sourceId: "greenhouse:qualified", detailId: "1", company: "Qualified Co", title: "AI Engineer", location: "上海", postedAt: now.toISOString(), deadline: null, sourceType: "company_careers", isOfficial: true, qualifications: { workMode: { value: "remote", evidence: { field: "workMode", path: "工作方式", value: "远程" } }, relocationRequired: { value: true, evidence: { field: "relocationRequired", path: "是否需要搬迁", value: "是" } }, salary: null, seniority: { value: "senior", evidence: { field: "seniority", path: "级别", value: "senior" } }, education: { value: "本科", evidence: { field: "education", path: "学历", value: "本科" } }, languages: { value: [{ name: "英语", level: "C1" }], evidence: { field: "languages", path: "语言", value: "英语(C1)" } }, workEligibility: { value: "中国工作许可", evidence: { field: "workEligibility", path: "工作资格", value: "中国工作许可" } }, industry: null, employmentType: null, requiredSkills: { value: ["TypeScript"], evidence: { field: "requiredSkills", path: "技能", value: "TypeScript" } } } }, retrievedAt: now, availability: "open", createdAt: now });
-    const leadId = crypto.randomUUID();
-    await database.insert(jobDiscoveryLeads).values({ id: leadId, userId, runId: started.run.runId, targetId, provider: "anysearch", queryId: plannedQuery.queryId, queryKind: plannedQuery.kind, queryFingerprint: plannedQuery.stableFingerprint, normalizedUrl: "https://fixture.invalid/qualified", stableFingerprint: "d".repeat(64), expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000), state: "verified", sourcePostingVersionId, verifiedFinalUrl: "https://fixture.invalid/qualified", rejectionCode: null, createdAt: now, updatedAt: now });
-    await database.insert(jobDiscoveryAttributions).values({ id: crypto.randomUUID(), userId, runId: started.run.runId, leadId, queryId: plannedQuery.queryId, provider: "anysearch", sourcePostingVersionId, createdAt: now });
-    const outcome = await createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: (input) => ({ run: async () => {
-      const facts = plannedLayeredDiscoveryFacts(input.executionSpec);
-      return { branchOutcome: { trusted: "succeeded", publicDiscovery: "verified" }, diagnostics: [], sourcePostingVersionIds: [sourcePostingVersionId], trustedSourcePostingVersionIds: [], discoveryFacts: { ...facts, publicQueries: facts.publicQueries.map((fact: any) => fact.queryId === plannedQuery.queryId ? { ...fact, outcome: "credible_results" as const } : fact) } };
-    } }) }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
-      .process({ version: 1, userId, runId: started.run.runId, finalAttempt: true });
-
+  it("layered recommendation 根以完整冻结资格生成并原子发布非空 child candidate", async () => {
+    const fixture = await createFullyQualifiedLayeredRecommendationFixture();
+    const { userId, targetId, profileId, sourcePostingVersionId, plannedQuery, rootRunId, rootBeforeCompletion, rootAfterCompletion, outcome, triage, child } = fixture;
     expect(outcome).toBe("completed");
-    const [triage] = await database.select({ id: jobTriageVersions.id, userId: jobTriageVersions.userId, opportunityId: jobTriageVersions.opportunityId, sourcePostingVersionId: jobTriageVersions.sourcePostingVersionId, profileId: jobTriageVersions.profileId, profileVersion: jobTriageVersions.profileVersion, targetId: jobTriageVersions.targetId, targetVersion: jobTriageVersions.targetVersion, overallVerdict: jobTriageVersions.overallVerdict, overallScore: jobTriageVersions.overallScore }).from(jobTriageVersions).where(eq(jobTriageVersions.sourcePostingVersionId, sourcePostingVersionId));
     expect(triage).toMatchObject({ userId, sourcePostingVersionId, profileId, profileVersion: 1, targetId, targetVersion: 1, overallVerdict: "pass", overallScore: expect.any(Number) });
-    const [rootAfterCompletion] = await database.select({ sourceScope: agentRuns.sourceScope, recommendationContext: agentRuns.recommendationContext }).from(agentRuns).where(eq(agentRuns.id, started.run.runId));
-    const [child] = await database.select({ id: agentRuns.id, sourceScope: agentRuns.sourceScope }).from(agentRuns).where(eq(agentRuns.parentRunId, started.run.runId));
     expect(rootAfterCompletion).toEqual(rootBeforeCompletion);
     expect((child!.sourceScope as any).frozenRecommendationEvidence).toMatchObject({ frozenTriageVersionIds: [triage!.id], discoveryFacts: { publicQueries: expect.arrayContaining([expect.objectContaining({ queryId: plannedQuery.queryId, checked: true, outcome: "credible_results", losses: [] })]) } });
     await expect(database.select({ candidateSnapshot: deepMatchRunCandidates.candidateSnapshot }).from(deepMatchRunCandidates).where(eq(deepMatchRunCandidates.runId, child!.id))).resolves.toEqual([{ candidateSnapshot: expect.objectContaining({ triageVersionId: triage!.id, opportunityId: triage!.opportunityId, sourcePostingVersionId, profileId, profileVersion: 1, targetVersion: 1 }) }]);
+    const childOutcome = await createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: new FakeDeepMatchAdapter(), checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .process({ version: 1, userId, runId: child!.id, finalAttempt: true });
+    expect(childOutcome).toBe("completed");
+    await expect(Promise.all([
+      database.select({ status: agentRuns.status, claimToken: agentRuns.claimToken, resultCount: agentRuns.resultCount }).from(agentRuns).where(eq(agentRuns.id, child!.id)),
+      database.select({ id: recommendationResults.id, kind: recommendationResults.kind, rootRunId: recommendationResults.rootRunId, producerRunId: recommendationResults.producerRunId, recommendationListId: recommendationResults.recommendationListId, itemCount: recommendationResults.itemCount }).from(recommendationResults).where(eq(recommendationResults.producerRunId, child!.id)),
+      database.select({ kind: agentInboxItems.kind, recommendationListId: agentInboxItems.recommendationListId }).from(agentInboxItems).where(eq(agentInboxItems.userId, userId)),
+      database.select({ resultKind: firstRecommendationJourneyCompletions.resultKind }).from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, userId)),
+    ])).resolves.toEqual([
+      [{ status: "completed", claimToken: null, resultCount: 1 }],
+      [expect.objectContaining({ id: expect.any(String), kind: "recommendation_list", rootRunId, producerRunId: child.id, recommendationListId: expect.any(String), itemCount: 1 })],
+      expect.arrayContaining([expect.objectContaining({ kind: "recommendation_list", recommendationListId: expect.any(String) })]),
+      [{ resultKind: "recommendation_list" }],
+    ]);
+    const [publishedResult] = await database.select({ id: recommendationResults.id, recommendationListId: recommendationResults.recommendationListId }).from(recommendationResults).where(eq(recommendationResults.producerRunId, child!.id));
+    const [publishedInbox] = await database.select({ recommendationListId: agentInboxItems.recommendationListId }).from(agentInboxItems).where(and(eq(agentInboxItems.userId, userId), eq(agentInboxItems.kind, "recommendation_list")));
+    expect({ resultId: publishedResult!.id, resultListId: publishedResult!.recommendationListId, inboxListId: publishedInbox!.recommendationListId }).toEqual({ resultId: publishedResult!.id, resultListId: publishedResult!.id, inboxListId: publishedResult!.id });
   });
+
+  it.each([
+    ["缺失 adapter usage", async (fixture: Awaited<ReturnType<typeof stageFullyQualifiedLayeredRecommendationFixture>>) => {
+      await database.update(deepMatchRunCandidates).set({ adapterUsage: null }).where(eq(deepMatchRunCandidates.runId, fixture.child.id));
+    }],
+    ["不合法 adapter usage", async (fixture: Awaited<ReturnType<typeof stageFullyQualifiedLayeredRecommendationFixture>>) => {
+      await database.update(deepMatchRunCandidates).set({ adapterUsage: { inputTokens: "bad" } as any }).where(eq(deepMatchRunCandidates.runId, fixture.child.id));
+    }],
+    ["破坏 assessment evidence closure", async (fixture: Awaited<ReturnType<typeof stageFullyQualifiedLayeredRecommendationFixture>>) => {
+      const [staged] = await database.select({ assessment: deepMatchRunCandidates.assessment }).from(deepMatchRunCandidates).where(eq(deepMatchRunCandidates.runId, fixture.child.id));
+      const malformed = structuredClone(staged!.assessment as any);
+      malformed.evidenceSnapshot.jobEvidence = [];
+      await database.update(deepMatchRunCandidates).set({ assessment: malformed }).where(eq(deepMatchRunCandidates.runId, fixture.child.id));
+    }],
+  ])("推荐 publisher 在首写前拒绝完全 staging 的 %s", async (_name, mutate) => {
+    const fixture = await stageFullyQualifiedLayeredRecommendationFixture();
+    await mutate(fixture);
+    await expect(fixture.commands.publishStagedRun(fixture.input)).rejects.toThrow("DEEP_MATCH_RECOMMENDATION_FACTS_INVALID");
+    await expectPublicationStillUnwritten({ userId: fixture.userId, childId: fixture.child.id });
+  });
+
+  it("publisher 在首写前以 active_duration 预算拒绝真实 staged recommendation child", async () => {
+    const fixture = await stageFullyQualifiedLayeredRecommendationFixture();
+    const [run] = await database.select({ workflowVersion: agentRuns.workflowVersion, budgetSnapshot: agentRuns.budgetSnapshot }).from(agentRuns).where(eq(agentRuns.id, fixture.child.id));
+    await database.update(agentRuns).set({ activeDurationMs: effectiveAgentRunBudget(run!.workflowVersion, run!.budgetSnapshot as any).maxActiveDurationMs }).where(eq(agentRuns.id, fixture.child.id));
+    const onPublished = vi.fn(async () => undefined);
+    await expect(fixture.commands.publishStagedRun({ ...fixture.input, onPublished })).rejects.toMatchObject({ message: "DEEP_MATCH_PUBLICATION_BUDGET_EXCEEDED", budgetDimension: "active_duration" });
+    expect(onPublished).not.toHaveBeenCalled();
+    await expectPublicationStillUnwritten({ userId: fixture.userId, childId: fixture.child.id });
+  });
+
+  it("recommendation child 在最后 checkpoint 后等待账户锁时以 fresh active_duration 预算终止发布", async () => {
+    const fixture = await createFullyQualifiedLayeredRecommendationFixture({ deepMatchMaxActiveDurationMs: 10_000 });
+    const lockDatabase = createDatabase(container.getConnectionUri());
+    const finalCheckpointEntered = deferred(); const releaseFinalCheckpoint = deferred(); const lockHeld = deferred(); const releaseLock = deferred();
+    let clockNow = now;
+    let finalCheckpointReturned = false;
+    const durable = checkpoint();
+    const controlled: AgentRunCheckpoint = { check: async (input) => {
+      const outcome = await durable.check(input);
+      if (input.runId === fixture.child.id && input.checkpointKey.endsWith(":step_create_recommendations_complete:1")) {
+        expect(outcome.kind).toBe("continue");
+        finalCheckpointEntered.resolve();
+        await releaseFinalCheckpoint.promise;
+        finalCheckpointReturned = true;
+      }
+      return outcome;
+    } };
+    const processor = createAgentRunProcessor({
+      db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: new FakeDeepMatchAdapter(), checkpoint: controlled,
+      contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => clockNow }), id: () => crypto.randomUUID(), clock: () => clockNow,
+    });
+    const processing = processor.process({ version: 1, userId: fixture.userId, runId: fixture.child.id, finalAttempt: true });
+    let lock: Promise<unknown> | undefined;
+    try {
+      await waitForBarrier({ barrier: finalCheckpointEntered.promise, operation: processing, name: "recommendation child final publication checkpoint" });
+      lock = lockDatabase.transaction(async (transaction) => {
+        await transaction.execute(sql`select pg_advisory_xact_lock(hashtextextended(${fixture.userId}, 0))`);
+        lockHeld.resolve();
+        await releaseLock.promise;
+      });
+      await lockHeld.promise;
+      releaseFinalCheckpoint.resolve();
+      await vi.waitFor(() => expect(finalCheckpointReturned).toBe(true), { timeout: 2_000 });
+      await waitUntilAConnectionIsWaitingForAccountAdvisoryLock(database);
+      clockNow = new Date(now.getTime() + 10_001);
+      releaseLock.resolve();
+      await lock;
+      await expect(processing).resolves.toBe("budget_exhausted");
+      await expect(Promise.all([
+        database.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, fixture.userId)),
+        database.select().from(recommendationLists).where(eq(recommendationLists.userId, fixture.userId)),
+        database.select().from(recommendationListItems).where(eq(recommendationListItems.userId, fixture.userId)),
+        database.select().from(recommendationExclusions).where(eq(recommendationExclusions.userId, fixture.userId)),
+        database.select().from(recommendationResults).where(eq(recommendationResults.producerRunId, fixture.child.id)),
+        database.select({ kind: agentInboxItems.kind, runId: agentInboxItems.runId, budgetDimension: agentInboxItems.budgetDimension }).from(agentInboxItems).where(eq(agentInboxItems.userId, fixture.userId)),
+        database.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, fixture.userId)),
+        database.select({ eventType: agentRunEvents.eventType }).from(agentRunEvents).where(and(eq(agentRunEvents.runId, fixture.child.id), eq(agentRunEvents.eventType, "run.completed"))),
+        database.select({ status: agentRuns.status, failureCode: agentRuns.failureCode, terminationKind: agentRuns.terminationKind, terminationBudgetDimension: agentRuns.terminationBudgetDimension }).from(agentRuns).where(eq(agentRuns.id, fixture.child.id)),
+      ])).resolves.toEqual([[], [], [], [], [], [{ kind: "budget_exhausted", runId: fixture.child.id, budgetDimension: "active_duration" }], [], [], [{ status: "failed", failureCode: "AGENT_RUN_BUDGET_EXCEEDED", terminationKind: "budget_exhausted", terminationBudgetDimension: "active_duration" }]]);
+    } finally {
+      releaseFinalCheckpoint.resolve();
+      releaseLock.resolve();
+      await lock?.catch(() => undefined);
+      await processing.catch(() => undefined);
+      await lockDatabase.$client.end();
+    }
+  }, 60_000);
+
+  it("recommendation child 在首个领域写入后超时，callback 预算检查回滚发布", async () => {
+    const fixture = await createFullyQualifiedLayeredRecommendationFixture({ deepMatchMaxActiveDurationMs: 10_000 });
+    let clockNow = now;
+    let finalCheckpointReturned = false;
+    let publicationIds = 0;
+    const durable = checkpoint();
+    const controlled: AgentRunCheckpoint = { check: async (input) => {
+      const outcome = await durable.check(input);
+      if (input.runId === fixture.child.id && input.checkpointKey.endsWith(":step_create_recommendations_complete:1")) finalCheckpointReturned = true;
+      return outcome;
+    } };
+    const processor = createAgentRunProcessor({
+      db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: new FakeDeepMatchAdapter(), checkpoint: controlled,
+      contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => clockNow }),
+      id: () => {
+        if (finalCheckpointReturned && ++publicationIds === 2) clockNow = new Date(now.getTime() + 10_001);
+        return crypto.randomUUID();
+      },
+      clock: () => clockNow,
+    });
+
+    await expect(processor.process({ version: 1, userId: fixture.userId, runId: fixture.child.id, finalAttempt: true })).resolves.toBe("budget_exhausted");
+    expect(publicationIds).toBeGreaterThanOrEqual(2);
+    await expect(Promise.all([
+      database.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, fixture.userId)),
+      database.select().from(recommendationLists).where(eq(recommendationLists.userId, fixture.userId)),
+      database.select().from(recommendationListItems).where(eq(recommendationListItems.userId, fixture.userId)),
+      database.select().from(recommendationExclusions).where(eq(recommendationExclusions.userId, fixture.userId)),
+      database.select().from(recommendationResults).where(eq(recommendationResults.producerRunId, fixture.child.id)),
+      database.select({ kind: agentInboxItems.kind, runId: agentInboxItems.runId, budgetDimension: agentInboxItems.budgetDimension }).from(agentInboxItems).where(eq(agentInboxItems.userId, fixture.userId)),
+      database.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, fixture.userId)),
+      database.select({ eventType: agentRunEvents.eventType }).from(agentRunEvents).where(and(eq(agentRunEvents.runId, fixture.child.id), eq(agentRunEvents.eventType, "run.completed"))),
+      database.select({ status: agentRuns.status, failureCode: agentRuns.failureCode, terminationKind: agentRuns.terminationKind, terminationBudgetDimension: agentRuns.terminationBudgetDimension }).from(agentRuns).where(eq(agentRuns.id, fixture.child.id)),
+    ])).resolves.toEqual([[], [], [], [], [], [{ kind: "budget_exhausted", runId: fixture.child.id, budgetDimension: "active_duration" }], [], [], [{ status: "failed", failureCode: "AGENT_RUN_BUDGET_EXCEEDED", terminationKind: "budget_exhausted", terminationBudgetDimension: "active_duration" }]]);
+  }, 60_000);
+
+  it("recommendation child 在最后 checkpoint 后仅 maxResults 收紧时拒绝完整冻结候选", async () => {
+    const fixture = await createFullyQualifiedLayeredRecommendationFixture({ withQualityCandidate: true, deepMatchMaxResults: 2, deepMatchMaxModelCalls: 3 });
+    let narrowBudget = false;
+    const originalEffectiveBudget = effectiveAgentRunBudgetModule.effectiveAgentRunBudget;
+    const effectiveBudgetSpy = vi.spyOn(effectiveAgentRunBudgetModule, "effectiveAgentRunBudget").mockImplementation((workflowVersion, snapshot) => {
+      const budget = originalEffectiveBudget(workflowVersion, snapshot);
+      return narrowBudget && workflowVersion === "deep-match-v1" ? { ...budget, maxResults: 1 } : budget;
+    });
+    const durable = checkpoint();
+    const controlled: AgentRunCheckpoint = { check: async (input) => {
+      const outcome = await durable.check(input);
+      if (input.runId === fixture.child.id && input.checkpointKey.endsWith(":step_create_recommendations_complete:1")) {
+        expect(outcome.kind).toBe("continue");
+        narrowBudget = true;
+      }
+      return outcome;
+    } };
+    const processor = createAgentRunProcessor({
+      db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: new FakeDeepMatchAdapter(), checkpoint: controlled,
+      contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+    try {
+      await expect(processor.process({ version: 1, userId: fixture.userId, runId: fixture.child.id, finalAttempt: true })).resolves.toBe("failed");
+      await expect(Promise.all([
+        database.select({ status: agentRuns.status, failureCode: agentRuns.failureCode, terminationKind: agentRuns.terminationKind, modelCallCount: agentRuns.modelCallCount }).from(agentRuns).where(eq(agentRuns.id, fixture.child.id)),
+        database.select().from(deepMatchRunCandidates).where(eq(deepMatchRunCandidates.runId, fixture.child.id)),
+        database.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, fixture.userId)),
+        database.select().from(recommendationLists).where(eq(recommendationLists.userId, fixture.userId)),
+        database.select().from(recommendationResults).where(eq(recommendationResults.producerRunId, fixture.child.id)),
+        database.select({ kind: agentInboxItems.kind }).from(agentInboxItems).where(eq(agentInboxItems.userId, fixture.userId)),
+        database.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, fixture.userId)),
+      ])).resolves.toEqual([[{ status: "failed", failureCode: "AGENT_RUN_PERSIST_FAILED", terminationKind: "persistence_failed", modelCallCount: 2 }], [expect.objectContaining({ assessment: expect.any(Object), adapterUsage: expect.any(Object) }), expect.objectContaining({ assessment: expect.any(Object), adapterUsage: expect.any(Object) })], [], [], [], [expect.objectContaining({ kind: "run_failed" })], []]);
+    } finally {
+      effectiveBudgetSpy.mockRestore();
+    }
+  }, 60_000);
+
+  it("recommendation child 在最后 checkpoint 后真实 model_calls 超限时保留 model_calls 预算终态", async () => {
+    const fixture = await createFullyQualifiedLayeredRecommendationFixture({ withQualityCandidate: true, deepMatchMaxResults: 2, deepMatchMaxModelCalls: 3 });
+    const hardBudget = DEEP_MATCH_AGENT_RUN_BUDGET as { maxModelCalls: number };
+    const originalMaxModelCalls = hardBudget.maxModelCalls;
+    const durable = checkpoint();
+    const controlled: AgentRunCheckpoint = { check: async (input) => {
+      const outcome = await durable.check(input);
+      if (input.runId === fixture.child.id && input.checkpointKey.endsWith(":step_create_recommendations_complete:1")) {
+        expect(outcome.kind).toBe("continue");
+        hardBudget.maxModelCalls = 1;
+      }
+      return outcome;
+    } };
+    const processor = createAgentRunProcessor({
+      db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: new FakeDeepMatchAdapter(), checkpoint: controlled,
+      contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+    try {
+      await expect(processor.process({ version: 1, userId: fixture.userId, runId: fixture.child.id, finalAttempt: true })).resolves.toBe("budget_exhausted");
+      await expect(Promise.all([
+        database.select({ status: agentRuns.status, failureCode: agentRuns.failureCode, terminationKind: agentRuns.terminationKind, terminationBudgetDimension: agentRuns.terminationBudgetDimension, modelCallCount: agentRuns.modelCallCount }).from(agentRuns).where(eq(agentRuns.id, fixture.child.id)),
+        database.select().from(deepMatchRunCandidates).where(eq(deepMatchRunCandidates.runId, fixture.child.id)),
+        database.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, fixture.userId)),
+        database.select().from(recommendationLists).where(eq(recommendationLists.userId, fixture.userId)),
+        database.select().from(recommendationResults).where(eq(recommendationResults.producerRunId, fixture.child.id)),
+        database.select({ kind: agentInboxItems.kind, budgetDimension: agentInboxItems.budgetDimension }).from(agentInboxItems).where(eq(agentInboxItems.userId, fixture.userId)),
+        database.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, fixture.userId)),
+      ])).resolves.toEqual([[{ status: "failed", failureCode: "AGENT_RUN_BUDGET_EXCEEDED", terminationKind: "budget_exhausted", terminationBudgetDimension: "model_calls", modelCallCount: 2 }], [expect.objectContaining({ assessment: expect.any(Object), adapterUsage: expect.any(Object) }), expect.objectContaining({ assessment: expect.any(Object), adapterUsage: expect.any(Object) })], [], [], [], [{ kind: "budget_exhausted", budgetDimension: "model_calls" }], []]);
+    } finally {
+      hardBudget.maxModelCalls = originalMaxModelCalls;
+    }
+  }, 60_000);
+
+  it.each([
+    ["profileVersion", async (_fixture: Awaited<ReturnType<typeof stageFullyQualifiedLayeredRecommendationFixture>>, triageId: string) => {
+      await database.update(jobTriageVersions).set({ profileVersion: 2 }).where(eq(jobTriageVersions.id, triageId));
+    }],
+    ["targetId", async (fixture: Awaited<ReturnType<typeof stageFullyQualifiedLayeredRecommendationFixture>>, triageId: string) => {
+      const targetId = crypto.randomUUID();
+      await database.insert(jobTargets).values({ id: targetId, userId: fixture.userId, version: 1, priority: "secondary", state: "active", activeSlot: 2, createdAt: now, updatedAt: now });
+      await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId: fixture.userId, targetId, version: 1, priority: "secondary", state: "active", constraints, createdAt: now });
+      await database.update(jobTriageVersions).set({ targetId }).where(eq(jobTriageVersions.id, triageId));
+    }],
+    ["targetVersion", async (fixture: Awaited<ReturnType<typeof stageFullyQualifiedLayeredRecommendationFixture>>, triageId: string) => {
+      await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId: fixture.userId, targetId: fixture.targetId, version: 2, priority: "primary", state: "active", constraints, createdAt: now });
+      await database.update(jobTriageVersions).set({ targetVersion: 2 }).where(eq(jobTriageVersions.id, triageId));
+    }],
+    ["sourcePostingVersion", async (fixture: Awaited<ReturnType<typeof stageFullyQualifiedLayeredRecommendationFixture>>, triageId: string) => {
+      const [source] = await database.select().from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.id, fixture.excludedSourcePostingVersionId!));
+      const sourcePostingVersionId = crypto.randomUUID();
+      await database.insert(jobSourcePostingVersions).values({ ...source!, id: sourcePostingVersionId, version: 2, contentSha256: "9".repeat(64), rawContentSha256: "8".repeat(64), createdAt: now });
+      await database.update(jobTriageVersions).set({ sourcePostingVersionId }).where(eq(jobTriageVersions.id, triageId));
+    }],
+  ])("publisher 拒绝前段排除机会的冻结 triage %s 漂移", async (_field, mutate) => {
+    const fixture = await stageFullyQualifiedLayeredRecommendationFixture({ withFrontExclusion: true });
+    const [excludedTriage] = await database.select({ id: jobTriageVersions.id, opportunityId: jobTriageVersions.opportunityId }).from(jobTriageVersions)
+      .where(and(eq(jobTriageVersions.userId, fixture.userId), eq(jobTriageVersions.sourcePostingVersionId, fixture.excludedSourcePostingVersionId!)));
+    await mutate(fixture, excludedTriage!.id);
+    await expect(fixture.commands.publishStagedRun(fixture.input)).rejects.toThrow("DEEP_MATCH_RECOMMENDATION_FACTS_INVALID");
+    await expectPublicationStillUnwritten({ userId: fixture.userId, childId: fixture.child.id });
+  });
+
+  it("真实推荐非空发布保留前段排除并闭合冻结 evidence", async () => {
+    const fixture = await createFullyQualifiedLayeredRecommendationFixture({ withFrontExclusion: true });
+    expect(fixture.outcome).toBe("completed");
+    const triages = await database.select({ id: jobTriageVersions.id, opportunityId: jobTriageVersions.opportunityId, sourcePostingVersionId: jobTriageVersions.sourcePostingVersionId, overallVerdict: jobTriageVersions.overallVerdict }).from(jobTriageVersions).where(eq(jobTriageVersions.userId, fixture.userId));
+    const excludedTriage = triages.find((triage) => triage.sourcePostingVersionId === fixture.excludedSourcePostingVersionId)!;
+    expect(excludedTriage).toMatchObject({ overallVerdict: "unknown" });
+    expect(fixture.child.sourceScope).toEqual(expect.objectContaining({ selectionExclusions: [{ opportunityId: excludedTriage.opportunityId, reasonCode: "TRIAGE_NOT_PASS" }], frozenRecommendationEvidence: expect.objectContaining({ frozenTriageVersionIds: expect.arrayContaining([fixture.triage.id, excludedTriage.id]) }) }));
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: new FakeDeepMatchAdapter(), checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .process({ version: 1, userId: fixture.userId, runId: fixture.child.id, finalAttempt: true })).resolves.toBe("completed");
+    const [result] = await database.select({ itemCount: recommendationResults.itemCount, evidence: recommendationResults.evidence, recommendationListId: recommendationResults.recommendationListId }).from(recommendationResults).where(eq(recommendationResults.producerRunId, fixture.child.id));
+    const [child] = await database.select({ resultCount: agentRuns.resultCount }).from(agentRuns).where(eq(agentRuns.id, fixture.child.id));
+    const exclusions = await database.select({ opportunityId: recommendationExclusions.opportunityId, reasonCode: recommendationExclusions.reasonCode }).from(recommendationExclusions).where(eq(recommendationExclusions.recommendationListId, result!.recommendationListId!));
+    const items = await database.select().from(recommendationListItems).where(eq(recommendationListItems.recommendationListId, result!.recommendationListId!));
+    expect({ itemCount: result!.itemCount, childResultCount: child!.resultCount, items }).toMatchObject({ itemCount: 1, childResultCount: 1, items: [expect.any(Object)] });
+    expect(exclusions).toEqual([{ opportunityId: excludedTriage.opportunityId, reasonCode: "TRIAGE_NOT_PASS" }]);
+    expect(result!.evidence).toMatchObject({ qualification: { evaluatedCount: 2, insufficientInformationCount: 1 }, coarseRanking: { eligibleCount: 1, deepMatchCandidateCount: 1 }, deepMatching: { evaluatedCount: 1, qualityInsufficientCount: 0, finalRecommendationCount: 1 } });
+  });
+
+  it("真实推荐非空清单同时持久化前段与质量排除", async () => {
+    const fixture = await createFullyQualifiedLayeredRecommendationFixture({ withFrontExclusion: true, withQualityCandidate: true });
+    const triages = await database.select({ opportunityId: jobTriageVersions.opportunityId, sourcePostingVersionId: jobTriageVersions.sourcePostingVersionId }).from(jobTriageVersions).where(eq(jobTriageVersions.userId, fixture.userId));
+    const frontExcluded = triages.find((triage) => triage.sourcePostingVersionId === fixture.excludedSourcePostingVersionId)!;
+    const qualityRejected = triages.find((triage) => triage.sourcePostingVersionId === fixture.qualitySourcePostingVersionId)!;
+    const fake = new FakeDeepMatchAdapter();
+    const adapter = { ...fake, assess: async (input: any, call: any) => fake.assess(input, { ...call, fixture: { qualityInsufficientOpportunityIds: input.candidates.filter((candidate: any) => candidate.sourcePostingVersionId === fixture.qualitySourcePostingVersionId).map((candidate: any) => candidate.opportunityId) } }) };
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: adapter, checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .process({ version: 1, userId: fixture.userId, runId: fixture.child.id, finalAttempt: true })).resolves.toBe("completed");
+    const [result] = await database.select({ itemCount: recommendationResults.itemCount, recommendationListId: recommendationResults.recommendationListId, evidence: recommendationResults.evidence }).from(recommendationResults).where(eq(recommendationResults.producerRunId, fixture.child.id));
+    const [child] = await database.select({ resultCount: agentRuns.resultCount }).from(agentRuns).where(eq(agentRuns.id, fixture.child.id));
+    const [items, exclusions, matches] = await Promise.all([
+      database.select().from(recommendationListItems).where(eq(recommendationListItems.recommendationListId, result!.recommendationListId!)),
+      database.select({ opportunityId: recommendationExclusions.opportunityId, reasonCode: recommendationExclusions.reasonCode }).from(recommendationExclusions).where(eq(recommendationExclusions.recommendationListId, result!.recommendationListId!)),
+      database.select({ opportunityId: jobMatchVersions.opportunityId }).from(jobMatchVersions).where(eq(jobMatchVersions.userId, fixture.userId)),
+    ]);
+    expect({ itemCount: result!.itemCount, childResultCount: child!.resultCount, items, matches }).toMatchObject({ itemCount: 1, childResultCount: 1, items: [expect.any(Object)], matches: expect.arrayContaining([{ opportunityId: qualityRejected.opportunityId }]) });
+    expect(exclusions).toEqual(expect.arrayContaining([{ opportunityId: frontExcluded.opportunityId, reasonCode: "TRIAGE_NOT_PASS" }, { opportunityId: qualityRejected.opportunityId, reasonCode: "MATCH_QUALITY_INSUFFICIENT" }]));
+    expect(result!.evidence).toMatchObject({ qualification: { evaluatedCount: 3, insufficientInformationCount: 1 }, coarseRanking: { eligibleCount: 2, deepMatchCandidateCount: 2 }, deepMatching: { evaluatedCount: 2, qualityInsufficientCount: 1, finalRecommendationCount: 1 } });
+  });
+
+  it("真实全部模型质量拒绝发布可信 no_recommendations", async () => {
+    const fixture = await createFullyQualifiedLayeredRecommendationFixture();
+    const fake = new FakeDeepMatchAdapter();
+    const qualityRejectingAdapter = { ...fake, assess: async (input: any, call: any) => fake.assess(input, { ...call, fixture: { qualityInsufficientOpportunityIds: input.candidates.map((candidate: any) => candidate.opportunityId) } }) };
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: qualityRejectingAdapter, checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .process({ version: 1, userId: fixture.userId, runId: fixture.child.id, finalAttempt: true })).resolves.toBe("completed");
+    const [result] = await database.select({ id: recommendationResults.id, kind: recommendationResults.kind, itemCount: recommendationResults.itemCount, recommendationListId: recommendationResults.recommendationListId, evidence: recommendationResults.evidence }).from(recommendationResults).where(eq(recommendationResults.producerRunId, fixture.child.id));
+    const [inbox] = await database.select({ recommendationResultId: agentInboxItems.recommendationResultId }).from(agentInboxItems).where(and(eq(agentInboxItems.userId, fixture.userId), eq(agentInboxItems.kind, "recommendation_result")));
+    await expect(Promise.all([
+      database.select().from(recommendationLists).where(eq(recommendationLists.userId, fixture.userId)),
+      database.select().from(recommendationListItems).where(eq(recommendationListItems.userId, fixture.userId)),
+      database.select().from(recommendationExclusions).where(eq(recommendationExclusions.userId, fixture.userId)),
+      database.select({ resultKind: firstRecommendationJourneyCompletions.resultKind, resultId: firstRecommendationJourneyCompletions.resultId }).from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, fixture.userId)),
+      database.select({ opportunityId: jobMatchVersions.opportunityId, assessment: jobMatchVersions.assessment }).from(jobMatchVersions).where(eq(jobMatchVersions.userId, fixture.userId)),
+      database.select({ status: agentRuns.status, currentStep: agentRuns.currentStep, resultCount: agentRuns.resultCount, claimToken: agentRuns.claimToken, usageComplete: agentRuns.usageComplete }).from(agentRuns).where(eq(agentRuns.id, fixture.child.id)),
+    ])).resolves.toEqual([[], [], [], [{ resultKind: "no_recommendations", resultId: result!.id }], [{ opportunityId: fixture.triage.opportunityId, assessment: expect.objectContaining({ opportunityId: fixture.triage.opportunityId, overallScore: 30 }) }], [{ status: "completed", currentStep: "completed", resultCount: 0, claimToken: null, usageComplete: true }]]);
+    expect({ kind: result!.kind, itemCount: result!.itemCount, recommendationListId: result!.recommendationListId, inboxResultId: inbox!.recommendationResultId }).toEqual({ kind: "no_recommendations", itemCount: 0, recommendationListId: null, inboxResultId: result!.id });
+    expect(result!.evidence).toMatchObject({ deepMatching: { evaluatedCount: 1, qualityInsufficientCount: 1, finalRecommendationCount: 0 } });
+  });
+
+  it.each(["recommendation_list", "no_recommendations"] as const)("已完成 recommendation child 的 %s direct replay 只读取原结果", async (kind) => {
+    const fixture = await createFullyQualifiedLayeredRecommendationFixture();
+    const fake = new FakeDeepMatchAdapter();
+    const initialAdapter = kind === "no_recommendations"
+      ? { ...fake, assess: async (input: any, call: any) => fake.assess(input, { ...call, fixture: { qualityInsufficientOpportunityIds: input.candidates.map((candidate: any) => candidate.opportunityId) } }) }
+      : fake;
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: initialAdapter, checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .process({ version: 1, userId: fixture.userId, runId: fixture.child.id, finalAttempt: true })).resolves.toBe("completed");
+    const [stored] = await database.select({ id: recommendationResults.id, kind: recommendationResults.kind, recommendationListId: recommendationResults.recommendationListId, itemCount: recommendationResults.itemCount, evidence: recommendationResults.evidence }).from(recommendationResults).where(eq(recommendationResults.producerRunId, fixture.child.id));
+    const before = await Promise.all([
+      database.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, fixture.userId)),
+      database.select().from(recommendationLists).where(eq(recommendationLists.userId, fixture.userId)),
+      database.select().from(recommendationListItems).where(eq(recommendationListItems.userId, fixture.userId)),
+      database.select().from(recommendationExclusions).where(eq(recommendationExclusions.userId, fixture.userId)),
+      database.select().from(recommendationResults).where(eq(recommendationResults.producerRunId, fixture.child.id)),
+      database.select().from(agentInboxItems).where(eq(agentInboxItems.userId, fixture.userId)),
+      database.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, fixture.userId)),
+      database.select().from(agentRunEvents).where(eq(agentRunEvents.runId, fixture.child.id)),
+      database.select().from(auditEvents).where(eq(auditEvents.resourceId, fixture.child.id)),
+    ]);
+    const replayCommands = createDeepMatchCommands({ db: database, id: () => crypto.randomUUID(), clock: () => now, adapter: { ...fake, assess: async () => { throw new Error("REPLAY_MUST_NOT_CALL_MODEL"); } } });
+    const replayed = await replayCommands.publishStagedRun({
+      userId: fixture.userId, targetId: fixture.targetId, runId: fixture.child.id, fence: { claimToken: crypto.randomUUID() }, selectionExclusions: [], ruleConfig: { minimumOverallScore: 0, minimumEvidenceDimensions: 0, requiredEvidenceDimensions: [], excludedOpportunityIds: [] },
+      recommendation: { rootRunId: fixture.rootRunId }, onPublished: async () => { throw new Error("REPLAY_MUST_NOT_CALLBACK"); },
+    });
+    expect(replayed).toMatchObject(kind === "recommendation_list"
+      ? { kind, resultId: stored!.id, recommendationListId: stored!.recommendationListId, evidence: stored!.evidence }
+      : { kind, resultId: stored!.id, evidence: stored!.evidence });
+    await expect(Promise.all([
+      database.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, fixture.userId)),
+      database.select().from(recommendationLists).where(eq(recommendationLists.userId, fixture.userId)),
+      database.select().from(recommendationListItems).where(eq(recommendationListItems.userId, fixture.userId)),
+      database.select().from(recommendationExclusions).where(eq(recommendationExclusions.userId, fixture.userId)),
+      database.select().from(recommendationResults).where(eq(recommendationResults.producerRunId, fixture.child.id)),
+      database.select().from(agentInboxItems).where(eq(agentInboxItems.userId, fixture.userId)),
+      database.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, fixture.userId)),
+      database.select().from(agentRunEvents).where(eq(agentRunEvents.runId, fixture.child.id)),
+      database.select().from(auditEvents).where(eq(auditEvents.resourceId, fixture.child.id)),
+    ])).resolves.toEqual(before);
+  }, 60_000);
+
+  it.each(["root", "target", "producer"] as const)("recommendation direct replay 的不同 %s 绑定明确冲突", async (conflict) => {
+    const fixture = await createFullyQualifiedLayeredRecommendationFixture();
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: new FakeDeepMatchAdapter(), checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .process({ version: 1, userId: fixture.userId, runId: fixture.child.id, finalAttempt: true })).resolves.toBe("completed");
+    const replayCommands = createDeepMatchCommands({ db: database, id: () => crypto.randomUUID(), clock: () => now, adapter: { ...new FakeDeepMatchAdapter(), assess: async () => { throw new Error("CONFLICT_REPLAY_MUST_NOT_CALL_MODEL"); } } });
+    const resultCountBefore = await database.select().from(recommendationResults).where(eq(recommendationResults.producerRunId, fixture.child.id));
+    await expect(replayCommands.publishStagedRun({
+      userId: fixture.userId,
+      targetId: conflict === "target" ? crypto.randomUUID() : fixture.targetId,
+      runId: conflict === "producer" ? crypto.randomUUID() : fixture.child.id,
+      fence: { claimToken: crypto.randomUUID() }, selectionExclusions: [], ruleConfig: { minimumOverallScore: 0, minimumEvidenceDimensions: 0, requiredEvidenceDimensions: [], excludedOpportunityIds: [] },
+      recommendation: { rootRunId: conflict === "root" ? crypto.randomUUID() : fixture.rootRunId }, onPublished: async () => { throw new Error("CONFLICT_REPLAY_MUST_NOT_CALLBACK"); },
+    })).rejects.toThrow("DEEP_MATCH_RECOMMENDATION_FACTS_INVALID");
+    await expect(database.select().from(recommendationResults).where(eq(recommendationResults.producerRunId, fixture.child.id))).resolves.toEqual(resultCountBefore);
+  }, 60_000);
+
+  it("已完成 recommendation worker 重投不重新 claim、调用模型或写发布事实", async () => {
+    const fixture = await createFullyQualifiedLayeredRecommendationFixture();
+    let modelCalls = 0;
+    const fake = new FakeDeepMatchAdapter();
+    const adapter = { ...fake, assess: async (...args: Parameters<FakeDeepMatchAdapter["assess"]>) => { modelCalls += 1; return fake.assess(...args); } };
+    const processor = () => createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: adapter, checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    await expect(processor().process({ version: 1, userId: fixture.userId, runId: fixture.child.id, finalAttempt: true })).resolves.toBe("completed");
+    const before = await Promise.all([
+      database.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, fixture.userId)),
+      database.select().from(recommendationLists).where(eq(recommendationLists.userId, fixture.userId)),
+      database.select().from(recommendationResults).where(eq(recommendationResults.producerRunId, fixture.child.id)),
+      database.select().from(agentInboxItems).where(eq(agentInboxItems.userId, fixture.userId)),
+      database.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, fixture.userId)),
+      database.select().from(agentRunEvents).where(eq(agentRunEvents.runId, fixture.child.id)),
+      database.select().from(auditEvents).where(eq(auditEvents.resourceId, fixture.child.id)),
+    ]);
+    await expect(processor().process({ version: 1, userId: fixture.userId, runId: fixture.child.id, finalAttempt: true })).resolves.toBe("stale");
+    expect(modelCalls).toBe(1);
+    await expect(Promise.all([
+      database.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, fixture.userId)),
+      database.select().from(recommendationLists).where(eq(recommendationLists.userId, fixture.userId)),
+      database.select().from(recommendationResults).where(eq(recommendationResults.producerRunId, fixture.child.id)),
+      database.select().from(agentInboxItems).where(eq(agentInboxItems.userId, fixture.userId)),
+      database.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, fixture.userId)),
+      database.select().from(agentRunEvents).where(eq(agentRunEvents.runId, fixture.child.id)),
+      database.select().from(auditEvents).where(eq(auditEvents.resourceId, fixture.child.id)),
+    ])).resolves.toEqual(before);
+  }, 60_000);
+
+  it("账户停止后 recommendation direct replay 仍返回已提交的原结果", async () => {
+    const fixture = await createFullyQualifiedLayeredRecommendationFixture();
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: new FakeDeepMatchAdapter(), checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .process({ version: 1, userId: fixture.userId, runId: fixture.child.id, finalAttempt: true })).resolves.toBe("completed");
+    const [stored] = await database.select({ id: recommendationResults.id, kind: recommendationResults.kind }).from(recommendationResults).where(eq(recommendationResults.producerRunId, fixture.child.id));
+    await createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .control({ userId: fixture.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+    const hardBudget = DEEP_MATCH_AGENT_RUN_BUDGET as { maxResults: number };
+    const originalMaxResults = hardBudget.maxResults;
+    hardBudget.maxResults = 0;
+    try {
+      const replayed = await createDeepMatchCommands({ db: database, id: () => crypto.randomUUID(), clock: () => now, adapter: { ...new FakeDeepMatchAdapter(), assess: async () => { throw new Error("STOP_REPLAY_MUST_NOT_CALL_MODEL"); } } }).publishStagedRun({
+        userId: fixture.userId, targetId: fixture.targetId, runId: fixture.child.id, fence: { claimToken: "" }, selectionExclusions: [], ruleConfig: { minimumOverallScore: 0, minimumEvidenceDimensions: 0, requiredEvidenceDimensions: [], excludedOpportunityIds: [] },
+        recommendation: { rootRunId: fixture.rootRunId }, onPublished: async () => { throw new Error("STOP_REPLAY_MUST_NOT_CALLBACK"); },
+      });
+      expect(replayed).toMatchObject({ kind: stored!.kind, resultId: stored!.id });
+    } finally {
+      hardBudget.maxResults = originalMaxResults;
+    }
+  }, 60_000);
+
+  it("同 owner 的第二个合法 recommendation result 不覆盖首次 journey completion", async () => {
+    const first = await createFullyQualifiedLayeredRecommendationFixture();
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: new FakeDeepMatchAdapter(), checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .process({ version: 1, userId: first.userId, runId: first.child.id, finalAttempt: true })).resolves.toBe("completed");
+    const [firstJourney] = await database.select({ resultId: firstRecommendationJourneyCompletions.resultId }).from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, first.userId));
+    await database.update(jobTargets).set({ state: "inactive", updatedAt: now }).where(eq(jobTargets.id, first.targetId));
+    const second = await createFullyQualifiedLayeredRecommendationFixture({ ownerUserId: first.userId });
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: new FakeDeepMatchAdapter(), checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .process({ version: 1, userId: second.userId, runId: second.child.id, finalAttempt: true })).resolves.toBe("completed");
+    const [secondResult] = await database.select({ id: recommendationResults.id }).from(recommendationResults).where(eq(recommendationResults.producerRunId, second.child.id));
+    expect(secondResult!.id).not.toBe(firstJourney!.resultId);
+    await expect(database.select({ resultId: firstRecommendationJourneyCompletions.resultId }).from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, first.userId))).resolves.toEqual([firstJourney]);
+  }, 60_000);
+
+  it.each(["staging assessment", "bound match projection"] as const)("recommendation direct replay 拒绝漂移的 %s", async (drift) => {
+    const fixture = await createFullyQualifiedLayeredRecommendationFixture();
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: new FakeDeepMatchAdapter(), checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
+      .process({ version: 1, userId: fixture.userId, runId: fixture.child.id, finalAttempt: true })).resolves.toBe("completed");
+    if (drift === "staging assessment") {
+      const [staged] = await database.select().from(deepMatchRunCandidates).where(eq(deepMatchRunCandidates.runId, fixture.child.id));
+      const assessment = structuredClone(staged!.assessment as { overallScore: number });
+      assessment.overallScore = assessment.overallScore === 99 ? 98 : 99;
+      await database.update(deepMatchRunCandidates).set({ assessment }).where(eq(deepMatchRunCandidates.id, staged!.id));
+    } else {
+      const [item] = await database.select({ matchVersionId: recommendationListItems.matchVersionId }).from(recommendationListItems).where(eq(recommendationListItems.userId, fixture.userId));
+      await database.update(jobMatchVersions).set({ overallScore: 0, displayBand: "consider_carefully" }).where(eq(jobMatchVersions.id, item!.matchVersionId));
+    }
+    await expect(createDeepMatchCommands({ db: database, id: () => crypto.randomUUID(), clock: () => now }).publishStagedRun({
+      userId: fixture.userId, targetId: fixture.targetId, runId: fixture.child.id, fence: { claimToken: "" }, selectionExclusions: [], ruleConfig: { minimumOverallScore: 0, minimumEvidenceDimensions: 0, requiredEvidenceDimensions: [], excludedOpportunityIds: [] },
+      recommendation: { rootRunId: fixture.rootRunId }, onPublished: async () => { throw new Error("DRIFT_REPLAY_MUST_NOT_CALLBACK"); },
+    })).rejects.toThrow("DEEP_MATCH_RECOMMENDATION_FACTS_INVALID");
+  }, 60_000);
 
   it.each(["fake", "greenhouse"] as const)("%s recommendation 根以真实非空 discovery metadata 创建保守 child", async (executionMode) => {
     const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const profileId = crypto.randomUUID(); const factId = crypto.randomUUID();

@@ -23,9 +23,9 @@ import { persistJobOpportunity } from "./job-opportunity-persistence";
 import { deepMatchDiscoveryIdempotencyKey, ensureDeepMatchRunInTransaction, triggerDeepMatchAfterDiscovery } from "./deep-match-agent-runs";
 import type { RunPreflightEvaluator } from "./run-preflight";
 import type { DeepMatchRunQueue } from "./deep-match-agent-runs";
-import { DeepMatchClaimLostError, createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
+import { DeepMatchClaimLostError, DeepMatchPublicationBudgetError, DeepMatchPublicationError, createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
 import { decideRetry } from "./agent-run-state";
-import { effectiveAgentRunBudget, type AgentRunBudget } from "./effective-agent-run-budget";
+import { effectiveAgentRunBudget, exhaustedAgentRunBudget, type AgentRunBudget } from "./effective-agent-run-budget";
 import { agentRunUsageSnapshot, appendBudgetFacts, settleActiveSlice, terminateBudgetRun, type BudgetDimension } from "./agent-run-lifecycle";
 import type { AgentRunCheckpoint } from "./agent-run-checkpoint";
 import { completeRecommendationDiscoveryFacts, narrowGreenhouseSourceScope, normalizeAgentRunSourceScope } from "./agent-run-source-scope";
@@ -710,19 +710,29 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           const assessCompleted = await transition("assess_matches", true); if (assessCompleted) return assessCompleted;
           const listStarted = await transition("create_recommendations", false); if (listStarted) return listStarted;
           const listCompleted = await transition("create_recommendations", true); if (listCompleted) return listCompleted;
-          await commands.publishStagedRun({ userId: job.userId, targetId: claimed.run.targetId, runId: job.runId, selectionExclusions: scope.selectionExclusions, ruleConfig: scope.recommendationRuleConfig, fence: { claimToken: claimed.claimToken }, onPublished: async (transaction, { resultCount }) => {
+          const recommendationChild = claimed.run.runPurpose === "recommendation" && claimed.run.parentRunId !== null;
+          const onPublished = async (transaction: any, { resultCount }: { resultCount: number }) => {
             const now = deps.clock();
             const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, claimed.claimToken), eq(agentRuns.controlState, "none"), gt(agentRuns.claimExpiresAt, now))).limit(1);
             if (!run) throw new DeepMatchClaimLostError();
+            const budgetDimension = exhaustedAgentRunBudget({ ...run, budgetSnapshot: run.budgetSnapshot as AgentRunBudget }, {}, run.activeSliceStartedAt ? Math.max(0, now.getTime() - run.activeSliceStartedAt.getTime()) : 0);
+            if (budgetDimension) throw new DeepMatchPublicationBudgetError(budgetDimension);
             const activeDurationMs = run.activeDurationMs + await settleActiveSlice(transaction, { id: deps.id, userId: job.userId, run, now });
             const version = run.version + 1;
-            const maxResults = effectiveAgentRunBudget(run.workflowVersion, run.budgetSnapshot as AgentRunBudget).maxResults;
-            const publishedResultCount = Math.min(resultCount, maxResults);
+            const publishedResultCount = recommendationChild ? resultCount : Math.min(resultCount, effectiveAgentRunBudget(run.workflowVersion, run.budgetSnapshot as AgentRunBudget).maxResults);
             const [completed] = await transaction.update(agentRuns).set({ status: "completed", currentStep: "completed", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, activeDurationMs, completedAt: now, failedAt: null, failureCode: null, terminationKind: "completed", terminationBudgetDimension: null, resultCount: publishedResultCount, usageComplete: true, version, updatedAt: now }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.claimToken, claimed.claimToken), gt(agentRuns.claimExpiresAt, now), eq(agentRuns.controlState, "none"))).returning({ id: agentRuns.id });
             if (!completed) throw new DeepMatchClaimLostError();
             await appendEvent(transaction, { id: deps.id, userId: job.userId, runId: job.runId, version, eventType: "run.completed", data: { eventType: "run.completed", status: "completed", currentStep: "completed", attemptCount: run.attemptCount, resultCount: publishedResultCount }, now });
             await deps.auditTrail.bind(transaction).append({ userId: job.userId, actorUserId: job.userId, eventType: "agent.run_completed", occurredAt: now, requestId: job.runId, outcome: "success", reasonCode: "AGENT_RUN_COMPLETED", resourceType: "agent_run", resourceId: job.runId, metadata: { runId: job.runId, targetId: run.targetId, attemptCount: run.attemptCount, resultCount: publishedResultCount } });
-          } });
+          };
+          const publicationInput = { userId: job.userId, targetId: claimed.run.targetId, runId: job.runId, selectionExclusions: scope.selectionExclusions, ruleConfig: scope.recommendationRuleConfig, fence: { claimToken: claimed.claimToken } };
+          try {
+            if (recommendationChild) await commands.publishStagedRun({ ...publicationInput, recommendation: { rootRunId: claimed.run.parentRunId }, onPublished });
+            else await commands.publishStagedRun({ ...publicationInput, onPublished });
+          } catch (error) {
+            if (error instanceof DeepMatchClaimLostError || error instanceof AgentRunBudgetError || error instanceof DeepMatchPublicationBudgetError || error instanceof DeepMatchPublicationError) throw error;
+            throw new DeepMatchPublicationError();
+          }
           return "completed";
         } catch (error) {
           // An in-flight adapter can observe AbortSignal before its promise settles.  The
@@ -737,6 +747,12 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           }
           if (error instanceof DeepMatchClaimLostError) {
             return await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "deep_match_stage_fence", ordinal: 1 }) ?? "stale";
+          }
+          if (error instanceof DeepMatchPublicationBudgetError) {
+            return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_BUDGET_EXCEEDED", retryable: false, category: "source", budgetDimension: error.budgetDimension }, deadline });
+          }
+          if (error instanceof DeepMatchPublicationError) {
+            return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_PERSIST_FAILED", retryable: false, category: "source" }, deadline });
           }
           return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
         }

@@ -11,7 +11,7 @@ import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import type { JobDiscoveryExecutionMode } from "./job-discovery-execution-mode";
 import type { RunPreflightEvaluator } from "./run-preflight";
 
-const RecommendationContextSchema = z.object({
+export const RecommendationContextSchema = z.object({
   version: z.literal("recommendation-context-v1"),
   profile: z.object({ profileId: z.uuid(), profileVersion: z.int().min(1) }).strict(),
   budgets: z.object({ discovery: AgentRunBudgetSchema, deepMatch: AgentRunBudgetSchema }).strict(),
