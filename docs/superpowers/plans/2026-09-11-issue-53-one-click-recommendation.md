@@ -593,6 +593,8 @@ fresh Astra/medium只读完整Task14 diff与验证日志，给spec和quality双�
 
 **2026-09-13 已批准补充：** Task5剩余实现前先完成Task14（规则排除契约）及独立审查，再继续三模式非空handoff与停止竞争。Task5最终审查BASE仍为6e15fcc，不能遗漏此前分段提交。Task6新发布使用显式ruleExcludedCount的严格写入校验；旧结果只在读取时默认零。
 
+**执行纠错（2026-09-13）：** 0049的推荐根trigger错误地仅允许layered workflow，违反spec“根运行必须是发现workflow”及本任务三mode要求。追加0052迁移替换同一trigger function，仅把root允许集修为当前builder真实输出的`job-discovery-workflow-v1`、`job-discovery-workflow-v3`、`layered-public-job-discovery-v1`；不改历史0049，不放开deep-match/未知workflow，不削弱账户/目标/身份不可变/唯一child/automatic child约束。真实PG覆盖0051升级和fresh chain、三种合法根及automatic child、非法workflow与跨账户/目标拒绝，并继续三mode真实commands.start→processor测试。此为已批准模式的实现修复，不改变产品范围。
+
 **执行修正（2026-09-12，优先于本任务后续旧草图）：**
 
 - Files 必须改为真实边界：修改 `agent-run-processor.ts`、`deep-match-agent-runs.ts`、`deep-match-persistence.ts`、`job-triage-persistence.ts`，并在需要统一非 layered 结果查询时修改 `job-discovery-persistence.ts`；测试使用 `agent-run-processor.integration.test.ts`、`deep-match-persistence.integration.test.ts`、`deep-match-trigger.test.ts`、`job-triage-persistence.integration.test.ts`，必要时补 `job-discovery-persistence.integration.test.ts`。不要创建与现有 fixture 脱节的同名单元测试。
