@@ -1,17 +1,17 @@
 import { createHash } from "node:crypto";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import { agentInboxItems, agentRunEvents, agentRunJobResults, agentRunSteps, agentRunUsageEntries, agentRuns, auditEvents, createDatabase, deepMatchRunCandidates, jobAccounts, jobDiscoveryAttributions, jobDiscoveryDiagnostics, jobDiscoveryLeads, jobDiscoveryRunResults, jobDiscoverySourceIssues, jobMatchVersions, jobOpportunities, jobOpportunitySources, jobProfiles, jobSourceHealthChecks, jobSourcePostings, jobSourcePostingVersions, jobTargetRevisions, jobTargets, jobTriageVersions, migrateDatabase, modelDiagnosticResults, profileFactRevisions, profileFacts, recommendationListItems, recommendationLists, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
-import { createAgentRunCheckpoint, createAgentRunCommands, createAgentRunProcessor as createDomainAgentRunProcessor, createAgentRunQueries, type AgentRunCheckpoint, type AgentRunQueue, type DiscoveryContentStore, type JobDiscoveryAdapter, type JobDiscoveryAdapterResolver } from "./agent-runs";
+import { createAgentRunCheckpoint, createAgentRunCommands, createAgentRunProcessor as createDomainAgentRunProcessor, createAgentRunQueries, createAgentRunRecoveryQueries, type AgentRunCheckpoint, type AgentRunQueue, type DiscoveryContentStore, type JobDiscoveryAdapter, type JobDiscoveryAdapterResolver } from "./agent-runs";
 import { createCompanyWatchlistCommands } from "./company-watchlists";
 import { AgentRunDetailSchema, AgentRunEventSchema, GREENHOUSE_JOB_DISCOVERY_ADAPTER, GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION, GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, GREENHOUSE_JOB_DISCOVERY_RULE_VERSION, GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION, GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION, GREENHOUSE_SOURCE_HEALTH_RULE_VERSION, GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST, GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, PUBLIC_JOB_DISCOVERY_BUDGET } from "@job-copilot/contracts/agent-runs";
 import { LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER, LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_TOOL_ALLOWLIST, LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION } from "@job-copilot/contracts/job-discovery";
 import { createLayeredPublicJobDiscoveryWorkflow, LayeredPublicWorkflowInterruption } from "./layered-public-job-discovery-workflow";
 import { createLayeredPublicJobDiscoveryRuntime } from "./layered-public-job-discovery-runtime";
 import { createJobDiscoveryPersistence } from "./job-discovery-persistence";
-import { createDeepMatchRunStarter as createDomainDeepMatchRunStarter, ensureDeepMatchRunInTransaction, triggerDeepMatchAfterDiscovery } from "./deep-match-agent-runs";
+import { createDeepMatchRunStarter as createDomainDeepMatchRunStarter, ensureDeepMatchRunInTransaction, triggerDeepMatchAfterDiscovery, type DeepMatchRunQueue } from "./deep-match-agent-runs";
 import { DeepMatchAdapterError, FakeDeepMatchAdapter } from "@job-copilot/contracts/deep-match";
 import { createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
 import { createAccountRunPolicies } from "./account-run-policies";
@@ -22,6 +22,7 @@ import { createModelDiagnosticProjectionReader } from "./model-diagnostics";
 import { createAccountRunControl } from "./account-run-control";
 import { createRecommendationRunCommands } from "./recommendation-runs";
 import type { SourceHealthDiscoveryAdapter } from "./source-health-discovery-adapter";
+import type { SourceCapabilityAdapter } from "./source-capabilities";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
 const constraints = { roleFamily: "AI 应用工程师", seniority: null, locations: [], workModes: [], relocation: "unknown" as const, salary: null, industries: [], dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] } };
@@ -44,6 +45,42 @@ function createAgentRunProcessor(deps: Omit<Parameters<typeof createDomainAgentR
 
 function createDeepMatchRunStarter(deps: Omit<Parameters<typeof createDomainDeepMatchRunStarter>[0], "runPreflight"> & { runPreflight?: Parameters<typeof createDomainDeepMatchRunStarter>[0]["runPreflight"] }) {
   return createDomainDeepMatchRunStarter({ ...deps, runPreflight: deps.runPreflight ?? createReadyRunPreflightEvaluator({ clock: deps.clock }) });
+}
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((next) => { resolve = next; });
+  return { promise, resolve };
+}
+
+async function waitUntilAConnectionIsWaitingForAccountAdvisoryLock(database: Database) {
+  await expect.poll(async () => {
+    const [row] = await database.execute<{ waiting: boolean }>(sql`
+      select exists(
+        select 1 from pg_stat_activity
+        where wait_event_type = 'Lock'
+          and wait_event = 'advisory'
+          and query like '%pg_advisory_xact_lock%'
+      ) as waiting
+    `);
+    return row?.waiting ?? false;
+  }, { timeout: 2_000, interval: 10 }).toBe(true);
+}
+
+async function waitForBarrier(input: { barrier: Promise<void>; operation: Promise<unknown>; name: string }) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      input.barrier,
+      input.operation.then(
+        (outcome) => Promise.reject(new Error(`${input.name}: operation settled before barrier: ${String(outcome)}`)),
+        (error) => Promise.reject(new Error(`${input.name}: operation rejected before barrier: ${String(error)}`)),
+      ),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`${input.name}: barrier timeout`)), 2_000); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 describe("AgentRunProcessor checkpoints", () => {
@@ -172,6 +209,72 @@ describe("AgentRunProcessor checkpoints", () => {
   function checkpoint(): AgentRunCheckpoint {
     return createAgentRunCheckpoint({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
   }
+
+  async function recommendationRoot(executionMode: "fake" | "greenhouse" | "layered_public") {
+    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const profileId = crypto.randomUUID(); const factId = crypto.randomUUID();
+    await database.insert(jobAccounts).values({ id: userId });
+    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: now, updatedAt: now });
+    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: now });
+    await database.insert(jobProfiles).values({ id: profileId, userId, version: 1, createdAt: now, updatedAt: now });
+    await database.insert(profileFacts).values({ id: factId, userId, profileId, factType: "skill", createdAt: now });
+    await database.insert(profileFactRevisions).values({ id: crypto.randomUUID(), userId, profileFactId: factId, revisionNumber: 1, factType: "skill", factValue: { name: "TypeScript" }, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1, createdAt: now });
+    if (executionMode !== "layered_public") await createCompanyWatchlistCommands({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).addItem({ userId, targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, canonicalCompanyName: "Concurrency Co", careersUrl: "https://boards.greenhouse.io/concurrency", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null } });
+    const fingerprint = crypto.randomUUID();
+    await database.insert(modelDiagnosticResults).values({ configurationFingerprint: fingerprint, status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket: "under_1s", checkedAt: now });
+    const capabilityAdapter: SourceCapabilityAdapter = { adapter: "greenhouse", adapterVersion: "test", declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring"] }) };
+    const preflight = createRunPreflightEvaluator({ capabilityAdapter, modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: fingerprint }), discoveryExecutionMode: executionMode, id: () => crypto.randomUUID(), clock: () => now });
+    const commands = createRecommendationRunCommands({ db: database, queue: new Queue(), auditTrail: createAuditTrail({ db: database, clock: () => now }), runPreflight: preflight, executionMode, id: () => crypto.randomUUID(), clock: () => now });
+    const preparation = await preflight.evaluate(database, { userId, workflow: "recommendation", trigger: "manual" });
+    const started = await commands.start({ userId, requestId: crypto.randomUUID(), command: { idempotencyKey: crypto.randomUUID(), warningFingerprint: preparation.report.warningFingerprint } });
+    return { userId, targetId, runId: started.run.runId };
+  }
+
+  function recommendationProcessor(input: { executionMode: "fake" | "greenhouse" | "layered_public"; auditTrail: any; matchingQueue?: DeepMatchRunQueue; collectionEntered?: ReturnType<typeof deferred>; releaseCollection?: ReturnType<typeof deferred> }) {
+    const waitAtCollection = async () => {
+      input.collectionEntered?.resolve();
+      if (input.releaseCollection) await input.releaseCollection.promise;
+    };
+    const detail = { sourceId: input.executionMode === "fake" ? "fake:aurora-careers" : "greenhouse:concurrency", detailId: "concurrency-1", company: "Concurrency Co", title: "AI Engineer", location: "上海", postedAt: now.toISOString(), deadline: null, sourceType: "company_careers" as const, isOfficial: true as const, rawPayload: {} };
+    const adapter: JobDiscoveryAdapter = {
+      adapter: input.executionMode === "greenhouse" ? "greenhouse" : "fake", adapterVersion: "test",
+      declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: input.executionMode === "greenhouse" ? "greenhouse" : "fake", adapterVersion: "test", contractVersion: "source-capabilities-v1" as const, capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
+      search: async () => ({ ok: false as const, error: { code: "UNUSED", retryable: false } }),
+      searchBatch: async () => ({ ok: true as const, data: [{ sourceId: detail.sourceId, detailId: detail.detailId, company: detail.company, title: detail.title, location: detail.location, postedAt: detail.postedAt, deadline: detail.deadline }] }),
+      getDetail: async () => { await waitAtCollection(); return { ok: true as const, data: detail }; },
+    };
+    const sourceHealthAdapter: SourceHealthDiscoveryAdapter = {
+      adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
+      declareCapabilities: ({ sourceId }: { sourceId: string }) => ({ sourceId, adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, contractVersion: "source-capabilities-v1" as const, capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
+      listSource: async ({ source }: { source: { sourceId: string } }) => { await waitAtCollection(); return { ok: true as const, attemptCount: 1, data: { sourceId: source.sourceId, observedDetailIds: [detail.detailId], candidates: [{ sourceId: source.sourceId, detailId: detail.detailId, company: null, title: detail.title, location: detail.location }] } }; },
+      getSourceDetail: async ({ source }: { source: { sourceId: string; boardToken: string } }) => ({ ok: true as const, attemptCount: 1, data: { ...detail, sourceId: source.sourceId, absoluteUrl: `https://boards.greenhouse.io/${source.boardToken}/jobs/${detail.detailId}` } }),
+    };
+    return createAgentRunProcessor({
+      db: database, auditTrail: input.auditTrail, id: () => crypto.randomUUID(), clock: () => now, contentStore: new Store(), checkpoint: checkpoint(), matchingQueue: input.matchingQueue,
+      ...(input.executionMode === "layered_public"
+        ? { adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => { await waitAtCollection(); return { branchOutcome: { trusted: "succeeded" as const, publicDiscovery: "clean_zero" as const }, diagnostics: [] }; } }) } }
+        : { adapterResolver: resolver(adapter), ...(input.executionMode === "greenhouse" ? { sourceHealthAdapterResolver: { resolve: () => sourceHealthAdapter } } : {}) }),
+    });
+  }
+
+  function auditThatPausesAfter(eventType: string, entered: ReturnType<typeof deferred>, release: ReturnType<typeof deferred>) {
+    const base = createAuditTrail({ db: database, clock: () => now });
+    return {
+      append: (event: any) => base.append(event),
+      bind(transaction: any) {
+        const bound = base.bind(transaction);
+        return {
+          append: async (event: any) => {
+            await bound.append(event);
+            if (event.eventType === eventType) { entered.resolve(); await release.promise; }
+          },
+          bind: bound.bind,
+          query: bound.query,
+        };
+      },
+      query: (input: any) => base.query(input),
+    };
+  }
+
   function successAdapter(calls = { search: 0, detail: 0 }): JobDiscoveryAdapter {
     const summary = { sourceId: "fake:aurora-careers", detailId: "opening-1", company: "示例科技", title: "AI 工程师", location: "上海", postedAt: null, deadline: null };
     return {
@@ -2293,5 +2396,157 @@ describe("AgentRunProcessor checkpoints", () => {
       database.select().from(agentRuns).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.workflowVersion, "deep-match-v1"))),
       database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, job.runId)),
     ])).resolves.toEqual([[], [], [{ status: "running" }]]);
+  });
+
+  it.each(["fake", "greenhouse", "layered_public"] as const)("%s 推荐根在 stop 先持有账户锁时不完成 root、冻结 triage 或创建 child", async (executionMode) => {
+    const root = await recommendationRoot(executionMode);
+    const collectionEntered = deferred(); const releaseCollection = deferred(); const stopEntered = deferred(); const releaseStop = deferred();
+    const stopDatabase = createDatabase(container.getConnectionUri());
+    const observerDatabase = createDatabase(container.getConnectionUri());
+    const stopAudit = (() => {
+      const base = createAuditTrail({ db: stopDatabase, clock: () => now });
+      return {
+        append: (event: any) => base.append(event),
+        bind(transaction: any) {
+          const bound = base.bind(transaction);
+          return { append: async (event: any) => {
+            await bound.append(event);
+            if (event.eventType === "account.run_stopped") { stopEntered.resolve(); await releaseStop.promise; }
+          }, bind: bound.bind, query: bound.query };
+        },
+        query: (input: any) => base.query(input),
+      };
+    })();
+    const controls = createAccountRunControl({ db: stopDatabase, auditTrail: stopAudit as any, id: () => crypto.randomUUID(), clock: () => now });
+    const processing = recommendationProcessor({ executionMode, auditTrail: createAuditTrail({ db: database, clock: () => now }), collectionEntered, releaseCollection })
+      .process({ version: 1, userId: root.userId, runId: root.runId, finalAttempt: true });
+    let stop: Promise<unknown> | undefined;
+    try {
+      await waitForBarrier({ barrier: collectionEntered.promise, operation: processing, name: `${executionMode} stop-first collection` });
+      stop = controls.control({ userId: root.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+      await stopEntered.promise;
+      const processingResult = processing.then((outcome) => ({ outcome }), (error) => ({ error }));
+      releaseCollection.resolve();
+      await waitUntilAConnectionIsWaitingForAccountAdvisoryLock(observerDatabase);
+
+      releaseStop.resolve();
+      await expect(stop).resolves.toMatchObject({ applied: true, state: { stoppedAt: expect.any(String) } });
+      await expect(processingResult).resolves.toMatchObject({ outcome: expect.stringMatching(/^(paused|stale)$/u) });
+      await expect(Promise.all([
+        database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, root.runId)),
+        database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, root.runId)),
+        database.select().from(jobDiscoveryRunResults).where(eq(jobDiscoveryRunResults.runId, root.runId)),
+        database.select().from(jobTriageVersions).where(eq(jobTriageVersions.userId, root.userId)),
+        database.select().from(agentRuns).where(eq(agentRuns.parentRunId, root.runId)),
+      ])).resolves.toEqual([[{ status: "paused" }], [], [], [], []]);
+
+      await expect(controls.control({ userId: root.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 1, action: "release" } })).resolves.toMatchObject({ applied: true });
+      await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, root.runId))).resolves.toEqual([{ status: "paused" }]);
+    } finally {
+      releaseCollection.resolve();
+      releaseStop.resolve();
+      await Promise.allSettled([processing, ...(stop ? [stop] : [])]);
+      await stopDatabase.$client.end();
+      await observerDatabase.$client.end();
+    }
+  }, 60_000);
+
+  it.each(["fake", "greenhouse", "layered_public"] as const)("%s 推荐根先提交 handoff 后，stop 看到并暂停唯一 child，release 不自动恢复", async (executionMode) => {
+    const root = await recommendationRoot(executionMode);
+    const handoffEntered = deferred(); const releaseHandoff = deferred(); const enqueued: string[] = [];
+    const stopDatabase = createDatabase(container.getConnectionUri());
+    const observerDatabase = createDatabase(container.getConnectionUri());
+    const processor = recommendationProcessor({
+      executionMode,
+      auditTrail: auditThatPausesAfter("agent.run_completed", handoffEntered, releaseHandoff),
+      matchingQueue: { enqueue: async (job) => { enqueued.push(job.runId); } },
+    });
+    const processing = processor.process({ version: 1, userId: root.userId, runId: root.runId, finalAttempt: true });
+    let stop: Promise<unknown> | undefined;
+    try {
+      await waitForBarrier({ barrier: handoffEntered.promise, operation: processing, name: `${executionMode} handoff-first completion` });
+      const controls = createAccountRunControl({ db: stopDatabase, auditTrail: createAuditTrail({ db: stopDatabase, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+      stop = controls.control({ userId: root.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+      const stopResult = stop.then((value) => ({ value }), (error) => ({ error }));
+      await waitUntilAConnectionIsWaitingForAccountAdvisoryLock(observerDatabase);
+
+      releaseHandoff.resolve();
+      await expect(processing).resolves.toBe("completed");
+      await expect(stopResult).resolves.toMatchObject({ value: { applied: true, state: { stoppedAt: expect.any(String) } } });
+      const [child] = await database.select({ id: agentRuns.id, status: agentRuns.status, controlState: agentRuns.controlState }).from(agentRuns).where(eq(agentRuns.parentRunId, root.runId));
+      expect(child).toEqual(expect.objectContaining({ status: "paused", controlState: "none" }));
+      await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, root.runId))).resolves.toEqual([{ status: "completed" }]);
+      await expect(database.select().from(agentRuns).where(eq(agentRuns.parentRunId, root.runId))).resolves.toHaveLength(1);
+
+      const queuedBeforeRelease = [...enqueued];
+      await expect(controls.control({ userId: root.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 1, action: "release" } })).resolves.toMatchObject({ applied: true });
+      await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, child!.id))).resolves.toEqual([{ status: "paused" }]);
+      expect(enqueued).toEqual(queuedBeforeRelease);
+    } finally {
+      releaseHandoff.resolve();
+      await Promise.allSettled([processing, ...(stop ? [stop] : [])]);
+      await stopDatabase.$client.end();
+      await observerDatabase.$client.end();
+    }
+  }, 60_000);
+
+  it("handoff 的 triage 审计依赖抛错时回滚 root results、triage、child 和 root 完成事实", async () => {
+    const root = await recommendationRoot("fake");
+    const base = createAuditTrail({ db: database, clock: () => now });
+    const failingAudit = {
+      append: (event: any) => base.append(event),
+      bind(transaction: any) {
+        const bound = base.bind(transaction);
+        return {
+          append: async (event: any) => {
+            await bound.append(event);
+            if (event.eventType === "job.triage_created") throw new Error("TRIAGE_AUDIT_DEPENDENCY_FAILED");
+          },
+          bind: bound.bind,
+          query: bound.query,
+        };
+      },
+      query: (input: any) => base.query(input),
+    };
+
+    await expect(recommendationProcessor({ executionMode: "fake", auditTrail: failingAudit }).process({ version: 1, userId: root.userId, runId: root.runId, finalAttempt: false })).resolves.toBe("retry");
+    await expect(Promise.all([
+      database.select({ status: agentRuns.status, currentStep: agentRuns.currentStep }).from(agentRuns).where(eq(agentRuns.id, root.runId)),
+      database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, root.runId)),
+      database.select().from(jobTriageVersions).where(eq(jobTriageVersions.userId, root.userId)),
+      database.select().from(agentRuns).where(eq(agentRuns.parentRunId, root.runId)),
+      database.select().from(agentRunEvents).where(and(eq(agentRunEvents.runId, root.runId), eq(agentRunEvents.eventType, "run.completed"))),
+    ])).resolves.toEqual([[{ status: "queued", currentStep: "persist_results" }], [], [], [], []]);
+  });
+
+  it("child 的入队失败由持久 queued 行恢复；stop 后旧恢复消息只能暂停 child", async () => {
+    const root = await recommendationRoot("fake");
+    const failedQueue: string[] = [];
+    await expect(recommendationProcessor({ executionMode: "fake", auditTrail: createAuditTrail({ db: database, clock: () => now }), matchingQueue: { enqueue: async (job) => { failedQueue.push(job.runId); throw new Error("QUEUE_UNAVAILABLE"); } } }).process({ version: 1, userId: root.userId, runId: root.runId, finalAttempt: true })).resolves.toBe("completed");
+    const [child] = await database.select({ id: agentRuns.id }).from(agentRuns).where(eq(agentRuns.parentRunId, root.runId));
+    expect(failedQueue).toEqual([child!.id]);
+    await expect(createAgentRunRecoveryQueries({ db: database, clock: () => now }).listRecoverable()).resolves.toContainEqual({ version: 1, runId: child!.id, userId: root.userId });
+
+    const control = createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    await control.control({ userId: root.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+    await database.update(agentRuns).set({ status: "queued", controlState: "none" }).where(eq(agentRuns.id, child!.id));
+    await expect(recommendationProcessor({ executionMode: "fake", auditTrail: createAuditTrail({ db: database, clock: () => now }) }).process({ version: 1, userId: root.userId, runId: child!.id, finalAttempt: true })).resolves.toBe("paused");
+    await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, child!.id))).resolves.toEqual([{ status: "paused" }]);
+  });
+
+  it("同一 completed root 的重复消息和恢复只复用一个 child、候选快照与 queued 事件", async () => {
+    const root = await recommendationRoot("fake");
+    const enqueued: string[] = [];
+    const processor = recommendationProcessor({ executionMode: "fake", auditTrail: createAuditTrail({ db: database, clock: () => now }), matchingQueue: { enqueue: async (job) => { enqueued.push(job.runId); } } });
+    await expect(processor.process({ version: 1, userId: root.userId, runId: root.runId, finalAttempt: true })).resolves.toBe("completed");
+    await expect(processor.process({ version: 1, userId: root.userId, runId: root.runId, finalAttempt: true })).resolves.toBe("stale");
+    await triggerDeepMatchAfterDiscovery({ db: database, id: () => crypto.randomUUID(), clock: () => now, runPreflight: createReadyRunPreflightEvaluator({ clock: () => now }), queue: { enqueue: async (job) => { enqueued.push(job.runId); } }, userId: root.userId, targetId: root.targetId, discoveryRunId: root.runId });
+    const [child] = await database.select({ id: agentRuns.id }).from(agentRuns).where(eq(agentRuns.parentRunId, root.runId));
+    await expect(Promise.all([
+      database.select().from(agentRuns).where(eq(agentRuns.parentRunId, root.runId)),
+      database.select().from(deepMatchRunCandidates).where(eq(deepMatchRunCandidates.runId, child!.id)),
+      database.select().from(agentRunEvents).where(and(eq(agentRunEvents.runId, child!.id), eq(agentRunEvents.eventType, "run.queued"))),
+    ])).resolves.toEqual([[expect.any(Object)], [], [expect.any(Object)]]);
+    expect(enqueued).toEqual([child!.id, child!.id]);
   });
 });
