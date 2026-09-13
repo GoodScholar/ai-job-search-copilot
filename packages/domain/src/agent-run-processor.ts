@@ -942,7 +942,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           if (!batch.ok) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: batch.error.retryable ? "AGENT_RUN_ADAPTER_RETRYABLE" : "AGENT_RUN_ADAPTER_FAILED", retryable: batch.error.retryable, category: "source" }, deadline });
           const batchItems = Array.isArray(batch.data) ? batch.data : batch.data.items;
           const batchItemKeys = new Set(batchItems.map((item) => discoverySourceIdentifier(item.sourceId, item.detailId)));
-          if (batchItems.some((item) => !sourceScope.sources.includes(item.sourceId)) || batchItemKeys.size !== batchItems.length) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "source" }, deadline });
+          if (batchItems.some((item) => !sourceScope.sources.includes(item.sourceId)) || (!Array.isArray(batch.data) && batchItemKeys.size !== batchItems.length)) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "source" }, deadline });
           summaries = batchItems.slice(0, effectiveAgentRunBudget(claimed.run.workflowVersion, claimed.run.budgetSnapshot as AgentRunBudget).maxResults);
           if (!Array.isArray(batch.data)) {
             const receipts = batch.data.sourceReceipts;

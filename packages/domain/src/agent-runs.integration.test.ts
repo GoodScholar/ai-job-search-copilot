@@ -447,6 +447,31 @@ describe("agent runs", () => {
     await expect(createAgentRunQueries({ db: database }).get({ userId, runId: run.runId })).resolves.toMatchObject({ results: [expect.objectContaining({ ordinal: 1 })], events: expect.arrayContaining([expect.objectContaining({ eventType: "run.completed", data: expect.objectContaining({ resultCount: 1 }) })]) });
   });
 
+  it("带 receipt 的 fake batch 拒绝重复来源身份而不读取详情或写 result", async () => {
+    const { userId, targetId } = await activeTarget();
+    const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+    const duplicate = adapter();
+    let detailCalls = 0;
+    duplicate.searchBatch = async () => ({ ok: true, data: {
+      items: [
+        { sourceId: "fake:aurora-careers", detailId: "opening-1", company: "示例科技", title: "AI 工程师", location: "上海", postedAt: null, deadline: null },
+        { sourceId: "fake:aurora-careers", detailId: "opening-1", company: "示例科技", title: "AI 工程师", location: "上海", postedAt: null, deadline: null },
+      ],
+      sourceReceipts: [
+        { sourceId: "fake:aurora-careers", checked: true as const, candidateCount: 2 },
+        { sourceId: "fake:orbit-careers", checked: true as const, candidateCount: 0 },
+      ],
+    } });
+    duplicate.getDetail = async () => { detailCalls += 1; return { ok: false as const, error: { code: "UNEXPECTED", retryable: false } }; };
+
+    await expect(createAgentRunProcessor({ db: database, adapter: duplicate, contentStore: new MemoryStore(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).process({ version: 1, runId: run.runId, userId, finalAttempt: true })).resolves.toBe("failed");
+    expect(detailCalls).toBe(0);
+    await expect(Promise.all([
+      database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, run.runId)),
+      database.select().from(agentRuns).where(eq(agentRuns.parentRunId, run.runId)),
+    ])).resolves.toEqual([[], []]);
+  });
+
   it("达到已持久化的第三次尝试时不创建第四个 claim，而是返回预算终止 outcome", async () => {
     const { userId, targetId } = await activeTarget();
     const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
