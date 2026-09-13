@@ -90,6 +90,7 @@ describe("推荐运行准备", () => {
       : { trustedSourceCount: (internal.startSpec!.executionSpec.sourceScope as { sources: unknown[] }).sources.length, publicQueryCount: 0 });
     expect(JSON.stringify(preparation)).not.toMatch(/profileId|profileVersion|must-not-project/);
     expect(internal.startSpec).toMatchObject({ targetId: owner.targetId, targetVersion: 2 });
+    expect(internal.startSpec!.accountPolicySnapshot).toEqual(internal.recommendationContext!.preflight.items.at(-1) ? expect.any(Object) : undefined);
     expect(internal.recommendationContext).toMatchObject({ version: "recommendation-context-v1", profile: { profileVersion: 3 }, preflight: preparation.preflight });
   });
 

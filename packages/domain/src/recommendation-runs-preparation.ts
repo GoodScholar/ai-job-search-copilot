@@ -22,7 +22,7 @@ const RecommendationContextSchema = z.object({
   if (Buffer.byteLength(JSON.stringify(value), "utf8") > 32 * 1024) context.addIssue({ code: "custom", message: "推荐上下文不能超过 32KiB" });
 });
 
-export type RecommendationRunStartSpec = { targetId: string; targetVersion: number; targetSnapshot: DiscoveryTargetSnapshot; executionSpec: z.infer<typeof AgentRunExecutionSpecSchema> };
+export type RecommendationRunStartSpec = { targetId: string; targetVersion: number; targetSnapshot: DiscoveryTargetSnapshot; executionSpec: z.infer<typeof AgentRunExecutionSpecSchema>; accountPolicySnapshot: unknown };
 export type RecommendationRunContext = z.infer<typeof RecommendationContextSchema>;
 export type RecommendationRunPreparationResult = { preparation: RecommendationRunPreparation; startSpec: RecommendationRunStartSpec | null; recommendationContext: RecommendationRunContext | null };
 
@@ -39,7 +39,7 @@ export async function prepareRecommendationRunInTransaction(transaction: any, in
   if (!profile || profile.version < 1) return { preparation, startSpec: null, recommendationContext: null };
   const executionSpec = AgentRunExecutionSpecSchema.parse({ targetSnapshot, ...(spec.profileSnapshot ? { profileSnapshot: spec.profileSnapshot, watchlistSnapshot: spec.watchlistSnapshot } : {}), sourceScope: spec.sourceScope, workflowVersion: spec.execution.workflowVersion, ruleVersion: spec.execution.ruleVersion, adapter: spec.execution.adapter, adapterVersion: spec.execution.adapterVersion, outputSchemaVersion: spec.execution.outputSchemaVersion, toolAllowlist: spec.toolAllowlist, model: null, budget: spec.execution.budget });
   const recommendationContext = RecommendationContextSchema.parse({ version: "recommendation-context-v1", profile: { profileId: profile.id, profileVersion: profile.version }, budgets, preflight: evaluation.report, accountPolicyRevisionNumber: evaluation.policy.revisionNumber });
-  return { preparation, startSpec: { targetId: targetSnapshot.targetId, targetVersion: targetSnapshot.version, targetSnapshot, executionSpec }, recommendationContext };
+  return { preparation, startSpec: { targetId: targetSnapshot.targetId, targetVersion: targetSnapshot.version, targetSnapshot, executionSpec, accountPolicySnapshot: evaluation.policy.snapshot }, recommendationContext };
 }
 
 export function createRecommendationRunPreparationQueries(deps: { db: Database; runPreflight: RunPreflightEvaluator; executionMode: JobDiscoveryExecutionMode; id: () => string; clock: () => Date }): { prepare(input: { userId: string }): Promise<RecommendationRunPreparation> } {

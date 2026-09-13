@@ -107,6 +107,39 @@ async function openDecisionItem(transaction: any, auditTrail: AuditTrail, input:
   if (item) await auditTrail.append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.inbox_opened", occurredAt: input.now, requestId: input.requestId, outcome: "success", reasonCode: "AGENT_RUN_PAUSED", resourceType: "agent_inbox_item", resourceId: item.id, metadata: { runId: input.runId, kind: "decision_required", reasonCode: "AGENT_RUN_PAUSED", budgetDimension: null } });
 }
 
+/**
+ * Persists one queued physical run inside a caller-owned transaction.  Logical
+ * recommendation orchestration uses this seam so its command fact, root run,
+ * steps, event and audit record share one commit.
+ */
+export async function insertAgentRunInTransaction(transaction: any, input: {
+  userId: string; requestId: string; idempotencyKey: string; targetId: string; targetVersion: number; targetSnapshot: unknown;
+  profileSnapshot?: unknown; watchlistSnapshot?: unknown; sourceScope: unknown; budgetSnapshot: unknown;
+  accountPolicyRevisionNumber: number; accountPolicySnapshot: unknown; preflightSnapshot: unknown;
+  workflowVersion: string; ruleVersion: string; adapter: string; adapterVersion: string; outputSchemaVersion: string;
+  toolAllowlist: readonly string[]; modelSnapshot: unknown; stepKeys: readonly string[];
+  runPurpose?: "job_discovery" | "opportunity_reevaluation" | "recommendation"; parentRunId?: string | null; recommendationContext?: unknown;
+}, deps: Pick<CommandDependencies, "auditTrail" | "id" | "clock">): Promise<RunRow> {
+  const now = deps.clock(); const runId = deps.id();
+  const [created] = await transaction.insert(agentRuns).values({
+    id: runId, userId: input.userId, targetId: input.targetId, idempotencyKey: input.idempotencyKey, targetVersion: input.targetVersion,
+    targetSnapshot: input.targetSnapshot, profileSnapshot: input.profileSnapshot ?? null, watchlistSnapshot: input.watchlistSnapshot ?? null,
+    sourceScope: input.sourceScope, budgetSnapshot: input.budgetSnapshot, accountPolicyRevisionNumber: input.accountPolicyRevisionNumber,
+    accountPolicySnapshot: input.accountPolicySnapshot, preflightSnapshot: input.preflightSnapshot,
+    workflowVersion: input.workflowVersion, ruleVersion: input.ruleVersion, toolAllowlist: input.toolAllowlist, modelSnapshot: input.modelSnapshot,
+    adapter: input.adapter, adapterVersion: input.adapterVersion, outputSchemaVersion: input.outputSchemaVersion,
+    runPurpose: input.runPurpose ?? "job_discovery", parentRunId: input.parentRunId ?? null, recommendationContext: input.recommendationContext ?? null,
+    status: "queued", currentStep: "queued", controlState: "none", version: 1, attemptCount: 0,
+    activeDurationMs: 0, toolCallCount: 0, sourceRequestCount: 0, modelCallCount: 0, inputTokenCount: 0, outputTokenCount: 0, totalTokenCount: 0, resultCount: 0, usageComplete: true,
+    queuedAt: now, createdAt: now, updatedAt: now,
+  }).returning();
+  if (!created) throw new Error("AGENT_RUN_PERSIST_FAILED");
+  await transaction.insert(agentRunSteps).values(input.stepKeys.map((stepKey, index) => ({ id: deps.id(), userId: input.userId, runId, stepKey, ordinal: index + 1, status: "pending", attemptCount: 0 })));
+  await transaction.insert(agentRunEvents).values({ id: deps.id(), userId: input.userId, runId, sequence: 1, runVersion: 1, eventType: "run.queued", data: { eventType: "run.queued", status: "queued", currentStep: "queued", attemptCount: 0 }, createdAt: now });
+  await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.run_queued", occurredAt: now, requestId: input.requestId, outcome: "success", reasonCode: "AGENT_RUN_QUEUED", resourceType: "agent_run", resourceId: runId, metadata: { runId, targetId: input.targetId, targetVersion: input.targetVersion, workflowVersion: input.workflowVersion, adapterVersion: input.adapterVersion } });
+  return created;
+}
+
 function createAgentRunStarter(deps: CommandDependencies): AgentRunStarter {
   return {
     async start(input) {
@@ -127,35 +160,24 @@ function createAgentRunStarter(deps: CommandDependencies): AgentRunStarter {
           ...(input.trigger?.kind === "schedule" ? { scheduledFor: input.trigger.scheduledFor } : {}),
         });
         authorizeRunPreflight({ evaluation, warningFingerprint: command.warningFingerprint });
-        // 账户锁等待可能跨越后台窗口边界；仅在确定不是幂等重放后读取当前时刻。
-        const now = deps.clock();
         const [target] = await transaction.select({ id: jobTargets.id, version: jobTargets.version, priority: jobTargets.priority, state: jobTargets.state, constraints: jobTargetRevisions.constraints })
           .from(jobTargets).innerJoin(jobTargetRevisions, and(eq(jobTargetRevisions.userId, jobTargets.userId), eq(jobTargetRevisions.targetId, jobTargets.id), eq(jobTargetRevisions.version, jobTargets.version)))
           .where(and(eq(jobTargets.userId, input.userId), eq(jobTargets.id, command.targetId)));
         if (!target) throw new AgentRunError("AGENT_RUN_TARGET_NOT_FOUND");
         if (target.state !== "active") throw new AgentRunError("AGENT_RUN_TARGET_INACTIVE");
-        const runId = deps.id();
         const targetSnapshot = { targetId: target.id, version: target.version, priority: target.priority, state: target.state, constraints: target.constraints };
         const executionMode = deps.executionMode ?? "fake";
         const policy = { revisionNumber: evaluation.policy.revisionNumber, effective: evaluation.policy.snapshot };
         const watchlist = await readDiscoveryWatchlistInTransaction(transaction, { userId: input.userId, targetId: target.id });
         const discoverySpec = await buildDiscoveryRunSpecInTransaction(transaction, { userId: input.userId, targetSnapshot, watchlist, policy: policy.effective, executionMode });
         const { execution } = discoverySpec;
-        const [created] = await transaction.insert(agentRuns).values({
-          id: runId, userId: input.userId, targetId: target.id, idempotencyKey: command.idempotencyKey, targetVersion: target.version,
-          targetSnapshot, ...(discoverySpec.profileSnapshot ? { profileSnapshot: discoverySpec.profileSnapshot, watchlistSnapshot: discoverySpec.watchlistSnapshot } : {}),
-          sourceScope: discoverySpec.sourceScope, budgetSnapshot: execution.budget, accountPolicyRevisionNumber: policy.revisionNumber, accountPolicySnapshot: policy.effective, preflightSnapshot: evaluation.report, workflowVersion: execution.workflowVersion,
-          ruleVersion: execution.ruleVersion, toolAllowlist: discoverySpec.toolAllowlist, modelSnapshot: null,
-          adapter: execution.adapter, adapterVersion: execution.adapterVersion, outputSchemaVersion: execution.outputSchemaVersion,
-          status: "queued", currentStep: "queued", controlState: "none", version: 1, attemptCount: 0,
-          activeDurationMs: 0, toolCallCount: 0, sourceRequestCount: 0, modelCallCount: 0, inputTokenCount: 0, outputTokenCount: 0, totalTokenCount: 0, resultCount: 0, usageComplete: true,
-          queuedAt: now, createdAt: now, updatedAt: now,
-        }).returning();
-        if (!created) throw new Error("AGENT_RUN_PERSIST_FAILED");
-        await transaction.insert(agentRunSteps).values(stepKeys.map((stepKey, index) => ({ id: deps.id(), userId: input.userId, runId, stepKey, ordinal: index + 1, status: "pending", attemptCount: 0 })));
-        await transaction.insert(agentRunEvents).values({ id: deps.id(), userId: input.userId, runId, sequence: 1, runVersion: 1, eventType: "run.queued", data: { eventType: "run.queued", status: "queued", currentStep: "queued", attemptCount: 0 }, createdAt: now });
-        await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.run_queued", occurredAt: now, requestId: input.requestId, outcome: "success", reasonCode: "AGENT_RUN_QUEUED", resourceType: "agent_run", resourceId: runId, metadata: { runId, targetId: target.id, targetVersion: target.version, workflowVersion: execution.workflowVersion, adapterVersion: execution.adapterVersion } });
-        return created;
+        return insertAgentRunInTransaction(transaction, {
+          userId: input.userId, requestId: input.requestId, idempotencyKey: command.idempotencyKey, targetId: target.id, targetVersion: target.version, targetSnapshot,
+          profileSnapshot: discoverySpec.profileSnapshot, watchlistSnapshot: discoverySpec.watchlistSnapshot, sourceScope: discoverySpec.sourceScope, budgetSnapshot: execution.budget,
+          accountPolicyRevisionNumber: policy.revisionNumber, accountPolicySnapshot: policy.effective, preflightSnapshot: evaluation.report,
+          workflowVersion: execution.workflowVersion, ruleVersion: execution.ruleVersion, toolAllowlist: discoverySpec.toolAllowlist, modelSnapshot: null,
+          adapter: execution.adapter, adapterVersion: execution.adapterVersion, outputSchemaVersion: execution.outputSchemaVersion, stepKeys,
+        }, deps);
       });
       const response = summary(run, reused);
       try { await deps.queue.enqueue({ version: AGENT_RUN_JOB_VERSION, runId: response.runId, userId: input.userId }); } catch { /* 提交后的唤醒可由恢复扫描补偿。 */ }
