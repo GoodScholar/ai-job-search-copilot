@@ -10,6 +10,7 @@ export const RecommendationCoverageLossCodeSchema = z.enum([
   "VERIFICATION_FAILED",
   "DISCOVERY_BUDGET_EXCEEDED",
 ]);
+const maxCoverageLossCombinations = RecommendationCoverageLossCodeSchema.options.length * 2;
 
 const RecommendationDiscoveryLossSchema = z.object({
   code: RecommendationCoverageLossCodeSchema,
@@ -26,7 +27,7 @@ const RecommendationDiscoveryOutcomeSchema = z.enum([
 const RecommendationDiscoveryBranchSchema = z.object({
   checked: z.boolean(),
   outcome: RecommendationDiscoveryOutcomeSchema,
-  losses: z.array(RecommendationDiscoveryLossSchema).max(10).refine(
+  losses: z.array(RecommendationDiscoveryLossSchema).max(maxCoverageLossCombinations).refine(
     (losses) => new Set(losses.map((loss) => `${loss.code}:${loss.retryable}`)).size === losses.length,
     "coverage losses must be unique",
   ),
@@ -49,11 +50,11 @@ const PublicQueryBranchSchema = RecommendationDiscoveryBranchSchema.extend({
 
 export const RecommendationDiscoveryFactsSchema = z.object({
   version: z.literal("recommendation-discovery-facts-v1"),
-  trusted: z.array(TrustedBranchSchema).max(50).refine(
+  trusted: z.array(TrustedBranchSchema).refine(
     (branches) => new Set(branches.map((branch) => branch.sourceId)).size === branches.length,
     "trusted source identities must be unique",
   ),
-  publicQueries: z.array(PublicQueryBranchSchema).max(10).refine(
+  publicQueries: z.array(PublicQueryBranchSchema).refine(
     (branches) => new Set(branches.map((branch) => branch.queryId)).size === branches.length,
     "public query identities must be unique",
   ),

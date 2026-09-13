@@ -339,6 +339,94 @@ describe("AgentRunProcessor checkpoints", () => {
     expect(received).toMatchObject({ trustedSources: Array.from({ length: 50 }, () => expect.anything()), publicDiscovery: { maxVerificationCandidates: 10 } });
   });
 
+  it("历史 recommendation root 的第十一条 query 在执行 hardcap 后冻结为预算裁剪事实", async () => {
+    const templateRoot = await recommendationRoot("layered_public");
+    const [template] = await database.select().from(agentRuns).where(eq(agentRuns.id, templateRoot.runId));
+    const originalScope = template!.sourceScope as any;
+    const queryTemplate = originalScope.publicDiscovery.queries[0]!;
+    const historicalScope = {
+      ...originalScope,
+      publicDiscovery: {
+        ...originalScope.publicDiscovery,
+        queries: Array.from({ length: 11 }, (_, index) => ({
+          ...queryTemplate,
+          ordinal: index + 1,
+          queryId: crypto.randomUUID(),
+          stableFingerprint: createHash("sha256").update(`legacy-query-${index}`).digest("hex"),
+        })),
+      },
+    };
+    const historicalRunId = crypto.randomUUID();
+    await database.insert(agentRuns).values({
+      ...template!,
+      id: historicalRunId,
+      idempotencyKey: crypto.randomUUID(),
+      sourceScope: historicalScope,
+      status: "queued",
+      currentStep: "queued",
+      claimToken: null,
+      claimExpiresAt: null,
+      activeSliceStartedAt: null,
+      startedAt: null,
+      completedAt: null,
+      failedAt: null,
+      cancelledAt: null,
+      failureCode: null,
+      terminationKind: null,
+      terminationBudgetDimension: null,
+      version: 1,
+      attemptCount: 0,
+      activeDurationMs: 0,
+      toolCallCount: 0,
+      sourceRequestCount: 0,
+      modelCallCount: 0,
+      inputTokenCount: 0,
+      outputTokenCount: 0,
+      totalTokenCount: 0,
+      resultCount: 0,
+      usageComplete: false,
+      queuedAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    await database.insert(agentRunSteps).values(["batch_search", "fetch_details", "persist_results"].map((stepKey, index) => ({ id: crypto.randomUUID(), userId: templateRoot.userId, runId: historicalRunId, stepKey, ordinal: index + 1, status: "pending", attemptCount: 0 })));
+
+    let received: any;
+    const processor = createAgentRunProcessor({
+      db: database,
+      adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
+      layeredPublicWorkflowResolver: { resolve: (input) => {
+        received = input.executionSpec.sourceScope;
+        return { run: async () => ({
+          branchOutcome: { trusted: "succeeded" as const, publicDiscovery: "clean_zero" as const },
+          diagnostics: [],
+          discoveryFacts: plannedLayeredDiscoveryFacts(input.executionSpec),
+        }) };
+      } },
+      contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+
+    await expect(processor.process({ version: 1, userId: templateRoot.userId, runId: historicalRunId, finalAttempt: true })).resolves.toBe("completed");
+    expect(received.publicDiscovery.queries).toHaveLength(10);
+    await expect(database.select({ sourceScope: agentRuns.sourceScope }).from(agentRuns).where(eq(agentRuns.id, historicalRunId))).resolves.toEqual([{ sourceScope: historicalScope }]);
+    const [child] = await database.select({ sourceScope: agentRuns.sourceScope }).from(agentRuns).where(eq(agentRuns.parentRunId, historicalRunId));
+    expect((child!.sourceScope as any).frozenRecommendationEvidence).toMatchObject({
+      plannedTrustedSourceCount: historicalScope.trustedSources.length,
+      plannedPublicQueryCount: 11,
+      discoveryFacts: {
+        publicQueries: expect.arrayContaining([
+          expect.objectContaining({
+            queryId: historicalScope.publicDiscovery.queries[10]!.queryId,
+            checked: false,
+            outcome: "failed",
+            losses: [{ code: "DISCOVERY_BUDGET_EXCEEDED", retryable: false }],
+          }),
+        ]),
+      },
+    });
+    expect((child!.sourceScope as any).frozenRecommendationEvidence.discoveryFacts.publicQueries).toHaveLength(11);
+  });
+
   it("低结果额度的 fake 运行只读取并发布允许的一条详情", async () => {
     const job = await run({ maxResults: 1 });
     const calls = { search: 0, detail: 0 };
@@ -396,6 +484,64 @@ describe("AgentRunProcessor checkpoints", () => {
     const [root] = await database.select().from(agentRuns).where(eq(agentRuns.id, rootId));
     await expect(database.select({ parentRunId: agentRuns.parentRunId, runPurpose: agentRuns.runPurpose, preflight: agentRuns.preflightSnapshot }).from(agentRuns).where(eq(agentRuns.parentRunId, rootId)))
       .resolves.toEqual([expect.objectContaining({ parentRunId: rootId, runPurpose: "recommendation", preflight: root!.preflightSnapshot })]);
+  });
+
+  it("recommendation root 在成功发现但缺失 facts 时于 handoff 原子回滚", async () => {
+    const root = await recommendationRoot("fake");
+    const processor = createAgentRunProcessor({
+      db: database,
+      adapterResolver: resolver(successAdapter()),
+      checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+
+    await expect(processor.process({ version: 1, userId: root.userId, runId: root.runId, finalAttempt: true })).resolves.toBe("retry");
+    await expect(Promise.all([
+      database.select({ status: agentRuns.status, currentStep: agentRuns.currentStep }).from(agentRuns).where(eq(agentRuns.id, root.runId)),
+      database.select().from(agentRuns).where(eq(agentRuns.parentRunId, root.runId)),
+      database.select().from(jobTriageVersions).where(eq(jobTriageVersions.userId, root.userId)),
+    ])).resolves.toEqual([[{ status: "queued", currentStep: "persist_results" }], [], []]);
+  });
+
+  it("recommendation root 在成功发现但 facts identity 错误时于 handoff 原子回滚", async () => {
+    const root = await recommendationRoot("layered_public");
+    const processor = createAgentRunProcessor({
+      db: database,
+      adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
+      layeredPublicWorkflowResolver: { resolve: () => ({ run: async () => ({
+        branchOutcome: { trusted: "succeeded" as const, publicDiscovery: "clean_zero" as const }, diagnostics: [],
+        discoveryFacts: { version: "recommendation-discovery-facts-v1" as const, trusted: [], publicQueries: [{ queryId: crypto.randomUUID(), checked: true as const, outcome: "credible_zero" as const, losses: [] }] },
+      }) }) },
+      checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+
+    await expect(processor.process({ version: 1, userId: root.userId, runId: root.runId, finalAttempt: true })).resolves.toBe("failed");
+    await expect(Promise.all([
+      database.select({ status: agentRuns.status, currentStep: agentRuns.currentStep }).from(agentRuns).where(eq(agentRuns.id, root.runId)),
+      database.select().from(agentRuns).where(eq(agentRuns.parentRunId, root.runId)),
+      database.select().from(jobTriageVersions).where(eq(jobTriageVersions.userId, root.userId)),
+    ])).resolves.toEqual([[{ status: "failed", currentStep: "failed" }], [], []]);
+  });
+
+  it("recommendation root 在实际执行 query 缺少事实时回滚 child、triage 与完成事件", async () => {
+    const root = await recommendationRoot("layered_public");
+    const processor = createAgentRunProcessor({
+      db: database,
+      adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
+      layeredPublicWorkflowResolver: { resolve: (input) => ({ run: async () => ({
+        branchOutcome: { trusted: "succeeded" as const, publicDiscovery: "clean_zero" as const },
+        diagnostics: [],
+        discoveryFacts: { ...plannedLayeredDiscoveryFacts(input.executionSpec), publicQueries: plannedLayeredDiscoveryFacts(input.executionSpec).publicQueries.slice(1) },
+      }) }) },
+      checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+
+    await expect(processor.process({ version: 1, userId: root.userId, runId: root.runId, finalAttempt: true })).resolves.toBe("failed");
+    await expect(Promise.all([
+      database.select({ status: agentRuns.status, currentStep: agentRuns.currentStep }).from(agentRuns).where(eq(agentRuns.id, root.runId)),
+      database.select().from(agentRuns).where(eq(agentRuns.parentRunId, root.runId)),
+      database.select().from(jobTriageVersions).where(eq(jobTriageVersions.userId, root.userId)),
+      database.select().from(agentRunEvents).where(and(eq(agentRunEvents.runId, root.runId), eq(agentRunEvents.eventType, "run.completed"))),
+    ])).resolves.toEqual([[{ status: "failed", currentStep: "failed" }], [], [], []]);
   });
 
   it("layered recommendation 根把真实非空 discovery tuple 保守冻结为 initialized 空 child", async () => {

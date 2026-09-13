@@ -28,7 +28,7 @@ import { decideRetry } from "./agent-run-state";
 import { effectiveAgentRunBudget, type AgentRunBudget } from "./effective-agent-run-budget";
 import { agentRunUsageSnapshot, appendBudgetFacts, settleActiveSlice, terminateBudgetRun, type BudgetDimension } from "./agent-run-lifecycle";
 import type { AgentRunCheckpoint } from "./agent-run-checkpoint";
-import { narrowGreenhouseSourceScope, normalizeAgentRunSourceScope } from "./agent-run-source-scope";
+import { completeRecommendationDiscoveryFacts, narrowGreenhouseSourceScope, normalizeAgentRunSourceScope } from "./agent-run-source-scope";
 import { applyTransactionDeadline } from "./transaction-deadline";
 import { deriveSourceHealthTerminal, type SourceHealthTerminal } from "./source-health-terminal";
 import type { SourceHealthDiscoveryAdapter, SourceHealthDiscoveryAdapterResolver } from "./source-health-discovery-adapter";
@@ -373,7 +373,7 @@ async function checkPoint(checkpoint: AgentRunCheckpoint, input: { userId: strin
   }
 }
 
-async function handoffRecommendationDiscoveryInTransaction(deps: AgentRunProcessorDependencies, transaction: any, root: typeof agentRuns.$inferSelect, discoveryFacts?: RecommendationDiscoveryFacts) {
+async function handoffRecommendationDiscoveryInTransaction(deps: AgentRunProcessorDependencies, transaction: any, root: typeof agentRuns.$inferSelect, discoveryFacts: RecommendationDiscoveryFacts | undefined, executionScope: unknown) {
   if (root.runPurpose !== "recommendation" || root.parentRunId !== null) return;
   const context = root.recommendationContext as { profile: { profileId: string; profileVersion: number }; budgets: { deepMatch: unknown } } | null;
   const targetSnapshot = root.targetSnapshot as { targetId: string; version: number; constraints: unknown };
@@ -382,7 +382,7 @@ async function handoffRecommendationDiscoveryInTransaction(deps: AgentRunProcess
   const rootScope = root.sourceScope as { trustedSources?: Array<{ source: { sourceId: string } }>; sources?: Array<string | { sourceId: string }>; publicDiscovery?: { queries?: Array<{ queryId: string }> } };
   const trustedSourceIds = new Set((rootScope.trustedSources ?? []).map(({ source }) => source.sourceId).concat((rootScope.sources ?? []).map((source) => typeof source === "string" ? source : source.sourceId)));
   const publicQueryIds = new Set((rootScope.publicDiscovery?.queries ?? []).map((query) => query.queryId));
-  const parsedFacts = RecommendationDiscoveryFactsSchema.parse(discoveryFacts);
+  const parsedFacts = completeRecommendationDiscoveryFacts({ plannedScope: rootScope, executionScope, discoveryFacts: RecommendationDiscoveryFactsSchema.parse(discoveryFacts), publicDiscoveryEnabled: currentDiscoveryHardLimits.enabledProviders.includes("anysearch") });
   if (parsedFacts.trusted.some((fact) => !trustedSourceIds.has(fact.sourceId)) || parsedFacts.publicQueries.some((fact) => !publicQueryIds.has(fact.queryId))) throw new Error("RECOMMENDATION_DISCOVERY_FACTS_SCOPE_INVALID");
   const tuples = await readDiscoveryResultCandidatesInTransaction(transaction, { userId: root.userId, targetId: root.targetId, rootRunId: root.id });
   const frozenTriageVersionIds: string[] = [];
@@ -403,6 +403,7 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
   trustedSourcePostingVersionIds: readonly string[];
   trustedSourceIds: readonly string[];
   discoveryFacts?: RecommendationDiscoveryFacts;
+  executionScope?: unknown;
   complete?: boolean;
   interrupted?: "paused" | "cancelled" | "budget_exhausted" | "stale";
 }): Promise<"completed" | "stale" | "facts"> {
@@ -496,7 +497,7 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
     const version = run.version + 1;
     // The durable child is part of the discovery completion transaction. Queue delivery
     // remains deliberately best-effort and is performed only after commit.
-    if (run.runPurpose === "recommendation") await handoffRecommendationDiscoveryInTransaction(deps, transaction, run, input.discoveryFacts);
+    if (run.runPurpose === "recommendation") await handoffRecommendationDiscoveryInTransaction(deps, transaction, run, input.discoveryFacts, input.executionScope ?? run.sourceScope);
     else await ensureDeepMatchRunInTransaction({ transaction, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight, userId: input.userId, targetId: run.targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(run.id), trigger: "automatic", discoveryRunId: run.id });
     await transaction.update(agentRunSteps).set({ status: "completed", completedAt: input.now, failedAt: null, failureCode: null }).where(and(
       eq(agentRunSteps.userId, input.userId), eq(agentRunSteps.runId, input.runId), eq(agentRunSteps.status, "running"),
@@ -757,7 +758,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         const commitBefore = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_before", ordinal: 1 });
         if (commitBefore) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return commitBefore; }
         let persisted: { cleanupObjectKeys: string[]; completed: boolean };
-        try { persisted = await runTransaction(deps, deadline, (transaction) => createJobDiscoveryPersistence({ db: deps.db, id: deps.id, clock: deps.clock, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({ run: { ...claimed.run, sourceScope: executionSourceScope, claimToken: claimed.claimToken }, details: input.details, scans: input.scans, storedObjects: stored.map((item) => ({ sourceId: item.detail.sourceId, detailId: item.detail.detailId, objectKey: item.objectKey, rawContentSha256: item.rawContentSha256 })), sourceChecks: input.sourceChecks, sourceIssues: input.sourceIssues, terminal: input.terminal, now: deps.clock(), transaction, afterCompleted: async ({ transaction: completedTransaction, userId, targetId, discoveryRunId }) => { if (claimed.run.runPurpose === "recommendation") await handoffRecommendationDiscoveryInTransaction(deps, completedTransaction, claimed.run, input.discoveryFacts); else await ensureDeepMatchRunInTransaction({ transaction: completedTransaction, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight, userId, targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(discoveryRunId), trigger: "automatic", discoveryRunId }); } })); }
+        try { persisted = await runTransaction(deps, deadline, (transaction) => createJobDiscoveryPersistence({ db: deps.db, id: deps.id, clock: deps.clock, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({ run: { ...claimed.run, sourceScope: executionSourceScope, claimToken: claimed.claimToken }, details: input.details, scans: input.scans, storedObjects: stored.map((item) => ({ sourceId: item.detail.sourceId, detailId: item.detail.detailId, objectKey: item.objectKey, rawContentSha256: item.rawContentSha256 })), sourceChecks: input.sourceChecks, sourceIssues: input.sourceIssues, terminal: input.terminal, now: deps.clock(), transaction, afterCompleted: async ({ transaction: completedTransaction, userId, targetId, discoveryRunId }) => { if (claimed.run.runPurpose === "recommendation") await handoffRecommendationDiscoveryInTransaction(deps, completedTransaction, claimed.run, input.discoveryFacts, executionSourceScope); else await ensureDeepMatchRunInTransaction({ transaction: completedTransaction, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight, userId, targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(discoveryRunId), trigger: "automatic", discoveryRunId }); } })); }
         catch { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_PERSIST_FAILED", retryable: true, category: "source" }, deadline }); }
         await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), persisted.cleanupObjectKeys); if (!persisted.completed) return "stale";
         // PostgreSQL queued state is authoritative; the shared queue wakes it immediately and reconciler repairs delivery failures.
@@ -821,7 +822,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           const detailsStart = await transition("fetch_details", false); if (detailsStart) return detailsStart;
           const detailsComplete = await transition("fetch_details", true); if (detailsComplete) return detailsComplete;
           const persistStart = await transition("persist_results", false); if (persistStart) return persistStart;
-          const persisted = await persistLayeredPublicOutcome(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), deadline, diagnostics: outcome.diagnostics, sourceIssues: outcome.sourceIssues ?? [], sourcePostingVersionIds: outcome.sourcePostingVersionIds ?? [], trustedSourcePostingVersionIds: outcome.trustedSourcePostingVersionIds ?? [], trustedSourceIds: layeredExecutionSpec.sourceScope.trustedSources.map(({ source }) => source.sourceId), discoveryFacts: outcome.discoveryFacts });
+          const persisted = await persistLayeredPublicOutcome(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), deadline, diagnostics: outcome.diagnostics, sourceIssues: outcome.sourceIssues ?? [], sourcePostingVersionIds: outcome.sourcePostingVersionIds ?? [], trustedSourcePostingVersionIds: outcome.trustedSourcePostingVersionIds ?? [], trustedSourceIds: layeredExecutionSpec.sourceScope.trustedSources.map(({ source }) => source.sourceId), discoveryFacts: outcome.discoveryFacts, executionScope: layeredExecutionSpec.sourceScope });
           if (persisted === "completed") await triggerDeepMatchAfterDiscovery({ db: deps.db, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight, queue: deps.matchingQueue, userId: job.userId, targetId: claimed.run.targetId, discoveryRunId: job.runId });
           return persisted === "facts" ? "stale" : persisted;
         } catch (error) {
