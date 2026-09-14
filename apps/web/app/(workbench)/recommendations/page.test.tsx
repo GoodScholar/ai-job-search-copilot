@@ -14,12 +14,28 @@ const targetA = "00000000-0000-4000-8000-000000000001", targetB = "00000000-0000
 const budget = { maxActiveDurationMs: 1, maxAttempts: 1, maxToolCalls: 1, maxResults: 1, maxModelCalls: 0, maxTokens: 0 };
 function list(id: string, targetId: string, title: string) { return RecommendationListSchema.parse({ recommendationListId: id, targetId, localDate: "2026-09-14", sequence: 1, createdAt: "2026-09-14T00:00:00.000Z", exclusions: [], items: [{ recommendationListItemId: "00000000-0000-4000-8000-000000000006", matchVersionId: "00000000-0000-4000-8000-000000000007", opportunityId: "00000000-0000-4000-8000-000000000008", company: "绑定公司", title, location: "上海", displayBand: "highly_matched", highlighted: true, ordinal: 1, jobEvidence: [{ id: "job", value: "岗位证据" }], profileEvidence: [{ id: "profile", value: "画像证据", kind: "profile_fact", profileFactRevisionId: "00000000-0000-4000-8000-000000000009" }], assessment: { opportunityId: "00000000-0000-4000-8000-000000000008", overallScore: 80, dimensions: ["skills", "experience", "project_depth", "career_direction", "location_logistics", "qualification_risk"].map((dimension) => ({ dimension, score: 80, judgment: "evidence_backed_inference", jobEvidenceIds: ["job"], profileEvidenceIds: ["profile"], summary: "证据支持的推断。" })) } }] }); }
 function published(targetId = targetA, listId = listA) { return RecommendationRunSchema.parse({ runId: runA, status: "completed", currentStage: null, stages: ["discovery", "qualification", "coarse_ranking", "deep_matching", "result_publication"].map((key) => ({ key, status: "completed", startedAt: "2026-09-14T00:00:00.000Z", completedAt: "2026-09-14T00:00:00.000Z" })), target: { targetId, targetVersion: 1, roleFamily: "前端工程师" }, sourceScope: { trustedSourceCount: 1, publicQueryCount: 0 }, accountPolicyRevisionNumber: 1, budgets: { discovery: budget, deepMatch: budget }, preflightSnapshot: { version: "run-preflight-v1", workflow: "recommendation", trigger: "manual", targetId, status: "ready", warningFingerprint: null, checkedAt: "2026-09-14T00:00:00.000Z", items: [{ code: "ACCOUNT_RUN_POLICY_READY", severity: "informational", summary: "账户运行可用", impact: "可以开始完整推荐", retryable: false, suggestedActions: [], evidence: { kind: "account_run_policy", revisionNumber: 1, status: "ready", checkedAt: "2026-09-14T00:00:00.000Z" } }] }, result: { kind: "recommendation_list", resultId: listId, recommendationListId: listId, itemCount: 1, publishedAt: "2026-09-14T00:00:00.000Z", evidence: { discovery: { discoveredJobCount: 1 }, sourceCoverage: { plannedTrustedSourceCount: 1, plannedPublicQueryCount: 0, checkedBranchCount: 1, credibleBranchCount: 1, verifiedJobCount: 1 }, coverageLosses: [], qualification: { evaluatedCount: 1, rejectedCount: 0, insufficientInformationCount: 0, expiredCount: 0 }, coarseRanking: { eligibleCount: 1, belowThresholdCount: 0, ruleExcludedCount: 0, candidateLimitExcludedCount: 0, deepMatchCandidateCount: 1 }, deepMatching: { evaluatedCount: 1, qualityInsufficientCount: 0, finalRecommendationCount: 1 }, suggestedActions: [] } }, failure: null, createdAt: "2026-09-14T00:00:00.000Z", updatedAt: "2026-09-14T00:00:00.000Z" }); }
+function nonCompleted(status: "queued" | "running" | "paused" | "failed" | "cancelled") {
+  const at = "2026-09-14T00:00:00.000Z", base = published(targetB, listA);
+  const stage = status === "failed" ? "qualification" : "discovery";
+  const stages = ["discovery", "qualification", "coarse_ranking", "deep_matching", "result_publication"].map((key) => {
+    if (status === "queued") return { key, status: "pending", startedAt: null, completedAt: null };
+    if (status === "cancelled") return key === "discovery" ? { key, status: "cancelled", startedAt: at, completedAt: at } : { key, status: "pending", startedAt: null, completedAt: null };
+    if (status === "failed") return key === "discovery" ? { key, status: "completed", startedAt: at, completedAt: at } : key === stage ? { key, status: "failed", startedAt: at, completedAt: at } : { key, status: "pending", startedAt: null, completedAt: null };
+    return key === "discovery" ? { key, status: "running", startedAt: at, completedAt: null } : { key, status: "pending", startedAt: null, completedAt: null };
+  });
+  return RecommendationRunSchema.parse({ ...base, status, currentStage: status === "queued" || status === "running" || status === "paused" ? "discovery" : status === "failed" ? stage : null, stages, result: null, failure: status === "failed" ? { code: "RECOMMENDATION_HANDOFF_FAILED", stage, summary: "资格门槛暂时无法完成", impact: "本次推荐尚未发布。", retryable: true, suggestedActions: ["restart_discovery"] } : null });
+}
+function noRecommendations(targetId = targetB) {
+  const base = published(targetId, listA), evidence = { discovery: { discoveredJobCount: 0 }, sourceCoverage: { plannedTrustedSourceCount: 1, plannedPublicQueryCount: 0, checkedBranchCount: 1, credibleBranchCount: 1, verifiedJobCount: 0 }, coverageLosses: [], qualification: { evaluatedCount: 0, rejectedCount: 0, insufficientInformationCount: 0, expiredCount: 0 }, coarseRanking: { eligibleCount: 0, belowThresholdCount: 0, ruleExcludedCount: 0, candidateLimitExcludedCount: 0, deepMatchCandidateCount: 0 }, deepMatching: { evaluatedCount: 0, qualityInsufficientCount: 0, finalRecommendationCount: 0 }, suggestedActions: [] };
+  return RecommendationRunSchema.parse({ ...base, result: { kind: "no_recommendations", resultId: listA, evidence, publishedAt: "2026-09-14T00:00:00.000Z" } });
+}
 
 describe("RecommendationsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.getJobTargets.mockResolvedValue({ targets: [] });
     mocks.getLatestRecommendations.mockResolvedValue(null);
+    mocks.getRecommendationList.mockResolvedValue(null);
     mocks.getRecommendationHistoryPage.mockResolvedValue({ items: [], nextCursor: null });
     mocks.getCalibrationProposals.mockResolvedValue([]);
     mocks.getLatestPublishedRecommendationRun.mockResolvedValue(null);
@@ -60,6 +76,7 @@ describe("RecommendationsPage", () => {
     expect(mocks.getLatestPublishedRecommendationRun).not.toHaveBeenCalled();
     expect(mocks.getRecommendationList).not.toHaveBeenCalled();
     expect(mocks.getLatestRecommendations).not.toHaveBeenCalled();
+    expect(mocks.getJobTargets).not.toHaveBeenCalled();
   });
 
   it("无关 query 不改变默认已发布结果的身份", async () => {
@@ -153,6 +170,62 @@ describe("RecommendationsPage", () => {
     await expect(RecommendationsPage({ searchParams: Promise.resolve({ runId: runA }) })).rejects.toBe(redirectError);
   });
 
+  it.each([
+    ["queued", "推荐正在等待开始"], ["running", "推荐正在进行"], ["paused", "推荐已暂停，等待恢复"], ["failed", "资格门槛暂时无法完成"], ["cancelled", "本次推荐已取消"],
+  ] as const)("root-only 的 %s 状态不回退为可信空结果", async (status, copy) => {
+    mocks.getRecommendationRun.mockResolvedValue(nonCompleted(status));
+    render(await RecommendationsPage({ searchParams: Promise.resolve({ runId: runA }) }));
+    expect(screen.getByText(copy)).toBeInTheDocument();
+    expect(screen.queryByText("暂无可处理的推荐")).not.toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "推荐岗位" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "查看本次推荐" })).toHaveAttribute("href", `/home?runId=${runA}`);
+    expect(mocks.getLatestPublishedRecommendationRun).not.toHaveBeenCalled();
+    expect(mocks.getLatestRecommendations).not.toHaveBeenCalled();
+  });
+
+  it("默认没有已发布结果时只使用 primary 的准备和历史入口，不读 latest", async () => {
+    mocks.getJobTargets.mockResolvedValue({ targets: [{ targetId: targetB, state: "active", priority: "secondary" }, { targetId: targetA, state: "active", priority: "primary" }] });
+    mocks.getRecommendationHistoryPage.mockResolvedValue({ items: [list(listB, targetA, "历史岗位")], nextCursor: null });
+    render(await RecommendationsPage());
+    expect(screen.getByText("暂无可处理的推荐")).toBeInTheDocument();
+    expect(screen.getByText("历史岗位")).toBeInTheDocument();
+    expect(mocks.getRecommendationHistoryPage).toHaveBeenCalledWith(targetA);
+    expect(mocks.getLatestRecommendations).not.toHaveBeenCalled();
+  });
+
+  it.each([["默认", {}, () => { mocks.getLatestPublishedRecommendationRun.mockResolvedValue(noRecommendations()); }], ["root", { runId: runA, resultId: listA }, () => { mocks.getRecommendationRun.mockResolvedValue(noRecommendations()); }]] as const)("%s 的可信空结果不回退为历史或当前清单", async (_name, searchParams, arrange) => {
+    arrange(); mocks.getLatestRecommendations.mockResolvedValue(list(listB, targetB, "旧清单岗位"));
+    render(await RecommendationsPage({ searchParams: Promise.resolve(searchParams) }));
+    expect(screen.getByText("今天暂无推荐")).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "推荐岗位" })).not.toBeInTheDocument();
+    expect(screen.queryByText("旧清单岗位")).not.toBeInTheDocument();
+    expect(mocks.getLatestRecommendations).not.toHaveBeenCalled();
+  });
+
+  it("停止结果由页面消费为策略入口，解除后重新读取同一不可变清单", async () => {
+    mocks.getLatestPublishedRecommendationRun.mockResolvedValue(published(targetB, listA)); mocks.getRecommendationList.mockResolvedValue(list(listA, targetB, "停止前岗位"));
+    mocks.requestRecommendationReevaluationAction.mockResolvedValueOnce({ kind: "account_run_stopped" }).mockResolvedValueOnce({ kind: "started" });
+    const first = await RecommendationsPage(); render(first); fireEvent.click(screen.getByRole("button", { name: "重新评估此岗位" }));
+    await waitFor(() => expect(screen.getByRole("link", { name: "管理运行策略" })).toHaveAttribute("href", "/profile/run-policy"));
+    const second = await RecommendationsPage(); render(second);
+    expect(screen.getAllByText("停止前岗位")).toHaveLength(2);
+    expect(mocks.getRecommendationList).toHaveBeenNthCalledWith(1, targetB, listA);
+    expect(mocks.getRecommendationList).toHaveBeenNthCalledWith(2, targetB, listA);
+    expect(mocks.requestRecommendationReevaluationAction).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "重新评估此岗位" }));
+    await waitFor(() => expect(mocks.requestRecommendationReevaluationAction).toHaveBeenCalledTimes(2));
+    expect(mocks.requestRecommendationReevaluationAction).toHaveBeenLastCalledWith(targetB, "00000000-0000-4000-8000-000000000008", expect.any(FormData));
+  });
+
+  it.each(["history", "calibration"] as const)("%s 的独立读取失败不污染已绑定的推荐结果", async (reader) => {
+    mocks.getLatestPublishedRecommendationRun.mockResolvedValue(published(targetB, listA)); mocks.getRecommendationList.mockResolvedValue(list(listA, targetB, "仍可查看的岗位"));
+    if (reader === "history") mocks.getRecommendationHistoryPage.mockRejectedValue(new Error("history secret")); else mocks.getCalibrationProposals.mockRejectedValue(new Error("calibration secret"));
+    render(await RecommendationsPage());
+    expect(screen.getByText("仍可查看的岗位")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("暂时无法读取");
+    expect(screen.queryByText(/secret/)).not.toBeInTheDocument();
+  });
+
   it("展示证据判断、历史版本入口和异步重新评估入口，但不展示精确分数", async () => {
     mocks.getJobTargets.mockResolvedValue({ targets: [{ targetId: "00000000-0000-4000-8000-000000000001", state: "active", priority: "primary" }] });
     mocks.getLatestRecommendations.mockResolvedValue({
@@ -165,7 +238,7 @@ describe("RecommendationsPage", () => {
       items: [{ matchVersionId: "20000000-0000-4000-8000-000000000000", opportunityId: "30000000-0000-4000-8000-000000000000", company: "历史公司", title: "历史岗位", location: "上海", displayBand: "worth_trying", highlighted: true, ordinal: 1, jobEvidence: [{ id: "job:old", value: "历史岗位证据", provenance: { sourcePostingVersionId: "40000000-0000-4000-8000-000000000000", field: "seniority", path: "岗位级别", originalValue: "资深工程师", normalizedValue: "senior" } }, { id: "job:old-salary", value: "薪资：CNY 30000-45000/month", provenance: { sourcePostingVersionId: "40000000-0000-4000-8000-000000000000", field: "salary", path: "薪资", originalValue: "历史月薪", normalizedValue: "salary-normalized" } }, { id: "job:old-industry", value: "行业：人工智能", provenance: { sourcePostingVersionId: "40000000-0000-4000-8000-000000000000", field: "industry", path: "行业", originalValue: "历史行业原文", normalizedValue: "人工智能" } }, { id: "job:old-employment", value: "雇佣类型：direct", provenance: { sourcePostingVersionId: "40000000-0000-4000-8000-000000000000", field: "employmentType", path: "雇佣类型", originalValue: "历史直聘原文", normalizedValue: "direct" } }], profileEvidence: [{ id: "profile:old", value: "历史画像证据" }], assessment: { opportunityId: "30000000-0000-4000-8000-000000000000", overallScore: 70, dimensions: ["skills", "experience", "project_depth", "career_direction", "location_logistics", "qualification_risk"].map((dimension) => ({ dimension, score: 70, judgment: "evidence_backed_inference", jobEvidenceIds: ["job:old"], profileEvidenceIds: ["profile:old"], summary: "历史证据支持的推断。" })) } }],
     }], nextCursor: null });
 
-    render(await RecommendationsPage());
+    render(await RecommendationsPage({ searchParams: Promise.resolve({ targetId: "00000000-0000-4000-8000-000000000001" }) }));
     expect(screen.getByText("高度匹配")).toBeInTheDocument();
     expect(screen.getByText("今日优先处理")).toBeInTheDocument();
     expect(screen.getByText(/岗位要求与已确认技能相符/u)).toBeInTheDocument();
