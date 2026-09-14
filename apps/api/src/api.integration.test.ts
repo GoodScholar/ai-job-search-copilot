@@ -2197,6 +2197,36 @@ describe("authenticated workbench HTTP API", () => {
     }
   });
 
+  it("为账户与推荐控制发布各自严格的 default 成功响应", async () => {
+    const response = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/openapi.json" });
+    expect(response.statusCode).toBe(200);
+    const document = response.json();
+    const resolveSchema = (schema: Record<string, unknown>): Record<string, unknown> => {
+      const reference = schema.$ref;
+      if (typeof reference !== "string") return schema;
+      expect(reference).toMatch(/^#\/components\/schemas\//);
+      return resolveSchema(document.components.schemas[reference.slice("#/components/schemas/".length)] as Record<string, unknown>);
+    };
+    const defaultSuccessSchema = (path: string) => resolveSchema(document.paths[path].post.responses.default.content["application/json"].schema as Record<string, unknown>);
+
+    const accountControl = defaultSuccessSchema("/v1/account/run-policy/controls");
+    const recommendationControl = defaultSuccessSchema("/v1/recommendation-runs/{runId}/controls");
+    const accountProperties = accountControl.properties as Record<string, Record<string, unknown>>;
+    const recommendationProperties = recommendationControl.properties as Record<string, Record<string, unknown>>;
+
+    expect(accountControl).toMatchObject({ additionalProperties: false, required: ["applied", "state"] });
+    expect(accountProperties.run).toBeUndefined();
+    expect(resolveSchema(accountProperties.state)).toMatchObject({
+      additionalProperties: false,
+      required: ["stoppedAt", "controlVersion", "scheduleResumeAfter"],
+    });
+    expect(recommendationControl).toMatchObject({ additionalProperties: false, required: ["applied", "run"] });
+    expect(recommendationProperties.state).toBeUndefined();
+    const recommendationRun = resolveSchema(recommendationProperties.run);
+    expect(recommendationRun).toMatchObject({ additionalProperties: false });
+    expect(recommendationRun.required).toEqual(expect.arrayContaining(["runId", "status", "result", "failure"]));
+  });
+
   it("refuses to bootstrap Dev Auth in production", async () => {
     const environment = {
       APP_ENV: process.env.APP_ENV,

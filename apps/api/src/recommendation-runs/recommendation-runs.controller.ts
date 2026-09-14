@@ -23,7 +23,7 @@ class PreparationDto extends createZodDto(z.object({ preparation: Recommendation
 class RunDto extends createZodDto(RecommendationRunSchema) {}
 class LatestRunDto extends createZodDto(z.object({ run: RecommendationRunSchema.nullable() }).strict()) {}
 class StartResponseDto extends createZodDto(z.object({ run: RecommendationRunSchema, reused: z.boolean() }).strict()) {}
-class ControlResponseDto extends createZodDto(z.object({ applied: z.boolean(), run: RecommendationRunSchema }).strict()) {}
+class RecommendationRunControlResponseDto extends createZodDto(z.object({ applied: z.boolean(), run: RecommendationRunSchema }).strict()) {}
 
 function missing() { return new ApiException("RECOMMENDATION_RUN_NOT_FOUND", HttpStatus.NOT_FOUND, "推荐运行不存在"); }
 function controlError(error: RecommendationRunError) {
@@ -69,7 +69,7 @@ export class RecommendationRunsController {
   @Get(":runId") @ZodResponse({ type: RunDto }) @ApiNotFoundResponse({ type: ApiProblem })
   async get(@Req() request: FastifyRequest, @Param() params: RunPathDto) { const run = await this.queries.get({ userId: request.authenticatedAccount!.userId, runId: params.runId }); if (!run) throw missing(); return run; }
 
-  @Post(":runId/controls") @HttpCode(HttpStatus.OK) @ZodResponse({ type: ControlResponseDto }) @ApiConflictResponse({ type: ApiProblem }) @ApiNotFoundResponse({ type: ApiProblem }) @ApiUnauthorizedResponse({ type: ApiProblem })
+  @Post(":runId/controls") @HttpCode(HttpStatus.OK) @ZodResponse({ type: RecommendationRunControlResponseDto }) @ApiConflictResponse({ type: ApiProblem }) @ApiNotFoundResponse({ type: ApiProblem }) @ApiUnauthorizedResponse({ type: ApiProblem })
   async control(@Req() request: FastifyRequest, @Param() params: RunPathDto, @Body() command: ControlDto) {
     try { return await this.commands.control({ userId: request.authenticatedAccount!.userId, requestId: getRequestId(request), runId: params.runId, command }); }
     catch (error) {
