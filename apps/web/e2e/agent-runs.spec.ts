@@ -119,6 +119,14 @@ function runStatus(page: Page) {
   return page.locator(".agent-run-panel .agent-run-live");
 }
 
+async function tabTo(page: Page, target: ReturnType<Page["getByRole"]>): Promise<void> {
+  for (let index = 0; index < 12; index += 1) {
+    await page.keyboard.press("Tab");
+    if (await target.evaluate((element) => document.activeElement === element)) return;
+  }
+  throw new Error("DISCOVERY_SCHEDULE_ENABLE_NOT_REACHED_BY_TAB");
+}
+
 function assertExecutionEvidence(run: AgentRunDetail): void {
   expect(run.targetSnapshot.constraints.roleFamily).toBe("AI 应用工程师");
   expect("sources" in run.executionSpec.sourceScope ? run.executionSpec.sourceScope.sources : []).toEqual(expect.arrayContaining([
@@ -141,7 +149,7 @@ async function assertAccessibleControls(page: Page, testInfo: TestInfo): Promise
     const enableSchedule = page.getByRole("button", { name: "启用" });
     await scheduleTime.focus();
     await expect(scheduleTime).toBeFocused();
-    await page.keyboard.press("Tab");
+    await tabTo(page, enableSchedule);
     await expect(enableSchedule).toBeFocused();
   }
 }

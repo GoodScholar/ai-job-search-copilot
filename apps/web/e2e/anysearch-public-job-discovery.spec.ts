@@ -147,12 +147,17 @@ async function configureAccount(request: APIRequestContext, scenario: { subject:
   return { token, userId: sessionBody.account.userId, targetId };
 }
 
-async function startPhysicalDiscovery(page: Page, targetId: string, idempotencyKey: string): Promise<{ kind: "blocked"; preflight: ReturnType<typeof RunPreflightReportSchema.parse> } | { kind: "started"; runId: string }> {
+async function readPhysicalPreflight(page: Page, targetId: string) {
   const preflightResponse = await page.request.get(`/api/run-preflight?targetId=${targetId}`);
   expect(preflightResponse.status()).toBe(200);
   const preflight = RunPreflightReportSchema.parse(await preflightResponse.json());
   expect(preflight).toMatchObject({ targetId });
-  if (preflight.status === "blocked") return { kind: "blocked", preflight };
+  return preflight;
+}
+
+async function startPhysicalDiscovery(page: Page, targetId: string, idempotencyKey: string): Promise<string> {
+  const preflight = await readPhysicalPreflight(page, targetId);
+  expect(preflight.status).not.toBe("blocked");
   const command = {
     targetId,
     idempotencyKey,
@@ -168,7 +173,7 @@ async function startPhysicalDiscovery(page: Page, targetId: string, idempotencyK
   expect(replayResponse.status()).toBe(200);
   await expect(replayResponse.json()).resolves.toMatchObject({ runId: created.runId, targetId, reused: true });
   await page.goto(`/home?runId=${created.runId}#agent-run`);
-  return { kind: "started", runId: created.runId };
+  return created.runId;
 }
 
 async function readRun(page: Page, runId: string): Promise<AgentRunDetail> {
@@ -230,13 +235,14 @@ test("版本化 Fake AnySearch 通过历史物理运行 fixture 执行真实 lay
   const account = await configureAccount(request, scenario);
   await resetFixture();
   await page.context().addCookies([{ name: "job_copilot_session", value: account.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
+  const unavailable = await readPhysicalPreflight(page, account.targetId);
+  expect(unavailable).toMatchObject({ status: "blocked" });
+  expect(unavailable.items.filter((item) => item.severity === "blocking").map((item) => item.code)).toEqual(["SOURCE_CAPABILITY_UNAVAILABLE"]);
+  expect(await fixtureAudit()).toEqual([]);
   await page.goto("/profile/targets/" + account.targetId + "/watchlist");
   await addApprovedFixtureWatchlist(page);
 
-  const started = await startPhysicalDiscovery(page, account.targetId, scenario.idempotencyKey);
-  expect(started.kind).toBe("started");
-  if (started.kind !== "started") throw new Error("CONFIGURED_ANYSEARCH_PREFLIGHT_BLOCKED");
-  const { runId } = started;
+  const runId = await startPhysicalDiscovery(page, account.targetId, scenario.idempotencyKey);
 
   await expect.poll(async () => (await readRun(page, runId)).status, { timeout: 75_000 }).toBe("completed");
   const run = await readRun(page, runId);
@@ -370,13 +376,9 @@ test("版本化 Fake AnySearch 缺 key 时由历史物理运行 preflight 与执
   const account = await configureAccount(request, { subject: "fake-anysearch-missing-key-" + scenario.subject });
   await resetFixture();
   await page.context().addCookies([{ name: "job_copilot_session", value: account.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
-  const started = await startPhysicalDiscovery(page, account.targetId, testInfo.project.name === "Desktop Chrome" ? "10000000-0000-4000-8000-000000000141" : "10000000-0000-4000-8000-000000000142");
-  if (started.kind === "blocked") {
-    expect(started.preflight.items.some((item) => item.severity === "blocking")).toBe(true);
-    expect(await fixtureAudit()).toEqual([]);
-    return;
-  }
-  const { runId } = started;
+  await page.goto("/profile/targets/" + account.targetId + "/watchlist");
+  await addApprovedFixtureWatchlist(page);
+  const runId = await startPhysicalDiscovery(page, account.targetId, testInfo.project.name === "Desktop Chrome" ? "10000000-0000-4000-8000-000000000141" : "10000000-0000-4000-8000-000000000142");
 
   await expect.poll(async () => (await readRun(page, runId)).status, { timeout: 75_000 }).toBe("failed");
   const run = await readRun(page, runId);

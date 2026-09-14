@@ -52,6 +52,7 @@ async function importAndEvaluate(page: Page, content: string, expected: string, 
 }
 
 test("真实运行时持久化 hard fail、unknown 与 pass 三条岗位评估路径", async ({ page, request }, testInfo) => {
+  const futureDeadline = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
   await signIn(page, request, testInfo.project.name);
   if (testInfo.project.name === "Desktop Chrome") {
     await page.getByRole("textbox", { name: "岗位描述" }).focus();
@@ -62,7 +63,7 @@ test("真实运行时持久化 hard fail、unknown 与 pass 三条岗位评估�
   await importAndEvaluate(page, ["# 现场前端", "公司：示例科技", "地点：上海", "工作方式：现场"].join("\n"), "不符合资格门槛", testInfo.project.name);
   await importAndEvaluate(page, ["# 待确认前端", "公司：示例科技", "地点：上海", "工作方式：远程"].join("\n"), "待补充证据", testInfo.project.name);
   await importAndEvaluate(page, [
-    "# frontend engineer", "公司：示例科技", "地点：上海", "截止日期：2026-09-12T00:00:00.000Z", "工作方式：远程", "是否需要搬迁：否",
+    "# frontend engineer", "公司：示例科技", "地点：上海", `截止日期：${futureDeadline}`, "工作方式：远程", "是否需要搬迁：否",
     "学历：本科", "语言：英语(C1)", "工作资格：中国工作许可", "必备技能：TypeScript",
   ].join("\n"), "符合资格门槛", testInfo.project.name);
 
