@@ -1027,6 +1027,8 @@ it("推荐运行读 client 分别保留 401，get 与 exact-list 保留 404", as
   await expect((unavailable() as any).getRecommendationRunPreparation(sessionToken)).rejects.toMatchObject({ status: 401 });
   await expect((unavailable() as any).getLatestRecommendationRun(sessionToken)).rejects.toMatchObject({ status: 401 });
   await expect((unavailable() as any).getLatestPublishedRecommendationRun(sessionToken)).rejects.toMatchObject({ status: 401 });
+  await expect((unavailable() as any).getRecommendationRun(sessionToken, agentRunId)).rejects.toMatchObject({ status: 401 });
+  await expect((unavailable() as any).getRecommendationList(sessionToken, targetId, importId)).rejects.toMatchObject({ status: 401 });
   const missing = () => createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(Response.json({ code: "RECOMMENDATION_RUN_NOT_FOUND", message: "推荐运行不存在", requestId: agentRunId }, { status: 404 })) });
   await expect((missing() as any).getRecommendationRun(sessionToken, agentRunId)).rejects.toMatchObject({ status: 404 });
   await expect((missing() as any).getRecommendationList(sessionToken, targetId, importId)).rejects.toMatchObject({ status: 404 });
