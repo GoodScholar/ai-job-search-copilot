@@ -8,7 +8,7 @@ it("preparation 代理成功、401 与未知上游，并始终 no-store", async 
   mocks.readSessionToken.mockResolvedValue("a".repeat(43)); mocks.getRecommendationRunPreparation.mockResolvedValue({ target: null });
   const success = await GET(); expect(success.status).toBe(200); expect(await success.json()).toEqual({ target: null }); expect(mocks.getRecommendationRunPreparation).toHaveBeenCalledWith("a".repeat(43));
   mocks.getRecommendationRunPreparation.mockRejectedValue({ status: 401 }); const unauthorized = await GET(); expect(unauthorized.status).toBe(401);
-  mocks.getRecommendationRunPreparation.mockRejectedValue(new Error("secret")); const unknown = await GET(); expect(unknown.status).toBe(502);
+  mocks.getRecommendationRunPreparation.mockRejectedValue({ status: 200, kind: "invalid_response" }); const unknown = await GET(); expect(unknown.status).toBe(502);
   mocks.readSessionToken.mockResolvedValue(null); const localUnauthorized = await GET(); expect(localUnauthorized.status).toBe(401);
   for (const response of [success, unauthorized, unknown, localUnauthorized]) expect(response.headers.get("cache-control")).toBe("no-store");
 });
