@@ -30,6 +30,7 @@
     "./job-discovery-execution-mode": "./src/job-discovery-execution-mode.ts",
     "./agent-runs": "./src/agent-runs.ts",
     "./recommendation-runs": "./src/recommendation-runs.ts",
+    "./recommendation-runs-preparation": "./src/recommendation-runs-preparation.ts",
     "./account-run-policies": "./src/account-run-policies.ts",
     "./account-run-control": "./src/account-run-control.ts",
     "./anysearch-query-plan": "./src/anysearch-query-plan.ts",

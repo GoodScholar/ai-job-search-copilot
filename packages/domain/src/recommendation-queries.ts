@@ -6,6 +6,7 @@ export function createRecommendationQueries(deps: { db: Database }) {
   const queries = createDeepMatchQueries(deps);
   return {
     getLatestList: queries.getLatestList,
+    getList: (input: { userId: string; targetId: string; recommendationListId: string }) => queries.getLatestList(input),
     getListHistoryPage: queries.getListHistoryPage,
     getListExclusionsPage: queries.getListExclusionsPage,
   };

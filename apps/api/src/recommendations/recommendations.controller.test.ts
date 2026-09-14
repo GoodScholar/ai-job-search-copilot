@@ -14,3 +14,9 @@ it("账户停止时手动重新评估返回安全 409", async () => {
   const controller = new RecommendationsController({} as never, { start: async () => { throw new AccountRunAdmissionError("ACCOUNT_RUN_STOPPED"); } } as never, {} as never, {} as never);
   await expect(controller.reevaluate({ authenticatedAccount: { userId: "owner" } } as never, { targetId: report.targetId, opportunityId: "00000000-0000-4000-8000-000000000002", idempotencyKey: "00000000-0000-4000-8000-000000000003", warningFingerprint: null } as never)).rejects.toMatchObject({ code: "ACCOUNT_RUN_STOPPED", status: 409, publicMessage: "账户已停止全部运行，请先解除全局停止" });
 });
+
+it("精确清单读取不回退到 target 的 latest，owner 或 target 不匹配同样隐藏", async () => {
+  const controller = new RecommendationsController({ getList: async () => null } as never, {} as never, {} as never, {} as never);
+  await expect(controller.getList({ authenticatedAccount: { userId: "owner" } } as never, { recommendationListId: "00000000-0000-4000-8000-000000000002" } as never, { targetId: "00000000-0000-4000-8000-000000000001" } as never))
+    .rejects.toMatchObject({ code: "RECOMMENDATION_LIST_NOT_FOUND", status: 404 });
+});

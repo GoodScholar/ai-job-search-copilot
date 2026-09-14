@@ -925,3 +925,16 @@ it("账户全局控制客户端严格解析状态、命令和两类可公开的 
   expect(fetchImpl).toHaveBeenNthCalledWith(1, "http://127.0.0.1:3021/v1/account/run-policy/control", expect.objectContaining({ method: "GET" }));
   expect(fetchImpl).toHaveBeenNthCalledWith(2, "http://127.0.0.1:3021/v1/account/run-policy/controls", expect.objectContaining({ method: "POST", body: JSON.stringify(command) }));
 });
+
+it("推荐运行客户端走固定 owner-bound 路径，并拒绝畸形成功响应", async () => {
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ unexpected: true }), { status: 200 }));
+  const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+  await expect((client as any).getRecommendationRunPreparation(sessionToken)).rejects.toMatchObject({ kind: "invalid_response" });
+  await expect((client as any).getLatestRecommendationRun(sessionToken)).rejects.toMatchObject({ kind: "invalid_response" });
+  await expect((client as any).getLatestPublishedRecommendationRun(sessionToken)).rejects.toMatchObject({ kind: "invalid_response" });
+  expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+    "http://127.0.0.1:3021/v1/recommendation-runs/preparation",
+    "http://127.0.0.1:3021/v1/recommendation-runs/latest",
+    "http://127.0.0.1:3021/v1/recommendation-runs/latest-result",
+  ]);
+});

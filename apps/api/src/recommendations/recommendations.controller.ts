@@ -40,6 +40,16 @@ export class RecommendationsController {
     return RecommendationListSchema.parse(list);
   }
 
+  @Get("lists/:recommendationListId")
+  @ZodResponse({ type: RecommendationListDto })
+  @ApiUnauthorizedResponse()
+  @ApiNotFoundResponse()
+  async getList(@Req() request: FastifyRequest, @Param() params: RecommendationListIdParamDto, @Query() query: RecommendationTargetQueryDto) {
+    const list = await this.queries.getList({ userId: request.authenticatedAccount!.userId, targetId: query.targetId, recommendationListId: params.recommendationListId });
+    if (!list) throw new ApiException("RECOMMENDATION_LIST_NOT_FOUND", 404, "推荐清单不存在");
+    return RecommendationListSchema.parse(list);
+  }
+
   @Get("history")
   async history(@Req() request: FastifyRequest, @Query() query: RecommendationCursorQueryDto) {
     return RecommendationListHistoryPageSchema.parse(await this.queries.getListHistoryPage({ userId: request.authenticatedAccount!.userId, targetId: query.targetId, cursor: query.cursor, limit: query.limit }));

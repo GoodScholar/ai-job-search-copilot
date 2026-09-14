@@ -139,6 +139,16 @@ export function createRecommendationRunQueries(deps: { db: Database }) {
         return root ? project(transaction, input.userId, root.id) : null;
       });
     },
+    async latestPublished(input: { userId: string }): Promise<RecommendationRun | null> {
+      return deps.db.transaction(async (transaction) => {
+        await acquireAccountAdvisoryLock(transaction, input.userId);
+        const [result] = await transaction.select({ rootRunId: recommendationResults.rootRunId }).from(recommendationResults)
+          .where(eq(recommendationResults.userId, input.userId))
+          .orderBy(desc(recommendationResults.createdAt), desc(recommendationResults.id))
+          .limit(1);
+        return result ? project(transaction, input.userId, result.rootRunId) : null;
+      });
+    },
     async get(input: { userId: string; runId: string }): Promise<RecommendationRun | null> {
       return deps.db.transaction(async (transaction) => { await acquireAccountAdvisoryLock(transaction, input.userId); const facts = await readLogicalFacts(transaction, input.userId, input.runId); return facts ? projectFacts(facts) : null; });
     },

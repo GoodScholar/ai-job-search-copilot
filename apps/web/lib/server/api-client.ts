@@ -83,6 +83,7 @@ import {
   type StartAgentRunCommand,
   type StartAgentRunResponse,
 } from "@job-copilot/contracts/agent-runs";
+import { ControlRecommendationRunCommandSchema, RecommendationRunPreparationSchema, RecommendationRunSchema, StartRecommendationRunCommandSchema, type ControlRecommendationRunCommand, type RecommendationRun, type RecommendationRunPreparation, type StartRecommendationRunCommand } from "@job-copilot/contracts/recommendation-runs";
 import {
   JobDiscoveryScheduleResponseSchema,
   SetJobDiscoveryScheduleCommandSchema,
@@ -274,6 +275,41 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
       const response = await request(`/v1/recommendations/latest?targetId=${encodeURIComponent(targetId)}`, { method: "GET", headers: { authorization: `Bearer ${sessionToken}` } });
       if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法读取推荐清单", response.status, problem ?? undefined); }
       return parseSuccess(response, RecommendationListSchema);
+    },
+    async getRecommendationList(sessionToken: string, targetId: string, recommendationListId: string): Promise<RecommendationList> {
+      const response = await request(`/v1/recommendations/lists/${encodeURIComponent(recommendationListId)}?targetId=${encodeURIComponent(targetId)}`, { method: "GET", headers: { authorization: `Bearer ${sessionToken}` }, cache: "no-store" });
+      if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法读取推荐清单", response.status, problem ?? undefined); }
+      return parseSuccess(response, RecommendationListSchema);
+    },
+    async getRecommendationRunPreparation(sessionToken: string): Promise<RecommendationRunPreparation> {
+      const response = await request("/v1/recommendation-runs/preparation", { method: "GET", headers: { authorization: `Bearer ${sessionToken}` }, cache: "no-store" });
+      if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法读取推荐准备状态", response.status, problem ?? undefined); }
+      return parseSuccess(response, z.object({ preparation: RecommendationRunPreparationSchema }).strict()).then(({ preparation }) => preparation);
+    },
+    async startRecommendationRun(sessionToken: string, command: StartRecommendationRunCommand): Promise<{ run: RecommendationRun; reused: boolean }> {
+      const response = await request("/v1/recommendation-runs", { method: "POST", headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" }, body: JSON.stringify(StartRecommendationRunCommandSchema.parse(command)), cache: "no-store" });
+      if (!response.ok) { if (response.status === 409) return throwRunPreflightConflict(response, "无法启动推荐运行"); const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法启动推荐运行", response.status, problem ?? undefined); }
+      return parseSuccess(response, z.object({ run: RecommendationRunSchema, reused: z.boolean() }).strict());
+    },
+    async getLatestRecommendationRun(sessionToken: string): Promise<RecommendationRun | null> {
+      const response = await request("/v1/recommendation-runs/latest", { method: "GET", headers: { authorization: `Bearer ${sessionToken}` }, cache: "no-store" });
+      if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法读取最近推荐运行", response.status, problem ?? undefined); }
+      return parseSuccess(response, z.object({ run: RecommendationRunSchema.nullable() }).strict()).then(({ run }) => run);
+    },
+    async getLatestPublishedRecommendationRun(sessionToken: string): Promise<RecommendationRun | null> {
+      const response = await request("/v1/recommendation-runs/latest-result", { method: "GET", headers: { authorization: `Bearer ${sessionToken}` }, cache: "no-store" });
+      if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法读取最近推荐结果", response.status, problem ?? undefined); }
+      return parseSuccess(response, z.object({ run: RecommendationRunSchema.nullable() }).strict()).then(({ run }) => run);
+    },
+    async getRecommendationRun(sessionToken: string, runId: string): Promise<RecommendationRun> {
+      const response = await request(`/v1/recommendation-runs/${encodeURIComponent(runId)}`, { method: "GET", headers: { authorization: `Bearer ${sessionToken}` }, cache: "no-store" });
+      if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法读取推荐运行", response.status, problem ?? undefined); }
+      return parseSuccess(response, RecommendationRunSchema);
+    },
+    async controlRecommendationRun(sessionToken: string, runId: string, command: ControlRecommendationRunCommand): Promise<{ applied: boolean; run: RecommendationRun }> {
+      const response = await request(`/v1/recommendation-runs/${encodeURIComponent(runId)}/controls`, { method: "POST", headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" }, body: JSON.stringify(ControlRecommendationRunCommandSchema.parse(command)), cache: "no-store" });
+      if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法控制推荐运行", response.status, problem ?? undefined); }
+      return parseSuccess(response, z.object({ applied: z.boolean(), run: RecommendationRunSchema }).strict());
     },
     async getRecommendationHistoryPage(sessionToken: string, targetId: string, cursor?: string): Promise<RecommendationListHistoryPage> {
       const cursorQuery = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
