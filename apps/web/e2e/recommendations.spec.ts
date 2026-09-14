@@ -226,7 +226,7 @@ test("显式 Fake matching 真实链路交付双方证据、质量排除与单�
   await page.context().addCookies([{ name: "job_copilot_session", value: account.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
   await installMatchingFixture(account.userId, account.targetId, { qualityInsufficientOpportunityIds: [excluded.opportunityId] });
   const discoveryRunId = await runDiscovery(request, account, scenarioFor(info).batchKey);
-  await page.goto("/recommendations");
+  await page.goto(`/recommendations?targetId=${account.targetId}`);
   await waitForRun(page, discoveryRunId);
   const initialRunId = await automaticMatchRun(account.userId, discoveryRunId);
   await waitForRun(page, initialRunId);
@@ -305,7 +305,7 @@ test("推荐决策与拒绝校准建议保持规则和目标不变", async ({ pa
   await Promise.all(["反馈岗位一", "反馈岗位二", "反馈岗位三", "反馈岗位四", "反馈岗位五"].map((title) => importAndTriage(request, account, title)));
   await page.context().addCookies([{ name: "job_copilot_session", value: account.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
   const discoveryRunId = await runDiscovery(request, account, info.project.name === "Desktop Chrome" ? "10000000-0000-4000-8000-000000000241" : "10000000-0000-4000-8000-000000000242");
-  await page.goto("/recommendations"); await waitForRun(page, discoveryRunId);
+  await page.goto(`/recommendations?targetId=${account.targetId}`); await waitForRun(page, discoveryRunId);
   const matching = await automaticMatchRun(account.userId, discoveryRunId); await waitForRun(page, matching);
   await page.reload();
   const latest = await request.get(`${apiBaseUrl}/v1/recommendations/latest?targetId=${account.targetId}`, { headers: { authorization: `Bearer ${account.token}` } });
@@ -356,7 +356,7 @@ test("交错批准后立即锁定过期建议，刷新读模型并重新计算�
   await Promise.all(["薪酬反馈一", "薪酬反馈二", "薪酬反馈三", "地点反馈一", "地点反馈二", "地点反馈三"].map((title) => importAndTriage(request, account, title)));
   await page.context().addCookies([{ name: "job_copilot_session", value: account.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
   const discoveryRunId = await runDiscovery(request, account, info.project.name === "Desktop Chrome" ? "10000000-0000-4000-8000-000000000341" : "10000000-0000-4000-8000-000000000342");
-  await page.goto("/recommendations"); await waitForRun(page, discoveryRunId);
+  await page.goto(`/recommendations?targetId=${account.targetId}`); await waitForRun(page, discoveryRunId);
   await waitForRun(page, await automaticMatchRun(account.userId, discoveryRunId));
   await page.reload();
   for (const title of ["薪酬反馈一", "薪酬反馈二", "薪酬反馈三"]) await ignoreRecommendation(page, title, "薪资", info);
@@ -393,7 +393,7 @@ test("显式 Fake matching 的质量不足候选可生成零推荐清单", async
   await page.context().addCookies([{ name: "job_copilot_session", value: account.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
   await installMatchingFixture(account.userId, account.targetId, { qualityInsufficientOpportunityIds: [excluded.opportunityId] });
   const discoveryRunId = await runDiscovery(request, account, crypto.randomUUID());
-  await page.goto("/recommendations");
+  await page.goto(`/recommendations?targetId=${account.targetId}`);
   await waitForRun(page, discoveryRunId);
   const runId = await automaticMatchRun(account.userId, discoveryRunId);
   await waitForRun(page, runId);
@@ -445,7 +445,7 @@ test("真实 discovery 自动 child 以深评稳定重排十项并标出正确 T
   await page.context().addCookies([{ name: "job_copilot_session", value: account.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
   await installMatchingFixture(account.userId, account.targetId, { overallScoresByOpportunityId: Object.fromEntries(opportunities.map((opportunity, index) => [opportunity.opportunityId, 81 + index])) });
   const discoveryRunId = await runDiscovery(request, account, crypto.randomUUID());
-  await page.goto("/recommendations");
+  await page.goto(`/recommendations?targetId=${account.targetId}`);
   await waitForRun(page, discoveryRunId);
   const runId = await automaticMatchRun(account.userId, discoveryRunId);
   await waitForRun(page, runId);
@@ -453,11 +453,11 @@ test("真实 discovery 自动 child 以深评稳定重排十项并标出正确 T
 
   await page.goto(`/home?runId=${runId}#agent-run`);
   await expect(page.getByRole("heading", { name: "评估候选岗位匹配" })).toBeVisible();
-  await expect(page.getByLabel("用于发现岗位的求职目标")).toBeVisible();
+  await expect(page.getByLabel("用于发现岗位的求职目标")).toHaveCount(0);
   await expect(page.locator(".agent-run-panel .agent-run-live")).toContainText("已生成 10 项推荐");
   await expect(page.getByRole("list", { name: "岗位匹配运行时间线" })).toContainText("岗位匹配完成");
 
-  await page.goto("/recommendations");
+  await page.goto(`/recommendations?targetId=${account.targetId}`);
   const recommendations = page.getByRole("list", { name: "推荐岗位" });
   await expect(recommendations.locator(":scope > li")).toHaveCount(10);
   const titles = await recommendations.locator("h2").allTextContents();

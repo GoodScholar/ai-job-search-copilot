@@ -1,4 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
+import { StartAgentRunResponseSchema } from "@job-copilot/contracts/agent-runs";
 import { Client } from "pg";
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
 
@@ -119,21 +120,6 @@ async function addWatchlistSource(page: Page, targetId: string, name: string, bo
   await page.getByLabel("允许域").fill("boards.greenhouse.io, boards-api.greenhouse.io");
   await page.getByRole("button", { name: "保存目标公司" }).click();
   await expect(page.getByRole("status")).toContainText("目标公司已添加。");
-}
-
-async function installFirstRandomUuid(page: Page, value: string): Promise<void> {
-  await page.addInitScript((fixed) => {
-    const original = crypto.randomUUID.bind(crypto);
-    const key = `e2e-first-random-uuid:${fixed}`;
-    Object.defineProperty(crypto, "randomUUID", {
-      configurable: true,
-      value: () => {
-        if (sessionStorage.getItem(key)) return original();
-        sessionStorage.setItem(key, "used");
-        return fixed;
-      },
-    });
-  }, value);
 }
 
 async function waitForRun(page: Page, runId: string): Promise<void> {
@@ -296,15 +282,21 @@ test("从首页将受限来源标记已读、停用并标记为已处理", async
   expect(preflight.warningFingerprint).toMatch(/^[a-f0-9]{64}$/u);
   expect(preflight.items.filter((item) => item.severity === "blocking")).toEqual([]);
   expect(preflight.items.filter((item) => item.severity === "warning")).toEqual([expect.objectContaining({ code: "SOURCE_HEALTH_UNCHECKED" })]);
-  await installFirstRandomUuid(page, info.project.name === "Desktop Chrome" ? "10000000-0000-4000-8000-000000000151" : "10000000-0000-4000-8000-000000000152");
-  await page.goto("/home");
-  await activate(page, info, "发现岗位");
-  const confirmation = page.getByRole("button", { name: "我已了解，仍要启动" });
-  await expect(confirmation).toBeVisible();
-  const responsePromise = page.waitForResponse((response) => response.url().endsWith("/api/agent-runs") && response.request().method() === "POST");
-  await activateControl(page, confirmation, info);
-  const runId = (await (await responsePromise).json() as { runId: string }).runId;
+  const command = {
+    targetId,
+    idempotencyKey: info.project.name === "Desktop Chrome" ? "10000000-0000-4000-8000-000000000151" : "10000000-0000-4000-8000-000000000152",
+    warningFingerprint: preflight.warningFingerprint,
+  };
+  const createdResponse = await page.request.post("/api/agent-runs", { data: command });
+  expect(createdResponse.status()).toBe(201);
+  const created = StartAgentRunResponseSchema.parse(await createdResponse.json());
+  expect(created).toMatchObject({ targetId, reused: false });
+  const replayResponse = await page.request.post("/api/agent-runs", { data: command });
+  expect(replayResponse.status()).toBe(200);
+  await expect(replayResponse.json()).resolves.toMatchObject({ runId: created.runId, targetId, reused: true });
+  const runId = created.runId;
   await waitForRun(page, runId);
+  await page.goto(`/home?runId=${runId}#agent-run`);
   await page.reload();
 
   const unread = await inboxItem(request, session.token, "source_attention", "unread");
@@ -356,7 +348,7 @@ test("从首页拒绝校准建议不会修改现行规则", async ({ page, reque
   const discoveryRunId = (await discovery.json() as { runId: string }).runId;
   await waitForRun(page, await waitForAutomaticMatch(account.userId, discoveryRunId));
   await page.goto("/home");
-  await page.getByRole("link", { name: "推荐" }).click();
+  await page.goto(`/recommendations?targetId=${account.targetId}`);
   await expect(page.getByRole("list", { name: "推荐岗位" })).toBeVisible({ timeout: 45_000 });
   for (const [title, reason] of feedback) {
     const card = page.getByRole("listitem").filter({ has: page.getByRole("heading", { name: title }) });

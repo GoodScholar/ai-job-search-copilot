@@ -1,6 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { AgentInboxItem } from "@job-copilot/contracts/agent-inbox";
-import type { AgentRunDetail } from "@job-copilot/contracts/agent-runs";
+import { StartAgentRunResponseSchema, type AgentRunDetail } from "@job-copilot/contracts/agent-runs";
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
@@ -12,13 +12,6 @@ const scenarios = {
 } as const;
 
 function scenarioFor(testInfo: TestInfo) { return scenarios[testInfo.project.name as keyof typeof scenarios]; }
-
-async function installFirstRandomUuid(page: Page, value: string): Promise<void> {
-  await page.addInitScript((fixed) => {
-    const original = crypto.randomUUID.bind(crypto); let used = false;
-    Object.defineProperty(crypto, "randomUUID", { configurable: true, value: () => used ? original() : (used = true, fixed) });
-  }, value);
-}
 
 async function configureTarget(page: Page, request: APIRequestContext, subject: string): Promise<{ targetId: string; token: string }> {
   const sessionResponse = await request.post(`${apiBaseUrl}/v1/auth/dev/sessions`, {
@@ -105,15 +98,15 @@ test("两来源 Fake 运行保留成功岗位、展示局部诊断并可停用�
   expect(preflight.warningFingerprint).toMatch(/^[a-f0-9]{64}$/u);
   expect(preflight.items.filter((item) => item.severity === "blocking")).toEqual([]);
   expect(preflight.items.filter((item) => item.severity === "warning")).toEqual([expect.objectContaining({ code: "SOURCE_HEALTH_UNCHECKED" })]);
-  await installFirstRandomUuid(page, scenario.idempotencyKey);
-  await page.goto("/home");
-  const start = page.getByRole("button", { name: "发现岗位" });
-  if (testInfo.project.name === "Mobile Safari") await start.tap(); else await start.click();
-  const confirmation = page.getByRole("button", { name: "我已了解，仍要启动" });
-  await expect(confirmation).toBeVisible();
-  const responsePromise = page.waitForResponse((response) => response.url().endsWith("/api/agent-runs") && response.request().method() === "POST");
-  if (testInfo.project.name === "Mobile Safari") await confirmation.tap(); else await confirmation.click();
-  const runId = ((await (await responsePromise).json()) as { runId: string }).runId;
+  const command = { targetId, idempotencyKey: scenario.idempotencyKey, warningFingerprint: preflight.warningFingerprint };
+  const createdResponse = await page.request.post("/api/agent-runs", { data: command });
+  expect(createdResponse.status()).toBe(201);
+  const created = StartAgentRunResponseSchema.parse(await createdResponse.json());
+  expect(created).toMatchObject({ targetId, reused: false });
+  const replayResponse = await page.request.post("/api/agent-runs", { data: command });
+  expect(replayResponse.status()).toBe(200);
+  await expect(replayResponse.json()).resolves.toMatchObject({ runId: created.runId, targetId, reused: true });
+  const runId = created.runId;
   await expect.poll(async () => {
     const run = await getRun(page, runId);
     return `${run.status}:${run.termination?.kind}`;

@@ -1,6 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { AgentInboxItem } from "@job-copilot/contracts/agent-inbox";
-import { AGENT_RUN_QUEUE, type AgentRunDetail } from "@job-copilot/contracts/agent-runs";
+import { AGENT_RUN_QUEUE, StartAgentRunResponseSchema, type AgentRunDetail } from "@job-copilot/contracts/agent-runs";
+import { RunPreflightReportSchema } from "@job-copilot/contracts/run-preflight";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { Queue } from "bullmq";
 import { Client } from "pg";
@@ -68,25 +69,6 @@ async function replaceActiveTarget(page: Page): Promise<void> {
   await expect(page.getByRole("status")).toHaveText("求职目标已保存。");
 }
 
-async function installFirstRandomUuid(page: Page, value: string): Promise<void> {
-  const install = (fixed: string) => {
-    const original = crypto.randomUUID.bind(crypto);
-    const marker = `job-copilot:e2e-fixed-random-uuid:${fixed}`;
-    let used = sessionStorage.getItem(marker) === "used";
-    Object.defineProperty(crypto, "randomUUID", {
-      configurable: true,
-      value: () => {
-        if (used) return original();
-        used = true;
-        sessionStorage.setItem(marker, "used");
-        return fixed;
-      },
-    });
-  };
-  await page.addInitScript(install, value);
-  await page.evaluate(install, value);
-}
-
 async function startScenario(page: Page, testInfo: TestInfo, idempotencyKey: string): Promise<string> {
   const sessionToken = await signIn(page, testInfo, idempotencyKey);
   await replaceActiveTarget(page);
@@ -98,18 +80,27 @@ async function startScenario(page: Page, testInfo: TestInfo, idempotencyKey: str
     data: { expectedVersion: 0, canonicalCompanyName: "Agent Run Fake Fixture", careersUrl: "https://boards.greenhouse.io/agent-run-fake-fixture", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null },
   });
   expect(source.status()).toBe(201);
-  await installFirstRandomUuid(page, idempotencyKey);
-  await page.getByRole("link", { name: "AI Job Search Copilot" }).click();
-  await expect(page).toHaveURL(/\/home$/);
-  const start = page.getByRole("button", { name: "发现岗位" });
-  if (testInfo.project.name === "Mobile Safari") await start.tap();
-  else await start.click();
-  await expect(page.getByRole("button", { name: "我已了解，仍要启动" })).toBeVisible();
-  const requestPromise = page.waitForRequest((request) => request.url().endsWith("/api/agent-runs") && request.method() === "POST");
-  const responsePromise = page.waitForResponse((response) => response.url().endsWith("/api/agent-runs") && response.request().method() === "POST");
-  await page.getByRole("button", { name: "我已了解，仍要启动" }).click();
-  expect((await requestPromise).postDataJSON()).toMatchObject({ idempotencyKey });
-  return ((await (await responsePromise).json()) as { runId: string }).runId;
+  const preflightResponse = await page.request.get(`/api/run-preflight?targetId=${targetId}`);
+  expect(preflightResponse.status()).toBe(200);
+  const preflight = RunPreflightReportSchema.parse(await preflightResponse.json());
+  expect(preflight).toMatchObject({ targetId });
+  expect(preflight.status).not.toBe("blocked");
+  const command = {
+    targetId,
+    idempotencyKey,
+    warningFingerprint: preflight.status === "ready_with_warnings" ? preflight.warningFingerprint : null,
+  };
+  if (preflight.status === "ready_with_warnings") expect(command.warningFingerprint).toMatch(/^[a-f0-9]{64}$/u);
+  else expect(command.warningFingerprint).toBeNull();
+  const createdResponse = await page.request.post("/api/agent-runs", { data: command });
+  expect(createdResponse.status()).toBe(201);
+  const created = StartAgentRunResponseSchema.parse(await createdResponse.json());
+  expect(created).toMatchObject({ targetId, reused: false });
+  const replayResponse = await page.request.post("/api/agent-runs", { data: command });
+  expect(replayResponse.status()).toBe(200);
+  await expect(replayResponse.json()).resolves.toMatchObject({ runId: created.runId, targetId, reused: true });
+  await page.goto(`/home?runId=${created.runId}#agent-run`);
+  return created.runId;
 }
 
 async function getRun(page: Page, runId: string): Promise<AgentRunDetail> {
@@ -146,11 +137,12 @@ async function assertAccessibleControls(page: Page, testInfo: TestInfo): Promise
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 
   if (testInfo.project.name === "Desktop Chrome") {
-    const target = page.getByRole("combobox", { name: "用于发现岗位的求职目标" });
-    await target.focus();
-    await expect(target).toBeFocused();
+    const scheduleTime = page.getByLabel("每日检查时间（北京时间 / Asia/Shanghai）");
+    const enableSchedule = page.getByRole("button", { name: "启用" });
+    await scheduleTime.focus();
+    await expect(scheduleTime).toBeFocused();
     await page.keyboard.press("Tab");
-    await expect(page.getByRole("button", { name: /发现岗位|暂停岗位发现|继续本次岗位发现/ }).first()).toBeFocused();
+    await expect(enableSchedule).toBeFocused();
   }
 }
 
@@ -173,7 +165,12 @@ test("暂停会持久化到 Inbox，刷新后用 SSE 游标恢复并可继续完
     expect((await resumedEventsRequest).url()).toContain(`afterEventId=${savedCursor}`);
     await queue.resume();
     queuePaused = false;
-    await page.getByRole("button", { name: "暂停岗位发现" }).click();
+    const pause = page.getByRole("button", { name: "暂停岗位发现" });
+    if (testInfo.project.name === "Desktop Chrome") {
+      await pause.focus();
+      await expect(pause).toBeFocused();
+      await page.keyboard.press("Enter");
+    } else await pause.click();
     await expect(runStatus(page)).toContainText(/等待安全暂停|岗位发现已暂停/);
     await expect(page.getByRole("heading", { name: "岗位发现已暂停" })).toBeVisible();
     await expect.poll(async () => (await getRun(page, runId)).status).toBe("paused");
@@ -202,7 +199,12 @@ test("暂停会持久化到 Inbox，刷新后用 SSE 游标恢复并可继续完
 
 test("取消会在安全检查点终止且不会保存岗位结果", async ({ page }, testInfo) => {
   const runId = await startScenario(page, testInfo, scenarioFor(testInfo, "cancel"));
-  await page.getByRole("button", { name: "取消岗位发现" }).click();
+  const cancel = page.getByRole("button", { name: "取消岗位发现" });
+  if (testInfo.project.name === "Desktop Chrome") {
+    await cancel.focus();
+    await expect(cancel).toBeFocused();
+    await page.keyboard.press("Enter");
+  } else await cancel.click();
   await expect(runStatus(page)).toContainText(/等待安全取消|岗位发现已取消/);
   let cancelled: AgentRunDetail | undefined;
   await expect.poll(async () => {

@@ -1,4 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
+import { StartAgentRunResponseSchema } from "@job-copilot/contracts/agent-runs";
+import { RunPreflightReportSchema } from "@job-copilot/contracts/run-preflight";
 import { Client } from "pg";
 import { expect, test, type APIRequestContext, type Locator, type Page, type TestInfo } from "@playwright/test";
 
@@ -149,25 +151,6 @@ async function tabTo(page: Page, target: Locator): Promise<void> {
   throw new Error("FIRST_RECOMMENDATION_JOURNEY_KEYBOARD_TARGET_UNREACHABLE");
 }
 
-async function installFirstRandomUuid(page: Page, value: string): Promise<void> {
-  const install = (fixed: string) => {
-    const original = crypto.randomUUID.bind(crypto);
-    const marker = `job-copilot:e2e-fixed-random-uuid:${fixed}`;
-    let used = sessionStorage.getItem(marker) === "used";
-    Object.defineProperty(crypto, "randomUUID", {
-      configurable: true,
-      value: () => {
-        if (used) return original();
-        used = true;
-        sessionStorage.setItem(marker, "used");
-        return fixed;
-      },
-    });
-  };
-  await page.addInitScript(install, value);
-  await page.evaluate(install, value);
-}
-
 async function activate(page: Page, target: Locator, info: TestInfo): Promise<void> {
   if (info.project.name === "Desktop Chrome") {
     await tabTo(page, target);
@@ -256,16 +239,28 @@ async function startDiscovery(request: APIRequestContext, account: PreparedAccou
   return (await started.json() as { runId: string }).runId;
 }
 
-async function startDiscoveryFromHome(page: Page, idempotencyKey: string): Promise<string> {
-  await installFirstRandomUuid(page, idempotencyKey);
-  await page.goto("/home");
-  await page.getByRole("button", { name: "发现岗位" }).click();
-  await expect(page.getByRole("button", { name: "我已了解，仍要启动" })).toBeVisible();
-  const requestPromise = page.waitForRequest((request) => request.url().endsWith("/api/agent-runs") && request.method() === "POST");
-  const responsePromise = page.waitForResponse((response) => response.url().endsWith("/api/agent-runs") && response.request().method() === "POST");
-  await page.getByRole("button", { name: "我已了解，仍要启动" }).click();
-  expect((await requestPromise).postDataJSON()).toMatchObject({ idempotencyKey });
-  return ((await (await responsePromise).json()) as { runId: string }).runId;
+async function startPhysicalDiscovery(page: Page, account: PreparedAccount, idempotencyKey: string): Promise<string> {
+  const preflightResponse = await page.request.get(`/api/run-preflight?targetId=${account.targetId}`);
+  expect(preflightResponse.status()).toBe(200);
+  const preflight = RunPreflightReportSchema.parse(await preflightResponse.json());
+  expect(preflight).toMatchObject({ targetId: account.targetId });
+  expect(preflight.status).not.toBe("blocked");
+  const command = {
+    targetId: account.targetId,
+    idempotencyKey,
+    warningFingerprint: preflight.status === "ready_with_warnings" ? preflight.warningFingerprint : null,
+  };
+  if (preflight.status === "ready_with_warnings") expect(command.warningFingerprint).toMatch(/^[a-f0-9]{64}$/u);
+  else expect(command.warningFingerprint).toBeNull();
+  const createdResponse = await page.request.post("/api/agent-runs", { data: command });
+  expect(createdResponse.status()).toBe(201);
+  const created = StartAgentRunResponseSchema.parse(await createdResponse.json());
+  expect(created).toMatchObject({ targetId: account.targetId, reused: false });
+  const replayResponse = await page.request.post("/api/agent-runs", { data: command });
+  expect(replayResponse.status()).toBe(200);
+  await expect(replayResponse.json()).resolves.toMatchObject({ runId: created.runId, targetId: account.targetId, reused: true });
+  await page.goto(`/home?runId=${created.runId}#agent-run`);
+  return created.runId;
 }
 
 async function automaticMatchRun(userId: string, discoveryRunId: string): Promise<string> {
@@ -390,7 +385,7 @@ test("可信非空推荐会永久完成旅程，后续撤销准备条件仍保�
   await installMatchingFixture(account.userId, account.targetId, { overallScoresByOpportunityId: { [opportunityId]: 95 } });
   try {
     const discoveryRunId = await startDiscovery(request, account, keyFor(info).success);
-    await page.goto("/recommendations");
+    await page.goto(`/recommendations?targetId=${account.targetId}`);
     await waitForRun(page, discoveryRunId);
     const matchRunId = await automaticMatchRun(account.userId, discoveryRunId);
     await waitForRun(page, matchRunId);
@@ -425,7 +420,7 @@ test("失败运行不会完成首次推荐旅程", async ({ page, request }, inf
   const failedAccount = await prepareMatchingAccount(request, info, "failed");
   await useSession(page, failedAccount.token);
   await importCareerMaterial(page);
-  const failedRunId = await startDiscoveryFromHome(page, keyFor(info).failure);
+  const failedRunId = await startPhysicalDiscovery(page, failedAccount, keyFor(info).failure);
   await waitForRun(page, failedRunId, "failed");
   await page.reload();
   await expectActiveJourney(page, "获得第一份推荐结果");
@@ -442,7 +437,7 @@ test("零接受推荐清单不会完成首次推荐旅程", async ({ page, reque
   await installMatchingFixture(emptyAccount.userId, emptyAccount.targetId, { qualityInsufficientOpportunityIds: [excludedOpportunityId] });
   try {
     const discoveryRunId = await startDiscovery(request, emptyAccount, crypto.randomUUID());
-    await page.goto("/recommendations");
+    await page.goto(`/recommendations?targetId=${emptyAccount.targetId}`);
     await waitForRun(page, discoveryRunId);
     const matchRunId = await automaticMatchRun(emptyAccount.userId, discoveryRunId);
     await waitForRun(page, matchRunId);

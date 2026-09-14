@@ -1,4 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
+import { StartAgentRunResponseSchema } from "@job-copilot/contracts/agent-runs";
+import { RecommendationRunPreparationSchema, RecommendationRunSchema, StartRecommendationRunCommandSchema } from "@job-copilot/contracts/recommendation-runs";
+import { RunPreflightReportSchema } from "@job-copilot/contracts/run-preflight";
 import path from "node:path";
 import { Client } from "pg";
 import { expect, test, type APIRequestContext, type TestInfo } from "@playwright/test";
@@ -39,13 +42,14 @@ test("新账户在工作台看到可修复的运行前阻塞，且不会创建�
   await page.context().addCookies([{ name: "job_copilot_session", value: sessionToken, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
   await page.goto("/home");
 
-  const preflight = page.getByRole("region", { name: "运行前检查" });
-  await expect(preflight).toBeVisible();
-  await expect(preflight.getByText("暂不能启动")).toBeVisible();
-  await expect(preflight.getByRole("link", { name: "完善求职画像" })).toHaveAttribute("href", "/profile");
-  await expect(page.getByRole("button", { name: "发现岗位" })).toHaveCount(0);
-  await page.getByRole("link", { name: "完善求职画像" }).focus();
-  await expect(page.getByRole("link", { name: "完善求职画像" })).toBeFocused();
+  const recommendation = page.locator(".recommendation-run-panel");
+  await expect(recommendation.getByRole("heading", { name: "开始今日完整推荐" })).toBeVisible();
+  await expect(recommendation.getByText("请先处理启动前的阻塞项。")).toBeVisible();
+  const profile = recommendation.getByRole("link", { name: "完善求职画像" });
+  await expect(profile).toHaveAttribute("href", "/profile");
+  await expect(recommendation.getByRole("button", { name: "开始今日发现" })).toBeDisabled();
+  await profile.focus();
+  await expect(profile).toBeFocused();
   await page.screenshot({ path: path.resolve(process.cwd(), "../..", ".impeccable/review", `issue-51-after-${test.info().project.name === "Desktop Chrome" ? "desktop" : "mobile"}.png`), fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).toBe(true);
   await expect(new AxeBuilder({ page }).include("main").analyze()).resolves.toMatchObject({ violations: [] });
@@ -59,90 +63,106 @@ test("新账户按画像、主目标、真实来源和模型诊断逐项解除�
   await page.context().addCookies([{ name: "job_copilot_session", value: sessionToken, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
 
   await page.goto("/home");
-  const preflight = page.getByRole("region", { name: "运行前检查" });
-  await expect(preflight.getByRole("link", { name: "完善求职画像" })).toHaveAttribute("href", "/profile");
+  const recommendation = page.locator(".recommendation-run-panel");
+  await expect(recommendation.getByRole("link", { name: "完善求职画像" })).toHaveAttribute("href", "/profile");
 
   const fact = await request.post(`${apiBaseUrl}/v1/profile/facts`, { headers: authorization, data: { expectedVersion: 0, factType: "skill", factValue: { name: "TypeScript" } } });
   expect(fact.status()).toBe(201);
   await page.reload();
-  await expect(preflight.getByRole("link", { name: "查看求职目标" }).first()).toHaveAttribute("href", "/profile/targets");
+  await expect(recommendation.getByRole("link", { name: "查看求职目标" })).toHaveAttribute("href", "/profile/targets");
 
   const targetId = await createActiveTarget(request, sessionToken, "primary", "平台工程师");
   await page.reload();
-  await expect(preflight.getByRole("link", { name: "查看来源能力" })).toHaveAttribute("href", `/profile/targets/${targetId}/watchlist#source-capabilities`);
+  await expect(recommendation.getByRole("link", { name: "查看来源设置" })).toHaveAttribute("href", "/profile/targets");
 
   const source = await request.post(`${apiBaseUrl}/v1/job-targets/${targetId}/company-watchlist/items`, { headers: authorization, data: { expectedVersion: 0, canonicalCompanyName: "Progression Greenhouse Fixture", careersUrl: `https://boards.greenhouse.io/progression-${info.project.name === "Desktop Chrome" ? "desktop" : "mobile"}`, allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null } });
   expect(source.status()).toBe(201);
-  const reportResponse = await request.get(`${apiBaseUrl}/v1/run-preflight?workflow=discovery&trigger=manual&targetId=${targetId}`, { headers: authorization });
+  const reportResponse = await request.get(`${apiBaseUrl}/v1/recommendation-runs/preparation`, { headers: authorization });
   expect(reportResponse.status()).toBe(200);
-  const report = await reportResponse.json() as { items: Array<{ code: string }> };
-  const modelBlocked = report.items.some((item) => item.code === "MODEL_DIAGNOSTIC_UNAVAILABLE");
+  const report = RecommendationRunPreparationSchema.parse((await reportResponse.json() as { preparation: unknown }).preparation);
+  const modelBlocked = report.preflight.items.some((item) => item.code === "MODEL_DIAGNOSTIC_UNAVAILABLE");
   await page.reload();
-  const diagnosticLink = preflight.getByRole("link", { name: "检查模型连接" });
+  const diagnosticLink = recommendation.getByRole("link", { name: "检查模型连接" });
   // 诊断记录以部署指纹共享；串行 worker 的第二个浏览器项目会继承第一个项目的真实稳定结果。
   if (modelBlocked) await expect(diagnosticLink).toHaveAttribute("href", "/profile/model-connection");
-  else await expect(preflight.getByText("模型诊断已就绪")).toBeVisible();
+  else await expect(recommendation.getByRole("button", { name: "开始今日发现" })).toBeEnabled();
 
   const diagnostic = await request.post(`${apiBaseUrl}/v1/model-diagnostics`, { headers: authorization, data: {} });
   expect(diagnostic.status()).toBe(201);
   await expect(diagnostic.json()).resolves.toMatchObject({ status: "available" });
   await page.reload();
-  await expect(preflight.getByText("启动前需要你确认")).toBeVisible();
-  await expect(preflight.getByRole("link", { name: "查看来源健康" })).toHaveAttribute("href", `/profile/targets/${targetId}/watchlist#source-health`);
-  await expect(page.getByRole("button", { name: "发现岗位" })).toBeEnabled();
+  await expect(recommendation.getByRole("button", { name: "开始今日发现" })).toBeEnabled();
+  await expect(recommendation.getByText(`主目标：平台工程师`)).toBeVisible();
+  await expect(recommendation.getByText(`本次将检查 ${report.sourceScope.trustedSourceCount} 个可信来源和 ${report.sourceScope.publicQueryCount} 条公开查询。`)).toBeVisible();
 });
 
 test("正式 health fixture 使旧 warning 过期，页面刷新后以同一 key 再确认", async ({ page, request }, info) => {
   const account = await createWarningAccount(request, info);
   await page.context().addCookies([{ name: "job_copilot_session", value: account.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
-  const initial = await request.get(`${apiBaseUrl}/v1/run-preflight?workflow=discovery&trigger=manual&targetId=${account.targetId}`, { headers: { authorization: `Bearer ${account.token}` } });
-  const old = await initial.json() as { warningFingerprint: string; items: Array<{ code: string }> };
+  const initial = await request.get(`${apiBaseUrl}/v1/recommendation-runs/preparation`, { headers: { authorization: `Bearer ${account.token}` } });
+  expect(initial.status()).toBe(200);
+  const old = RecommendationRunPreparationSchema.parse((await initial.json() as { preparation: unknown }).preparation).preflight;
   expect(old.items.map((item) => item.code)).toContain("SOURCE_HEALTH_UNCHECKED");
-  await page.goto("/home"); await page.getByRole("button", { name: "发现岗位" }).click();
-  const bootstrap = await request.post(`${apiBaseUrl}/v1/agent-runs`, { headers: { authorization: `Bearer ${account.token}` }, data: { targetId: account.targetId, idempotencyKey: "10000000-0000-4000-8000-000000000302", warningFingerprint: old.warningFingerprint } });
+  await page.goto("/home");
+  const start = page.locator(".recommendation-run-panel").getByRole("button", { name: "开始今日发现" });
+  await start.click();
+  await expect(page.getByRole("button", { name: "我已了解，开始今日发现" })).toBeVisible();
+  const physicalPreflightResponse = await page.request.get(`/api/run-preflight?targetId=${account.targetId}`);
+  expect(physicalPreflightResponse.status()).toBe(200);
+  const physicalPreflight = RunPreflightReportSchema.parse(await physicalPreflightResponse.json());
+  expect(physicalPreflight.status).not.toBe("blocked");
+  const physicalCommand = { targetId: account.targetId, idempotencyKey: "10000000-0000-4000-8000-000000000302", warningFingerprint: physicalPreflight.status === "ready_with_warnings" ? physicalPreflight.warningFingerprint : null };
+  const bootstrap = await page.request.post("/api/agent-runs", { data: physicalCommand });
   expect(bootstrap.status()).toBe(201);
-  const { runId } = await bootstrap.json() as { runId: string };
+  const { runId } = StartAgentRunResponseSchema.parse(await bootstrap.json());
   const client = new Client({ connectionString: databaseUrl }); await client.connect();
   try { await client.query("insert into job_source_health_checks (id, user_id, run_id, target_id, watchlist_item_id, source_id, status, reason_codes, impact_scope, impact_affected_count, observed_posting_count, selected_detail_count, valid_detail_count, request_attempt_count, checked_at) values (gen_random_uuid(), $1, $2, $3, $4, $5, 'rate_limited', '[\"SOURCE_RATE_LIMITED\"]'::jsonb, 'entire_source', null, 0, 0, 0, 1, now()) on conflict (run_id, source_id) do update set user_id = excluded.user_id, target_id = excluded.target_id, watchlist_item_id = excluded.watchlist_item_id, status = excluded.status, reason_codes = excluded.reason_codes, impact_scope = excluded.impact_scope, impact_affected_count = excluded.impact_affected_count, observed_posting_count = excluded.observed_posting_count, selected_detail_count = excluded.selected_detail_count, valid_detail_count = excluded.valid_detail_count, request_attempt_count = excluded.request_attempt_count, checked_at = excluded.checked_at", [account.userId, runId, account.targetId, account.itemId, account.sourceId]); } finally { await client.end(); }
-  const currentReport = await request.get(`${apiBaseUrl}/v1/run-preflight?workflow=discovery&trigger=manual&targetId=${account.targetId}`, { headers: { authorization: `Bearer ${account.token}` } });
-  const current = await currentReport.json() as { warningFingerprint: string; items: Array<{ code: string }> };
+  const currentReport = await request.get(`${apiBaseUrl}/v1/recommendation-runs/preparation`, { headers: { authorization: `Bearer ${account.token}` } });
+  expect(currentReport.status()).toBe(200);
+  const current = RecommendationRunPreparationSchema.parse((await currentReport.json() as { preparation: unknown }).preparation).preflight;
   expect(current.items.map((item) => item.code)).toContain("SOURCE_HEALTH_DEGRADED"); expect(current.warningFingerprint).not.toBe(old.warningFingerprint);
-  const stale = page.waitForResponse((response) => response.url().endsWith("/api/agent-runs") && response.request().method() === "POST");
-  await page.getByRole("button", { name: "我已了解，仍要启动" }).click();
+  const stale = page.waitForResponse((response) => response.url().endsWith("/api/recommendation-runs") && response.request().method() === "POST");
+  await page.getByRole("button", { name: "我已了解，开始今日发现" }).click();
   const staleResponse = await stale; expect(staleResponse.status()).toBe(409);
   const key = staleResponse.request().postDataJSON().idempotencyKey;
-  await expect(page.getByText("启动条件已变化，请查看最新检查后再次确认。")).toBeVisible();
-  await page.getByRole("button", { name: "发现岗位" }).click();
-  const confirmed = page.waitForResponse((response) => response.url().endsWith("/api/agent-runs") && response.request().method() === "POST");
-  await page.getByRole("button", { name: "我已了解，仍要启动" }).click();
+  await expect(page.getByText("启动条件已变化，已读取最新准备状态")).toBeVisible();
+  await start.click();
+  const confirmed = page.waitForResponse((response) => response.url().endsWith("/api/recommendation-runs") && response.request().method() === "POST");
+  await page.getByRole("button", { name: "我已了解，开始今日发现" }).click();
   const confirmedResponse = await confirmed; expect(confirmedResponse.status()).toBe(201); expect(confirmedResponse.request().postDataJSON()).toMatchObject({ idempotencyKey: key, warningFingerprint: current.warningFingerprint });
 });
 
-test("活动主次目标切换期间禁用启动，完成后只采用所选目标的正式报告", async ({ page, request }, info) => {
+test("默认主目标驱动当前推荐准备，显式次目标 preflight 仍保持隔离", async ({ page, request }, info) => {
   const account = await createWarningAccount(request, info);
   const secondaryId = await createActiveTarget(request, account.token, "secondary", "数据平台工程师");
   const secondarySource = await request.post(`${apiBaseUrl}/v1/job-targets/${secondaryId}/company-watchlist/items`, { headers: { authorization: `Bearer ${account.token}` }, data: { expectedVersion: 0, canonicalCompanyName: "Secondary Target Fixture", careersUrl: `https://boards.greenhouse.io/secondary-${info.project.name === "Desktop Chrome" ? "desktop" : "mobile"}`, allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null } });
   expect(secondarySource.status()).toBe(201);
   await page.context().addCookies([{ name: "job_copilot_session", value: account.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
   await page.goto("/home");
-  const target = page.getByRole("combobox", { name: "用于发现岗位的求职目标" });
-  await expect(target).toHaveValue(account.targetId);
-  let release!: () => void;
-  const delayed = new Promise<void>((resolve) => { release = resolve; });
-  await page.route(`**/api/run-preflight?targetId=${secondaryId}`, async (route) => {
-    const response = await route.fetch();
-    await delayed;
-    await route.fulfill({ response });
-  });
-  await target.selectOption(secondaryId);
-  await expect(page.getByRole("button", { name: "发现岗位" })).toBeDisabled();
-  await expect(page.getByText("正在刷新所选求职目标的启动条件。")).toBeVisible();
-  const refreshed = page.waitForResponse((response) => response.url().endsWith(`/api/run-preflight?targetId=${secondaryId}`));
-  release();
-  const report = await (await refreshed).json() as { targetId: string };
-  expect(report.targetId).toBe(secondaryId);
-  await expect(target).toHaveValue(secondaryId);
-  await expect(page.getByRole("button", { name: "发现岗位" })).toBeEnabled();
+  const recommendation = page.locator(".recommendation-run-panel");
+  await expect(recommendation.getByText("主目标：AI 应用工程师")).toBeVisible();
+  await expect(recommendation.getByRole("button", { name: "开始今日发现" })).toBeEnabled();
+  await expect(page.getByRole("combobox", { name: "用于发现岗位的求职目标" })).toHaveCount(0);
+  const preparation = await request.get(`${apiBaseUrl}/v1/recommendation-runs/preparation`, { headers: { authorization: `Bearer ${account.token}` } });
+  expect(preparation.status()).toBe(200);
+  const preparationBody = RecommendationRunPreparationSchema.parse((await preparation.json() as { preparation: unknown }).preparation);
+  expect(preparationBody).toMatchObject({ target: { targetId: account.targetId, roleFamily: "AI 应用工程师" } });
+  const explicitSecondary = await request.get(`${apiBaseUrl}/v1/run-preflight?workflow=discovery&trigger=manual&targetId=${secondaryId}`, { headers: { authorization: `Bearer ${account.token}` } });
+  expect(explicitSecondary.status()).toBe(200);
+  await expect(explicitSecondary.json()).resolves.toMatchObject({ targetId: secondaryId });
+  const startRequest = page.waitForRequest((value) => value.url().endsWith("/api/recommendation-runs") && value.method() === "POST");
+  const startResponse = page.waitForResponse((value) => value.url().endsWith("/api/recommendation-runs") && value.request().method() === "POST");
+  const start = recommendation.getByRole("button", { name: "开始今日发现" });
+  await start.click();
+  if (preparationBody.preflight.status === "ready_with_warnings") await page.getByRole("button", { name: "我已了解，开始今日发现" }).click();
+  const command = StartRecommendationRunCommandSchema.parse((await startRequest).postDataJSON());
+  expect(Object.keys(command).sort()).toEqual(["idempotencyKey", "warningFingerprint"]);
+  expect(command.warningFingerprint).toBe(preparationBody.preflight.status === "ready_with_warnings" ? preparationBody.preflight.warningFingerprint : null);
+  const response = await startResponse;
+  expect(response.status()).toBe(201);
+  const payload = await response.json() as { run: unknown; reused: boolean };
+  expect(payload.reused).toBe(false);
+  expect(RecommendationRunSchema.parse(payload.run).target).toMatchObject({ targetId: account.targetId, roleFamily: "AI 应用工程师" });
 });
 
 test("账户 B 不能从工作台或正式报告读取账户 A 的目标和来源证据", async ({ page, request }, info) => {

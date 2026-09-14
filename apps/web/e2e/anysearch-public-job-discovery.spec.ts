@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { Client as MinioClient } from "minio";
-import type { AgentRunDetail } from "@job-copilot/contracts/agent-runs";
+import { StartAgentRunResponseSchema, type AgentRunDetail } from "@job-copilot/contracts/agent-runs";
+import { RunPreflightReportSchema } from "@job-copilot/contracts/run-preflight";
 import AxeBuilder from "@axe-core/playwright";
 import { Queue } from "bullmq";
 import { Client } from "pg";
@@ -140,15 +141,34 @@ async function configureAccount(request: APIRequestContext, scenario: { subject:
   settings.discovery.publicQueryLimit = 6;
   const savedPolicy = await request.put(apiBaseUrl + "/v1/account/run-policy", { headers: { authorization: "Bearer " + token }, data: { expectedVersion: policy.revision.revisionNumber, settings } });
   expect(savedPolicy.status()).toBe(200);
+  const diagnostic = await request.post(apiBaseUrl + "/v1/model-diagnostics", { headers: { authorization: "Bearer " + token }, data: {} });
+  expect(diagnostic.status()).toBe(201);
+  await expect(diagnostic.json()).resolves.toMatchObject({ status: "available" });
   return { token, userId: sessionBody.account.userId, targetId };
 }
 
-async function installIdempotencyKey(page: Page, value: string): Promise<void> {
-  await page.addInitScript((fixed) => {
-    const original = crypto.randomUUID.bind(crypto);
-    let used = false;
-    Object.defineProperty(crypto, "randomUUID", { configurable: true, value: () => used ? original() : (used = true, fixed) });
-  }, value);
+async function startPhysicalDiscovery(page: Page, targetId: string, idempotencyKey: string): Promise<{ kind: "blocked"; preflight: ReturnType<typeof RunPreflightReportSchema.parse> } | { kind: "started"; runId: string }> {
+  const preflightResponse = await page.request.get(`/api/run-preflight?targetId=${targetId}`);
+  expect(preflightResponse.status()).toBe(200);
+  const preflight = RunPreflightReportSchema.parse(await preflightResponse.json());
+  expect(preflight).toMatchObject({ targetId });
+  if (preflight.status === "blocked") return { kind: "blocked", preflight };
+  const command = {
+    targetId,
+    idempotencyKey,
+    warningFingerprint: preflight.status === "ready_with_warnings" ? preflight.warningFingerprint : null,
+  };
+  if (preflight.status === "ready_with_warnings") expect(command.warningFingerprint).toMatch(/^[a-f0-9]{64}$/u);
+  else expect(command.warningFingerprint).toBeNull();
+  const createdResponse = await page.request.post("/api/agent-runs", { data: command });
+  expect(createdResponse.status()).toBe(201);
+  const created = StartAgentRunResponseSchema.parse(await createdResponse.json());
+  expect(created).toMatchObject({ targetId, reused: false });
+  const replayResponse = await page.request.post("/api/agent-runs", { data: command });
+  expect(replayResponse.status()).toBe(200);
+  await expect(replayResponse.json()).resolves.toMatchObject({ runId: created.runId, targetId, reused: true });
+  await page.goto(`/home?runId=${created.runId}#agent-run`);
+  return { kind: "started", runId: created.runId };
 }
 
 async function readRun(page: Page, runId: string): Promise<AgentRunDetail> {
@@ -204,7 +224,7 @@ async function persistedFacts(userId: string, runId: string) {
   }
 }
 
-test("版本化 Fake AnySearch 从普通 UI 运行真实 layered public 验收链 @configured", async ({ page, request }, testInfo) => {
+test("版本化 Fake AnySearch 通过历史物理运行 fixture 执行真实 layered public 验收链 @configured", async ({ page, request }, testInfo) => {
   test.setTimeout(90_000);
   const scenario = scenarioFor(testInfo);
   const account = await configureAccount(request, scenario);
@@ -213,12 +233,10 @@ test("版本化 Fake AnySearch 从普通 UI 运行真实 layered public 验收�
   await page.goto("/profile/targets/" + account.targetId + "/watchlist");
   await addApprovedFixtureWatchlist(page);
 
-  await installIdempotencyKey(page, scenario.idempotencyKey);
-  await page.goto("/home");
-  const started = page.waitForResponse((response) => response.url().endsWith("/api/agent-runs") && response.request().method() === "POST");
-  const start = page.getByRole("button", { name: "发现岗位" });
-  if (testInfo.project.name === "Mobile Safari") await start.tap(); else await start.click();
-  const runId = ((await (await started).json()) as { runId: string }).runId;
+  const started = await startPhysicalDiscovery(page, account.targetId, scenario.idempotencyKey);
+  expect(started.kind).toBe("started");
+  if (started.kind !== "started") throw new Error("CONFIGURED_ANYSEARCH_PREFLIGHT_BLOCKED");
+  const { runId } = started;
 
   await expect.poll(async () => (await readRun(page, runId)).status, { timeout: 75_000 }).toBe("completed");
   const run = await readRun(page, runId);
@@ -335,7 +353,7 @@ test("版本化 Fake AnySearch 从普通 UI 运行真实 layered public 验收�
   }
   expect(await persistedFacts(account.userId, runId)).toEqual(facts);
   await page.goto(`/home?runId=${runId}#agent-run`);
-  await expect(page.locator(".agent-run-panel [role=status]")).toContainText("岗位发现部分完成");
+  await expect(page.locator(".agent-run-panel .agent-run-live")).toContainText("岗位发现部分完成");
   await expect(page.locator(".agent-run-results li")).toHaveCount(1);
   const attention = page.locator(".agent-inbox-panel").getByRole("article", { name: "公开岗位发现需要关注" }).getByRole("link", { name: "查看相关记录" });
   expectTrue(await routeMatches(attention, runId));
@@ -346,18 +364,19 @@ test("版本化 Fake AnySearch 从普通 UI 运行真实 layered public 验收�
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
 
-test("版本化 Fake AnySearch 缺 key 时从普通 UI 失败且不触发 provider transport @missing-key", async ({ page, request }, testInfo) => {
+test("版本化 Fake AnySearch 缺 key 时由历史物理运行 preflight 与执行保护且不触发 provider transport @missing-key", async ({ page, request }, testInfo) => {
   test.setTimeout(90_000);
   const scenario = scenarioFor(testInfo);
   const account = await configureAccount(request, { subject: "fake-anysearch-missing-key-" + scenario.subject });
   await resetFixture();
   await page.context().addCookies([{ name: "job_copilot_session", value: account.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
-  await installIdempotencyKey(page, testInfo.project.name === "Desktop Chrome" ? "10000000-0000-4000-8000-000000000141" : "10000000-0000-4000-8000-000000000142");
-  await page.goto("/home");
-  const started = page.waitForResponse((response) => response.url().endsWith("/api/agent-runs") && response.request().method() === "POST");
-  const start = page.getByRole("button", { name: "发现岗位" });
-  if (testInfo.project.name === "Mobile Safari") await start.tap(); else await start.click();
-  const runId = ((await (await started).json()) as { runId: string }).runId;
+  const started = await startPhysicalDiscovery(page, account.targetId, testInfo.project.name === "Desktop Chrome" ? "10000000-0000-4000-8000-000000000141" : "10000000-0000-4000-8000-000000000142");
+  if (started.kind === "blocked") {
+    expect(started.preflight.items.some((item) => item.severity === "blocking")).toBe(true);
+    expect(await fixtureAudit()).toEqual([]);
+    return;
+  }
+  const { runId } = started;
 
   await expect.poll(async () => (await readRun(page, runId)).status, { timeout: 75_000 }).toBe("failed");
   const run = await readRun(page, runId);
