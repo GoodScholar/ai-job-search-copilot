@@ -458,8 +458,8 @@ describe("agent runs", () => {
         { sourceId: "fake:aurora-careers", detailId: "opening-1", company: "示例科技", title: "AI 工程师", location: "上海", postedAt: null, deadline: null },
       ],
       sourceReceipts: [
-        { sourceId: "fake:aurora-careers", checked: true as const, candidateCount: 2 },
-        { sourceId: "fake:orbit-careers", checked: true as const, candidateCount: 0 },
+        { sourceId: "fake:aurora-careers", checked: true as const, candidateCount: 2, budgetExcludedCount: 0 },
+        { sourceId: "fake:orbit-careers", checked: true as const, candidateCount: 0, budgetExcludedCount: 0 },
       ],
     } });
     duplicate.getDetail = async () => { detailCalls += 1; return { ok: false as const, error: { code: "UNEXPECTED", retryable: false } }; };

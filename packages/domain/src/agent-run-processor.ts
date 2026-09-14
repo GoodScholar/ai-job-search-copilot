@@ -5,7 +5,7 @@ import {
   type Database,
 } from "@job-copilot/database";
 import {
-  AGENT_RUN_BUDGET, AGENT_RUN_JOB_VERSION, AgentRunExecutionSpecSchema, DeepMatchAgentRunSourceScopeSchema, DiscoveryBatchSearchResultSchema, DiscoveryDetailResultSchema, PublicDiscoveryBatchSearchResultSchema,
+  AGENT_RUN_BUDGET, AGENT_RUN_JOB_VERSION, AgentRunExecutionSpecSchema, DeepMatchAgentRunSourceScopeSchema, DiscoveryBatchSearchResultSchema, DiscoveryDetailResultSchema, FAKE_JOB_DISCOVERY_MAX_BUDGET_EXCLUDED_COUNT, PublicDiscoveryBatchSearchResultSchema,
   GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, parseSourceHealthDetailResult, parseSourceHealthListResult,
   type JobSourceHealthCheck,
   type AgentRunJob,
@@ -41,7 +41,7 @@ import {
   isLayeredPublicWorkflowInterruption,
   type LayeredPublicWorkflowDiagnostic,
 } from "./layered-public-job-discovery-workflow";
-import { FrozenRecommendationEvidenceSchema, RecommendationDiscoveryFactsSchema, type RecommendationDiscoveryFacts } from "@job-copilot/contracts/recommendation-discovery-facts";
+import { FrozenRecommendationEvidenceWriteSchema, RecommendationDiscoveryFactsSchema, type RecommendationDiscoveryFacts } from "@job-copilot/contracts/recommendation-discovery-facts";
 
 export interface DiscoveryContentStore {
   put(input: { objectKey: string; bytes: Uint8Array; mediaType: "application/json"; runId: string }): Promise<void>;
@@ -373,7 +373,7 @@ async function checkPoint(checkpoint: AgentRunCheckpoint, input: { userId: strin
   }
 }
 
-async function handoffRecommendationDiscoveryInTransaction(deps: AgentRunProcessorDependencies, transaction: any, root: typeof agentRuns.$inferSelect, discoveryFacts: RecommendationDiscoveryFacts | undefined, executionScope: unknown) {
+async function handoffRecommendationDiscoveryInTransaction(deps: AgentRunProcessorDependencies, transaction: any, root: typeof agentRuns.$inferSelect, discoveryFacts: RecommendationDiscoveryFacts | undefined, executionScope: unknown, rootBudgetExcludedJobCount = 0) {
   if (root.runPurpose !== "recommendation" || root.parentRunId !== null) return;
   const context = root.recommendationContext as { profile: { profileId: string; profileVersion: number }; budgets: { deepMatch: unknown } } | null;
   const targetSnapshot = root.targetSnapshot as { targetId: string; version: number; constraints: unknown };
@@ -390,8 +390,33 @@ async function handoffRecommendationDiscoveryInTransaction(deps: AgentRunProcess
     const triage = await createFrozenJobTriageInTransaction({ transaction, auditTrail: deps.auditTrail, id: deps.id, clock: deps.clock, userId: root.userId, requestId: root.id, opportunityId: tuple.opportunityId, sourcePostingVersionId: tuple.sourcePostingVersionId, profileId: context.profile.profileId, profileVersion: context.profile.profileVersion, targetId: root.targetId, targetVersion: targetSnapshot.version, targetConstraints: targetSnapshot.constraints });
     frozenTriageVersionIds.push(triage.triageVersionId);
   }
-  const frozenRecommendationEvidence = FrozenRecommendationEvidenceSchema.parse({ version: "recommendation-evidence-v1", plannedTrustedSourceCount: trustedSourceIds.size, plannedPublicQueryCount: publicQueryIds.size, discoveryFacts: parsedFacts, frozenTriageVersionIds });
+  const frozenRecommendationEvidence = FrozenRecommendationEvidenceWriteSchema.parse({ version: "recommendation-evidence-v1", plannedTrustedSourceCount: trustedSourceIds.size, plannedPublicQueryCount: publicQueryIds.size, rootBudgetExcludedJobCount, discoveryFacts: parsedFacts, frozenTriageVersionIds });
   await ensureDeepMatchRunInTransaction({ transaction, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight, userId: root.userId, targetId: root.targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(root.id), trigger: "automatic", discoveryRunId: root.id, recommendation: { parentRunId: root.id, profileId: context.profile.profileId, profileVersion: context.profile.profileVersion, targetSnapshot, budgetSnapshot: context.budgets.deepMatch, accountPolicyRevisionNumber: root.accountPolicyRevisionNumber!, accountPolicySnapshot: root.accountPolicySnapshot, preflightSnapshot: root.preflightSnapshot, frozenTriageVersionIds, frozenRecommendationEvidence } });
+}
+
+function addRootBudgetExcludedFacts(input: {
+  discoveryFacts: RecommendationDiscoveryFacts;
+  excludedVersionIds: readonly string[];
+  trustedVersionIds: ReadonlySet<string>;
+  sourceIdByVersionId: ReadonlyMap<string, string | null>;
+  queryIdsByVersionId: ReadonlyMap<string, ReadonlySet<string>>;
+}) {
+  const facts = RecommendationDiscoveryFactsSchema.parse(input.discoveryFacts);
+  const trusted = facts.trusted.map((fact) => ({ ...fact, losses: [...fact.losses] }));
+  const publicQueries = facts.publicQueries.map((fact) => ({ ...fact, losses: [...fact.losses] }));
+  const trustedBySourceId = new Map(trusted.map((fact) => [fact.sourceId, fact]));
+  const publicByQueryId = new Map(publicQueries.map((fact) => [fact.queryId, fact]));
+  for (const versionId of input.excludedVersionIds) {
+    const branches = [
+      ...(input.trustedVersionIds.has(versionId) ? [trustedBySourceId.get(input.sourceIdByVersionId.get(versionId) ?? "")] : []),
+      ...[...(input.queryIdsByVersionId.get(versionId) ?? [])].map((queryId) => publicByQueryId.get(queryId)),
+    ];
+    if (!branches.length || branches.some((branch) => !branch)) throw new Error("LAYERED_PUBLIC_RESULT_PROVENANCE_INVALID");
+    for (const branch of branches) if (!branch!.losses.some((loss) => loss.code === "DISCOVERY_BUDGET_EXCEEDED" && loss.retryable === false)) {
+      branch!.losses.push({ code: "DISCOVERY_BUDGET_EXCEEDED", retryable: false });
+    }
+  }
+  return RecommendationDiscoveryFactsSchema.parse({ ...facts, trusted, publicQueries });
 }
 
 /** v4 终态只持久化脱敏 diagnostic facts；页面、URL、query 正文和 provider body 均留在 adapter 生命周期内。 */
@@ -456,8 +481,16 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
       }
       return "facts";
     }
-    const attributed = new Set((await transaction.select({ sourcePostingVersionId: jobDiscoveryAttributions.sourcePostingVersionId }).from(jobDiscoveryAttributions).where(and(eq(jobDiscoveryAttributions.userId, input.userId), eq(jobDiscoveryAttributions.runId, input.runId)))).map((row: { sourcePostingVersionId: string }) => row.sourcePostingVersionId));
+    const attributionRows: Array<{ sourcePostingVersionId: string; queryId: string }> = await transaction.select({ sourcePostingVersionId: jobDiscoveryAttributions.sourcePostingVersionId, queryId: jobDiscoveryAttributions.queryId }).from(jobDiscoveryAttributions).where(and(eq(jobDiscoveryAttributions.userId, input.userId), eq(jobDiscoveryAttributions.runId, input.runId)));
+    const attributed = new Set(attributionRows.map((row) => row.sourcePostingVersionId));
+    const queryIdsByVersionId = new Map<string, Set<string>>();
+    for (const attribution of attributionRows) {
+      const queryIds = queryIdsByVersionId.get(attribution.sourcePostingVersionId) ?? new Set<string>();
+      queryIds.add(attribution.queryId);
+      queryIdsByVersionId.set(attribution.sourcePostingVersionId, queryIds);
+    }
     const trusted = new Set(input.trustedSourcePostingVersionIds);
+    const sourceIdByVersionId = new Map<string, string | null>();
     for (const sourcePostingVersionId of input.sourcePostingVersionIds) {
       const [version] = await transaction.select({ sourceId: jobSourcePostings.sourceId, sourceIdentifier: jobSourcePostings.sourceIdentifier, sourceType: jobSourcePostings.sourceType, isOfficial: jobSourcePostings.isOfficial }).from(jobSourcePostingVersions).innerJoin(jobSourcePostings, and(eq(jobSourcePostings.userId, jobSourcePostingVersions.userId), eq(jobSourcePostings.id, jobSourcePostingVersions.sourcePostingId))).where(and(eq(jobSourcePostingVersions.userId, input.userId), eq(jobSourcePostingVersions.id, sourcePostingVersionId))).limit(1);
       const trustedVersion = trusted.has(sourcePostingVersionId)
@@ -466,6 +499,7 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
         && version?.sourceType === "company_careers"
         && version.isOfficial;
       if (!version || (!attributed.has(sourcePostingVersionId) && !trustedVersion)) throw new Error("LAYERED_PUBLIC_RESULT_PROVENANCE_INVALID");
+      sourceIdByVersionId.set(sourcePostingVersionId, version.sourceId);
       if (attributed.has(sourcePostingVersionId)) {
         await persistJobOpportunity(transaction, {
           id: deps.id, userId: input.userId, importId: null, sourcePostingVersionId, isOfficial: version.isOfficial,
@@ -477,10 +511,12 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
     const existingResults: Array<{ ordinal: number; sourcePostingVersionId: string }> = await transaction.select({ ordinal: jobDiscoveryRunResults.ordinal, sourcePostingVersionId: jobDiscoveryRunResults.sourcePostingVersionId })
       .from(jobDiscoveryRunResults).where(and(eq(jobDiscoveryRunResults.userId, input.userId), eq(jobDiscoveryRunResults.runId, input.runId))).orderBy(asc(jobDiscoveryRunResults.ordinal));
     const existingVersionIds = new Set(existingResults.map((result) => result.sourcePostingVersionId));
+    const rootBudgetExcludedVersionIds: string[] = [];
     let nextOrdinal = Math.max(0, ...existingResults.map((result) => result.ordinal)) + 1;
     const maxResults = effectiveAgentRunBudget(run.workflowVersion, run.budgetSnapshot as AgentRunBudget).maxResults;
     for (const sourcePostingVersionId of [...new Set(input.sourcePostingVersionIds)]) {
-      if (existingVersionIds.has(sourcePostingVersionId) || nextOrdinal > maxResults) continue;
+      if (existingVersionIds.has(sourcePostingVersionId)) continue;
+      if (nextOrdinal > maxResults) { rootBudgetExcludedVersionIds.push(sourcePostingVersionId); continue; }
       await transaction.insert(jobDiscoveryRunResults).values({ id: deps.id(), userId: input.userId, runId: input.runId, sourcePostingVersionId, ordinal: nextOrdinal, createdAt: input.now }).onConflictDoNothing({ target: [jobDiscoveryRunResults.userId, jobDiscoveryRunResults.runId, jobDiscoveryRunResults.sourcePostingVersionId] });
       existingVersionIds.add(sourcePostingVersionId);
       nextOrdinal += 1;
@@ -497,7 +533,10 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
     const version = run.version + 1;
     // The durable child is part of the discovery completion transaction. Queue delivery
     // remains deliberately best-effort and is performed only after commit.
-    if (run.runPurpose === "recommendation") await handoffRecommendationDiscoveryInTransaction(deps, transaction, run, input.discoveryFacts, input.executionScope ?? run.sourceScope);
+    const discoveryFacts = run.runPurpose === "recommendation" && input.discoveryFacts
+      ? addRootBudgetExcludedFacts({ discoveryFacts: input.discoveryFacts, excludedVersionIds: rootBudgetExcludedVersionIds, trustedVersionIds: trusted, sourceIdByVersionId, queryIdsByVersionId })
+      : input.discoveryFacts;
+    if (run.runPurpose === "recommendation") await handoffRecommendationDiscoveryInTransaction(deps, transaction, run, discoveryFacts, input.executionScope ?? run.sourceScope, rootBudgetExcludedVersionIds.length);
     else await ensureDeepMatchRunInTransaction({ transaction, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight, userId: input.userId, targetId: run.targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(run.id), trigger: "automatic", discoveryRunId: run.id });
     await transaction.update(agentRunSteps).set({ status: "completed", completedAt: input.now, failedAt: null, failureCode: null }).where(and(
       eq(agentRunSteps.userId, input.userId), eq(agentRunSteps.runId, input.runId), eq(agentRunSteps.status, "running"),
@@ -952,7 +991,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
       let summaries: Array<{ sourceId: string; detailId: string }>;
       let scans: Array<{ sourceId: string; observedDetailIds: string[]; complete: boolean }> = [];
       let discoveryFacts: RecommendationDiscoveryFacts | undefined;
-      let sourceReceipts: Array<{ sourceId: string; checked: true; candidateCount: number }> | undefined;
+      let sourceReceipts: Array<{ sourceId: string; checked: true; candidateCount: number; budgetExcludedCount: number }> | undefined;
       try {
         if (sourceScope.adapter === "fake") {
           const called = await adapterCall("source_search_batch", 1, () => adapter.searchBatch({ targetSnapshot: snapshot, sourceScope }));
@@ -967,7 +1006,11 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
             const receipts = batch.data.sourceReceipts;
             const itemCounts = new Map(sourceScope.sources.map((sourceId) => [sourceId, 0]));
             for (const item of batchItems) itemCounts.set(item.sourceId, (itemCounts.get(item.sourceId) ?? 0) + 1);
-            if (receipts.some((receipt) => !sourceScope.sources.includes(receipt.sourceId) || receipt.candidateCount !== itemCounts.get(receipt.sourceId)) || new Set(receipts.map((receipt) => receipt.sourceId)).size !== sourceScope.sources.length) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "source" }, deadline });
+            if (receipts.reduce((total, receipt) => total + receipt.budgetExcludedCount, 0) > FAKE_JOB_DISCOVERY_MAX_BUDGET_EXCLUDED_COUNT
+              || receipts.some((receipt) => !sourceScope.sources.includes(receipt.sourceId)
+              || receipt.candidateCount !== itemCounts.get(receipt.sourceId)
+              || (batchItems.length < AGENT_RUN_BUDGET.maxResults && receipt.budgetExcludedCount !== 0))
+              || new Set(receipts.map((receipt) => receipt.sourceId)).size !== sourceScope.sources.length) return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "source" }, deadline });
             sourceReceipts = receipts;
           }
         } else {
@@ -1011,9 +1054,9 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           version: "recommendation-discovery-facts-v1",
           trusted: sourceReceipts.map((receipt) => {
             const validDetailCount = details.filter((detail) => detail.sourceId === receipt.sourceId).length;
-            if (receipt.candidateCount === 0) return { sourceId: receipt.sourceId, checked: true, outcome: "credible_zero" as const, losses: [] };
-            if (validDetailCount > 0) return { sourceId: receipt.sourceId, checked: true, outcome: "credible_results" as const, losses: validDetailCount < receipt.candidateCount ? [{ code: "DISCOVERY_BUDGET_EXCEEDED" as const, retryable: false }] : [] };
-            return { sourceId: receipt.sourceId, checked: true, outcome: "verification_failed" as const, losses: [{ code: receipt.candidateCount > summaries.filter((summary) => summary.sourceId === receipt.sourceId).length ? "DISCOVERY_BUDGET_EXCEEDED" as const : "VERIFICATION_FAILED" as const, retryable: false }] };
+            if (receipt.candidateCount === 0 && receipt.budgetExcludedCount === 0) return { sourceId: receipt.sourceId, checked: true, outcome: "credible_zero" as const, losses: [] };
+            if (validDetailCount > 0) return { sourceId: receipt.sourceId, checked: true, outcome: "credible_results" as const, losses: validDetailCount < receipt.candidateCount || receipt.budgetExcludedCount > 0 ? [{ code: "DISCOVERY_BUDGET_EXCEEDED" as const, retryable: false }] : [] };
+            return { sourceId: receipt.sourceId, checked: true, outcome: "verification_failed" as const, losses: [{ code: receipt.budgetExcludedCount > 0 || receipt.candidateCount > summaries.filter((summary) => summary.sourceId === receipt.sourceId).length ? "DISCOVERY_BUDGET_EXCEEDED" as const : "VERIFICATION_FAILED" as const, retryable: false }] };
           }),
           publicQueries: [],
         };

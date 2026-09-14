@@ -456,6 +456,51 @@ describe("AgentRunProcessor checkpoints", () => {
     }) })]);
   });
 
+  it("真实 layered 推荐根在结果限额裁剪后冻结来源损失与已验证差额", async () => {
+    const root = await recommendationRoot("layered_public", { withWatchlist: true });
+    await database.update(agentRuns).set({ budgetSnapshot: { ...PUBLIC_JOB_DISCOVERY_BUDGET, maxResults: 1 } }).where(eq(agentRuns.id, root.runId));
+    const [rootRun] = await database.select({ sourceScope: agentRuns.sourceScope }).from(agentRuns).where(eq(agentRuns.id, root.runId));
+    const trustedSource = (rootRun!.sourceScope as any).trustedSources[0]!;
+    const runtime = createLayeredPublicJobDiscoveryRuntime({
+      db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => now }), contentStore: new Store(), evidenceStore: new Store() as never,
+      trustedSourceAdapter: {
+        adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
+        declareCapabilities: ({ sourceId }: any) => ({ sourceId, adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
+        listSource: async ({ source }: any) => ({ ok: true as const, data: { sourceId: source.sourceId, observedDetailIds: ["first", "second"], candidates: [{ sourceId: source.sourceId, detailId: "first" }, { sourceId: source.sourceId, detailId: "second" }] } }),
+        getSourceDetail: async ({ source, detailId }: any) => ({ ok: true as const, data: { sourceId: source.sourceId, detailId, company: "Runtime", title: "AI 应用工程师", location: "上海", postedAt: now.toISOString(), deadline: null, sourceType: "company_careers" as const, isOfficial: true as const, rawPayload: { id: detailId } } }),
+      },
+      anySearch: { isConfigured: () => false, search: async () => ({ candidates: [] }), extract: async () => { throw new Error("UNUSED"); } }, preflight: async () => null, fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
+    });
+    const runtimeClock = () => new Date();
+    const rootProcessor = createAgentRunProcessor({
+      db: database,
+      adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
+      layeredPublicWorkflowResolver: {
+        resolve: () => ({
+          run: async (input) => {
+            const outcome = await runtime.run(input);
+            if (!outcome.sourcePostingVersionIds?.length) return outcome;
+            const duplicateVersionId = outcome.sourcePostingVersionIds.at(-1)!;
+            return { ...outcome, sourcePostingVersionIds: [...outcome.sourcePostingVersionIds, duplicateVersionId], trustedSourcePostingVersionIds: [...(outcome.trustedSourcePostingVersionIds ?? []), duplicateVersionId] };
+          },
+        }),
+      },
+      contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: runtimeClock }), id: () => crypto.randomUUID(), clock: runtimeClock,
+    });
+    await expect(rootProcessor.process({ version: 1, userId: root.userId, runId: root.runId, finalAttempt: true })).resolves.toBe("completed");
+    await expect(database.select().from(jobDiscoveryRunResults).where(eq(jobDiscoveryRunResults.runId, root.runId))).resolves.toHaveLength(1);
+    const [child] = await database.select({ id: agentRuns.id, sourceScope: agentRuns.sourceScope }).from(agentRuns).where(eq(agentRuns.parentRunId, root.runId));
+    expect(child!.sourceScope).toMatchObject({ frozenRecommendationEvidence: {
+      rootBudgetExcludedJobCount: 1,
+      discoveryFacts: { trusted: [expect.objectContaining({ sourceId: trustedSource.source.sourceId, losses: [{ code: "DISCOVERY_BUDGET_EXCEEDED", retryable: false }] })] },
+    } });
+    const childProcessor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: new FakeDeepMatchAdapter(), checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    await expect(childProcessor.process({ version: 1, userId: root.userId, runId: child!.id, finalAttempt: true })).resolves.toBe("completed");
+    await expect(database.select({ evidence: recommendationResults.evidence }).from(recommendationResults).where(eq(recommendationResults.producerRunId, child!.id))).resolves.toEqual([{
+      evidence: expect.objectContaining({ discovery: { discoveredJobCount: 1 }, sourceCoverage: expect.objectContaining({ verifiedJobCount: 2, rootBudgetExcludedJobCount: 1 }), qualification: expect.objectContaining({ evaluatedCount: 1 }), coverageLosses: expect.arrayContaining([expect.objectContaining({ code: "DISCOVERY_BUDGET_EXCEEDED", affectedCount: 1 })]) }),
+    }]);
+  });
+
   it("推荐根冻结 list auth 失败并把来源修复建议发布到最终 suggestion", async () => {
     const root = await recommendationRoot("layered_public", { watchlistCount: 2 });
     const [rootRun] = await database.select({ sourceScope: agentRuns.sourceScope }).from(agentRuns).where(eq(agentRuns.id, root.runId));
@@ -660,6 +705,69 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("completed");
     expect(calls).toEqual({ search: 1, detail: 1 });
     await expect(createAgentRunQueries({ db: database }).get(job)).resolves.toMatchObject({ accountPolicyRevisionNumber: 1, budget: { maxResults: 1 }, usage: { results: 1 }, results: [expect.anything()] });
+  });
+
+  it("fake 回执拒绝超过固定全局预算上界的伪造裁剪总数", async () => {
+    const job = await run();
+    const summaries = [
+      ...Array.from({ length: 3 }, (_, index) => ({ sourceId: "fake:aurora-careers", detailId: `aurora-${index}`, company: "示例科技", title: "AI 工程师", location: "上海", postedAt: null, deadline: null })),
+      ...Array.from({ length: 2 }, (_, index) => ({ sourceId: "fake:orbit-careers", detailId: `orbit-${index}`, company: "示例科技", title: "AI 工程师", location: "上海", postedAt: null, deadline: null })),
+    ];
+    let detailCalls = 0;
+    const adapter: JobDiscoveryAdapter = {
+      adapter: "fake", adapterVersion: "test",
+      declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "fake", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
+      search: async () => ({ ok: false as const, error: { code: "UNUSED", retryable: false } }),
+      searchBatch: async () => ({ ok: true as const, data: { items: summaries, sourceReceipts: [
+        { sourceId: "fake:aurora-careers", checked: true as const, candidateCount: 3, budgetExcludedCount: 1 },
+        { sourceId: "fake:orbit-careers", checked: true as const, candidateCount: 2, budgetExcludedCount: 1 },
+      ] } }),
+      getDetail: async () => { detailCalls += 1; throw new Error("forged receipts must fail before detail reads"); },
+    };
+    const processor = createAgentRunProcessor({ db: database, adapterResolver: resolver(adapter), checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("failed");
+    expect(detailCalls).toBe(0);
+  });
+
+  it("fake 六条匹配裁剪为五条后冻结未验证预算损失并发布结果证据", async () => {
+    const root = await recommendationRoot("fake");
+    const summaries = [
+      ...Array.from({ length: 3 }, (_, index) => ({ sourceId: "fake:aurora-careers", detailId: `aurora-${index}`, company: "示例科技", title: "AI 工程师", location: "上海", postedAt: null, deadline: null })),
+      ...Array.from({ length: 2 }, (_, index) => ({ sourceId: "fake:orbit-careers", detailId: `orbit-${index}`, company: "示例科技", title: "AI 工程师", location: "上海", postedAt: null, deadline: null })),
+    ];
+    const adapter: JobDiscoveryAdapter = {
+      adapter: "fake", adapterVersion: "test",
+      declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "fake", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
+      search: async () => ({ ok: false as const, error: { code: "UNUSED", retryable: false } }),
+      searchBatch: async ({ sourceScope }: any) => ({ ok: true as const, data: { items: summaries, sourceReceipts: sourceScope.sources.map((sourceId: string) => (
+        sourceId === "fake:aurora-careers"
+          ? { sourceId, checked: true as const, candidateCount: 3, budgetExcludedCount: 0 }
+          : sourceId === "fake:orbit-careers"
+            ? { sourceId, checked: true as const, candidateCount: 2, budgetExcludedCount: 1 }
+            : { sourceId, checked: true as const, candidateCount: 0, budgetExcludedCount: 0 }
+      )) } }),
+      getDetail: async ({ sourceId, detailId }) => {
+        const summary = summaries.find((item) => item.sourceId === sourceId && item.detailId === detailId)!;
+        return { ok: true as const, data: { ...summary, sourceType: "company_careers" as const, isOfficial: true as const, rawPayload: { sourceId, detailId } } };
+      },
+    };
+    const rootProcessor = createAgentRunProcessor({ db: database, adapterResolver: resolver(adapter), checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+
+    await expect(rootProcessor.process({ version: 1, userId: root.userId, runId: root.runId, finalAttempt: true })).resolves.toBe("completed");
+    const [child] = await database.select({ id: agentRuns.id, sourceScope: agentRuns.sourceScope }).from(agentRuns).where(eq(agentRuns.parentRunId, root.runId));
+    expect((child!.sourceScope as any).frozenRecommendationEvidence).toMatchObject({
+      rootBudgetExcludedJobCount: 0,
+      discoveryFacts: { trusted: expect.arrayContaining([
+        expect.objectContaining({ sourceId: "fake:aurora-careers", outcome: "credible_results", losses: [] }),
+        expect.objectContaining({ sourceId: "fake:orbit-careers", outcome: "credible_results", losses: [{ code: "DISCOVERY_BUDGET_EXCEEDED", retryable: false }] }),
+      ]) },
+    });
+    const childProcessor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: new FakeDeepMatchAdapter(), checkpoint: checkpoint(), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    await expect(childProcessor.process({ version: 1, userId: root.userId, runId: child!.id, finalAttempt: true })).resolves.toBe("completed");
+    await expect(database.select({ evidence: recommendationResults.evidence }).from(recommendationResults).where(eq(recommendationResults.producerRunId, child!.id))).resolves.toEqual([{
+      evidence: expect.objectContaining({ sourceCoverage: expect.objectContaining({ rootBudgetExcludedJobCount: 0 }), coverageLosses: expect.arrayContaining([expect.objectContaining({ code: "DISCOVERY_BUDGET_EXCEEDED", affectedCount: 1 })]) }),
+    }]);
   });
 
   it("零结果额度安全完成，不读取详情也不报告结果", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FrozenRecommendationEvidenceSchema, RecommendationDiscoveryFactsSchema } from "./recommendation-discovery-facts";
+import { FrozenRecommendationEvidenceSchema, FrozenRecommendationEvidenceWriteSchema, RecommendationDiscoveryFactsSchema } from "./recommendation-discovery-facts";
 
 const sourceId = "greenhouse:aurora";
 const queryId = "00000000-0000-4000-8000-000000000001";
@@ -21,7 +21,9 @@ describe("推荐发现冻结事实契约", () => {
     } as const;
 
     expect(RecommendationDiscoveryFactsSchema.parse(facts)).toEqual(facts);
-    expect(FrozenRecommendationEvidenceSchema.parse(frozen)).toEqual(frozen);
+    expect(FrozenRecommendationEvidenceSchema.parse(frozen)).toMatchObject({ ...frozen, rootBudgetExcludedJobCount: 0 });
+    expect(FrozenRecommendationEvidenceWriteSchema.safeParse(frozen).success).toBe(false);
+    expect(FrozenRecommendationEvidenceWriteSchema.safeParse({ ...frozen, rootBudgetExcludedJobCount: 1 }).success).toBe(true);
     expect(RecommendationDiscoveryFactsSchema.safeParse({ ...facts, trusted: [...facts.trusted, facts.trusted[0]] }).success).toBe(false);
     expect(FrozenRecommendationEvidenceSchema.safeParse({ ...frozen, plannedTrustedSourceCount: 0 }).success).toBe(false);
     expect(FrozenRecommendationEvidenceSchema.safeParse({ ...frozen, frozenTriageVersionIds: [triageVersionId, triageVersionId] }).success).toBe(false);

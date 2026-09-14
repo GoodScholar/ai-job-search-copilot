@@ -280,6 +280,12 @@ type RecommendationResult =
 + 最终推荐数
 ```
 
+### 根结果限额的已验证差额（2026-09-15 已确认）
+
+`verifiedJobCount` 是所有实际完成本地验证、按来源版本去重后的总集；`discoveredJobCount` 是其中实际进入资格筛选的集合。根推荐运行因自身 `maxResults` 截断时，两者允许不同，但必须显式记录 `sourceCoverage.rootBudgetExcludedJobCount`，并满足：`verifiedJobCount = discoveredJobCount + rootBudgetExcludedJobCount`。其余资格、粗排和深度匹配闭合保持不变。
+
+该差额只计已经验证但未被根结果纳入的唯一来源版本；同一版本在多个来源或公开查询归因下只计一次，同时每个实际受影响分支各冻结一条 `DISCOVERY_BUDGET_EXCEEDED` 覆盖损失。fake adapter 回执中的未验证候选截断不属于该差额。旧不可变结果读取时缺字段按零兼容；新发布必须显式写入该字段，不回写历史记录，也不需要数据库迁移。结果页在差额非零时以最小中文说明其未进入资格筛选的原因。
+
 ### 规则排除补充（2026-09-13 已确认）
 
 推荐运行继续遵守已生效的 `excludedOpportunityIds`，被排除岗位不调用模型。为避免计数遗漏，增加稳定排除原因 `RULE_EXCLUDED` 和 `coarseRanking.ruleExcludedCount`；不能借用低分、资格失败或模型证据不足原因。粗排闭合为 `eligibleCount = belowThresholdCount + ruleExcludedCount + candidateLimitExcludedCount + deepMatchCandidateCount`。

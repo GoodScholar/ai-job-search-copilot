@@ -274,6 +274,7 @@ export function createDeepMatchQueries(deps: { db: Database }) {
   return {
     selectCandidateSelection,
     async getLatestList(input: { userId: string; targetId: string }) { return readList({ ...input, exclusionLimit: 25 }); },
+    async getList(input: { userId: string; targetId: string; recommendationListId: string }) { return readList({ ...input, recommendationListId: input.recommendationListId, exclusionLimit: 25 }); },
     async getFrozenCandidates(input: { userId: string; runId: string }): Promise<SelectedDeepMatchCandidate[]> {
       const rows = await deps.db.select({ candidateSnapshot: deepMatchRunCandidates.candidateSnapshot }).from(deepMatchRunCandidates)
         .where(and(eq(deepMatchRunCandidates.userId, input.userId), eq(deepMatchRunCandidates.runId, input.runId))).orderBy(deepMatchRunCandidates.ordinal);

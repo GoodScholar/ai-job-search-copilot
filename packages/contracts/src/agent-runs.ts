@@ -52,6 +52,9 @@ export const AGENT_RUN_BUDGET = {
   maxModelCalls: 0,
   maxTokens: 0,
 } as const;
+// 固定 fake 夹具最多有六条匹配项，而批量预算最多返回五条；未验证候选的回执差额因此至多为一条。
+export const FAKE_JOB_DISCOVERY_FIXED_MATCHING_FIXTURE_COUNT = 6;
+export const FAKE_JOB_DISCOVERY_MAX_BUDGET_EXCLUDED_COUNT = FAKE_JOB_DISCOVERY_FIXED_MATCHING_FIXTURE_COUNT - AGENT_RUN_BUDGET.maxResults;
 export const PUBLIC_JOB_DISCOVERY_BUDGET = {
   maxActiveDurationMs: 180_000,
   maxAttempts: 3,
@@ -645,6 +648,7 @@ export const FakeDiscoverySourceReceiptSchema = z.object({
   sourceId: z.string().trim().min(1).max(2_048),
   checked: z.literal(true),
   candidateCount: nonnegativeInteger,
+  budgetExcludedCount: nonnegativeInteger.max(FAKE_JOB_DISCOVERY_MAX_BUDGET_EXCLUDED_COUNT).default(0),
 }).strict();
 export const DiscoveryBatchSearchResultSchema = adapterResult(z.union([
   z.array(DiscoverySearchSummarySchema).max(AGENT_RUN_BUDGET.maxResults),

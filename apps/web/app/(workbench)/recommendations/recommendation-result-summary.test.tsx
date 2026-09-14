@@ -53,11 +53,11 @@ describe("RecommendationResultSummary", () => {
   });
 
   it("完整闭合统计逐项呈现服务端冻结事实", () => {
-    const result = RecommendationResultSchema.parse({ ...noRecommendationsResult, kind: "recommendation_list", recommendationListId: noRecommendationsResult.resultId, itemCount: 3, evidence: { ...noRecommendationsResult.evidence, discovery: { discoveredJobCount: 12 }, sourceCoverage: { plannedTrustedSourceCount: 2, plannedPublicQueryCount: 1, checkedBranchCount: 3, credibleBranchCount: 2, verifiedJobCount: 12 }, qualification: { evaluatedCount: 12, rejectedCount: 1, insufficientInformationCount: 2, expiredCount: 1 }, coarseRanking: { eligibleCount: 8, belowThresholdCount: 1, ruleExcludedCount: 2, candidateLimitExcludedCount: 1, deepMatchCandidateCount: 4 }, deepMatching: { evaluatedCount: 4, qualityInsufficientCount: 1, finalRecommendationCount: 3 } } });
+    const result = RecommendationResultSchema.parse({ ...noRecommendationsResult, kind: "recommendation_list", recommendationListId: noRecommendationsResult.resultId, itemCount: 3, evidence: { ...noRecommendationsResult.evidence, discovery: { discoveredJobCount: 11 }, sourceCoverage: { plannedTrustedSourceCount: 2, plannedPublicQueryCount: 1, checkedBranchCount: 3, credibleBranchCount: 2, verifiedJobCount: 12, rootBudgetExcludedJobCount: 1 }, qualification: { evaluatedCount: 11, rejectedCount: 1, insufficientInformationCount: 2, expiredCount: 1 }, coarseRanking: { eligibleCount: 7, belowThresholdCount: 1, ruleExcludedCount: 2, candidateLimitExcludedCount: 0, deepMatchCandidateCount: 4 }, deepMatching: { evaluatedCount: 4, qualityInsufficientCount: 1, finalRecommendationCount: 3 } } });
     render(<RecommendationResultSummary result={result} />);
-    expect(screen.getByText("来源覆盖：计划可信来源 2 个、公开查询 1 个；已检查 3 项，可信 2 项；已验证并发现岗位 12 个。")).toBeVisible();
-    expect(screen.getByText("资格筛选：评估 12 个，淘汰 1 个，信息不足 2 个，已过期 1 个。")).toBeVisible();
-    expect(screen.getByText("初步排序：合格 8 个，低于阈值 1 个，规则排除 2 个，候选上限外 1 个，进入深度匹配 4 个。")).toBeVisible();
+    expect(screen.getByText("来源覆盖：计划可信来源 2 个、公开查询 1 个；已检查 3 项，可信 2 项；已验证并发现岗位 12 个；其中 1 个因本次结果限额未进入资格筛选。")).toBeVisible();
+    expect(screen.getByText("资格筛选：评估 11 个，淘汰 1 个，信息不足 2 个，已过期 1 个。")).toBeVisible();
+    expect(screen.getByText("初步排序：合格 7 个，低于阈值 1 个，规则排除 2 个，候选上限外 0 个，进入深度匹配 4 个。")).toBeVisible();
     expect(screen.getByText("深度匹配：评估 4 个，质量不足 1 个，最终推荐 3 个。")).toBeVisible();
   });
 

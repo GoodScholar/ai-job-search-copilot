@@ -29,12 +29,18 @@ export const RecommendationRunSourceScopeSchema = z.object({
   trustedSourceCount: nonnegativeInteger, publicQueryCount: nonnegativeInteger,
 }).strict();
 
+const RecommendationSourceCoverageSchema = z.object({
+  plannedTrustedSourceCount: nonnegativeInteger, plannedPublicQueryCount: nonnegativeInteger, checkedBranchCount: nonnegativeInteger,
+  credibleBranchCount: nonnegativeInteger, verifiedJobCount: nonnegativeInteger, rootBudgetExcludedJobCount: nonnegativeInteger.default(0),
+}).strict();
+const RecommendationSourceCoverageWriteSchema = z.object({
+  plannedTrustedSourceCount: nonnegativeInteger, plannedPublicQueryCount: nonnegativeInteger, checkedBranchCount: nonnegativeInteger,
+  credibleBranchCount: nonnegativeInteger, verifiedJobCount: nonnegativeInteger, rootBudgetExcludedJobCount: nonnegativeInteger,
+}).strict();
+
 const RecommendationResultEvidenceBaseSchema = z.object({
   discovery: z.object({ discoveredJobCount: nonnegativeInteger }).strict(),
-  sourceCoverage: z.object({
-    plannedTrustedSourceCount: nonnegativeInteger, plannedPublicQueryCount: nonnegativeInteger, checkedBranchCount: nonnegativeInteger,
-    credibleBranchCount: nonnegativeInteger, verifiedJobCount: nonnegativeInteger,
-  }).strict(),
+  sourceCoverage: RecommendationSourceCoverageSchema,
   coverageLosses: z.array(z.object({ code: RecommendationCoverageLossCodeSchema, affectedCount: nonnegativeInteger, retryable: z.boolean() }).strict()).max(32),
   qualification: z.object({
     evaluatedCount: nonnegativeInteger, rejectedCount: nonnegativeInteger, insufficientInformationCount: nonnegativeInteger, expiredCount: nonnegativeInteger,
@@ -57,7 +63,7 @@ const refineRecommendationResultEvidence = (evidence: z.infer<typeof Recommendat
   if (sourceCoverage.credibleBranchCount < 1) context.addIssue({ code: "custom", path: ["sourceCoverage", "credibleBranchCount"], message: "可信结果至少需要一个可信发现分支" });
   if (sourceCoverage.checkedBranchCount > sourceCoverage.plannedTrustedSourceCount + sourceCoverage.plannedPublicQueryCount) context.addIssue({ code: "custom", path: ["sourceCoverage", "checkedBranchCount"], message: "已检查分支不能超过计划来源范围" });
   if (sourceCoverage.credibleBranchCount > sourceCoverage.checkedBranchCount) context.addIssue({ code: "custom", path: ["sourceCoverage", "credibleBranchCount"], message: "可信分支不能超过已检查分支" });
-  if (sourceCoverage.verifiedJobCount !== discovery.discoveredJobCount) context.addIssue({ code: "custom", path: ["sourceCoverage", "verifiedJobCount"], message: "已验证岗位与发现岗位必须使用同一去重口径" });
+  if (sourceCoverage.verifiedJobCount !== discovery.discoveredJobCount + sourceCoverage.rootBudgetExcludedJobCount) context.addIssue({ code: "custom", path: ["sourceCoverage", "verifiedJobCount"], message: "已验证岗位必须由进入资格评估的发现岗位与根结果预算裁剪岗位闭合" });
 };
 
 export const RecommendationResultEvidenceSchema = RecommendationResultEvidenceBaseSchema.extend({
@@ -65,6 +71,7 @@ export const RecommendationResultEvidenceSchema = RecommendationResultEvidenceBa
 }).superRefine(refineRecommendationResultEvidence);
 
 export const RecommendationResultEvidenceWriteSchema = RecommendationResultEvidenceBaseSchema.extend({
+  sourceCoverage: RecommendationSourceCoverageWriteSchema,
   coarseRanking: RecommendationCoarseRankingSchema.extend({ ruleExcludedCount: nonnegativeInteger }).strict(),
 }).superRefine(refineRecommendationResultEvidence);
 

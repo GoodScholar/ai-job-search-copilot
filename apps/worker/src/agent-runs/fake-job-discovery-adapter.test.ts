@@ -86,8 +86,8 @@ describe("FakeJobDiscoveryAdapter", () => {
       "fake:orbit-careers/orbit-ai-001",
     ]);
     expect(broad.data.sourceReceipts).toEqual([
-      { sourceId: "fake:aurora-careers", checked: true, candidateCount: 3 },
-      { sourceId: "fake:orbit-careers", checked: true, candidateCount: 2 },
+      { sourceId: "fake:aurora-careers", checked: true, candidateCount: 3, budgetExcludedCount: 0 },
+      { sourceId: "fake:orbit-careers", checked: true, candidateCount: 2, budgetExcludedCount: 1 },
     ]);
     if (!filtered.ok || Array.isArray(filtered.data)) throw new Error("fake batch search must include source receipts");
     expect(filtered).toEqual({
@@ -95,8 +95,8 @@ describe("FakeJobDiscoveryAdapter", () => {
       data: {
         items: [expect.objectContaining({ sourceId: "fake:orbit-careers", detailId: "orbit-ai-001", location: "深圳" })],
         sourceReceipts: [
-          { sourceId: "fake:aurora-careers", checked: true, candidateCount: 0 },
-          { sourceId: "fake:orbit-careers", checked: true, candidateCount: 1 },
+          { sourceId: "fake:aurora-careers", checked: true, candidateCount: 0, budgetExcludedCount: 0 },
+          { sourceId: "fake:orbit-careers", checked: true, candidateCount: 1, budgetExcludedCount: 0 },
         ],
       },
     });
@@ -112,7 +112,7 @@ describe("FakeJobDiscoveryAdapter", () => {
         kind: "company_watchlist", adapter: "fake", adapterVersion: "fake-job-discovery-v1", watchlistVersion: 2,
         sources: [customUrl],
       },
-    })).resolves.toEqual({ ok: true, data: { items: [], sourceReceipts: [{ sourceId: customUrl, checked: true, candidateCount: 0 }] } });
+    })).resolves.toEqual({ ok: true, data: { items: [], sourceReceipts: [{ sourceId: customUrl, checked: true, candidateCount: 0, budgetExcludedCount: 0 }] } });
 
     const mixed = await adapter.searchBatch({
       targetSnapshot,
@@ -132,9 +132,9 @@ describe("FakeJobDiscoveryAdapter", () => {
       "fake:aurora-careers/aurora-frontend-001",
     ]);
     expect(mixed.data.sourceReceipts).toEqual([
-      { sourceId: customUrl, checked: true, candidateCount: 0 },
-      { sourceId: "fake:orbit-careers", checked: true, candidateCount: 3 },
-      { sourceId: "fake:aurora-careers", checked: true, candidateCount: 2 },
+      { sourceId: customUrl, checked: true, candidateCount: 0, budgetExcludedCount: 0 },
+      { sourceId: "fake:orbit-careers", checked: true, candidateCount: 3, budgetExcludedCount: 0 },
+      { sourceId: "fake:aurora-careers", checked: true, candidateCount: 2, budgetExcludedCount: 1 },
     ]);
   });
 

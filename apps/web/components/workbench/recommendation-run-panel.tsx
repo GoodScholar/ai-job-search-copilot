@@ -62,6 +62,8 @@ export function RecommendationRunPanel({ initialRun, initialPreparation, unavail
   const idempotencyKey = useRef<string | null>(null);
   const commandIds = useRef<Partial<Record<Action, string>>>({});
   const authoritativeRunId = useRef(initialRun?.runId ?? null);
+  const observedRun = useRef({ runId: initialRun?.runId ?? null, status: initialRun?.status ?? null });
+  const onRunChangedRef = useRef(onRunChanged);
   const propsInitialized = useRef(false);
   const authorityGeneration = useRef(0);
   const readGeneration = useRef(0);
@@ -77,6 +79,7 @@ export function RecommendationRunPanel({ initialRun, initialPreparation, unavail
       readAbortController.current?.abort();
     };
   }, []);
+  useEffect(() => { onRunChangedRef.current = onRunChanged; }, [onRunChanged]);
   useEffect(() => {
     if (!propsInitialized.current) {
       propsInitialized.current = true;
@@ -85,6 +88,7 @@ export function RecommendationRunPanel({ initialRun, initialPreparation, unavail
     const nextAuthoritativeRunId = initialRun?.runId ?? null;
     const rootChanged = authoritativeRunId.current !== nextAuthoritativeRunId;
     authoritativeRunId.current = nextAuthoritativeRunId;
+    observedRun.current = { runId: nextAuthoritativeRunId, status: initialRun?.status ?? null };
     if (initialRun?.status === "paused") commandIds.current.pause = undefined;
     if (initialRun?.status === "running") commandIds.current.resume = undefined;
     const generation = ++authorityGeneration.current;
@@ -105,6 +109,7 @@ export function RecommendationRunPanel({ initialRun, initialPreparation, unavail
     });
   }, [initialPreparation, initialRun]);
   const adoptRun = useCallback((next: RecommendationRun | null) => {
+    observedRun.current = { runId: next?.runId ?? null, status: next?.status ?? null };
     authoritativeRunId.current = next?.runId ?? null;
     authorityGeneration.current += 1;
     readGeneration.current += 1;
@@ -124,8 +129,11 @@ export function RecommendationRunPanel({ initialRun, initialPreparation, unavail
       if (mounted.current && readGeneration.current === generation && authoritativeRunId.current === runId) {
         if (next.status === "paused") commandIds.current.pause = undefined;
         if (next.status === "running") commandIds.current.resume = undefined;
+        const previous = observedRun.current;
+        observedRun.current = { runId: next.runId, status: next.status };
         setRun(next);
         setMessage("");
+        if (previous.runId === next.runId && previous.status !== next.status && (next.status === "paused" || terminalStatuses.has(next.status))) onRunChangedRef.current?.();
         return true;
       }
     } catch {

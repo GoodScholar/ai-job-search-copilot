@@ -749,6 +749,15 @@ it("hidden 初始不读取，visible 后读取；卸载后停止轮询", async (
   expect(fetchSpy).toHaveBeenCalledTimes(1);
 });
 
+it("SSR 初始终态不读取也不触发工作台刷新", async () => {
+  const onRunChanged = vi.fn();
+  const fetchSpy = vi.mocked(fetch);
+  render(<RecommendationRunPanel initialRun={completedRun("no_recommendations")} initialPreparation={preparation()} onRunChanged={onRunChanged} />);
+  await act(async () => { vi.advanceTimersByTime(30_000); });
+  expect(fetchSpy).not.toHaveBeenCalled();
+  expect(onRunChanged).not.toHaveBeenCalled();
+});
+
 it.each([200, 201])("start 收到 %i 后只读取返回的新 run root", async (status) => {
   const nextRunId = "4f8c6eb3-2b92-4d91-aad4-959b7d4cd7a3";
   const initialRun = RecommendationRunSchema.parse({ ...cancelledRun(), runId: "a1a1a1a1-2b92-4d91-aad4-959b7d4cd7a3" });
@@ -784,19 +793,44 @@ it.each([200, 201])("start 直接收到 %i completed 后不启动轮询", async 
 it.each([
   ["cancelled", cancelledRun()],
   ["completed", completedRun("no_recommendations")],
+  ["failed", failedRun([])],
 ] as const)("running 轮询转换为 %s 后不再读取", async (_status, terminalRun) => {
   let reads = 0;
+  const onRunChanged = vi.fn();
   const fetchSpy = vi.mocked(fetch).mockImplementation((input) => {
     if (!String(input).endsWith(`/${runId}`)) throw new Error(`unexpected request: ${String(input)}`);
     reads += 1;
     return Promise.resolve(response(reads === 1 ? runningRun() : terminalRun));
   });
-  render(<RecommendationRunPanel initialRun={runningRun()} initialPreparation={preparation()} />);
+  render(<RecommendationRunPanel initialRun={runningRun()} initialPreparation={preparation()} onRunChanged={onRunChanged} />);
   await act(async () => { await Promise.resolve(); });
   await act(async () => { vi.advanceTimersByTime(15_000); await Promise.resolve(); });
   expect(fetchSpy).toHaveBeenCalledTimes(2);
+  expect(onRunChanged).toHaveBeenCalledTimes(1);
   await act(async () => { vi.advanceTimersByTime(30_000); });
   expect(fetchSpy).toHaveBeenCalledTimes(2);
+  expect(onRunChanged).toHaveBeenCalledTimes(1);
+});
+
+it("轮询只在当前 root 的权威状态变化时通知，并保留每次 pause 边沿", async () => {
+  const onRunChanged = vi.fn();
+  let serverRun = runningRun();
+  vi.mocked(fetch).mockImplementation((input) => {
+    if (!String(input).endsWith(`/${runId}`)) throw new Error(`unexpected request: ${String(input)}`);
+    return Promise.resolve(response(serverRun));
+  });
+  render(<RecommendationRunPanel initialRun={runningRun()} initialPreparation={preparation()} onRunChanged={onRunChanged} />);
+  await act(async () => { await Promise.resolve(); });
+  expect(onRunChanged).not.toHaveBeenCalled();
+  serverRun = pausedRun();
+  await act(async () => { vi.advanceTimersByTime(15_000); await Promise.resolve(); });
+  expect(onRunChanged).toHaveBeenCalledTimes(1);
+  serverRun = runningRun();
+  await act(async () => { vi.advanceTimersByTime(15_000); await Promise.resolve(); });
+  expect(onRunChanged).toHaveBeenCalledTimes(1);
+  serverRun = pausedRun();
+  await act(async () => { vi.advanceTimersByTime(15_000); await Promise.resolve(); });
+  expect(onRunChanged).toHaveBeenCalledTimes(2);
 });
 
 it("缺少主目标的合法 blocked preparation 禁止启动并指向目标设置", () => {
@@ -875,7 +909,7 @@ it("旧 start 的 409 在 props 切换后不读取或覆盖新 root", async () =
   const rootA = RecommendationRunSchema.parse({ ...cancelledRun(), runId: "a1a1a1a1-2b92-4d91-aad4-959b7d4cd7a3" });
   const rootB = RecommendationRunSchema.parse({ ...cancelledRun(), runId: "b1b1b1b1-2b92-4d91-aad4-959b7d4cd7a3" });
   const warningB = RecommendationRunPreparationSchema.parse({ ...preparation("ready_with_warnings"), preflight: { ...preflight("ready_with_warnings"), items: [{ ...preflight("ready_with_warnings").items[0]!, summary: "新 root 的来源提示" }] } });
-  vi.mocked(fetch).mockImplementation((input, init) => {
+  const fetchSpy = vi.mocked(fetch).mockImplementation((input, init) => {
     if (input === "/api/recommendation-runs" && init?.method === "POST") return new Promise<Response>((resolve) => { resolveStart = resolve; });
     throw new Error(`stale start must not read: ${String(input)}`);
   });
@@ -887,6 +921,8 @@ it("旧 start 的 409 在 props 切换后不读取或覆盖新 root", async () =
   expect(screen.getByRole("button", { name: "我已了解，开始今日发现" })).toBeVisible();
   resolveStart(response({ code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED" }, 409));
   await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  expect(fetchSpy).toHaveBeenCalledTimes(1);
+  expect(fetchSpy).not.toHaveBeenCalledWith(`/api/recommendation-runs/${rootA.runId}`, expect.anything());
   expect(screen.getByRole("status")).toHaveTextContent("本次推荐已取消");
   expect(screen.getByRole("button", { name: "我已了解，开始今日发现" })).toBeVisible();
 });

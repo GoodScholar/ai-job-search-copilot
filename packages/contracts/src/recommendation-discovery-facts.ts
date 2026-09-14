@@ -60,23 +60,29 @@ export const RecommendationDiscoveryFactsSchema = z.object({
   ),
 }).strict();
 
-export const FrozenRecommendationEvidenceSchema = z.object({
+const FrozenRecommendationEvidenceBaseSchema = z.object({
   version: z.literal("recommendation-evidence-v1"),
   plannedTrustedSourceCount: nonnegativeInteger,
   plannedPublicQueryCount: nonnegativeInteger,
+  rootBudgetExcludedJobCount: nonnegativeInteger.default(0),
   discoveryFacts: RecommendationDiscoveryFactsSchema,
   frozenTriageVersionIds: z.array(z.uuid()).max(5).refine(
     (ids) => new Set(ids).size === ids.length,
     "frozen triage version IDs must be unique",
   ),
-}).strict().superRefine((evidence, context) => {
+}).strict();
+
+const refineFrozenRecommendationEvidence = (evidence: z.infer<typeof FrozenRecommendationEvidenceBaseSchema>, context: z.RefinementCtx) => {
   if (evidence.discoveryFacts.trusted.length > evidence.plannedTrustedSourceCount) {
     context.addIssue({ code: "custom", path: ["plannedTrustedSourceCount"], message: "trusted facts cannot exceed planned sources" });
   }
   if (evidence.discoveryFacts.publicQueries.length > evidence.plannedPublicQueryCount) {
     context.addIssue({ code: "custom", path: ["plannedPublicQueryCount"], message: "public facts cannot exceed planned queries" });
   }
-});
+};
+
+export const FrozenRecommendationEvidenceSchema = FrozenRecommendationEvidenceBaseSchema.superRefine(refineFrozenRecommendationEvidence);
+export const FrozenRecommendationEvidenceWriteSchema = FrozenRecommendationEvidenceBaseSchema.extend({ rootBudgetExcludedJobCount: nonnegativeInteger }).superRefine(refineFrozenRecommendationEvidence);
 
 export type RecommendationDiscoveryFacts = z.infer<typeof RecommendationDiscoveryFactsSchema>;
 export type FrozenRecommendationEvidence = z.infer<typeof FrozenRecommendationEvidenceSchema>;

@@ -11,6 +11,7 @@ import { JobTargetConstraintsSchema } from "@job-copilot/contracts/job-targets";
 import { createDeepMatchRunStarter as createDomainDeepMatchRunStarter, ensureDeepMatchRunInTransaction } from "./deep-match-agent-runs";
 import { createAgentRunRecoveryQueries } from "./agent-run-processor";
 import { createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
+import { createRecommendationQueries } from "./recommendation-queries";
 import { createAccountRunControl } from "./account-run-control";
 import { createAuditTrail, type AuditTrail } from "./audit-trail";
 import { RunPreflightRejectedError, type RunPreflightEvaluator } from "./run-preflight";
@@ -153,7 +154,7 @@ describe("deep match persistence", () => {
     await expect(manual.start({ userId: input.userId, trigger: "manual", command: { targetId: input.targetId, opportunityId: input.opportunityId, idempotencyKey: crypto.randomUUID(), warningFingerprint: null } })).rejects.toMatchObject({ code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED" } satisfies Partial<RunPreflightRejectedError>);
     await expect(manual.start({ userId: input.userId, trigger: "manual", command: { targetId: input.targetId, opportunityId: input.opportunityId, idempotencyKey: crypto.randomUUID(), warningFingerprint: "a".repeat(64) } })).rejects.toMatchObject({ code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED" } satisfies Partial<RunPreflightRejectedError>);
     const created = await manual.start({ userId: input.userId, trigger: "manual", command: { targetId: input.targetId, opportunityId: input.opportunityId, idempotencyKey: crypto.randomUUID(), warningFingerprint: "b".repeat(64) } });
-    await expect(db.select({ snapshot: agentRuns.preflightSnapshot }).from(agentRuns).where(eq(agentRuns.id, created.runId))).resolves.toEqual([{ snapshot: expect.objectContaining({ status: "ready_with_warnings", warningFingerprint: "b".repeat(64) }) }]);
+    await expect(db.select({ snapshot: agentRuns.preflightSnapshot, runPurpose: agentRuns.runPurpose }).from(agentRuns).where(eq(agentRuns.id, created.runId))).resolves.toEqual([{ snapshot: expect.objectContaining({ status: "ready_with_warnings", warningFingerprint: "b".repeat(64) }), runPurpose: "opportunity_reevaluation" }]);
 
     const blocked = createDeepMatchRunStarter({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now, runPreflight: await preflight("blocked") });
     await expect(blocked.start({ userId: input.userId, trigger: "automatic", targetId: input.targetId, discoveryRunId: crypto.randomUUID(), idempotencyKey: crypto.randomUUID() })).resolves.toMatchObject({ kind: "blocked", preflight: { status: "blocked" } });
@@ -286,7 +287,7 @@ describe("deep match persistence", () => {
     await db.insert(recommendationRuleVersions).values({ id: crypto.randomUUID(), userId: input.userId, targetId: input.targetId, proposalId, proposalRevisionId, version: 1, config: ruleConfig, createdAt: now });
 
     const idempotencyKey = crypto.randomUUID();
-    const frozenEvidence = { version: "recommendation-evidence-v1" as const, plannedTrustedSourceCount: 1, plannedPublicQueryCount: 0, discoveryFacts: { version: "recommendation-discovery-facts-v1" as const, trusted: [{ sourceId: "fake:aurora-careers", checked: true, outcome: "credible_results" as const, losses: [] }], publicQueries: [] }, frozenTriageVersionIds: [input.triageVersionId] };
+    const frozenEvidence = { version: "recommendation-evidence-v1" as const, plannedTrustedSourceCount: 1, plannedPublicQueryCount: 0, rootBudgetExcludedJobCount: 0, discoveryFacts: { version: "recommendation-discovery-facts-v1" as const, trusted: [{ sourceId: "fake:aurora-careers", checked: true, outcome: "credible_results" as const, losses: [] }], publicQueries: [] }, frozenTriageVersionIds: [input.triageVersionId] };
     await expect(db.transaction((transaction) => ensureDeepMatchRunInTransaction({
       transaction, id: () => crypto.randomUUID(), clock: () => now, runPreflight: { evaluate: async () => { throw new Error("mismatched selection must fail before preflight"); } } as any,
       userId: input.userId, targetId: input.targetId, idempotencyKey, trigger: "automatic", discoveryRunId: parentRunId,
@@ -865,6 +866,8 @@ describe("deep match persistence", () => {
     const latest = await queries.getLatestList({ userId: input.userId, targetId: input.targetId });
     expect(latest).toMatchObject({ recommendationListId: listIds[20], exclusionsNextCursor: expect.any(String) });
     expect(latest?.exclusions).toHaveLength(25);
+    await expect(createRecommendationQueries({ db }).getList({ userId: input.userId, targetId: input.targetId, recommendationListId: listIds[0]! }))
+      .resolves.toMatchObject({ recommendationListId: listIds[0] });
     await expect(queries.getListExclusionsPage({ userId: input.userId, targetId: input.targetId, recommendationListId: listIds[20]!, cursor: latest!.exclusionsNextCursor!, limit: 25 })).resolves.toMatchObject({ items: [expect.any(Object)], nextCursor: null });
   }, 60_000);
 

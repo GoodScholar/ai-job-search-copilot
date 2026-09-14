@@ -26,7 +26,7 @@ const blockedPreflight = { ...readyPreflight, targetId: null, status: "blocked",
 }] } as const;
 const closingEvidence = {
   discovery: { discoveredJobCount: 5 },
-  sourceCoverage: { plannedTrustedSourceCount: 2, plannedPublicQueryCount: 1, checkedBranchCount: 3, credibleBranchCount: 2, verifiedJobCount: 5 },
+  sourceCoverage: { plannedTrustedSourceCount: 2, plannedPublicQueryCount: 1, checkedBranchCount: 3, credibleBranchCount: 2, verifiedJobCount: 5, rootBudgetExcludedJobCount: 0 },
   coverageLosses: [{ code: "TRUSTED_SOURCE_UNAVAILABLE", affectedCount: 1, retryable: true }],
   qualification: { evaluatedCount: 5, rejectedCount: 1, insufficientInformationCount: 1, expiredCount: 0 },
   coarseRanking: { eligibleCount: 3, belowThresholdCount: 1, ruleExcludedCount: 0, candidateLimitExcludedCount: 0, deepMatchCandidateCount: 2 },
@@ -47,6 +47,7 @@ describe("逻辑推荐运行契约", () => {
     const legacyEvidence = { ...closingEvidence, coarseRanking: legacyCoarseRanking };
     const next = {
       ...legacyEvidence,
+      sourceCoverage: { ...legacyEvidence.sourceCoverage, rootBudgetExcludedJobCount: 0 },
       coarseRanking: {
         eligibleCount: 3,
         belowThresholdCount: 0,
@@ -65,6 +66,30 @@ describe("逻辑推荐运行契约", () => {
     expect(RecommendationResultEvidenceWriteSchema.safeParse({ ...next, coarseRanking: { ...next.coarseRanking, ruleExcludedCount: 2 } }).success).toBe(false);
     expect(RecommendationResultEvidenceWriteSchema.safeParse({ ...next, coarseRanking: { ...next.coarseRanking, deepMatchCandidateCount: 1 } }).success).toBe(false);
     expect(RecommendationResultEvidenceWriteSchema.safeParse(next).success).toBe(true);
+  });
+
+  it("根结果预算裁剪以显式差额保持来源验证与资格闭包", () => {
+    const { rootBudgetExcludedJobCount: _rootBudgetExcludedJobCount, ...legacySourceCoverage } = closingEvidence.sourceCoverage;
+    const legacyEvidence = {
+      ...closingEvidence,
+      sourceCoverage: legacySourceCoverage,
+    };
+    const rootBudgetExcluded = {
+      ...closingEvidence,
+      sourceCoverage: {
+        ...closingEvidence.sourceCoverage,
+        verifiedJobCount: 6,
+        rootBudgetExcludedJobCount: 1,
+      },
+    };
+
+    expect(RecommendationResultEvidenceSchema.parse(legacyEvidence).sourceCoverage.rootBudgetExcludedJobCount).toBe(0);
+    expect(RecommendationResultEvidenceWriteSchema.safeParse(legacyEvidence).success).toBe(false);
+    expect(RecommendationResultEvidenceWriteSchema.safeParse(rootBudgetExcluded).success).toBe(true);
+    expect(RecommendationResultEvidenceWriteSchema.safeParse({
+      ...rootBudgetExcluded,
+      sourceCoverage: { ...rootBudgetExcluded.sourceCoverage, rootBudgetExcludedJobCount: 0 },
+    }).success).toBe(false);
   });
 
   it("接受可信的非空推荐清单并拒绝空清单和不闭合证据", () => {

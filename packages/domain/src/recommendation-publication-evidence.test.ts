@@ -22,6 +22,7 @@ function frozen(triageIds: readonly string[], input: Partial<FrozenRecommendatio
     version: "recommendation-evidence-v1" as const,
     plannedTrustedSourceCount: 1,
     plannedPublicQueryCount: 1,
+    rootBudgetExcludedJobCount: 0,
     discoveryFacts: {
       version: "recommendation-discovery-facts-v1" as const,
       trusted: input.trusted ?? [{ sourceId: "fake:aurora", checked: true, outcome: "credible_results" as const, losses: [{ code: "SOURCE_HEALTH_DEGRADED" as const, retryable: true }] }],
@@ -56,7 +57,7 @@ describe("recommendation publication evidence", () => {
       acceptedOpportunityIds: [triages[6]!.opportunityId],
     })).toEqual({
       discovery: { discoveredJobCount: 8 },
-      sourceCoverage: { plannedTrustedSourceCount: 1, plannedPublicQueryCount: 1, checkedBranchCount: 1, credibleBranchCount: 1, verifiedJobCount: 8 },
+      sourceCoverage: { plannedTrustedSourceCount: 1, plannedPublicQueryCount: 1, checkedBranchCount: 1, credibleBranchCount: 1, verifiedJobCount: 8, rootBudgetExcludedJobCount: 0 },
       coverageLosses: [
         { code: "PUBLIC_DISCOVERY_UNAVAILABLE", affectedCount: 1, retryable: false },
         { code: "SOURCE_HEALTH_DEGRADED", affectedCount: 1, retryable: true },

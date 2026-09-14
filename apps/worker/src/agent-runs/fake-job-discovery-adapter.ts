@@ -119,14 +119,13 @@ export class FakeJobDiscoveryAdapter implements JobDiscoveryAdapter {
     const failure = this.options.failures?.searchBatch;
     if (failure) return { ok: false, error: failure };
     const sourceOrder = new Map<string, number>(input.sourceScope.sources.map((sourceId, index) => [sourceId, index]));
-    const data = fixtures
+    const matched = fixtures
       .filter((item) => sourceOrder.has(item.sourceId) && matchesTarget(item, input.targetSnapshot))
       .sort((left, right) => {
         const sourceDifference = sourceOrder.get(left.sourceId)! - sourceOrder.get(right.sourceId)!;
         return sourceDifference || left.detailId.localeCompare(right.detailId);
-      })
-      .slice(0, AGENT_RUN_BUDGET.maxResults)
-      .map(summary);
+      });
+    const data = matched.slice(0, AGENT_RUN_BUDGET.maxResults).map(summary);
     return {
       ok: true,
       data: {
@@ -135,6 +134,7 @@ export class FakeJobDiscoveryAdapter implements JobDiscoveryAdapter {
           sourceId,
           checked: true as const,
           candidateCount: data.filter((item) => item.sourceId === sourceId).length,
+          budgetExcludedCount: matched.filter((item) => item.sourceId === sourceId).length - data.filter((item) => item.sourceId === sourceId).length,
         })),
       },
     };

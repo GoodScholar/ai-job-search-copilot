@@ -288,7 +288,7 @@ async function preparation(request: APIRequestContext, token: string) {
   return await response.json() as { preparation: { preflight: { status: "ready" | "ready_with_warnings" | "blocked" } } };
 }
 
-type BrowserPreparation = { preflight: { status: "ready" | "ready_with_warnings" | "blocked"; warningFingerprint: string | null } };
+type BrowserPreparation = { preflight: { status: "ready" | "ready_with_warnings" | "blocked"; warningFingerprint: string | null; items: Array<{ code: string }> } };
 type StartResponse = { run: RecommendationRun; reused: boolean };
 
 async function browserPreparation(page: Page): Promise<BrowserPreparation> {
@@ -573,12 +573,14 @@ test("同一账户全局停止保留历史 A，解除后只由用户继续 B", a
     await page.getByRole("button", { name: "停止全部运行" }).click();
     expect((await stopResponse).status()).toBe(200);
     await expect.poll(() => accountRunControl(request, account.token)).toMatchObject({ stoppedAt: expect.any(String), controlVersion: 1 });
+    await expect.poll(() => browserPreparation(page)).toMatchObject({ preflight: { status: "blocked", items: expect.arrayContaining([expect.objectContaining({ code: "ACCOUNT_RUN_POLICY_BLOCKED" })]) } });
 
     await expect.poll(async () => (await recommendationRun(request, account.token, bRootRunId)).status, { timeout: 30_000 }).toBe("paused");
     await page.goto(`/home?runId=${bRootRunId}`);
     const panel = page.locator(".recommendation-run-panel");
     await expect(panel.getByRole("status")).toContainText("本次推荐已暂停");
     await expect(panel.getByRole("button", { name: "本次推荐已暂停" })).toBeDisabled();
+    await expect(panel.getByRole("link", { name: "查看运行设置" })).toHaveAttribute("href", "/profile/run-policy");
     await queue.resume();
     paused = false;
     const blockedResumeResponse = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/recommendation-runs/${bRootRunId}/controls` && response.request().method() === "POST");

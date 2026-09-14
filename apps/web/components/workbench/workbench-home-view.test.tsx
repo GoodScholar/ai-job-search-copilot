@@ -69,7 +69,7 @@ function pausedRecommendationRun(runId: string) {
   return RecommendationRunSchema.parse({ ...runningRecommendationRun(runId), status: "paused" });
 }
 
-afterEach(() => { refresh.mockClear(); replace.mockClear(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => { refresh.mockClear(); replace.mockClear(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 it("把需要决定的事项放在首页标题，并完整呈现真实摘要和未启用的投递能力", () => {
   render(<WorkbenchHomeView home={home} inbox={{ items: [] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
@@ -254,4 +254,39 @@ it("从历史终态推荐重跑时把服务端新 root 写入工作台深链", a
   expect(screen.getByRole("button", { name: "暂停本次推荐" })).toBeEnabled();
   await user.click(screen.getByRole("button", { name: "暂停本次推荐" }));
   await waitFor(() => expect(fetch).toHaveBeenCalledWith(`/api/recommendation-runs/${rootB.runId}/controls`, expect.objectContaining({ method: "POST" })));
+});
+
+it("推荐 root 轮询到终态时刷新工作台，并回灌新的 Inbox、摘要和旅程", async () => {
+  vi.useFakeTimers();
+  const root = runningRecommendationRun("c1c1c1c1-2b92-4d91-aad4-959b7d4cd7a3");
+  const completed = RecommendationRunSchema.parse({
+    ...root, status: "completed", currentStage: null,
+    stages: ["discovery", "qualification", "coarse_ranking", "deep_matching", "result_publication"].map((key) => ({ key, status: "completed", startedAt: "2026-09-14T00:00:00.000Z", completedAt: "2026-09-14T00:00:01.000Z" })),
+    result: { kind: "no_recommendations", resultId: "d1c1c1c1-2b92-4d91-aad4-959b7d4cd7a3", publishedAt: "2026-09-14T00:00:01.000Z", evidence: { discovery: { discoveredJobCount: 0 }, sourceCoverage: { plannedTrustedSourceCount: 1, plannedPublicQueryCount: 0, checkedBranchCount: 1, credibleBranchCount: 1, verifiedJobCount: 0 }, coverageLosses: [], qualification: { evaluatedCount: 0, rejectedCount: 0, insufficientInformationCount: 0, expiredCount: 0 }, coarseRanking: { eligibleCount: 0, belowThresholdCount: 0, ruleExcludedCount: 0, candidateLimitExcludedCount: 0, deepMatchCandidateCount: 0 }, deepMatching: { evaluatedCount: 0, qualityInsufficientCount: 0, finalRecommendationCount: 0 }, suggestedActions: [] } },
+  });
+  let serverRun = root;
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>((input) => {
+    if (String(input).endsWith(`/${root.runId}`)) return Promise.resolve(Response.json(serverRun));
+    throw new Error(`unexpected request: ${String(input)}`);
+  }));
+  const view = render(<WorkbenchHomeView home={home} inbox={{ items: [] }} initialRecommendationPreparation={recommendationPreparation} initialRecommendationRun={root} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
+  await act(async () => { await Promise.resolve(); });
+  serverRun = completed;
+  await act(async () => { vi.advanceTimersByTime(15_000); await Promise.resolve(); });
+  expect(refresh).toHaveBeenCalledOnce();
+
+  const refreshedJourney: FirstRecommendationJourney = { status: "active", interactionVersion: 1, currentStepId: "first_result", completedAt: null, steps: [
+    { id: "career_materials", title: "准备可用职业资料", status: "waiting", stateLabel: "等待开始", impact: "新的权威推荐结论。", action: { label: "查看结论", href: "/recommendations" } },
+    { id: "profile_evidence", title: "建立可信求职画像", status: "waiting", stateLabel: "等待开始", impact: "新的权威推荐结论。", action: { label: "查看结论", href: "/recommendations" } },
+    { id: "primary_target", title: "明确主要求职方向", status: "waiting", stateLabel: "等待开始", impact: "新的权威推荐结论。", action: { label: "查看结论", href: "/recommendations" } },
+    { id: "job_sources", title: "接通真实岗位来源", status: "waiting", stateLabel: "等待开始", impact: "新的权威推荐结论。", action: { label: "查看结论", href: "/recommendations" } },
+    { id: "run_readiness", title: "确认今天可以开始", status: "waiting", stateLabel: "等待开始", impact: "新的权威推荐结论。", action: { label: "查看结论", href: "/recommendations" } },
+    { id: "first_result", title: "获得第一份推荐结果", status: "needs_action", stateLabel: "查看结论", impact: "新的权威推荐结论。", action: { label: "查看结论", href: "/recommendations" } },
+  ] };
+  const refreshedHome = { ...home, summary: { ...home.summary, todayRecommendations: 0, pendingDecisions: 1 }, firstRecommendationJourney: refreshedJourney };
+  const refreshedInbox: AgentInboxItem = { itemId: "e1c1c1c1-2b92-4d91-aad4-959b7d4cd7a3", runId: null, kind: "recommendation_result", status: "unread", reasonCode: "NO_RECOMMENDATIONS_PUBLISHED", budgetDimension: null, title: "新的推荐结论", message: "本次没有推荐岗位。", basis: "覆盖证据已冻结。", impact: "可查看后续建议。", suggestedAction: "查看结论", retryable: false, suggestedActions: [], target: { type: "recommendation_result", recommendationResultId: completed.result!.resultId, rootRunId: root.runId, targetId: recommendationTargetId, href: `/recommendations?runId=${root.runId}&resultId=${completed.result!.resultId}#recommendation-result` }, availableActions: ["mark_read"], createdAt: "2026-09-14T00:00:01.000Z", readAt: null, resolvedAt: null };
+  view.rerender(<WorkbenchHomeView home={refreshedHome} inbox={{ items: [refreshedInbox] }} initialRecommendationPreparation={recommendationPreparation} initialRecommendationRun={completed} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
+  expect(screen.getByRole("article", { name: "新的推荐结论" })).toBeVisible();
+  expect(screen.getByLabelText("当前求职记录摘要")).toHaveTextContent("今日推荐0");
+  expect(screen.getByRole("region", { name: "首次推荐旅程" })).toHaveTextContent("查看结论");
 });
