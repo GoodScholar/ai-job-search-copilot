@@ -47,6 +47,7 @@ describe("E2E runner", () => {
   it("明确普通、source-health 或 workbench-inbox spec 时只运行对应阶段并原样透传参数", async () => {
     expect(await selectE2EPhases(["e2e/auth-workbench.spec.ts", "--list"])).toEqual(["ordinary"]);
     expect(await selectE2EPhases(["e2e/source-health.spec.ts", "--project", "Mobile Safari"])).toEqual(["source-health"]);
+    expect(await selectE2EPhases(["e2e/one-click-recommendation.spec.ts", "--project", "Mobile Safari"])).toEqual(["ordinary", "source-health"]);
     expect(await selectE2EPhases(["e2e/workbench-inbox.spec.ts", "--project", "Mobile Safari"])).toEqual(["ordinary", "workbench-inbox"]);
     expect(await selectE2EPhases(["e2e/model-diagnostics.spec.ts", "--project", "Mobile Safari"])).toEqual(["model-diagnostics-success", "model-diagnostics-failed", "model-diagnostics-temporarily-unavailable"]);
   });
@@ -63,6 +64,7 @@ describe("E2E runner", () => {
     [["e2e/anysearch-public-job-discovery.spec.ts", "e2e/workbench-inbox.spec.ts"], ["anysearch-configured", "anysearch-missing-key", "ordinary", "workbench-inbox"]],
     [["e2e/anysearch-public-job-discovery.spec.ts", "e2e/source-health.spec.ts"], ["anysearch-configured", "anysearch-missing-key", "source-health"]],
     [["e2e/source-health.spec.ts", "e2e/workbench-inbox.spec.ts"], ["ordinary", "source-health", "workbench-inbox"]],
+    [["e2e/one-click-recommendation.spec.ts", "e2e/anysearch-public-job-discovery.spec.ts"], ["anysearch-configured", "anysearch-missing-key", "ordinary", "source-health"]],
     [["e2e/auth-workbench.spec.ts", "e2e/anysearch-public-job-discovery.spec.ts", "e2e/source-health.spec.ts", "e2e/workbench-inbox.spec.ts"], ["anysearch-configured", "anysearch-missing-key", "ordinary", "source-health", "workbench-inbox"]],
   ])("混合显式 special specs 按稳定有序并集运行，不静默漏 phase：%o", async (specs, expected) => {
     expect(await selectE2EPhases([...specs, "--project", "Mobile Safari"])).toEqual(expected);
@@ -106,6 +108,19 @@ describe("E2E runner", () => {
           E2E_ANYSEARCH_PUBLIC_JOB_PHASE: "fake-anysearch-public-job-missing-key-v1",
         },
       },
+    ]);
+  });
+
+  it("one-click 显式双 phase 清理遗留 scenario，并原样透传筛选参数", async () => {
+    const arguments_ = ["e2e/one-click-recommendation.spec.ts", "--project", "Desktop Chrome"];
+    const calls: RunnerCall[] = [];
+    await expect(executeE2E(arguments_, {
+      environment: { ...baseEnvironment, E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: '{"stale":{}}', E2E_SOURCE_HEALTH_ONLY: "1" },
+      run: async (call: RunnerCall) => { calls.push(call); return { code: 0, stdout: "" }; },
+    })).resolves.toEqual({ code: 0 });
+    expect(calls).toEqual([
+      { phase: "ordinary", args: arguments_, environment: { CI: "true", KEEP_ME: "yes" } },
+      { phase: "source-health", args: arguments_, environment: { CI: "true", KEEP_ME: "yes", E2E_SOURCE_HEALTH_ONLY: "1" } },
     ]);
   });
 

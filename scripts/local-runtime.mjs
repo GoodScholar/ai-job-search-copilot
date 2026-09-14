@@ -14,7 +14,7 @@ export const testRuntime = Object.freeze({
   minioApiPort: "59100",
   minioConsolePort: "59101",
   mailpitHttpPort: "58126",
-  mailpitSmtpPort: "51125",
+  mailpitSmtpPort: "31125",
 });
 
 export function createRuntimeConfig({ test = false, env = process.env, anysearchPublicJobPhase = test ? env.E2E_ANYSEARCH_PUBLIC_JOB_PHASE : undefined } = {}) {

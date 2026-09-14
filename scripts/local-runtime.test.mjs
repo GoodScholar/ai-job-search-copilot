@@ -712,7 +712,9 @@ test("test runtime removes only its isolated Compose project before starting dep
   assert.equal(runtime.composeProject, "job-copilot-issue-2-e2e");
   assert.equal(runtime.webPort, "3120");
   assert.equal(runtime.apiPort, "3121");
+  assert.equal(runtime.mailpitSmtpPort, "31125");
   assert.ok(processOptions.every((options) => options.env.PATH === process.env.PATH));
+  assert.ok(processOptions.every((options) => options.env.MAILPIT_SMTP_PORT === "31125"));
   assert.deepEqual(calls, [
     ["docker", "compose", "version", "55420"],
     ["docker", "compose", "--project-name", "job-copilot-issue-2-e2e", "down", "-v", "--remove-orphans", "55420"],

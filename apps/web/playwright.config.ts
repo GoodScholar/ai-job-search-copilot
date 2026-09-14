@@ -28,12 +28,20 @@ const sourceHealthScenarios = {
     "greenhouse:e2e-inbox-mobile-good": "healthy",
     "greenhouse:e2e-inbox-mobile-limited": "rate_limited",
   },
+  "10000000-0000-4000-8000-000000000181": {
+    "greenhouse:e2e-one-click-desktop-good": "healthy",
+    "greenhouse:e2e-one-click-desktop-limited": "rate_limited",
+  },
+  "10000000-0000-4000-8000-000000000182": {
+    "greenhouse:e2e-one-click-mobile-good": "healthy",
+    "greenhouse:e2e-one-click-mobile-limited": "rate_limited",
+  },
 };
 
 export default defineConfig({
   testDir: "./e2e",
   testIgnore: anysearchPhase || sourceHealthOnly || workbenchInboxSourceOnly ? undefined : /source-health\.spec\.ts|anysearch-public-job-discovery\.spec\.ts/,
-  testMatch: anysearchPhase ? /anysearch-public-job-discovery\.spec\.ts/ : sourceHealthOnly ? /source-health\.spec\.ts/ : workbenchInboxSourceOnly ? /workbench-inbox\.spec\.ts/ : undefined,
+  testMatch: anysearchPhase ? /anysearch-public-job-discovery\.spec\.ts/ : sourceHealthOnly ? /source-health\.spec\.ts|one-click-recommendation\.spec\.ts/ : workbenchInboxSourceOnly ? /workbench-inbox\.spec\.ts/ : undefined,
   grep: configuredAnysearchPublicJobPhase ? /@configured/ : missingKeyAnysearchPublicJobPhase ? /@missing-key/ : undefined,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,

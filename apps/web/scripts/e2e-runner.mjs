@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { fakeAnysearchPublicJobMissingKeyPhase, fakeAnysearchPublicJobPhase } from "../../../scripts/fake-anysearch-test-phase-policy.mjs";
 
 const sourceHealthSpec = "source-health.spec.ts";
+const oneClickSpec = "one-click-recommendation.spec.ts";
 const workbenchInboxSpec = "workbench-inbox.spec.ts";
 const anysearchSpec = "anysearch-public-job-discovery.spec.ts";
 const modelDiagnosticsSpec = "model-diagnostics.spec.ts";
@@ -41,13 +42,14 @@ function explicitSpecPhase(arguments_) {
   if (!specs.length) return null;
   const anysearch = specs.some((spec) => spec.includes(anysearchSpec));
   const sourceHealth = specs.some((spec) => spec.includes(sourceHealthSpec));
+  const oneClick = specs.some((spec) => spec.includes(oneClickSpec));
   const workbenchInbox = specs.some((spec) => spec.includes(workbenchInboxSpec));
   const modelDiagnostics = specs.some((spec) => spec.includes(modelDiagnosticsSpec));
-  const ordinary = specs.some((spec) => !spec.includes(sourceHealthSpec) && !spec.includes(workbenchInboxSpec) && !spec.includes(anysearchSpec) && !spec.includes(modelDiagnosticsSpec));
+  const ordinary = oneClick || specs.some((spec) => !spec.includes(sourceHealthSpec) && !spec.includes(workbenchInboxSpec) && !spec.includes(anysearchSpec) && !spec.includes(modelDiagnosticsSpec));
   return [
     ...(anysearch ? ["anysearch-configured", "anysearch-missing-key"] : []),
     ...((ordinary || workbenchInbox) ? ["ordinary"] : []),
-    ...(sourceHealth ? ["source-health"] : []),
+    ...(sourceHealth || oneClick ? ["source-health"] : []),
     ...(modelDiagnostics ? ["model-diagnostics-success", "model-diagnostics-failed", "model-diagnostics-temporarily-unavailable"] : []),
     ...(workbenchInbox ? ["workbench-inbox"] : []),
   ];
