@@ -1214,6 +1214,15 @@ describe("AgentRunProcessor checkpoints", () => {
 
   it("recommendation child 模型重试后只发布一次完整结果事实", async () => {
     const fixture = await createFullyQualifiedLayeredRecommendationFixture();
+    const ownerBoundSideFacts = () => Promise.all([
+      database.select({ id: jobProfiles.id, version: jobProfiles.version, createdAt: jobProfiles.createdAt, updatedAt: jobProfiles.updatedAt }).from(jobProfiles).where(and(eq(jobProfiles.userId, fixture.userId), eq(jobProfiles.id, fixture.profileId))),
+      database.select({ id: profileFacts.id, profileId: profileFacts.profileId, factType: profileFacts.factType, createdAt: profileFacts.createdAt }).from(profileFacts).where(eq(profileFacts.userId, fixture.userId)),
+      database.select({ id: profileFactRevisions.id, profileFactId: profileFactRevisions.profileFactId, revisionNumber: profileFactRevisions.revisionNumber, profileVersion: profileFactRevisions.profileVersion, state: profileFactRevisions.state, factValue: profileFactRevisions.factValue }).from(profileFactRevisions).where(eq(profileFactRevisions.userId, fixture.userId)),
+      database.select({ id: jobTargets.id, version: jobTargets.version, state: jobTargets.state, priority: jobTargets.priority, updatedAt: jobTargets.updatedAt }).from(jobTargets).where(and(eq(jobTargets.userId, fixture.userId), eq(jobTargets.id, fixture.targetId))),
+      database.select({ id: jobTargetRevisions.id, targetId: jobTargetRevisions.targetId, version: jobTargetRevisions.version, state: jobTargetRevisions.state, priority: jobTargetRevisions.priority, constraints: jobTargetRevisions.constraints }).from(jobTargetRevisions).where(and(eq(jobTargetRevisions.userId, fixture.userId), eq(jobTargetRevisions.targetId, fixture.targetId))),
+    ]);
+    const sideFactsBefore = await ownerBoundSideFacts();
+    expect(sideFactsBefore.map((facts) => facts.length)).toEqual([1, 4, 4, 1, 1]);
     const fake = new FakeDeepMatchAdapter();
     let modelCalls = 0;
     const processor = () => createAgentRunProcessor({
@@ -1228,6 +1237,7 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(processor().process({ version: 1, userId: fixture.userId, runId: fixture.child.id, finalAttempt: false })).resolves.toBe("retry");
     await expect(processor().process({ version: 1, userId: fixture.userId, runId: fixture.child.id, finalAttempt: true })).resolves.toBe("completed");
     expect(modelCalls).toBe(2);
+    await expect(ownerBoundSideFacts()).resolves.toEqual(sideFactsBefore);
     await expect(Promise.all([
       database.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, fixture.userId)),
       database.select().from(recommendationLists).where(eq(recommendationLists.userId, fixture.userId)),
