@@ -33,6 +33,20 @@ function preparation(status: "ready" | "ready_with_warnings" | "blocked" = "read
   });
 }
 
+function targetMissingPreparation(): RecommendationRunPreparation {
+  return RecommendationRunPreparationSchema.parse({
+    target: null, sourceScope: { trustedSourceCount: 0, publicQueryCount: 0 }, accountPolicyRevisionNumber: 1,
+    budgets: { discovery: budget, deepMatch: budget },
+    preflight: {
+      version: "run-preflight-v1", workflow: "recommendation", trigger: "manual", targetId: null, status: "blocked", warningFingerprint: null, checkedAt: now,
+      items: [{
+        code: "PRIMARY_JOB_TARGET_MISSING", severity: "blocking", summary: "缺少活动主求职目标", impact: "请先设置一个活动主求职目标。", retryable: false, suggestedActions: ["review_job_targets"],
+        evidence: { kind: "job_target", primaryTargetId: null, primaryTargetVersion: null, requestedTargetId: null, requestedTargetVersion: null, requestedTargetState: "missing", checkedAt: now },
+      }],
+    },
+  });
+}
+
 function runningRun(): RecommendationRun {
   return RecommendationRunSchema.parse({
     runId, status: "running", currentStage: "discovery",
@@ -57,6 +71,20 @@ function cancelledRun(): RecommendationRun {
       { key: "deep_matching", status: "pending", startedAt: null, completedAt: null },
       { key: "result_publication", status: "pending", startedAt: null, completedAt: null },
     ],
+  });
+}
+
+function failedRun(suggestedActions: Array<"restart_discovery" | "review_source_health" | "review_profile" | "review_primary_target" | "run_model_diagnostic" | "review_account_run_policy">): RecommendationRun {
+  return RecommendationRunSchema.parse({
+    ...runningRun(), status: "failed", currentStage: "qualification",
+    stages: [
+      { key: "discovery", status: "completed", startedAt: now, completedAt: now },
+      { key: "qualification", status: "failed", startedAt: now, completedAt: now },
+      { key: "coarse_ranking", status: "pending", startedAt: null, completedAt: null },
+      { key: "deep_matching", status: "pending", startedAt: null, completedAt: null },
+      { key: "result_publication", status: "pending", startedAt: null, completedAt: null },
+    ],
+    failure: { code: "RECOMMENDATION_HANDOFF_FAILED", stage: "qualification", summary: "资格门槛交接失败", impact: "本次推荐无法继续发布。", retryable: true, suggestedActions },
   });
 }
 
@@ -673,7 +701,7 @@ it("同 root 的迟到 GET 不覆盖 control 成功后的 paused 投影", async 
   expect(screen.getByRole("button", { name: "继续本次推荐" })).toBeEnabled();
 });
 
-it("hidden 初始不读取，visible 后读取；卸载与 terminal 后停止轮询", async () => {
+it("hidden 初始不读取，visible 后读取；卸载后停止轮询", async () => {
   setDocumentVisibility("hidden");
   const fetchSpy = vi.mocked(fetch);
   const view = render(<RecommendationRunPanel initialRun={runningRun()} initialPreparation={preparation()} />);
@@ -683,4 +711,125 @@ it("hidden 初始不读取，visible 后读取；卸载与 terminal 后停止轮
   view.unmount();
   await act(async () => { vi.advanceTimersByTime(30_000); });
   expect(fetchSpy).toHaveBeenCalledTimes(1);
+});
+
+it.each([200, 201])("start 收到 %i 后只读取返回的新 run root", async (status) => {
+  const nextRunId = "4f8c6eb3-2b92-4d91-aad4-959b7d4cd7a3";
+  const initialRun = RecommendationRunSchema.parse({ ...cancelledRun(), runId: "a1a1a1a1-2b92-4d91-aad4-959b7d4cd7a3" });
+  const serverRun = RecommendationRunSchema.parse({ ...runningRun(), runId: nextRunId });
+  vi.mocked(fetch).mockImplementation((input, init) => {
+    if (input === "/api/recommendation-runs" && init?.method === "POST") return Promise.resolve(response({ run: serverRun, reused: status === 200 }, status));
+    if (String(input).endsWith(`/${nextRunId}`)) return Promise.resolve(response(serverRun));
+    throw new Error(`unexpected request: ${String(input)}`);
+  });
+  render(<RecommendationRunPanel initialRun={initialRun} initialPreparation={preparation()} />);
+  fireEvent.click(screen.getByRole("button", { name: "开始今日发现" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  const reads = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method !== "POST").map(([input]) => String(input));
+  expect(reads).toEqual([`/api/recommendation-runs/${nextRunId}`]);
+});
+
+it.each([200, 201])("start 直接收到 %i completed 后不启动轮询", async (status) => {
+  const nextRunId = "4f8c6eb3-2b92-4d91-aad4-959b7d4cd7a3";
+  const initialRun = RecommendationRunSchema.parse({ ...cancelledRun(), runId: "a1a1a1a1-2b92-4d91-aad4-959b7d4cd7a3" });
+  const completed = RecommendationRunSchema.parse({ ...completedRun("no_recommendations"), runId: nextRunId });
+  const fetchSpy = vi.mocked(fetch).mockImplementation((input, init) => {
+    if (input === "/api/recommendation-runs" && init?.method === "POST") return Promise.resolve(response({ run: completed, reused: status === 200 }, status));
+    throw new Error(`unexpected request: ${String(input)}`);
+  });
+  render(<RecommendationRunPanel initialRun={initialRun} initialPreparation={preparation()} />);
+  fireEvent.click(screen.getByRole("button", { name: "开始今日发现" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  await act(async () => { vi.advanceTimersByTime(30_000); });
+  expect(fetchSpy).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("status")).toHaveTextContent("本次暂无推荐");
+});
+
+it.each([
+  ["cancelled", cancelledRun()],
+  ["completed", completedRun("no_recommendations")],
+] as const)("running 轮询转换为 %s 后不再读取", async (_status, terminalRun) => {
+  let reads = 0;
+  const fetchSpy = vi.mocked(fetch).mockImplementation((input) => {
+    if (!String(input).endsWith(`/${runId}`)) throw new Error(`unexpected request: ${String(input)}`);
+    reads += 1;
+    return Promise.resolve(response(reads === 1 ? runningRun() : terminalRun));
+  });
+  render(<RecommendationRunPanel initialRun={runningRun()} initialPreparation={preparation()} />);
+  await act(async () => { await Promise.resolve(); });
+  await act(async () => { vi.advanceTimersByTime(15_000); await Promise.resolve(); });
+  expect(fetchSpy).toHaveBeenCalledTimes(2);
+  await act(async () => { vi.advanceTimersByTime(30_000); });
+  expect(fetchSpy).toHaveBeenCalledTimes(2);
+});
+
+it("缺少主目标的合法 blocked preparation 禁止启动并指向目标设置", () => {
+  render(<RecommendationRunPanel initialRun={null} initialPreparation={targetMissingPreparation()} />);
+  expect(screen.getByRole("button", { name: "开始今日发现" })).toBeDisabled();
+  expect(screen.getByRole("link", { name: "查看求职目标" })).toHaveAttribute("href", "/profile/targets");
+});
+
+it.each([
+  ["review_account_run_policy", "查看运行设置", "/profile/run-policy"],
+  ["review_profile", "完善求职画像", "/profile"],
+  ["review_primary_target", "查看求职目标", "/profile/targets"],
+  ["review_source_health", "查看来源状态", "/profile/targets"],
+  ["run_model_diagnostic", "检查模型连接", "/profile/model-connection"],
+] as const)("failed 的有限 action %s 使用服务端 href", (action, label, href) => {
+  render(<RecommendationRunPanel initialRun={failedRun([action])} initialPreparation={preparation()} />);
+  expect(screen.getByRole("link", { name: label })).toHaveAttribute("href", href);
+});
+
+it("failed restart_discovery 实际 POST 并采用新 run", async () => {
+  const nextRun = RecommendationRunSchema.parse({ ...runningRun(), runId: "4f8c6eb3-2b92-4d91-aad4-959b7d4cd7a3" });
+  const fetchSpy = vi.mocked(fetch).mockImplementation((input, init) => {
+    if (input === "/api/recommendation-runs" && init?.method === "POST") return Promise.resolve(response({ run: nextRun, reused: false }, 201));
+    if (String(input).endsWith(`/${nextRun.runId}`)) return Promise.resolve(response(nextRun));
+    throw new Error(`unexpected request: ${String(input)}`);
+  });
+  render(<RecommendationRunPanel initialRun={failedRun(["restart_discovery"])} initialPreparation={preparation()} />);
+  fireEvent.click(screen.getByRole("button", { name: "重新开始今日发现" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  expect(fetchSpy.mock.calls.find(([input, init]) => input === "/api/recommendation-runs" && init?.method === "POST")).toBeDefined();
+  expect(screen.getByRole("button", { name: "暂停本次推荐" })).toBeEnabled();
+});
+
+it("failed 与 cancelled 不显示结果入口或可信空状态", () => {
+  const failed = render(<RecommendationRunPanel initialRun={failedRun([])} initialPreparation={preparation()} />);
+  expect(screen.queryByRole("link", { name: /查看本次/u })).not.toBeInTheDocument();
+  expect(screen.queryByText("本次暂无推荐")).not.toBeInTheDocument();
+  failed.unmount();
+  render(<RecommendationRunPanel initialRun={cancelledRun()} initialPreparation={preparation()} />);
+  expect(screen.queryByRole("link", { name: /查看本次/u })).not.toBeInTheDocument();
+  expect(screen.queryByText("本次暂无推荐")).not.toBeInTheDocument();
+});
+
+it("可信空无覆盖损失且无 action 时不擅加入口，并使用精确结果链接", () => {
+  const run = RecommendationRunSchema.parse({
+    ...completedRun("no_recommendations"),
+    result: { ...completedRun("no_recommendations").result!, evidence: { ...completedRun("no_recommendations").result!.evidence, suggestedActions: [] } },
+  });
+  render(<RecommendationRunPanel initialRun={run} initialPreparation={preparation()} />);
+  expect(screen.getByText("无覆盖损失。")).toBeVisible();
+  expect(screen.getByRole("link", { name: "查看本次结论" })).toHaveAttribute("href", `/recommendations?runId=${runId}&resultId=6e5d8a8a-5652-4fd1-9f1c-50515bd11c48#recommendation-result`);
+  expect(screen.queryByRole("link", { name: "查看来源状态" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("link", { name: "完善求职画像" })).not.toBeInTheDocument();
+});
+
+it("可信空 review_primary_target 与 restart_discovery 只执行服务端 action", async () => {
+  const base = completedRun("no_recommendations");
+  const actionRun = RecommendationRunSchema.parse({
+    ...base, result: { ...base.result!, evidence: { ...base.result!.evidence, suggestedActions: ["review_primary_target", "restart_discovery"] } },
+  });
+  const nextRun = RecommendationRunSchema.parse({ ...runningRun(), runId: "4f8c6eb3-2b92-4d91-aad4-959b7d4cd7a3" });
+  const fetchSpy = vi.mocked(fetch).mockImplementation((input, init) => {
+    if (input === "/api/recommendation-runs" && init?.method === "POST") return Promise.resolve(response({ run: nextRun, reused: false }, 201));
+    if (String(input).endsWith(`/${nextRun.runId}`)) return Promise.resolve(response(nextRun));
+    throw new Error(`unexpected request: ${String(input)}`);
+  });
+  render(<RecommendationRunPanel initialRun={actionRun} initialPreparation={preparation()} />);
+  expect(screen.getByRole("link", { name: "查看求职目标" })).toHaveAttribute("href", "/profile/targets");
+  fireEvent.click(screen.getByRole("button", { name: "重新开始今日发现" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  expect(fetchSpy.mock.calls.find(([input, init]) => input === "/api/recommendation-runs" && init?.method === "POST")).toBeDefined();
 });
