@@ -43,7 +43,7 @@ export function projectRecommendationRun(facts: {
     : !facts.child || matching !== "completed" ? "pending" as const
       : facts.child.status === "failed" ? "failed" as const
         : facts.child.status === "cancelled" ? "cancelled" as const
-          : facts.child.steps[2] === "completed" ? "failed" as const
+          : facts.child.status === "completed" ? "failed" as const
             : facts.child.steps[2] === "pending" && facts.child.status === "queued" && !facts.child.started ? "pending" as const : "running" as const;
   return [
     { key: "discovery" as const, status: physical(facts.root) },

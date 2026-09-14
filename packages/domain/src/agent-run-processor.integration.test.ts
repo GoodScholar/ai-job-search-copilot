@@ -886,6 +886,75 @@ describe("AgentRunProcessor checkpoints", () => {
     expect({ resultId: publishedResult!.id, resultListId: publishedResult!.recommendationListId, inboxListId: publishedInbox!.recommendationListId }).toEqual({ resultId: publishedResult!.id, resultListId: publishedResult!.id, inboxListId: publishedResult!.id });
   });
 
+  it("recommendation child 在发布前窗口保持逻辑运行，发布后只绑定一个 root result", async () => {
+    const fixture = await createFullyQualifiedLayeredRecommendationFixture();
+    const publicationCheckpointEntered = deferred();
+    const releasePublicationCheckpoint = deferred();
+    const durable = checkpoint();
+    const controlled: AgentRunCheckpoint = { check: async (input) => {
+      const outcome = await durable.check(input);
+      if (input.runId === fixture.child.id && input.checkpointKey.endsWith(":step_create_recommendations_complete:1")) {
+        expect(outcome.kind).toBe("continue");
+        publicationCheckpointEntered.resolve();
+        await releasePublicationCheckpoint.promise;
+      }
+      return outcome;
+    } };
+    const processor = createAgentRunProcessor({
+      db: database,
+      adapterResolver: { resolve: () => { throw new Error("UNUSED"); } },
+      deepMatchAdapter: new FakeDeepMatchAdapter(),
+      checkpoint: controlled,
+      contentStore: new Store(),
+      auditTrail: createAuditTrail({ db: database, clock: () => now }),
+      id: () => crypto.randomUUID(),
+      clock: () => now,
+    });
+    const processing = processor.process({ version: 1, userId: fixture.userId, runId: fixture.child.id, finalAttempt: true });
+
+    try {
+      await waitForBarrier({ barrier: publicationCheckpointEntered.promise, operation: processing, name: "publication checkpoint" });
+      await expect(Promise.all([
+        database.select({ status: agentRuns.status, failureCode: agentRuns.failureCode }).from(agentRuns).where(eq(agentRuns.id, fixture.child.id)),
+        database.select({ status: agentRunSteps.status }).from(agentRunSteps).where(eq(agentRunSteps.runId, fixture.child.id)).orderBy(agentRunSteps.ordinal),
+      ])).resolves.toEqual([[{ status: "running", failureCode: null }], [{ status: "completed" }, { status: "completed" }, { status: "completed" }]]);
+      await expect(createRecommendationRunQueries({ db: database }).get({ userId: fixture.userId, runId: fixture.rootRunId })).resolves.toMatchObject({
+        status: "running",
+        currentStage: "result_publication",
+        result: null,
+        failure: null,
+        stages: [
+          { key: "discovery", status: "completed" },
+          { key: "qualification", status: "completed" },
+          { key: "coarse_ranking", status: "completed" },
+          { key: "deep_matching", status: "completed" },
+          { key: "result_publication", status: "running" },
+        ],
+      });
+
+      releasePublicationCheckpoint.resolve();
+      await expect(processing).resolves.toBe("completed");
+      const resultRows = await database.select({ id: recommendationResults.id, rootRunId: recommendationResults.rootRunId, producerRunId: recommendationResults.producerRunId, recommendationListId: recommendationResults.recommendationListId, itemCount: recommendationResults.itemCount }).from(recommendationResults).where(and(eq(recommendationResults.userId, fixture.userId), eq(recommendationResults.rootRunId, fixture.rootRunId)));
+      expect(resultRows).toHaveLength(1);
+      const [result] = resultRows;
+      expect(result).toMatchObject({ rootRunId: fixture.rootRunId, producerRunId: fixture.child.id, itemCount: 1, recommendationListId: expect.any(String) });
+      await expect(Promise.all([
+        database.select({ id: recommendationLists.id }).from(recommendationLists).where(and(eq(recommendationLists.userId, fixture.userId), eq(recommendationLists.targetId, fixture.targetId))),
+        database.select({ id: recommendationListItems.id, recommendationListId: recommendationListItems.recommendationListId }).from(recommendationListItems).where(eq(recommendationListItems.recommendationListId, result!.recommendationListId!)),
+        database.select({ id: agentRuns.id, status: agentRuns.status, failureCode: agentRuns.failureCode }).from(agentRuns).where(and(eq(agentRuns.parentRunId, fixture.rootRunId), eq(agentRuns.runPurpose, "recommendation"))),
+      ])).resolves.toEqual([[{ id: result!.recommendationListId }], [expect.objectContaining({ id: expect.any(String), recommendationListId: result!.recommendationListId })], [{ id: fixture.child.id, status: "completed", failureCode: null }]]);
+      await expect(createRecommendationRunQueries({ db: database }).get({ userId: fixture.userId, runId: fixture.rootRunId })).resolves.toMatchObject({
+        status: "completed",
+        currentStage: null,
+        failure: null,
+        result: { kind: "recommendation_list", resultId: result!.id, recommendationListId: result!.recommendationListId, itemCount: 1 },
+      });
+    } finally {
+      releasePublicationCheckpoint.resolve();
+      await Promise.allSettled([processing]);
+    }
+  });
+
   it.each([
     ["缺失 adapter usage", async (fixture: Awaited<ReturnType<typeof stageFullyQualifiedLayeredRecommendationFixture>>) => {
       await database.update(deepMatchRunCandidates).set({ adapterUsage: null }).where(eq(deepMatchRunCandidates.runId, fixture.child.id));
