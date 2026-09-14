@@ -4,6 +4,7 @@ import { APP_FILTER, APP_INTERCEPTOR, APP_PIPE } from "@nestjs/core";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
 import { Test } from "@nestjs/testing";
 import { AccountRunAdmissionError } from "@job-copilot/domain/account-run-control";
+import { AgentRunControlError } from "@job-copilot/domain/agent-runs";
 import { RecommendationRunError } from "@job-copilot/domain/recommendation-runs";
 import { RunPreflightRejectedError } from "@job-copilot/domain/run-preflight";
 import { RecommendationRunPreparationSchema, RecommendationRunSchema } from "@job-copilot/contracts/recommendation-runs";
@@ -199,6 +200,12 @@ describe("RecommendationRunsModule 的真实 Fastify HTTP 边界", () => {
     const controlConflict = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/recommendation-runs/${runId}/controls`, headers: { ...requestHeaders, "content-type": "application/json" }, payload: { commandId: "00000000-0000-4000-8000-000000000012", action: "pause" } });
     controlFailure = new RecommendationRunError("RECOMMENDATION_RUN_COMMAND_ID_CONFLICT");
     const commandIdConflict = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/recommendation-runs/${runId}/controls`, headers: { ...requestHeaders, "content-type": "application/json" }, payload: { commandId: "00000000-0000-4000-8000-000000000018", action: "pause" } });
+    controlFailure = new AgentRunControlError("AGENT_RUN_CONTROL_CONFLICT");
+    const physicalConflict = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/recommendation-runs/${runId}/controls`, headers: { ...requestHeaders, "content-type": "application/json" }, payload: { commandId: "00000000-0000-4000-8000-000000000019", action: "resume" } });
+    controlFailure = new AgentRunControlError("AGENT_RUN_COMMAND_ID_CONFLICT");
+    const physicalCommandConflict = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/recommendation-runs/${runId}/controls`, headers: { ...requestHeaders, "content-type": "application/json" }, payload: { commandId: "00000000-0000-4000-8000-000000000020", action: "resume" } });
+    controlFailure = new AgentRunControlError("AGENT_RUN_NOT_FOUND");
+    const physicalMissing = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/recommendation-runs/${runId}/controls`, headers: { ...requestHeaders, "content-type": "application/json" }, payload: { commandId: "00000000-0000-4000-8000-000000000021", action: "resume" } });
     controlFailure = new AccountRunAdmissionError("ACCOUNT_RUN_STOPPED");
     const stopped = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/recommendation-runs/${runId}/controls`, headers: { ...requestHeaders, "content-type": "application/json" }, payload: { commandId: "00000000-0000-4000-8000-000000000013", action: "pause" } });
     startFailure = new RunPreflightRejectedError("RUN_PREFLIGHT_BLOCKED", blockedReport);
@@ -214,13 +221,19 @@ describe("RecommendationRunsModule 的真实 Fastify HTTP 边界", () => {
     expect(controlConflict.statusCode).toBe(HttpStatus.CONFLICT);
     expect(commandIdConflict.json()).toMatchObject({ code: "RECOMMENDATION_RUN_COMMAND_ID_CONFLICT", message: expect.stringMatching(/推荐运行状态/) });
     expect(commandIdConflict.statusCode).toBe(HttpStatus.CONFLICT);
+    expect(physicalConflict.json()).toMatchObject({ code: "RECOMMENDATION_RUN_CONTROL_CONFLICT", message: expect.stringMatching(/推荐运行状态/) });
+    expect(physicalConflict.statusCode).toBe(HttpStatus.CONFLICT);
+    expect(physicalCommandConflict.json()).toMatchObject({ code: "RECOMMENDATION_RUN_COMMAND_ID_CONFLICT", message: expect.stringMatching(/推荐运行状态/) });
+    expect(physicalCommandConflict.statusCode).toBe(HttpStatus.CONFLICT);
+    expect(physicalMissing.json()).toMatchObject({ code: "RECOMMENDATION_RUN_NOT_FOUND", message: "推荐运行不存在" });
+    expect(physicalMissing.statusCode).toBe(HttpStatus.NOT_FOUND);
     expect(stopped.json()).toMatchObject({ code: "ACCOUNT_RUN_STOPPED", message: "账户已停止全部运行，请先解除全局停止" });
     expect(stopped.statusCode).toBe(HttpStatus.CONFLICT);
     expect(blocked.json()).toMatchObject({ code: "RUN_PREFLIGHT_BLOCKED", preflight: blockedReport });
     expect(blocked.statusCode).toBe(HttpStatus.CONFLICT);
     expect(warning.json()).toMatchObject({ code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED", preflight: warningReport });
     expect(warning.statusCode).toBe(HttpStatus.CONFLICT);
-    for (const response of [missing, controlConflict, commandIdConflict, stopped, blocked, warning]) expectNoStore(response);
+    for (const response of [missing, controlConflict, commandIdConflict, physicalConflict, physicalCommandConflict, physicalMissing, stopped, blocked, warning]) expectNoStore(response);
   });
 
   it("控制成功、未认证和未知异常均经真实 HTTP 边界处理且不泄露异常内容", async () => {

@@ -2,6 +2,7 @@ import { Body, Controller, Get, HttpCode, HttpStatus, Inject, Param, Post, Req, 
 import { ApiBadRequestResponse, ApiBearerAuth, ApiConflictResponse, ApiNotFoundResponse, ApiUnauthorizedResponse } from "@nestjs/swagger";
 import { ControlRecommendationRunCommandSchema, RecommendationRunPreparationSchema, RecommendationRunSchema, StartRecommendationRunCommandSchema } from "@job-copilot/contracts/recommendation-runs";
 import { AccountRunAdmissionError } from "@job-copilot/domain/account-run-control";
+import { AgentRunControlError } from "@job-copilot/domain/agent-runs";
 import { RecommendationRunError } from "@job-copilot/domain/recommendation-runs";
 import { RunPreflightRejectedError } from "@job-copilot/domain/run-preflight";
 import type { FastifyReply, FastifyRequest } from "fastify";
@@ -28,6 +29,11 @@ function missing() { return new ApiException("RECOMMENDATION_RUN_NOT_FOUND", Htt
 function controlError(error: RecommendationRunError) {
   if (error.code === "RECOMMENDATION_RUN_NOT_FOUND") return missing();
   return new ApiException(error.code, HttpStatus.CONFLICT, "推荐运行状态已变化，请刷新后重试");
+}
+function physicalControlError(error: AgentRunControlError) {
+  if (error.code === "AGENT_RUN_NOT_FOUND") return missing();
+  if (error.code === "AGENT_RUN_COMMAND_ID_CONFLICT") return new ApiException("RECOMMENDATION_RUN_COMMAND_ID_CONFLICT", HttpStatus.CONFLICT, "推荐运行状态已变化，请刷新后重试");
+  return new ApiException("RECOMMENDATION_RUN_CONTROL_CONFLICT", HttpStatus.CONFLICT, "推荐运行状态已变化，请刷新后重试");
 }
 
 @Controller("v1/recommendation-runs")
@@ -68,6 +74,7 @@ export class RecommendationRunsController {
     try { return await this.commands.control({ userId: request.authenticatedAccount!.userId, requestId: getRequestId(request), runId: params.runId, command }); }
     catch (error) {
       if (error instanceof RecommendationRunError) throw controlError(error);
+      if (error instanceof AgentRunControlError) throw physicalControlError(error);
       if (error instanceof AccountRunAdmissionError && error.code === "ACCOUNT_RUN_STOPPED") throw new ApiException(error.code, HttpStatus.CONFLICT, "账户已停止全部运行，请先解除全局停止");
       throw error;
     }

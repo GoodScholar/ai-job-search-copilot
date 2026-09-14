@@ -100,6 +100,7 @@ import {
   type AgentInboxActionResponse,
 } from "@job-copilot/contracts/agent-inbox";
 import { z } from "zod";
+import { projectRecommendationRunPreflightProblem } from "./recommendation-run-preflight-problem";
 import { CalibrationProposalCommandResponseSchema, CalibrationProposalRebaseCommandSchema, CalibrationProposalResolutionCommandSchema, CalibrationProposalRevisionCommandSchema, CalibrationProposalSchema, RecommendationDecisionCommandSchema, RecommendationExclusionPageSchema, RecommendationListHistoryPageSchema, RecommendationListSchema, type CalibrationProposalRebaseCommand, type CalibrationProposalResolutionCommand, type CalibrationProposalRevisionCommand, type RecommendationDecisionCommand, type RecommendationExclusionPage, type RecommendationList, type RecommendationListHistoryPage } from "@job-copilot/contracts/recommendations";
 
 type ApiClientConfig = {
@@ -192,7 +193,8 @@ async function throwRunPreflightConflict(response: Response, fallbackMessage: st
 async function throwRecommendationControlConflict(response: Response): Promise<never> {
   const problem = await readProblem(response);
   if (problem && ["ACCOUNT_RUN_STOPPED", "RECOMMENDATION_RUN_COMMAND_ID_CONFLICT", "RECOMMENDATION_RUN_CONTROL_CONFLICT"].includes(problem.code)) {
-    throw new ApiClientError("api", problem.message, 409, problem);
+    const message = problem.code === "ACCOUNT_RUN_STOPPED" ? "账户已停止全部运行，请先解除全局停止" : "推荐运行状态已变化，请刷新后重试";
+    throw new ApiClientError("api", message, 409, { ...problem, message });
   }
   throw new ApiClientError("api", "上游推荐运行控制冲突响应无效", 502);
 }
@@ -295,7 +297,7 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
     },
     async startRecommendationRun(sessionToken: string, command: StartRecommendationRunCommand): Promise<{ run: RecommendationRun; reused: boolean }> {
       const response = await request("/v1/recommendation-runs", { method: "POST", headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" }, body: JSON.stringify(StartRecommendationRunCommandSchema.parse(command)), cache: "no-store" });
-      if (!response.ok) { if (response.status === 409) { const payload = await parseJson(response).catch(() => null); const raw = payload && typeof payload === "object" ? { ...(payload as Record<string, unknown>) } : null; if (raw) delete raw.requestId; const preflight = raw ? RunPreflightProblemSchema.safeParse(raw).data : null; if (preflight) throw new ApiClientError("api", preflight.message, 409, preflight); const problem = ApiProblemSchema.safeParse(payload).data; if (problem && ["ACCOUNT_RUN_STOPPED", "RECOMMENDATION_RUN_COMMAND_ID_CONFLICT"].includes(problem.code)) throw new ApiClientError("api", problem.message, 409, problem); throw new ApiClientError("api", "上游推荐运行冲突响应无效", 502); } const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法启动推荐运行", response.status, problem ?? undefined); }
+      if (!response.ok) { if (response.status === 409) { const payload = await parseJson(response).catch(() => null); const raw = payload && typeof payload === "object" ? { ...(payload as Record<string, unknown>) } : null; if (raw) delete raw.requestId; const preflight = projectRecommendationRunPreflightProblem(raw); if (preflight) throw new ApiClientError("api", preflight.message, 409, preflight); const problem = ApiProblemSchema.safeParse(payload).data; if (problem && ["ACCOUNT_RUN_STOPPED", "RECOMMENDATION_RUN_COMMAND_ID_CONFLICT"].includes(problem.code)) { const message = problem.code === "ACCOUNT_RUN_STOPPED" ? "账户已停止全部运行，请先解除全局停止" : "推荐运行状态已变化，请刷新后重试"; throw new ApiClientError("api", message, 409, { ...problem, message }); } throw new ApiClientError("api", "上游推荐运行冲突响应无效", 502); } const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法启动推荐运行", response.status, problem ?? undefined); }
       return parseSuccess(response, z.object({ run: RecommendationRunSchema, reused: z.boolean() }).strict());
     },
     async getLatestRecommendationRun(sessionToken: string): Promise<RecommendationRun | null> {

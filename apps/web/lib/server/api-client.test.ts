@@ -12,6 +12,8 @@ import type { JobTriageVersion } from "@job-copilot/contracts/job-triage";
 import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-policies";
 import { ApiProblemSchema } from "@job-copilot/contracts/api-problem";
 import { RunPreflightProblemSchema } from "@job-copilot/contracts/run-preflight";
+import { RecommendationListSchema } from "@job-copilot/contracts/recommendations";
+import { RecommendationRunPreparationSchema, RecommendationRunSchema } from "@job-copilot/contracts/recommendation-runs";
 
 vi.mock("server-only", () => ({}));
 
@@ -937,4 +939,62 @@ it("推荐运行客户端走固定 owner-bound 路径，并拒绝畸形成功响
     "http://127.0.0.1:3021/v1/recommendation-runs/latest",
     "http://127.0.0.1:3021/v1/recommendation-runs/latest-result",
   ]);
+});
+
+it("推荐运行 client 严格验证全部新读写成功响应，并传递 bearer、路径和命令体", async () => {
+  const recommendationRun = RecommendationRunSchema.parse({ runId: agentRunId, status: "queued", currentStage: "discovery", stages: ["discovery", "qualification", "coarse_ranking", "deep_matching", "result_publication"].map((key) => ({ key, status: "pending", startedAt: null, completedAt: null })), target: { targetId, targetVersion: 1, roleFamily: "后端工程师" }, sourceScope: { trustedSourceCount: 0, publicQueryCount: 0 }, accountPolicyRevisionNumber: 1, budgets: { discovery: agentRunSummary.budget, deepMatch: agentRunSummary.budget }, preflightSnapshot: { version: "run-preflight-v1", workflow: "recommendation", trigger: "manual", targetId, status: "ready", warningFingerprint: null, checkedAt: "2026-09-14T00:00:00.000Z", items: [] }, result: null, failure: null, createdAt: "2026-09-14T00:00:00.000Z", updatedAt: "2026-09-14T00:00:00.000Z" });
+  const preparation = RecommendationRunPreparationSchema.parse({ target: recommendationRun.target, sourceScope: recommendationRun.sourceScope, accountPolicyRevisionNumber: 1, budgets: recommendationRun.budgets, preflight: recommendationRun.preflightSnapshot });
+  const list = RecommendationListSchema.parse({ recommendationListId: importId, targetId, localDate: "2026-09-14", sequence: 1, createdAt: "2026-09-14T00:00:00.000Z", exclusions: [], items: [] });
+  const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+    const url = String(input);
+    if (url.endsWith("/preparation")) return Response.json({ preparation });
+    if (url.endsWith("/recommendation-runs")) return Response.json({ run: recommendationRun, reused: false });
+    if (url.endsWith("/latest")) return Response.json({ run: null });
+    if (url.endsWith("/latest-result")) return Response.json({ run: recommendationRun });
+    if (url.includes("/controls")) return Response.json({ applied: true, run: recommendationRun });
+    if (url.includes(`/recommendations/lists/${importId}`)) return Response.json(list);
+    if (url.endsWith(`/${agentRunId}`)) return Response.json(recommendationRun);
+    throw new Error(`unexpected ${url}`);
+  });
+  const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+  const start = { idempotencyKey: "00000000-0000-4000-8000-000000000030", warningFingerprint: null } as const;
+  const control = { commandId: "00000000-0000-4000-8000-000000000031", action: "resume" } as const;
+  await expect((client as any).getRecommendationRunPreparation(sessionToken)).resolves.toEqual(preparation);
+  await expect((client as any).startRecommendationRun(sessionToken, start)).resolves.toEqual({ run: recommendationRun, reused: false });
+  await expect((client as any).getLatestRecommendationRun(sessionToken)).resolves.toBeNull();
+  await expect((client as any).getLatestPublishedRecommendationRun(sessionToken)).resolves.toEqual(recommendationRun);
+  await expect((client as any).getRecommendationRun(sessionToken, agentRunId)).resolves.toEqual(recommendationRun);
+  await expect((client as any).controlRecommendationRun(sessionToken, agentRunId, control)).resolves.toEqual({ applied: true, run: recommendationRun });
+  await expect((client as any).getRecommendationList(sessionToken, targetId, importId)).resolves.toEqual(list);
+  expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
+    "http://127.0.0.1:3021/v1/recommendation-runs/preparation", "http://127.0.0.1:3021/v1/recommendation-runs", "http://127.0.0.1:3021/v1/recommendation-runs/latest", "http://127.0.0.1:3021/v1/recommendation-runs/latest-result", `http://127.0.0.1:3021/v1/recommendation-runs/${agentRunId}`, `http://127.0.0.1:3021/v1/recommendation-runs/${agentRunId}/controls`, `http://127.0.0.1:3021/v1/recommendations/lists/${importId}?targetId=${targetId}`,
+  ]);
+  for (const [, init] of fetchImpl.mock.calls) expect(new Headers(init?.headers).get("authorization")).toBe(`Bearer ${sessionToken}`);
+  expect(fetchImpl.mock.calls[1]![1]?.body).toBe(JSON.stringify(start)); expect(fetchImpl.mock.calls[5]![1]?.body).toBe(JSON.stringify(control));
+});
+
+it("推荐运行 client 拒绝 start/get/control/exact-list 的畸形成功响应", async () => {
+  const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(Response.json({ unexpected: true }));
+  const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+  const start = { idempotencyKey: "00000000-0000-4000-8000-000000000030", warningFingerprint: null } as const; const control = { commandId: "00000000-0000-4000-8000-000000000031", action: "resume" } as const;
+  await expect((client as any).startRecommendationRun(sessionToken, start)).rejects.toMatchObject({ kind: "invalid_response" });
+  await expect((client as any).getRecommendationRun(sessionToken, agentRunId)).rejects.toMatchObject({ kind: "invalid_response" });
+  await expect((client as any).controlRecommendationRun(sessionToken, agentRunId, control)).rejects.toMatchObject({ kind: "invalid_response" });
+  await expect((client as any).getRecommendationList(sessionToken, targetId, importId)).rejects.toMatchObject({ kind: "invalid_response" });
+});
+
+it("推荐运行 client 将合法恶意预检和有限冲突重建为安全问题，畸形冲突降级 502", async () => {
+  const sentinel = "Bearer secret-sentinel";
+  const blocked = { code: "RUN_PREFLIGHT_BLOCKED", message: `错误 ${sentinel}`, preflight: { version: "run-preflight-v1", workflow: "recommendation", trigger: "manual", targetId: null, status: "blocked", warningFingerprint: null, checkedAt: "2026-09-14T00:00:00.000Z", items: [{ code: "PRIMARY_JOB_TARGET_MISSING", severity: "blocking", summary: `错误 ${sentinel}`, impact: `错误 ${sentinel}`, retryable: false, suggestedActions: ["review_job_targets"], evidence: { kind: "job_target", primaryTargetId: null, primaryTargetVersion: null, requestedTargetId: null, requestedTargetVersion: null, requestedTargetState: "missing", checkedAt: "2026-09-14T00:00:00.000Z" } }] } };
+  const warning = { ...blocked, code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED", preflight: { ...blocked.preflight, targetId, status: "ready_with_warnings", warningFingerprint: "a".repeat(64), items: [{ code: "SOURCE_HEALTH_UNCHECKED", severity: "warning", summary: `错误 ${sentinel}`, impact: `错误 ${sentinel}`, retryable: true, suggestedActions: ["review_source_health"], evidence: { kind: "source_health", checkedSourceCount: 0, healthySourceCount: 0, degradedSourceCount: 0, uncheckedSourceCount: 1, latestCheckedAt: null } }] } };
+  const responses = [blocked, warning, { code: "ACCOUNT_RUN_STOPPED", message: sentinel, requestId: agentRunId }, { code: "RECOMMENDATION_RUN_COMMAND_ID_CONFLICT", message: sentinel, requestId: agentRunId }, { code: "RECOMMENDATION_RUN_CONTROL_CONFLICT", message: sentinel, requestId: agentRunId }, { code: "UNKNOWN", message: sentinel, requestId: agentRunId }];
+  const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => Response.json(responses.shift(), { status: 409 }));
+  const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+  const start = { idempotencyKey: "00000000-0000-4000-8000-000000000030", warningFingerprint: null } as const; const control = { commandId: "00000000-0000-4000-8000-000000000031", action: "resume" } as const;
+  for (const expected of ["运行前检查未通过", "请确认当前运行前检查提示", "账户已停止全部运行，请先解除全局停止", "推荐运行状态已变化，请刷新后重试", "推荐运行状态已变化，请刷新后重试"]) {
+    const call = expected.includes("推荐运行状态") && fetchImpl.mock.calls.length >= 4 ? (client as any).controlRecommendationRun(sessionToken, agentRunId, control) : (client as any).startRecommendationRun(sessionToken, start);
+    await expect(call).rejects.toMatchObject({ status: 409, message: expected });
+    await call.catch((error: Error) => expect(JSON.stringify(error)).not.toContain(sentinel));
+  }
+  await expect((client as any).controlRecommendationRun(sessionToken, agentRunId, control)).rejects.toMatchObject({ status: 502 });
 });
