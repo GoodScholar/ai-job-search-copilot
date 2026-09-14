@@ -819,9 +819,9 @@ it("stops polling when the document is hidden and resumes it for an active run",
 
 - [ ] **Step 2: 运行 RED 测试**
 
-Run: `pnpm --filter web test -- recommendation-run-panel.test.tsx`
+Run: `pnpm --dir apps/web exec vitest run components/workbench/recommendation-run-panel.test.tsx --no-file-parallelism`
 
-Expected: FAIL，组件尚不存在。
+Expected: FAIL，合法 fixture 下的状态、轮询或控制行为断言失败；缺组件/导出导致的装配失败不计业务 RED，应先用最小可渲染骨架运行行为断言。
 
 - [ ] **Step 3: 最小实现并接入首页**
 
@@ -829,7 +829,7 @@ Expected: FAIL，组件尚不存在。
 
 - [ ] **Step 4: 运行 GREEN 测试与 lint**
 
-Run: `pnpm --filter web test -- recommendation-run-panel.test.tsx && pnpm --filter web lint`
+Run（逐条串行，分别保留完整输出和退出码）: `pnpm --dir apps/web exec vitest run components/workbench/recommendation-run-panel.test.tsx --no-file-parallelism`，随后 `pnpm --dir apps/web lint`。交付前还需完整回归本任务修改的 server helper、page、home view 与 legacy panel 测试文件，不只新 panel。
 
 Expected: PASS，且无 lint 错误。
 
@@ -876,9 +876,9 @@ it("explains a credible empty result without rendering a fake empty list", () =>
 
 - [ ] **Step 2: 运行 RED 测试**
 
-Run: `pnpm --filter web test -- recommendation-result-summary.test.tsx`
+Run: `pnpm --dir apps/web exec vitest run 'app/(workbench)/recommendations/recommendation-result-summary.test.tsx' --no-file-parallelism`
 
-Expected: FAIL，结果联合视图尚不存在。
+Expected: FAIL，合法 fixture 下的结果联合视图行为断言失败；缺模块导致的装配失败不计业务 RED。
 
 - [ ] **Step 3: 实现结果联合分支**
 
@@ -886,7 +886,7 @@ Expected: FAIL，结果联合视图尚不存在。
 
 - [ ] **Step 4: 运行 GREEN 测试**
 
-Run: `pnpm --filter web test -- recommendation-result-summary.test.tsx`
+Run: `pnpm --dir apps/web exec vitest run 'app/(workbench)/recommendations/recommendation-result-summary.test.tsx' --no-file-parallelism`
 
 Expected: PASS。
 
