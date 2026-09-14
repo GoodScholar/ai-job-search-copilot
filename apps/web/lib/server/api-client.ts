@@ -189,6 +189,13 @@ async function throwRunPreflightConflict(response: Response, fallbackMessage: st
   if (problem?.code === "ACCOUNT_RUN_STOPPED") throw new ApiClientError("api", problem.message, 409, problem);
   throw new ApiClientError("api", "上游运行前检查冲突响应无效", 502);
 }
+async function throwRecommendationControlConflict(response: Response): Promise<never> {
+  const problem = await readProblem(response);
+  if (problem && ["ACCOUNT_RUN_STOPPED", "RECOMMENDATION_RUN_COMMAND_ID_CONFLICT", "RECOMMENDATION_RUN_CONTROL_CONFLICT"].includes(problem.code)) {
+    throw new ApiClientError("api", problem.message, 409, problem);
+  }
+  throw new ApiClientError("api", "上游推荐运行控制冲突响应无效", 502);
+}
 
 async function throwAgentInboxRestartConflict(response: Response, fallbackMessage: string): Promise<never> {
   const payload = await parseJson(response).catch(() => null);
@@ -288,7 +295,7 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
     },
     async startRecommendationRun(sessionToken: string, command: StartRecommendationRunCommand): Promise<{ run: RecommendationRun; reused: boolean }> {
       const response = await request("/v1/recommendation-runs", { method: "POST", headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" }, body: JSON.stringify(StartRecommendationRunCommandSchema.parse(command)), cache: "no-store" });
-      if (!response.ok) { if (response.status === 409) return throwRunPreflightConflict(response, "无法启动推荐运行"); const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法启动推荐运行", response.status, problem ?? undefined); }
+      if (!response.ok) { if (response.status === 409) { const payload = await parseJson(response).catch(() => null); const raw = payload && typeof payload === "object" ? { ...(payload as Record<string, unknown>) } : null; if (raw) delete raw.requestId; const preflight = raw ? RunPreflightProblemSchema.safeParse(raw).data : null; if (preflight) throw new ApiClientError("api", preflight.message, 409, preflight); const problem = ApiProblemSchema.safeParse(payload).data; if (problem && ["ACCOUNT_RUN_STOPPED", "RECOMMENDATION_RUN_COMMAND_ID_CONFLICT"].includes(problem.code)) throw new ApiClientError("api", problem.message, 409, problem); throw new ApiClientError("api", "上游推荐运行冲突响应无效", 502); } const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法启动推荐运行", response.status, problem ?? undefined); }
       return parseSuccess(response, z.object({ run: RecommendationRunSchema, reused: z.boolean() }).strict());
     },
     async getLatestRecommendationRun(sessionToken: string): Promise<RecommendationRun | null> {
@@ -308,7 +315,7 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
     },
     async controlRecommendationRun(sessionToken: string, runId: string, command: ControlRecommendationRunCommand): Promise<{ applied: boolean; run: RecommendationRun }> {
       const response = await request(`/v1/recommendation-runs/${encodeURIComponent(runId)}/controls`, { method: "POST", headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" }, body: JSON.stringify(ControlRecommendationRunCommandSchema.parse(command)), cache: "no-store" });
-      if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法控制推荐运行", response.status, problem ?? undefined); }
+      if (!response.ok) { if (response.status === 409) return throwRecommendationControlConflict(response); const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法控制推荐运行", response.status, problem ?? undefined); }
       return parseSuccess(response, z.object({ applied: z.boolean(), run: RecommendationRunSchema }).strict());
     },
     async getRecommendationHistoryPage(sessionToken: string, targetId: string, cursor?: string): Promise<RecommendationListHistoryPage> {
