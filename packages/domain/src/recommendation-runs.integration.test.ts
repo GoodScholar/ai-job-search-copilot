@@ -2,12 +2,13 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { and, desc, eq, sql } from "drizzle-orm";
-import { agentRunControlCommands, agentRunEvents, agentRunSteps, agentRuns, auditEvents, createDatabase, jobAccounts, jobProfiles, jobTargets, jobTargetRevisions, migrateDatabase, modelDiagnosticResults, profileFactRevisions, profileFacts, recommendationLists, recommendationResults, recommendationRunControlCommands, recommendationRunStartCommands, type Database } from "@job-copilot/database";
+import { agentInboxItemActions, agentInboxItems, agentRunControlCommands, agentRunEvents, agentRunSteps, agentRuns, auditEvents, createDatabase, jobAccounts, jobDiscoverySourceIssues, jobProfiles, jobTargets, jobTargetRevisions, migrateDatabase, modelDiagnosticResults, profileFactRevisions, profileFacts, recommendationLists, recommendationResults, recommendationRunControlCommands, recommendationRunStartCommands, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
 import { createAccountRunControl } from "./account-run-control";
 import { createModelDiagnosticProjectionReader, createRunPreflightEvaluator } from "./run-preflight";
 import { createRecommendationRunCommands, createRecommendationRunQueries } from "./recommendation-runs";
 import { createAgentRunRecoveryQueries } from "./agent-run-processor";
+import { createAgentInbox } from "./agent-inbox";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import type { SourceCapabilityAdapter } from "./source-capabilities";
 
@@ -195,7 +196,52 @@ describe("推荐运行领域边界", () => {
     const owner = await account(); const service = commands(owner.fingerprint); const started = await service.start({ userId: owner.userId, requestId: randomUUID(), command: await command(owner, randomUUID()) });
     await database.update(agentRuns).set({ status: "completed", currentStep: "completed", startedAt: now, completedAt: now, terminationKind: "completed", updatedAt: now }).where(eq(agentRuns.id, started.run.runId));
     await database.update(agentRunSteps).set({ status: "completed", startedAt: now, completedAt: now }).where(eq(agentRunSteps.runId, started.run.runId));
-    await expect(createRecommendationRunQueries({ db: database }).get({ userId: owner.userId, runId: started.run.runId })).resolves.toMatchObject({ status: "failed", currentStage: "qualification", failure: { code: "RECOMMENDATION_HANDOFF_FAILED", stage: "qualification", retryable: true } });
+    await expect(createRecommendationRunQueries({ db: database }).get({ userId: owner.userId, runId: started.run.runId })).resolves.toMatchObject({ status: "failed", currentStage: "qualification", failure: { code: "RECOMMENDATION_HANDOFF_FAILED", stage: "qualification", retryable: false, suggestedActions: [] } });
+  });
+
+  it("逻辑失败只采用同一物理根的持久来源能力诊断", async () => {
+    const owner = await account(); const service = commands(owner.fingerprint);
+    const started = await service.start({ userId: owner.userId, requestId: randomUUID(), command: await command(owner, randomUUID()) });
+    await database.update(agentRuns).set({ status: "failed", currentStep: "failed", startedAt: now, failedAt: now, failureCode: "AGENT_RUN_ADAPTER_FAILED", terminationKind: "source_failed", usageComplete: true, updatedAt: now }).where(eq(agentRuns.id, started.run.runId));
+    await database.update(agentRunSteps).set({ status: "failed", startedAt: now, failedAt: now, failureCode: "AGENT_RUN_ADAPTER_FAILED" }).where(and(eq(agentRunSteps.runId, started.run.runId), eq(agentRunSteps.stepKey, "batch_search")));
+    await database.insert(jobDiscoverySourceIssues).values({ id: randomUUID(), userId: owner.userId, runId: started.run.runId, provider: "greenhouse", code: "SOURCE_CAPABILITY_UNSUPPORTED", affectedCount: 1, createdAt: now });
+    await expect(createRecommendationRunQueries({ db: database }).get({ userId: owner.userId, runId: started.run.runId })).resolves.toMatchObject({
+      failure: { code: "AGENT_RUN_ADAPTER_FAILED", retryable: false, suggestedActions: ["review_source_health"] },
+    });
+  });
+
+  it("B2 可信空结果 Inbox 只投影 owner-bound result、root 与 target", async () => {
+    const owner = await account(); const service = commands(owner.fingerprint);
+    const started = await service.start({ userId: owner.userId, requestId: randomUUID(), command: await command(owner, randomUUID()) });
+    const { root, childId } = await completeRootAndInsertChild(started.run.runId);
+    const resultId = randomUUID(); const itemId = randomUUID();
+    await database.insert(recommendationResults).values({ id: resultId, userId: owner.userId, targetId: owner.targetId, rootRunId: root.id, producerRunId: childId, kind: "no_recommendations", recommendationListId: null, itemCount: 0, evidence: resultEvidence(root, 0), createdAt: now });
+    await database.insert(agentInboxItems).values({ id: itemId, userId: owner.userId, recommendationResultId: resultId, kind: "recommendation_result", status: "unread", reasonCode: "NO_RECOMMENDATIONS_PUBLISHED", budgetDimension: null, createdAt: now });
+    const inbox = createAgentInbox({ db: database, commands: {} as never, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: randomUUID, clock: () => now });
+    await expect(inbox.list({ userId: owner.userId, status: "pending" })).resolves.toMatchObject({ items: [{
+      itemId, runId: null, kind: "recommendation_result", retryable: false, suggestedActions: [],
+      target: { type: "recommendation_result", recommendationResultId: resultId, rootRunId: root.id, targetId: owner.targetId, href: `/recommendations?runId=${root.id}&resultId=${resultId}#recommendation-result` },
+    }] });
+  });
+
+  it("推荐 child 失败保留物理归属、链接逻辑 root，并拒绝伪造 restart", async () => {
+    const owner = await account(); const service = commands(owner.fingerprint);
+    const started = await service.start({ userId: owner.userId, requestId: randomUUID(), command: await command(owner, randomUUID()) });
+    const { root, childId } = await completeRootAndInsertChild(started.run.runId);
+    await database.update(agentRuns).set({ status: "failed", currentStep: "failed", startedAt: now, failedAt: now, failureCode: "AGENT_RUN_MODEL_AUTH_FAILED", terminationKind: "source_failed", usageComplete: true }).where(eq(agentRuns.id, childId));
+    const itemId = randomUUID();
+    await database.insert(agentInboxItems).values({ id: itemId, userId: owner.userId, runId: childId, triggerEventSequence: 1, kind: "run_failed", status: "unread", reasonCode: "AGENT_RUN_MODEL_AUTH_FAILED", budgetDimension: null, createdAt: now });
+    const inbox = createAgentInbox({ db: database, commands: {} as never, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: randomUUID, clock: () => now });
+    await expect(inbox.list({ userId: owner.userId, status: "pending" })).resolves.toMatchObject({ items: [{
+      itemId, runId: childId, retryable: false, suggestedActions: ["run_model_diagnostic"], availableActions: ["mark_read", "dismiss"],
+      target: { type: "recommendation_run", physicalRunId: childId, rootRunId: root.id, targetId: owner.targetId, href: `/home?runId=${root.id}#recommendation-run` },
+    }] });
+    await expect(inbox.act({ userId: owner.userId, requestId: randomUUID(), itemId, command: { actionId: randomUUID(), action: "restart_run" } })).rejects.toMatchObject({ code: "AGENT_INBOX_ACTION_CONFLICT" });
+    await expect(database.select().from(agentInboxItemActions).where(eq(agentInboxItemActions.itemId, itemId))).resolves.toEqual([]);
+    const pendingActionId = randomUUID();
+    await database.insert(agentInboxItemActions).values({ id: randomUUID(), userId: owner.userId, itemId, actionId: pendingActionId, action: "restart_run", outcome: "pending", relatedRunId: null, reasonCode: null, createdAt: now });
+    await expect(inbox.act({ userId: owner.userId, requestId: randomUUID(), itemId, command: { actionId: pendingActionId, action: "restart_run" } })).rejects.toMatchObject({ code: "AGENT_INBOX_ACTION_CONFLICT" });
+    await expect(database.select({ outcome: agentInboxItemActions.outcome }).from(agentInboxItemActions).where(and(eq(agentInboxItemActions.itemId, itemId), eq(agentInboxItemActions.actionId, pendingActionId)))).resolves.toEqual([{ outcome: "pending" }]);
   });
 
   it("合法的清单与暂无推荐结果均能由 get、latest 与启动重放投影", async () => {

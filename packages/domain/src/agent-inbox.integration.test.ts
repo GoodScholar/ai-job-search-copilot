@@ -160,7 +160,7 @@ describe("agent inbox", () => {
     const items = (await inbox().list({ userId: owner.userId, status: "pending" })).items;
     expect(items).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: "candidate_fact", availableActions: ["mark_read", "dismiss"], target: expect.objectContaining({ type: "candidate_fact", candidateFactId: factId }), basis: expect.any(String), impact: expect.any(String), suggestedAction: expect.any(String) }),
-      expect.objectContaining({ kind: "recommendation_list", availableActions: ["mark_read", "dismiss"], target: expect.objectContaining({ type: "recommendation_list", recommendationListId: listId, targetId: owner.targetId }), basis: expect.any(String), impact: expect.any(String), suggestedAction: expect.any(String) }),
+      expect.objectContaining({ kind: "recommendation_list", retryable: false, suggestedActions: [], availableActions: ["mark_read", "dismiss"], target: { type: "recommendation_list", recommendationListId: listId, targetId: owner.targetId, href: `/recommendations?targetId=${owner.targetId}&recommendationListId=${listId}#recommendation-list` }, basis: expect.any(String), impact: expect.any(String), suggestedAction: expect.any(String) }),
       expect.objectContaining({ kind: "calibration_proposal", availableActions: ["mark_read", "dismiss"], target: expect.objectContaining({ type: "calibration_proposal", proposalId, targetId: owner.targetId }), basis: expect.any(String), impact: expect.any(String), suggestedAction: expect.any(String) }),
     ]));
     expect(JSON.stringify(items)).not.toContain("private skill");

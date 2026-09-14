@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { and, desc, eq, exists, inArray, isNull, notExists, or } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
-import { agentRunControlCommands, agentRunSteps, agentRuns, recommendationResults, recommendationRunControlCommands, recommendationRunStartCommands, type Database } from "@job-copilot/database";
-import { ControlRecommendationRunCommandSchema, RecommendationResultSchema, RecommendationRunSchema, StartRecommendationRunCommandSchema, type ControlRecommendationRunCommand, type RecommendationRun, type StartRecommendationRunCommand } from "@job-copilot/contracts/recommendation-runs";
+import { agentRunControlCommands, agentRunSteps, agentRuns, jobDiscoverySourceIssues, recommendationResults, recommendationRunControlCommands, recommendationRunStartCommands, type Database } from "@job-copilot/database";
+import { ControlRecommendationRunCommandSchema, RecommendationResultSchema, RecommendationRunSchema, StartRecommendationRunCommandSchema, type ControlRecommendationRunCommand, type RecommendationRun, type RecommendationRunFailureCode, type RecommendationRunStageKey, type StartRecommendationRunCommand } from "@job-copilot/contracts/recommendation-runs";
 import { JobTargetConstraintsSchema } from "@job-copilot/contracts/job-targets";
 import { authorizeRunPreflight, type RunPreflightEvaluator } from "./run-preflight";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
@@ -11,6 +11,7 @@ import { prepareRecommendationRunInTransaction } from "./recommendation-runs-pre
 import { discoverySourceScopeCounts } from "./agent-run-discovery-spec";
 import type { AuditTrail } from "./audit-trail";
 import type { JobDiscoveryExecutionMode } from "./job-discovery-execution-mode";
+import { projectRecommendationFailure } from "./recommendation-failure-projection";
 
 type PhysicalStatus = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled";
 type StageStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
@@ -62,14 +63,18 @@ function stageTime(status: StageStatus, startedAt: Date | null | undefined, comp
 async function readLogicalFacts(db: any, userId: string, rootId: string) {
   const [root] = await db.select().from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, rootId), eq(agentRuns.runPurpose, "recommendation"), isNull(agentRuns.parentRunId))).limit(1);
   if (!root) return null;
-  const [rootSteps, childRows, resultRows] = await Promise.all([
+  const [rootSteps, childRows, resultRows, rootSourceIssues] = await Promise.all([
     db.select().from(agentRunSteps).where(and(eq(agentRunSteps.userId, userId), eq(agentRunSteps.runId, root.id))).orderBy(agentRunSteps.ordinal),
     db.select().from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.parentRunId, root.id), eq(agentRuns.runPurpose, "recommendation"))).limit(1),
     db.select().from(recommendationResults).where(and(eq(recommendationResults.userId, userId), eq(recommendationResults.rootRunId, root.id))).limit(1),
+    db.select({ code: jobDiscoverySourceIssues.code }).from(jobDiscoverySourceIssues).where(and(eq(jobDiscoverySourceIssues.userId, userId), eq(jobDiscoverySourceIssues.runId, root.id))),
   ]);
   const child = childRows[0] ?? null;
-  const childSteps = child ? await db.select().from(agentRunSteps).where(and(eq(agentRunSteps.userId, userId), eq(agentRunSteps.runId, child.id))).orderBy(agentRunSteps.ordinal) : [];
-  return { root, rootSteps, child, childSteps, result: resultRows[0] ?? null };
+  const [childSteps, childSourceIssues] = child ? await Promise.all([
+    db.select().from(agentRunSteps).where(and(eq(agentRunSteps.userId, userId), eq(agentRunSteps.runId, child.id))).orderBy(agentRunSteps.ordinal),
+    db.select({ code: jobDiscoverySourceIssues.code }).from(jobDiscoverySourceIssues).where(and(eq(jobDiscoverySourceIssues.userId, userId), eq(jobDiscoverySourceIssues.runId, child.id))),
+  ]) : [[], []];
+  return { root, rootSteps, child, childSteps, result: resultRows[0] ?? null, rootSourceIssues, childSourceIssues };
 }
 
 function projectFacts(facts: NonNullable<Awaited<ReturnType<typeof readLogicalFacts>>>): RecommendationRun {
@@ -97,7 +102,16 @@ function projectFacts(facts: NonNullable<Awaited<ReturnType<typeof readLogicalFa
   });
   if (facts.result) for (const stage of stages) Object.assign(stage, { status: "completed" }, stageTime("completed", facts.root.createdAt, facts.result.createdAt, facts.result.createdAt));
   const result = facts.result ? RecommendationResultSchema.parse(facts.result.kind === "recommendation_list" ? { kind: "recommendation_list", resultId: facts.result.id, recommendationListId: facts.result.recommendationListId, itemCount: facts.result.itemCount, evidence: facts.result.evidence, publishedAt: facts.result.createdAt.toISOString() } : { kind: "no_recommendations", resultId: facts.result.id, evidence: facts.result.evidence, publishedAt: facts.result.createdAt.toISOString() }) : null;
-  const failure = status === "failed" ? { code: (handoffMissing ? "RECOMMENDATION_HANDOFF_FAILED" : publicationMissing ? "RECOMMENDATION_PUBLICATION_FAILED" : facts.child?.failureCode ?? facts.root.failureCode ?? "AGENT_RUN_PERSIST_FAILED") as any, stage: terminalStage!, summary: handoffMissing ? "推荐运行交接未完成。" : publicationMissing ? "推荐结果发布未完成。" : "推荐运行未能完成。", impact: "本次推荐尚未生成可用结果。", retryable: true, suggestedActions: ["restart_discovery"] } : null;
+  const failure = status === "failed" ? (() => {
+    const failureCode = (handoffMissing ? "RECOMMENDATION_HANDOFF_FAILED" : publicationMissing ? "RECOMMENDATION_PUBLICATION_FAILED" : facts.child?.failureCode ?? facts.root.failureCode ?? "AGENT_RUN_PERSIST_FAILED") as RecommendationRunFailureCode;
+    const physicalSourceIssues = facts.child?.status === "failed" ? facts.childSourceIssues : facts.rootSourceIssues;
+    const projected = projectRecommendationFailure({
+      failureCode,
+      stage: terminalStage! as RecommendationRunStageKey,
+      hasSourceCapabilityDiagnosis: failureCode === "AGENT_RUN_ADAPTER_FAILED" && physicalSourceIssues.some((issue: { code: string }) => issue.code === "SOURCE_CAPABILITY_UNSUPPORTED" || issue.code === "SOURCE_CAPABILITY_DECLARATION_MISMATCH"),
+    });
+    return { code: projected.code, stage: projected.stage, summary: projected.summary, impact: projected.impact, retryable: projected.retryable, suggestedActions: projected.suggestedActions };
+  })() : null;
   return RecommendationRunSchema.parse({ runId: facts.root.id, status, currentStage, stages, target: { targetId: facts.root.targetId, targetVersion: facts.root.targetVersion, roleFamily: target.roleFamily }, sourceScope: discoverySourceScopeCounts(facts.root.sourceScope, facts.root.workflowVersion === "layered-public-job-discovery-v1" ? "layered_public" : "greenhouse"), accountPolicyRevisionNumber: context.accountPolicyRevisionNumber, budgets: context.budgets, preflightSnapshot: context.preflight, result, failure, createdAt: facts.root.createdAt.toISOString(), updatedAt: (facts.result?.createdAt ?? facts.child?.updatedAt ?? facts.root.updatedAt).toISOString() });
 }
 

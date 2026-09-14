@@ -140,6 +140,8 @@ export const StartRecommendationRunCommandSchema = z.object({ idempotencyKey: z.
 export const ControlRecommendationRunCommandSchema = z.object({ commandId: z.uuid(), action: z.enum(["pause", "resume", "cancel"]) }).strict();
 
 export type RecommendationRunStageKey = z.infer<typeof RecommendationRunStageKeySchema>;
+export type RecommendationRunFailureCode = z.infer<typeof RecommendationRunFailureCodeSchema>;
+export type RecommendationRunFailureSuggestedAction = z.infer<typeof RecommendationRunFailureSuggestedActionSchema>;
 export type RecommendationRunStage = z.infer<typeof RecommendationRunStageSchema>;
 export type RecommendationResultEvidence = z.infer<typeof RecommendationResultEvidenceSchema>;
 export type RecommendationResult = z.infer<typeof RecommendationResultSchema>;

@@ -6,6 +6,8 @@ const runId = "1e764df5-19f3-49f3-b16e-512147298baa";
 const candidateFactId = "e9f7f71b-bffd-42da-a201-6cc982be0069";
 const watchlistItemId = "6f33fc64-1a9f-4d02-b18e-8cf403d98d20";
 const recommendationListId = "95410c35-aa1b-4d27-8bb0-bb2685779d0f";
+const recommendationResultId = "77910c35-aa1b-4d27-8bb0-bb2685779d0f";
+const rootRunId = "6e764df5-19f3-49f3-b16e-512147298baa";
 const proposalId = "a2a08b93-a89d-4d21-85f1-7bf73fe26e07";
 const targetId = "1b2f8ef3-04d8-44a6-b30a-ac5d545be3e7";
 const actionId = "d1e8d370-16c8-44c2-bad5-483a8c0f0f0f";
@@ -16,20 +18,20 @@ const copy = { title: "待处理事项", message: "请查看并处理此事项�
 
 describe("agent inbox contracts", () => {
   it("parses an unread candidate-fact item with its allowlisted target", () => {
-    expect(AgentInboxItemSchema.parse({ itemId, runId: null, kind: "candidate_fact", status: "unread", reasonCode: "CANDIDATE_FACT_PENDING", budgetDimension: null, ...copy, availableActions: ["mark_read", "dismiss"], target: { type: "candidate_fact", candidateFactId, href: "/profile#candidate-facts" }, createdAt, readAt: null, resolvedAt: null })).toMatchObject({ status: "unread", target: { type: "candidate_fact", candidateFactId } });
+    expect(AgentInboxItemSchema.parse({ itemId, runId: null, kind: "candidate_fact", status: "unread", reasonCode: "CANDIDATE_FACT_PENDING", budgetDimension: null, retryable: false, suggestedActions: [], ...copy, availableActions: ["mark_read", "dismiss"], target: { type: "candidate_fact", candidateFactId, href: "/profile#candidate-facts" }, createdAt, readAt: null, resolvedAt: null })).toMatchObject({ status: "unread", target: { type: "candidate_fact", candidateFactId } });
   });
 
   it("parses a read source item with run provenance", () => {
-    expect(AgentInboxItemSchema.parse({ itemId, runId, kind: "source_attention", status: "read", reasonCode: "SOURCE_HEALTH_ATTENTION", budgetDimension: null, ...copy, availableActions: ["dismiss"], target: { type: "job_source", watchlistItemId, targetId, href: `/profile/targets/${targetId}/watchlist#source-health` }, createdAt, readAt, resolvedAt: null })).toMatchObject({ status: "read", runId, target: { type: "job_source", watchlistItemId, targetId } });
+    expect(AgentInboxItemSchema.parse({ itemId, runId, kind: "source_attention", status: "read", reasonCode: "SOURCE_HEALTH_ATTENTION", budgetDimension: null, retryable: false, suggestedActions: [], ...copy, availableActions: ["dismiss"], target: { type: "job_source", watchlistItemId, targetId, href: `/profile/targets/${targetId}/watchlist#source-health` }, createdAt, readAt, resolvedAt: null })).toMatchObject({ status: "read", runId, target: { type: "job_source", watchlistItemId, targetId } });
   });
 
   it("parses unread recommendation and calibration items", () => {
-    expect(AgentInboxItemSchema.parse({ itemId, runId: null, kind: "recommendation_list", status: "unread", reasonCode: "RECOMMENDATION_LIST_PUBLISHED", budgetDimension: null, ...copy, availableActions: ["mark_read", "dismiss"], target: { type: "recommendation_list", recommendationListId, targetId, href: `/recommendations?targetId=${targetId}#recommendation-list` }, createdAt, readAt: null, resolvedAt: null })).toMatchObject({ target: { type: "recommendation_list", recommendationListId } });
-    expect(AgentInboxItemSchema.parse({ itemId, runId: null, kind: "calibration_proposal", status: "unread", reasonCode: "CALIBRATION_PROPOSAL_CREATED", budgetDimension: null, ...copy, availableActions: ["mark_read", "dismiss"], target: { type: "calibration_proposal", proposalId, targetId, href: `/recommendations?targetId=${targetId}#calibration-proposal` }, createdAt, readAt: null, resolvedAt: null })).toMatchObject({ target: { type: "calibration_proposal", proposalId } });
+    expect(AgentInboxItemSchema.parse({ itemId, runId: null, kind: "recommendation_list", status: "unread", reasonCode: "RECOMMENDATION_LIST_PUBLISHED", budgetDimension: null, retryable: false, suggestedActions: [], ...copy, availableActions: ["mark_read", "dismiss"], target: { type: "recommendation_list", recommendationListId, targetId, href: `/recommendations?targetId=${targetId}&recommendationListId=${recommendationListId}#recommendation-list` }, createdAt, readAt: null, resolvedAt: null })).toMatchObject({ target: { type: "recommendation_list", recommendationListId } });
+    expect(AgentInboxItemSchema.parse({ itemId, runId: null, kind: "calibration_proposal", status: "unread", reasonCode: "CALIBRATION_PROPOSAL_CREATED", budgetDimension: null, retryable: false, suggestedActions: [], ...copy, availableActions: ["mark_read", "dismiss"], target: { type: "calibration_proposal", proposalId, targetId, href: `/recommendations?targetId=${targetId}#calibration-proposal` }, createdAt, readAt: null, resolvedAt: null })).toMatchObject({ target: { type: "calibration_proposal", proposalId } });
   });
 
   it("parses a resolved run item and accepts lifecycle commands", () => {
-    expect(AgentInboxItemSchema.parse({ itemId, runId, kind: "run_failed", status: "resolved", reasonCode: "AGENT_RUN_ADAPTER_FAILED", budgetDimension: null, ...copy, availableActions: [], target: { type: "agent_run", runId, href: `/home?runId=${runId}#agent-run` }, createdAt, readAt: null, resolvedAt })).toMatchObject({ status: "resolved", resolvedAt });
+    expect(AgentInboxItemSchema.parse({ itemId, runId, kind: "run_failed", status: "resolved", reasonCode: "AGENT_RUN_ADAPTER_FAILED", budgetDimension: null, retryable: true, suggestedActions: [], ...copy, availableActions: [], target: { type: "agent_run", runId, href: `/home?runId=${runId}#agent-run` }, createdAt, readAt: null, resolvedAt })).toMatchObject({ status: "resolved", resolvedAt });
     for (const action of ["restart_run", "resume_run", "cancel_run", "mark_read", "dismiss"] as const) expect(AgentInboxActionCommandSchema.parse({ actionId, action })).toEqual({ actionId, action });
     expect(AgentInboxListSchema.parse({ items: [] })).toEqual({ items: [] });
   });
@@ -40,8 +42,42 @@ describe("agent inbox contracts", () => {
     expect(AgentInboxActionCommandSchema.safeParse({ actionId, action: "dismiss", warningFingerprint }).success).toBe(false);
   });
 
+  it("只接受 owner-bound 推荐结果、精确清单与物理推荐运行目标", () => {
+    const result = {
+      itemId, runId: null, kind: "recommendation_result", status: "unread", reasonCode: "NO_RECOMMENDATIONS_PUBLISHED", budgetDimension: null,
+      retryable: false, suggestedActions: [], ...copy, availableActions: ["mark_read", "dismiss"],
+      target: { type: "recommendation_result", recommendationResultId, rootRunId, targetId, href: `/recommendations?runId=${rootRunId}&resultId=${recommendationResultId}#recommendation-result` },
+      createdAt, readAt: null, resolvedAt: null,
+    };
+    expect(AgentInboxItemSchema.parse(result)).toMatchObject({ target: { type: "recommendation_result", recommendationResultId, rootRunId, targetId } });
+    expect(AgentInboxItemSchema.parse({
+      itemId, runId, kind: "run_failed", status: "unread", reasonCode: "AGENT_RUN_MODEL_AUTH_FAILED", budgetDimension: null,
+      retryable: false, suggestedActions: ["run_model_diagnostic"], ...copy, availableActions: ["mark_read", "dismiss"],
+      target: { type: "recommendation_run", physicalRunId: runId, rootRunId, targetId, href: `/home?runId=${rootRunId}#recommendation-run` },
+      createdAt, readAt: null, resolvedAt: null,
+    })).toMatchObject({ target: { type: "recommendation_run", physicalRunId: runId, rootRunId } });
+    expect(AgentInboxItemSchema.parse({
+      itemId, runId: null, kind: "recommendation_list", status: "unread", reasonCode: "RECOMMENDATION_LIST_PUBLISHED", budgetDimension: null,
+      retryable: false, suggestedActions: [], ...copy, availableActions: ["mark_read", "dismiss"],
+      target: { type: "recommendation_list", recommendationListId, targetId, href: `/recommendations?targetId=${targetId}&recommendationListId=${recommendationListId}#recommendation-list` },
+      createdAt, readAt: null, resolvedAt: null,
+    })).toMatchObject({ target: { type: "recommendation_list", recommendationListId } });
+  });
+
+  it("拒绝错链、错物理归属与不可重试的伪造 restart", () => {
+    const failed = {
+      itemId, runId, kind: "run_failed", status: "read", reasonCode: "AGENT_RUN_PERSIST_FAILED", budgetDimension: null,
+      retryable: false, suggestedActions: [], ...copy, availableActions: ["dismiss"],
+      target: { type: "recommendation_run", physicalRunId: runId, rootRunId, targetId, href: `/home?runId=${rootRunId}#recommendation-run` },
+      createdAt, readAt, resolvedAt: null,
+    };
+    expect(AgentInboxItemSchema.safeParse({ ...failed, availableActions: ["restart_run", "dismiss"] }).success).toBe(false);
+    expect(AgentInboxItemSchema.safeParse({ ...failed, target: { ...failed.target, physicalRunId: rootRunId } }).success).toBe(false);
+    expect(AgentInboxItemSchema.safeParse({ ...failed, target: { ...failed.target, href: `/home?runId=${runId}#recommendation-run` } }).success).toBe(false);
+  });
+
   it("rejects free-form targets, cross-kind targets, inconsistent timestamps, and the former open status", () => {
-    const candidate = { itemId, runId: null, kind: "candidate_fact", status: "unread", reasonCode: "CANDIDATE_FACT_PENDING", budgetDimension: null, ...copy, availableActions: ["mark_read", "dismiss"], target: { type: "candidate_fact", candidateFactId, href: "/profile#candidate-facts" }, createdAt, readAt: null, resolvedAt: null };
+    const candidate = { itemId, runId: null, kind: "candidate_fact", status: "unread", reasonCode: "CANDIDATE_FACT_PENDING", budgetDimension: null, retryable: false, suggestedActions: [], ...copy, availableActions: ["mark_read", "dismiss"], target: { type: "candidate_fact", candidateFactId, href: "/profile#candidate-facts" }, createdAt, readAt: null, resolvedAt: null };
     expect(AgentInboxItemSchema.safeParse({ ...candidate, target: { type: "candidate_fact", candidateFactId, href: "https://example.test" } }).success).toBe(false);
     expect(AgentInboxItemSchema.safeParse({ ...candidate, target: { type: "agent_run", runId, href: `/home?runId=${runId}#agent-run` } }).success).toBe(false);
     expect(AgentInboxItemSchema.safeParse({ ...candidate, status: "read", readAt: null }).success).toBe(false);
