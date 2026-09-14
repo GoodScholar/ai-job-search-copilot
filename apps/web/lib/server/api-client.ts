@@ -171,14 +171,6 @@ async function throwAccountRunControlConflict(response: Response): Promise<never
   }
   throw new ApiClientError("api", "上游账户运行控制冲突响应无效", 502);
 }
-async function readRunPreflightProblem(response: Response): Promise<RunPreflightProblem | null> {
-  const payload = await parseJson(response).catch(() => null);
-  if (!payload || typeof payload !== "object") return null;
-  const problem = { ...(payload as Record<string, unknown>) };
-  delete problem.requestId;
-  return RunPreflightProblemSchema.safeParse(problem).data ?? null;
-}
-
 async function throwRunPreflightConflict(response: Response, fallbackMessage: string): Promise<never> {
   const payload = await parseJson(response).catch(() => null);
   if (!payload || typeof payload !== "object") throw new ApiClientError("api", "上游运行前检查冲突响应无效", 502);

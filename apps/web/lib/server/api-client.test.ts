@@ -922,8 +922,8 @@ it("账户全局控制客户端严格解析状态、命令和两类可公开的 
     .mockResolvedValueOnce(Response.json({ applied: true, state: { stoppedAt: "2026-09-12T00:00:00.000Z", controlVersion: 1, scheduleResumeAfter: null } }));
   const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
 
-  await expect((client as any).getAccountRunControl(sessionToken)).resolves.toEqual({ stoppedAt: null, controlVersion: 0, scheduleResumeAfter: null });
-  await expect((client as any).controlAccountRuns(sessionToken, command)).resolves.toEqual({ applied: true, state: { stoppedAt: "2026-09-12T00:00:00.000Z", controlVersion: 1, scheduleResumeAfter: null } });
+  await expect(client.getAccountRunControl(sessionToken)).resolves.toEqual({ stoppedAt: null, controlVersion: 0, scheduleResumeAfter: null });
+  await expect(client.controlAccountRuns(sessionToken, command)).resolves.toEqual({ applied: true, state: { stoppedAt: "2026-09-12T00:00:00.000Z", controlVersion: 1, scheduleResumeAfter: null } });
   expect(fetchImpl).toHaveBeenNthCalledWith(1, "http://127.0.0.1:3021/v1/account/run-policy/control", expect.objectContaining({ method: "GET" }));
   expect(fetchImpl).toHaveBeenNthCalledWith(2, "http://127.0.0.1:3021/v1/account/run-policy/controls", expect.objectContaining({ method: "POST", body: JSON.stringify(command) }));
 });
@@ -931,9 +931,9 @@ it("账户全局控制客户端严格解析状态、命令和两类可公开的 
 it("推荐运行读取 client 分别拒绝每个 helper 的畸形成功响应", async () => {
   const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => new Response(JSON.stringify({ unexpected: true }), { status: 200 }));
   const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
-  await expect((client as any).getRecommendationRunPreparation(sessionToken)).rejects.toMatchObject({ kind: "invalid_response" });
-  await expect((client as any).getLatestRecommendationRun(sessionToken)).rejects.toMatchObject({ kind: "invalid_response" });
-  await expect((client as any).getLatestPublishedRecommendationRun(sessionToken)).rejects.toMatchObject({ kind: "invalid_response" });
+  await expect(client.getRecommendationRunPreparation(sessionToken)).rejects.toMatchObject({ kind: "invalid_response" });
+  await expect(client.getLatestRecommendationRun(sessionToken)).rejects.toMatchObject({ kind: "invalid_response" });
+  await expect(client.getLatestPublishedRecommendationRun(sessionToken)).rejects.toMatchObject({ kind: "invalid_response" });
   expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
     "http://127.0.0.1:3021/v1/recommendation-runs/preparation",
     "http://127.0.0.1:3021/v1/recommendation-runs/latest",
@@ -959,13 +959,13 @@ it("推荐运行 client 严格验证全部新读写成功响应，并传递 bear
   const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
   const start = { idempotencyKey: "00000000-0000-4000-8000-000000000030", warningFingerprint: null } as const;
   const control = { commandId: "00000000-0000-4000-8000-000000000031", action: "resume" } as const;
-  await expect((client as any).getRecommendationRunPreparation(sessionToken)).resolves.toEqual(preparation);
-  await expect((client as any).startRecommendationRun(sessionToken, start)).resolves.toEqual({ run: recommendationRun, reused: false });
-  await expect((client as any).getLatestRecommendationRun(sessionToken)).resolves.toBeNull();
-  await expect((client as any).getLatestPublishedRecommendationRun(sessionToken)).resolves.toEqual(recommendationRun);
-  await expect((client as any).getRecommendationRun(sessionToken, agentRunId)).resolves.toEqual(recommendationRun);
-  await expect((client as any).controlRecommendationRun(sessionToken, agentRunId, control)).resolves.toEqual({ applied: true, run: recommendationRun });
-  await expect((client as any).getRecommendationList(sessionToken, targetId, importId)).resolves.toEqual(list);
+  await expect(client.getRecommendationRunPreparation(sessionToken)).resolves.toEqual(preparation);
+  await expect(client.startRecommendationRun(sessionToken, start)).resolves.toEqual({ run: recommendationRun, reused: false });
+  await expect(client.getLatestRecommendationRun(sessionToken)).resolves.toBeNull();
+  await expect(client.getLatestPublishedRecommendationRun(sessionToken)).resolves.toEqual(recommendationRun);
+  await expect(client.getRecommendationRun(sessionToken, agentRunId)).resolves.toEqual(recommendationRun);
+  await expect(client.controlRecommendationRun(sessionToken, agentRunId, control)).resolves.toEqual({ applied: true, run: recommendationRun });
+  await expect(client.getRecommendationList(sessionToken, targetId, importId)).resolves.toEqual(list);
   expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
     "http://127.0.0.1:3021/v1/recommendation-runs/preparation", "http://127.0.0.1:3021/v1/recommendation-runs", "http://127.0.0.1:3021/v1/recommendation-runs/latest", "http://127.0.0.1:3021/v1/recommendation-runs/latest-result", `http://127.0.0.1:3021/v1/recommendation-runs/${agentRunId}`, `http://127.0.0.1:3021/v1/recommendation-runs/${agentRunId}/controls`, `http://127.0.0.1:3021/v1/recommendations/lists/${importId}?targetId=${targetId}`,
   ]);
@@ -977,10 +977,10 @@ it("推荐运行写入和精确读取 client 分别拒绝畸形成功响应", as
   const fetchImpl = vi.fn<typeof fetch>().mockImplementation(async () => Response.json({ unexpected: true }));
   const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
   const start = { idempotencyKey: "00000000-0000-4000-8000-000000000030", warningFingerprint: null } as const; const control = { commandId: "00000000-0000-4000-8000-000000000031", action: "resume" } as const;
-  await expect((client as any).startRecommendationRun(sessionToken, start)).rejects.toMatchObject({ kind: "invalid_response" });
-  await expect((client as any).getRecommendationRun(sessionToken, agentRunId)).rejects.toMatchObject({ kind: "invalid_response" });
-  await expect((client as any).controlRecommendationRun(sessionToken, agentRunId, control)).rejects.toMatchObject({ kind: "invalid_response" });
-  await expect((client as any).getRecommendationList(sessionToken, targetId, importId)).rejects.toMatchObject({ kind: "invalid_response" });
+  await expect(client.startRecommendationRun(sessionToken, start)).rejects.toMatchObject({ kind: "invalid_response" });
+  await expect(client.getRecommendationRun(sessionToken, agentRunId)).rejects.toMatchObject({ kind: "invalid_response" });
+  await expect(client.controlRecommendationRun(sessionToken, agentRunId, control)).rejects.toMatchObject({ kind: "invalid_response" });
+  await expect(client.getRecommendationList(sessionToken, targetId, importId)).rejects.toMatchObject({ kind: "invalid_response" });
 });
 
 it("推荐运行 client 将合法恶意预检和有限冲突重建为安全问题，畸形冲突降级 502", async () => {
@@ -992,11 +992,11 @@ it("推荐运行 client 将合法恶意预检和有限冲突重建为安全问�
   const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
   const start = { idempotencyKey: "00000000-0000-4000-8000-000000000030", warningFingerprint: null } as const; const control = { commandId: "00000000-0000-4000-8000-000000000031", action: "resume" } as const;
   for (const expected of ["运行前检查未通过", "请确认当前运行前检查提示", "账户已停止全部运行，请先解除全局停止", "推荐运行状态已变化，请刷新后重试", "推荐运行状态已变化，请刷新后重试"]) {
-    const call = expected.includes("推荐运行状态") && fetchImpl.mock.calls.length >= 4 ? (client as any).controlRecommendationRun(sessionToken, agentRunId, control) : (client as any).startRecommendationRun(sessionToken, start);
+    const call = expected.includes("推荐运行状态") && fetchImpl.mock.calls.length >= 4 ? client.controlRecommendationRun(sessionToken, agentRunId, control) : client.startRecommendationRun(sessionToken, start);
     await expect(call).rejects.toMatchObject({ status: 409, message: expected });
     await call.catch((error: Error) => expect(JSON.stringify(error)).not.toContain(sentinel));
   }
-  await expect((client as any).controlRecommendationRun(sessionToken, agentRunId, control)).rejects.toMatchObject({ status: 502 });
+  await expect(client.controlRecommendationRun(sessionToken, agentRunId, control)).rejects.toMatchObject({ status: 502 });
 });
 
 it("control client 分别处理停止、命令冲突、未知 code 与畸形 409", async () => {
@@ -1008,28 +1008,28 @@ it("control client 分别处理停止、命令冲突、未知 code 与畸形 409
   ];
   const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl: vi.fn<typeof fetch>().mockImplementation(async () => responses.shift()!) });
   const control = { commandId: "00000000-0000-4000-8000-000000000031", action: "resume" } as const;
-  await expect((client as any).controlRecommendationRun(sessionToken, agentRunId, control)).rejects.toMatchObject({ status: 409, message: "账户已停止全部运行，请先解除全局停止" });
-  await expect((client as any).controlRecommendationRun(sessionToken, agentRunId, control)).rejects.toMatchObject({ status: 409, message: "推荐运行状态已变化，请刷新后重试" });
-  await expect((client as any).controlRecommendationRun(sessionToken, agentRunId, control)).rejects.toMatchObject({ status: 502 });
-  await expect((client as any).controlRecommendationRun(sessionToken, agentRunId, control)).rejects.toMatchObject({ status: 502 });
+  await expect(client.controlRecommendationRun(sessionToken, agentRunId, control)).rejects.toMatchObject({ status: 409, message: "账户已停止全部运行，请先解除全局停止" });
+  await expect(client.controlRecommendationRun(sessionToken, agentRunId, control)).rejects.toMatchObject({ status: 409, message: "推荐运行状态已变化，请刷新后重试" });
+  await expect(client.controlRecommendationRun(sessionToken, agentRunId, control)).rejects.toMatchObject({ status: 502 });
+  await expect(client.controlRecommendationRun(sessionToken, agentRunId, control)).rejects.toMatchObject({ status: 502 });
 });
 
 it("start client 分别将未知 code 与畸形 409 降级为 502", async () => {
   const responses: Array<Response> = [Response.json({ code: "UNKNOWN", message: "Bearer secret", requestId: agentRunId }, { status: 409 }), Response.json({ nope: true }, { status: 409 })];
   const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl: vi.fn<typeof fetch>().mockImplementation(async () => responses.shift()!) });
   const start = { idempotencyKey: "00000000-0000-4000-8000-000000000030", warningFingerprint: null } as const;
-  await expect((client as any).startRecommendationRun(sessionToken, start)).rejects.toMatchObject({ status: 502 });
-  await expect((client as any).startRecommendationRun(sessionToken, start)).rejects.toMatchObject({ status: 502 });
+  await expect(client.startRecommendationRun(sessionToken, start)).rejects.toMatchObject({ status: 502 });
+  await expect(client.startRecommendationRun(sessionToken, start)).rejects.toMatchObject({ status: 502 });
 });
 
 it("推荐运行读 client 分别保留 401，get 与 exact-list 保留 404", async () => {
   const unavailable = () => createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(Response.json({ code: "AUTH_REQUIRED", message: "需要有效会话", requestId: agentRunId }, { status: 401 })) });
-  await expect((unavailable() as any).getRecommendationRunPreparation(sessionToken)).rejects.toMatchObject({ status: 401 });
-  await expect((unavailable() as any).getLatestRecommendationRun(sessionToken)).rejects.toMatchObject({ status: 401 });
-  await expect((unavailable() as any).getLatestPublishedRecommendationRun(sessionToken)).rejects.toMatchObject({ status: 401 });
-  await expect((unavailable() as any).getRecommendationRun(sessionToken, agentRunId)).rejects.toMatchObject({ status: 401 });
-  await expect((unavailable() as any).getRecommendationList(sessionToken, targetId, importId)).rejects.toMatchObject({ status: 401 });
+  await expect(unavailable().getRecommendationRunPreparation(sessionToken)).rejects.toMatchObject({ status: 401 });
+  await expect(unavailable().getLatestRecommendationRun(sessionToken)).rejects.toMatchObject({ status: 401 });
+  await expect(unavailable().getLatestPublishedRecommendationRun(sessionToken)).rejects.toMatchObject({ status: 401 });
+  await expect(unavailable().getRecommendationRun(sessionToken, agentRunId)).rejects.toMatchObject({ status: 401 });
+  await expect(unavailable().getRecommendationList(sessionToken, targetId, importId)).rejects.toMatchObject({ status: 401 });
   const missing = () => createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl: vi.fn<typeof fetch>().mockResolvedValue(Response.json({ code: "RECOMMENDATION_RUN_NOT_FOUND", message: "推荐运行不存在", requestId: agentRunId }, { status: 404 })) });
-  await expect((missing() as any).getRecommendationRun(sessionToken, agentRunId)).rejects.toMatchObject({ status: 404 });
-  await expect((missing() as any).getRecommendationList(sessionToken, targetId, importId)).rejects.toMatchObject({ status: 404 });
+  await expect(missing().getRecommendationRun(sessionToken, agentRunId)).rejects.toMatchObject({ status: 404 });
+  await expect(missing().getRecommendationList(sessionToken, targetId, importId)).rejects.toMatchObject({ status: 404 });
 });
