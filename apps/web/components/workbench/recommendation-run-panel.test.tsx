@@ -57,6 +57,10 @@ function cancelledRun(): RecommendationRun {
   });
 }
 
+function pausedRun(): RecommendationRun {
+  return RecommendationRunSchema.parse({ ...runningRun(), status: "paused" });
+}
+
 function response(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
@@ -193,4 +197,78 @@ it("旧 root 的延迟读取不能覆盖后来到达的权威 root", async () =>
 
   expect(screen.getByRole("status")).toHaveTextContent("正在完成今日发现");
   expect(screen.getByText("主目标：数据工程师")).toBeVisible();
+});
+
+it("成功 resume 后可继续 pause，两个控制请求均到达当前服务端状态", async () => {
+  let serverRun = pausedRun();
+  const events: string[] = [];
+  vi.mocked(fetch).mockImplementation((input, init) => {
+    if (String(input).endsWith("/controls") && init?.method === "POST") {
+      const action = JSON.parse(String(init.body)).action as "pause" | "resume";
+      events.push(`POST ${action}`);
+      serverRun = RecommendationRunSchema.parse(action === "resume" ? runningRun() : pausedRun());
+      return Promise.resolve(response({ run: serverRun, applied: true }));
+    }
+    events.push(`GET ${serverRun.status}`);
+    return Promise.resolve(response(serverRun));
+  });
+  render(<RecommendationRunPanel initialRun={pausedRun()} initialPreparation={preparation()} />);
+  await act(async () => { await Promise.resolve(); });
+  fireEvent.click(screen.getByRole("button", { name: "继续本次推荐" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  expect(screen.getByRole("button", { name: "暂停本次推荐" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "暂停本次推荐" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  expect(events).toEqual(["GET paused", "POST resume", "GET running", "POST pause", "GET paused"]);
+  expect(screen.getByRole("button", { name: "继续本次推荐" })).toBeEnabled();
+});
+
+it("warning 启动冲突刷新后允许重新确认并提交", async () => {
+  const requests: string[] = [];
+  const refreshedPreparation = preparation("ready_with_warnings");
+  vi.mocked(fetch).mockImplementation((input, init) => {
+    if (input === "/api/recommendation-runs" && init?.method === "POST") {
+      requests.push("POST start");
+      return Promise.resolve(requests.length === 1
+        ? response({ code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED" }, 409)
+        : response({ run: runningRun(), reused: false }, 201));
+    }
+    if (input === "/api/recommendation-runs/preparation") return Promise.resolve(response(refreshedPreparation));
+    if (input === "/api/recommendation-runs/latest") return Promise.resolve(response({ run: null }));
+    return Promise.resolve(response(runningRun()));
+  });
+  render(<RecommendationRunPanel initialRun={null} initialPreparation={preparation("ready_with_warnings")} />);
+  await act(async () => { await Promise.resolve(); });
+  fireEvent.click(screen.getByRole("button", { name: "开始今日发现" }));
+  fireEvent.click(screen.getByRole("button", { name: "我已了解，开始今日发现" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  expect(screen.getByRole("button", { name: "开始今日发现" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "开始今日发现" }));
+  fireEvent.click(screen.getByRole("button", { name: "我已了解，开始今日发现" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect(requests).toEqual(["POST start", "POST start"]);
+});
+
+it.each([200, 201])("start 收到 %i 后，服务端终态允许再次启动", async (status) => {
+  let startCount = 0;
+  let serverRun: RecommendationRun | null = null;
+  vi.mocked(fetch).mockImplementation((input, init) => {
+    if (input === "/api/recommendation-runs" && init?.method === "POST") {
+      startCount += 1;
+      serverRun = RecommendationRunSchema.parse(runningRun());
+      const startResponse = response({ run: serverRun, reused: false }, status);
+      if (startCount === 1) serverRun = cancelledRun();
+      return Promise.resolve(startResponse);
+    }
+    if (String(input).endsWith(`/${runId}`)) return Promise.resolve(response(serverRun));
+    return Promise.resolve(response({ run: null }));
+  });
+  render(<RecommendationRunPanel initialRun={null} initialPreparation={preparation()} />);
+  await act(async () => { await Promise.resolve(); });
+  fireEvent.click(screen.getByRole("button", { name: "开始今日发现" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  expect(screen.getByRole("button", { name: "开始今日发现" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "开始今日发现" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect(startCount).toBe(2);
 });

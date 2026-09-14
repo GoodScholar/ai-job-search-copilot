@@ -61,6 +61,8 @@ export function RecommendationRunPanel({ initialRun, initialPreparation, unavail
   const authorityGeneration = useRef(0);
   const readGeneration = useRef(0);
   const readAbortController = useRef<AbortController | null>(null);
+  const startOperation = useRef(0);
+  const controlOperation = useRef(0);
 
   useEffect(() => {
     mounted.current = true;
@@ -164,6 +166,7 @@ export function RecommendationRunPanel({ initialRun, initialPreparation, unavail
     if (preflight.status === "ready_with_warnings" && !confirmed) { setConfirmationOpen(true); return; }
     idempotencyKey.current ??= crypto.randomUUID();
     const generation = authorityGeneration.current;
+    const operation = ++startOperation.current;
     setPendingStart(true); setMessage("");
     try {
       const response = await fetch("/api/recommendation-runs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ idempotencyKey: idempotencyKey.current, warningFingerprint: preflight.status === "ready_with_warnings" ? preflight.warningFingerprint : null }) });
@@ -181,13 +184,14 @@ export function RecommendationRunPanel({ initialRun, initialPreparation, unavail
       const stopped = payload && typeof payload === "object" && "code" in payload && payload.code === "ACCOUNT_RUN_STOPPED";
       if (mounted.current && authorityGeneration.current === generation) setMessage(stopped ? "账户已停止全部运行，请先在运行设置中解除全局停止。" : "今日发现暂时无法启动，请稍后重试。");
     } catch { if (mounted.current && authorityGeneration.current === generation) setMessage("今日发现暂时无法启动，请稍后重试。"); }
-    finally { if (mounted.current && authorityGeneration.current === generation) setPendingStart(false); }
+    finally { if (mounted.current && startOperation.current === operation) setPendingStart(false); }
   }
   async function control(action: Action) {
     if (!run || pendingAction) return;
     if (authoritativeRunId.current !== run.runId) return;
     const commandId = commandIds.current[action] ?? crypto.randomUUID(); commandIds.current[action] = commandId; setPendingAction(action); setMessage("");
     const generation = authorityGeneration.current;
+    const operation = ++controlOperation.current;
     const controlledRunId = run.runId;
     try {
       const response = await fetch(`/api/recommendation-runs/${run.runId}/controls`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ commandId, action }) });
@@ -201,7 +205,7 @@ export function RecommendationRunPanel({ initialRun, initialPreparation, unavail
       }
       if (mounted.current && authorityGeneration.current === generation && authoritativeRunId.current === controlledRunId) setMessage("本次操作暂时无法提交，请稍后重试。");
     } catch { if (mounted.current && authorityGeneration.current === generation && authoritativeRunId.current === controlledRunId) setMessage("本次操作暂时无法提交，请稍后重试。"); }
-    finally { if (mounted.current && authorityGeneration.current === generation && authoritativeRunId.current === controlledRunId) setPendingAction(null); }
+    finally { if (mounted.current && controlOperation.current === operation) setPendingAction(null); }
   }
   const resultHref = run?.result ? `/recommendations?runId=${run.runId}&resultId=${run.result.resultId}#recommendation-result` : null;
   return <section aria-labelledby="recommendation-run-title" className="workbench-ledger recommendation-run-panel" id="recommendation-run">
