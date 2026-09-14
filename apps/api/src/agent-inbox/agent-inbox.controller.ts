@@ -5,7 +5,8 @@ import {
   AgentInboxActionResponseSchema,
   AgentInboxListSchema,
 } from "@job-copilot/contracts/agent-inbox";
-import { AgentInboxError } from "@job-copilot/domain/agent-runs";
+import { AgentInboxError, AgentRunControlError, AgentRunError, RecommendationRunError } from "@job-copilot/domain/agent-runs";
+import { AccountRunAdmissionError } from "@job-copilot/domain/account-run-control";
 import { RunPreflightRejectedError } from "@job-copilot/domain/run-preflight";
 import type { FastifyRequest } from "fastify";
 import { createZodDto, ZodResponse, ZodValidationPipe } from "nestjs-zod";
@@ -32,6 +33,16 @@ function inboxProblem(error: AgentInboxError): ApiException {
     return new ApiException(error.code, HttpStatus.CONFLICT, "Agent Inbox 事项状态已变化，请刷新后重试");
   }
   throw error;
+}
+
+function inboxActionProblem(error: unknown): ApiException | null {
+  if ((error instanceof AgentRunError && error.code === "ACCOUNT_RUN_STOPPED") || (error instanceof AccountRunAdmissionError && error.code === "ACCOUNT_RUN_STOPPED")) {
+    return new ApiException("ACCOUNT_RUN_STOPPED", HttpStatus.CONFLICT, "账户已停止全部运行，请先恢复后重试");
+  }
+  if (error instanceof AgentRunControlError || error instanceof RecommendationRunError) {
+    return new ApiException("AGENT_INBOX_ACTION_CONFLICT", HttpStatus.CONFLICT, "事项状态已变化，请刷新后重试");
+  }
+  return null;
 }
 
 @Controller("v1/agent-inbox")
@@ -71,6 +82,8 @@ export class AgentInboxController {
     } catch (error) {
       if (error instanceof RunPreflightRejectedError) throw runPreflightConflict(error);
       if (error instanceof AgentInboxError) throw inboxProblem(error);
+      const actionProblem = inboxActionProblem(error);
+      if (actionProblem) throw actionProblem;
       throw error;
     }
   }

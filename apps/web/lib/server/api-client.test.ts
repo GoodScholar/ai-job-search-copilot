@@ -196,6 +196,8 @@ const inboxItem: AgentInboxItem = {
   basis: "运行已暂停。",
   impact: "本次发现不会继续。",
   suggestedAction: "继续或取消运行。",
+  retryable: false,
+  suggestedActions: [],
   target: { type: "agent_run", runId: agentRunId, href: `/home?runId=${agentRunId}#agent-run` },
   availableActions: ["mark_read", "resume_run", "cancel_run"],
   createdAt: "2026-08-29T08:00:00.000Z",
@@ -769,6 +771,19 @@ it("restart Agent Inbox 原样保留普通动作冲突 409", async () => {
   const action = { actionId: "59d2bfbf-7e40-49fc-86c8-3a15d7ad4f98", action: "restart_run" as const };
 
   await expect(client.actOnAgentInboxItem(sessionToken, inboxItem.itemId, action)).rejects.toMatchObject({ kind: "api", status: 409, problem: restartConflictProblem });
+});
+
+it("resume 仅保留账户停止白名单 409，其他上游正文降级为 502", async () => {
+  const stopped = ApiProblemSchema.parse({ code: "ACCOUNT_RUN_STOPPED", message: "账户已停止全部运行，请先恢复后重试", requestId: "d7a6aa9c-5cec-4681-a5f4-a017ed3ad5d0" });
+  const unexpected = ApiProblemSchema.parse({ code: "UPSTREAM_SECRET", message: "Bearer secret", requestId: "e7a6aa9c-5cec-4681-a5f4-a017ed3ad5d0" });
+  const fetchImpl = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response(JSON.stringify(stopped), { status: 409 }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(unexpected), { status: 409 }));
+  const client = createApiClient({ apiInternalUrl: "http://127.0.0.1:3021", devAuthSharedSecret: "secret", fetchImpl });
+  const action = { actionId: "59d2bfbf-7e40-49fc-86c8-3a15d7ad4f98", action: "resume_run" as const };
+
+  await expect(client.actOnAgentInboxItem(sessionToken, inboxItem.itemId, action)).rejects.toMatchObject({ kind: "api", status: 409, problem: stopped });
+  await expect(client.actOnAgentInboxItem(sessionToken, inboxItem.itemId, { ...action, actionId: "69d2bfbf-7e40-49fc-86c8-3a15d7ad4f98" })).rejects.toMatchObject({ kind: "api", status: 502, problem: undefined });
 });
 
 it("restart Agent Inbox 将畸形或恶意运行前检查 409 降级为安全 502", async () => {

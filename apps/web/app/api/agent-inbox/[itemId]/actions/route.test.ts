@@ -60,3 +60,24 @@ it("安全转发 restart 的预检 409 报告给浏览器二次确认", async ()
   expect(response.status).toBe(409);
   await expect(response.json()).resolves.toEqual(preflight);
 });
+
+it("只转发账户停止的白名单 409，不转发上游原文", async () => {
+  mocks.readSessionToken.mockResolvedValue("a".repeat(43));
+  mocks.actOnAgentInboxItem.mockRejectedValue({ status: 409, problem: { code: "ACCOUNT_RUN_STOPPED", message: "账户已停止全部运行，请先恢复后重试", requestId: "secret-request-id" } });
+
+  const response = await POST(new Request("http://localhost", { method: "POST", body: JSON.stringify({ ...command, action: "restart_run" }) }), context(itemId));
+
+  expect(response.status).toBe(409);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  await expect(response.json()).resolves.toEqual({ code: "ACCOUNT_RUN_STOPPED", message: "账户已停止全部运行，请先恢复后重试" });
+});
+
+it("白名单 code 也重建固定中文，不回显上游秘密正文", async () => {
+  mocks.readSessionToken.mockResolvedValue("a".repeat(43));
+  mocks.actOnAgentInboxItem.mockRejectedValue({ status: 409, problem: { code: "ACCOUNT_RUN_STOPPED", message: "Bearer secret", requestId: "secret-request-id" } });
+
+  const response = await POST(new Request("http://localhost", { method: "POST", body: JSON.stringify({ ...command, action: "resume_run" }) }), context(itemId));
+
+  expect(response.status).toBe(409);
+  await expect(response.json()).resolves.toEqual({ code: "ACCOUNT_RUN_STOPPED", message: "账户已停止全部运行，请先恢复后重试" });
+});

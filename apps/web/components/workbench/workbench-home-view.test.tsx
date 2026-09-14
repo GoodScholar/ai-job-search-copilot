@@ -89,6 +89,7 @@ it("候选事实 Inbox dismiss 只减少待决定事项，权威刷新后仍保�
   const resolvedItem: AgentInboxItem = {
     itemId: "8a1b0207-b852-4f86-8b1f-3b9615655ed8", runId: null, kind: "candidate_fact", status: "resolved", reasonCode: "CANDIDATE_FACT_PENDING", budgetDimension: null,
     title: "确认候选事实", message: "待确认。", basis: "依据。", impact: "影响。", suggestedAction: "确认。",
+    retryable: false, suggestedActions: [],
     target: { type: "candidate_fact", candidateFactId: "9a1b0207-b852-4f86-8b1f-3b9615655ed8", href: "/profile#candidate-facts" }, availableActions: [], createdAt: "2026-09-04T08:00:00.000Z", readAt: "2026-09-04T08:00:00.000Z", resolvedAt: "2026-09-04T08:00:01.000Z",
   };
   const unresolvedItem: AgentInboxItem = { ...resolvedItem, status: "read", availableActions: ["dismiss"], resolvedAt: null };
@@ -156,7 +157,7 @@ it("服务端快照固定在线，挂载后才读取离线状态", () => {
 
 it("收到刷新后的服务端 props 后替换 Inbox 并结束陈旧提示", async () => {
   const user = userEvent.setup();
-  const freshItem: AgentInboxItem = { itemId: "8a1b0207-b852-4f86-8b1f-3b9615655ed8", runId: null, kind: "candidate_fact", status: "unread", reasonCode: "CANDIDATE_FACT_PENDING", budgetDimension: null, title: "刷新后的事项", message: "新读取的数据。", basis: "新依据。", impact: "新影响。", suggestedAction: "新建议。", target: { type: "candidate_fact", candidateFactId: "9a1b0207-b852-4f86-8b1f-3b9615655ed8", href: "/profile#candidate-facts" }, availableActions: ["dismiss"], createdAt: "2026-09-04T08:00:00.000Z", readAt: null, resolvedAt: null };
+  const freshItem: AgentInboxItem = { itemId: "8a1b0207-b852-4f86-8b1f-3b9615655ed8", runId: null, kind: "candidate_fact", status: "unread", reasonCode: "CANDIDATE_FACT_PENDING", budgetDimension: null, title: "刷新后的事项", message: "新读取的数据。", basis: "新依据。", impact: "新影响。", suggestedAction: "新建议。", retryable: false, suggestedActions: [], target: { type: "candidate_fact", candidateFactId: "9a1b0207-b852-4f86-8b1f-3b9615655ed8", href: "/profile#candidate-facts" }, availableActions: ["dismiss"], createdAt: "2026-09-04T08:00:00.000Z", readAt: null, resolvedAt: null };
   Object.defineProperty(navigator, "onLine", { configurable: true, value: true });
   const view = render(<WorkbenchHomeView home={home} inbox={{ items: [] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
   act(() => window.dispatchEvent(new Event("online")));
@@ -170,7 +171,7 @@ it("收到刷新后的服务端 props 后替换 Inbox 并结束陈旧提示", as
 
 it("刷新后的 Inbox props 到达时保留 mark-read 自动恢复的稳定焦点", async () => {
   const user = userEvent.setup();
-  const unreadItem: AgentInboxItem = { itemId: "8a1b0207-b852-4f86-8b1f-3b9615655ed8", runId: null, kind: "candidate_fact", status: "unread", reasonCode: "CANDIDATE_FACT_PENDING", budgetDimension: null, title: "刷新后仍可查看的事项", message: "新读取的数据。", basis: "新依据。", impact: "新影响。", suggestedAction: "新建议。", target: { type: "candidate_fact", candidateFactId: "9a1b0207-b852-4f86-8b1f-3b9615655ed8", href: "/profile#candidate-facts" }, availableActions: ["mark_read", "dismiss"], createdAt: "2026-09-04T08:00:00.000Z", readAt: null, resolvedAt: null };
+  const unreadItem: AgentInboxItem = { itemId: "8a1b0207-b852-4f86-8b1f-3b9615655ed8", runId: null, kind: "candidate_fact", status: "unread", reasonCode: "CANDIDATE_FACT_PENDING", budgetDimension: null, title: "刷新后仍可查看的事项", message: "新读取的数据。", basis: "新依据。", impact: "新影响。", suggestedAction: "新建议。", retryable: false, suggestedActions: [], target: { type: "candidate_fact", candidateFactId: "9a1b0207-b852-4f86-8b1f-3b9615655ed8", href: "/profile#candidate-facts" }, availableActions: ["mark_read", "dismiss"], createdAt: "2026-09-04T08:00:00.000Z", readAt: null, resolvedAt: null };
   const readItem: AgentInboxItem = { ...unreadItem, status: "read", availableActions: ["dismiss"], readAt: "2026-09-04T08:00:01.000Z" };
   vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(Response.json({ applied: true, item: readItem, run: null })));
   const view = render(<WorkbenchHomeView home={home} inbox={{ items: [unreadItem] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);

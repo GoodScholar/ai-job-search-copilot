@@ -487,6 +487,7 @@ it("运行面板触发 Inbox 刷新后将新权威事项呈现在收件箱", asy
   const refreshedItem: AgentInboxItem = {
     itemId: "4a1b0207-b852-4f86-8b1f-3b9615655ed8", runId: runId, kind: "candidate_fact", status: "unread", reasonCode: "CANDIDATE_FACT_PENDING", budgetDimension: null,
     title: "刷新后的事项", message: "新读取的数据。", basis: "新依据。", impact: "新影响。", suggestedAction: "新建议。",
+    retryable: false, suggestedActions: [],
     target: { type: "candidate_fact", candidateFactId: "1a1b0207-b852-4f86-8b1f-3b9615655ed8", href: "/profile#candidate-facts" }, availableActions: ["dismiss"], createdAt: now, readAt: null, resolvedAt: null,
   };
   vi.stubGlobal("fetch", vi.fn<typeof fetch>()

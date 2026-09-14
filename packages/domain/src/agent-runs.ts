@@ -21,6 +21,7 @@ export { createRecommendationRunPreparationQueries, prepareRecommendationRunInTr
 export { createAgentRunCheckpoint, type AgentRunCheckpoint, type AgentRunCheckpointDecision } from "./agent-run-checkpoint";
 export { createAgentRunQueries } from "./agent-run-queries";
 export { AgentInboxActionError, AgentInboxError, createAgentInbox } from "./agent-inbox";
+export { createRecommendationRunCommands, createRecommendationRunQueries, RecommendationRunError } from "./recommendation-runs";
 export type {
   SourceHealthAdapterFailure,
   SourceHealthDetailResult,

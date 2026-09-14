@@ -108,6 +108,11 @@ type ApiClientConfig = {
 };
 
 type ApiErrorKind = "api" | "invalid_response" | "network" | "configuration";
+const AgentInboxActionProblemSchema = z.object({
+  code: z.enum(["ACCOUNT_RUN_STOPPED", "AGENT_INBOX_ACTION_CONFLICT", "AGENT_INBOX_ACTION_FAILED"]),
+  message: z.string().min(1),
+  requestId: z.uuid(),
+}).strict();
 
 export class ApiClientError extends Error {
   constructor(
@@ -193,7 +198,7 @@ async function throwAgentInboxRestartConflict(response: Response, fallbackMessag
   delete problem.requestId;
   const preflight = RunPreflightProblemSchema.safeParse(problem).data;
   if (preflight) throw new ApiClientError("api", preflight.message ?? fallbackMessage, 409, preflight);
-  const apiProblem = ApiProblemSchema.safeParse(payload).data;
+  const apiProblem = AgentInboxActionProblemSchema.safeParse(payload).data;
   if (apiProblem) throw new ApiClientError("api", apiProblem.message ?? fallbackMessage, 409, apiProblem);
   throw new ApiClientError("api", "上游运行前检查冲突响应无效", 502);
 }
@@ -818,7 +823,7 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
         body: JSON.stringify(requestBody),
       });
       if (!response.ok) {
-        if (response.status === 409 && requestBody.action === "restart_run") return throwAgentInboxRestartConflict(response, "无法处理 Agent Inbox");
+        if (response.status === 409) return throwAgentInboxRestartConflict(response, "无法处理 Agent Inbox");
         const problem = await readProblem(response);
         throw new ApiClientError("api", problem?.message ?? "无法处理 Agent Inbox", response.status, problem ?? undefined);
       }

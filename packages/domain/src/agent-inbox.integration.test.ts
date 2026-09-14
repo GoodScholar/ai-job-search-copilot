@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { agentInboxItemActions, agentInboxItems, agentRunEvents, agentRuns, auditEvents, calibrationProposals, candidateFacts, careerDocuments, careerImports, createDatabase, jobAccounts, jobSourceHealthChecks, jobTargetRevisions, jobTargets, migrateDatabase, recommendationLists, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
+import { createAccountRunControl } from "./account-run-control";
 import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
 import { createAgentInbox, createAgentRunCommands, type AgentRunQueue } from "./agent-runs";
 import { RunPreflightRejectedError } from "./run-preflight";
@@ -179,6 +180,20 @@ describe("agent inbox", () => {
     await expect(database.select().from(agentRunEvents).where(and(eq(agentRunEvents.userId, owner.userId), eq(agentRunEvents.runId, runId), eq(agentRunEvents.eventType, "run.resumed")))).resolves.toHaveLength(1);
     await expect(database.select({ eventType: auditEvents.eventType, requestId: auditEvents.requestId, outcome: auditEvents.outcome, metadata: auditEvents.metadata }).from(auditEvents).where(and(eq(auditEvents.userId, owner.userId), eq(auditEvents.resourceId, itemId), eq(auditEvents.eventType, "agent.inbox_action_applied")))).resolves.toEqual([expect.objectContaining({ eventType: "agent.inbox_action_applied", outcome: "success", metadata: expect.objectContaining({ action: "resume_run", outcome: "applied" }) })]);
     await expect(inbox().act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId, command: { actionId: crypto.randomUUID(), action: "dismiss" } })).rejects.toMatchObject({ code: "AGENT_INBOX_ACTION_CONFLICT" });
+  });
+
+  it("账户停止拒绝 legacy resume 时仅释放本 action pending claim，恢复后可重试", async () => {
+    const owner = await activeTarget();
+    const item = await openItem({ ...owner, kind: "decision_required", reasonCode: "AGENT_RUN_PAUSED" });
+    const accountControl = createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    await accountControl.control({ userId: owner.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+    const actionId = crypto.randomUUID();
+
+    await expect(inbox().act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: item.itemId, command: { actionId, action: "resume_run" } })).rejects.toMatchObject({ code: "ACCOUNT_RUN_STOPPED" });
+    await expect(database.select().from(agentInboxItemActions).where(and(eq(agentInboxItemActions.userId, owner.userId), eq(agentInboxItemActions.itemId, item.itemId), eq(agentInboxItemActions.actionId, actionId)))).resolves.toEqual([]);
+
+    await accountControl.control({ userId: owner.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 1, action: "release" } });
+    await expect(inbox().act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId: item.itemId, command: { actionId, action: "resume_run" } })).resolves.toMatchObject({ applied: true, item: { status: "resolved" } });
   });
 
   it("restart 使用当前 active target 版本、保存 retry 关联并以 actionId 重放", async () => {

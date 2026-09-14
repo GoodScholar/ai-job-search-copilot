@@ -11,6 +11,7 @@ const now = "2026-09-04T08:00:00.000Z";
 const item: AgentInboxItem = {
   itemId, runId: null, kind: "candidate_fact", status: "unread", reasonCode: "CANDIDATE_FACT_PENDING", budgetDimension: null,
   title: "确认工作经历", message: "发现一条候选工作经历。", basis: "来自已导入资料的可追溯片段。", impact: "确认前不会用于推荐或材料生成。", suggestedAction: "核对后确认、修改或拒绝这条事实。",
+  retryable: false, suggestedActions: [],
   target: { type: "candidate_fact", candidateFactId: "1a1b0207-b852-4f86-8b1f-3b9615655ed8", href: "/profile#candidate-facts" }, availableActions: ["mark_read", "dismiss"], createdAt: now, readAt: null, resolvedAt: null,
 };
 
@@ -46,6 +47,49 @@ it("restart 收到 warning 预检后只允许以同一 actionId 明确确认", a
   const requests = (fetch as ReturnType<typeof vi.fn>).mock.calls;
   expect(JSON.parse(String(requests[0]![1]?.body))).toEqual({ actionId, action: "restart_run" });
   expect(JSON.parse(String(requests[1]![1]?.body))).toEqual({ actionId, action: "restart_run", warningFingerprint: fingerprint });
+});
+
+it("推荐失败只从 availableActions 渲染一次重启，并提供有限内部诊断导航", () => {
+  const recommendation: AgentInboxItem = {
+    ...item,
+    runId: "7a1b0207-b852-4f86-8b1f-3b9615655ed8",
+    kind: "run_failed",
+    reasonCode: "AGENT_RUN_MODEL_RETRYABLE",
+    title: "推荐运行暂时无法完成。",
+    target: { type: "recommendation_run", physicalRunId: "7a1b0207-b852-4f86-8b1f-3b9615655ed8", rootRunId: "8a1b0207-b852-4f86-8b1f-3b9615655ed8", targetId: "9a1b0207-b852-4f86-8b1f-3b9615655ed8", href: "/home?runId=8a1b0207-b852-4f86-8b1f-3b9615655ed8#recommendation-run" },
+    retryable: true,
+    suggestedActions: ["restart_discovery", "run_model_diagnostic"],
+    availableActions: ["mark_read", "restart_run", "dismiss"],
+  };
+
+  render(<AgentInboxPanel items={[recommendation]} onResolved={vi.fn()} />);
+
+  expect(screen.getAllByRole("button", { name: "重新开始完整推荐：推荐运行暂时无法完成。" })).toHaveLength(1);
+  expect(screen.getByRole("link", { name: "检查模型连接" })).toHaveAttribute("href", "/profile/model-connection");
+});
+
+it("账户停止提示不伪装为事项状态冲突", async () => {
+  const user = userEvent.setup();
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(Response.json({ code: "ACCOUNT_RUN_STOPPED", message: "账户已停止全部运行，请先恢复后重试" }, { status: 409 })));
+  render(<AgentInboxPanel items={[item]} onResolved={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "标记已处理：确认工作经历" }));
+
+  await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("账户已停止全部运行，请先恢复后重试。"));
+});
+
+it("预检 warning 后的权威刷新不会保留权限外确认按钮", async () => {
+  const user = userEvent.setup();
+  const failed: AgentInboxItem = { ...item, runId: "7a1b0207-b852-4f86-8b1f-3b9615655ed8", kind: "run_failed", reasonCode: "AGENT_RUN_ADAPTER_FAILED", title: "岗位发现未完成", target: { type: "agent_run", runId: "7a1b0207-b852-4f86-8b1f-3b9615655ed8", href: "/home?runId=7a1b0207-b852-4f86-8b1f-3b9615655ed8#agent-run" }, availableActions: ["mark_read", "restart_run", "dismiss"] };
+  const preflight = { code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED", message: "请确认当前运行前检查提示", preflight: { version: "run-preflight-v1", workflow: "discovery", trigger: "manual", targetId: "8a1b0207-b852-4f86-8b1f-3b9615655ed8", status: "ready_with_warnings", warningFingerprint: "a".repeat(64), checkedAt: now, items: [{ code: "SOURCE_HEALTH_UNCHECKED", severity: "warning", summary: "来源尚未完成健康检查", impact: "运行可以继续，建议稍后查看来源健康状态。", retryable: true, suggestedActions: ["review_source_health"], evidence: { kind: "source_health", checkedSourceCount: 0, healthySourceCount: 0, degradedSourceCount: 0, uncheckedSourceCount: 1, latestCheckedAt: null } }] } };
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(Response.json(preflight, { status: 409 })));
+  const view = render(<AgentInboxPanel items={[failed]} onResolved={vi.fn()} />);
+
+  await user.click(screen.getByRole("button", { name: "重新开始岗位发现：岗位发现未完成" }));
+  await screen.findByText("来源尚未完成健康检查");
+  view.rerender(<AgentInboxPanel items={[{ ...failed, availableActions: ["mark_read", "dismiss"], retryable: false }]} onResolved={vi.fn()} />);
+
+  expect(screen.queryByRole("button", { name: "确认当前提示并重新开始岗位发现" })).not.toBeInTheDocument();
 });
 
 it("隔离各状态缓存并忽略乱序响应，往返后仍显示权威 pending 项", async () => {

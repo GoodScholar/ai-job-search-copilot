@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
+import type { Database } from "@job-copilot/database";
+import type { AgentRunQueue } from "@job-copilot/domain/agent-runs";
+import type { AuditTrail } from "@job-copilot/domain/audit-trail";
+import type { RunPreflightEvaluator } from "../run-preflight/run-preflight.tokens.js";
 
-import { createConfiguredJobDiscoveryExecutionMode } from "./agent-runs.module.js";
+import { AUDIT_TRAIL } from "../auth/auth.module.js";
+import { DATABASE } from "../config/runtime-config.module.js";
+import { RUN_PREFLIGHT_EVALUATOR } from "../run-preflight/run-preflight.tokens.js";
+import { AgentRunsModule, createConfiguredJobDiscoveryExecutionMode } from "./agent-runs.module.js";
+import { AGENT_RUN_QUEUE_PORT, RECOMMENDATION_RUN_COMMANDS } from "./agent-runs.tokens.js";
 
 describe("AgentRunsModule", () => {
   it.each([
@@ -46,5 +54,27 @@ describe("AgentRunsModule", () => {
     const sentinel = JSON.stringify(scenario);
     expect(() => createConfiguredJobDiscoveryExecutionMode({ APP_ENV: "test", ...scenario })).toThrow("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID");
     try { createConfiguredJobDiscoveryExecutionMode({ APP_ENV: "test", ...scenario }); } catch (error) { expect(String(error)).not.toContain(sentinel); }
+  });
+
+  it("推荐 commands 在同一模块声明共享依赖、导出 token，并可由该 factory 创建", () => {
+    const providers = Reflect.getMetadata("providers", AgentRunsModule) as Array<{ provide?: symbol; inject?: unknown[]; useFactory?: (...deps: unknown[]) => unknown }>;
+    const recommendation = providers.find((provider) => provider.provide === RECOMMENDATION_RUN_COMMANDS);
+    expect(recommendation?.inject).toEqual([DATABASE, AGENT_RUN_QUEUE_PORT, AUDIT_TRAIL, RUN_PREFLIGHT_EVALUATOR]);
+    expect(Reflect.getMetadata("exports", AgentRunsModule)).toContain(RECOMMENDATION_RUN_COMMANDS);
+
+    const originalAppEnv = process.env.APP_ENV;
+    process.env.APP_ENV = "test";
+    try {
+      const commands = recommendation?.useFactory?.(
+        {} as Database,
+        {} as AgentRunQueue,
+        {} as AuditTrail,
+        {} as RunPreflightEvaluator,
+      );
+      expect(commands).toMatchObject({ start: expect.any(Function) });
+    } finally {
+      if (originalAppEnv === undefined) delete process.env.APP_ENV;
+      else process.env.APP_ENV = originalAppEnv;
+    }
   });
 });
