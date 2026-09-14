@@ -275,6 +275,42 @@ it("成功 resume 后可继续 pause，两个控制请求均到达当前服务�
   expect(screen.getByRole("button", { name: "继续本次推荐" })).toBeEnabled();
 });
 
+it("暂停态明确等待继续，并在同 root 恢复后还原进行中文案和控制", async () => {
+  const paused = RecommendationRunSchema.parse({
+    ...runningRun(), status: "paused", currentStage: "qualification",
+    stages: [
+      { key: "discovery", status: "completed", startedAt: now, completedAt: now },
+      { key: "qualification", status: "running", startedAt: now, completedAt: null },
+      { key: "coarse_ranking", status: "pending", startedAt: null, completedAt: null },
+      { key: "deep_matching", status: "pending", startedAt: null, completedAt: null },
+      { key: "result_publication", status: "pending", startedAt: null, completedAt: null },
+    ],
+  });
+  const resumed = RecommendationRunSchema.parse({ ...paused, status: "running" });
+  let serverRun = paused;
+  vi.mocked(fetch).mockImplementation(() => Promise.resolve(response(serverRun)));
+  const view = render(<RecommendationRunPanel initialRun={paused} initialPreparation={preparation()} />);
+  await act(async () => { await Promise.resolve(); });
+
+  expect(screen.getByRole("button", { name: "本次推荐已暂停" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "今日发现进行中" })).not.toBeInTheDocument();
+  const pausedStage = screen.getByText("资格筛选").closest("li");
+  expect(pausedStage).toHaveAttribute("aria-current", "step");
+  expect(pausedStage).toHaveTextContent("已暂停，等待继续");
+  expect(screen.getByText("发现岗位").closest("li")).toHaveTextContent("已完成");
+  expect(screen.getByText("初步排序").closest("li")).toHaveTextContent("等待开始");
+  expect(screen.getByRole("button", { name: "继续本次推荐" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "取消本次推荐" })).toBeEnabled();
+
+  serverRun = resumed;
+  view.rerender(<RecommendationRunPanel initialRun={resumed} initialPreparation={preparation()} />);
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  expect(screen.getByRole("button", { name: "今日发现进行中" })).toBeDisabled();
+  expect(screen.getByText("资格筛选").closest("li")).toHaveTextContent("正在进行");
+  expect(screen.getByRole("button", { name: "暂停本次推荐" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "取消本次推荐" })).toBeEnabled();
+});
+
 it("warning 启动冲突刷新后允许重新确认并提交", async () => {
   const requests: string[] = [];
   const refreshedPreparation = preparation("ready_with_warnings");

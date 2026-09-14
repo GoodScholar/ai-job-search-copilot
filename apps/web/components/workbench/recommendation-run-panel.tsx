@@ -234,12 +234,12 @@ export function RecommendationRunPanel({ initialRun, initialPreparation, unavail
     {unavailable ? <p className="recommendation-run-message">推荐准备状态暂时无法读取，请稍后刷新页面重试。</p> : <>
       {preparation && <div className="recommendation-run-summary"><p>主目标：{preparation.target?.roleFamily ?? "尚未设置"}</p><p>本次将检查 {preparation.sourceScope.trustedSourceCount} 个可信来源和 {preparation.sourceScope.publicQueryCount} 条公开查询。</p><p>账户运行策略版本：{preparation.accountPolicyRevisionNumber}</p><p>发现预算：最多 {preparation.budgets.discovery.maxResults} 条岗位；深度匹配预算：最多 {preparation.budgets.deepMatch.maxResults} 条。</p></div>}
       {preflight?.status === "blocked" && <div className="recommendation-run-notice"><p>{accountStopped ? "账户运行策略当前阻止启动。" : "请先处理启动前的阻塞项。"}</p>{blockedLink && <Link className="workbench-touch-target recommendation-run-link" href={blockedLink.href}>{blockedLink.label}</Link>}</div>}
-      <div className="recommendation-run-start"><Button className="workbench-touch-target" disabled={blocked || unfinished || pendingStart} onClick={() => void start()} size="lg" type="button">{pendingStart ? "正在开始…" : unfinished ? "今日发现进行中" : "开始今日发现"}</Button></div>
+      <div className="recommendation-run-start"><Button className="workbench-touch-target" disabled={blocked || unfinished || pendingStart} onClick={() => void start()} size="lg" type="button">{pendingStart ? "正在开始…" : run?.status === "paused" ? "本次推荐已暂停" : unfinished ? "今日发现进行中" : "开始今日发现"}</Button></div>
       {confirmationOpen && <div className="recommendation-run-notice recommendation-run-warning"><p>{preflight?.items.filter((item) => item.severity === "warning").map((item) => `${item.summary}：${item.impact}`).join("；")}</p><Button className="workbench-touch-target" onClick={() => void start(true)} size="lg" type="button">我已了解，开始今日发现</Button></div>}
     </>}
     <ol aria-label="完整推荐阶段" className="recommendation-run-stages">{stages.map(([key, label]) => {
       const stage = run?.stages.find((candidate) => candidate.key === key);
-      return <li aria-current={run?.currentStage === key ? "step" : undefined} data-status={stage?.status ?? "pending"} key={key}><h3>{label}</h3><p>{stage ? stageStatusLabel(stage.status) : "等待开始"}</p></li>;
+      return <li aria-current={run?.currentStage === key ? "step" : undefined} data-status={stage?.status ?? "pending"} key={key}><h3>{label}</h3><p>{run?.status === "paused" && run.currentStage === key && stage?.status === "running" ? "已暂停，等待继续" : stage ? stageStatusLabel(stage.status) : "等待开始"}</p></li>;
     })}</ol>
     <p aria-live="polite" className={message ? "recommendation-run-live" : "recommendation-run-live is-empty"} role="status">{message || runStatus(run)}</p>
     {message.includes("账户已停止") && <Link className="workbench-touch-target recommendation-run-link" href="/profile/run-policy">查看运行设置</Link>}
