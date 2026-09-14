@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { Client as MinioClient } from "minio";
-import { StartAgentRunResponseSchema, type AgentRunDetail } from "@job-copilot/contracts/agent-runs";
+import { type AgentRunDetail } from "@job-copilot/contracts/agent-runs";
 import { RunPreflightReportSchema } from "@job-copilot/contracts/run-preflight";
 import AxeBuilder from "@axe-core/playwright";
 import { Queue } from "bullmq";
@@ -8,6 +8,7 @@ import { Client } from "pg";
 import { expect, test, type APIRequestContext, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { assertFalse } from "./support/assert-false";
 import { expectTrue } from "./support/assert-true";
+import { startPhysicalDiscovery } from "./support/start-physical-discovery";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const databaseUrl = process.env.E2E_DATABASE_URL ?? "postgresql://job_copilot:local_only_job_copilot@127.0.0.1:55420/job_copilot";
@@ -155,7 +156,7 @@ async function readPhysicalPreflight(page: Page, targetId: string) {
   return preflight;
 }
 
-async function startPhysicalDiscovery(page: Page, targetId: string, idempotencyKey: string): Promise<string> {
+async function startPreparedPhysicalDiscovery(page: Page, targetId: string, idempotencyKey: string): Promise<string> {
   const preflight = await readPhysicalPreflight(page, targetId);
   expect(preflight.status).not.toBe("blocked");
   const command = {
@@ -165,13 +166,7 @@ async function startPhysicalDiscovery(page: Page, targetId: string, idempotencyK
   };
   if (preflight.status === "ready_with_warnings") expect(command.warningFingerprint).toMatch(/^[a-f0-9]{64}$/u);
   else expect(command.warningFingerprint).toBeNull();
-  const createdResponse = await page.request.post("/api/agent-runs", { data: command });
-  expect(createdResponse.status()).toBe(201);
-  const created = StartAgentRunResponseSchema.parse(await createdResponse.json());
-  expect(created).toMatchObject({ targetId, reused: false });
-  const replayResponse = await page.request.post("/api/agent-runs", { data: command });
-  expect(replayResponse.status()).toBe(200);
-  await expect(replayResponse.json()).resolves.toMatchObject({ runId: created.runId, targetId, reused: true });
+  const created = await startPhysicalDiscovery(page.request, command);
   await page.goto(`/home?runId=${created.runId}#agent-run`);
   return created.runId;
 }
@@ -242,7 +237,7 @@ test("版本化 Fake AnySearch 通过历史物理运行 fixture 执行真实 lay
   await page.goto("/profile/targets/" + account.targetId + "/watchlist");
   await addApprovedFixtureWatchlist(page);
 
-  const runId = await startPhysicalDiscovery(page, account.targetId, scenario.idempotencyKey);
+  const runId = await startPreparedPhysicalDiscovery(page, account.targetId, scenario.idempotencyKey);
 
   await expect.poll(async () => (await readRun(page, runId)).status, { timeout: 75_000 }).toBe("completed");
   const run = await readRun(page, runId);
@@ -378,7 +373,7 @@ test("版本化 Fake AnySearch 缺 key 时由历史物理运行 preflight 与执
   await page.context().addCookies([{ name: "job_copilot_session", value: account.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
   await page.goto("/profile/targets/" + account.targetId + "/watchlist");
   await addApprovedFixtureWatchlist(page);
-  const runId = await startPhysicalDiscovery(page, account.targetId, testInfo.project.name === "Desktop Chrome" ? "10000000-0000-4000-8000-000000000141" : "10000000-0000-4000-8000-000000000142");
+  const runId = await startPreparedPhysicalDiscovery(page, account.targetId, testInfo.project.name === "Desktop Chrome" ? "10000000-0000-4000-8000-000000000141" : "10000000-0000-4000-8000-000000000142");
 
   await expect.poll(async () => (await readRun(page, runId)).status, { timeout: 75_000 }).toBe("failed");
   const run = await readRun(page, runId);

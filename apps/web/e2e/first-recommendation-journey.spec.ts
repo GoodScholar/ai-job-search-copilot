@@ -1,8 +1,8 @@
 import AxeBuilder from "@axe-core/playwright";
-import { StartAgentRunResponseSchema } from "@job-copilot/contracts/agent-runs";
 import { RunPreflightReportSchema } from "@job-copilot/contracts/run-preflight";
 import { Client } from "pg";
 import { expect, test, type APIRequestContext, type Locator, type Page, type TestInfo } from "@playwright/test";
+import { startPhysicalDiscovery } from "./support/start-physical-discovery";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const databaseUrl = process.env.E2E_DATABASE_URL ?? "postgresql://job_copilot:local_only_job_copilot@127.0.0.1:55420/job_copilot";
@@ -239,7 +239,7 @@ async function startDiscovery(request: APIRequestContext, account: PreparedAccou
   return (await started.json() as { runId: string }).runId;
 }
 
-async function startPhysicalDiscovery(page: Page, account: PreparedAccount, idempotencyKey: string): Promise<string> {
+async function startPreparedPhysicalDiscovery(page: Page, account: PreparedAccount, idempotencyKey: string): Promise<string> {
   const preflightResponse = await page.request.get(`/api/run-preflight?targetId=${account.targetId}`);
   expect(preflightResponse.status()).toBe(200);
   const preflight = RunPreflightReportSchema.parse(await preflightResponse.json());
@@ -252,13 +252,7 @@ async function startPhysicalDiscovery(page: Page, account: PreparedAccount, idem
   };
   if (preflight.status === "ready_with_warnings") expect(command.warningFingerprint).toMatch(/^[a-f0-9]{64}$/u);
   else expect(command.warningFingerprint).toBeNull();
-  const createdResponse = await page.request.post("/api/agent-runs", { data: command });
-  expect(createdResponse.status()).toBe(201);
-  const created = StartAgentRunResponseSchema.parse(await createdResponse.json());
-  expect(created).toMatchObject({ targetId: account.targetId, reused: false });
-  const replayResponse = await page.request.post("/api/agent-runs", { data: command });
-  expect(replayResponse.status()).toBe(200);
-  await expect(replayResponse.json()).resolves.toMatchObject({ runId: created.runId, targetId: account.targetId, reused: true });
+  const created = await startPhysicalDiscovery(page.request, command);
   await page.goto(`/home?runId=${created.runId}#agent-run`);
   return created.runId;
 }
@@ -420,7 +414,7 @@ test("失败运行不会完成首次推荐旅程", async ({ page, request }, inf
   const failedAccount = await prepareMatchingAccount(request, info, "failed");
   await useSession(page, failedAccount.token);
   await importCareerMaterial(page);
-  const failedRunId = await startPhysicalDiscovery(page, failedAccount, keyFor(info).failure);
+  const failedRunId = await startPreparedPhysicalDiscovery(page, failedAccount, keyFor(info).failure);
   await waitForRun(page, failedRunId, "failed");
   await page.reload();
   await expectActiveJourney(page, "获得第一份推荐结果");

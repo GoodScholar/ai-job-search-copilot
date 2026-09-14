@@ -1,7 +1,8 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { AgentInboxItem } from "@job-copilot/contracts/agent-inbox";
-import { StartAgentRunResponseSchema, type AgentRunDetail } from "@job-copilot/contracts/agent-runs";
+import { type AgentRunDetail } from "@job-copilot/contracts/agent-runs";
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
+import { startPhysicalDiscovery } from "./support/start-physical-discovery";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const testDevAuthSecret = "issue-2-e2e-dev-auth-shared-secret";
@@ -99,13 +100,7 @@ test("两来源 Fake 运行保留成功岗位、展示局部诊断并可停用�
   expect(preflight.items.filter((item) => item.severity === "blocking")).toEqual([]);
   expect(preflight.items.filter((item) => item.severity === "warning")).toEqual([expect.objectContaining({ code: "SOURCE_HEALTH_UNCHECKED" })]);
   const command = { targetId, idempotencyKey: scenario.idempotencyKey, warningFingerprint: preflight.warningFingerprint };
-  const createdResponse = await page.request.post("/api/agent-runs", { data: command });
-  expect(createdResponse.status()).toBe(201);
-  const created = StartAgentRunResponseSchema.parse(await createdResponse.json());
-  expect(created).toMatchObject({ targetId, reused: false });
-  const replayResponse = await page.request.post("/api/agent-runs", { data: command });
-  expect(replayResponse.status()).toBe(200);
-  await expect(replayResponse.json()).resolves.toMatchObject({ runId: created.runId, targetId, reused: true });
+  const created = await startPhysicalDiscovery(page.request, command);
   const runId = created.runId;
   await expect.poll(async () => {
     const run = await getRun(page, runId);

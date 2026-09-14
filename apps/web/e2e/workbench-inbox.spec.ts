@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
-import { StartAgentRunResponseSchema } from "@job-copilot/contracts/agent-runs";
 import { Client } from "pg";
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
+import { startPhysicalDiscovery } from "./support/start-physical-discovery";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const databaseUrl = process.env.E2E_DATABASE_URL ?? "postgresql://job_copilot:local_only_job_copilot@127.0.0.1:55420/job_copilot";
@@ -287,13 +287,7 @@ test("从首页将受限来源标记已读、停用并标记为已处理", async
     idempotencyKey: info.project.name === "Desktop Chrome" ? "10000000-0000-4000-8000-000000000151" : "10000000-0000-4000-8000-000000000152",
     warningFingerprint: preflight.warningFingerprint,
   };
-  const createdResponse = await page.request.post("/api/agent-runs", { data: command });
-  expect(createdResponse.status()).toBe(201);
-  const created = StartAgentRunResponseSchema.parse(await createdResponse.json());
-  expect(created).toMatchObject({ targetId, reused: false });
-  const replayResponse = await page.request.post("/api/agent-runs", { data: command });
-  expect(replayResponse.status()).toBe(200);
-  await expect(replayResponse.json()).resolves.toMatchObject({ runId: created.runId, targetId, reused: true });
+  const created = await startPhysicalDiscovery(page.request, command);
   const runId = created.runId;
   await waitForRun(page, runId);
   await page.goto(`/home?runId=${runId}#agent-run`);

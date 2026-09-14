@@ -1,10 +1,11 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { AgentInboxItem } from "@job-copilot/contracts/agent-inbox";
-import { AGENT_RUN_QUEUE, StartAgentRunResponseSchema, type AgentRunDetail } from "@job-copilot/contracts/agent-runs";
+import { AGENT_RUN_QUEUE, type AgentRunDetail } from "@job-copilot/contracts/agent-runs";
 import { RunPreflightReportSchema } from "@job-copilot/contracts/run-preflight";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { Queue } from "bullmq";
 import { Client } from "pg";
+import { startPhysicalDiscovery } from "./support/start-physical-discovery";
 
 const desktopScenarios = {
   pause: "10000000-0000-4000-8000-000000000101",
@@ -92,13 +93,7 @@ async function startScenario(page: Page, testInfo: TestInfo, idempotencyKey: str
   };
   if (preflight.status === "ready_with_warnings") expect(command.warningFingerprint).toMatch(/^[a-f0-9]{64}$/u);
   else expect(command.warningFingerprint).toBeNull();
-  const createdResponse = await page.request.post("/api/agent-runs", { data: command });
-  expect(createdResponse.status()).toBe(201);
-  const created = StartAgentRunResponseSchema.parse(await createdResponse.json());
-  expect(created).toMatchObject({ targetId, reused: false });
-  const replayResponse = await page.request.post("/api/agent-runs", { data: command });
-  expect(replayResponse.status()).toBe(200);
-  await expect(replayResponse.json()).resolves.toMatchObject({ runId: created.runId, targetId, reused: true });
+  const created = await startPhysicalDiscovery(page.request, command);
   await page.goto(`/home?runId=${created.runId}#agent-run`);
   return created.runId;
 }
