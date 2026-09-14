@@ -22,12 +22,7 @@ export function RecommendationResultSummary({ result }: { result: Recommendation
   return <section aria-labelledby="recommendation-result-title" className="recommendation-result-summary" id="recommendation-result">
     <p className="section-kicker">本次结果</p>
     <h2 id="recommendation-result-title">{result.kind === "no_recommendations" ? "今天暂无推荐" : "本次推荐已准备好"}</h2>
-    {result.kind === "recommendation_list" ? <p>已整理 {result.itemCount} 个值得优先查看的岗位。</p> : <>
-      <p>已检查 {evidence.sourceCoverage.checkedBranchCount} 个来源</p>
-      <p>资格筛选：淘汰 {evidence.qualification.rejectedCount} 个，信息不足 {evidence.qualification.insufficientInformationCount} 个，已过期 {evidence.qualification.expiredCount} 个</p>
-      <p>初步排序：低于阈值 {evidence.coarseRanking.belowThresholdCount} 个，规则排除 {evidence.coarseRanking.ruleExcludedCount} 个，超出范围 {evidence.coarseRanking.candidateLimitExcludedCount} 个</p>
-      <p>深度匹配：评估 {evidence.deepMatching.evaluatedCount} 个，质量不足 {evidence.deepMatching.qualityInsufficientCount} 个</p>
-    </>}
+    {result.kind === "recommendation_list" ? <p>已整理 {result.itemCount} 个值得优先查看的岗位。</p> : null}
     <section aria-label="本次覆盖证据" className="recommendation-result-evidence">
       <p>来源覆盖：计划可信来源 {evidence.sourceCoverage.plannedTrustedSourceCount} 个、公开查询 {evidence.sourceCoverage.plannedPublicQueryCount} 个；已检查 {evidence.sourceCoverage.checkedBranchCount} 项，可信 {evidence.sourceCoverage.credibleBranchCount} 项；已验证并发现岗位 {evidence.sourceCoverage.verifiedJobCount} 个。</p>
       <p>资格筛选：评估 {evidence.qualification.evaluatedCount} 个，淘汰 {evidence.qualification.rejectedCount} 个，信息不足 {evidence.qualification.insufficientInformationCount} 个，已过期 {evidence.qualification.expiredCount} 个。</p>

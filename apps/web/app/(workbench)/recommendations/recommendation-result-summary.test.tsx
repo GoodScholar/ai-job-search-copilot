@@ -23,10 +23,7 @@ describe("RecommendationResultSummary", () => {
 
     expect(screen.getByRole("heading", { name: "今天暂无推荐" })).toBeVisible();
     expect(screen.queryByRole("list", { name: "推荐岗位" })).not.toBeInTheDocument();
-    expect(screen.getByText("已检查 3 个来源")).toBeVisible();
-    expect(screen.getByText("资格筛选：淘汰 1 个，信息不足 1 个，已过期 0 个")).toBeVisible();
-    expect(screen.getByText("初步排序：低于阈值 1 个，规则排除 0 个，超出范围 0 个")).toBeVisible();
-    expect(screen.getByText("深度匹配：评估 0 个，质量不足 0 个")).toBeVisible();
+    expect(screen.getAllByText(/深度匹配：评估 0 个/u)).toHaveLength(1);
   });
 
   it("只投影有界覆盖损失和服务端建议，不泄露原始技术内容", () => {
@@ -36,6 +33,8 @@ describe("RecommendationResultSummary", () => {
     expect(screen.getByText("可信来源暂不可用：影响 1 项来源检查，可稍后重试")).toBeVisible();
     expect(screen.getByText("验证未通过：影响 1 项来源检查，当前不可重试")).toBeVisible();
     expect(screen.getAllByRole("link")).toHaveLength(2);
+    expect(screen.getByRole("link", { name: "查看来源状态" })).toHaveAttribute("href", "/profile/targets");
+    expect(screen.getByRole("link", { name: "完善求职画像" })).toHaveAttribute("href", "/profile");
     expect(screen.queryByText(/Bearer|gateway|模型响应/u)).not.toBeInTheDocument();
   });
 
@@ -55,7 +54,12 @@ describe("RecommendationResultSummary", () => {
     const losses = ["TRUSTED_SOURCE_UNAVAILABLE", "PUBLIC_DISCOVERY_UNAVAILABLE", "SOURCE_HEALTH_DEGRADED", "SOURCE_CAPABILITY_UNAVAILABLE", "VERIFICATION_FAILED", "DISCOVERY_BUDGET_EXCEEDED"] as const;
     const result = RecommendationResultSchema.parse({ ...noRecommendationsResult, evidence: { ...noRecommendationsResult.evidence, coverageLosses: losses.map((code, index) => ({ code, affectedCount: index + 1, retryable: index % 2 === 0 })), suggestedActions: ["restart_discovery", "review_primary_target"] } });
     render(<RecommendationResultSummary result={result} />);
-    expect(screen.getAllByText(/项来源检查/u)).toHaveLength(6);
+    expect(screen.getByText("可信来源暂不可用：影响 1 项来源检查，可稍后重试")).toBeVisible();
+    expect(screen.getByText("公开发现暂不可用：影响 2 项来源检查，当前不可重试")).toBeVisible();
+    expect(screen.getByText("来源健康度下降：影响 3 项来源检查，可稍后重试")).toBeVisible();
+    expect(screen.getByText("来源能力暂不可用：影响 4 项来源检查，当前不可重试")).toBeVisible();
+    expect(screen.getByText("验证未通过：影响 5 项来源检查，可稍后重试")).toBeVisible();
+    expect(screen.getByText("发现预算已用尽：影响 6 项来源检查，当前不可重试")).toBeVisible();
     expect(screen.getByRole("link", { name: "重新开始今日发现" })).toHaveAttribute("href", "/home");
     expect(screen.getByRole("link", { name: "查看求职目标" })).toHaveAttribute("href", "/profile/targets");
     expect(screen.queryByText(/TRUSTED_SOURCE_UNAVAILABLE|VERIFICATION_FAILED/u)).not.toBeInTheDocument();
@@ -65,5 +69,14 @@ describe("RecommendationResultSummary", () => {
     const result = RecommendationResultSchema.parse({ ...noRecommendationsResult, evidence: { ...noRecommendationsResult.evidence, suggestedActions } });
     render(<RecommendationResultSummary result={result} />);
     expect(screen.queryAllByRole("link")).toHaveLength(suggestedActions.length);
+  });
+
+  it("零覆盖损失保持明确文案，非空结果不显示建议动作", () => {
+    const emptyLosses = RecommendationResultSchema.parse({ ...noRecommendationsResult, evidence: { ...noRecommendationsResult.evidence, coverageLosses: [], suggestedActions: [] } });
+    const listResult = RecommendationResultSchema.parse({ ...emptyLosses, kind: "recommendation_list", recommendationListId: emptyLosses.resultId, itemCount: 1, evidence: { ...emptyLosses.evidence, discovery: { discoveredJobCount: 1 }, sourceCoverage: { ...emptyLosses.evidence.sourceCoverage, verifiedJobCount: 1 }, qualification: { evaluatedCount: 1, rejectedCount: 0, insufficientInformationCount: 0, expiredCount: 0 }, coarseRanking: { eligibleCount: 1, belowThresholdCount: 0, ruleExcludedCount: 0, candidateLimitExcludedCount: 0, deepMatchCandidateCount: 1 }, deepMatching: { evaluatedCount: 1, qualityInsufficientCount: 0, finalRecommendationCount: 1 }, suggestedActions: ["review_profile"] } });
+    const { rerender } = render(<RecommendationResultSummary result={emptyLosses} />);
+    expect(screen.getByText("本次没有覆盖损失。")).toBeVisible();
+    rerender(<RecommendationResultSummary result={listResult} />);
+    expect(screen.queryByRole("navigation", { name: "下一步建议" })).not.toBeInTheDocument();
   });
 });
