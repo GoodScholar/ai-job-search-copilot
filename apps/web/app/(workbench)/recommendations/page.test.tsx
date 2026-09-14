@@ -1,13 +1,13 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, vi } from "vitest";
 import { RecommendationRunSchema } from "@job-copilot/contracts/recommendation-runs";
 import { RecommendationListSchema } from "@job-copilot/contracts/recommendations";
-const mocks = vi.hoisted(() => ({ getJobTargets: vi.fn(), getLatestRecommendations: vi.fn(), getRecommendationList: vi.fn(), getRecommendationHistoryPage: vi.fn(), getCalibrationProposals: vi.fn(), getLatestPublishedRecommendationRun: vi.fn(), getRecommendationRun: vi.fn() }));
+const mocks = vi.hoisted(() => ({ getJobTargets: vi.fn(), getLatestRecommendations: vi.fn(), getRecommendationList: vi.fn(), getRecommendationHistoryPage: vi.fn(), getCalibrationProposals: vi.fn(), getLatestPublishedRecommendationRun: vi.fn(), getRecommendationRun: vi.fn(), requestRecommendationReevaluationAction: vi.fn(), recordRecommendationDecisionAction: vi.fn(), reviseCalibrationProposalAction: vi.fn(), rebaseCalibrationProposalAction: vi.fn(), resolveCalibrationProposalAction: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/lib/server/job-targets", () => ({ getJobTargets: mocks.getJobTargets }));
 vi.mock("@/lib/server/recommendations", () => ({ getLatestRecommendations: mocks.getLatestRecommendations, getRecommendationList: mocks.getRecommendationList, getRecommendationHistoryPage: mocks.getRecommendationHistoryPage, getCalibrationProposals: mocks.getCalibrationProposals }));
 vi.mock("@/lib/server/recommendation-runs", () => ({ getLatestPublishedRecommendationRun: mocks.getLatestPublishedRecommendationRun, getRecommendationRun: mocks.getRecommendationRun }));
-vi.mock("./actions", () => ({ requestRecommendationReevaluationAction: vi.fn(), recordRecommendationDecisionAction: vi.fn(), reviseCalibrationProposalAction: vi.fn(), rebaseCalibrationProposalAction: vi.fn(), resolveCalibrationProposalAction: vi.fn() }));
+vi.mock("./actions", () => ({ requestRecommendationReevaluationAction: mocks.requestRecommendationReevaluationAction, recordRecommendationDecisionAction: mocks.recordRecommendationDecisionAction, reviseCalibrationProposalAction: mocks.reviseCalibrationProposalAction, rebaseCalibrationProposalAction: mocks.rebaseCalibrationProposalAction, resolveCalibrationProposalAction: mocks.resolveCalibrationProposalAction }));
 import RecommendationsPage from "./page";
 
 const targetA = "00000000-0000-4000-8000-000000000001", targetB = "00000000-0000-4000-8000-000000000002", listA = "00000000-0000-4000-8000-000000000003", listB = "00000000-0000-4000-8000-000000000004", runA = "00000000-0000-4000-8000-000000000005";
@@ -24,6 +24,8 @@ describe("RecommendationsPage", () => {
     mocks.getCalibrationProposals.mockResolvedValue([]);
     mocks.getLatestPublishedRecommendationRun.mockResolvedValue(null);
     mocks.getRecommendationRun.mockResolvedValue(null);
+    mocks.requestRecommendationReevaluationAction.mockResolvedValue({ kind: "started" });
+    mocks.recordRecommendationDecisionAction.mockResolvedValue(undefined);
   });
 
   it("explains the evidence-driven recommendation state without exposing a precise score", async () => {
@@ -42,6 +44,8 @@ describe("RecommendationsPage", () => {
   it("root 深链只读取指定运行和其精确清单", async () => { mocks.getRecommendationRun.mockResolvedValue(published(targetB, listA)); mocks.getRecommendationList.mockResolvedValue(list(listA, targetB, "深链岗位")); render(await RecommendationsPage({ searchParams: Promise.resolve({ runId: runA, resultId: listA }) })); expect(screen.getByText("深链岗位")).toBeInTheDocument(); expect(mocks.getRecommendationRun).toHaveBeenCalledWith(runA); expect(mocks.getRecommendationList).toHaveBeenCalledWith(targetB, listA); expect(mocks.getLatestPublishedRecommendationRun).not.toHaveBeenCalled(); expect(mocks.getLatestRecommendations).not.toHaveBeenCalled(); });
   it("target 与 list 深链只读取精确 pair", async () => { mocks.getRecommendationList.mockResolvedValue(list(listA, targetB, "精确岗位")); render(await RecommendationsPage({ searchParams: Promise.resolve({ targetId: targetB, recommendationListId: listA }) })); expect(screen.getByText("精确岗位")).toBeInTheDocument(); expect(mocks.getRecommendationList).toHaveBeenCalledWith(targetB, listA); expect(document.getElementById("recommendation-list")).not.toBeNull(); expect(document.getElementById("recommendation-result")).toBeNull(); expect(mocks.getLatestPublishedRecommendationRun).not.toHaveBeenCalled(); expect(mocks.getLatestRecommendations).not.toHaveBeenCalled(); });
   it("legacy target-only URL 保留该目标 latest 读取", async () => { mocks.getLatestRecommendations.mockResolvedValue(list(listA, targetB, "兼容岗位")); render(await RecommendationsPage({ searchParams: Promise.resolve({ targetId: targetB }) })); expect(screen.getByText("兼容岗位")).toBeInTheDocument(); expect(mocks.getLatestRecommendations).toHaveBeenCalledWith(targetB); expect(mocks.getLatestPublishedRecommendationRun).not.toHaveBeenCalled(); });
+  it("default 在目标数组排序变化后仍渲染同一绑定岗位", async () => { mocks.getLatestPublishedRecommendationRun.mockResolvedValue(published(targetB, listA)); mocks.getRecommendationList.mockResolvedValue(list(listA, targetB, "稳定绑定岗位")); mocks.getJobTargets.mockResolvedValue({ targets: [{ targetId: targetA, state: "active", priority: "primary" }, { targetId: targetB, state: "active", priority: "secondary" }] }); const first = await RecommendationsPage(); mocks.getJobTargets.mockResolvedValue({ targets: [{ targetId: targetB, state: "active", priority: "secondary" }, { targetId: targetA, state: "active", priority: "primary" }] }); const second = await RecommendationsPage(); render(<>{first}{second}</>); expect(screen.getAllByText("稳定绑定岗位")).toHaveLength(2); expect(mocks.getRecommendationList).toHaveBeenNthCalledWith(1, targetB, listA); expect(mocks.getRecommendationList).toHaveBeenNthCalledWith(2, targetB, listA); });
+  it("重新评估和收藏保留绑定的目标、岗位、清单与条目身份", async () => { mocks.getLatestPublishedRecommendationRun.mockResolvedValue(published(targetB, listA)); mocks.getRecommendationList.mockResolvedValue(list(listA, targetB, "交互岗位")); render(await RecommendationsPage()); fireEvent.click(screen.getByRole("button", { name: "重新评估此岗位" })); fireEvent.click(screen.getByRole("button", { name: "收藏" })); await waitFor(() => expect(mocks.requestRecommendationReevaluationAction).toHaveBeenCalledWith(targetB, "00000000-0000-4000-8000-000000000008", expect.any(FormData))); await waitFor(() => expect(mocks.recordRecommendationDecisionAction).toHaveBeenCalledWith(listA, "00000000-0000-4000-8000-000000000006", expect.any(FormData))); });
 
   it("展示证据判断、历史版本入口和异步重新评估入口，但不展示精确分数", async () => {
     mocks.getJobTargets.mockResolvedValue({ targets: [{ targetId: "00000000-0000-4000-8000-000000000001", state: "active", priority: "primary" }] });
