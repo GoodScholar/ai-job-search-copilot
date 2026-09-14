@@ -8,6 +8,13 @@ import { Button } from "@/components/ui/button";
 const pollingIntervalMs = 15_000;
 const stages = [["discovery", "发现岗位"], ["qualification", "资格筛选"], ["coarse_ranking", "初步排序"], ["deep_matching", "深度匹配"], ["result_publication", "发布结果"]] as const;
 const terminalStatuses = new Set(["completed", "failed", "cancelled"]);
+const failureActionLinks = {
+  review_account_run_policy: { href: "/profile/run-policy", label: "查看运行设置" },
+  review_profile: { href: "/profile", label: "完善求职画像" },
+  review_primary_target: { href: "/profile/targets", label: "查看求职目标" },
+  review_source_health: { href: "/profile/targets", label: "查看来源状态" },
+  run_model_diagnostic: { href: "/profile/model-connection", label: "检查模型连接" },
+} as const;
 type Action = "pause" | "resume" | "cancel";
 
 type Props = { initialRun: RecommendationRun | null; initialPreparation: RecommendationRunPreparation | null; unavailable?: boolean; onRunChanged?: () => void; };
@@ -95,7 +102,7 @@ export function RecommendationRunPanel({ initialRun, initialPreparation, unavail
       if (parsed.success && [200, 201].includes(response.status)) { setRun(parsed.data); setConfirmationOpen(false); idempotencyKey.current = null; onRunChanged?.(); return; }
       if (response.status === 409) { await refreshAuthoritativeState(); setConfirmationOpen(false); setMessage("启动条件已变化，已读取最新准备状态。"); return; }
       const stopped = payload && typeof payload === "object" && "code" in payload && payload.code === "ACCOUNT_RUN_STOPPED";
-      setMessage(stopped ? "账户已停止全部运行，请先在运行设置中解除全局停止。" : "启动条件已变化，请刷新后查看最新状态。");
+      setMessage(stopped ? "账户已停止全部运行，请先在运行设置中解除全局停止。" : "启动条件已变化，已读取最新准备状态。");
     } catch { setMessage("今日发现暂时无法启动，请稍后重试。"); }
     finally { if (mounted.current) setPendingStart(false); }
   }
@@ -136,7 +143,7 @@ export function RecommendationRunPanel({ initialRun, initialPreparation, unavail
       {run.status === "paused" && <Button className="workbench-touch-target" disabled={pendingAction !== null} onClick={() => void control("resume")} type="button">继续本次推荐</Button>}
       {["queued", "running", "paused"].includes(run.status) && <Button className="workbench-touch-target" disabled={pendingAction !== null} onClick={() => void control("cancel")} type="button" variant="outline">取消本次推荐</Button>}
       {resultHref && <Link className="workbench-touch-target recommendation-run-result-link" href={resultHref}>{run.result?.kind === "no_recommendations" ? "查看本次结论" : "查看本次推荐"}</Link>}
-      {run.status === "failed" && run.failure?.suggestedActions.includes("review_account_run_policy") && <Link className="workbench-touch-target recommendation-run-link" href="/profile/run-policy">查看运行设置</Link>}
+      {run.status === "failed" && run.failure?.suggestedActions.map((action) => failureActionLinks[action as keyof typeof failureActionLinks]).filter(Boolean).map((link) => <Link className="workbench-touch-target recommendation-run-link" href={link.href} key={link.href}>{link.label}</Link>)}
     </div>}
   </section>;
 }

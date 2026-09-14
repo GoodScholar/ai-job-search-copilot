@@ -190,3 +190,11 @@ it("运行设置同时提供模型连接和运行策略入口", () => {
   expect(screen.getByRole("link", { name: "检查模型连接" })).toHaveAttribute("href", "/profile/model-connection");
   expect(screen.getByRole("link", { name: "管理运行策略" })).toHaveAttribute("href", "/profile/run-policy");
 });
+
+it("接入独立完整推荐区域，并把推荐读取失败明确标为不可用", () => {
+  const { rerender } = render(<WorkbenchHomeView home={home} inbox={{ items: [] }} initialRecommendationPreparation={null} initialRecommendationRun={null} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
+  expect(screen.getByRole("region", { name: "开始今日完整推荐" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "开始今日发现" })).toBeDisabled();
+  rerender(<WorkbenchHomeView home={home} inbox={{ items: [] }} initialRecommendationPreparation={null} initialRecommendationRun={null} initialRun={null} targets={{ suggestions: [], targets: [] }} unavailableSections={["recommendationPreparation"]} />);
+  expect(screen.getByText("推荐准备状态暂时无法读取，请稍后刷新页面重试。")).toBeVisible();
+});

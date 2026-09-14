@@ -704,3 +704,11 @@ it("警告首次点击只展示知情确认，确认后才用当前 fingerprint 
   await user.click(screen.getByRole("button", { name: "我已了解，仍要启动" }));
   expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ targetId, warningFingerprint });
 });
+
+it("隐藏旧启动入口时仍保留物理运行历史和逐运行控制", () => {
+  render(<AgentRunPanel initialRun={detail("running")} showStartControls={false} targets={[target()]} />);
+  expect(screen.queryByRole("button", { name: "发现岗位" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("combobox", { name: "用于发现岗位的求职目标" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "暂停岗位发现" })).toBeVisible();
+  expect(screen.getByRole("region", { name: "本次岗位发现执行规格" })).toBeVisible();
+});

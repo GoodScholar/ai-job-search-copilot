@@ -118,3 +118,32 @@ it("replays a pause control with its command id and refreshes authoritative stat
   expect(fetchSpy.mock.calls[1]).toMatchObject([`/api/recommendation-runs/${runId}/controls`, { body: JSON.stringify({ commandId: "355eec35-befa-44ee-ac34-1e3614975d4f", action: "pause" }) }]);
   expect(screen.getByRole("link", { name: "查看运行设置" })).toHaveAttribute("href", "/profile/run-policy");
 });
+
+it("adopts refreshed preparation after a start conflict instead of reusing an old warning fingerprint", async () => {
+  const refreshedPreparation = preparation("ready");
+  const fetchSpy = vi.mocked(fetch).mockImplementation((input, init) => {
+    if (input === "/api/recommendation-runs" && init?.method === "POST") return Promise.resolve(response({ code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED" }, 409));
+    if (input === "/api/recommendation-runs/preparation") return Promise.resolve(response(refreshedPreparation));
+    if (input === "/api/recommendation-runs/latest") return Promise.resolve(response({ run: null }));
+    return Promise.resolve(response(runningRun()));
+  });
+  render(<RecommendationRunPanel initialRun={null} initialPreparation={preparation("ready_with_warnings")} />);
+  fireEvent.click(screen.getByRole("button", { name: "开始今日发现" }));
+  fireEvent.click(screen.getByRole("button", { name: "我已了解，开始今日发现" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect(fetchSpy.mock.calls.some(([url]) => url === "/api/recommendation-runs/preparation")).toBe(true);
+  expect(screen.getByRole("status")).toHaveTextContent("已读取最新准备状态");
+});
+
+it("terminal runs and unmounted panels do not continue polling", async () => {
+  const completed = { ...runningRun(), status: "cancelled", currentStage: null, stages: [
+    { key: "discovery", status: "cancelled", startedAt: now, completedAt: now },
+    { key: "qualification", status: "pending", startedAt: null, completedAt: null }, { key: "coarse_ranking", status: "pending", startedAt: null, completedAt: null },
+    { key: "deep_matching", status: "pending", startedAt: null, completedAt: null }, { key: "result_publication", status: "pending", startedAt: null, completedAt: null },
+  ] } as RecommendationRun;
+  const fetchSpy = vi.mocked(fetch);
+  const terminal = render(<RecommendationRunPanel initialRun={completed} initialPreparation={preparation()} />);
+  await act(async () => { vi.advanceTimersByTime(30_000); });
+  expect(fetchSpy).not.toHaveBeenCalled();
+  terminal.unmount();
+});
