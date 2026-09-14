@@ -44,6 +44,19 @@ function runningRun(): RecommendationRun {
   });
 }
 
+function cancelledRun(): RecommendationRun {
+  return RecommendationRunSchema.parse({
+    ...runningRun(), status: "cancelled", currentStage: null,
+    stages: [
+      { key: "discovery", status: "cancelled", startedAt: now, completedAt: now },
+      { key: "qualification", status: "pending", startedAt: null, completedAt: null },
+      { key: "coarse_ranking", status: "pending", startedAt: null, completedAt: null },
+      { key: "deep_matching", status: "pending", startedAt: null, completedAt: null },
+      { key: "result_publication", status: "pending", startedAt: null, completedAt: null },
+    ],
+  });
+}
+
 function response(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
@@ -146,4 +159,38 @@ it("terminal runs and unmounted panels do not continue polling", async () => {
   await act(async () => { vi.advanceTimersByTime(30_000); });
   expect(fetchSpy).not.toHaveBeenCalled();
   terminal.unmount();
+});
+
+it("同一面板收到新的权威 props 时更新运行和准备状态，同时保留当前焦点", async () => {
+  const secondRun = RecommendationRunSchema.parse({ ...runningRun(), runId: "4f8c6eb3-2b92-4d91-aad4-959b7d4cd7a3" });
+  const secondPreparation = RecommendationRunPreparationSchema.parse({ ...preparation(), target: { targetId, targetVersion: 2, roleFamily: "数据工程师" } });
+  const view = render(<RecommendationRunPanel initialRun={null} initialPreparation={preparation()} />);
+  const startButton = screen.getByRole("button", { name: "开始今日发现" });
+  startButton.focus();
+
+  view.rerender(<RecommendationRunPanel initialRun={secondRun} initialPreparation={secondPreparation} />);
+
+  await act(async () => { await Promise.resolve(); });
+  expect(screen.getByText("主目标：数据工程师")).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent("正在完成今日发现");
+  expect(document.activeElement).toBe(startButton);
+});
+
+it("旧 root 的延迟读取不能覆盖后来到达的权威 root", async () => {
+  let resolveOldRead!: (value: Response) => void;
+  const oldRun = runningRun();
+  const secondRun = RecommendationRunSchema.parse({ ...runningRun(), runId: "4f8c6eb3-2b92-4d91-aad4-959b7d4cd7a3", target: { targetId, targetVersion: 2, roleFamily: "数据工程师" } });
+  const secondPreparation = RecommendationRunPreparationSchema.parse({ ...preparation(), target: { targetId, targetVersion: 2, roleFamily: "数据工程师" } });
+  vi.mocked(fetch).mockImplementation((input) => String(input).endsWith(oldRun.runId)
+    ? new Promise<Response>((resolve) => { resolveOldRead = resolve; })
+    : Promise.resolve(response(secondRun)));
+  const view = render(<RecommendationRunPanel initialRun={oldRun} initialPreparation={preparation()} />);
+
+  view.rerender(<RecommendationRunPanel initialRun={secondRun} initialPreparation={secondPreparation} />);
+  await act(async () => { await Promise.resolve(); });
+  resolveOldRead(response(cancelledRun()));
+  await act(async () => { await Promise.resolve(); });
+
+  expect(screen.getByRole("status")).toHaveTextContent("正在完成今日发现");
+  expect(screen.getByText("主目标：数据工程师")).toBeVisible();
 });
