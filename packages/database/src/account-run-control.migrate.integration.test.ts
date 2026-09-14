@@ -54,8 +54,8 @@ describe("账户运行停止控制迁移", () => {
     try {
       const source = fileURLToPath(new URL("../migrations", import.meta.url)); await cp(source, migrationsFolder, { recursive: true });
       await unlink(join(migrationsFolder, "0050_account_run_control.sql")); await unlink(join(migrationsFolder, "meta", "0050_snapshot.json"));
-      const journalPath = join(migrationsFolder, "meta", "_journal.json"); const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
-      journal.entries = journal.entries.filter(({ tag }) => tag !== "0050_account_run_control"); await writeFile(journalPath, JSON.stringify(journal, null, 2));
+      const journalPath = join(migrationsFolder, "meta", "_journal.json"); const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ idx: number }> };
+      journal.entries = journal.entries.filter(({ idx }) => idx <= 49); await writeFile(journalPath, JSON.stringify(journal, null, 2));
       await migrate(legacy, { migrationsFolder }); const userId = randomUUID();
       await legacy.execute(sql`insert into job_accounts (id) values (${userId})`); await legacy.execute(sql`insert into account_run_policy_revisions (id, user_id, revision_number, settings) values (${randomUUID()}, ${userId}, 0, '{}'::jsonb)`); await legacy.execute(sql`insert into account_run_policies (user_id, current_revision_number, version) values (${userId}, 0, 0)`);
       await migrate(legacy, { migrationsFolder: source });

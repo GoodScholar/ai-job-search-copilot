@@ -1109,10 +1109,13 @@ describe("database migrations", () => {
     const journal = JSON.parse(await readFile(fileURLToPath(new URL("../migrations/meta/_journal.json", import.meta.url)), "utf8")) as {
       entries: Array<{ idx: number; tag: string }>;
     };
-    expect(journal.entries.at(-4)).toEqual({ idx: 47, version: "7", when: expect.any(Number), tag: "0047_agent_run_preflight_snapshot", breakpoints: true });
-    expect(journal.entries.at(-3)).toEqual({ idx: 48, version: "7", when: 1788685000000, tag: "0048_first_recommendation_journey", breakpoints: true });
-    expect(journal.entries.at(-2)).toEqual({ idx: 49, version: "7", when: 1789200000000, tag: "0049_recommendation_runs", breakpoints: true });
-    expect(journal.entries.at(-1)).toEqual({ idx: 50, version: "7", when: expect.any(Number), tag: "0050_account_run_control", breakpoints: true });
+    const preflightIndex = journal.entries.findIndex(({ tag }) => tag === "0047_agent_run_preflight_snapshot");
+    expect(journal.entries.slice(preflightIndex, preflightIndex + 4)).toEqual([
+      { idx: 47, version: "7", when: expect.any(Number), tag: "0047_agent_run_preflight_snapshot", breakpoints: true },
+      { idx: 48, version: "7", when: 1788685000000, tag: "0048_first_recommendation_journey", breakpoints: true },
+      { idx: 49, version: "7", when: 1789200000000, tag: "0049_recommendation_runs", breakpoints: true },
+      { idx: 50, version: "7", when: expect.any(Number), tag: "0050_account_run_control", breakpoints: true },
+    ]);
   });
 
   it("upgrades a 0020 snapshot with open lifecycle defaults without changing stored run JSON", async () => {
@@ -1247,10 +1250,8 @@ describe("database migrations", () => {
         unlink(join(migrationsFolder, "meta", "0042_snapshot.json")),
       ]);
       const journalPath = join(migrationsFolder, "meta", "_journal.json");
-      const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
-      await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter((entry) => ![
-        "0023_source_attention_inbox", "0024_fat_jane_foster", "0025_layered_public_discovery_workflow", "0026_discovery_attention", "0027_massive_purple_man", "0028_job_triage_versions", "0029_heavy_devos", "0030_deep_match_recommendations", "0031_deep_match_agent_runs", "0032_recommendation_highlight_limit", "0033_deep_match_usage_entries", "0034_recommendation_highlight_limit_lock", "0035_agent_run_step_model_failures", "0036_recommendation_exclusion_list_ownership", "0037_deep_match_run_staging", "0038_recommendation_feedback_calibration", "0039_boring_sleepwalker", "0040_loud_northstar", "0041_thankful_lethal_legion", "0042_mighty_malcolm_colcord", "0043_task_control_agent_inbox", "0044_account_run_policies", "0045_account_run_policy_schedule_window", "0046_model_diagnostic_results", "0047_agent_run_preflight_snapshot", "0048_first_recommendation_journey", "0049_recommendation_runs", "0050_account_run_control",
-      ].includes(entry.tag)) }, null, 2));
+      const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ idx: number }> };
+      await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter(({ idx }) => idx <= 22) }, null, 2));
       await migrate(upgradeDatabase, { migrationsFolder });
       const userId = "a9f4da20-e9e9-44c4-a6a5-fc2cf5b9ed93"; const targetId = "f1e7a7a6-a3e6-458e-9f53-33cdbbf2d6ea"; const runId = "833f4544-376c-4f8d-81af-16e50df78624";
       await upgradeDatabase.execute(sql`insert into job_accounts (id) values (${userId})`);
@@ -1465,8 +1466,8 @@ describe("database migrations", () => {
       await cp(migrationSource, migrationsFolder, { recursive: true });
       await Promise.all(["0043_task_control_agent_inbox.sql", "0044_account_run_policies.sql", "0045_account_run_policy_schedule_window.sql", "0046_model_diagnostic_results.sql", "0047_agent_run_preflight_snapshot.sql", "0048_first_recommendation_journey.sql", "0049_recommendation_runs.sql", "0050_account_run_control.sql"].map((file) => unlink(join(migrationsFolder, file)).catch(() => undefined)));
       const journalPath = join(migrationsFolder, "meta", "_journal.json");
-      const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ tag: string }> };
-      await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter((entry) => !["0043_task_control_agent_inbox", "0044_account_run_policies", "0045_account_run_policy_schedule_window", "0046_model_diagnostic_results", "0047_agent_run_preflight_snapshot", "0048_first_recommendation_journey", "0049_recommendation_runs", "0050_account_run_control"].includes(entry.tag)) }, null, 2));
+      const journal = JSON.parse(await readFile(journalPath, "utf8")) as { entries: Array<{ idx: number }> };
+      await writeFile(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter(({ idx }) => idx <= 42) }, null, 2));
       await migrate(upgradeDatabase, { migrationsFolder });
       await upgradeDatabase.execute(sql`insert into job_accounts (id) values (${userId})`);
       await upgradeDatabase.execute(sql`insert into job_targets (id, user_id, version, priority, state) values (${targetId}, ${userId}, 1, 'primary', 'active')`);
