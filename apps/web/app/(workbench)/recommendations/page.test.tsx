@@ -1,18 +1,29 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ getJobTargets: vi.fn(), getLatestRecommendations: vi.fn(), getRecommendationHistoryPage: vi.fn(), getCalibrationProposals: vi.fn() }));
+import { RecommendationRunSchema } from "@job-copilot/contracts/recommendation-runs";
+import { RecommendationListSchema } from "@job-copilot/contracts/recommendations";
+const mocks = vi.hoisted(() => ({ getJobTargets: vi.fn(), getLatestRecommendations: vi.fn(), getRecommendationList: vi.fn(), getRecommendationHistoryPage: vi.fn(), getCalibrationProposals: vi.fn(), getLatestPublishedRecommendationRun: vi.fn(), getRecommendationRun: vi.fn() }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/lib/server/job-targets", () => ({ getJobTargets: mocks.getJobTargets }));
-vi.mock("@/lib/server/recommendations", () => ({ getLatestRecommendations: mocks.getLatestRecommendations, getRecommendationHistoryPage: mocks.getRecommendationHistoryPage, getCalibrationProposals: mocks.getCalibrationProposals }));
+vi.mock("@/lib/server/recommendations", () => ({ getLatestRecommendations: mocks.getLatestRecommendations, getRecommendationList: mocks.getRecommendationList, getRecommendationHistoryPage: mocks.getRecommendationHistoryPage, getCalibrationProposals: mocks.getCalibrationProposals }));
+vi.mock("@/lib/server/recommendation-runs", () => ({ getLatestPublishedRecommendationRun: mocks.getLatestPublishedRecommendationRun, getRecommendationRun: mocks.getRecommendationRun }));
 vi.mock("./actions", () => ({ requestRecommendationReevaluationAction: vi.fn(), recordRecommendationDecisionAction: vi.fn(), reviseCalibrationProposalAction: vi.fn(), rebaseCalibrationProposalAction: vi.fn(), resolveCalibrationProposalAction: vi.fn() }));
 import RecommendationsPage from "./page";
 
+const targetA = "00000000-0000-4000-8000-000000000001", targetB = "00000000-0000-4000-8000-000000000002", listA = "00000000-0000-4000-8000-000000000003", listB = "00000000-0000-4000-8000-000000000004", runA = "00000000-0000-4000-8000-000000000005";
+const budget = { maxActiveDurationMs: 1, maxAttempts: 1, maxToolCalls: 1, maxResults: 1, maxModelCalls: 0, maxTokens: 0 };
+function list(id: string, targetId: string, title: string) { return RecommendationListSchema.parse({ recommendationListId: id, targetId, localDate: "2026-09-14", sequence: 1, createdAt: "2026-09-14T00:00:00.000Z", exclusions: [], items: [{ recommendationListItemId: "00000000-0000-4000-8000-000000000006", matchVersionId: "00000000-0000-4000-8000-000000000007", opportunityId: "00000000-0000-4000-8000-000000000008", company: "绑定公司", title, location: "上海", displayBand: "highly_matched", highlighted: true, ordinal: 1, jobEvidence: [{ id: "job", value: "岗位证据" }], profileEvidence: [{ id: "profile", value: "画像证据", kind: "profile_fact", profileFactRevisionId: "00000000-0000-4000-8000-000000000009" }], assessment: { opportunityId: "00000000-0000-4000-8000-000000000008", overallScore: 80, dimensions: ["skills", "experience", "project_depth", "career_direction", "location_logistics", "qualification_risk"].map((dimension) => ({ dimension, score: 80, judgment: "evidence_backed_inference", jobEvidenceIds: ["job"], profileEvidenceIds: ["profile"], summary: "证据支持的推断。" })) } }] }); }
+function published(targetId = targetA, listId = listA) { return RecommendationRunSchema.parse({ runId: runA, status: "completed", currentStage: null, stages: ["discovery", "qualification", "coarse_ranking", "deep_matching", "result_publication"].map((key) => ({ key, status: "completed", startedAt: "2026-09-14T00:00:00.000Z", completedAt: "2026-09-14T00:00:00.000Z" })), target: { targetId, targetVersion: 1, roleFamily: "前端工程师" }, sourceScope: { trustedSourceCount: 1, publicQueryCount: 0 }, accountPolicyRevisionNumber: 1, budgets: { discovery: budget, deepMatch: budget }, preflightSnapshot: { version: "run-preflight-v1", workflow: "recommendation", trigger: "manual", targetId, status: "ready", warningFingerprint: null, checkedAt: "2026-09-14T00:00:00.000Z", items: [{ code: "ACCOUNT_RUN_POLICY_READY", severity: "informational", summary: "账户运行可用", impact: "可以开始完整推荐", retryable: false, suggestedActions: [], evidence: { kind: "account_run_policy", revisionNumber: 1, status: "ready", checkedAt: "2026-09-14T00:00:00.000Z" } }] }, result: { kind: "recommendation_list", resultId: listId, recommendationListId: listId, itemCount: 1, publishedAt: "2026-09-14T00:00:00.000Z", evidence: { discovery: { discoveredJobCount: 1 }, sourceCoverage: { plannedTrustedSourceCount: 1, plannedPublicQueryCount: 0, checkedBranchCount: 1, credibleBranchCount: 1, verifiedJobCount: 1 }, coverageLosses: [], qualification: { evaluatedCount: 1, rejectedCount: 0, insufficientInformationCount: 0, expiredCount: 0 }, coarseRanking: { eligibleCount: 1, belowThresholdCount: 0, ruleExcludedCount: 0, candidateLimitExcludedCount: 0, deepMatchCandidateCount: 1 }, deepMatching: { evaluatedCount: 1, qualityInsufficientCount: 0, finalRecommendationCount: 1 }, suggestedActions: [] } }, failure: null, createdAt: "2026-09-14T00:00:00.000Z", updatedAt: "2026-09-14T00:00:00.000Z" }); }
+
 describe("RecommendationsPage", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     mocks.getJobTargets.mockResolvedValue({ targets: [] });
     mocks.getLatestRecommendations.mockResolvedValue(null);
     mocks.getRecommendationHistoryPage.mockResolvedValue({ items: [], nextCursor: null });
     mocks.getCalibrationProposals.mockResolvedValue([]);
+    mocks.getLatestPublishedRecommendationRun.mockResolvedValue(null);
+    mocks.getRecommendationRun.mockResolvedValue(null);
   });
 
   it("explains the evidence-driven recommendation state without exposing a precise score", async () => {
@@ -22,8 +33,18 @@ describe("RecommendationsPage", () => {
     expect(screen.queryByText(/%/)).not.toBeInTheDocument();
   });
 
+  it("default 将最新已发布结果绑定到其精确清单，而非首个活动目标的最新清单", async () => {
+    const bound = list(listA, targetB, "绑定岗位"), latest = list(listB, targetA, "错误最新岗位");
+    mocks.getLatestPublishedRecommendationRun.mockResolvedValue(published(targetB, listA)); mocks.getRecommendationList.mockResolvedValue(bound); mocks.getLatestRecommendations.mockResolvedValue(latest);
+    mocks.getJobTargets.mockResolvedValue({ targets: [{ targetId: targetA, state: "active", priority: "primary" }, { targetId: targetB, state: "active", priority: "secondary" }] });
+    render(await RecommendationsPage()); expect(screen.getByText("绑定岗位")).toBeInTheDocument(); expect(screen.queryByText("错误最新岗位")).not.toBeInTheDocument(); expect(mocks.getRecommendationList).toHaveBeenCalledWith(targetB, listA); expect(mocks.getLatestRecommendations).not.toHaveBeenCalled();
+  });
+  it("root 深链只读取指定运行和其精确清单", async () => { mocks.getRecommendationRun.mockResolvedValue(published(targetB, listA)); mocks.getRecommendationList.mockResolvedValue(list(listA, targetB, "深链岗位")); render(await RecommendationsPage({ searchParams: Promise.resolve({ runId: runA, resultId: listA }) })); expect(screen.getByText("深链岗位")).toBeInTheDocument(); expect(mocks.getRecommendationRun).toHaveBeenCalledWith(runA); expect(mocks.getLatestPublishedRecommendationRun).not.toHaveBeenCalled(); expect(mocks.getLatestRecommendations).not.toHaveBeenCalled(); });
+  it("target 与 list 深链只读取精确 pair", async () => { mocks.getRecommendationList.mockResolvedValue(list(listA, targetB, "精确岗位")); render(await RecommendationsPage({ searchParams: Promise.resolve({ targetId: targetB, recommendationListId: listA }) })); expect(screen.getByText("精确岗位")).toBeInTheDocument(); expect(mocks.getRecommendationList).toHaveBeenCalledWith(targetB, listA); expect(mocks.getLatestPublishedRecommendationRun).not.toHaveBeenCalled(); expect(mocks.getLatestRecommendations).not.toHaveBeenCalled(); });
+  it("legacy target-only URL 保留该目标 latest 读取", async () => { mocks.getLatestRecommendations.mockResolvedValue(list(listA, targetB, "兼容岗位")); render(await RecommendationsPage({ searchParams: Promise.resolve({ targetId: targetB }) })); expect(screen.getByText("兼容岗位")).toBeInTheDocument(); expect(mocks.getLatestRecommendations).toHaveBeenCalledWith(targetB); expect(mocks.getLatestPublishedRecommendationRun).not.toHaveBeenCalled(); });
+
   it("展示证据判断、历史版本入口和异步重新评估入口，但不展示精确分数", async () => {
-    mocks.getJobTargets.mockResolvedValue({ targets: [{ targetId: "00000000-0000-4000-8000-000000000001", state: "active" }] });
+    mocks.getJobTargets.mockResolvedValue({ targets: [{ targetId: "00000000-0000-4000-8000-000000000001", state: "active", priority: "primary" }] });
     mocks.getLatestRecommendations.mockResolvedValue({
       recommendationListId: "10000000-0000-4000-8000-000000000001", targetId: "00000000-0000-4000-8000-000000000001", localDate: "2026-09-01", sequence: 2, createdAt: "2026-09-01T00:00:00.000Z",
       exclusions: [{ opportunityId: "30000000-0000-4000-8000-000000000099", reasonCode: "MATCH_QUALITY_INSUFFICIENT" }],
