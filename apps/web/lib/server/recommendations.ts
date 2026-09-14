@@ -13,6 +13,13 @@ export async function getLatestRecommendations(targetId: string): Promise<Recomm
   }
 }
 
+/** 按 owner、目标与不可变清单身份读取；404 必须暴露为结果一致性错误。 */
+export async function getRecommendationList(targetId: string, recommendationListId: string): Promise<RecommendationList | null> {
+  const session = await readSessionToken();
+  if (!session) return null;
+  return api.getRecommendationList(session, targetId, recommendationListId);
+}
+
 export async function getRecommendationHistoryPage(targetId: string): Promise<RecommendationListHistoryPage> {
   const session = await readSessionToken();
   if (!session) return { items: [], nextCursor: null };

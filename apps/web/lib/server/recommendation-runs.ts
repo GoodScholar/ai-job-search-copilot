@@ -29,6 +29,10 @@ export async function getLatestRecommendationRun() {
   return ownerBound((token) => api.getLatestRecommendationRun(token));
 }
 
+export async function getLatestPublishedRecommendationRun() {
+  return ownerBound((token) => api.getLatestPublishedRecommendationRun(token));
+}
+
 /** 仅对当前会话读取逻辑推荐运行；owner-hidden 404 安全投影为空。 */
 export async function getRecommendationRun(runId: string) {
   try {
