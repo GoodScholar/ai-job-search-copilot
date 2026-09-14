@@ -64,6 +64,27 @@ function pausedRun(): RecommendationRun {
   return RecommendationRunSchema.parse({ ...runningRun(), status: "paused" });
 }
 
+function resultEvidence(coverageLosses: Array<{ code: "TRUSTED_SOURCE_UNAVAILABLE" | "PUBLIC_DISCOVERY_UNAVAILABLE" | "SOURCE_HEALTH_DEGRADED" | "SOURCE_CAPABILITY_UNAVAILABLE" | "VERIFICATION_FAILED" | "DISCOVERY_BUDGET_EXCEEDED"; affectedCount: number; retryable: boolean }> = []) {
+  return {
+    discovery: { discoveredJobCount: 6 }, sourceCoverage: { plannedTrustedSourceCount: 2, plannedPublicQueryCount: 1, checkedBranchCount: 3, credibleBranchCount: 1, verifiedJobCount: 6 }, coverageLosses,
+    qualification: { evaluatedCount: 6, rejectedCount: 2, insufficientInformationCount: 1, expiredCount: 1 },
+    coarseRanking: { eligibleCount: 2, belowThresholdCount: 1, ruleExcludedCount: 0, candidateLimitExcludedCount: 0, deepMatchCandidateCount: 1 },
+    deepMatching: { evaluatedCount: 1, qualityInsufficientCount: 1, finalRecommendationCount: 0 }, suggestedActions: ["review_source_health", "review_profile"],
+  };
+}
+
+function completedRun(kind: "recommendation_list" | "no_recommendations", coverageLosses: Parameters<typeof resultEvidence>[0] = []): RecommendationRun {
+  const evidence = resultEvidence(coverageLosses);
+  if (kind === "recommendation_list") {
+    evidence.coarseRanking = { ...evidence.coarseRanking, deepMatchCandidateCount: 1 };
+    evidence.deepMatching = { evaluatedCount: 1, qualityInsufficientCount: 0, finalRecommendationCount: 1 };
+  }
+  return RecommendationRunSchema.parse({
+    ...runningRun(), status: "completed", currentStage: null, stages: ["discovery", "qualification", "coarse_ranking", "deep_matching", "result_publication"].map((key) => ({ key, status: "completed", startedAt: now, completedAt: now })),
+    result: kind === "recommendation_list" ? { kind, resultId: "6e5d8a8a-5652-4fd1-9f1c-50515bd11c48", recommendationListId: "6e5d8a8a-5652-4fd1-9f1c-50515bd11c48", itemCount: 1, evidence, publishedAt: now } : { kind, resultId: "6e5d8a8a-5652-4fd1-9f1c-50515bd11c48", evidence, publishedAt: now },
+  });
+}
+
 function response(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
@@ -588,4 +609,78 @@ it("start 409 成功刷新为 policy block 后保持禁用", async () => {
   await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
   expect(screen.getByRole("button", { name: "开始今日发现" })).toBeDisabled();
   expect(screen.getByText("账户运行策略当前阻止启动。")).toBeVisible();
+});
+
+it("可信空结果直接显示有限证据、损失与服务端建议", () => {
+  const run = completedRun("no_recommendations", [
+    { code: "TRUSTED_SOURCE_UNAVAILABLE", affectedCount: 2, retryable: true }, { code: "VERIFICATION_FAILED", affectedCount: 1, retryable: false },
+  ]);
+  render(<RecommendationRunPanel initialRun={run} initialPreparation={preparation()} />);
+  expect(screen.getByRole("status")).toHaveTextContent("本次暂无推荐");
+  expect(screen.getByText("已检查 3 个分支，可信覆盖 1 个，发现 6 条岗位。")).toBeVisible();
+  expect(screen.getByText("资格筛选：淘汰 2 条，信息不足 1 条，已过期 1 条。")).toBeVisible();
+  expect(screen.getByText("粗排：低于阈值 1 条，规则排除 0 条，超出上限 0 条。")).toBeVisible();
+  expect(screen.getByText("深度匹配：质量不足 1 条。")).toBeVisible();
+  expect(screen.getByText("可信来源暂不可用：2；验证未通过：1")).toBeVisible();
+  expect(screen.getByRole("link", { name: "查看来源状态" })).toHaveAttribute("href", "/profile/targets");
+  expect(screen.getByRole("link", { name: "完善求职画像" })).toHaveAttribute("href", "/profile");
+});
+
+it("推荐清单使用精确结果链接，非空清单不显示可信空摘要", () => {
+  const run = completedRun("recommendation_list");
+  render(<RecommendationRunPanel initialRun={run} initialPreparation={preparation()} />);
+  expect(screen.getByRole("link", { name: "查看本次推荐" })).toHaveAttribute("href", `/recommendations?runId=${runId}&resultId=6e5d8a8a-5652-4fd1-9f1c-50515bd11c48#recommendation-result`);
+  expect(screen.queryByText("本次暂无推荐")).not.toBeInTheDocument();
+});
+
+it("准备摘要显示账户策略版本并分别绑定两类预算", () => {
+  const value = RecommendationRunPreparationSchema.parse({
+    ...preparation(), accountPolicyRevisionNumber: 42,
+    budgets: { discovery: { ...budget, maxResults: 3 }, deepMatch: { ...budget, maxResults: 7 } },
+  });
+  render(<RecommendationRunPanel initialRun={null} initialPreparation={value} />);
+  expect(screen.getByText("账户运行策略版本：42")).toBeVisible();
+  expect(screen.getByText("发现预算：最多 3 条岗位；深度匹配预算：最多 7 条。")).toBeVisible();
+});
+
+it("start 的 ACCOUNT_RUN_STOPPED 409 后准备读取网络 reject 仍保留停止入口", async () => {
+  vi.mocked(fetch).mockImplementation((input, init) => {
+    if (input === "/api/recommendation-runs" && init?.method === "POST") return Promise.resolve(response({ code: "ACCOUNT_RUN_STOPPED" }, 409));
+    if (input === "/api/recommendation-runs/preparation" || input === "/api/recommendation-runs/latest") return Promise.reject(new Error("network unavailable"));
+    return Promise.resolve(response({ run: null }));
+  });
+  render(<RecommendationRunPanel initialRun={null} initialPreparation={preparation()} />);
+  fireEvent.click(screen.getByRole("button", { name: "开始今日发现" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  expect(screen.getByRole("status")).toHaveTextContent("账户已停止全部运行，请先在运行设置中解除全局停止。");
+  expect(screen.getByRole("link", { name: "查看运行设置" })).toHaveAttribute("href", "/profile/run-policy");
+});
+
+it("同 root 的迟到 GET 不覆盖 control 成功后的 paused 投影", async () => {
+  let resolveRead!: (value: Response) => void;
+  let reads = 0;
+  vi.mocked(fetch).mockImplementation((input, init) => {
+    if (String(input).endsWith("/controls") && init?.method === "POST") return Promise.resolve(response({ run: pausedRun(), applied: true }));
+    reads += 1;
+    return reads === 1 ? new Promise<Response>((resolve) => { resolveRead = resolve; }) : Promise.resolve(response(pausedRun()));
+  });
+  render(<RecommendationRunPanel initialRun={runningRun()} initialPreparation={preparation()} />);
+  fireEvent.click(screen.getByRole("button", { name: "暂停本次推荐" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect(screen.getByRole("button", { name: "继续本次推荐" })).toBeEnabled();
+  resolveRead(response(runningRun()));
+  await act(async () => { await Promise.resolve(); });
+  expect(screen.getByRole("button", { name: "继续本次推荐" })).toBeEnabled();
+});
+
+it("hidden 初始不读取，visible 后读取；卸载与 terminal 后停止轮询", async () => {
+  setDocumentVisibility("hidden");
+  const fetchSpy = vi.mocked(fetch);
+  const view = render(<RecommendationRunPanel initialRun={runningRun()} initialPreparation={preparation()} />);
+  expect(fetchSpy).not.toHaveBeenCalled();
+  setDocumentVisibility("visible");
+  expect(fetchSpy).toHaveBeenCalledTimes(1);
+  view.unmount();
+  await act(async () => { vi.advanceTimersByTime(30_000); });
+  expect(fetchSpy).toHaveBeenCalledTimes(1);
 });

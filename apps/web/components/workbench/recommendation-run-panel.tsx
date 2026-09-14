@@ -23,6 +23,10 @@ const preflightActionLinks = {
   review_source_health: { href: "/profile/targets", label: "查看来源状态" },
   run_model_diagnostic: { href: "/profile/model-connection", label: "检查模型连接" },
 } as const;
+const coverageLossLabels = {
+  TRUSTED_SOURCE_UNAVAILABLE: "可信来源暂不可用", PUBLIC_DISCOVERY_UNAVAILABLE: "公开发现暂不可用", SOURCE_HEALTH_DEGRADED: "来源健康度下降",
+  SOURCE_CAPABILITY_UNAVAILABLE: "来源能力暂不可用", VERIFICATION_FAILED: "验证未通过", DISCOVERY_BUDGET_EXCEEDED: "发现预算已用尽",
+} as const;
 type Action = "pause" | "resume" | "cancel";
 
 type Props = { initialRun: RecommendationRun | null; initialPreparation: RecommendationRunPreparation | null; unavailable?: boolean; onRunChanged?: () => void; };
@@ -35,7 +39,7 @@ function runStatus(run: RecommendationRun | null) {
   if (run.status === "queued") return "已提交，等待开始";
   if (run.status === "running") return "正在完成今日发现";
   if (run.status === "paused") return "本次推荐已暂停";
-  if (run.status === "completed") return run.result?.kind === "no_recommendations" ? "本次未找到可信推荐" : "本次推荐已准备完成";
+  if (run.status === "completed") return run.result?.kind === "no_recommendations" ? "本次暂无推荐" : "本次推荐已准备完成";
   if (run.status === "cancelled") return "本次推荐已取消";
   return run.failure?.summary ?? "本次推荐未完成";
 }
@@ -179,7 +183,7 @@ export function RecommendationRunPanel({ initialRun, initialPreparation, unavail
       const stopped = payload && typeof payload === "object" && "code" in payload && payload.code === "ACCOUNT_RUN_STOPPED";
       if (parsed.success && [200, 201].includes(response.status) && mounted.current && authorityGeneration.current === generation) { adoptRun(parsed.data); setConfirmationOpen(false); idempotencyKey.current = null; onRunChanged?.(); return; }
       if (response.status === 409) {
-        const refreshed = await refreshAuthoritativeState();
+        const refreshed = await refreshAuthoritativeState().catch(() => false);
         if (mounted.current) {
           setConfirmationOpen(false);
           setMessage(stopped ? "账户已停止全部运行，请先在运行设置中解除全局停止。" : refreshed ? "启动条件已变化，已读取最新准备状态。" : "启动条件已变化，但暂时无法读取最新准备状态，请稍后刷新页面重试。");
@@ -212,10 +216,11 @@ export function RecommendationRunPanel({ initialRun, initialPreparation, unavail
     finally { if (mounted.current && controlOperation.current === operation) setPendingAction(null); }
   }
   const resultHref = run?.result ? `/recommendations?runId=${run.runId}&resultId=${run.result.resultId}#recommendation-result` : null;
+  const emptyEvidence = run?.result?.kind === "no_recommendations" ? run.result.evidence : null;
   return <section aria-labelledby="recommendation-run-title" className="workbench-ledger recommendation-run-panel" id="recommendation-run">
     <div className="workbench-ledger-heading"><h2 id="recommendation-run-title">开始今日完整推荐</h2></div>
     {unavailable ? <p className="recommendation-run-message">推荐准备状态暂时无法读取，请稍后刷新页面重试。</p> : <>
-      {preparation && <div className="recommendation-run-summary"><p>主目标：{preparation.target?.roleFamily ?? "尚未设置"}</p><p>本次将检查 {preparation.sourceScope.trustedSourceCount} 个可信来源和 {preparation.sourceScope.publicQueryCount} 条公开查询。</p><p>发现预算：最多 {preparation.budgets.discovery.maxResults} 条岗位；深度匹配预算：最多 {preparation.budgets.deepMatch.maxResults} 条。</p></div>}
+      {preparation && <div className="recommendation-run-summary"><p>主目标：{preparation.target?.roleFamily ?? "尚未设置"}</p><p>本次将检查 {preparation.sourceScope.trustedSourceCount} 个可信来源和 {preparation.sourceScope.publicQueryCount} 条公开查询。</p><p>账户运行策略版本：{preparation.accountPolicyRevisionNumber}</p><p>发现预算：最多 {preparation.budgets.discovery.maxResults} 条岗位；深度匹配预算：最多 {preparation.budgets.deepMatch.maxResults} 条。</p></div>}
       {preflight?.status === "blocked" && <div className="recommendation-run-notice"><p>{accountStopped ? "账户运行策略当前阻止启动。" : "请先处理启动前的阻塞项。"}</p>{blockedLink && <Link className="workbench-touch-target recommendation-run-link" href={blockedLink.href}>{blockedLink.label}</Link>}</div>}
       <div className="recommendation-run-start"><Button className="workbench-touch-target" disabled={blocked || unfinished || pendingStart} onClick={() => void start()} size="lg" type="button">{pendingStart ? "正在开始…" : unfinished ? "今日发现进行中" : "开始今日发现"}</Button></div>
       {confirmationOpen && <div className="recommendation-run-notice recommendation-run-warning"><p>{preflight?.items.filter((item) => item.severity === "warning").map((item) => `${item.summary}：${item.impact}`).join("；")}</p><Button className="workbench-touch-target" onClick={() => void start(true)} size="lg" type="button">我已了解，开始今日发现</Button></div>}
@@ -226,6 +231,7 @@ export function RecommendationRunPanel({ initialRun, initialPreparation, unavail
     })}</ol>
     <p aria-live="polite" className={message ? "recommendation-run-live" : "recommendation-run-live is-empty"} role="status">{message || runStatus(run)}</p>
     {message.includes("账户已停止") && <Link className="workbench-touch-target recommendation-run-link" href="/profile/run-policy">查看运行设置</Link>}
+    {emptyEvidence && <div className="recommendation-run-notice"><div><p>已检查 {emptyEvidence.sourceCoverage.checkedBranchCount} 个分支，可信覆盖 {emptyEvidence.sourceCoverage.credibleBranchCount} 个，发现 {emptyEvidence.discovery.discoveredJobCount} 条岗位。</p><p>资格筛选：淘汰 {emptyEvidence.qualification.rejectedCount} 条，信息不足 {emptyEvidence.qualification.insufficientInformationCount} 条，已过期 {emptyEvidence.qualification.expiredCount} 条。</p><p>粗排：低于阈值 {emptyEvidence.coarseRanking.belowThresholdCount} 条，规则排除 {emptyEvidence.coarseRanking.ruleExcludedCount} 条，超出上限 {emptyEvidence.coarseRanking.candidateLimitExcludedCount} 条。</p><p>深度匹配：质量不足 {emptyEvidence.deepMatching.qualityInsufficientCount} 条。</p>{emptyEvidence.coverageLosses.length ? <p>{emptyEvidence.coverageLosses.map((loss) => `${coverageLossLabels[loss.code]}：${loss.affectedCount}`).join("；")}</p> : <p>无覆盖损失。</p>}</div>{emptyEvidence.suggestedActions.map((action) => action === "restart_discovery" ? <Button className="workbench-touch-target" key={action} onClick={() => void start()} type="button">重新开始今日发现</Button> : <Link className="workbench-touch-target recommendation-run-link" href={failureActionLinks[action].href} key={action}>{failureActionLinks[action].label}</Link>)}</div>}
     {run && <div className="recommendation-run-controls">
       {(run.status === "queued" || run.status === "running") && <Button className="workbench-touch-target" disabled={pendingAction !== null} onClick={() => void control("pause")} type="button" variant="outline">暂停本次推荐</Button>}
       {run.status === "paused" && <Button className="workbench-touch-target" disabled={pendingAction !== null} onClick={() => void control("resume")} type="button">继续本次推荐</Button>}
