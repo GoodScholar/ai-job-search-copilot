@@ -1153,6 +1153,15 @@ summary.workbench-touch-target:focus-visible,
 .job-import-panel { background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--shadow-paper); min-width: 0; padding: clamp(1.25rem, 4vw, 2rem); }
 .job-import-panel li, .job-import-panel p { min-width: 0; overflow-wrap: anywhere; }
 .job-import-panel h2 { font-size: 1.35rem; letter-spacing: -0.025em; margin: 0 0 1rem; }
+.recommendation-result-summary { border-block: 1px solid var(--rule); display: grid; gap: 0.65rem; margin-block: 1.5rem; padding-block: 1.25rem; }
+.recommendation-result-summary h2, .recommendation-result-summary h3 { margin: 0; }
+.recommendation-result-summary h3 { font-size: 1rem; }
+.recommendation-result-summary p { margin: 0; }
+.recommendation-result-coverage { border-top: 1px solid var(--rule); margin-top: 0.5rem; padding-top: 1rem; }
+.recommendation-result-coverage ul { margin: 0.7rem 0 0; padding-left: 1.25rem; }
+.recommendation-result-evidence { border-top: 1px solid var(--rule); display: grid; gap: 0.45rem; margin-top: 0.5rem; padding-top: 1rem; }
+.recommendation-result-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+.recommendation-result-actions a { color: var(--emerald-strong); font-weight: 700; text-decoration: underline; }
 .job-import-panel label, .job-import-panel p { color: var(--muted); line-height: 1.6; }
 .job-import-panel label { display: block; font-size: 0.9rem; font-weight: 700; margin-bottom: 0.5rem; }
 .job-import-tabs { border-bottom: 1px solid var(--rule); display: flex; gap: 0.5rem; margin-bottom: 1rem; }
