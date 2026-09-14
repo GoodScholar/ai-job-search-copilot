@@ -29,7 +29,7 @@ const coverageLossLabels = {
 } as const;
 type Action = "pause" | "resume" | "cancel";
 
-type Props = { initialRun: RecommendationRun | null; initialPreparation: RecommendationRunPreparation | null; unavailable?: boolean; onRunChanged?: () => void; };
+type Props = { initialRun: RecommendationRun | null; initialPreparation: RecommendationRunPreparation | null; unavailable?: boolean; onRunChanged?: () => void; onRunStarted?: (run: RecommendationRun) => void; };
 
 function stageStatusLabel(status: RecommendationRun["stages"][number]["status"]) {
   return ({ pending: "等待开始", running: "正在进行", completed: "已完成", failed: "未完成", cancelled: "已取消" })[status];
@@ -51,7 +51,7 @@ async function readRun(runId: string, signal: AbortSignal): Promise<Recommendati
   return parsed.data;
 }
 
-export function RecommendationRunPanel({ initialRun, initialPreparation, unavailable = false, onRunChanged }: Props) {
+export function RecommendationRunPanel({ initialRun, initialPreparation, unavailable = false, onRunChanged, onRunStarted }: Props) {
   const [run, setRun] = useState(initialRun);
   const [preparation, setPreparation] = useState(initialPreparation);
   const [confirmationOpen, setConfirmationOpen] = useState(false);
@@ -62,6 +62,7 @@ export function RecommendationRunPanel({ initialRun, initialPreparation, unavail
   const idempotencyKey = useRef<string | null>(null);
   const commandIds = useRef<Partial<Record<Action, string>>>({});
   const authoritativeRunId = useRef(initialRun?.runId ?? null);
+  const propsInitialized = useRef(false);
   const authorityGeneration = useRef(0);
   const readGeneration = useRef(0);
   const readAbortController = useRef<AbortController | null>(null);
@@ -77,11 +78,18 @@ export function RecommendationRunPanel({ initialRun, initialPreparation, unavail
     };
   }, []);
   useEffect(() => {
-    const rootChanged = authoritativeRunId.current !== initialRun?.runId;
-    authoritativeRunId.current = initialRun?.runId ?? null;
+    if (!propsInitialized.current) {
+      propsInitialized.current = true;
+      return;
+    }
+    const nextAuthoritativeRunId = initialRun?.runId ?? null;
+    const rootChanged = authoritativeRunId.current !== nextAuthoritativeRunId;
+    authoritativeRunId.current = nextAuthoritativeRunId;
     if (initialRun?.status === "paused") commandIds.current.pause = undefined;
     if (initialRun?.status === "running") commandIds.current.resume = undefined;
     const generation = ++authorityGeneration.current;
+    startOperation.current += 1;
+    setPendingStart(false);
     readGeneration.current += 1;
     readAbortController.current?.abort();
     queueMicrotask(() => {
@@ -93,7 +101,6 @@ export function RecommendationRunPanel({ initialRun, initialPreparation, unavail
         idempotencyKey.current = null;
         setConfirmationOpen(false);
         setPendingAction(null);
-        setPendingStart(false);
       }
     });
   }, [initialPreparation, initialRun]);
@@ -145,8 +152,8 @@ export function RecommendationRunPanel({ initialRun, initialPreparation, unavail
     return () => { stop(); document.removeEventListener("visibilitychange", onVisibilityChange); };
   }, [currentRunStatus, refreshRun, runId]);
 
-  const refreshAuthoritativeState = useCallback(async () => {
-    const generation = authorityGeneration.current;
+  const refreshAuthoritativeState = useCallback(async (generation: number) => {
+    if (authorityGeneration.current !== generation) return false;
     const [preparationResponse, latestResponse] = await Promise.all([
       fetch("/api/recommendation-runs/preparation", { cache: "no-store" }), fetch("/api/recommendation-runs/latest", { cache: "no-store" }),
     ]);
@@ -181,10 +188,15 @@ export function RecommendationRunPanel({ initialRun, initialPreparation, unavail
       const payload = await response.json().catch(() => null);
       const parsed = RecommendationRunSchema.safeParse(payload && typeof payload === "object" && "run" in payload ? payload.run : null);
       const stopped = payload && typeof payload === "object" && "code" in payload && payload.code === "ACCOUNT_RUN_STOPPED";
-      if (parsed.success && [200, 201].includes(response.status) && mounted.current && authorityGeneration.current === generation) { adoptRun(parsed.data); setConfirmationOpen(false); idempotencyKey.current = null; onRunChanged?.(); return; }
+      if (parsed.success && [200, 201].includes(response.status) && mounted.current && authorityGeneration.current === generation) {
+        adoptRun(parsed.data); setConfirmationOpen(false); idempotencyKey.current = null;
+        if (onRunStarted) onRunStarted(parsed.data); else onRunChanged?.();
+        return;
+      }
       if (response.status === 409) {
-        const refreshed = await refreshAuthoritativeState().catch(() => false);
-        if (mounted.current) {
+        if (!mounted.current || startOperation.current !== operation || authorityGeneration.current !== generation) return;
+        const refreshed = await refreshAuthoritativeState(generation).catch(() => false);
+        if (mounted.current && startOperation.current === operation) {
           setConfirmationOpen(false);
           setMessage(stopped ? "账户已停止全部运行，请先在运行设置中解除全局停止。" : refreshed ? "启动条件已变化，已读取最新准备状态。" : "启动条件已变化，但暂时无法读取最新准备状态，请稍后刷新页面重试。");
         }

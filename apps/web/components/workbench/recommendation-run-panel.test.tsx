@@ -833,3 +833,76 @@ it("可信空 review_primary_target 与 restart_discovery 只执行服务端 act
   await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
   expect(fetchSpy.mock.calls.find(([input, init]) => input === "/api/recommendation-runs" && init?.method === "POST")).toBeDefined();
 });
+
+it("旧 start 的 409 在 props 切换后不读取或覆盖新 root", async () => {
+  let resolveStart!: (value: Response) => void;
+  const rootA = RecommendationRunSchema.parse({ ...cancelledRun(), runId: "a1a1a1a1-2b92-4d91-aad4-959b7d4cd7a3" });
+  const rootB = RecommendationRunSchema.parse({ ...cancelledRun(), runId: "b1b1b1b1-2b92-4d91-aad4-959b7d4cd7a3" });
+  const warningB = RecommendationRunPreparationSchema.parse({ ...preparation("ready_with_warnings"), preflight: { ...preflight("ready_with_warnings"), items: [{ ...preflight("ready_with_warnings").items[0]!, summary: "新 root 的来源提示" }] } });
+  vi.mocked(fetch).mockImplementation((input, init) => {
+    if (input === "/api/recommendation-runs" && init?.method === "POST") return new Promise<Response>((resolve) => { resolveStart = resolve; });
+    throw new Error(`stale start must not read: ${String(input)}`);
+  });
+  const view = render(<RecommendationRunPanel initialRun={rootA} initialPreparation={preparation()} />);
+  fireEvent.click(screen.getByRole("button", { name: "开始今日发现" }));
+  view.rerender(<RecommendationRunPanel initialRun={rootB} initialPreparation={warningB} />);
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  fireEvent.click(screen.getByRole("button", { name: "开始今日发现" }));
+  expect(screen.getByRole("button", { name: "我已了解，开始今日发现" })).toBeVisible();
+  resolveStart(response({ code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED" }, 409));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  expect(screen.getByRole("status")).toHaveTextContent("本次推荐已取消");
+  expect(screen.getByRole("button", { name: "我已了解，开始今日发现" })).toBeVisible();
+});
+
+it("已在途的旧 start 409 刷新不能采用 C 或关闭 B 的确认", async () => {
+  let resolvePreparation!: (value: Response) => void;
+  let resolveLatest!: (value: Response) => void;
+  const rootA = RecommendationRunSchema.parse({ ...cancelledRun(), runId: "a1a1a1a1-2b92-4d91-aad4-959b7d4cd7a3" });
+  const rootB = RecommendationRunSchema.parse({ ...cancelledRun(), runId: "b1b1b1b1-2b92-4d91-aad4-959b7d4cd7a3" });
+  const rootC = RecommendationRunSchema.parse({ ...runningRun(), runId: "c1c1c1c1-2b92-4d91-aad4-959b7d4cd7a3" });
+  const warningB = RecommendationRunPreparationSchema.parse({ ...preparation("ready_with_warnings"), preflight: { ...preflight("ready_with_warnings"), items: [{ ...preflight("ready_with_warnings").items[0]!, summary: "B 的确认仍应保留" }] } });
+  vi.mocked(fetch).mockImplementation((input, init) => {
+    if (input === "/api/recommendation-runs" && init?.method === "POST") return Promise.resolve(response({ code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED" }, 409));
+    if (input === "/api/recommendation-runs/preparation") return new Promise<Response>((resolve) => { resolvePreparation = resolve; });
+    if (input === "/api/recommendation-runs/latest") return new Promise<Response>((resolve) => { resolveLatest = resolve; });
+    throw new Error(`unexpected request: ${String(input)}`);
+  });
+  const view = render(<RecommendationRunPanel initialRun={rootA} initialPreparation={preparation()} />);
+  fireEvent.click(screen.getByRole("button", { name: "开始今日发现" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  view.rerender(<RecommendationRunPanel initialRun={rootB} initialPreparation={warningB} />);
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  fireEvent.click(screen.getByRole("button", { name: "开始今日发现" }));
+  resolvePreparation(response(preparation()));
+  resolveLatest(response({ run: rootC }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  expect(screen.getByRole("status")).toHaveTextContent("本次推荐已取消");
+  expect(screen.getByRole("button", { name: "我已了解，开始今日发现" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "暂停本次推荐" })).not.toBeInTheDocument();
+});
+
+it("同 root 的新权威 props 使在途 start 409 不得关闭新确认", async () => {
+  let resolvePreparation!: (value: Response) => void;
+  let resolveLatest!: (value: Response) => void;
+  const root = RecommendationRunSchema.parse({ ...cancelledRun(), runId: "a1a1a1a1-2b92-4d91-aad4-959b7d4cd7a3" });
+  const warningPreparation = RecommendationRunPreparationSchema.parse({ ...preparation("ready_with_warnings"), preflight: { ...preflight("ready_with_warnings"), items: [{ ...preflight("ready_with_warnings").items[0]!, summary: "新权威准备状态要求确认" }] } });
+  vi.mocked(fetch).mockImplementation((input, init) => {
+    if (input === "/api/recommendation-runs" && init?.method === "POST") return Promise.resolve(response({ code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED" }, 409));
+    if (input === "/api/recommendation-runs/preparation") return new Promise<Response>((resolve) => { resolvePreparation = resolve; });
+    if (input === "/api/recommendation-runs/latest") return new Promise<Response>((resolve) => { resolveLatest = resolve; });
+    throw new Error(`unexpected request: ${String(input)}`);
+  });
+  const view = render(<RecommendationRunPanel initialRun={root} initialPreparation={preparation()} />);
+  fireEvent.click(screen.getByRole("button", { name: "开始今日发现" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  view.rerender(<RecommendationRunPanel initialRun={root} initialPreparation={warningPreparation} />);
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  fireEvent.click(screen.getByRole("button", { name: "开始今日发现" }));
+  expect(screen.getByRole("button", { name: "我已了解，开始今日发现" })).toBeVisible();
+  resolvePreparation(response(warningPreparation));
+  resolveLatest(response({ run: root }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  expect(screen.getByRole("status")).toHaveTextContent("本次推荐已取消");
+  expect(screen.getByRole("button", { name: "我已了解，开始今日发现" })).toBeVisible();
+});

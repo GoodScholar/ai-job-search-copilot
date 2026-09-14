@@ -111,7 +111,7 @@ function WorkbenchHomeContent({ home, targets, initialRun, initialRecommendation
 
       {targetsUnavailable && <section aria-labelledby="targets-unavailable-title" className="workbench-ledger"><h2 id="targets-unavailable-title">求职目标暂时无法读取</h2><p>已成功读取的运行状态仍会保留。请稍后刷新重试。</p></section>}
       {runUnavailable && <section aria-labelledby="run-unavailable-title" className="workbench-ledger"><h2 id="run-unavailable-title">运行状态暂时无法读取</h2><p>已成功读取的求职目标仍可继续使用。请稍后刷新重试。</p></section>}
-      <RecommendationRunPanel initialPreparation={initialRecommendationPreparation} initialRun={initialRecommendationRun} onRunChanged={() => router.refresh()} unavailable={recommendationUnavailable} />
+      <RecommendationRunPanel initialPreparation={initialRecommendationPreparation} initialRun={initialRecommendationRun} onRunChanged={() => router.refresh()} onRunStarted={(run) => { router.replace(`/home?runId=${run.runId}`, { scroll: false }); router.refresh(); }} unavailable={recommendationUnavailable} />
       {(!targetsUnavailable || !runUnavailable) && <AgentRunPanel currentReport={preflight} initialRun={initialRun} onInboxRefresh={refreshInbox} onPreflightChange={setPreflight} preflightUnavailable={preflightUnavailable} refreshVersion={runRefreshVersion} showDiscoverySchedule showStartControls={false} targets={targetsUnavailable ? null : targets?.targets ?? []} />}
 
       <section aria-labelledby="run-policy-entry-title" className="workbench-ledger">

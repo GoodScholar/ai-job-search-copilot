@@ -5,9 +5,11 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { AgentInboxItem } from "@job-copilot/contracts/agent-inbox";
 import type { AgentRunDetail } from "@job-copilot/contracts/agent-runs";
 import type { FirstRecommendationJourney } from "@job-copilot/contracts/workbench";
+import { RecommendationRunPreparationSchema, RecommendationRunSchema } from "@job-copilot/contracts/recommendation-runs";
 
 const refresh = vi.fn();
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
+const replace = vi.fn();
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh, replace }) }));
 
 import { WorkbenchHomeView } from "./workbench-home-view";
 
@@ -34,7 +36,40 @@ const completedRun = {
   termination: { kind: "completed", failureCode: null, budgetDimension: null }, retryOfRunId: null, steps: [], events: [], results: [],
 } as unknown as AgentRunDetail;
 
-afterEach(() => { refresh.mockClear(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+const recommendationTargetId = "5f8c6eb3-2b92-4d91-aad4-959b7d4cd7a3";
+const recommendationBudget = { maxActiveDurationMs: 60_000, maxAttempts: 3, maxToolCalls: 10, maxResults: 5, maxModelCalls: 0, maxTokens: 0 };
+const recommendationPreparation = RecommendationRunPreparationSchema.parse({
+  target: { targetId: recommendationTargetId, targetVersion: 1, roleFamily: "AI 应用工程师" }, sourceScope: { trustedSourceCount: 1, publicQueryCount: 0 }, accountPolicyRevisionNumber: 1,
+  budgets: { discovery: recommendationBudget, deepMatch: recommendationBudget },
+  preflight: { version: "run-preflight-v1", workflow: "recommendation", trigger: "manual", targetId: recommendationTargetId, status: "ready", warningFingerprint: null, checkedAt: "2026-09-14T00:00:00.000Z", items: [] },
+});
+function cancelledRecommendationRun(runId: string) {
+  return RecommendationRunSchema.parse({
+    runId, status: "cancelled", currentStage: null,
+    stages: [
+      { key: "discovery", status: "cancelled", startedAt: "2026-09-14T00:00:00.000Z", completedAt: "2026-09-14T00:00:01.000Z" },
+      { key: "qualification", status: "pending", startedAt: null, completedAt: null }, { key: "coarse_ranking", status: "pending", startedAt: null, completedAt: null },
+      { key: "deep_matching", status: "pending", startedAt: null, completedAt: null }, { key: "result_publication", status: "pending", startedAt: null, completedAt: null },
+    ],
+    target: recommendationPreparation.target!, sourceScope: recommendationPreparation.sourceScope, accountPolicyRevisionNumber: 1, budgets: recommendationPreparation.budgets, preflightSnapshot: recommendationPreparation.preflight,
+    result: null, failure: null, createdAt: "2026-09-14T00:00:00.000Z", updatedAt: "2026-09-14T00:00:01.000Z",
+  });
+}
+function runningRecommendationRun(runId: string) {
+  return RecommendationRunSchema.parse({
+    ...cancelledRecommendationRun(runId), status: "running", currentStage: "discovery",
+    stages: [
+      { key: "discovery", status: "running", startedAt: "2026-09-14T00:00:00.000Z", completedAt: null },
+      { key: "qualification", status: "pending", startedAt: null, completedAt: null }, { key: "coarse_ranking", status: "pending", startedAt: null, completedAt: null },
+      { key: "deep_matching", status: "pending", startedAt: null, completedAt: null }, { key: "result_publication", status: "pending", startedAt: null, completedAt: null },
+    ],
+  });
+}
+function pausedRecommendationRun(runId: string) {
+  return RecommendationRunSchema.parse({ ...runningRecommendationRun(runId), status: "paused" });
+}
+
+afterEach(() => { refresh.mockClear(); replace.mockClear(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 it("把需要决定的事项放在首页标题，并完整呈现真实摘要和未启用的投递能力", () => {
   render(<WorkbenchHomeView home={home} inbox={{ items: [] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
@@ -197,4 +232,26 @@ it("接入独立完整推荐区域，并把推荐读取失败明确标为不可�
   expect(screen.getByRole("button", { name: "开始今日发现" })).toBeDisabled();
   rerender(<WorkbenchHomeView home={home} inbox={{ items: [] }} initialRecommendationPreparation={null} initialRecommendationRun={null} initialRun={null} targets={{ suggestions: [], targets: [] }} unavailableSections={["recommendationPreparation"]} />);
   expect(screen.getByText("推荐准备状态暂时无法读取，请稍后刷新页面重试。")).toBeVisible();
+});
+
+it("从历史终态推荐重跑时把服务端新 root 写入工作台深链", async () => {
+  const user = userEvent.setup();
+  const rootA = cancelledRecommendationRun("a1a1a1a1-2b92-4d91-aad4-959b7d4cd7a3");
+  const rootB = runningRecommendationRun("b1b1b1b1-2b92-4d91-aad4-959b7d4cd7a3");
+  const pausedRootB = pausedRecommendationRun(rootB.runId);
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
+    if (input === "/api/recommendation-runs" && init?.method === "POST") return Response.json({ run: rootB, reused: false }, { status: 201 });
+    if (String(input).endsWith(`/${rootB.runId}/controls`) && init?.method === "POST") return Response.json({ run: pausedRootB, applied: true });
+    if (String(input).endsWith(`/${rootB.runId}`)) return Response.json(rootB);
+    throw new Error(`unexpected request: ${String(input)}`);
+  }));
+  render(<WorkbenchHomeView home={home} inbox={{ items: [] }} initialRecommendationPreparation={recommendationPreparation} initialRecommendationRun={rootA} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
+
+  await user.click(screen.getByRole("button", { name: "开始今日发现" }));
+
+  await waitFor(() => expect(replace).toHaveBeenCalledWith(`/home?runId=${rootB.runId}`, { scroll: false }));
+  expect(refresh).toHaveBeenCalledOnce();
+  expect(screen.getByRole("button", { name: "暂停本次推荐" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "暂停本次推荐" }));
+  await waitFor(() => expect(fetch).toHaveBeenCalledWith(`/api/recommendation-runs/${rootB.runId}/controls`, expect.objectContaining({ method: "POST" })));
 });
