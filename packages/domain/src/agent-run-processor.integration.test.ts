@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { agentInboxItems, agentRunEvents, agentRunJobResults, agentRunSteps, agentRunUsageEntries, agentRuns, auditEvents, createDatabase, deepMatchRunCandidates, firstRecommendationJourneyCompletions, jobAccounts, jobDiscoveryAttributions, jobDiscoveryDiagnostics, jobDiscoveryLeads, jobDiscoveryRunResults, jobDiscoverySourceIssues, jobMatchVersions, jobOpportunities, jobOpportunitySources, jobProfiles, jobSourceHealthChecks, jobSourcePostings, jobSourcePostingVersions, jobTargetRevisions, jobTargets, jobTriageVersions, migrateDatabase, modelDiagnosticResults, profileFactRevisions, profileFacts, recommendationExclusions, recommendationListItems, recommendationLists, recommendationResults, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
-import { createAgentRunCheckpoint, createAgentRunCommands, createAgentRunProcessor as createDomainAgentRunProcessor, createAgentRunQueries, createAgentRunRecoveryQueries, type AgentRunCheckpoint, type AgentRunQueue, type DiscoveryContentStore, type JobDiscoveryAdapter, type JobDiscoveryAdapterResolver } from "./agent-runs";
+import { createAgentRunCheckpoint, createAgentRunCommands, createAgentRunProcessor as createDomainAgentRunProcessor, createAgentRunQueries, createAgentRunRecoveryQueries, createRecommendationRunQueries, type AgentRunCheckpoint, type AgentRunQueue, type DiscoveryContentStore, type JobDiscoveryAdapter, type JobDiscoveryAdapterResolver } from "./agent-runs";
 import { createCompanyWatchlistCommands } from "./company-watchlists";
 import { AgentRunDetailSchema, AgentRunEventSchema, ControlAgentRunResponseSchema, DEEP_MATCH_AGENT_RUN_BUDGET, GREENHOUSE_JOB_DISCOVERY_ADAPTER, GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION, GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, GREENHOUSE_JOB_DISCOVERY_RULE_VERSION, GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION, GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION, GREENHOUSE_SOURCE_HEALTH_RULE_VERSION, GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST, GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, PUBLIC_JOB_DISCOVERY_BUDGET } from "@job-copilot/contracts/agent-runs";
 import { LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER, LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_TOOL_ALLOWLIST, LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION } from "@job-copilot/contracts/job-discovery";
@@ -1054,6 +1054,192 @@ describe("AgentRunProcessor checkpoints", () => {
     expect({ kind: result!.kind, itemCount: result!.itemCount, recommendationListId: result!.recommendationListId, inboxResultId: inbox!.recommendationResultId }).toEqual({ kind: "no_recommendations", itemCount: 0, recommendationListId: null, inboxResultId: result!.id });
     expect(result!.evidence).toMatchObject({ deepMatching: { evaluatedCount: 1, qualityInsufficientCount: 1, finalRecommendationCount: 0 } });
   });
+
+  it.each([
+    ["recommendation_list", "stop-first"],
+    ["no_recommendations", "stop-first"],
+    ["recommendation_list", "publish-first"],
+    ["no_recommendations", "publish-first"],
+  ] as const)("真实 recommendation child 的 %s 发布与账户停止按 %s 账户锁串行", async (kind, order) => {
+    const fixture = await createFullyQualifiedLayeredRecommendationFixture();
+    const fake = new FakeDeepMatchAdapter();
+    const adapter = kind === "no_recommendations"
+      ? { ...fake, assess: async (input: any, call: any) => fake.assess(input, { ...call, fixture: { qualityInsufficientOpportunityIds: input.candidates.map((candidate: any) => candidate.opportunityId) } }) }
+      : fake;
+    const finalCheckpointEntered = deferred(); const releaseFinalCheckpoint = deferred();
+    const durable = checkpoint();
+    const controlled: AgentRunCheckpoint = { check: async (input) => {
+      const outcome = await durable.check(input);
+      if (input.runId === fixture.child.id && input.checkpointKey.endsWith(":step_create_recommendations_complete:1")) {
+        expect(outcome.kind).toBe("continue");
+        finalCheckpointEntered.resolve();
+        await releaseFinalCheckpoint.promise;
+      }
+      return outcome;
+    } };
+    const stopDatabase = createDatabase(container.getConnectionUri());
+    const observerDatabase = createDatabase(container.getConnectionUri());
+    const releaseStop = deferred(); const stopEntered = deferred();
+    const stopAuditBase = createAuditTrail({ db: stopDatabase, clock: () => now });
+    const heldStopAudit = {
+      append: (event: any) => stopAuditBase.append(event),
+      bind(transaction: any) {
+        const bound = stopAuditBase.bind(transaction);
+        return { ...bound, append: async (event: any) => {
+          await bound.append(event);
+          if (event.eventType === "account.run_stopped") { stopEntered.resolve(); await releaseStop.promise; }
+        } };
+      },
+      query: (input: any) => stopAuditBase.query(input),
+    };
+    const publicationEntered = deferred(); const releasePublication = deferred();
+    const publicationAuditBase = createAuditTrail({ db: database, clock: () => now });
+    const heldPublicationAudit = {
+      append: (event: any) => publicationAuditBase.append(event),
+      bind(transaction: any) {
+        const bound = publicationAuditBase.bind(transaction);
+        return { ...bound, append: async (event: any) => {
+          await bound.append(event);
+          if (event.eventType === "agent.run_completed") { publicationEntered.resolve(); await releasePublication.promise; }
+        } };
+      },
+      query: (input: any) => publicationAuditBase.query(input),
+    };
+    const controls = createAccountRunControl({ db: stopDatabase, auditTrail: order === "stop-first" ? heldStopAudit as any : createAuditTrail({ db: stopDatabase, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    const processor = createAgentRunProcessor({
+      db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: adapter, checkpoint: controlled,
+      contentStore: new Store(), auditTrail: order === "stop-first" ? createAuditTrail({ db: database, clock: () => now }) : heldPublicationAudit as any,
+      id: () => crypto.randomUUID(), clock: () => now,
+    });
+    const processing = processor.process({ version: 1, userId: fixture.userId, runId: fixture.child.id, finalAttempt: true });
+    let stop: Promise<unknown> | undefined;
+    try {
+      await waitForBarrier({ barrier: finalCheckpointEntered.promise, operation: processing, name: `${kind} ${order} final child checkpoint` });
+      if (order === "stop-first") {
+        stop = controls.control({ userId: fixture.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+        await waitForBarrier({ barrier: stopEntered.promise, operation: stop, name: `${kind} stop transaction` });
+        releaseFinalCheckpoint.resolve();
+        await waitUntilAConnectionIsWaitingForAccountAdvisoryLock(observerDatabase);
+        releaseStop.resolve();
+        await expect(stop).resolves.toMatchObject({ applied: true, state: { stoppedAt: expect.any(String) } });
+        await expect(processing).resolves.toMatch(/^(paused|stale)$/u);
+        await expect(Promise.all([
+          database.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, fixture.userId)),
+          database.select().from(recommendationResults).where(eq(recommendationResults.producerRunId, fixture.child.id)),
+          database.select().from(recommendationLists).where(eq(recommendationLists.userId, fixture.userId)),
+          database.select().from(recommendationListItems).where(eq(recommendationListItems.userId, fixture.userId)),
+          database.select().from(recommendationExclusions).where(eq(recommendationExclusions.userId, fixture.userId)),
+          database.select().from(agentInboxItems).where(and(eq(agentInboxItems.userId, fixture.userId), eq(agentInboxItems.kind, "recommendation_result"))),
+          database.select({ resultKind: firstRecommendationJourneyCompletions.resultKind }).from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, fixture.userId)),
+          database.select().from(agentRunEvents).where(and(eq(agentRunEvents.runId, fixture.child.id), eq(agentRunEvents.eventType, "run.completed"))),
+          database.select({ status: agentRuns.status, controlState: agentRuns.controlState }).from(agentRuns).where(eq(agentRuns.id, fixture.child.id)),
+        ])).resolves.toEqual([[], [], [], [], [], [], [], [], [{ status: "paused", controlState: "none" }]]);
+      } else {
+        releaseFinalCheckpoint.resolve();
+        await waitForBarrier({ barrier: publicationEntered.promise, operation: processing, name: `${kind} publication transaction` });
+        stop = controls.control({ userId: fixture.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
+        await waitUntilAConnectionIsWaitingForAccountAdvisoryLock(observerDatabase);
+        releasePublication.resolve();
+        await expect(processing).resolves.toBe("completed");
+        await expect(stop).resolves.toMatchObject({ applied: true, state: { stoppedAt: expect.any(String) } });
+        const [result] = await database.select({ id: recommendationResults.id, kind: recommendationResults.kind, recommendationListId: recommendationResults.recommendationListId, itemCount: recommendationResults.itemCount }).from(recommendationResults).where(eq(recommendationResults.producerRunId, fixture.child.id));
+        expect(result).toMatchObject(kind === "recommendation_list" ? { kind, recommendationListId: expect.any(String), itemCount: 1 } : { kind, recommendationListId: null, itemCount: 0 });
+        await expect(createRecommendationRunQueries({ db: database }).get({ userId: fixture.userId, runId: fixture.rootRunId })).resolves.toMatchObject({
+          runId: fixture.rootRunId,
+          status: "completed",
+          result: kind === "recommendation_list"
+            ? { kind, resultId: result!.id, recommendationListId: result!.recommendationListId, itemCount: 1 }
+            : { kind, resultId: result!.id },
+        });
+        await expect(Promise.all([
+          database.select().from(recommendationLists).where(eq(recommendationLists.userId, fixture.userId)),
+          database.select().from(recommendationListItems).where(eq(recommendationListItems.userId, fixture.userId)),
+          database.select().from(recommendationExclusions).where(eq(recommendationExclusions.userId, fixture.userId)),
+          database.select().from(agentInboxItems).where(and(eq(agentInboxItems.userId, fixture.userId), eq(agentInboxItems.kind, kind === "recommendation_list" ? "recommendation_list" : "recommendation_result"))),
+          database.select({ resultKind: firstRecommendationJourneyCompletions.resultKind }).from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, fixture.userId)),
+          database.select({ eventType: agentRunEvents.eventType }).from(agentRunEvents).where(and(eq(agentRunEvents.runId, fixture.child.id), eq(agentRunEvents.eventType, "run.completed"))),
+          database.select({ status: agentRuns.status, controlState: agentRuns.controlState }).from(agentRuns).where(eq(agentRuns.id, fixture.child.id)),
+        ])).resolves.toEqual(kind === "recommendation_list"
+          ? [[expect.any(Object)], [expect.any(Object)], [], [expect.any(Object)], [{ resultKind: kind }], [{ eventType: "run.completed" }], [{ status: "completed", controlState: "none" }]]
+          : [[], [], [], [expect.any(Object)], [{ resultKind: kind }], [{ eventType: "run.completed" }], [{ status: "completed", controlState: "none" }]]);
+      }
+    } finally {
+      releaseFinalCheckpoint.resolve();
+      releasePublication.resolve();
+      releaseStop.resolve();
+      await Promise.allSettled([processing, ...(stop ? [stop] : [])]);
+      await stopDatabase.$client.end();
+      await observerDatabase.$client.end();
+    }
+  }, 60_000);
+
+  it("实际 recommendation Inbox INSERT 失败时回滚全部发布事实", async () => {
+    const fixture = await createFullyQualifiedLayeredRecommendationFixture();
+    await database.execute(sql`
+      create function task6_c3_fail_recommendation_inbox_insert() returns trigger language plpgsql as $$
+      begin
+        if new.kind in ('recommendation_list', 'recommendation_result') then
+          raise exception 'TASK6_C3_RECOMMENDATION_INBOX_INSERT_FAILED';
+        end if;
+        return new;
+      end;
+      $$
+    `);
+    await database.execute(sql`
+      create trigger task6_c3_fail_recommendation_inbox_insert
+      before insert on agent_inbox_items
+      for each row execute function task6_c3_fail_recommendation_inbox_insert()
+    `);
+    try {
+      await expect(createAgentRunProcessor({
+        db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: new FakeDeepMatchAdapter(), checkpoint: checkpoint(),
+        contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+      }).process({ version: 1, userId: fixture.userId, runId: fixture.child.id, finalAttempt: true })).resolves.toBe("failed");
+      await expect(Promise.all([
+        database.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, fixture.userId)),
+        database.select().from(recommendationResults).where(eq(recommendationResults.producerRunId, fixture.child.id)),
+        database.select().from(recommendationLists).where(eq(recommendationLists.userId, fixture.userId)),
+        database.select().from(recommendationListItems).where(eq(recommendationListItems.userId, fixture.userId)),
+        database.select().from(recommendationExclusions).where(eq(recommendationExclusions.userId, fixture.userId)),
+        database.select().from(agentInboxItems).where(and(eq(agentInboxItems.userId, fixture.userId), eq(agentInboxItems.kind, "recommendation_list"))),
+        database.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, fixture.userId)),
+        database.select().from(agentRunEvents).where(and(eq(agentRunEvents.runId, fixture.child.id), eq(agentRunEvents.eventType, "run.completed"))),
+        database.select({ status: agentRuns.status, failureCode: agentRuns.failureCode, terminationKind: agentRuns.terminationKind }).from(agentRuns).where(eq(agentRuns.id, fixture.child.id)),
+      ])).resolves.toEqual([[], [], [], [], [], [], [], [], [{ status: "failed", failureCode: "AGENT_RUN_PERSIST_FAILED", terminationKind: "persistence_failed" }]]);
+    } finally {
+      await database.execute(sql`drop trigger if exists task6_c3_fail_recommendation_inbox_insert on agent_inbox_items`);
+      await database.execute(sql`drop function if exists task6_c3_fail_recommendation_inbox_insert()`);
+    }
+  }, 60_000);
+
+  it("recommendation child 模型重试后只发布一次完整结果事实", async () => {
+    const fixture = await createFullyQualifiedLayeredRecommendationFixture();
+    const fake = new FakeDeepMatchAdapter();
+    let modelCalls = 0;
+    const processor = () => createAgentRunProcessor({
+      db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, checkpoint: checkpoint(), contentStore: new Store(),
+      deepMatchAdapter: { ...fake, assess: async (...args: Parameters<FakeDeepMatchAdapter["assess"]>) => {
+        modelCalls += 1;
+        if (modelCalls === 1) throw new DeepMatchAdapterError("retryable");
+        return fake.assess(...args);
+      } },
+      auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now,
+    });
+    await expect(processor().process({ version: 1, userId: fixture.userId, runId: fixture.child.id, finalAttempt: false })).resolves.toBe("retry");
+    await expect(processor().process({ version: 1, userId: fixture.userId, runId: fixture.child.id, finalAttempt: true })).resolves.toBe("completed");
+    expect(modelCalls).toBe(2);
+    await expect(Promise.all([
+      database.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, fixture.userId)),
+      database.select().from(recommendationLists).where(eq(recommendationLists.userId, fixture.userId)),
+      database.select().from(recommendationListItems).where(eq(recommendationListItems.userId, fixture.userId)),
+      database.select().from(recommendationExclusions).where(eq(recommendationExclusions.userId, fixture.userId)),
+      database.select().from(recommendationResults).where(eq(recommendationResults.producerRunId, fixture.child.id)),
+      database.select().from(agentInboxItems).where(and(eq(agentInboxItems.userId, fixture.userId), eq(agentInboxItems.kind, "recommendation_list"))),
+      database.select().from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, fixture.userId)),
+      database.select().from(agentRunEvents).where(and(eq(agentRunEvents.runId, fixture.child.id), eq(agentRunEvents.eventType, "run.completed"))),
+      database.select().from(auditEvents).where(and(eq(auditEvents.resourceId, fixture.child.id), eq(auditEvents.eventType, "agent.run_completed"))),
+    ])).resolves.toEqual([[expect.any(Object)], [expect.any(Object)], [expect.any(Object)], [], [expect.any(Object)], [expect.any(Object)], [expect.any(Object)], [expect.any(Object)], [expect.any(Object)]]);
+  }, 60_000);
 
   it.each(["recommendation_list", "no_recommendations"] as const)("已完成 recommendation child 的 %s direct replay 只读取原结果", async (kind) => {
     const fixture = await createFullyQualifiedLayeredRecommendationFixture();
