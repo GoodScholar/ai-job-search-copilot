@@ -17,7 +17,7 @@ it("精确清单读取将 owner/target/list 三元组交给 API，404 不回退�
   const listId = "00000000-0000-4000-8000-000000000002";
   mocks.readSessionToken.mockResolvedValue("a".repeat(43));
   mocks.getRecommendationList.mockRejectedValue({ status: 404 });
-  mocks.getLatestRecommendations.mockResolvedValue({ recommendationListId: "00000000-0000-4000-8000-000000000003" });
+  mocks.getLatestRecommendations.mockResolvedValue(RecommendationListSchema.parse({ ...exactList, recommendationListId: "00000000-0000-4000-8000-000000000003" }));
 
   await expect(getRecommendationList(targetId, listId)).rejects.toEqual({ status: 404 });
   expect(mocks.getRecommendationList).toHaveBeenCalledWith("a".repeat(43), targetId, listId);
