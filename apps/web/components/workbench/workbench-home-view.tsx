@@ -5,18 +5,22 @@ import type { AgentRunDetail } from "@job-copilot/contracts/agent-runs";
 import type { AgentInboxItem } from "@job-copilot/contracts/agent-inbox";
 import type { JobTargetOverview } from "@job-copilot/contracts/job-targets";
 import type { RunPreflightReport } from "@job-copilot/contracts/run-preflight";
+import type { RecommendationRun, RecommendationRunPreparation } from "@job-copilot/contracts/recommendation-runs";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { AgentRunPanel } from "./agent-run-panel";
 import { AgentInboxPanel, loadAgentInbox } from "./agent-inbox-panel";
 import { FirstRecommendationJourneyPanel } from "./first-recommendation-journey";
+import { RecommendationRunPanel } from "./recommendation-run-panel";
 
-type UnavailableSection = "summary" | "targets" | "run" | "inbox" | "preflight";
+type UnavailableSection = "summary" | "targets" | "run" | "inbox" | "preflight" | "recommendationPreparation" | "recommendationRun";
 type WorkbenchHomeViewProps = {
   home: WorkbenchHome | null;
   targets: JobTargetOverview | null;
   initialRun: AgentRunDetail | null;
+  initialRecommendationPreparation?: RecommendationRunPreparation | null;
+  initialRecommendationRun?: RecommendationRun | null;
   preflight?: RunPreflightReport | null;
   inbox: { items: AgentInboxItem[] };
   unavailableSections?: UnavailableSection[];
@@ -39,11 +43,11 @@ function subscribeToOnlineState(callback: () => void) {
 function readOnlineState() { return navigator.onLine; }
 function readServerOnlineState() { return true; }
 
-export function WorkbenchHomeView({ home, targets, initialRun, preflight = null, inbox, unavailableSections = [] }: WorkbenchHomeViewProps) {
-  return <WorkbenchHomeContent home={home} inbox={inbox} initialRun={initialRun} preflight={preflight} targets={targets} unavailableSections={unavailableSections} />;
+export function WorkbenchHomeView({ home, targets, initialRun, initialRecommendationPreparation = null, initialRecommendationRun = null, preflight = null, inbox, unavailableSections = [] }: WorkbenchHomeViewProps) {
+  return <WorkbenchHomeContent home={home} inbox={inbox} initialRecommendationPreparation={initialRecommendationPreparation} initialRecommendationRun={initialRecommendationRun} initialRun={initialRun} preflight={preflight} targets={targets} unavailableSections={unavailableSections} />;
 }
 
-function WorkbenchHomeContent({ home, targets, initialRun, preflight: initialPreflight = null, inbox, unavailableSections = [] }: WorkbenchHomeViewProps) {
+function WorkbenchHomeContent({ home, targets, initialRun, initialRecommendationPreparation = null, initialRecommendationRun = null, preflight: initialPreflight = null, inbox, unavailableSections = [] }: WorkbenchHomeViewProps) {
   const router = useRouter();
   const [runRefreshVersion, setRunRefreshVersion] = useState(0);
   const [preflight, setPreflight] = useState(initialPreflight);
@@ -58,6 +62,7 @@ function WorkbenchHomeContent({ home, targets, initialRun, preflight: initialPre
   const targetsUnavailable = unavailableSections.includes("targets") || targets === null;
   const runUnavailable = unavailableSections.includes("run");
   const preflightUnavailable = unavailableSections.includes("preflight");
+  const recommendationUnavailable = unavailableSections.includes("recommendationPreparation") || unavailableSections.includes("recommendationRun");
   const adjustment = summaryAdjustment.source === home ? summaryAdjustment : { pendingDecisions: 0 };
   const summary = home ? {
     ...home.summary,
@@ -102,11 +107,12 @@ function WorkbenchHomeContent({ home, targets, initialRun, preflight: initialPre
           ? { ...current, pendingDecisions: current.pendingDecisions + 1 }
           : { source: home, pendingDecisions: 1 });
         router.refresh();
-      }} onRunUpdated={() => setRunRefreshVersion((version) => version + 1)} />}
+      }} onRunUpdated={() => { setRunRefreshVersion((version) => version + 1); router.refresh(); }} />}
 
       {targetsUnavailable && <section aria-labelledby="targets-unavailable-title" className="workbench-ledger"><h2 id="targets-unavailable-title">求职目标暂时无法读取</h2><p>已成功读取的运行状态仍会保留。请稍后刷新重试。</p></section>}
       {runUnavailable && <section aria-labelledby="run-unavailable-title" className="workbench-ledger"><h2 id="run-unavailable-title">运行状态暂时无法读取</h2><p>已成功读取的求职目标仍可继续使用。请稍后刷新重试。</p></section>}
-      {(!targetsUnavailable || !runUnavailable) && <AgentRunPanel currentReport={preflight} initialRun={initialRun} onInboxRefresh={refreshInbox} onPreflightChange={setPreflight} preflightUnavailable={preflightUnavailable} refreshVersion={runRefreshVersion} showDiscoverySchedule targets={targetsUnavailable ? null : targets?.targets ?? []} />}
+      <RecommendationRunPanel initialPreparation={initialRecommendationPreparation} initialRun={initialRecommendationRun} onRunChanged={() => router.refresh()} unavailable={recommendationUnavailable} />
+      {(!targetsUnavailable || !runUnavailable) && <AgentRunPanel currentReport={preflight} initialRun={initialRun} onInboxRefresh={refreshInbox} onPreflightChange={setPreflight} preflightUnavailable={preflightUnavailable} refreshVersion={runRefreshVersion} showDiscoverySchedule showStartControls={false} targets={targetsUnavailable ? null : targets?.targets ?? []} />}
 
       <section aria-labelledby="run-policy-entry-title" className="workbench-ledger">
         <div className="workbench-ledger-heading"><p>运行设置 · 账户级</p><h2 id="run-policy-entry-title">管理运行策略</h2></div>

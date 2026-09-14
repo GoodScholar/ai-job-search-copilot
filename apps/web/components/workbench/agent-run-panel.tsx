@@ -140,7 +140,7 @@ function RunPreflightHistory({ snapshot }: { snapshot: RunPreflightSnapshot }) {
   return <><p>{summary}</p><dl><div><dt>触发方式</dt><dd>{triggerLabel}</dd></div><div><dt>检查时间</dt><dd>{snapshot.checkedAt}</dd></div><div><dt>账户策略版本</dt><dd>{policyRevision}</dd></div></dl>{snapshot.items.filter((item) => item.severity !== "blocking").map((item) => <p key={item.code}>{item.summary}：{item.impact}</p>)}</>;
 }
 
-export function AgentRunPanel({ targets, initialRun, currentReport, onPreflightChange, preflightUnavailable = false, onInboxRefresh, refreshVersion = 0, showDiscoverySchedule = false }: {
+export function AgentRunPanel({ targets, initialRun, currentReport, onPreflightChange, preflightUnavailable = false, onInboxRefresh, refreshVersion = 0, showDiscoverySchedule = false, showStartControls = true }: {
   targets: JobTarget[] | null;
   initialRun: AgentRunDetail | null;
   currentReport?: RunPreflightReport | null;
@@ -149,6 +149,7 @@ export function AgentRunPanel({ targets, initialRun, currentReport, onPreflightC
   onInboxRefresh?: () => Promise<boolean>;
   refreshVersion?: number;
   showDiscoverySchedule?: boolean;
+  showStartControls?: boolean;
 }) {
   const activeTargets = targets?.filter((target) => target.state === "active") ?? [];
   const targetsUnavailable = targets === null;
@@ -432,7 +433,7 @@ export function AgentRunPanel({ targets, initialRun, currentReport, onPreflightC
         <h2 id="agent-run-title">{isDeepMatchRun(run) ? "评估候选岗位匹配" : "发现新的岗位机会"}</h2>
       </div>
       {currentReport !== undefined ? <RunPreflightPanel report={preflight ?? null} unavailable={preflightIsUnavailable} /> : null}
-      <div className="agent-run-controls">
+      {showStartControls && <div className="agent-run-controls">
         {!canStartRun ? <div><p>{targetsUnavailable ? "求职目标暂时无法读取；以下仅显示已成功读取的本次运行记录。" : "当前没有可用的求职目标；以下仅显示已成功读取的本次运行记录。"}</p></div> : <><label htmlFor="agent-run-target">用于发现岗位的求职目标</label>
         <div>
           <select disabled={isStarting || runIsUnfinished} id="agent-run-target" onChange={(event) => {
@@ -450,7 +451,7 @@ export function AgentRunPanel({ targets, initialRun, currentReport, onPreflightC
           {warningConfirmation ? <div className="agent-run-warning-confirmation"><p>来源状态有待确认提示。请确认你已了解影响后继续。</p><Button className="workbench-touch-target" onClick={() => void startRun(true)} size="lg" type="button">我已了解，仍要启动</Button></div> : null}
           {isDeepMatchRun(run) ? <p className="agent-run-start-note">岗位匹配会在岗位发现完成后自动开始；如需重新评估，请在推荐清单中选择具体岗位。</p> : null}
         </div></>}
-      </div>
+      </div>}
       {showDiscoverySchedule && selectedTarget ? <DiscoverySchedulePanel key={selectedTarget.targetId} targetId={selectedTarget.targetId} targetState={selectedTarget.state} /> : null}
       {run ? <>
         <div className="agent-run-command-row">
