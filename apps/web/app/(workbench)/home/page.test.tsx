@@ -100,3 +100,57 @@ it("显式逻辑运行成功时不读取物理历史，非 404 失败保留逻�
   await WorkbenchHomePage({ searchParams: Promise.resolve({ runId }) });
   expect(mocks.getAgentRun).not.toHaveBeenCalled();
 });
+
+it("显式 logical 404 投影为空时只读取同 ID 的物理历史", async () => {
+  const runId = "8f8c6eb3-2b92-4d91-aad4-959b7d4cd7a3";
+  const physical = { runId };
+  mocks.getWorkbenchHome.mockResolvedValue(home);
+  mocks.getJobTargets.mockResolvedValue({ suggestions: [], targets: [] });
+  mocks.getOpenAgentInbox.mockResolvedValue({ items: [] });
+  mocks.getRunPreflight.mockResolvedValue(null);
+  mocks.getRecommendationRunPreparation.mockResolvedValue({ target: null });
+  mocks.getRecommendationRun.mockResolvedValue(null);
+  mocks.getAgentRun.mockResolvedValue(physical);
+
+  const page = await WorkbenchHomePage({ searchParams: Promise.resolve({ runId }) });
+  expect(mocks.getAgentRun).toHaveBeenCalledWith(runId);
+  expect(mocks.getLatestRecommendationRun).not.toHaveBeenCalled();
+  expect(mocks.getLatestAgentRun).not.toHaveBeenCalled();
+  expect(page.props).toMatchObject({ initialRecommendationRun: null, initialRun: physical });
+});
+
+it("显式 logical 502 不读取物理历史，并仅标记逻辑运行不可用", async () => {
+  const runId = "8f8c6eb3-2b92-4d91-aad4-959b7d4cd7a3";
+  const targets = { suggestions: [], targets: [] };
+  mocks.getWorkbenchHome.mockResolvedValue(home);
+  mocks.getJobTargets.mockResolvedValue(targets);
+  mocks.getOpenAgentInbox.mockResolvedValue({ items: [] });
+  mocks.getRunPreflight.mockResolvedValue(null);
+  mocks.getRecommendationRunPreparation.mockResolvedValue({ target: null });
+  mocks.getRecommendationRun.mockRejectedValue({ status: 502 });
+
+  const page = await WorkbenchHomePage({ searchParams: Promise.resolve({ runId }) });
+  expect(mocks.getAgentRun).not.toHaveBeenCalled();
+  expect(page.props).toMatchObject({ home, targets, initialRecommendationRun: null, unavailableSections: ["recommendationRun"] });
+});
+
+it("默认首页在任一推荐读取完成前已并行启动 preparation 和 latest", async () => {
+  let resolvePreparation!: (value: unknown) => void;
+  let resolveLatest!: (value: unknown) => void;
+  mocks.getWorkbenchHome.mockResolvedValue(home);
+  mocks.getJobTargets.mockResolvedValue({ suggestions: [], targets: [] });
+  mocks.getLatestAgentRun.mockResolvedValue({ run: null });
+  mocks.getOpenAgentInbox.mockResolvedValue({ items: [] });
+  mocks.getRunPreflight.mockResolvedValue(null);
+  mocks.getRecommendationRunPreparation.mockReturnValue(new Promise((resolve) => { resolvePreparation = resolve; }));
+  mocks.getLatestRecommendationRun.mockReturnValue(new Promise((resolve) => { resolveLatest = resolve; }));
+
+  const pendingPage = WorkbenchHomePage();
+  await Promise.resolve();
+  expect(mocks.getRecommendationRunPreparation).toHaveBeenCalledOnce();
+  expect(mocks.getLatestRecommendationRun).toHaveBeenCalledOnce();
+  resolvePreparation({ target: null });
+  resolveLatest({ runId: "8f8c6eb3-2b92-4d91-aad4-959b7d4cd7a3" });
+  const page = await pendingPage;
+  expect(page.props).toMatchObject({ initialRecommendationPreparation: { target: null }, initialRecommendationRun: { runId: "8f8c6eb3-2b92-4d91-aad4-959b7d4cd7a3" } });
+});

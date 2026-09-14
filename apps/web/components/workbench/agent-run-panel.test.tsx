@@ -705,10 +705,12 @@ it("警告首次点击只展示知情确认，确认后才用当前 fingerprint 
   expect(JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body))).toMatchObject({ targetId, warningFingerprint });
 });
 
-it("隐藏旧启动入口时仍保留物理运行历史和逐运行控制", () => {
-  render(<AgentRunPanel initialRun={detail("running")} showStartControls={false} targets={[target()]} />);
+it("隐藏旧启动入口时仍保留定时设置、物理运行历史和逐运行控制", () => {
+  vi.stubGlobal("fetch", vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 503 })));
+  render(<AgentRunPanel initialRun={detail("running")} showDiscoverySchedule showStartControls={false} targets={[target()]} />);
   expect(screen.queryByRole("button", { name: "发现岗位" })).not.toBeInTheDocument();
   expect(screen.queryByRole("combobox", { name: "用于发现岗位的求职目标" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "暂停岗位发现" })).toBeVisible();
   expect(screen.getByRole("region", { name: "本次岗位发现执行规格" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "每天检查新岗位" })).toBeVisible();
 });

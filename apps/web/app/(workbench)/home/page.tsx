@@ -31,7 +31,7 @@ export default async function WorkbenchHomePage({ searchParams }: WorkbenchHomeP
     ? getRecommendationRun(requestedRunId)
     : hasRequestedRun ? Promise.resolve(null) : getLatestRecommendationRun();
   const runPromise = hasValidRequestedRun
-    ? recommendationRunPromise.then((logicalRun) => logicalRun === null ? getAgentRun(requestedRunId) : null)
+    ? recommendationRunPromise.then((logicalRun) => logicalRun === null ? getAgentRun(requestedRunId) : null, () => null)
     : hasRequestedRun ? Promise.resolve(null) : getLatestAgentRun().then((response) => response.run);
   const recommendationPreparationPromise = getRecommendationRunPreparation();
   const targetsPromise = getJobTargets();
