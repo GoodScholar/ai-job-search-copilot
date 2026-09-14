@@ -20,10 +20,11 @@
 - 任何新行为先写测试、确认测试因缺少行为而失败，再写最小实现；同一时间只运行一条重叠的测试命令。
 - 账户全局停止/解除语义已于 2026-09-12 获批，以 spec 的“账户全局停止”为准；所有 legacy 和新推荐运行均受约束。
 - RED 必须到达业务断言；模块缺失、导入错误、fixture 不合法、数据库未启动均不是有效 RED。新模块先提供可导入的最小类型/导出，再验证缺少目标行为；本条覆盖下方早期草图中相反的 Expected 描述。
+- 测试命令以 `pnpm --dir <实际包目录> exec vitest run <实际测试文件> -t '<精确用例>' --no-file-parallelism` 为准；完整文件回归去掉 `-t`。禁止使用下方旧草图中的 `test --` 包脚本转发写法，避免参数被吞而误跑全包。先确认文件路径（Web 文件不在 `src/` 下）。
 
-## 当前进度与执行顺序（2026-09-12）
+## 当前进度与执行顺序（2026-09-14）
 
-Task 1、Task 2 已完成，当前 HEAD 为 `ed838ea`；两任务保留原编号与历史步骤，不重做迁移 0049。Task 3–10 尚未实施。新增前置顺序为 **Task 11 → Task 12 → Task 13 → Task 3 → Task 4 → Task 5 → Task 6 → Task 7 → Task 8 → Task 9 → Task 10**。设计与最终审查使用 Astra/medium，实现、测试及修复使用 Terra/high；每个切片独立 TDD 与既定双轴审查，测试单进程串行。详细计划由主代理交接，本文更新不代表已实施或验收。
+Task 1、2、11、12、13、3、4、14、5、6 已完成，保留原编号与历史步骤，不重做迁移。Task 6 首轮独立审查的三个 Important 已修复至 `9997407`，限定双轴复审通过；fake 回执截断计数 Minor 留最终分支审查评估。Task 7–10 尚未实施，后续顺序为 **Task 7 → Task 8 → Task 9 → Task 10 → 完整分支审查/验收**。设计与最终审查使用 Astra/medium，实现、测试及修复使用 Terra/high；每个切片独立 TDD 与既定双轴审查，测试单进程串行。精确提交、审查结论和证据以本计划的 `.superpowers/sdd/2026-09-11-issue-53-one-click-recommendation/progress.md` 为准；本文历史步骤并不代表重复执行授权。
 
 Task 11 交付持久控制及命令；Task 12 交付全部现有执行路径的停止屏障；Task 13 交付账户页面控制入口。Task 3–10 接入这些已存在的接口，不再假设全局停止等待裁定。
 
@@ -712,10 +713,17 @@ git commit -m "feat: publish durable recommendation results"
 
 - 复用 Task 13 安全错误映射模式，recommendation start/resume 的 ACCOUNT_RUN_STOPPED 返回 409；preflight blocked 仍返回最新报告。账户 control 两个路由已由 Task 13 交付，不复制到 RecommendationRuns module；所有读取在停止期间仍可用。
 - endpoint 固定为 `GET /v1/recommendation-runs/preparation`、`POST /v1/recommendation-runs`、`GET /v1/recommendation-runs/latest`、`GET /v1/recommendation-runs/:runId`、`POST /v1/recommendation-runs/:runId/controls`；BFF 一一对应。原 Interfaces 中连写的 `preparation/latest/:runId` 和 `start/:runId/controls` 不是路由定义。
-- RecommendationRuns module 必须按 Task 4 factory 的完整签名装配 db、queue、audit trail、preflight、execution mode、id、clock，并导入已有 Auth/AgentRuns/RunPreflight/runtime config 所需 provider。controller 只从 `SessionGuard` 身份注入 userId，body 严格限于契约字段。
+- RecommendationRuns module 复用 Task6 C2 已在 AgentRunsModule 装配并导出的 `RECOMMENDATION_RUN_COMMANDS`，不复制 command factory 或 queue；该 provider 已按 Task4 完整签名接入 db、queue、audit trail、preflight、execution mode、id、clock。新的 preparation/read queries 可在 RecommendationRuns module 装配，导入已有 Auth/AgentRuns/RunPreflight/runtime providers。controller 只从 `SessionGuard` 身份注入 userId，body 严格限于契约字段。
 - 五个 BFF route 均有相邻 `.test.ts`，API controller/module 各有启动测试；`apps/web/lib/server/api-client.test.ts` 加 preparation/start/latest/get/control schema 与状态映射。覆盖 201 首建、200 同义重放/活动复用、400 非法越权字段、401、owner-hidden 404、409 preflight/阶段冲突、`Cache-Control: no-store`，未知或畸形上游错误统一安全 502 且不反射正文。
 - 为 Task 9 同步扩展既有 recommendation read seam：`RecommendationQueries.getList({ userId, targetId, recommendationListId })`，API 为 `GET /v1/recommendations/lists/:recommendationListId?targetId=...`，BFF 为 `GET /api/recommendations/lists/:recommendationListId?targetId=...`，server/api-client helper 精确按 ID 读取。复用现有 `deep-match-persistence.readList`，owner/target 不匹配返回同样 404；不得回退为 latest-by-target。
 - 因此 Files 还包括 `packages/domain/src/recommendation-queries.ts`、`apps/api/src/recommendations/recommendations.controller.ts/.test.ts`、`apps/web/app/api/recommendations/lists/[recommendationListId]/route.ts/.test.ts` 与 `apps/web/lib/server/api-client.test.ts`。Task 7 GREEN 要串行运行 RecommendationRuns API、五个 BFF、exact-list API/BFF 和 api-client 的窄测试。
+
+**已发布结果读取补充（2026-09-13）：**
+
+- 在 `packages/domain/src/recommendation-runs.ts` 的 query factory 增加 `latestPublished({ userId }): Promise<RecommendationRun | null>`：持账户锁按 owner-bound `recommendationResults.createdAt DESC, id DESC` 选择最新已发布结果，再复用对应 root 的既有逻辑投影。`latest` 仍取最新 root，不能改变语义。
+- 增加静态 `GET /v1/recommendation-runs/latest-result` 和同源 `GET /api/recommendation-runs/latest-result`，声明在动态 `:runId` 之前；创建相邻 BFF 测试，API/client 与既有读取共用认证、严格响应、no-store 和安全错误规则。server helper 名为 `getLatestPublishedRecommendationRun`。
+- 精确回归：旧 root 已发布后出现新 queued/running root、旧 root 已发布后出现新 failed root、无任何已发布 result，以及停止/解除和不同 owner；前两种仍返回原已发布 root，无结果返回 null，不新增公开历史列表。
+- 此 seam 供 Task 9 默认页使用；显式 root 深链仍用 `get(rootId)`，不得悄悄回退为另一历史结果。`publishedRun.target` 与 `publishedRun.result` 分属逻辑运行字段，`RecommendationResult` 本身没有 target。
 
 **Files:**
 - Create: `apps/api/src/recommendation-runs/recommendation-runs.controller.ts`
@@ -749,9 +757,9 @@ it("does not allow a browser to select another target when starting", async () =
 
 - [ ] **Step 2: 运行 RED 测试**
 
-Run: `pnpm --filter api test -- recommendation-runs.controller.test.ts && pnpm --filter web test -- api/recommendation-runs/route.test.ts`
+Run（先确认文件已建立，逐条串行）: `pnpm --dir apps/api exec vitest run src/recommendation-runs/recommendation-runs.controller.test.ts --no-file-parallelism`，随后 `pnpm --dir apps/web exec vitest run app/api/recommendation-runs/route.test.ts --no-file-parallelism`。
 
-Expected: FAIL，路由和 providers 尚不存在。
+Expected: 真实路由行为或契约断言 FAIL；缺文件、缺模块或 provider 装配错误不算业务 RED，应先完成最小可测试装配再确认预期行为失败。
 
 - [ ] **Step 3: 实现最小 REST/BFF 边界**
 
@@ -759,7 +767,7 @@ API controller 从 `SessionGuard` 的账户身份构造命令输入；严格 DTO
 
 - [ ] **Step 4: 运行 GREEN 测试**
 
-Run: `pnpm --filter api test -- recommendation-runs.controller.test.ts && pnpm --filter web test -- api/recommendation-runs/route.test.ts`
+Run: 使用 Step 2 的直接 Vitest 命令逐条串行，并补齐本任务上方列明的 module、其余 BFF、exact-list、latest-result 与 api-client 窄测试及相关类型检查。
 
 Expected: PASS。
 
@@ -780,6 +788,7 @@ git commit -m "feat: expose recommendation run endpoints"
 - 不能直接移除 `AgentRunPanel`，因为它承载 `DiscoverySchedulePanel`。最小接线是在旧 panel 增加 `showStartControls={false}`（或等价窄 prop）以保留 schedule/history/旧物理运行展示，由新 `RecommendationRunPanel` 唯一承接“一键发现”启动和逻辑控制。
 - 新面板 start 后以服务端返回的 logical runId 为唯一轮询键；只在 document visible 且非 terminal 时轮询，visibility 恢复立即 fetch，terminal/unmount 清 timer。201、200、409 都重新采用 authoritative projection；409 不在客户端猜状态。
 - Inbox 更新若命中当前逻辑 root 或 child，必须触发 logical run refetch/`router.refresh()`，不能只递增旧 AgentRunPanel 的 refreshVersion。保持键盘顺序、`aria-current`、非抢焦点 `aria-live` 和至少 44px 操作目标。
+- Task6C 的推荐运行 Inbox target 保留 `physicalRunId` 与 `rootRunId`，链接为 `/home?runId=<root>#recommendation-run`；新逻辑面板提供对应 anchor，通知中的控制动作仍绑定原 physicalRunId，不能自动改控后来的 child。
 - server helper 测试覆盖无 session、owner-hidden 404 与非 404 透传；页面/组件测试覆盖 SSR 恢复、旧链接 fallback、schedule 保留、warning 确认、blocked target-null、轮询清理、控制重放和 Inbox 刷新。不得把测试限定为 layered_public；UI 消费统一逻辑投影，不识别底层 mode。
 
 **Files:**
@@ -836,10 +845,11 @@ git commit -m "feat: manage recommendation runs from workbench"
 **执行修正（2026-09-12，优先于本任务后续旧草图）：**
 
 - 停止期间保留历史推荐结果读取，暂停/停止不能显示为可信“暂无推荐”；manual reevaluation 接 Task 13 安全 409 并引导账户策略页，release 不主动重评。增加停止前已发布结果在停止/解除后仍绑定同 result/list 的视图断言。
-- Files 还包括 `apps/web/app/(workbench)/recommendations/page.test.tsx`、`apps/web/lib/server/recommendations.ts` 及对应测试（若仓库尚无该文件则创建 `recommendations.test.ts`）。页面先读取 latest immutable recommendation result；结果自带非空 target，不能继续选择“第一个 active target”。尚无 result 时才以 active primary target 维持既有准备/历史入口。
-- `recommendation_list` 分支必须调用 Task 7 exact helper，以 `{ targetId: result.target.targetId, recommendationListId: result.recommendationListId }` 精确取 list；404 是结果一致性错误，不得静默改读 target 最新 list。manual reevaluation 或后续新 list 不得替换逻辑运行绑定的清单。
+- Files 还包括 `apps/web/app/(workbench)/recommendations/page.test.tsx`、`apps/web/lib/server/recommendations.ts` 及对应测试（若仓库尚无该文件则创建 `recommendations.test.ts`）。默认页面通过 Task 7 `getLatestPublishedRecommendationRun` 读取最新不可变结果所属逻辑运行，目标取 `publishedRun.target`，结果取 `publishedRun.result`；不能继续选择“第一个 active target”。尚无已发布 result 时才以 active primary target 维持既有准备/历史入口。显式 root 深链使用 `get(rootId)` 并呈现该次运行的真实状态，不回退其他结果。
+- `recommendation_list` 分支必须调用 Task 7 exact helper，以 `{ targetId: publishedRun.target.targetId, recommendationListId: publishedRun.result.recommendationListId }` 精确取 list；404 是结果一致性错误，不得静默改读 target 最新 list。manual reevaluation 或后续新 list 不得替换逻辑运行绑定的清单。
 - `no_recommendations`、尚无 result、失败/取消是三个不同视图：可信空结果展示已检查来源、资格/粗排/深匹配闭合计数、coverage losses 和最多两个服务端动作；尚无结果保留准备提示；失败/取消由逻辑运行投影给稳定原因，不渲染为空结果。
 - 既有 recommendation history、manual reevaluation、decision、calibration 和 exclusions 仍使用原接口/语义；新 summary 只包裹 logical result。测试须证明 secondary target 排序变化不影响绑定结果、exact list 不是 latest list、空结果不造空 `<ol>`、覆盖损失有界且不显示上游/模型原文。
+- Task6C 结果通知的精确深链固定为 `?runId=<root>&resultId=<result>#recommendation-result`；以 owner-bound get(root) 读取，并校验返回 result ID 一致，不一致展示错误、不回退。显式 `?targetId=<target>&recommendationListId=<list>#recommendation-list` 则用 exact-list helper，不能附带另一个 latestPublished 的摘要；提供对应 anchors。旧 target-only URL 保留兼容。矛盾或畸形参数不得静默忽略后展示另一份结果。
 
 **Files:**
 - Modify: `apps/web/app/(workbench)/recommendations/page.tsx`
@@ -848,7 +858,7 @@ git commit -m "feat: manage recommendation runs from workbench"
 - Modify: `apps/web/app/globals.css`
 
 **Interfaces:**
-- Consumes: 最新 `RecommendationResult`；有清单时继续用既有列表读取。
+- Consumes: 最新已发布的 `RecommendationRun`，其 `target` 与 `result` 绑定；有清单时用 Task 7 exact-list 读取。
 - Produces: 推荐清单覆盖摘要，或可解释的“暂无推荐”证据/建议动作。
 
 - [ ] **Step 1: 写入 RED 视图测试**
@@ -896,6 +906,7 @@ git commit -m "feat: explain recommendation run results"
 - 浏览器同一按钮双击不作为并发证明。Task 4 integration test 负责数据库并发；E2E 用两个直接 API POST 制造同键重放和不同键并发（携带同一已登录 session），再由页面恢复返回的唯一 logical run。这样不会因第一次点击禁用按钮使第二个 Playwright click 超时。
 - 五个场景使用现有按 user/target 限定的 fake/PG trigger fixture：有推荐、可信空结果、部分来源失败、离页恢复、重复启动。fixture 必须在 `beforeEach/afterEach` 安装与清理，等待条件用数据库权威事实或可见终态；同时保留 fake、greenhouse、layered_public 的 domain integration 覆盖，不要求 E2E 为每个 mode 复制五组场景。
 - “无外部行动”同时断言相关业务表无新增，并由已有 fake adapter/audit 证明未调用页面填写、提交、邮件或联系路径；只查 UI 文案不够。E2E 不新增生产测试 API。
+- 当前 schema/模块尚无定制简历、投递准备包/执行和外部行动表，禁止为上一条虚构表或恒等零 helper。验收使用现有 owner-bound 导入材料/画像版本/目标/decision 等旁路事实 before/after、实际 adapter 调用和有限审计事件，结合源代码端口检查明确记录这些领域的结构性缺席；如果届时已新增相关真实表/端口，则补上真实检查。
 - Task 10 的 `git add` 必须覆盖本任务实际修改的 `one-click-recommendation.spec.ts`、可选 first-journey spec、README 和 support fixture 文件。全量 `pnpm test → typecheck → lint → build → test:e2e` 严格串行，并遵守 Supervisor/Executor 不重叠测试；仅凭完整新鲜日志逐条验收后才评论/关闭 Issue。
 
 **Files:**
