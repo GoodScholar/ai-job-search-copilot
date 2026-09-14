@@ -112,6 +112,15 @@ describe("RecommendationsPage", () => {
     expect(mocks.getLatestRecommendations).not.toHaveBeenCalled();
   });
 
+  it("错误 root 的未完成运行只显示安全错误，不泄露其状态或恢复入口", async () => {
+    const wrongRoot = RecommendationRunSchema.parse({ ...nonCompleted("failed"), runId: "00000000-0000-4000-8000-000000000010" });
+    mocks.getRecommendationRun.mockResolvedValue(wrongRoot);
+    render(await RecommendationsPage({ searchParams: Promise.resolve({ runId: runA }) }));
+    expect(screen.getByRole("alert")).toHaveTextContent("推荐结果无法确认");
+    expect(screen.queryByText("资格门槛暂时无法完成")).not.toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "查看本次推荐" })).not.toBeInTheDocument();
+  });
+
   it.each([
     ["root 结果", { runId: runA, resultId: listA }, (): void => { mocks.getRecommendationRun.mockResolvedValue(published(targetB, listA)); }],
     ["显式 target/list", { targetId: targetB, recommendationListId: listA }, (): void => undefined],
