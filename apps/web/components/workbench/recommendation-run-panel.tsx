@@ -109,6 +109,7 @@ export function RecommendationRunPanel({ initialRun, initialPreparation, unavail
     try {
       const next = await readRun(runId, controller.signal);
       if (mounted.current && readGeneration.current === generation && authoritativeRunId.current === runId) {
+        if (next.status === "paused") commandIds.current.pause = undefined;
         setRun(next);
         setMessage("");
         return true;

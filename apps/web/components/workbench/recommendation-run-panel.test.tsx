@@ -13,6 +13,9 @@ const targetId = "d194d0ce-fc7e-45db-9425-e8ff4eaf8c08";
 const now = "2026-09-14T08:00:00.000Z";
 const warningFingerprint = "a".repeat(64);
 const budget = { maxActiveDurationMs: 60_000, maxAttempts: 3, maxToolCalls: 10, maxResults: 5, maxModelCalls: 0, maxTokens: 0 };
+const firstKey = "355eec35-befa-44ee-ac34-1e3614975d4f";
+const secondKey = "aee8d950-b36e-42ee-aac5-6763673757fc";
+const thirdKey = "6e5d8a8a-5652-4fd1-9f1c-50515bd11c48";
 
 function preflight(status: "ready" | "ready_with_warnings" | "blocked" = "ready") {
   const item = status === "blocked"
@@ -73,7 +76,7 @@ function setDocumentVisibility(state: "visible" | "hidden") {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(response(runningRun()))));
-  vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue("355eec35-befa-44ee-ac34-1e3614975d4f");
+  vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(firstKey);
   setDocumentVisibility("visible");
 });
 
@@ -271,4 +274,134 @@ it.each([200, 201])("start 收到 %i 后，服务端终态允许再次启动", a
   fireEvent.click(screen.getByRole("button", { name: "开始今日发现" }));
   await act(async () => { await Promise.resolve(); await Promise.resolve(); });
   expect(startCount).toBe(2);
+});
+
+it("start 网络失败重试复用 key，终态后新启动生成新 key", async () => {
+  let startCount = 0;
+  let serverRun: RecommendationRun | null = null;
+  vi.mocked(crypto.randomUUID).mockReturnValueOnce(firstKey).mockReturnValueOnce(secondKey);
+  vi.mocked(fetch).mockImplementation((input, init) => {
+    if (input === "/api/recommendation-runs" && init?.method === "POST") {
+      startCount += 1;
+      if (startCount === 1) return Promise.reject(new Error("network unavailable"));
+      serverRun = RecommendationRunSchema.parse(runningRun());
+      const started = response({ run: serverRun, reused: false }, 201);
+      if (startCount === 2) serverRun = cancelledRun();
+      return Promise.resolve(started);
+    }
+    if (String(input).endsWith(`/${runId}`)) return Promise.resolve(response(serverRun));
+    return Promise.resolve(response({ run: null }));
+  });
+  render(<RecommendationRunPanel initialRun={null} initialPreparation={preparation()} />);
+  await act(async () => { await Promise.resolve(); });
+  fireEvent.click(screen.getByRole("button", { name: "开始今日发现" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  fireEvent.click(screen.getByRole("button", { name: "开始今日发现" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  expect(screen.getByRole("button", { name: "开始今日发现" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "开始今日发现" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  const starts = vi.mocked(fetch).mock.calls.filter(([input, init]) => input === "/api/recommendation-runs" && init?.method === "POST");
+  expect(starts.map(([, init]) => JSON.parse(String(init?.body)))).toEqual([
+    { idempotencyKey: firstKey, warningFingerprint: null },
+    { idempotencyKey: firstKey, warningFingerprint: null },
+    { idempotencyKey: secondKey, warningFingerprint: null },
+  ]);
+});
+
+it.each([
+  ["pause", runningRun(), "暂停本次推荐", pausedRun(), "继续本次推荐"],
+  ["resume", pausedRun(), "继续本次推荐", runningRun(), "暂停本次推荐"],
+  ["cancel", runningRun(), "取消本次推荐", cancelledRun(), "本次推荐已取消"],
+] as const)("%s 网络未知后重试复用 commandId，并采用合法服务端投影", async (action, initialRun, buttonName, appliedRun, visibleState) => {
+  let serverRun = RecommendationRunSchema.parse(initialRun);
+  let postCount = 0;
+  vi.mocked(fetch).mockImplementation((input, init) => {
+    if (String(input).endsWith("/controls") && init?.method === "POST") {
+      postCount += 1;
+      serverRun = RecommendationRunSchema.parse(appliedRun);
+      if (postCount === 1) return Promise.reject(new Error("network unavailable"));
+      return Promise.resolve(response({ run: serverRun, applied: true }));
+    }
+    return Promise.resolve(response(serverRun));
+  });
+  render(<RecommendationRunPanel initialRun={initialRun} initialPreparation={preparation()} />);
+  await act(async () => { await Promise.resolve(); });
+  fireEvent.click(screen.getByRole("button", { name: buttonName }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  fireEvent.click(screen.getByRole("button", { name: buttonName }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  const commands = vi.mocked(fetch).mock.calls.filter(([input, init]) => String(input).endsWith("/controls") && init?.method === "POST");
+  expect(commands.map(([input, init]) => [input, init?.method, JSON.parse(String(init?.body))])).toEqual([
+    [`/api/recommendation-runs/${runId}/controls`, "POST", { commandId: firstKey, action }],
+    [`/api/recommendation-runs/${runId}/controls`, "POST", { commandId: firstKey, action }],
+  ]);
+  if (action === "cancel") expect(screen.getByRole("status")).toHaveTextContent(visibleState);
+  else expect(screen.getByRole("button", { name: visibleState })).toBeEnabled();
+});
+
+it("pause 未知结果被 GET 确认后，新的 pause 意图使用新 commandId", async () => {
+  let serverRun = runningRun();
+  let pausePosts = 0;
+  vi.mocked(crypto.randomUUID).mockReturnValueOnce(firstKey).mockReturnValueOnce(secondKey).mockReturnValueOnce(thirdKey);
+  vi.mocked(fetch).mockImplementation((input, init) => {
+    if (String(input).endsWith("/controls") && init?.method === "POST") {
+      const action = JSON.parse(String(init.body)).action as "pause" | "resume";
+      serverRun = RecommendationRunSchema.parse(action === "pause" ? pausedRun() : runningRun());
+      if (action === "pause") {
+        pausePosts += 1;
+        if (pausePosts === 1) return Promise.reject(new Error("network unavailable"));
+      }
+      return Promise.resolve(response({ run: serverRun, applied: true }));
+    }
+    return Promise.resolve(response(serverRun));
+  });
+  render(<RecommendationRunPanel initialRun={runningRun()} initialPreparation={preparation()} />);
+  await act(async () => { await Promise.resolve(); });
+  fireEvent.click(screen.getByRole("button", { name: "暂停本次推荐" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  await act(async () => { vi.advanceTimersByTime(15_000); await Promise.resolve(); });
+  expect(screen.getByRole("button", { name: "继续本次推荐" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "继续本次推荐" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  fireEvent.click(screen.getByRole("button", { name: "暂停本次推荐" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  const pauseCommands = vi.mocked(fetch).mock.calls
+    .filter(([input, init]) => String(input).endsWith("/controls") && init?.method === "POST")
+    .map(([, init]) => JSON.parse(String(init?.body)))
+    .filter((body) => body.action === "pause");
+  expect(pauseCommands).toEqual([
+    { commandId: firstKey, action: "pause" }, { commandId: thirdKey, action: "pause" },
+  ]);
+});
+
+it("未知命令后的新 root 不继承旧 commandId", async () => {
+  const nextRun = RecommendationRunSchema.parse({ ...runningRun(), runId: "4f8c6eb3-2b92-4d91-aad4-959b7d4cd7a3" });
+  let serverRun = runningRun();
+  let controls = 0;
+  vi.mocked(crypto.randomUUID).mockReturnValueOnce(firstKey).mockReturnValueOnce(secondKey);
+  vi.mocked(fetch).mockImplementation((input, init) => {
+    if (String(input).endsWith("/controls") && init?.method === "POST") {
+      controls += 1;
+      if (controls === 1) return Promise.reject(new Error("network unavailable"));
+      serverRun = RecommendationRunSchema.parse({ ...pausedRun(), runId: nextRun.runId });
+      return Promise.resolve(response({ run: serverRun, applied: true }));
+    }
+    return Promise.resolve(response(serverRun));
+  });
+  const view = render(<RecommendationRunPanel initialRun={runningRun()} initialPreparation={preparation()} />);
+  await act(async () => { await Promise.resolve(); });
+  fireEvent.click(screen.getByRole("button", { name: "暂停本次推荐" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  serverRun = nextRun;
+  view.rerender(<RecommendationRunPanel initialRun={nextRun} initialPreparation={preparation()} />);
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect(screen.getByRole("button", { name: "暂停本次推荐" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "暂停本次推荐" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  const commands = vi.mocked(fetch).mock.calls.filter(([input, init]) => String(input).endsWith("/controls") && init?.method === "POST");
+  expect(commands.map(([input, init]) => [input, JSON.parse(String(init?.body))])).toEqual([
+    [`/api/recommendation-runs/${runId}/controls`, { commandId: firstKey, action: "pause" }],
+    [`/api/recommendation-runs/${nextRun.runId}/controls`, { commandId: secondKey, action: "pause" }],
+  ]);
 });
