@@ -24,7 +24,7 @@
 
 ## 当前进度与执行顺序（2026-09-14）
 
-Task 1、2、11、12、13、3、4、14、5、6、7、8 已完成，保留原编号与历史步骤，不重做迁移。Task 6 修复至 `9997407`，Task 7 修复至 `1acf756`；Task 8 至 `dfe1db3`，代码双轴、真实浏览器取证、独立视觉整改复验及设计文档对照已完成，七文件 143 tests 与 Web typecheck/完整 lint 通过。Task 8 原始 before 与部分早期日志缺失、唯一 detector 的既有警告及新增字号 advisory 处置均保留在验收记录，不宣称无条件全绿。fake 回执截断计数、exact-list 隐藏契约及 Task 8 两项 Minor 留最终分支审查评估。Task 9、10 未开始，后续顺序为 **Task 9 → Task 10 → 完整分支审查/验收**。设计与最终审查使用 Astra/medium，实现、测试及修复使用 Terra/high；每个切片独立 TDD 与既定双轴审查，测试单进程串行。精确提交、审查结论和证据以本计划的 `.superpowers/sdd/2026-09-11-issue-53-one-click-recommendation/progress.md` 为准；本文历史步骤并不代表重复执行授权。
+Task 1、2、11、12、13、3、4、14、5、6、7、8、9 已完成，保留原编号与历史步骤，不重做迁移。Task 6 修复至 `9997407`，Task 7 修复至 `1acf756`；Task 8 至 `dfe1db3`，代码双轴、真实浏览器取证、独立视觉整改复验及设计文档对照已完成，七文件 143 tests 与 Web typecheck/完整 lint 通过。Task 9 至 `a2c549b`，九文件 99 tests、Web typecheck/完整 lint、双轴及视觉整改限定复核通过，设计文档 No changes。Task 8/9 原始日志、TDD与截图证据限制均保留在验收记录，不宣称全程无偏差或将持久化 fixture 冒称完整 E2E。fake 回执截断计数、exact-list 隐藏契约及 Task 8/9 Minor 留最终分支审查评估。后续顺序为 **Task 10（先发布读取窗口定向回归）→ 完整分支审查/验收**。设计与最终审查使用 Astra/medium，实现、测试及修复使用 Terra/high；每个切片独立 TDD 与既定双轴审查，测试单进程串行。精确提交、审查结论和证据以本计划的 `.superpowers/sdd/2026-09-11-issue-53-one-click-recommendation/progress.md` 为准；本文历史步骤并不代表重复执行授权。完成本地验收不构成 push、merge、Issue 评论或关闭授权。
 
 Task 11 交付持久控制及命令；Task 12 交付全部现有执行路径的停止屏障；Task 13 交付账户页面控制入口。Task 3–10 接入这些已存在的接口，不再假设全局停止等待裁定。
 
@@ -842,6 +842,8 @@ git commit -m "feat: manage recommendation runs from workbench"
 
 ### Task 9: 在推荐页呈现结果与覆盖证据
 
+**交付状态（2026-09-14）：已完成至 `a2c549b`。** 精确读取、状态隔离、完整覆盖摘要、入口前置及历史兼容已交付；最终原始日志72–75为99测试、typecheck、完整lint及diffcheck通过。独立Spec/Standards及视觉整改限定verdict通过，documenter No changes。下列早期RED草图保留为历史，不能追认首轮作废或先代码草稿为原始TDD；具体有效RED与补验证据见SDD task-9-acceptance-index.md。非空浏览器为合法持久化测试fixture，真实全链验收仍属于Task10。
+
 **执行修正（2026-09-12，优先于本任务后续旧草图）：**
 
 - 停止期间保留历史推荐结果读取，暂停/停止不能显示为可信“暂无推荐”；manual reevaluation 接 Task 13 安全 409 并引导账户策略页，release 不主动重评。增加停止前已发布结果在停止/解除后仍绑定同 result/list 的视图断言。
@@ -898,6 +900,8 @@ git commit -m "feat: explain recommendation run results"
 ```
 
 ### Task 10: 端到端验收和回归验证
+
+**先行回归（2026-09-14）：** Task9浏览器观察到未保留完整响应的瞬态失败，静态定位到深匹配最后step已完成但结果尚未发布时，逻辑投影可能提前failed。先用真实processor的既有checkpoint在`step_create_recommendations_complete`建立可控barrier，通过真实logical get验证运行中间态，再按业务RED做最小修复；真实physical completed却无result仍须报发布失败，停止/预算/claim fence保持。此项与独立delta审查须闭合后再执行以下全链验收，不将静态推断或最终DB成功当作问题已解决。
 
 **执行修正（2026-09-12，优先于本任务后续旧草图）：**
 
