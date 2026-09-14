@@ -405,3 +405,187 @@ it("未知命令后的新 root 不继承旧 commandId", async () => {
     [`/api/recommendation-runs/${nextRun.runId}/controls`, { commandId: secondKey, action: "pause" }],
   ]);
 });
+
+it.each(["GET", "props"] as const)("resume 未知结果由 %s 确认后，新的 resume 意图使用新 commandId", async (confirmation) => {
+  let serverRun = pausedRun();
+  let resumePosts = 0;
+  vi.mocked(crypto.randomUUID).mockReturnValueOnce(firstKey).mockReturnValueOnce(secondKey).mockReturnValueOnce(thirdKey);
+  vi.mocked(fetch).mockImplementation((input, init) => {
+    if (String(input).endsWith("/controls") && init?.method === "POST") {
+      const action = JSON.parse(String(init.body)).action as "pause" | "resume";
+      serverRun = RecommendationRunSchema.parse(action === "resume" ? runningRun() : pausedRun());
+      if (action === "resume") {
+        resumePosts += 1;
+        if (resumePosts === 1) return Promise.reject(new Error("network unavailable"));
+      }
+      return Promise.resolve(response({ run: serverRun, applied: true }));
+    }
+    return Promise.resolve(response(serverRun));
+  });
+  const view = render(<RecommendationRunPanel initialRun={pausedRun()} initialPreparation={preparation()} />);
+  await act(async () => { await Promise.resolve(); });
+  fireEvent.click(screen.getByRole("button", { name: "继续本次推荐" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  if (confirmation === "GET") {
+    await act(async () => { vi.advanceTimersByTime(15_000); await Promise.resolve(); });
+  } else {
+    view.rerender(<RecommendationRunPanel initialRun={runningRun()} initialPreparation={preparation()} />);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  }
+  expect(screen.getByRole("button", { name: "暂停本次推荐" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "暂停本次推荐" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  fireEvent.click(screen.getByRole("button", { name: "继续本次推荐" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  const resumeCommands = vi.mocked(fetch).mock.calls
+    .filter(([input, init]) => String(input).endsWith("/controls") && init?.method === "POST")
+    .map(([, init]) => JSON.parse(String(init?.body)))
+    .filter((body) => body.action === "resume");
+  expect(resumeCommands).toEqual([
+    { commandId: firstKey, action: "resume" }, { commandId: thirdKey, action: "resume" },
+  ]);
+});
+
+it("warning A 的 409 刷新为 warning B 后，第二次确认仅提交 B fingerprint", async () => {
+  const warningBFingerprint = "b".repeat(64);
+  const warningB = RecommendationRunPreparationSchema.parse({
+    ...preparation("ready_with_warnings"),
+    preflight: {
+      ...preflight("ready_with_warnings"), warningFingerprint: warningBFingerprint,
+      items: [{ ...preflight("ready_with_warnings").items[0]!, summary: "来源范围已变化", impact: "本次会跳过一个来源" }],
+    },
+  });
+  let serverRun: RecommendationRun | null = null;
+  const requests: Array<Record<string, unknown>> = [];
+  vi.mocked(fetch).mockImplementation((input, init) => {
+    if (input === "/api/recommendation-runs" && init?.method === "POST") {
+      requests.push(JSON.parse(String(init.body)));
+      if (requests.length === 1) return Promise.resolve(response({ code: "RUN_PREFLIGHT_WARNING_CONFIRMATION_REQUIRED" }, 409));
+      serverRun = RecommendationRunSchema.parse(runningRun());
+      return Promise.resolve(response({ run: serverRun, reused: false }, 201));
+    }
+    if (input === "/api/recommendation-runs/preparation") return Promise.resolve(response(warningB));
+    if (input === "/api/recommendation-runs/latest") return Promise.resolve(response({ run: null }));
+    return Promise.resolve(response(serverRun));
+  });
+  render(<RecommendationRunPanel initialRun={null} initialPreparation={preparation("ready_with_warnings")} />);
+  await act(async () => { await Promise.resolve(); });
+  fireEvent.click(screen.getByRole("button", { name: "开始今日发现" }));
+  fireEvent.click(screen.getByRole("button", { name: "我已了解，开始今日发现" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  expect(requests).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "开始今日发现" }));
+  expect(screen.getByRole("button", { name: "我已了解，开始今日发现" })).toBeVisible();
+  expect(screen.getByText("来源范围已变化：本次会跳过一个来源")).toBeVisible();
+  expect(requests).toHaveLength(1);
+  fireEvent.click(screen.getByRole("button", { name: "我已了解，开始今日发现" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+  expect(requests).toEqual([
+    { idempotencyKey: firstKey, warningFingerprint },
+    { idempotencyKey: firstKey, warningFingerprint: warningBFingerprint },
+  ]);
+});
+
+it.each([
+  ["preparation", 401], ["preparation", 502], ["preparation", 200],
+  ["latest", 401], ["latest", 502], ["latest", 200],
+] as const)("start 409 后 %s 读取 %i 失败时保留原准备状态并显示安全文案", async (failedEndpoint, status) => {
+  const originalPreparation = RecommendationRunPreparationSchema.parse({ ...preparation(), target: { targetId, targetVersion: 1, roleFamily: "原始目标" } });
+  vi.mocked(fetch).mockImplementation((input, init) => {
+    if (input === "/api/recommendation-runs" && init?.method === "POST") return Promise.resolve(response({ message: "不可信的启动错误" }, 409));
+    if (input === "/api/recommendation-runs/preparation") {
+      const body = failedEndpoint === "preparation" && status === 200 ? { message: "不可信的准备状态" } : originalPreparation;
+      return Promise.resolve(response(body, failedEndpoint === "preparation" ? status : 200));
+    }
+    if (input === "/api/recommendation-runs/latest") {
+      const body = failedEndpoint === "latest" && status === 200 ? { message: "不可信的最新状态" } : { run: null };
+      return Promise.resolve(response(body, failedEndpoint === "latest" ? status : 200));
+    }
+    return Promise.resolve(response({ run: null }));
+  });
+  render(<RecommendationRunPanel initialRun={null} initialPreparation={originalPreparation} />);
+  fireEvent.click(screen.getByRole("button", { name: "开始今日发现" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  expect(screen.getByText("主目标：原始目标")).toBeVisible();
+  expect(screen.getByRole("button", { name: "开始今日发现" })).toBeEnabled();
+  expect(screen.getByRole("status")).toHaveTextContent("启动条件已变化，但暂时无法读取最新准备状态，请稍后刷新页面重试。");
+  expect(screen.queryByText(/不可信的/u)).not.toBeInTheDocument();
+  expect(screen.getByRole("status")).not.toHaveTextContent("已读取最新准备状态");
+});
+
+it.each([[401], [502], [200]] as const)("control 409 后 GET %i 失败时保留权威 run 并显示安全文案", async (status) => {
+  const initialRun = runningRun();
+  vi.mocked(fetch).mockImplementation((input, init) => {
+    if (String(input).endsWith("/controls") && init?.method === "POST") return Promise.resolve(response({ message: "不可信的控制错误" }, 409));
+    if (String(input).endsWith(`/${runId}`)) return Promise.resolve(response(status === 200 ? { message: "不可信的运行状态" } : initialRun, status));
+    return Promise.resolve(response(initialRun));
+  });
+  render(<RecommendationRunPanel initialRun={initialRun} initialPreparation={preparation()} />);
+  await act(async () => { await Promise.resolve(); });
+  fireEvent.click(screen.getByRole("button", { name: "暂停本次推荐" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  expect(screen.getByRole("button", { name: "暂停本次推荐" })).toBeEnabled();
+  expect(screen.getByRole("status")).toHaveTextContent("运行状态已变化，但暂时无法读取最新状态，请稍后刷新页面重试。");
+  expect(screen.queryByText(/不可信的/u)).not.toBeInTheDocument();
+  expect(screen.getByRole("status")).not.toHaveTextContent("已读取最新状态");
+});
+
+it("control 409 的成功读取采用新的权威 run 投影", async () => {
+  let serverRun = runningRun();
+  vi.mocked(fetch).mockImplementation((input, init) => {
+    if (String(input).endsWith("/controls") && init?.method === "POST") {
+      serverRun = pausedRun();
+      return Promise.resolve(response({ code: "RUN_STATE_CHANGED" }, 409));
+    }
+    return Promise.resolve(response(serverRun));
+  });
+  render(<RecommendationRunPanel initialRun={runningRun()} initialPreparation={preparation()} />);
+  await act(async () => { await Promise.resolve(); });
+  fireEvent.click(screen.getByRole("button", { name: "暂停本次推荐" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  expect(screen.getByRole("button", { name: "继续本次推荐" })).toBeEnabled();
+});
+
+it("start 收到 ACCOUNT_RUN_STOPPED 409 且权威读取失败时保留停止恢复入口", async () => {
+  vi.mocked(fetch).mockImplementation((input, init) => {
+    if (input === "/api/recommendation-runs" && init?.method === "POST") return Promise.resolve(response({ code: "ACCOUNT_RUN_STOPPED", message: "不可信的停止说明" }, 409));
+    if (input === "/api/recommendation-runs/preparation" || input === "/api/recommendation-runs/latest") return Promise.resolve(response({ message: "不可信的读取错误" }, 502));
+    return Promise.resolve(response({ run: null }));
+  });
+  render(<RecommendationRunPanel initialRun={null} initialPreparation={preparation()} />);
+  fireEvent.click(screen.getByRole("button", { name: "开始今日发现" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  expect(screen.getByRole("status")).toHaveTextContent("账户已停止全部运行，请先在运行设置中解除全局停止。");
+  expect(screen.getByRole("link", { name: "查看运行设置" })).toHaveAttribute("href", "/profile/run-policy");
+  expect(screen.queryByText(/不可信的/u)).not.toBeInTheDocument();
+});
+
+it("resume 收到 ACCOUNT_RUN_STOPPED 409 且读取失败时不自动恢复", async () => {
+  const serverRun = pausedRun();
+  vi.mocked(fetch).mockImplementation((input, init) => {
+    if (String(input).endsWith("/controls") && init?.method === "POST") return Promise.resolve(response({ code: "ACCOUNT_RUN_STOPPED", message: "不可信的停止说明" }, 409));
+    if (String(input).endsWith(`/${runId}`)) return Promise.resolve(response({ message: "不可信的读取错误" }, 502));
+    return Promise.resolve(response(serverRun));
+  });
+  render(<RecommendationRunPanel initialRun={serverRun} initialPreparation={preparation()} />);
+  await act(async () => { await Promise.resolve(); });
+  fireEvent.click(screen.getByRole("button", { name: "继续本次推荐" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  expect(screen.getByRole("status")).toHaveTextContent("账户已停止全部运行，请先在运行设置中解除全局停止。");
+  expect(screen.getByRole("link", { name: "查看运行设置" })).toHaveAttribute("href", "/profile/run-policy");
+  expect(screen.getByRole("button", { name: "继续本次推荐" })).toBeEnabled();
+});
+
+it("start 409 成功刷新为 policy block 后保持禁用", async () => {
+  vi.mocked(fetch).mockImplementation((input, init) => {
+    if (input === "/api/recommendation-runs" && init?.method === "POST") return Promise.resolve(response({ code: "RUN_STATE_CHANGED" }, 409));
+    if (input === "/api/recommendation-runs/preparation") return Promise.resolve(response(preparation("blocked")));
+    if (input === "/api/recommendation-runs/latest") return Promise.resolve(response({ run: null }));
+    return Promise.resolve(response({ run: null }));
+  });
+  render(<RecommendationRunPanel initialRun={null} initialPreparation={preparation()} />);
+  fireEvent.click(screen.getByRole("button", { name: "开始今日发现" }));
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+  expect(screen.getByRole("button", { name: "开始今日发现" })).toBeDisabled();
+  expect(screen.getByText("账户运行策略当前阻止启动。")).toBeVisible();
+});

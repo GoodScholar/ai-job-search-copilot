@@ -75,6 +75,8 @@ export function RecommendationRunPanel({ initialRun, initialPreparation, unavail
   useEffect(() => {
     const rootChanged = authoritativeRunId.current !== initialRun?.runId;
     authoritativeRunId.current = initialRun?.runId ?? null;
+    if (initialRun?.status === "paused") commandIds.current.pause = undefined;
+    if (initialRun?.status === "running") commandIds.current.resume = undefined;
     const generation = ++authorityGeneration.current;
     readGeneration.current += 1;
     readAbortController.current?.abort();
@@ -110,6 +112,7 @@ export function RecommendationRunPanel({ initialRun, initialPreparation, unavail
       const next = await readRun(runId, controller.signal);
       if (mounted.current && readGeneration.current === generation && authoritativeRunId.current === runId) {
         if (next.status === "paused") commandIds.current.pause = undefined;
+        if (next.status === "running") commandIds.current.resume = undefined;
         setRun(next);
         setMessage("");
         return true;
@@ -173,16 +176,16 @@ export function RecommendationRunPanel({ initialRun, initialPreparation, unavail
       const response = await fetch("/api/recommendation-runs", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ idempotencyKey: idempotencyKey.current, warningFingerprint: preflight.status === "ready_with_warnings" ? preflight.warningFingerprint : null }) });
       const payload = await response.json().catch(() => null);
       const parsed = RecommendationRunSchema.safeParse(payload && typeof payload === "object" && "run" in payload ? payload.run : null);
+      const stopped = payload && typeof payload === "object" && "code" in payload && payload.code === "ACCOUNT_RUN_STOPPED";
       if (parsed.success && [200, 201].includes(response.status) && mounted.current && authorityGeneration.current === generation) { adoptRun(parsed.data); setConfirmationOpen(false); idempotencyKey.current = null; onRunChanged?.(); return; }
       if (response.status === 409) {
         const refreshed = await refreshAuthoritativeState();
         if (mounted.current) {
           setConfirmationOpen(false);
-          setMessage(refreshed ? "启动条件已变化，已读取最新准备状态。" : "启动条件已变化，但暂时无法读取最新准备状态，请稍后刷新页面重试。");
+          setMessage(stopped ? "账户已停止全部运行，请先在运行设置中解除全局停止。" : refreshed ? "启动条件已变化，已读取最新准备状态。" : "启动条件已变化，但暂时无法读取最新准备状态，请稍后刷新页面重试。");
         }
         return;
       }
-      const stopped = payload && typeof payload === "object" && "code" in payload && payload.code === "ACCOUNT_RUN_STOPPED";
       if (mounted.current && authorityGeneration.current === generation) setMessage(stopped ? "账户已停止全部运行，请先在运行设置中解除全局停止。" : "今日发现暂时无法启动，请稍后重试。");
     } catch { if (mounted.current && authorityGeneration.current === generation) setMessage("今日发现暂时无法启动，请稍后重试。"); }
     finally { if (mounted.current && startOperation.current === operation) setPendingStart(false); }
@@ -200,9 +203,9 @@ export function RecommendationRunPanel({ initialRun, initialPreparation, unavail
       const parsed = RecommendationRunSchema.safeParse(payload && typeof payload === "object" && "run" in payload ? payload.run : null);
       if (parsed.success && response.ok && mounted.current && authorityGeneration.current === generation && authoritativeRunId.current === controlledRunId) { commandIds.current[action] = undefined; adoptRun(parsed.data); onRunChanged?.(); return; }
       if (response.status === 409) {
-        await refreshRun();
+        const refreshed = await refreshRun();
         const stopped = payload && typeof payload === "object" && "code" in payload && payload.code === "ACCOUNT_RUN_STOPPED";
-        if (mounted.current && authorityGeneration.current === generation && authoritativeRunId.current === controlledRunId) setMessage(stopped ? "账户已停止全部运行，请先在运行设置中解除全局停止。" : "运行状态已变化，已读取最新状态。"); return;
+        if (mounted.current && authorityGeneration.current === generation && authoritativeRunId.current === controlledRunId) setMessage(stopped ? "账户已停止全部运行，请先在运行设置中解除全局停止。" : refreshed ? "运行状态已变化，已读取最新状态。" : "运行状态已变化，但暂时无法读取最新状态，请稍后刷新页面重试。"); return;
       }
       if (mounted.current && authorityGeneration.current === generation && authoritativeRunId.current === controlledRunId) setMessage("本次操作暂时无法提交，请稍后重试。");
     } catch { if (mounted.current && authorityGeneration.current === generation && authoritativeRunId.current === controlledRunId) setMessage("本次操作暂时无法提交，请稍后重试。"); }
