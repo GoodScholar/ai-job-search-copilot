@@ -20,9 +20,10 @@ const coverageLossLabels = {
 export function RecommendationResultSummary({ result }: { result: RecommendationResult }) {
   const { evidence } = result;
   return <section aria-labelledby="recommendation-result-title" className="recommendation-result-summary" id="recommendation-result">
-    <p className="section-kicker">本次结果</p>
     <h2 id="recommendation-result-title">{result.kind === "no_recommendations" ? "今天暂无推荐" : "本次推荐已准备好"}</h2>
     {result.kind === "recommendation_list" ? <p>已整理 {result.itemCount} 个值得优先查看的岗位。</p> : null}
+    {result.kind === "recommendation_list" ? <Link className="workbench-touch-target" href="#recommendation-list">查看推荐岗位</Link> : null}
+    {result.kind === "no_recommendations" && evidence.suggestedActions.length > 0 ? <nav aria-label="下一步建议" className="recommendation-result-actions">{evidence.suggestedActions.map((action) => <Link className="workbench-touch-target" href={actionLinks[action].href} key={action}>{actionLinks[action].label}</Link>)}</nav> : null}
     <section aria-label="本次覆盖证据" className="recommendation-result-evidence">
       <p>来源覆盖：计划可信来源 {evidence.sourceCoverage.plannedTrustedSourceCount} 个、公开查询 {evidence.sourceCoverage.plannedPublicQueryCount} 个；已检查 {evidence.sourceCoverage.checkedBranchCount} 项，可信 {evidence.sourceCoverage.credibleBranchCount} 项；已验证并发现岗位 {evidence.sourceCoverage.verifiedJobCount} 个。</p>
       <p>资格筛选：评估 {evidence.qualification.evaluatedCount} 个，淘汰 {evidence.qualification.rejectedCount} 个，信息不足 {evidence.qualification.insufficientInformationCount} 个，已过期 {evidence.qualification.expiredCount} 个。</p>
@@ -33,6 +34,5 @@ export function RecommendationResultSummary({ result }: { result: Recommendation
       <h3 id="recommendation-coverage-title">覆盖情况</h3>
       {evidence.coverageLosses.length === 0 ? <p>本次没有覆盖损失。</p> : <ul>{evidence.coverageLosses.map((loss) => <li key={`${loss.code}:${loss.affectedCount}`}>{coverageLossLabels[loss.code]}：影响 {loss.affectedCount} 项来源检查{loss.retryable ? "，可稍后重试" : "，当前不可重试"}</li>)}</ul>}
     </section>
-    {result.kind === "no_recommendations" && evidence.suggestedActions.length > 0 ? <nav aria-label="下一步建议" className="recommendation-result-actions">{evidence.suggestedActions.map((action) => <Link className="workbench-touch-target" href={actionLinks[action].href} key={action}>{actionLinks[action].label}</Link>)}</nav> : null}
   </section>;
 }

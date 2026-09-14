@@ -22,6 +22,8 @@ describe("RecommendationResultSummary", () => {
     render(<RecommendationResultSummary result={noRecommendationsResult} />);
 
     expect(screen.getByRole("heading", { name: "今天暂无推荐" })).toBeVisible();
+    expect(screen.queryByText("本次结果")).not.toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "下一步建议" }).compareDocumentPosition(screen.getByLabelText("本次覆盖证据")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByRole("list", { name: "推荐岗位" })).not.toBeInTheDocument();
     expect(screen.getAllByText(/深度匹配：评估 0 个/u)).toHaveLength(1);
   });
@@ -57,6 +59,14 @@ describe("RecommendationResultSummary", () => {
     expect(screen.getByText("资格筛选：评估 12 个，淘汰 1 个，信息不足 2 个，已过期 1 个。")).toBeVisible();
     expect(screen.getByText("初步排序：合格 8 个，低于阈值 1 个，规则排除 2 个，候选上限外 1 个，进入深度匹配 4 个。")).toBeVisible();
     expect(screen.getByText("深度匹配：评估 4 个，质量不足 1 个，最终推荐 3 个。")).toBeVisible();
+  });
+
+  it("非空结果在完整证据前提供原生推荐清单入口", () => {
+    const result = RecommendationResultSchema.parse({ ...noRecommendationsResult, kind: "recommendation_list", recommendationListId: noRecommendationsResult.resultId, itemCount: 1, evidence: { ...noRecommendationsResult.evidence, discovery: { discoveredJobCount: 1 }, sourceCoverage: { ...noRecommendationsResult.evidence.sourceCoverage, verifiedJobCount: 1 }, qualification: { evaluatedCount: 1, rejectedCount: 0, insufficientInformationCount: 0, expiredCount: 0 }, coarseRanking: { eligibleCount: 1, belowThresholdCount: 0, ruleExcludedCount: 0, candidateLimitExcludedCount: 0, deepMatchCandidateCount: 1 }, deepMatching: { evaluatedCount: 1, qualityInsufficientCount: 0, finalRecommendationCount: 1 } } });
+    render(<RecommendationResultSummary result={result} />);
+    const link = screen.getByRole("link", { name: "查看推荐岗位" });
+    expect(link).toHaveAttribute("href", "#recommendation-list");
+    expect(link.compareDocumentPosition(screen.getByLabelText("本次覆盖证据")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("穷举来源检查损失与服务端建议的有限投影", () => {
