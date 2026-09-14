@@ -228,6 +228,13 @@ test("database package exposes the documented db:migrate command", async () => {
   assert.equal(packageJson.scripts["db:migrate"], "drizzle-kit migrate --config=drizzle.config.ts");
 });
 
+test("Nest application tests exclude compiled artifacts", async () => {
+  for (const app of ["api", "worker"]) {
+    const packageJson = JSON.parse(await readFile(new URL(`../apps/${app}/package.json`, import.meta.url), "utf8"));
+    assert.match(packageJson.scripts.test, /--exclude=dist\/\*\*/);
+  }
+});
+
 test("runtime tests run without Node's subprocess wrapper to avoid IPC serialization failures", async () => {
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
