@@ -3,7 +3,7 @@ import { beforeEach, vi } from "vitest";
 import { RecommendationRunSchema } from "@job-copilot/contracts/recommendation-runs";
 import { RecommendationListSchema } from "@job-copilot/contracts/recommendations";
 const mocks = vi.hoisted(() => ({ getJobTargets: vi.fn(), getLatestRecommendations: vi.fn(), getRecommendationList: vi.fn(), getRecommendationHistoryPage: vi.fn(), getCalibrationProposals: vi.fn(), getLatestPublishedRecommendationRun: vi.fn(), getRecommendationRun: vi.fn(), requestRecommendationReevaluationAction: vi.fn(), recordRecommendationDecisionAction: vi.fn(), reviseCalibrationProposalAction: vi.fn(), rebaseCalibrationProposalAction: vi.fn(), resolveCalibrationProposalAction: vi.fn() }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+vi.mock("next/navigation", async () => ({ ...await vi.importActual<typeof import("next/navigation")>("next/navigation"), useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/lib/server/job-targets", () => ({ getJobTargets: mocks.getJobTargets }));
 vi.mock("@/lib/server/recommendations", () => ({ getLatestRecommendations: mocks.getLatestRecommendations, getRecommendationList: mocks.getRecommendationList, getRecommendationHistoryPage: mocks.getRecommendationHistoryPage, getCalibrationProposals: mocks.getCalibrationProposals }));
 vi.mock("@/lib/server/recommendation-runs", () => ({ getLatestPublishedRecommendationRun: mocks.getLatestPublishedRecommendationRun, getRecommendationRun: mocks.getRecommendationRun }));
@@ -46,6 +46,112 @@ describe("RecommendationsPage", () => {
   it("legacy target-only URL 保留该目标 latest 读取", async () => { mocks.getLatestRecommendations.mockResolvedValue(list(listA, targetB, "兼容岗位")); render(await RecommendationsPage({ searchParams: Promise.resolve({ targetId: targetB }) })); expect(screen.getByText("兼容岗位")).toBeInTheDocument(); expect(mocks.getLatestRecommendations).toHaveBeenCalledWith(targetB); expect(mocks.getLatestPublishedRecommendationRun).not.toHaveBeenCalled(); });
   it("default 在目标数组排序变化后仍渲染同一绑定岗位", async () => { mocks.getLatestPublishedRecommendationRun.mockResolvedValue(published(targetB, listA)); mocks.getRecommendationList.mockResolvedValue(list(listA, targetB, "稳定绑定岗位")); mocks.getJobTargets.mockResolvedValue({ targets: [{ targetId: targetA, state: "active", priority: "primary" }, { targetId: targetB, state: "active", priority: "secondary" }] }); const first = await RecommendationsPage(); mocks.getJobTargets.mockResolvedValue({ targets: [{ targetId: targetB, state: "active", priority: "secondary" }, { targetId: targetA, state: "active", priority: "primary" }] }); const second = await RecommendationsPage(); render(<>{first}{second}</>); expect(screen.getAllByText("稳定绑定岗位")).toHaveLength(2); expect(mocks.getRecommendationList).toHaveBeenNthCalledWith(1, targetB, listA); expect(mocks.getRecommendationList).toHaveBeenNthCalledWith(2, targetB, listA); });
   it("重新评估和收藏保留绑定的目标、岗位、清单与条目身份", async () => { mocks.getLatestPublishedRecommendationRun.mockResolvedValue(published(targetB, listA)); mocks.getRecommendationList.mockResolvedValue(list(listA, targetB, "交互岗位")); render(await RecommendationsPage()); fireEvent.click(screen.getByRole("button", { name: "重新评估此岗位" })); fireEvent.click(screen.getByRole("button", { name: "收藏" })); await waitFor(() => expect(mocks.requestRecommendationReevaluationAction).toHaveBeenCalledWith(targetB, "00000000-0000-4000-8000-000000000008", expect.any(FormData))); await waitFor(() => expect(mocks.recordRecommendationDecisionAction).toHaveBeenCalledWith(listA, "00000000-0000-4000-8000-000000000006", expect.any(FormData))); });
+
+  it.each([
+    [{ runId: "" }], [{ runId: runA, resultId: "" }], [{ runId: [runA] }], [{ runId: "not-a-uuid", resultId: listA }],
+    [{ resultId: listA }], [{ runId: runA, resultId: [listA] }], [{ runId: runA, resultId: "not-a-uuid" }],
+    [{ recommendationListId: listA }], [{ targetId: "" }], [{ targetId: [targetA] }], [{ targetId: "not-a-uuid" }],
+    [{ targetId: targetA, recommendationListId: "" }], [{ targetId: targetA, recommendationListId: [listA] }], [{ targetId: targetA, recommendationListId: "not-a-uuid" }],
+    [{ runId: runA, resultId: listA, targetId: targetA }], [{ runId: runA, resultId: listA, recommendationListId: listA }],
+  ])("拒绝无效或矛盾的结果身份参数，并且不读取替代结果：%o", async (searchParams) => {
+    render(await RecommendationsPage({ searchParams: Promise.resolve(searchParams) }));
+    expect(screen.getByRole("alert")).toHaveTextContent("推荐链接无效");
+    expect(mocks.getRecommendationRun).not.toHaveBeenCalled();
+    expect(mocks.getLatestPublishedRecommendationRun).not.toHaveBeenCalled();
+    expect(mocks.getRecommendationList).not.toHaveBeenCalled();
+    expect(mocks.getLatestRecommendations).not.toHaveBeenCalled();
+  });
+
+  it("无关 query 不改变默认已发布结果的身份", async () => {
+    mocks.getLatestPublishedRecommendationRun.mockResolvedValue(published(targetB, listA));
+    mocks.getRecommendationList.mockResolvedValue(list(listA, targetB, "默认绑定岗位"));
+    render(await RecommendationsPage({ searchParams: Promise.resolve({ from: "notification" }) }));
+    expect(screen.getByText("默认绑定岗位")).toBeInTheDocument();
+    expect(mocks.getLatestPublishedRecommendationRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("只含合法 root ID 时读取该运行的精确清单", async () => {
+    mocks.getRecommendationRun.mockResolvedValue(published(targetB, listA));
+    mocks.getRecommendationList.mockResolvedValue(list(listA, targetB, "root 专属岗位"));
+    render(await RecommendationsPage({ searchParams: Promise.resolve({ runId: runA }) }));
+    expect(screen.getByText("root 专属岗位")).toBeInTheDocument();
+    expect(mocks.getRecommendationRun).toHaveBeenCalledWith(runA);
+    expect(mocks.getRecommendationList).toHaveBeenCalledWith(targetB, listA);
+    expect(mocks.getLatestPublishedRecommendationRun).not.toHaveBeenCalled();
+    expect(mocks.getLatestRecommendations).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["root 读取为空", null, { runId: runA }],
+    ["root 身份不符", published(targetB, listA), { runId: runA }],
+    ["显式 result 身份不符", published(targetB, listA), { runId: runA, resultId: listB }],
+  ])("%s 时拒绝显示替代结果", async (_name, selected, searchParams) => {
+    const mismatched = selected && _name === "root 身份不符" ? RecommendationRunSchema.parse({ ...selected, runId: "00000000-0000-4000-8000-000000000010" }) : selected;
+    mocks.getRecommendationRun.mockResolvedValue(mismatched);
+    render(await RecommendationsPage({ searchParams: Promise.resolve(searchParams) }));
+    expect(screen.getByRole("alert")).toHaveTextContent("推荐结果无法确认");
+    expect(mocks.getLatestPublishedRecommendationRun).not.toHaveBeenCalled();
+    expect(mocks.getRecommendationList).not.toHaveBeenCalled();
+    expect(mocks.getLatestRecommendations).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["root 结果", { runId: runA, resultId: listA }, (): void => { mocks.getRecommendationRun.mockResolvedValue(published(targetB, listA)); }],
+    ["显式 target/list", { targetId: targetB, recommendationListId: listA }, (): void => undefined],
+  ])("%s 的精确清单不存在时不回退", async (_name, searchParams, arrange) => {
+    arrange();
+    mocks.getRecommendationList.mockResolvedValue(null);
+    render(await RecommendationsPage({ searchParams: Promise.resolve(searchParams) }));
+    expect(screen.getByRole("alert")).toHaveTextContent("推荐结果无法确认");
+    expect(screen.queryByText("暂无可处理的推荐")).not.toBeInTheDocument();
+    expect(mocks.getLatestPublishedRecommendationRun).not.toHaveBeenCalled();
+    expect(mocks.getLatestRecommendations).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["root 结果", { runId: runA, resultId: listA }, (): void => { mocks.getRecommendationRun.mockResolvedValue(published(targetB, listA)); }],
+    ["显式 target/list", { targetId: targetB, recommendationListId: listA }, (): void => undefined],
+  ])("%s 的精确清单返回 404 时不回退", async (_name, searchParams, arrange) => {
+    arrange();
+    mocks.getRecommendationList.mockRejectedValue({ status: 404, body: "untrusted" });
+    render(await RecommendationsPage({ searchParams: Promise.resolve(searchParams) }));
+    expect(screen.getByRole("alert")).toHaveTextContent("推荐结果无法确认");
+    expect(screen.queryByText("untrusted")).not.toBeInTheDocument();
+    expect(mocks.getLatestRecommendations).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["root 结果的 target", { runId: runA, resultId: listA }, list(listA, targetA, "错误目标"), (): void => { mocks.getRecommendationRun.mockResolvedValue(published(targetB, listA)); }],
+    ["显式 pair 的 list", { targetId: targetB, recommendationListId: listA }, list(listB, targetB, "错误清单"), (): void => undefined],
+  ])("%s 身份不符时不回退", async (_name, searchParams, returnedList, arrange) => {
+    arrange();
+    mocks.getRecommendationList.mockResolvedValue(returnedList);
+    render(await RecommendationsPage({ searchParams: Promise.resolve(searchParams) }));
+    expect(screen.getByRole("alert")).toHaveTextContent("推荐结果无法确认");
+    expect(mocks.getLatestRecommendations).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["默认已发布结果", {}, (): void => { mocks.getLatestPublishedRecommendationRun.mockRejectedValue(new Error("502 upstream body")); }],
+    ["root 结果", { runId: runA }, (): void => { mocks.getRecommendationRun.mockRejectedValue(new Error("502 upstream body")); }],
+    ["显式精确清单", { targetId: targetB, recommendationListId: listA }, (): void => { mocks.getRecommendationList.mockRejectedValue(new Error("502 upstream body")); }],
+  ])("%s 读取异常时显示稳定错误且不准备空文案", async (_name, searchParams, arrange) => {
+    arrange();
+    render(await RecommendationsPage({ searchParams: Promise.resolve(searchParams) }));
+    expect(screen.getByRole("alert")).toHaveTextContent("推荐结果暂时无法读取，请稍后重试。");
+    expect(screen.queryByText("502 upstream body")).not.toBeInTheDocument();
+    expect(screen.queryByText("暂无可处理的推荐")).not.toBeInTheDocument();
+    expect(mocks.getLatestRecommendations).not.toHaveBeenCalled();
+  });
+
+  it("保留可识别的 Next 重定向控制流", async () => {
+    const { redirect } = await import("next/navigation");
+    let redirectError: unknown;
+    try { redirect("/login?returnTo=%2Frecommendations"); } catch (error) { redirectError = error; }
+    expect(redirectError).toBeDefined();
+    mocks.getRecommendationRun.mockRejectedValue(redirectError);
+    await expect(RecommendationsPage({ searchParams: Promise.resolve({ runId: runA }) })).rejects.toBe(redirectError);
+  });
 
   it("展示证据判断、历史版本入口和异步重新评估入口，但不展示精确分数", async () => {
     mocks.getJobTargets.mockResolvedValue({ targets: [{ targetId: "00000000-0000-4000-8000-000000000001", state: "active", priority: "primary" }] });
