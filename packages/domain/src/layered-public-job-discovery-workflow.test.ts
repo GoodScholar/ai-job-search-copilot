@@ -10,6 +10,7 @@ import {
   LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION,
   DiscoveryDiagnosticSchema,
 } from "@job-copilot/contracts/job-discovery";
+import { RecommendationDiscoveryFactsSchema } from "@job-copilot/contracts/recommendation-discovery-facts";
 import { createLayeredPublicJobDiscoveryWorkflow, LayeredPublicWorkflowInterruption } from "./layered-public-job-discovery-workflow";
 import { createLayeredPublicJobDiscoveryRuntime } from "./layered-public-job-discovery-runtime";
 
@@ -444,6 +445,85 @@ describe("layered public job discovery workflow", () => {
     } as never);
     const outcome = await runtime.run({ userId: targetId, runId, claimToken: crypto.randomUUID(), now: new Date(), attemptCount: 1, signal: new AbortController().signal, executionSpec: executionSpecFor([], [{ kind: "greenhouse_trusted_source", source: { sourceId, watchlistItemId: "55555555-5555-8555-8555-555555555555", canonicalCompanyName: "Observed", careersUrl: "https://boards.greenhouse.io/observed", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], boardToken: "observed" } }]) as never, beforePhysicalOperation: async () => undefined, onDiagnostics: () => undefined });
     expect(outcome.discoveryFacts?.trusted).toEqual([{ sourceId, checked: true, outcome: "verification_failed", losses: [{ code: "VERIFICATION_FAILED", retryable: false }] }]);
+  });
+
+  it("恢复拒绝与同 query 的新鲜策略拒绝只冻结一项覆盖损失，保留另一可信 query", async () => {
+    const secondQueryId = "88888888-8888-8888-8888-888888888888";
+    const pending = {
+      leadId: "66666666-6666-8666-8666-666666666666", userId: targetId, runId, queryId,
+      queryFingerprint: "a".repeat(64), normalizedUrl: "https://careers.example.com/jobs/recovered", stableFingerprint: "b".repeat(64), allowedSiteDomains: [],
+    };
+    const workflow = createLayeredPublicJobDiscoveryWorkflow({
+      trustedSources: { discover: async () => ({ succeeded: false, verifiedSourcePostingVersionIds: [] }) },
+      anySearch: {
+        search: async ({ query, beforeRequest }) => {
+          await beforeRequest();
+          return query.queryId === queryId ? { candidates: [], rejectedCandidateCount: 1 } : { candidates: [] };
+        },
+        extract: async ({ beforeRequest }) => { await beforeRequest(); return { normalizedUrl: "https://careers.example.com/jobs/rewritten" }; },
+      },
+      preflight: async () => null,
+      leads: {
+        recordPendingForClaim: async () => { throw new Error("UNUSED"); },
+        recoverPendingForClaim: async ({ queryId: recoveredQueryId }) => recoveredQueryId === queryId ? [pending] : [],
+      },
+      fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
+      gate: { verifyForClaim: async () => { throw new Error("UNUSED"); }, rejectForClaim: async () => undefined },
+    });
+    const outcome = await workflow.run({
+      userId: targetId, runId, claimToken: crypto.randomUUID(), now: new Date(), attemptCount: 2, signal: new AbortController().signal,
+      executionSpec: executionSpecFor([
+        { ordinal: 1, queryId, kind: "general", stableFingerprint: pending.queryFingerprint, query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 },
+        { ordinal: 2, queryId: secondQueryId, kind: "general", stableFingerprint: "c".repeat(64), query: "AI 工程师 远程", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 },
+      ]) as never,
+      beforePhysicalOperation: async () => undefined, onDiagnostics: () => undefined,
+    });
+
+    expect(outcome.discoveryFacts?.publicQueries).toEqual([
+      { queryId, checked: true, outcome: "verification_failed", losses: [{ code: "VERIFICATION_FAILED", retryable: false }] },
+      { queryId: secondQueryId, checked: true, outcome: "credible_zero", losses: [] },
+    ]);
+    expect(RecommendationDiscoveryFactsSchema.safeParse(outcome.discoveryFacts).success).toBe(true);
+  });
+
+  it.each([
+    ["GREENHOUSE_TIMEOUT", true],
+    ["GREENHOUSE_AUTH_FAILED", false],
+    ["GREENHOUSE_NEW_UNKNOWN_FAILURE", false],
+  ] as const)("可信来源 list 的稳定错误码 %s 冻结 retryable=%s", async (code, retryable) => {
+    const sourceId = "greenhouse:classified";
+    const runtime = createLayeredPublicJobDiscoveryRuntime({
+      db: {} as never, id: () => crypto.randomUUID(), auditTrail: {} as never,
+      contentStore: { put: async () => undefined, delete: async () => undefined }, evidenceStore: { put: async () => ({ created: true }), delete: async () => undefined },
+      trustedSourceAdapter: {
+        adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2",
+        declareCapabilities: ({ sourceId: declaredSourceId }: { sourceId: string }) => ({ sourceId: declaredSourceId, adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2", contractVersion: "source-capabilities-v1" as const, capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
+        listSource: async () => ({ ok: false as const, error: { code } }),
+        getSourceDetail: async () => { throw new Error("UNUSED"); },
+      },
+      anySearch: { isConfigured: () => false, search: async () => ({ candidates: [] }), extract: async () => { throw new Error("UNUSED"); } }, preflight: async () => null,
+      fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
+    } as never);
+    const outcome = await runtime.run({ userId: targetId, runId, claimToken: crypto.randomUUID(), now: new Date(), attemptCount: 1, signal: new AbortController().signal, executionSpec: executionSpecFor([], [{ kind: "greenhouse_trusted_source", source: { sourceId, watchlistItemId: "55555555-5555-8555-8555-555555555555", canonicalCompanyName: "Classified", careersUrl: "https://boards.greenhouse.io/classified", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], boardToken: "classified" } }]) as never, beforePhysicalOperation: async () => undefined, onDiagnostics: () => undefined });
+    expect(outcome.discoveryFacts?.trusted).toEqual([{ sourceId, checked: true, outcome: "failed", losses: [{ code: "TRUSTED_SOURCE_UNAVAILABLE", retryable }] }]);
+  });
+
+  it("可信来源 detail 的混合稳定错误码保留 retryable 与不可重试覆盖损失", async () => {
+    const sourceId = "greenhouse:mixed";
+    const runtime = createLayeredPublicJobDiscoveryRuntime({
+      db: {} as never, id: () => crypto.randomUUID(), auditTrail: {} as never,
+      contentStore: { put: async () => undefined, delete: async () => undefined }, evidenceStore: { put: async () => ({ created: true }), delete: async () => undefined },
+      trustedSourceAdapter: {
+        adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2",
+        declareCapabilities: ({ sourceId: declaredSourceId }: { sourceId: string }) => ({ sourceId: declaredSourceId, adapter: "greenhouse", adapterVersion: "greenhouse-job-board-v2", contractVersion: "source-capabilities-v1" as const, capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
+        listSource: async () => ({ ok: true as const, data: { sourceId, observedDetailIds: ["timeout", "auth"], candidates: [{ sourceId, detailId: "timeout" }, { sourceId, detailId: "auth" }] } }),
+        getSourceDetail: async ({ detailId }: { detailId: string }) => ({ ok: false as const, error: { code: detailId === "timeout" ? "GREENHOUSE_TIMEOUT" : "GREENHOUSE_AUTH_FAILED" } }),
+      },
+      anySearch: { isConfigured: () => false, search: async () => ({ candidates: [] }), extract: async () => { throw new Error("UNUSED"); } }, preflight: async () => null,
+      fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
+    } as never);
+    const outcome = await runtime.run({ userId: targetId, runId, claimToken: crypto.randomUUID(), now: new Date(), attemptCount: 1, signal: new AbortController().signal, executionSpec: executionSpecFor([], [{ kind: "greenhouse_trusted_source", source: { sourceId, watchlistItemId: "55555555-5555-8555-8555-555555555555", canonicalCompanyName: "Mixed", careersUrl: "https://boards.greenhouse.io/mixed", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], boardToken: "mixed" } }]) as never, beforePhysicalOperation: async () => undefined, onDiagnostics: () => undefined });
+    expect(outcome.discoveryFacts?.trusted).toEqual([{ sourceId, checked: true, outcome: "verification_failed", losses: [{ code: "VERIFICATION_FAILED", retryable: true }, { code: "VERIFICATION_FAILED", retryable: false }] }]);
   });
 
   it("只允许已签发 URL capability，并将安全但不在批准域的候选终结为 policy rejected Lead", async () => {

@@ -30,6 +30,17 @@ function sourceIssueCode(value: string, fallback: string) {
   return /^GREENHOUSE_[A-Z0-9_]{1,100}$/u.test(value) || value === "SOURCE_CAPABILITY_UNSUPPORTED" ? value : fallback;
 }
 
+function trustedSourceFailureRetryable(code: string) {
+  return code === "GREENHOUSE_TIMEOUT"
+    || code === "GREENHOUSE_UNREACHABLE"
+    || code === "GREENHOUSE_RATE_LIMITED"
+    || code === "GREENHOUSE_SERVER_ERROR";
+}
+
+function recordDetailFailure(losses: Array<{ code: "VERIFICATION_FAILED"; retryable: boolean }>, retryable: boolean) {
+  if (!losses.some((loss) => loss.retryable === retryable)) losses.push({ code: "VERIFICATION_FAILED", retryable });
+}
+
 function rawObject(input: { id: () => string; userId: string; runId: string; sourceId: string; detail: DiscoveryDetail }): StoredDiscoveryObject {
   const bytes = canonicalJsonBytes(input.detail.rawPayload);
   const sourceHash = createHash("sha256").update(`${input.sourceId}:${input.detail.detailId}`).digest("hex");
@@ -79,7 +90,7 @@ export function createLayeredPublicJobDiscoveryRuntime(input: Omit<WorkflowDepen
         const listed = await input.trustedSourceAdapter.listSource({ targetSnapshot: executionSpec.targetSnapshot, source, signal });
         if (!listed.ok) {
           sourceIssues.push({ code: sourceIssueCode(listed.error.code, "GREENHOUSE_LIST_FAILED"), affectedCount: 1 });
-          discoveryFacts.push({ sourceId: source.sourceId, checked: true, outcome: "failed", losses: [{ code: "TRUSTED_SOURCE_UNAVAILABLE", retryable: true }] });
+          discoveryFacts.push({ sourceId: source.sourceId, checked: true, outcome: "failed", losses: [{ code: "TRUSTED_SOURCE_UNAVAILABLE", retryable: trustedSourceFailureRetryable(listed.error.code) }] });
           continue;
         }
         const candidateKeys = new Set<string>();
@@ -97,31 +108,31 @@ export function createLayeredPublicJobDiscoveryRuntime(input: Omit<WorkflowDepen
           continue;
         }
         const details: DiscoveryDetail[] = [];
-        let detailFailure = false;
+        const detailLosses: Array<{ code: "VERIFICATION_FAILED"; retryable: boolean }> = [];
         for (const candidate of listed.data.candidates) {
           const detailAuthorization = authorizeSourceAction({ declaration: input.trustedSourceAdapter.declareCapabilities({ sourceId: source.sourceId }), action: "read_details", expected: { sourceId: source.sourceId, adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER, adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION } });
           if (!detailAuthorization.allowed) {
             sourceIssues.push({ code: detailAuthorization.failure.reasonCode, affectedCount: 1 });
-            detailFailure = true;
+            recordDetailFailure(detailLosses, false);
             break;
           }
           await beforeRequest(source.watchlistItemId);
           const detailed = await input.trustedSourceAdapter.getSourceDetail({ source, detailId: candidate.detailId, signal });
           if (!detailed.ok) {
             sourceIssues.push({ code: sourceIssueCode(detailed.error.code, "GREENHOUSE_DETAIL_FAILED"), affectedCount: 1 });
-            detailFailure = true;
+            recordDetailFailure(detailLosses, trustedSourceFailureRetryable(detailed.error.code));
             continue;
           }
           const detail = detailed.data;
           if (detail.sourceId !== source.sourceId || detail.detailId !== candidate.detailId || detail.sourceType !== "company_careers" || !detail.isOfficial) {
             sourceIssues.push({ code: "GREENHOUSE_DETAIL_IDENTITY_INVALID", affectedCount: 1 });
-            detailFailure = true;
+            recordDetailFailure(detailLosses, false);
             continue;
           }
           details.push(detail);
         }
         if (details.length === 0) {
-          discoveryFacts.push({ sourceId: source.sourceId, checked: true, outcome: "verification_failed", losses: [{ code: "VERIFICATION_FAILED", retryable: false }] });
+          discoveryFacts.push({ sourceId: source.sourceId, checked: true, outcome: "verification_failed", losses: detailLosses.length ? detailLosses : [{ code: "VERIFICATION_FAILED", retryable: false }] });
           continue;
         }
         const storedDetails = details.map((detail) => ({ detail, stored: rawObject({ id: input.id, userId, runId, sourceId: source.sourceId, detail }) }));
@@ -134,7 +145,7 @@ export function createLayeredPublicJobDiscoveryRuntime(input: Omit<WorkflowDepen
             userId, runId, claimToken, sourceId: source.sourceId, details, storedObjects, now,
           });
           verifiedSourcePostingVersionIds.push(...persisted.sourcePostingVersionIds);
-          discoveryFacts.push({ sourceId: source.sourceId, checked: true, outcome: "credible_results", losses: detailFailure ? [{ code: "VERIFICATION_FAILED", retryable: false }] : [] });
+          discoveryFacts.push({ sourceId: source.sourceId, checked: true, outcome: "credible_results", losses: detailLosses });
           await cleanup(input.contentStore, persisted.cleanupObjectKeys);
         } catch (error) {
           await cleanup(input.contentStore, storedObjects.map((stored) => stored.objectKey));

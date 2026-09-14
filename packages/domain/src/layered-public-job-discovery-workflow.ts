@@ -165,7 +165,7 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
       const rejectedCandidateCount = boundedRejectedCandidateCount(searched.rejectedCandidateCount);
       if (rejectedCandidateCount > 0) {
         publicState.candidateSeen = true;
-        publicState.losses.push({ code: "VERIFICATION_FAILED", retryable: false });
+        recordPublicFailure(publicState, false);
         recordDiagnostic({ scope: "query", queryId: query.queryId, kind: query.kind, stableFingerprint: query.stableFingerprint, code: "ANYSEARCH_POLICY_REJECTED", retryable: false, affectedCount: rejectedCandidateCount });
         sourceIssues.push({ provider: "anysearch", code: "ANYSEARCH_POLICY_REJECTED", affectedCount: rejectedCandidateCount });
       }

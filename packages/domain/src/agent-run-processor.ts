@@ -826,7 +826,10 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
             return outcome.interruption;
           }
           const branchOutcome = LayeredPublicWorkflowBranchOutcomeSchema.parse(outcome.branchOutcome);
-          const branchSucceeded = branchOutcome.trusted === "succeeded" || branchOutcome.publicDiscovery === "verified" || branchOutcome.publicDiscovery === "clean_zero";
+          const discoveryFacts = RecommendationDiscoveryFactsSchema.safeParse(outcome.discoveryFacts);
+          const hasCredibleRecommendationDiscovery = claimed.run.runPurpose === "recommendation" && discoveryFacts.success
+            && [...discoveryFacts.data.trusted, ...discoveryFacts.data.publicQueries].some((fact) => fact.outcome === "credible_results" || fact.outcome === "credible_zero");
+          const branchSucceeded = branchOutcome.trusted === "succeeded" || branchOutcome.publicDiscovery === "verified" || branchOutcome.publicDiscovery === "clean_zero" || hasCredibleRecommendationDiscovery;
           if (!branchSucceeded) {
             const retryable = outcome.diagnostics.some((diagnostic) => diagnostic.retryable);
             // 可重试尝试只保留 attempt diagnostic；最终投递才冻结 run-level issue/attention，避免随后成功仍被旧问题污染终态。
