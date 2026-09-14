@@ -20,6 +20,8 @@ const scenarioKeys = {
     duplicateConcurrentOther: "10000000-0000-4000-8000-000000000183",
     recovery: "10000000-0000-4000-8000-000000000177",
     partial: "10000000-0000-4000-8000-000000000181",
+    globalStopA: "10000000-0000-4000-8000-000000000185",
+    globalStopB: "10000000-0000-4000-8000-000000000186",
   },
   "Mobile Safari": {
     full: "10000000-0000-4000-8000-000000000173",
@@ -29,6 +31,8 @@ const scenarioKeys = {
     duplicateConcurrentOther: "10000000-0000-4000-8000-000000000184",
     recovery: "10000000-0000-4000-8000-000000000180",
     partial: "10000000-0000-4000-8000-000000000182",
+    globalStopA: "10000000-0000-4000-8000-000000000187",
+    globalStopB: "10000000-0000-4000-8000-000000000188",
   },
 } as const;
 
@@ -93,7 +97,7 @@ type Scenario = "full" | "empty" | "partial";
 
 function auth(token: string) { return { authorization: `Bearer ${token}` }; }
 function scenarioKey(info: TestInfo, scenario: keyof typeof scenarioKeys["Desktop Chrome"]) { return scenarioKeys[info.project.name as keyof typeof scenarioKeys][scenario]; }
-function fixtureName(info: TestInfo, scenario: "full" | "partial" | "duplicate" | "recovery") { return `e2e_one_click_${info.project.name === "Desktop Chrome" ? "desktop" : "mobile"}_${scenario}`; }
+function fixtureName(info: TestInfo, scenario: "full" | "partial" | "duplicate" | "recovery" | "global_stop_a" | "global_stop_b") { return `e2e_one_click_${info.project.name === "Desktop Chrome" ? "desktop" : "mobile"}_${scenario}`; }
 function sqlLiteral(value: string) { return `'${value.replaceAll("'", "''")}'`; }
 
 async function createAccount(request: APIRequestContext, info: TestInfo, scenario: Scenario, accountIdentity: string = scenario): Promise<Account> {
@@ -349,6 +353,41 @@ async function completedRun(request: APIRequestContext, token: string, rootRunId
   return finalRun!;
 }
 
+async function recommendationRun(request: APIRequestContext, token: string, rootRunId: string): Promise<RecommendationRun> {
+  const response = await request.get(`${apiBaseUrl}/v1/recommendation-runs/${rootRunId}`, { headers: auth(token) });
+  expect(response.status()).toBe(200);
+  return response.json() as Promise<RecommendationRun>;
+}
+
+async function accountRunControl(request: APIRequestContext, token: string): Promise<{ stoppedAt: string | null; controlVersion: number; scheduleResumeAfter: string | null }> {
+  const response = await request.get(`${apiBaseUrl}/v1/account/run-policy/control`, { headers: auth(token) });
+  expect(response.status()).toBe(200);
+  return response.json() as Promise<{ stoppedAt: string | null; controlVersion: number; scheduleResumeAfter: string | null }>;
+}
+
+async function recommendationListSnapshot(request: APIRequestContext, token: string, targetId: string, listId: string): Promise<unknown> {
+  const response = await request.get(`${apiBaseUrl}/v1/recommendations/lists/${listId}?targetId=${targetId}`, { headers: auth(token) });
+  expect(response.status()).toBe(200);
+  return response.json();
+}
+
+async function recommendationControlBinding(userId: string, rootRunId: string, commandId: string): Promise<{ rootRunId: string; physicalRunId: string; action: string; applied: boolean; physicalParentRunId: string | null }> {
+  const client = new Client({ connectionString: databaseUrl });
+  await client.connect();
+  try {
+    const result = await client.query(`
+      select logical.root_run_id, logical.physical_run_id, logical.action, physical.applied, run.parent_run_id
+      from recommendation_run_control_commands logical
+      join agent_run_control_commands physical on physical.user_id = logical.user_id and physical.run_id = logical.physical_run_id and physical.command_id = logical.command_id
+      join agent_runs run on run.user_id = logical.user_id and run.id = logical.physical_run_id
+      where logical.user_id = $1 and logical.root_run_id = $2 and logical.command_id = $3
+    `, [userId, rootRunId, commandId]);
+    expect(result.rows).toHaveLength(1);
+    const row = result.rows[0]!;
+    return { rootRunId: row.root_run_id, physicalRunId: row.physical_run_id, action: row.action, applied: row.applied, physicalParentRunId: row.parent_run_id };
+  } finally { await client.end(); }
+}
+
 test("完整来源输入经真实推荐启动、worker 与发布链交付一条推荐", async ({ page, request }, info) => {
   test.setTimeout(90_000);
   test.skip(sourceHealthOnly, "完整来源输入仅在 ordinary phase 运行");
@@ -481,6 +520,114 @@ test("离页后以精确 root SSR 恢复并继续同一推荐运行", async ({ p
     if (paused) await queue.resume();
     await queue.close();
     await removeSourceInputFixture(name);
+  }
+});
+
+test("同一账户全局停止保留历史 A，解除后只由用户继续 B", async ({ page, request }, info) => {
+  test.setTimeout(150_000);
+  test.skip(sourceHealthOnly, "全局停止旅程仅在 ordinary phase 运行");
+  const account = await createAccount(request, info, "full", "global-stop");
+  const aKey = scenarioKey(info, "globalStopA");
+  const bKey = scenarioKey(info, "globalStopB");
+  const aFixture = fixtureName(info, "global_stop_a");
+  const bFixture = fixtureName(info, "global_stop_b");
+  const before = await sideFacts(account.userId, account.targetId);
+  const queue = new Queue(AGENT_RUN_QUEUE, { connection: { host: "127.0.0.1", port: redisPort } });
+  let aFixtureInstalled = false;
+  let bFixtureInstalled = false;
+  let paused = false;
+  let trackAfterRelease = false;
+  let bRootRunId = "";
+  const afterReleaseStartPosts: string[] = [];
+  const afterReleaseBControlPosts: string[] = [];
+  page.on("request", (value) => {
+    if (!trackAfterRelease || value.method() !== "POST") return;
+    const pathname = new URL(value.url()).pathname;
+    if (pathname === "/api/recommendation-runs") afterReleaseStartPosts.push(value.url());
+    if (pathname === `/api/recommendation-runs/${bRootRunId}/controls`) afterReleaseBControlPosts.push(value.url());
+  });
+  try {
+    aFixtureInstalled = true;
+    await installSourceInputFixture({ name: aFixture, userId: account.userId, targetId: account.targetId, idempotencyKey: aKey });
+    const aRootRunId = await startFromHome(page, request, account, aKey);
+    const aRun = await completedRun(request, account.token, aRootRunId);
+    expect(aRun.result).toMatchObject({ kind: "recommendation_list", itemCount: 1 });
+    if (aRun.result?.kind !== "recommendation_list") throw new Error("EXPECTED_A_RECOMMENDATION_LIST");
+    const aListSnapshot = await recommendationListSnapshot(request, account.token, account.targetId, aRun.result.recommendationListId);
+    await expect.poll(() => runGraph(account.userId, aRootRunId, account.targetId), { timeout: 20_000 }).toMatchObject({ rootCount: 1, ownerTargetRootCount: 1, ownerTargetRootIds: [aRootRunId], childCount: 1, resultCount: 1, listCount: 1, itemCount: 1, journeyCompletionCount: 1, childParentMatches: true, resultProducerMatches: true, journeyOwnerRootChildMatches: true });
+    assertOperationalFacts(await operationalFacts(account.userId, aRootRunId));
+    await page.goto(`/recommendations?runId=${aRootRunId}&resultId=${aRun.result.resultId}`);
+    await expect(page.getByRole("heading", { name: "本次推荐已准备好" })).toBeVisible();
+    await expect(page.getByRole("list", { name: "推荐岗位" })).toContainText("高级前端工程师");
+
+    bFixtureInstalled = true;
+    await installSourceInputFixture({ name: bFixture, userId: account.userId, targetId: account.targetId, idempotencyKey: bKey });
+    await queue.pause();
+    paused = true;
+    bRootRunId = await startFromHome(page, request, account, bKey);
+    await expect.poll(async () => (await recommendationRun(request, account.token, bRootRunId)).status).toBe("queued");
+    await expect.poll(() => runGraph(account.userId, bRootRunId, account.targetId), { timeout: 20_000 }).toMatchObject({ rootCount: 1, ownerTargetRootCount: 2, ownerTargetRootIds: [aRootRunId, bRootRunId].sort(), childCount: 0, resultCount: 0, listCount: 0, itemCount: 0 });
+
+    await page.goto("/profile/run-policy");
+    const stopResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/account/run-policy/controls" && response.request().method() === "POST");
+    await page.getByRole("button", { name: "停止全部运行" }).click();
+    expect((await stopResponse).status()).toBe(200);
+    await expect.poll(() => accountRunControl(request, account.token)).toMatchObject({ stoppedAt: expect.any(String), controlVersion: 1 });
+
+    await expect.poll(async () => (await recommendationRun(request, account.token, bRootRunId)).status, { timeout: 30_000 }).toBe("paused");
+    await page.goto(`/home?runId=${bRootRunId}`);
+    const panel = page.locator(".recommendation-run-panel");
+    await expect(panel.getByRole("status")).toContainText("本次推荐已暂停");
+    await expect(panel.getByRole("button", { name: "本次推荐已暂停" })).toBeDisabled();
+    await queue.resume();
+    paused = false;
+    const blockedResumeResponse = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/recommendation-runs/${bRootRunId}/controls` && response.request().method() === "POST");
+    await panel.getByRole("button", { name: "继续本次推荐" }).click();
+    expect((await blockedResumeResponse).status()).toBe(409);
+    await expect(panel.getByRole("status")).toContainText("账户已停止全部运行");
+
+    await page.goto(`/recommendations?runId=${aRootRunId}&resultId=${aRun.result.resultId}`);
+    await expect(page.getByRole("heading", { name: "本次推荐已准备好" })).toBeVisible();
+    await expect(page.getByRole("list", { name: "推荐岗位" })).toContainText("高级前端工程师");
+    expect(await recommendationListSnapshot(request, account.token, account.targetId, aRun.result.recommendationListId)).toEqual(aListSnapshot);
+    expect(await runGraph(account.userId, aRootRunId, account.targetId)).toMatchObject({ rootCount: 1, ownerTargetRootCount: 2, ownerTargetRootIds: [aRootRunId, bRootRunId].sort(), childCount: 1, resultCount: 1, listCount: 1, itemCount: 1, journeyCompletionCount: 1, childParentMatches: true, resultProducerMatches: true, journeyOwnerRootChildMatches: true });
+
+    trackAfterRelease = true;
+    await page.goto("/profile/run-policy");
+    const releaseResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/account/run-policy/controls" && response.request().method() === "POST");
+    await page.getByRole("button", { name: "解除全局停止" }).click();
+    expect((await releaseResponse).status()).toBe(200);
+    await expect.poll(() => accountRunControl(request, account.token)).toMatchObject({ stoppedAt: null, controlVersion: 2 });
+    await page.goto(`/home?runId=${bRootRunId}`);
+    await expect(panel.getByRole("status")).toContainText("本次推荐已暂停");
+    expect(afterReleaseStartPosts).toEqual([]);
+    expect(afterReleaseBControlPosts).toEqual([]);
+    expect(await recommendationRun(request, account.token, bRootRunId)).toMatchObject({ status: "paused", result: null, failure: null });
+    expect(await runGraph(account.userId, bRootRunId, account.targetId)).toMatchObject({ rootCount: 1, ownerTargetRootCount: 2, ownerTargetRootIds: [aRootRunId, bRootRunId].sort(), childCount: 0, resultCount: 0, listCount: 0, itemCount: 0, journeyCompletionCount: 0 });
+    expect(await recommendationListSnapshot(request, account.token, account.targetId, aRun.result.recommendationListId)).toEqual(aListSnapshot);
+
+    trackAfterRelease = false;
+    const resumeRequest = page.waitForRequest((value) => new URL(value.url()).pathname === `/api/recommendation-runs/${bRootRunId}/controls` && value.method() === "POST");
+    const resumeResponse = page.waitForResponse((response) => new URL(response.url()).pathname === `/api/recommendation-runs/${bRootRunId}/controls` && response.request().method() === "POST");
+    await panel.getByRole("button", { name: "继续本次推荐" }).click();
+    const resumeCommand = (await resumeRequest).postDataJSON() as { commandId: string; action: string };
+    expect(resumeCommand.action).toBe("resume");
+    expect((await resumeResponse).status()).toBe(200);
+    await expect.poll(() => recommendationControlBinding(account.userId, bRootRunId, resumeCommand.commandId), { timeout: 20_000 }).toMatchObject({ rootRunId: bRootRunId, physicalRunId: bRootRunId, physicalParentRunId: null, action: "resume", applied: true });
+    const bRun = await completedRun(request, account.token, bRootRunId);
+    expect(bRun.result).toMatchObject({ kind: "recommendation_list", itemCount: 1 });
+    await expect.poll(() => runGraph(account.userId, bRootRunId, account.targetId), { timeout: 20_000 }).toMatchObject({ rootCount: 1, ownerTargetRootCount: 2, ownerTargetRootIds: [aRootRunId, bRootRunId].sort(), childCount: 1, resultCount: 1, listCount: 1, itemCount: 1, journeyCompletionCount: 0, childParentMatches: true, resultProducerMatches: true });
+    const bFacts = await operationalFacts(account.userId, bRootRunId);
+    assertOperationalFacts(bFacts);
+    expect(bFacts.auditEventTypes).toEqual(expect.arrayContaining(["agent.run_paused", "agent.run_resumed"]));
+    expect(await runGraph(account.userId, aRootRunId, account.targetId)).toMatchObject({ rootCount: 1, ownerTargetRootCount: 2, ownerTargetRootIds: [aRootRunId, bRootRunId].sort(), childCount: 1, resultCount: 1, listCount: 1, itemCount: 1, journeyCompletionCount: 1, journeyOwnerRootChildMatches: true });
+    expect(await recommendationListSnapshot(request, account.token, account.targetId, aRun.result.recommendationListId)).toEqual(aListSnapshot);
+    expect(await sideFacts(account.userId, account.targetId)).toEqual(before);
+  } finally {
+    if (paused) await queue.resume();
+    await queue.close();
+    if (bFixtureInstalled) await removeSourceInputFixture(bFixture);
+    if (aFixtureInstalled) await removeSourceInputFixture(aFixture);
   }
 });
 
