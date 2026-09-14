@@ -7,8 +7,15 @@ const request = { authenticatedAccount: { userId: owner }, requestId: "00000000-
 
 it("推荐运行仅从会话身份读取 owner，并将账户停止映射为安全 409", async () => {
   const controller = new RecommendationRunsController({ start: async (input: unknown) => { expect(input).toMatchObject({ userId: owner }); throw new AccountRunAdmissionError("ACCOUNT_RUN_STOPPED"); } } as never, {} as never, {} as never);
-  await expect(controller.start(request, { idempotencyKey: "00000000-0000-4000-8000-000000000003", warningFingerprint: null } as never))
+  await expect(controller.start(request, { status() {} } as never, { idempotencyKey: "00000000-0000-4000-8000-000000000003", warningFingerprint: null } as never))
     .rejects.toMatchObject({ code: "ACCOUNT_RUN_STOPPED", status: 409, publicMessage: "账户已停止全部运行，请先解除全局停止" });
+});
+
+it("首次与复用启动写入真实 201/200", async () => {
+  const statuses: number[] = []; const command = { idempotencyKey: "00000000-0000-4000-8000-000000000003", warningFingerprint: null } as never;
+  const controller = new RecommendationRunsController({ start: async () => ({ run: {}, reused: false }) } as never, {} as never, {} as never);
+  await controller.start(request, { status(value: number) { statuses.push(value); } } as never, command);
+  expect(statuses).toEqual([201]);
 });
 
 it("owner 不匹配的逻辑 root 读取保持隐藏 404", async () => {

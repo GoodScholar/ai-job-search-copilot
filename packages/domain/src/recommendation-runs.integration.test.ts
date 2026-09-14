@@ -286,6 +286,23 @@ describe("推荐运行领域边界", () => {
       .resolves.toMatchObject({ runId: published.run.runId, result: { kind: "no_recommendations" } });
   });
 
+  it("latestPublished 对无结果、不同 owner 与账户停止/解除保持只读语义", async () => {
+    const owner = await account(); const other = await account(); const service = commands(owner.fingerprint);
+    const started = await service.start({ userId: owner.userId, requestId: randomUUID(), command: await command(owner, randomUUID()) });
+    const queries = createRecommendationRunQueries({ db: database });
+    await expect(queries.latestPublished({ userId: owner.userId })).resolves.toBeNull();
+    const facts = await completeRootAndInsertChild(started.run.runId);
+    await database.update(agentRuns).set({ status: "completed", currentStep: "completed", startedAt: now, completedAt: now, terminationKind: "completed", updatedAt: now }).where(eq(agentRuns.id, facts.childId));
+    await database.update(agentRunSteps).set({ status: "completed", startedAt: now, completedAt: now }).where(eq(agentRunSteps.runId, facts.childId));
+    await database.insert(recommendationResults).values({ id: randomUUID(), userId: owner.userId, targetId: owner.targetId, rootRunId: started.run.runId, producerRunId: facts.childId, kind: "no_recommendations", recommendationListId: null, itemCount: 0, evidence: resultEvidence(facts.root, 0), createdAt: now });
+    const control = createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: randomUUID, clock: () => now });
+    await control.control({ userId: owner.userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 0, action: "stop" } });
+    await expect(queries.latestPublished({ userId: owner.userId })).resolves.toMatchObject({ runId: started.run.runId });
+    await expect(queries.latestPublished({ userId: other.userId })).resolves.toBeNull();
+    await control.control({ userId: owner.userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 1, action: "release" } });
+    await expect(queries.latestPublished({ userId: owner.userId })).resolves.toMatchObject({ runId: started.run.runId });
+  });
+
   it.each(["running", "paused", "failed", "cancelled", "completed"] as const)("公开 get 为 create_recommendations 的 %s 持久事实输出严格闭合投影", async (publicationStatus) => {
     const owner = await account(); const service = commands(owner.fingerprint); const started = await service.start({ userId: owner.userId, requestId: randomUUID(), command: await command(owner, randomUUID()) });
     const { childId } = await completeRootAndInsertChild(started.run.runId);

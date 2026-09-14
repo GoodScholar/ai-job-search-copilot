@@ -1,10 +1,10 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Inject, Param, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, HttpStatus, Inject, Param, Post, Req, Res, UseGuards } from "@nestjs/common";
 import { ApiBadRequestResponse, ApiBearerAuth, ApiConflictResponse, ApiNotFoundResponse, ApiUnauthorizedResponse } from "@nestjs/swagger";
 import { ControlRecommendationRunCommandSchema, RecommendationRunPreparationSchema, RecommendationRunSchema, StartRecommendationRunCommandSchema } from "@job-copilot/contracts/recommendation-runs";
 import { AccountRunAdmissionError } from "@job-copilot/domain/account-run-control";
 import { RecommendationRunError } from "@job-copilot/domain/recommendation-runs";
 import { RunPreflightRejectedError } from "@job-copilot/domain/run-preflight";
-import type { FastifyRequest } from "fastify";
+import type { FastifyReply, FastifyRequest } from "fastify";
 import { createZodDto, ZodResponse } from "nestjs-zod";
 import { z } from "zod";
 import { SessionGuard } from "../auth/session.guard.js";
@@ -44,8 +44,8 @@ export class RecommendationRunsController {
   async preparation(@Req() request: FastifyRequest) { return { preparation: await this.preparationQueries.prepare({ userId: request.authenticatedAccount!.userId }) }; }
 
   @Post() @ZodResponse({ type: StartResponseDto, status: HttpStatus.CREATED }) @ZodResponse({ type: StartResponseDto, status: HttpStatus.OK }) @ApiBadRequestResponse({ type: ApiProblem }) @ApiConflictResponse({ type: ApiProblem })
-  async start(@Req() request: FastifyRequest, @Body() command: StartDto) {
-    try { return await this.commands.start({ userId: request.authenticatedAccount!.userId, requestId: getRequestId(request), command }); }
+  async start(@Req() request: FastifyRequest, @Res({ passthrough: true }) reply: FastifyReply, @Body() command: StartDto) {
+    try { const result = await this.commands.start({ userId: request.authenticatedAccount!.userId, requestId: getRequestId(request), command }); reply.status(result.reused ? HttpStatus.OK : HttpStatus.CREATED); return result; }
     catch (error) {
       if (error instanceof RunPreflightRejectedError) throw runPreflightConflict(error);
       if (error instanceof AccountRunAdmissionError && error.code === "ACCOUNT_RUN_STOPPED") throw new ApiException(error.code, HttpStatus.CONFLICT, "账户已停止全部运行，请先解除全局停止");
