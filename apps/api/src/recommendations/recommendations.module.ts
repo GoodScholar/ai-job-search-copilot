@@ -1,4 +1,4 @@
-import { Module } from "@nestjs/common";
+import { MiddlewareConsumer, Module, NestModule } from "@nestjs/common";
 import type { Database } from "@job-copilot/database";
 import { createRecommendationQueries } from "@job-copilot/domain/recommendation-queries";
 import { createDeepMatchRunStarter } from "@job-copilot/domain/deep-match-agent-runs";
@@ -24,4 +24,6 @@ import { RUN_PREFLIGHT_EVALUATOR, type RunPreflightEvaluator } from "../run-pref
     { provide: RECOMMENDATION_FEEDBACK_QUERIES, inject: [DATABASE], useFactory: (db: Database) => createRecommendationFeedbackQueries({ db }) },
   ],
 })
-export class RecommendationsModule {}
+export class RecommendationsModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) { consumer.apply((_request: unknown, response: { setHeader(name: string, value: string): void }, next: () => void) => { response.setHeader("Cache-Control", "no-store"); next(); }).forRoutes(RecommendationsController); }
+}
