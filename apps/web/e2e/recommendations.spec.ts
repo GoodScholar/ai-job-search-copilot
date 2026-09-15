@@ -337,10 +337,14 @@ test("推荐决策与拒绝校准建议保持规则和目标不变", async ({ pa
   const proposalBefore = await (async () => { const client = new Client({ connectionString: databaseUrl }); await client.connect(); try { return (await client.query("select id, status, version from calibration_proposals where user_id = $1 order by created_at desc limit 1", [account.userId])).rows[0] as { id: string; status: string; version: number }; } finally { await client.end(); } })();
   expect(proposalBefore.status).toBe("pending");
   const revise = page.getByRole("button", { name: "修改建议" });
+  const renderedVersion = page.locator("form").filter({ has: revise }).locator('input[name="expectedVersion"]');
   if (info.project.name === "Desktop Chrome") await revise.click(); else await revise.tap();
   await expect.poll(async () => { const client = new Client({ connectionString: databaseUrl }); await client.connect(); try { return (await client.query("select status, version from calibration_proposals where id = $1", [proposalBefore.id])).rows[0]; } finally { await client.end(); } }).toMatchObject({ status: "pending", version: proposalBefore.version + 1 });
+  // 数据库提交先于 RSC 表单更新；下一次操作必须使用已经渲染的新版本。
+  await expect(renderedVersion).toHaveValue(String(proposalBefore.version + 1));
   if (info.project.name === "Desktop Chrome") await revise.click(); else await revise.tap();
   await expect.poll(async () => { const client = new Client({ connectionString: databaseUrl }); await client.connect(); try { return (await client.query("select status, version from calibration_proposals where id = $1", [proposalBefore.id])).rows[0]; } finally { await client.end(); } }).toMatchObject({ status: "pending", version: proposalBefore.version + 2 });
+  await expect(renderedVersion).toHaveValue(String(proposalBefore.version + 2));
   const reject = page.getByRole("button", { name: "拒绝建议" });
   if (info.project.name === "Desktop Chrome") { await reject.focus(); await page.keyboard.press("Enter"); } else await reject.tap();
   await expect.poll(async () => { const client = new Client({ connectionString: databaseUrl }); await client.connect(); try { return (await client.query("select status, version, resolution_idempotency_key from calibration_proposals where id = $1", [proposalBefore.id])).rows[0]; } finally { await client.end(); } }).toMatchObject({ status: "rejected", version: proposalBefore.version + 3, resolution_idempotency_key: expect.any(String) });

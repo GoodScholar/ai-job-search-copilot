@@ -24,6 +24,8 @@
 
 ## 当前进度与执行顺序（2026-09-15）
 
+**收尾更新：** 下段为 final fix wave 前的历史快照，不再表示待实施状态。Task 1–14 已交付；`57db5f9` 完成整分支审查修复，Standards/Spec 限定复审均无剩余阻塞。后续收尾将 Playwright 精确升级到 1.63.0、移除 Mobile 专属本地重试、等待校准表单版本同步，并保留开始按钮失败取证。runtime 43、workspace 2,384、8 包类型检查、Web lint 和三应用构建已有有效通过记录；新版 E2E 长矩阵原 Mobile 导航场景首次通过，新发现的校准时序失败修正后两浏览器共 10 次通过，来源健康、Inbox、AnySearch 与模型诊断范围另行补齐。未声称修改后一次完整矩阵全绿。原 Desktop 开始按钮偶发禁用在 20 次重复及 8 次独立运行时冷启动中未复现，根因仍 unknown；用户明确同意暂时放行，按已知限制交付，不标记为业务修复。原始失败、TDD/trace 缺失及采样边界保留于 `.superpowers/sdd/2026-09-11-issue-53-one-click-recommendation/final-version-gate-report.md`。最新授权包括提交与 Issue 更新关闭；本轮不 push、merge 或实施 #54。
+
 Task 1、2、11、12、13、3、4、14、5、6、7、8、9、10 已完成至 `6bc5781c63470cf717cfa3afcd2b86518ab93e6e`，保留原编号与历史步骤，不重做迁移。整分支初审的 Spec 与 Standards 两轴结论均为 Needs fixes；本轮 final fix wave 正在收口审查项，随后仍需限定复审与 root 安排的最终 gate。Task 8/9 原始日志、TDD 与截图证据限制均保留在验收记录，不宣称全程无偏差或将持久化 fixture 冒称完整 E2E。设计与最终审查使用 Astra/medium，实现、测试及修复使用 Terra/high；每个切片独立 TDD 与既定双轴审查，测试单进程串行。精确提交、审查结论和证据以本计划的 `.superpowers/sdd/2026-09-11-issue-53-one-click-recommendation/progress.md` 为准；本文历史步骤并不代表重复执行授权。完成本地验收不构成 push、merge、Issue 评论或关闭授权。
 
 Task 11 交付持久控制及命令；Task 12 交付全部现有执行路径的停止屏障；Task 13 交付账户页面控制入口。Task 3–10 接入这些已存在的接口，不再假设全局停止等待裁定。

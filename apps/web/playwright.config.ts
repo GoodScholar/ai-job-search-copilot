@@ -88,8 +88,6 @@ export default defineConfig({
     },
     {
       name: "Mobile Safari",
-      // https://github.com/microsoft/playwright/issues/42385: retry refreshes a stuck WebKit worker in long macOS runs.
-      retries: process.env.CI ? 2 : 1,
       use: {
         ...devices["iPhone 13"],
         browserName: "webkit",

@@ -314,7 +314,18 @@ async function startFromHome(page: Page, request: APIRequestContext, account: Ac
   await page.goto("/home");
   await installFirstRandomUuid(page, idempotencyKey);
   const start = page.getByRole("button", { name: "开始今日发现" });
-  await expect(start).toBeEnabled();
+  try {
+    await expect(start).toBeEnabled();
+  } catch (error) {
+    try {
+      const current = await browserPreparation(page).catch(() => null);
+      await test.info().attach("start-preparation-state", {
+        body: JSON.stringify({ beforeNavigation: ready.preparation.preflight, afterFailure: current?.preflight, page: await page.locator("body").innerText() }),
+        contentType: "application/json",
+      });
+    } catch { /* 取证失败不能覆盖原始断言。 */ }
+    throw error;
+  }
   if (ready.preparation.preflight.status === "ready_with_warnings") {
     await start.click();
     const confirm = page.getByRole("button", { name: "我已了解，开始今日发现" });
