@@ -6,6 +6,7 @@ import { createAuditTrail } from "@job-copilot/domain/audit-trail";
 import { createAgentRunCommands, createAgentRunProcessor, createAgentRunRecoveryQueries, createLayeredPublicJobDiscoveryRuntime, type DiscoveryContentStore, type LayeredPublicJobDiscoveryWorkflowResolver } from "@job-copilot/domain/agent-runs";
 import { FAKE_ANYSEARCH_PUBLIC_JOB_PHASE, resolveJobDiscoveryExecutionMode, resolveJobDiscoveryRuntimeConfig } from "@job-copilot/domain/job-discovery-execution-mode";
 import { createJobDiscoverySchedules } from "@job-copilot/domain/job-discovery-schedules";
+import { createRecommendationRunCommands } from "@job-copilot/domain/recommendation-runs";
 import { createRunPreflightEvaluator } from "@job-copilot/domain/run-preflight";
 import { createModelDiagnosticProjectionReader } from "@job-copilot/domain/model-diagnostics";
 import type { VerifiedJobEvidenceStore } from "@job-copilot/domain/verified-job-source-gate";
@@ -282,17 +283,9 @@ class AgentRunDatabase {
       ) => {
         const db = database.db;
         const auditTrail = createAuditTrail({ db, clock: () => new Date() });
-        const runs = createAgentRunCommands({
-          db,
-          queue,
-          auditTrail,
-          id: randomUUID,
-          clock: () => new Date(),
-          executionMode,
-          runPreflight,
-        });
+        const recommendations = createRecommendationRunCommands({ db, queue, auditTrail, id: randomUUID, clock: () => new Date(), executionMode, runPreflight });
         return new AgentRunScheduler({
-          schedules: createJobDiscoverySchedules({ db, runs, auditTrail, id: randomUUID, clock: () => new Date(), executionMode }),
+          schedules: createJobDiscoverySchedules({ db, recommendations, runPreflight, auditTrail, id: randomUUID, clock: () => new Date(), executionMode }),
           reporter,
         });
       },

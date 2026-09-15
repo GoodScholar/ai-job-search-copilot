@@ -991,6 +991,7 @@ describe("database migrations", () => {
       "job_discovery_schedule_occurrences_status_check",
       "job_discovery_schedule_occurrences_skip_reason_check",
       "job_discovery_schedule_occurrences_outcome_check",
+      "agent_inbox_items_owner_schedule_occurrence_fk",
       "agent_runs_preflight_snapshot_object",
       "job_source_postings_availability_check",
       "job_source_posting_versions_availability_check",
@@ -1004,6 +1005,7 @@ describe("database migrations", () => {
       { table_name: "job_discovery_schedules", column_name: "next_run_at", data_type: "timestamp with time zone" },
       { table_name: "job_discovery_schedule_occurrences", column_name: "scheduled_for", data_type: "timestamp with time zone" },
       { table_name: "job_discovery_schedule_occurrences", column_name: "skip_reason", data_type: "character varying" },
+      { table_name: "agent_inbox_items", column_name: "schedule_occurrence_id", data_type: "uuid" },
       { table_name: "agent_runs", column_name: "preflight_snapshot", data_type: "jsonb" },
       { table_name: "job_source_postings", column_name: "availability", data_type: "character varying" },
       { table_name: "job_source_postings", column_name: "availability_updated_at", data_type: "timestamp with time zone" },
@@ -1093,16 +1095,33 @@ describe("database migrations", () => {
         '7d7f93d8-1f78-4604-a1f9-1e245070a267', ${userId}, ${scheduleId}, ${targetId}, now() + interval '4 days', 'skipped', ${runId}, 'RUN_PREFLIGHT_BLOCKED'
       )
     `)).rejects.toMatchObject({ cause: { code: "23514" } });
+    await migratedDatabase.execute(sql`
+      insert into agent_inbox_items (id, user_id, schedule_occurrence_id, kind, status, reason_code, budget_dimension)
+      values ('ad4dc85c-4445-461c-adfd-d17827ed0b36', ${userId}, '46fe0861-7a2a-4684-b5cd-a66d26d0eb94', 'schedule_attention', 'unread', 'SCHEDULE_RUN_PREFLIGHT_BLOCKED', null)
+    `);
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_inbox_items (id, user_id, schedule_occurrence_id, kind, status, reason_code, budget_dimension)
+      values ('d2e20de7-5e9c-440e-b2db-c5bb8e962ddb', ${userId}, '46fe0861-7a2a-4684-b5cd-a66d26d0eb94', 'schedule_attention', 'unread', 'SCHEDULE_RUN_PREFLIGHT_BLOCKED', null)
+    `)).rejects.toMatchObject({ cause: { code: "23505" } });
+    await migratedDatabase.execute(sql`
+      insert into job_discovery_schedule_occurrences (id, user_id, schedule_id, target_id, scheduled_for, status, run_id, skip_reason)
+      values ('7ad6050a-e7e8-4b51-8738-40a54b559c0d', ${userId}, ${scheduleId}, ${targetId}, now() + interval '5 days', 'skipped', null, 'RUN_PREFLIGHT_BLOCKED')
+    `);
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_inbox_items (id, user_id, schedule_occurrence_id, kind, status, reason_code, budget_dimension)
+      values ('452e9524-303f-4c76-b41f-bc606a8d1d09', ${otherUserId}, '7ad6050a-e7e8-4b51-8738-40a54b559c0d', 'schedule_attention', 'unread', 'SCHEDULE_RUN_PREFLIGHT_BLOCKED', null)
+    `)).rejects.toMatchObject({ cause: { code: "23503" } });
 
     const indexes = await migratedDatabase.execute(sql`
       select indexname from pg_indexes
       where schemaname = 'public' and indexname in (
         'job_discovery_schedules_due_idx', 'job_discovery_schedule_occurrences_pending_idx',
         'job_source_postings_availability_idx', 'job_source_posting_versions_availability_idx',
-        'job_opportunities_availability_idx', 'job_opportunities_canonical_idx', 'job_opportunities_current_dedup_unique', 'job_source_postings_source_scan_idx'
+        'job_opportunities_availability_idx', 'job_opportunities_canonical_idx', 'job_opportunities_current_dedup_unique', 'job_source_postings_source_scan_idx',
+        'agent_inbox_items_schedule_occurrence_unique_idx'
       ) order by indexname
     `);
-    expect(indexes).toHaveLength(8);
+    expect(indexes).toHaveLength(9);
   });
 
   it("registers the 0047 preflight snapshot migration before 0048", async () => {

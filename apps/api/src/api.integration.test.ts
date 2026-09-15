@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { agentRuns, auditEvents, candidateFactEvidence, candidateFacts, careerDocuments, careerFactConflicts, careerImports, companyWatchlistRevisions, companyWatchlists, createDatabase, firstRecommendationJourneyCompletions, jobProfiles, jobSourceHealthChecks, modelDiagnosticResults, migrateDatabase, profileFactRevisions, profileFacts, type Database } from "@job-copilot/database";
 import type { CareerDocumentStore, CareerImportQueue } from "@job-copilot/domain/career-imports";
 import type { JobContentStore, JobImportQueue } from "@job-copilot/domain/job-imports";
-import { createAgentRunCommands, type AgentRunQueue } from "@job-copilot/domain/agent-runs";
+import { createAgentRunCommands, createRecommendationRunCommands, type AgentRunQueue } from "@job-copilot/domain/agent-runs";
 import { createReadyRunPreflightEvaluator } from "../../../packages/domain/src/testing/run-preflight.js";
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
 import { createCompanyWatchlistCommands } from "@job-copilot/domain/company-watchlists";
@@ -265,8 +265,9 @@ describe("authenticated workbench HTTP API", () => {
     Object.assign(process.env, originalEnvironment);
   });
 
-  const productionPreflight = () => createConfiguredRunPreflightEvaluator(
+  const productionPreflight = (environment: NodeJS.ProcessEnv = process.env) => createConfiguredRunPreflightEvaluator(
     createModelDiagnosticProjectionReader({ configurationFingerprint: createFakeModelDiagnosticAdapter({ kind: "success" }, TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED).configurationFingerprint }),
+    environment,
   );
 
   function withDeepMatchWarning(evaluator: RunPreflightEvaluator, warningRevision: () => number): RunPreflightEvaluator {
@@ -1238,27 +1239,27 @@ describe("authenticated workbench HTTP API", () => {
   });
 
   it("通过真实 HTTP 序列化 Public v2 scheduled run 的 latest 与 detail 响应", async () => {
-    const session = await createSession(app, "public-v2-run-response");
-    const targetId = await createActiveTarget(app, session.sessionToken, "Public v2 工程师");
+    const prepared = await prepareRealPreflightAccount("public-v2-run-response");
+    const { session, targetId, sourceSentinel } = prepared;
     const setupClock = () => new Date("2026-08-30T01:31:00.000Z");
     const dueClock = () => new Date("2026-08-31T01:31:00.000Z");
     const auditTrail = createAuditTrail({ db: database, clock: setupClock });
-    await createCompanyWatchlistCommands({ db: database, auditTrail, id: randomUUID, clock: setupClock }).addItem({
-      userId: session.account.userId, targetId, requestId: randomUUID(),
-      command: { expectedVersion: 0, canonicalCompanyName: "Public Example", careersUrl: "https://boards.greenhouse.io/public-example", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null },
-    });
-    const runs = createAgentRunCommands({ db: database, queue: agentRunQueue, auditTrail, runPreflight: createReadyRunPreflightEvaluator({ clock: setupClock }), id: randomUUID, clock: setupClock, executionMode: "greenhouse" });
-    const schedules = createJobDiscoverySchedules({ db: database, runs, auditTrail, id: randomUUID, clock: setupClock });
+    const greenhouseEnvironment = { ...process.env, E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: JSON.stringify({ [randomUUID()]: {} }) };
+    const setupPreflight = productionPreflight(greenhouseEnvironment);
+    const recommendations = createRecommendationRunCommands({ db: database, queue: agentRunQueue, auditTrail, runPreflight: setupPreflight, id: randomUUID, clock: setupClock, executionMode: "greenhouse" });
+    const schedules = createJobDiscoverySchedules({ db: database, recommendations, runPreflight: setupPreflight, auditTrail, id: randomUUID, clock: setupClock });
     const schedule = await schedules.set({ userId: session.account.userId, targetId, requestId: randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
     expect(schedule.nextRunAt).toBe("2026-08-31T01:30:00.000Z");
-    const dueSchedules = createJobDiscoverySchedules({ db: database, runs, auditTrail, id: randomUUID, clock: dueClock });
+    const duePreflight = productionPreflight(greenhouseEnvironment);
+    const dueRecommendations = createRecommendationRunCommands({ db: database, queue: agentRunQueue, auditTrail, runPreflight: duePreflight, id: randomUUID, clock: dueClock, executionMode: "greenhouse" });
+    const dueSchedules = createJobDiscoverySchedules({ db: database, recommendations: dueRecommendations, runPreflight: duePreflight, auditTrail, id: randomUUID, clock: dueClock });
     await dueSchedules.materializeDue({ limit: 1 });
     await dueSchedules.dispatchPending({ limit: 1 });
     const headers = bearer(session.sessionToken);
     const latest = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-runs/latest", headers });
 
     expect(latest.statusCode).toBe(200);
-    expect(latest.json().run).toMatchObject({ adapter: "greenhouse", sourceScope: { sources: [expect.objectContaining({ sourceId: "greenhouse:public-example" })] } });
+    expect(latest.json().run).toMatchObject({ adapter: "greenhouse", sourceScope: { sources: [expect.objectContaining({ sourceId: `greenhouse:${sourceSentinel}` })] } });
     const detail = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/agent-runs/${latest.json().run.runId}`, headers });
     expect(detail.statusCode).toBe(200);
     expect(detail.json()).toMatchObject({ adapter: "greenhouse", executionSpec: { adapter: "greenhouse" } });

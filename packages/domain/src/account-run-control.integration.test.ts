@@ -2,11 +2,12 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { and, eq, inArray } from "drizzle-orm";
-import { accountRunPolicies, agentRunEvents, agentRuns, auditEvents, createDatabase, jobAccounts, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
+import { accountRunPolicies, agentInboxItems, agentRunEvents, agentRuns, auditEvents, createDatabase, jobAccounts, jobDiscoveryScheduleOccurrences, jobDiscoverySchedules, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
 import { accountRunAdmissionReason, createAccountRunControl } from "./account-run-control";
 import { AccountRunControlError } from "./account-run-control";
 import { createAgentRunCommands, type AgentRunQueue } from "./agent-run-control";
+import { createAgentRunCheckpoint } from "./agent-run-checkpoint";
 import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
 
 class MemoryQueue implements AgentRunQueue { async enqueue(): Promise<void> {} }
@@ -53,6 +54,12 @@ describe("账户运行停止控制", () => {
     await expect(service.control({ userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 1, action: "release" } })).resolves.toMatchObject({ applied: true, state: { controlVersion: 2 } });
     await expect(service.control({ userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 2, action: "release" } })).resolves.toEqual({ applied: false, state: { stoppedAt: null, controlVersion: 2, scheduleResumeAfter: now.toISOString() } });
     await expect(service.control({ userId, requestId: randomUUID(), command: { commandId, expectedVersion: 0, action: "release" } })).rejects.toMatchObject({ code: "ACCOUNT_RUN_CONTROL_COMMAND_ID_CONFLICT" } satisfies Partial<AccountRunControlError>);
+    await expect(database.select({ outcome: auditEvents.outcome, reasonCode: auditEvents.reasonCode, metadata: auditEvents.metadata }).from(auditEvents).where(and(eq(auditEvents.userId, userId), eq(auditEvents.eventType, "account.run_control_rejected"))))
+      .resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({ outcome: "failure", reasonCode: "ACCOUNT_RUN_CONTROL_VERSION_CONFLICT", metadata: expect.objectContaining({ action: "stop", expectedVersion: 0 }) }),
+        expect.objectContaining({ outcome: "failure", reasonCode: "ACCOUNT_RUN_CONTROL_COMMAND_ID_CONFLICT", metadata: expect.objectContaining({ action: "stop", expectedVersion: 1 }) }),
+      ]));
+    await expect(database.select().from(agentInboxItems).where(eq(agentInboxItems.userId, userId))).resolves.toEqual([]);
   });
 
   it("读取默认控制不创建策略基线", async () => {
@@ -70,7 +77,7 @@ describe("账户运行停止控制", () => {
     await expect(database.select().from(agentRuns).where(eq(agentRuns.userId, target.userId))).resolves.toEqual([]);
   });
 
-  it("停止只暂停所属 queued/running 运行并保留取消、终态和其他账户，释放不恢复运行", async () => {
+  it("停止取消所属 queued/running 运行并保留已暂停、终态和其他账户，释放不恢复运行", async () => {
     const owner = await activeTarget(); const other = await activeTarget(); const runtime = commands();
     const queued = await runtime.start({ userId: owner.userId, requestId: randomUUID(), command: { targetId: owner.targetId, idempotencyKey: randomUUID() } });
     const paused = await runtime.start({ userId: owner.userId, requestId: randomUUID(), command: { targetId: owner.targetId, idempotencyKey: randomUUID() } });
@@ -87,28 +94,28 @@ describe("账户运行停止控制", () => {
     await expect(service.control({ userId: owner.userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 0, action: "stop" } })).resolves.toMatchObject({ applied: true, state: { controlVersion: 1 } });
     const rows = await database.select({ id: agentRuns.id, status: agentRuns.status, controlState: agentRuns.controlState }).from(agentRuns).where(and(eq(agentRuns.userId, owner.userId), inArray(agentRuns.id, [queued.runId, paused.runId, running.runId, cancelling.runId, terminal.runId])));
     expect(rows).toEqual(expect.arrayContaining([
-      { id: queued.runId, status: "paused", controlState: "none" }, { id: paused.runId, status: "paused", controlState: "none" }, { id: running.runId, status: "running", controlState: "pause_requested" }, { id: cancelling.runId, status: "running", controlState: "cancel_requested" }, { id: terminal.runId, status: "completed", controlState: "none" },
+      { id: queued.runId, status: "cancelled", controlState: "none" }, { id: paused.runId, status: "paused", controlState: "none" }, { id: running.runId, status: "running", controlState: "cancel_requested" }, { id: cancelling.runId, status: "running", controlState: "cancel_requested" }, { id: terminal.runId, status: "completed", controlState: "none" },
     ]));
     await expect(database.select().from(agentRuns).where(eq(agentRuns.id, paused.runId))).resolves.toEqual(pausedBeforeStop);
     await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, foreign.runId))).resolves.toEqual([{ status: "queued" }]);
     const beforeRelease = await database.select({ id: agentRuns.id, status: agentRuns.status, controlState: agentRuns.controlState }).from(agentRuns).where(eq(agentRuns.userId, owner.userId));
     await service.control({ userId: owner.userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 1, action: "release" } });
     await expect(database.select({ id: agentRuns.id, status: agentRuns.status, controlState: agentRuns.controlState }).from(agentRuns).where(eq(agentRuns.userId, owner.userId))).resolves.toEqual(beforeRelease);
-    await expect(database.select({ eventType: agentRunEvents.eventType }).from(agentRunEvents).where(eq(agentRunEvents.userId, owner.userId))).resolves.toEqual(expect.arrayContaining([{ eventType: "run.paused" }, { eventType: "run.pause_requested" }]));
+    await expect(database.select({ eventType: agentRunEvents.eventType }).from(agentRunEvents).where(eq(agentRunEvents.userId, owner.userId))).resolves.toEqual(expect.arrayContaining([{ eventType: "run.paused" }, { eventType: "run.cancel_requested" }, { eventType: "run.cancelled" }]));
     await expect(database.select().from(auditEvents).where(and(eq(auditEvents.userId, owner.userId), eq(auditEvents.eventType, "account.run_stopped")))).resolves.toHaveLength(1);
   });
 
-  it("释放账户停止不清除 running run 的 pending pause 请求", async () => {
+  it("释放账户停止不清除 running run 的 pending cancel 请求", async () => {
     const target = await activeTarget(); const runtime = commands();
     const started = await runtime.start({ userId: target.userId, requestId: randomUUID(), command: { targetId: target.targetId, idempotencyKey: randomUUID() } });
     await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", claimToken: randomUUID(), claimExpiresAt: new Date(now.getTime() + 30_000), activeSliceStartedAt: now, startedAt: now, attemptCount: 1, controlState: "none" }).where(eq(agentRuns.id, started.runId));
     const service = controls();
     await service.control({ userId: target.userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 0, action: "stop" } });
     await expect(database.select({ status: agentRuns.status, controlState: agentRuns.controlState }).from(agentRuns).where(eq(agentRuns.id, started.runId)))
-      .resolves.toEqual([{ status: "running", controlState: "pause_requested" }]);
+      .resolves.toEqual([{ status: "running", controlState: "cancel_requested" }]);
     await service.control({ userId: target.userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 1, action: "release" } });
     await expect(database.select({ status: agentRuns.status, controlState: agentRuns.controlState }).from(agentRuns).where(eq(agentRuns.id, started.runId)))
-      .resolves.toEqual([{ status: "running", controlState: "pause_requested" }]);
+      .resolves.toEqual([{ status: "running", controlState: "cancel_requested" }]);
   });
 
   it("同一账户命令并发仅施加一次，no-op 不重复审计", async () => {
@@ -119,5 +126,30 @@ describe("账户运行停止控制", () => {
     await service.control({ userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 1, action: "release" } });
     await service.control({ userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 2, action: "release" } });
     await expect(database.select().from(auditEvents).where(and(eq(auditEvents.userId, userId), eq(auditEvents.eventType, "account.run_stop_released")))).resolves.toHaveLength(1);
+  });
+
+  it("全局停止取消旧运行并关闭每日计划，释放后旧运行仍在安全检查点终止", async () => {
+    const target = await activeTarget();
+    const runtime = commands();
+    const queued = await runtime.start({ userId: target.userId, requestId: randomUUID(), command: { targetId: target.targetId, idempotencyKey: randomUUID() } });
+    const running = await runtime.start({ userId: target.userId, requestId: randomUUID(), command: { targetId: target.targetId, idempotencyKey: randomUUID() } });
+    const claimToken = randomUUID();
+    await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", claimToken, claimExpiresAt: new Date(now.getTime() + 30_000), activeSliceStartedAt: now, startedAt: now, attemptCount: 1 }).where(eq(agentRuns.id, running.runId));
+    const scheduleId = randomUUID();
+    const occurrenceId = randomUUID();
+    await database.insert(jobDiscoverySchedules).values({ id: scheduleId, userId: target.userId, targetId: target.targetId, version: 1, state: "enabled", dailyTime: "09:00", timeZone: "Asia/Shanghai", nextRunAt: new Date(now.getTime() + 86_400_000), createdAt: now, updatedAt: now });
+    await database.insert(jobDiscoveryScheduleOccurrences).values({ id: occurrenceId, userId: target.userId, scheduleId, targetId: target.targetId, scheduledFor: now, status: "pending", runId: null, skipReason: null, createdAt: now });
+
+    const service = controls();
+    await service.control({ userId: target.userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 0, action: "stop" } });
+    await expect(database.select({ id: agentRuns.id, status: agentRuns.status, controlState: agentRuns.controlState }).from(agentRuns).where(and(eq(agentRuns.userId, target.userId), inArray(agentRuns.id, [queued.runId, running.runId])))).resolves.toEqual(expect.arrayContaining([
+      { id: queued.runId, status: "cancelled", controlState: "none" },
+      { id: running.runId, status: "running", controlState: "cancel_requested" },
+    ]));
+    await expect(database.select({ state: jobDiscoverySchedules.state, nextRunAt: jobDiscoverySchedules.nextRunAt }).from(jobDiscoverySchedules).where(eq(jobDiscoverySchedules.id, scheduleId))).resolves.toEqual([{ state: "disabled", nextRunAt: null }]);
+    await expect(database.select({ status: jobDiscoveryScheduleOccurrences.status, skipReason: jobDiscoveryScheduleOccurrences.skipReason }).from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, occurrenceId))).resolves.toEqual([{ status: "skipped", skipReason: "ACCOUNT_RUN_STOPPED" }]);
+
+    await service.control({ userId: target.userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 1, action: "release" } });
+    await expect(createAgentRunCheckpoint({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: randomUUID, clock: () => now }).check({ userId: target.userId, runId: running.runId, claimToken, checkpointKey: "after-release" })).resolves.toEqual({ kind: "cancelled" });
   });
 });

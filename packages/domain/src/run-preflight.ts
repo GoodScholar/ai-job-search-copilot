@@ -24,6 +24,8 @@ export type RunPreflightInput = {
   workflow: "discovery" | "deep_match" | "recommendation";
   trigger: "manual" | "schedule" | "automatic";
   scheduledFor?: Date;
+  /** 仅用于保存每日计划：检查下次时点，不把保存动作当作实际后台运行。 */
+  configuration?: boolean;
 };
 export type RunPreflightEvaluation = {
   report: RunPreflightReport;
@@ -154,7 +156,7 @@ function usableBudget(settings: AccountRunPolicySettings, input: RunPreflightInp
   if (required.some((value) => value <= 0)) return false;
   if (input.trigger !== "schedule") return true;
   return input.scheduledFor !== undefined
-    && isDateInBackgroundWindow(now, settings.backgroundWindow)
+    && (input.configuration || isDateInBackgroundWindow(now, settings.backgroundWindow))
     && isDateInBackgroundWindow(input.scheduledFor, settings.backgroundWindow);
 }
 
@@ -167,16 +169,18 @@ export function createRunPreflightEvaluator(deps: { capabilityAdapter: SourceCap
         readAccountRunControlInTransaction(db, input.userId),
       ]);
       const primary = allTargets.find((value) => value.priority === "primary" && value.state === "active") ?? null;
-      const requested = input.workflow === "recommendation" ? primary : input.targetId ? allTargets.find((value) => value.targetId === input.targetId) ?? null : primary;
+      // 手动推荐始终从当前主目标开始；每日计划才带有 occurrence 已绑定的目标。
+      const requestedTargetId = input.workflow === "recommendation" && input.trigger === "manual" ? undefined : input.targetId;
+      const requested = requestedTargetId ? allTargets.find((value) => value.targetId === requestedTargetId) ?? null : primary;
       // A foreign/missing caller-supplied id is never reflected in the public report.
       // It is indistinguishable from a missing request and falls back to the owner's primary target.
-      const safeRequestedTargetId = requested?.targetId ?? (input.targetId ? null : primary?.targetId ?? null);
+      const safeRequestedTargetId = requested?.targetId ?? (requestedTargetId ? null : primary?.targetId ?? null);
       const targetId = requested?.state === "active" ? requested.targetId : primary?.targetId ?? null;
       const realSources = (await sources(db, input.userId, targetId)).slice(0, policy.effective.discovery.trustedSourceLimit);
       let recommendationPlan: RunPreflightEvaluation["recommendationPlan"];
       if (input.workflow === "recommendation" && targetId) {
         const targetSnapshot = await readDiscoveryTargetInTransaction(db, { userId: input.userId, targetId });
-        if (targetSnapshot?.state === "active" && targetSnapshot.priority === "primary") {
+        if (targetSnapshot?.state === "active") {
           const watchlist = await readDiscoveryWatchlistInTransaction(db, { userId: input.userId, targetId });
           let discoverySpec: DiscoveryRunSpec | null = null;
           try {

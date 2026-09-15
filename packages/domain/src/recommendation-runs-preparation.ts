@@ -26,8 +26,9 @@ export type RecommendationRunStartSpec = { targetId: string; targetVersion: numb
 export type RecommendationRunContext = z.infer<typeof RecommendationContextSchema>;
 export type RecommendationRunPreparationResult = { preparation: RecommendationRunPreparation; startSpec: RecommendationRunStartSpec | null; recommendationContext: RecommendationRunContext | null };
 
-export async function prepareRecommendationRunInTransaction(transaction: any, input: { userId: string; executionMode: JobDiscoveryExecutionMode }, deps: { runPreflight: RunPreflightEvaluator; id: () => string; clock: () => Date }): Promise<RecommendationRunPreparationResult> {
-  const evaluation = await deps.runPreflight.evaluate(transaction, { userId: input.userId, workflow: "recommendation", trigger: "manual" });
+export async function prepareRecommendationRunInTransaction(transaction: any, input: { userId: string; executionMode: JobDiscoveryExecutionMode; targetId?: string; trigger?: "manual" | "schedule"; scheduledFor?: Date }, deps: { runPreflight: RunPreflightEvaluator; id: () => string; clock: () => Date }): Promise<RecommendationRunPreparationResult> {
+  const trigger = input.trigger ?? "manual";
+  const evaluation = await deps.runPreflight.evaluate(transaction, { userId: input.userId, workflow: "recommendation", trigger, ...(trigger === "schedule" && input.targetId ? { targetId: input.targetId } : {}), ...(trigger === "schedule" && input.scheduledFor ? { scheduledFor: input.scheduledFor } : {}) });
   const budgets = { discovery: input.executionMode === "fake" ? evaluation.policy.snapshot.budgets.fake : evaluation.policy.snapshot.budgets.publicDiscovery, deepMatch: evaluation.policy.snapshot.budgets.deepMatch };
   const plan = evaluation.recommendationPlan;
   if (!plan) return { preparation: RecommendationRunPreparationSchema.parse({ target: null, sourceScope: { trustedSourceCount: 0, publicQueryCount: 0 }, accountPolicyRevisionNumber: evaluation.policy.revisionNumber, budgets, preflight: evaluation.report }), startSpec: null, recommendationContext: null };

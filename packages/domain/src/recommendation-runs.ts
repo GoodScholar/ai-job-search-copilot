@@ -1,17 +1,19 @@
 import { createHash } from "node:crypto";
 import { and, desc, eq, exists, inArray, isNull, notExists, or } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
-import { agentRunControlCommands, agentRunSteps, agentRuns, jobDiscoverySourceIssues, recommendationResults, recommendationRunControlCommands, recommendationRunStartCommands, type Database } from "@job-copilot/database";
+import { agentRunControlCommands, agentRunSteps, agentRuns, jobDiscoveryScheduleOccurrences, jobDiscoverySchedules, jobDiscoverySourceIssues, recommendationResults, recommendationRunControlCommands, recommendationRunStartCommands, type Database } from "@job-copilot/database";
 import { ControlRecommendationRunCommandSchema, RecommendationResultSchema, RecommendationRunSchema, StartRecommendationRunCommandSchema, type ControlRecommendationRunCommand, type RecommendationRun, type RecommendationRunFailureCode, type RecommendationRunStageKey, type StartRecommendationRunCommand } from "@job-copilot/contracts/recommendation-runs";
 import { JobTargetConstraintsSchema } from "@job-copilot/contracts/job-targets";
 import { authorizeRunPreflight, type RunPreflightEvaluator } from "./run-preflight";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
+import { applyTransactionDeadline } from "./transaction-deadline";
 import { applyAgentRunControlInTransaction, insertAgentRunInTransaction, type AgentRunQueue } from "./agent-run-control";
 import { prepareRecommendationRunInTransaction } from "./recommendation-runs-preparation";
 import { discoverySourceScopeCounts } from "./agent-run-discovery-spec";
 import type { AuditTrail } from "./audit-trail";
 import type { JobDiscoveryExecutionMode } from "./job-discovery-execution-mode";
 import { projectRecommendationFailure } from "./recommendation-failure-projection";
+import { AccountRunAdmissionError, accountRunAdmissionReason, readAccountRunControlInTransaction } from "./account-run-admission";
 
 type PhysicalStatus = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled";
 type StageStatus = "pending" | "running" | "completed" | "failed" | "cancelled";
@@ -22,6 +24,16 @@ const rootStepKeys = ["batch_search", "fetch_details", "persist_results"] as con
 export class RecommendationRunError extends Error {
   constructor(readonly code: "RECOMMENDATION_RUN_NOT_FOUND" | "RECOMMENDATION_RUN_COMMAND_ID_CONFLICT" | "RECOMMENDATION_RUN_CONTROL_CONFLICT") { super(code); }
 }
+
+export type RecommendationRunStarter = {
+  start(input: {
+    userId: string;
+    requestId: string;
+    command: StartRecommendationRunCommand;
+    trigger?: { kind: "manual" } | { kind: "schedule"; occurrenceId: string; scheduledFor: Date; targetId: string };
+    deadline?: Date;
+  }): Promise<{ run: RecommendationRun; reused: boolean }>;
+};
 
 function fingerprint(value: unknown) { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
 function physicalStage(run: PhysicalRun, steps: readonly PhysicalStep[]): StageStatus {
@@ -155,15 +167,32 @@ export function createRecommendationRunQueries(deps: { db: Database }) {
   };
 }
 
-export function createRecommendationRunCommands(deps: { db: Database; queue: AgentRunQueue; auditTrail: AuditTrail; runPreflight: RunPreflightEvaluator; executionMode: JobDiscoveryExecutionMode; id: () => string; clock: () => Date }) {
+export function createRecommendationRunCommands(deps: { db: Database; queue: AgentRunQueue; auditTrail: AuditTrail; runPreflight: RunPreflightEvaluator; executionMode: JobDiscoveryExecutionMode; id: () => string; clock: () => Date }): RecommendationRunStarter & {
+  control(input: { userId: string; requestId: string; runId: string; command: ControlRecommendationRunCommand }): Promise<{ applied: boolean; run: RecommendationRun }>;
+} {
   return {
-    async start(input: { userId: string; requestId: string; command: StartRecommendationRunCommand }): Promise<{ run: RecommendationRun; reused: boolean }> {
-      const command = StartRecommendationRunCommandSchema.parse(input.command); const commandFingerprint = fingerprint({ warningFingerprint: command.warningFingerprint });
+    async start(input) {
+      const command = StartRecommendationRunCommandSchema.parse(input.command);
+      const commandFingerprint = input.trigger?.kind === "schedule"
+        ? fingerprint({ warningFingerprint: command.warningFingerprint, trigger: "schedule", occurrenceId: input.trigger.occurrenceId, scheduledFor: input.trigger.scheduledFor.toISOString(), targetId: input.trigger.targetId })
+        : fingerprint({ warningFingerprint: command.warningFingerprint });
       const outcome = await deps.db.transaction(async (transaction) => {
+        if (input.deadline) await applyTransactionDeadline(transaction, { deadline: input.deadline, clock: deps.clock });
         await acquireAccountAdvisoryLock(transaction, input.userId);
         const [prior] = await transaction.select().from(recommendationRunStartCommands).where(and(eq(recommendationRunStartCommands.userId, input.userId), eq(recommendationRunStartCommands.idempotencyKey, command.idempotencyKey))).limit(1);
         if (prior) { if (prior.commandFingerprint !== commandFingerprint) throw new RecommendationRunError("RECOMMENDATION_RUN_COMMAND_ID_CONFLICT"); return { rootId: prior.rootRunId, reused: true, wake: false }; }
-        const preparation = await prepareRecommendationRunInTransaction(transaction, { userId: input.userId, executionMode: deps.executionMode }, deps);
+        if (input.trigger?.kind === "schedule") {
+          const control = await readAccountRunControlInTransaction(transaction, input.userId);
+          const admission = accountRunAdmissionReason(control, input.trigger.scheduledFor);
+          if (admission) throw new AccountRunAdmissionError(admission);
+          const [occurrence] = await transaction.select({ status: jobDiscoveryScheduleOccurrences.status, scheduledFor: jobDiscoveryScheduleOccurrences.scheduledFor, scheduleState: jobDiscoverySchedules.state })
+            .from(jobDiscoveryScheduleOccurrences)
+            .innerJoin(jobDiscoverySchedules, and(eq(jobDiscoverySchedules.userId, jobDiscoveryScheduleOccurrences.userId), eq(jobDiscoverySchedules.id, jobDiscoveryScheduleOccurrences.scheduleId), eq(jobDiscoverySchedules.targetId, jobDiscoveryScheduleOccurrences.targetId)))
+            .where(and(eq(jobDiscoveryScheduleOccurrences.userId, input.userId), eq(jobDiscoveryScheduleOccurrences.id, input.trigger.occurrenceId), eq(jobDiscoveryScheduleOccurrences.targetId, input.trigger.targetId)))
+            .limit(1);
+          if (!occurrence || occurrence.status !== "pending" || occurrence.scheduleState !== "enabled" || occurrence.scheduledFor.getTime() !== input.trigger.scheduledFor.getTime()) throw new AccountRunAdmissionError("ACCOUNT_RUN_SCHEDULE_SKIPPED");
+        }
+        const preparation = await prepareRecommendationRunInTransaction(transaction, { userId: input.userId, executionMode: deps.executionMode, ...(input.trigger?.kind === "schedule" ? { targetId: input.trigger.targetId, trigger: "schedule" as const, scheduledFor: input.trigger.scheduledFor } : {}) }, deps);
         authorizeRunPreflight({ evaluation: { report: preparation.preparation.preflight } as any, warningFingerprint: command.warningFingerprint });
         if (!preparation.startSpec || !preparation.recommendationContext) throw new Error("RECOMMENDATION_RUN_PREPARATION_UNAVAILABLE");
         const active = await findActiveRoot(transaction, input.userId);

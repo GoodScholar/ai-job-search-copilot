@@ -251,7 +251,7 @@ export function AccountRunPolicyView({ initialControl = null, initialPolicy }: {
       pendingControlCommand.current = null;
       const refreshed = await refreshControl();
       if (refreshed) {
-        setControlMessage(refreshed.stoppedAt === null ? "已解除全局停止。旧运行需逐个继续，错过的计划不会补跑" : "已停止全部运行。");
+        setControlMessage(refreshed.stoppedAt === null ? "已解除全局停止。旧运行不会恢复；每日计划保持关闭，需重新启用。" : "已停止全部运行。");
       }
     } catch {
       setControlMessage("暂时无法更新运行控制，请稍后重试。");
@@ -264,9 +264,9 @@ export function AccountRunPolicyView({ initialControl = null, initialPolicy }: {
     <section className="profile-intro"><p className="workbench-kicker">求职画像 · 运行策略</p><h1>账户运行策略</h1><p>系统硬上限保护每次运行。你可以保存更保守的额度；手动运行不受后台窗口限制。</p></section>
     <section aria-labelledby="account-run-control-title" className="job-targets-section">
       <h2 id="account-run-control-title">账户运行控制</h2>
-      <p>停止后将阻止新的运行和外部动作，正在运行的任务会在安全检查点暂停；已发出的请求可能仍产生费用。</p>
-      {control?.stoppedAt !== null && control ? <p>已停止新动作，正在运行的任务将在安全检查点暂停。已发出的请求可能仍产生费用</p> : null}
-      {control?.stoppedAt !== null && control ? <p>全局停止已生效。解除不会自动恢复旧运行，旧运行需逐个继续，错过的计划不会补跑</p> : <p>解除全局停止只开放未来新运行，不会恢复旧运行或补跑错过的计划。</p>}
+      <p>停止后将阻止新的运行和外部动作，正在运行的任务会在下一个安全检查点终止；已发出的请求可能仍产生费用。</p>
+      {control?.stoppedAt !== null && control ? <p>已停止新动作，正在运行的任务将在下一个安全检查点终止。已发出的请求可能仍产生费用</p> : null}
+      {control?.stoppedAt !== null && control ? <p>全局停止已生效。解除不会恢复旧运行；每日计划保持关闭，需重新启用。</p> : <p>解除全局停止只开放未来新运行，不会恢复旧运行；每日计划需要重新启用。</p>}
       <div className="run-policy-actions"><Button className="workbench-touch-target" disabled={controlUnavailable || !control || controlling} onClick={() => void controlAllRuns()} size="lg" type="button" variant="outline">{controlling ? "正在更新…" : !control || control.stoppedAt === null ? "停止全部运行" : "解除全局停止"}</Button></div>
       {controlUnavailable && !controlMessage ? <p>运行控制暂不可用</p> : null}
       {controlMessage ? <p aria-live="polite" className="run-policy-status" role="status">{controlMessage}</p> : null}

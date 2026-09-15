@@ -1412,7 +1412,7 @@ describe("AgentRunProcessor checkpoints", () => {
         await waitUntilAConnectionIsWaitingForAccountAdvisoryLock(observerDatabase);
         releaseStop.resolve();
         await expect(stop).resolves.toMatchObject({ applied: true, state: { stoppedAt: expect.any(String) } });
-        await expect(processing).resolves.toMatch(/^(paused|stale)$/u);
+        await expect(processing).resolves.toBe("cancelled");
         await expect(Promise.all([
           database.select().from(jobMatchVersions).where(eq(jobMatchVersions.userId, fixture.userId)),
           database.select().from(recommendationResults).where(eq(recommendationResults.producerRunId, fixture.child.id)),
@@ -1423,7 +1423,7 @@ describe("AgentRunProcessor checkpoints", () => {
           database.select({ resultKind: firstRecommendationJourneyCompletions.resultKind }).from(firstRecommendationJourneyCompletions).where(eq(firstRecommendationJourneyCompletions.userId, fixture.userId)),
           database.select().from(agentRunEvents).where(and(eq(agentRunEvents.runId, fixture.child.id), eq(agentRunEvents.eventType, "run.completed"))),
           database.select({ status: agentRuns.status, controlState: agentRuns.controlState }).from(agentRuns).where(eq(agentRuns.id, fixture.child.id)),
-        ])).resolves.toEqual([[], [], [], [], [], [], [], [], [{ status: "paused", controlState: "none" }]]);
+        ])).resolves.toEqual([[], [], [], [], [], [], [], [], [{ status: "cancelled", controlState: "none" }]]);
       } else {
         releaseFinalCheckpoint.resolve();
         await waitForBarrier({ barrier: publicationEntered.promise, operation: processing, name: `${kind} publication transaction` });
@@ -2042,10 +2042,10 @@ describe("AgentRunProcessor checkpoints", () => {
   });
 
   it.each([
-    ["释放账户停止", "paused", false],
-    ["取消优先", "cancelled", false],
-    ["旧 claim 被替换", "paused", true],
-  ] as const)("账户停止后 deferred 模型调用在%s再迟到返回时，只结算旧 invocation usage", async (_scenario, expectedStatus, replaceClaim) => {
+    ["释放账户停止", "cancelled", false, false],
+    ["取消优先", "cancelled", false, true],
+    ["旧 claim 被替换", "cancelled", true, false],
+  ] as const)("账户停止后 deferred 模型调用在%s再迟到返回时，只结算旧 invocation usage", async (_scenario, expectedStatus, replaceClaim, cancelRun) => {
     const job = await deepMatchRun(); const fake = new FakeDeepMatchAdapter(); let entered!: () => void; let release!: () => void; let calls = 0;
     const started = new Promise<void>((resolve) => { entered = resolve; });
     const returned = new Promise<void>((resolve) => { release = resolve; });
@@ -2061,13 +2061,13 @@ describe("AgentRunProcessor checkpoints", () => {
     const processor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, deepMatchAdapter: adapter, checkpoint: durable, contentStore: new Store(), auditTrail, id: () => crypto.randomUUID(), clock: () => now, heartbeatIntervalMs: 1, heartbeatRenew: async (input) => {
       await started;
       await control.control({ userId: job.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
-      if (expectedStatus === "cancelled") await runCommands.control({ userId: job.userId, requestId: crypto.randomUUID(), runId: job.runId, command: { commandId: crypto.randomUUID(), action: "cancel" } });
+      if (cancelRun) await runCommands.control({ userId: job.userId, requestId: crypto.randomUUID(), runId: job.runId, command: { commandId: crypto.randomUUID(), action: "cancel" } });
       const decision = await durable.check({ userId: input.userId, runId: input.runId, claimToken: input.claimToken, checkpointKey: `${input.claimToken}:test_account_stop:1` });
       return decision.kind === "paused" || decision.kind === "cancelled" ? decision.kind : false;
     } });
     await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe(expectedStatus);
     await control.control({ userId: job.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 1, action: "release" } });
-    if (replaceClaim) await database.update(agentRuns).set({ status: "running", currentStep: "assess_matches", controlState: "none", claimToken: crypto.randomUUID(), claimExpiresAt: new Date(now.getTime() + 30_000), activeSliceStartedAt: now, attemptCount: 2, modelCallCount: 3, inputTokenCount: 17, outputTokenCount: 19, totalTokenCount: 36 }).where(eq(agentRuns.id, job.runId));
+    if (replaceClaim) await database.update(agentRuns).set({ status: "running", currentStep: "assess_matches", controlState: "none", cancelledAt: null, terminationKind: null, claimToken: crypto.randomUUID(), claimExpiresAt: new Date(now.getTime() + 30_000), activeSliceStartedAt: now, attemptCount: 2, modelCallCount: 3, inputTokenCount: 17, outputTokenCount: 19, totalTokenCount: 36 }).where(eq(agentRuns.id, job.runId));
     release();
     const usageKey = `deep_match_model:${job.opportunityIds[0]}:attempt:1`;
     await vi.waitFor(async () => expect(await database.select({ category: agentRunUsageEntries.category, amount: agentRunUsageEntries.amount }).from(agentRunUsageEntries).where(and(eq(agentRunUsageEntries.runId, job.runId), eq(agentRunUsageEntries.usageKey, usageKey))).orderBy(agentRunUsageEntries.category)).toEqual([{ category: "input_tokens", amount: 7 }, { category: "model_call", amount: 1 }, { category: "output_tokens", amount: 11 }]));
@@ -2090,13 +2090,13 @@ describe("AgentRunProcessor checkpoints", () => {
       await started;
       await control.control({ userId: job.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
       const decision = await durable.check({ userId: input.userId, runId: input.runId, claimToken: input.claimToken, checkpointKey: `${input.claimToken}:test_account_stop:1` });
-      return decision.kind === "paused" ? "paused" : false;
+      return decision.kind === "cancelled" ? "cancelled" : false;
     } });
-    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("paused");
+    await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("cancelled");
     const usageKey = `deep_match_model:${job.opportunityIds[0]}:attempt:1`;
     await vi.waitFor(async () => expect(await database.select({ category: agentRunUsageEntries.category, amount: agentRunUsageEntries.amount }).from(agentRunUsageEntries).where(and(eq(agentRunUsageEntries.runId, job.runId), eq(agentRunUsageEntries.usageKey, usageKey))).orderBy(agentRunUsageEntries.category)).toEqual([{ category: "input_tokens", amount: 7 }, { category: "model_call", amount: 1 }, { category: "output_tokens", amount: 11 }]));
     expect(calls).toBe(1);
-    await expect(Promise.all([database.select({ assessment: deepMatchRunCandidates.assessment }).from(deepMatchRunCandidates).where(eq(deepMatchRunCandidates.runId, job.runId)), database.select().from(recommendationLists).where(eq(recommendationLists.userId, job.userId)), database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, job.runId))])).resolves.toEqual([[{ assessment: null }, { assessment: null }], [], [{ status: "paused" }]]);
+    await expect(Promise.all([database.select({ assessment: deepMatchRunCandidates.assessment }).from(deepMatchRunCandidates).where(eq(deepMatchRunCandidates.runId, job.runId)), database.select().from(recommendationLists).where(eq(recommendationLists.userId, job.userId)), database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, job.runId))])).resolves.toEqual([[{ assessment: null }, { assessment: null }], [], [{ status: "cancelled" }]]);
   });
 
   it("迟到模型 usage 的 checkpoint 失败只记录固定错误码，不把正常 abort 误报为结算失败", async () => {
@@ -2120,9 +2120,9 @@ describe("AgentRunProcessor checkpoints", () => {
         await started;
         await control.control({ userId: job.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
         const decision = await durable.check({ userId: input.userId, runId: input.runId, claimToken: input.claimToken, checkpointKey: `${input.claimToken}:test_account_stop:1` });
-        return decision.kind === "paused" ? "paused" : false;
+        return decision.kind === "cancelled" ? "cancelled" : false;
       } });
-      await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("paused");
+      await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("cancelled");
       release();
       await vi.waitFor(() => expect(error).toHaveBeenCalledWith("AGENT_RUN_LATE_USAGE_SETTLEMENT_FAILED"));
       expect(error).toHaveBeenCalledTimes(1);
@@ -2145,9 +2145,9 @@ describe("AgentRunProcessor checkpoints", () => {
         await started;
         await control.control({ userId: job.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
         const decision = await durable.check({ userId: input.userId, runId: input.runId, claimToken: input.claimToken, checkpointKey: `${input.claimToken}:test_account_stop:1` });
-        return decision.kind === "paused" ? "paused" : false;
+        return decision.kind === "cancelled" ? "cancelled" : false;
       } });
-      await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("paused");
+      await expect(processor.process({ version: 1, userId: job.userId, runId: job.runId, finalAttempt: true })).resolves.toBe("cancelled");
       expect(error).not.toHaveBeenCalled();
     } finally { error.mockRestore(); }
   });
@@ -3544,21 +3544,21 @@ describe("AgentRunProcessor checkpoints", () => {
     });
   });
 
-  it("账户停止时 processor 不领取 queued run、也不增加 attempt 或调用 adapter", async () => {
+  it("账户停止时 processor 不领取 queued run、也不增加 attempt 或调用 adapter，并终止旧运行", async () => {
     const job = await run(); const calls = { search: 0, detail: 0 };
     const control = createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
     await control.control({ userId: job.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
     await expect(control.get({ userId: job.userId })).resolves.toMatchObject({ stoppedAt: expect.any(String) });
     // 独立模拟账户行已停止、但旧 worker 仍看见 queued 行的竞态。
-    await database.update(agentRuns).set({ status: "queued", controlState: "none", claimToken: null, claimExpiresAt: null, attemptCount: 0 }).where(eq(agentRuns.id, job.runId));
+    await database.update(agentRuns).set({ status: "queued", currentStep: "queued", controlState: "none", claimToken: null, claimExpiresAt: null, cancelledAt: null, terminationKind: null, attemptCount: 0 }).where(eq(agentRuns.id, job.runId));
     await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(successAdapter(calls)), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
-      .process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("paused");
+      .process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("cancelled");
     expect(calls).toEqual({ search: 0, detail: 0 });
     await expect(database.select({ status: agentRuns.status, attemptCount: agentRuns.attemptCount }).from(agentRuns).where(eq(agentRuns.id, job.runId)))
-      .resolves.toEqual([{ status: "paused", attemptCount: 0 }]);
+      .resolves.toEqual([{ status: "cancelled", attemptCount: 0 }]);
   });
 
-  it.each(["pause_requested", "cancel_requested"] as const)("账户停止后过期 claim 以旧 token 收敛 %s 而不 takeover", async (controlState) => {
+  it.each(["pause_requested", "cancel_requested"] as const)("账户停止后过期 claim 以旧 token 终止 %s 而不 takeover", async (controlState) => {
     const job = await run(); const oldToken = crypto.randomUUID(); const calls = { search: 0, detail: 0 };
     await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", controlState: "none", attemptCount: 1, startedAt: new Date(now.getTime() - 30_000), claimToken: oldToken, claimExpiresAt: new Date(now.getTime() - 1), activeSliceStartedAt: new Date(now.getTime() - 30_000) }).where(eq(agentRuns.id, job.runId));
     const control = createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
@@ -3567,13 +3567,13 @@ describe("AgentRunProcessor checkpoints", () => {
     // 模拟 controller 写入与旧 worker recovery 之间的已丢失 run-level pause 标记。
     await database.update(agentRuns).set({ controlState: controlState === "pause_requested" ? "none" : controlState }).where(eq(agentRuns.id, job.runId));
     await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(successAdapter(calls)), contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
-      .process({ version: 1, ...job, finalAttempt: true })).resolves.toBe(controlState === "cancel_requested" ? "cancelled" : "paused");
+      .process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("cancelled");
     expect(calls).toEqual({ search: 0, detail: 0 });
     await expect(database.select({ status: agentRuns.status, attemptCount: agentRuns.attemptCount, claimToken: agentRuns.claimToken }).from(agentRuns).where(eq(agentRuns.id, job.runId)))
-      .resolves.toEqual([{ status: controlState === "cancel_requested" ? "cancelled" : "paused", attemptCount: 1, claimToken: null }]);
+      .resolves.toEqual([{ status: "cancelled", attemptCount: 1, claimToken: null }]);
   });
 
-  it("账户停止且 run pause 标记丢失后 stepTransition 不再推进步骤", async () => {
+  it("账户停止且 run control 标记丢失后 stepTransition 不再推进步骤", async () => {
     const job = await run(); const calls = { search: 0, detail: 0 }; let stopped = false;
     const control = createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
     const durable = checkpoint();
@@ -3588,15 +3588,15 @@ describe("AgentRunProcessor checkpoints", () => {
     } };
 
     await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(successAdapter(calls)), checkpoint: controlled, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, heartbeatRenew: async () => true })
-      .process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("paused");
+      .process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("cancelled");
     expect(calls).toEqual({ search: 0, detail: 0 });
     await expect(Promise.all([
       database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, job.runId)),
       database.select({ eventType: agentRunEvents.eventType }).from(agentRunEvents).where(and(eq(agentRunEvents.runId, job.runId), eq(agentRunEvents.eventType, "step.started"))),
-    ])).resolves.toEqual([[{ status: "paused" }], []]);
+    ])).resolves.toEqual([[{ status: "cancelled" }], []]);
   });
 
-  it("账户停止且 run pause 标记丢失后 failOrRetry 不重新入队", async () => {
+  it("账户停止且 run control 标记丢失后 failOrRetry 不重新入队", async () => {
     const job = await run(); let stopped = false;
     const control = createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
     const durable = checkpoint();
@@ -3612,14 +3612,14 @@ describe("AgentRunProcessor checkpoints", () => {
     const retryableFailure = { ...successAdapter(), searchBatch: async () => { throw new Error("TEMPORARY"); } };
 
     await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(retryableFailure), checkpoint: controlled, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, heartbeatRenew: async () => true })
-      .process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("paused");
+      .process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("cancelled");
     await expect(Promise.all([
       database.select({ status: agentRuns.status, attemptCount: agentRuns.attemptCount }).from(agentRuns).where(eq(agentRuns.id, job.runId)),
       database.select({ eventType: agentRunEvents.eventType }).from(agentRunEvents).where(and(eq(agentRunEvents.runId, job.runId), eq(agentRunEvents.eventType, "run.retry_scheduled"))),
-    ])).resolves.toEqual([[{ status: "paused", attemptCount: 1 }], []]);
+    ])).resolves.toEqual([[{ status: "cancelled", attemptCount: 1 }], []]);
   });
 
-  it("账户停止且 run pause 标记丢失时 renewClaim 中止在途物理调用", async () => {
+  it("账户停止且 run control 标记丢失时 renewClaim 中止在途物理调用", async () => {
     const job = await layeredRun(); let reachedPhysicalCall!: () => void; let signal: AbortSignal | undefined;
     const physicalCallStarted = new Promise<void>((resolve) => { reachedPhysicalCall = resolve; });
     const processor = createAgentRunProcessor({
@@ -3639,7 +3639,7 @@ describe("AgentRunProcessor checkpoints", () => {
     await database.update(agentRuns).set({ controlState: "none" }).where(eq(agentRuns.id, job.runId));
 
     await vi.waitFor(() => expect(signal?.aborted).toBe(true), { timeout: 150 });
-    await expect(processing).resolves.toBe("paused");
+    await expect(processing).resolves.toBe("cancelled");
   });
 
   it("账户停止且 run pause 标记丢失后 layered outcome 不写结果或 child", async () => {
@@ -3754,17 +3754,17 @@ describe("AgentRunProcessor checkpoints", () => {
 
       releaseStop.resolve();
       await expect(stop).resolves.toMatchObject({ applied: true, state: { stoppedAt: expect.any(String) } });
-      await expect(processingResult).resolves.toMatchObject({ outcome: expect.stringMatching(/^(paused|stale)$/u) });
+      await expect(processingResult).resolves.toMatchObject({ outcome: "cancelled" });
       await expect(Promise.all([
         database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, root.runId)),
         database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, root.runId)),
         database.select().from(jobDiscoveryRunResults).where(eq(jobDiscoveryRunResults.runId, root.runId)),
         database.select().from(jobTriageVersions).where(eq(jobTriageVersions.userId, root.userId)),
         database.select().from(agentRuns).where(eq(agentRuns.parentRunId, root.runId)),
-      ])).resolves.toEqual([[{ status: "paused" }], [], [], [], []]);
+      ])).resolves.toEqual([[{ status: "cancelled" }], [], [], [], []]);
 
       await expect(controls.control({ userId: root.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 1, action: "release" } })).resolves.toMatchObject({ applied: true });
-      await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, root.runId))).resolves.toEqual([{ status: "paused" }]);
+      await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, root.runId))).resolves.toEqual([{ status: "cancelled" }]);
     } finally {
       releaseCollection.resolve();
       releaseStop.resolve();
@@ -3774,7 +3774,7 @@ describe("AgentRunProcessor checkpoints", () => {
     }
   }, 60_000);
 
-  it.each(["fake", "greenhouse", "layered_public"] as const)("%s 推荐根先提交 handoff 后，stop 看到并暂停唯一 child，release 不自动恢复", async (executionMode) => {
+  it.each(["fake", "greenhouse", "layered_public"] as const)("%s 推荐根先提交 handoff 后，stop 看到并终止唯一 child，release 不自动恢复", async (executionMode) => {
     const root = await recommendationRoot(executionMode);
     const handoffEntered = deferred(); const releaseHandoff = deferred(); const enqueued: string[] = [];
     const stopDatabase = createDatabase(container.getConnectionUri());
@@ -3797,13 +3797,13 @@ describe("AgentRunProcessor checkpoints", () => {
       await expect(processing).resolves.toBe("completed");
       await expect(stopResult).resolves.toMatchObject({ value: { applied: true, state: { stoppedAt: expect.any(String) } } });
       const [child] = await database.select({ id: agentRuns.id, status: agentRuns.status, controlState: agentRuns.controlState }).from(agentRuns).where(eq(agentRuns.parentRunId, root.runId));
-      expect(child).toEqual(expect.objectContaining({ status: "paused", controlState: "none" }));
+      expect(child).toEqual(expect.objectContaining({ status: "cancelled", controlState: "none" }));
       await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, root.runId))).resolves.toEqual([{ status: "completed" }]);
       await expect(database.select().from(agentRuns).where(eq(agentRuns.parentRunId, root.runId))).resolves.toHaveLength(1);
 
       const queuedBeforeRelease = [...enqueued];
       await expect(controls.control({ userId: root.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 1, action: "release" } })).resolves.toMatchObject({ applied: true });
-      await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, child!.id))).resolves.toEqual([{ status: "paused" }]);
+      await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, child!.id))).resolves.toEqual([{ status: "cancelled" }]);
       expect(enqueued).toEqual(queuedBeforeRelease);
     } finally {
       releaseHandoff.resolve();
@@ -3842,7 +3842,7 @@ describe("AgentRunProcessor checkpoints", () => {
     ])).resolves.toEqual([[{ status: "queued", currentStep: "persist_results" }], [], [], [], []]);
   });
 
-  it("child 的入队失败由持久 queued 行恢复；stop 后旧恢复消息只能暂停 child", async () => {
+  it("child 的入队失败由持久 queued 行恢复；stop 后旧恢复消息只能终止 child", async () => {
     const root = await recommendationRoot("fake");
     const failedQueue: string[] = [];
     await expect(recommendationProcessor({ executionMode: "fake", auditTrail: createAuditTrail({ db: database, clock: () => now }), matchingQueue: { enqueue: async (job) => { failedQueue.push(job.runId); throw new Error("QUEUE_UNAVAILABLE"); } } }).process({ version: 1, userId: root.userId, runId: root.runId, finalAttempt: true })).resolves.toBe("completed");
@@ -3852,9 +3852,9 @@ describe("AgentRunProcessor checkpoints", () => {
 
     const control = createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
     await control.control({ userId: root.userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
-    await database.update(agentRuns).set({ status: "queued", controlState: "none" }).where(eq(agentRuns.id, child!.id));
-    await expect(recommendationProcessor({ executionMode: "fake", auditTrail: createAuditTrail({ db: database, clock: () => now }) }).process({ version: 1, userId: root.userId, runId: child!.id, finalAttempt: true })).resolves.toBe("paused");
-    await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, child!.id))).resolves.toEqual([{ status: "paused" }]);
+    await database.update(agentRuns).set({ status: "queued", currentStep: "queued", controlState: "none", cancelledAt: null, terminationKind: null }).where(eq(agentRuns.id, child!.id));
+    await expect(recommendationProcessor({ executionMode: "fake", auditTrail: createAuditTrail({ db: database, clock: () => now }) }).process({ version: 1, userId: root.userId, runId: child!.id, finalAttempt: true })).resolves.toBe("cancelled");
+    await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, child!.id))).resolves.toEqual([{ status: "cancelled" }]);
   });
 
   it("同一 completed root 的重复消息和恢复只复用一个 child、候选快照与 queued 事件", async () => {

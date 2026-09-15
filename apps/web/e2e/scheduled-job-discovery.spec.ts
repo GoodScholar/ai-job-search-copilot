@@ -124,7 +124,7 @@ test("计划 E2E fixture 的窗口覆盖上海日界分钟", () => {
   });
 });
 
-test("每日检查通过 Fake Worker 交付一组岗位，并抵抗重复 Worker delivery", async ({ page, request }, testInfo) => {
+test("每日推荐通过 Fake Worker 交付一组岗位，并抵抗重复 Worker delivery", async ({ page, request }, testInfo) => {
   test.setTimeout(60_000);
   const session = await createSession(request, `scheduled-job-discovery-${testInfo.project.name}-${runSuffix}`);
   await addProfileEvidence(request, session.token);
@@ -139,7 +139,7 @@ test("每日检查通过 Fake Worker 交付一组岗位，并抵抗重复 Worker
   await page.context().addCookies([{ name: "job_copilot_session", value: session.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
   await page.goto("/home");
 
-  await expect(page.getByRole("heading", { name: "每天检查新岗位" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "每天获取岗位推荐" })).toBeVisible();
   await expect(page.getByText("可每日检查 1 个岗位来源")).toBeVisible();
   const time = page.getByLabel("每日检查时间（北京时间 / Asia/Shanghai）");
   expect(await time.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
@@ -157,7 +157,7 @@ test("每日检查通过 Fake Worker 交付一组岗位，并抵抗重复 Worker
   }
   const saveResponse = page.waitForResponse((response) => response.url().includes(`/api/job-targets/${targetId}/discovery-schedule`) && response.request().method() === "PUT");
   await page.getByRole("button", { name: "保存每日检查" }).click();
-  await expect(page.getByRole("region", { name: "每天检查新岗位" }).getByRole("status")).toContainText("每日检查已保存。");
+  await expect(page.getByRole("region", { name: "每天获取岗位推荐" }).getByRole("status")).toContainText("每日检查已保存。");
   expect((await saveResponse).status()).toBe(200);
   const scheduleResponse = await page.request.get(`/api/job-targets/${targetId}/discovery-schedule`);
   expect(scheduleResponse.status()).toBe(200);
@@ -202,12 +202,10 @@ test("每日检查通过 Fake Worker 交付一组岗位，并抵抗重复 Worker
     await queue.close();
   }
   await page.goto(`/home?runId=${queued.runId}#agent-run`);
-  const history = page.getByRole("region", { name: "本次启动条件" });
-  await expect(history).toContainText("触发方式计划启动");
-  await expect(history).toContainText("计划启动时带提示自动继续");
-  await expect(history).not.toContainText("已确认提示");
-  await expect(page.getByRole("heading", { name: "发现新的岗位机会" })).toBeVisible();
-  await expect(page.locator(".agent-run-results li")).toHaveCount(2);
+  const recommendation = page.getByRole("region", { name: "开始今日完整推荐" });
+  await expect(recommendation).toBeVisible();
+  await expect(recommendation.getByRole("list", { name: "完整推荐阶段" })).toBeVisible();
+  await expect(recommendation.getByRole("status")).toContainText(/本次(?:暂无推荐|推荐已准备完成)/u);
 
   const controls = page.locator(".agent-run-panel .workbench-touch-target");
   expect(await controls.count()).toBeGreaterThan(0);
@@ -216,7 +214,7 @@ test("每日检查通过 Fake Worker 交付一组岗位，并抵抗重复 Worker
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
 
-test("计划 occurrence 遇到运行前阻塞会跳过且绝不创建岗位发现 run", async ({ request }, testInfo) => {
+test("计划 occurrence 遇到运行前阻塞会跳过、公开 Inbox 提供有限处理动作和修复入口", async ({ page, request }, testInfo) => {
   test.setTimeout(60_000);
   const session = await createSession(request, `scheduled-preflight-blocked-${testInfo.project.name}-${runSuffix}`);
   // 先用完整的正式配置创建计划，再在 occurrence 发生前撤销唯一画像事实。
@@ -264,4 +262,23 @@ test("计划 occurrence 遇到运行前阻塞会跳过且绝不创建岗位发�
   } finally {
     await client.end();
   }
+  await page.context().addCookies([{ name: "job_copilot_session", value: session.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
+  const pending = await page.request.get("/api/agent-inbox?status=pending");
+  expect(pending.status()).toBe(200);
+  const inbox = await pending.json() as { items: Array<{ itemId: string; runId: string | null; kind: string; reasonCode: string; availableActions: string[]; target: unknown }> };
+  const attention = inbox.items.find((item) => item.kind === "schedule_attention");
+  expect(attention).toMatchObject({
+    runId: null, reasonCode: "SCHEDULE_RUN_PREFLIGHT_BLOCKED", availableActions: ["mark_read", "dismiss"],
+    target: { type: "schedule_occurrence", targetId, href: "/home#recommendation-run" },
+  });
+  const markedRead = await page.request.post(`/api/agent-inbox/${attention!.itemId}/actions`, { data: { actionId: crypto.randomUUID(), action: "mark_read" } });
+  expect(markedRead.status()).toBe(200);
+  await expect(markedRead.json()).resolves.toMatchObject({ applied: true, run: null, item: { status: "read", availableActions: ["dismiss"] } });
+  const dismissed = await page.request.post(`/api/agent-inbox/${attention!.itemId}/actions`, { data: { actionId: crypto.randomUUID(), action: "dismiss" } });
+  expect(dismissed.status()).toBe(200);
+  await expect(dismissed.json()).resolves.toMatchObject({ applied: true, run: null, item: { status: "resolved", availableActions: [] } });
+  await page.goto("/home");
+  const recommendation = page.getByRole("region", { name: "开始今日完整推荐" });
+  await expect(recommendation).toContainText("请先处理启动前的阻塞项。");
+  await expect(recommendation.getByRole("link", { name: "完善求职画像" })).toHaveAttribute("href", "/profile");
 });

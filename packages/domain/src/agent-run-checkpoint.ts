@@ -115,14 +115,14 @@ export function createAgentRunCheckpoint(deps: Dependencies): AgentRunCheckpoint
           await appendBudgetFacts(transaction, { id: deps.id, auditTrail: deps.auditTrail, userId: input.userId, requestId: input.runId, runId: input.runId, version: usageVersion, currentStep: run.currentStep, usage, consumed: { activeDurationMs: elapsed, toolCalls: amount(chargedReserve.toolCalls), sourceRequests: amount(chargedReserve.sourceRequests), modelCalls: amount(chargedReserve.modelCalls) }, now });
         }
         if (!ownsClaim || (expired && run.controlState === "none" && accountControl.stoppedAt === null)) return { kind: "stale" };
-        if (run.controlState === "cancel_requested") {
+        if (run.controlState === "cancel_requested" || accountControl.stoppedAt !== null) {
           const version = usageVersion + 1;
           await transaction.update(agentRuns).set({ ...usageUpdate, status: "cancelled", currentStep: "cancelled", controlState: "none", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, cancelledAt: now, terminationKind: "cancelled_by_user", terminationBudgetDimension: null, failureCode: null, usageComplete: run.usageComplete, version }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId)));
           await appendEvent(transaction, { id: deps.id, userId: input.userId, runId: input.runId, version, eventType: "run.cancelled", data: { eventType: "run.cancelled", status: "cancelled", currentStep: "cancelled", attemptCount: run.attemptCount }, now });
           await deps.auditTrail.bind(transaction).append({ userId: input.userId, actorUserId: input.userId, eventType: "agent.run_cancelled", occurredAt: now, requestId: input.runId, outcome: "success", reasonCode: "AGENT_RUN_CANCELLED", resourceType: "agent_run", resourceId: input.runId, metadata: { runId: input.runId, version, action: "cancel", attemptCount: run.attemptCount } });
           return { kind: "cancelled" };
         }
-        if (run.controlState === "pause_requested" || accountControl.stoppedAt !== null) {
+        if (run.controlState === "pause_requested") {
           const version = usageVersion + 1;
           await transaction.update(agentRuns).set({ ...usageUpdate, status: "paused", controlState: "none", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, version }).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId)));
           const sequence = await appendEvent(transaction, { id: deps.id, userId: input.userId, runId: input.runId, version, eventType: "run.paused", data: { eventType: "run.paused", status: "paused", currentStep: run.currentStep, attemptCount: run.attemptCount }, now });

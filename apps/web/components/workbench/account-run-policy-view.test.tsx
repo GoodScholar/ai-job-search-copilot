@@ -70,7 +70,7 @@ const activeControl: AccountRunControlState = { stoppedAt: null, controlVersion:
 
 afterEach(() => vi.restoreAllMocks());
 
-it("停止全部运行后重新读取权威状态，并说明安全检查点与在途费用", async () => {
+it("停止全部运行后重新读取权威状态，并说明安全检查点终止与在途费用", async () => {
   const user = userEvent.setup();
   const fetchMock = vi.spyOn(globalThis, "fetch")
     .mockResolvedValueOnce(Response.json({ applied: true, state: { stoppedAt: "2026-09-12T00:00:00.000Z", controlVersion: 1, scheduleResumeAfter: null } }))
@@ -83,10 +83,10 @@ it("停止全部运行后重新读取权威状态，并说明安全检查点与�
 
   await waitFor(() => expect(fetchMock).toHaveBeenCalledWith("/api/account/run-policy/controls", expect.objectContaining({ method: "POST" })));
   expect(await screen.findByRole("button", { name: "解除全局停止" })).toBeEnabled();
-  expect(screen.getByText(/已停止新动作，正在运行的任务将在安全检查点暂停。已发出的请求可能仍产生费用/u)).toBeInTheDocument();
+  expect(screen.getByText(/已停止新动作，正在运行的任务将在下一个安全检查点终止。已发出的请求可能仍产生费用/u)).toBeInTheDocument();
 });
 
-it("解除后说明旧运行需逐个继续且错过的计划不会补跑", async () => {
+it("解除后说明旧运行不会恢复且每日计划需重新启用", async () => {
   const user = userEvent.setup();
   const stopped: AccountRunControlState = { stoppedAt: "2026-09-12T00:00:00.000Z", controlVersion: 1, scheduleResumeAfter: null };
   vi.spyOn(globalThis, "fetch")
@@ -96,7 +96,7 @@ it("解除后说明旧运行需逐个继续且错过的计划不会补跑", asyn
   render(<AccountRunPolicyView initialControl={stopped} initialPolicy={initialPolicy} />);
   await user.click(screen.getByRole("button", { name: "解除全局停止" }));
 
-  expect(await screen.findByText(/旧运行需逐个继续，错过的计划不会补跑/u)).toBeInTheDocument();
+  expect(await screen.findByText(/旧运行不会恢复；每日计划保持关闭，需重新启用/u)).toBeInTheDocument();
 });
 
 it("旧停止命令重放后以重新读取的解除状态为准", async () => {
@@ -109,13 +109,13 @@ it("旧停止命令重放后以重新读取的解除状态为准", async () => {
   await user.click(screen.getByRole("button", { name: "停止全部运行" }));
 
   expect(await screen.findByRole("button", { name: "停止全部运行" })).toBeEnabled();
-  expect(screen.getByRole("status")).toHaveTextContent("已解除全局停止。旧运行需逐个继续，错过的计划不会补跑");
+  expect(screen.getByRole("status")).toHaveTextContent("已解除全局停止。旧运行不会恢复；每日计划保持关闭，需重新启用。");
 });
 
 it("未停止时仅说明停止效果，不把当前状态说成已停止", () => {
   render(<AccountRunPolicyView initialControl={activeControl} initialPolicy={initialPolicy} />);
-  expect(screen.queryByText("已停止新动作，正在运行的任务将在安全检查点暂停。已发出的请求可能仍产生费用")).not.toBeInTheDocument();
-  expect(screen.getByText("停止后将阻止新的运行和外部动作，正在运行的任务会在安全检查点暂停；已发出的请求可能仍产生费用。")).toBeInTheDocument();
+  expect(screen.queryByText("已停止新动作，正在运行的任务将在下一个安全检查点终止。已发出的请求可能仍产生费用")).not.toBeInTheDocument();
+  expect(screen.getByText("停止后将阻止新的运行和外部动作，正在运行的任务会在下一个安全检查点终止；已发出的请求可能仍产生费用。")).toBeInTheDocument();
 });
 
 it("控制状态不可用时禁用按钮，不阻塞既有策略编辑", () => {
@@ -191,7 +191,7 @@ it("保存策略不改变独立控制状态", async () => {
     body: JSON.stringify({ expectedVersion: 4, settings: initialPolicy.effective }),
   }]]);
   expect(screen.getByRole("button", { name: "解除全局停止" })).toBeEnabled();
-  expect(screen.getByText("已停止新动作，正在运行的任务将在安全检查点暂停。已发出的请求可能仍产生费用")).toBeVisible();
+  expect(screen.getByText("已停止新动作，正在运行的任务将在下一个安全检查点终止。已发出的请求可能仍产生费用")).toBeVisible();
 });
 
 it("保存更保守的可信来源上限时携带完整设置和当前修订，并显示新修订", async () => {

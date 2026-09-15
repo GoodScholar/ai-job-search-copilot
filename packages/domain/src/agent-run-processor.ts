@@ -279,8 +279,8 @@ async function stepTransition(deps: AgentRunProcessorDependencies, input: { user
     const [run] = await transaction.select().from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.status, "running"), eq(agentRuns.claimToken, input.claimToken)));
     if (!run) return false;
     const accountControl = await readAccountRunControlInTransaction(transaction, input.userId);
-    if (run.controlState !== "none" || accountControl.stoppedAt !== null) {
-      if (run.controlState === "none" && accountControl.stoppedAt !== null) await applyAgentRunControlInTransaction(transaction, { userId: input.userId, requestId: input.runId, runId: input.runId, command: { commandId: deps.id(), action: "pause" } }, deps);
+      if (run.controlState !== "none" || accountControl.stoppedAt !== null) {
+      if (run.controlState === "none" && accountControl.stoppedAt !== null) await applyAgentRunControlInTransaction(transaction, { userId: input.userId, requestId: input.runId, runId: input.runId, command: { commandId: deps.id(), action: "cancel" } }, deps);
       return "control";
     }
     const version = run.version + 1;
@@ -305,7 +305,7 @@ async function failOrRetry(deps: AgentRunProcessorDependencies, input: { userId:
     if (!run) return "stale";
     const accountControl = await readAccountRunControlInTransaction(transaction, input.userId);
     if (run.controlState !== "none" || accountControl.stoppedAt !== null) {
-      if (run.controlState === "none" && accountControl.stoppedAt !== null) await applyAgentRunControlInTransaction(transaction, { userId: input.userId, requestId: input.runId, runId: input.runId, command: { commandId: deps.id(), action: "pause" } }, deps);
+      if (run.controlState === "none" && accountControl.stoppedAt !== null) await applyAgentRunControlInTransaction(transaction, { userId: input.userId, requestId: input.runId, runId: input.runId, command: { commandId: deps.id(), action: "cancel" } }, deps);
       return "pending_control";
     }
     const elapsed = await settleActiveSlice(transaction, { id: deps.id, userId: input.userId, run, now });
@@ -574,11 +574,11 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         if (current.status === "cancelled") return { kind: "cancelled" as const };
         const accountStopped = (await readAccountRunControlInTransaction(transaction, job.userId)).stoppedAt !== null;
         if (accountStopped && current.status === "queued") {
-          await applyAgentRunControlInTransaction(transaction, { userId: job.userId, requestId: job.runId, runId: job.runId, command: { commandId: deps.id(), action: "pause" } }, deps);
-          return { kind: "paused" as const };
+          await applyAgentRunControlInTransaction(transaction, { userId: job.userId, requestId: job.runId, runId: job.runId, command: { commandId: deps.id(), action: "cancel" } }, deps);
+          return { kind: "cancelled" as const };
         }
         if (accountStopped && current.status === "running" && current.claimToken) {
-          if (current.controlState === "none") await applyAgentRunControlInTransaction(transaction, { userId: job.userId, requestId: job.runId, runId: job.runId, command: { commandId: deps.id(), action: "pause" } }, deps);
+          if (current.controlState === "none") await applyAgentRunControlInTransaction(transaction, { userId: job.userId, requestId: job.runId, runId: job.runId, command: { commandId: deps.id(), action: "cancel" } }, deps);
           return { kind: "pending_control" as const, claimToken: current.claimToken };
         }
         if (current.status === "running" && current.claimExpiresAt && current.claimExpiresAt > claimNow) return { kind: "retry" as const };

@@ -712,5 +712,5 @@ it("隐藏旧启动入口时仍保留定时设置、物理运行历史和逐运�
   expect(screen.queryByRole("combobox", { name: "用于发现岗位的求职目标" })).not.toBeInTheDocument();
   expect(screen.getByRole("button", { name: "暂停岗位发现" })).toBeVisible();
   expect(screen.getByRole("region", { name: "本次岗位发现执行规格" })).toBeVisible();
-  expect(screen.getByRole("heading", { name: "每天检查新岗位" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "每天获取岗位推荐" })).toBeVisible();
 });

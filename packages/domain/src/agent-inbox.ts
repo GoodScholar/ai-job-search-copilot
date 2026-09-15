@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
-import { agentInboxItemActions, agentInboxItems, agentRunSteps, agentRuns, calibrationProposals, jobDiscoverySourceIssues, jobSourceHealthChecks, recommendationLists, recommendationResults, type Database } from "@job-copilot/database";
+import { agentInboxItemActions, agentInboxItems, agentRunSteps, agentRuns, calibrationProposals, jobDiscoveryScheduleOccurrences, jobDiscoverySourceIssues, jobSourceHealthChecks, recommendationLists, recommendationResults, type Database } from "@job-copilot/database";
 import { AgentInboxActionCommandSchema, AgentInboxActionResponseSchema, AgentInboxListSchema, AgentInboxReasonCodeSchema, type AgentInboxActionCommand, type AgentInboxActionResponse, type AgentInboxItem, type AgentInboxTarget } from "@job-copilot/contracts/agent-inbox";
 import type { ControlAgentRunResponse, StartAgentRunCommand, StartAgentRunResponse } from "@job-copilot/contracts/agent-runs";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
@@ -35,6 +35,7 @@ const runCopy = {
   recommendation_list: ["新的推荐清单已生成", "可以查看最新推荐岗位。", "已生成一份新的结构化推荐清单。", "可据此安排后续求职行动。", "查看推荐清单。"],
   recommendation_result: ["本次推荐暂无合适岗位", "已完成可信推荐检查，暂未找到合适岗位。", "已发布可信的暂无推荐结果。", "本次推荐没有生成岗位清单。", "查看本次推荐结果。"],
   calibration_proposal: ["推荐校准建议待查看", "有一项推荐校准建议可供查看。", "已生成结构化校准建议。", "建议可能影响后续推荐排序。", "查看校准建议。"],
+  schedule_attention: ["每日推荐未启动", "计划运行前检查发现需要处理的事项。", "本次计划重新检查时未满足启动条件。", "本次计划未创建推荐运行。", "查看准备状态并修复阻塞项。"],
 } as const;
 function copyFor(item: Row) {
   if (item.kind !== "budget_exhausted") { const [title, message, basis, impact, suggestedAction] = runCopy[item.kind as keyof typeof runCopy]; return { title, message, basis, impact, suggestedAction }; }
@@ -51,6 +52,10 @@ function auditReason(item: Row) { return AgentInboxReasonCodeSchema.parse(item.r
 
 async function targetFor(db: Pick<Database, "select">, userId: string, item: Row): Promise<AgentInboxTarget> {
   if (item.kind === "candidate_fact" && item.candidateFactId) return { type: "candidate_fact", candidateFactId: item.candidateFactId, href: "/profile#candidate-facts" };
+  if (item.kind === "schedule_attention" && item.scheduleOccurrenceId) {
+    const occurrence = (await db.select({ targetId: jobDiscoveryScheduleOccurrences.targetId }).from(jobDiscoveryScheduleOccurrences).where(and(eq(jobDiscoveryScheduleOccurrences.userId, userId), eq(jobDiscoveryScheduleOccurrences.id, item.scheduleOccurrenceId))))[0];
+    if (occurrence) return { type: "schedule_occurrence", occurrenceId: item.scheduleOccurrenceId, targetId: occurrence.targetId, href: "/home#recommendation-run" };
+  }
   if (item.kind === "recommendation_list" && item.recommendationListId) { const list = (await db.select({ targetId: recommendationLists.targetId }).from(recommendationLists).where(and(eq(recommendationLists.userId, userId), eq(recommendationLists.id, item.recommendationListId))))[0]; if (list) return { type: "recommendation_list", recommendationListId: item.recommendationListId, targetId: list.targetId, href: `/recommendations?targetId=${list.targetId}&recommendationListId=${item.recommendationListId}#recommendation-list` }; }
   if (item.kind === "recommendation_result" && item.recommendationResultId) {
     const result = (await db.select({ rootRunId: recommendationResults.rootRunId, targetId: recommendationResults.targetId }).from(recommendationResults).where(and(eq(recommendationResults.userId, userId), eq(recommendationResults.id, item.recommendationResultId))))[0];

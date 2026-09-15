@@ -477,7 +477,7 @@ describe("agent run controls", () => {
     await expect(database.select({ eventType: auditEvents.eventType }).from(auditEvents).where(and(eq(auditEvents.userId, userId), eq(auditEvents.resourceId, queued.runId), eq(auditEvents.eventType, "agent.run_resumed")))).resolves.toHaveLength(1);
   });
 
-  it("账户停止后拒绝恢复已暂停运行且保留暂停事实", async () => {
+  it("账户停止后拒绝恢复已终止运行且保留终止事实", async () => {
     const { userId, targetId } = await activeTarget();
     const queue = new MemoryQueue();
     const started = await commands(queue).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
@@ -486,7 +486,7 @@ describe("agent run controls", () => {
     await expect(commands(queue).control({ userId, requestId: crypto.randomUUID(), runId: started.runId, command: { commandId: crypto.randomUUID(), action: "resume" } }))
       .rejects.toMatchObject({ code: "ACCOUNT_RUN_STOPPED" });
     await expect(database.select({ status: agentRuns.status, controlState: agentRuns.controlState }).from(agentRuns).where(eq(agentRuns.id, started.runId)))
-      .resolves.toEqual([{ status: "paused", controlState: "none" }]);
+      .resolves.toEqual([{ status: "cancelled", controlState: "none" }]);
   });
 
   it("账户停止在 fake、Greenhouse 与分层公开三种 discovery 启动器之前拒绝新建，幂等重放不丢失", async () => {
@@ -508,7 +508,7 @@ describe("agent run controls", () => {
     await expect(fake.start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: existingKey } }))
       .resolves.toMatchObject({ runId: existing.runId, reused: true });
     await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, existing.runId)))
-      .resolves.toEqual([{ status: "paused" }]);
+      .resolves.toEqual([{ status: "cancelled" }]);
   });
 
   it("直接恢复或取消暂停运行时也解决对应 decision Inbox 项", async () => {
@@ -580,7 +580,7 @@ describe("agent run controls", () => {
     await expect(database.select({ status: agentRuns.status, claimToken: agentRuns.claimToken, activeSliceStartedAt: agentRuns.activeSliceStartedAt }).from(agentRuns).where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, cancelling.runId)))).resolves.toEqual([{ status: "cancelled", claimToken: null, activeSliceStartedAt: null }]);
   });
 
-  it("账户停止且 run pause 标记丢失时 checkpoint 不新增 reservation", async () => {
+  it("账户停止且 run control 标记丢失时 checkpoint 不新增 reservation", async () => {
     const { userId, targetId } = await activeTarget();
     const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
     const claimToken = crypto.randomUUID();
@@ -589,14 +589,14 @@ describe("agent run controls", () => {
       .control({ userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
     await database.update(agentRuns).set({ controlState: "none" }).where(eq(agentRuns.id, run.runId));
 
-    await expect(checkpoints(new Date(now.getTime() + 100)).check({ userId, runId: run.runId, claimToken, checkpointKey: `${claimToken}:stopped-reserve`, reserve: { toolCalls: 1, sourceRequests: 1 } })).resolves.toEqual({ kind: "paused" });
+    await expect(checkpoints(new Date(now.getTime() + 100)).check({ userId, runId: run.runId, claimToken, checkpointKey: `${claimToken}:stopped-reserve`, reserve: { toolCalls: 1, sourceRequests: 1 } })).resolves.toEqual({ kind: "cancelled" });
     await expect(Promise.all([
       database.select({ status: agentRuns.status, toolCallCount: agentRuns.toolCallCount, sourceRequestCount: agentRuns.sourceRequestCount }).from(agentRuns).where(eq(agentRuns.id, run.runId)),
       database.select({ category: agentRunUsageEntries.category }).from(agentRunUsageEntries).where(eq(agentRunUsageEntries.runId, run.runId)),
-    ])).resolves.toEqual([[{ status: "paused", toolCallCount: 0, sourceRequestCount: 0 }], [{ category: "active_duration" }]]);
+    ])).resolves.toEqual([[{ status: "cancelled", toolCallCount: 0, sourceRequestCount: 0 }], [{ category: "active_duration" }]]);
   });
 
-  it("账户停止且 run pause 标记丢失时 checkpoint 以过期 lease 截止结算后暂停", async () => {
+  it("账户停止且 run control 标记丢失时 checkpoint 以过期 lease 截止结算后终止", async () => {
     const { userId, targetId } = await activeTarget();
     const run = await commands(new MemoryQueue()).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
     const claimToken = crypto.randomUUID();
@@ -606,9 +606,9 @@ describe("agent run controls", () => {
       .control({ userId, requestId: crypto.randomUUID(), command: { commandId: crypto.randomUUID(), expectedVersion: 0, action: "stop" } });
     await database.update(agentRuns).set({ controlState: "none" }).where(eq(agentRuns.id, run.runId));
 
-    await expect(checkpoints().check({ userId, runId: run.runId, claimToken, checkpointKey: `${claimToken}:stopped-expired` })).resolves.toEqual({ kind: "paused" });
+    await expect(checkpoints().check({ userId, runId: run.runId, claimToken, checkpointKey: `${claimToken}:stopped-expired` })).resolves.toEqual({ kind: "cancelled" });
     await expect(database.select({ status: agentRuns.status, activeDurationMs: agentRuns.activeDurationMs, claimToken: agentRuns.claimToken }).from(agentRuns).where(eq(agentRuns.id, run.runId)))
-      .resolves.toEqual([{ status: "paused", activeDurationMs: 29_999, claimToken: null }]);
+      .resolves.toEqual([{ status: "cancelled", activeDurationMs: 29_999, claimToken: null }]);
   });
 
   it("模型零预算在调用前拒绝，且暂停区间不计入 active time", async () => {

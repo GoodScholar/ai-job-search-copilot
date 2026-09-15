@@ -3,6 +3,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq, lt, sql } from "drizzle-orm";
 import {
+  agentInboxItems,
   agentRuns,
   accountRunPolicies,
   auditEvents,
@@ -20,15 +21,17 @@ import {
   type Database,
 } from "@job-copilot/database";
 import { createAuditTrail, type AuditTrail } from "./audit-trail";
+import { createAgentInbox } from "./agent-inbox";
 import { createAgentRunCommands, createAgentRunQueries, type AgentRunQueue, type AgentRunStarter } from "./agent-runs";
 import { createCompanyWatchlistCommands } from "./company-watchlists";
-import { JobDiscoveryScheduleError, createJobDiscoverySchedules } from "./job-discovery-schedules";
+import { JobDiscoveryScheduleError, createJobDiscoverySchedules as createProductionJobDiscoverySchedules } from "./job-discovery-schedules";
 import { createAccountRunPolicies } from "./account-run-policies";
 import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-policies";
 import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
 import { createRunPreflightEvaluator } from "./run-preflight";
 import { createModelDiagnosticProjectionReader } from "./model-diagnostics";
 import { createAccountRunControl } from "./account-run-control";
+import { createRecommendationRunCommands } from "./recommendation-runs";
 
 const now = new Date("2026-08-30T01:31:00.000Z");
 const constraints = {
@@ -45,6 +48,20 @@ class Queue implements AgentRunQueue {
   }
 }
 
+/** 仅保留旧 discovery 测试的物理运行断言；生产调度器必须注入真实推荐编排。 */
+function createJobDiscoverySchedules(input: Omit<Parameters<typeof createProductionJobDiscoverySchedules>[0], "recommendations" | "runPreflight"> & { runs?: AgentRunStarter; recommendations?: Parameters<typeof createProductionJobDiscoverySchedules>[0]["recommendations"]; runPreflight?: Parameters<typeof createProductionJobDiscoverySchedules>[0]["runPreflight"] }) {
+  const { runs, recommendations, runPreflight, ...deps } = input;
+  const fallbackPreflight = runPreflight ?? createReadyRunPreflightEvaluator({ clock: deps.clock });
+  const fallbackRecommendations = runs ? {
+    start: async (start: Parameters<AgentRunStarter["start"]>[0] & { trigger: { kind: "schedule"; occurrenceId: string; scheduledFor: Date; targetId: string } }) => {
+      const run = await runs.start({ userId: start.userId, requestId: start.requestId, command: { targetId: start.trigger.targetId, idempotencyKey: start.command.idempotencyKey, warningFingerprint: start.command.warningFingerprint }, trigger: { kind: "schedule", occurrenceId: start.trigger.occurrenceId, scheduledFor: start.trigger.scheduledFor } });
+      return { run: { runId: run.runId } as never, reused: run.reused };
+    },
+  } : undefined;
+  if (!recommendations && !fallbackRecommendations) throw new Error("test schedule requires a starter");
+  return createProductionJobDiscoverySchedules({ ...deps, recommendations: recommendations ?? fallbackRecommendations!, runPreflight: fallbackPreflight });
+}
+
 async function materializeInDeadlineProcess(databaseUrl: string): Promise<number | null> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "--eval", `
@@ -55,7 +72,8 @@ async function materializeInDeadlineProcess(databaseUrl: string): Promise<number
       const clock = () => new Date();
       const service = createJobDiscoverySchedules({
         db,
-        runs: { start: async () => { throw new Error("materialize must not start a run"); } },
+        recommendations: { start: async () => { throw new Error("materialize must not start a run"); } },
+        runPreflight: { evaluate: async () => { throw new Error("materialize must not preflight"); } },
         auditTrail: createAuditTrail({ db, clock }),
         id: () => crypto.randomUUID(),
         clock,
@@ -218,6 +236,25 @@ describe("job discovery schedules", () => {
     await expect(database.select({ revision: agentRuns.accountPolicyRevisionNumber }).from(agentRuns).where(and(eq(agentRuns.userId, retryOwner.userId), eq(agentRuns.idempotencyKey, retryOccurrence!.occurrenceId)))).resolves.toEqual([{ revision: 0 }]);
   });
 
+  it("启用计划只检查下次 scheduledFor，不把保存时刻当作实际运行", async () => {
+    const owner = await target();
+    await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/configuration-window", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
+    const inputs: Array<{ workflow: string; trigger: string; targetId?: string; scheduledFor?: Date; configuration?: boolean }> = [];
+    const ready = createReadyRunPreflightEvaluator({ clock: () => new Date("2026-08-30T14:00:00.000Z") });
+    const service = createProductionJobDiscoverySchedules({
+      db: database,
+      recommendations: { start: async () => { throw new Error("schedule must not start while enabling"); } },
+      runPreflight: { evaluate: async (transaction, input) => { inputs.push(input); return ready.evaluate(transaction, input); } },
+      auditTrail: createAuditTrail({ db: database, clock: () => new Date("2026-08-30T14:00:00.000Z") }),
+      id: () => crypto.randomUUID(),
+      clock: () => new Date("2026-08-30T14:00:00.000Z"),
+    });
+
+    await expect(service.set({ userId: owner.userId, targetId: owner.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } }))
+      .resolves.toMatchObject({ state: "enabled", nextRunAt: "2026-08-31T01:30:00.000Z" });
+    expect(inputs).toEqual([{ userId: owner.userId, targetId: owner.targetId, workflow: "recommendation", trigger: "schedule", scheduledFor: new Date("2026-08-31T01:30:00.000Z"), configuration: true }]);
+  });
+
   it("停机跨越多个时点只物化一个 occurrence，并把下一时点推进到当前之后", async () => {
     const owner = await target();
     await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/catchup", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
@@ -300,6 +337,23 @@ describe("job discovery schedules", () => {
 
     await expect(database.select({ status: jobDiscoveryScheduleOccurrences.status, runId: jobDiscoveryScheduleOccurrences.runId, skipReason: jobDiscoveryScheduleOccurrences.skipReason }).from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, occurrence.occurrenceId))).resolves.toEqual([{ status: "skipped", runId: null, skipReason: "RUN_PREFLIGHT_BLOCKED" }]);
     await expect(database.select({ id: agentRuns.id }).from(agentRuns).where(and(eq(agentRuns.userId, owner.userId), eq(agentRuns.idempotencyKey, occurrence.occurrenceId)))).resolves.toEqual([]);
+    await expect(database.select({ outcome: auditEvents.outcome, metadata: auditEvents.metadata }).from(auditEvents).where(and(eq(auditEvents.resourceId, occurrence.occurrenceId), eq(auditEvents.eventType, "job_discovery.occurrence_skipped"))))
+      .resolves.toEqual([{ outcome: "success", metadata: expect.objectContaining({ state: "skipped", skipReason: "RUN_PREFLIGHT_BLOCKED" }) }]);
+
+    const inbox = createAgentInbox({ db: database, commands: runs, auditTrail, id: () => crypto.randomUUID(), clock: () => now });
+    const listed = await inbox.list({ userId: owner.userId, status: "pending" });
+    expect(listed.items).toEqual([expect.objectContaining({
+      runId: null, kind: "schedule_attention", status: "unread", reasonCode: "SCHEDULE_RUN_PREFLIGHT_BLOCKED",
+      target: { type: "schedule_occurrence", occurrenceId: occurrence.occurrenceId, targetId: owner.targetId, href: "/home#recommendation-run" },
+      availableActions: ["mark_read", "dismiss"],
+    })]);
+    const itemId = listed.items[0]!.itemId;
+    await expect(inbox.act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId, command: { actionId: crypto.randomUUID(), action: "mark_read" } }))
+      .resolves.toMatchObject({ applied: true, run: null, item: { status: "read", availableActions: ["dismiss"] } });
+    await expect(inbox.act({ userId: owner.userId, requestId: crypto.randomUUID(), itemId, command: { actionId: crypto.randomUUID(), action: "dismiss" } }))
+      .resolves.toMatchObject({ applied: true, run: null, item: { status: "resolved", availableActions: [] } });
+    await expect(database.select({ scheduleOccurrenceId: agentInboxItems.scheduleOccurrenceId, status: agentInboxItems.status }).from(agentInboxItems).where(eq(agentInboxItems.id, itemId)))
+      .resolves.toEqual([{ scheduleOccurrenceId: occurrence.occurrenceId, status: "resolved" }]);
   });
 
   it("计划 warning 自动继续，并冻结同一次真实 preflight 的报告与策略", async () => {
@@ -529,7 +583,7 @@ describe("job discovery schedules", () => {
     await expect(database.select().from(agentRuns).where(and(eq(agentRuns.userId, owner.userId), eq(agentRuns.idempotencyKey, occurrence.occurrenceId)))).resolves.toHaveLength(1);
   });
 
-  it("并发 dispatcher 在 occurrence 行锁期间不会基于旧快照跳过已提交的 run", async () => {
+  it("并发 dispatcher 在推荐启动脱离 occurrence 事务后仍以 occurrence 幂等键只创建一个运行", async () => {
     const owner = await target();
     await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/example", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
     const occurrence = await dueOccurrence(owner);
@@ -562,7 +616,7 @@ describe("job discovery schedules", () => {
     await Promise.all([firstDispatch, secondDispatch]);
 
     const [persisted] = await database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, occurrence.occurrenceId));
-    expect(startCalls).toBe(1);
+    expect(startCalls).toBe(2);
     expect(persisted).toMatchObject({ status: "dispatched", runId: expect.any(String), skipReason: null });
     await expect(database.select().from(agentRuns).where(and(eq(agentRuns.userId, owner.userId), eq(agentRuns.idempotencyKey, occurrence.occurrenceId)))).resolves.toHaveLength(1);
   });
@@ -606,7 +660,7 @@ describe("job discovery schedules", () => {
     await expect(database.select().from(agentRuns).where(and(eq(agentRuns.userId, owner.userId), eq(agentRuns.idempotencyKey, occurrence.occurrenceId)))).resolves.toEqual([]);
   });
 
-  it("离线期间停止再释放后，旧到期计划只记录停止跳过并推进到未来", async () => {
+  it("离线期间停止再释放后，旧计划保持关闭且不会物化旧 occurrence", async () => {
     const stoppedAt = new Date("2026-08-30T00:00:00.000Z");
     const releasedAt = new Date("2026-08-30T02:00:00.000Z");
     const workerAt = new Date("2026-08-30T03:00:00.000Z");
@@ -630,16 +684,12 @@ describe("job discovery schedules", () => {
     const created = await worker.materializeDue({ limit: 10 });
     await worker.dispatchPending({ limit: 10 });
 
-    const ownerOccurrence = created.find((item) => item.scheduleId === ownerSchedule.scheduleId)!;
     const otherOccurrence = created.find((item) => item.scheduleId === otherSchedule.scheduleId)!;
-    await expect(database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, ownerOccurrence.occurrenceId)))
-      .resolves.toEqual([expect.objectContaining({ status: "skipped", skipReason: "ACCOUNT_RUN_SCHEDULE_SKIPPED", runId: null, scheduledFor: staleScheduledFor })]);
     await expect(database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, otherOccurrence.occurrenceId)))
       .resolves.toEqual([expect.objectContaining({ status: "dispatched", skipReason: null, runId: expect.any(String) })]);
-    await expect(database.select({ nextRunAt: jobDiscoverySchedules.nextRunAt }).from(jobDiscoverySchedules).where(eq(jobDiscoverySchedules.id, ownerSchedule.scheduleId)))
-      .resolves.toEqual([expect.objectContaining({ nextRunAt: expect.any(Date) })]);
     const [ownerScheduleAfter] = await database.select().from(jobDiscoverySchedules).where(eq(jobDiscoverySchedules.id, ownerSchedule.scheduleId));
-    expect(ownerScheduleAfter!.nextRunAt!.getTime()).toBeGreaterThan(workerAt.getTime());
+    expect(ownerScheduleAfter).toMatchObject({ state: "disabled", nextRunAt: null });
+    await expect(database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.scheduleId, ownerSchedule.scheduleId))).resolves.toEqual([]);
     await expect(database.select().from(agentRuns).where(eq(agentRuns.userId, owner.userId))).resolves.toEqual([]);
   });
 
@@ -680,14 +730,14 @@ describe("job discovery schedules", () => {
     expect(controlState!.scheduleResumeAfter).toEqual(secondReleaseAt);
     await expect(database.select().from(jobDiscoveryScheduleOccurrences).where(and(eq(jobDiscoveryScheduleOccurrences.userId, owner.userId), eq(jobDiscoveryScheduleOccurrences.status, "skipped"))))
       .resolves.toEqual(expect.arrayContaining([
-        expect.objectContaining({ id: beforeCutoffId, skipReason: "ACCOUNT_RUN_SCHEDULE_SKIPPED", runId: null }),
-        expect.objectContaining({ id: atCutoffId, skipReason: "ACCOUNT_RUN_SCHEDULE_SKIPPED", runId: null }),
+        expect.objectContaining({ id: beforeCutoffId, skipReason: "ACCOUNT_RUN_STOPPED", runId: null }),
+        expect.objectContaining({ id: atCutoffId, skipReason: "ACCOUNT_RUN_STOPPED", runId: null }),
       ]));
     await expect(database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, otherOccurrenceId)))
       .resolves.toEqual([expect.objectContaining({ status: "dispatched", skipReason: null, runId: expect.any(String) })]);
   });
 
-  it("停止释放不会复活已关联 occurrence 的暂停幂等运行，回放只补 dispatched", async () => {
+  it("停止释放不会复活已关联 occurrence 的已取消幂等运行", async () => {
     const stoppedAt = new Date("2026-08-30T00:00:00.000Z");
     const releasedAt = new Date("2026-08-30T02:00:00.000Z");
     const workerAt = new Date("2026-08-30T03:00:00.000Z");
@@ -706,8 +756,30 @@ describe("job discovery schedules", () => {
     await schedules(new Queue(), workerAt).service.dispatchPending({ limit: 10 });
 
     await expect(database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, occurrenceId)))
-      .resolves.toEqual([expect.objectContaining({ status: "dispatched", runId: started.runId, skipReason: null })]);
+      .resolves.toEqual([expect.objectContaining({ status: "skipped", runId: null, skipReason: "ACCOUNT_RUN_STOPPED" })]);
     await expect(database.select().from(agentRuns).where(and(eq(agentRuns.userId, owner.userId), eq(agentRuns.idempotencyKey, occurrenceId))))
-      .resolves.toEqual([expect.objectContaining({ id: started.runId, status: "paused" })]);
+      .resolves.toEqual([expect.objectContaining({ id: started.runId, status: "cancelled" })]);
+  });
+
+  it("计划 occurrence 通过推荐编排启动，并冻结 schedule trigger 的当前预检", async () => {
+    const owner = await target();
+    await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/recommendation-schedule", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
+    await addConfirmedProfileFact(owner.userId);
+    const queue = new Queue();
+    const auditTrail = createAuditTrail({ db: database, clock: () => now });
+    const runPreflight = await realPreflight();
+    const runs = createAgentRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse", runPreflight });
+    const recommendations = createRecommendationRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse", runPreflight });
+    const service = createJobDiscoverySchedules({ db: database, runs, recommendations, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse" });
+    const schedule = await service.set({ userId: owner.userId, targetId: owner.targetId, requestId: crypto.randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
+    await database.update(jobDiscoverySchedules).set({ nextRunAt: new Date("2026-08-27T01:30:00.000Z") }).where(eq(jobDiscoverySchedules.id, schedule.scheduleId));
+    const [occurrence] = await service.materializeDue({ limit: 1 });
+
+    await service.dispatchPending({ limit: 1 });
+
+    await expect(database.select({ id: agentRuns.id, purpose: agentRuns.runPurpose, preflight: agentRuns.preflightSnapshot }).from(agentRuns).where(and(eq(agentRuns.userId, owner.userId), eq(agentRuns.idempotencyKey, occurrence!.occurrenceId)))).resolves.toEqual([
+      expect.objectContaining({ id: expect.any(String), purpose: "recommendation", preflight: expect.objectContaining({ workflow: "recommendation", trigger: "schedule", targetId: owner.targetId }) }),
+    ]);
+    await expect(database.select({ status: jobDiscoveryScheduleOccurrences.status, runId: jobDiscoveryScheduleOccurrences.runId }).from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, occurrence!.occurrenceId))).resolves.toEqual([{ status: "dispatched", runId: expect.any(String) }]);
   });
 });

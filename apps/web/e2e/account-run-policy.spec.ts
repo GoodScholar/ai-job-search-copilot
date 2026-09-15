@@ -216,7 +216,7 @@ test("账户全局停止持久化到刷新后，解除不恢复任何旧运行",
   const releaseResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/account/run-policy/controls" && response.request().method() === "POST");
   await release.click();
   expect((await releaseResponse).status()).toBe(200);
-  await expect(page.getByRole("status")).toContainText("旧运行需逐个继续，错过的计划不会补跑");
+  await expect(page.getByRole("status")).toContainText("旧运行不会恢复；每日计划保持关闭，需重新启用。");
   await expect.poll(() => getControl(request, session.token)).toMatchObject({ stoppedAt: null, controlVersion: 2 });
   expect(resumedRequests).toEqual([]);
 });

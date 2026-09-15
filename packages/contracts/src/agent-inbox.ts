@@ -14,13 +14,13 @@ const nonBudgetFailureCodes = new Set<string>(AgentRunFailureCodeSchema.options.
 
 export const AgentInboxKindSchema = z.enum([
   "run_failed", "budget_exhausted", "decision_required", "source_attention", "discovery_attention",
-  "candidate_fact", "recommendation_list", "recommendation_result", "calibration_proposal",
+  "candidate_fact", "recommendation_list", "recommendation_result", "calibration_proposal", "schedule_attention",
 ]);
 export const AgentInboxStatusSchema = z.enum(["unread", "read", "resolved"]);
 export const AgentInboxActionSchema = z.enum(["restart_run", "resume_run", "cancel_run", "mark_read", "dismiss"]);
 export const AgentInboxReasonCodeSchema = z.union([
   z.literal("AGENT_RUN_PAUSED"), z.literal("SOURCE_HEALTH_ATTENTION"), z.literal("DISCOVERY_ATTENTION"),
-  z.literal("CANDIDATE_FACT_PENDING"), z.literal("RECOMMENDATION_LIST_PUBLISHED"), z.literal("NO_RECOMMENDATIONS_PUBLISHED"), z.literal("CALIBRATION_PROPOSAL_CREATED"),
+  z.literal("CANDIDATE_FACT_PENDING"), z.literal("RECOMMENDATION_LIST_PUBLISHED"), z.literal("NO_RECOMMENDATIONS_PUBLISHED"), z.literal("CALIBRATION_PROPOSAL_CREATED"), z.literal("SCHEDULE_RUN_PREFLIGHT_BLOCKED"),
   AgentRunFailureCodeSchema,
 ]);
 
@@ -32,6 +32,7 @@ export const AgentInboxTargetSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("recommendation_list"), recommendationListId: z.uuid(), targetId: z.uuid(), href: z.string().regex(new RegExp(`^/recommendations\\?targetId=${uuidPattern}&recommendationListId=${uuidPattern}#recommendation-list$`, "u")) }).strict(),
   z.object({ type: z.literal("recommendation_result"), recommendationResultId: z.uuid(), rootRunId: z.uuid(), targetId: z.uuid(), href: z.string().regex(new RegExp(`^/recommendations\\?runId=${uuidPattern}&resultId=${uuidPattern}#recommendation-result$`, "u")) }).strict(),
   z.object({ type: z.literal("calibration_proposal"), proposalId: z.uuid(), targetId: z.uuid(), href: z.string().regex(new RegExp(`^/recommendations\\?targetId=${uuidPattern}#calibration-proposal$`, "u")) }).strict(),
+  z.object({ type: z.literal("schedule_occurrence"), occurrenceId: z.uuid(), targetId: z.uuid(), href: z.string().regex(/^\/home#recommendation-run$/u) }).strict(),
 ]);
 
 const copy = z.string().trim().min(1).max(500);
@@ -62,6 +63,7 @@ export const AgentInboxItemSchema = itemSchema.superRefine((item, context) => {
   if (item.target.type === "recommendation_list" && item.target.href !== `/recommendations?targetId=${item.target.targetId}&recommendationListId=${item.target.recommendationListId}#recommendation-list`) issue("target", "recommendation href must match target and list");
   if (item.target.type === "recommendation_result" && item.target.href !== `/recommendations?runId=${item.target.rootRunId}&resultId=${item.target.recommendationResultId}#recommendation-result`) issue("target", "recommendation result href must match root and result");
   if (item.target.type === "calibration_proposal" && item.target.href !== `/recommendations?targetId=${item.target.targetId}#calibration-proposal`) issue("target", "calibration href must match targetId");
+  if (item.target.type === "schedule_occurrence" && item.target.href !== "/home#recommendation-run") issue("target", "schedule occurrence href must match recommendation entrypoint");
 
   const active = item.status !== "resolved";
   if (item.kind === "candidate_fact") {
@@ -79,6 +81,9 @@ export const AgentInboxItemSchema = itemSchema.superRefine((item, context) => {
   } else if (item.kind === "source_attention") {
     if (item.reasonCode !== "SOURCE_HEALTH_ATTENTION" || item.budgetDimension !== null || item.runId === null || item.target.type !== "job_source" || item.retryable || item.suggestedActions.length) issue("kind", "invalid source attention projection");
     if (active && !sameActions(item.availableActions, unreadActions(item.status, ["dismiss"]))) issue("availableActions", "invalid source attention actions");
+  } else if (item.kind === "schedule_attention") {
+    if (item.reasonCode !== "SCHEDULE_RUN_PREFLIGHT_BLOCKED" || item.budgetDimension !== null || item.runId !== null || item.target.type !== "schedule_occurrence" || item.retryable || item.suggestedActions.length) issue("kind", "invalid schedule attention projection");
+    if (active && !sameActions(item.availableActions, unreadActions(item.status, ["dismiss"]))) issue("availableActions", "invalid schedule attention actions");
   } else {
     if (item.runId === null || (item.target.type !== "agent_run" && item.target.type !== "recommendation_run") || (item.target.type === "agent_run" && item.target.runId !== item.runId) || (item.target.type === "recommendation_run" && item.target.physicalRunId !== item.runId)) issue("target", "run items require matching run provenance");
     if (item.kind === "decision_required") {

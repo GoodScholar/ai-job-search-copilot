@@ -2,7 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import {
   companyWatchlistRevisions,
   companyWatchlists,
-  agentRuns,
+  agentInboxItems,
   jobDiscoveryScheduleOccurrences,
   jobDiscoverySchedules,
   jobProfiles,
@@ -21,24 +21,26 @@ import {
   type SetJobDiscoveryScheduleCommand,
 } from "@job-copilot/contracts/job-discovery-schedules";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
-import { AgentRunError, type AgentRunStarter } from "./agent-run-control";
 import type { AuditTrail } from "./audit-trail";
 import { analyzePublicJobDiscoverySources } from "./public-job-discovery-sources";
 import { applyTransactionDeadline } from "./transaction-deadline";
 import type { JobDiscoveryExecutionMode } from "./job-discovery-execution-mode";
 import { resolveEffectiveAccountRunPolicy } from "./account-run-policies";
 import { isDateInBackgroundWindow, isInBackgroundWindow } from "./account-run-policy-window";
-import { RunPreflightRejectedError } from "./run-preflight";
+import { authorizeRunPreflight, RunPreflightRejectedError, type RunPreflightEvaluator } from "./run-preflight";
 import { AccountRunAdmissionError } from "./account-run-admission";
+import { AgentRunError } from "./agent-run-errors";
+import type { RecommendationRunStarter } from "./recommendation-runs";
 
 export class JobDiscoveryScheduleError extends Error {
-  constructor(public readonly code: "JOB_DISCOVERY_SCHEDULE_TARGET_NOT_FOUND" | "JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE" | "JOB_DISCOVERY_SCHEDULE_VERSION_CONFLICT" | "SOURCE_POLICY_REQUIRED" | "NO_SUPPORTED_SOURCE" | "PROFILE_UNAVAILABLE" | "ACCOUNT_RUN_POLICY_WINDOW_CLOSED") { super(code); }
+  constructor(public readonly code: "JOB_DISCOVERY_SCHEDULE_TARGET_NOT_FOUND" | "JOB_DISCOVERY_SCHEDULE_TARGET_INACTIVE" | "JOB_DISCOVERY_SCHEDULE_VERSION_CONFLICT" | "SOURCE_POLICY_REQUIRED" | "NO_SUPPORTED_SOURCE" | "PROFILE_UNAVAILABLE" | "ACCOUNT_RUN_POLICY_WINDOW_CLOSED" | "RUN_PREFLIGHT_BLOCKED") { super(code); }
 }
 
-type Dependencies = { db: Database; runs: AgentRunStarter; auditTrail: AuditTrail; id: () => string; clock: () => Date; executionMode?: JobDiscoveryExecutionMode };
+type Dependencies = { db: Database; recommendations: RecommendationRunStarter; runPreflight: RunPreflightEvaluator; auditTrail: AuditTrail; id: () => string; clock: () => Date; executionMode?: JobDiscoveryExecutionMode };
 type ScheduleRow = typeof jobDiscoverySchedules.$inferSelect;
 type OccurrenceRow = typeof jobDiscoveryScheduleOccurrences.$inferSelect;
 type ScanInput = { limit: number; deadline?: Date };
+type ScheduleSkipReason = NonNullable<JobDiscoveryScheduleOccurrence["skipReason"]>;
 
 const DEFAULT_SCHEDULE_SCAN_TIMEOUT_MS = 5_000;
 
@@ -124,11 +126,11 @@ async function sourceSupport(db: Pick<Database, "select" | "insert">, userId: st
 
 async function appendScheduleAudit(auditTrail: AuditTrail, input: {
   userId: string; requestId: string; eventType: "schedule_set" | "occurrence_materialized" | "occurrence_dispatched" | "occurrence_skipped";
-  scheduleId: string; targetId: string; occurrenceId?: string; runId?: string; version?: number; scheduledFor?: Date; state?: "enabled" | "disabled" | "pending" | "dispatched" | "skipped"; now: Date;
+  scheduleId: string; targetId: string; occurrenceId?: string; runId?: string; version?: number; scheduledFor?: Date; state?: "enabled" | "disabled" | "pending" | "dispatched" | "skipped"; skipReason?: ScheduleSkipReason; now: Date;
 }) {
   const metadata = {
     scheduleId: input.scheduleId, targetId: input.targetId, occurrenceId: input.occurrenceId ?? null, runId: input.runId ?? null,
-    version: input.version ?? null, scheduledFor: input.scheduledFor?.toISOString() ?? null, state: input.state ?? null,
+    version: input.version ?? null, scheduledFor: input.scheduledFor?.toISOString() ?? null, state: input.state ?? null, skipReason: input.skipReason ?? null,
   };
   if (input.eventType === "schedule_set") return auditTrail.append({ userId: input.userId, actorUserId: input.userId, eventType: "job_discovery.schedule_set", occurredAt: input.now, requestId: input.requestId, outcome: "success", reasonCode: "JOB_DISCOVERY_SCHEDULE_SET", resourceType: "job_discovery_schedule", resourceId: input.scheduleId, metadata });
   if (input.eventType === "occurrence_materialized") return auditTrail.append({ userId: input.userId, actorUserId: input.userId, eventType: "job_discovery.occurrence_materialized", occurredAt: input.now, requestId: input.requestId, outcome: "success", reasonCode: "JOB_DISCOVERY_OCCURRENCE_MATERIALIZED", resourceType: "job_discovery_occurrence", resourceId: input.occurrenceId!, metadata });
@@ -171,6 +173,15 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
         const currentVersion = current?.version ?? 0;
         if (currentVersion !== command.expectedVersion) throw new JobDiscoveryScheduleError("JOB_DISCOVERY_SCHEDULE_VERSION_CONFLICT");
         const nextRunAt = command.state === "enabled" ? nextShanghaiDailyRun(now, command.dailyTime) : null;
+        if (command.state === "enabled" && deps.runPreflight && nextRunAt) {
+          try {
+            const evaluation = await deps.runPreflight.evaluate(transaction, { userId: input.userId, targetId: input.targetId, workflow: "recommendation", trigger: "schedule", scheduledFor: nextRunAt, configuration: true });
+            authorizeRunPreflight({ evaluation, warningFingerprint: null });
+          } catch (error) {
+            if (error instanceof RunPreflightRejectedError) throw new JobDiscoveryScheduleError("RUN_PREFLIGHT_BLOCKED");
+            throw error;
+          }
+        }
         const row = current
           ? (await transaction.update(jobDiscoverySchedules).set({ version: current.version + 1, state: command.state, dailyTime: command.dailyTime, nextRunAt, updatedAt: now }).where(and(eq(jobDiscoverySchedules.userId, input.userId), eq(jobDiscoverySchedules.id, current.id), eq(jobDiscoverySchedules.version, current.version))).returning())[0]
           : (await transaction.insert(jobDiscoverySchedules).values({ id: deps.id(), userId: input.userId, targetId: input.targetId, version: 1, state: command.state, dailyTime: command.dailyTime, timeZone: "Asia/Shanghai", nextRunAt, createdAt: now, updatedAt: now }).returning())[0];
@@ -211,66 +222,63 @@ export function createJobDiscoverySchedules(deps: Dependencies): {
     },
     async dispatchPending(input) {
       const deadline = scanDeadline(input, deps.clock);
-      await deps.db.transaction(async (transaction) => {
-        await applyTransactionDeadline(transaction, { deadline, clock: deps.clock });
-        const pending = await transaction.execute(sql`
-          select id, user_id, schedule_id, target_id, scheduled_for, status, run_id, skip_reason, created_at
-          from job_discovery_schedule_occurrences
-          where status = 'pending'
-          order by scheduled_for asc, id asc
-          for update skip locked
-          limit ${Math.max(1, input.limit)}
-        `) as unknown as Array<{
-          id: string; user_id: string; schedule_id: string; target_id: string; scheduled_for: Date;
-          status: OccurrenceRow["status"]; run_id: string | null; skip_reason: OccurrenceRow["skipReason"]; created_at: Date;
-        }>;
-
-        for (const row of pending) {
-          const occurrence: OccurrenceRow = {
-            id: row.id, userId: row.user_id, scheduleId: row.schedule_id, targetId: row.target_id,
-            scheduledFor: new Date(row.scheduled_for), status: row.status, runId: row.run_id,
-            skipReason: row.skip_reason, createdAt: new Date(row.created_at),
-          };
-          const now = deps.clock();
-          const auditTrail = deps.auditTrail.bind(transaction);
-          const dispatch = async (runId: string) => {
-            const [dispatched] = await transaction.update(jobDiscoveryScheduleOccurrences).set({ status: "dispatched", runId, skipReason: null })
-              .where(and(eq(jobDiscoveryScheduleOccurrences.id, occurrence.id), eq(jobDiscoveryScheduleOccurrences.status, "pending"))).returning();
-            if (dispatched) await appendScheduleAudit(auditTrail, { userId: dispatched.userId, requestId: deps.id(), eventType: "occurrence_dispatched", scheduleId: dispatched.scheduleId, targetId: dispatched.targetId, occurrenceId: dispatched.id, runId, scheduledFor: dispatched.scheduledFor, state: "dispatched", now });
-          };
-          const skip = async (reason: "TARGET_INACTIVE" | "NO_SUPPORTED_SOURCE" | "SOURCE_POLICY_REQUIRED" | "PROFILE_UNAVAILABLE" | "ACCOUNT_RUN_POLICY_WINDOW_CLOSED" | "RUN_PREFLIGHT_BLOCKED" | "ACCOUNT_RUN_STOPPED" | "ACCOUNT_RUN_SCHEDULE_SKIPPED") => {
-            const [skipped] = await transaction.update(jobDiscoveryScheduleOccurrences).set({ status: "skipped", runId: null, skipReason: reason })
-              .where(and(eq(jobDiscoveryScheduleOccurrences.id, occurrence.id), eq(jobDiscoveryScheduleOccurrences.status, "pending"))).returning();
-            if (skipped) await appendScheduleAudit(auditTrail, { userId: skipped.userId, requestId: deps.id(), eventType: "occurrence_skipped", scheduleId: skipped.scheduleId, targetId: skipped.targetId, occurrenceId: skipped.id, scheduledFor: skipped.scheduledFor, state: "skipped", now });
-          };
-
-          const [existingRun] = await transaction.select({ id: agentRuns.id }).from(agentRuns)
-            .where(and(eq(agentRuns.userId, occurrence.userId), eq(agentRuns.idempotencyKey, occurrence.id)));
-          if (existingRun) {
-            const run = await deps.runs.start({ userId: occurrence.userId, requestId: deps.id(), command: { targetId: occurrence.targetId, idempotencyKey: occurrence.id }, trigger: { kind: "schedule", occurrenceId: occurrence.id, scheduledFor: occurrence.scheduledFor }, deadline });
-            await dispatch(run.runId);
-            continue;
-          }
-
-          try {
-            const run = await deps.runs.start({ userId: occurrence.userId, requestId: deps.id(), command: { targetId: occurrence.targetId, idempotencyKey: occurrence.id }, trigger: { kind: "schedule", occurrenceId: occurrence.id, scheduledFor: occurrence.scheduledFor }, deadline });
-            await dispatch(run.runId);
-          } catch (error) {
-            if (error instanceof AgentRunError && (error.code === "ACCOUNT_RUN_STOPPED" || error.code === "ACCOUNT_RUN_SCHEDULE_SKIPPED")) { await skip(error.code); continue; }
-            if (error instanceof AccountRunAdmissionError) { await skip(error.code); continue; }
-            if (error instanceof RunPreflightRejectedError && error.code === "RUN_PREFLIGHT_BLOCKED") { await skip("RUN_PREFLIGHT_BLOCKED"); continue; }
-            if (!(error instanceof AgentRunError)) throw error;
-            if (error.code === "AGENT_RUN_TARGET_INACTIVE") { await skip("TARGET_INACTIVE"); continue; }
-            if (error.code === "AGENT_RUN_UNAVAILABLE") {
-              const reason = await validateScheduleConfiguration(transaction, occurrence.userId, occurrence.targetId, deps.executionMode, { id: deps.id, clock: deps.clock });
-              if (reason) { await skip(reason); continue; }
-              const policy = await resolveEffectiveAccountRunPolicy(transaction, occurrence.userId, { id: deps.id, clock: deps.clock });
-              if (!isDateInBackgroundWindow(deps.clock(), policy.effective.backgroundWindow) || !isDateInBackgroundWindow(occurrence.scheduledFor, policy.effective.backgroundWindow)) { await skip("ACCOUNT_RUN_POLICY_WINDOW_CLOSED"); continue; }
-            }
-            throw error;
-          }
-        }
+      const pending = await deps.db.transaction(async (transaction) => {
+          await applyTransactionDeadline(transaction, { deadline, clock: deps.clock });
+          return transaction.execute(sql`
+            select id, user_id, schedule_id, target_id, scheduled_for, status, run_id, skip_reason, created_at
+            from job_discovery_schedule_occurrences
+            where status = 'pending'
+            order by scheduled_for asc, id asc
+            limit ${Math.max(1, input.limit)}
+          `) as unknown as Array<{
+            id: string; user_id: string; schedule_id: string; target_id: string; scheduled_for: Date;
+            status: OccurrenceRow["status"]; run_id: string | null; skip_reason: OccurrenceRow["skipReason"]; created_at: Date;
+          }>;
       });
+      for (const row of pending) {
+          const occurrence: OccurrenceRow = { id: row.id, userId: row.user_id, scheduleId: row.schedule_id, targetId: row.target_id, scheduledFor: new Date(row.scheduled_for), status: row.status, runId: row.run_id, skipReason: row.skip_reason, createdAt: new Date(row.created_at) };
+          try {
+            const started = await deps.recommendations.start({ userId: occurrence.userId, requestId: deps.id(), command: { idempotencyKey: occurrence.id, warningFingerprint: null }, trigger: { kind: "schedule", occurrenceId: occurrence.id, scheduledFor: occurrence.scheduledFor, targetId: occurrence.targetId }, deadline });
+            await deps.db.transaction(async (transaction) => {
+              await applyTransactionDeadline(transaction, { deadline, clock: deps.clock });
+              await acquireAccountAdvisoryLock(transaction, occurrence.userId);
+              const [dispatched] = await transaction.update(jobDiscoveryScheduleOccurrences).set({ status: "dispatched", runId: started.run.runId, skipReason: null })
+                .where(and(eq(jobDiscoveryScheduleOccurrences.id, occurrence.id), eq(jobDiscoveryScheduleOccurrences.status, "pending"))).returning();
+              if (dispatched) await appendScheduleAudit(deps.auditTrail.bind(transaction), { userId: dispatched.userId, requestId: deps.id(), eventType: "occurrence_dispatched", scheduleId: dispatched.scheduleId, targetId: dispatched.targetId, occurrenceId: dispatched.id, runId: started.run.runId, scheduledFor: dispatched.scheduledFor, state: "dispatched", now: deps.clock() });
+            });
+          } catch (error) {
+            let reason: ScheduleSkipReason | null = error instanceof RunPreflightRejectedError ? "RUN_PREFLIGHT_BLOCKED"
+              : error instanceof AccountRunAdmissionError ? error.code : null;
+            if (error instanceof AgentRunError) {
+              if (error.code === "ACCOUNT_RUN_STOPPED" || error.code === "ACCOUNT_RUN_SCHEDULE_SKIPPED") reason = error.code;
+              else if (error.code === "AGENT_RUN_TARGET_INACTIVE") reason = "TARGET_INACTIVE";
+              else if (error.code === "AGENT_RUN_UNAVAILABLE") {
+                const configuration = await deps.db.transaction(async (transaction) => {
+                  await applyTransactionDeadline(transaction, { deadline, clock: deps.clock });
+                  await acquireAccountAdvisoryLock(transaction, occurrence.userId);
+                  return validateScheduleConfiguration(transaction, occurrence.userId, occurrence.targetId, deps.executionMode, { id: deps.id, clock: deps.clock });
+                });
+                reason = configuration ?? null;
+              }
+            }
+            if (!reason) throw error;
+            await deps.db.transaction(async (transaction) => {
+              await applyTransactionDeadline(transaction, { deadline, clock: deps.clock });
+              await acquireAccountAdvisoryLock(transaction, occurrence.userId);
+              const [skipped] = await transaction.update(jobDiscoveryScheduleOccurrences).set({ status: "skipped", runId: null, skipReason: reason })
+                .where(and(eq(jobDiscoveryScheduleOccurrences.id, occurrence.id), eq(jobDiscoveryScheduleOccurrences.status, "pending"))).returning();
+              if (skipped) {
+                const requestId = deps.id();
+                const now = deps.clock();
+                await appendScheduleAudit(deps.auditTrail.bind(transaction), { userId: skipped.userId, requestId, eventType: "occurrence_skipped", scheduleId: skipped.scheduleId, targetId: skipped.targetId, occurrenceId: skipped.id, scheduledFor: skipped.scheduledFor, state: "skipped", skipReason: reason, now });
+                if (reason === "RUN_PREFLIGHT_BLOCKED") {
+                  const [item] = await transaction.insert(agentInboxItems).values({ id: deps.id(), userId: skipped.userId, scheduleOccurrenceId: skipped.id, kind: "schedule_attention", status: "unread", reasonCode: "SCHEDULE_RUN_PREFLIGHT_BLOCKED", budgetDimension: null, createdAt: now }).onConflictDoNothing().returning({ id: agentInboxItems.id });
+                  if (item) await deps.auditTrail.bind(transaction).append({ userId: skipped.userId, actorUserId: skipped.userId, eventType: "agent.inbox_opened", occurredAt: now, requestId, outcome: "success", reasonCode: "SCHEDULE_RUN_PREFLIGHT_BLOCKED", resourceType: "agent_inbox_item", resourceId: item.id, metadata: { occurrenceId: skipped.id, kind: "schedule_attention", reasonCode: "SCHEDULE_RUN_PREFLIGHT_BLOCKED", budgetDimension: null } });
+                }
+              }
+            });
+          }
+      }
     },
   };
 }

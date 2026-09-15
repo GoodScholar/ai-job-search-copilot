@@ -10,6 +10,13 @@ const response = (body: unknown, status = 200) => new Response(JSON.stringify(bo
 const load = () => vi.spyOn(globalThis, "fetch").mockResolvedValue(response(ready));
 afterEach(() => vi.restoreAllMocks());
 
+it("把每日计划说明为生成推荐，并提示恢复后需要重新启用", async () => {
+  load();
+  render(<DiscoverySchedulePanel targetId={targetId} targetState="active" />);
+  expect(await screen.findByRole("heading", { name: "每天获取岗位推荐" })).toBeInTheDocument();
+  expect(screen.getByText("每天在这个时间生成新的岗位推荐。停止全部运行后需要重新启用。", { exact: false })).toBeInTheDocument();
+});
+
 it("只读取当前目标的计划，并以北京时间保存首次 version 0", async () => {
   const fetchMock = load();
   render(<DiscoverySchedulePanel targetId={targetId} targetState="active" />);

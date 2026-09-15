@@ -10,6 +10,7 @@ import { GenericContainer, type StartedTestContainer, Wait } from "testcontainer
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   agentRunJobResults,
+  agentRunSteps,
   agentRuns,
   createDatabase,
   jobDiscoveryScheduleOccurrences,
@@ -30,6 +31,7 @@ import {
 import { AGENT_RUN_JOB_NAME, AGENT_RUN_QUEUE } from "@job-copilot/contracts/agent-runs";
 import { createAgentRunCommands, createAgentRunProcessor, createAgentRunQueries, createAgentRunRecoveryQueries } from "@job-copilot/domain/agent-runs";
 import { createAccountRunPolicies } from "@job-copilot/domain/account-run-policies";
+import { createAccountRunControl } from "@job-copilot/domain/account-run-control";
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
 import { createReadyRunPreflightEvaluator } from "../../../../packages/domain/src/testing/run-preflight.js";
 import { createCompanyWatchlistCommands } from "@job-copilot/domain/company-watchlists";
@@ -194,6 +196,30 @@ describe("岗位发现 Agent Run Worker", () => {
       queue: { enqueue: async () => { throw new Error("API queue wakeup unavailable"); } },
       auditTrail: createAuditTrail({ db: database, clock: () => new Date() }),
       runPreflight: createReadyRunPreflightEvaluator({ clock: () => new Date() }),
+      id: randomUUID,
+      clock: () => new Date(),
+    });
+  }
+
+  /** 仅用于直接调度器单元场景；真正的 Worker 由 AgentRunModule 注入推荐编排。 */
+  function scheduleService(auditTrail = createAuditTrail({ db: database, clock: () => new Date() })) {
+    return createJobDiscoverySchedules({
+      db: database,
+      recommendations: {
+        async start(input) {
+          if (input.trigger?.kind !== "schedule") throw new Error("test schedule starter requires a schedule trigger");
+          const run = await commands().start({
+            userId: input.userId,
+            requestId: input.requestId,
+            command: { targetId: input.trigger.targetId, idempotencyKey: input.command.idempotencyKey, warningFingerprint: input.command.warningFingerprint },
+            trigger: { kind: "schedule", occurrenceId: input.trigger.occurrenceId, scheduledFor: input.trigger.scheduledFor },
+            deadline: input.deadline,
+          });
+          return { run: { runId: run.runId } as never, reused: run.reused };
+        },
+      },
+      runPreflight: createReadyRunPreflightEvaluator({ clock: () => new Date() }),
+      auditTrail,
       id: randomUUID,
       clock: () => new Date(),
     });
@@ -371,7 +397,7 @@ describe("岗位发现 Agent Run Worker", () => {
       userId: scheduledUserId, targetId: scheduledTargetId, requestId: randomUUID(),
       command: { expectedVersion: 0, canonicalCompanyName: "Schedule Fixture", careersUrl: "https://boards.greenhouse.io/schedule-fixture", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null },
     });
-    const schedules = createJobDiscoverySchedules({ db: database, runs: commands(), auditTrail, id: randomUUID, clock: () => new Date() });
+    const schedules = scheduleService(auditTrail);
     const schedule = await schedules.set({ userId: scheduledUserId, targetId: scheduledTargetId, requestId: randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: scheduledDailyTime } });
     await database.update(jobDiscoverySchedules).set({ nextRunAt: new Date(Date.now() - 1_000) }).where(eq(jobDiscoverySchedules.id, schedule.scheduleId));
 
@@ -437,7 +463,7 @@ describe("岗位发现 Agent Run Worker", () => {
     await expect(Promise.all([inactive, unsupported, policy].map(({ userId }) => database.select().from(agentRuns).where(eq(agentRuns.userId, userId))))).resolves.toEqual([[], [], []]);
   }, 45_000);
 
-  it("计划 starter 与 automatic child 在真实 Worker 路径中调用同一个 preflight provider", async () => {
+  it("计划 starter 在真实 Worker 路径中通过推荐编排调用 preflight provider", async () => {
     await stopWorker();
     await startWorker();
     const workerPreflight = context!.get<RunPreflightEvaluator>(AGENT_RUN_PREFLIGHT, { strict: false });
@@ -465,7 +491,7 @@ describe("岗位发现 Agent Run Worker", () => {
       userId: scheduledUserId, targetId: scheduledTargetId, requestId: randomUUID(),
       command: { expectedVersion: 0, canonicalCompanyName: "Composition Fixture", careersUrl: "https://boards.greenhouse.io/composition-fixture", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null },
     });
-    const schedules = createJobDiscoverySchedules({ db: database, runs: commands(), auditTrail, id: randomUUID, clock: () => new Date() });
+    const schedules = scheduleService(auditTrail);
     const schedule = await schedules.set({ userId: scheduledUserId, targetId: scheduledTargetId, requestId: randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: scheduledDailyTime } });
     await database.update(jobDiscoverySchedules).set({ nextRunAt: new Date(Date.now() - 1_000) }).where(eq(jobDiscoverySchedules.id, schedule.scheduleId));
 
@@ -474,11 +500,8 @@ describe("岗位发现 Agent Run Worker", () => {
       return occurrence?.status === "dispatched" && Boolean(occurrence.runId)
         && (await createAgentRunQueries({ db: database }).get({ userId: scheduledUserId, runId: occurrence.runId! }))?.status === "completed";
     }, "scheduler command starter did not complete the scheduled discovery");
-    await waitFor(async () => trace.some((entry) => entry.userId === scheduledUserId && entry.workflow === "deep_match" && entry.trigger === "automatic"), "processor did not create its automatic child through the provider", 30_000);
-
     expect(trace).toEqual(expect.arrayContaining([
-      { userId: scheduledUserId, workflow: "discovery", trigger: "schedule" },
-      { userId: scheduledUserId, workflow: "deep_match", trigger: "automatic" },
+      { userId: scheduledUserId, workflow: "recommendation", trigger: "schedule" },
     ]));
   }, 45_000);
 
@@ -553,7 +576,7 @@ describe("岗位发现 Agent Run Worker", () => {
 
     const failures: AgentRunScheduleFailure[] = [];
     const scheduler = new AgentRunScheduler({
-      schedules: createJobDiscoverySchedules({ db: database, runs: commands(), auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: randomUUID, clock: () => new Date() }),
+      schedules: scheduleService(),
       reporter: { report: async (failure) => { failures.push(failure); } },
       scanTimeoutMs: 100,
     });
@@ -599,7 +622,7 @@ describe("岗位发现 Agent Run Worker", () => {
     await locked.promise;
     const failures: AgentRunScheduleFailure[] = [];
     const scheduler = new AgentRunScheduler({
-      schedules: createJobDiscoverySchedules({ db: database, runs: commands(), auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: randomUUID, clock: () => new Date() }),
+      schedules: scheduleService(),
       reporter: { report: async (failure) => { failures.push(failure); } },
       scanTimeoutMs: 100,
     });
@@ -623,7 +646,7 @@ describe("岗位发现 Agent Run Worker", () => {
     }
   }, 10_000);
 
-  it("计划派发把同一绝对 deadline 传给被账户锁阻塞的 start 事务，并在下一 tick 恢复", async () => {
+  it("计划派发把同一绝对 deadline 传给被账户锁阻塞的推荐启动，并在锁释放后恢复", async () => {
     await stopWorker();
     const scheduledUserId = randomUUID();
     const scheduledTargetId = randomUUID();
@@ -635,7 +658,7 @@ describe("岗位发现 Agent Run Worker", () => {
       userId: scheduledUserId, targetId: scheduledTargetId, requestId: randomUUID(),
       command: { expectedVersion: 0, canonicalCompanyName: "Deadline Fixture", careersUrl: "https://boards.greenhouse.io/deadline-fixture", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"], sourceNote: null },
     });
-    const schedules = createJobDiscoverySchedules({ db: database, runs: commands(), auditTrail, id: randomUUID, clock: () => new Date() });
+    const schedules = scheduleService(auditTrail);
     const schedule = await schedules.set({ userId: scheduledUserId, targetId: scheduledTargetId, requestId: randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
     await database.update(jobDiscoverySchedules).set({ nextRunAt: new Date(Date.now() - 1_000) }).where(eq(jobDiscoverySchedules.id, schedule.scheduleId));
     const [occurrence] = await schedules.materializeDue({ limit: 1 });
@@ -669,7 +692,6 @@ describe("岗位发现 Agent Run Worker", () => {
       await waitFor(async () => failures.length >= 1, "scheduler did not report dispatch failure", 2_000);
       expect(failures[0]).toEqual({ failureCode: "JOB_DISCOVERY_SCHEDULE_DISPATCH_FAILED" });
       await initializing;
-      await waitFor(async () => failures.length >= 2, "scheduler single-flight did not clear for the next tick", 3_000);
       await waitFor(async () => !Boolean((await database.execute(sql<{ waiting: boolean }>`
         select exists(
           select 1 from pg_stat_activity
@@ -682,6 +704,7 @@ describe("岗位发现 Agent Run Worker", () => {
 
       releaseLock.resolve();
       await holder;
+      await schedules.dispatchPending({ limit: 1 });
       await waitFor(async () => {
         const [persisted] = await database.select().from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, occurrence.occurrenceId));
         return persisted?.status === "dispatched" && Boolean(persisted.runId);
@@ -692,7 +715,7 @@ describe("岗位发现 Agent Run Worker", () => {
       await holder.catch(() => undefined);
       await scheduler.close();
     }
-  }, 12_000);
+  }, 16_000);
 
   it("暂停 run 不被恢复扫描，恢复后完成，取消的 run 不产生结果", async () => {
     await stopWorker();
@@ -718,6 +741,69 @@ describe("岗位发现 Agent Run Worker", () => {
     await new Promise((resolve) => setTimeout(resolve, 1_100));
     await expect(createAgentRunQueries({ db: database }).get({ userId, runId: cancelled.runId }))
       .resolves.toMatchObject({ status: "cancelled", results: [] });
+  }, 30_000);
+
+  it("真实 Redis Worker 在全局停止、立即解除和重启后不复活旧排队或运行中任务", async () => {
+    await stopWorker();
+    const accountId = randomUUID();
+    const accountTargetId = randomUUID();
+    await database.insert(jobAccounts).values({ id: accountId });
+    await database.insert(jobTargets).values({ id: accountTargetId, userId: accountId, version: 1, priority: "primary", state: "active", activeSlot: null });
+    await database.insert(jobTargetRevisions).values({ id: randomUUID(), userId: accountId, targetId: accountTargetId, version: 1, priority: "primary", state: "active", constraints });
+    const queueUnavailableCommands = createAgentRunCommands({
+      db: database,
+      queue: { enqueue: async () => { throw new Error("test queues through Redis after account control"); } },
+      auditTrail: createAuditTrail({ db: database, clock: () => new Date() }),
+      runPreflight: createReadyRunPreflightEvaluator({ clock: () => new Date() }),
+      id: randomUUID,
+      clock: () => new Date(),
+    });
+    const queued = await queueUnavailableCommands.start({ userId: accountId, requestId: randomUUID(), command: { targetId: accountTargetId, idempotencyKey: randomUUID() } });
+    const running = await queueUnavailableCommands.start({ userId: accountId, requestId: randomUUID(), command: { targetId: accountTargetId, idempotencyKey: randomUUID() } });
+    await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", startedAt: new Date(), attemptCount: 1, claimToken: randomUUID(), claimExpiresAt: new Date(Date.now() - 1_000), activeSliceStartedAt: new Date(Date.now() - 2_000) }).where(eq(agentRuns.id, running.runId));
+    const controls = createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: randomUUID, clock: () => new Date() });
+    const stop = { commandId: randomUUID(), expectedVersion: 0, action: "stop" as const };
+    const firstStop = await controls.control({ userId: accountId, requestId: randomUUID(), command: stop });
+    await expect(controls.control({ userId: accountId, requestId: randomUUID(), command: stop })).resolves.toEqual(firstStop);
+    await expect(database.select({ id: agentRuns.id, status: agentRuns.status, controlState: agentRuns.controlState }).from(agentRuns).where(and(eq(agentRuns.userId, accountId), sql`${agentRuns.id} in (${queued.runId}, ${running.runId})`)))
+      .resolves.toEqual(expect.arrayContaining([{ id: queued.runId, status: "cancelled", controlState: "none" }, { id: running.runId, status: "running", controlState: "cancel_requested" }]));
+    const release = { commandId: randomUUID(), expectedVersion: 1, action: "release" as const };
+    await controls.control({ userId: accountId, requestId: randomUUID(), command: release });
+    await stopWorker();
+    await startWorker();
+    await queue.add(AGENT_RUN_JOB_NAME, { version: 1, runId: queued.runId, userId: accountId }, agentRunQueueJobOptions(queued.runId));
+    await queue.add(AGENT_RUN_JOB_NAME, { version: 1, runId: running.runId, userId: accountId }, agentRunQueueJobOptions(running.runId));
+    await waitFor(async () => (await createAgentRunQueries({ db: database }).get({ userId: accountId, runId: running.runId }))?.status === "cancelled", "old running run was not terminated after release", 10_000);
+    await expect(Promise.all([queued, running].map(({ runId }) => createAgentRunQueries({ db: database }).get({ userId: accountId, runId })))).resolves.toEqual([
+      expect.objectContaining({ status: "cancelled", results: [] }),
+      expect.objectContaining({ status: "cancelled", results: [] }),
+    ]);
+  }, 30_000);
+
+  it("真实 Worker 在 slow_checkpoint 外部调用期间停止后，不执行后续步骤且在解除后仍终止", async () => {
+    await stopWorker();
+    const slowKey = randomUUID();
+    process.env.E2E_AGENT_RUN_SCENARIOS = JSON.stringify({ [slowKey]: "slow_checkpoint" });
+    const slow = await createDurableQueuedRun(slowKey);
+    await startWorker();
+    await waitFor(async () => {
+      const run = await createAgentRunQueries({ db: database }).get({ userId, runId: slow.runId });
+      return run?.status === "running" && run.currentStep === "batch_search";
+    }, "slow checkpoint run did not enter the external-call step", 10_000);
+    await createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: randomUUID, clock: () => new Date() })
+      .control({ userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 0, action: "stop" } });
+    await createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: randomUUID, clock: () => new Date() })
+      .control({ userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 1, action: "release" } });
+    await waitFor(async () => (await createAgentRunQueries({ db: database }).get({ userId, runId: slow.runId }))?.status === "cancelled", "slow checkpoint run was not cancelled after release", 10_000);
+    // `agent_run_steps` has no cancelled state.  The active external-call step remains
+    // running to record that it was interrupted; the cancelled root run is authoritative.
+    await expect(database.select({ stepKey: agentRunSteps.stepKey, status: agentRunSteps.status }).from(agentRunSteps).where(and(eq(agentRunSteps.userId, userId), eq(agentRunSteps.runId, slow.runId))))
+      .resolves.toEqual(expect.arrayContaining([
+        { stepKey: "batch_search", status: "running" },
+        { stepKey: "fetch_details", status: "pending" },
+        { stepKey: "persist_results", status: "pending" },
+      ]));
+    await expect(database.select().from(agentRunJobResults).where(and(eq(agentRunJobResults.userId, userId), eq(agentRunJobResults.runId, slow.runId)))).resolves.toEqual([]);
   }, 30_000);
 
   it("production Worker resolver 能完成精确 legacy Fake v1 的 queued 与 paused 恢复", async () => {

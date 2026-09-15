@@ -25,6 +25,7 @@ function scheduleProblem(error: unknown): never {
     case "NO_SUPPORTED_SOURCE": throw new ApiException(error.code, HttpStatus.CONFLICT, "待接入");
     case "PROFILE_UNAVAILABLE": throw new ApiException(error.code, HttpStatus.CONFLICT, "请先完善求职档案");
     case "ACCOUNT_RUN_POLICY_WINDOW_CLOSED": throw new ApiException(error.code, HttpStatus.CONFLICT, "当前不在账户允许的后台运行时间窗口内");
+    case "RUN_PREFLIGHT_BLOCKED": throw new ApiException(error.code, HttpStatus.CONFLICT, "当前条件不允许启用每日检查，请先处理运行前检查项");
   }
 }
 

@@ -228,7 +228,7 @@ describe("推荐 handoff 的 Worker 恢复", () => {
     })).resolves.toMatchObject({ applied: true });
     await expect(database.select({ status: agentRuns.status }).from(agentRuns)
       .where(and(eq(agentRuns.userId, userId), eq(agentRuns.id, child.id))))
-      .resolves.toEqual([{ status: "paused" }]);
+      .resolves.toEqual([{ status: "cancelled" }]);
 
     const afterStop: Array<{ version: number; runId: string; userId: string }> = [];
     let stoppedReconciler: AgentRunReconciler | undefined;

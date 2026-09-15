@@ -1,8 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
-import { agentInboxItemActions, agentInboxItems, agentRunControlCommands, agentRunEvents, agentRunSteps, agentRuns, auditEvents, createDatabase, jobAccounts, jobDiscoverySourceIssues, jobProfiles, jobTargets, jobTargetRevisions, migrateDatabase, modelDiagnosticResults, profileFactRevisions, profileFacts, recommendationLists, recommendationResults, recommendationRunControlCommands, recommendationRunStartCommands, type Database } from "@job-copilot/database";
+import { agentInboxItemActions, agentInboxItems, agentRunControlCommands, agentRunEvents, agentRunSteps, agentRuns, auditEvents, createDatabase, jobAccounts, jobDiscoveryScheduleOccurrences, jobDiscoverySchedules, jobDiscoverySourceIssues, jobProfiles, jobTargets, jobTargetRevisions, migrateDatabase, modelDiagnosticResults, profileFactRevisions, profileFacts, recommendationLists, recommendationResults, recommendationRunControlCommands, recommendationRunStartCommands, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
 import { createAccountRunControl } from "./account-run-control";
 import { createModelDiagnosticProjectionReader, createRunPreflightEvaluator } from "./run-preflight";
@@ -12,6 +12,7 @@ import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
 import { createAgentRunRecoveryQueries } from "./agent-run-processor";
 import { createAgentInbox } from "./agent-inbox";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
+import { AccountRunAdmissionError } from "./account-run-admission";
 import type { SourceCapabilityAdapter } from "./source-capabilities";
 
 const now = new Date("2026-09-13T12:00:00.000Z");
@@ -108,6 +109,47 @@ describe("推荐运行领域边界", () => {
     await database.update(agentRuns).set({ status: "running", currentStep: "batch_search", startedAt: now, updatedAt: new Date(now.getTime() + 1_000) }).where(eq(agentRuns.id, first.run.runId));
     const replay = await service.start({ userId: owner.userId, requestId: randomUUID(), command: await command(owner, key) });
     expect(replay).toMatchObject({ reused: true, run: { runId: first.run.runId, status: "running", currentStage: "discovery" } });
+  });
+
+  it("升级后仍按旧 manual fingerprint 重放已持久化启动命令", async () => {
+    const owner = await account(); const service = commands(owner.fingerprint); const key = randomUUID();
+    const startedCommand = await command(owner, key);
+    const started = await service.start({ userId: owner.userId, requestId: randomUUID(), command: startedCommand });
+    const legacyFingerprint = createHash("sha256").update(JSON.stringify({ warningFingerprint: startedCommand.warningFingerprint })).digest("hex");
+    await expect(database.select({ commandFingerprint: recommendationRunStartCommands.commandFingerprint }).from(recommendationRunStartCommands).where(and(eq(recommendationRunStartCommands.userId, owner.userId), eq(recommendationRunStartCommands.idempotencyKey, key))))
+      .resolves.toEqual([{ commandFingerprint: legacyFingerprint }]);
+    await expect(service.start({ userId: owner.userId, requestId: randomUUID(), command: startedCommand }))
+      .resolves.toMatchObject({ reused: true, run: { runId: started.run.runId } });
+  });
+
+  it("停止后立即释放不会让缓存的旧 schedule occurrence 创建 recommendation root", async () => {
+    const owner = await account(); const service = commands(owner.fingerprint); const scheduleId = randomUUID(); const occurrenceId = randomUUID();
+    await database.insert(jobDiscoverySchedules).values({ id: scheduleId, userId: owner.userId, targetId: owner.targetId, version: 1, state: "enabled", dailyTime: "09:00", timeZone: "Asia/Shanghai", nextRunAt: new Date(now.getTime() + 86_400_000), createdAt: now, updatedAt: now });
+    await database.insert(jobDiscoveryScheduleOccurrences).values({ id: occurrenceId, userId: owner.userId, scheduleId, targetId: owner.targetId, scheduledFor: now, status: "pending", runId: null, skipReason: null, createdAt: now });
+    const control = createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: randomUUID, clock: () => now });
+    await control.control({ userId: owner.userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 0, action: "stop" } });
+    await control.control({ userId: owner.userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 1, action: "release" } });
+
+    await expect(service.start({ userId: owner.userId, requestId: randomUUID(), command: { idempotencyKey: occurrenceId, warningFingerprint: null }, trigger: { kind: "schedule", occurrenceId, scheduledFor: now, targetId: owner.targetId } }))
+      .rejects.toMatchObject({ code: "ACCOUNT_RUN_SCHEDULE_SKIPPED" } satisfies Partial<AccountRunAdmissionError>);
+    await expect(database.select({ id: agentRuns.id }).from(agentRuns).where(eq(agentRuns.userId, owner.userId))).resolves.toEqual([]);
+    await expect(database.select({ state: jobDiscoverySchedules.state }).from(jobDiscoverySchedules).where(eq(jobDiscoverySchedules.id, scheduleId))).resolves.toEqual([{ state: "disabled" }]);
+    await expect(database.select({ status: jobDiscoveryScheduleOccurrences.status, skipReason: jobDiscoveryScheduleOccurrences.skipReason }).from(jobDiscoveryScheduleOccurrences).where(eq(jobDiscoveryScheduleOccurrences.id, occurrenceId)))
+      .resolves.toEqual([{ status: "skipped", skipReason: "ACCOUNT_RUN_STOPPED" }]);
+  });
+
+  it("停止后的同义 schedule 启动键只重放既有 root，不验证已废弃 occurrence", async () => {
+    const owner = await account(); const service = commands(owner.fingerprint); const scheduleId = randomUUID(); const occurrenceId = randomUUID();
+    await database.insert(jobDiscoverySchedules).values({ id: scheduleId, userId: owner.userId, targetId: owner.targetId, version: 1, state: "enabled", dailyTime: "09:00", timeZone: "Asia/Shanghai", nextRunAt: new Date(now.getTime() + 86_400_000), createdAt: now, updatedAt: now });
+    await database.insert(jobDiscoveryScheduleOccurrences).values({ id: occurrenceId, userId: owner.userId, scheduleId, targetId: owner.targetId, scheduledFor: now, status: "pending", runId: null, skipReason: null, createdAt: now });
+    const start = { userId: owner.userId, requestId: randomUUID(), command: { idempotencyKey: occurrenceId, warningFingerprint: null }, trigger: { kind: "schedule" as const, occurrenceId, scheduledFor: now, targetId: owner.targetId } };
+    const first = await service.start(start);
+    await database.update(jobDiscoveryScheduleOccurrences).set({ status: "dispatched", runId: first.run.runId, skipReason: null }).where(eq(jobDiscoveryScheduleOccurrences.id, occurrenceId));
+    const control = createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: randomUUID, clock: () => now });
+    await control.control({ userId: owner.userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 0, action: "stop" } });
+    await control.control({ userId: owner.userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 1, action: "release" } });
+    await expect(service.start({ ...start, requestId: randomUUID() })).resolves.toMatchObject({ reused: true, run: { runId: first.run.runId, status: "cancelled" } });
+    await expect(database.select({ id: agentRuns.id }).from(agentRuns).where(eq(agentRuns.userId, owner.userId))).resolves.toEqual([{ id: first.run.runId }]);
   });
 
   it("同键异义稳定冲突，终态根运行允许新的启动键创建新根", async () => {
@@ -368,12 +410,12 @@ describe("推荐运行领域边界", () => {
     const oldKey = randomUUID(); const started = await service.start({ userId: owner.userId, requestId: randomUUID(), command: await command(owner, oldKey) });
     const accountControl = createAccountRunControl({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: randomUUID, clock: () => now });
     await accountControl.control({ userId: owner.userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 0, action: "stop" } });
-    await expect(service.start({ userId: owner.userId, requestId: randomUUID(), command: await command(owner, oldKey) })).resolves.toMatchObject({ reused: true, run: { runId: started.run.runId, status: "paused" } });
+    await expect(service.start({ userId: owner.userId, requestId: randomUUID(), command: await command(owner, oldKey) })).resolves.toMatchObject({ reused: true, run: { runId: started.run.runId, status: "cancelled" } });
     await expect(service.start({ userId: owner.userId, requestId: randomUUID(), command: await command(owner, randomUUID()) })).rejects.toThrow("RUN_PREFLIGHT_BLOCKED");
     await accountControl.control({ userId: owner.userId, requestId: randomUUID(), command: { commandId: randomUUID(), expectedVersion: 1, action: "release" } });
-    await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, started.run.runId))).resolves.toEqual([{ status: "paused" }]);
-    await expect(service.control({ userId: owner.userId, requestId: randomUUID(), runId: started.run.runId, command: { commandId: randomUUID(), action: "resume" } })).resolves.toMatchObject({ applied: true, run: { status: "queued", currentStage: "discovery" } });
-    expect(enqueued).toEqual([started.run.runId, started.run.runId]);
+    await expect(database.select({ status: agentRuns.status }).from(agentRuns).where(eq(agentRuns.id, started.run.runId))).resolves.toEqual([{ status: "cancelled" }]);
+    await expect(service.control({ userId: owner.userId, requestId: randomUUID(), runId: started.run.runId, command: { commandId: randomUUID(), action: "resume" } })).rejects.toThrow("RECOMMENDATION_RUN_CONTROL_CONFLICT");
+    expect(enqueued).toEqual([started.run.runId]);
   });
 
   it("同一控制键的不同动作稳定冲突且不重放物理控制", async () => {

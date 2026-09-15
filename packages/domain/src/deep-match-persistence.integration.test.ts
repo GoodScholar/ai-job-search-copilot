@@ -921,8 +921,8 @@ describe("deep match persistence", () => {
       .resolves.toMatchObject({ kind: "created", runId: existingManual.runId, reused: true });
     await expect(starter.start({ userId: input.userId, targetId: input.targetId, discoveryRunId: crypto.randomUUID(), idempotencyKey: automaticKey, trigger: "automatic" }))
       .resolves.toMatchObject({ kind: "created", runId: existingAutomatic.runId, reused: true });
-    await expect(db.select({ id: agentRuns.id, status: agentRuns.status }).from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.status, "paused"))))
-      .resolves.toEqual(expect.arrayContaining([{ id: existingManual.runId, status: "paused" }, { id: existingAutomatic.runId, status: "paused" }]));
+    await expect(db.select({ id: agentRuns.id, status: agentRuns.status }).from(agentRuns).where(and(eq(agentRuns.userId, input.userId), eq(agentRuns.status, "cancelled"))))
+      .resolves.toEqual(expect.arrayContaining([{ id: existingManual.runId, status: "cancelled" }, { id: existingAutomatic.runId, status: "cancelled" }]));
   });
 
 });

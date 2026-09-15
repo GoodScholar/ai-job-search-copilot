@@ -1,5 +1,5 @@
 import { and, eq, inArray } from "drizzle-orm";
-import { accountRunControlCommands, accountRunPolicies, agentRuns, type Database } from "@job-copilot/database";
+import { accountRunControlCommands, accountRunPolicies, agentRuns, jobDiscoveryScheduleOccurrences, jobDiscoverySchedules, type Database } from "@job-copilot/database";
 import { AccountRunControlCommandSchema, AccountRunControlResponseSchema, AccountRunControlStateSchema, type AccountRunControlCommand, type AccountRunControlResponse, type AccountRunControlState } from "@job-copilot/contracts/account-run-policies";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import type { AuditTrail } from "./audit-trail";
@@ -17,7 +17,8 @@ export function createAccountRunControl(deps: Dependencies): { get(input: { user
     async get({ userId }) { return state(await readAccountRunControlInTransaction(deps.db, userId)); },
     async control(input) {
       const command = AccountRunControlCommandSchema.parse(input.command);
-      return deps.db.transaction(async (tx) => {
+      try {
+        return await deps.db.transaction(async (tx) => {
         await acquireAccountAdvisoryLock(tx, input.userId);
         const [prior] = await tx.select().from(accountRunControlCommands).where(and(eq(accountRunControlCommands.userId, input.userId), eq(accountRunControlCommands.commandId, command.commandId)));
         if (prior) {
@@ -34,15 +35,25 @@ export function createAccountRunControl(deps: Dependencies): { get(input: { user
           await tx.update(accountRunPolicies).set({ stoppedAt: next.stoppedAt, controlVersion: next.controlVersion, scheduleResumeAfter: next.scheduleResumeAfter, updatedAt: now }).where(eq(accountRunPolicies.userId, input.userId));
           if (command.action === "stop") {
             const runs = await tx.select({ id: agentRuns.id, controlState: agentRuns.controlState }).from(agentRuns).where(and(eq(agentRuns.userId, input.userId), inArray(agentRuns.status, ["queued", "running"])));
-            for (const run of runs) if (run.controlState !== "cancel_requested") await applyAgentRunControlInTransaction(tx, { userId: input.userId, requestId: input.requestId, runId: run.id, command: { commandId: command.commandId, action: "pause" } }, deps);
+            for (const run of runs) if (run.controlState !== "cancel_requested") await applyAgentRunControlInTransaction(tx, { userId: input.userId, requestId: input.requestId, runId: run.id, command: { commandId: command.commandId, action: "cancel" } }, deps);
+            await tx.update(jobDiscoverySchedules).set({ state: "disabled", nextRunAt: null, updatedAt: now }).where(and(eq(jobDiscoverySchedules.userId, input.userId), eq(jobDiscoverySchedules.state, "enabled")));
+            await tx.update(jobDiscoveryScheduleOccurrences).set({ status: "skipped", runId: null, skipReason: "ACCOUNT_RUN_STOPPED" }).where(and(eq(jobDiscoveryScheduleOccurrences.userId, input.userId), eq(jobDiscoveryScheduleOccurrences.status, "pending")));
           }
           const audit = deps.auditTrail.bind(tx);
           if (command.action === "stop") await audit.append({ userId: input.userId, actorUserId: input.userId, eventType: "account.run_stopped", occurredAt: now, requestId: input.requestId, outcome: "success", reasonCode: "ACCOUNT_RUN_STOPPED", resourceType: "account_run_control", resourceId: input.userId, metadata: { commandId: command.commandId, controlVersion: next.controlVersion, action: "stop" } });
           else await audit.append({ userId: input.userId, actorUserId: input.userId, eventType: "account.run_stop_released", occurredAt: now, requestId: input.requestId, outcome: "success", reasonCode: "ACCOUNT_RUN_STOP_RELEASED", resourceType: "account_run_control", resourceId: input.userId, metadata: { commandId: command.commandId, controlVersion: next.controlVersion, action: "release" } });
         }
         await tx.insert(accountRunControlCommands).values({ userId: input.userId, commandId: command.commandId, action: command.action, expectedVersion: command.expectedVersion, applied: response.applied, resultSnapshot: response, createdAt: now });
-        return response;
-      });
+          return response;
+        });
+      } catch (error) {
+        if (error instanceof AccountRunControlError) {
+          try {
+            await deps.auditTrail.append({ userId: input.userId, actorUserId: input.userId, eventType: "account.run_control_rejected", occurredAt: deps.clock(), requestId: input.requestId, outcome: "failure", reasonCode: error.code, resourceType: "account_run_control", resourceId: input.userId, metadata: { commandId: command.commandId, action: command.action, expectedVersion: command.expectedVersion } });
+          } catch { /* 基础数据库不可用时无法在同一持久化边界记录拒绝审计。 */ }
+        }
+        throw error;
+      }
     },
   };
 }
