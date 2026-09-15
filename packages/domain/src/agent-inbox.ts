@@ -36,6 +36,7 @@ const runCopy = {
   recommendation_result: ["本次推荐暂无合适岗位", "已完成可信推荐检查，暂未找到合适岗位。", "已发布可信的暂无推荐结果。", "本次推荐没有生成岗位清单。", "查看本次推荐结果。"],
   calibration_proposal: ["推荐校准建议待查看", "有一项推荐校准建议可供查看。", "已生成结构化校准建议。", "建议可能影响后续推荐排序。", "查看校准建议。"],
   schedule_attention: ["每日推荐未启动", "计划运行前检查发现需要处理的事项。", "本次计划重新检查时未满足启动条件。", "本次计划未创建推荐运行。", "查看准备状态并修复阻塞项。"],
+  account_control_attention: ["运行控制需要重新确认", "账户运行控制命令未被应用。", "控制状态已变化或命令与先前请求不一致。", "停止或解除停止尚未按这次请求变更。", "查看运行控制状态并重新提交。"],
 } as const;
 function copyFor(item: Row) {
   if (item.kind !== "budget_exhausted") { const [title, message, basis, impact, suggestedAction] = runCopy[item.kind as keyof typeof runCopy]; return { title, message, basis, impact, suggestedAction }; }
@@ -51,6 +52,7 @@ async function itemFor(db: Pick<Database, "select">, userId: string, itemId: str
 function auditReason(item: Row) { return AgentInboxReasonCodeSchema.parse(item.reasonCode); }
 
 async function targetFor(db: Pick<Database, "select">, userId: string, item: Row): Promise<AgentInboxTarget> {
+  if (item.kind === "account_control_attention" && item.accountControlCommandId) return { type: "account_run_policy", href: "/profile/run-policy" };
   if (item.kind === "candidate_fact" && item.candidateFactId) return { type: "candidate_fact", candidateFactId: item.candidateFactId, href: "/profile#candidate-facts" };
   if (item.kind === "schedule_attention" && item.scheduleOccurrenceId) {
     const occurrence = (await db.select({ targetId: jobDiscoveryScheduleOccurrences.targetId }).from(jobDiscoveryScheduleOccurrences).where(and(eq(jobDiscoveryScheduleOccurrences.userId, userId), eq(jobDiscoveryScheduleOccurrences.id, item.scheduleOccurrenceId))))[0];

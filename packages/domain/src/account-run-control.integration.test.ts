@@ -2,12 +2,13 @@ import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { and, eq, inArray } from "drizzle-orm";
-import { accountRunPolicies, agentInboxItems, agentRunEvents, agentRuns, auditEvents, createDatabase, jobAccounts, jobDiscoveryScheduleOccurrences, jobDiscoverySchedules, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
+import { accountRunPolicies, agentInboxItemActions, agentInboxItems, agentRunEvents, agentRuns, auditEvents, createDatabase, jobAccounts, jobDiscoveryScheduleOccurrences, jobDiscoverySchedules, jobTargetRevisions, jobTargets, migrateDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
 import { accountRunAdmissionReason, createAccountRunControl } from "./account-run-control";
 import { AccountRunControlError } from "./account-run-control";
 import { createAgentRunCommands, type AgentRunQueue } from "./agent-run-control";
 import { createAgentRunCheckpoint } from "./agent-run-checkpoint";
+import { createAgentInbox } from "./agent-inbox";
 import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
 
 class MemoryQueue implements AgentRunQueue { async enqueue(): Promise<void> {} }
@@ -45,7 +46,7 @@ describe("账户运行停止控制", () => {
     await expect(service.get({ userId })).resolves.toMatchObject({ stoppedAt: null, controlVersion: 2 });
   });
 
-  it("旧版本、同命令不同载荷与相同状态的新命令分别冲突或不变更版本", async () => {
+  it("旧版本和同命令异义拒绝产生可处理 Inbox，重放不重复创建", async () => {
     const userId = await account(); const service = controls();
     const commandId = randomUUID();
     await service.control({ userId, requestId: randomUUID(), command: { commandId, expectedVersion: 0, action: "stop" } });
@@ -59,7 +60,18 @@ describe("账户运行停止控制", () => {
         expect.objectContaining({ outcome: "failure", reasonCode: "ACCOUNT_RUN_CONTROL_VERSION_CONFLICT", metadata: expect.objectContaining({ action: "stop", expectedVersion: 0 }) }),
         expect.objectContaining({ outcome: "failure", reasonCode: "ACCOUNT_RUN_CONTROL_COMMAND_ID_CONFLICT", metadata: expect.objectContaining({ action: "stop", expectedVersion: 1 }) }),
       ]));
-    await expect(database.select().from(agentInboxItems).where(eq(agentInboxItems.userId, userId))).resolves.toEqual([]);
+    const inbox = createAgentInbox({ db: database, commands: {} as never, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: randomUUID, clock: () => now });
+    const listed = await inbox.list({ userId, status: "pending" });
+    expect(listed.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "account_control_attention", reasonCode: "ACCOUNT_RUN_CONTROL_COMMAND_ID_CONFLICT", target: { type: "account_run_policy", href: "/profile/run-policy" }, availableActions: ["mark_read", "dismiss"] }),
+      expect.objectContaining({ kind: "account_control_attention", reasonCode: "ACCOUNT_RUN_CONTROL_VERSION_CONFLICT", target: { type: "account_run_policy", href: "/profile/run-policy" }, availableActions: ["mark_read", "dismiss"] }),
+    ]));
+    const conflict = listed.items.find((item) => item.reasonCode === "ACCOUNT_RUN_CONTROL_COMMAND_ID_CONFLICT")!;
+    await expect(inbox.act({ userId, requestId: randomUUID(), itemId: conflict.itemId, command: { actionId: randomUUID(), action: "mark_read" } })).resolves.toMatchObject({ applied: true, item: { status: "read" } });
+    await expect(inbox.act({ userId, requestId: randomUUID(), itemId: conflict.itemId, command: { actionId: randomUUID(), action: "dismiss" } })).resolves.toMatchObject({ applied: true, item: { status: "resolved" } });
+    await expect(service.control({ userId, requestId: randomUUID(), command: { commandId, expectedVersion: 0, action: "release" } })).rejects.toMatchObject({ code: "ACCOUNT_RUN_CONTROL_COMMAND_ID_CONFLICT" } satisfies Partial<AccountRunControlError>);
+    await expect(database.select().from(agentInboxItems).where(eq(agentInboxItems.userId, userId))).resolves.toHaveLength(2);
+    await expect(database.select().from(agentInboxItemActions).where(eq(agentInboxItemActions.userId, userId))).resolves.toHaveLength(2);
   });
 
   it("读取默认控制不创建策略基线", async () => {

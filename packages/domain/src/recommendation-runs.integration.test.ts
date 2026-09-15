@@ -122,6 +122,36 @@ describe("推荐运行领域边界", () => {
       .resolves.toMatchObject({ reused: true, run: { runId: started.run.runId } });
   });
 
+  it("计划启动的最终投影继承同一 deadline，账户锁阻塞时不会遗留等待事务", async () => {
+    const owner = await account();
+    const scheduleId = randomUUID(); const occurrenceId = randomUUID();
+    await database.insert(jobDiscoverySchedules).values({ id: scheduleId, userId: owner.userId, targetId: owner.targetId, version: 1, state: "enabled", dailyTime: "09:00", timeZone: "Asia/Shanghai", nextRunAt: new Date(now.getTime() + 86_400_000), createdAt: now, updatedAt: now });
+    await database.insert(jobDiscoveryScheduleOccurrences).values({ id: occurrenceId, userId: owner.userId, scheduleId, targetId: owner.targetId, scheduledFor: now, status: "pending", runId: null, skipReason: null, createdAt: now });
+    const preflight = createRunPreflightEvaluator({ capabilityAdapter, modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: owner.fingerprint }), discoveryExecutionMode: "layered_public", id: randomUUID, clock: () => now });
+    let releaseLock!: () => void; const lockReleased = new Promise<void>((resolve) => { releaseLock = resolve; });
+    let acquiredLock!: () => void; const lockAcquired = new Promise<void>((resolve) => { acquiredLock = resolve; });
+    let holder: Promise<unknown> | undefined;
+    const service = createRecommendationRunCommands({
+      db: database,
+      queue: { enqueue: async () => {
+        holder = database.transaction(async (transaction) => { await acquireAccountAdvisoryLock(transaction, owner.userId); acquiredLock(); await lockReleased; });
+        await lockAcquired;
+      } },
+      auditTrail: createAuditTrail({ db: database, clock: () => now }), runPreflight: preflight, executionMode: "layered_public", id: randomUUID, clock: () => now,
+    });
+    const start = service.start({ userId: owner.userId, requestId: randomUUID(), command: await command(owner, occurrenceId), trigger: { kind: "schedule", occurrenceId, scheduledFor: now, targetId: owner.targetId }, deadline: new Date(now.getTime() + 150) });
+    try {
+      await waitUntilAConnectionIsWaitingForAccountAdvisoryLock(database);
+      await expect(start).rejects.toMatchObject({ cause: { code: "57014" } });
+      await expect.poll(async () => (await database.execute<{ waiting: boolean }>(sql`
+        select exists(select 1 from pg_stat_activity where wait_event_type = 'Lock' and wait_event = 'advisory' and query like '%pg_advisory_xact_lock%') as waiting
+      `))[0]?.waiting ?? false, { timeout: 2_000, interval: 10 }).toBe(false);
+    } finally {
+      releaseLock();
+      await holder;
+    }
+  });
+
   it("停止后立即释放不会让缓存的旧 schedule occurrence 创建 recommendation root", async () => {
     const owner = await account(); const service = commands(owner.fingerprint); const scheduleId = randomUUID(); const occurrenceId = randomUUID();
     await database.insert(jobDiscoverySchedules).values({ id: scheduleId, userId: owner.userId, targetId: owner.targetId, version: 1, state: "enabled", dailyTime: "09:00", timeZone: "Asia/Shanghai", nextRunAt: new Date(now.getTime() + 86_400_000), createdAt: now, updatedAt: now });

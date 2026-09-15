@@ -1,5 +1,5 @@
 import { and, eq, inArray } from "drizzle-orm";
-import { accountRunControlCommands, accountRunPolicies, agentRuns, jobDiscoveryScheduleOccurrences, jobDiscoverySchedules, type Database } from "@job-copilot/database";
+import { accountRunControlCommands, accountRunPolicies, agentInboxItems, agentRuns, jobDiscoveryScheduleOccurrences, jobDiscoverySchedules, type Database } from "@job-copilot/database";
 import { AccountRunControlCommandSchema, AccountRunControlResponseSchema, AccountRunControlStateSchema, type AccountRunControlCommand, type AccountRunControlResponse, type AccountRunControlState } from "@job-copilot/contracts/account-run-policies";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import type { AuditTrail } from "./audit-trail";
@@ -49,7 +49,12 @@ export function createAccountRunControl(deps: Dependencies): { get(input: { user
       } catch (error) {
         if (error instanceof AccountRunControlError) {
           try {
-            await deps.auditTrail.append({ userId: input.userId, actorUserId: input.userId, eventType: "account.run_control_rejected", occurredAt: deps.clock(), requestId: input.requestId, outcome: "failure", reasonCode: error.code, resourceType: "account_run_control", resourceId: input.userId, metadata: { commandId: command.commandId, action: command.action, expectedVersion: command.expectedVersion } });
+            await deps.db.transaction(async (tx) => {
+              await acquireAccountAdvisoryLock(tx, input.userId);
+              const occurredAt = deps.clock();
+              await tx.insert(agentInboxItems).values({ id: deps.id(), userId: input.userId, runId: null, triggerEventSequence: null, scheduleOccurrenceId: null, accountControlCommandId: command.commandId, candidateFactId: null, watchlistItemId: null, sourceHealthCheckId: null, recommendationListId: null, recommendationResultId: null, calibrationProposalId: null, kind: "account_control_attention", status: "unread", reasonCode: error.code, budgetDimension: null, createdAt: occurredAt }).onConflictDoNothing();
+              await deps.auditTrail.bind(tx).append({ userId: input.userId, actorUserId: input.userId, eventType: "account.run_control_rejected", occurredAt, requestId: input.requestId, outcome: "failure", reasonCode: error.code, resourceType: "account_run_control", resourceId: input.userId, metadata: { commandId: command.commandId, action: command.action, expectedVersion: command.expectedVersion } });
+            });
           } catch { /* 基础数据库不可用时无法在同一持久化边界记录拒绝审计。 */ }
         }
         throw error;

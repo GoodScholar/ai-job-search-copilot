@@ -14,13 +14,13 @@ const nonBudgetFailureCodes = new Set<string>(AgentRunFailureCodeSchema.options.
 
 export const AgentInboxKindSchema = z.enum([
   "run_failed", "budget_exhausted", "decision_required", "source_attention", "discovery_attention",
-  "candidate_fact", "recommendation_list", "recommendation_result", "calibration_proposal", "schedule_attention",
+  "candidate_fact", "recommendation_list", "recommendation_result", "calibration_proposal", "schedule_attention", "account_control_attention",
 ]);
 export const AgentInboxStatusSchema = z.enum(["unread", "read", "resolved"]);
 export const AgentInboxActionSchema = z.enum(["restart_run", "resume_run", "cancel_run", "mark_read", "dismiss"]);
 export const AgentInboxReasonCodeSchema = z.union([
   z.literal("AGENT_RUN_PAUSED"), z.literal("SOURCE_HEALTH_ATTENTION"), z.literal("DISCOVERY_ATTENTION"),
-  z.literal("CANDIDATE_FACT_PENDING"), z.literal("RECOMMENDATION_LIST_PUBLISHED"), z.literal("NO_RECOMMENDATIONS_PUBLISHED"), z.literal("CALIBRATION_PROPOSAL_CREATED"), z.literal("SCHEDULE_RUN_PREFLIGHT_BLOCKED"),
+  z.literal("CANDIDATE_FACT_PENDING"), z.literal("RECOMMENDATION_LIST_PUBLISHED"), z.literal("NO_RECOMMENDATIONS_PUBLISHED"), z.literal("CALIBRATION_PROPOSAL_CREATED"), z.literal("SCHEDULE_RUN_PREFLIGHT_BLOCKED"), z.literal("ACCOUNT_RUN_CONTROL_COMMAND_ID_CONFLICT"), z.literal("ACCOUNT_RUN_CONTROL_VERSION_CONFLICT"),
   AgentRunFailureCodeSchema,
 ]);
 
@@ -33,6 +33,7 @@ export const AgentInboxTargetSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("recommendation_result"), recommendationResultId: z.uuid(), rootRunId: z.uuid(), targetId: z.uuid(), href: z.string().regex(new RegExp(`^/recommendations\\?runId=${uuidPattern}&resultId=${uuidPattern}#recommendation-result$`, "u")) }).strict(),
   z.object({ type: z.literal("calibration_proposal"), proposalId: z.uuid(), targetId: z.uuid(), href: z.string().regex(new RegExp(`^/recommendations\\?targetId=${uuidPattern}#calibration-proposal$`, "u")) }).strict(),
   z.object({ type: z.literal("schedule_occurrence"), occurrenceId: z.uuid(), targetId: z.uuid(), href: z.string().regex(/^\/home#recommendation-run$/u) }).strict(),
+  z.object({ type: z.literal("account_run_policy"), href: z.string().regex(/^\/profile\/run-policy$/u) }).strict(),
 ]);
 
 const copy = z.string().trim().min(1).max(500);
@@ -84,6 +85,9 @@ export const AgentInboxItemSchema = itemSchema.superRefine((item, context) => {
   } else if (item.kind === "schedule_attention") {
     if (item.reasonCode !== "SCHEDULE_RUN_PREFLIGHT_BLOCKED" || item.budgetDimension !== null || item.runId !== null || item.target.type !== "schedule_occurrence" || item.retryable || item.suggestedActions.length) issue("kind", "invalid schedule attention projection");
     if (active && !sameActions(item.availableActions, unreadActions(item.status, ["dismiss"]))) issue("availableActions", "invalid schedule attention actions");
+  } else if (item.kind === "account_control_attention") {
+    if ((item.reasonCode !== "ACCOUNT_RUN_CONTROL_COMMAND_ID_CONFLICT" && item.reasonCode !== "ACCOUNT_RUN_CONTROL_VERSION_CONFLICT") || item.budgetDimension !== null || item.runId !== null || item.target.type !== "account_run_policy" || item.retryable || item.suggestedActions.length) issue("kind", "invalid account control attention projection");
+    if (active && !sameActions(item.availableActions, unreadActions(item.status, ["dismiss"]))) issue("availableActions", "invalid account control attention actions");
   } else {
     if (item.runId === null || (item.target.type !== "agent_run" && item.target.type !== "recommendation_run") || (item.target.type === "agent_run" && item.target.runId !== item.runId) || (item.target.type === "recommendation_run" && item.target.physicalRunId !== item.runId)) issue("target", "run items require matching run provenance");
     if (item.kind === "decision_required") {

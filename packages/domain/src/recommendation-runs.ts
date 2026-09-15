@@ -129,8 +129,8 @@ function projectFacts(facts: NonNullable<Awaited<ReturnType<typeof readLogicalFa
 
 async function project(db: any, userId: string, rootId: string) { const facts = await readLogicalFacts(db, userId, rootId); if (!facts) throw new RecommendationRunError("RECOMMENDATION_RUN_NOT_FOUND"); return projectFacts(facts); }
 
-async function projectUnderAccountLock(db: Database, userId: string, rootId: string) {
-  return db.transaction(async (transaction) => { await acquireAccountAdvisoryLock(transaction, userId); return project(transaction, userId, rootId); });
+async function projectUnderAccountLock(db: Database, userId: string, rootId: string, deadline?: Date, clock: () => Date = () => new Date()) {
+  return db.transaction(async (transaction) => { if (deadline) await applyTransactionDeadline(transaction, { deadline, clock }); await acquireAccountAdvisoryLock(transaction, userId); return project(transaction, userId, rootId); });
 }
 
 async function findActiveRoot(transaction: any, userId: string) {
@@ -201,7 +201,7 @@ export function createRecommendationRunCommands(deps: { db: Database; queue: Age
         return { rootId: root.id, reused: active !== null, wake: true };
       });
       if (outcome.wake) try { await deps.queue.enqueue({ version: 1, runId: outcome.rootId, userId: input.userId }); } catch { /* reconciler owns recovery */ }
-      return { run: await projectUnderAccountLock(deps.db, input.userId, outcome.rootId), reused: outcome.reused };
+      return { run: await projectUnderAccountLock(deps.db, input.userId, outcome.rootId, input.deadline, deps.clock), reused: outcome.reused };
     },
     async control(input: { userId: string; requestId: string; runId: string; command: ControlRecommendationRunCommand }): Promise<{ applied: boolean; run: RecommendationRun }> {
       const command = ControlRecommendationRunCommandSchema.parse(input.command); const commandFingerprint = fingerprint({ action: command.action });

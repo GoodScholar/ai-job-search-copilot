@@ -1111,6 +1111,18 @@ describe("database migrations", () => {
       insert into agent_inbox_items (id, user_id, schedule_occurrence_id, kind, status, reason_code, budget_dimension)
       values ('452e9524-303f-4c76-b41f-bc606a8d1d09', ${otherUserId}, '7ad6050a-e7e8-4b51-8738-40a54b559c0d', 'schedule_attention', 'unread', 'SCHEDULE_RUN_PREFLIGHT_BLOCKED', null)
     `)).rejects.toMatchObject({ cause: { code: "23503" } });
+    await migratedDatabase.execute(sql`
+      insert into agent_inbox_items (id, user_id, account_control_command_id, kind, status, reason_code, budget_dimension)
+      values ('f1a9b879-41e3-4ab8-a30c-7047316df176', ${userId}, '1b5db874-35a3-4ab8-a30c-7047316df176', 'account_control_attention', 'unread', 'ACCOUNT_RUN_CONTROL_VERSION_CONFLICT', null)
+    `);
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_inbox_items (id, user_id, account_control_command_id, kind, status, reason_code, budget_dimension)
+      values ('f2a9b879-41e3-4ab8-a30c-7047316df176', ${userId}, '1b5db874-35a3-4ab8-a30c-7047316df176', 'account_control_attention', 'unread', 'ACCOUNT_RUN_CONTROL_VERSION_CONFLICT', null)
+    `)).rejects.toMatchObject({ cause: { code: "23505" } });
+    await expect(migratedDatabase.execute(sql`
+      insert into agent_inbox_items (id, user_id, account_control_command_id, kind, status, reason_code, budget_dimension)
+      values ('f3a9b879-41e3-4ab8-a30c-7047316df176', ${userId}, null, 'account_control_attention', 'unread', 'ACCOUNT_RUN_CONTROL_COMMAND_ID_CONFLICT', null)
+    `)).rejects.toMatchObject({ cause: { code: "23514" } });
 
     const indexes = await migratedDatabase.execute(sql`
       select indexname from pg_indexes
@@ -1118,10 +1130,10 @@ describe("database migrations", () => {
         'job_discovery_schedules_due_idx', 'job_discovery_schedule_occurrences_pending_idx',
         'job_source_postings_availability_idx', 'job_source_posting_versions_availability_idx',
         'job_opportunities_availability_idx', 'job_opportunities_canonical_idx', 'job_opportunities_current_dedup_unique', 'job_source_postings_source_scan_idx',
-        'agent_inbox_items_schedule_occurrence_unique_idx'
+        'agent_inbox_items_schedule_occurrence_unique_idx', 'agent_inbox_items_account_control_command_unique_idx'
       ) order by indexname
     `);
-    expect(indexes).toHaveLength(9);
+    expect(indexes).toHaveLength(10);
   });
 
   it("registers the 0047 preflight snapshot migration before 0048", async () => {
