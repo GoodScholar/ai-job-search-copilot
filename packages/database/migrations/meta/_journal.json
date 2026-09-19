@@ -393,6 +393,13 @@
       "when": 1789293000000,
       "tag": "0055_account_control_attention_inbox",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1789459664146,
+      "tag": "0056_job_opportunity_archives",
+      "breakpoints": true
     }
   ]
 }

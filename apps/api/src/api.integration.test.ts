@@ -4,7 +4,7 @@ import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fa
 import { Test } from "@nestjs/testing";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { agentRuns, auditEvents, candidateFactEvidence, candidateFacts, careerDocuments, careerFactConflicts, careerImports, companyWatchlistRevisions, companyWatchlists, createDatabase, firstRecommendationJourneyCompletions, jobProfiles, jobSourceHealthChecks, modelDiagnosticResults, migrateDatabase, profileFactRevisions, profileFacts, type Database } from "@job-copilot/database";
+import { agentRuns, auditEvents, candidateFactEvidence, candidateFacts, careerDocuments, careerFactConflicts, careerImports, companyWatchlistRevisions, companyWatchlists, createDatabase, firstRecommendationJourneyCompletions, jobOpportunities, jobOpportunitySources, jobProfiles, jobSourceHealthChecks, jobSourcePostingVersions, jobSourcePostings, modelDiagnosticResults, migrateDatabase, profileFactRevisions, profileFacts, type Database } from "@job-copilot/database";
 import type { CareerDocumentStore, CareerImportQueue } from "@job-copilot/domain/career-imports";
 import type { JobContentStore, JobImportQueue } from "@job-copilot/domain/job-imports";
 import { createAgentRunCommands, createRecommendationRunCommands, type AgentRunQueue } from "@job-copilot/domain/agent-runs";
@@ -1840,6 +1840,41 @@ describe("authenticated workbench HTTP API", () => {
     }));
     expect(retry.statusCode).toBe(202);
     expect(retry.json()).toMatchObject({ status: "queued", reused: true });
+  });
+
+  it("归档 API 默认隐藏活跃岗位，支持恢复并且不向其他账户泄露资源", async () => {
+    const owner = await createSession(app, "job-opportunity-archive-owner");
+    const other = await createSession(app, "job-opportunity-archive-other");
+    const opportunityId = randomUUID();
+    const sourcePostingId = randomUUID();
+    const sourcePostingVersionId = randomUUID();
+    const digest = sourcePostingId.replaceAll("-", "").padEnd(64, "a");
+    const createdAt = new Date("2026-09-15T08:00:00.000Z");
+    await database.insert(jobSourcePostings).values({ id: sourcePostingId, userId: owner.account.userId, sourceType: "user_import", sourceIdentifier: digest, sourceIdentity: { hash: digest }, isOfficial: false, availability: "open", availabilityUpdatedAt: createdAt, createdAt, updatedAt: createdAt });
+    await database.insert(jobSourcePostingVersions).values({ id: sourcePostingVersionId, userId: owner.account.userId, sourcePostingId, version: 1, contentSha256: digest, rawContentSha256: digest, rawObjectReference: { key: "safe" }, normalizedData: {}, retrievedAt: createdAt, availability: "open", createdAt });
+    await database.insert(jobOpportunities).values({ id: opportunityId, userId: owner.account.userId, importId: null, sourcePostingVersionId, canonicalOpportunityId: null, dedupKey: digest, company: "示例科技", title: "归档测试工程师", location: "上海", postedAt: null, deadline: null, description: "保留的岗位正文", normalizedData: {}, availability: "open", availabilityUpdatedAt: createdAt, createdAt, updatedAt: createdAt });
+    await database.insert(jobOpportunitySources).values({ id: randomUUID(), userId: owner.account.userId, opportunityId, sourcePostingVersionId, createdAt });
+    const commandId = randomUUID();
+    const activeBefore = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/job-opportunities", headers: bearer(owner.sessionToken) });
+    const archived = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/job-opportunities/${opportunityId}/archive-state`, headers: { ...bearer(owner.sessionToken), "content-type": "application/json" }, payload: { action: "archive", commandId, expectedVersion: 0 } });
+    const activeAfter = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/job-opportunities", headers: bearer(owner.sessionToken) });
+    const archivedList = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/job-opportunities?filter=archived", headers: bearer(owner.sessionToken) });
+    const hidden = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/job-opportunities/${opportunityId}/archive-state`, headers: { ...bearer(other.sessionToken), "content-type": "application/json" }, payload: { action: "archive", commandId: randomUUID(), expectedVersion: 0 } });
+    const conflict = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/job-opportunities/${opportunityId}/archive-state`, headers: { ...bearer(owner.sessionToken), "content-type": "application/json" }, payload: { action: "restore", commandId: randomUUID(), expectedVersion: 0 } });
+    const restored = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/job-opportunities/${opportunityId}/archive-state`, headers: { ...bearer(owner.sessionToken), "content-type": "application/json" }, payload: { action: "restore", commandId: randomUUID(), expectedVersion: 1 } });
+    const replayed = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/job-opportunities/${opportunityId}/archive-state`, headers: { ...bearer(owner.sessionToken), "content-type": "application/json" }, payload: { action: "archive", commandId, expectedVersion: 0 } });
+
+    expect(activeBefore.statusCode).toBe(200);
+    expect(activeBefore.json()).toMatchObject({ items: [expect.objectContaining({ opportunityId, archivedAt: null, version: 0 })], counts: { active: 1, archived: 0 } });
+    expect(archived.statusCode).toBe(201);
+    expect(archived.json()).toMatchObject({ applied: true, state: { archivedAt: expect.any(String), version: 1 } });
+    expect(activeAfter.json()).toMatchObject({ items: [], counts: { active: 0, archived: 1 } });
+    expect(archivedList.json()).toMatchObject({ items: [expect.objectContaining({ opportunityId, title: "归档测试工程师", version: 1 })], counts: { active: 0, archived: 1 } });
+    expect(hidden.statusCode).toBe(404);
+    expect(conflict.statusCode).toBe(409);
+    expect(restored.json()).toMatchObject({ applied: true, state: { archivedAt: null, version: 2 } });
+    expect(replayed.json()).toEqual(archived.json());
+    await expect(database.execute(`select id from job_opportunity_sources where opportunity_id = '${opportunityId}'`)).resolves.toHaveLength(1);
   });
 
   it("为 owner 创建、复用并读取岗位导入，且不向其他账户暴露原文", async () => {

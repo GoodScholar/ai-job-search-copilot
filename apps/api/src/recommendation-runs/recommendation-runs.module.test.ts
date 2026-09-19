@@ -286,7 +286,7 @@ describe("RecommendationsModule 的精确清单 HTTP 边界", () => {
   });
 
   it("按 owner、target 与 list id 精确读取，错配保持隐藏且认证/404 均不可缓存", async () => {
-    const found = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/recommendations/lists/${listId}?targetId=${targetId}`, headers: requestHeaders });
+    const found = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/recommendations/lists/${listId}?targetId=${targetId}&includeArchived=false`, headers: requestHeaders });
     const hiddenListId = "00000000-0000-4000-8000-000000000021";
     const hidden = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/recommendations/lists/${hiddenListId}?targetId=${targetId}`, headers: requestHeaders });
     const unauthorized = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/recommendations/lists/${listId}?targetId=${targetId}` });
@@ -296,8 +296,8 @@ describe("RecommendationsModule 的精确清单 HTTP 边界", () => {
     expect(hidden.statusCode).toBe(HttpStatus.NOT_FOUND);
     expect(hidden.json()).toMatchObject({ code: "RECOMMENDATION_LIST_NOT_FOUND", message: "推荐清单不存在" });
     expect(receivedInputs).toEqual([
-      { userId: ownerId, targetId, recommendationListId: listId },
-      { userId: ownerId, targetId, recommendationListId: hiddenListId },
+      { userId: ownerId, targetId, recommendationListId: listId, includeArchived: false },
+      { userId: ownerId, targetId, recommendationListId: hiddenListId, includeArchived: true },
     ]);
     expect(unauthorized.statusCode).toBe(HttpStatus.UNAUTHORIZED);
     expectNoStore(found);

@@ -59,6 +59,9 @@ const CompletedJobImportMetadataSchema = z.object({
 const FailedJobImportMetadataSchema = z.object({
   importId: z.uuid(), inputType: JobImportInputTypeSchema, attemptCount: z.int().min(1), failureCode: JobImportFailureCodeSchema,
 }).strict();
+const JobOpportunityArchiveMetadataSchema = z.object({
+  opportunityId: z.uuid(), action: z.enum(["archive", "restore"]), version: z.int().positive(),
+}).strict();
 const CreatedJobTriageMetadataSchema = z.object({
   triageVersionId: z.uuid(), opportunityId: z.uuid(), sourcePostingVersionId: z.uuid(), profileId: z.uuid(), profileVersion: z.int().min(1),
   targetId: z.uuid(), targetVersion: z.int().min(1), qualificationRuleVersion: z.string().min(1).max(64), coarseRuleVersion: z.string().min(1).max(64),
@@ -226,6 +229,16 @@ const AuditEventInputSchema = z.discriminatedUnion("eventType", [
     userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("job.import_failed"), occurredAt: z.date().optional(),
     requestId: z.uuid(), outcome: z.literal("failure"), reasonCode: JobImportFailureCodeSchema,
     resourceType: z.literal("job_import"), resourceId: z.uuid(), metadata: FailedJobImportMetadataSchema,
+  }).strict(),
+  z.object({
+    userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("job.opportunity_archived"), occurredAt: z.date().optional(),
+    requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.literal("JOB_OPPORTUNITY_ARCHIVED"),
+    resourceType: z.literal("job_opportunity"), resourceId: z.uuid(), metadata: JobOpportunityArchiveMetadataSchema,
+  }).strict(),
+  z.object({
+    userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("job.opportunity_restored"), occurredAt: z.date().optional(),
+    requestId: z.uuid(), outcome: z.literal("success"), reasonCode: z.literal("JOB_OPPORTUNITY_RESTORED"),
+    resourceType: z.literal("job_opportunity"), resourceId: z.uuid(), metadata: JobOpportunityArchiveMetadataSchema,
   }).strict(),
   z.object({
     userId: z.uuid(), actorUserId: z.uuid(), eventType: z.literal("job.triage_created"), occurredAt: z.date().optional(),
