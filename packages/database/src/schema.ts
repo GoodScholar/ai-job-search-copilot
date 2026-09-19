@@ -501,12 +501,15 @@ export const jobOpportunities = pgTable("job_opportunities", {
   normalizedData: jsonb("normalized_data").notNull(),
   availability: varchar("availability", { length: 16 }).notNull().default("open"),
   availabilityUpdatedAt: timestamp("availability_updated_at", { withTimezone: true }).notNull().defaultNow(),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  archiveVersion: integer("archive_version").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   uniqueIndex("job_opportunities_current_dedup_unique").on(table.userId, table.dedupKey).where(sql`${table.canonicalOpportunityId} is null`),
   unique("job_opportunities_user_id_id_unique").on(table.userId, table.id),
   index("job_opportunities_availability_idx").on(table.userId, table.availability, table.availabilityUpdatedAt),
+  index("job_opportunities_archive_projection_idx").on(table.userId, table.archivedAt, table.updatedAt, table.id),
   index("job_opportunities_canonical_idx").on(table.userId, table.canonicalOpportunityId),
   foreignKey({
     columns: [table.userId, table.importId],
@@ -527,6 +530,25 @@ export const jobOpportunities = pgTable("job_opportunities", {
   check("job_opportunities_canonical_opportunity_not_self", sql`${table.canonicalOpportunityId} is null or ${table.canonicalOpportunityId} <> ${table.id}`),
   check("job_opportunities_normalized_data_object", sql`jsonb_typeof(${table.normalizedData}) = 'object'`),
   check("job_opportunities_availability_check", sql`${table.availability} in ('open', 'closed', 'expired')`),
+  check("job_opportunities_archive_version_nonnegative", sql`${table.archiveVersion} >= 0`),
+]);
+
+/** 用户可变的岗位归档投影；岗位来源与推荐证据始终留在机会及其历史记录上。 */
+export const jobOpportunityArchiveCommands = pgTable("job_opportunity_archive_commands", {
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  opportunityId: uuid("opportunity_id").notNull(),
+  commandId: uuid("command_id").notNull(),
+  action: varchar("action", { length: 8 }).notNull(),
+  expectedVersion: integer("expected_version").notNull(),
+  applied: boolean("applied").notNull(),
+  resultSnapshot: jsonb("result_snapshot").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  primaryKey({ columns: [table.userId, table.commandId], name: "job_opportunity_archive_commands_pk" }),
+  foreignKey({ columns: [table.userId, table.opportunityId], foreignColumns: [jobOpportunities.userId, jobOpportunities.id], name: "job_opportunity_archive_commands_owner_opportunity_fk" }),
+  check("job_opportunity_archive_commands_action_check", sql`${table.action} in ('archive', 'restore')`),
+  check("job_opportunity_archive_commands_expected_version_nonnegative", sql`${table.expectedVersion} >= 0`),
+  check("job_opportunity_archive_commands_result_snapshot_object", sql`jsonb_typeof(${table.resultSnapshot}) = 'object' and octet_length(${table.resultSnapshot}::text) <= 1024`),
 ]);
 
 export const jobOpportunitySources = pgTable("job_opportunity_sources", {

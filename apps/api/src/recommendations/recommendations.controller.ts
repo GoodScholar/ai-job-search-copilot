@@ -14,6 +14,7 @@ import { runPreflightConflict } from "../run-preflight/run-preflight-error.js";
 
 class RecommendationListDto extends createZodDto(RecommendationListSchema) {}
 class RecommendationTargetQueryDto extends createZodDto(z.object({ targetId: z.uuid() }).strict()) {}
+class RecommendationListQueryDto extends createZodDto(z.object({ targetId: z.uuid(), includeArchived: z.enum(["true", "false"]).transform((value) => value === "true").default(true) }).strict()) {}
 class RecommendationCursorQueryDto extends createZodDto(z.object({ targetId: z.uuid(), cursor: z.uuid().optional(), limit: z.coerce.number().int().min(1).max(100).default(20) }).strict()) {}
 class RecommendationListExclusionsQueryDto extends createZodDto(z.object({ targetId: z.uuid(), cursor: z.uuid().optional(), limit: z.coerce.number().int().min(1).max(100).default(25) }).strict()) {}
 class RecommendationListIdParamDto extends createZodDto(z.object({ recommendationListId: z.uuid() }).strict()) {}
@@ -44,8 +45,8 @@ export class RecommendationsController {
   @ZodResponse({ type: RecommendationListDto })
   @ApiUnauthorizedResponse()
   @ApiNotFoundResponse()
-  async getList(@Req() request: FastifyRequest, @Param() params: RecommendationListIdParamDto, @Query() query: RecommendationTargetQueryDto) {
-    const list = await this.queries.getList({ userId: request.authenticatedAccount!.userId, targetId: query.targetId, recommendationListId: params.recommendationListId });
+  async getList(@Req() request: FastifyRequest, @Param() params: RecommendationListIdParamDto, @Query() query: RecommendationListQueryDto) {
+    const list = await this.queries.getList({ userId: request.authenticatedAccount!.userId, targetId: query.targetId, recommendationListId: params.recommendationListId, includeArchived: query.includeArchived });
     if (!list) throw new ApiException("RECOMMENDATION_LIST_NOT_FOUND", 404, "推荐清单不存在");
     return RecommendationListSchema.parse(list);
   }

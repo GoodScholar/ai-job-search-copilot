@@ -52,6 +52,14 @@ import {
   type JobImportList,
 } from "@job-copilot/contracts/job-imports";
 import {
+  JobOpportunityArchiveCommandResponseSchema,
+  JobOpportunityArchiveCommandSchema,
+  JobOpportunityArchivePageSchema,
+  type JobOpportunityArchiveCommand,
+  type JobOpportunityArchiveFilter,
+  type JobOpportunityArchivePage,
+} from "@job-copilot/contracts/job-opportunity-archives";
+import {
   CreateJobTriageVersionCommandSchema,
   JobTriageVersionSchema,
   type CreateJobTriageVersionCommand,
@@ -277,8 +285,9 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
       if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法读取推荐清单", response.status, problem ?? undefined); }
       return parseSuccess(response, RecommendationListSchema);
     },
-    async getRecommendationList(sessionToken: string, targetId: string, recommendationListId: string): Promise<RecommendationList> {
-      const response = await request(`/v1/recommendations/lists/${encodeURIComponent(recommendationListId)}?targetId=${encodeURIComponent(targetId)}`, { method: "GET", headers: { authorization: `Bearer ${sessionToken}` }, cache: "no-store" });
+    async getRecommendationList(sessionToken: string, targetId: string, recommendationListId: string, includeArchived = true): Promise<RecommendationList> {
+      const includeArchivedQuery = includeArchived ? "" : "&includeArchived=false";
+      const response = await request(`/v1/recommendations/lists/${encodeURIComponent(recommendationListId)}?targetId=${encodeURIComponent(targetId)}${includeArchivedQuery}`, { method: "GET", headers: { authorization: `Bearer ${sessionToken}` }, cache: "no-store" });
       if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法读取推荐清单", response.status, problem ?? undefined); }
       return parseSuccess(response, RecommendationListSchema);
     },
@@ -660,6 +669,17 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
         throw new ApiClientError("api", problem?.message ?? "无法读取岗位导入", response.status, problem ?? undefined);
       }
       return parseSuccess(response, JobImportListSchema);
+    },
+    async listJobOpportunities(sessionToken: string, filter: JobOpportunityArchiveFilter, cursor?: string): Promise<JobOpportunityArchivePage> {
+      const cursorQuery = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
+      const response = await request(`/v1/job-opportunities?filter=${encodeURIComponent(filter)}&limit=20${cursorQuery}`, { method: "GET", headers: { authorization: `Bearer ${sessionToken}` }, cache: "no-store" });
+      if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法读取岗位机会", response.status, problem ?? undefined); }
+      return parseSuccess(response, JobOpportunityArchivePageSchema);
+    },
+    async changeJobOpportunityArchiveState(sessionToken: string, opportunityId: string, command: JobOpportunityArchiveCommand) {
+      const response = await request(`/v1/job-opportunities/${encodeURIComponent(opportunityId)}/archive-state`, { method: "POST", headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" }, body: JSON.stringify(JobOpportunityArchiveCommandSchema.parse(command)), cache: "no-store" });
+      if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法更新岗位归档状态", response.status, problem ?? undefined); }
+      return parseSuccess(response, JobOpportunityArchiveCommandResponseSchema);
     },
 
     async getJobImport(sessionToken: string, importId: string): Promise<JobImportDetail> {

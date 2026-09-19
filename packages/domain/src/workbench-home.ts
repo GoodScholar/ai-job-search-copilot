@@ -1,8 +1,8 @@
-import { and, count, desc, eq, inArray, notExists, or } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNull, notExists, or } from "drizzle-orm";
 import { WorkbenchHomeSchema, type WorkbenchHome } from "@job-copilot/contracts/workbench";
 import { CompanyWatchlistItemSchema } from "@job-copilot/contracts/company-watchlists";
 import { classifyGreenhousePublicSource } from "@job-copilot/contracts/job-discovery-schedules";
-import { agentInboxItems, agentRuns, candidateFactDecisions, candidateFacts, companyWatchlistRevisions, companyWatchlists, jobAccounts, jobSourceHealthChecks, recommendationListItems, recommendationLists, type Database } from "@job-copilot/database";
+import { agentInboxItems, agentRuns, candidateFactDecisions, candidateFacts, companyWatchlistRevisions, companyWatchlists, jobAccounts, jobMatchVersions, jobOpportunities, jobSourceHealthChecks, recommendationListItems, recommendationLists, type Database } from "@job-copilot/database";
 import type { FirstRecommendationJourneyReader } from "./first-recommendation-journey";
 
 export class DomainError extends Error {
@@ -71,10 +71,15 @@ async function countTodayRecommendationItems(db: Database, userId: string, local
     .where(and(eq(recommendationLists.userId, userId), eq(recommendationLists.localDate, localDate)))
     .orderBy(recommendationLists.targetId, desc(recommendationLists.sequence), desc(recommendationLists.id));
   if (latestLists.length === 0) return 0;
-  const [items] = await db.select({ count: count() }).from(recommendationListItems).where(and(
-    eq(recommendationListItems.userId, userId),
-    inArray(recommendationListItems.recommendationListId, latestLists.map(({ id }) => id)),
-  ));
+  const [items] = await db.select({ count: count() }).from(recommendationListItems)
+    .innerJoin(jobMatchVersions, and(eq(jobMatchVersions.userId, recommendationListItems.userId), eq(jobMatchVersions.id, recommendationListItems.matchVersionId)))
+    .innerJoin(jobOpportunities, and(eq(jobOpportunities.userId, jobMatchVersions.userId), eq(jobOpportunities.id, jobMatchVersions.opportunityId)))
+    .where(and(
+      eq(recommendationListItems.userId, userId),
+      inArray(recommendationListItems.recommendationListId, latestLists.map(({ id }) => id)),
+      isNull(jobOpportunities.canonicalOpportunityId),
+      isNull(jobOpportunities.archivedAt),
+    ));
   return countFromDatabase(items?.count ?? 0, "今日推荐");
 }
 

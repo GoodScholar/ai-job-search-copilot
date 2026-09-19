@@ -2,7 +2,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { readFile } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
-  agentInboxItems, agentRuns, calibrationProposalRevisions, calibrationProposals, createDatabase, deepMatchRunCandidates, jobAccounts, jobMatchVersions, jobOpportunities, jobOpportunitySources, jobProfiles, jobSourcePostingVersions, jobSourcePostings, recommendationListItems, recommendationLists, recommendationRuleVersions,
+  agentInboxItems, agentRuns, calibrationProposalRevisions, calibrationProposals, createDatabase, deepMatchRunCandidates, jobAccounts, jobMatchVersions, jobOpportunities, jobOpportunitySources, jobProfiles, jobSourcePostingVersions, jobSourcePostings, recommendationDecisionEvents, recommendationListItems, recommendationLists, recommendationRuleVersions,
   firstRecommendationJourneyCompletions, jobTargetRevisions, jobTargets, jobTriageVersions, migrateDatabase, profileFactRevisions, profileFacts, recommendationExclusions, type Database,
 } from "@job-copilot/database";
 import { and, eq, sql } from "drizzle-orm";
@@ -12,6 +12,8 @@ import { createDeepMatchRunStarter as createDomainDeepMatchRunStarter, ensureDee
 import { createAgentRunRecoveryQueries } from "./agent-run-processor";
 import { createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-persistence";
 import { createRecommendationQueries } from "./recommendation-queries";
+import { createRecommendationFeedbackCommands } from "./recommendation-feedback";
+import { createJobOpportunityArchiveCommands } from "./job-opportunity-archives";
 import { createAccountRunControl } from "./account-run-control";
 import { createAuditTrail, type AuditTrail } from "./audit-trail";
 import { RunPreflightRejectedError, type RunPreflightEvaluator } from "./run-preflight";
@@ -654,6 +656,42 @@ describe("deep match persistence", () => {
         resultId: published.recommendationListId,
         completedAt: now,
       })]);
+  });
+
+  it("默认推荐读取隐藏已归档岗位，而精确历史读取保留匹配、推荐决策和审计证据", async () => {
+    const input = await fixture();
+    const published = await publishStagedFixture(input);
+    const queries = createDeepMatchQueries({ db });
+    const [item] = await db.select({ id: recommendationListItems.id }).from(recommendationListItems).where(eq(recommendationListItems.recommendationListId, published.recommendationListId));
+    await createRecommendationFeedbackCommands({ db, auditTrail: createAuditTrail({ db, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now }).recordDecision({
+      userId: input.userId, recommendationListId: published.recommendationListId, recommendationListItemId: item!.id,
+      command: { decision: "saved", expectedVersion: 0, idempotencyKey: crypto.randomUUID() },
+    });
+
+    await createJobOpportunityArchiveCommands({ db, auditTrail: createAuditTrail({ db, clock: () => now }), clock: () => now }).change({
+      userId: input.userId, requestId: crypto.randomUUID(), opportunityId: input.opportunityId,
+      command: { action: "archive", expectedVersion: 0, commandId: crypto.randomUUID() },
+    });
+
+    await expect(queries.getLatestList({ userId: input.userId, targetId: input.targetId }))
+      .resolves.toMatchObject({ recommendationListId: published.recommendationListId, items: [] });
+    await expect(queries.getList({ userId: input.userId, targetId: input.targetId, recommendationListId: published.recommendationListId, includeArchived: false }))
+      .resolves.toMatchObject({ recommendationListId: published.recommendationListId, items: [] });
+    const history = await queries.getList({ userId: input.userId, targetId: input.targetId, recommendationListId: published.recommendationListId });
+    expect(history?.items).toEqual(expect.arrayContaining([expect.objectContaining({
+      opportunityId: input.opportunityId, decision: { status: "saved", version: 1 },
+      jobEvidence: expect.arrayContaining([expect.objectContaining({ id: expect.any(String), value: expect.any(String) })]),
+      profileEvidence: expect.arrayContaining([expect.objectContaining({ id: expect.any(String), value: expect.any(String) })]),
+    })]));
+    await expect(Promise.all([
+      db.select().from(jobMatchVersions).where(eq(jobMatchVersions.opportunityId, input.opportunityId)),
+      db.select().from(recommendationDecisionEvents).where(eq(recommendationDecisionEvents.recommendationListItemId, item!.id)),
+      createAuditTrail({ db, clock: () => now }).query({ userId: input.userId }),
+    ])).resolves.toEqual([
+      [expect.objectContaining({ opportunityId: input.opportunityId })],
+      [expect.objectContaining({ decision: "saved", version: 1 })],
+      expect.arrayContaining([expect.objectContaining({ eventType: "job.opportunity_archived", resourceId: input.opportunityId })]),
+    ]);
   });
 
   it("零 accepted 即使生成空清单和排除记录也不完成首次推荐旅程", async () => {

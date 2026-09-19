@@ -299,6 +299,60 @@ test("显式 Fake matching 真实链路交付双方证据、质量排除与单�
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });
 
+test("岗位归档和恢复保留推荐证据，并在工作台与移动端保持可访问", async ({ page, request }, info) => {
+  test.setTimeout(90_000);
+  const account = await createAccount(request, info);
+  const opportunity = await importAndTriage(request, account, "可归档推荐岗位");
+  await page.context().addCookies([{ name: "job_copilot_session", value: account.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
+  const discoveryRunId = await runDiscovery(request, account, info.project.name === "Desktop Chrome" ? "10000000-0000-4000-8000-000000000451" : "10000000-0000-4000-8000-000000000452");
+  await page.goto(`/recommendations?targetId=${account.targetId}`);
+  await waitForRun(page, discoveryRunId);
+  await waitForRun(page, await automaticMatchRun(account.userId, discoveryRunId));
+  await page.reload();
+  await expect(page.getByRole("list", { name: "推荐岗位" })).toContainText("可归档推荐岗位");
+
+  await page.goto("/jobs");
+  const activeControls = page.locator("main .workbench-touch-target");
+  expect(await activeControls.evaluateAll((items) => items.every((item) => {
+    const rect = item.getBoundingClientRect();
+    return rect.height >= 44 && rect.width >= 44;
+  }))).toBe(true);
+  await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  expect(await page.locator("main").evaluate((element) => getComputedStyle(element).scrollBehavior)).not.toBe("smooth");
+  const archive = page.getByRole("button", { name: "归档岗位：可归档推荐岗位" });
+  if (info.project.name === "Desktop Chrome") { await archive.focus(); await expectVisibleKeyboardFocus(archive); await page.keyboard.press("Enter"); } else await archive.tap();
+  await expect(page.getByText("已归档，可在归档岗位中恢复。")).toBeVisible();
+  await page.reload();
+  await expect(page.getByText("没有活跃岗位。")).toBeVisible();
+
+  await page.goto(`/recommendations?targetId=${account.targetId}`);
+  await expect(page.getByText("当前推荐岗位均已归档。")).toBeVisible();
+  await expect(page.getByRole("link", { name: "查看已归档岗位" })).toHaveAttribute("href", "/jobs?filter=archived");
+
+  await page.goto("/jobs?filter=archived");
+  const archivedControls = page.locator("main .workbench-touch-target");
+  expect(await archivedControls.evaluateAll((items) => items.every((item) => {
+    const rect = item.getBoundingClientRect();
+    return rect.height >= 44 && rect.width >= 44;
+  }))).toBe(true);
+  await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  const restore = page.getByRole("button", { name: "恢复岗位：可归档推荐岗位" });
+  if (info.project.name === "Desktop Chrome") await restore.click(); else await restore.tap();
+  await expect(page.getByText("已恢复到活跃岗位。")).toBeVisible();
+  await page.goto("/jobs");
+  await expect(page.getByRole("button", { name: "归档岗位：可归档推荐岗位" })).toBeVisible();
+  await page.goto(`/recommendations?targetId=${account.targetId}`);
+  await expect(page.getByRole("list", { name: "推荐岗位" })).toContainText("可归档推荐岗位");
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
+  const persisted = await request.get(`${apiBaseUrl}/v1/recommendations/latest?targetId=${account.targetId}`, { headers: { authorization: `Bearer ${account.token}` } });
+  expect(persisted.status()).toBe(200);
+  expect((await persisted.json() as { items: Array<{ opportunityId: string }> }).items).toEqual(expect.arrayContaining([expect.objectContaining({ opportunityId: opportunity.opportunityId })]));
+});
+
 test("推荐决策与拒绝校准建议保持规则和目标不变", async ({ page, request }, info) => {
   test.setTimeout(90_000);
   const account = await createAccount(request, info);
