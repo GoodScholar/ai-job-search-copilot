@@ -551,6 +551,62 @@ export const jobOpportunityArchiveCommands = pgTable("job_opportunity_archive_co
   check("job_opportunity_archive_commands_result_snapshot_object", sql`jsonb_typeof(${table.resultSnapshot}) = 'object' and octet_length(${table.resultSnapshot}::text) <= 1024`),
 ]);
 
+/** 岗位导出请求的不可变元数据；状态与交付对象可随生成和清理推进。 */
+export const jobExports = pgTable("job_exports", {
+  id: uuid("id").primaryKey(),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  commandId: uuid("command_id").notNull(),
+  filter: varchar("filter", { length: 16 }).notNull(),
+  fieldVersion: integer("field_version").notNull(),
+  status: varchar("status", { length: 16 }).notNull().default("generating"),
+  rowCount: integer("row_count").notNull(),
+  objectKey: varchar("object_key", { length: 512 }).notNull(),
+  queuePublishedAt: timestamp("queue_published_at", { withTimezone: true }),
+  objectDeletedAt: timestamp("object_deleted_at", { withTimezone: true }),
+  failureCode: varchar("failure_code", { length: 64 }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  unique("job_exports_user_command_unique").on(table.userId, table.commandId),
+  unique("job_exports_user_id_id_unique").on(table.userId, table.id),
+  index("job_exports_owner_created_idx").on(table.userId, table.createdAt, table.id),
+  index("job_exports_recovery_idx").on(table.status, table.queuePublishedAt, table.createdAt),
+  index("job_exports_expiry_idx").on(table.status, table.expiresAt, table.objectDeletedAt),
+  check("job_exports_filter_check", sql`${table.filter} in ('active', 'archived', 'all')`),
+  check("job_exports_field_version_check", sql`${table.fieldVersion} = 1`),
+  check("job_exports_status_check", sql`${table.status} in ('generating', 'ready', 'failed', 'expired')`),
+  check("job_exports_row_count_nonnegative", sql`${table.rowCount} >= 0`),
+  check("job_exports_failure_code_check", sql`${table.failureCode} is null or ${table.failureCode} = 'JOB_EXPORT_GENERATION_FAILED'`),
+]);
+
+/** 生成时一次性冻结的安全字段；Worker 绝不回读岗位、推荐或投递表。 */
+export const jobExportRows = pgTable("job_export_rows", {
+  exportId: uuid("export_id").notNull().references(() => jobExports.id, { onDelete: "cascade" }),
+  userId: uuid("user_id").notNull().references(() => jobAccounts.id),
+  ordinal: integer("ordinal").notNull(),
+  opportunityId: uuid("opportunity_id").notNull(),
+  sourcePostingVersionId: uuid("source_posting_version_id").notNull(),
+  title: text("title"),
+  company: text("company"),
+  location: text("location"),
+  sourceUrl: text("source_url"),
+  availability: varchar("availability", { length: 16 }).notNull(),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  recommendationDecision: varchar("recommendation_decision", { length: 16 }),
+  applicationStatus: varchar("application_status", { length: 32 }),
+  postedAt: timestamp("posted_at", { withTimezone: true }),
+  deadline: timestamp("deadline", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+}, (table) => [
+  primaryKey({ columns: [table.exportId, table.ordinal], name: "job_export_rows_pk" }),
+  foreignKey({ columns: [table.userId, table.exportId], foreignColumns: [jobExports.userId, jobExports.id], name: "job_export_rows_owner_export_fk" }),
+  check("job_export_rows_ordinal_positive", sql`${table.ordinal} >= 1`),
+  check("job_export_rows_availability_check", sql`${table.availability} in ('open', 'closed', 'expired')`),
+  check("job_export_rows_decision_check", sql`${table.recommendationDecision} is null or ${table.recommendationDecision} in ('pending', 'saved', 'ignored')`),
+  check("job_export_rows_application_status_check", sql`${table.applicationStatus} is null`),
+]);
+
 export const jobOpportunitySources = pgTable("job_opportunity_sources", {
   id: uuid("id").primaryKey().defaultRandom(),
   userId: uuid("user_id").notNull().references(() => jobAccounts.id),

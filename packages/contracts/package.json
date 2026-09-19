@@ -12,6 +12,7 @@
     "./company-watchlists": "./src/company-watchlists.ts",
     "./job-imports": "./src/job-imports.ts",
     "./job-opportunity-archives": "./src/job-opportunity-archives.ts",
+    "./job-exports": "./src/job-exports.ts",
     "./job-triage": "./src/job-triage.ts",
     "./deep-match": "./src/deep-match.ts",
     "./recommendations": "./src/recommendations.ts",

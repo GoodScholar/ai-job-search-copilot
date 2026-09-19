@@ -3,6 +3,8 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { JobOpportunityArchiveCommandResponseSchema, JobOpportunityArchivePageSchema, type JobOpportunityArchiveFilter, type JobOpportunityArchivePage } from "@job-copilot/contracts/job-opportunity-archives";
+import type { JobExport } from "@job-copilot/contracts/job-exports";
+import { JobExportPanel } from "./job-export-panel";
 
 type Retry = { opportunityId: string; action: "archive" | "restore"; version: number; commandId: string };
 
@@ -10,7 +12,7 @@ function appendPage(current: JobOpportunityArchivePage, next: JobOpportunityArch
   return { ...next, items: [...new Map([...current.items, ...next.items].map((item) => [item.opportunityId, item])).values()] };
 }
 
-export function JobOpportunitiesView({ initialFilter, initialPage }: { initialFilter: JobOpportunityArchiveFilter; initialPage: JobOpportunityArchivePage }) {
+export function JobOpportunitiesView({ initialFilter, initialPage, initialExports }: { initialFilter: JobOpportunityArchiveFilter; initialPage: JobOpportunityArchivePage; initialExports?: JobExport[] | null }) {
   const router = useRouter();
   const [filter, setFilter] = useState(initialFilter);
   const [page, setPage] = useState(initialPage);
@@ -98,6 +100,7 @@ export function JobOpportunitiesView({ initialFilter, initialPage }: { initialFi
   return <main className="container workbench-page" id="main-content"><section className="job-import-panel" aria-labelledby="job-opportunities-title">
     <p className="section-kicker">岗位机会 · 当前状态</p><h1 id="job-opportunities-title">岗位机会</h1><p>归档只整理当前工作区，来源、匹配和推荐历史仍保留原有证据。</p>
     <div aria-label="岗位筛选"><button aria-pressed={filter === "active"} className="workbench-touch-target" disabled={loading || busy !== null} onClick={() => void select("active")} type="button">活跃 {page.counts.active}</button><button aria-pressed={filter === "archived"} className="workbench-touch-target" disabled={loading || busy !== null} onClick={() => void select("archived")} type="button">已归档 {page.counts.archived}</button></div>
+    {initialExports !== undefined ? <JobExportPanel filter={filter} initialExports={initialExports} /> : null}
     {message ? <p role="status">{message}</p> : null}
     {retry ? <button className="workbench-touch-target" disabled={loading || busy === retry.opportunityId} onClick={() => void change(retry)} type="button">重试{retry.action === "archive" ? "归档岗位" : "恢复岗位"}</button> : null}
     {page.items.length === 0 ? <p>{filter === "active" ? "没有活跃岗位。" : "没有已归档岗位。"}</p> : <ol aria-label={filter === "active" ? "活跃岗位" : "已归档岗位"}>{page.items.map((item) => <li key={item.opportunityId}><h2>{item.title ?? "岗位机会"}</h2><p>{item.company ?? "来源待确认"} · {item.location ?? "地点待确认"}</p><button className="workbench-touch-target" disabled={loading || busy !== null} onClick={() => startChange(item.opportunityId, filter === "active" ? "archive" : "restore", item.version)} type="button">{filter === "active" ? `归档岗位：${item.title ?? "岗位机会"}` : `恢复岗位：${item.title ?? "岗位机会"}`}</button></li>)}</ol>}

@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { agentRuns, auditEvents, candidateFactEvidence, candidateFacts, careerDocuments, careerFactConflicts, careerImports, companyWatchlistRevisions, companyWatchlists, createDatabase, firstRecommendationJourneyCompletions, jobOpportunities, jobOpportunitySources, jobProfiles, jobSourceHealthChecks, jobSourcePostingVersions, jobSourcePostings, modelDiagnosticResults, migrateDatabase, profileFactRevisions, profileFacts, type Database } from "@job-copilot/database";
 import type { CareerDocumentStore, CareerImportQueue } from "@job-copilot/domain/career-imports";
 import type { JobContentStore, JobImportQueue } from "@job-copilot/domain/job-imports";
+import type { JobExportQueue, JobExportStore } from "@job-copilot/domain/job-exports";
 import { createAgentRunCommands, createRecommendationRunCommands, type AgentRunQueue } from "@job-copilot/domain/agent-runs";
 import { createReadyRunPreflightEvaluator } from "../../../packages/domain/src/testing/run-preflight.js";
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
@@ -25,6 +26,7 @@ import { configureApiApplication } from "./configure-api-application.js";
 import { DATABASE, RUNTIME_CONFIG } from "./config/runtime-config.module.js";
 import { CAREER_DOCUMENT_STORE, CAREER_IMPORT_QUEUE } from "./career-import/career-import.tokens.js";
 import { JOB_CONTENT_STORE, JOB_IMPORT_QUEUE, JOB_PAGE_FETCHER } from "./job-imports/job-imports.tokens.js";
+import { JOB_EXPORT_QUEUE, JOB_EXPORT_STORE } from "./job-exports/job-exports.tokens.js";
 import { JobPageFetchError, type JobPageFetcher } from "./job-imports/job-page-fetcher.js";
 import { createMinimalDocx } from "./career-import/minimal-docx.test-support.js";
 import { CAREER_FACT_CONFLICT_REVIEW_COMMANDS, PROFILE_REVIEW_COMMANDS, type ProfileReviewCommands } from "./profile-review/profile-review.tokens.js";
@@ -192,6 +194,10 @@ describe("authenticated workbench HTTP API", () => {
       };
     },
   };
+  const jobExportQueue: JobExportQueue & { jobs: unknown[] } = { jobs: [], async enqueue(job) { this.jobs.push(job); } };
+  const jobExportStore: JobExportStore = {
+    async put() {}, async get() { throw new Error("job export object unavailable"); }, async delete() {},
+  };
   const originalEnvironment = {
     APP_ENV: process.env.APP_ENV,
     AUTH_MODE: process.env.AUTH_MODE,
@@ -224,6 +230,8 @@ describe("authenticated workbench HTTP API", () => {
       .overrideProvider(JOB_CONTENT_STORE).useValue(jobContentStore)
       .overrideProvider(JOB_IMPORT_QUEUE).useValue(jobQueue)
       .overrideProvider(JOB_PAGE_FETCHER).useValue(jobPageFetcher)
+      .overrideProvider(JOB_EXPORT_QUEUE).useValue(jobExportQueue)
+      .overrideProvider(JOB_EXPORT_STORE).useValue(jobExportStore)
       .overrideProvider(AGENT_RUN_QUEUE_PORT).useValue(agentRunQueue)
       .overrideProvider(CAREER_FACT_CONFLICT_REVIEW_COMMANDS).useValue(conflictReviewCommands)
       .overrideProvider(JOB_TRIAGE_COMMANDS).useValue(triageCommands)
@@ -254,6 +262,8 @@ describe("authenticated workbench HTTP API", () => {
     expect(app.get(CAREER_DOCUMENT_STORE)).toBe(documentStore);
     expect(app.get(JOB_IMPORT_QUEUE)).toBe(jobQueue);
     expect(app.get(JOB_CONTENT_STORE)).toBe(jobContentStore);
+    expect(app.get(JOB_EXPORT_QUEUE)).toBe(jobExportQueue);
+    expect(app.get(JOB_EXPORT_STORE)).toBe(jobExportStore);
     expect(app.get(AGENT_RUN_QUEUE_PORT)).toBe(agentRunQueue);
   }, 60_000);
 
@@ -2275,6 +2285,22 @@ describe("authenticated workbench HTTP API", () => {
       .rejects.toThrow(/正式环境不能启用 Dev Auth/);
 
     Object.assign(process.env, environment);
+  });
+
+  it("为已认证账户创建不可泄漏对象键的岗位导出快照", async () => {
+    const anonymous = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/job-exports", payload: { commandId: randomUUID(), filter: "active", fieldVersion: 1 } });
+    expect(anonymous.statusCode).toBe(401);
+    const session = await createSession(app, `job-export-${randomUUID()}`);
+    const sourcePostingId = randomUUID(); const sourcePostingVersionId = randomUUID(); const opportunityId = randomUUID(); const digest = sourcePostingId.replaceAll("-", "").padEnd(64, "a"); const now = new Date();
+    await database.insert(jobSourcePostings).values({ id: sourcePostingId, userId: session.account.userId, sourceType: "user_import", sourceIdentifier: digest, sourceId: "https://jobs.example.test/export", sourceIdentity: {}, isOfficial: false, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
+    await database.insert(jobSourcePostingVersions).values({ id: sourcePostingVersionId, userId: session.account.userId, sourcePostingId, version: 1, contentSha256: digest, rawContentSha256: digest, rawObjectReference: {}, normalizedData: {}, retrievedAt: now, availability: "open", createdAt: now });
+    await database.insert(jobOpportunities).values({ id: opportunityId, userId: session.account.userId, importId: null, sourcePostingVersionId, canonicalOpportunityId: null, dedupKey: digest, company: "示例科技", title: "导出岗位", location: "上海", postedAt: null, deadline: null, description: "不得导出", normalizedData: {}, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
+    const created = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/job-exports", headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: { commandId: randomUUID(), filter: "active", fieldVersion: 1 } });
+    expect(created.statusCode, JSON.stringify(created.json())).toBe(201); expect(created.json()).toMatchObject({ status: "generating", rowCount: 1, fieldVersion: 1 }); expect(created.json().objectKey).toBeUndefined();
+    const listed = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/job-exports", headers: bearer(session.sessionToken) });
+    expect(listed.statusCode).toBe(200); expect(listed.json().items).toEqual([expect.objectContaining({ id: created.json().id })]);
+    const downloading = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/job-exports/${created.json().id}/download`, headers: bearer(session.sessionToken) });
+    expect(downloading.statusCode).toBe(409);
   });
 });
 

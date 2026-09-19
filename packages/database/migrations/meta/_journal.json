@@ -407,6 +407,13 @@
       "when": 1789820001000,
       "tag": "0057_job_opportunity_archives",
       "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1789820002000,
+      "tag": "0058_job_exports",
+      "breakpoints": true
     }
   ]
 }
