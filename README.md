@@ -1,54 +1,59 @@
-# AI Job Search Copilot
+# AI Job Search Copilot · v0.1.0-alpha
 
-本仓库提供 AI Job Search Copilot 的本地产品运行时：Web、API、Worker，以及 PostgreSQL、Redis、MinIO 和 Mailpit。本阶段的工作台是一个已接入真实账户与会话的空状态基础，不是营销首页的示例数据。
+面向中国市场中高级互联网与 AI 技术求职者的求职工作台。本次 Alpha 交付从职业资料、画像确认、求职目标和来源准备，到运行前检查、首次推荐清单或可信“暂无推荐”、岗位归档与 CSV 导出的闭环。
 
-## 前置条件
+**发布准备状态：未公开发布；许可证待 [#60 人工法律审核](https://github.com/GoodScholar/ai-job-search-copilot/issues/60)。尚未加入获批 LICENSE，不宣称已按 AGPL-3.0 授权。** Alpha 不包含支付、购买额度或自动外部行动。
 
-- Node.js `>=22.22.2`
-- pnpm `11.5.2`
-- Docker 与 Docker Compose
+## 从零体验合成演示
 
-默认端口见 [`.env.example`](./.env.example)。如需覆盖端口，请在同一 shell 中导出变量后再运行 `pnpm dev`；例如 `WEB_PORT=4020 API_PORT=4021 pnpm dev`。默认端口适用于通常的本地开发；不要把 E2E 使用的隔离端口作为日常开发端口。
+需要 Node.js `>=22.22.2`、pnpm `11.5.2`、运行中的 Docker 与 Docker Compose；首次安装需访问包仓库、浏览器和容器镜像下载源。取得本版本源码后，在仓库根目录执行：
 
-## 启动与访问
-
-在仓库根目录运行：
-
-```bash
-pnpm install && pnpm dev
+```sh
+pnpm install --frozen-lockfile
+pnpm --filter web exec playwright install --with-deps chromium webkit
+pnpm demo:alpha
 ```
 
-`pnpm dev` 会先对本地数据库运行迁移，再启动 Web、API、Worker，以及 PostgreSQL、Redis、MinIO 和 Mailpit；迁移、Docker Compose 或任何依赖不可用时，应用不会以不完整状态继续启动，因此无需手动执行迁移。
+这是自动运行的全栈演示验收：启动 Web、API、Worker、PostgreSQL、Redis、MinIO 和 Mailpit，从空数据库执行迁移，使用[明确虚构的职业资料](docs/demo/fictional-career.md)和确定性模型/岗位来源，串行验证桌面和移动端两种结局，预期 **4 passed**。默认无需 OpenAI、AnySearch 或招聘站点凭据，不访问真实招聘或模型服务。安装下载不属于业务服务调用。
 
-- 产品：<http://127.0.0.1:3020>
-- API OpenAPI：<http://127.0.0.1:3021/openapi.json>
-- API readiness：<http://127.0.0.1:3021/health/ready>
-- Mailpit：<http://127.0.0.1:58025>
-- MinIO Console：<http://127.0.0.1:59001>
+演示复用专用隔离 Compose 项目 `job-copilot-issue-2-e2e`；每次运行前后会删除该项目的测试卷，不得用于真实资料，也不能与其他 E2E 同时运行。想观察浏览器操作可运行 `pnpm demo:alpha --headed`；结束后自动清理应用和测试数据，它不是一个常驻的托管站点。完整流程、端口与失败处理见[快速开始和部署责任](docs/releases/v0.1.0-alpha.md)。
 
-停止本地运行时：
+## 日常本地运行
 
-```bash
-pnpm dev:down
+```sh
+pnpm dev
 ```
 
-若 `pnpm dev` 仍在另一个终端运行，先在该终端按 `Ctrl-C`，它会先停止 Web、API 和 Worker，再清理由 Compose 管理的依赖。`pnpm dev:down` 本身只关闭 Compose 管理的基础设施（以及残留测试资源），不会终止其他终端中的应用进程。
+自动启动真实依赖、初始化对象存储、运行数据库迁移，再启动三个应用。默认端口见 [`.env.example`](.env.example)，不自动读取该文件；覆盖配置需在同一 shell `export` 后运行。此模式保留本地数据，使用 Dev Auth；模型服务和真实来源的配置、能力限制见[部署说明](docs/releases/v0.1.0-alpha.md#日常本地运行与运行服务配置)。
 
-## 登录与当前范围
+- 产品：[本地工作台](http://127.0.0.1:3020)
+- API：[OpenAPI](http://127.0.0.1:3021/openapi.json)、[readiness](http://127.0.0.1:3021/health/ready)
+- [Mailpit](http://127.0.0.1:58025)、[MinIO Console](http://127.0.0.1:59001)
 
-本地运行时启用 **Dev Auth**，仅用于本地开发和测试；它不是生产认证方案，也不能用于正式环境。正式 Beta 将使用微信登录，当前仅保留相应的产品与适配边界，尚未实现真实微信 OAuth 流程。
+运行终端按 `Ctrl-C` 停止 Web、API 和 Worker，然后运行 `pnpm dev:down` 停止 Compose 依赖；默认保留数据卷。`dev:down` 不会终止另一终端的应用进程。Dev Auth 和示例凭据只用于本机隔离开发，不能直接作为公网邀请制认证。
 
-登录后进入 `/home`。任务控制首页与 Agent Inbox 会聚合账户级的真实推荐、待确认事实、运行、来源关注和待决定事项，不展示营销示例数据。投递记录仍未启用，始终显示为 `0`，也不会保存投递数据。
+## 发布材料与验证
 
-## 验证
+- [变更、兼容性、迁移要求和已知限制](CHANGELOG.md)
+- [快速开始、两种演示结局、托管与自行部署责任](docs/releases/v0.1.0-alpha.md)
+- [本次干净环境验收记录](docs/acceptance/alpha-release-package.md)
+- [#58 首次推荐完整验收与安全分支基线](docs/acceptance/alpha-first-recommendation.md)
+- [#60 人工法律审核交接材料与待补信息](docs/releases/legal-review-handoff.md)
 
-在满足上述 Node 与 pnpm 版本约束的环境中，从仓库根目录运行：
+全部检查应串行执行：
 
-```bash
-pnpm lint && pnpm typecheck && pnpm test && pnpm test:e2e && pnpm build
+```sh
+pnpm typecheck
+pnpm test:runtime
+pnpm --workspace-concurrency=1 -r --if-present test
+pnpm lint
+pnpm test:e2e -- --workers=1 --retries=0 --trace=retain-on-failure --reporter=line
+pnpm build
 ```
 
 端到端测试使用自己的隔离 Compose 项目和端口，并会在结束时清理；它不会占用或替代本文档中的默认开发端口。
+
+E2E 包括 ordinary、source-health、workbench-inbox 三阶段，按环境跳过的场景不算通过。默认检查不调用真实模型、AnySearch 或招聘站点；生产 Adapter 冒烟另行显式执行。
 
 ### OpenAI 职业资料解析
 

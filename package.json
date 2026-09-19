@@ -1,5 +1,6 @@
 {
   "name": "ai-job-search-copilot",
+  "version": "0.1.0-alpha",
   "private": true,
   "packageManager": "pnpm@11.5.2",
   "engines": { "node": ">=22.22.2" },
@@ -8,6 +9,7 @@
   },
   "scripts": {
     "dev": "node scripts/local-runtime.mjs",
+    "demo:alpha": "pnpm test:e2e -- e2e/first-recommendation-journey.spec.ts --grep Alpha --workers=1 --retries=0",
     "dev:test": "exec node scripts/local-runtime.mjs --test",
     "dev:down": "docker compose down",
     "metrics": "tsx apps/worker/src/journey-metrics/cli.ts",

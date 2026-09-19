@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import AxeBuilder from "@axe-core/playwright";
 import { RunPreflightReportSchema } from "@job-copilot/contracts/run-preflight";
 import { Client } from "pg";
@@ -8,9 +9,7 @@ const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const databaseUrl = process.env.E2E_DATABASE_URL ?? "postgresql://job_copilot:local_only_job_copilot@127.0.0.1:55420/job_copilot";
 const devAuthSecret = "issue-2-e2e-dev-auth-shared-secret";
 const runSuffix = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-const resume = [
-  "# 姓名：张三", "邮箱：first-journey@example.test", "## 工作经历", "- 前端工程师｜示例科技｜2024-至今", "## 技能", "- TypeScript", "## 教育经历", "- 示例大学｜计算机科学｜2020", "## 项目经历", "- 求职工作台｜构建证据驱动的求职流程", "## 语言", "- 英语：专业工作水平", "## 联系方式", "- 电话：13800000000",
-].join("\n");
+const resume = readFileSync(new URL("../../../docs/demo/fictional-career.md", import.meta.url), "utf8");
 
 const runKeys = {
   "Desktop Chrome": { success: "10000000-0000-4000-8000-000000000141", failure: "10000000-0000-4000-8000-000000000104" },

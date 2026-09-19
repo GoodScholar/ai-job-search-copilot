@@ -3,7 +3,7 @@ import "reflect-metadata";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
 import { Test } from "@nestjs/testing";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { agentRuns, auditEvents, candidateFactEvidence, candidateFacts, careerDocuments, careerFactConflicts, careerImports, companyWatchlistRevisions, companyWatchlists, createDatabase, firstRecommendationJourneyCompletions, jobOpportunities, jobOpportunitySources, jobProfiles, jobSourceHealthChecks, jobSourcePostingVersions, jobSourcePostings, modelDiagnosticResults, migrateDatabase, profileFactRevisions, profileFacts, type Database } from "@job-copilot/database";
 import type { CareerDocumentStore, CareerImportQueue } from "@job-copilot/domain/career-imports";
 import type { JobContentStore, JobImportQueue } from "@job-copilot/domain/job-imports";
@@ -1249,30 +1249,35 @@ describe("authenticated workbench HTTP API", () => {
   });
 
   it("通过真实 HTTP 序列化 Public v2 scheduled run 的 latest 与 detail 响应", async () => {
-    const prepared = await prepareRealPreflightAccount("public-v2-run-response");
-    const { session, targetId, sourceSentinel } = prepared;
-    const setupClock = () => new Date("2026-08-30T01:31:00.000Z");
-    const dueClock = () => new Date("2026-08-31T01:31:00.000Z");
-    const auditTrail = createAuditTrail({ db: database, clock: setupClock });
-    const greenhouseEnvironment = { ...process.env, E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: JSON.stringify({ [randomUUID()]: {} }) };
-    const setupPreflight = productionPreflight(greenhouseEnvironment);
-    const recommendations = createRecommendationRunCommands({ db: database, queue: agentRunQueue, auditTrail, runPreflight: setupPreflight, id: randomUUID, clock: setupClock, executionMode: "greenhouse" });
-    const schedules = createJobDiscoverySchedules({ db: database, recommendations, runPreflight: setupPreflight, auditTrail, id: randomUUID, clock: setupClock });
-    const schedule = await schedules.set({ userId: session.account.userId, targetId, requestId: randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
-    expect(schedule.nextRunAt).toBe("2026-08-31T01:30:00.000Z");
-    const duePreflight = productionPreflight(greenhouseEnvironment);
-    const dueRecommendations = createRecommendationRunCommands({ db: database, queue: agentRunQueue, auditTrail, runPreflight: duePreflight, id: randomUUID, clock: dueClock, executionMode: "greenhouse" });
-    const dueSchedules = createJobDiscoverySchedules({ db: database, recommendations: dueRecommendations, runPreflight: duePreflight, auditTrail, id: randomUUID, clock: dueClock });
-    await dueSchedules.materializeDue({ limit: 1 });
-    await dueSchedules.dispatchPending({ limit: 1 });
-    const headers = bearer(session.sessionToken);
-    const latest = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-runs/latest", headers });
+    // Production preflight and the schedule fixture must observe the same allowed background time.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-31T01:31:00.000Z"));
+    try {
+      const prepared = await prepareRealPreflightAccount("public-v2-run-response");
+      const { session, targetId, sourceSentinel } = prepared;
+      const setupClock = () => new Date("2026-08-30T01:31:00.000Z");
+      const dueClock = () => new Date("2026-08-31T01:31:00.000Z");
+      const auditTrail = createAuditTrail({ db: database, clock: setupClock });
+      const greenhouseEnvironment = { ...process.env, E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: JSON.stringify({ [randomUUID()]: {} }) };
+      const setupPreflight = productionPreflight(greenhouseEnvironment);
+      const recommendations = createRecommendationRunCommands({ db: database, queue: agentRunQueue, auditTrail, runPreflight: setupPreflight, id: randomUUID, clock: setupClock, executionMode: "greenhouse" });
+      const schedules = createJobDiscoverySchedules({ db: database, recommendations, runPreflight: setupPreflight, auditTrail, id: randomUUID, clock: setupClock });
+      const schedule = await schedules.set({ userId: session.account.userId, targetId, requestId: randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
+      expect(schedule.nextRunAt).toBe("2026-08-31T01:30:00.000Z");
+      const duePreflight = productionPreflight(greenhouseEnvironment);
+      const dueRecommendations = createRecommendationRunCommands({ db: database, queue: agentRunQueue, auditTrail, runPreflight: duePreflight, id: randomUUID, clock: dueClock, executionMode: "greenhouse" });
+      const dueSchedules = createJobDiscoverySchedules({ db: database, recommendations: dueRecommendations, runPreflight: duePreflight, auditTrail, id: randomUUID, clock: dueClock });
+      await dueSchedules.materializeDue({ limit: 1 });
+      await dueSchedules.dispatchPending({ limit: 1 });
+      const headers = bearer(session.sessionToken);
+      const latest = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-runs/latest", headers });
 
-    expect(latest.statusCode).toBe(200);
-    expect(latest.json().run).toMatchObject({ adapter: "greenhouse", sourceScope: { sources: [expect.objectContaining({ sourceId: `greenhouse:${sourceSentinel}` })] } });
-    const detail = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/agent-runs/${latest.json().run.runId}`, headers });
-    expect(detail.statusCode).toBe(200);
-    expect(detail.json()).toMatchObject({ adapter: "greenhouse", executionSpec: { adapter: "greenhouse" } });
+      expect(latest.statusCode).toBe(200);
+      expect(latest.json().run).toMatchObject({ adapter: "greenhouse", sourceScope: { sources: [expect.objectContaining({ sourceId: `greenhouse:${sourceSentinel}` })] } });
+      const detail = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/agent-runs/${latest.json().run.runId}`, headers });
+      expect(detail.statusCode).toBe(200);
+      expect(detail.json()).toMatchObject({ adapter: "greenhouse", executionSpec: { adapter: "greenhouse" } });
+    } finally { vi.useRealTimers(); }
   });
 
   it("以认证账户读写、追溯并安全映射账户运行策略", async () => {

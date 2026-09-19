@@ -1,3 +1,4 @@
+import webPackage from "@/package.json";
 import Link from "next/link";
 import { endSessionAction } from "@/app/login/actions";
 import { Button } from "@/components/ui/button";
@@ -12,7 +13,10 @@ export function WorkbenchHeader() {
   return (
     <header className="workbench-header">
       <div className="container workbench-header-inner">
-        <Link className="workbench-brand workbench-touch-target" href="/home">AI Job Search Copilot</Link>
+        <div>
+          <Link className="workbench-brand workbench-touch-target" href="/home">AI Job Search Copilot</Link>
+          <p className="text-xs">v{webPackage.version}</p>
+        </div>
         <WorkbenchNavigation />
         <form action={submitEndSession}>
           <Button className="workbench-signout workbench-touch-target" size="lg" type="submit" variant="outline">退出</Button>
