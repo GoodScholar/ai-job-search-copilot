@@ -1,4 +1,5 @@
 import { Client } from "pg";
+import { JourneyMetricEventSchema } from "@job-copilot/contracts/journey-metrics";
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
 import { AGENT_RUN_QUEUE } from "@job-copilot/contracts/agent-runs";
 import { JobNormalizerOutputSchema } from "@job-copilot/contracts/job-imports";
@@ -141,6 +142,30 @@ async function createAccount(request: APIRequestContext, info: TestInfo, scenari
   expect(diagnostic.status()).toBe(201);
   await expect(diagnostic.json()).resolves.toMatchObject({ status: "available" });
   return { token: body.sessionToken, userId: body.account.userId, targetId };
+}
+
+async function enrollMetricFixture(userId: string): Promise<string> {
+  const db = new Client({ connectionString: databaseUrl });
+  await db.connect();
+  try {
+    const { rows } = await db.query<{ journey_id: string }>("insert into journey_metric_enrollments (user_id, configuration) values ($1, 'valid') returning journey_id", [userId]);
+    return rows[0]!.journey_id;
+  } finally { await db.end(); }
+}
+
+// 指标落地表是产品分析的输出边界，断言对外事件白名单，不读取采集器内部状态。
+async function expectMetricCompletion(journeyId: string, account: Account, kind: "recommendation_list" | "no_recommendations") {
+  await expect.poll(async () => {
+    const db = new Client({ connectionString: databaseUrl });
+    await db.connect();
+    try {
+      const { rows } = await db.query<{ event: unknown }>("select event from journey_metric_events where journey_id = $1 and event->>'type' = 'completed'", [journeyId]);
+      const events = rows.map((row) => JourneyMetricEventSchema.parse(row.event));
+      expect(JSON.stringify(events)).not.toContain(account.userId);
+      expect(JSON.stringify(events)).not.toContain(account.token);
+      return events.map((event) => event.terminalStatus);
+    } finally { await db.end(); }
+  }, { timeout: 20_000 }).toEqual([kind]);
 }
 
 async function setSessionCookie(page: Page, token: string): Promise<void> {
@@ -386,6 +411,7 @@ test("完整来源输入经真实推荐启动、worker 与发布链交付一条�
   test.setTimeout(90_000);
   test.skip(sourceHealthOnly, "完整来源输入仅在 ordinary phase 运行");
   const account = await createAccount(request, info, "full");
+  const journeyId = await enrollMetricFixture(account.userId);
   const idempotencyKey = scenarioKey(info, "full");
   const name = fixtureName(info, "full");
   const before = await sideFacts(account.userId, account.targetId);
@@ -401,6 +427,9 @@ test("完整来源输入经真实推荐启动、worker 与发布链交付一条�
     await page.goto(`/recommendations?runId=${rootRunId}&resultId=${result.resultId}`);
     await expect(page.getByRole("heading", { name: "本次推荐已准备好" })).toBeVisible();
     await expect(page.getByRole("list", { name: "推荐岗位" })).toContainText("高级前端工程师");
+    await expectMetricCompletion(journeyId, account, "recommendation_list");
+    await page.reload();
+    await expectMetricCompletion(journeyId, account, "recommendation_list");
     expect(await sideFacts(account.userId, account.targetId)).toEqual(before);
   } finally { await removeSourceInputFixture(name); }
 });
@@ -409,6 +438,7 @@ test("可信空来源回执经真实推荐启动、worker 与发布链交付暂�
   test.setTimeout(90_000);
   test.skip(sourceHealthOnly, "可信空来源仅在 ordinary phase 运行");
   const account = await createAccount(request, info, "empty");
+  const journeyId = await enrollMetricFixture(account.userId);
   const before = await sideFacts(account.userId, account.targetId);
   const rootRunId = await startFromHome(page, request, account, scenarioKey(info, "empty"));
   const run = await completedRun(request, account.token, rootRunId);
@@ -422,6 +452,7 @@ test("可信空来源回执经真实推荐启动、worker 与发布链交付暂�
   await page.goto(`/recommendations?runId=${rootRunId}&resultId=${result.resultId}`);
   await expect(page.getByRole("heading", { name: "今天暂无推荐" })).toBeVisible();
   await expect(page.getByRole("list", { name: "推荐岗位" })).toHaveCount(0);
+  await expectMetricCompletion(journeyId, account, "no_recommendations");
   expect(await sideFacts(account.userId, account.targetId)).toEqual(before);
 });
 

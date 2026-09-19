@@ -1,0 +1,20 @@
+import { afterEach, expect, it, vi } from "vitest";
+import { JourneyMetricsObserver } from "./journey-metrics-observer";
+afterEach(() => vi.useRealTimers());
+it("后台观察不重叠采集，关闭后不再扫描，错误只报告固定代码", async () => {
+  vi.useFakeTimers();
+  let release!: () => void; let calls = 0;
+  const failure = new Error("secret-provider-response");
+  const failures: string[] = [];
+  const observer = new JourneyMetricsObserver({ collect: async () => { calls++; if (calls === 1) await new Promise<void>((resolve) => { release = resolve; }); else throw failure; } }, (code) => failures.push(code));
+  observer.onModuleInit();
+  await vi.advanceTimersByTimeAsync(15_000);
+  expect(calls).toBe(1);
+  release();
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(calls).toBe(2);
+  expect(failures).toEqual(["JOURNEY_METRIC_COLLECTION_FAILED"]);
+  await observer.close();
+  await vi.advanceTimersByTimeAsync(10_000);
+  expect(calls).toBe(2);
+});

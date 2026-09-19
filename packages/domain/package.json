@@ -37,7 +37,8 @@
     "./account-run-control": "./src/account-run-control.ts",
     "./anysearch-query-plan": "./src/anysearch-query-plan.ts",
     "./job-discovery-leads": "./src/job-discovery-leads.public.ts",
-    "./verified-job-source-gate": "./src/verified-job-source-gate.public.ts"
+    "./verified-job-source-gate": "./src/verified-job-source-gate.public.ts",
+    "./journey-metrics": "./src/journey-metrics.ts"
   },
   "scripts": {
     "test": "vitest run --no-file-parallelism",

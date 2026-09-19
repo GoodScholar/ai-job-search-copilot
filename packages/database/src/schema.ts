@@ -1413,3 +1413,17 @@ export const recommendationExclusions = pgTable("recommendation_exclusions", {
 }, (table) => [
   index("recommendation_exclusions_owner_target_opportunity_idx").on(table.userId, table.targetId, table.opportunityId, table.createdAt), foreignKey({ columns: [table.userId, table.targetId], foreignColumns: [jobTargets.userId, jobTargets.id], name: "recommendation_exclusions_owner_target_fk" }), foreignKey({ columns: [table.userId, table.opportunityId], foreignColumns: [jobOpportunities.userId, jobOpportunities.id], name: "recommendation_exclusions_owner_opportunity_fk" }), foreignKey({ columns: [table.userId, table.recommendationListId], foreignColumns: [recommendationLists.userId, recommendationLists.id], name: "recommendation_exclusions_owner_list_fk" }), check("recommendation_exclusions_reason_code_check", sql`${table.reasonCode} in ('TRIAGE_NOT_PASS', 'DEADLINE_EXPIRED', 'SCORE_BELOW_THRESHOLD', 'CANDIDATE_LIMIT', 'MATCH_QUALITY_INSUFFICIENT', 'RULE_EXCLUDED')`),
 ]);
+
+/** 运营登记与随机指标标识的私有映射；不得导出给产品指标消费者。 */
+export const journeyMetricEnrollments = pgTable("journey_metric_enrollments", {
+  userId: uuid("user_id").primaryKey().references(() => jobAccounts.id),
+  journeyId: uuid("journey_id").notNull().unique().defaultRandom(),
+  configuration: varchar("configuration", { length: 16 }).notNull(),
+}, (table) => [check("journey_metric_enrollments_configuration", sql`${table.configuration} in ('valid', 'invalid')`)]);
+
+/** 指标历史只能被观察器追加，产品领域逻辑不读取该表。 */
+export const journeyMetricEvents = pgTable("journey_metric_events", {
+  eventKey: varchar("event_key", { length: 64 }).primaryKey(),
+  journeyId: uuid("journey_id").notNull().references(() => journeyMetricEnrollments.journeyId),
+  event: jsonb("event").notNull(),
+}, (table) => [index("journey_metric_events_journey_idx").on(table.journeyId)]);

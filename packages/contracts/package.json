@@ -29,7 +29,8 @@
     "./workbench": "./src/workbench.ts",
     "./runtime": "./src/runtime.ts",
     "./model-diagnostics": "./src/model-diagnostics.ts",
-    "./run-preflight": "./src/run-preflight.ts"
+    "./run-preflight": "./src/run-preflight.ts",
+    "./journey-metrics": "./src/journey-metrics.ts"
   },
   "scripts": {
     "test": "vitest run",
