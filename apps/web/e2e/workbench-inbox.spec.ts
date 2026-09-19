@@ -1,4 +1,3 @@
-import { trackWorkbenchRefresh } from "./support/workbench-refresh";
 import AxeBuilder from "@axe-core/playwright";
 import { Client } from "pg";
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
@@ -206,7 +205,6 @@ async function activeRuleSnapshot(userId: string, targetId: string): Promise<{ v
 }
 
 test("从首页将候选事实由未读标记为已读并确认解决", async ({ page, request }, info) => {
-  const waitForRefresh = trackWorkbenchRefresh(page);
   test.skip(process.env.E2E_WORKBENCH_INBOX_SOURCE_ONLY === "1", "来源受控 phase 只运行来源旅程。");
   const session = await createSession(request, subject(info, "candidate"));
   await createCandidateFact(request, session.token);
@@ -229,13 +227,17 @@ test("从首页将候选事实由未读标记为已读并确认解决", async ({
   await activate(page, info, "标记为已读：有待确认的画像事实");
   await expect(inboxStatusMessage).toContainText("暂时无法处理该事项，请稍后重试。");
   await expect(article).toBeVisible();
+  // RSC 可在页面提交后继续保持流式连接；按用户可见的恢复完成同步，不等待传输 EOF。
+  const recoveryResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/home"
+    && response.request().headers().rsc === "1" && response.request().headers()["next-router-prefetch"] !== "1" && response.ok());
   await page.context().setOffline(false);
+  await recoveryResponse;
+  await expect(page.getByText("网络已恢复，正在等待最新数据。", { exact: true })).toHaveCount(0);
   await activate(page, info, "标记为已读：有待确认的画像事实");
   await expect(inboxStatusMessage).toContainText("事项已标记为已读。");
   await expect.poll(() => inboxStatus(request, session.token, "candidate_fact", "read")).toBe("read");
   expect(await inboxItem(request, session.token, "candidate_fact", "read")).toMatchObject({ itemId: unread.itemId, status: "read" });
 
-  await waitForRefresh();
   const detail = article.getByRole("link", { name: "查看相关记录" });
   if (info.project.name === "Mobile Safari") await detail.tap();
   else { await expect(detail).toBeFocused(); await page.keyboard.press("Enter"); }

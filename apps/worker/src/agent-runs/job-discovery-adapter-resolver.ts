@@ -18,6 +18,7 @@ const FAKE_ADAPTER_VERSION = "fake-job-discovery-v1";
 const SLOW_CHECKPOINT_DELAY_MS = 750;
 
 function fakeForScenario(scenario: AgentRunScenarioMap[string] | undefined, attemptCount: number): JobDiscoveryAdapter {
+  if (scenario === "first_recommendation") return new FakeJobDiscoveryAdapter({ firstRecommendation: true });
   if (scenario === "slow_checkpoint") return new FakeJobDiscoveryAdapter({ delayMs: SLOW_CHECKPOINT_DELAY_MS });
   if (scenario === "retry_once" && attemptCount === 1) {
     return new FakeJobDiscoveryAdapter({ failures: { searchBatch: { code: "FAKE_SCENARIO_RETRY_ONCE", retryable: true } } });

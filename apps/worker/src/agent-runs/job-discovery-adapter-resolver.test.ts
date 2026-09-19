@@ -66,6 +66,16 @@ const sourceHealthExecutionSpec = {
 } as const;
 
 describe("JobDiscoveryAdapterResolver", () => {
+  it("首次推荐夹具在来源公开接口提供完整资格证据，且只能在 test 环境显式启用", async () => {
+    const environment = { APP_ENV: "test", E2E_AGENT_RUN_SCENARIOS: JSON.stringify({ [idempotencyKey]: "first_recommendation" }) };
+    const adapter = createJobDiscoveryAdapterResolver(environment).resolve({ ...metadata, attemptCount: 1 });
+    const found = await adapter.searchBatch({ ...batchInput, targetSnapshot: { ...targetSnapshot, constraints: { ...targetSnapshot.constraints, roleFamily: "前端", locations: ["上海"] } } });
+    expect(found).toMatchObject({ ok: true, data: { items: [expect.objectContaining({ title: "高级前端工程师（合成验收）" })] } });
+    const detail = await adapter.getDetail({ sourceId: "fake:aurora-careers", detailId: "aurora-frontend-001" });
+    expect(detail).toMatchObject({ ok: true, data: { description: expect.stringContaining("虚构"), qualifications: { requiredSkills: { value: ["TypeScript"] }, workMode: { value: "remote" } } } });
+    for (const APP_ENV of ["local", "production"]) expect(() => createJobDiscoveryAdapterResolver({ ...environment, APP_ENV })).toThrow("JOB_DISCOVERY_RUNTIME_CONFIG_INVALID");
+  });
+
   it("production v4 resolver 缺少 key 时不发送匿名 AnySearch 请求", async () => {
     const resolverModule = await import("./job-discovery-adapter-resolver.js") as Record<string, unknown>;
     const createLayeredResolver = resolverModule.createLayeredPublicJobDiscoveryWorkflowResolver;

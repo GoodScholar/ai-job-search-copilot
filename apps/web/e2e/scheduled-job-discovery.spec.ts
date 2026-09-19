@@ -143,6 +143,11 @@ test("每日推荐通过 Fake Worker 交付一组岗位，并抵抗重复 Worker
 
   await expect(page.getByRole("heading", { name: "每天获取岗位推荐" })).toBeVisible();
   await expect(page.getByText("可每日检查 1 个岗位来源")).toBeVisible();
+  const initialSchedule = await page.request.get(`/api/job-targets/${targetId}/discovery-schedule`);
+  expect(initialSchedule.status()).toBe(200);
+  const initial = await initialSchedule.json() as { schedule: { state: string } | null };
+  expect(initial.schedule?.state ?? "disabled").toBe("disabled");
+  expect((await latest(page)).run).toBeNull();
   const time = page.getByLabel("每日检查时间（北京时间 / Asia/Shanghai）");
   expect(await time.evaluate((element) => element.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
   for (const name of ["启用", "停用", "保存每日检查"]) {
