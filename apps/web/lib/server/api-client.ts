@@ -1,6 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
+import { JobExportCommandSchema, JobExportListSchema, JobExportSchema, type JobExportCommand } from "@job-copilot/contracts/job-exports";
 import { ApiProblemSchema, type ApiProblem } from "@job-copilot/contracts/api-problem";
 import { RunPreflightProblemSchema, RunPreflightReportSchema, type RunPreflightProblem, type RunPreflightReport } from "@job-copilot/contracts/run-preflight";
 import {
@@ -242,6 +243,22 @@ export function createApiClient({ apiInternalUrl, devAuthSharedSecret, fetchImpl
   }
 
   return {
+    async createJobExport(sessionToken: string, command: JobExportCommand) {
+      const response = await request("/v1/job-exports", { method: "POST", headers: { authorization: `Bearer ${sessionToken}`, "content-type": "application/json" }, body: JSON.stringify(JobExportCommandSchema.parse(command)), cache: "no-store" });
+      if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", "无法创建导出快照", response.status, problem ?? undefined); }
+      return parseSuccess(response, JobExportSchema);
+    },
+    async listJobExports(sessionToken: string) {
+      const response = await request("/v1/job-exports", { method: "GET", headers: { authorization: `Bearer ${sessionToken}` }, cache: "no-store" });
+      if (!response.ok) throw new ApiClientError("api", "无法读取导出快照", response.status);
+      return parseSuccess(response, JobExportListSchema);
+    },
+    async downloadJobExport(sessionToken: string, exportId: string) {
+      const response = await request(`/v1/job-exports/${encodeURIComponent(exportId)}/download`, { method: "GET", headers: { authorization: `Bearer ${sessionToken}` }, cache: "no-store" });
+      if (!response.ok) throw new ApiClientError("api", "无法下载导出快照", response.status);
+      if (!response.headers.get("content-type")?.startsWith("text/csv")) throw new ApiClientError("invalid_response", "导出文件响应无效", 502);
+      return response;
+    },
     async getCalibrationProposals(sessionToken: string, targetId: string) {
       const response = await request(`/v1/recommendations/calibration-proposals?targetId=${encodeURIComponent(targetId)}`, { method: "GET", headers: { authorization: `Bearer ${sessionToken}` } });
       if (!response.ok) { const problem = await readProblem(response); throw new ApiClientError("api", problem?.message ?? "无法读取校准建议", response.status, problem ?? undefined); }
