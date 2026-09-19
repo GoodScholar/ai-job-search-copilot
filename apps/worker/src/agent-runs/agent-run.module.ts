@@ -7,13 +7,13 @@ import { createAgentRunCommands, createAgentRunProcessor, createAgentRunRecovery
 import { FAKE_ANYSEARCH_PUBLIC_JOB_PHASE, resolveJobDiscoveryExecutionMode, resolveJobDiscoveryRuntimeConfig } from "@job-copilot/domain/job-discovery-execution-mode";
 import { createJobDiscoverySchedules } from "@job-copilot/domain/job-discovery-schedules";
 import { createRecommendationRunCommands } from "@job-copilot/domain/recommendation-runs";
-import { createRunPreflightEvaluator } from "@job-copilot/domain/run-preflight";
-import { createModelDiagnosticProjectionReader } from "@job-copilot/domain/model-diagnostics";
 import type { VerifiedJobEvidenceStore } from "@job-copilot/domain/verified-job-source-gate";
 import { SecureJobPageFetcher } from "@job-copilot/source-access";
-import { createOpenAiModelDiagnosticAdapter } from "@job-copilot/model-access";
-import { createFakeModelDiagnosticAdapter, TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED } from "@job-copilot/model-access/testing";
 
+import { createJourneyMetrics } from "@job-copilot/domain/journey-metrics";
+import { JourneyMetricsObserver } from "../journey-metrics/journey-metrics-observer.js";
+import { createWorkerRunPreflight } from "./run-preflight.js";
+export { createWorkerRunPreflight } from "./run-preflight.js";
 import { AgentRunConsumer } from "./agent-run-consumer.js";
 import {
   AgentRunReconciler,
@@ -33,6 +33,7 @@ import { createFakeAnysearchFixturePageTransport, fakeAnysearchFixtureLookup, re
 import { MinioDiscoveryContentStore } from "./minio-discovery-content-store.js";
 import { MinioVerifiedJobEvidenceStore } from "./minio-verified-job-evidence-store.js";
 
+const JOURNEY_METRICS_OBSERVER = Symbol("JOURNEY_METRICS_OBSERVER");
 export const AGENT_RUN_CONSUMER = Symbol("AGENT_RUN_CONSUMER");
 export const AGENT_RUN_RECONCILER = Symbol("AGENT_RUN_RECONCILER");
 export const AGENT_RUN_QUEUE = Symbol("AGENT_RUN_QUEUE");
@@ -44,14 +45,6 @@ export const AGENT_RUN_EXECUTION_MODE = Symbol("AGENT_RUN_EXECUTION_MODE");
 export const AGENT_RUN_PREFLIGHT = Symbol("AGENT_RUN_PREFLIGHT");
 const MAX_QUERY_POLICY_REJECTED_CANDIDATES = 5;
 
-/** 只读模型诊断投影；此装配从不主动运行外部诊断。 */
-export function createWorkerRunPreflight(input: { environment?: NodeJS.ProcessEnv; executionMode: ReturnType<typeof createConfiguredJobDiscoveryExecutionMode> }) {
-  const environment = input.environment ?? process.env;
-  const adapter = environment.APP_ENV === "test"
-    ? createFakeModelDiagnosticAdapter({ kind: "success" }, TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED)
-    : createOpenAiModelDiagnosticAdapter({ apiKey: environment.OPENAI_API_KEY ?? "", endpoint: environment.OPENAI_ENDPOINT, organization: environment.OPENAI_ORGANIZATION, project: environment.OPENAI_PROJECT, lowCostModel: environment.OPENAI_LOW_COST_MODEL, highQualityModel: environment.OPENAI_HIGH_QUALITY_MODEL });
-  return createRunPreflightEvaluator({ capabilityAdapter: new GreenhouseTrustedSourceAdapter(), modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: adapter.configurationFingerprint }), discoveryExecutionMode: input.executionMode, id: randomUUID, clock: () => new Date() });
-}
 
 function required(
   name: "DATABASE_URL" | "REDIS_URL" | "MINIO_ENDPOINT" | "MINIO_ACCESS_KEY" | "MINIO_SECRET_KEY" | "MINIO_BUCKET",
@@ -231,6 +224,14 @@ class AgentRunDatabase {
       } satisfies AgentRunScheduleReporter,
     },
     {
+      provide: JOURNEY_METRICS_OBSERVER,
+      inject: [AGENT_RUN_DATABASE, AGENT_RUN_PREFLIGHT],
+      useFactory: (database: AgentRunDatabase, runPreflight: ReturnType<typeof createWorkerRunPreflight>) => new JourneyMetricsObserver(
+        createJourneyMetrics({ db: database.db, clock: () => new Date(), runPreflight }),
+        (code) => console.error(code),
+      ),
+    },
+    {
       provide: AGENT_RUN_CONSUMER,
       inject: [AGENT_RUN_DATABASE, AGENT_RUN_QUEUE, AGENT_RUN_PREFLIGHT],
       useFactory: (database: AgentRunDatabase, queue: BullmqAgentRunQueue, runPreflight: ReturnType<typeof createWorkerRunPreflight>) => {
@@ -295,6 +296,7 @@ class AgentRunDatabase {
 })
 export class AgentRunModule implements OnModuleDestroy {
   constructor(
+    @Inject(JOURNEY_METRICS_OBSERVER) private readonly metrics: JourneyMetricsObserver,
     @Inject(AGENT_RUN_SCHEDULER) private readonly scheduler: AgentRunScheduler,
     @Inject(AGENT_RUN_RECONCILER) private readonly reconciler: AgentRunReconciler,
     @Inject(AGENT_RUN_CONSUMER) private readonly consumer: AgentRunConsumer,
@@ -303,6 +305,7 @@ export class AgentRunModule implements OnModuleDestroy {
   ) {}
 
   async onModuleDestroy(): Promise<void> {
+    try { await this.metrics.close(); } catch { /* 继续释放业务资源。 */ }
     try { await this.scheduler.close(); } catch { /* 其余资源仍需关闭。 */ }
     try { await this.reconciler.close(); } catch { /* 其余资源仍需关闭。 */ }
     try { await this.consumer.close(); } catch { /* 其余资源仍需关闭。 */ }
