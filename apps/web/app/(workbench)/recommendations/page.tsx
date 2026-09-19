@@ -16,7 +16,7 @@ import { formatBand, formatDimensionDetail, formatDimensionLabel, formatEvidence
 import { RecommendationResultSummary } from "./recommendation-result-summary";
 
 
-export default async function RecommendationsPage({ searchParams = Promise.resolve({}) }: { searchParams?: Promise<Record<string, string | string[] | undefined>> } = {}) {
+export default async function RecommendationsPage({ searchParams = Promise.resolve({}) }: { searchParams?: Promise<Record<string, string | string[] | undefined>> }) {
   const params = await searchParams;
   const only = (key: string) => typeof params[key] === "string" && params[key] !== "" && z.uuid().safeParse(params[key]).success ? params[key] : null;
   const runId = only("runId"), resultId = only("resultId"), targetParam = only("targetId"), listParam = only("recommendationListId");

@@ -12,7 +12,7 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = { title: "工作台 | AI Job Search Copilot" };
 
-type WorkbenchHomePageProps = { searchParams: Promise<{ runId?: string | string[] }> };
+type WorkbenchHomePageProps = { searchParams?: Promise<{ runId?: string | string[] }> };
 type UnavailableSection = "summary" | "targets" | "run" | "inbox" | "preflight" | "recommendationPreparation" | "recommendationRun";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
@@ -23,7 +23,7 @@ function valueOr<T>(result: PromiseSettledResult<T>, fallback: T, section: Unava
   return fallback;
 }
 
-export default async function WorkbenchHomePage({ searchParams }: WorkbenchHomePageProps = { searchParams: Promise.resolve({}) }) {
+export default async function WorkbenchHomePage({ searchParams = Promise.resolve({}) }: WorkbenchHomePageProps) {
   const requestedRunId = (await searchParams).runId;
   const hasRequestedRun = requestedRunId !== undefined;
   const hasValidRequestedRun = typeof requestedRunId === "string" && uuid.test(requestedRunId);

@@ -1,3 +1,4 @@
+import { trackWorkbenchRefresh } from "./support/workbench-refresh";
 import AxeBuilder from "@axe-core/playwright";
 import { Queue } from "bullmq";
 import { Client } from "pg";
@@ -125,6 +126,7 @@ test("计划 E2E fixture 的窗口覆盖上海日界分钟", () => {
 });
 
 test("每日推荐通过 Fake Worker 交付一组岗位，并抵抗重复 Worker delivery", async ({ page, request }, testInfo) => {
+  const waitForRefresh = trackWorkbenchRefresh(page);
   test.setTimeout(60_000);
   const session = await createSession(request, `scheduled-job-discovery-${testInfo.project.name}-${runSuffix}`);
   await addProfileEvidence(request, session.token);
@@ -201,6 +203,7 @@ test("每日推荐通过 Fake Worker 交付一组岗位，并抵抗重复 Worker
     await queue.resume().catch(() => undefined);
     await queue.close();
   }
+  await waitForRefresh();
   await page.goto(`/home?runId=${queued.runId}#agent-run`);
   const recommendation = page.getByRole("region", { name: "开始今日完整推荐" });
   await expect(recommendation).toBeVisible();

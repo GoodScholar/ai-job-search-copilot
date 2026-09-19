@@ -56,13 +56,13 @@ function latestStable(row: Stored | undefined, now: Date, failures: number) {
   return response(row.status, row, retryAt.getTime() > now.getTime() ? retryAt : null);
 }
 /**
- * 只读取当前部署指纹的最后稳定诊断。此投影从不触发 Adapter；拿不到 advisory lock
- * 代表另一个实例正在确定该指纹的当前状态，因此安全地返回 checking。
+ * 只读取当前部署指纹的最后稳定诊断。此投影从不触发 Adapter；读取者共享 advisory lock；拿不到共享锁
+ * 代表另一个实例正在更新该指纹的当前状态，因此安全地返回 checking。
  */
 export function createModelDiagnosticProjectionReader(deps: { configurationFingerprint: string }): ModelDiagnosticProjectionReader {
   return {
     async get(db, now) {
-      const [lock] = await db.execute(sql`select pg_try_advisory_xact_lock(hashtextextended(${deps.configurationFingerprint}, 50)) as locked`) as unknown as Array<{ locked: boolean }>;
+      const [lock] = await db.execute(sql`select pg_try_advisory_xact_lock_shared(hashtextextended(${deps.configurationFingerprint}, 50)) as locked`) as unknown as Array<{ locked: boolean }>;
       if (!lock?.locked) return response("checking");
       const row = await latest(db, deps.configurationFingerprint);
       return latestStable(row, now, row?.status === "available" ? 0 : await failureCount(db, deps.configurationFingerprint)) ?? response("unverified");
