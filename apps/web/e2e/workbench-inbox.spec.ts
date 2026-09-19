@@ -1,3 +1,4 @@
+import { trackWorkbenchRefresh } from "./support/workbench-refresh";
 import AxeBuilder from "@axe-core/playwright";
 import { Client } from "pg";
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
@@ -205,6 +206,7 @@ async function activeRuleSnapshot(userId: string, targetId: string): Promise<{ v
 }
 
 test("从首页将候选事实由未读标记为已读并确认解决", async ({ page, request }, info) => {
+  const waitForRefresh = trackWorkbenchRefresh(page);
   test.skip(process.env.E2E_WORKBENCH_INBOX_SOURCE_ONLY === "1", "来源受控 phase 只运行来源旅程。");
   const session = await createSession(request, subject(info, "candidate"));
   await createCandidateFact(request, session.token);
@@ -233,6 +235,7 @@ test("从首页将候选事实由未读标记为已读并确认解决", async ({
   await expect.poll(() => inboxStatus(request, session.token, "candidate_fact", "read")).toBe("read");
   expect(await inboxItem(request, session.token, "candidate_fact", "read")).toMatchObject({ itemId: unread.itemId, status: "read" });
 
+  await waitForRefresh();
   const detail = article.getByRole("link", { name: "查看相关记录" });
   if (info.project.name === "Mobile Safari") await detail.tap();
   else { await expect(detail).toBeFocused(); await page.keyboard.press("Enter"); }

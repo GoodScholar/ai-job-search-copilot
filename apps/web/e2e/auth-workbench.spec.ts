@@ -1,3 +1,4 @@
+import { trackWorkbenchRefresh } from "./support/workbench-refresh";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 
@@ -118,7 +119,7 @@ test("工作台在目标浏览器保持键盘、触控、减动效与无障碍�
     await page.keyboard.press("Tab");
     await expect(page.getByRole("link", { name: "首页" })).toBeFocused();
     await page.keyboard.press("Tab");
-    await expect(page.getByRole("link", { name: "推荐" })).toBeFocused();
+    await expect(page.getByRole("link", { name: "推荐", exact: true })).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(page.getByRole("link", { name: "画像" })).toBeFocused();
     await page.keyboard.press("Tab");
@@ -144,3 +145,35 @@ test("工作台在目标浏览器保持键盘、触控、减动效与无障碍�
   expect(results.violations).toEqual([]);
   expect(loginResults.violations).toEqual([]);
 });
+
+for (const trigger of ["网络恢复", "关闭引导"] as const) {
+  test(`首页${trigger}的刷新失败后，等待恢复完成再导航到画像`, async ({ page, request }, info) => {
+    const waitForRefresh = trackWorkbenchRefresh(page);
+    const session = await createTestSession(request, `refresh-${info.project.name}-${crypto.randomUUID()}`);
+    await page.context().addCookies([{ name: "job_copilot_session", value: session.sessionToken, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
+    await page.goto("/home");
+    await expect(page.getByRole("heading", { name: "今天暂无待决定事项" })).toBeVisible();
+    let release!: () => void;
+    let arrived!: () => void;
+    const pending = new Promise<void>((resolve) => { arrived = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    await page.route("**/home?*", async (route) => {
+      if (route.request().headers().rsc !== "1") { await route.continue(); return; }
+      arrived();
+      await gate;
+      await route.abort("failed").catch(() => undefined);
+    });
+    try {
+      if (trigger === "网络恢复") await page.evaluate(() => window.dispatchEvent(new Event("online")));
+      else await page.getByRole("button", { name: "暂时关闭引导" }).click();
+      await pending;
+      const failed = page.waitForEvent("requestfailed", (request) => new URL(request.url()).pathname === "/home" && request.headers().rsc === "1");
+      release();
+      await failed;
+      await waitForRefresh();
+      await page.goto("/profile#candidate-facts");
+      await expect(page).toHaveURL(/\/profile#candidate-facts$/u);
+      await expect(page.getByRole("heading", { name: "从职业资料建立求职画像", exact: true })).toBeVisible();
+    } finally { release(); }
+  });
+}

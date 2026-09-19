@@ -394,6 +394,18 @@ test("test runtime 清除任意 OPENAI_ 前缀变量后再启动 Web、API 与 W
   assert.equal(spawnCall[2].env.OPENAI_UNDOCUMENTED_SENTINEL, undefined);
 });
 
+test("test runtime launches prebuilt E2E applications instead of the development server", () => {
+  let spawnCall;
+  startApplications({
+    config: createRuntimeConfig({ test: true }),
+    env: {},
+    spawnProcess: (...args) => { spawnCall = args; return {}; },
+  });
+  assert.equal(spawnCall[0], "pnpm");
+  assert.equal(spawnCall[1].at(-1), "dev:e2e");
+  assert.equal(spawnCall[2].env.APP_ENV, "test");
+});
+
 test("API and Worker dev commands launch the cross-platform Nest loader", async () => {
   for (const packagePath of ["../apps/api/package.json", "../apps/worker/package.json"]) {
     const packageJson = JSON.parse(await readFile(new URL(packagePath, import.meta.url), "utf8"));
