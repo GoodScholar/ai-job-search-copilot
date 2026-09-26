@@ -22,9 +22,10 @@ describe("OpenAI 岗位规范化", () => {
     const normalizer = createOpenAiJobPostingNormalizer({ apiKey: "test-key" }, fetcher);
     await expect(normalizer.normalize("公司：示例公司\n标题：工程师\n工作方式：远程")).resolves.toMatchObject({ adapter: "openai", company: "示例公司", usage: { status: "known", inputTokens: 20, outputTokens: 30, totalTokens: 50 } });
     const request = JSON.parse(String(fetcher.mock.calls[0]![1].body));
-    expect(request).toMatchObject({ store: false, text: { format: { strict: true } } });
+    expect(request).toMatchObject({ store: false, reasoning: { effort: "low" }, text: { format: { strict: true } } });
     expect(request.text.format.schema.properties.qualifications.additionalProperties).toBe(false);
     expect(request.text.format.schema.properties.fieldEvidence.type).toBe("array");
+    expect(request.input[1].content[0].text).toContain("1| 公司：示例公司");
     expect(everyObjectIsStrict(request.text.format.schema)).toBe(true);
     expect(request.tools).toBeUndefined();
     expect(fetcher.mock.calls[0]![1]).toMatchObject({ redirect: "error" });

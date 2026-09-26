@@ -78,6 +78,7 @@ describe("job import contracts", () => {
     expect(validateJobNormalizerOutput(source, { ...output, deadlineProvenance: { field: "deadline", path: "lines:1-1", value: "2026-09-01T00:00:00.000Z", status: "invalid" } })).toBe(false);
   });
 
+
   it("只在应用层将完整规范化输出的每条证据绑定到真实发布版本", () => {
     const output = JobNormalizerOutputSchema.parse({
       normalizerVersion: "fake-job-normalizer-v2", company: "示例科技", title: "高级前端工程师", location: null,
@@ -128,6 +129,14 @@ describe("job import contracts", () => {
       return Object.values(value).every((child) => Array.isArray(child) ? child.every(visit) : visit(child));
     };
     expect(visit(schema)).toBe(true);
+  });
+
+  it("要求资格证据的字段名与资格 key 完全一致", () => {
+    const raw = JobNormalizerModelOutputSchema.parse({
+      company: null, title: null, location: null, postedAt: null, deadline: null, deadlineProvenance: null, description: null,
+      qualifications: { workMode: { value: "remote", evidence: { field: "workMode", path: "lines:1-1", rawValue: "远程", normalizedValue: "remote" } }, relocationRequired: null, salary: null, seniority: null, education: null, languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: null }, fieldEvidence: [],
+    });
+    expect(() => JobNormalizerModelOutputSchema.parse({ ...raw, qualifications: { ...raw.qualifications, workMode: { ...raw.qualifications.workMode!, evidence: { ...raw.qualifications.workMode!.evidence, field: "工作方式" } } } })).toThrow();
   });
 
   it("treats legacy normalized data without qualifications as missing fields", () => {

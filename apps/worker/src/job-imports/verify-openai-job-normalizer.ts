@@ -53,6 +53,6 @@ async function main() {
     cases.push({ caseId: "case-3", status: "passed", requests: injectionRequests, usageCount: 0, evidenceCount: 0, qualificationEvidenceCount: 0, latencyBucket: "not_called", usage: "not_called" });
   }
   if (cases.length !== 3) throw new Error("JOB_NORMALIZER_EVALUATION_CASE_FAILED:case-3:JOB_NORMALIZER_INJECTION_DETECTED");
-  console.log(JSON.stringify({ evaluationVersion: JOB_NORMALIZER_EVALUATION_VERSION, timeoutMs, adapter: metadata.adapter, model: metadata.model, normalizerVersion: metadata.normalizerVersion, promptVersion: metadata.promptVersion, ruleVersion: metadata.ruleVersion, outputSchemaVersion: metadata.outputSchemaVersion, cases }));
+  console.log(JSON.stringify({ evaluationVersion: JOB_NORMALIZER_EVALUATION_VERSION, timeoutMs, reasoning: "low", adapter: metadata.adapter, model: metadata.model, normalizerVersion: metadata.normalizerVersion, promptVersion: metadata.promptVersion, ruleVersion: metadata.ruleVersion, outputSchemaVersion: metadata.outputSchemaVersion, cases }));
 }
 void main().catch((error: unknown) => { console.error(codeOf(error)); process.exitCode = 1; });

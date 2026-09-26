@@ -148,6 +148,7 @@ const usage = z.object({
   if (value.status === "known" && (value.inputTokens === null || value.outputTokens === null || value.totalTokens !== value.inputTokens + value.outputTokens)) context.addIssue({ code: "custom", message: "known usage requires exact token totals" });
   if (value.status !== "known" && (value.inputTokens !== null || value.outputTokens !== null || value.totalTokens !== null)) context.addIssue({ code: "custom", message: "unknown usage must not invent token counts" });
 });
+const modelQualificationEvidence = <Field extends string>(field: Field) => JobNormalizationEvidenceSchema.extend({ field: z.literal(field) });
 const modelOutput = z.object({
   company: nullableJobField,
   title: nullableJobField,
@@ -157,16 +158,16 @@ const modelOutput = z.object({
   deadlineProvenance: z.object({ field: z.literal("deadline"), path: z.string().trim().min(1).max(256), value: z.string().trim().min(1).max(512), status: z.literal("invalid") }).strict().nullable(),
   description: nullableJobField,
   qualifications: z.object({
-    workMode: z.object({ value: z.enum(["onsite", "hybrid", "remote"]), evidence: JobNormalizationEvidenceSchema }).strict().nullable(),
-    relocationRequired: z.object({ value: z.boolean(), evidence: JobNormalizationEvidenceSchema }).strict().nullable(),
-    salary: z.object({ value: z.object({ minimum: z.int().nonnegative().nullable(), maximum: z.int().nonnegative().nullable(), currency: z.string().regex(/^[A-Z]{3}$/), period: z.enum(["month", "year"]) }).strict(), evidence: JobNormalizationEvidenceSchema }).strict().nullable(),
-    seniority: z.object({ value: z.string().trim().min(1).max(128), evidence: JobNormalizationEvidenceSchema }).strict().nullable(),
-    education: z.object({ value: z.string().trim().min(1).max(256), evidence: JobNormalizationEvidenceSchema }).strict().nullable(),
-    languages: z.object({ value: z.array(z.object({ name: z.string().trim().min(1).max(128), level: z.string().trim().min(1).max(128).nullable() }).strict()).min(1).max(20), evidence: JobNormalizationEvidenceSchema }).strict().nullable(),
-    workEligibility: z.object({ value: z.string().trim().min(1).max(256), evidence: JobNormalizationEvidenceSchema }).strict().nullable(),
-    industry: z.object({ value: z.string().trim().min(1).max(256), evidence: JobNormalizationEvidenceSchema }).strict().nullable(),
-    employmentType: z.object({ value: z.enum(["direct", "outsourcing", "dispatch", "headhunter"]), evidence: JobNormalizationEvidenceSchema }).strict().nullable(),
-    requiredSkills: z.object({ value: z.array(z.string().trim().min(1).max(128)).min(1).max(100), evidence: JobNormalizationEvidenceSchema }).strict().nullable(),
+    workMode: z.object({ value: z.enum(["onsite", "hybrid", "remote"]), evidence: modelQualificationEvidence("workMode") }).strict().nullable(),
+    relocationRequired: z.object({ value: z.boolean(), evidence: modelQualificationEvidence("relocationRequired") }).strict().nullable(),
+    salary: z.object({ value: z.object({ minimum: z.int().nonnegative().nullable(), maximum: z.int().nonnegative().nullable(), currency: z.string().regex(/^[A-Z]{3}$/), period: z.enum(["month", "year"]) }).strict(), evidence: modelQualificationEvidence("salary") }).strict().nullable(),
+    seniority: z.object({ value: z.string().trim().min(1).max(128), evidence: modelQualificationEvidence("seniority") }).strict().nullable(),
+    education: z.object({ value: z.string().trim().min(1).max(256), evidence: modelQualificationEvidence("education") }).strict().nullable(),
+    languages: z.object({ value: z.array(z.object({ name: z.string().trim().min(1).max(128), level: z.string().trim().min(1).max(128).nullable() }).strict()).min(1).max(20), evidence: modelQualificationEvidence("languages") }).strict().nullable(),
+    workEligibility: z.object({ value: z.string().trim().min(1).max(256), evidence: modelQualificationEvidence("workEligibility") }).strict().nullable(),
+    industry: z.object({ value: z.string().trim().min(1).max(256), evidence: modelQualificationEvidence("industry") }).strict().nullable(),
+    employmentType: z.object({ value: z.enum(["direct", "outsourcing", "dispatch", "headhunter"]), evidence: modelQualificationEvidence("employmentType") }).strict().nullable(),
+    requiredSkills: z.object({ value: z.array(z.string().trim().min(1).max(128)).min(1).max(100), evidence: modelQualificationEvidence("requiredSkills") }).strict().nullable(),
   }).strict(),
   fieldEvidence,
 }).strict();
@@ -279,9 +280,16 @@ export function jobNormalizerEvidenceFailure(content: string, output: JobNormali
     const provenance = output.deadlineProvenance;
     if (output.deadline !== null || !evidenceMatchesPath(content, provenance.path, provenance.value) || !isInvalidIsoDateTime(provenance.value)) return "deadlineProvenance";
   }
-  for (const [field, qualification] of Object.entries(output.qualifications)) if (qualification && (!qualification.evidence.rawValue || !qualification.evidence.normalizedValue || qualification.evidence.field !== field || !evidenceMatchesPath(content, qualification.evidence.path, qualification.evidence.rawValue) || qualification.evidence.normalizedValue !== normalizedQualificationValue(qualification.value) || !matchesQualificationNormalization(field, qualification.evidence.rawValue, qualification.value))) return `qualification:${field}`;
+  for (const [field, qualification] of Object.entries(output.qualifications)) if (qualification) {
+    if (!qualification.evidence.rawValue || !qualification.evidence.normalizedValue) return `qualification:${field}:missing`;
+    if (qualification.evidence.field !== field) return `qualification:${field}:field`;
+    if (!evidenceMatchesPath(content, qualification.evidence.path, qualification.evidence.rawValue)) return `qualification:${field}:path`;
+    if (qualification.evidence.normalizedValue !== normalizedQualificationValue(qualification.value)) return `qualification:${field}:normalized`;
+    if (!matchesQualificationNormalization(field, qualification.evidence.rawValue, qualification.value)) return `qualification:${field}:mapping`;
+  }
   return null;
 }
+
 
 /** Add the legacy display value only after strict provider output has passed its schema. */
 export function bindStrictJobNormalizerOutput(raw: z.infer<typeof JobNormalizerModelOutputSchema>, metadata: JobNormalizerMetadata & { usage: import("./job-normalizer").JobNormalizerUsage }): JobNormalizerOutput {
@@ -338,6 +346,7 @@ function matchesQualificationNormalization(field: string, rawValue: string, valu
   if (field === "languages") return JSON.stringify(raw.split(/[,，]/u).map((item) => item.trim()).filter(Boolean).map((item) => { const [name, level] = item.split(/\s*\(([^)]+)\)\s*/u); return { name: name!.trim(), level: level?.trim() || null }; })) === JSON.stringify(value);
   return false;
 }
+
 
 export type CreateJobImportCommand = z.infer<typeof CreateJobImportCommandSchema>;
 export type CreateJobImportResponse = z.infer<typeof CreateJobImportResponseSchema>;
