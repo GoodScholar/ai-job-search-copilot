@@ -17,6 +17,7 @@ import {
   type JobImportFailureCode,
   type JobImportInputType,
 } from "@job-copilot/contracts/job-imports";
+import { JobNormalizerError, isJobInstructionLike, type JobNormalizerCallOptions } from "@job-copilot/contracts/job-normalizer";
 import type { AuditTrail } from "./audit-trail";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { persistJobOpportunity } from "./job-opportunity-persistence";
@@ -32,7 +33,37 @@ export interface JobImportQueue {
 }
 
 export interface JobPostingNormalizer {
-  normalize(content: string): Promise<unknown>;
+  normalize(content: string, options?: JobNormalizerCallOptions): Promise<unknown>;
+}
+
+function normalizationFailure(error: unknown): JobImportFailureCode {
+  if (error instanceof JobNormalizerError) return error.code;
+  return "JOB_NORMALIZER_UNAVAILABLE";
+}
+
+function hasExactEvidence(content: string, rawValue: string): boolean {
+  return content.includes(rawValue);
+}
+
+function matchesDeterministicNormalization(field: string, rawValue: string, normalizedValue: string): boolean {
+  if (rawValue === normalizedValue) return true;
+  if (field !== "postedAt" && field !== "deadline") return false;
+  const parsed = new Date(rawValue);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === normalizedValue;
+}
+
+function validateNormalizationEvidence(content: string, output: import("@job-copilot/contracts/job-imports").JobNormalizerOutput): boolean {
+  if (isJobInstructionLike(content)) return false;
+  for (const field of ["company", "title", "location", "postedAt", "deadline", "description"] as const) {
+    const value = output[field];
+    if (value === null) continue;
+    const evidence = output.fieldEvidence[field];
+    if (!evidence || evidence.field !== field || evidence.normalizedValue !== value || !matchesDeterministicNormalization(field, evidence.rawValue, value) || !hasExactEvidence(content, evidence.rawValue)) return false;
+  }
+  for (const [field, qualification] of Object.entries(output.qualifications)) {
+    if (!qualification || !hasExactEvidence(content, qualification.evidence.value) || qualification.evidence.field !== field) return false;
+  }
+  return true;
 }
 
 export type FetchedUrlJobPage = {
@@ -423,18 +454,24 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
       let normalized: unknown;
       try {
         normalized = await deps.normalizer.normalize(canonical);
-      } catch {
+      } catch (error) {
+        const failureCode = normalizationFailure(error);
+        if (failureCode === "JOB_NORMALIZER_INJECTION_DETECTED" || failureCode === "JOB_NORMALIZER_OUTPUT_INVALID" || failureCode === "JOB_NORMALIZER_EVIDENCE_INVALID" || failureCode === "JOB_NORMALIZER_AUTH_FAILED")
+          return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode, attemptCount }) ? "failed" : "stale";
         if (!job.finalAttempt) {
           await releaseImportForRetry(deps, { ...parsedJob, claimToken });
           throw new JobImportRetryableError();
         }
-        return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode: "JOB_IMPORT_PERSIST_FAILED", attemptCount }) ? "failed" : "stale";
+        return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode, attemptCount }) ? "failed" : "stale";
       }
       const result = JobNormalizerOutputSchema.safeParse(normalized);
       if (!result.success) {
         return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode: "JOB_NORMALIZER_OUTPUT_INVALID", attemptCount }) ? "failed" : "stale";
       }
       const output = result.data;
+      if (!validateNormalizationEvidence(canonical, output)) {
+        return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode: "JOB_NORMALIZER_EVIDENCE_INVALID", attemptCount }) ? "failed" : "stale";
+      }
       try {
         const completed = await deps.db.transaction(async (transaction) => {
           await acquireAccountAdvisoryLock(transaction, parsedJob.userId);
@@ -445,6 +482,11 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
             eq(jobImports.status, "normalizing"), eq(jobImports.claimToken, claimToken),
           )).returning({ id: jobImports.id });
           if (!completionClaimed) return false;
+
+          // 规范化结果属于不可变发布版本；机会行只是当前展示投影。
+          await transaction.update(jobSourcePostingVersions).set({ normalizedData: output }).where(and(
+            eq(jobSourcePostingVersions.userId, parsedJob.userId), eq(jobSourcePostingVersions.id, sourceVersion.id),
+          ));
 
           const opportunity = await persistJobOpportunity(transaction, { id: deps.id, userId: parsedJob.userId, importId: parsedJob.importId, sourcePostingVersionId: sourceVersion.id, isOfficial: sourceVersion.isOfficial, company: output.company, title: output.title, location: output.location, postedAt: output.postedAt, deadline: output.deadline, description: output.description, normalizedData: output, now });
           await deps.auditTrail.bind(transaction).append({

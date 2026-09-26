@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { JobNormalizerFieldEvidenceSchema, JOB_NORMALIZER_OUTPUT_SCHEMA_VERSION, JOB_NORMALIZER_PROMPT_VERSION, type JobNormalizerMetadata } from "./job-normalizer";
 
 export const JOB_IMPORT_MAX_BYTES = 524_288;
 export const JOB_IMPORT_QUEUE = "job-imports";
@@ -52,6 +53,13 @@ export const JobImportFailureCodeSchema = z.enum([
   "JOB_IMPORT_CONTENT_READ_FAILED",
   "JOB_IMPORT_CHECKSUM_MISMATCH",
   "JOB_NORMALIZER_OUTPUT_INVALID",
+  "JOB_NORMALIZER_EVIDENCE_INVALID",
+  "JOB_NORMALIZER_INJECTION_DETECTED",
+  "JOB_NORMALIZER_RATE_LIMITED",
+  "JOB_NORMALIZER_CANCELLED",
+  "JOB_NORMALIZER_BUDGET_EXHAUSTED",
+  "JOB_NORMALIZER_UNAVAILABLE",
+  "JOB_NORMALIZER_AUTH_FAILED",
   "JOB_IMPORT_PERSIST_FAILED",
   "JOB_PAGE_URL_INVALID",
   "JOB_PAGE_TARGET_REJECTED",
@@ -128,6 +136,10 @@ export const JobImportJobSchema = z.object({
 
 export const JobNormalizerOutputSchema = z.object({
   normalizerVersion: z.string().trim().min(1).max(64),
+  adapter: z.enum(["fake", "openai"]).optional().default("fake"),
+  model: z.string().trim().min(1).max(128).nullable().optional().default(null),
+  promptVersion: z.string().trim().min(1).max(64).optional().default(JOB_NORMALIZER_PROMPT_VERSION),
+  outputSchemaVersion: z.string().trim().min(1).max(64).optional().default(JOB_NORMALIZER_OUTPUT_SCHEMA_VERSION),
   company: nullableJobField,
   title: nullableJobField,
   location: nullableJobField,
@@ -139,6 +151,7 @@ export const JobNormalizerOutputSchema = z.object({
   }).strict().nullable().optional().default(null),
   description: nullableJobField,
   qualifications: JobQualificationsSchema.optional().default(missingQualifications),
+  fieldEvidence: JobNormalizerFieldEvidenceSchema.optional().default({}),
 }).strict();
 
 export type CreateJobImportCommand = z.infer<typeof CreateJobImportCommandSchema>;
@@ -151,3 +164,7 @@ export type JobImportDetail = z.infer<typeof JobImportDetailSchema>;
 export type JobImportJob = z.infer<typeof JobImportJobSchema>;
 export type JobNormalizerOutput = z.infer<typeof JobNormalizerOutputSchema>;
 export type JobQualifications = z.infer<typeof JobQualificationsSchema>;
+export const FAKE_JOB_NORMALIZER_METADATA: JobNormalizerMetadata = {
+  adapter: "fake", normalizerVersion: "fake-job-normalizer-v2", promptVersion: JOB_NORMALIZER_PROMPT_VERSION,
+  outputSchemaVersion: JOB_NORMALIZER_OUTPUT_SCHEMA_VERSION, model: null,
+};

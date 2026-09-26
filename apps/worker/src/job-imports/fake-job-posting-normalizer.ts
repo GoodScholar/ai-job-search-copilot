@@ -1,3 +1,6 @@
+import { FAKE_JOB_NORMALIZER_METADATA } from "@job-copilot/contracts/job-imports";
+import { JobNormalizerError, assertJobNormalizerInputBudget, isJobInstructionLike, type JobNormalizerCallOptions } from "@job-copilot/contracts/job-normalizer";
+
 const INVALID_FIXTURE = "<!-- job-copilot:fake-normalizer-invalid -->";
 
 type Field = "company" | "location" | "postedAt" | "deadline" | "workMode" | "relocationRequired" | "salary" | "seniority" | "education" | "languages" | "workEligibility" | "industry" | "employmentType" | "requiredSkills";
@@ -50,12 +53,16 @@ export const FAKE_JOB_NORMALIZER_INVALID_FIXTURE = INVALID_FIXTURE;
 export class FakeJobPostingNormalizer {
   constructor(private readonly options: { enableFailureFixture?: boolean; testDelayMs?: number } = {}) {}
 
-  async normalize(content: string): Promise<unknown> {
+  readonly metadata = FAKE_JOB_NORMALIZER_METADATA;
+
+  async normalize(content: string, options: JobNormalizerCallOptions = {}): Promise<unknown> {
+    const budget = assertJobNormalizerInputBudget(content, options);
+    if (isJobInstructionLike(content)) throw new JobNormalizerError("JOB_NORMALIZER_INJECTION_DETECTED");
     if (this.options.enableFailureFixture && content.trim() === INVALID_FIXTURE) return { invalid: "fake-fixture" };
     if (this.options.testDelayMs) await new Promise((resolve) => setTimeout(resolve, this.options.testDelayMs));
 
     const output = {
-      normalizerVersion: "fake-job-normalizer-v1",
+      ...this.metadata,
       company: null as string | null,
       title: null as string | null,
       location: null as string | null,
@@ -67,6 +74,7 @@ export class FakeJobPostingNormalizer {
         workMode: null, relocationRequired: null, salary: null, seniority: null, education: null,
         languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: null,
       },
+      fieldEvidence: {} as Record<string, { field: string; path: string; rawValue: string; normalizedValue: string }>,
     };
     const lines = content.split(/\r\n|\r|\n/u);
     let descriptionStart: number | undefined;
@@ -77,7 +85,10 @@ export class FakeJobPostingNormalizer {
       if (heading) {
         const headingText = heading[2]!.replace(/\s+#+\s*$/u, "").trim();
         const lower = headingText.toLowerCase();
-        if (heading[1]!.length === 1 && output.title === null && headingText) output.title = headingText;
+        if (heading[1]!.length === 1 && output.title === null && headingText) {
+          output.title = headingText;
+          output.fieldEvidence.title = { field: "title", path: `line:${index + 1}`, rawValue: headingText, normalizedValue: headingText };
+        }
         if (descriptionHeadings.has(lower)) {
           descriptionStart = index + 1;
           break;
@@ -95,8 +106,12 @@ export class FakeJobPostingNormalizer {
         if (field === "postedAt" || field === "deadline") {
           const parsed = validIsoDateTime(value);
           output[field] = parsed;
+          if (parsed) output.fieldEvidence[field] = { field, path: label[1]!.trim(), rawValue: value, normalizedValue: parsed };
           if (field === "deadline" && parsed === null) output.deadlineProvenance = { field: "deadline", path: label[1]!.trim(), value, status: "invalid" };
-        } else output[field] = value;
+        } else {
+          output[field] = value;
+          output.fieldEvidence[field] = { field, path: label[1]!.trim(), rawValue: value, normalizedValue: value };
+        }
         continue;
       }
       if (output.qualifications[field] !== null) continue;
@@ -112,7 +127,10 @@ export class FakeJobPostingNormalizer {
       }
       const copied = section.join("\n");
       output.description = copied.trim() ? copied : null;
+      if (output.description) output.fieldEvidence.description = { field: "description", path: `line:${descriptionStart + 1}`, rawValue: output.description, normalizedValue: output.description };
     }
+    const outputBytes = new TextEncoder().encode(JSON.stringify(output)).byteLength;
+    if (outputBytes > budget.maxOutputTokens || budget.inputTokenBound + outputBytes > budget.maxTotalTokens) throw new JobNormalizerError("JOB_NORMALIZER_BUDGET_EXHAUSTED");
     return output;
   }
 }
