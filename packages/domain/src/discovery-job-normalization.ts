@@ -59,9 +59,14 @@ export function createDiscoveryJobNormalizer(input: {
               if (input.signal.aborted) throw new DiscoveryJobNormalizationError("DISCOVERY_JOB_NORMALIZATION_INTERRUPTED");
               const reserve: Record<string, number | boolean> = input.metadata!.adapter === "fake" ? {} : { modelCalls: 1, budgetTokens: budget.inputTokenBound + budget.maxOutputTokens };
               interrupt(await input.checkpoint.check({ userId: input.userId, runId: input.runId, claimToken: input.claimToken, checkpointKey: `${prefix}:invoke`, reserve }));
+              if (input.signal.aborted) throw new DiscoveryJobNormalizationError("DISCOVERY_JOB_NORMALIZATION_INTERRUPTED");
               invocationStarted = true;
             },
             onUsage: async (usage) => {
+              if (!Number.isSafeInteger(usage.inputTokens) || usage.inputTokens < 0 || !Number.isSafeInteger(usage.outputTokens) || usage.outputTokens < 0 || !Number.isSafeInteger(usage.inputTokens + usage.outputTokens)) {
+                await markIncomplete();
+                throw new DiscoveryJobNormalizationError("DISCOVERY_JOB_NORMALIZATION_USAGE_INCOMPLETE");
+              }
               usageSettled = true;
               interrupt(await input.checkpoint.check({ userId: input.userId, runId: input.runId, claimToken: input.claimToken, checkpointKey: `${prefix}:usage`, reserve: { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens, settleActual: true, invocationAttemptCount: input.attemptCount } }));
             },
@@ -72,8 +77,13 @@ export function createDiscoveryJobNormalizer(input: {
           if (!sameMetadata(output, input.metadata!) || !validateJobNormalizerOutput(value.content, output)) throw new JobNormalizerError("JOB_NORMALIZER_EVIDENCE_INVALID");
           return output;
         } catch (error) {
+          if (input.signal.aborted && !(error instanceof DiscoveryJobNormalizationError && error.code === "DISCOVERY_JOB_NORMALIZATION_USAGE_INCOMPLETE")) {
+            if (invocationStarted && !usageSettled) await markIncomplete();
+            throw new DiscoveryJobNormalizationError("DISCOVERY_JOB_NORMALIZATION_INTERRUPTED");
+          }
           if (invocationStarted && !usageSettled && !(error instanceof DiscoveryJobNormalizationError && error.code === "DISCOVERY_JOB_NORMALIZATION_INTERRUPTED")) {
             await markIncomplete();
+            if (error instanceof JobNormalizerError && ["JOB_NORMALIZER_AUTH_FAILED", "JOB_NORMALIZER_INJECTION_DETECTED", "JOB_NORMALIZER_EVIDENCE_INVALID", "JOB_NORMALIZER_OUTPUT_INVALID"].includes(error.code)) throw error;
             throw new DiscoveryJobNormalizationError("DISCOVERY_JOB_NORMALIZATION_USAGE_INCOMPLETE");
           }
           throw error;

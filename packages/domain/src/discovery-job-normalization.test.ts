@@ -39,4 +39,21 @@ describe("discovery job normalization", () => {
     expect(markUsageIncomplete).toHaveBeenCalledOnce();
     expect(normalizer.normalize).toHaveBeenCalledOnce();
   });
+
+  it("非法或中断后未结算的 usage 会降级完整性并阻止后续请求", async () => {
+    const invalid = fixture();
+    invalid.normalizer.normalize.mockImplementationOnce(async (_content: string, options: any) => { await options.beforeRequest(); await options.onUsage({ inputTokens: -1, outputTokens: 5 }); return output; });
+    await expect(invalid.helper.normalizePosting({ identity: "invalid", content })).rejects.toMatchObject({ code: "DISCOVERY_JOB_NORMALIZATION_USAGE_INCOMPLETE" });
+    await expect(invalid.helper.normalizePosting({ identity: "blocked", content })).rejects.toMatchObject({ code: "DISCOVERY_JOB_NORMALIZATION_USAGE_INCOMPLETE" });
+    expect(invalid.markUsageIncomplete).toHaveBeenCalledOnce();
+    expect(invalid.normalizer.normalize).toHaveBeenCalledOnce();
+
+    const controller = new AbortController();
+    const checkpoint = { check: vi.fn(async () => ({ kind: "continue" })) };
+    const normalizer = { metadata, normalize: vi.fn(async (_content: string, options: any) => { await options.beforeRequest(); controller.abort(); throw new Error("provider cancelled before usage"); }) };
+    const markUsageIncomplete = vi.fn(async () => undefined);
+    const helper = createDiscoveryJobNormalizer({ metadata, normalizerResolver: { resolve: () => normalizer }, checkpoint, userId: "user", runId: "run", claimToken: "claim", attemptCount: 1, clock: () => new Date("2026-09-26T00:00:00.000Z"), deadline: new Date("2026-09-26T00:00:10.000Z"), signal: controller.signal, markUsageIncomplete });
+    await expect(helper.normalizePosting({ identity: "cancelled", content })).rejects.toMatchObject({ code: "DISCOVERY_JOB_NORMALIZATION_INTERRUPTED" });
+    expect(markUsageIncomplete).toHaveBeenCalledOnce();
+  });
 });

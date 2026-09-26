@@ -45,7 +45,7 @@ import { FrozenRecommendationEvidenceWriteSchema, RecommendationDiscoveryFactsSc
 import { createDiscoveryJobNormalizer, DiscoveryJobNormalizationError, type DiscoveryJobNormalizerResolver } from "./discovery-job-normalization.js";
 import { normalizeTrustedDetails } from "./trusted-job-normalization.js";
 import { validatePersistedJobNormalizerOutput } from "@job-copilot/contracts/job-imports";
-import { JobNormalizerError, JobNormalizerMetadataSchema } from "@job-copilot/contracts/job-normalizer";
+import { JobNormalizerError, JobNormalizerMetadataSchema, type JobNormalizerMetadata } from "@job-copilot/contracts/job-normalizer";
 
 export interface DiscoveryContentStore {
   put(input: { objectKey: string; bytes: Uint8Array; mediaType: "application/json"; runId: string }): Promise<void>;
@@ -689,19 +689,30 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
       } catch (error) {
         return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
       }
-      if (claimed.run.workflowVersion === "layered-public-job-discovery-v1" && layeredExecutionSpec.model && !deps.jobPostingNormalizerResolver) {
-        return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_MODEL_INVALID_RESPONSE", retryable: false, category: "model_invalid" }, deadline });
-      }
       const modelController = claimed.run.workflowVersion === "deep-match-v1" ? new AbortController() : undefined;
       const layeredController = claimed.run.workflowVersion === "layered-public-job-discovery-v1" ? new AbortController() : undefined;
       const discoveryController = claimed.run.workflowVersion !== "deep-match-v1" && claimed.run.workflowVersion !== "layered-public-job-discovery-v1" ? new AbortController() : undefined;
-      const discoveryMetadata = claimed.run.adapter === "greenhouse" ? JobNormalizerMetadataSchema.nullable().parse(claimed.run.modelSnapshot) : null;
-      const discoveryNormalizer = discoveryMetadata && deps.jobPostingNormalizerResolver ? createDiscoveryJobNormalizer({
-        metadata: discoveryMetadata, normalizerResolver: deps.jobPostingNormalizerResolver, checkpoint,
-        userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount,
-        clock: deps.clock, deadline, signal: discoveryController!.signal,
-        markUsageIncomplete: async () => { await deps.db.update(agentRuns).set({ usageComplete: false, updatedAt: deps.clock() }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.claimToken, claimed.claimToken))); },
-      }) : undefined;
+      let discoveryMetadata: JobNormalizerMetadata | null = null;
+      let discoveryNormalizer: ReturnType<typeof createDiscoveryJobNormalizer> | undefined;
+      try {
+        discoveryMetadata = claimed.run.workflowVersion === "layered-public-job-discovery-v1"
+          ? layeredExecutionSpec.model
+          : claimed.run.adapter === "greenhouse"
+            ? JobNormalizerMetadataSchema.nullable().parse(claimed.run.modelSnapshot)
+            : null;
+        if (discoveryMetadata) {
+          if (!deps.jobPostingNormalizerResolver) throw new DiscoveryJobNormalizationError("DISCOVERY_JOB_NORMALIZATION_SNAPSHOT_UNSUPPORTED");
+          discoveryNormalizer = createDiscoveryJobNormalizer({
+            metadata: discoveryMetadata, normalizerResolver: deps.jobPostingNormalizerResolver, checkpoint,
+            userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount,
+            clock: deps.clock, deadline, signal: layeredController?.signal ?? discoveryController!.signal,
+            markUsageIncomplete: async () => { await deps.db.update(agentRuns).set({ usageComplete: false, updatedAt: deps.clock() }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.claimToken, claimed.claimToken))); },
+          });
+        }
+      } catch (error) {
+        // 这里的唯一动态值是冻结 model snapshot；它无效时不能被归类成来源 adapter 故障。
+        return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_MODEL_INVALID_RESPONSE", retryable: false, category: "model_invalid" }, deadline });
+      }
       let trustedStop: "paused" | "cancelled" | "budget_exhausted" | "stale" | undefined;
       let heartbeatControl: "paused" | "cancelled" | undefined;
       const stopHeartbeat = startClaimHeartbeat(deps, {
@@ -710,6 +721,17 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         onControl: (outcome) => { heartbeatControl = outcome; trustedStop = outcome; layeredController?.abort(); modelController?.abort(); discoveryController?.abort(); },
         onDeadline: () => { trustedStop = "budget_exhausted"; layeredController?.abort(); modelController?.abort(); discoveryController?.abort(); },
       });
+      const normalizationInterruption = async (error: unknown): Promise<ProcessorOutcome | null> => {
+        const explicit = error instanceof DiscoveryJobNormalizationError && error.code === "DISCOVERY_JOB_NORMALIZATION_INTERRUPTED";
+        const aborted = Boolean(discoveryController?.signal.aborted || layeredController?.signal.aborted || trustedStop);
+        if (!explicit && !aborted) return null;
+        if (explicit && (error.interruption === "paused" || error.interruption === "cancelled" || error.interruption === "budget_exhausted" || error.interruption === "stale")) return error.interruption;
+        const stopped = await checkPoint(checkpoint, {
+          userId: job.userId, runId: job.runId, claimToken: claimed.claimToken,
+          operation: "discovery_job_normalizer_interrupted", ordinal: 1,
+        });
+        return stopped ?? trustedStop ?? "stale";
+      };
       try {
       const adapterCall = async <T>(operation: string, ordinal: number, call: () => Promise<T>): Promise<{ value?: T; outcome?: ProcessorOutcome }> => {
         const before = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation, ordinal, reserve: { toolCalls: 1, sourceRequests: 1 } });
@@ -832,7 +854,13 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         }
       }
       const persistDiscoveryOutcome = async (input: { details: DiscoveryDetail[]; scans: Array<{ sourceId: string; observedDetailIds: string[]; complete: boolean }>; sourceChecks?: JobSourceHealthCheck[]; sourceIssues?: Array<{ provider: "greenhouse"; code: "SOURCE_CAPABILITY_UNSUPPORTED" | "SOURCE_CAPABILITY_DECLARATION_MISMATCH"; sourceId: string; action: SourceExecutionAction; affectedCount: 1 }>; terminal?: SourceHealthTerminal; discoveryFacts?: RecommendationDiscoveryFacts }) => {
-        const normalizedDetails = discoveryNormalizer ? await normalizeTrustedDetails({ db: deps.db, userId: job.userId, metadata: discoveryMetadata!, details: input.details, normalizePosting: discoveryNormalizer.normalizePosting }) : input.details;
+        let normalizedDetails: DiscoveryDetail[];
+        try { normalizedDetails = discoveryNormalizer ? await normalizeTrustedDetails({ db: deps.db, userId: job.userId, metadata: discoveryMetadata!, details: input.details, normalizePosting: discoveryNormalizer.normalizePosting }) : input.details; }
+        catch (error) {
+          const interrupted = await normalizationInterruption(error);
+          if (interrupted) return interrupted;
+          return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
+        }
         const stored = normalizedDetails.map((detail) => {
           const bytes = canonicalJsonBytes(detail.rawPayload); const sourceIdentifier = discoverySourceIdentifier(detail.sourceId, detail.detailId); const rawContentSha256 = createHash("sha256").update(bytes).digest("hex");
           return { detail, bytes, rawContentSha256, objectKey: `accounts/${job.userId}/agent-runs/${job.runId}/sources/${sourceIdentifier}/${claimed.claimToken}/${rawContentSha256}.json` };
@@ -881,12 +909,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         try {
           const workflowPromise = layeredWorkflow.run({
             userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), executionSpec: layeredExecutionSpec, attemptCount: claimed.attemptCount, signal: controller.signal,
-            ...(deps.jobPostingNormalizerResolver && layeredExecutionSpec.model ? { normalizePosting: createDiscoveryJobNormalizer({
-              metadata: layeredExecutionSpec.model, normalizerResolver: deps.jobPostingNormalizerResolver, checkpoint,
-              userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount,
-              clock: deps.clock, deadline, signal: controller.signal,
-              markUsageIncomplete: async () => { await deps.db.update(agentRuns).set({ usageComplete: false, updatedAt: deps.clock() }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.claimToken, claimed.claimToken))); },
-            }).normalizePosting } : {}),
+            ...(discoveryNormalizer ? { normalizePosting: discoveryNormalizer.normalizePosting } : {}),
             onDiagnostics: (snapshot) => { latestDiagnostics = snapshot; },
             beforePhysicalOperation: async (operation) => {
               if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(operation.identity)) throw new Error("LAYERED_PUBLIC_OPERATION_IDENTITY_INVALID");
@@ -940,6 +963,8 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
           }
           if (error instanceof LayeredPublicWorkflowStop) return error.outcome;
           if (error instanceof LayeredPublicWorkflowInterruption && trustedStop === error.outcome) return error.outcome;
+          const interrupted = await normalizationInterruption(error);
+          if (interrupted) return interrupted;
           return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
         } finally { clearTimeout(abortAtDeadline); }
       }

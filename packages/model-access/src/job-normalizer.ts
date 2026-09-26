@@ -62,9 +62,12 @@ export function createOpenAiJobPostingNormalizer(config: OpenAiJobNormalizerConf
     let outputTokens: number;
     try {
       value = body as typeof value;
-      if (!Number.isSafeInteger(value.usage?.input_tokens) || !Number.isSafeInteger(value.usage?.output_tokens) || value.usage.input_tokens < 0 || value.usage.output_tokens < 0) throw new Error();
-      inputTokens = value.usage.input_tokens;
-      outputTokens = value.usage.output_tokens;
+      const usage = value.usage;
+      const reportedInput = usage?.input_tokens;
+      const reportedOutput = usage?.output_tokens;
+      if (typeof reportedInput !== "number" || !Number.isSafeInteger(reportedInput) || reportedInput < 0 || typeof reportedOutput !== "number" || !Number.isSafeInteger(reportedOutput) || reportedOutput < 0) throw new Error();
+      inputTokens = reportedInput;
+      outputTokens = reportedOutput;
       if (!Number.isSafeInteger(inputTokens + outputTokens)) throw new Error();
     } catch { throw new JobNormalizerError("JOB_NORMALIZER_OUTPUT_INVALID"); }
     // 控制/checkpoint 错误是运行时权威状态，绝不能被 JSON/schema 错误处理吞掉。
