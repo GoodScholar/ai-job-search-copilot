@@ -91,6 +91,11 @@ describe("FakeJobPostingNormalizer", () => {
     expect(output).toMatchObject({ deadline: null, deadlineProvenance: { field: "deadline", path: "lines:1-1", value: deadline, status: "invalid" } });
   });
 
+  it("将日历合法但缺少时间和时区的截止日期保留为未知", async () => {
+    const output = JobNormalizerOutputSchema.parse(await new FakeJobPostingNormalizer().normalize("截止日期：2026-10-01"));
+    expect(output).toMatchObject({ deadline: null, deadlineProvenance: null });
+  });
+
   it("默认把 failure fixture 当作普通未知正文", async () => {
     const output = JobNormalizerOutputSchema.parse(await new FakeJobPostingNormalizer().normalize(
       "<!-- job-copilot:fake-normalizer-invalid -->",

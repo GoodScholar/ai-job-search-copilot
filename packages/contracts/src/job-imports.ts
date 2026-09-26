@@ -187,8 +187,10 @@ export const JobNormalizerOutputSchema = modelOutput.extend({
 
 type PersistedEvidence = z.infer<typeof JobNormalizationEvidenceSchema> & { sourcePostingVersionId: string };
 type PersistedQualificationEvidence = z.infer<typeof qualificationEvidence> & { sourcePostingVersionId: string };
+type PersistedDeadlineProvenance = NonNullable<JobNormalizerOutput["deadlineProvenance"]> & { sourcePostingVersionId: string };
 export type PersistedJobNormalizerOutput = Omit<JobNormalizerOutput, "fieldEvidence" | "qualifications"> & {
   fieldEvidence: PersistedEvidence[];
+  deadlineProvenance: PersistedDeadlineProvenance | null;
   qualifications: {
     [K in keyof JobQualifications]: JobQualifications[K] extends { value: infer Value; evidence: unknown } | null
       ? { value: Value; evidence: PersistedQualificationEvidence } | null
@@ -201,6 +203,7 @@ export function bindJobNormalizerOutput(sourcePostingVersionId: string, output: 
   const parsed = JobNormalizerOutputSchema.parse(output);
   return {
     ...parsed,
+    deadlineProvenance: parsed.deadlineProvenance === null ? null : { ...parsed.deadlineProvenance, sourcePostingVersionId },
     fieldEvidence: parsed.fieldEvidence.map((evidence) => ({ ...evidence, sourcePostingVersionId })),
     qualifications: Object.fromEntries(Object.entries(parsed.qualifications).map(([field, qualification]) => [field,
       qualification === null ? null : { ...qualification, evidence: { ...qualification.evidence, sourcePostingVersionId } },
@@ -212,6 +215,18 @@ export function bindJobNormalizerOutput(sourcePostingVersionId: string, output: 
 export function validatePersistedJobNormalizerOutput(value: unknown, input: { sourcePostingVersionId: string; metadata?: JobNormalizerMetadata }): JobNormalizerOutput {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("JOB_NORMALIZER_PERSISTED_OUTPUT_INVALID");
   const persisted = value as Record<string, unknown>;
+  const deadlineProvenance = persisted.deadlineProvenance && typeof persisted.deadlineProvenance === "object" && !Array.isArray(persisted.deadlineProvenance)
+    ? (() => {
+      const item = persisted.deadlineProvenance as Record<string, unknown>;
+      if ("sourcePostingVersionId" in item) {
+        if (item.sourcePostingVersionId !== input.sourcePostingVersionId) throw new Error("JOB_NORMALIZER_PERSISTED_EVIDENCE_INVALID");
+        const { sourcePostingVersionId: _sourcePostingVersionId, ...provenance } = item;
+        return provenance;
+      }
+      if (persisted.usage && typeof persisted.usage === "object" && (persisted.usage as { status?: unknown }).status === "known") throw new Error("JOB_NORMALIZER_PERSISTED_EVIDENCE_INVALID");
+      return item;
+    })()
+    : persisted.deadlineProvenance;
   const fieldEvidence = Array.isArray(persisted.fieldEvidence) ? persisted.fieldEvidence.map((item) => {
     if (!item || typeof item !== "object" || Array.isArray(item) || (item as Record<string, unknown>).sourcePostingVersionId !== input.sourcePostingVersionId) throw new Error("JOB_NORMALIZER_PERSISTED_EVIDENCE_INVALID");
     const { sourcePostingVersionId: _sourcePostingVersionId, ...evidence } = item as Record<string, unknown>;
@@ -227,27 +242,45 @@ export function validatePersistedJobNormalizerOutput(value: unknown, input: { so
       return [field, { ...item, evidence }];
     }))
     : persisted.qualifications;
-  const output = JobNormalizerOutputSchema.parse({ ...persisted, fieldEvidence, qualifications });
+  const output = JobNormalizerOutputSchema.parse({ ...persisted, deadlineProvenance, fieldEvidence, qualifications });
   if (input.metadata && (output.adapter !== input.metadata.adapter || output.normalizerVersion !== input.metadata.normalizerVersion || output.promptVersion !== input.metadata.promptVersion || output.outputSchemaVersion !== input.metadata.outputSchemaVersion || output.ruleVersion !== input.metadata.ruleVersion || output.model !== input.metadata.model)) throw new Error("JOB_NORMALIZER_PERSISTED_METADATA_INVALID");
   return output;
 }
 
+/** v2+ configured adapters always account for usage; these snapshots must never take a legacy fallback path. */
+export function isCurrentJobNormalizerOutput(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const metadata = record.adapter === "openai" || record.adapter === "fake"
+    || (typeof record.normalizerVersion === "string" && typeof record.promptVersion === "string" && typeof record.outputSchemaVersion === "string" && typeof record.ruleVersion === "string");
+  const hasBoundEvidence = (Array.isArray(record.fieldEvidence) && record.fieldEvidence.some((item) => Boolean(item && typeof item === "object" && "sourcePostingVersionId" in item)))
+    || Boolean(record.deadlineProvenance && typeof record.deadlineProvenance === "object" && "sourcePostingVersionId" in record.deadlineProvenance)
+    || Boolean(record.qualifications && typeof record.qualifications === "object" && Object.values(record.qualifications as Record<string, unknown>).some((item) => Boolean(item && typeof item === "object" && "evidence" in item && (item as { evidence?: unknown }).evidence && typeof (item as { evidence: unknown }).evidence === "object" && "sourcePostingVersionId" in (item as { evidence: object }).evidence)));
+  return Boolean(metadata || hasBoundEvidence || (record.usage && typeof record.usage === "object" && (record.usage as { status?: unknown }).status === "known"));
+}
+
 export function validateJobNormalizerOutput(content: string, output: JobNormalizerOutput): boolean {
+  return jobNormalizerEvidenceFailure(content, output) === null;
+}
+
+/** Stable, payload-free reason for explicit evaluation diagnostics. */
+export function jobNormalizerEvidenceFailure(content: string, output: JobNormalizerOutput): string | null {
   // Historical snapshots and test seams predate call accounting. They remain readable,
   // while every configured v2 adapter reports known usage and must satisfy full proof.
-  if (output.usage.status !== "known") return true;
-  if (isJobInstructionLike(content)) return false;
+  if (output.usage.status !== "known") return null;
+  if (isJobInstructionLike(content)) return "input_injection";
   const evidenceByField = new Map(output.fieldEvidence.map((item) => [item.field, item]));
   for (const field of ["company", "title", "location", "postedAt", "deadline", "description"] as const) {
     const value = output[field];
     const evidence = evidenceByField.get(field);
-    if (value === null ? Boolean(evidence) : !evidence || evidence.normalizedValue !== value || !evidenceMatchesPath(content, evidence.path, evidence.rawValue) || !matchesScalarNormalization(field, evidence.rawValue, value)) return false;
+    if (value === null ? Boolean(evidence) : !evidence || evidence.normalizedValue !== value || !evidenceMatchesPath(content, evidence.path, evidence.rawValue) || !matchesScalarNormalization(field, evidence.rawValue, value)) return `scalar:${field}`;
   }
   if (output.deadlineProvenance) {
     const provenance = output.deadlineProvenance;
-    if (output.deadline !== null || !evidenceMatchesPath(content, provenance.path, provenance.value) || !Number.isNaN(new Date(provenance.value).getTime())) return false;
+    if (output.deadline !== null || !evidenceMatchesPath(content, provenance.path, provenance.value) || !isInvalidIsoDateTime(provenance.value)) return "deadlineProvenance";
   }
-  return Object.entries(output.qualifications).every(([field, qualification]) => !qualification || Boolean(qualification.evidence.rawValue && qualification.evidence.normalizedValue) && qualification.evidence.field === field && evidenceMatchesPath(content, qualification.evidence.path, qualification.evidence.rawValue!) && qualification.evidence.normalizedValue === normalizedQualificationValue(qualification.value) && matchesQualificationNormalization(field, qualification.evidence.rawValue!, qualification.value));
+  for (const [field, qualification] of Object.entries(output.qualifications)) if (qualification && (!qualification.evidence.rawValue || !qualification.evidence.normalizedValue || qualification.evidence.field !== field || !evidenceMatchesPath(content, qualification.evidence.path, qualification.evidence.rawValue) || qualification.evidence.normalizedValue !== normalizedQualificationValue(qualification.value) || !matchesQualificationNormalization(field, qualification.evidence.rawValue, qualification.value))) return `qualification:${field}`;
+  return null;
 }
 
 /** Add the legacy display value only after strict provider output has passed its schema. */
@@ -272,8 +305,21 @@ function matchesScalarNormalization(field: string, rawValue: string, normalizedV
   if (rawValue === normalizedValue) return true;
   if (field !== "postedAt" && field !== "deadline") return false;
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/u.test(rawValue)) return false;
+  if (!isValidIsoDateTime(rawValue)) return false;
   const date = new Date(rawValue);
   return !Number.isNaN(date.getTime()) && date.toISOString() === normalizedValue;
+}
+
+function isInvalidIsoDateTime(value: string): boolean { return looksLikeIsoDateTime(value) && !isValidIsoDateTime(value); }
+
+function looksLikeIsoDateTime(value: string): boolean { return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/u.test(value); }
+
+function isValidIsoDateTime(value: string): boolean {
+  if (!looksLikeIsoDateTime(value)) return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/u.exec(value)!;
+  const [year, month, day, hour, minute, second] = match.slice(1, 7).map(Number);
+  if (month < 1 || month > 12 || day < 1 || hour > 23 || minute > 59 || second > 59) return false;
+  return day <= new Date(Date.UTC(year!, month!, 0)).getUTCDate();
 }
 
 function normalizedQualificationValue(value: unknown): string { return typeof value === "string" ? value : JSON.stringify(value); }

@@ -96,6 +96,29 @@ describe("job import contracts", () => {
     expect(() => validatePersistedJobNormalizerOutput({ ...persisted, fieldEvidence: [{ ...persisted.fieldEvidence[0], sourcePostingVersionId: opportunityId }, ...persisted.fieldEvidence.slice(1)] }, { sourcePostingVersionId, metadata: output })).toThrow();
   });
 
+  it("绑定非法截止日期溯源并拒绝错误发布版本，同时兼容旧未绑定溯源", () => {
+    const output = JobNormalizerOutputSchema.parse({
+      normalizerVersion: "fake-job-normalizer-v2", company: null, title: null, location: null, postedAt: null, deadline: null,
+      deadlineProvenance: { field: "deadline", path: "lines:1-1", value: "2026-02-30T09:00:00.000Z", status: "invalid" }, description: null,
+      qualifications: { workMode: null, relocationRequired: null, salary: null, seniority: null, education: null, languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: null }, fieldEvidence: [],
+      usage: { status: "known", inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+    });
+    const persisted = bindJobNormalizerOutput(sourcePostingVersionId, output);
+    expect(validatePersistedJobNormalizerOutput(persisted, { sourcePostingVersionId })).toEqual(output);
+    expect(() => validatePersistedJobNormalizerOutput({ ...persisted, deadlineProvenance: { ...persisted.deadlineProvenance!, sourcePostingVersionId: opportunityId } }, { sourcePostingVersionId })).toThrow("JOB_NORMALIZER_PERSISTED_EVIDENCE_INVALID");
+    expect(() => validatePersistedJobNormalizerOutput({ ...persisted, deadlineProvenance: output.deadlineProvenance }, { sourcePostingVersionId })).toThrow("JOB_NORMALIZER_PERSISTED_EVIDENCE_INVALID");
+    expect(validatePersistedJobNormalizerOutput({ ...persisted, usage: { status: "not_called", inputTokens: null, outputTokens: null, totalTokens: null }, normalizerVersion: "legacy", adapter: "fake", fieldEvidence: [], deadlineProvenance: output.deadlineProvenance }, { sourcePostingVersionId })).toMatchObject({ deadlineProvenance: output.deadlineProvenance });
+  });
+
+  it("拒绝自动进位后看似可解析的非法日历日期", () => {
+    const output = JobNormalizerOutputSchema.parse({
+      normalizerVersion: "fake-job-normalizer-v2", company: null, title: null, location: null, postedAt: "2026-03-02T09:00:00.000Z", deadline: null, deadlineProvenance: null, description: null,
+      qualifications: { workMode: null, relocationRequired: null, salary: null, seniority: null, education: null, languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: null },
+      fieldEvidence: [{ field: "postedAt", path: "lines:1-1", rawValue: "2026-02-30T09:00:00.000Z", normalizedValue: "2026-03-02T09:00:00.000Z" }], usage: { status: "known", inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+    });
+    expect(validateJobNormalizerOutput("发布时间：2026-02-30T09:00:00.000Z", output)).toBe(false);
+  });
+
   it("为提供商生成无自由键的递归 strict JSON Schema", () => {
     const schema = JobNormalizerModelOutputSchema.toJSONSchema() as any;
     const visit = (node: unknown): boolean => {

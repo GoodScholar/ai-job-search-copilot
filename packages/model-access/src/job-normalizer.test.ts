@@ -114,6 +114,24 @@ describe("OpenAI 岗位规范化", () => {
     cancelledBody.resolve({});
   });
 
+  it("响应到达前已取消且 body 永不结算时仍在一个事件循环内终止", async () => {
+    const controller = new AbortController();
+    const body = deferred<unknown>();
+    const normalizer = createOpenAiJobPostingNormalizer({ apiKey: "test-key" }, vi.fn().mockImplementation(async () => {
+      controller.abort();
+      return { ok: true, status: 200, json: () => body.promise } as Response;
+    }));
+    await expect(normalizer.normalize("公司：示例公司\n标题：工程师", { signal: controller.signal })).rejects.toMatchObject({ code: "JOB_NORMALIZER_CANCELLED", usage: { status: "unknown" } });
+    body.resolve({});
+  });
+
+  it("已发出请求但 usage 缺失时不伪造 not_called，用量已知后的输出错误保留 known", async () => {
+    await expect(createOpenAiJobPostingNormalizer({ apiKey: "test-key" }, vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: "completed", output: [] })))).normalize("公司：示例公司\n标题：工程师"))
+      .rejects.toMatchObject({ code: "JOB_NORMALIZER_OUTPUT_INVALID", usage: { status: "unknown" } });
+    await expect(createOpenAiJobPostingNormalizer({ apiKey: "test-key" }, vi.fn().mockResolvedValue(complete({ ...result, title: "编造" }))).normalize("公司：示例公司\n标题：工程师"))
+      .rejects.toMatchObject({ code: "JOB_NORMALIZER_EVIDENCE_INVALID", usage: { status: "known", inputTokens: 20, outputTokens: 30, totalTokens: 50 } });
+  });
+
   it("beforeRequest 期间已取消时不启动 transport", async () => {
     const controller = new AbortController();
     const fetcher = vi.fn();

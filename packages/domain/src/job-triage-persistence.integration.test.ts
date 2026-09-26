@@ -140,6 +140,18 @@ describe("job triage persistence", () => {
     await expect(createJobTriageQueries({ db: database }).getLatest({ userId, opportunityId, targetId })).resolves.toMatchObject({ triageVersionId: first.triageVersionId });
   });
 
+  it("拒绝当前已知用量但绑定版本错误的来源快照，不回退到可变岗位字段", async () => {
+    const input = await fixture();
+    await database.update(jobSourcePostingVersions).set({ normalizedData: {
+      normalizerVersion: "openai-job-normalizer-v1-test", adapter: "openai", model: "test", promptVersion: "job-normalizer-prompt-v1", outputSchemaVersion: "job-normalizer-v1", ruleVersion: "job-normalization-evidence-v2",
+      company: "冻结公司", title: "冻结岗位", location: null, postedAt: null, deadline: null, deadlineProvenance: null, description: null,
+      qualifications: { workMode: null, relocationRequired: null, salary: null, seniority: null, education: null, languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: null },
+      fieldEvidence: [{ field: "title", path: "lines:1-1", rawValue: "冻结岗位", normalizedValue: "冻结岗位", sourcePostingVersionId: crypto.randomUUID() }], usage: { status: "known", inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    } }).where(eq(jobSourcePostingVersions.id, input.sourcePostingVersionId));
+    const commands = createJobTriageCommands({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    await expect(commands.create({ userId: input.userId, requestId: crypto.randomUUID(), opportunityId: input.opportunityId, command: { targetId: input.targetId } })).rejects.toMatchObject({ code: "JOB_TRIAGE_NORMALIZATION_INVALID" });
+  });
+
   it("creates a new immutable version when the confirmed profile revision changes and serializes concurrent reuse", async () => {
     const { userId, targetId, opportunityId } = await fixture();
     const commands = createJobTriageCommands({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });

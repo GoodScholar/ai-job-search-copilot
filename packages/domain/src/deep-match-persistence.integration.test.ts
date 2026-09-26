@@ -349,6 +349,19 @@ describe("deep match persistence", () => {
     ]));
   });
 
+  it("不将错误绑定版本的当前规范化输出回退为可变岗位字段", async () => {
+    const input = await fixture();
+    await db.update(jobSourcePostingVersions).set({ normalizedData: {
+      normalizerVersion: "openai-job-normalizer-v1-test", adapter: "openai", model: "test", promptVersion: "job-normalizer-prompt-v2", outputSchemaVersion: "job-normalizer-v1", ruleVersion: "job-normalization-evidence-v2",
+      company: "冻结公司", title: "冻结岗位", location: null, postedAt: null, deadline: null, deadlineProvenance: null, description: null,
+      qualifications: { workMode: null, relocationRequired: null, salary: null, seniority: null, education: null, languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: null },
+      fieldEvidence: [{ field: "title", path: "lines:1-1", rawValue: "冻结岗位", normalizedValue: "冻结岗位", sourcePostingVersionId: crypto.randomUUID() }], usage: { status: "known", inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+    } }).where(eq(jobSourcePostingVersions.id, input.sourcePostingVersionId));
+    const selection = await createDeepMatchQueries({ db }).selectCandidateSelection({ userId: input.userId, targetId: input.targetId, targetVersion: 1 });
+    expect(selection.candidates).toEqual([]);
+    expect(selection.exclusions).toEqual([{ opportunityId: input.opportunityId, reasonCode: "MATCH_QUALITY_INSUFFICIENT" }]);
+  });
+
   it("bounds every frozen job evidence field before the candidate reaches the adapter", async () => {
     const input = await fixture();
     const longTitle = "职".repeat(20_000);

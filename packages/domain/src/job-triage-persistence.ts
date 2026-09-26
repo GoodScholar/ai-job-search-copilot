@@ -3,7 +3,7 @@ import {
   jobOpportunities, jobOpportunitySources, jobProfiles, jobSourcePostingVersions, jobTargetRevisions, jobTargets,
   jobTriageVersions, profileFactRevisions, profileFacts, type Database,
 } from "@job-copilot/database";
-import { JobNormalizerOutputSchema, JobQualificationsSchema, validatePersistedJobNormalizerOutput } from "@job-copilot/contracts/job-imports";
+import { isCurrentJobNormalizerOutput, JobNormalizerOutputSchema, JobQualificationsSchema, validatePersistedJobNormalizerOutput } from "@job-copilot/contracts/job-imports";
 import { JobTargetConstraintsSchema } from "@job-copilot/contracts/job-targets";
 import { JobTriageVersionSchema, type CreateJobTriageVersionCommand, type JobTriageVersion } from "@job-copilot/contracts/job-triage";
 import { ProfileFactSchema } from "@job-copilot/contracts/profile-review";
@@ -12,7 +12,7 @@ import { COARSE_RULE_VERSION, QUALIFICATION_RULE_VERSION, evaluateJobTriage } fr
 import type { AuditTrail } from "./audit-trail";
 
 export class JobTriageError extends Error {
-  constructor(public readonly code: "JOB_TRIAGE_OPPORTUNITY_NOT_FOUND" | "JOB_TRIAGE_TARGET_NOT_FOUND" | "JOB_TRIAGE_TARGET_INACTIVE" | "JOB_TRIAGE_PROFILE_EMPTY") {
+  constructor(public readonly code: "JOB_TRIAGE_OPPORTUNITY_NOT_FOUND" | "JOB_TRIAGE_TARGET_NOT_FOUND" | "JOB_TRIAGE_TARGET_INACTIVE" | "JOB_TRIAGE_PROFILE_EMPTY" | "JOB_TRIAGE_NORMALIZATION_INVALID") {
     super(code);
   }
 }
@@ -66,7 +66,7 @@ const unknownQualifications = JobQualificationsSchema.parse({
 function frozenDiscoveryJob(normalizedData: unknown, sourcePostingVersionId?: string): TriageJob {
   if (sourcePostingVersionId) {
     try { return validatePersistedJobNormalizerOutput(normalizedData, { sourcePostingVersionId }); }
-    catch { /* 历史 source version 继续走兼容读取。 */ }
+    catch { if (isCurrentJobNormalizerOutput(normalizedData)) throw new JobTriageError("JOB_TRIAGE_NORMALIZATION_INVALID"); /* 历史 source version 继续走兼容读取。 */ }
   }
   const imported = JobNormalizerOutputSchema.safeParse(normalizedData);
   if (imported.success) return imported.data;
@@ -148,7 +148,7 @@ export function createJobTriageCommands(deps: { db: Database; auditTrail: AuditT
         if (!profile) throw new JobTriageError("JOB_TRIAGE_PROFILE_EMPTY");
         let normalized: TriageJob;
         try { normalized = validatePersistedJobNormalizerOutput(opportunity.sourceNormalizedData, { sourcePostingVersionId: opportunity.sourcePostingVersionId }); }
-        catch { normalized = JobNormalizerOutputSchema.parse(opportunity.normalizedData); }
+        catch { if (isCurrentJobNormalizerOutput(opportunity.sourceNormalizedData)) throw new JobTriageError("JOB_TRIAGE_NORMALIZATION_INVALID"); normalized = JobNormalizerOutputSchema.parse(opportunity.normalizedData); }
         return evaluateAndPersistJobTriageInTransaction({
           transaction, auditTrail: deps.auditTrail, id: deps.id, clock: deps.clock, userId: input.userId, requestId: input.requestId,
           opportunityId: opportunity.id, sourcePostingVersionId: opportunity.sourcePostingVersionId, profileId: profile.id, profileVersion: profile.version,

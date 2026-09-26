@@ -9,7 +9,7 @@ import {
 } from "@job-copilot/contracts/deep-match";
 import { acceptsRecommendationRule, RecommendationRuleConfigSchema } from "@job-copilot/contracts/recommendations";
 import { AgentRunTargetSnapshotSchema, DeepMatchAgentRunSourceScopeSchema } from "@job-copilot/contracts/agent-runs";
-import { JobQualificationsSchema, validatePersistedJobNormalizerOutput } from "@job-copilot/contracts/job-imports";
+import { isCurrentJobNormalizerOutput, JobQualificationsSchema, validatePersistedJobNormalizerOutput } from "@job-copilot/contracts/job-imports";
 import { JobTargetConstraintsSchema } from "@job-copilot/contracts/job-targets";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { readAccountRunControlInTransaction } from "./account-run-admission";
@@ -221,9 +221,9 @@ export function createDeepMatchQueries(deps: { db: Database }) {
         const sourceNormalized = sourceVersion.normalizedData as Record<string, unknown>;
         const opportunityNormalized = opportunity.normalizedData as Record<string, unknown>;
         let boundNormalized: ReturnType<typeof validatePersistedJobNormalizerOutput> | undefined;
-        try { boundNormalized = validatePersistedJobNormalizerOutput(sourceNormalized, { sourcePostingVersionId: triage.sourcePostingVersionId }); } catch { /* 旧快照仍按原兼容读取。 */ }
+        try { boundNormalized = validatePersistedJobNormalizerOutput(sourceNormalized, { sourcePostingVersionId: triage.sourcePostingVersionId }); } catch { if (isCurrentJobNormalizerOutput(sourceNormalized)) return null; /* 旧快照仍按原兼容读取。 */ }
         const normalized = boundNormalized ?? (usesFrozenTriage || Object.keys(sourceNormalized).length > 0 ? sourceNormalized : opportunityNormalized);
-        const jobSourceContent = usesFrozenTriage
+        const jobSourceContent = (usesFrozenTriage || boundNormalized !== undefined)
           ? { company: normalizedText(sourceNormalized.company), title: normalizedText(sourceNormalized.title), location: normalizedText(sourceNormalized.location), description: normalizedText(sourceNormalized.description) }
           : { company: opportunity.company, title: opportunity.title, location: opportunity.location, description: opportunity.description };
         const opportunitySnapshot = { company: jobSourceContent.company, title: jobSourceContent.title, location: jobSourceContent.location };

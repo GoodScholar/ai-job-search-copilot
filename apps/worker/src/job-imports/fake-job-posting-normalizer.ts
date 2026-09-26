@@ -110,7 +110,7 @@ export class FakeJobPostingNormalizer {
           const parsed = validIsoDateTime(value);
           output[field] = parsed;
           if (parsed) output.fieldEvidence.push({ field, path, rawValue: value, normalizedValue: parsed });
-          if (field === "deadline" && parsed === null) output.deadlineProvenance = { field: "deadline", path, value, status: "invalid" };
+          if (field === "deadline" && parsed === null && looksLikeIsoDateTime(value)) output.deadlineProvenance = { field: "deadline", path, value, status: "invalid" };
         } else {
           output[field] = value;
           output.fieldEvidence.push({ field, path, rawValue: value, normalizedValue: value });
@@ -164,9 +164,11 @@ function parseQualification(field: Exclude<Field, "company" | "location" | "post
 }
 
 function validIsoDateTime(value: string): string | null {
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/u.test(value)) return null;
+  if (!looksLikeIsoDateTime(value)) return null;
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return null;
   const normalized = date.toISOString();
   return normalized.slice(0, 19) === value.slice(0, 19) ? normalized : null;
 }
+
+function looksLikeIsoDateTime(value: string): boolean { return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/u.test(value); }

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const JOB_NORMALIZER_PROMPT_VERSION = "job-normalizer-prompt-v1";
+export const JOB_NORMALIZER_PROMPT_VERSION = "job-normalizer-prompt-v3";
 export const JOB_NORMALIZER_OUTPUT_SCHEMA_VERSION = "job-normalizer-v1";
 export const JOB_NORMALIZER_RULE_VERSION = "job-normalization-evidence-v2";
 export const DEFAULT_JOB_NORMALIZER_BUDGET = { maxInputBytes: 16_384, maxOutputTokens: 2_000, maxTotalTokens: 12_000, timeoutMs: 25_000 } as const;
@@ -13,7 +13,10 @@ export type JobNormalizerCallOptions = {
   beforeRequest?: () => Promise<void>;
   /** Called once a provider has reported usage, before parsing or evidence validation can fail. */
   onUsage?: (usage: { inputTokens: number; outputTokens: number }) => Promise<void>;
+  /** Explicit evaluation may record only this fixed stage enum; production callers do not log provider payloads. */
+  onDiagnostic?: (stage: JobNormalizerDiagnosticStage) => void;
 };
+export type JobNormalizerDiagnosticStage = "response_incomplete_max_output_tokens" | "response_status_invalid" | "response_output_text_invalid" | "model_payload_invalid" | "model_payload_valid" | "evidence_invalid" | "evidence_invalid:input_injection" | "evidence_invalid:deadlineProvenance" | "evidence_invalid:scalar:company" | "evidence_invalid:scalar:title" | "evidence_invalid:scalar:location" | "evidence_invalid:scalar:postedAt" | "evidence_invalid:scalar:deadline" | "evidence_invalid:scalar:description" | "evidence_invalid:qualification:workMode" | "evidence_invalid:qualification:relocationRequired" | "evidence_invalid:qualification:salary" | "evidence_invalid:qualification:seniority" | "evidence_invalid:qualification:education" | "evidence_invalid:qualification:languages" | "evidence_invalid:qualification:workEligibility" | "evidence_invalid:qualification:industry" | "evidence_invalid:qualification:employmentType" | "evidence_invalid:qualification:requiredSkills";
 export type JobNormalizerMetadata = { adapter: "fake" | "openai"; normalizerVersion: string; promptVersion: string; outputSchemaVersion: string; ruleVersion: string; model: string | null };
 export const JobNormalizerMetadataSchema = z.object({
   adapter: z.enum(["fake", "openai"]), normalizerVersion: z.string().trim().min(1).max(64),
@@ -49,12 +52,12 @@ export function knownJobNormalizerUsage(inputTokens: number, outputTokens: numbe
 
 export const unknownJobNormalizerUsage = (): JobNormalizerUsage => ({ status: "unknown", inputTokens: null, outputTokens: null, totalTokens: null });
 
-export function assertJobNormalizerInputBudget(content: string, options: JobNormalizerCallOptions = {}) {
+export function assertJobNormalizerInputBudget(content: string, options: JobNormalizerCallOptions = {}, requestOverheadTokens = 1_500) {
   if (options.signal?.aborted) throw new JobNormalizerError("JOB_NORMALIZER_CANCELLED");
   const budget = options.budget ?? DEFAULT_JOB_NORMALIZER_BUDGET;
   const maxTotalTokens = budget.maxTotalTokens ?? DEFAULT_JOB_NORMALIZER_BUDGET.maxTotalTokens;
-  const inputTokenBound = new TextEncoder().encode(content).byteLength + 1_500;
-  if (![budget.maxInputBytes, budget.maxOutputTokens, budget.timeoutMs, maxTotalTokens].every((value) => Number.isSafeInteger(value) && value > 0)
+  const inputTokenBound = new TextEncoder().encode(content).byteLength + requestOverheadTokens;
+  if (![budget.maxInputBytes, budget.maxOutputTokens, budget.timeoutMs, maxTotalTokens, requestOverheadTokens].every((value) => Number.isSafeInteger(value) && value > 0)
     || new TextEncoder().encode(content).byteLength > budget.maxInputBytes || inputTokenBound + budget.maxOutputTokens > maxTotalTokens)
     throw new JobNormalizerError("JOB_NORMALIZER_BUDGET_EXHAUSTED");
   return { ...budget, maxTotalTokens, inputTokenBound };
