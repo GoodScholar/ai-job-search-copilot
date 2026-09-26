@@ -185,6 +185,8 @@ export function createLayeredPublicJobDiscoveryRuntime(input: Omit<WorkflowDepen
           userId: value.candidate.userId, leadId: value.candidate.leadId,
           candidate: { queryId: value.candidate.queryId, normalizedUrl: value.candidate.normalizedUrl, candidateFingerprint: value.candidateFingerprint },
           extract: value.extract, page: value.page, claimToken: value.claimToken, now: value.now,
+          ...(value.normalizePosting ? { normalizePosting: value.normalizePosting } : {}),
+          ...(value.normalizerMetadata ? { normalizerMetadata: value.normalizerMetadata } : {}),
         });
         await input.afterVerifiedPersistence?.({ normalizedUrl: value.candidate.normalizedUrl });
         return { sourcePostingVersionId: verified.sourcePostingVersion.sourcePostingVersionId };

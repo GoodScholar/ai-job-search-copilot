@@ -4,6 +4,8 @@ import {
   JobImportDetailSchema,
   JobNormalizerModelOutputSchema,
   JobNormalizerOutputSchema,
+  bindJobNormalizerOutput,
+  validatePersistedJobNormalizerOutput,
   validateJobNormalizerOutput,
 } from "./job-imports";
 
@@ -73,6 +75,24 @@ describe("job import contracts", () => {
     expect(validateJobNormalizerOutput(source, output)).toBe(true);
     expect(validateJobNormalizerOutput(source.replace("远程", "现场"), output)).toBe(false);
     expect(validateJobNormalizerOutput(source, { ...output, qualifications: { ...output.qualifications, workMode: { ...output.qualifications.workMode!, evidence: { ...output.qualifications.workMode!.evidence, path: "lines:1-1" } } } })).toBe(false);
+  });
+
+  it("只在应用层将完整规范化输出的每条证据绑定到真实发布版本", () => {
+    const output = JobNormalizerOutputSchema.parse({
+      normalizerVersion: "fake-job-normalizer-v2", company: "示例科技", title: "高级前端工程师", location: null,
+      postedAt: null, deadline: null, description: null,
+      qualifications: { workMode: { value: "remote", evidence: { field: "workMode", path: "lines:3-3", value: "远程", rawValue: "远程", normalizedValue: "remote" } }, relocationRequired: null, salary: null, seniority: null, education: null, languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: null },
+      fieldEvidence: [
+        { field: "company", path: "lines:1-1", rawValue: "示例科技", normalizedValue: "示例科技" },
+        { field: "title", path: "lines:2-2", rawValue: "高级前端工程师", normalizedValue: "高级前端工程师" },
+      ],
+      usage: { status: "known", inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+    });
+    const persisted = bindJobNormalizerOutput(sourcePostingVersionId, output);
+    expect(validatePersistedJobNormalizerOutput(persisted, { sourcePostingVersionId, metadata: output })).toEqual(output);
+    expect((persisted.fieldEvidence[0] as { sourcePostingVersionId: string }).sourcePostingVersionId).toBe(sourcePostingVersionId);
+    expect((persisted.qualifications.workMode!.evidence as { sourcePostingVersionId: string }).sourcePostingVersionId).toBe(sourcePostingVersionId);
+    expect(() => validatePersistedJobNormalizerOutput({ ...persisted, fieldEvidence: [{ ...persisted.fieldEvidence[0], sourcePostingVersionId: opportunityId }, ...persisted.fieldEvidence.slice(1)] }, { sourcePostingVersionId, metadata: output })).toThrow();
   });
 
   it("为提供商生成无自由键的递归 strict JSON Schema", () => {

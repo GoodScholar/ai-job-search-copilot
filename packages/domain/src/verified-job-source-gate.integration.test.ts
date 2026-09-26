@@ -19,6 +19,7 @@ import {
   type Database,
 } from "@job-copilot/database";
 import { createAuditTrail } from "./audit-trail";
+import { FAKE_JOB_NORMALIZER_METADATA } from "@job-copilot/contracts/job-imports";
 import { createAgentRunCheckpoint } from "./agent-runs";
 import { createJobDiscoveryLeadRepository } from "./job-discovery-leads";
 import { createVerifiedJobSourceGate, VerifiedJobEvidenceStoreUnavailableError, VerifiedJobSourceGateError } from "./verified-job-source-gate";
@@ -97,8 +98,9 @@ describe("verified public job source gate", () => {
     await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active" });
     await database.insert(agentRuns).values({
       id: runId, userId, targetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1,
-      targetSnapshot: {}, sourceScope: {}, budgetSnapshot: {}, workflowVersion: "workflow-v4", ruleVersion: "rules-v1",
+      targetSnapshot: {}, sourceScope: {}, budgetSnapshot: {}, workflowVersion: "layered-public-job-discovery-v1", ruleVersion: "rules-v1",
       adapter: "layered-public", adapterVersion: "v1", outputSchemaVersion: "result-v4", toolAllowlist: [],
+      modelSnapshot: FAKE_JOB_NORMALIZER_METADATA,
       status: "queued", currentStep: "queued", createdAt: now, updatedAt: now, queuedAt: now,
     });
     const lead = await createJobDiscoveryLeadRepository({ db: database, id: () => crypto.randomUUID() }).recordPending({
@@ -113,8 +115,9 @@ describe("verified public job source gate", () => {
     const queryId = crypto.randomUUID();
     await database.insert(agentRuns).values({
       id: runId, userId: subject.userId, targetId: subject.targetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1,
-      targetSnapshot: {}, sourceScope: {}, budgetSnapshot: {}, workflowVersion: "workflow-v4", ruleVersion: "rules-v1",
+      targetSnapshot: {}, sourceScope: {}, budgetSnapshot: {}, workflowVersion: "layered-public-job-discovery-v1", ruleVersion: "rules-v1",
       adapter: "layered-public", adapterVersion: "v1", outputSchemaVersion: "result-v4", toolAllowlist: [],
+      modelSnapshot: FAKE_JOB_NORMALIZER_METADATA,
       status: "queued", currentStep: "queued", createdAt: now, updatedAt: now, queuedAt: now,
     });
     const lead = await createJobDiscoveryLeadRepository({ db: database, id: () => crypto.randomUUID() }).recordPending({
@@ -923,5 +926,38 @@ describe("verified public job source gate", () => {
       expect(result.sourcePosting).toMatchObject({ sourceType: item.sourceType, sourceId: url, isOfficial: item.official });
       expect(result.sourcePosting.sourceIdentity).toEqual({ taxonomyPolicy: "public-job-source-taxonomy-v1", canonicalUrl: url, finalUrl: url, finalUrls: [url] });
     }
+  });
+
+  it("在事务外只为未完成的 v2 版本调用 visibleText normalizer，并把完整输出绑定真实版本后供另一 Lead 复用", async () => {
+    const first = await owner();
+    const second = await anotherLead(first);
+    const metadata = FAKE_JOB_NORMALIZER_METADATA;
+    const output = { ...metadata, company: null, title: "Senior Engineer", location: null, postedAt: null, deadline: null, description: null, qualifications: { workMode: null, relocationRequired: null, salary: null, seniority: null, education: null, languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: null }, fieldEvidence: [{ field: "title", path: "lines:1-1", rawValue: "Senior Engineer", normalizedValue: "Senior Engineer" }], usage: { status: "known" as const, inputTokens: 1, outputTokens: 1, totalTokens: 2 } };
+    let calls = 0;
+    const normalizePosting = async ({ content }: { identity: string; content: string }) => { calls += 1; expect(content).toBe(page().visibleText); return output; };
+    const gate = createVerifiedJobSourceGate({ db: database, contentStore: new EvidenceStore(), id: () => crypto.randomUUID() });
+    const firstResult = await gate.verify({ userId: first.userId, leadId: first.leadId, candidate: { queryId: first.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: page(), now, normalizePosting, normalizerMetadata: metadata });
+    const secondResult = await gate.verify({ userId: second.userId, leadId: second.leadId, candidate: { queryId: second.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: page(), now, normalizePosting, normalizerMetadata: metadata });
+    expect(calls).toBe(1);
+    expect(secondResult.sourcePostingVersion.sourcePostingVersionId).toBe(firstResult.sourcePostingVersion.sourcePostingVersionId);
+    const [stored] = await database.select({ normalizedData: jobSourcePostingVersions.normalizedData }).from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.id, firstResult.sourcePostingVersion.sourcePostingVersionId));
+    expect(stored?.normalizedData).toMatchObject({ title: "Senior Engineer", fieldEvidence: [expect.objectContaining({ field: "title", sourcePostingVersionId: firstResult.sourcePostingVersion.sourcePostingVersionId })] });
+  });
+
+  it("旧空版本和不同冻结 metadata 都不能作为完整 v2 结果复用", async () => {
+    const legacy = await owner();
+    const firstNormalized = await anotherLead(legacy);
+    const changedMetadata = { ...FAKE_JOB_NORMALIZER_METADATA, normalizerVersion: "fake-job-normalizer-v3" };
+    const secondNormalized = await anotherLead(legacy);
+    const output = (metadata: typeof FAKE_JOB_NORMALIZER_METADATA) => ({ ...metadata, company: null, title: "Senior Engineer", location: null, postedAt: null, deadline: null, description: null, qualifications: { workMode: null, relocationRequired: null, salary: null, seniority: null, education: null, languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: null }, fieldEvidence: [{ field: "title", path: "lines:1-1", rawValue: "Senior Engineer", normalizedValue: "Senior Engineer" }], usage: { status: "known" as const, inputTokens: 1, outputTokens: 1, totalTokens: 2 } });
+    let calls = 0;
+    const gate = createVerifiedJobSourceGate({ db: database, contentStore: new EvidenceStore(), id: () => crypto.randomUUID() });
+    const input = (subject: { userId: string; leadId: string; queryId: string }) => ({ userId: subject.userId, leadId: subject.leadId, candidate: { queryId: subject.queryId, normalizedUrl, candidateFingerprint }, extract: { normalizedUrl }, page: page(), now });
+    const legacyResult = await gate.verify(input(legacy));
+    const firstResult = await gate.verify({ ...input(firstNormalized), normalizePosting: async () => { calls += 1; return output(FAKE_JOB_NORMALIZER_METADATA); }, normalizerMetadata: FAKE_JOB_NORMALIZER_METADATA });
+    const secondResult = await gate.verify({ ...input(secondNormalized), normalizePosting: async () => { calls += 1; return output(changedMetadata); }, normalizerMetadata: changedMetadata });
+    expect(calls).toBe(2);
+    expect(firstResult.sourcePostingVersion.sourcePostingVersionId).not.toBe(legacyResult.sourcePostingVersion.sourcePostingVersionId);
+    expect(secondResult.sourcePostingVersion.sourcePostingVersionId).not.toBe(firstResult.sourcePostingVersion.sourcePostingVersionId);
   });
 });

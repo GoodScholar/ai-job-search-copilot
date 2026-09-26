@@ -185,6 +185,53 @@ export const JobNormalizerOutputSchema = modelOutput.extend({
   usage: usage.optional().default({ status: "not_called", inputTokens: null, outputTokens: null, totalTokens: null }),
 }).strict();
 
+type PersistedEvidence = z.infer<typeof JobNormalizationEvidenceSchema> & { sourcePostingVersionId: string };
+type PersistedQualificationEvidence = z.infer<typeof qualificationEvidence> & { sourcePostingVersionId: string };
+export type PersistedJobNormalizerOutput = Omit<JobNormalizerOutput, "fieldEvidence" | "qualifications"> & {
+  fieldEvidence: PersistedEvidence[];
+  qualifications: {
+    [K in keyof JobQualifications]: JobQualifications[K] extends { value: infer Value; evidence: unknown } | null
+      ? { value: Value; evidence: PersistedQualificationEvidence } | null
+      : never;
+  };
+};
+
+/** Provider output stays identity-free. Bind source identity only after the application owns a real immutable version. */
+export function bindJobNormalizerOutput(sourcePostingVersionId: string, output: JobNormalizerOutput): PersistedJobNormalizerOutput {
+  const parsed = JobNormalizerOutputSchema.parse(output);
+  return {
+    ...parsed,
+    fieldEvidence: parsed.fieldEvidence.map((evidence) => ({ ...evidence, sourcePostingVersionId })),
+    qualifications: Object.fromEntries(Object.entries(parsed.qualifications).map(([field, qualification]) => [field,
+      qualification === null ? null : { ...qualification, evidence: { ...qualification.evidence, sourcePostingVersionId } },
+    ])) as PersistedJobNormalizerOutput["qualifications"],
+  };
+}
+
+/** Reconstruct and validate the strict provider contract without ever accepting a model-supplied source identity. */
+export function validatePersistedJobNormalizerOutput(value: unknown, input: { sourcePostingVersionId: string; metadata?: JobNormalizerMetadata }): JobNormalizerOutput {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("JOB_NORMALIZER_PERSISTED_OUTPUT_INVALID");
+  const persisted = value as Record<string, unknown>;
+  const fieldEvidence = Array.isArray(persisted.fieldEvidence) ? persisted.fieldEvidence.map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item) || (item as Record<string, unknown>).sourcePostingVersionId !== input.sourcePostingVersionId) throw new Error("JOB_NORMALIZER_PERSISTED_EVIDENCE_INVALID");
+    const { sourcePostingVersionId: _sourcePostingVersionId, ...evidence } = item as Record<string, unknown>;
+    return evidence;
+  }) : persisted.fieldEvidence;
+  const qualifications = persisted.qualifications && typeof persisted.qualifications === "object" && !Array.isArray(persisted.qualifications)
+    ? Object.fromEntries(Object.entries(persisted.qualifications as Record<string, unknown>).map(([field, qualification]) => {
+      if (qualification === null) return [field, null];
+      if (!qualification || typeof qualification !== "object" || Array.isArray(qualification)) throw new Error("JOB_NORMALIZER_PERSISTED_EVIDENCE_INVALID");
+      const item = qualification as { evidence?: unknown };
+      if (!item.evidence || typeof item.evidence !== "object" || Array.isArray(item.evidence) || (item.evidence as Record<string, unknown>).sourcePostingVersionId !== input.sourcePostingVersionId) throw new Error("JOB_NORMALIZER_PERSISTED_EVIDENCE_INVALID");
+      const { sourcePostingVersionId: _sourcePostingVersionId, ...evidence } = item.evidence as Record<string, unknown>;
+      return [field, { ...item, evidence }];
+    }))
+    : persisted.qualifications;
+  const output = JobNormalizerOutputSchema.parse({ ...persisted, fieldEvidence, qualifications });
+  if (input.metadata && (output.adapter !== input.metadata.adapter || output.normalizerVersion !== input.metadata.normalizerVersion || output.promptVersion !== input.metadata.promptVersion || output.outputSchemaVersion !== input.metadata.outputSchemaVersion || output.ruleVersion !== input.metadata.ruleVersion || output.model !== input.metadata.model)) throw new Error("JOB_NORMALIZER_PERSISTED_METADATA_INVALID");
+  return output;
+}
+
 export function validateJobNormalizerOutput(content: string, output: JobNormalizerOutput): boolean {
   // Historical snapshots and test seams predate call accounting. They remain readable,
   // while every configured v2 adapter reports known usage and must satisfy full proof.

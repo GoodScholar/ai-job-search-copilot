@@ -2557,7 +2557,7 @@ describe("AgentRunProcessor checkpoints", () => {
     if (!detail || detail.workflowVersion !== LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION) throw new Error("expected v4 detail");
     expect(detail).toMatchObject({
       runId: job.runId,
-      usage: { results: 3, complete: true },
+      usage: { results: 3, complete: false },
       results: [
         { sourcePostingVersionId: secondExtraVersionId },
         { sourcePostingVersionId: job.sourcePostingVersionId },

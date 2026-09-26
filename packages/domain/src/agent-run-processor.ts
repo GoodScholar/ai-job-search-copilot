@@ -43,6 +43,8 @@ import {
 } from "./layered-public-job-discovery-workflow";
 import { FrozenRecommendationEvidenceWriteSchema, RecommendationDiscoveryFactsSchema, type RecommendationDiscoveryFacts } from "@job-copilot/contracts/recommendation-discovery-facts";
 import { createDiscoveryJobNormalizer, type DiscoveryJobNormalizerResolver } from "./discovery-job-normalization.js";
+import { validatePersistedJobNormalizerOutput } from "@job-copilot/contracts/job-imports";
+import { JobNormalizerMetadataSchema } from "@job-copilot/contracts/job-normalizer";
 
 export interface DiscoveryContentStore {
   put(input: { objectKey: string; bytes: Uint8Array; mediaType: "application/json"; runId: string }): Promise<void>;
@@ -495,7 +497,7 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
     const trusted = new Set(input.trustedSourcePostingVersionIds);
     const sourceIdByVersionId = new Map<string, string | null>();
     for (const sourcePostingVersionId of input.sourcePostingVersionIds) {
-      const [version] = await transaction.select({ sourceId: jobSourcePostings.sourceId, sourceIdentifier: jobSourcePostings.sourceIdentifier, sourceType: jobSourcePostings.sourceType, isOfficial: jobSourcePostings.isOfficial }).from(jobSourcePostingVersions).innerJoin(jobSourcePostings, and(eq(jobSourcePostings.userId, jobSourcePostingVersions.userId), eq(jobSourcePostings.id, jobSourcePostingVersions.sourcePostingId))).where(and(eq(jobSourcePostingVersions.userId, input.userId), eq(jobSourcePostingVersions.id, sourcePostingVersionId))).limit(1);
+      const [version] = await transaction.select({ sourceId: jobSourcePostings.sourceId, sourceIdentifier: jobSourcePostings.sourceIdentifier, sourceType: jobSourcePostings.sourceType, isOfficial: jobSourcePostings.isOfficial, normalizedData: jobSourcePostingVersions.normalizedData }).from(jobSourcePostingVersions).innerJoin(jobSourcePostings, and(eq(jobSourcePostings.userId, jobSourcePostingVersions.userId), eq(jobSourcePostings.id, jobSourcePostingVersions.sourcePostingId))).where(and(eq(jobSourcePostingVersions.userId, input.userId), eq(jobSourcePostingVersions.id, sourcePostingVersionId))).limit(1);
       const trustedVersion = trusted.has(sourcePostingVersionId)
         && version?.sourceId !== null
         && input.trustedSourceIds.includes(version?.sourceId ?? "")
@@ -504,9 +506,16 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
       if (!version || (!attributed.has(sourcePostingVersionId) && !trustedVersion)) throw new Error("LAYERED_PUBLIC_RESULT_PROVENANCE_INVALID");
       sourceIdByVersionId.set(sourcePostingVersionId, version.sourceId);
       if (attributed.has(sourcePostingVersionId)) {
+        const frozenMetadata = JobNormalizerMetadataSchema.nullable().parse(run.modelSnapshot);
+        let normalized: ReturnType<typeof validatePersistedJobNormalizerOutput> | undefined;
+        if (frozenMetadata) normalized = validatePersistedJobNormalizerOutput(version.normalizedData, { sourcePostingVersionId, metadata: frozenMetadata });
+        else {
+          try { normalized = validatePersistedJobNormalizerOutput(version.normalizedData, { sourcePostingVersionId }); }
+          catch { /* 仅历史 null snapshot 兼容空版本。 */ }
+        }
         await persistJobOpportunity(transaction, {
           id: deps.id, userId: input.userId, importId: null, sourcePostingVersionId, isOfficial: version.isOfficial,
-          company: null, title: null, location: null, postedAt: null, deadline: null, description: null, normalizedData: {},
+          company: normalized?.company ?? null, title: normalized?.title ?? null, location: normalized?.location ?? null, postedAt: normalized?.postedAt ?? null, deadline: normalized?.deadline ?? null, description: normalized?.description ?? null, normalizedData: version.normalizedData as Record<string, unknown>,
           dedupIdentity: version.sourceIdentifier, now: input.now,
         });
       }
@@ -544,7 +553,7 @@ async function persistLayeredPublicOutcome(deps: AgentRunProcessorDependencies, 
     await transaction.update(agentRunSteps).set({ status: "completed", completedAt: input.now, failedAt: null, failureCode: null }).where(and(
       eq(agentRunSteps.userId, input.userId), eq(agentRunSteps.runId, input.runId), eq(agentRunSteps.status, "running"),
     ));
-    await transaction.update(agentRuns).set({ status: "completed", currentStep: "completed", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, activeDurationMs, completedAt: input.now, failedAt: null, failureCode: null, terminationKind: terminal, terminationBudgetDimension: null, resultCount: Math.min(Number(resultCount), maxResults), usageComplete: true, version, updatedAt: input.now }).where(and(
+    await transaction.update(agentRuns).set({ status: "completed", currentStep: "completed", claimToken: null, claimExpiresAt: null, activeSliceStartedAt: null, activeDurationMs, completedAt: input.now, failedAt: null, failureCode: null, terminationKind: terminal, terminationBudgetDimension: null, resultCount: Math.min(Number(resultCount), maxResults), usageComplete: run.usageComplete, version, updatedAt: input.now }).where(and(
       eq(agentRuns.userId, input.userId), eq(agentRuns.id, input.runId), eq(agentRuns.claimToken, input.claimToken), eq(agentRuns.controlState, "none"),
     ));
     const sequence = await appendEvent(transaction, { id: deps.id, userId: input.userId, runId: input.runId, version, eventType: "run.completed", data: { eventType: "run.completed", status: "completed", currentStep: "completed", attemptCount: run.attemptCount, resultCount: Math.min(Number(resultCount), maxResults) }, now: input.now });
