@@ -95,6 +95,9 @@ describe("job import contracts", () => {
     expect((persisted.fieldEvidence[0] as { sourcePostingVersionId: string }).sourcePostingVersionId).toBe(sourcePostingVersionId);
     expect((persisted.qualifications.workMode!.evidence as { sourcePostingVersionId: string }).sourcePostingVersionId).toBe(sourcePostingVersionId);
     expect(() => validatePersistedJobNormalizerOutput({ ...persisted, fieldEvidence: [{ ...persisted.fieldEvidence[0], sourcePostingVersionId: opportunityId }, ...persisted.fieldEvidence.slice(1)] }, { sourcePostingVersionId, metadata: output })).toThrow();
+    expect(() => validatePersistedJobNormalizerOutput({ ...persisted, fieldEvidence: persisted.fieldEvidence.filter((item) => item.field !== "title") }, { sourcePostingVersionId, metadata: output })).toThrow("JOB_NORMALIZER_PERSISTED_EVIDENCE_INVALID");
+    expect(() => validatePersistedJobNormalizerOutput({ ...persisted, title: "被篡改" }, { sourcePostingVersionId, metadata: output })).toThrow("JOB_NORMALIZER_PERSISTED_EVIDENCE_INVALID");
+    expect(() => validatePersistedJobNormalizerOutput({ ...persisted, qualifications: { ...persisted.qualifications, workMode: { ...persisted.qualifications.workMode!, evidence: { ...persisted.qualifications.workMode!.evidence, normalizedValue: "onsite" } } } }, { sourcePostingVersionId, metadata: output })).toThrow("JOB_NORMALIZER_PERSISTED_EVIDENCE_INVALID");
   });
 
   it("绑定非法截止日期溯源并拒绝错误发布版本，同时兼容旧未绑定溯源", () => {

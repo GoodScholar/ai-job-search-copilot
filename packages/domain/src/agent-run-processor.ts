@@ -200,6 +200,8 @@ function adapterFailure(error: unknown): Failure {
   }
   if (error instanceof DiscoveryJobNormalizationError) {
     if (error.code === "DISCOVERY_JOB_NORMALIZATION_INTERRUPTED") return { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "model_invalid" };
+    if (error.normalizerError?.code === "JOB_NORMALIZER_RATE_LIMITED" || error.normalizerError?.code === "JOB_NORMALIZER_UNAVAILABLE") return { failureCode: "AGENT_RUN_MODEL_RETRYABLE", retryable: true, category: "model" };
+    if (error.normalizerError?.code === "JOB_NORMALIZER_BUDGET_EXHAUSTED") return { failureCode: "AGENT_RUN_BUDGET_EXCEEDED", retryable: false, category: "model_invalid", budgetDimension: "active_duration" };
     return { failureCode: "AGENT_RUN_MODEL_INVALID_RESPONSE", retryable: false, category: "model_invalid" };
   }
   if (error instanceof DeepMatchAdapterError) {

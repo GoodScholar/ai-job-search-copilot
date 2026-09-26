@@ -434,7 +434,7 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
         normalized = await deps.normalizer.normalize(canonical);
       } catch (error) {
         const failureCode = normalizationFailure(error);
-        if (failureCode === "JOB_NORMALIZER_INJECTION_DETECTED" || failureCode === "JOB_NORMALIZER_OUTPUT_INVALID" || failureCode === "JOB_NORMALIZER_EVIDENCE_INVALID" || failureCode === "JOB_NORMALIZER_AUTH_FAILED")
+        if (failureCode === "JOB_NORMALIZER_INJECTION_DETECTED" || failureCode === "JOB_NORMALIZER_OUTPUT_INVALID" || failureCode === "JOB_NORMALIZER_EVIDENCE_INVALID" || failureCode === "JOB_NORMALIZER_AUTH_FAILED" || failureCode === "JOB_NORMALIZER_BUDGET_EXHAUSTED" || failureCode === "JOB_NORMALIZER_CANCELLED")
           return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode, attemptCount }) ? "failed" : "stale";
         if (!job.finalAttempt) {
           await releaseImportForRetry(deps, { ...parsedJob, claimToken });

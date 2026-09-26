@@ -9,7 +9,7 @@ export interface DiscoveryJobNormalizationCheckpoint {
 }
 
 export class DiscoveryJobNormalizationError extends Error {
-  constructor(readonly code: "DISCOVERY_JOB_NORMALIZATION_INTERRUPTED" | "DISCOVERY_JOB_NORMALIZATION_USAGE_INCOMPLETE" | "DISCOVERY_JOB_NORMALIZATION_SNAPSHOT_UNSUPPORTED", readonly interruption?: string) { super(code); }
+  constructor(readonly code: "DISCOVERY_JOB_NORMALIZATION_INTERRUPTED" | "DISCOVERY_JOB_NORMALIZATION_USAGE_INCOMPLETE" | "DISCOVERY_JOB_NORMALIZATION_SNAPSHOT_UNSUPPORTED", readonly interruption?: string, readonly normalizerError?: JobNormalizerError) { super(code); }
 }
 
 function sameMetadata(left: JobNormalizerOutput, right: JobNormalizerMetadata) {
@@ -85,7 +85,7 @@ export function createDiscoveryJobNormalizer(input: {
           if (invocationStarted && !usageSettled && !(error instanceof DiscoveryJobNormalizationError && error.code === "DISCOVERY_JOB_NORMALIZATION_INTERRUPTED")) {
             await markIncomplete();
             if (error instanceof JobNormalizerError && ["JOB_NORMALIZER_AUTH_FAILED", "JOB_NORMALIZER_INJECTION_DETECTED", "JOB_NORMALIZER_EVIDENCE_INVALID", "JOB_NORMALIZER_OUTPUT_INVALID"].includes(error.code)) throw error;
-            throw new DiscoveryJobNormalizationError("DISCOVERY_JOB_NORMALIZATION_USAGE_INCOMPLETE");
+            throw new DiscoveryJobNormalizationError("DISCOVERY_JOB_NORMALIZATION_USAGE_INCOMPLETE", undefined, error instanceof JobNormalizerError ? error : undefined);
           }
           throw error;
         }

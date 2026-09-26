@@ -245,7 +245,18 @@ export function validatePersistedJobNormalizerOutput(value: unknown, input: { so
     : persisted.qualifications;
   const output = JobNormalizerOutputSchema.parse({ ...persisted, deadlineProvenance, fieldEvidence, qualifications });
   if (input.metadata && (output.adapter !== input.metadata.adapter || output.normalizerVersion !== input.metadata.normalizerVersion || output.promptVersion !== input.metadata.promptVersion || output.outputSchemaVersion !== input.metadata.outputSchemaVersion || output.ruleVersion !== input.metadata.ruleVersion || output.model !== input.metadata.model)) throw new Error("JOB_NORMALIZER_PERSISTED_METADATA_INVALID");
+  if (isCurrentJobNormalizerOutput(persisted) && !hasCompleteCurrentEvidence(output)) throw new Error("JOB_NORMALIZER_PERSISTED_EVIDENCE_INVALID");
   return output;
+}
+
+function hasCompleteCurrentEvidence(output: JobNormalizerOutput): boolean {
+  const evidence = new Map(output.fieldEvidence.map((item) => [item.field, item]));
+  for (const field of ["company", "title", "location", "postedAt", "deadline", "description"] as const) {
+    const item = evidence.get(field);
+    if (output[field] === null ? Boolean(item) : !item || item.normalizedValue !== output[field] || !/^lines:[1-9][0-9]*-[1-9][0-9]*$/u.test(item.path)) return false;
+  }
+  for (const [field, value] of Object.entries(output.qualifications)) if (value && (value.evidence.field !== field || !value.evidence.rawValue || value.evidence.normalizedValue !== normalizedQualificationValue(value.value) || !/^lines:[1-9][0-9]*-[1-9][0-9]*$/u.test(value.evidence.path))) return false;
+  return output.deadlineProvenance === null || (output.deadline === null && /^lines:[1-9][0-9]*-[1-9][0-9]*$/u.test(output.deadlineProvenance.path));
 }
 
 /** v2+ configured adapters always account for usage; these snapshots must never take a legacy fallback path. */

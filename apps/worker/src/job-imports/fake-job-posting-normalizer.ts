@@ -62,11 +62,21 @@ export class FakeJobPostingNormalizer {
 
   async normalize(content: string, options: JobNormalizerCallOptions = {}): Promise<unknown> {
     const budget = assertJobNormalizerInputBudget(content, options);
+    const timeout = AbortSignal.timeout(budget.timeoutMs);
+    const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+    const cancelled = () => { if (signal.aborted) throw new JobNormalizerError(options.signal?.aborted ? "JOB_NORMALIZER_CANCELLED" : "JOB_NORMALIZER_BUDGET_EXHAUSTED"); };
     if (isJobInstructionLike(content)) throw new JobNormalizerError("JOB_NORMALIZER_INJECTION_DETECTED");
     await options.beforeRequest?.({ inputTokenBound: budget.inputTokenBound, maxOutputTokens: budget.maxOutputTokens });
+    cancelled();
     await options.onUsage?.({ inputTokens: 0, outputTokens: 0 });
+    cancelled();
     if (this.options.enableFailureFixture && content.trim() === INVALID_FIXTURE) return { invalid: "fake-fixture" };
-    if (this.options.testDelayMs) await new Promise((resolve) => setTimeout(resolve, this.options.testDelayMs));
+    if (this.options.testDelayMs) await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(resolve, this.options.testDelayMs);
+      const abort = () => { clearTimeout(timer); reject(new JobNormalizerError(options.signal?.aborted ? "JOB_NORMALIZER_CANCELLED" : "JOB_NORMALIZER_BUDGET_EXHAUSTED")); };
+      signal.addEventListener("abort", abort, { once: true });
+    });
+    cancelled();
 
     const output = {
       ...this.metadata,
