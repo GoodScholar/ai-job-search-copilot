@@ -100,6 +100,11 @@ test("登录用户可导入、持久化并安全复用 Markdown 职业资料", a
   const fileInput = page.getByLabel("选择 Markdown、DOCX 或 PDF 职业资料");
   const uploadButton = page.getByRole("button", { name: "上传并解析" });
   await expect(page.getByRole("navigation", { name: "求职工作台导航" })).toHaveText("首页推荐投递画像");
+  for (const label of ["职业资料", "目标与来源", "运行策略", "模型连接"]) {
+    const height = await page.getByRole("navigation", { name: "画像上下文" }).getByRole("link", { exact: true, name: label })
+      .evaluate((element) => element.getBoundingClientRect().height);
+    expect(height).toBeGreaterThanOrEqual(44);
+  }
   if (testInfo.project.name === "Desktop Chrome") {
     await page.goto("/profile");
     await page.keyboard.press("Tab");
@@ -111,9 +116,19 @@ test("登录用户可导入、持久化并安全复用 Markdown 职业资料", a
     await page.keyboard.press("Tab");
     await expect(page.getByRole("link", { name: "画像" })).toBeFocused();
     await page.keyboard.press("Tab");
+    await expect(page.getByRole("link", { name: "职业资料" })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("link", { name: "目标与来源" })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("link", { exact: true, name: "运行策略" })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("link", { name: "模型连接" })).toBeFocused();
+    await page.keyboard.press("Tab");
     await expect(page.getByRole("button", { name: "退出" })).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(page.getByRole("link", { name: "管理账户运行策略" })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(page.getByText("手工添加事实", { exact: true })).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(fileInput).toBeFocused();
   }
@@ -195,6 +210,7 @@ test("登录用户可导入、持久化并安全复用 Markdown 职业资料", a
   });
   expect(hiddenResponse.status()).toBe(404);
 
+  await page.getByRole("button", { name: "导入职业资料" }).click();
   const [fileInputHeight, uploadButtonHeight] = await Promise.all([
     fileInput.evaluate((element) => element.getBoundingClientRect().height),
     uploadButton.evaluate((element) => element.getBoundingClientRect().height),
@@ -228,14 +244,14 @@ test("候选事实的确认、纠正、拒绝、并发冲突和刷新都保持�
   await page.getByRole("button", { name: "确认 TypeScript" }).click();
   await expect(page.getByRole("button", { name: "确认 TypeScript" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "当前可信画像" })).toContainText("当前可信画像");
-  await expect(page.locator(".profile-fact-list").last()).toContainText("TypeScript");
+  await expect(page.locator(".profile-trusted-facts")).toContainText("TypeScript");
 
   await page.getByRole("button", { name: "纠正 React" }).click();
   await page.getByLabel("纠正后的内容").fill("React 19");
   await page.getByLabel("纠正原因").fill("实际使用的版本");
   await page.getByRole("button", { name: "保存纠正" }).click();
   await expect(page.getByRole("button", { name: "纠正 React" })).toHaveCount(0);
-  await expect(page.locator(".profile-fact-list").last()).toContainText("React 19");
+  await expect(page.locator(".profile-trusted-facts")).toContainText("React 19");
 
   await page.getByRole("button", { name: /^拒绝 英语/ }).click();
   await expect(page.getByRole("button", { name: /^拒绝 英语/ })).toHaveCount(0);

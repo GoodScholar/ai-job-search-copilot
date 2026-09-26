@@ -84,6 +84,7 @@ const factTypeNames: Record<CandidateFact["factType"], string> = {
   certification: "证书",
 };
 const profileFactTypeNames = { ...factTypeNames, work_eligibility: "工作资格" } as const;
+const profileFactTypeOrder = ["experience", "project", "skill", "achievement", "education", "certification", "language", "work_eligibility"] as const satisfies readonly ProfileFactType[];
 
 function factValue(fact: CandidateFact): string {
   if ("name" in fact.factValue) {
@@ -187,6 +188,7 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
   const [isPending, startTransition] = useTransition();
   const [recentImports, setRecentImports] = useState<CareerImportSummary[]>(initialImports);
   const [activeImport, setActiveImport] = useState<CareerImportSummary | null>(initialImports[0] ?? null);
+  const [isImporting, setIsImporting] = useState(initialImports.length === 0);
   const [detail, setDetail] = useState<CareerImportDetail | null>(null);
   const [profile, setProfile] = useState<ProfileSnapshot>(initialProfile);
   const [decidedCandidateFactIds, setDecidedCandidateFactIds] = useState<Set<string>>(() => new Set());
@@ -220,6 +222,9 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
   const pendingConflictFactIds = new Set((detail?.conflicts ?? [])
     .filter((conflict) => conflict.status === "pending")
     .flatMap((conflict) => [conflict.existingFact.factId, conflict.incomingFact.factId]));
+  const profileFactGroups = profileFactTypeOrder
+    .map((factType) => ({ factType, facts: profile.facts.filter((fact) => fact.factType === factType) }))
+    .filter((group) => group.facts.length > 0);
   const moveToRecentTop = useCallback((nextImport: CareerImportSummary) => {
     setRecentImports((previous) => [nextImport, ...previous.filter((item) => item.importId !== nextImport.importId)].slice(0, 20));
   }, []);
@@ -305,6 +310,7 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
   }, [profile.version]);
 
   const selectImport = (nextImport: CareerImportSummary) => {
+    setIsImporting(false);
     pollingGeneration.current = {
       value: pollingGeneration.current.value + 1,
       initialStatus: nextImport.status,
@@ -392,6 +398,7 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
         setDetail(null);
         setPollingError(false);
         setHasPendingFileSelection(false);
+        setIsImporting(false);
         return;
       }
       setActionState(nextState);
@@ -463,18 +470,103 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
         ? statusText[displayedStatus]
         : privacyMessage
           ? privacyMessage
-        : "请选择一份 Markdown、DOCX 或 PDF 职业资料后上传。";
+          : "请选择一份 Markdown、DOCX 或 PDF 职业资料后上传。";
+
+  function startImporting() {
+    setActionState(initialUploadActionState);
+    setPrivacyMessage(null);
+    setIsImporting(true);
+  }
+
+  function cancelImporting() {
+    privacyGeneration.current += 1;
+    setPreparedDocument(null);
+    setPrivacyMode(null);
+    setConfirmedSanitized(false);
+    setHasPendingFileSelection(false);
+    setPrivacyMessage(null);
+    setActionState(initialUploadActionState);
+    setIsImporting(false);
+  }
 
   return (
     <main className="container profile-main">
       <section aria-labelledby="profile-title" className="profile-intro">
-        <p className="workbench-kicker">职业资料 · 候选事实</p>
-        <h1 id="profile-title">从职业资料建立求职画像</h1>
-        <p>系统只会提取带原文证据的候选事实；它们需要你的确认后才会进入求职画像。</p>
+        <p className="workbench-kicker">职业画像</p>
+        <h1 id="profile-title">先确认可信事实，再补充职业资料</h1>
+        <p>已确认事实才会进入求职画像并支持推荐判断；新导入内容始终先以候选事实等待你的决定。</p>
         <Link className="profile-target-link workbench-touch-target" href="/profile/run-policy">管理账户运行策略</Link>
       </section>
 
-      <section aria-labelledby="profile-upload-title" className="profile-upload">
+      <section aria-labelledby="trusted-profile-title" className="profile-facts profile-trusted-facts">
+        <div className="profile-facts-heading">
+          <div>
+            <p className="workbench-kicker">已确认事实</p>
+            <h2 id="trusted-profile-title">当前可信画像</h2>
+          </div>
+          <p className="profile-pending">版本 {profile.version}</p>
+        </div>
+        {profile.facts.length ? <Link className="profile-target-link workbench-touch-target" href="/profile/targets">确认求职目标</Link> : null}
+        {profileFactGroups.length ? (
+          <div className="profile-fact-groups">
+            {profileFactGroups.map(({ factType, facts }) => (
+              <section aria-labelledby={`trusted-profile-${factType}`} className="profile-fact-group" key={factType}>
+                <h3 id={`trusted-profile-${factType}`}>{profileFactTypeNames[factType]}</h3>
+                <ol className="profile-fact-list">
+                  {facts.map((fact) => (
+                    <li key={fact.factId}>
+                      <div className="profile-fact-value">
+                        <strong>{profileFactValue(fact)}</strong>
+                        <span>{fact.source === "candidate_fact" ? "已保留原候选事实证据" : "由你确认"}</span>
+                      </div>
+                      <div className="profile-fact-actions">
+                        <button aria-label={`修改 ${profileFactTypeNames[fact.factType]}`} className="workbench-touch-target" onClick={() => { setEditingFactId(fact.factId); setEditingValue(profileFactInputValue(fact)); setEditingReason(""); setEditingLanguageLevel(profileFactLanguageLevel(fact)); setRemovingFactId(null); }} type="button">修改</button>
+                        <button aria-label={`移除 ${profileFactTypeNames[fact.factType]}`} className="workbench-touch-target" onClick={() => { setRemovingFactId(fact.factId); setRemovalReason(""); setEditingFactId(null); }} type="button">移除</button>
+                      </div>
+                      {editingFactId === fact.factId ? <form className="profile-fact-correction" onSubmit={(event) => { event.preventDefault(); if (!editingValue.trim() || !editingReason.trim()) return; void submitProfileMaintenance(`/api/profile/facts/${fact.factId}/revisions`, { factValue: profileInputValue(fact.factType, editingValue.trim(), editingLanguageLevel), reason: editingReason.trim() }); }}>
+                        <label>修改后的内容<input onChange={(event) => setEditingValue(event.target.value)} value={editingValue} /></label>
+                        <label>修改原因<input onChange={(event) => setEditingReason(event.target.value)} value={editingReason} /></label>
+                        {fact.factType === "language" ? <label>修改后的语言级别<input onChange={(event) => setEditingLanguageLevel(event.target.value)} value={editingLanguageLevel} /></label> : null}
+                        <button disabled={!editingValue.trim() || !editingReason.trim()} type="submit">保存修改</button>
+                      </form> : null}
+                      {removingFactId === fact.factId ? <form className="profile-fact-correction" onSubmit={(event) => { event.preventDefault(); if (!removalReason.trim()) return; void submitProfileMaintenance(`/api/profile/facts/${fact.factId}/removals`, { reason: removalReason.trim() }); }}>
+                        <label>移除原因<input onChange={(event) => setRemovalReason(event.target.value)} value={removalReason} /></label>
+                        <button disabled={!removalReason.trim()} type="submit">确认移除</button>
+                      </form> : null}
+                    </li>
+                  ))}
+                </ol>
+              </section>
+            ))}
+          </div>
+        ) : <p className="profile-next-step">尚无已验证画像事实。</p>}
+        <details className="profile-manual-fact-editor">
+          <summary className="workbench-touch-target">手工添加事实</summary>
+          <form className="profile-fact-correction profile-manual-fact-form" onSubmit={(event) => {
+            event.preventDefault();
+            if (!manualFactValue.trim()) return;
+            void submitProfileMaintenance("/api/profile/facts", {
+              factType: manualFactType,
+              factValue: profileInputValue(manualFactType, manualFactValue.trim(), manualLanguageLevel),
+            });
+          }}>
+            <label>
+              画像事实类型
+              <select onChange={(event) => setManualFactType(event.target.value as ProfileFactType)} value={manualFactType}>
+                {Object.entries(profileFactTypeNames).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </select>
+            </label>
+            <label>画像事实内容<input onChange={(event) => setManualFactValue(event.target.value)} value={manualFactValue} /></label>
+            {manualFactType === "language" ? <label>画像事实语言级别<input onChange={(event) => setManualLanguageLevel(event.target.value)} value={manualLanguageLevel} /></label> : null}
+            <button disabled={!manualFactValue.trim()} type="submit">新增画像事实</button>
+          </form>
+        </details>
+        {profileMessage ? <p aria-live="polite" className="profile-next-step" role="status">{profileMessage}</p> : null}
+      </section>
+
+      <p aria-live="polite" className="profile-status" role="status">{liveMessage}</p>
+
+      {isImporting ? <section aria-labelledby="profile-upload-title" className="profile-upload profile-edit-mode">
         <h2 id="profile-upload-title">导入职业资料</h2>
         <div className="profile-privacy-reminder" role="note">
           <strong>上传前先检查隐私</strong>
@@ -543,12 +635,11 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
             </label>
           ) : null}
 
-          <button className="profile-upload-button workbench-touch-target" disabled={isPending || !canSubmit} type="submit">
+          <div className="profile-upload-actions"><button className="profile-upload-button workbench-touch-target" disabled={isPending || !canSubmit} type="submit">
             上传并解析
-          </button>
+          </button>{recentImports.length ? <button className="workbench-touch-target" disabled={isPending} onClick={cancelImporting} type="button">取消导入</button> : null}</div>
         </form>
-        <p aria-live="polite" className="profile-status" role="status">{liveMessage}</p>
-      </section>
+      </section> : null}
 
       {recentImports.length ? (
         <section aria-labelledby="profile-recent-imports-title" className="profile-recent-imports">
@@ -579,6 +670,12 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
           </ol>
         </section>
       ) : null}
+
+      {!isImporting ? <section aria-label="职业资料导入操作" className="profile-upload profile-edit-mode">
+        <div className="profile-facts-heading"><div><p className="workbench-kicker">继续完善</p><h2>导入职业资料</h2></div><p className="profile-pending">原件先在本地完成隐私检查</p></div>
+        <p>上传新的 Markdown、DOCX 或 PDF 后，解析结果会先作为候选事实等待你的确认。</p>
+        <button className="profile-upload-button workbench-touch-target" onClick={startImporting} type="button">导入职业资料</button>
+      </section> : null}
 
       {detail?.facts.length ? (
         <section aria-labelledby="profile-facts-title" className="profile-facts">
@@ -658,116 +755,6 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
         </article>)}
       </section> : null}
 
-      <section aria-labelledby="trusted-profile-title" className="profile-facts">
-        <div className="profile-facts-heading">
-          <div>
-            <p className="workbench-kicker">长期记忆 · 已验证</p>
-            <h2 id="trusted-profile-title">当前可信画像</h2>
-          </div>
-          <p className="profile-pending">版本 {profile.version}</p>
-        </div>
-        {profile.facts.length ? <Link className="profile-target-link workbench-touch-target" href="/profile/targets">确认求职目标</Link> : null}
-        <form
-          className="profile-fact-correction"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!manualFactValue.trim()) return;
-            void submitProfileMaintenance("/api/profile/facts", {
-              factType: manualFactType,
-              factValue: profileInputValue(manualFactType, manualFactValue.trim(), manualLanguageLevel),
-            });
-          }}
-        >
-          <label>画像事实类型
-            <select onChange={(event) => setManualFactType(event.target.value as ProfileFactType)} value={manualFactType}>
-              {Object.entries(profileFactTypeNames).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-            </select>
-          </label>
-          <label>画像事实内容
-            <input onChange={(event) => setManualFactValue(event.target.value)} value={manualFactValue} />
-          </label>
-          {manualFactType === "language" ? <label>画像事实语言级别
-            <input onChange={(event) => setManualLanguageLevel(event.target.value)} value={manualLanguageLevel} />
-          </label> : null}
-          <button disabled={!manualFactValue.trim()} type="submit">新增画像事实</button>
-        </form>
-        {profile.facts.length ? (
-          <ol className="profile-fact-list">
-            {profile.facts.map((fact) => (
-              <li key={fact.factId}>
-                <div className="profile-fact-value">
-                  <p>{profileFactTypeNames[fact.factType]}</p>
-                  <strong>{profileFactValue(fact)}</strong>
-                  <span>{fact.source === "candidate_fact" ? "已保留原候选事实证据" : "由你确认"}</span>
-                </div>
-                <div className="profile-fact-actions">
-                  <button
-                    aria-label={`修改 ${profileFactTypeNames[fact.factType]}`}
-                    className="workbench-touch-target"
-                    onClick={() => {
-                      setEditingFactId(fact.factId);
-                      setEditingValue(profileFactInputValue(fact));
-                      setEditingReason("");
-                      setEditingLanguageLevel(profileFactLanguageLevel(fact));
-                      setRemovingFactId(null);
-                    }}
-                    type="button"
-                  >修改</button>
-                  <button
-                    aria-label={`移除 ${profileFactTypeNames[fact.factType]}`}
-                    className="workbench-touch-target"
-                    onClick={() => {
-                      setRemovingFactId(fact.factId);
-                      setRemovalReason("");
-                      setEditingFactId(null);
-                    }}
-                    type="button"
-                  >移除</button>
-                </div>
-                {editingFactId === fact.factId ? (
-                  <form
-                    className="profile-fact-correction"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      if (!editingValue.trim() || !editingReason.trim()) return;
-                      void submitProfileMaintenance(`/api/profile/facts/${fact.factId}/revisions`, {
-                        factValue: profileInputValue(fact.factType, editingValue.trim(), editingLanguageLevel), reason: editingReason.trim(),
-                      });
-                    }}
-                  >
-                    <label>修改后的内容
-                      <input onChange={(event) => setEditingValue(event.target.value)} value={editingValue} />
-                    </label>
-                    <label>修改原因
-                      <input onChange={(event) => setEditingReason(event.target.value)} value={editingReason} />
-                    </label>
-                    {fact.factType === "language" ? <label>修改后的语言级别
-                      <input onChange={(event) => setEditingLanguageLevel(event.target.value)} value={editingLanguageLevel} />
-                    </label> : null}
-                    <button disabled={!editingValue.trim() || !editingReason.trim()} type="submit">保存修改</button>
-                  </form>
-                ) : null}
-                {removingFactId === fact.factId ? (
-                  <form
-                    className="profile-fact-correction"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      if (!removalReason.trim()) return;
-                      void submitProfileMaintenance(`/api/profile/facts/${fact.factId}/removals`, { reason: removalReason.trim() });
-                    }}
-                  >
-                    <label>移除原因
-                      <input onChange={(event) => setRemovalReason(event.target.value)} value={removalReason} />
-                    </label>
-                    <button disabled={!removalReason.trim()} type="submit">确认移除</button>
-                  </form>
-                ) : null}
-              </li>
-            ))}
-          </ol>
-        ) : <p className="profile-next-step">尚无已验证画像事实。</p>}
-        {profileMessage ? <p aria-live="polite" className="profile-next-step" role="status">{profileMessage}</p> : null}
-      </section>
     </main>
   );
 }

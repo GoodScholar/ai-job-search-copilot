@@ -47,7 +47,9 @@ test("超长无空格角色名称不会造成 Watchlist 页面横向溢出", asy
 });
 
 async function addCompany(page: Page, company: string, careersUrl: string, domain: string, note = ""): Promise<void> {
-  await page.getByLabel("公司规范名称").fill(company);
+  const name = page.getByLabel("公司规范名称");
+  if (!await name.isVisible()) await page.getByRole("button", { name: "新增目标公司" }).click();
+  await name.fill(company);
   await page.getByLabel("公开招聘入口").fill(careersUrl);
   await page.getByLabel("允许域").fill(domain);
   if (note) await page.getByLabel("来源备注").fill(note);
@@ -103,6 +105,8 @@ test("目标公司 Watchlist 可添加、排序、禁用、重载并显示并发
   await cancel.focus();
   await expect(cancel).toBeFocused();
   await page.keyboard.press("Enter");
+  await expect(page.getByRole("heading", { name: "继续维护来源" })).toBeVisible();
+  await page.getByRole("button", { name: "新增目标公司" }).click();
   await expect(page.getByRole("heading", { name: "添加目标公司" })).toBeVisible();
   const controls = page.locator([
     ".company-watchlist-main button:not(:disabled):not([aria-disabled=true]):not([aria-hidden=true]):visible",

@@ -120,6 +120,16 @@ function currentStepLabel(step: AgentRunDetail["currentStep"]): string {
   return step === "queued" ? "等待开始" : step === "completed" ? "已完成" : step === "failed" ? "未完成" : "已取消";
 }
 
+function liveMessageTone(message: string): "error" | "warning" | "info" {
+  if (/暂时无法|未通过|未接受/u.test(message)) return "error";
+  if (/已变化|阻塞/u.test(message)) return "warning";
+  return "info";
+}
+
+function runStatusTone(run: AgentRunDetail | null): "error" | "info" {
+  return run?.status === "failed" || run?.termination?.kind === "budget_exhausted" ? "error" : "info";
+}
+
 async function fetchRunDetail(runId: string): Promise<AgentRunDetail> {
   const response = await fetch(`/api/agent-runs/${runId}`, { cache: "no-store" });
   if (!response.ok) throw new Error("detail unavailable");
@@ -166,10 +176,13 @@ export function AgentRunPanel({ targets, initialRun, currentReport, onPreflightC
   const runNoun = isDeepMatchRun(run) ? "岗位匹配" : "岗位发现";
   const [timeline, setTimeline] = useState<TimelineEvent[]>(() => detailTimeline(initialRun));
   const [message, setMessage] = useState("");
+  const messageTone = message ? liveMessageTone(message) : runStatusTone(run);
   const [isStarting, setIsStarting] = useState(false);
   const idempotencyKey = useRef<string | null>(null);
   const pendingRunId = useRef<string | null>(null);
   const runIsUnfinished = run != null && ["queued", "running", "paused"].includes(run.status);
+  const [auditOpen, setAuditOpen] = useState(runIsUnfinished);
+  const auditRunId = useRef(run?.runId ?? null);
   const commandIds = useRef<Record<"pause" | "resume" | "cancel", string | null>>({ pause: null, resume: null, cancel: null });
   const runRef = useRef(run);
   const mountedRef = useRef(false);
@@ -238,6 +251,12 @@ export function AgentRunPanel({ targets, initialRun, currentReport, onPreflightC
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
+
+  useEffect(() => {
+    if (auditRunId.current === run?.runId) return;
+    auditRunId.current = run?.runId ?? null;
+    setAuditOpen(run != null && ["queued", "running", "paused"].includes(run.status));
+  }, [run]);
 
   useEffect(() => {
     if (refreshVersion === 0 || !runRef.current) return;
@@ -459,6 +478,8 @@ export function AgentRunPanel({ targets, initialRun, currentReport, onPreflightC
           {run.status === "paused" || run.controlState === "pause_requested" ? <button className="agent-run-action workbench-touch-target" disabled={pendingControls.resume} onClick={() => void controlRun("resume")} type="button">继续本次{runNoun}</button> : null}
           {["queued", "running", "paused"].includes(run.status) && run.controlState !== "cancel_requested" ? <button className="agent-run-action agent-run-cancel workbench-touch-target" disabled={pendingControls.cancel} onClick={() => void controlRun("cancel")} type="button">取消{runNoun}</button> : null}
         </div>
+        <details className="agent-run-audit-details" onToggle={(event) => setAuditOpen(event.currentTarget.open)} open={auditOpen}>
+          <summary>查看本次运行执行与审计详情</summary>
         <section aria-label={`本次${runNoun}执行规格`} className="agent-run-detail">
           <dl>
             <div><dt>求职目标</dt><dd>{run.executionSpec.targetSnapshot.constraints.roleFamily} · v{run.targetVersion}</dd></div>
@@ -496,8 +517,17 @@ export function AgentRunPanel({ targets, initialRun, currentReport, onPreflightC
             </>}
           </dl>
         </section>
+        {timeline.length > 0 ? (
+          <ol aria-label={isDeepMatchRun(run) ? "岗位匹配运行时间线" : "岗位发现运行时间线"} className="agent-run-timeline">
+            {timeline.map((event) => <li data-state={event.eventType.startsWith("run.") ? event.data.status : event.eventType.endsWith("completed") ? "completed" : "running"} key={event.sequence}>
+              <span aria-hidden="true">{String(event.sequence).padStart(2, "0")}</span>
+              <p>{timelineLabel(event, isDeepMatchRun(run))}</p>
+            </li>)}
+          </ol>
+        ) : null}
+        </details>
       </> : null}
-      <p aria-live="polite" className={message ? "agent-run-live agent-run-live-error" : "agent-run-live"} role="status">
+      <p aria-live="polite" className={`agent-run-live${messageTone === "error" ? " agent-run-live-error" : messageTone === "warning" ? " agent-run-live-warning" : ""}`} role="status">
         {message || runStatusLabel(run)}
       </p>
       {run && "sourceIssues" in run && run.sourceIssues.some((issue) => "impact" in issue && (issue.code === "SOURCE_CAPABILITY_UNSUPPORTED" || issue.code === "SOURCE_CAPABILITY_DECLARATION_MISMATCH")) ? (() => {
@@ -510,15 +540,6 @@ export function AgentRunPanel({ targets, initialRun, currentReport, onPreflightC
       })() : run?.status === "completed" && run.termination?.kind === "completed_with_source_issues" ? <p>
         {isLayeredPublicRun ? <>公开岗位发现存在待关注诊断。 <Link className="workbench-touch-target" href={`/home?runId=${run.runId}#agent-run`}>查看本次运行诊断</Link></> : <>问题来源 {("sourceChecks" in run ? run.sourceChecks : []).filter((check) => ["parser_degraded", "rate_limited", "hard_failed"].includes(check.status)).length} 个。 <Link className="workbench-touch-target" href={`/profile/targets/${run.targetId}/watchlist#source-health`}>查看来源诊断</Link></>}
       </p> : null}
-
-      {timeline.length > 0 ? (
-        <ol aria-label={isDeepMatchRun(run) ? "岗位匹配运行时间线" : "岗位发现运行时间线"} className="agent-run-timeline">
-          {timeline.map((event) => <li data-state={event.eventType.startsWith("run.") ? event.data.status : event.eventType.endsWith("completed") ? "completed" : "running"} key={event.sequence}>
-            <span aria-hidden="true">{String(event.sequence).padStart(2, "0")}</span>
-            <p>{timelineLabel(event, isDeepMatchRun(run))}</p>
-          </li>)}
-        </ol>
-      ) : null}
 
       {!isDeepMatchRun(run) && run?.status === "completed" && run.results.length > 0 ? (
         <div className="agent-run-results">

@@ -90,6 +90,7 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth, ini
   const [sourceCapabilities, setSourceCapabilities] = useState(initialSourceCapabilities);
   const [draft, setDraft] = useState<Draft>(emptyDraft);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [isEditing, setIsEditing] = useState(initialOverview.items.length === 0);
   const [message, setMessage] = useState("");
   const [healthRefreshFailure, setHealthRefreshFailure] = useState<RefreshFailure>(initialHealthRefreshFailed ? "initial" : null);
   const [capabilityRefreshFailure, setCapabilityRefreshFailure] = useState<RefreshFailure>(initialCapabilityRefreshFailed ? "initial" : null);
@@ -166,7 +167,7 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth, ini
       const parsed = CompanyWatchlistOverviewSchema.safeParse(await response.json());
       if (!parsed.success) { setMessage("暂时无法保存目标公司，请稍后重试。"); return; }
       await applySuccessfulMutation(parsed.data, editingItem ? "目标公司已更新。" : "目标公司已添加。");
-      setDraft(emptyDraft); setEditingItemId(null);
+      setDraft(emptyDraft); setEditingItemId(null); setIsEditing(false);
     } catch {
       setMessage("暂时无法保存目标公司，请稍后重试。");
     } finally {
@@ -191,7 +192,15 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth, ini
   }
 
   function startEditing(item: CompanyWatchlistItem) {
-    setDraft(draftFrom(item)); setEditingItemId(item.itemId); setMessage("");
+    setDraft(draftFrom(item)); setEditingItemId(item.itemId); setIsEditing(true); setMessage("");
+  }
+
+  function startCreating() {
+    setDraft(emptyDraft); setEditingItemId(null); setIsEditing(true); setMessage("");
+  }
+
+  function cancelEditing() {
+    setDraft(emptyDraft); setEditingItemId(null); setIsEditing(false); setMessage("");
   }
 
   function move(item: CompanyWatchlistItem, direction: -1 | 1) {
@@ -216,22 +225,6 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth, ini
       {inactive ? <p className="profile-status" role="status">该求职目标已停用，不能维护 Watchlist。</p> : null}
     </section>
 
-    <section aria-labelledby="company-watchlist-form-title" className="company-watchlist-section">
-      <h2 id="company-watchlist-form-title">{editingItem ? `编辑 ${editingItem.canonicalCompanyName}` : "添加目标公司"}</h2>
-      <p className="company-watchlist-notice">{safetyNotice}</p>
-      <form className="company-watchlist-form" onSubmit={save}>
-        <label>公司规范名称<input aria-invalid={message === "请填写公司规范名称。"} disabled={inactive || isSaving} onChange={(event) => updateDraft("canonicalCompanyName", event.target.value)} value={draft.canonicalCompanyName} /></label>
-        <label>公开招聘入口<input aria-invalid={message.includes("公开招聘入口") || message.includes("有效的公开招聘入口")} disabled={inactive || isSaving} inputMode="url" onChange={(event) => updateDraft("careersUrl", event.target.value)} value={draft.careersUrl} /></label>
-        <label>允许域<input disabled={inactive || isSaving} onChange={(event) => updateDraft("allowedDomains", event.target.value)} placeholder="careers.example.com，jobs.example.com" value={draft.allowedDomains} /></label>
-        <label>来源备注<textarea disabled={inactive || isSaving} onChange={(event) => updateDraft("sourceNote", event.target.value)} value={draft.sourceNote} /></label>
-        <div className="company-watchlist-form-actions">
-          <button className="workbench-touch-target" disabled={inactive || isSaving} type="submit">{editingItem ? "保存修改" : "保存目标公司"}</button>
-          {editingItem ? <button className="workbench-touch-target" disabled={isSaving} onClick={() => { setEditingItemId(null); setDraft(emptyDraft); setMessage(""); }} type="button">取消编辑</button> : null}
-        </div>
-      </form>
-      {message ? <p aria-live="polite" className="profile-status" role="status">{message}</p> : null}
-    </section>
-
     <section aria-labelledby="company-watchlist-ledger-title" className="company-watchlist-section">
       <h2 id="company-watchlist-ledger-title">已登记来源</h2>
       {overview.items.length ? <ol className="company-watchlist-list">{overview.items.map((item, index) => <li key={item.itemId}>
@@ -250,6 +243,25 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth, ini
         </article>
       </li>)}</ol> : <p className="profile-next-step">尚未登记目标公司。添加第一个公开来源后，它会成为优先级 01。</p>}
     </section>
+    {isEditing ? <section aria-labelledby="company-watchlist-form-title" className="company-watchlist-section company-watchlist-edit-section">
+      <div className="company-watchlist-section-heading"><div><p>公开来源编辑</p><h2 id="company-watchlist-form-title">{editingItem ? `编辑 ${editingItem.canonicalCompanyName}` : "添加目标公司"}</h2></div><p>保存后会重新读取该来源状态</p></div>
+      <p className="company-watchlist-notice">{safetyNotice}</p>
+      {message ? <p aria-live="polite" className="profile-status" role="status">{message}</p> : null}
+      <form className="company-watchlist-form" onSubmit={save}>
+        <label>公司规范名称<input aria-invalid={message === "请填写公司规范名称。"} disabled={inactive || isSaving} onChange={(event) => updateDraft("canonicalCompanyName", event.target.value)} value={draft.canonicalCompanyName} /></label>
+        <label>公开招聘入口<input aria-invalid={message.includes("公开招聘入口") || message.includes("有效的公开招聘入口")} disabled={inactive || isSaving} inputMode="url" onChange={(event) => updateDraft("careersUrl", event.target.value)} value={draft.careersUrl} /></label>
+        <label>允许域<input disabled={inactive || isSaving} onChange={(event) => updateDraft("allowedDomains", event.target.value)} placeholder="careers.example.com，jobs.example.com" value={draft.allowedDomains} /></label>
+        <label>来源备注<textarea disabled={inactive || isSaving} onChange={(event) => updateDraft("sourceNote", event.target.value)} value={draft.sourceNote} /></label>
+        <div className="company-watchlist-form-actions">
+          <button className="workbench-touch-target" disabled={inactive || isSaving} type="submit">{editingItem ? "保存修改" : "保存目标公司"}</button>
+          {overview.items.length ? <button className="workbench-touch-target" disabled={isSaving} onClick={cancelEditing} type="button">取消编辑</button> : null}
+        </div>
+      </form>
+    </section> : <section aria-label="公开来源操作" className="company-watchlist-section company-watchlist-edit-section">
+      <div className="company-watchlist-section-heading"><div><p>公开来源</p><h2>继续维护来源</h2></div><p>新增来源或编辑已登记公司</p></div>
+      {message ? <p aria-live="polite" className="profile-status" role="status">{message}</p> : null}
+      <button className="workbench-touch-target" disabled={inactive || isSaving} onClick={startCreating} type="button">新增目标公司</button>
+    </section>}
     {capabilitySources.length ? <section aria-labelledby="source-capabilities-title" className="company-watchlist-section" id="source-capabilities">
       <h2 id="source-capabilities-title">来源能力</h2>
       <p>能力是来源稳定支持边界，不会因本次诊断结果扩大或缩小。</p>

@@ -52,7 +52,13 @@ function journeyStep(page: Page, title: string) {
   return journey(page).getByRole("heading", { name: title }).locator("xpath=ancestor::li");
 }
 
+async function expandJourney(page: Page): Promise<void> {
+  const disclosure = journey(page).getByText(/查看完整旅程（6 步）/u).locator("xpath=ancestor::details");
+  if (await disclosure.getAttribute("open") === null) await disclosure.getByText(/查看完整旅程（6 步）/u).click();
+}
+
 async function expectJourneyStep(page: Page, title: string, status: JourneyStatus, current = false): Promise<void> {
+  await expandJourney(page);
   const step = journeyStep(page, title);
   await expect(step).toHaveAttribute("data-status", status);
   await expect(step.getByText({ completed: "已完成", in_progress: "进行中", needs_action: "需要处理", waiting: "等待开始" }[status], { exact: true })).toBeVisible();
@@ -61,7 +67,8 @@ async function expectJourneyStep(page: Page, title: string, status: JourneyStatu
 
 async function expectJourneyVector(page: Page, expected: JourneyStatus[]): Promise<void> {
   await expect(journey(page)).toBeVisible();
-  const actual = await journey(page).getByRole("listitem").evaluateAll((steps) => steps.map((step) => ({
+  await expandJourney(page);
+  const actual = await journey(page).getByRole("list", { name: "完整推荐旅程" }).getByRole("listitem").evaluateAll((steps) => steps.map((step) => ({
     title: step.querySelector("h3")?.textContent,
     status: step.getAttribute("data-status"),
   })));
@@ -87,7 +94,8 @@ async function readinessVector(request: APIRequestContext, token: string, target
 
 async function expectActiveJourney(page: Page, currentTitle: string): Promise<void> {
   await expect(journey(page)).toBeVisible();
-  await expect(journey(page).getByRole("list")).toBeVisible();
+  await expandJourney(page);
+  await expect(journey(page).getByRole("list", { name: "完整推荐旅程" })).toBeVisible();
   await expect(journeyStep(page, currentTitle)).toHaveAttribute("aria-current", "step");
 }
 

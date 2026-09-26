@@ -6,9 +6,9 @@ export function HeroSection() {
   return (
     <section className="hero-section container" aria-labelledby="hero-title">
       <div className="hero-intro">
-        <p className="hero-eyebrow">晨间求职内参 · 今日行动优先</p>
-        <h1 id="hero-title">今天，只处理最值得投的 3 件事</h1>
-        <p className="hero-summary">推荐、确认和材料准备，按价值排好顺序。</p>
+        <p className="hero-eyebrow">面向中高级技术岗位的求职协作</p>
+        <h1 id="hero-title">每天先看值得你判断的机会</h1>
+        <p className="hero-summary">把岗位证据、个人画像和下一步行动放在同一处，让决定更清晰。</p>
         <Link
           className={`${buttonVariants({ variant: "default", size: "lg" })} marketing-cta`}
           href="/login?returnTo=%2Fhome"
@@ -21,7 +21,7 @@ export function HeroSection() {
 
       <aside aria-label="Copilot 示例运行状态" className="copilot-status">
         <p className="copilot-annotation">由你确认后才继续</p>
-        <p className="copilot-status-title">Copilot Agent</p>
+        <p className="copilot-status-title">今日工作状态</p>
         <dl>
           <div>
             <dt>正在检查 12 家目标公司（示例）</dt>

@@ -41,6 +41,9 @@ async function signIn(page: Page, request: APIRequestContext, project: string): 
 
 async function importAndEvaluate(page: Page, content: string, expected: string, project: string): Promise<void> {
   const title = content.match(/^#\s+(.+)$/mu)?.[1];
+  if (!await page.getByRole("textbox", { name: "岗位描述" }).isVisible()) {
+    await page.getByRole("button", { name: "导入新岗位" }).click();
+  }
   await page.getByRole("textbox", { name: "岗位描述" }).fill(content);
   const submit = page.getByRole("button", { name: "导入岗位" });
   if (project === "Mobile Safari") await submit.tap(); else await submit.click();

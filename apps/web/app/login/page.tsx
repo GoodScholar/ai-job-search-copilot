@@ -22,8 +22,9 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
     : "本地开发登录";
 
   return (
-    <main className="container py-16 sm:py-24">
-      <section aria-labelledby="login-boundary-title" className="max-w-2xl border-y border-[var(--rule)] py-10">
+    <main className="container login-shell">
+      <section aria-labelledby="login-boundary-title" className="login-panel">
+        <p className="login-product-name">Job Copilot</p>
         <p className="section-kicker">登录边界 · 邀请制 Beta</p>
         <h1 id="login-boundary-title" className="mt-3 text-[clamp(2.25rem,5vw,4rem)] font-bold tracking-[-0.04em] leading-[1.05]">
           登录尚未开放
@@ -40,7 +41,7 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
         <dl className="mt-8 border-t border-[var(--rule)]">
           <div className="grid gap-1 border-b border-[var(--rule)] py-4 sm:grid-cols-[9rem_1fr] sm:gap-4">
             <dt className="text-sm font-bold">身份适配器</dt>
-            <dd className="m-0 text-[var(--emerald-strong)]">{adapterStatus}</dd>
+            <dd className="m-0 text-[var(--accent-strong)]">{adapterStatus}</dd>
           </div>
           <div className="grid gap-1 border-b border-[var(--rule)] py-4 sm:grid-cols-[9rem_1fr] sm:gap-4">
             <dt className="text-sm font-bold">站内回跳路径</dt>

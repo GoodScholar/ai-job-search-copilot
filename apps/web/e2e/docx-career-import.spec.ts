@@ -41,6 +41,7 @@ async function uploadDocx(page: Page, file: { name: string; mimeType: string; bu
   });
   const input = page.getByLabel("选择 Markdown、DOCX 或 PDF 职业资料");
   try {
+    if (!await input.isVisible()) await page.getByRole("button", { name: "导入职业资料" }).click();
     await input.setInputFiles(file);
     const confirmation = page.getByLabel(/我已检查该文件/);
     await expect(confirmation).not.toBeChecked();

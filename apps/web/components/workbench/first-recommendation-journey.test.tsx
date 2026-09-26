@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { FirstRecommendationJourneyPanel } from "./first-recommendation-journey";
@@ -20,13 +20,31 @@ const activeJourney = (interactionVersion = 7) => ({
   steps: steps.map(([id, title, status, stateLabel, label, href]) => ({ id, title, status, stateLabel, impact: `完成${title}后，才能继续获得可信推荐。`, action: { label, href } })),
 });
 
+function fullJourneyDisclosure() {
+  return screen.getByText("查看完整旅程（6 步）").closest("details")!;
+}
+
+async function openFullJourney(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByText("查看完整旅程（6 步）"));
+}
+
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-it("以语义化步骤显示六个结果导向标题、状态、影响与站内入口", () => {
+it("优先显示当前步骤，并在展开完整旅程后保留六个结果导向标题、状态、影响与站内入口", async () => {
+  const user = userEvent.setup();
   render(<FirstRecommendationJourneyPanel journey={activeJourney()} onAuthoritativeRefresh={vi.fn()} />);
 
   const region = screen.getByRole("region", { name: "首次推荐旅程" });
-  expect(region.querySelector("ol")).toBeTruthy();
+  expect(screen.getByText(/当前步骤：准备可用职业资料/u)).toBeVisible();
+  expect(fullJourneyDisclosure()).not.toHaveAttribute("open");
+  expect(screen.getByRole("heading", { name: "准备可用职业资料" })).not.toBeVisible();
+
+  await openFullJourney(user);
+  expect(fullJourneyDisclosure()).toHaveAttribute("open");
+  const fullJourney = screen.getByRole("list", { name: "完整推荐旅程" });
+  expect(fullJourney).toBeTruthy();
+  expect(within(fullJourney).getAllByRole("listitem")).toHaveLength(6);
+  expect(within(fullJourney).getAllByRole("listitem").map((item) => item.querySelector("h3")?.textContent)).toEqual(steps.map(([, title]) => title));
   for (const [, title, , stateLabel, label, href] of steps) {
     expect(screen.getByRole("heading", { name: title })).toBeVisible();
     expect(screen.getAllByText(stateLabel).length).toBeGreaterThan(0);
@@ -34,6 +52,7 @@ it("以语义化步骤显示六个结果导向标题、状态、影响与站内�
     expect(screen.getByRole("link", { name: label })).toHaveAttribute("href", href);
   }
   expect(screen.getByRole("heading", { name: "准备可用职业资料" }).closest("li")).toHaveAttribute("aria-current", "step");
+  expect(region.querySelectorAll("li[aria-current=step]")).toHaveLength(1);
   for (const [, title, status] of steps) {
     expect(screen.getByRole("heading", { name: title }).querySelector(`[aria-hidden="true"][data-status="${status}"]`)).toBeTruthy();
   }
@@ -143,6 +162,7 @@ it("同一版本的新权威投影清除旧关闭错误", async () => {
 
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "建立可信求职画像" }).closest("li")).toHaveAttribute("aria-current", "step");
+  await openFullJourney(user);
   expect(screen.getByText("这是新的权威影响说明。")).toBeVisible();
 });
 

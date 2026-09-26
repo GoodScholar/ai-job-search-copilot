@@ -37,6 +37,7 @@ test("文本型 PDF 经完整导入链路显示页码证据，无文本层 PDF �
   await expect(page.getByText("TypeScript", { exact: true })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText("第 2 页", { exact: true })).toBeVisible();
 
+  await page.getByRole("button", { name: "导入职业资料" }).click();
   await input.setInputFiles({ name: "scanned.pdf", mimeType: "application/pdf", buffer: createPdf([]) });
   await expect(page.getByRole("status")).toHaveText("该 PDF 没有可读取的文本层，请上传文本型 PDF。");
   await expect(page.getByRole("button", { name: "上传并解析" })).toBeDisabled();

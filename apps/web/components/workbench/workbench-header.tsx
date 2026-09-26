@@ -12,7 +12,10 @@ export function WorkbenchHeader() {
   return (
     <header className="workbench-header">
       <div className="container workbench-header-inner">
-        <Link className="workbench-brand workbench-touch-target" href="/home">AI Job Search Copilot</Link>
+        <Link aria-label="AI Job Search Copilot" className="workbench-brand workbench-touch-target" href="/home">
+          <span>Job Copilot</span>
+          <small>你的求职工作台</small>
+        </Link>
         <WorkbenchNavigation />
         <form action={submitEndSession}>
           <Button className="workbench-signout workbench-touch-target" size="lg" type="submit" variant="outline">退出</Button>

@@ -24,6 +24,7 @@ export function JobTargetsView({ initialOverview }: { initialOverview: JobTarget
   const [draft, setDraft] = useState<TargetDraft>(emptyDraft);
   const [priority, setPriority] = useState<"primary" | "secondary">("primary");
   const [editingTargetId, setEditingTargetId] = useState<string | null>(null);
+  const [isEditing, setIsEditing] = useState(initialOverview.targets.length === 0);
   const [message, setMessage] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const editingTarget = overview.targets.find((target) => target.targetId === editingTargetId) ?? null;
@@ -32,9 +33,12 @@ export function JobTargetsView({ initialOverview }: { initialOverview: JobTarget
   const secondaryUnavailable = otherActiveTargets.filter((target) => target.priority === "secondary").length >= 2;
   const selectedPriority = editingTarget ? priority : priority === "primary" && primaryUnavailable ? secondaryUnavailable ? null : "secondary" : priority === "secondary" && secondaryUnavailable ? primaryUnavailable ? null : "primary" : priority;
   const noAvailableSlot = !editingTarget && selectedPriority === null;
+  const activeTargetCount = overview.targets.filter((target) => target.state === "active").length;
   function updateDraft<Key extends keyof TargetDraft>(key: Key, value: TargetDraft[Key]) { setDraft((previous) => ({ ...previous, [key]: value })); }
-  function selectSuggestion(roleFamily: string) { setDraft((previous) => ({ ...previous, roleFamily })); setEditingTargetId(null); setMessage(""); }
-  function editTarget(target: JobTarget) { setDraft(draftFrom(target.constraints)); setPriority(target.priority); setEditingTargetId(target.targetId); setMessage(""); }
+  function startNewTarget() { setDraft(emptyDraft); setPriority("primary"); setEditingTargetId(null); setIsEditing(true); setMessage(""); }
+  function cancelEditing() { setDraft(emptyDraft); setPriority("primary"); setEditingTargetId(null); setIsEditing(false); setMessage(""); }
+  function selectSuggestion(roleFamily: string) { setDraft((previous) => ({ ...previous, roleFamily })); setEditingTargetId(null); setIsEditing(true); setMessage(""); }
+  function editTarget(target: JobTarget) { setDraft(draftFrom(target.constraints)); setPriority(target.priority); setEditingTargetId(target.targetId); setIsEditing(true); setMessage(""); }
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (noAvailableSlot) { setMessage("主目标和两个次目标均已设置。如需新增，请先停用或修改已有目标。"); return; }
@@ -49,7 +53,7 @@ export function JobTargetsView({ initialOverview }: { initialOverview: JobTarget
       if (!response.ok) { setMessage(response.status === 409 ? "目标已在其他位置更新，请刷新后重试。" : "暂时无法保存求职目标，请稍后重试。"); return; }
       const nextOverview = JobTargetOverviewSchema.safeParse(await response.json());
       if (!nextOverview.success) { setMessage("暂时无法保存求职目标，请稍后重试。"); return; }
-      setOverview(nextOverview.data); setEditingTargetId(null); setDraft(emptyDraft); setPriority("primary"); setMessage("求职目标已保存。");
+      setOverview(nextOverview.data); setEditingTargetId(null); setDraft(emptyDraft); setPriority("primary"); setIsEditing(false); setMessage("求职目标已保存。");
     } catch { setMessage("暂时无法保存求职目标，请稍后重试。"); } finally { setIsSaving(false); }
   }
   async function deactivate(target: JobTarget) {
@@ -59,20 +63,51 @@ export function JobTargetsView({ initialOverview }: { initialOverview: JobTarget
       if (!response.ok) { setMessage(response.status === 409 ? "目标已在其他位置更新，请刷新后重试。" : "暂时无法停用求职目标，请稍后重试。"); return; }
       const nextOverview = JobTargetOverviewSchema.safeParse(await response.json());
       if (!nextOverview.success) { setMessage("暂时无法停用求职目标，请稍后重试。"); return; }
-      setOverview(nextOverview.data); if (editingTargetId === target.targetId) { setEditingTargetId(null); setDraft(emptyDraft); } setMessage("求职目标已停用。");
+      setOverview(nextOverview.data); if (editingTargetId === target.targetId) { setEditingTargetId(null); setDraft(emptyDraft); setIsEditing(false); } setMessage("求职目标已停用。");
     } catch { setMessage("暂时无法停用求职目标，请稍后重试。"); } finally { setIsSaving(false); }
   }
   return <main className="container profile-main job-targets-main">
-    <section aria-labelledby="job-targets-title" className="profile-intro"><p className="workbench-kicker">求职画像 · 目标确认</p><h1 id="job-targets-title">确认你的求职目标</h1><p>设置一个主目标与最多两个次目标；系统会据此筛选岗位机会，但不会代表你执行外部行动。</p></section>
-    <section aria-labelledby="job-target-suggestions-title" className="job-targets-section"><h2 id="job-target-suggestions-title">候选岗位方向</h2><p>候选岗位方向只会预填表单。请核对建议依据并手动确认后再保存。</p><ol className="job-target-suggestion-list">{overview.suggestions.slice(0, 5).map((suggestion) => <li key={suggestion.suggestionId}><article><h3>{suggestion.roleFamily}</h3><p>{suggestion.rationale}</p><strong>建议依据</strong><ul>{suggestion.evidence.map((evidence) => <li key={`${evidence.factId}-${evidence.revisionId}`}>{evidence.label}</li>)}</ul><button className="workbench-touch-target" onClick={() => selectSuggestion(suggestion.roleFamily)} type="button">使用 {suggestion.roleFamily} 建议</button></article></li>)}</ol></section>
-    <section aria-labelledby="job-target-form-title" className="job-targets-section"><h2 id="job-target-form-title">{editingTarget ? `修改 ${editingTarget.constraints.roleFamily}` : "手动确认求职目标"}</h2>{noAvailableSlot ? <p className="profile-status" role="status">主目标和两个次目标均已设置。如需新增，请先停用或修改已有目标。</p> : null}<form className="job-target-form" onSubmit={submit}>
-      <fieldset><legend>目标优先级</legend><label><input checked={selectedPriority === "primary"} disabled={primaryUnavailable} name="priority" onChange={() => setPriority("primary")} type="radio" value="primary" /> 主目标</label><label><input checked={selectedPriority === "secondary"} disabled={secondaryUnavailable} name="priority" onChange={() => setPriority("secondary")} type="radio" value="secondary" /> 次目标</label></fieldset>
-      <label>目标岗位方向<input onChange={(event) => updateDraft("roleFamily", event.target.value)} required value={draft.roleFamily} /></label><label>资历级别<input onChange={(event) => updateDraft("seniority", event.target.value)} value={draft.seniority} /></label><label>意向地点（用逗号分隔）<input onChange={(event) => updateDraft("locations", event.target.value)} value={draft.locations} /></label>
-      <label>工作方式<select aria-label="工作方式" multiple onChange={(event) => updateDraft("workModes", Array.from(event.currentTarget.selectedOptions, (option) => option.value as JobTargetConstraints["workModes"][number]))} value={draft.workModes}>{Object.entries(workModeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>是否接受搬迁<select onChange={(event) => updateDraft("relocation", event.target.value as TargetDraft["relocation"])} value={draft.relocation}>{Object.entries(relocationLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-      <div className="job-target-salary-fields"><label>最低薪资<input inputMode="numeric" min="0" onChange={(event) => updateDraft("minimumSalary", event.target.value)} type="number" value={draft.minimumSalary} /></label><label>最高薪资<input inputMode="numeric" min="0" onChange={(event) => updateDraft("maximumSalary", event.target.value)} type="number" value={draft.maximumSalary} /></label><label>薪资周期<select onChange={(event) => updateDraft("salaryPeriod", event.target.value as TargetDraft["salaryPeriod"])} value={draft.salaryPeriod}><option value="month">月</option><option value="year">年</option></select></label><label>薪资币种<select onChange={(event) => updateDraft("salaryCurrency", event.target.value)} value={draft.salaryCurrency}><option value="CNY">CNY</option><option value="USD">USD</option><option value="HKD">HKD</option></select></label></div>
-      <label>意向行业（用逗号分隔）<input onChange={(event) => updateDraft("industries", event.target.value)} value={draft.industries} /></label><fieldset><legend>不可接受条件</legend><label>不接受的公司（用逗号分隔）<input onChange={(event) => updateDraft("excludedCompanies", event.target.value)} value={draft.excludedCompanies} /></label><label>不接受的行业（用逗号分隔）<input onChange={(event) => updateDraft("excludedIndustries", event.target.value)} value={draft.excludedIndustries} /></label><label><input checked={draft.excludeOutsourcing} onChange={(event) => updateDraft("excludeOutsourcing", event.target.checked)} type="checkbox" /> 不接受外包</label><label><input checked={draft.excludeDispatch} onChange={(event) => updateDraft("excludeDispatch", event.target.checked)} type="checkbox" /> 不接受派遣</label><label><input checked={draft.excludeHeadhunter} onChange={(event) => updateDraft("excludeHeadhunter", event.target.checked)} type="checkbox" /> 不接受猎头</label><label>其他不可接受条件（用逗号分隔）<input onChange={(event) => updateDraft("otherDealBreakers", event.target.value)} value={draft.otherDealBreakers} /></label></fieldset>
-      <button className="profile-upload-button workbench-touch-target" disabled={isSaving || noAvailableSlot} type="submit">{editingTarget ? "保存修改" : noAvailableSlot ? "保存求职目标" : selectedPriority === "primary" ? "保存主目标" : "保存次目标"}</button>
-    </form>{message ? <p aria-live="polite" className="profile-status" role="status">{message}</p> : null}</section>
-    <section aria-labelledby="job-target-history-title" className="job-targets-section"><h2 id="job-target-history-title">已确认目标与历史</h2>{overview.targets.length ? <ol className="job-target-history-list">{overview.targets.map((target) => <li key={target.targetId}><article><div><strong>{target.constraints.roleFamily}</strong><span>{targetStatus(target)}</span></div><p>版本 {target.version} · {target.constraints.seniority ?? "未限定资历"}</p><p>{target.constraints.locations.length ? target.constraints.locations.join("、") : "地点未限定"} · {target.constraints.workModes.map((mode) => workModeLabels[mode]).join("、") || "工作方式未限定"}</p>{target.state === "active" ? <div className="profile-fact-actions"><a aria-label={`维护 ${target.constraints.roleFamily} 的目标公司 Watchlist`} className="workbench-touch-target job-target-watchlist-link" href={`/profile/targets/${target.targetId}/watchlist`}>维护目标公司 Watchlist</a><button aria-label={`修改 ${target.constraints.roleFamily}`} className="workbench-touch-target" onClick={() => editTarget(target)} type="button">修改</button><button aria-label={`停用 ${target.constraints.roleFamily}`} className="workbench-touch-target" disabled={isSaving} onClick={() => void deactivate(target)} type="button">停用</button></div> : null}</article></li>)}</ol> : <p className="profile-next-step">尚未保存求职目标。</p>}</section>
+    <section aria-labelledby="job-targets-title" className="profile-intro">
+      <p className="workbench-kicker">求职画像 · 目标确认</p>
+      <h1 id="job-targets-title">确认你的求职目标</h1>
+      <p>设置一个主目标与最多两个次目标；系统会据此筛选岗位机会，但不会代表你执行外部行动。</p>
+      <dl aria-label="当前目标摘要" className="job-target-summary">
+        <div><dt>已启用目标</dt><dd>{activeTargetCount}</dd></div>
+        <div><dt>仍可设置</dt><dd>{Math.max(0, 3 - activeTargetCount)}</dd></div>
+      </dl>
+    </section>
+
+    <section aria-labelledby="job-target-form-title" className="job-targets-section job-target-primary-action">
+      {isEditing ? <>
+        <div className="job-target-section-heading">
+          <div><p>目标编辑</p><h2 id="job-target-form-title">{editingTarget ? `修改 ${editingTarget.constraints.roleFamily}` : "确认一个求职目标"}</h2></div>
+          <p>{editingTarget ? "正在编辑已保存目标" : "保存后才会影响后续筛选"}</p>
+        </div>
+        {noAvailableSlot ? <p className="profile-status" role="status">主目标和两个次目标均已设置。如需新增，请先停用或修改已有目标。</p> : null}
+      </> : <div className="job-target-section-heading">
+        <div><p>下一步</p><h2 id="job-target-form-title">添加新的求职目标</h2></div>
+        <button className="profile-upload-button workbench-touch-target" disabled={noAvailableSlot} onClick={startNewTarget} type="button">新增求职目标</button>
+      </div>}
+      {!isEditing && noAvailableSlot ? <p className="profile-status" role="status">主目标和两个次目标均已设置。如需新增，请先停用或修改已有目标。</p> : null}
+      {message ? <p aria-live="polite" className="profile-status" role="status">{message}</p> : null}
+      {isEditing ? <form className="job-target-form" onSubmit={submit}>
+        <fieldset><legend>目标优先级</legend><label><input checked={selectedPriority === "primary"} disabled={primaryUnavailable} name="priority" onChange={() => setPriority("primary")} type="radio" value="primary" /> 主目标</label><label><input checked={selectedPriority === "secondary"} disabled={secondaryUnavailable} name="priority" onChange={() => setPriority("secondary")} type="radio" value="secondary" /> 次目标</label></fieldset>
+        <fieldset><legend>岗位与地点</legend><label>目标岗位方向<input onChange={(event) => updateDraft("roleFamily", event.target.value)} required value={draft.roleFamily} /></label><label>资历级别<input onChange={(event) => updateDraft("seniority", event.target.value)} value={draft.seniority} /></label><label>意向地点（用逗号分隔）<input onChange={(event) => updateDraft("locations", event.target.value)} value={draft.locations} /></label><label>工作方式<select aria-label="工作方式" multiple onChange={(event) => updateDraft("workModes", Array.from(event.currentTarget.selectedOptions, (option) => option.value as JobTargetConstraints["workModes"][number]))} value={draft.workModes}>{Object.entries(workModeLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label>是否接受搬迁<select onChange={(event) => updateDraft("relocation", event.target.value as TargetDraft["relocation"])} value={draft.relocation}>{Object.entries(relocationLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label></fieldset>
+        <fieldset><legend>薪资与行业</legend><div className="job-target-salary-fields"><label>最低薪资<input inputMode="numeric" min="0" onChange={(event) => updateDraft("minimumSalary", event.target.value)} type="number" value={draft.minimumSalary} /></label><label>最高薪资<input inputMode="numeric" min="0" onChange={(event) => updateDraft("maximumSalary", event.target.value)} type="number" value={draft.maximumSalary} /></label><label>薪资周期<select onChange={(event) => updateDraft("salaryPeriod", event.target.value as TargetDraft["salaryPeriod"])} value={draft.salaryPeriod}><option value="month">月</option><option value="year">年</option></select></label><label>薪资币种<select onChange={(event) => updateDraft("salaryCurrency", event.target.value)} value={draft.salaryCurrency}><option value="CNY">CNY</option><option value="USD">USD</option><option value="HKD">HKD</option></select></label></div><label>意向行业（用逗号分隔）<input onChange={(event) => updateDraft("industries", event.target.value)} value={draft.industries} /></label></fieldset>
+        <fieldset><legend>不可接受条件</legend><label>不接受的公司（用逗号分隔）<input onChange={(event) => updateDraft("excludedCompanies", event.target.value)} value={draft.excludedCompanies} /></label><label>不接受的行业（用逗号分隔）<input onChange={(event) => updateDraft("excludedIndustries", event.target.value)} value={draft.excludedIndustries} /></label><label><input checked={draft.excludeOutsourcing} onChange={(event) => updateDraft("excludeOutsourcing", event.target.checked)} type="checkbox" /> 不接受外包</label><label><input checked={draft.excludeDispatch} onChange={(event) => updateDraft("excludeDispatch", event.target.checked)} type="checkbox" /> 不接受派遣</label><label><input checked={draft.excludeHeadhunter} onChange={(event) => updateDraft("excludeHeadhunter", event.target.checked)} type="checkbox" /> 不接受猎头</label><label>其他不可接受条件（用逗号分隔）<input onChange={(event) => updateDraft("otherDealBreakers", event.target.value)} value={draft.otherDealBreakers} /></label></fieldset>
+        <div className="profile-fact-actions"><button className="profile-upload-button workbench-touch-target" disabled={isSaving || noAvailableSlot} type="submit">{editingTarget ? "保存修改" : noAvailableSlot ? "保存求职目标" : selectedPriority === "primary" ? "保存主目标" : "保存次目标"}</button>{overview.targets.length ? <button className="workbench-touch-target" disabled={isSaving} onClick={cancelEditing} type="button">取消编辑</button> : null}</div>
+      </form> : null}
+    </section>
+
+    <section aria-labelledby="job-target-history-title" className="job-targets-section">
+      <h2 id="job-target-history-title">已确认目标</h2>
+      {overview.targets.length ? <ol className="job-target-history-list">{overview.targets.map((target) => <li key={target.targetId}><article><div><strong>{target.constraints.roleFamily}</strong><span>{targetStatus(target)}</span></div><p>版本 {target.version} · {target.constraints.seniority ?? "未限定资历"}</p><p>{target.constraints.locations.length ? target.constraints.locations.join("、") : "地点未限定"} · {target.constraints.workModes.map((mode) => workModeLabels[mode]).join("、") || "工作方式未限定"}</p>{target.state === "active" ? <div className="profile-fact-actions"><a aria-label={`维护 ${target.constraints.roleFamily} 的目标公司 Watchlist`} className="workbench-touch-target job-target-watchlist-link" href={`/profile/targets/${target.targetId}/watchlist`}>维护目标公司 Watchlist</a><button aria-label={`修改 ${target.constraints.roleFamily}`} className="workbench-touch-target" onClick={() => editTarget(target)} type="button">修改</button><button aria-label={`停用 ${target.constraints.roleFamily}`} className="workbench-touch-target" disabled={isSaving} onClick={() => void deactivate(target)} type="button">停用</button></div> : null}</article></li>)}</ol> : <p className="profile-next-step">尚未保存求职目标。</p>}
+    </section>
+
+    <section aria-labelledby="job-target-suggestions-title" className="job-targets-section">
+      <h2 id="job-target-suggestions-title">候选岗位方向</h2>
+      <p>候选岗位方向只会预填表单。请核对建议依据并手动确认后再保存。</p>
+      {overview.suggestions.length ? <ol className="job-target-suggestion-list">{overview.suggestions.slice(0, 5).map((suggestion) => <li key={suggestion.suggestionId}><article><h3>{suggestion.roleFamily}</h3><p>{suggestion.rationale}</p><strong>建议依据</strong><ul>{suggestion.evidence.map((evidence) => <li key={`${evidence.factId}-${evidence.revisionId}`}>{evidence.label}</li>)}</ul><button className="workbench-touch-target" onClick={() => selectSuggestion(suggestion.roleFamily)} type="button">使用 {suggestion.roleFamily} 建议</button></article></li>)}</ol> : <p className="profile-next-step">暂无可用候选岗位方向。</p>}
+    </section>
   </main>;
 }
