@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
 import type { Database } from "@job-copilot/database";
 import { GREENHOUSE_JOB_DISCOVERY_ADAPTER, GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION } from "@job-copilot/contracts/agent-runs";
+import { JobNormalizerOutputSchema } from "@job-copilot/contracts/job-imports";
 import type { RecommendationDiscoveryFacts } from "@job-copilot/contracts/recommendation-discovery-facts";
 
 import type { AuditTrail } from "./audit-trail";
 import { canonicalJsonBytes, type DiscoveryContentStore } from "./agent-run-processor";
 import { createJobDiscoveryPersistence, type DiscoveryDetail, type StoredDiscoveryObject } from "./job-discovery-persistence";
+import { normalizeTrustedDetails } from "./trusted-job-normalization";
 import { createJobDiscoveryLeadRepository } from "./job-discovery-leads";
 import { createLayeredPublicJobDiscoveryWorkflow, type LayeredPublicJobDiscoveryWorkflow } from "./layered-public-job-discovery-workflow";
 import { createVerifiedJobSourceGate, type VerifiedJobEvidenceStore } from "./verified-job-source-gate";
@@ -72,7 +74,7 @@ export function createLayeredPublicJobDiscoveryRuntime(input: Omit<WorkflowDepen
   const gate = createVerifiedJobSourceGate({ db: input.db, contentStore: input.evidenceStore, id: input.id });
   const persistence = createJobDiscoveryPersistence({ db: input.db, id: input.id, auditTrail: input.auditTrail });
   const trustedSources: WorkflowDependencies["trustedSources"] = {
-    discover: async ({ userId, runId, claimToken, now, executionSpec, signal, beforeRequest }) => {
+    discover: async ({ userId, runId, claimToken, now, executionSpec, signal, beforeRequest, normalizePosting }) => {
       const frozenSources = executionSpec.sourceScope.trustedSources;
       if (frozenSources.length === 0) return { succeeded: false, verifiedSourcePostingVersionIds: [], discoveryFacts: [] };
       const sourceIssues: Array<{ code: string; affectedCount: number }> = [];
@@ -135,14 +137,17 @@ export function createLayeredPublicJobDiscoveryRuntime(input: Omit<WorkflowDepen
           discoveryFacts.push({ sourceId: source.sourceId, checked: true, outcome: "verification_failed", losses: detailLosses.length ? detailLosses : [{ code: "VERIFICATION_FAILED", retryable: false }] });
           continue;
         }
-        const storedDetails = details.map((detail) => ({ detail, stored: rawObject({ id: input.id, userId, runId, sourceId: source.sourceId, detail }) }));
+        const normalizedDetails = normalizePosting && executionSpec.model
+          ? await normalizeTrustedDetails({ db: input.db, userId, metadata: executionSpec.model, details, normalizePosting: async (value) => JobNormalizerOutputSchema.parse(await normalizePosting(value)) })
+          : details;
+        const storedDetails = normalizedDetails.map((detail) => ({ detail, stored: rawObject({ id: input.id, userId, runId, sourceId: source.sourceId, detail }) }));
         const storedObjects = storedDetails.map(({ stored }) => stored);
         try {
           for (const { detail, stored } of storedDetails) {
             await input.contentStore.put({ objectKey: stored.objectKey, bytes: canonicalJsonBytes(detail.rawPayload), mediaType: "application/json", runId });
           }
           const persisted = await persistence.persistTrustedLayeredDiscovery({
-            userId, runId, claimToken, sourceId: source.sourceId, details, storedObjects, now,
+            userId, runId, claimToken, sourceId: source.sourceId, details: normalizedDetails, storedObjects, now,
           });
           verifiedSourcePostingVersionIds.push(...persisted.sourcePostingVersionIds);
           discoveryFacts.push({ sourceId: source.sourceId, checked: true, outcome: "credible_results", losses: detailLosses });

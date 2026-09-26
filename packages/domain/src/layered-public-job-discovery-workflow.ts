@@ -81,7 +81,7 @@ function boundedRejectedCandidateCount(value: unknown): number { return typeof v
 
 /** v4 安全链路；Slice 8 只组装 provider/config，不能改变 pending → extract → fetch → gate 的顺序。 */
 export function createLayeredPublicJobDiscoveryWorkflow(deps: {
-  trustedSources: { discover(input: { userId: string; runId: string; claimToken: string; now: Date; executionSpec: LayeredSpec; signal: AbortSignal; beforeRequest(watchlistItemId: string): Promise<void> }): Promise<{ succeeded: boolean; verifiedSourcePostingVersionIds: string[]; sourceIssues?: Array<{ code: string; affectedCount: number }>; discoveryFacts?: RecommendationDiscoveryFacts["trusted"] }> };
+  trustedSources: { discover(input: { userId: string; runId: string; claimToken: string; now: Date; executionSpec: LayeredSpec; signal: AbortSignal; beforeRequest(watchlistItemId: string): Promise<void>; normalizePosting?: (input: { identity: string; content: string }) => Promise<unknown> }): Promise<{ succeeded: boolean; verifiedSourcePostingVersionIds: string[]; sourceIssues?: Array<{ code: string; affectedCount: number }>; discoveryFacts?: RecommendationDiscoveryFacts["trusted"] }> };
   anySearch: { isConfigured?(): boolean; search(input: { runId: string; executionSpec: LayeredSpec; query: Query; signal: AbortSignal; beforeRequest(): Promise<void> }): Promise<{ candidates: Candidate[]; rejectedCandidateCount?: number } | { error: AnySearchProviderError }>; extract(input: { candidate: RecoveredCandidateCapability; signal: AbortSignal; beforeRequest(): Promise<void>; authorizeRecoveredCandidate(input: { queryId: string; candidateFingerprint: string; identity: string; operationIdentity: string }): Promise<boolean> }): Promise<{ normalizedUrl: string } | { error: AnySearchProviderError }> };
   preflight(input: { candidate: IssuedCandidateCapability }): Promise<{ normalizedUrl: string } | null>;
   leads: {
@@ -121,7 +121,7 @@ export function createLayeredPublicJobDiscoveryWorkflow(deps: {
     };
     };
     try {
-    trusted = await deps.trustedSources.discover({ userId: value.userId, runId: value.runId, claimToken: value.claimToken, now: value.now, executionSpec: spec, signal: value.signal, beforeRequest: (watchlistItemId) => value.beforePhysicalOperation({ kind: "search", identity: watchlistItemId }) });
+    trusted = await deps.trustedSources.discover({ userId: value.userId, runId: value.runId, claimToken: value.claimToken, now: value.now, executionSpec: spec, signal: value.signal, beforeRequest: (watchlistItemId) => value.beforePhysicalOperation({ kind: "search", identity: watchlistItemId }), normalizePosting: value.normalizePosting });
     sourcePostingVersionIds.push(...trusted.verifiedSourcePostingVersionIds);
     sourceIssues.push(...(trusted.sourceIssues?.map((issue) => ({ provider: "greenhouse" as const, ...issue })) ?? []));
     if (spec.sourceScope.publicDiscovery.queries.length > 0 && deps.anySearch.isConfigured?.() === false) {

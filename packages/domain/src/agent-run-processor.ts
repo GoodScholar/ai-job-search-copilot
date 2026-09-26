@@ -689,6 +689,9 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
       } catch (error) {
         return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: adapterFailure(error), deadline });
       }
+      if (claimed.run.workflowVersion === "layered-public-job-discovery-v1" && layeredExecutionSpec.model && !deps.jobPostingNormalizerResolver) {
+        return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_MODEL_INVALID_RESPONSE", retryable: false, category: "model_invalid" }, deadline });
+      }
       const modelController = claimed.run.workflowVersion === "deep-match-v1" ? new AbortController() : undefined;
       const layeredController = claimed.run.workflowVersion === "layered-public-job-discovery-v1" ? new AbortController() : undefined;
       const discoveryController = claimed.run.workflowVersion !== "deep-match-v1" && claimed.run.workflowVersion !== "layered-public-job-discovery-v1" ? new AbortController() : undefined;
