@@ -88,6 +88,8 @@ describe("job triage persistence", () => {
     await database.insert(jobOpportunitySources).values({ id: crypto.randomUUID(), userId: input.userId, opportunityId: input.opportunityId, sourcePostingVersionId: input.sourcePostingVersionId, createdAt: now });
     const create = () => database.transaction((transaction) => createFrozenJobTriageInTransaction({ transaction, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, userId: input.userId, requestId: crypto.randomUUID(), opportunityId: input.opportunityId, sourcePostingVersionId: input.sourcePostingVersionId, profileId: input.profileId, profileVersion: 1, targetId: input.targetId, targetVersion: 1, targetConstraints: input.constraints }));
     await expect(create()).resolves.toMatchObject({ reused: false });
+    await database.update(jobSourcePostingVersions).set({ normalizedData: { ...bound, qualifications: { ...bound.qualifications, workMode: { ...bound.qualifications.workMode!, evidence: { ...bound.qualifications.workMode!.evidence, rawValue: "现场" } } } } }).where(eq(jobSourcePostingVersions.id, input.sourcePostingVersionId));
+    await expect(create()).rejects.toThrow("JOB_TRIAGE_NORMALIZATION_INVALID");
     await database.update(jobSourcePostingVersions).set({ normalizedData: { ...bound, fieldEvidence: bound.fieldEvidence.filter((item) => item.field !== "title") } }).where(eq(jobSourcePostingVersions.id, input.sourcePostingVersionId));
     await expect(create()).rejects.toThrow("JOB_TRIAGE_NORMALIZATION_INVALID");
     await expect(database.select().from(jobTriageVersions).where(eq(jobTriageVersions.sourcePostingVersionId, input.sourcePostingVersionId))).resolves.toHaveLength(1);

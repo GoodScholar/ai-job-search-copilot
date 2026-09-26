@@ -253,10 +253,10 @@ function hasCompleteCurrentEvidence(output: JobNormalizerOutput): boolean {
   const evidence = new Map(output.fieldEvidence.map((item) => [item.field, item]));
   for (const field of ["company", "title", "location", "postedAt", "deadline", "description"] as const) {
     const item = evidence.get(field);
-    if (output[field] === null ? Boolean(item) : !item || item.normalizedValue !== output[field] || !/^lines:[1-9][0-9]*-[1-9][0-9]*$/u.test(item.path)) return false;
+    if (output[field] === null ? Boolean(item) : !item || item.normalizedValue !== output[field] || !hasValidEvidencePath(item.path) || !matchesScalarNormalization(field, item.rawValue, output[field])) return false;
   }
-  for (const [field, value] of Object.entries(output.qualifications)) if (value && (value.evidence.field !== field || !value.evidence.rawValue || value.evidence.normalizedValue !== normalizedQualificationValue(value.value) || !/^lines:[1-9][0-9]*-[1-9][0-9]*$/u.test(value.evidence.path))) return false;
-  return output.deadlineProvenance === null || (output.deadline === null && /^lines:[1-9][0-9]*-[1-9][0-9]*$/u.test(output.deadlineProvenance.path));
+  for (const [field, value] of Object.entries(output.qualifications)) if (value && (value.evidence.field !== field || !value.evidence.rawValue || value.evidence.normalizedValue !== normalizedQualificationValue(value.value) || !hasValidEvidencePath(value.evidence.path) || !matchesQualificationNormalization(field, value.evidence.rawValue, value.value))) return false;
+  return output.deadlineProvenance === null || (output.deadline === null && hasValidEvidencePath(output.deadlineProvenance.path) && isInvalidIsoDateTime(output.deadlineProvenance.value));
 }
 
 /** v2+ configured adapters always account for usage; these snapshots must never take a legacy fallback path. */
@@ -309,13 +309,21 @@ export function bindStrictJobNormalizerOutput(raw: z.infer<typeof JobNormalizerM
   });
 }
 
+function hasValidEvidencePath(path: string): boolean {
+  const match = /^lines:(\d+)-(\d+)$/u.exec(path);
+  if (!match) return false;
+  const start = Number(match[1]);
+  const end = Number(match[2]);
+  return Number.isSafeInteger(start) && Number.isSafeInteger(end) && start >= 1 && end >= start;
+}
+
 function evidenceMatchesPath(content: string, path: string, rawValue: string): boolean {
   const match = /^lines:(\d+)-(\d+)$/u.exec(path);
   if (!match) return false;
   const start = Number(match[1]);
   const end = Number(match[2]);
   const lines = content.split(/\r\n|\r|\n/u);
-  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 1 || end < start || end > lines.length) return false;
+  if (!hasValidEvidencePath(path) || end > lines.length) return false;
   return lines.slice(start - 1, end).join("\n").includes(rawValue);
 }
 

@@ -98,6 +98,12 @@ describe("job import contracts", () => {
     expect(() => validatePersistedJobNormalizerOutput({ ...persisted, fieldEvidence: persisted.fieldEvidence.filter((item) => item.field !== "title") }, { sourcePostingVersionId, metadata: output })).toThrow("JOB_NORMALIZER_PERSISTED_EVIDENCE_INVALID");
     expect(() => validatePersistedJobNormalizerOutput({ ...persisted, title: "被篡改" }, { sourcePostingVersionId, metadata: output })).toThrow("JOB_NORMALIZER_PERSISTED_EVIDENCE_INVALID");
     expect(() => validatePersistedJobNormalizerOutput({ ...persisted, qualifications: { ...persisted.qualifications, workMode: { ...persisted.qualifications.workMode!, evidence: { ...persisted.qualifications.workMode!.evidence, normalizedValue: "onsite" } } } }, { sourcePostingVersionId, metadata: output })).toThrow("JOB_NORMALIZER_PERSISTED_EVIDENCE_INVALID");
+    for (const invalid of [
+      { ...persisted, fieldEvidence: persisted.fieldEvidence.map((item) => item.field === "title" ? { ...item, rawValue: "编造" } : item) },
+      { ...persisted, fieldEvidence: persisted.fieldEvidence.map((item) => item.field === "title" ? { ...item, path: "lines:2-1" } : item) },
+      { ...persisted, fieldEvidence: persisted.fieldEvidence.map((item) => item.field === "title" ? { ...item, path: "lines:9007199254740992-9007199254740992" } : item) },
+      { ...persisted, qualifications: { ...persisted.qualifications, workMode: { ...persisted.qualifications.workMode!, evidence: { ...persisted.qualifications.workMode!.evidence, rawValue: "现场" } } } },
+    ]) expect(() => validatePersistedJobNormalizerOutput(invalid, { sourcePostingVersionId, metadata: output })).toThrow("JOB_NORMALIZER_PERSISTED_EVIDENCE_INVALID");
   });
 
   it("绑定非法截止日期溯源并拒绝错误发布版本，同时兼容旧未绑定溯源", () => {
@@ -111,6 +117,7 @@ describe("job import contracts", () => {
     expect(validatePersistedJobNormalizerOutput(persisted, { sourcePostingVersionId })).toEqual(output);
     expect(() => validatePersistedJobNormalizerOutput({ ...persisted, deadlineProvenance: { ...persisted.deadlineProvenance!, sourcePostingVersionId: opportunityId } }, { sourcePostingVersionId })).toThrow("JOB_NORMALIZER_PERSISTED_EVIDENCE_INVALID");
     expect(() => validatePersistedJobNormalizerOutput({ ...persisted, deadlineProvenance: output.deadlineProvenance }, { sourcePostingVersionId })).toThrow("JOB_NORMALIZER_PERSISTED_EVIDENCE_INVALID");
+    for (const value of ["2026-09-01T00:00:00.000Z", "not-an-iso-date"]) expect(() => validatePersistedJobNormalizerOutput({ ...persisted, deadlineProvenance: { ...persisted.deadlineProvenance!, value } }, { sourcePostingVersionId })).toThrow("JOB_NORMALIZER_PERSISTED_EVIDENCE_INVALID");
     expect(validatePersistedJobNormalizerOutput({ ...persisted, usage: { status: "not_called", inputTokens: null, outputTokens: null, totalTokens: null }, normalizerVersion: "legacy", adapter: "fake", fieldEvidence: [], deadlineProvenance: output.deadlineProvenance }, { sourcePostingVersionId })).toMatchObject({ deadlineProvenance: output.deadlineProvenance });
   });
 
