@@ -113,6 +113,9 @@ const conflictDetail = {
 };
 
 async function prepareFile() {
+  if (!screen.queryByLabelText("选择 Markdown、DOCX 或 PDF 职业资料")) {
+    fireEvent.click(screen.getByRole("button", { name: "导入职业资料" }));
+  }
   fireEvent.change(screen.getByLabelText("选择 Markdown、DOCX 或 PDF 职业资料"), {
     target: { files: [new File(["## 技能\n- TypeScript"], "career.md", { type: "text/markdown" })] },
   });
@@ -130,6 +133,10 @@ async function submitFile() {
 
 async function confirmSanitizedFile(user: ReturnType<typeof userEvent.setup>) {
   await user.click(await screen.findByRole("checkbox", { name: /我已检查该文件/ }));
+}
+
+async function openManualFactEditor(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByText("手工添加事实"));
 }
 
 afterEach(() => {
@@ -150,6 +157,55 @@ it("links from trusted profile facts to confirmation of job targets", () => {
   }} />);
 
   expect(screen.getByRole("link", { name: "确认求职目标" })).toHaveAttribute("href", "/profile/targets");
+});
+
+it("groups trusted profile facts by their persisted fact type", () => {
+  render(<ProfileImportView initialImports={[]} initialProfile={{
+    profileId: "fa7753f2-2ff3-4bd6-9fbd-6b4ae41d8364", version: 1,
+    facts: [
+      {
+        factId: "75ff2891-df0c-4e35-a95d-44f1be3fbdb7", revisionId: "b4d4a7c1-9a17-4a8c-8b36-0f815d042e9a",
+        factType: "skill", factValue: { name: "TypeScript" }, source: "user_confirmed", candidateFactId: null,
+        createdAt: "2026-08-28T08:00:00.000Z",
+      },
+      {
+        factId: "7fbe8a25-8f4e-4f8f-93e9-8f24678e840c", revisionId: "a312d91e-1a98-478d-b4f2-11e50b486044",
+        factType: "experience", factValue: { summary: "平台工程师｜示例科技" }, source: "candidate_fact", candidateFactId: "0c8aae1d-f504-4812-b721-919ea691e03d",
+        createdAt: "2026-08-28T08:00:00.000Z",
+      },
+    ],
+  }} />);
+
+  const experienceHeading = screen.getByRole("heading", { level: 3, name: "工作经历" });
+  const skillsHeading = screen.getByRole("heading", { level: 3, name: "技能" });
+  expect(experienceHeading.closest("section")).toHaveTextContent("平台工程师｜示例科技");
+  expect(skillsHeading.closest("section")).toHaveTextContent("TypeScript");
+  expect(skillsHeading.closest("section")).not.toHaveTextContent("平台工程师｜示例科技");
+});
+
+it("keeps manual fact creation in a closed editor until the user asks to add a fact", async () => {
+  const user = userEvent.setup();
+  render(<ProfileImportView initialImports={[]} />);
+
+  const editor = screen.getByText("手工添加事实").closest("details")!;
+  expect(editor).not.toHaveAttribute("open");
+  expect(screen.getByLabelText("画像事实类型")).not.toBeVisible();
+
+  await openManualFactEditor(user);
+  expect(editor).toHaveAttribute("open");
+  expect(screen.getByLabelText("画像事实类型")).toBeVisible();
+  expect(screen.getByRole("button", { name: "新增画像事实" })).toBeDisabled();
+});
+
+it("已有职业资料时先展示可信画像和导入记录，按需打开导入编辑器", async () => {
+  const user = userEvent.setup();
+  render(<ProfileImportView initialImports={[completedImport]} />);
+
+  expect(screen.queryByLabelText("选择 Markdown、DOCX 或 PDF 职业资料")).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "最近导入" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "导入职业资料" }));
+  expect(screen.getByLabelText("选择 Markdown、DOCX 或 PDF 职业资料")).toBeVisible();
+  expect(screen.getByRole("button", { name: "取消导入" })).toBeVisible();
 });
 
 it("detects private information before upload and submits only the sanitized processing copy", async () => {
@@ -256,6 +312,7 @@ it("选择无文本层 PDF 时优先显示本次解析错误，且不会提交�
   const user = userEvent.setup();
 
   render(<ProfileImportView initialImports={[completedImport]} />);
+  await user.click(screen.getByRole("button", { name: "导入职业资料" }));
   await user.upload(
     screen.getByLabelText("选择 Markdown、DOCX 或 PDF 职业资料"),
     new File(["%PDF-empty"], "scanned.pdf", { type: "application/pdf" }),
@@ -404,6 +461,7 @@ it("manually adds, revises, and removes a trusted profile fact with reasons", as
   const user = userEvent.setup();
   render(<ProfileImportView initialImports={[]} initialProfile={{ profileId: null, version: 0, facts: [] }} />);
 
+  await openManualFactEditor(user);
   await user.selectOptions(screen.getByLabelText("画像事实类型"), "work_eligibility");
   await user.type(screen.getByLabelText("画像事实内容"), "可在中国大陆工作");
   await user.click(screen.getByRole("button", { name: "新增画像事实" }));
@@ -443,6 +501,7 @@ it("creates language facts with a level and preserves or changes that level duri
   const user = userEvent.setup();
   render(<ProfileImportView initialImports={[]} initialProfile={{ profileId: null, version: 0, facts: [] }} />);
 
+  await openManualFactEditor(user);
   await user.selectOptions(screen.getByLabelText("画像事实类型"), "language");
   await user.type(screen.getByLabelText("画像事实内容"), "英语");
   await user.type(screen.getByLabelText("画像事实语言级别"), "B2");
@@ -532,6 +591,7 @@ it("gives a new upload failure priority over an existing queued import", async (
   const user = userEvent.setup();
 
   render(<ProfileImportView initialImports={[queuedImport]} />);
+  await user.click(screen.getByRole("button", { name: "导入职业资料" }));
   await user.upload(screen.getByLabelText("选择 Markdown、DOCX 或 PDF 职业资料"), new File(["# empty"], "career.md", { type: "text/markdown" }));
   await confirmSanitizedFile(user);
   await user.click(screen.getByRole("button", { name: "上传并解析" }));

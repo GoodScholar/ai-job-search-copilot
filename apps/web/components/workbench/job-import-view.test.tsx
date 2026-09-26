@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 
@@ -39,6 +39,20 @@ it("按导入类型显示来源标签", async () => {
   expect(screen.getByRole("button", { name: /岗位链接/ })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /frontend\.md/ })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /粘贴的岗位描述/ })).toBeInTheDocument();
+});
+
+it("已有岗位记录时先展示当前机会，按需打开新的导入编辑器", async () => {
+  const user = userEvent.setup();
+  vi.spyOn(globalThis, "fetch")
+    .mockResolvedValueOnce(Response.json(completed))
+    .mockResolvedValueOnce(new Response("原文", { headers: { "content-type": "text/plain" } }));
+  render(<JobImportView initialImports={[completed]} />);
+
+  expect(screen.queryByRole("textbox", { name: "岗位描述" })).not.toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "规范化岗位机会" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "导入新岗位" }));
+  expect(screen.getByRole("textbox", { name: "岗位描述" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "取消导入" })).toBeVisible();
 });
 
 it("将复用通知告知用户，并以 literal pre 展示不可信 Markdown", async () => {
@@ -112,9 +126,14 @@ it("用简短中文提示轮询和提交失败", async () => {
   const user = userEvent.setup();
   render(<JobImportView initialImports={[imported]} />);
 
+  await user.click(screen.getByRole("button", { name: "导入新岗位" }));
   await user.type(screen.getByRole("textbox", { name: "岗位描述" }), "岗位正文");
   await user.click(screen.getByRole("button", { name: "导入岗位" }));
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("岗位导入暂时不可用，请稍后重试。"));
+  const formPanel = screen.getByRole("heading", { name: "添加岗位内容" }).closest("section");
+  expect(formPanel).not.toBeNull();
+  expect(within(formPanel!).getByRole("alert")).toHaveTextContent("岗位导入暂时不可用，请稍后重试。");
+  expect(within(formPanel!).getByRole("textbox", { name: "岗位描述" })).toHaveValue("岗位正文");
   expect(screen.getByText("暂时无法读取导入状态，请稍后重试。")).toBeInTheDocument();
 });
 
@@ -207,6 +226,7 @@ it("复用当前记录后仍显示真实的终态，且提示不会遮蔽切换�
   render(<JobImportView initialImports={[completed, failed]} />);
   await screen.findByText("原文");
 
+  await user.click(screen.getByRole("button", { name: "导入新岗位" }));
   await user.type(screen.getByRole("textbox", { name: "岗位描述" }), "重复岗位正文");
   await user.click(screen.getByRole("button", { name: "导入岗位" }));
   expect(await screen.findByText("已复用已有岗位导入记录。")).toBeInTheDocument();

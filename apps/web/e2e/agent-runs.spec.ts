@@ -114,6 +114,15 @@ function runStatus(page: Page) {
   return page.locator(".agent-run-panel .agent-run-live");
 }
 
+async function expandRunAudit(page: Page): Promise<void> {
+  const audit = page.locator(".agent-run-audit-details");
+  await expect(audit).toBeAttached();
+  if (!await audit.evaluate((element) => (element as HTMLDetailsElement).open)) {
+    await audit.locator("summary").click();
+  }
+  await expect(audit).toHaveAttribute("open", "");
+}
+
 async function tabTo(page: Page, target: ReturnType<Page["getByRole"]>): Promise<void> {
   for (let index = 0; index < 12; index += 1) {
     await page.keyboard.press("Tab");
@@ -227,6 +236,7 @@ test("来源临时失败后会在重试预算内完成第二次尝试", async ({
   const timeline = page.getByRole("list", { name: "岗位发现运行时间线" });
   await expect(timeline).toContainText("正在重新尝试", { timeout: 45_000 });
   await expect(runStatus(page)).toContainText("岗位发现完成", { timeout: 45_000 });
+  await expandRunAudit(page);
   await expect(page.getByText("2 / 3 次尝试")).toBeVisible();
   const completed = await getRun(page, runId);
   assertExecutionEvidence(completed);
@@ -277,6 +287,7 @@ test("运行详情保留启动快照，当前状态改变后不污染历史，�
   const checkedAt = before.preflightSnapshot!.checkedAt;
   const policy = before.preflightSnapshot!.items.find((item) => item.evidence.kind === "account_run_policy");
   const revision = policy?.evidence.kind === "account_run_policy" ? policy.evidence.revisionNumber : "未记录";
+  await expandRunAudit(page);
   const history = page.getByRole("region", { name: "本次启动条件" });
   await expect(history).toContainText(`检查时间${checkedAt}`);
   await expect(history).toContainText(`账户策略版本${revision}`);
@@ -291,6 +302,7 @@ test("运行详情保留启动快照，当前状态改变后不污染历史，�
   expect(current.status()).toBe(200);
   await expect(current.json()).resolves.toMatchObject({ status: "blocked" });
   await page.reload();
+  await expandRunAudit(page);
   await expect(history).toContainText(`检查时间${checkedAt}`);
   await expect(history).toContainText(`账户策略版本${revision}`);
 
@@ -298,5 +310,6 @@ test("运行详情保留启动快照，当前状态改变后不污染历史，�
   await client.connect();
   try { await client.query("update agent_runs set preflight_snapshot = null where id = $1", [runId]); } finally { await client.end(); }
   await page.reload();
+  await expandRunAudit(page);
   await expect(page.getByText("该历史运行创建时尚未记录运行前检查快照", { exact: true })).toBeVisible();
 });

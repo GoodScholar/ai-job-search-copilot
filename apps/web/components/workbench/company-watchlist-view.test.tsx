@@ -41,6 +41,18 @@ function source(itemId: string, sourceId: string, name: string, status: JobSourc
 
 afterEach(() => vi.unstubAllGlobals());
 
+it("优先呈现已登记来源，并在用户请求后打开编辑表单", async () => {
+  const user = userEvent.setup();
+  render(<CompanyWatchlistView initialOverview={overview([item(firstItemId, 1, "曙光云图")], 1)} />);
+
+  expect(screen.getByRole("heading", { name: "已登记来源" })).toBeVisible();
+  expect(screen.queryByLabelText("公司规范名称")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "编辑 曙光云图" }));
+  expect(screen.getByLabelText("公司规范名称")).toHaveValue("曙光云图");
+  await user.click(screen.getByRole("button", { name: "取消编辑" }));
+  expect(screen.queryByLabelText("公司规范名称")).not.toBeInTheDocument();
+});
+
 it("为空 Watchlist 呈现目标角色、唯一新增提交和固定安全提示", () => {
   render(<CompanyWatchlistView initialOverview={overview()} />);
 
@@ -183,6 +195,7 @@ it("每次成功写入后都用 BFF 的当前 health 投影替换旧证据", asy
   vi.stubGlobal("fetch", fetchMock);
   render(<CompanyWatchlistView initialOverview={initial} initialSourceHealth={initialHealth} />);
 
+  await user.click(screen.getByRole("button", { name: "新增目标公司" }));
   await user.type(screen.getByLabelText("公司规范名称"), "新来源");
   await user.type(screen.getByLabelText("公开招聘入口"), "https://careers.orbit.example/jobs");
   await user.type(screen.getByLabelText("允许域"), "careers.orbit.example");

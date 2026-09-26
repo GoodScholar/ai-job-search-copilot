@@ -198,6 +198,7 @@ it("收到 Inbox 已处理通知后重新读取权威运行详情", async () => 
   view.rerender(<AgentRunPanel initialRun={paused} refreshVersion={1} targets={[target()]} />);
 
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("岗位发现完成，共保存 1 个岗位机会"));
+  expect(screen.getByText("查看本次运行执行与审计详情").closest("details")).toHaveAttribute("open");
 });
 
 it("求职目标暂时不可读取时仍以只读方式保留成功的运行记录", () => {
@@ -302,6 +303,7 @@ it("按稳定失败码解释固定预算，而不泄露异常正文或误导为�
   render(<AgentRunPanel initialRun={detail("failed")} targets={[target()]} />);
 
   expect(screen.getByText("本次发现超过固定处理预算，请缩小求职目标后重新发起。")).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveClass("agent-run-live-error");
   expect(screen.queryByText(/Error|exception|稍后重新尝试/u)).not.toBeInTheDocument();
 });
 
@@ -321,7 +323,21 @@ it("显示冻结的执行规格、模型说明和预算账本", () => {
   expect(screen.getByText("允许的操作范围")).toBeVisible();
 });
 
-it("对深度匹配运行保留匹配记录，同时仍允许发起下一次岗位发现", () => {
+it("将完成运行的执行规格、预算和时间线收进按需审计详情", async () => {
+  const user = userEvent.setup();
+  render(<AgentRunPanel initialRun={detail("completed")} targets={[target()]} />);
+
+  const summary = screen.getByText("查看本次运行执行与审计详情");
+  const disclosure = summary.closest("details");
+  expect(disclosure).not.toBeNull();
+  expect(disclosure).not.toHaveAttribute("open");
+  await user.click(summary);
+  expect(disclosure).toHaveAttribute("open");
+  expect(screen.getByText("预算使用分录")).toBeVisible();
+});
+
+it("对深度匹配运行保留匹配记录，同时仍允许发起下一次岗位发现", async () => {
+  const user = userEvent.setup();
   const matching = {
     ...detail("completed"), workflowVersion: "deep-match-v1", currentStep: "completed",
     usage: { ...detail("completed").usage, results: 7 },
@@ -342,6 +358,7 @@ it("对深度匹配运行保留匹配记录，同时仍允许发起下一次岗�
   expect(screen.getByRole("button", { name: "发现岗位" })).toBeEnabled();
   expect(screen.queryByRole("button", { name: "开始岗位匹配" })).not.toBeInTheDocument();
   expect(screen.getByText("岗位匹配会在岗位发现完成后自动开始；如需重新评估，请在推荐清单中选择具体岗位。")).toBeVisible();
+  await user.click(screen.getByText("查看本次运行执行与审计详情"));
   expect(screen.getByLabelText("本次岗位匹配执行规格")).toBeVisible();
   expect(screen.queryByRole("heading", { name: "本次发现的岗位" })).not.toBeInTheDocument();
   expect(screen.getByText("fake · fake-deep-match-model-v1")).toBeVisible();
@@ -382,6 +399,7 @@ it("在控制请求尚未返回时立即说明正在等待安全暂停", async (
 
   await user.click(screen.getByRole("button", { name: "暂停岗位发现" }));
   expect(screen.getByRole("status")).toHaveTextContent("等待安全暂停");
+  expect(screen.getByRole("status")).not.toHaveClass("agent-run-live-error");
   resolve(new Response(null, { status: 502 }));
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("暂停请求暂时无法提交，请稍后重试。"));
 });

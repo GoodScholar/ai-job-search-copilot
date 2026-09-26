@@ -121,7 +121,7 @@ export function ModelConnectionView({ initialDiagnostics }: { initialDiagnostics
       <p>检查当前部署是否能安全使用模型功能。检查不会展示或请求你的账户信息。</p>
     </section>
     <section aria-labelledby="model-connection-status-title" className="workbench-ledger model-connection-ledger">
-      <div className="workbench-ledger-heading"><h2 id="model-connection-status-title" title={statusTitle[diagnostics.status]}>{statusTitle[diagnostics.status]}</h2></div>
+      <div className="workbench-ledger-heading model-connection-heading"><div><p>当前可用状态</p><h2 id="model-connection-status-title" title={statusTitle[diagnostics.status]}>{statusTitle[diagnostics.status]}</h2></div><p>{diagnostics.checkedAt ? "已读取上次检查结果" : "尚未建立检查记录"}</p></div>
       <p aria-live="polite" className="model-connection-live" role="status">{liveText}</p>
       <dl className="model-connection-details">
         <div><dt>原因</dt><dd>{diagnostics.reasonSummary}</dd></div>

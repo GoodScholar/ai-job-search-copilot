@@ -2,17 +2,17 @@ import { getJobTargets } from "@/lib/server/job-targets";
 import { unstable_rethrow } from "next/navigation";
 import { z } from "zod";
 import Link from "next/link";
-import type { CalibrationProposal, RecommendationListHistoryPage } from "@job-copilot/contracts/recommendations";
+import type { CalibrationProposal, RecommendationList, RecommendationListHistoryPage } from "@job-copilot/contracts/recommendations";
 import { getLatestPublishedRecommendationRun, getRecommendationRun } from "@/lib/server/recommendation-runs";
 import { getCalibrationProposals, getLatestRecommendations, getRecommendationHistoryPage, getRecommendationList } from "@/lib/server/recommendations";
-import { DeepMatchAssessmentSchema } from "@job-copilot/contracts/deep-match";
+import { DeepMatchAssessmentSchema, type DeepMatchAssessment } from "@job-copilot/contracts/deep-match";
 import { rebaseCalibrationProposalAction, recordRecommendationDecisionAction, requestRecommendationReevaluationAction, resolveCalibrationProposalAction, reviseCalibrationProposalAction } from "./actions";
 import { RecommendationDecision } from "./recommendation-decision";
 import { CalibrationProposals } from "./calibration-proposals";
 import { ReevaluationForm } from "./reevaluate-button";
 import { RecommendationHistory } from "./recommendation-history";
 import { LatestExclusions } from "./latest-exclusions";
-import { formatBand, formatDimensionDetail, formatDimensionLabel, formatEvidence, formatProfileEvidence } from "./formatters";
+import { formatBand, formatDimensionDetail, formatDimensionLabel, formatEvidence, formatProfileEvidence, formatProfileEvidenceValue } from "./formatters";
 import { RecommendationResultSummary } from "./recommendation-result-summary";
 
 
@@ -43,7 +43,7 @@ export default async function RecommendationsPage({ searchParams = Promise.resol
     <main className="container workbench-page" id="main-content">
       <section aria-labelledby="recommendations-title" className="job-import-panel">
         <p className="section-kicker">今日处理</p>
-        <h1 id="recommendations-title">推荐清单</h1>
+        <h1 className="recommendations-page-title" id="recommendations-title">推荐清单</h1>
         <p>系统会从通过资格门槛的岗位中整理少量推荐，并保留每项判断的岗位与画像证据。</p>
         {resultError ? <p role="alert">{resultError}</p> : result ? <RecommendationResultSummary result={result} /> : null}
         {sideReadError ? <p role="alert">{sideReadError}</p> : null}
@@ -56,7 +56,19 @@ export default async function RecommendationsPage({ searchParams = Promise.resol
           <ol aria-label="推荐岗位" id="recommendation-list">
             {list.items.map((item) => {
               const assessment = DeepMatchAssessmentSchema.safeParse(item.assessment).data;
-              return <li key={item.matchVersionId}><h2>{item.title ?? "岗位机会"}</h2><p>{item.company ?? "来源待确认"} · {item.location ?? "地点待确认"} · <strong>{formatBand(item.displayBand)}</strong></p>{item.highlighted ? <p><strong>今日优先处理</strong></p> : null}<RecommendationDecision item={item} action={recordRecommendationDecisionAction.bind(null, list.recommendationListId, item.recommendationListItemId ?? "")} /><ReevaluationForm action={requestRecommendationReevaluationAction.bind(null, targetId!, item.opportunityId)} /><details><summary className="workbench-touch-target">查看证据与判断</summary><p>匹配版本：{item.matchVersionId}</p><p>岗位证据：{formatEvidence(item.jobEvidence)}</p><p>画像证据：{formatProfileEvidence(item.profileEvidence)}</p>{assessment?.dimensions.map((dimension) => <p key={dimension.dimension}><strong>{formatDimensionLabel(dimension)}</strong>：{formatDimensionDetail(dimension)}</p>)}</details></li>;
+              return <li key={item.matchVersionId}>
+                <article className="recommendation-card">
+                  <div className="recommendation-card-heading">
+                    <div><p className="recommendation-card-band">{formatBand(item.displayBand)}</p><h2>{item.title ?? "岗位机会"}</h2><p>{item.company ?? "来源待确认"} · {item.location ?? "地点待确认"}</p></div>
+                    {item.highlighted ? <p className="recommendation-card-priority">今日优先处理</p> : null}
+                  </div>
+                  <div className="recommendation-card-actions">
+                    <RecommendationDecision item={item} action={recordRecommendationDecisionAction.bind(null, list.recommendationListId, item.recommendationListItemId ?? "")} />
+                    <ReevaluationForm action={requestRecommendationReevaluationAction.bind(null, targetId!, item.opportunityId)} />
+                  </div>
+                  <details className="recommendation-evidence"><summary className="workbench-touch-target">查看证据与判断</summary><RecommendationEvidence assessment={assessment} item={item} /></details>
+                </article>
+              </li>;
             })}
           </ol>
         </> : null}
@@ -64,4 +76,24 @@ export default async function RecommendationsPage({ searchParams = Promise.resol
       </section>
     </main>
   );
+}
+
+function RecommendationEvidence({ assessment, item }: {
+  assessment: DeepMatchAssessment | undefined;
+  item: RecommendationList["items"][number];
+}) {
+  const supported = assessment?.dimensions.filter((dimension) => dimension.judgment === "evidence_backed_inference") ?? [];
+  const needsReview = assessment?.dimensions.filter((dimension) => dimension.judgment !== "evidence_backed_inference") ?? [];
+  const jobEvidenceById = new Map(item.jobEvidence.map((evidence) => [evidence.id, evidence]));
+  const profileEvidenceById = new Map(item.profileEvidence.map((evidence) => [evidence.id, evidence]));
+  return <div className="recommendation-evidence-content">
+    <p className="recommendation-version">匹配版本：{item.matchVersionId}</p>
+    <div className="recommendation-evidence-columns">
+      <section aria-label="岗位要求"><h3>岗位要求</h3><ul>{item.jobEvidence.map((evidence) => <li key={evidence.id}>{evidence.provenance ? `${evidence.provenance.path}：${evidence.provenance.originalValue}` : evidence.value}</li>)}</ul><p className="recommendation-evidence-summary">岗位证据：{formatEvidence(item.jobEvidence)}</p></section>
+      <section aria-label="画像证据"><h3>画像证据</h3><ul>{item.profileEvidence.map((evidence) => <li key={evidence.id}>{formatProfileEvidenceValue(evidence.value)}</li>)}</ul><p className="recommendation-evidence-summary">画像证据：{formatProfileEvidence(item.profileEvidence)}</p></section>
+    </div>
+    {supported.length > 0 ? <section className="recommendation-dimensions" aria-label="有证据的判断"><h3>有证据的判断</h3>{supported.map((dimension) => <section className="recommendation-dimension" key={dimension.dimension}><p><strong>{formatDimensionLabel(dimension)}</strong>：{formatDimensionDetail(dimension)}</p><dl><div><dt>岗位要求</dt><dd>{dimension.jobEvidenceIds.map((id) => jobEvidenceById.get(id)?.value ?? id).join("；")}</dd></div><div><dt>画像证据</dt><dd>{dimension.profileEvidenceIds.map((id) => formatProfileEvidenceValue(profileEvidenceById.get(id)?.value ?? id)).join("；")}</dd></div></dl></section>)}</section> : null}
+    {needsReview.length > 0 ? <section className="recommendation-dimensions recommendation-dimensions-review" aria-label="证据不足的判断"><h3>证据不足的判断</h3>{needsReview.map((dimension) => <p key={dimension.dimension}><strong>{formatDimensionLabel(dimension)}</strong>：{formatDimensionDetail(dimension)}</p>)}</section> : null}
+    <details className="recommendation-evidence-audit"><summary className="workbench-touch-target">查看原始画像原值</summary><p>冻结画像原值：{item.profileEvidence.map((evidence) => evidence.value).join("；")}</p></details>
+  </div>;
 }

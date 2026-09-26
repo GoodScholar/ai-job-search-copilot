@@ -12,7 +12,7 @@ import RecommendationsPage from "./page";
 
 const targetA = "00000000-0000-4000-8000-000000000001", targetB = "00000000-0000-4000-8000-000000000002", listA = "00000000-0000-4000-8000-000000000003", listB = "00000000-0000-4000-8000-000000000004", runA = "00000000-0000-4000-8000-000000000005";
 const budget = { maxActiveDurationMs: 1, maxAttempts: 1, maxToolCalls: 1, maxResults: 1, maxModelCalls: 0, maxTokens: 0 };
-function list(id: string, targetId: string, title: string) { return RecommendationListSchema.parse({ recommendationListId: id, targetId, localDate: "2026-09-14", sequence: 1, createdAt: "2026-09-14T00:00:00.000Z", exclusions: [], items: [{ recommendationListItemId: "00000000-0000-4000-8000-000000000006", matchVersionId: "00000000-0000-4000-8000-000000000007", opportunityId: "00000000-0000-4000-8000-000000000008", company: "绑定公司", title, location: "上海", displayBand: "highly_matched", highlighted: true, ordinal: 1, jobEvidence: [{ id: "job", value: "岗位证据" }], profileEvidence: [{ id: "profile", value: "画像证据", kind: "profile_fact", profileFactRevisionId: "00000000-0000-4000-8000-000000000009" }], assessment: { opportunityId: "00000000-0000-4000-8000-000000000008", overallScore: 80, dimensions: ["skills", "experience", "project_depth", "career_direction", "location_logistics", "qualification_risk"].map((dimension) => ({ dimension, score: 80, judgment: "evidence_backed_inference", jobEvidenceIds: ["job"], profileEvidenceIds: ["profile"], summary: "证据支持的推断。" })) } }] }); }
+function list(id: string, targetId: string, title: string, judgment: "evidence_backed_inference" | "insufficient_evidence" = "evidence_backed_inference") { const citesEvidence = judgment === "evidence_backed_inference"; return RecommendationListSchema.parse({ recommendationListId: id, targetId, localDate: "2026-09-14", sequence: 1, createdAt: "2026-09-14T00:00:00.000Z", exclusions: [], items: [{ recommendationListItemId: "00000000-0000-4000-8000-000000000006", matchVersionId: "00000000-0000-4000-8000-000000000007", opportunityId: "00000000-0000-4000-8000-000000000008", company: "绑定公司", title, location: "上海", displayBand: "highly_matched", highlighted: true, ordinal: 1, jobEvidence: [{ id: "job", value: "岗位证据" }], profileEvidence: [{ id: "profile", value: "画像证据", kind: "profile_fact", profileFactRevisionId: "00000000-0000-4000-8000-000000000009" }], assessment: { opportunityId: "00000000-0000-4000-8000-000000000008", overallScore: 80, dimensions: ["skills", "experience", "project_depth", "career_direction", "location_logistics", "qualification_risk"].map((dimension) => ({ dimension, score: 80, judgment, jobEvidenceIds: citesEvidence ? ["job"] : [], profileEvidenceIds: citesEvidence ? ["profile"] : [], summary: citesEvidence ? "证据支持的推断。" : "需要补充证据后再判断。" })) } }] }); }
 function published(targetId = targetA, listId = listA) { return RecommendationRunSchema.parse({ runId: runA, status: "completed", currentStage: null, stages: ["discovery", "qualification", "coarse_ranking", "deep_matching", "result_publication"].map((key) => ({ key, status: "completed", startedAt: "2026-09-14T00:00:00.000Z", completedAt: "2026-09-14T00:00:00.000Z" })), target: { targetId, targetVersion: 1, roleFamily: "前端工程师" }, sourceScope: { trustedSourceCount: 1, publicQueryCount: 0 }, accountPolicyRevisionNumber: 1, budgets: { discovery: budget, deepMatch: budget }, preflightSnapshot: { version: "run-preflight-v1", workflow: "recommendation", trigger: "manual", targetId, status: "ready", warningFingerprint: null, checkedAt: "2026-09-14T00:00:00.000Z", items: [{ code: "ACCOUNT_RUN_POLICY_READY", severity: "informational", summary: "账户运行可用", impact: "可以开始完整推荐", retryable: false, suggestedActions: [], evidence: { kind: "account_run_policy", revisionNumber: 1, status: "ready", checkedAt: "2026-09-14T00:00:00.000Z" } }] }, result: { kind: "recommendation_list", resultId: listId, recommendationListId: listId, itemCount: 1, publishedAt: "2026-09-14T00:00:00.000Z", evidence: { discovery: { discoveredJobCount: 1 }, sourceCoverage: { plannedTrustedSourceCount: 1, plannedPublicQueryCount: 0, checkedBranchCount: 1, credibleBranchCount: 1, verifiedJobCount: 1 }, coverageLosses: [], qualification: { evaluatedCount: 1, rejectedCount: 0, insufficientInformationCount: 0, expiredCount: 0 }, coarseRanking: { eligibleCount: 1, belowThresholdCount: 0, ruleExcludedCount: 0, candidateLimitExcludedCount: 0, deepMatchCandidateCount: 1 }, deepMatching: { evaluatedCount: 1, qualityInsufficientCount: 0, finalRecommendationCount: 1 }, suggestedActions: [] } }, failure: null, createdAt: "2026-09-14T00:00:00.000Z", updatedAt: "2026-09-14T00:00:00.000Z" }); }
 function nonCompleted(status: "queued" | "running" | "paused" | "failed" | "cancelled") {
   const at = "2026-09-14T00:00:00.000Z", base = published(targetB, listA);
@@ -62,6 +62,33 @@ describe("RecommendationsPage", () => {
   it("legacy target-only URL 保留该目标 latest 读取", async () => { mocks.getLatestRecommendations.mockResolvedValue(list(listA, targetB, "兼容岗位")); render(await RecommendationsPage({ searchParams: Promise.resolve({ targetId: targetB }) })); expect(screen.getByText("兼容岗位")).toBeInTheDocument(); expect(mocks.getLatestRecommendations).toHaveBeenCalledWith(targetB); expect(mocks.getLatestPublishedRecommendationRun).not.toHaveBeenCalled(); });
   it("default 在目标数组排序变化后仍渲染同一绑定岗位", async () => { mocks.getLatestPublishedRecommendationRun.mockResolvedValue(published(targetB, listA)); mocks.getRecommendationList.mockResolvedValue(list(listA, targetB, "稳定绑定岗位")); mocks.getJobTargets.mockResolvedValue({ targets: [{ targetId: targetA, state: "active", priority: "primary" }, { targetId: targetB, state: "active", priority: "secondary" }] }); const first = await RecommendationsPage(); mocks.getJobTargets.mockResolvedValue({ targets: [{ targetId: targetB, state: "active", priority: "secondary" }, { targetId: targetA, state: "active", priority: "primary" }] }); const second = await RecommendationsPage(); render(<>{first}{second}</>); expect(screen.getAllByText("稳定绑定岗位")).toHaveLength(2); expect(mocks.getRecommendationList).toHaveBeenNthCalledWith(1, targetB, listA); expect(mocks.getRecommendationList).toHaveBeenNthCalledWith(2, targetB, listA); });
   it("重新评估和收藏保留绑定的目标、岗位、清单与条目身份", async () => { mocks.getLatestPublishedRecommendationRun.mockResolvedValue(published(targetB, listA)); mocks.getRecommendationList.mockResolvedValue(list(listA, targetB, "交互岗位")); render(await RecommendationsPage()); fireEvent.click(screen.getByRole("button", { name: "重新评估此岗位" })); fireEvent.click(screen.getByRole("button", { name: "收藏" })); await waitFor(() => expect(mocks.requestRecommendationReevaluationAction).toHaveBeenCalledWith(targetB, "00000000-0000-4000-8000-000000000008", expect.any(FormData))); await waitFor(() => expect(mocks.recordRecommendationDecisionAction).toHaveBeenCalledWith(listA, "00000000-0000-4000-8000-000000000006", expect.any(FormData))); });
+
+  it("展开后把岗位要求、画像证据和可追溯判断并列显示", async () => {
+    mocks.getLatestPublishedRecommendationRun.mockResolvedValue(published(targetB, listA));
+    mocks.getRecommendationList.mockResolvedValue(list(listA, targetB, "证据对照岗位"));
+    render(await RecommendationsPage());
+
+    const evidence = screen.getByText("查看证据与判断").closest("details")!;
+    expect(evidence).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByText("查看证据与判断"));
+    expect(evidence).toHaveAttribute("open");
+    expect(screen.getByRole("heading", { name: "岗位要求" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "画像证据" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "有证据的判断" })).toBeInTheDocument();
+    expect(screen.getByText("匹配版本：00000000-0000-4000-8000-000000000007")).toBeInTheDocument();
+    expect(screen.getAllByText("岗位证据").length).toBeGreaterThan(1);
+    expect(screen.getAllByText("画像证据").length).toBeGreaterThan(1);
+  });
+
+  it("明确把 insufficient_evidence 呈现为需要补充证据的判断", async () => {
+    mocks.getLatestPublishedRecommendationRun.mockResolvedValue(published(targetB, listA));
+    mocks.getRecommendationList.mockResolvedValue(list(listA, targetB, "待补证据岗位", "insufficient_evidence"));
+    render(await RecommendationsPage());
+
+    fireEvent.click(screen.getByText("查看证据与判断"));
+    expect(screen.getByRole("heading", { name: "证据不足的判断" })).toBeInTheDocument();
+    expect(screen.queryByText(/候选事实待确认/u)).not.toBeInTheDocument();
+  });
 
   it.each([
     [{ runId: "" }], [{ runId: runA, resultId: "" }], [{ runId: [runA] }], [{ runId: "not-a-uuid", resultId: listA }],

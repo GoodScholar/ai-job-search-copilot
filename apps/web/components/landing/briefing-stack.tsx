@@ -5,7 +5,7 @@ import { useRef, useState } from "react";
 export type BriefingId = "recommendation" | "facts" | "resume";
 
 const briefings = [
-  { id: "recommendation", label: "AI 应用工程师", state: "匹配 91" },
+  { id: "recommendation", label: "AI 应用工程师", state: "优先查看" },
   { id: "facts", label: "确认 2 条候选事实", state: "待你确认" },
   { id: "resume", label: "审核 1 份定制简历", state: "待你审核" },
 ] as const;
@@ -78,7 +78,7 @@ export function BriefingStack({
               <span aria-hidden="true" className="briefing-card-content">
                 <span className="briefing-card-heading">
                   <span>
-                    {String(index + 1).padStart(2, "0")} / {isActive ? "当前优先" : "待处理"}
+                    {isActive ? "当前优先" : "待处理"}
                   </span>
                   <span>示例</span>
                 </span>
@@ -130,7 +130,7 @@ function RecommendationBriefing() {
       <span className="briefing-card-title">
         <span>AI 应用工程师</span>
         <span>
-          匹配 <strong>91</strong>
+          <strong>优先查看</strong>
         </span>
       </span>
       <span className="briefing-meta">极光科技 · 北京 · 25–40K · 发布 2 小时</span>
@@ -163,7 +163,7 @@ function FactsBriefing() {
         </span>
       </span>
       <span className="briefing-candidate-note">
-        待确认，尚未计入当前 91 分或正式画像证据（示例）
+        待确认，尚未计入正式画像证据（示例）
       </span>
       <span className="briefing-footnote">来源待你核验；确认不等于自动执行（示例）</span>
     </>

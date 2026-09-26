@@ -92,6 +92,10 @@ function WorkbenchHomeContent({ home, targets, initialRun, initialRecommendation
         <p>{summaryUnavailable ? "今日摘要暂时无法读取，其余可用内容仍会保留。" : pendingDecisions > 0 ? "先完成待决定事项，再查看今天的推荐、运行和来源状态。" : "当前没有等待你确认的事项；新的确认、异常或推荐会显示在这里。"}</p>
       </section>
 
+      <section aria-label="今日主行动" className="workbench-home-primary-action">
+        <RecommendationRunPanel initialPreparation={initialRecommendationPreparation} initialRun={initialRecommendationRun} onRunChanged={() => router.refresh()} onRunStarted={(run) => { router.replace(`/home?runId=${run.runId}`, { scroll: false }); router.refresh(); }} unavailable={recommendationUnavailable} />
+      </section>
+
       {home && <FirstRecommendationJourneyPanel journey={home.firstRecommendationJourney} onAuthoritativeRefresh={() => router.refresh()} />}
 
       {summaryUnavailable ? <section aria-label="今日摘要不可用" className="workbench-summary workbench-summary-unavailable"><p>今日摘要暂时无法读取。请稍后刷新重试。</p></section> : <>
@@ -111,7 +115,6 @@ function WorkbenchHomeContent({ home, targets, initialRun, initialRecommendation
 
       {targetsUnavailable && <section aria-labelledby="targets-unavailable-title" className="workbench-ledger"><h2 id="targets-unavailable-title">求职目标暂时无法读取</h2><p>已成功读取的运行状态仍会保留。请稍后刷新重试。</p></section>}
       {runUnavailable && <section aria-labelledby="run-unavailable-title" className="workbench-ledger"><h2 id="run-unavailable-title">运行状态暂时无法读取</h2><p>已成功读取的求职目标仍可继续使用。请稍后刷新重试。</p></section>}
-      <RecommendationRunPanel initialPreparation={initialRecommendationPreparation} initialRun={initialRecommendationRun} onRunChanged={() => router.refresh()} onRunStarted={(run) => { router.replace(`/home?runId=${run.runId}`, { scroll: false }); router.refresh(); }} unavailable={recommendationUnavailable} />
       {(!targetsUnavailable || !runUnavailable) && <AgentRunPanel currentReport={preflight} initialRun={initialRun} onInboxRefresh={refreshInbox} onPreflightChange={setPreflight} preflightUnavailable={preflightUnavailable} refreshVersion={runRefreshVersion} showDiscoverySchedule showStartControls={false} targets={targetsUnavailable ? null : targets?.targets ?? []} />}
 
       <section aria-labelledby="run-policy-entry-title" className="workbench-ledger">
@@ -121,7 +124,7 @@ function WorkbenchHomeContent({ home, targets, initialRun, initialRecommendation
       </section>
 
       <section aria-labelledby="ledger-title" className="workbench-ledger">
-        <div className="workbench-ledger-heading"><p>档案纸 · 当前状态</p><h2 id="ledger-title">{hasPendingFacts ? "职业资料等待确认" : "当前无待确认事实"}</h2></div>
+        <div className="workbench-ledger-heading"><p>职业画像 · 当前状态</p><h2 id="ledger-title">{hasPendingFacts ? "职业资料等待确认" : "当前无待确认事实"}</h2></div>
         <div className="workbench-ledger-row"><div><h3>下一步</h3><p>{hasPendingFacts ? "检查候选事实的来源和证据，确认后再让它们进入求职画像。" : "你可以查看或导入职业资料，继续完善求职画像。"}</p></div><Link className="workbench-ledger-link workbench-touch-target" href="/profile">{hasPendingFacts ? "查看待确认事实" : "查看职业资料"}</Link></div>
         <p className="workbench-ledger-note">{hasPendingFacts ? "待确认事实尚未进入求职画像，不能用于推荐或材料生成。" : "导入或更新职业资料后，新的候选事实会先等待确认，再用于推荐或材料生成。"}</p>
       </section>

@@ -280,7 +280,7 @@ export function AccountRunPolicyView({ initialControl = null, initialPolicy }: {
         <tr><th scope="row">后台运行时间</th><td>{defaults.backgroundWindow.start}–{defaults.backgroundWindow.end}</td><td>全天可用</td><td>{policy.userSettings ? `${policy.userSettings.backgroundWindow.start}–${policy.userSettings.backgroundWindow.end}` : "系统默认"}</td><td>{policy.effective.backgroundWindow.start}–{policy.effective.backgroundWindow.end}</td></tr>
       </tbody></table></div>
     </section>
-    <section aria-labelledby="run-policy-settings-title" className="job-targets-section">
+    <section aria-labelledby="run-policy-settings-title" className="job-targets-section run-policy-primary-action">
       <h2 id="run-policy-settings-title">调整运行策略</h2><p>当前修订：{policy.revision.revisionNumber}{policy.revision.isSystemBaseline ? "（账户初始基线）" : ""}</p><p>以下设置只会收紧账户运行策略，不能超过系统硬上限。</p>
       <fieldset className="run-policy-fieldset"><legend>公开岗位发现</legend><div className="run-policy-field-grid">
         {(Object.keys(discoveryLabels) as Array<keyof typeof discoveryLabels>).map((key) => {

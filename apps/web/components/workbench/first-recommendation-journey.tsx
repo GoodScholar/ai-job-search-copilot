@@ -34,7 +34,9 @@ export function FirstRecommendationJourneyPanel({ journey, onAuthoritativeRefres
 
 function ActiveFirstRecommendationJourneyPanel({ journey, onAuthoritativeRefresh }: { journey: Extract<FirstRecommendationJourney, { status: "active" }>; onAuthoritativeRefresh: () => void }) {
   const [dismissal, setDismissal] = useState<{ source: typeof journey; state: "idle" | "pending" | "hidden"; error: boolean } | null>(null);
+  const [showFullJourney, setShowFullJourney] = useState(false);
   const currentDismissal = dismissal?.source === journey ? dismissal : { state: "idle" as const, error: false };
+  const currentStep = journey.steps.find((step) => step.id === journey.currentStepId) ?? journey.steps[0];
 
   function saveVisit(stepId: FirstRecommendationJourneyStepId) {
     void updateInteraction({ action: "visit_step", stepId, expectedVersion: journey.interactionVersion })
@@ -70,11 +72,27 @@ function ActiveFirstRecommendationJourneyPanel({ journey, onAuthoritativeRefresh
       <button className="workbench-touch-target first-recommendation-journey-dismiss" disabled={currentDismissal.state === "pending"} onClick={dismiss} type="button">暂时关闭引导</button>
     </div>
     {currentDismissal.error && <p className="first-recommendation-journey-error" role="alert">暂时无法关闭引导，请重试。</p>}
-    <ol className="first-recommendation-journey-list">
-      {journey.steps.map((step) => <li aria-current={step.id === journey.currentStepId ? "step" : undefined} data-status={step.status} key={step.id}>
-        <div className="first-recommendation-journey-step-copy"><h3><span aria-hidden="true" className="first-recommendation-journey-status-icon" data-status={step.status} />{step.title}</h3><p className="first-recommendation-journey-state">{step.stateLabel}</p><p>{step.impact}</p></div>
-        <Link className="workbench-ledger-link workbench-touch-target" href={step.action.href} onClick={() => saveVisit(step.id)}>{step.action.label}</Link>
-      </li>)}
-    </ol>
+    {currentStep ? <p className="first-recommendation-current-step">当前步骤：{currentStep.title} · {currentStep.stateLabel}</p> : null}
+    <details className="first-recommendation-journey-details" onToggle={(event) => setShowFullJourney(event.currentTarget.open)} open={showFullJourney}>
+      <summary className="workbench-touch-target">查看完整旅程（{journey.steps.length} 步）</summary>
+      <ol aria-label="完整推荐旅程" className="first-recommendation-journey-list">
+        {journey.steps.map((step) => <JourneyStep current={step.id === journey.currentStepId} key={step.id} onVisit={saveVisit} step={step} />)}
+      </ol>
+    </details>
   </section>;
+}
+
+function JourneyStep({ current = false, onVisit, step }: {
+  current?: boolean;
+  onVisit: (stepId: FirstRecommendationJourneyStepId) => void;
+  step: Extract<FirstRecommendationJourney, { status: "active" }> ["steps"][number];
+}) {
+  return <li aria-current={current ? "step" : undefined} data-status={step.status}>
+    <div className="first-recommendation-journey-step-copy">
+      <h3><span aria-hidden="true" className="first-recommendation-journey-status-icon" data-status={step.status} />{step.title}</h3>
+      <p className="first-recommendation-journey-state">{step.stateLabel}</p>
+      <p>{step.impact}</p>
+    </div>
+    <Link className="workbench-ledger-link workbench-touch-target" href={step.action.href} onClick={() => onVisit(step.id)}>{step.action.label}</Link>
+  </li>;
 }
