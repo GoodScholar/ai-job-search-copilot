@@ -3,7 +3,7 @@ import { Inject, Injectable, Module, type OnModuleDestroy } from "@nestjs/common
 import { Client as MinioClient } from "minio";
 import { createDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
-import { createAgentRunCommands, createAgentRunProcessor, createAgentRunRecoveryQueries, createLayeredPublicJobDiscoveryRuntime, type DiscoveryContentStore, type LayeredPublicJobDiscoveryWorkflowResolver } from "@job-copilot/domain/agent-runs";
+import { createAgentRunCommands, createAgentRunProcessor, createAgentRunRecoveryQueries, createLayeredPublicJobDiscoveryRuntime, type DiscoveryContentStore, type DiscoveryJobNormalizerResolver, type LayeredPublicJobDiscoveryWorkflowResolver } from "@job-copilot/domain/agent-runs";
 import { FAKE_ANYSEARCH_PUBLIC_JOB_PHASE, resolveJobDiscoveryExecutionMode, resolveJobDiscoveryRuntimeConfig } from "@job-copilot/domain/job-discovery-execution-mode";
 import { createJobDiscoverySchedules } from "@job-copilot/domain/job-discovery-schedules";
 import { createRecommendationRunCommands } from "@job-copilot/domain/recommendation-runs";
@@ -11,7 +11,10 @@ import { createRunPreflightEvaluator } from "@job-copilot/domain/run-preflight";
 import { createModelDiagnosticProjectionReader } from "@job-copilot/domain/model-diagnostics";
 import type { VerifiedJobEvidenceStore } from "@job-copilot/domain/verified-job-source-gate";
 import { SecureJobPageFetcher } from "@job-copilot/source-access";
-import { createOpenAiModelDiagnosticAdapter, resolveJobNormalizerConfig } from "@job-copilot/model-access";
+import { createOpenAiJobPostingNormalizer, createOpenAiModelDiagnosticAdapter, openAiJobNormalizerMetadata, resolveJobNormalizerConfig } from "@job-copilot/model-access";
+import { FAKE_JOB_NORMALIZER_METADATA } from "@job-copilot/contracts/job-imports";
+import type { JobNormalizerMetadata } from "@job-copilot/contracts/job-normalizer";
+import { FakeJobPostingNormalizer } from "../job-imports/fake-job-posting-normalizer.js";
 import { createFakeModelDiagnosticAdapter, TEST_MODEL_DIAGNOSTIC_FINGERPRINT_SEED } from "@job-copilot/model-access/testing";
 
 import { AgentRunConsumer } from "./agent-run-consumer.js";
@@ -84,6 +87,21 @@ export function createConfiguredJobDiscoveryExecutionMode(environment: NodeJS.Pr
 
 export function createConfiguredJobDiscoveryAdapterResolver(environment: NodeJS.ProcessEnv = process.env) {
   return createJobDiscoveryAdapterResolver(environment);
+}
+
+/** 运行时环境只提供密钥和 endpoint；adapter/model 必须来自已冻结的 execution spec。 */
+export function createConfiguredJobPostingNormalizerResolver(environment: NodeJS.ProcessEnv = process.env): DiscoveryJobNormalizerResolver {
+  return {
+    resolve(metadata: JobNormalizerMetadata) {
+      if (metadata.adapter === "fake") {
+        if (JSON.stringify(metadata) !== JSON.stringify(FAKE_JOB_NORMALIZER_METADATA)) return undefined;
+        return new FakeJobPostingNormalizer();
+      }
+      if (metadata.adapter !== "openai" || !metadata.model || !environment.OPENAI_API_KEY?.trim()) return undefined;
+      if (JSON.stringify(openAiJobNormalizerMetadata(metadata.model)) !== JSON.stringify(metadata)) return undefined;
+      return createOpenAiJobPostingNormalizer({ apiKey: environment.OPENAI_API_KEY, model: metadata.model, endpoint: environment.OPENAI_ENDPOINT, organization: environment.OPENAI_ORGANIZATION, project: environment.OPENAI_PROJECT });
+    },
+  };
 }
 
 /** 恢复候选也只能复用已解析的精确 configured phase fixture base。 */
@@ -248,6 +266,7 @@ class AgentRunDatabase {
               evidenceStore: new MinioVerifiedJobEvidenceStore(createMinioClient(), required("MINIO_BUCKET", "career-documents")),
               id: randomUUID,
             }),
+            jobPostingNormalizerResolver: createConfiguredJobPostingNormalizerResolver(),
             contentStore: new MinioDiscoveryContentStore(createMinioClient(), required("MINIO_BUCKET", "career-documents")),
             auditTrail: createAuditTrail({ db, clock: () => new Date() }),
             matchingQueue: queue,
