@@ -697,7 +697,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
       try {
         discoveryMetadata = claimed.run.workflowVersion === "layered-public-job-discovery-v1"
           ? layeredExecutionSpec.model
-          : claimed.run.adapter === "greenhouse"
+          : claimed.run.adapter === "fake" || claimed.run.adapter === "greenhouse"
             ? JobNormalizerMetadataSchema.nullable().parse(claimed.run.modelSnapshot)
             : null;
         if (discoveryMetadata) {

@@ -3,12 +3,14 @@ import { JobNormalizerError, assertJobNormalizerInputBudget, isJobInstructionLik
 
 const INVALID_FIXTURE = "<!-- job-copilot:fake-normalizer-invalid -->";
 
-type Field = "company" | "location" | "postedAt" | "deadline" | "workMode" | "relocationRequired" | "salary" | "seniority" | "education" | "languages" | "workEligibility" | "industry" | "employmentType" | "requiredSkills";
+type Field = "company" | "title" | "location" | "postedAt" | "deadline" | "description" | "workMode" | "relocationRequired" | "salary" | "seniority" | "education" | "languages" | "workEligibility" | "industry" | "employmentType" | "requiredSkills";
 
 const labels = new Map<string, Field>([
   ["公司", "company"],
   ["公司名称", "company"],
   ["company", "company"],
+  ["标题", "title"],
+  ["title", "title"],
   ["地点", "location"],
   ["工作地点", "location"],
   ["location", "location"],
@@ -17,7 +19,10 @@ const labels = new Map<string, Field>([
   ["posted at", "postedAt"],
   ["deadline", "deadline"],
   ["截止日期", "deadline"],
+  ["截止时间", "deadline"],
   ["申请截止", "deadline"],
+  ["描述", "description"],
+  ["description", "description"],
   ["工作方式", "workMode"],
   ["work mode", "workMode"],
   ["是否需要搬迁", "relocationRequired"],
@@ -58,7 +63,7 @@ export class FakeJobPostingNormalizer {
   async normalize(content: string, options: JobNormalizerCallOptions = {}): Promise<unknown> {
     const budget = assertJobNormalizerInputBudget(content, options);
     if (isJobInstructionLike(content)) throw new JobNormalizerError("JOB_NORMALIZER_INJECTION_DETECTED");
-    await options.beforeRequest?.();
+    await options.beforeRequest?.({ inputTokenBound: budget.inputTokenBound, maxOutputTokens: budget.maxOutputTokens });
     await options.onUsage?.({ inputTokens: 0, outputTokens: 0 });
     if (this.options.enableFailureFixture && content.trim() === INVALID_FIXTURE) return { invalid: "fake-fixture" };
     if (this.options.testDelayMs) await new Promise((resolve) => setTimeout(resolve, this.options.testDelayMs));
@@ -104,7 +109,7 @@ export class FakeJobPostingNormalizer {
       const value = label[2]!.trim();
       const path = `lines:${index + 1}-${index + 1}`;
       if (!field || !value) continue;
-      if (field === "company" || field === "location" || field === "postedAt" || field === "deadline") {
+      if (field === "company" || field === "title" || field === "location" || field === "postedAt" || field === "deadline" || field === "description") {
         if (output[field] !== null) continue;
         if (field === "postedAt" || field === "deadline") {
           const parsed = validIsoDateTime(value);

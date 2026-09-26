@@ -12,6 +12,7 @@ import { createAgentRunCheckpoint } from "./agent-run-checkpoint";
 import { systemAccountRunPolicy } from "@job-copilot/contracts/account-run-policies";
 import { RunPreflightSnapshotSchema } from "@job-copilot/contracts/run-preflight";
 import { PUBLIC_JOB_DISCOVERY_BUDGET } from "@job-copilot/contracts/agent-runs";
+import { FAKE_JOB_NORMALIZER_METADATA } from "@job-copilot/contracts/job-imports";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
 const constraints = {
@@ -171,6 +172,14 @@ describe("agent runs", () => {
       .resolves.toMatchObject({ reused: true, runId: first.runId });
     await expect(database.select({ modelSnapshot: agentRuns.modelSnapshot, budgetSnapshot: agentRuns.budgetSnapshot }).from(agentRuns).where(eq(agentRuns.id, first.runId)))
       .resolves.toEqual([{ modelSnapshot: firstMetadata, budgetSnapshot: PUBLIC_JOB_DISCOVERY_BUDGET }]);
+  });
+
+  it("Fake 发现同样冻结 normalizer 元数据，避免回退到未绑定展示字段", async () => {
+    const { userId, targetId } = await activeTarget();
+    const started = await commands(new MemoryQueue(), FAKE_JOB_NORMALIZER_METADATA).start({ userId, requestId: crypto.randomUUID(), command: { targetId, idempotencyKey: crypto.randomUUID() } });
+
+    await expect(database.select({ modelSnapshot: agentRuns.modelSnapshot }).from(agentRuns).where(eq(agentRuns.id, started.runId)))
+      .resolves.toEqual([{ modelSnapshot: FAKE_JOB_NORMALIZER_METADATA }]);
   });
 
   it("拒绝缺失、跨账户或已停用目标，并让队列故障保留可恢复 run", async () => {

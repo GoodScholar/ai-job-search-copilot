@@ -55,9 +55,9 @@ export function createDiscoveryJobNormalizer(input: {
           const raw = await normalizer.normalize(value.content, {
             signal: input.signal,
             budget,
-            beforeRequest: async () => {
+            beforeRequest: async (requestBudget) => {
               if (input.signal.aborted) throw new DiscoveryJobNormalizationError("DISCOVERY_JOB_NORMALIZATION_INTERRUPTED");
-              const reserve: Record<string, number | boolean> = input.metadata!.adapter === "fake" ? {} : { modelCalls: 1, budgetTokens: budget.inputTokenBound + budget.maxOutputTokens };
+              const reserve: Record<string, number | boolean> = input.metadata!.adapter === "fake" ? {} : { modelCalls: 1, budgetTokens: requestBudget.inputTokenBound + requestBudget.maxOutputTokens };
               interrupt(await input.checkpoint.check({ userId: input.userId, runId: input.runId, claimToken: input.claimToken, checkpointKey: `${prefix}:invoke`, reserve }));
               if (input.signal.aborted) throw new DiscoveryJobNormalizationError("DISCOVERY_JOB_NORMALIZATION_INTERRUPTED");
               invocationStarted = true;

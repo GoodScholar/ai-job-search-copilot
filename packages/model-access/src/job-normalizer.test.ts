@@ -151,4 +151,15 @@ describe("OpenAI 岗位规范化", () => {
     await expect(normalizer.normalize("公司：示例公司\n标题：工程师", { signal: controller.signal, beforeRequest: async () => { controller.abort(); } })).rejects.toMatchObject({ code: "JOB_NORMALIZER_CANCELLED" });
     expect(fetcher).not.toHaveBeenCalled();
   });
+
+  it("把完整序列化预检额度交给调用方，并在其拒绝时零 transport", async () => {
+    const fetcher = vi.fn();
+    const beforeRequest = vi.fn(async (requestBudget: { inputTokenBound: number; maxOutputTokens: number }) => {
+      expect(requestBudget.inputTokenBound).toBeGreaterThan(1_500);
+      expect(requestBudget.maxOutputTokens).toBe(2_000);
+      throw new Error("checkpoint budget exhausted");
+    });
+    await expect(createOpenAiJobPostingNormalizer({ apiKey: "test-key" }, fetcher).normalize("公司：示例公司\n标题：工程师", { beforeRequest })).rejects.toThrow("checkpoint budget exhausted");
+    expect(fetcher).not.toHaveBeenCalled();
+  });
 });

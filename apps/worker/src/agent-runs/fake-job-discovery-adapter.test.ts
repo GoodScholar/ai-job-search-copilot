@@ -156,6 +156,20 @@ describe("FakeJobDiscoveryAdapter", () => {
       .resolves.toEqual({ ok: false, error: { code: "FAKE_JOB_DETAIL_NOT_FOUND", retryable: false } });
   });
 
+  it("为归一化器提供受控 ATS 原文，而非仅提供展示摘要", async () => {
+    const adapter = new FakeJobDiscoveryAdapter();
+    const result = await adapter.getDetail({ sourceId: "fake:aurora-careers", detailId: "aurora-frontend-001" });
+    if (!result.ok) throw new Error("expected known fixture");
+
+    expect(result.data.rawPayload).toMatchObject({
+      company_name: "曙光云图",
+      title: "高级前端工程师",
+      location: { name: "上海" },
+      first_published: "2026-08-20T00:00:00.000Z",
+      content: expect.stringContaining("工作方式：远程"),
+    });
+  });
+
   it("每次读取返回隔离的原始夹具，调用方修改不会污染后续结果", async () => {
     const adapter = new FakeJobDiscoveryAdapter();
     const input = { sourceId: "fake:orbit-careers", detailId: "orbit-agent-001" };

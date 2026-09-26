@@ -3209,7 +3209,7 @@ describe("AgentRunProcessor checkpoints", () => {
     };
     const normalizer = {
       metadata: productionNormalizerMetadata,
-      normalize: async (_content: string, options: any) => { calls += 1; await options.beforeRequest(); await options.onUsage({ inputTokens: 3, outputTokens: 5 }); return normalizedTrustedOutput(); },
+      normalize: async (_content: string, options: any) => { calls += 1; await options.beforeRequest({ inputTokenBound: 1_500, maxOutputTokens: 2_000 }); await options.onUsage({ inputTokens: 3, outputTokens: 5 }); return normalizedTrustedOutput(); },
     };
 
     const outcome = await createAgentRunProcessor({ db: database, adapterResolver: resolver(adapter), jobPostingNormalizerResolver: { resolve: () => normalizer }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
@@ -3246,7 +3246,7 @@ describe("AgentRunProcessor checkpoints", () => {
       },
       anySearch: { isConfigured: () => false, search: async () => ({ candidates: [] }), extract: async () => { throw new Error("UNUSED"); } }, preflight: async () => null, fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
     });
-    const normalizer = { metadata: productionNormalizerMetadata, normalize: async (_content: string, options: any) => { calls += 1; await options.beforeRequest(); await options.onUsage({ inputTokens: 3, outputTokens: 5 }); return normalizedTrustedOutput(); } };
+    const normalizer = { metadata: productionNormalizerMetadata, normalize: async (_content: string, options: any) => { calls += 1; await options.beforeRequest({ inputTokenBound: 1_500, maxOutputTokens: 2_000 }); await options.onUsage({ inputTokens: 3, outputTokens: 5 }); return normalizedTrustedOutput(); } };
     const processor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => runtime }, jobPostingNormalizerResolver: { resolve: () => normalizer }, contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: () => crypto.randomUUID(), clock: () => new Date() });
 
     await expect(processor.process({ version: 1, ...first, finalAttempt: true })).resolves.toBe("completed");
@@ -3262,7 +3262,7 @@ describe("AgentRunProcessor checkpoints", () => {
     const failedMetadata = { ...productionNormalizerMetadata, normalizerVersion: "openai-responses-job-normalizer-auth-failure" };
     await database.update(agentRuns).set({ modelSnapshot: failedMetadata }).where(eq(agentRuns.id, failed.runId));
     const putsBeforeFailure = store.puts.length;
-    const authFailure = { metadata: failedMetadata, normalize: async (_content: string, options: any) => { await options.beforeRequest(); throw new JobNormalizerError("JOB_NORMALIZER_AUTH_FAILED"); } };
+    const authFailure = { metadata: failedMetadata, normalize: async (_content: string, options: any) => { await options.beforeRequest({ inputTokenBound: 1_500, maxOutputTokens: 2_000 }); throw new JobNormalizerError("JOB_NORMALIZER_AUTH_FAILED"); } };
     await expect(createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => runtime }, jobPostingNormalizerResolver: { resolve: () => authFailure }, contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: () => crypto.randomUUID(), clock: () => new Date() }).process({ version: 1, ...failed, finalAttempt: true })).resolves.toBe("failed");
     expect(store.puts).toHaveLength(putsBeforeFailure);
     await expect(Promise.all([
@@ -3290,7 +3290,7 @@ describe("AgentRunProcessor checkpoints", () => {
       preflight: async ({ candidate }: any) => ({ normalizedUrl: candidate.normalizedUrl }),
       fetcher: { fetch: async ({ candidate }: any) => ({ requestedUrl: candidate.normalizedUrl, finalUrl: candidate.normalizedUrl, canonicalUrl: candidate.normalizedUrl, rawHtml: "<main><h1>AI 应用工程师</h1><p>职责：构建产品</p><p>必备技能：TypeScript</p></main>", visibleText: "AI 应用工程师\n职责：构建产品\n必备技能：TypeScript", pageClassification: "job" as const, sourceKind: "official" as const }) },
     });
-    const normalizer = { metadata: productionNormalizerMetadata, normalize: async (_content: string, options: any) => { calls += 1; await options.beforeRequest(); await options.onUsage({ inputTokens: 3, outputTokens: 5 }); return publicOutput; } };
+    const normalizer = { metadata: productionNormalizerMetadata, normalize: async (_content: string, options: any) => { calls += 1; await options.beforeRequest({ inputTokenBound: 1_500, maxOutputTokens: 2_000 }); await options.onUsage({ inputTokens: 3, outputTokens: 5 }); return publicOutput; } };
     await expect(createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => runtime }, jobPostingNormalizerResolver: { resolve: () => normalizer }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: () => crypto.randomUUID(), clock: () => new Date() }).process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("completed");
     expect(calls).toBe(1);
     const [version] = await database.select({ id: jobSourcePostingVersions.id, normalizedData: jobSourcePostingVersions.normalizedData }).from(jobSourcePostingVersions).where(and(eq(jobSourcePostingVersions.userId, job.userId), sql`${jobSourcePostingVersions.normalizedData}->>'title' = 'AI 应用工程师'`));
@@ -3325,7 +3325,7 @@ describe("AgentRunProcessor checkpoints", () => {
     const retrySource = await configureV2ProductionNormalizerRun(retryJob);
     const knownRate = {
       metadata: productionNormalizerMetadata,
-      normalize: async (_content: string, options: any) => { await options.beforeRequest(); await options.onUsage({ inputTokens: 3, outputTokens: 5 }); throw new JobNormalizerError("JOB_NORMALIZER_RATE_LIMITED"); },
+      normalize: async (_content: string, options: any) => { await options.beforeRequest({ inputTokenBound: 1_500, maxOutputTokens: 2_000 }); await options.onUsage({ inputTokens: 3, outputTokens: 5 }); throw new JobNormalizerError("JOB_NORMALIZER_RATE_LIMITED"); },
     };
     await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(productionV2Adapter(retrySource)), jobPostingNormalizerResolver: { resolve: () => knownRate }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
       .process({ version: 1, ...retryJob, finalAttempt: false })).resolves.toBe("retry");
@@ -3336,7 +3336,7 @@ describe("AgentRunProcessor checkpoints", () => {
     let providerCalls = 0;
     const unknownUsage = {
       metadata: productionNormalizerMetadata,
-      normalize: async (_content: string, options: any) => { await options.beforeRequest(); providerCalls += 1; throw new Error("provider connection closed"); },
+      normalize: async (_content: string, options: any) => { await options.beforeRequest({ inputTokenBound: 1_500, maxOutputTokens: 2_000 }); providerCalls += 1; throw new Error("provider connection closed"); },
     };
     await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(productionV2Adapter(unknownSource, ["701", "702"])), jobPostingNormalizerResolver: { resolve: () => unknownUsage }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
       .process({ version: 1, ...unknownJob, finalAttempt: true })).resolves.toBe("failed");
@@ -3352,7 +3352,7 @@ describe("AgentRunProcessor checkpoints", () => {
     const cancelledSource = await configureV2ProductionNormalizerRun(cancelledJob);
     const cancelled = {
       metadata: productionNormalizerMetadata,
-      normalize: async (_content: string, options: any) => { await options.beforeRequest(); await database.update(agentRuns).set({ controlState: "cancel_requested" }).where(eq(agentRuns.id, cancelledJob.runId)); await options.onUsage({ inputTokens: 3, outputTokens: 5 }); return normalizedTrustedOutput(); },
+      normalize: async (_content: string, options: any) => { await options.beforeRequest({ inputTokenBound: 1_500, maxOutputTokens: 2_000 }); await database.update(agentRuns).set({ controlState: "cancel_requested" }).where(eq(agentRuns.id, cancelledJob.runId)); await options.onUsage({ inputTokens: 3, outputTokens: 5 }); return normalizedTrustedOutput(); },
     };
     await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(productionV2Adapter(cancelledSource)), jobPostingNormalizerResolver: { resolve: () => cancelled }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
       .process({ version: 1, ...cancelledJob, finalAttempt: true })).resolves.toBe("cancelled");
@@ -3367,7 +3367,7 @@ describe("AgentRunProcessor checkpoints", () => {
     let providerCalls = 0;
     const limited = {
       metadata: productionNormalizerMetadata,
-      normalize: async (_content: string, options: any) => { await options.beforeRequest(); providerCalls += 1; await options.onUsage({ inputTokens: 3, outputTokens: 5 }); return normalizedTrustedOutput(); },
+      normalize: async (_content: string, options: any) => { await options.beforeRequest({ inputTokenBound: 1_500, maxOutputTokens: 2_000 }); providerCalls += 1; await options.onUsage({ inputTokens: 3, outputTokens: 5 }); return normalizedTrustedOutput(); },
     };
     await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(productionV2Adapter(budgetSource, ["701", "702"])), jobPostingNormalizerResolver: { resolve: () => limited }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
       .process({ version: 1, ...budgetJob, finalAttempt: true })).resolves.toBe("budget_exhausted");
@@ -3381,7 +3381,7 @@ describe("AgentRunProcessor checkpoints", () => {
     const settledBudgetSource = await configureV2ProductionNormalizerRun(settledBudgetJob);
     const actualOverBudget = {
       metadata: productionNormalizerMetadata,
-      normalize: async (_content: string, options: any) => { await options.beforeRequest(); await options.onUsage({ inputTokens: 600, outputTokens: 119_500 }); return normalizedTrustedOutput(); },
+      normalize: async (_content: string, options: any) => { await options.beforeRequest({ inputTokenBound: 1_500, maxOutputTokens: 2_000 }); await options.onUsage({ inputTokens: 600, outputTokens: 119_500 }); return normalizedTrustedOutput(); },
     };
     await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(productionV2Adapter(settledBudgetSource)), jobPostingNormalizerResolver: { resolve: () => actualOverBudget }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now })
       .process({ version: 1, ...settledBudgetJob, finalAttempt: true })).resolves.toBe("budget_exhausted");

@@ -37,6 +37,22 @@ describe("FakePublicSourceHealthAdapter", () => {
     });
   });
 
+  it("为健康来源提供可由 normalizer 读取的受控 ATS 原文", async () => {
+    const adapter = new FakePublicSourceHealthAdapter();
+    const result = await adapter.getSourceDetail({ source: healthy, detailId: "healthy-engineer-001" });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: { rawPayload: {
+        company_name: "Healthy Inc",
+        title: "Engineer",
+        location: { name: "Beijing" },
+        first_published: "2026-08-20T00:00:00.000Z",
+        content: expect.stringContaining("工作方式：远程"),
+      } },
+    });
+  });
+
   it.each([
     ["missing_field", "SOURCE_DETAIL_FIELDS_MISSING"],
     ["invalid_url", "SOURCE_DETAIL_URL_INVALID"],

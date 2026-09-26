@@ -6,11 +6,13 @@ export const JOB_NORMALIZER_RULE_VERSION = "job-normalization-evidence-v4";
 export const DEFAULT_JOB_NORMALIZER_BUDGET = { maxInputBytes: 16_384, maxOutputTokens: 2_000, maxTotalTokens: 12_000, timeoutMs: 25_000 } as const;
 
 export type JobNormalizerBudget = { maxInputBytes: number; maxOutputTokens: number; maxTotalTokens?: number; timeoutMs: number };
+/** Provider request's conservative preflight reservation; schema/instructions use the documented byte/4 estimate. */
+export type JobNormalizerRequestBudget = { inputTokenBound: number; maxOutputTokens: number };
 export type JobNormalizerCallOptions = {
   signal?: AbortSignal;
   budget?: JobNormalizerBudget;
   /** Called after local safety and budget checks, immediately before a provider request. */
-  beforeRequest?: () => Promise<void>;
+  beforeRequest?: (budget: JobNormalizerRequestBudget) => Promise<void>;
   /** Called once a provider has reported usage, before parsing or evidence validation can fail. */
   onUsage?: (usage: { inputTokens: number; outputTokens: number }) => Promise<void>;
   /** Explicit evaluation may record only this fixed stage enum; production callers do not log provider payloads. */

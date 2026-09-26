@@ -51,11 +51,12 @@ export function createOpenAiJobPostingNormalizer(config: OpenAiJobNormalizerConf
   if (!config.apiKey.trim()) throw new Error("JOB_NORMALIZER_CREDENTIALS_MISSING");
   return { metadata, async normalize(content: string, options: JobNormalizerCallOptions = {}) {
     const numberedContent = numberedJobPosting(content);
-    const requestOverheadTokens = Math.ceil(new TextEncoder().encode(JSON.stringify({ model, store: false, max_output_tokens: DEFAULT_JOB_NORMALIZER_BUDGET.maxOutputTokens, reasoning: { effort: "low" }, input: [{ role: "developer", content: [{ type: "input_text", text: INSTRUCTIONS }] }], text: { format: { type: "json_schema", name: "job_normalization", strict: true, schema: RESPONSE_SCHEMA } } })).byteLength / 4);
+    const requestedBudget = options.budget ?? DEFAULT_JOB_NORMALIZER_BUDGET;
+    const requestOverheadTokens = Math.ceil(new TextEncoder().encode(JSON.stringify({ model, store: false, max_output_tokens: requestedBudget.maxOutputTokens, reasoning: { effort: "low" }, input: [{ role: "developer", content: [{ type: "input_text", text: INSTRUCTIONS }] }], text: { format: { type: "json_schema", name: "job_normalization", strict: true, schema: RESPONSE_SCHEMA } } })).byteLength / 4);
     // Serialized schema/instructions use a byte/4 estimate plus the exact numbered-input delta; raw input byte cap remains authoritative.
     const budget = assertJobNormalizerInputBudget(content, options, requestOverheadTokens + new TextEncoder().encode(numberedContent).byteLength - new TextEncoder().encode(content).byteLength);
     if (isJobInstructionLike(content)) throw new JobNormalizerError("JOB_NORMALIZER_INJECTION_DETECTED");
-    await options.beforeRequest?.();
+    await options.beforeRequest?.({ inputTokenBound: budget.inputTokenBound, maxOutputTokens: budget.maxOutputTokens });
     if (options.signal?.aborted) throw new JobNormalizerError("JOB_NORMALIZER_CANCELLED", unknownJobNormalizerUsage());
     const timeout = AbortSignal.timeout(budget.timeoutMs);
     const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;

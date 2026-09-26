@@ -1,9 +1,46 @@
 import { describe, expect, it } from "vitest";
 import { JobNormalizerOutputSchema } from "@job-copilot/contracts/job-imports";
+import { buildTrustedNormalizationContent } from "../../../../packages/domain/src/trusted-job-normalization.js";
+import { evaluateJobTriage } from "../../../../packages/domain/src/job-triage.js";
 
+import { FakeJobDiscoveryAdapter } from "../agent-runs/fake-job-discovery-adapter.js";
 import { FakeJobPostingNormalizer } from "./fake-job-posting-normalizer.js";
 
 describe("FakeJobPostingNormalizer", () => {
+  it("从 Fake ATS 原文提取完整的当前冻结字段与资格证据", async () => {
+    const detail = await new FakeJobDiscoveryAdapter().getDetail({ sourceId: "fake:aurora-careers", detailId: "aurora-frontend-001" });
+    if (!detail.ok) throw new Error("expected known fixture");
+    const content = buildTrustedNormalizationContent(detail.data);
+    const output = JobNormalizerOutputSchema.parse(await new FakeJobPostingNormalizer().normalize(content));
+
+    expect(output).toMatchObject({
+      company: "曙光云图", title: "高级前端工程师", location: "上海", postedAt: "2026-08-20T00:00:00.000Z",
+      description: "为可验证的求职工作台交付 TypeScript 前端功能。",
+      qualifications: {
+        workMode: { value: "remote", evidence: { path: "lines:6-6", rawValue: "远程" } },
+        requiredSkills: { value: ["TypeScript"], evidence: { path: "lines:14-14", rawValue: "TypeScript" } },
+      },
+    });
+    expect(evaluateJobTriage({
+      sourcePostingVersionId: "10000000-0000-4000-8000-000000000001",
+      now: new Date("2026-09-26T00:00:00.000Z"),
+      target: {
+        targetId: "10000000-0000-4000-8000-000000000002", version: 1,
+        constraints: {
+          roleFamily: "前端", seniority: null, locations: ["上海"], workModes: ["remote"], relocation: "not_willing", salary: null, industries: [],
+          dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] },
+        },
+      },
+      job: output,
+      facts: [
+        { factId: "education", revisionId: "education-r1", factType: "education", factValue: { summary: "本科" } },
+        { factId: "language", revisionId: "language-r1", factType: "language", factValue: { name: "英语", level: "C1" } },
+        { factId: "eligibility", revisionId: "eligibility-r1", factType: "work_eligibility", factValue: { summary: "中国工作许可" } },
+        { factId: "skill", revisionId: "skill-r1", factType: "skill", factValue: { name: "TypeScript" } },
+      ],
+    })).toMatchObject({ overallVerdict: "pass", deadlineStatus: "missing" });
+  });
+
   it("只从显式标题和标签提取岗位字段，并原样保留描述章节", async () => {
     const source = [
       "# 高级前端工程师",
