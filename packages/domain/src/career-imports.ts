@@ -17,6 +17,12 @@ import {
   parseQuotedCareerFactValue,
   type CreateCareerImportResponse,
   CareerParserOutputSchema,
+  CareerParserError,
+  DEFAULT_CAREER_PARSER_BUDGET,
+  FAKE_CAREER_PARSER_METADATA,
+  isCareerInstructionLike,
+  type CareerParserCallOptions,
+  type CareerParserMetadata,
   type CareerImportDetail,
   type CareerImportFailureCode,
   type CareerImportJob,
@@ -32,11 +38,6 @@ import type { AuditTrail } from "./audit-trail";
 import { detectCareerFactConflict } from "./career-fact-conflicts";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 
-const parserAdapter = "fake";
-const parserVersion = "fake-career-parser-v1";
-const promptVersion = "career-import-prompt-v1";
-const outputSchemaVersion = "career-facts-v1";
-
 export interface CareerDocumentStore {
   put(input: { objectKey: string; bytes: Uint8Array; mediaType: "text/markdown" | "text/plain" | "application/vnd.openxmlformats-officedocument.wordprocessingml.document" | "application/pdf"; documentId: string }): Promise<void>;
   get(input: { objectKey: string }): Promise<Uint8Array>;
@@ -47,7 +48,8 @@ export interface CareerImportQueue {
 }
 
 export interface CareerDocumentParser {
-  parse(markdown: string): Promise<unknown>;
+  metadata?: CareerParserMetadata;
+  parse(markdown: string, options?: CareerParserCallOptions): Promise<unknown>;
 }
 
 export class CareerImportError extends Error {
@@ -80,6 +82,7 @@ type CommandDependencies = {
   auditTrail: AuditTrail;
   documentStore: CareerDocumentStore;
   queue: CareerImportQueue;
+  parserMetadata?: CareerParserMetadata;
   id: () => string;
   clock: () => Date;
 };
@@ -101,6 +104,11 @@ type ImportRecord = {
   originalFilename: string;
   sourceFormat: string;
   checksumSha256: string;
+  parserAdapter: string;
+  parserVersion: string;
+  promptVersion: string;
+  outputSchemaVersion: string;
+  model: string | null;
   privacyScanVersion: string | null;
   status: string;
   attemptCount: number;
@@ -239,6 +247,11 @@ async function findImport(db: Database, input: { userId: string; importId: strin
     originalFilename: careerDocuments.originalFilename,
     sourceFormat: careerDocuments.sourceFormat,
     checksumSha256: careerDocuments.checksumSha256,
+    parserAdapter: careerImports.parserAdapter,
+    parserVersion: careerImports.parserVersion,
+    promptVersion: careerImports.promptVersion,
+    outputSchemaVersion: careerImports.outputSchemaVersion,
+    model: careerImports.model,
     privacyScanVersion: careerDocuments.privacyScanVersion,
     status: careerImports.status,
     attemptCount: careerImports.attemptCount,
@@ -257,6 +270,7 @@ export function createCareerImportCommands(deps: CommandDependencies): {
 } {
   return {
     async createOrReuse(input): Promise<CreateOrReuseResult> {
+      const { adapter: parserAdapter, parserVersion, promptVersion, outputSchemaVersion, model } = deps.parserMetadata ?? FAKE_CAREER_PARSER_METADATA;
       const checksumSha256 = sha256(input.bytes);
       const now = deps.clock();
       let [document] = await deps.db.select({
@@ -406,6 +420,7 @@ export function createCareerImportCommands(deps: CommandDependencies): {
             parserVersion,
             promptVersion,
             outputSchemaVersion,
+            model,
             originatingRequestId: input.requestId,
             queuedAt: now,
             createdAt: now,
@@ -722,7 +737,7 @@ export function createCareerImportQueries(deps: { db: Database }): {
 }
 
 export function createCareerImportProcessor(deps: ProcessorDependencies): {
-  process(input: CareerImportJob & { finalAttempt: boolean }): Promise<"completed" | "failed" | "noop">;
+  process(input: CareerImportJob & { finalAttempt: boolean; signal?: AbortSignal }): Promise<"completed" | "failed" | "noop">;
 } {
   async function fail(
     record: ImportRecord,
@@ -803,6 +818,10 @@ export function createCareerImportProcessor(deps: ProcessorDependencies): {
       if (record.privacyScanVersion !== CAREER_PRIVACY_SCAN_VERSION) {
         return fail(record, attemptToken, "CAREER_DOCUMENT_PRIVACY_UNVERIFIED");
       }
+      const parserMetadata = deps.parser.metadata ?? FAKE_CAREER_PARSER_METADATA;
+      if (record.parserAdapter !== parserMetadata.adapter || record.parserVersion !== parserMetadata.parserVersion
+        || record.promptVersion !== parserMetadata.promptVersion || record.outputSchemaVersion !== parserMetadata.outputSchemaVersion
+        || record.model !== parserMetadata.model) return fail(record, attemptToken, "CAREER_PARSER_OUTPUT_INVALID");
 
       let rawBytes: Uint8Array;
       try {
@@ -823,13 +842,18 @@ export function createCareerImportProcessor(deps: ProcessorDependencies): {
         } catch {
           throw new StableImportFailure("CAREER_PARSER_OUTPUT_INVALID");
         }
-        const rawOutput = await deps.parser.parse(markdown);
+        const rawOutput = await deps.parser.parse(markdown, { signal: input.signal, budget: DEFAULT_CAREER_PARSER_BUDGET });
         if (exceedsCareerImportFactLimit(rawOutput)) {
           throw new StableImportFailure("CAREER_IMPORT_FACT_LIMIT_EXCEEDED");
         }
         const outputResult = CareerParserOutputSchema.safeParse(rawOutput);
         if (!outputResult.success) throw new StableImportFailure("CAREER_PARSER_OUTPUT_INVALID");
         const output = outputResult.data;
+        if (output.adapter !== record.parserAdapter || output.parserVersion !== record.parserVersion
+          || output.promptVersion !== record.promptVersion || output.outputSchemaVersion !== record.outputSchemaVersion
+          || (output.adapter === "openai" ? output.model : null) !== record.model) {
+          throw new StableImportFailure("CAREER_PARSER_OUTPUT_INVALID");
+        }
         const markdownFacts = output.facts.filter((fact) => fact.evidence.locatorType === "markdown_lines") as Array<CareerParserFact & {
           evidence: { locatorType: "markdown_lines"; startLine: number; endLine: number; excerpt: string };
         }>;
@@ -843,6 +867,7 @@ export function createCareerImportProcessor(deps: ProcessorDependencies): {
           const quoted = lines.slice(fact.evidence.startLine - 1, fact.evidence.endLine).join("\n");
           const parsedFactValue = parseQuotedCareerFactValue(fact.factType, quoted);
           return quoted === fact.evidence.excerpt
+            && !quoted.split("\n").some(isCareerInstructionLike)
             && parsedFactValue !== null
             && normalizeJson(parsedFactValue) === normalizeJson(fact.factValue);
         });
@@ -952,6 +977,8 @@ export function createCareerImportProcessor(deps: ProcessorDependencies): {
       } catch (error) {
         if (error instanceof StaleImportAttempt) return "noop";
         if (error instanceof StableImportFailure) return fail(record, attemptToken, error.code);
+        if (error instanceof CareerParserError) return fail(record, attemptToken,
+          error.code === "CAREER_PARSER_OUTPUT_INVALID" ? "CAREER_PARSER_OUTPUT_INVALID" : error.code);
         if (input.finalAttempt) return fail(record, attemptToken, "CAREER_IMPORT_PERSIST_FAILED");
         throw new RetryableImportFailure();
       }

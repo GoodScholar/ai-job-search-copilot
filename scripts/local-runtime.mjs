@@ -130,6 +130,7 @@ function applicationEnv(config, env) {
   return {
     ...inheritedEnvironment,
     APP_ENV: config.appEnv,
+    CAREER_PARSER_ADAPTER: config.test ? "fake" : (env.CAREER_PARSER_ADAPTER ?? "fake"),
     AUTH_MODE: "dev",
     DEV_AUTH_SHARED_SECRET: config.devAuthSharedSecret,
     PORT: config.webPort,

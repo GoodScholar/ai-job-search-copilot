@@ -1,4 +1,5 @@
 import { createInternalOpenAiModelDiagnosticAdapter, type OpenAiModelDiagnosticConfig } from "./internal.js";
+export { createOpenAiCareerParser, resolveCareerParserConfig, openAiCareerParserMetadata } from "./career-parser.js";
 
 export type { ModelDiagnosticAdapter, ModelDiagnosticProbeResult } from "@job-copilot/contracts/model-diagnostics";
 export type { OpenAiModelDiagnosticConfig } from "./internal.js";

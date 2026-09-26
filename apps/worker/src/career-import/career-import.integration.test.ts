@@ -332,7 +332,7 @@ describe("CareerImportConsumer", () => {
     await expect(database.select({ id: candidateFacts.id }).from(candidateFacts)).resolves.toEqual([]);
   });
 
-  it("将近 512 KiB 短列表的第 501 条事实稳定标记为事实数超限", async () => {
+  it("将超过解析输入预算的上传稳定终止且不重试", async () => {
     const prefix = "## 技能\n";
     const source = prefix + "- x\n".repeat(Math.floor((CAREER_DOCUMENT_MAX_BYTES - Buffer.byteLength(prefix)) / 4));
     expect(Buffer.byteLength(source)).toBeLessThanOrEqual(CAREER_DOCUMENT_MAX_BYTES);
@@ -343,7 +343,7 @@ describe("CareerImportConsumer", () => {
     await waitFor(async () => (await database.select({ status: careerImports.status }).from(careerImports)).at(0)?.status === "failed");
     const [result] = await database.select({ status: careerImports.status, failureCode: careerImports.failureCode, attemptCount: careerImports.attemptCount })
       .from(careerImports);
-    expect(result).toEqual({ status: "failed", failureCode: "CAREER_IMPORT_FACT_LIMIT_EXCEEDED", attemptCount: 1 });
+    expect(result).toEqual({ status: "failed", failureCode: "CAREER_PARSER_BUDGET_EXHAUSTED", attemptCount: 1 });
     await expect(database.select({ id: candidateFacts.id }).from(candidateFacts)).resolves.toEqual([]);
   });
 
