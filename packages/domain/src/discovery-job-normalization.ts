@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { JobNormalizerOutputSchema, validateJobNormalizerOutput, type JobNormalizerOutput } from "@job-copilot/contracts/job-imports";
 import { DEFAULT_JOB_NORMALIZER_BUDGET, JobNormalizerError, assertJobNormalizerInputBudget, type JobNormalizerCallOptions, type JobNormalizerMetadata } from "@job-copilot/contracts/job-normalizer";
 
-export interface DiscoveryJobPostingNormalizer { normalize(content: string, options?: JobNormalizerCallOptions): Promise<unknown>; }
+export interface DiscoveryJobPostingNormalizer { metadata: JobNormalizerMetadata; normalize(content: string, options?: JobNormalizerCallOptions): Promise<unknown>; }
 export interface DiscoveryJobNormalizerResolver { resolve(metadata: JobNormalizerMetadata): DiscoveryJobPostingNormalizer | undefined; }
 export interface DiscoveryJobNormalizationCheckpoint {
   check(input: { userId: string; runId: string; claimToken: string; checkpointKey: string; reserve: Record<string, number | boolean> }): Promise<{ kind: string }>;
