@@ -21,7 +21,7 @@ describe("discovery job normalization", () => {
     await expect(helper.normalizePosting({ identity: "lead", content })).resolves.toEqual(output);
     await expect(helper.normalizePosting({ identity: "lead", content })).resolves.toEqual(output);
     expect(normalizer.normalize).toHaveBeenCalledOnce();
-    expect(checkpoint.check).toHaveBeenNthCalledWith(1, expect.objectContaining({ reserve: expect.objectContaining({ modelCalls: 1, budgetTokens: expect.any(Number) }) }));
+    expect(checkpoint.check).toHaveBeenNthCalledWith(1, expect.objectContaining({ reserve: {} }));
     expect(checkpoint.check).toHaveBeenNthCalledWith(2, expect.objectContaining({ reserve: { inputTokens: 3, outputTokens: 5, settleActual: true, invocationAttemptCount: 1 } }));
   });
 

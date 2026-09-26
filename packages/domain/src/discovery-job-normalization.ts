@@ -50,13 +50,16 @@ export function createDiscoveryJobNormalizer(input: {
         const budget = assertJobNormalizerInputBudget(value.content, { budget: { ...DEFAULT_JOB_NORMALIZER_BUDGET, timeoutMs: Math.min(DEFAULT_JOB_NORMALIZER_BUDGET.timeoutMs, remaining) } });
         const prefix = `job_normalizer:${key}:attempt:${input.attemptCount}`;
         let usageSettled = false;
+        let invocationStarted = false;
         try {
           const raw = await normalizer.normalize(value.content, {
             signal: input.signal,
             budget,
             beforeRequest: async () => {
               if (input.signal.aborted) throw new DiscoveryJobNormalizationError("DISCOVERY_JOB_NORMALIZATION_INTERRUPTED");
-              interrupt(await input.checkpoint.check({ userId: input.userId, runId: input.runId, claimToken: input.claimToken, checkpointKey: `${prefix}:invoke`, reserve: { modelCalls: 1, budgetTokens: budget.inputTokenBound + budget.maxOutputTokens } }));
+              const reserve: Record<string, number | boolean> = input.metadata!.adapter === "fake" ? {} : { modelCalls: 1, budgetTokens: budget.inputTokenBound + budget.maxOutputTokens };
+              interrupt(await input.checkpoint.check({ userId: input.userId, runId: input.runId, claimToken: input.claimToken, checkpointKey: `${prefix}:invoke`, reserve }));
+              invocationStarted = true;
             },
             onUsage: async (usage) => {
               usageSettled = true;
@@ -69,7 +72,7 @@ export function createDiscoveryJobNormalizer(input: {
           if (!sameMetadata(output, input.metadata!) || !validateJobNormalizerOutput(value.content, output)) throw new JobNormalizerError("JOB_NORMALIZER_EVIDENCE_INVALID");
           return output;
         } catch (error) {
-          if (!usageSettled && !(error instanceof DiscoveryJobNormalizationError && error.code === "DISCOVERY_JOB_NORMALIZATION_INTERRUPTED")) {
+          if (invocationStarted && !usageSettled && !(error instanceof DiscoveryJobNormalizationError && error.code === "DISCOVERY_JOB_NORMALIZATION_INTERRUPTED")) {
             await markIncomplete();
             throw new DiscoveryJobNormalizationError("DISCOVERY_JOB_NORMALIZATION_USAGE_INCOMPLETE");
           }

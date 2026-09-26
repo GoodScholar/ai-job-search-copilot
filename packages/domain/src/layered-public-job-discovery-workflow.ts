@@ -5,7 +5,7 @@ import { LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION, LayeredPublicJobDiscover
 import type { RecommendationDiscoveryFacts } from "@job-copilot/contracts/recommendation-discovery-facts";
 
 const LayeredPublicOperationKindSchema = z.enum(["search", "extract", "fetch", "record_pending", "gate_reject", "gate_verify"]);
-const RunInputSchema = z.object({ userId: z.uuid(), runId: z.uuid(), claimToken: z.uuid(), now: z.date(), executionSpec: AgentRunExecutionSpecSchema, attemptCount: z.int().min(1).max(3), beforePhysicalOperation: z.function({ input: [z.object({ kind: LayeredPublicOperationKindSchema, identity: z.uuid() }).strict()], output: z.promise(z.void()) }), onDiagnostics: z.function({ input: [z.array(z.unknown())], output: z.void() }), signal: z.instanceof(AbortSignal) }).strict();
+const RunInputSchema = z.object({ userId: z.uuid(), runId: z.uuid(), claimToken: z.uuid(), now: z.date(), executionSpec: AgentRunExecutionSpecSchema, attemptCount: z.int().min(1).max(3), beforePhysicalOperation: z.function({ input: [z.object({ kind: LayeredPublicOperationKindSchema, identity: z.uuid() }).strict()], output: z.promise(z.void()) }), onDiagnostics: z.function({ input: [z.array(z.unknown())], output: z.void() }), normalizePosting: z.function({ input: [z.object({ identity: z.string(), content: z.string() }).strict()], output: z.promise(z.unknown()) }).optional(), signal: z.instanceof(AbortSignal) }).strict();
 const fingerprint = z.string().regex(/^[a-f0-9]{64}$/u);
 type LayeredSpec = Extract<z.infer<typeof AgentRunExecutionSpecSchema>, { workflowVersion: "layered-public-job-discovery-v1" }>;
 type Query = z.infer<typeof LayeredPublicJobDiscoveryQuerySchema>;
@@ -45,7 +45,7 @@ export type LayeredPublicWorkflowOutcome = {
   discoveryFacts?: RecommendationDiscoveryFacts;
   interruption?: "paused" | "cancelled" | "budget_exhausted" | "stale";
 };
-export interface LayeredPublicJobDiscoveryWorkflow { run(input: { userId: string; runId: string; claimToken: string; now: Date; executionSpec: LayeredSpec; attemptCount: number; beforePhysicalOperation(operation: LayeredPublicPhysicalOperation): Promise<void>; onDiagnostics(snapshot: readonly LayeredPublicWorkflowDiagnostic[]): void; signal: AbortSignal }): Promise<LayeredPublicWorkflowOutcome>; }
+export interface LayeredPublicJobDiscoveryWorkflow { run(input: { userId: string; runId: string; claimToken: string; now: Date; executionSpec: LayeredSpec; attemptCount: number; beforePhysicalOperation(operation: LayeredPublicPhysicalOperation): Promise<void>; onDiagnostics(snapshot: readonly LayeredPublicWorkflowDiagnostic[]): void; normalizePosting?(input: { identity: string; content: string }): Promise<unknown>; signal: AbortSignal }): Promise<LayeredPublicWorkflowOutcome>; }
 export interface LayeredPublicJobDiscoveryWorkflowResolver { resolve(input: { runId: string; idempotencyKey: string; executionSpec: LayeredSpec; attemptCount: number }): LayeredPublicJobDiscoveryWorkflow; }
 
 type Page = { requestedUrl: string; finalUrl: string; canonicalUrl: string; rawHtml: string; visibleText: string; pageClassification: "job"; sourceKind: "official" | "aggregator" };

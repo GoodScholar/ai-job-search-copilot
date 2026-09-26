@@ -42,6 +42,7 @@ import {
   type LayeredPublicWorkflowDiagnostic,
 } from "./layered-public-job-discovery-workflow";
 import { FrozenRecommendationEvidenceWriteSchema, RecommendationDiscoveryFactsSchema, type RecommendationDiscoveryFacts } from "@job-copilot/contracts/recommendation-discovery-facts";
+import { createDiscoveryJobNormalizer, type DiscoveryJobNormalizerResolver } from "./discovery-job-normalization.js";
 
 export interface DiscoveryContentStore {
   put(input: { objectKey: string; bytes: Uint8Array; mediaType: "application/json"; runId: string }): Promise<void>;
@@ -136,6 +137,8 @@ export type AgentRunProcessorDependencies = {
   sourceHealthAdapterResolver?: SourceHealthDiscoveryAdapterResolver;
   /** v4 的生产实现由 Slice 8 注入；这里不读取环境配置也不构造 provider client。 */
   layeredPublicWorkflowResolver?: LayeredPublicJobDiscoveryWorkflowResolver;
+  /** 由 Worker 按冻结 model snapshot 解析；processor 不读取环境。 */
+  jobPostingNormalizerResolver?: DiscoveryJobNormalizerResolver;
   checkpoint: AgentRunCheckpoint;
   contentStore: DiscoveryContentStore;
   auditTrail: AuditTrail;
@@ -845,6 +848,12 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         try {
           const workflowPromise = layeredWorkflow.run({
             userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, now: deps.clock(), executionSpec: layeredExecutionSpec, attemptCount: claimed.attemptCount, signal: controller.signal,
+            ...(deps.jobPostingNormalizerResolver && layeredExecutionSpec.model ? { normalizePosting: createDiscoveryJobNormalizer({
+              metadata: layeredExecutionSpec.model, normalizerResolver: deps.jobPostingNormalizerResolver, checkpoint,
+              userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount,
+              clock: deps.clock, deadline, signal: controller.signal,
+              markUsageIncomplete: async () => { await deps.db.update(agentRuns).set({ usageComplete: false, updatedAt: deps.clock() }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.claimToken, claimed.claimToken))); },
+            }).normalizePosting } : {}),
             onDiagnostics: (snapshot) => { latestDiagnostics = snapshot; },
             beforePhysicalOperation: async (operation) => {
               if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(operation.identity)) throw new Error("LAYERED_PUBLIC_OPERATION_IDENTITY_INVALID");
