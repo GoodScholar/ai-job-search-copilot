@@ -37,15 +37,20 @@ describe("FakeJobPostingNormalizer", () => {
       deadlineProvenance: null,
       description: "负责 Web 平台。  \n- 与产品团队协作",
       qualifications: {
-        workMode: { value: "remote", evidence: { field: "workMode", path: "工作方式", value: "远程" } },
-        relocationRequired: { value: false, evidence: { field: "relocationRequired", path: "是否需要搬迁", value: "否" } },
-        salary: { value: { minimum: 30000, maximum: 45000, currency: "CNY", period: "month" }, evidence: { field: "salary", path: "薪资", value: "CNY 30000-45000/month" } },
+        workMode: { value: "remote", evidence: { field: "workMode", path: "lines:6-6", value: "远程", rawValue: "远程", normalizedValue: "remote" } },
+        relocationRequired: { value: false, evidence: { field: "relocationRequired", path: "lines:7-7", value: "否", rawValue: "否", normalizedValue: "false" } },
+        salary: { value: { minimum: 30000, maximum: 45000, currency: "CNY", period: "month" }, evidence: { field: "salary", path: "lines:8-8", value: "CNY 30000-45000/month", rawValue: "CNY 30000-45000/month", normalizedValue: "{\"minimum\":30000,\"maximum\":45000,\"currency\":\"CNY\",\"period\":\"month\"}" } },
         seniority: null, education: null, languages: null, workEligibility: null, industry: null,
-        employmentType: { value: "direct", evidence: { field: "employmentType", path: "雇佣类型", value: "直接雇佣" } },
-        requiredSkills: { value: ["TypeScript", "React"], evidence: { field: "requiredSkills", path: "必备技能", value: "TypeScript, React" } },
+        employmentType: { value: "direct", evidence: { field: "employmentType", path: "lines:9-9", value: "直接雇佣", rawValue: "直接雇佣", normalizedValue: "direct" } },
+        requiredSkills: { value: ["TypeScript", "React"], evidence: { field: "requiredSkills", path: "lines:10-10", value: "TypeScript, React", rawValue: "TypeScript, React", normalizedValue: "[\"TypeScript\",\"React\"]" } },
       },
-      fieldEvidence: { company: { rawValue: "示例科技", normalizedValue: "示例科技" }, title: { rawValue: "高级前端工程师" }, location: { rawValue: "上海" } },
+      usage: { status: "known", inputTokens: 0, outputTokens: 0, totalTokens: 0 },
     });
+    expect(output.fieldEvidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: "company", rawValue: "示例科技", normalizedValue: "示例科技" }),
+      expect.objectContaining({ field: "title", rawValue: "高级前端工程师" }),
+      expect.objectContaining({ field: "location", rawValue: "上海" }),
+    ]));
   });
 
   it("忽略未知字段和普通文本，缺失的已知字段保持 nullable", async () => {
@@ -64,7 +69,7 @@ describe("FakeJobPostingNormalizer", () => {
       description: null,
       qualifications: {
         workMode: null, relocationRequired: null, salary: null,
-        seniority: { value: "P8", evidence: { field: "seniority", path: "级别", value: "P8" } }, education: null,
+        seniority: { value: "P8", evidence: { field: "seniority", path: "lines:3-3", value: "P8", rawValue: "P8", normalizedValue: "P8" } }, education: null,
         languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: null,
       },
       fieldEvidence: {},
@@ -83,7 +88,7 @@ describe("FakeJobPostingNormalizer", () => {
 
   it.each(["2026-02-31T00:00:00Z", "2026-09-01T24:00:00Z"])("拒绝不会 round-trip 的截止日期 %s", async (deadline) => {
     const output = JobNormalizerOutputSchema.parse(await new FakeJobPostingNormalizer().normalize(`截止日期：${deadline}`));
-    expect(output).toMatchObject({ deadline: null, deadlineProvenance: { field: "deadline", path: "截止日期", value: deadline, status: "invalid" } });
+    expect(output).toMatchObject({ deadline: null, deadlineProvenance: { field: "deadline", path: "lines:1-1", value: deadline, status: "invalid" } });
   });
 
   it("默认把 failure fixture 当作普通未知正文", async () => {

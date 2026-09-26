@@ -9,6 +9,7 @@ import {
   JobImportJobSchema,
   JobImportListSchema,
   JobNormalizerOutputSchema,
+  validateJobNormalizerOutput,
   type CreateJobImportCommand,
   type CreateJobImportResponse,
   type JobImportDetail,
@@ -17,7 +18,7 @@ import {
   type JobImportFailureCode,
   type JobImportInputType,
 } from "@job-copilot/contracts/job-imports";
-import { JobNormalizerError, isJobInstructionLike, type JobNormalizerCallOptions } from "@job-copilot/contracts/job-normalizer";
+import { JobNormalizerError, type JobNormalizerCallOptions } from "@job-copilot/contracts/job-normalizer";
 import type { AuditTrail } from "./audit-trail";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { persistJobOpportunity } from "./job-opportunity-persistence";
@@ -41,30 +42,6 @@ function normalizationFailure(error: unknown): JobImportFailureCode {
   return "JOB_NORMALIZER_UNAVAILABLE";
 }
 
-function hasExactEvidence(content: string, rawValue: string): boolean {
-  return content.includes(rawValue);
-}
-
-function matchesDeterministicNormalization(field: string, rawValue: string, normalizedValue: string): boolean {
-  if (rawValue === normalizedValue) return true;
-  if (field !== "postedAt" && field !== "deadline") return false;
-  const parsed = new Date(rawValue);
-  return !Number.isNaN(parsed.getTime()) && parsed.toISOString() === normalizedValue;
-}
-
-function validateNormalizationEvidence(content: string, output: import("@job-copilot/contracts/job-imports").JobNormalizerOutput): boolean {
-  if (isJobInstructionLike(content)) return false;
-  for (const field of ["company", "title", "location", "postedAt", "deadline", "description"] as const) {
-    const value = output[field];
-    if (value === null) continue;
-    const evidence = output.fieldEvidence[field];
-    if (!evidence || evidence.field !== field || evidence.normalizedValue !== value || !matchesDeterministicNormalization(field, evidence.rawValue, value) || !hasExactEvidence(content, evidence.rawValue)) return false;
-  }
-  for (const [field, qualification] of Object.entries(output.qualifications)) {
-    if (!qualification || !hasExactEvidence(content, qualification.evidence.value) || qualification.evidence.field !== field) return false;
-  }
-  return true;
-}
 
 export type FetchedUrlJobPage = {
   requestedUrl: string;
@@ -469,7 +446,7 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
         return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode: "JOB_NORMALIZER_OUTPUT_INVALID", attemptCount }) ? "failed" : "stale";
       }
       const output = result.data;
-      if (!validateNormalizationEvidence(canonical, output)) {
+      if (!validateJobNormalizerOutput(canonical, output)) {
         return await failImport(deps, { userId: parsedJob.userId, importId: parsedJob.importId, inputType, claimToken, failureCode: "JOB_NORMALIZER_EVIDENCE_INVALID", attemptCount }) ? "failed" : "stale";
       }
       try {

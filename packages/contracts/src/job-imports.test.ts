@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   CreateJobImportCommandSchema,
   JobImportDetailSchema,
+  JobNormalizerModelOutputSchema,
   JobNormalizerOutputSchema,
+  validateJobNormalizerOutput,
 } from "./job-imports";
 
 describe("job import contracts", () => {
@@ -41,8 +43,8 @@ describe("job import contracts", () => {
     })).toBeDefined();
   });
 
-  it("keeps only explicit qualification fields and their minimal evidence", () => {
-    expect(JobNormalizerOutputSchema.parse({
+  it("仅接受可回指原文并可确定性导出标准值的资格证据", () => {
+    const output = JobNormalizerOutputSchema.parse({
       normalizerVersion: "fake-job-normalizer-v2",
       company: "示例科技",
       title: "高级前端工程师",
@@ -51,7 +53,7 @@ describe("job import contracts", () => {
       deadline: null,
       description: null,
       qualifications: {
-        workMode: { value: "remote", evidence: { field: "workMode", path: "工作方式", value: "远程" } },
+        workMode: { value: "remote", evidence: { field: "workMode", path: "lines:3-3", value: "远程", rawValue: "远程", normalizedValue: "remote" } },
         relocationRequired: null,
         salary: null,
         seniority: null,
@@ -61,10 +63,26 @@ describe("job import contracts", () => {
         industry: null,
         employmentType: null,
         requiredSkills: null,
-      },
-    })).toMatchObject({
-      qualifications: { workMode: { value: "remote", evidence: { field: "workMode", path: "工作方式", value: "远程" } } },
+      }, fieldEvidence: [
+        { field: "company", path: "lines:1-1", rawValue: "示例科技", normalizedValue: "示例科技" },
+        { field: "title", path: "lines:2-2", rawValue: "高级前端工程师", normalizedValue: "高级前端工程师" },
+      ],
     });
+    const source = "公司：示例科技\n标题：高级前端工程师\n工作方式：远程";
+    expect(validateJobNormalizerOutput(source, output)).toBe(true);
+    expect(validateJobNormalizerOutput(source.replace("远程", "现场"), output)).toBe(false);
+    expect(validateJobNormalizerOutput(source, { ...output, qualifications: { ...output.qualifications, workMode: { ...output.qualifications.workMode!, evidence: { ...output.qualifications.workMode!.evidence, path: "lines:1-1" } } } })).toBe(false);
+  });
+
+  it("为提供商生成无自由键的递归 strict JSON Schema", () => {
+    const schema = JobNormalizerModelOutputSchema.toJSONSchema() as any;
+    const visit = (node: unknown): boolean => {
+      if (!node || typeof node !== "object") return true;
+      const value = node as { type?: unknown; additionalProperties?: unknown; properties?: Record<string, unknown>; required?: unknown };
+      if (value.type === "object" && (value.additionalProperties !== false || !Array.isArray(value.required) || Object.keys(value.properties ?? {}).some((key) => !(value.required as string[]).includes(key)))) return false;
+      return Object.values(value).every((child) => Array.isArray(child) ? child.every(visit) : visit(child));
+    };
+    expect(visit(schema)).toBe(true);
   });
 
   it("treats legacy normalized data without qualifications as missing fields", () => {

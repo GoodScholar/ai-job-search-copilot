@@ -20,7 +20,7 @@ export function compareJobTriageRank(
 
 type Gate = JobTriageGate;
 type Verdict = "pass" | "fail" | "unknown";
-type JobEvidence = { sourcePostingVersionId: string; field: string; path: string; value: string };
+type JobEvidence = { sourcePostingVersionId: string; field: string; path: string; value: string; rawValue?: string; normalizedValue?: string };
 type TargetEvidence = { kind: "target_constraint"; targetId: string; version: number; path: string; label: string; value: string };
 type FactEvidence = { kind: "profile_fact"; factId: string; revisionId: string; label: string; value: string };
 type CandidateEvidence = TargetEvidence | FactEvidence;
@@ -49,8 +49,12 @@ const normalized = (value: string) => value.trim().toLocaleLowerCase("en-US");
 const summarizeEvidence = (value: string, maximum: number) => value.length <= maximum ? value : `${value.slice(0, maximum - 1)}…`;
 const jobEvidenceValue = (value: string) => summarizeEvidence(value, JOB_TRIAGE_MAX_JOB_EVIDENCE_VALUE_LENGTH);
 const candidateEvidenceValue = (value: string) => summarizeEvidence(value, JOB_TRIAGE_MAX_CANDIDATE_EVIDENCE_VALUE_LENGTH);
-const directJobEvidence = (sourcePostingVersionId: string, field: string, path: string, value: string): JobEvidence => ({ sourcePostingVersionId, field, path, value: jobEvidenceValue(value) });
-const evidence = (sourcePostingVersionId: string, field: string, input: { evidence: { path: string; value: string } }): JobEvidence => directJobEvidence(sourcePostingVersionId, field, input.evidence.path, input.evidence.value);
+const directJobEvidence = (sourcePostingVersionId: string, field: string, path: string, rawValue: string, normalizedValue: string = rawValue): JobEvidence => ({ sourcePostingVersionId, field, path, value: jobEvidenceValue(rawValue), rawValue: jobEvidenceValue(rawValue), normalizedValue: jobEvidenceValue(normalizedValue) });
+const evidence = (sourcePostingVersionId: string, field: string, input: { evidence: { path: string; rawValue?: string; normalizedValue?: string; value?: string } }): JobEvidence => {
+  // 旧发布版本只保存 value；新的导入边界拒绝这种输出，但读取历史不可变快照时保守保留其可见值。
+  const rawValue = input.evidence.rawValue ?? input.evidence.value ?? "未知";
+  return directJobEvidence(sourcePostingVersionId, field, input.evidence.path, rawValue, input.evidence.normalizedValue ?? rawValue);
+};
 const unknown = (reasonCode: JobTriageReasonCode, jobEvidence: JobEvidence | null = null): GateResult => ({ verdict: "unknown", reasonCode, jobEvidence, candidateEvidence: null });
 const pass = (reasonCode: JobTriageReasonCode, jobEvidence: JobEvidence | null = null, candidateEvidence: CandidateEvidence | null = null): GateResult => ({ verdict: "pass", reasonCode, jobEvidence, candidateEvidence });
 const fail = (reasonCode: JobTriageReasonCode, jobEvidence: JobEvidence, candidateEvidence: CandidateEvidence): GateResult => ({ verdict: "fail", reasonCode, jobEvidence, candidateEvidence });

@@ -21,7 +21,7 @@ export const JobTriageReasonCodeSchema = z.enum([
 
 const jobEvidence = z.object({
   sourcePostingVersionId: z.uuid(), field: z.string().trim().min(1).max(64),
-  path: z.string().trim().min(1).max(256), value: z.string().trim().min(1).max(JOB_TRIAGE_MAX_JOB_EVIDENCE_VALUE_LENGTH),
+  path: z.string().trim().min(1).max(256), value: z.string().trim().min(1).max(JOB_TRIAGE_MAX_JOB_EVIDENCE_VALUE_LENGTH), rawValue: z.string().trim().min(1).max(JOB_TRIAGE_MAX_JOB_EVIDENCE_VALUE_LENGTH).optional(), normalizedValue: z.string().trim().min(1).max(JOB_TRIAGE_MAX_JOB_EVIDENCE_VALUE_LENGTH).optional(),
 }).strict();
 const candidateEvidence = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("target_constraint"), targetId: z.uuid(), version: z.int().min(1), path: z.string().trim().min(1).max(256), label: z.string().trim().min(1).max(64), value: z.string().trim().min(1).max(JOB_TRIAGE_MAX_CANDIDATE_EVIDENCE_VALUE_LENGTH) }).strict(),

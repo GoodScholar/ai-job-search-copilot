@@ -474,7 +474,7 @@ describe("job imports", () => {
       .resolves.toMatchObject({ status: "imported", failureCode: null });
     await expect(processor.process({ version: 1, importId: imported.importId, userId, finalAttempt: true })).resolves.toBe("failed");
     await expect(createJobImportQueries({ db: database, contentStore: store }).get({ userId, importId: imported.importId }))
-      .resolves.toMatchObject({ status: "failed", failureCode: "JOB_IMPORT_PERSIST_FAILED" });
+      .resolves.toMatchObject({ status: "failed", failureCode: "JOB_NORMALIZER_UNAVAILABLE" });
     await expect(database.execute<{ claim_token: string | null; claim_expires_at: Date | null }>(sql`
       select claim_token, claim_expires_at from job_imports where id = ${imported.importId}
     `)).resolves.toEqual([{ claim_token: null, claim_expires_at: null }]);

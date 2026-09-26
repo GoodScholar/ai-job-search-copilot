@@ -2,15 +2,24 @@ import { z } from "zod";
 
 export const JOB_NORMALIZER_PROMPT_VERSION = "job-normalizer-prompt-v1";
 export const JOB_NORMALIZER_OUTPUT_SCHEMA_VERSION = "job-normalizer-v1";
+export const JOB_NORMALIZER_RULE_VERSION = "job-normalization-evidence-v2";
 export const DEFAULT_JOB_NORMALIZER_BUDGET = { maxInputBytes: 16_384, maxOutputTokens: 2_000, maxTotalTokens: 12_000, timeoutMs: 25_000 } as const;
 
 export type JobNormalizerBudget = { maxInputBytes: number; maxOutputTokens: number; maxTotalTokens?: number; timeoutMs: number };
-export type JobNormalizerCallOptions = { signal?: AbortSignal; budget?: JobNormalizerBudget };
-export type JobNormalizerMetadata = { adapter: "fake" | "openai"; normalizerVersion: string; promptVersion: string; outputSchemaVersion: string; model: string | null };
+export type JobNormalizerCallOptions = {
+  signal?: AbortSignal;
+  budget?: JobNormalizerBudget;
+  /** Called after local safety and budget checks, immediately before a provider request. */
+  beforeRequest?: () => Promise<void>;
+  /** Called once a provider has reported usage, before parsing or evidence validation can fail. */
+  onUsage?: (usage: { inputTokens: number; outputTokens: number }) => Promise<void>;
+};
+export type JobNormalizerMetadata = { adapter: "fake" | "openai"; normalizerVersion: string; promptVersion: string; outputSchemaVersion: string; ruleVersion: string; model: string | null };
+export type JobNormalizerUsage = { status: "known" | "unknown" | "not_called"; inputTokens: number | null; outputTokens: number | null; totalTokens: number | null };
 export type JobNormalizerErrorCode = "JOB_NORMALIZER_OUTPUT_INVALID" | "JOB_NORMALIZER_EVIDENCE_INVALID" | "JOB_NORMALIZER_INJECTION_DETECTED" | "JOB_NORMALIZER_RATE_LIMITED" | "JOB_NORMALIZER_CANCELLED" | "JOB_NORMALIZER_BUDGET_EXHAUSTED" | "JOB_NORMALIZER_UNAVAILABLE" | "JOB_NORMALIZER_AUTH_FAILED";
 
 export class JobNormalizerError extends Error {
-  constructor(readonly code: JobNormalizerErrorCode) { super(code); }
+  constructor(readonly code: JobNormalizerErrorCode, readonly usage: JobNormalizerUsage = { status: "not_called", inputTokens: null, outputTokens: null, totalTokens: null }) { super(code); }
 }
 
 export const JobNormalizationEvidenceSchema = z.object({
@@ -21,6 +30,19 @@ export const JobNormalizationEvidenceSchema = z.object({
 }).strict();
 
 export const JobNormalizerFieldEvidenceSchema = z.record(z.string().trim().min(1).max(64), JobNormalizationEvidenceSchema);
+
+export type BoundJobNormalizationEvidence = z.infer<typeof JobNormalizationEvidenceSchema> & { sourcePostingVersionId: string };
+
+/** Source identities are assigned by the application only, after model output has been validated. */
+export function bindJobNormalizerEvidence(sourcePostingVersionId: string, evidence: z.infer<typeof JobNormalizationEvidenceSchema>): BoundJobNormalizationEvidence {
+  return { ...evidence, sourcePostingVersionId };
+}
+
+export function knownJobNormalizerUsage(inputTokens: number, outputTokens: number): JobNormalizerUsage {
+  return { status: "known", inputTokens, outputTokens, totalTokens: inputTokens + outputTokens };
+}
+
+export const unknownJobNormalizerUsage = (): JobNormalizerUsage => ({ status: "unknown", inputTokens: null, outputTokens: null, totalTokens: null });
 
 export function assertJobNormalizerInputBudget(content: string, options: JobNormalizerCallOptions = {}) {
   if (options.signal?.aborted) throw new JobNormalizerError("JOB_NORMALIZER_CANCELLED");
