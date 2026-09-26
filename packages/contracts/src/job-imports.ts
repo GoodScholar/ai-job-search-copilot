@@ -243,6 +243,10 @@ export function validateJobNormalizerOutput(content: string, output: JobNormaliz
     const evidence = evidenceByField.get(field);
     if (value === null ? Boolean(evidence) : !evidence || evidence.normalizedValue !== value || !evidenceMatchesPath(content, evidence.path, evidence.rawValue) || !matchesScalarNormalization(field, evidence.rawValue, value)) return false;
   }
+  if (output.deadlineProvenance) {
+    const provenance = output.deadlineProvenance;
+    if (output.deadline !== null || !evidenceMatchesPath(content, provenance.path, provenance.value) || !Number.isNaN(new Date(provenance.value).getTime())) return false;
+  }
   return Object.entries(output.qualifications).every(([field, qualification]) => !qualification || Boolean(qualification.evidence.rawValue && qualification.evidence.normalizedValue) && qualification.evidence.field === field && evidenceMatchesPath(content, qualification.evidence.path, qualification.evidence.rawValue!) && qualification.evidence.normalizedValue === normalizedQualificationValue(qualification.value) && matchesQualificationNormalization(field, qualification.evidence.rawValue!, qualification.value));
 }
 

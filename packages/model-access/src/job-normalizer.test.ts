@@ -66,6 +66,12 @@ describe("OpenAI 岗位规范化", () => {
     expect(onUsage).toHaveBeenCalledWith({ inputTokens: 20, outputTokens: 30 });
   });
 
+  it("原样传播 usage checkpoint 的控制错误，不将其改写为输出无效", async () => {
+    const control = Object.assign(new Error("checkpoint cancelled"), { code: "DISCOVERY_JOB_NORMALIZATION_INTERRUPTED" });
+    const normalizer = createOpenAiJobPostingNormalizer({ apiKey: "test-key" }, vi.fn().mockResolvedValue(complete(result)));
+    await expect(normalizer.normalize("公司：示例公司\n标题：工程师", { onUsage: async () => { throw control; } })).rejects.toBe(control);
+  });
+
   it("在不完整响应和响应到达后的取消前结算已报告用量", async () => {
     const incomplete = new Response(JSON.stringify({ status: "incomplete", usage: { input_tokens: 20, output_tokens: 30 }, incomplete_details: { reason: "max_output_tokens" }, output: [] }));
     const incompleteUsage = vi.fn().mockResolvedValue(undefined);

@@ -75,6 +75,7 @@ describe("job import contracts", () => {
     expect(validateJobNormalizerOutput(source, output)).toBe(true);
     expect(validateJobNormalizerOutput(source.replace("远程", "现场"), output)).toBe(false);
     expect(validateJobNormalizerOutput(source, { ...output, qualifications: { ...output.qualifications, workMode: { ...output.qualifications.workMode!, evidence: { ...output.qualifications.workMode!.evidence, path: "lines:1-1" } } } })).toBe(false);
+    expect(validateJobNormalizerOutput(source, { ...output, deadlineProvenance: { field: "deadline", path: "lines:1-1", value: "2026-09-01T00:00:00.000Z", status: "invalid" } })).toBe(false);
   });
 
   it("只在应用层将完整规范化输出的每条证据绑定到真实发布版本", () => {

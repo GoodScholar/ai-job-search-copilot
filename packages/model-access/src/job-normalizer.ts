@@ -57,12 +57,19 @@ export function createOpenAiJobPostingNormalizer(config: OpenAiJobNormalizerConf
     if (!response.ok) throw new JobNormalizerError("JOB_NORMALIZER_UNAVAILABLE", unknownJobNormalizerUsage());
     let body: unknown;
     try { body = await response.json(); } catch { throw new JobNormalizerError(options.signal?.aborted ? "JOB_NORMALIZER_CANCELLED" : timeout.aborted ? "JOB_NORMALIZER_BUDGET_EXHAUSTED" : "JOB_NORMALIZER_OUTPUT_INVALID"); }
+    let value: { status?: unknown; output?: unknown; usage?: { input_tokens?: unknown; output_tokens?: unknown }; incomplete_details?: { reason?: unknown } };
+    let inputTokens: number;
+    let outputTokens: number;
     try {
-      const value = body as { status?: unknown; output?: unknown; usage?: { input_tokens?: unknown; output_tokens?: unknown }; incomplete_details?: { reason?: unknown } };
-      if (!Number.isSafeInteger(value.usage?.input_tokens) || !Number.isSafeInteger(value.usage?.output_tokens)) throw new Error();
-      const inputTokens = value.usage!.input_tokens as number;
-      const outputTokens = value.usage!.output_tokens as number;
-      await options.onUsage?.({ inputTokens, outputTokens });
+      value = body as typeof value;
+      if (!Number.isSafeInteger(value.usage?.input_tokens) || !Number.isSafeInteger(value.usage?.output_tokens) || value.usage.input_tokens < 0 || value.usage.output_tokens < 0) throw new Error();
+      inputTokens = value.usage.input_tokens;
+      outputTokens = value.usage.output_tokens;
+      if (!Number.isSafeInteger(inputTokens + outputTokens)) throw new Error();
+    } catch { throw new JobNormalizerError("JOB_NORMALIZER_OUTPUT_INVALID"); }
+    // 控制/checkpoint 错误是运行时权威状态，绝不能被 JSON/schema 错误处理吞掉。
+    await options.onUsage?.({ inputTokens, outputTokens });
+    try {
       const usage = knownJobNormalizerUsage(inputTokens, outputTokens);
       if (options.signal?.aborted) throw new JobNormalizerError("JOB_NORMALIZER_CANCELLED", usage);
       if (value?.status === "incomplete" && value.incomplete_details?.reason === "max_output_tokens") throw new JobNormalizerError("JOB_NORMALIZER_BUDGET_EXHAUSTED", usage);

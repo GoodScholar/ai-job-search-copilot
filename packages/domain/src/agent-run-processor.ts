@@ -42,10 +42,10 @@ import {
   type LayeredPublicWorkflowDiagnostic,
 } from "./layered-public-job-discovery-workflow";
 import { FrozenRecommendationEvidenceWriteSchema, RecommendationDiscoveryFactsSchema, type RecommendationDiscoveryFacts } from "@job-copilot/contracts/recommendation-discovery-facts";
-import { createDiscoveryJobNormalizer, type DiscoveryJobNormalizerResolver } from "./discovery-job-normalization.js";
+import { createDiscoveryJobNormalizer, DiscoveryJobNormalizationError, type DiscoveryJobNormalizerResolver } from "./discovery-job-normalization.js";
 import { normalizeTrustedDetails } from "./trusted-job-normalization.js";
 import { validatePersistedJobNormalizerOutput } from "@job-copilot/contracts/job-imports";
-import { JobNormalizerMetadataSchema } from "@job-copilot/contracts/job-normalizer";
+import { JobNormalizerError, JobNormalizerMetadataSchema } from "@job-copilot/contracts/job-normalizer";
 
 export interface DiscoveryContentStore {
   put(input: { objectKey: string; bytes: Uint8Array; mediaType: "application/json"; runId: string }): Promise<void>;
@@ -191,6 +191,17 @@ async function runTransaction<T>(deps: AgentRunProcessorDependencies, deadline: 
 
 function adapterFailure(error: unknown): Failure {
   if (error instanceof AgentRunBudgetError) return { failureCode: "AGENT_RUN_BUDGET_EXCEEDED", retryable: false, category: "source", budgetDimension: error.budgetDimension };
+  if (error instanceof JobNormalizerError) {
+    if (error.code === "JOB_NORMALIZER_RATE_LIMITED" || error.code === "JOB_NORMALIZER_UNAVAILABLE") return { failureCode: "AGENT_RUN_MODEL_RETRYABLE", retryable: true, category: "model" };
+    if (error.code === "JOB_NORMALIZER_AUTH_FAILED") return { failureCode: "AGENT_RUN_MODEL_AUTH_FAILED", retryable: false, category: "model_auth" };
+    if (error.code === "JOB_NORMALIZER_INJECTION_DETECTED") return { failureCode: "AGENT_RUN_MODEL_POLICY_REJECTED", retryable: false, category: "model_policy" };
+    if (error.code === "JOB_NORMALIZER_BUDGET_EXHAUSTED") return { failureCode: "AGENT_RUN_BUDGET_EXCEEDED", retryable: false, category: "model_invalid", budgetDimension: "tokens" };
+    return { failureCode: "AGENT_RUN_MODEL_INVALID_RESPONSE", retryable: false, category: "model_invalid" };
+  }
+  if (error instanceof DiscoveryJobNormalizationError) {
+    if (error.code === "DISCOVERY_JOB_NORMALIZATION_INTERRUPTED") return { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "model_invalid" };
+    return { failureCode: "AGENT_RUN_MODEL_INVALID_RESPONSE", retryable: false, category: "model_invalid" };
+  }
   if (error instanceof DeepMatchAdapterError) {
     if (error.category === "retryable") return { failureCode: "AGENT_RUN_MODEL_RETRYABLE", retryable: true, category: "model" };
     if (error.category === "auth") return { failureCode: "AGENT_RUN_MODEL_AUTH_FAILED", retryable: false, category: "model_auth" };
