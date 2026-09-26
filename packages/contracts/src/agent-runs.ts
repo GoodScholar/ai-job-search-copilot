@@ -19,6 +19,7 @@ import { JobTargetConstraintsSchema } from "./job-targets";
 import { RecommendationRuleConfigSchema } from "./recommendations";
 import { FrozenRecommendationEvidenceSchema } from "./recommendation-discovery-facts";
 import { RunPreflightSnapshotSchema, RunPreflightWarningFingerprintSchema } from "./run-preflight";
+import { JobNormalizerMetadataSchema } from "./job-normalizer";
 
 export const AGENT_RUN_QUEUE = "agent-runs";
 export const AGENT_RUN_JOB_NAME = "discover-jobs";
@@ -60,8 +61,8 @@ export const PUBLIC_JOB_DISCOVERY_BUDGET = {
   maxAttempts: 3,
   maxToolCalls: 60,
   maxResults: 5,
-  maxModelCalls: 0,
-  maxTokens: 0,
+  maxModelCalls: 10,
+  maxTokens: 120_000,
 } as const;
 export const DEEP_MATCH_AGENT_RUN_WORKFLOW_VERSION = "deep-match-v1";
 export const DEEP_MATCH_AGENT_RUN_STEPS = ["select_candidates", "assess_matches", "create_recommendations"] as const;
@@ -290,7 +291,7 @@ const FakeAgentRunExecutionSpecSchema = z.object({
   adapterVersion: z.literal(FAKE_JOB_DISCOVERY_ADAPTER_VERSION),
   outputSchemaVersion: z.literal(FAKE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION),
   toolAllowlist: z.tuple([z.literal(AGENT_RUN_TOOL_ALLOWLIST[0]), z.literal(AGENT_RUN_TOOL_ALLOWLIST[1])]),
-  model: z.null(),
+  model: JobNormalizerMetadataSchema.nullable(),
   budget: AgentRunBudgetSchema,
 }).strict();
 
@@ -345,7 +346,7 @@ const PublicAgentRunExecutionSpecSchema = z.object({
   adapterVersion: z.literal(GREENHOUSE_JOB_DISCOVERY_ADAPTER_VERSION),
   outputSchemaVersion: z.literal(GREENHOUSE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION),
   toolAllowlist: z.tuple([z.literal(AGENT_RUN_TOOL_ALLOWLIST[0]), z.literal(AGENT_RUN_TOOL_ALLOWLIST[1])]),
-  model: z.null(),
+  model: JobNormalizerMetadataSchema.nullable(),
   budget: PublicAgentRunBudgetSchema,
 }).strict();
 
@@ -358,7 +359,7 @@ const PublicSourceHealthAgentRunExecutionSpecSchema = z.object({
   adapterVersion: z.literal(GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION),
   outputSchemaVersion: z.literal(GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION),
   toolAllowlist: z.tuple([z.literal(GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST[0]), z.literal(GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST[1])]),
-  model: z.null(),
+  model: JobNormalizerMetadataSchema.nullable(),
   budget: PublicAgentRunBudgetSchema,
 }).strict();
 
@@ -378,7 +379,7 @@ const LayeredPublicAgentRunExecutionSpecSchema = z.object({
     z.literal(LAYERED_PUBLIC_JOB_DISCOVERY_TOOL_ALLOWLIST[2]),
     z.literal(LAYERED_PUBLIC_JOB_DISCOVERY_TOOL_ALLOWLIST[3]),
   ]),
-  model: z.null(),
+  model: JobNormalizerMetadataSchema.nullable(),
   budget: PublicAgentRunBudgetSchema,
 }).strict().superRefine((spec, context) => {
   if (spec.profileSnapshot.targetId !== spec.targetSnapshot.targetId || spec.watchlistSnapshot.targetId !== spec.targetSnapshot.targetId) {

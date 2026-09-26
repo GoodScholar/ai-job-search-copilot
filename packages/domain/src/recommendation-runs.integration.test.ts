@@ -14,6 +14,7 @@ import { createAgentInbox } from "./agent-inbox";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { AccountRunAdmissionError } from "./account-run-admission";
 import type { SourceCapabilityAdapter } from "./source-capabilities";
+import { PUBLIC_JOB_DISCOVERY_BUDGET } from "@job-copilot/contracts/agent-runs";
 
 const now = new Date("2026-09-13T12:00:00.000Z");
 const constraints = { roleFamily: "AI 应用工程师", seniority: null, locations: [], workModes: [], relocation: "unknown" as const, salary: null, industries: [], dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] } };
@@ -50,13 +51,13 @@ describe("推荐运行领域边界", () => {
     await database.insert(modelDiagnosticResults).values({ configurationFingerprint: fingerprint, status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket: "under_1s", checkedAt: now });
     return { userId, targetId, profileId, fingerprint };
   }
-  function commands(fingerprint: string) {
-    const preflight = createRunPreflightEvaluator({ capabilityAdapter, modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: fingerprint }), discoveryExecutionMode: "layered_public", id: randomUUID, clock: () => now });
+  function commands(fingerprint: string, jobNormalizerMetadata?: { adapter: "fake" | "openai"; normalizerVersion: string; promptVersion: string; outputSchemaVersion: string; ruleVersion: string; model: string | null }) {
+    const preflight = createRunPreflightEvaluator({ capabilityAdapter, modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: fingerprint }), discoveryExecutionMode: "layered_public", jobNormalizerMetadata, id: randomUUID, clock: () => now });
     return createRecommendationRunCommands({ db: database, queue: { enqueue: async () => undefined }, auditTrail: createAuditTrail({ db: database, clock: () => now }), runPreflight: preflight, executionMode: "layered_public", id: randomUUID, clock: () => now });
   }
-  async function command(owner: { userId: string; fingerprint: string }, idempotencyKey: string, mode: "fake" | "greenhouse" | "layered_public" = "layered_public") {
-    const preflight = createRunPreflightEvaluator({ capabilityAdapter, modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: owner.fingerprint }), discoveryExecutionMode: mode, id: randomUUID, clock: () => now });
-    const report = await preflight.evaluate(database, { userId: owner.userId, workflow: "recommendation", trigger: "manual" });
+  async function command(owner: { userId: string; targetId: string; fingerprint: string }, idempotencyKey: string, mode: "fake" | "greenhouse" | "layered_public" = "layered_public", jobNormalizerMetadata?: { adapter: "fake" | "openai"; normalizerVersion: string; promptVersion: string; outputSchemaVersion: string; ruleVersion: string; model: string | null }, trigger: "manual" | "schedule" = "manual") {
+    const preflight = createRunPreflightEvaluator({ capabilityAdapter, modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint: owner.fingerprint }), discoveryExecutionMode: mode, jobNormalizerMetadata, id: randomUUID, clock: () => now });
+    const report = await preflight.evaluate(database, { userId: owner.userId, workflow: "recommendation", trigger, ...(trigger === "schedule" ? { targetId: owner.targetId, scheduledFor: now } : {}) });
     return { idempotencyKey, warningFingerprint: report.report.warningFingerprint };
   }
   async function completeRootAndInsertChild(rootId: string, db: any = database) {
@@ -94,6 +95,25 @@ describe("推荐运行领域边界", () => {
     await database.execute(sql`insert into job_match_versions (id, user_id, opportunity_id, source_posting_version_id, triage_version_id, profile_id, profile_version, target_id, target_version, rule_version, prompt_version, adapter, adapter_version, model, output_schema_version, overall_score, display_band, assessment, sequence) values (${matchId}, ${owner.userId}, ${opportunityId}, ${postingVersionId}, ${triageId}, ${owner.profileId}, 1, ${owner.targetId}, 1, 'rules-v1', 'prompt-v1', 'fake', 'fake-v1', 'fake-model', 'result-v1', 90, 'highly_matched', '{}'::jsonb, 1)`);
     await database.execute(sql`insert into recommendation_list_items (id, user_id, recommendation_list_id, match_version_id, ordinal, highlighted, created_at) values (${randomUUID()}, ${owner.userId}, ${listId}, ${matchId}, 1, true, now())`);
   }
+
+  it("推荐手动与计划启动冻结同一 normalizer 元数据，重放不重读环境", async () => {
+    const owner = await account();
+    const frozenMetadata = { adapter: "openai" as const, normalizerVersion: "job-normalizer-v1", promptVersion: "job-normalizer-prompt-v1", outputSchemaVersion: "job-normalizer-v1", ruleVersion: "job-normalization-evidence-v2", model: "gpt-5-mini" };
+    const changedMetadata = { ...frozenMetadata, model: "gpt-5-next" };
+    const manualKey = randomUUID();
+    const manual = await commands(owner.fingerprint, frozenMetadata).start({ userId: owner.userId, requestId: randomUUID(), command: await command(owner, manualKey, "layered_public", frozenMetadata) });
+    await expect(database.select({ modelSnapshot: agentRuns.modelSnapshot, budgetSnapshot: agentRuns.budgetSnapshot, recommendationContext: agentRuns.recommendationContext }).from(agentRuns).where(eq(agentRuns.id, manual.run.runId)))
+      .resolves.toEqual([{ modelSnapshot: frozenMetadata, budgetSnapshot: PUBLIC_JOB_DISCOVERY_BUDGET, recommendationContext: expect.objectContaining({ budgets: expect.objectContaining({ discovery: PUBLIC_JOB_DISCOVERY_BUDGET }) }) }]);
+    await expect(commands(owner.fingerprint, changedMetadata).start({ userId: owner.userId, requestId: randomUUID(), command: await command(owner, manualKey, "layered_public", changedMetadata) }))
+      .resolves.toMatchObject({ reused: true, run: { runId: manual.run.runId } });
+
+    const scheduledOwner = await account(); const scheduleId = randomUUID(); const occurrenceId = randomUUID();
+    await database.insert(jobDiscoverySchedules).values({ id: scheduleId, userId: scheduledOwner.userId, targetId: scheduledOwner.targetId, version: 1, state: "enabled", dailyTime: "09:00", timeZone: "Asia/Shanghai", nextRunAt: new Date(now.getTime() + 86_400_000), createdAt: now, updatedAt: now });
+    await database.insert(jobDiscoveryScheduleOccurrences).values({ id: occurrenceId, userId: scheduledOwner.userId, scheduleId, targetId: scheduledOwner.targetId, scheduledFor: now, status: "pending", runId: null, skipReason: null, createdAt: now });
+    const scheduled = await commands(scheduledOwner.fingerprint, frozenMetadata).start({ userId: scheduledOwner.userId, requestId: randomUUID(), command: await command(scheduledOwner, occurrenceId, "layered_public", frozenMetadata, "schedule"), trigger: { kind: "schedule", occurrenceId, scheduledFor: now, targetId: scheduledOwner.targetId } });
+    await expect(database.select({ modelSnapshot: agentRuns.modelSnapshot, budgetSnapshot: agentRuns.budgetSnapshot }).from(agentRuns).where(eq(agentRuns.id, scheduled.run.runId)))
+      .resolves.toEqual([{ modelSnapshot: frozenMetadata, budgetSnapshot: PUBLIC_JOB_DISCOVERY_BUDGET }]);
+  });
 
   it("不同启动键并发时复用一个活动逻辑根运行", async () => {
     const owner = await account(); const service = commands(owner.fingerprint);

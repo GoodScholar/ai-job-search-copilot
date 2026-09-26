@@ -17,12 +17,13 @@ import { createAnySearchQueryPlan } from "./anysearch-query-plan";
 import type { JobDiscoveryExecutionMode } from "./job-discovery-execution-mode";
 import { AgentRunError } from "./agent-run-errors";
 import { analyzePublicJobDiscoverySources } from "./public-job-discovery-sources";
+import type { JobNormalizerMetadata } from "@job-copilot/contracts/job-normalizer";
 
 export type DiscoveryTargetSnapshot = { targetId: string; version: number; priority: string; state: string; constraints: unknown };
 export type DiscoveryWatchlist = { version: number; items: unknown } | undefined;
 export type DiscoveryExecution = {
   budget: { maxActiveDurationMs: number; maxAttempts: number; maxToolCalls: number; maxResults: number; maxModelCalls: number; maxTokens: number };
-  workflowVersion: string; ruleVersion: string; adapter: string; adapterVersion: string; outputSchemaVersion: string;
+  workflowVersion: string; ruleVersion: string; adapter: string; adapterVersion: string; outputSchemaVersion: string; model: JobNormalizerMetadata | null;
 };
 export type DiscoveryRunSpec = {
   execution: DiscoveryExecution;
@@ -91,11 +92,11 @@ export async function readDiscoveryWatchlistInTransaction(transaction: any, inpu
   return watchlist;
 }
 
-export async function buildDiscoveryRunSpecInTransaction(transaction: any, input: { userId: string; targetSnapshot: DiscoveryTargetSnapshot; watchlist: DiscoveryWatchlist; policy: { budgets: { fake: DiscoveryExecution["budget"]; publicDiscovery: DiscoveryExecution["budget"] }; discovery: { trustedSourceLimit: number; publicQueryLimit: number; verificationCandidateLimit: number; enabledProviders: readonly string[] } }; executionMode: JobDiscoveryExecutionMode }): Promise<DiscoveryRunSpec> {
+export async function buildDiscoveryRunSpecInTransaction(transaction: any, input: { userId: string; targetSnapshot: DiscoveryTargetSnapshot; watchlist: DiscoveryWatchlist; policy: { budgets: { fake: DiscoveryExecution["budget"]; publicDiscovery: DiscoveryExecution["budget"] }; discovery: { trustedSourceLimit: number; publicQueryLimit: number; verificationCandidateLimit: number; enabledProviders: readonly string[] } }; executionMode: JobDiscoveryExecutionMode; normalizerMetadata?: JobNormalizerMetadata }): Promise<DiscoveryRunSpec> {
   const canUseAnySearch = input.policy.discovery.enabledProviders.includes("anysearch") && input.policy.discovery.publicQueryLimit > 0;
   const layered = input.executionMode === "layered_public" ? await layeredPublicDiscoverySpec(transaction, { userId: input.userId, targetSnapshot: input.targetSnapshot, watchlist: input.watchlist, policy: { ...input.policy.discovery, publicQueryLimit: canUseAnySearch ? input.policy.discovery.publicQueryLimit : 0 } }) : null;
   if (layered && !layered.sourceScope.trustedSources.length && !layered.sourceScope.publicDiscovery.queries.length) throw new AgentRunError("AGENT_RUN_UNAVAILABLE");
-  if (input.executionMode === "layered_public") return { execution: { budget: input.policy.budgets.publicDiscovery, workflowVersion: LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION, ruleVersion: LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION, adapter: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER, adapterVersion: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION, outputSchemaVersion: LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION }, sourceScope: layered!.sourceScope, toolAllowlist: LAYERED_PUBLIC_JOB_DISCOVERY_TOOL_ALLOWLIST, profileSnapshot: layered!.profileSnapshot, watchlistSnapshot: layered!.watchlistSnapshot };
-  if (input.executionMode === "greenhouse") return { execution: { budget: input.policy.budgets.publicDiscovery, workflowVersion: GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, ruleVersion: GREENHOUSE_SOURCE_HEALTH_RULE_VERSION, adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER, adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, outputSchemaVersion: GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION }, sourceScope: publicSourceScope(input.watchlist, input.policy.discovery.trustedSourceLimit), toolAllowlist: GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST };
-  return { execution: { budget: input.policy.budgets.fake, workflowVersion: FAKE_JOB_DISCOVERY_WORKFLOW_VERSION, ruleVersion: AGENT_RUN_RULE_VERSION, adapter: FAKE_JOB_DISCOVERY_ADAPTER, adapterVersion: FAKE_JOB_DISCOVERY_ADAPTER_VERSION, outputSchemaVersion: FAKE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION }, sourceScope: sourceScope(input.watchlist), toolAllowlist: AGENT_RUN_TOOL_ALLOWLIST };
+  if (input.executionMode === "layered_public") return { execution: { budget: input.policy.budgets.publicDiscovery, workflowVersion: LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION, ruleVersion: LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION, adapter: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER, adapterVersion: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION, outputSchemaVersion: LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, model: input.normalizerMetadata ?? null }, sourceScope: layered!.sourceScope, toolAllowlist: LAYERED_PUBLIC_JOB_DISCOVERY_TOOL_ALLOWLIST, profileSnapshot: layered!.profileSnapshot, watchlistSnapshot: layered!.watchlistSnapshot };
+  if (input.executionMode === "greenhouse") return { execution: { budget: input.policy.budgets.publicDiscovery, workflowVersion: GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION, ruleVersion: GREENHOUSE_SOURCE_HEALTH_RULE_VERSION, adapter: GREENHOUSE_JOB_DISCOVERY_ADAPTER, adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, outputSchemaVersion: GREENHOUSE_SOURCE_HEALTH_OUTPUT_SCHEMA_VERSION, model: input.normalizerMetadata ?? null }, sourceScope: publicSourceScope(input.watchlist, input.policy.discovery.trustedSourceLimit), toolAllowlist: GREENHOUSE_SOURCE_HEALTH_TOOL_ALLOWLIST };
+  return { execution: { budget: input.policy.budgets.fake, workflowVersion: FAKE_JOB_DISCOVERY_WORKFLOW_VERSION, ruleVersion: AGENT_RUN_RULE_VERSION, adapter: FAKE_JOB_DISCOVERY_ADAPTER, adapterVersion: FAKE_JOB_DISCOVERY_ADAPTER_VERSION, outputSchemaVersion: FAKE_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, model: null }, sourceScope: sourceScope(input.watchlist), toolAllowlist: AGENT_RUN_TOOL_ALLOWLIST };
 }

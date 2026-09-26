@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { createJobDiscoveryAdapterResolver, createSourceHealthDiscoveryAdapterResolver } from "./job-discovery-adapter-resolver.js";
+import { createJobDiscoveryAdapterResolver, createLayeredPublicJobDiscoveryWorkflowResolver, createSourceHealthDiscoveryAdapterResolver } from "./job-discovery-adapter-resolver.js";
+import { LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER, LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION, LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION } from "@job-copilot/contracts/job-discovery";
 import { FakePublicSourceHealthAdapter } from "./fake-public-source-health-adapter.js";
 import { GreenhouseSourceHealthAdapter } from "./greenhouse-source-health-adapter.js";
 import { GreenhouseJobDiscoveryAdapter } from "./greenhouse-job-discovery-adapter.js";
@@ -64,8 +65,38 @@ const sourceHealthExecutionSpec = {
   outputSchemaVersion: "job-discovery-result-v3",
   toolAllowlist: ["job_discovery.list_source", "job_discovery.get_detail"],
 } as const;
+const layeredExecutionSpec = {
+  targetSnapshot,
+  profileSnapshot: { targetId: targetSnapshot.targetId, version: 1, confirmedActiveSkillNames: [] },
+  watchlistSnapshot: { targetId: targetSnapshot.targetId, version: 0, companies: [] },
+  sourceScope: {
+    kind: "layered_public" as const,
+    trustedSources: [],
+    publicDiscovery: {
+      provider: "anysearch" as const,
+      queries: [{ ordinal: 1, queryId: "50000000-0000-4000-8000-000000000005", kind: "general" as const, stableFingerprint: "a".repeat(64), query: "AI 工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 }],
+      batchSize: 5,
+      maxVerificationCandidates: 10,
+    },
+  },
+  workflowVersion: LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION,
+  ruleVersion: LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION,
+  adapter: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER,
+  adapterVersion: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION,
+  outputSchemaVersion: LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION,
+  toolAllowlist: ["job_discovery.list_source", "job_discovery.search", "job_discovery.extract", "job_discovery.fetch"],
+  model: { adapter: "openai" as const, normalizerVersion: "job-normalizer-v1", promptVersion: "job-normalizer-prompt-v1", outputSchemaVersion: "job-normalizer-v1", ruleVersion: "job-normalization-evidence-v2", model: "gpt-5-mini" },
+  budget: { maxActiveDurationMs: 180_000, maxAttempts: 3, maxToolCalls: 60, maxResults: 5, maxModelCalls: 10, maxTokens: 120_000 },
+};
 
 describe("JobDiscoveryAdapterResolver", () => {
+  it("v4 resolver 只将已解析的冻结 execution spec 交给 factory", () => {
+    const received: unknown[] = [];
+    const resolver = createLayeredPublicJobDiscoveryWorkflowResolver({ createWorkflow: (executionSpec) => { received.push(executionSpec); return {} as any; } });
+    resolver.resolve({ executionSpec: layeredExecutionSpec } as any);
+    expect(received).toEqual([layeredExecutionSpec]);
+  });
+
   it("production v4 resolver 缺少 key 时不发送匿名 AnySearch 请求", async () => {
     const resolverModule = await import("./job-discovery-adapter-resolver.js") as Record<string, unknown>;
     const createLayeredResolver = resolverModule.createLayeredPublicJobDiscoveryWorkflowResolver;

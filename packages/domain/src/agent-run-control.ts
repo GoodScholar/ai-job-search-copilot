@@ -169,13 +169,13 @@ function createAgentRunStarter(deps: CommandDependencies): AgentRunStarter {
         const executionMode = deps.executionMode ?? "fake";
         const policy = { revisionNumber: evaluation.policy.revisionNumber, effective: evaluation.policy.snapshot };
         const watchlist = await readDiscoveryWatchlistInTransaction(transaction, { userId: input.userId, targetId: target.id });
-        const discoverySpec = await buildDiscoveryRunSpecInTransaction(transaction, { userId: input.userId, targetSnapshot, watchlist, policy: policy.effective, executionMode });
+        const discoverySpec = await buildDiscoveryRunSpecInTransaction(transaction, { userId: input.userId, targetSnapshot, watchlist, policy: policy.effective, executionMode, normalizerMetadata: evaluation.jobNormalizerMetadata });
         const { execution } = discoverySpec;
         return insertAgentRunInTransaction(transaction, {
           userId: input.userId, requestId: input.requestId, idempotencyKey: command.idempotencyKey, targetId: target.id, targetVersion: target.version, targetSnapshot,
           profileSnapshot: discoverySpec.profileSnapshot, watchlistSnapshot: discoverySpec.watchlistSnapshot, sourceScope: discoverySpec.sourceScope, budgetSnapshot: execution.budget,
           accountPolicyRevisionNumber: policy.revisionNumber, accountPolicySnapshot: policy.effective, preflightSnapshot: evaluation.report,
-          workflowVersion: execution.workflowVersion, ruleVersion: execution.ruleVersion, toolAllowlist: discoverySpec.toolAllowlist, modelSnapshot: null,
+          workflowVersion: execution.workflowVersion, ruleVersion: execution.ruleVersion, toolAllowlist: discoverySpec.toolAllowlist, modelSnapshot: execution.model,
           adapter: execution.adapter, adapterVersion: execution.adapterVersion, outputSchemaVersion: execution.outputSchemaVersion, stepKeys,
         }, deps);
       });

@@ -14,6 +14,7 @@ import type { JobDiscoveryExecutionMode } from "./job-discovery-execution-mode";
 import { type ModelDiagnosticProjectionReader, createModelDiagnosticProjectionReader } from "./model-diagnostics";
 import type { SourceCapabilityAdapter } from "./source-capabilities";
 import { buildDiscoveryRunSpecInTransaction, discoverySourceScopeCounts, readDiscoveryTargetInTransaction, readDiscoveryWatchlistInTransaction, type DiscoveryRunSpec, type DiscoveryTargetSnapshot } from "./agent-run-discovery-spec";
+import type { JobNormalizerMetadata } from "@job-copilot/contracts/job-normalizer";
 import { AgentRunError } from "./agent-run-errors";
 
 export type { ModelDiagnosticProjectionReader } from "./model-diagnostics";
@@ -31,6 +32,7 @@ export type RunPreflightEvaluation = {
   report: RunPreflightReport;
   policy: { revisionNumber: number; snapshot: AccountRunPolicySettings };
   recommendationPlan?: { targetSnapshot: DiscoveryTargetSnapshot; discoverySpec: DiscoveryRunSpec | null };
+  jobNormalizerMetadata?: JobNormalizerMetadata;
 };
 export type RunPreflightDatabase = Pick<Database, "select" | "insert" | "execute">;
 export type RunPreflightEvaluator = { evaluate(db: RunPreflightDatabase, input: RunPreflightInput): Promise<RunPreflightEvaluation> };
@@ -147,9 +149,10 @@ async function health(db: Pick<Database, "select">, userId: string, targetId: st
     latest: values.reduce<Date | null>((maximum, value) => !maximum || value.checkedAt > maximum ? value.checkedAt : maximum, null),
   };
 }
-function usableBudget(settings: AccountRunPolicySettings, input: RunPreflightInput, mode: JobDiscoveryExecutionMode, now: Date): boolean {
+function usableBudget(settings: AccountRunPolicySettings, input: RunPreflightInput, mode: JobDiscoveryExecutionMode, now: Date, normalizerMetadata?: JobNormalizerMetadata): boolean {
   const discoveryBudget = mode === "fake" ? settings.budgets.fake : settings.budgets.publicDiscovery;
-  const discoveryRequired = [discoveryBudget.maxActiveDurationMs, discoveryBudget.maxAttempts, discoveryBudget.maxToolCalls, discoveryBudget.maxResults];
+  const discoveryRequired = [discoveryBudget.maxActiveDurationMs, discoveryBudget.maxAttempts, discoveryBudget.maxToolCalls, discoveryBudget.maxResults,
+    ...(normalizerMetadata?.adapter === "openai" ? [discoveryBudget.maxModelCalls, discoveryBudget.maxTokens] : [])];
   const deepMatchBudget = settings.budgets.deepMatch;
   const deepMatchRequired = [deepMatchBudget.maxActiveDurationMs, deepMatchBudget.maxAttempts, deepMatchBudget.maxResults, deepMatchBudget.maxModelCalls, deepMatchBudget.maxTokens];
   const required = input.workflow === "deep_match" ? deepMatchRequired : input.workflow === "recommendation" ? [...discoveryRequired, ...deepMatchRequired] : discoveryRequired;
@@ -160,7 +163,7 @@ function usableBudget(settings: AccountRunPolicySettings, input: RunPreflightInp
     && isDateInBackgroundWindow(input.scheduledFor, settings.backgroundWindow);
 }
 
-export function createRunPreflightEvaluator(deps: { capabilityAdapter: SourceCapabilityAdapter; modelDiagnosticReader: ModelDiagnosticProjectionReader; discoveryExecutionMode: JobDiscoveryExecutionMode; id: () => string; clock: () => Date }): RunPreflightEvaluator {
+export function createRunPreflightEvaluator(deps: { capabilityAdapter: SourceCapabilityAdapter; modelDiagnosticReader: ModelDiagnosticProjectionReader; discoveryExecutionMode: JobDiscoveryExecutionMode; jobNormalizerMetadata?: JobNormalizerMetadata; id: () => string; clock: () => Date }): RunPreflightEvaluator {
   return {
     async evaluate(db, input) {
       const checkedAt = deps.clock();
@@ -184,7 +187,7 @@ export function createRunPreflightEvaluator(deps: { capabilityAdapter: SourceCap
           const watchlist = await readDiscoveryWatchlistInTransaction(db, { userId: input.userId, targetId });
           let discoverySpec: DiscoveryRunSpec | null = null;
           try {
-            discoverySpec = await buildDiscoveryRunSpecInTransaction(db, { userId: input.userId, targetSnapshot, watchlist, policy: policy.effective, executionMode: deps.discoveryExecutionMode });
+            discoverySpec = await buildDiscoveryRunSpecInTransaction(db, { userId: input.userId, targetSnapshot, watchlist, policy: policy.effective, executionMode: deps.discoveryExecutionMode, normalizerMetadata: deps.jobNormalizerMetadata });
           } catch (error) {
             if (!(error instanceof AgentRunError) || error.code !== "AGENT_RUN_UNAVAILABLE") throw error;
           }
@@ -214,11 +217,11 @@ export function createRunPreflightEvaluator(deps: { capabilityAdapter: SourceCap
         items.push(item(healthCode, healthCode === "SOURCE_HEALTH_READY" ? "informational" : "warning", { kind: "source_health", checkedSourceCount: sourceHealth.checked, healthySourceCount: sourceHealth.healthy, degradedSourceCount: sourceHealth.degraded, uncheckedSourceCount: sourceHealth.unchecked, latestCheckedAt: sourceHealth.latest?.toISOString() ?? null }, true, healthCode === "SOURCE_HEALTH_READY" ? [] : ["review_source_health"]));
       }
       items.push(item(model.status === "available" ? "MODEL_DIAGNOSTIC_READY" : "MODEL_DIAGNOSTIC_UNAVAILABLE", model.status === "available" ? "informational" : "blocking", { kind: "model_diagnostic", status: model.status, checkedAt: model.checkedAt }, model.status !== "available", model.status === "available" ? [] : ["run_model_diagnostic"]));
-      const policyReady = usableBudget(policy.effective, input, deps.discoveryExecutionMode, checkedAt) && control.stoppedAt === null;
+      const policyReady = usableBudget(policy.effective, input, deps.discoveryExecutionMode, checkedAt, deps.jobNormalizerMetadata) && control.stoppedAt === null;
       const policyItem = item(policyReady ? "ACCOUNT_RUN_POLICY_READY" : "ACCOUNT_RUN_POLICY_BLOCKED", policyReady ? "informational" : "blocking", { kind: "account_run_policy", revisionNumber: policy.revisionNumber, status: policyReady ? "ready" : "blocked", checkedAt: checkedAt.toISOString() }, false, policyReady ? [] : ["review_account_run_policy"]);
       items.push(control.stoppedAt === null ? policyItem : { ...policyItem, summary: "账户已停止全部运行" });
       const report = RunPreflightReportSchema.parse({ version: "run-preflight-v1", workflow: input.workflow, trigger: input.trigger, targetId, status: status(items), items, warningFingerprint: fingerprint({ workflow: input.workflow, trigger: input.trigger, targetId, items }), checkedAt: checkedAt.toISOString() });
-      return { report, policy: { revisionNumber: policy.revisionNumber, snapshot: policy.effective }, ...(recommendationPlan ? { recommendationPlan } : {}) };
+      return { report, policy: { revisionNumber: policy.revisionNumber, snapshot: policy.effective }, ...(deps.jobNormalizerMetadata ? { jobNormalizerMetadata: deps.jobNormalizerMetadata } : {}), ...(recommendationPlan ? { recommendationPlan } : {}) };
     },
   };
 }

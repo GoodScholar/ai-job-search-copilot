@@ -15,6 +15,11 @@ export type JobNormalizerCallOptions = {
   onUsage?: (usage: { inputTokens: number; outputTokens: number }) => Promise<void>;
 };
 export type JobNormalizerMetadata = { adapter: "fake" | "openai"; normalizerVersion: string; promptVersion: string; outputSchemaVersion: string; ruleVersion: string; model: string | null };
+export const JobNormalizerMetadataSchema = z.object({
+  adapter: z.enum(["fake", "openai"]), normalizerVersion: z.string().trim().min(1).max(64),
+  promptVersion: z.string().trim().min(1).max(64), outputSchemaVersion: z.string().trim().min(1).max(64),
+  ruleVersion: z.string().trim().min(1).max(64), model: z.string().trim().min(1).max(128).nullable(),
+}).strict();
 export type JobNormalizerUsage = { status: "known" | "unknown" | "not_called"; inputTokens: number | null; outputTokens: number | null; totalTokens: number | null };
 export type JobNormalizerErrorCode = "JOB_NORMALIZER_OUTPUT_INVALID" | "JOB_NORMALIZER_EVIDENCE_INVALID" | "JOB_NORMALIZER_INJECTION_DETECTED" | "JOB_NORMALIZER_RATE_LIMITED" | "JOB_NORMALIZER_CANCELLED" | "JOB_NORMALIZER_BUDGET_EXHAUSTED" | "JOB_NORMALIZER_UNAVAILABLE" | "JOB_NORMALIZER_AUTH_FAILED";
 

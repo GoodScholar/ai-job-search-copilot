@@ -32,6 +32,7 @@ import { createRunPreflightEvaluator } from "./run-preflight";
 import { createModelDiagnosticProjectionReader } from "./model-diagnostics";
 import { createAccountRunControl } from "./account-run-control";
 import { createRecommendationRunCommands } from "./recommendation-runs";
+import { PUBLIC_JOB_DISCOVERY_BUDGET } from "@job-copilot/contracts/agent-runs";
 
 const now = new Date("2026-08-30T01:31:00.000Z");
 const constraints = {
@@ -127,12 +128,12 @@ describe("job discovery schedules", () => {
     await database.insert(profileFactRevisions).values({ id: crypto.randomUUID(), userId, profileFactId: factId, revisionNumber: 1, factType: "skill", factValue: { name: "TypeScript" }, state: "active", source: "user_confirmed", candidateFactId: null, reason: null, profileVersion: 1, createdAt: now });
   }
 
-  async function realPreflight() {
+  async function realPreflight(jobNormalizerMetadata?: { adapter: "fake" | "openai"; normalizerVersion: string; promptVersion: string; outputSchemaVersion: string; ruleVersion: string; model: string | null }) {
     const configurationFingerprint = crypto.randomUUID();
     await database.insert(modelDiagnosticResults).values({ configurationFingerprint, status: "available", checks: { authentication: "passed", modelAvailability: "passed", structuredOutput: "passed", timeout: "passed" }, reasonCode: "MODEL_DIAGNOSTIC_AVAILABLE", latencyBucket: "under_1s", checkedAt: now });
     return createRunPreflightEvaluator({
       capabilityAdapter: { adapter: "greenhouse", adapterVersion: "test", declareCapabilities: ({ sourceId }) => ({ sourceId, adapter: "greenhouse", adapterVersion: "test", contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring"] }) },
-      modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint }), discoveryExecutionMode: "greenhouse", id: () => crypto.randomUUID(), clock: () => now,
+      modelDiagnosticReader: createModelDiagnosticProjectionReader({ configurationFingerprint }), discoveryExecutionMode: "greenhouse", jobNormalizerMetadata, id: () => crypto.randomUUID(), clock: () => now,
     });
   }
 
@@ -372,6 +373,20 @@ describe("job discovery schedules", () => {
     const [run] = await database.select({ preflightSnapshot: agentRuns.preflightSnapshot, accountPolicySnapshot: agentRuns.accountPolicySnapshot, accountPolicyRevisionNumber: agentRuns.accountPolicyRevisionNumber }).from(agentRuns).where(and(eq(agentRuns.userId, owner.userId), eq(agentRuns.idempotencyKey, occurrence.occurrenceId)));
     expect(run).toEqual({ preflightSnapshot: expected.report, accountPolicySnapshot: expected.policy.snapshot, accountPolicyRevisionNumber: expected.policy.revisionNumber });
     expect(run!.preflightSnapshot).toMatchObject({ status: "ready_with_warnings", warningFingerprint: expect.stringMatching(/^[a-f0-9]{64}$/) });
+  });
+
+  it("生产 schedule recommendation root 冻结 normalizer 元数据和公开模型预算", async () => {
+    const owner = await target();
+    await addConfirmedProfileFact(owner.userId);
+    await addWatchlistSource({ userId: owner.userId, targetId: owner.targetId, careersUrl: "https://boards.greenhouse.io/frozen-normalizer", allowedDomains: ["boards.greenhouse.io", "boards-api.greenhouse.io"] });
+    const occurrence = await dueOccurrence(owner);
+    const metadata = { adapter: "openai" as const, normalizerVersion: "job-normalizer-v1", promptVersion: "job-normalizer-prompt-v1", outputSchemaVersion: "job-normalizer-v1", ruleVersion: "job-normalization-evidence-v2", model: "gpt-5-mini" };
+    const queue = new Queue(); const auditTrail = createAuditTrail({ db: database, clock: () => now }); const runPreflight = await realPreflight(metadata);
+    const recommendations = createRecommendationRunCommands({ db: database, queue, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse", runPreflight });
+    const service = createJobDiscoverySchedules({ db: database, recommendations, runPreflight, auditTrail, id: () => crypto.randomUUID(), clock: () => now, executionMode: "greenhouse" });
+    await service.dispatchPending({ limit: 1 });
+    await expect(database.select({ runPurpose: agentRuns.runPurpose, modelSnapshot: agentRuns.modelSnapshot, budgetSnapshot: agentRuns.budgetSnapshot }).from(agentRuns).where(and(eq(agentRuns.userId, owner.userId), eq(agentRuns.idempotencyKey, occurrence.occurrenceId))))
+      .resolves.toEqual([{ runPurpose: "recommendation", modelSnapshot: metadata, budgetSnapshot: PUBLIC_JOB_DISCOVERY_BUDGET }]);
   });
 
   it("v4 无 Watchlist 的 occurrence 仍派发一个冻结五条 general/site query 的 run，重放不重复创建", async () => {
