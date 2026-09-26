@@ -31,6 +31,8 @@ import { SourceCapabilityRejectionReasonCodeSchema } from "@job-copilot/contract
 import { SourceExecutionActionSchema, type SourceExecutionAction } from "./source-capabilities";
 import { narrowGreenhouseSourceScope } from "./agent-run-source-scope";
 import { z } from "zod";
+import { JobNormalizerOutputSchema, bindJobNormalizerOutput, validateJobNormalizerOutput, validatePersistedJobNormalizerOutput, type JobNormalizerOutput } from "@job-copilot/contracts/job-imports";
+import { buildTrustedNormalizationContent } from "./trusted-job-normalization";
 
 /** Reads the immutable result tuples owned by one completed discovery root. */
 export async function readDiscoveryResultCandidatesInTransaction(transaction: any, input: { userId: string; targetId: string; rootRunId: string }) {
@@ -75,6 +77,8 @@ export type DiscoveryDetail = {
   sourceType: string;
   isOfficial: boolean;
   rawPayload: Record<string, unknown>;
+  /** 已通过共享 normalizer 验证、但尚未取得 source version ID 的 provider 输出。 */
+  normalization?: JobNormalizerOutput;
 };
 
 export type StoredDiscoveryObject = {
@@ -109,8 +113,42 @@ function contentSha256(detail: DiscoveryDetail): string {
   });
 }
 
-function detailAvailability(detail: DiscoveryDetail, now: Date): Availability {
-  return detail.deadline && new Date(detail.deadline).getTime() <= now.getTime() ? "expired" : "open";
+function normalizedContentSha256(detail: DiscoveryDetail, output: JobNormalizerOutput): string {
+  return sha256({
+    sourceId: detail.sourceId, detailId: detail.detailId, content: buildTrustedNormalizationContent(detail),
+    adapter: output.adapter, normalizerVersion: output.normalizerVersion, model: output.model,
+    promptVersion: output.promptVersion, outputSchemaVersion: output.outputSchemaVersion, ruleVersion: output.ruleVersion,
+  });
+}
+
+function verifiedNormalization(detail: DiscoveryDetail): JobNormalizerOutput | undefined {
+  if (!detail.normalization) return undefined;
+  const output = JobNormalizerOutputSchema.parse(detail.normalization);
+  if (output.usage.status !== "known" || !validateJobNormalizerOutput(buildTrustedNormalizationContent(detail), output)) {
+    throw new Error("AGENT_RUN_PERSIST_FAILED");
+  }
+  return output;
+}
+
+function normalizedProjection(input: { sourcePostingVersionId: string; normalizedData: unknown; detail: DiscoveryDetail }) {
+  try {
+    const output = validatePersistedJobNormalizerOutput(input.normalizedData, { sourcePostingVersionId: input.sourcePostingVersionId });
+    return {
+      company: output.company, title: output.title, location: output.location, postedAt: output.postedAt,
+      deadline: output.deadline, description: output.description, normalizedData: input.normalizedData as Record<string, unknown>,
+    };
+  } catch {
+    if (input.detail.normalization) throw new Error("AGENT_RUN_PERSIST_FAILED");
+    return {
+      company: input.detail.company, title: input.detail.title, location: input.detail.location, postedAt: input.detail.postedAt,
+      deadline: input.detail.deadline, description: null, normalizedData: discoveryNormalizedData(input.detail),
+    };
+  }
+}
+
+function detailAvailability(detail: DiscoveryDetail, now: Date, normalizedDeadline?: string | null): Availability {
+  const deadline = normalizedDeadline === undefined ? detail.deadline : normalizedDeadline;
+  return deadline && new Date(deadline).getTime() <= now.getTime() ? "expired" : "open";
 }
 
 async function appendEvent(db: any, input: { id: () => string; userId: string; runId: string; version: number; eventType: string; data: Record<string, unknown>; now: Date }) {
@@ -145,12 +183,14 @@ async function persistDiscoverySource(db: any, input: { id: () => string; userId
   let [posting] = await db.select().from(jobSourcePostings).where(and(
     eq(jobSourcePostings.userId, input.userId), eq(jobSourcePostings.sourceType, input.detail.sourceType), eq(jobSourcePostings.sourceIdentifier, sourceIdentifier),
   ));
-  const availability = detailAvailability(input.detail, input.now);
+  const normalization = verifiedNormalization(input.detail);
+  const deadline = normalization?.deadline === undefined ? input.detail.deadline : normalization.deadline;
+  const availability = detailAvailability(input.detail, input.now, normalization?.deadline);
   if (!posting) {
     const [created] = await db.insert(jobSourcePostings).values({
       id: input.id(), userId: input.userId, sourceType: input.detail.sourceType, sourceIdentifier,
       sourceId: input.detail.sourceId, sourceIdentity: { sourceId: input.detail.sourceId, detailId: input.detail.detailId },
-      applicationDeadline: input.detail.deadline ? new Date(input.detail.deadline) : null, isOfficial: input.detail.isOfficial,
+      applicationDeadline: deadline ? new Date(deadline) : null, isOfficial: input.detail.isOfficial,
       availability, availabilityUpdatedAt: input.now, createdAt: input.now, updatedAt: input.now,
     }).returning();
     if (!created) throw new Error("AGENT_RUN_PERSIST_FAILED");
@@ -159,11 +199,11 @@ async function persistDiscoverySource(db: any, input: { id: () => string; userId
     posting.availability !== availability
     || (input.detail.isOfficial && !posting.isOfficial)
     || posting.sourceId !== input.detail.sourceId
-    || posting.applicationDeadline?.getTime() !== (input.detail.deadline ? new Date(input.detail.deadline).getTime() : undefined)
+    || posting.applicationDeadline?.getTime() !== (deadline ? new Date(deadline).getTime() : undefined)
   ) {
     const [updated] = await db.update(jobSourcePostings).set({
       availability, availabilityUpdatedAt: posting.availability === availability ? posting.availabilityUpdatedAt : input.now,
-      sourceId: input.detail.sourceId, applicationDeadline: input.detail.deadline ? new Date(input.detail.deadline) : null,
+      sourceId: input.detail.sourceId, applicationDeadline: deadline ? new Date(deadline) : null,
       isOfficial: posting.isOfficial || input.detail.isOfficial, updatedAt: input.now,
     }).where(and(eq(jobSourcePostings.userId, input.userId), eq(jobSourcePostings.id, posting.id))).returning();
     if (!updated) throw new Error("AGENT_RUN_PERSIST_FAILED");
@@ -171,19 +211,31 @@ async function persistDiscoverySource(db: any, input: { id: () => string; userId
   }
 
   const latest = await latestSourceVersion(db, input.userId, posting.id);
-  const normalizedHash = contentSha256(input.detail);
+  const normalizedHash = normalization ? normalizedContentSha256(input.detail, normalization) : contentSha256(input.detail);
+  const reusableNormalization = latest && normalization ? (() => {
+    try {
+      const output = validatePersistedJobNormalizerOutput(latest.normalizedData, { sourcePostingVersionId: latest.id });
+      return output.usage.status === "known"
+        && output.adapter === normalization.adapter && output.normalizerVersion === normalization.normalizerVersion
+        && output.model === normalization.model && output.promptVersion === normalization.promptVersion
+        && output.outputSchemaVersion === normalization.outputSchemaVersion && output.ruleVersion === normalization.ruleVersion
+        && validateJobNormalizerOutput(buildTrustedNormalizationContent(input.detail), output);
+    } catch { return false; }
+  })() : !normalization;
   const unchanged = latest
     && latest.contentSha256 === normalizedHash
     && latest.rawContentSha256 === input.stored.rawContentSha256
-    && latest.availability === availability;
-  if (unchanged) return { sourcePostingId: posting.id, sourcePostingVersionId: latest.id, isOfficial: posting.isOfficial, sourceVersionCreated: false };
+    && latest.availability === availability
+    && reusableNormalization;
+  if (unchanged) return { sourcePostingId: posting.id, sourcePostingVersionId: latest.id, isOfficial: posting.isOfficial, sourceVersionCreated: false, normalizedData: latest.normalizedData };
+  const sourcePostingVersionId = input.id();
   const [created] = await db.insert(jobSourcePostingVersions).values({
-    id: input.id(), userId: input.userId, sourcePostingId: posting.id, version: (latest?.version ?? 0) + 1,
+    id: sourcePostingVersionId, userId: input.userId, sourcePostingId: posting.id, version: (latest?.version ?? 0) + 1,
     contentSha256: normalizedHash, rawContentSha256: input.stored.rawContentSha256,
-      rawObjectReference: { objectKey: input.stored.objectKey }, normalizedData: discoveryNormalizedData(input.detail), retrievedAt: input.now, availability, createdAt: input.now,
+      rawObjectReference: { objectKey: input.stored.objectKey }, normalizedData: normalization ? bindJobNormalizerOutput(sourcePostingVersionId, normalization) : discoveryNormalizedData(input.detail), retrievedAt: input.now, availability, createdAt: input.now,
   }).returning();
   if (!created) throw new Error("AGENT_RUN_PERSIST_FAILED");
-  return { sourcePostingId: posting.id, sourcePostingVersionId: created.id, isOfficial: posting.isOfficial, sourceVersionCreated: true };
+  return { sourcePostingId: posting.id, sourcePostingVersionId: created.id, isOfficial: posting.isOfficial, sourceVersionCreated: true, normalizedData: created.normalizedData };
 }
 
 async function closeMissingSourcePostings(db: any, input: { id: () => string; userId: string; sourceType: string; scan: { sourceId: string; observedDetailIds: string[]; complete: boolean }; now: Date }): Promise<string[]> {
@@ -217,7 +269,11 @@ async function closeMissingSourcePostings(db: any, input: { id: () => string; us
   const latestByPosting = new Map(versions.map((version) => [version.sourcePostingId, version]));
   const inserts = candidates.flatMap(({ posting, availability }) => {
     const latest = latestByPosting.get(posting.id);
-    return latest ? [{ id: input.id(), userId: input.userId, sourcePostingId: posting.id, version: latest.version + 1, contentSha256: latest.contentSha256, rawContentSha256: latest.rawContentSha256, rawObjectReference: latest.rawObjectReference, normalizedData: latest.normalizedData, retrievedAt: input.now, availability, createdAt: input.now }] : [];
+    if (!latest) return [];
+    const id = input.id();
+    let normalizedData = latest.normalizedData;
+    try { normalizedData = bindJobNormalizerOutput(id, validatePersistedJobNormalizerOutput(latest.normalizedData, { sourcePostingVersionId: latest.id })); } catch { /* 历史未绑定版本保持原样。 */ }
+    return [{ id, userId: input.userId, sourcePostingId: posting.id, version: latest.version + 1, contentSha256: latest.contentSha256, rawContentSha256: latest.rawContentSha256, rawObjectReference: latest.rawObjectReference, normalizedData, retrievedAt: input.now, availability, createdAt: input.now }];
   });
   if (inserts.length !== candidates.length) throw new Error("AGENT_RUN_PERSIST_FAILED");
   const createdVersions = await db.execute(sql`
@@ -362,11 +418,10 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
           const source = await persistDiscoverySource(transaction, { id: deps.id, userId: input.userId, detail, stored, now: input.now });
           if (!source.sourceVersionCreated) cleanupObjectKeys.push(stored.objectKey);
           const existingOpportunityId = await existingOpportunityForPosting(transaction, { userId: input.userId, sourcePostingId: source.sourcePostingId });
+          const projection = normalizedProjection({ sourcePostingVersionId: source.sourcePostingVersionId, normalizedData: source.normalizedData, detail });
           await persistJobOpportunity(transaction, {
             id: deps.id, userId: input.userId, importId: null, sourcePostingVersionId: source.sourcePostingVersionId,
-            existingOpportunityId, isOfficial: source.isOfficial, company: detail.company, title: detail.title,
-            location: detail.location, postedAt: detail.postedAt, deadline: detail.deadline, description: null,
-            normalizedData: discoveryNormalizedData(detail), now: input.now,
+            existingOpportunityId, isOfficial: source.isOfficial, ...projection, now: input.now,
           });
           sourcePostingVersionIds.push(source.sourcePostingVersionId);
         }
@@ -508,14 +563,13 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
           const source = await persistDiscoverySource(transaction, { id: deps.id, userId: run.userId, detail, stored, now: input.now });
           if (!source.sourceVersionCreated) cleanupObjectKeys.push(stored.objectKey);
           const existingOpportunityId = await existingOpportunityForPosting(transaction, { userId: run.userId, sourcePostingId: source.sourcePostingId });
+          const projection = normalizedProjection({ sourcePostingVersionId: source.sourcePostingVersionId, normalizedData: source.normalizedData, detail });
           const evidence = await persistJobOpportunity(transaction, {
             id: deps.id, userId: run.userId, importId: null, sourcePostingVersionId: source.sourcePostingVersionId,
-            existingOpportunityId, isOfficial: source.isOfficial, company: detail.company, title: detail.title,
-            location: detail.location, postedAt: detail.postedAt, deadline: detail.deadline, description: null,
-            normalizedData: discoveryNormalizedData(detail), now: input.now,
+            existingOpportunityId, isOfficial: source.isOfficial, ...projection, now: input.now,
           });
           opportunityIds.add(evidence.opportunityId);
-          if (detailAvailability(detail, input.now) === "open") resultRows.push({ opportunityId: evidence.opportunityId, sourcePostingVersionId: source.sourcePostingVersionId });
+          if (detailAvailability(detail, input.now, detail.normalization?.deadline) === "open") resultRows.push({ opportunityId: evidence.opportunityId, sourcePostingVersionId: source.sourcePostingVersionId });
         }
         // Scan records carry no source type. The immutable, claimed execution
         // spec is the only authority for translating a public adapter to it.

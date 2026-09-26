@@ -43,6 +43,7 @@ import {
 } from "./layered-public-job-discovery-workflow";
 import { FrozenRecommendationEvidenceWriteSchema, RecommendationDiscoveryFactsSchema, type RecommendationDiscoveryFacts } from "@job-copilot/contracts/recommendation-discovery-facts";
 import { createDiscoveryJobNormalizer, type DiscoveryJobNormalizerResolver } from "./discovery-job-normalization.js";
+import { normalizeTrustedDetails } from "./trusted-job-normalization.js";
 import { validatePersistedJobNormalizerOutput } from "@job-copilot/contracts/job-imports";
 import { JobNormalizerMetadataSchema } from "@job-copilot/contracts/job-normalizer";
 
@@ -679,13 +680,21 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
       }
       const modelController = claimed.run.workflowVersion === "deep-match-v1" ? new AbortController() : undefined;
       const layeredController = claimed.run.workflowVersion === "layered-public-job-discovery-v1" ? new AbortController() : undefined;
+      const discoveryController = claimed.run.workflowVersion !== "deep-match-v1" && claimed.run.workflowVersion !== "layered-public-job-discovery-v1" ? new AbortController() : undefined;
+      const discoveryMetadata = claimed.run.adapter === "greenhouse" ? JobNormalizerMetadataSchema.nullable().parse(claimed.run.modelSnapshot) : null;
+      const discoveryNormalizer = discoveryMetadata && deps.jobPostingNormalizerResolver ? createDiscoveryJobNormalizer({
+        metadata: discoveryMetadata, normalizerResolver: deps.jobPostingNormalizerResolver, checkpoint,
+        userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount,
+        clock: deps.clock, deadline, signal: discoveryController!.signal,
+        markUsageIncomplete: async () => { await deps.db.update(agentRuns).set({ usageComplete: false, updatedAt: deps.clock() }).where(and(eq(agentRuns.userId, job.userId), eq(agentRuns.id, job.runId), eq(agentRuns.claimToken, claimed.claimToken))); },
+      }) : undefined;
       let trustedStop: "paused" | "cancelled" | "budget_exhausted" | "stale" | undefined;
       let heartbeatControl: "paused" | "cancelled" | undefined;
       const stopHeartbeat = startClaimHeartbeat(deps, {
         userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, deadline,
-        onLeaseLost: () => { trustedStop = "stale"; layeredController?.abort(); modelController?.abort(); },
-        onControl: (outcome) => { heartbeatControl = outcome; trustedStop = outcome; layeredController?.abort(); modelController?.abort(); },
-        onDeadline: () => { trustedStop = "budget_exhausted"; layeredController?.abort(); modelController?.abort(); },
+        onLeaseLost: () => { trustedStop = "stale"; layeredController?.abort(); modelController?.abort(); discoveryController?.abort(); },
+        onControl: (outcome) => { heartbeatControl = outcome; trustedStop = outcome; layeredController?.abort(); modelController?.abort(); discoveryController?.abort(); },
+        onDeadline: () => { trustedStop = "budget_exhausted"; layeredController?.abort(); modelController?.abort(); discoveryController?.abort(); },
       });
       try {
       const adapterCall = async <T>(operation: string, ordinal: number, call: () => Promise<T>): Promise<{ value?: T; outcome?: ProcessorOutcome }> => {
@@ -809,7 +818,8 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         }
       }
       const persistDiscoveryOutcome = async (input: { details: DiscoveryDetail[]; scans: Array<{ sourceId: string; observedDetailIds: string[]; complete: boolean }>; sourceChecks?: JobSourceHealthCheck[]; sourceIssues?: Array<{ provider: "greenhouse"; code: "SOURCE_CAPABILITY_UNSUPPORTED" | "SOURCE_CAPABILITY_DECLARATION_MISMATCH"; sourceId: string; action: SourceExecutionAction; affectedCount: 1 }>; terminal?: SourceHealthTerminal; discoveryFacts?: RecommendationDiscoveryFacts }) => {
-        const stored = input.details.map((detail) => {
+        const normalizedDetails = discoveryNormalizer ? await normalizeTrustedDetails({ db: deps.db, userId: job.userId, metadata: discoveryMetadata!, details: input.details, normalizePosting: discoveryNormalizer.normalizePosting }) : input.details;
+        const stored = normalizedDetails.map((detail) => {
           const bytes = canonicalJsonBytes(detail.rawPayload); const sourceIdentifier = discoverySourceIdentifier(detail.sourceId, detail.detailId); const rawContentSha256 = createHash("sha256").update(bytes).digest("hex");
           return { detail, bytes, rawContentSha256, objectKey: `accounts/${job.userId}/agent-runs/${job.runId}/sources/${sourceIdentifier}/${claimed.claimToken}/${rawContentSha256}.json` };
         });
@@ -825,7 +835,7 @@ export function createAgentRunProcessor(deps: AgentRunProcessorDependencies): { 
         const commitBefore = await checkPoint(checkpoint, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, operation: "domain_commit_before", ordinal: 1 });
         if (commitBefore) { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return commitBefore; }
         let persisted: { cleanupObjectKeys: string[]; completed: boolean };
-        try { persisted = await runTransaction(deps, deadline, (transaction) => createJobDiscoveryPersistence({ db: deps.db, id: deps.id, clock: deps.clock, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({ run: { ...claimed.run, sourceScope: executionSourceScope, claimToken: claimed.claimToken }, details: input.details, scans: input.scans, storedObjects: stored.map((item) => ({ sourceId: item.detail.sourceId, detailId: item.detail.detailId, objectKey: item.objectKey, rawContentSha256: item.rawContentSha256 })), sourceChecks: input.sourceChecks, sourceIssues: input.sourceIssues, terminal: input.terminal, now: deps.clock(), transaction, afterCompleted: async ({ transaction: completedTransaction, userId, targetId, discoveryRunId }) => { if (claimed.run.runPurpose === "recommendation") await handoffRecommendationDiscoveryInTransaction(deps, completedTransaction, claimed.run, input.discoveryFacts, executionSourceScope); else await ensureDeepMatchRunInTransaction({ transaction: completedTransaction, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight, userId, targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(discoveryRunId), trigger: "automatic", discoveryRunId }); } })); }
+        try { persisted = await runTransaction(deps, deadline, (transaction) => createJobDiscoveryPersistence({ db: deps.db, id: deps.id, clock: deps.clock, auditTrail: deps.auditTrail }).persistSuccessfulDiscovery({ run: { ...claimed.run, sourceScope: executionSourceScope, claimToken: claimed.claimToken }, details: normalizedDetails, scans: input.scans, storedObjects: stored.map((item) => ({ sourceId: item.detail.sourceId, detailId: item.detail.detailId, objectKey: item.objectKey, rawContentSha256: item.rawContentSha256 })), sourceChecks: input.sourceChecks, sourceIssues: input.sourceIssues, terminal: input.terminal, now: deps.clock(), transaction, afterCompleted: async ({ transaction: completedTransaction, userId, targetId, discoveryRunId }) => { if (claimed.run.runPurpose === "recommendation") await handoffRecommendationDiscoveryInTransaction(deps, completedTransaction, claimed.run, input.discoveryFacts, executionSourceScope); else await ensureDeepMatchRunInTransaction({ transaction: completedTransaction, id: deps.id, clock: deps.clock, runPreflight: deps.runPreflight, userId, targetId, idempotencyKey: deepMatchDiscoveryIdempotencyKey(discoveryRunId), trigger: "automatic", discoveryRunId }); } })); }
         catch { await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), putObjectKeys); return failOrRetry(deps, { userId: job.userId, runId: job.runId, claimToken: claimed.claimToken, attemptCount: claimed.attemptCount, failure: { failureCode: "AGENT_RUN_PERSIST_FAILED", retryable: true, category: "source" }, deadline }); }
         await removeBestEffort(deps.contentStore, deps.clock, cleanupDeadline(deps), persisted.cleanupObjectKeys); if (!persisted.completed) return "stale";
         // PostgreSQL queued state is authoritative; the shared queue wakes it immediately and reconciler repairs delivery failures.

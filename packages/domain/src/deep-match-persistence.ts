@@ -9,7 +9,7 @@ import {
 } from "@job-copilot/contracts/deep-match";
 import { acceptsRecommendationRule, RecommendationRuleConfigSchema } from "@job-copilot/contracts/recommendations";
 import { AgentRunTargetSnapshotSchema, DeepMatchAgentRunSourceScopeSchema } from "@job-copilot/contracts/agent-runs";
-import { JobQualificationsSchema } from "@job-copilot/contracts/job-imports";
+import { JobQualificationsSchema, validatePersistedJobNormalizerOutput } from "@job-copilot/contracts/job-imports";
 import { JobTargetConstraintsSchema } from "@job-copilot/contracts/job-targets";
 import { acquireAccountAdvisoryLock } from "./account-advisory-lock";
 import { readAccountRunControlInTransaction } from "./account-run-admission";
@@ -220,7 +220,9 @@ export function createDeepMatchQueries(deps: { db: Database }) {
         // opportunity normalization when it is non-empty (never an `{}` fallback).
         const sourceNormalized = sourceVersion.normalizedData as Record<string, unknown>;
         const opportunityNormalized = opportunity.normalizedData as Record<string, unknown>;
-        const normalized = usesFrozenTriage || Object.keys(sourceNormalized).length > 0 ? sourceNormalized : opportunityNormalized;
+        let boundNormalized: ReturnType<typeof validatePersistedJobNormalizerOutput> | undefined;
+        try { boundNormalized = validatePersistedJobNormalizerOutput(sourceNormalized, { sourcePostingVersionId: triage.sourcePostingVersionId }); } catch { /* 旧快照仍按原兼容读取。 */ }
+        const normalized = boundNormalized ?? (usesFrozenTriage || Object.keys(sourceNormalized).length > 0 ? sourceNormalized : opportunityNormalized);
         const jobSourceContent = usesFrozenTriage
           ? { company: normalizedText(sourceNormalized.company), title: normalizedText(sourceNormalized.title), location: normalizedText(sourceNormalized.location), description: normalizedText(sourceNormalized.description) }
           : { company: opportunity.company, title: opportunity.title, location: opportunity.location, description: opportunity.description };
@@ -231,6 +233,10 @@ export function createDeepMatchQueries(deps: { db: Database }) {
         const qualificationValue = (value: NonNullable<typeof qualifications>["seniority"] | NonNullable<typeof qualifications>["education"] | NonNullable<typeof qualifications>["languages"] | NonNullable<typeof qualifications>["workEligibility"]) => value === null ? null : typeof value.value === "string" ? value.value : value.value.map((language) => `${language.name}${language.level ? `（${language.level}）` : ""}`).join("、");
         const boundedValue = (value: string) => boundedEvidenceText("", [value]) ?? "";
         const sourceEvidence = (field: string, path: string, originalValue: string | undefined, normalizedValue: string | undefined) => ({ sourcePostingVersionId: triage.sourcePostingVersionId, field, path, originalValue: boundedValue(originalValue ?? ""), normalizedValue: boundedValue(normalizedValue ?? originalValue ?? "") });
+        const scalarEvidence = (field: "title" | "location" | "description", value: string) => {
+          const evidence = boundNormalized?.fieldEvidence.find((item) => item.field === field);
+          return sourceEvidence(field, evidence?.path ?? field, evidence?.rawValue ?? value, evidence?.normalizedValue ?? value);
+        };
         const jobEvidenceItem = (value: string, dimensions: DeepMatchCandidate["jobEvidence"][number]["dimensions"], provenance: ReturnType<typeof sourceEvidence>) => ({ value: boundedValue(value), dimensions, provenance });
         const rawJobEvidence: Array<Omit<DeepMatchCandidate["jobEvidence"][number], "id">> = [
           ...(requiredSkillsEvidence ? [jobEvidenceItem(requiredSkillsEvidence, ["skills"], sourceEvidence(qualifications!.requiredSkills!.evidence.field, qualifications!.requiredSkills!.evidence.path, qualifications!.requiredSkills!.evidence.rawValue ?? qualifications!.requiredSkills!.evidence.value, qualifications!.requiredSkills!.evidence.normalizedValue ?? (boundedEvidenceText("", requiredSkills) ?? "")))] : []),
@@ -244,9 +250,9 @@ export function createDeepMatchQueries(deps: { db: Database }) {
           ...(qualifications?.salary ? [jobEvidenceItem(`薪资：${qualifications.salary.value.currency} ${qualifications.salary.value.minimum ?? ""}${qualifications.salary.value.maximum === null ? "" : `-${qualifications.salary.value.maximum}`}/${qualifications.salary.value.period}`, ["qualification_risk"], sourceEvidence(qualifications.salary.evidence.field, qualifications.salary.evidence.path, qualifications.salary.evidence.rawValue ?? qualifications.salary.evidence.value, qualifications.salary.evidence.normalizedValue ?? JSON.stringify(qualifications.salary.value)))] : []),
           ...(qualifications?.industry ? [jobEvidenceItem(`行业：${qualifications.industry.value}`, ["career_direction"], sourceEvidence(qualifications.industry.evidence.field, qualifications.industry.evidence.path, qualifications.industry.evidence.rawValue ?? qualifications.industry.evidence.value, qualifications.industry.evidence.normalizedValue ?? qualifications.industry.value))] : []),
           ...(qualifications?.employmentType ? [jobEvidenceItem(`雇佣类型：${qualifications.employmentType.value}`, ["qualification_risk"], sourceEvidence(qualifications.employmentType.evidence.field, qualifications.employmentType.evidence.path, qualifications.employmentType.evidence.rawValue ?? qualifications.employmentType.evidence.value, qualifications.employmentType.evidence.normalizedValue ?? qualifications.employmentType.value))] : []),
-          ...(jobSourceContent.title ? [jobEvidenceItem(jobSourceContent.title, ["career_direction"], sourceEvidence("title", "title", jobSourceContent.title, jobSourceContent.title))] : []),
-          ...(jobSourceContent.location ? [jobEvidenceItem(jobSourceContent.location, ["location_logistics"], sourceEvidence("location", "location", jobSourceContent.location, jobSourceContent.location))] : []),
-          ...(jobSourceContent.description ? [jobEvidenceItem(jobSourceContent.description, ["experience"], sourceEvidence("description", "description", jobSourceContent.description, jobSourceContent.description))] : []),
+          ...(jobSourceContent.title ? [jobEvidenceItem(jobSourceContent.title, ["career_direction"], scalarEvidence("title", jobSourceContent.title))] : []),
+          ...(jobSourceContent.location ? [jobEvidenceItem(jobSourceContent.location, ["location_logistics"], scalarEvidence("location", jobSourceContent.location))] : []),
+          ...(jobSourceContent.description ? [jobEvidenceItem(jobSourceContent.description, ["experience"], scalarEvidence("description", jobSourceContent.description))] : []),
         ];
         const jobEvidence: DeepMatchCandidate["jobEvidence"] = rawJobEvidence.filter((evidence) => evidence.value.length > 0).map((evidence, index) => ({ id: `job:${triage.sourcePostingVersionId}:${index + 1}`, ...evidence }));
         if (!jobEvidence.length) return null;

@@ -9,6 +9,7 @@ import {
   JobImportJobSchema,
   JobImportListSchema,
   JobNormalizerOutputSchema,
+  bindJobNormalizerOutput,
   validateJobNormalizerOutput,
   type CreateJobImportCommand,
   type CreateJobImportResponse,
@@ -461,11 +462,12 @@ export function createJobImportProcessor(deps: ProcessorDependencies): {
           if (!completionClaimed) return false;
 
           // 规范化结果属于不可变发布版本；机会行只是当前展示投影。
-          await transaction.update(jobSourcePostingVersions).set({ normalizedData: output }).where(and(
+          const boundOutput = bindJobNormalizerOutput(sourceVersion.id, output);
+          await transaction.update(jobSourcePostingVersions).set({ normalizedData: boundOutput }).where(and(
             eq(jobSourcePostingVersions.userId, parsedJob.userId), eq(jobSourcePostingVersions.id, sourceVersion.id),
           ));
 
-          const opportunity = await persistJobOpportunity(transaction, { id: deps.id, userId: parsedJob.userId, importId: parsedJob.importId, sourcePostingVersionId: sourceVersion.id, isOfficial: sourceVersion.isOfficial, company: output.company, title: output.title, location: output.location, postedAt: output.postedAt, deadline: output.deadline, description: output.description, normalizedData: output, now });
+          const opportunity = await persistJobOpportunity(transaction, { id: deps.id, userId: parsedJob.userId, importId: parsedJob.importId, sourcePostingVersionId: sourceVersion.id, isOfficial: sourceVersion.isOfficial, company: output.company, title: output.title, location: output.location, postedAt: output.postedAt, deadline: output.deadline, description: output.description, normalizedData: boundOutput, now });
           await deps.auditTrail.bind(transaction).append({
             userId: parsedJob.userId, actorUserId: parsedJob.userId, eventType: "job.import_completed", occurredAt: now,
             requestId: parsedJob.importId, outcome: "success", reasonCode: "JOB_IMPORT_COMPLETED", resourceType: "job_import", resourceId: parsedJob.importId,

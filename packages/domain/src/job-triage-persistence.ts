@@ -3,7 +3,7 @@ import {
   jobOpportunities, jobOpportunitySources, jobProfiles, jobSourcePostingVersions, jobTargetRevisions, jobTargets,
   jobTriageVersions, profileFactRevisions, profileFacts, type Database,
 } from "@job-copilot/database";
-import { JobNormalizerOutputSchema, JobQualificationsSchema } from "@job-copilot/contracts/job-imports";
+import { JobNormalizerOutputSchema, JobQualificationsSchema, validatePersistedJobNormalizerOutput } from "@job-copilot/contracts/job-imports";
 import { JobTargetConstraintsSchema } from "@job-copilot/contracts/job-targets";
 import { JobTriageVersionSchema, type CreateJobTriageVersionCommand, type JobTriageVersion } from "@job-copilot/contracts/job-triage";
 import { ProfileFactSchema } from "@job-copilot/contracts/profile-review";
@@ -63,7 +63,11 @@ const unknownQualifications = JobQualificationsSchema.parse({
  * absent qualification fields remain unknown and must never be recovered from the
  * mutable opportunity row.
  */
-function frozenDiscoveryJob(normalizedData: unknown): TriageJob {
+function frozenDiscoveryJob(normalizedData: unknown, sourcePostingVersionId?: string): TriageJob {
+  if (sourcePostingVersionId) {
+    try { return validatePersistedJobNormalizerOutput(normalizedData, { sourcePostingVersionId }); }
+    catch { /* 历史 source version 继续走兼容读取。 */ }
+  }
   const imported = JobNormalizerOutputSchema.safeParse(normalizedData);
   if (imported.success) return imported.data;
   const source = normalizedData !== null && typeof normalizedData === "object" ? normalizedData as Record<string, unknown> : {};
@@ -100,7 +104,7 @@ export async function createFrozenJobTriageInTransaction(input: { transaction: a
   }).from(jobOpportunities).innerJoin(jobOpportunitySources, and(eq(jobOpportunitySources.userId, jobOpportunities.userId), eq(jobOpportunitySources.opportunityId, jobOpportunities.id), eq(jobOpportunitySources.sourcePostingVersionId, input.sourcePostingVersionId))).innerJoin(jobSourcePostingVersions, and(eq(jobSourcePostingVersions.userId, jobOpportunities.userId), eq(jobSourcePostingVersions.id, input.sourcePostingVersionId)))
     .where(and(eq(jobOpportunities.userId, input.userId), eq(jobOpportunities.id, input.opportunityId))).limit(1);
   if (!opportunity || opportunity.sourceAvailability !== "open") throw new JobTriageError("JOB_TRIAGE_OPPORTUNITY_NOT_FOUND");
-  return evaluateAndPersistJobTriageInTransaction({ ...input, job: frozenDiscoveryJob(opportunity.normalizedData) });
+  return evaluateAndPersistJobTriageInTransaction({ ...input, job: frozenDiscoveryJob(opportunity.normalizedData, input.sourcePostingVersionId) });
 }
 
 async function findVersion(db: Pick<Database, "select">, input: {
@@ -126,7 +130,7 @@ export function createJobTriageCommands(deps: { db: Database; auditTrail: AuditT
         const [opportunity] = await transaction.select({
           id: jobOpportunities.id, sourcePostingVersionId: jobOpportunities.sourcePostingVersionId, company: jobOpportunities.company,
           title: jobOpportunities.title, location: jobOpportunities.location, deadline: jobOpportunities.deadline,
-          availability: jobOpportunities.availability, normalizedData: jobOpportunities.normalizedData,
+          availability: jobOpportunities.availability, normalizedData: jobOpportunities.normalizedData, sourceNormalizedData: jobSourcePostingVersions.normalizedData,
           sourceAvailability: jobSourcePostingVersions.availability,
         }).from(jobOpportunities).innerJoin(jobSourcePostingVersions, and(
           eq(jobSourcePostingVersions.userId, jobOpportunities.userId), eq(jobSourcePostingVersions.id, jobOpportunities.sourcePostingVersionId),
@@ -142,12 +146,14 @@ export function createJobTriageCommands(deps: { db: Database; auditTrail: AuditT
 
         const [profile] = await transaction.select().from(jobProfiles).where(eq(jobProfiles.userId, input.userId));
         if (!profile) throw new JobTriageError("JOB_TRIAGE_PROFILE_EMPTY");
-        const normalized = JobNormalizerOutputSchema.parse(opportunity.normalizedData);
+        let normalized: TriageJob;
+        try { normalized = validatePersistedJobNormalizerOutput(opportunity.sourceNormalizedData, { sourcePostingVersionId: opportunity.sourcePostingVersionId }); }
+        catch { normalized = JobNormalizerOutputSchema.parse(opportunity.normalizedData); }
         return evaluateAndPersistJobTriageInTransaction({
           transaction, auditTrail: deps.auditTrail, id: deps.id, clock: deps.clock, userId: input.userId, requestId: input.requestId,
           opportunityId: opportunity.id, sourcePostingVersionId: opportunity.sourcePostingVersionId, profileId: profile.id, profileVersion: profile.version,
           targetId: target.id, targetVersion: target.version, targetConstraints: target.constraints,
-          job: { ...normalized, company: opportunity.company, title: opportunity.title, location: opportunity.location, deadline: opportunity.deadline?.toISOString() ?? normalized.deadline },
+          job: normalized,
         });
       });
     },
