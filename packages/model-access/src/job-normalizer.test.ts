@@ -38,6 +38,13 @@ describe("OpenAI 岗位规范化", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it("允许把 tool calling 和 function calling 作为正常岗位职责", async () => {
+    const fetcher = vi.fn().mockResolvedValue(complete(result));
+    const normalizer = createOpenAiJobPostingNormalizer({ apiKey: "test-key" }, fetcher);
+    await expect(normalizer.normalize("公司：示例公司\n标题：工程师\n工作方式：远程\n职责：实现 tool calling 和 function calling 能力")).resolves.toMatchObject({ title: "工程师" });
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
   it("不允许模型输出覆写应用分配的版本元数据", async () => {
     const normalizer = createOpenAiJobPostingNormalizer({ apiKey: "test-key" }, vi.fn().mockResolvedValue(complete({ ...result, adapter: "fake", model: "invented", normalizerVersion: "invented", promptVersion: "invented", outputSchemaVersion: "invented" })));
     await expect(normalizer.normalize("公司：示例公司\n标题：工程师")).rejects.toMatchObject({ code: "JOB_NORMALIZER_OUTPUT_INVALID" });
@@ -57,5 +64,21 @@ describe("OpenAI 岗位规范化", () => {
     await expect(normalizer.normalize("公司：示例公司\n标题：工程师\n工作方式：现场", { beforeRequest, onUsage })).rejects.toMatchObject({ code: "JOB_NORMALIZER_EVIDENCE_INVALID" });
     expect(beforeRequest).toHaveBeenCalledOnce();
     expect(onUsage).toHaveBeenCalledWith({ inputTokens: 20, outputTokens: 30 });
+  });
+
+  it("在不完整响应和响应到达后的取消前结算已报告用量", async () => {
+    const incomplete = new Response(JSON.stringify({ status: "incomplete", usage: { input_tokens: 20, output_tokens: 30 }, incomplete_details: { reason: "max_output_tokens" }, output: [] }));
+    const incompleteUsage = vi.fn().mockResolvedValue(undefined);
+    await expect(createOpenAiJobPostingNormalizer({ apiKey: "test-key" }, vi.fn().mockResolvedValue(incomplete)).normalize("公司：示例公司\n标题：工程师", { onUsage: incompleteUsage })).rejects.toMatchObject({ code: "JOB_NORMALIZER_BUDGET_EXHAUSTED" });
+    expect(incompleteUsage).toHaveBeenCalledWith({ inputTokens: 20, outputTokens: 30 });
+
+    const controller = new AbortController();
+    const cancelledUsage = vi.fn().mockResolvedValue(undefined);
+    const normalizer = createOpenAiJobPostingNormalizer({ apiKey: "test-key" }, vi.fn().mockImplementation(async () => {
+      controller.abort();
+      return complete(result);
+    }));
+    await expect(normalizer.normalize("公司：示例公司\n标题：工程师", { signal: controller.signal, onUsage: cancelledUsage })).rejects.toMatchObject({ code: "JOB_NORMALIZER_CANCELLED" });
+    expect(cancelledUsage).toHaveBeenCalledWith({ inputTokens: 20, outputTokens: 30 });
   });
 });

@@ -61,5 +61,5 @@ export function assertJobNormalizerInputBudget(content: string, options: JobNorm
 }
 
 export function isJobInstructionLike(value: string): boolean {
-  return /(?:ignore\s+(?:all\s+)?previous|system\s+prompt|developer\s+message|tool\s+call|忽略.{0,16}(?:指令|之前)|系统提示|开发者消息|调用工具)/iu.test(value);
+  return /(?:ignore\s+(?:all\s+)?(?:previous\s+)?(?:instructions?|system\s+(?:prompt|message)|developer\s+message)|(?:reveal|show|display)\s+(?:the\s+)?(?:system\s+(?:prompt|message)|developer\s+message)|忽略.{0,24}(?:之前|所有).{0,24}(?:指令|系统提示|开发者消息)|(?:泄露|显示).{0,24}(?:系统提示|开发者消息))/iu.test(value);
 }

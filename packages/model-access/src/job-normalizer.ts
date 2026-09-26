@@ -52,20 +52,21 @@ export function createOpenAiJobPostingNormalizer(config: OpenAiJobNormalizerConf
     } catch {
       throw new JobNormalizerError(options.signal?.aborted ? "JOB_NORMALIZER_CANCELLED" : timeout.aborted ? "JOB_NORMALIZER_BUDGET_EXHAUSTED" : "JOB_NORMALIZER_UNAVAILABLE", unknownJobNormalizerUsage());
     }
-    if (options.signal?.aborted) throw new JobNormalizerError("JOB_NORMALIZER_CANCELLED");
     if (response.status === 429) throw new JobNormalizerError("JOB_NORMALIZER_RATE_LIMITED", unknownJobNormalizerUsage());
     if (response.status === 401 || response.status === 403) throw new JobNormalizerError("JOB_NORMALIZER_AUTH_FAILED", unknownJobNormalizerUsage());
     if (!response.ok) throw new JobNormalizerError("JOB_NORMALIZER_UNAVAILABLE", unknownJobNormalizerUsage());
     let body: unknown;
     try { body = await response.json(); } catch { throw new JobNormalizerError(options.signal?.aborted ? "JOB_NORMALIZER_CANCELLED" : timeout.aborted ? "JOB_NORMALIZER_BUDGET_EXHAUSTED" : "JOB_NORMALIZER_OUTPUT_INVALID"); }
-    if (options.signal?.aborted) throw new JobNormalizerError("JOB_NORMALIZER_CANCELLED");
     try {
       const value = body as { status?: unknown; output?: unknown; usage?: { input_tokens?: unknown; output_tokens?: unknown }; incomplete_details?: { reason?: unknown } };
-      if (value?.status === "incomplete" && value.incomplete_details?.reason === "max_output_tokens") throw new JobNormalizerError("JOB_NORMALIZER_BUDGET_EXHAUSTED");
-      if (value?.status !== "completed" || !Array.isArray(value.output) || !Number.isSafeInteger(value.usage?.input_tokens) || !Number.isSafeInteger(value.usage?.output_tokens)) throw new Error();
+      if (!Number.isSafeInteger(value.usage?.input_tokens) || !Number.isSafeInteger(value.usage?.output_tokens)) throw new Error();
       const inputTokens = value.usage!.input_tokens as number;
       const outputTokens = value.usage!.output_tokens as number;
       await options.onUsage?.({ inputTokens, outputTokens });
+      const usage = knownJobNormalizerUsage(inputTokens, outputTokens);
+      if (options.signal?.aborted) throw new JobNormalizerError("JOB_NORMALIZER_CANCELLED", usage);
+      if (value?.status === "incomplete" && value.incomplete_details?.reason === "max_output_tokens") throw new JobNormalizerError("JOB_NORMALIZER_BUDGET_EXHAUSTED", usage);
+      if (value?.status !== "completed" || !Array.isArray(value.output)) throw new JobNormalizerError("JOB_NORMALIZER_OUTPUT_INVALID", usage);
       if (outputTokens > budget.maxOutputTokens || inputTokens + outputTokens > budget.maxTotalTokens) throw new JobNormalizerError("JOB_NORMALIZER_BUDGET_EXHAUSTED", knownJobNormalizerUsage(inputTokens, outputTokens));
       const parts = value.output.flatMap((item: any) => Array.isArray(item?.content) ? item.content : []);
       const texts = parts.filter((part: any) => part?.type === "output_text");
