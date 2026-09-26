@@ -138,7 +138,6 @@ describe("job import contracts", () => {
     });
     expect(() => JobNormalizerModelOutputSchema.parse({ ...raw, qualifications: { ...raw.qualifications, workMode: { ...raw.qualifications.workMode!, evidence: { ...raw.qualifications.workMode!.evidence, field: "工作方式" } } } })).toThrow();
   });
-
   it("treats legacy normalized data without qualifications as missing fields", () => {
     expect(JobNormalizerOutputSchema.parse({
       normalizerVersion: "fake-job-normalizer-v1", company: null, title: null, location: null,

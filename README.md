@@ -73,3 +73,9 @@ JOB_POSTING_NORMALIZER_ADAPTER=openai pnpm verify:job-normalizer:openai
 ```
 
 每次调用最多接收 16 KiB 输入、生成 2,000 个输出 Token、总计 12,000 Token，并在 25 秒后终止；发现运行仍受其冻结预算策略约束。未在原文明确支持的字段保持未知，正文不会写入日志，Responses 关闭存储且不提供工具。
+
+兼容供应商的显式评测可临时提高**评测进程**等待上限，不会改变正常运行的 25 秒预算或输出、总 Token 限额：
+
+```bash
+JOB_POSTING_NORMALIZER_ADAPTER=openai JOB_NORMALIZER_EVALUATION_TIMEOUT_MS=60000 pnpm verify:job-normalizer:openai
+```

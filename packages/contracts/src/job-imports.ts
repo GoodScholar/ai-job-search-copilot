@@ -290,7 +290,6 @@ export function jobNormalizerEvidenceFailure(content: string, output: JobNormali
   return null;
 }
 
-
 /** Add the legacy display value only after strict provider output has passed its schema. */
 export function bindStrictJobNormalizerOutput(raw: z.infer<typeof JobNormalizerModelOutputSchema>, metadata: JobNormalizerMetadata & { usage: import("./job-normalizer").JobNormalizerUsage }): JobNormalizerOutput {
   return JobNormalizerOutputSchema.parse({

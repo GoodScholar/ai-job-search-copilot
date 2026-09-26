@@ -45,6 +45,17 @@ describe("OpenAI 岗位规范化", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it("将编号行前缀计入请求前预算", async () => {
+    const fetcher = vi.fn().mockResolvedValue(complete(result));
+    const normalizer = createOpenAiJobPostingNormalizer({ apiKey: "test-key" }, fetcher);
+    const oneLine = "x".repeat(2_999);
+    const manyLines = Array.from({ length: 1_500 }, () => "x").join("\n");
+
+    await expect(normalizer.normalize(oneLine)).rejects.toMatchObject({ code: "JOB_NORMALIZER_EVIDENCE_INVALID" });
+    await expect(normalizer.normalize(manyLines)).rejects.toMatchObject({ code: "JOB_NORMALIZER_BUDGET_EXHAUSTED" });
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
   it("允许把 tool calling 和 function calling 作为正常岗位职责", async () => {
     const fetcher = vi.fn().mockResolvedValue(complete(result));
     const normalizer = createOpenAiJobPostingNormalizer({ apiKey: "test-key" }, fetcher);
@@ -58,7 +69,7 @@ describe("OpenAI 岗位规范化", () => {
   });
 
   it("拒绝原文能命中但不能确定性导出资格标准值的输出", async () => {
-    const invalid = { ...result, qualifications: { ...result.qualifications, workMode: { value: "remote", evidence: { field: "workMode", path: "工作方式", rawValue: "现场", normalizedValue: "remote" } } } };
+    const invalid = { ...result, qualifications: { ...result.qualifications, workMode: { value: "remote", evidence: { field: "workMode", path: "lines:3-3", rawValue: "现场", normalizedValue: "remote" } } } };
     const normalizer = createOpenAiJobPostingNormalizer({ apiKey: "test-key" }, vi.fn().mockResolvedValue(complete(invalid)));
     await expect(normalizer.normalize("公司：示例公司\n标题：工程师\n工作方式：现场")).rejects.toMatchObject({ code: "JOB_NORMALIZER_EVIDENCE_INVALID" });
   });
@@ -66,7 +77,7 @@ describe("OpenAI 岗位规范化", () => {
   it("在发送前执行检查点，并在输出证据失败前结算已返回的用量", async () => {
     const beforeRequest = vi.fn().mockResolvedValue(undefined);
     const onUsage = vi.fn().mockResolvedValue(undefined);
-    const invalid = { ...result, qualifications: { ...result.qualifications, workMode: { value: "remote", evidence: { field: "workMode", path: "工作方式", rawValue: "现场", normalizedValue: "remote" } } } };
+    const invalid = { ...result, qualifications: { ...result.qualifications, workMode: { value: "remote", evidence: { field: "workMode", path: "lines:3-3", rawValue: "现场", normalizedValue: "remote" } } } };
     const normalizer = createOpenAiJobPostingNormalizer({ apiKey: "test-key" }, vi.fn().mockResolvedValue(complete(invalid)));
     await expect(normalizer.normalize("公司：示例公司\n标题：工程师\n工作方式：现场", { beforeRequest, onUsage })).rejects.toMatchObject({ code: "JOB_NORMALIZER_EVIDENCE_INVALID" });
     expect(beforeRequest).toHaveBeenCalledOnce();

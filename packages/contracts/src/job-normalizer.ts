@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const JOB_NORMALIZER_PROMPT_VERSION = "job-normalizer-prompt-v6";
+export const JOB_NORMALIZER_PROMPT_VERSION = "job-normalizer-prompt-v7";
 export const JOB_NORMALIZER_OUTPUT_SCHEMA_VERSION = "job-normalizer-v2";
 export const JOB_NORMALIZER_RULE_VERSION = "job-normalization-evidence-v4";
 export const DEFAULT_JOB_NORMALIZER_BUDGET = { maxInputBytes: 16_384, maxOutputTokens: 2_000, maxTotalTokens: 12_000, timeoutMs: 25_000 } as const;
