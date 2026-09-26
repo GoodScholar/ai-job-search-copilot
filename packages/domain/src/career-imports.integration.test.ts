@@ -15,7 +15,7 @@ import {
   type Database,
 } from "@job-copilot/database";
 import { CAREER_PRIVACY_SCAN_VERSION } from "@job-copilot/contracts/career-document-privacy";
-import type { CareerImportJob } from "@job-copilot/contracts/career-import";
+import { CareerParserError, type CareerImportJob } from "@job-copilot/contracts/career-import";
 import { createAuditTrail, type AuditTrail } from "./audit-trail";
 import { createProfileReviewCommands, createTrustedProfileQueries } from "./profile-review";
 import {
@@ -919,6 +919,37 @@ describe("career imports", () => {
       .resolves.toBe("failed");
     await expect(createCareerImportQueries({ db: database }).get({ userId, importId: created.importId }))
       .resolves.toMatchObject({ status: "failed", failureCode, facts: [] });
+  });
+
+  it("保存生产解析器版本与模型，并拒绝解析输出冒充其他版本", async () => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const metadata = { adapter: "openai" as const, parserVersion: "openai-career-parser-v1-0123456789abcdef", promptVersion: "career-import-prompt-v1", outputSchemaVersion: "career-facts-v1", model: "gpt-5.6-luna" };
+    const commands = createCareerImportCommands({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), documentStore: store,
+      queue, parserMetadata: metadata, id: () => crypto.randomUUID(), clock: () => now });
+    const created = await commands.createOrReuse({ userId, requestId: crypto.randomUUID(), bytes: new TextEncoder().encode(`${markdown}\n<!-- ${crypto.randomUUID()} -->`),
+      originalFilename: "resume.md", mediaType: "text/markdown", privacyScanVersion: CAREER_PRIVACY_SCAN_VERSION });
+    const [row] = await database.select({ adapter: careerImports.parserAdapter, model: careerImports.model, parserVersion: careerImports.parserVersion }).from(careerImports).where(eq(careerImports.id, created.importId));
+    expect(row).toEqual({ adapter: "openai", model: "gpt-5.6-luna", parserVersion: metadata.parserVersion });
+    await expect(database.insert(careerImports).values({ id: crypto.randomUUID(), userId, careerDocumentId: created.documentId,
+      parserAdapter: "openai", parserVersion: "openai-career-parser-v1-fedcba9876543210", model: null, originatingRequestId: crypto.randomUUID() }))
+      .rejects.toThrow();
+    const processor = createCareerImportProcessor({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), documentStore: store,
+      parser: { metadata, parse: async () => ({ ...validOutput(), ...metadata, model: "wrong-model" }) }, id: () => crypto.randomUUID(), clock: () => now });
+    await expect(processor.process({ version: 1, importId: created.importId, userId, finalAttempt: true })).resolves.toBe("failed");
+    expect(await createCareerImportQueries({ db: database }).get({ userId, importId: created.importId }))
+      .toMatchObject({ status: "failed", failureCode: "CAREER_PARSER_OUTPUT_INVALID", facts: [] });
+  });
+
+  it("把限流、取消及预算耗尽映射为稳定导入结果", async () => {
+    for (const code of ["CAREER_PARSER_RATE_LIMITED", "CAREER_PARSER_CANCELLED", "CAREER_PARSER_BUDGET_EXHAUSTED"] as const) {
+      const store = new MemoryStore(); const queue = new MemoryQueue();
+      const created = await createImport({ documentStore: store, queue, ids: () => crypto.randomUUID(), requestId: crypto.randomUUID() });
+      const processor = createCareerImportProcessor({ db: database, auditTrail: createAuditTrail({ db: database, clock: () => now }), documentStore: store,
+        parser: { parse: async () => { throw new CareerParserError(code); } }, id: () => crypto.randomUUID(), clock: () => now });
+      await expect(processor.process({ version: 1, importId: created.importId, userId, finalAttempt: true })).resolves.toBe("failed");
+      expect(await createCareerImportQueries({ db: database }).get({ userId, importId: created.importId })).toMatchObject({ failureCode: code });
+    }
   });
 
   it("rejects an evidence end line beyond the document even when slicing would match its excerpt", async () => {

@@ -49,3 +49,17 @@ pnpm lint && pnpm typecheck && pnpm test && pnpm test:e2e && pnpm build
 ```
 
 端到端测试使用自己的隔离 Compose 项目和端口，并会在结束时清理；它不会占用或替代本文档中的默认开发端口。
+
+### OpenAI 职业资料解析
+
+默认使用确定性的 Fake；测试运行时会强制选择 Fake。生产解析需在同一运行环境中显式配置 `CAREER_PARSER_ADAPTER=openai` 和 `OPENAI_API_KEY`，模型默认遵循 ADR 0019 的 `gpt-5.6-luna`（可由部署配置 `OPENAI_LOW_COST_MODEL` 指定）。API 与 Worker 必须使用相同配置。
+
+独立真实验证使用 `career-parser-eval-v1` 固定脱敏 Markdown，不读取用户文件；门禁检查事实完整性、准确原文证据、注入过滤与延迟，仅输出版本和事实数量：
+
+```bash
+CAREER_PARSER_ADAPTER=openai pnpm verify:career-parser:openai
+```
+
+解析仅读取通过隐私检查的处理副本；每次最多处理 16 KiB UTF-8 文本、生成 4,000 个输出 Token、消耗 20,000 个总 Token，25 秒后终止。超出解析预算的资料会保留稳定失败原因，用户可精简后重试。文件上传上限与解析预算分别约束文件存储和模型调用。
+
+Adapter 使用 [Responses Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs)，关闭响应存储、不提供工具，模型仅选择事实类型和原文行号；事实值由本地原文生成，并再次通过领域校验。密钥、原文、联系方式和供应方错误正文不会进入普通日志。

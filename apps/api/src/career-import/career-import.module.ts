@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { Client as MinioClient } from "minio";
 import { createCareerImportCommands, createCareerImportQueries } from "@job-copilot/domain/career-imports";
 import { type Database } from "@job-copilot/database";
+import { resolveCareerParserConfig } from "@job-copilot/model-access";
 import { AuthModule, AUDIT_TRAIL } from "../auth/auth.module.js";
 import type { AuditTrail } from "@job-copilot/domain/audit-trail";
 import { DATABASE, RuntimeConfigModule } from "../config/runtime-config.module.js";
@@ -31,7 +32,7 @@ function createMinioClient(): MinioClient {
       provide: CAREER_IMPORT_COMMANDS,
       inject: [DATABASE, AUDIT_TRAIL, CAREER_DOCUMENT_STORE, CAREER_IMPORT_QUEUE],
       useFactory: (db: Database, auditTrail: AuditTrail, documentStore: CareerDocumentStore, queue: CareerImportQueue) => createCareerImportCommands({
-        db, auditTrail, documentStore, queue, id: () => crypto.randomUUID(), clock: () => new Date(),
+        db, auditTrail, documentStore, queue, parserMetadata: resolveCareerParserConfig(process.env), id: () => crypto.randomUUID(), clock: () => new Date(),
       }),
     },
     {

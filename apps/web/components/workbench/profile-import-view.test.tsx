@@ -520,6 +520,12 @@ it("explains the fact-count limit and tells the candidate how to retry", () => {
     .toBeInTheDocument();
 });
 
+it("解释解析预算耗尽并提示用户精简资料", async () => {
+  render(<ProfileImportView initialImports={[{ ...queuedImport, status: "failed", failureCode: "CAREER_PARSER_BUDGET_EXHAUSTED" }]} />);
+  expect(await screen.findByText("解析达到资源上限，请精简职业资料后重试。"))
+    .toBeInTheDocument();
+});
+
 it("gives a new upload failure priority over an existing queued import", async () => {
   mocks.createCareerImportAction.mockResolvedValue({ ok: false, code: "NO_SUPPORTED_FACTS", message: "没有找到可确认的职业资料事实，请检查职业资料内容后重试。" });
   vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ ...queuedImport, facts: [] }));

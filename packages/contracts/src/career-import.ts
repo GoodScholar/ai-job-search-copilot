@@ -5,6 +5,40 @@ export const CAREER_DOCUMENT_MAX_BYTES = 524_288;
 export const CAREER_IMPORT_MAX_FACTS = 500;
 export const CAREER_IMPORT_QUEUE = "career-imports";
 export const CAREER_IMPORT_JOB_NAME = "parse-career-document";
+export const CAREER_PARSER_PROMPT_VERSION = "career-import-prompt-v1";
+export const CAREER_PARSER_OUTPUT_SCHEMA_VERSION = "career-facts-v1";
+export const FAKE_CAREER_PARSER_METADATA = {
+  adapter: "fake", parserVersion: "fake-career-parser-v1", promptVersion: CAREER_PARSER_PROMPT_VERSION,
+  outputSchemaVersion: CAREER_PARSER_OUTPUT_SCHEMA_VERSION, model: null,
+} as const;
+export const DEFAULT_CAREER_PARSER_BUDGET = { maxInputBytes: 16_384, maxOutputTokens: 4_000, maxTotalTokens: 20_000, timeoutMs: 25_000 } as const;
+export type CareerParserBudget = { maxInputBytes: number; maxOutputTokens: number; maxTotalTokens?: number; timeoutMs: number };
+export type CareerParserCallOptions = { signal?: AbortSignal; budget?: CareerParserBudget };
+export type CareerParserMetadata = {
+  adapter: "fake" | "openai"; parserVersion: string; promptVersion: string;
+  outputSchemaVersion: string; model: string | null;
+};
+export type CareerParserErrorCode = "CAREER_PARSER_OUTPUT_INVALID" | "CAREER_PARSER_RATE_LIMITED" | "CAREER_PARSER_CANCELLED" | "CAREER_PARSER_BUDGET_EXHAUSTED" | "CAREER_PARSER_UNAVAILABLE" | "CAREER_PARSER_AUTH_FAILED" | "CAREER_PARSER_PRIVACY_UNVERIFIED";
+export class CareerParserError extends Error {
+  constructor(readonly code: CareerParserErrorCode) { super(code); }
+}
+
+export function numberedCareerMarkdown(markdown: string): string {
+  return markdown.replace(/\r\n?/gu, "\n").split("\n").map((line, index) => `${index + 1}: ${line}`).join("\n");
+}
+
+/** UTF-8 字节数作为保守 Token 上界，另预留固定指令与 Schema 开销。 */
+export function assertCareerParserInputBudget(markdown: string, options: CareerParserCallOptions) {
+  if (options.signal?.aborted) throw new CareerParserError("CAREER_PARSER_CANCELLED");
+  const budget = options.budget ?? DEFAULT_CAREER_PARSER_BUDGET;
+  const maxTotalTokens = budget.maxTotalTokens ?? DEFAULT_CAREER_PARSER_BUDGET.maxTotalTokens;
+  const encoder = new TextEncoder();
+  const inputTokenBound = encoder.encode(JSON.stringify(numberedCareerMarkdown(markdown))).byteLength + 1500;
+  if (![budget.maxInputBytes, budget.maxOutputTokens, budget.timeoutMs, maxTotalTokens].every((value) => Number.isSafeInteger(value) && value > 0)
+    || encoder.encode(markdown).byteLength > budget.maxInputBytes || inputTokenBound + budget.maxOutputTokens > maxTotalTokens)
+    throw new CareerParserError("CAREER_PARSER_BUDGET_EXHAUSTED");
+  return { ...budget, maxTotalTokens, inputTokenBound };
+}
 
 const filename = z.string().trim().min(1).max(255).regex(/\.(?:md|docx|pdf)$/i);
 const confidenceBasisPoints = z.int().min(0).max(10_000);
@@ -126,6 +160,12 @@ export const CareerImportFailureCodeSchema = z.enum([
   "CAREER_IMPORT_FACT_LIMIT_EXCEEDED",
   "CAREER_PARSER_OUTPUT_INVALID",
   "CAREER_PARSER_EVIDENCE_INVALID",
+  "CAREER_PARSER_RATE_LIMITED",
+  "CAREER_PARSER_CANCELLED",
+  "CAREER_PARSER_BUDGET_EXHAUSTED",
+  "CAREER_PARSER_AUTH_FAILED",
+  "CAREER_PARSER_PRIVACY_UNVERIFIED",
+  "CAREER_PARSER_UNAVAILABLE",
   "NO_SUPPORTED_FACTS",
   "CAREER_IMPORT_PERSIST_FAILED",
 ]);
@@ -187,13 +227,15 @@ export const CreateCareerImportResponseSchema = CareerImportBaseSchema.extend({
   detailUrl: z.string().startsWith("/v1/career-documents/imports/"),
 }).strict();
 
-export const CareerParserOutputSchema = z.object({
-  adapter: z.literal("fake"),
-  parserVersion: z.literal("fake-career-parser-v1"),
-  promptVersion: z.literal("career-import-prompt-v1"),
-  outputSchemaVersion: z.literal("career-facts-v1"),
+const parserOutputBase = {
+  promptVersion: z.literal(CAREER_PARSER_PROMPT_VERSION),
+  outputSchemaVersion: z.literal(CAREER_PARSER_OUTPUT_SCHEMA_VERSION),
   facts: z.array(CareerParserFactSchema).max(CAREER_IMPORT_MAX_FACTS),
-}).strict();
+};
+export const CareerParserOutputSchema = z.discriminatedUnion("adapter", [
+  z.object({ ...parserOutputBase, adapter: z.literal("fake"), parserVersion: z.literal("fake-career-parser-v1") }).strict(),
+  z.object({ ...parserOutputBase, adapter: z.literal("openai"), parserVersion: z.string().regex(/^openai-career-parser-v1-[0-9a-f]{16}$/), model: z.string().min(1).max(128) }).strict(),
+]);
 
 export const CareerImportJobSchema = z.object({
   version: z.literal(1),
@@ -215,6 +257,11 @@ export type ResolveCareerFactConflictCommand = z.infer<typeof ResolveCareerFactC
 export type ResolveCareerFactConflictResponse = z.infer<typeof ResolveCareerFactConflictResponseSchema>;
 export type CreateCareerImportResponse = z.infer<typeof CreateCareerImportResponseSchema>;
 export type CareerParserOutput = z.infer<typeof CareerParserOutputSchema>;
+
+export function isCareerInstructionLike(line: string): boolean {
+  const value = line.replace(/^\s*(?:#{1,6}|[-*+]|\d+[.)])\s+/u, "").trim();
+  return /^(?:忽略(?:之前|以上|上述|所有|前面).{0,12}(?:指令|要求|规则)|你现在是|从现在开始(?:你|请)|ignore (?:all |any )?(?:previous|prior|above) instructions|system\s*:|developer\s*:)/iu.test(value);
+}
 export type CareerImportJob = z.infer<typeof CareerImportJobSchema>;
 
 const quotedListItemPattern = /^\s*(?:[-*+]|\d+[.)])\s+(.+?)\s*$/;
