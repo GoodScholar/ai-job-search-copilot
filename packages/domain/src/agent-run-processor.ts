@@ -195,13 +195,13 @@ function adapterFailure(error: unknown): Failure {
     if (error.code === "JOB_NORMALIZER_RATE_LIMITED" || error.code === "JOB_NORMALIZER_UNAVAILABLE") return { failureCode: "AGENT_RUN_MODEL_RETRYABLE", retryable: true, category: "model" };
     if (error.code === "JOB_NORMALIZER_AUTH_FAILED") return { failureCode: "AGENT_RUN_MODEL_AUTH_FAILED", retryable: false, category: "model_auth" };
     if (error.code === "JOB_NORMALIZER_INJECTION_DETECTED") return { failureCode: "AGENT_RUN_MODEL_POLICY_REJECTED", retryable: false, category: "model_policy" };
-    if (error.code === "JOB_NORMALIZER_BUDGET_EXHAUSTED") return { failureCode: "AGENT_RUN_BUDGET_EXCEEDED", retryable: false, category: "model_invalid", budgetDimension: "tokens" };
+    if (error.code === "JOB_NORMALIZER_BUDGET_EXHAUSTED") return { failureCode: "AGENT_RUN_BUDGET_EXCEEDED", retryable: false, category: "model_invalid", budgetDimension: error.budgetDimension ?? "tokens" };
     return { failureCode: "AGENT_RUN_MODEL_INVALID_RESPONSE", retryable: false, category: "model_invalid" };
   }
   if (error instanceof DiscoveryJobNormalizationError) {
     if (error.code === "DISCOVERY_JOB_NORMALIZATION_INTERRUPTED") return { failureCode: "AGENT_RUN_ADAPTER_FAILED", retryable: false, category: "model_invalid" };
-    if (error.normalizerError?.code === "JOB_NORMALIZER_RATE_LIMITED" || error.normalizerError?.code === "JOB_NORMALIZER_UNAVAILABLE") return { failureCode: "AGENT_RUN_MODEL_RETRYABLE", retryable: true, category: "model" };
-    if (error.normalizerError?.code === "JOB_NORMALIZER_BUDGET_EXHAUSTED") return { failureCode: "AGENT_RUN_BUDGET_EXCEEDED", retryable: false, category: "model_invalid", budgetDimension: "active_duration" };
+    if (error.normalizerError?.code === "JOB_NORMALIZER_RATE_LIMITED" || error.normalizerError?.code === "JOB_NORMALIZER_UNAVAILABLE") return { failureCode: "AGENT_RUN_MODEL_RETRYABLE", retryable: false, category: "model" };
+    if (error.normalizerError?.code === "JOB_NORMALIZER_BUDGET_EXHAUSTED") return { failureCode: "AGENT_RUN_BUDGET_EXCEEDED", retryable: false, category: "model_invalid", budgetDimension: error.normalizerError?.budgetDimension ?? "tokens" };
     return { failureCode: "AGENT_RUN_MODEL_INVALID_RESPONSE", retryable: false, category: "model_invalid" };
   }
   if (error instanceof DeepMatchAdapterError) {

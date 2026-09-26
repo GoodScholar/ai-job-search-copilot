@@ -28,3 +28,31 @@ describe("岗位规范化显式评测", () => {
     ]) expect(() => assertJobNormalizerEvaluation(invalid as typeof output, fixture.content, 1)).toThrow("JOB_NORMALIZER_EVALUATION_ASSERTION_FAILED");
   });
 });
+
+function validCaseThree() {
+  return JobNormalizerOutputSchema.parse({
+    normalizerVersion: "eval", adapter: "openai", model: "eval", promptVersion: "eval", outputSchemaVersion: "eval", ruleVersion: "eval",
+    company: "示例科技", title: "前端工程师", location: "上海", postedAt: null, deadline: null, deadlineProvenance: null, description: "该岗位负责维护 Web 应用并与产品团队协作。",
+    qualifications: { workMode: null, relocationRequired: null, salary: null, seniority: null, education: null, languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: null },
+    fieldEvidence: [
+      { field: "company", path: "lines:1-1", rawValue: "示例科技", normalizedValue: "示例科技" },
+      { field: "title", path: "lines:1-1", rawValue: "前端工程师", normalizedValue: "前端工程师" },
+      { field: "location", path: "lines:1-1", rawValue: "上海", normalizedValue: "上海" },
+      { field: "description", path: "lines:1-1", rawValue: "该岗位负责维护 Web 应用并与产品团队协作。", normalizedValue: "该岗位负责维护 Web 应用并与产品团队协作。" },
+    ],
+    usage: { status: "known", inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+  });
+}
+
+describe("自然段岗位评测", () => {
+  it("要求自然段中的公司、职位、地点与原文描述均有严格证据，并保持其余字段未知", () => {
+    const fixture = JOB_NORMALIZER_EVALUATION_CASES[2]!;
+    const output = validCaseThree();
+    expect(assertJobNormalizerEvaluation(output, fixture.content, 1)).toMatchObject({ caseId: "case-3", evidencedFieldCount: 4, qualificationEvidenceCount: 0 });
+    for (const invalid of [
+      { ...output, description: "负责维护 Web 应用", fieldEvidence: output.fieldEvidence.map((item) => item.field === "description" ? { ...item, normalizedValue: "负责维护 Web 应用" } : item) },
+      { ...output, fieldEvidence: output.fieldEvidence.filter((item) => item.field !== "company") },
+      { ...output, qualifications: { ...output.qualifications, seniority: { value: "senior", evidence: { field: "seniority", path: "lines:1-1", rawValue: "前端工程师", normalizedValue: "senior" } } } },
+    ]) expect(() => assertJobNormalizerEvaluation(invalid as typeof output, fixture.content, 1)).toThrow("JOB_NORMALIZER_EVALUATION_ASSERTION_FAILED");
+  });
+});

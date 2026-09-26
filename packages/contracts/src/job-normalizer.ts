@@ -26,10 +26,11 @@ export const JobNormalizerMetadataSchema = z.object({
   ruleVersion: z.string().trim().min(1).max(64), model: z.string().trim().min(1).max(128).nullable(),
 }).strict();
 export type JobNormalizerUsage = { status: "known" | "unknown" | "not_called"; inputTokens: number | null; outputTokens: number | null; totalTokens: number | null };
+export type JobNormalizerBudgetDimension = "tokens" | "active_duration";
 export type JobNormalizerErrorCode = "JOB_NORMALIZER_OUTPUT_INVALID" | "JOB_NORMALIZER_EVIDENCE_INVALID" | "JOB_NORMALIZER_INJECTION_DETECTED" | "JOB_NORMALIZER_RATE_LIMITED" | "JOB_NORMALIZER_CANCELLED" | "JOB_NORMALIZER_BUDGET_EXHAUSTED" | "JOB_NORMALIZER_UNAVAILABLE" | "JOB_NORMALIZER_AUTH_FAILED";
 
 export class JobNormalizerError extends Error {
-  constructor(readonly code: JobNormalizerErrorCode, readonly usage: JobNormalizerUsage = { status: "not_called", inputTokens: null, outputTokens: null, totalTokens: null }) { super(code); }
+  constructor(readonly code: JobNormalizerErrorCode, readonly usage: JobNormalizerUsage = { status: "not_called", inputTokens: null, outputTokens: null, totalTokens: null }, readonly budgetDimension?: JobNormalizerBudgetDimension) { super(code); }
 }
 
 export const JobNormalizationEvidenceSchema = z.object({
@@ -61,7 +62,7 @@ export function assertJobNormalizerInputBudget(content: string, options: JobNorm
   const inputTokenBound = new TextEncoder().encode(content).byteLength + requestOverheadTokens;
   if (![budget.maxInputBytes, budget.maxOutputTokens, budget.timeoutMs, maxTotalTokens, requestOverheadTokens].every((value) => Number.isSafeInteger(value) && value > 0)
     || new TextEncoder().encode(content).byteLength > budget.maxInputBytes || inputTokenBound + budget.maxOutputTokens > maxTotalTokens)
-    throw new JobNormalizerError("JOB_NORMALIZER_BUDGET_EXHAUSTED");
+    throw new JobNormalizerError("JOB_NORMALIZER_BUDGET_EXHAUSTED", undefined, "tokens");
   return { ...budget, maxTotalTokens, inputTokenBound };
 }
 

@@ -66,7 +66,7 @@ Adapter 使用 [Responses Structured Outputs](https://developers.openai.com/api/
 
 ### OpenAI 岗位规范化
 
-岗位规范化默认使用确定性的 Fake；生产 API 与 Worker 都需显式设置 `JOB_POSTING_NORMALIZER_ADAPTER=openai` 和 `OPENAI_API_KEY`，并共同沿用 `OPENAI_LOW_COST_MODEL`；可选 `OPENAI_ENDPOINT`、`OPENAI_ORGANIZATION` 与 `OPENAI_PROJECT`。独立评测只使用固定合成岗位并输出版本、状态、证据数量、用量状态与延迟分桶：
+岗位规范化默认使用确定性的 Fake；生产 API 与 Worker 都需显式设置 `JOB_POSTING_NORMALIZER_ADAPTER=openai` 和 `OPENAI_API_KEY`，并共同沿用 `OPENAI_LOW_COST_MODEL`；可选 `OPENAI_ENDPOINT`、`OPENAI_ORGANIZATION` 与 `OPENAI_PROJECT`。独立评测固定包含三条正常合成岗位（两条标签输入和一条自然段输入）及一条零请求注入样例，只输出版本、状态、证据数量、用量状态与延迟分桶：
 
 ```bash
 JOB_POSTING_NORMALIZER_ADAPTER=openai pnpm verify:job-normalizer:openai

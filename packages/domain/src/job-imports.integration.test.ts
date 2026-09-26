@@ -3,6 +3,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testconta
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createDatabase, jobAccounts, jobOpportunities, jobSourcePostingVersions, migrateDatabase, type Database } from "@job-copilot/database";
 import { eq, sql } from "drizzle-orm";
+import { JobNormalizerError } from "@job-copilot/contracts/job-normalizer";
 import { createAuditTrail, type AuditTrail } from "./audit-trail";
 import {
   createJobImportCommands,
@@ -455,6 +456,17 @@ describe("job imports", () => {
     await expect(database.execute<{ claim_token: string | null; claim_expires_at: Date | null }>(sql`
       select claim_token, claim_expires_at from job_imports where id = ${imported.importId}
     `)).resolves.toEqual([{ claim_token: null, claim_expires_at: null }]);
+  });
+
+  it.each(["JOB_NORMALIZER_BUDGET_EXHAUSTED", "JOB_NORMALIZER_CANCELLED"] as const)("%s 在 first attempt 直接终态，不释放重试", async (code) => {
+    const store = new MemoryStore();
+    const queue = new MemoryQueue();
+    const commands = createJobImportCommands({ db: database, contentStore: store, queue, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now });
+    const imported = await commands.submit({ userId, requestId: crypto.randomUUID(), command: { inputType: "pasted_text", content: `terminal ${code}` } });
+    const processor = createJobImportProcessor({ db: database, contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => now }), normalizer: { normalize: async () => { throw new JobNormalizerError(code); } }, id: () => crypto.randomUUID(), clock: () => now });
+    await expect(processor.process({ version: 1, importId: imported.importId, userId, finalAttempt: false })).resolves.toBe("failed");
+    await expect(createJobImportQueries({ db: database, contentStore: store }).get({ userId, importId: imported.importId })).resolves.toMatchObject({ status: "failed", failureCode: code });
+    expect(queue.jobs).toHaveLength(1);
   });
 
   it("normalizer 异常在非最终尝试可重试，最终尝试不冒充输出无效", async () => {

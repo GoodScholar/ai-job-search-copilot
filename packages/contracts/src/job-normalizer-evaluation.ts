@@ -20,6 +20,10 @@ export const JOB_NORMALIZER_EVALUATION_CASES = [
     id: "case-2", content: "标题：AI 应用工程师\n描述：负责检索增强生成服务。",
     expected: { company: null, title: "AI 应用工程师", location: null, postedAt: null, deadline: null, description: "负责检索增强生成服务。", qualifications: unknownQualifications },
   },
+  {
+    id: "case-3", content: "示例科技正在上海招聘前端工程师。该岗位负责维护 Web 应用并与产品团队协作。",
+    expected: { company: "示例科技", title: "前端工程师", location: "上海", postedAt: null, deadline: null, description: "该岗位负责维护 Web 应用并与产品团队协作。", qualifications: unknownQualifications },
+  },
 ] as const;
 
 export function assertJobNormalizerEvaluation(output: JobNormalizerOutput, content: string, latencyMs: number, timeoutMs = 25_000) {

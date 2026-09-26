@@ -6,6 +6,7 @@ import {
 } from "@job-copilot/database";
 import { eq } from "drizzle-orm";
 import { JobTriageVersionSchema, type JobTriageVersion } from "@job-copilot/contracts/job-triage";
+import { bindJobNormalizerOutput, JobNormalizerOutputSchema } from "@job-copilot/contracts/job-imports";
 import type { JobTargetConstraints } from "@job-copilot/contracts/job-targets";
 import { createAuditTrail } from "./audit-trail";
 import { createFrozenJobTriageInTransaction, createJobTriageCommands, createJobTriageQueries } from "./job-triage-persistence";
@@ -78,6 +79,19 @@ describe("job triage persistence", () => {
     await database.insert(jobOpportunities).values({ id: opportunityId, userId, importId: null, sourcePostingVersionId, canonicalOpportunityId: null, dedupKey: hash, company: options.company ?? "示例科技", title: options.title ?? "frontend engineer", location: options.location ?? "上海", postedAt: null, deadline: new Date("2026-09-12T00:00:00.000Z"), description: null, normalizedData, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
     return { userId, profileId, targetId, sourcePostingId, sourcePostingVersionId, opportunityId, constraints, normalizedData, skillFactIds, skillRevisionIds };
   }
+
+  it("current bound 快照缺 scalar 证据时拒绝创建 triage", async () => {
+    const input = await fixture();
+    const output = JobNormalizerOutputSchema.parse({ normalizerVersion: "current-v1", adapter: "fake", model: null, promptVersion: "p1", outputSchemaVersion: "s1", ruleVersion: "r1", company: "示例科技", title: "frontend engineer", location: "上海", postedAt: null, deadline: null, deadlineProvenance: null, description: null, qualifications: { workMode: { value: "remote", evidence: { field: "workMode", path: "lines:4-4", value: "远程", rawValue: "远程", normalizedValue: "remote" } }, relocationRequired: null, salary: null, seniority: null, education: null, languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: null }, fieldEvidence: [{ field: "company", path: "lines:1-1", rawValue: "示例科技", normalizedValue: "示例科技" }, { field: "title", path: "lines:2-2", rawValue: "frontend engineer", normalizedValue: "frontend engineer" }, { field: "location", path: "lines:3-3", rawValue: "上海", normalizedValue: "上海" }], usage: { status: "known", inputTokens: 1, outputTokens: 1, totalTokens: 2 } });
+    const bound = bindJobNormalizerOutput(input.sourcePostingVersionId, output);
+    await database.update(jobSourcePostingVersions).set({ normalizedData: bound }).where(eq(jobSourcePostingVersions.id, input.sourcePostingVersionId));
+    await database.insert(jobOpportunitySources).values({ id: crypto.randomUUID(), userId: input.userId, opportunityId: input.opportunityId, sourcePostingVersionId: input.sourcePostingVersionId, createdAt: now });
+    const create = () => database.transaction((transaction) => createFrozenJobTriageInTransaction({ transaction, auditTrail: createAuditTrail({ db: database, clock: () => now }), id: () => crypto.randomUUID(), clock: () => now, userId: input.userId, requestId: crypto.randomUUID(), opportunityId: input.opportunityId, sourcePostingVersionId: input.sourcePostingVersionId, profileId: input.profileId, profileVersion: 1, targetId: input.targetId, targetVersion: 1, targetConstraints: input.constraints }));
+    await expect(create()).resolves.toMatchObject({ reused: false });
+    await database.update(jobSourcePostingVersions).set({ normalizedData: { ...bound, fieldEvidence: bound.fieldEvidence.filter((item) => item.field !== "title") } }).where(eq(jobSourcePostingVersions.id, input.sourcePostingVersionId));
+    await expect(create()).rejects.toThrow("JOB_TRIAGE_NORMALIZATION_INVALID");
+    await expect(database.select().from(jobTriageVersions).where(eq(jobTriageVersions.sourcePostingVersionId, input.sourcePostingVersionId))).resolves.toHaveLength(1);
+  });
 
   it("冻结入口只使用关联岗位版本、历史画像和目标快照，并拒绝越权或未关联版本", async () => {
     const frozenFixture = await fixture({

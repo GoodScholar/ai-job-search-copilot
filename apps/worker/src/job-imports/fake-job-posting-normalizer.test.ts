@@ -158,11 +158,16 @@ describe("FakeJobPostingNormalizer 调用中断", () => {
     await expect(new FakeJobPostingNormalizer().normalize("公司：示例", { signal: controller.signal, beforeRequest: async () => { controller.abort(); } })).rejects.toMatchObject({ code: "JOB_NORMALIZER_CANCELLED" });
   });
 
-  it("延迟期间遵守取消和超时预算", async () => {
+  it("onUsage 中取消不会返回成功", async () => {
+    const controller = new AbortController();
+    await expect(new FakeJobPostingNormalizer().normalize("公司：示例", { signal: controller.signal, onUsage: async () => { controller.abort(); } })).rejects.toMatchObject({ code: "JOB_NORMALIZER_CANCELLED" });
+  });
+
+  it("延迟监听实际在取消发生时中断", async () => {
     const controller = new AbortController();
     const cancelled = new FakeJobPostingNormalizer({ testDelayMs: 30 }).normalize("公司：示例", { signal: controller.signal });
-    controller.abort();
+    await new Promise<void>((resolve) => setTimeout(() => { controller.abort(); resolve(); }, 5));
     await expect(cancelled).rejects.toMatchObject({ code: "JOB_NORMALIZER_CANCELLED" });
-    await expect(new FakeJobPostingNormalizer({ testDelayMs: 30 }).normalize("公司：示例", { budget: { maxInputBytes: 16_384, maxOutputTokens: 2_000, maxTotalTokens: 12_000, timeoutMs: 1 } })).rejects.toMatchObject({ code: "JOB_NORMALIZER_BUDGET_EXHAUSTED" });
+    await expect(new FakeJobPostingNormalizer({ testDelayMs: 30 }).normalize("公司：示例", { budget: { maxInputBytes: 16_384, maxOutputTokens: 2_000, maxTotalTokens: 12_000, timeoutMs: 1 } })).rejects.toMatchObject({ code: "JOB_NORMALIZER_BUDGET_EXHAUSTED", budgetDimension: "active_duration", usage: { status: "known", inputTokens: 0, outputTokens: 0, totalTokens: 0 } });
   });
 });

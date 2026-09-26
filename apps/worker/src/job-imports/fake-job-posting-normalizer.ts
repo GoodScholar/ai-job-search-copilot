@@ -62,18 +62,24 @@ export class FakeJobPostingNormalizer {
 
   async normalize(content: string, options: JobNormalizerCallOptions = {}): Promise<unknown> {
     const budget = assertJobNormalizerInputBudget(content, options);
-    const timeout = AbortSignal.timeout(budget.timeoutMs);
-    const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
-    const cancelled = () => { if (signal.aborted) throw new JobNormalizerError(options.signal?.aborted ? "JOB_NORMALIZER_CANCELLED" : "JOB_NORMALIZER_BUDGET_EXHAUSTED"); };
     if (isJobInstructionLike(content)) throw new JobNormalizerError("JOB_NORMALIZER_INJECTION_DETECTED");
     await options.beforeRequest?.({ inputTokenBound: budget.inputTokenBound, maxOutputTokens: budget.maxOutputTokens });
+    // 与生产 Adapter 一致：provider 调用时间预算从请求检查点完成后开始；父 signal 仍即时生效。
+    const timeout = AbortSignal.timeout(budget.timeoutMs);
+    const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
+    let usageReported = false;
+    const reportedUsage = () => usageReported ? knownJobNormalizerUsage(0, 0) : undefined;
+    const cancelled = () => {
+      if (signal.aborted) throw new JobNormalizerError(options.signal?.aborted ? "JOB_NORMALIZER_CANCELLED" : "JOB_NORMALIZER_BUDGET_EXHAUSTED", reportedUsage(), timeout.aborted ? "active_duration" : undefined);
+    };
     cancelled();
     await options.onUsage?.({ inputTokens: 0, outputTokens: 0 });
+    usageReported = true;
     cancelled();
     if (this.options.enableFailureFixture && content.trim() === INVALID_FIXTURE) return { invalid: "fake-fixture" };
     if (this.options.testDelayMs) await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(resolve, this.options.testDelayMs);
-      const abort = () => { clearTimeout(timer); reject(new JobNormalizerError(options.signal?.aborted ? "JOB_NORMALIZER_CANCELLED" : "JOB_NORMALIZER_BUDGET_EXHAUSTED")); };
+      const abort = () => { clearTimeout(timer); reject(new JobNormalizerError(options.signal?.aborted ? "JOB_NORMALIZER_CANCELLED" : "JOB_NORMALIZER_BUDGET_EXHAUSTED", reportedUsage(), timeout.aborted ? "active_duration" : undefined)); };
       signal.addEventListener("abort", abort, { once: true });
     });
     cancelled();
@@ -148,7 +154,7 @@ export class FakeJobPostingNormalizer {
       if (output.description) output.fieldEvidence.push({ field: "description", path: `lines:${descriptionStart + 1}-${descriptionStart + section.length}`, rawValue: output.description, normalizedValue: output.description });
     }
     const outputTokenBound = Math.ceil(new TextEncoder().encode(JSON.stringify(output)).byteLength / 4);
-    if (outputTokenBound > budget.maxOutputTokens || budget.inputTokenBound + outputTokenBound > budget.maxTotalTokens) throw new JobNormalizerError("JOB_NORMALIZER_BUDGET_EXHAUSTED");
+    if (outputTokenBound > budget.maxOutputTokens || budget.inputTokenBound + outputTokenBound > budget.maxTotalTokens) throw new JobNormalizerError("JOB_NORMALIZER_BUDGET_EXHAUSTED", knownJobNormalizerUsage(0, 0), "tokens");
     const result = JobNormalizerOutputSchema.parse({ ...output, usage: knownJobNormalizerUsage(0, 0) });
     if (!validateJobNormalizerOutput(content, result)) throw new JobNormalizerError("JOB_NORMALIZER_EVIDENCE_INVALID");
     return result;

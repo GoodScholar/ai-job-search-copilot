@@ -71,13 +71,13 @@ export function createOpenAiJobPostingNormalizer(config: OpenAiJobNormalizerConf
         text: { format: { type: "json_schema", name: "job_normalization", strict: true, schema: RESPONSE_SCHEMA } },
       }) });
     } catch {
-      throw new JobNormalizerError(options.signal?.aborted ? "JOB_NORMALIZER_CANCELLED" : timeout.aborted ? "JOB_NORMALIZER_BUDGET_EXHAUSTED" : "JOB_NORMALIZER_UNAVAILABLE", unknownJobNormalizerUsage());
+      throw new JobNormalizerError(options.signal?.aborted ? "JOB_NORMALIZER_CANCELLED" : timeout.aborted ? "JOB_NORMALIZER_BUDGET_EXHAUSTED" : "JOB_NORMALIZER_UNAVAILABLE", unknownJobNormalizerUsage(), timeout.aborted ? "active_duration" : undefined);
     }
     if (response.status === 429) throw new JobNormalizerError("JOB_NORMALIZER_RATE_LIMITED", unknownJobNormalizerUsage());
     if (response.status === 401 || response.status === 403) throw new JobNormalizerError("JOB_NORMALIZER_AUTH_FAILED", unknownJobNormalizerUsage());
     if (!response.ok) throw new JobNormalizerError("JOB_NORMALIZER_UNAVAILABLE", unknownJobNormalizerUsage());
     let body: unknown;
-    try { body = await awaitWithAbort(Promise.resolve().then(() => response.json()), signal); } catch { throw new JobNormalizerError(options.signal?.aborted ? "JOB_NORMALIZER_CANCELLED" : timeout.aborted ? "JOB_NORMALIZER_BUDGET_EXHAUSTED" : "JOB_NORMALIZER_OUTPUT_INVALID", unknownJobNormalizerUsage()); }
+    try { body = await awaitWithAbort(Promise.resolve().then(() => response.json()), signal); } catch { throw new JobNormalizerError(options.signal?.aborted ? "JOB_NORMALIZER_CANCELLED" : timeout.aborted ? "JOB_NORMALIZER_BUDGET_EXHAUSTED" : "JOB_NORMALIZER_OUTPUT_INVALID", unknownJobNormalizerUsage(), timeout.aborted ? "active_duration" : undefined); }
     let value: { status?: unknown; output?: unknown; usage?: { input_tokens?: unknown; output_tokens?: unknown }; incomplete_details?: { reason?: unknown } };
     let inputTokens: number;
     let outputTokens: number;
@@ -96,9 +96,9 @@ export function createOpenAiJobPostingNormalizer(config: OpenAiJobNormalizerConf
     const usage = knownJobNormalizerUsage(inputTokens, outputTokens);
     try {
       if (options.signal?.aborted) throw new JobNormalizerError("JOB_NORMALIZER_CANCELLED", usage);
-      if (value?.status === "incomplete" && value.incomplete_details?.reason === "max_output_tokens") { options.onDiagnostic?.("response_incomplete_max_output_tokens"); throw new JobNormalizerError("JOB_NORMALIZER_BUDGET_EXHAUSTED", usage); }
+      if (value?.status === "incomplete" && value.incomplete_details?.reason === "max_output_tokens") { options.onDiagnostic?.("response_incomplete_max_output_tokens"); throw new JobNormalizerError("JOB_NORMALIZER_BUDGET_EXHAUSTED", usage, "tokens"); }
       if (value?.status !== "completed" || !Array.isArray(value.output)) { options.onDiagnostic?.("response_status_invalid"); throw new JobNormalizerError("JOB_NORMALIZER_OUTPUT_INVALID", usage); }
-      if (outputTokens > budget.maxOutputTokens || inputTokens + outputTokens > budget.maxTotalTokens) throw new JobNormalizerError("JOB_NORMALIZER_BUDGET_EXHAUSTED", usage);
+      if (outputTokens > budget.maxOutputTokens || inputTokens + outputTokens > budget.maxTotalTokens) throw new JobNormalizerError("JOB_NORMALIZER_BUDGET_EXHAUSTED", usage, "tokens");
       const parts = value.output.flatMap((item: any) => Array.isArray(item?.content) ? item.content : []);
       const texts = parts.filter((part: any) => part?.type === "output_text");
       if (parts.some((part: any) => part?.type === "refusal") || texts.length !== 1 || typeof texts[0]?.text !== "string") { options.onDiagnostic?.("response_output_text_invalid"); throw new Error(); }

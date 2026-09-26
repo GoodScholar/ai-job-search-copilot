@@ -27,6 +27,7 @@ import type { SourceHealthDiscoveryAdapter } from "./source-health-discovery-ada
 import type { SourceCapabilityAdapter } from "./source-capabilities";
 import { JobNormalizerOutputSchema } from "@job-copilot/contracts/job-imports";
 import { JobNormalizerError, type JobNormalizerMetadata } from "@job-copilot/contracts/job-normalizer";
+import { createOpenAiJobPostingNormalizer } from "../../model-access/src/job-normalizer.js";
 
 const now = new Date("2026-08-29T12:00:00.000Z");
 const constraints = { roleFamily: "AI 应用工程师", seniority: null, locations: [], workModes: [], relocation: "unknown" as const, salary: null, industries: [], dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] } };
@@ -3345,6 +3346,44 @@ describe("AgentRunProcessor checkpoints", () => {
       database.select({ failureCode: agentRuns.failureCode, usageComplete: agentRuns.usageComplete, modelCalls: agentRuns.modelCallCount }).from(agentRuns).where(eq(agentRuns.id, unknownJob.runId)),
       database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, unknownJob.runId)),
     ])).resolves.toEqual([[{ failureCode: "AGENT_RUN_MODEL_INVALID_RESPONSE", usageComplete: false, modelCalls: 1 }], []]);
+  });
+
+  it("真实 OpenAI 429 未知 usage 保留限流原因并阻止同次后续 transport", async () => {
+    const job = await run();
+    const source = await configureV2ProductionNormalizerRun(job);
+    const transport = vi.fn().mockResolvedValue(new Response("", { status: 429 }));
+    const normalizer = createOpenAiJobPostingNormalizer({ apiKey: "test-key" }, transport);
+    const processor = createAgentRunProcessor({ db: database, adapterResolver: resolver(productionV2Adapter(source, ["701", "702"])), jobPostingNormalizerResolver: { resolve: () => normalizer }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: () => crypto.randomUUID(), clock: () => new Date() });
+    await expect(processor.process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("failed");
+    expect(transport).toHaveBeenCalledOnce();
+    await expect(database.select({ status: agentRuns.status, failureCode: agentRuns.failureCode, usageComplete: agentRuns.usageComplete, modelCalls: agentRuns.modelCallCount }).from(agentRuns).where(eq(agentRuns.id, job.runId))).resolves.toEqual([{ status: "failed", failureCode: "AGENT_RUN_MODEL_RETRYABLE", usageComplete: false, modelCalls: 1 }]);
+  });
+
+  it("真实 OpenAI transport 超时保留 active_duration，未知 usage 后不再请求下一候选", async () => {
+    const job = await run();
+    const source = await configureV2ProductionNormalizerRun(job);
+    const transport = vi.fn(async (_url: string, init: RequestInit) => await new Promise<Response>((_resolve, reject) => init.signal!.addEventListener("abort", () => reject(new Error("aborted")), { once: true })));
+    const adapter = createOpenAiJobPostingNormalizer({ apiKey: "test-key" }, transport);
+    const normalizer = { metadata: adapter.metadata, normalize: (content: string, options: any) => adapter.normalize(content, { ...options, budget: { ...options.budget, timeoutMs: 1 } }) };
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(productionV2Adapter(source, ["701", "702"])), jobPostingNormalizerResolver: { resolve: () => normalizer }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: () => crypto.randomUUID(), clock: () => new Date() }).process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("budget_exhausted");
+    expect(transport).toHaveBeenCalledOnce();
+    await expect(database.select({ failureCode: agentRuns.failureCode, terminationBudgetDimension: agentRuns.terminationBudgetDimension, usageComplete: agentRuns.usageComplete, modelCalls: agentRuns.modelCallCount }).from(agentRuns).where(eq(agentRuns.id, job.runId))).resolves.toEqual([{ failureCode: "AGENT_RUN_BUDGET_EXCEEDED", terminationBudgetDimension: "active_duration", usageComplete: false, modelCalls: 1 }]);
+  });
+
+  it("已结算 Fake 超时标记 active_duration，实际输出令牌超额仍标记 tokens", async () => {
+    const timeoutJob = await run();
+    const timeoutSource = await configureV2ProductionNormalizerRun(timeoutJob);
+    const delayedFake = new (await import("../../../apps/worker/src/job-imports/fake-job-posting-normalizer.js")).FakeJobPostingNormalizer({ testDelayMs: 150 });
+    const timedOutNormalizer = { metadata: productionNormalizerMetadata, normalize: (content: string, options: any) => delayedFake.normalize(content, { ...options, budget: { ...options.budget, timeoutMs: 100 } }) };
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(productionV2Adapter(timeoutSource)), jobPostingNormalizerResolver: { resolve: () => timedOutNormalizer }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: () => crypto.randomUUID(), clock: () => new Date() }).process({ version: 1, ...timeoutJob, finalAttempt: true })).resolves.toBe("budget_exhausted");
+    await expect(database.select({ terminationBudgetDimension: agentRuns.terminationBudgetDimension, usageComplete: agentRuns.usageComplete, totalTokens: agentRuns.totalTokenCount }).from(agentRuns).where(eq(agentRuns.id, timeoutJob.runId))).resolves.toEqual([{ terminationBudgetDimension: "active_duration", usageComplete: true, totalTokens: 0 }]);
+
+    const tokenJob = await run();
+    const tokenSource = await configureV2ProductionNormalizerRun(tokenJob);
+    const tokenFake = new (await import("../../../apps/worker/src/job-imports/fake-job-posting-normalizer.js")).FakeJobPostingNormalizer();
+    const tokenLimitedNormalizer = { metadata: productionNormalizerMetadata, normalize: (content: string, options: any) => tokenFake.normalize(content, { ...options, budget: { ...options.budget, maxOutputTokens: 1 } }) };
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: resolver(productionV2Adapter(tokenSource)), jobPostingNormalizerResolver: { resolve: () => tokenLimitedNormalizer }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: () => crypto.randomUUID(), clock: () => new Date() }).process({ version: 1, ...tokenJob, finalAttempt: true })).resolves.toBe("budget_exhausted");
+    await expect(database.select({ terminationBudgetDimension: agentRuns.terminationBudgetDimension, usageComplete: agentRuns.usageComplete, totalTokens: agentRuns.totalTokenCount }).from(agentRuns).where(eq(agentRuns.id, tokenJob.runId))).resolves.toEqual([{ terminationBudgetDimension: "tokens", usageComplete: true, totalTokens: 0 }]);
   });
 
   it("v2 normalizer 结算时遇到取消或累计模型预算，保留权威终态且不发布结果", async () => {
