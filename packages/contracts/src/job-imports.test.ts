@@ -67,6 +67,7 @@ describe("job import contracts", () => {
         { field: "company", path: "lines:1-1", rawValue: "示例科技", normalizedValue: "示例科技" },
         { field: "title", path: "lines:2-2", rawValue: "高级前端工程师", normalizedValue: "高级前端工程师" },
       ],
+      usage: { status: "known", inputTokens: 0, outputTokens: 0, totalTokens: 0 },
     });
     const source = "公司：示例科技\n标题：高级前端工程师\n工作方式：远程";
     expect(validateJobNormalizerOutput(source, output)).toBe(true);
