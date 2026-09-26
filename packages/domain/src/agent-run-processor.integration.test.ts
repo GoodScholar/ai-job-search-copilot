@@ -185,16 +185,18 @@ describe("AgentRunProcessor checkpoints", () => {
     await expect(database.transaction((tx) => ensureDeepMatchRunInTransaction({ transaction: tx, id: () => crypto.randomUUID(), clock: () => now, runPreflight: { evaluate: async () => { throw new Error("unexpected-preflight"); } } as any, userId: parent.userId, targetId: parent.targetId, idempotencyKey: crypto.randomUUID(), trigger: "automatic", discoveryRunId: parent.runId }))).rejects.toThrow("unexpected-preflight");
   }, 15_000);
 
-  async function layeredRun() {
-    const userId = crypto.randomUUID(); const targetId = crypto.randomUUID(); const runId = crypto.randomUUID(); const queryId = crypto.randomUUID(); const watchlistItemId = crypto.randomUUID(); const sourcePostingId = crypto.randomUUID(); const sourcePostingVersionId = crypto.randomUUID();
+  async function layeredRun(existing?: { userId: string; targetId: string }) {
+    const userId = existing?.userId ?? crypto.randomUUID(); const targetId = existing?.targetId ?? crypto.randomUUID(); const runId = crypto.randomUUID(); const queryId = crypto.randomUUID(); const watchlistItemId = crypto.randomUUID(); const sourcePostingId = crypto.randomUUID(); const sourcePostingVersionId = crypto.randomUUID();
     const targetSnapshot = { targetId, version: 1, priority: "primary" as const, state: "active" as const, constraints };
     const profileSnapshot = { targetId, version: 1, confirmedActiveSkillNames: [] };
     const watchlistSnapshot = { targetId, version: 0, companies: [] };
     const sourceScope = { kind: "layered_public" as const, trustedSources: [{ kind: "greenhouse_trusted_source" as const, source: { sourceId: "greenhouse:example", watchlistItemId, canonicalCompanyName: "Example", careersUrl: "https://boards.greenhouse.io/example", allowedDomains: ["boards-api.greenhouse.io"], boardToken: "example" } }], publicDiscovery: { provider: "anysearch" as const, batchSize: 5 as const, maxVerificationCandidates: 10 as const, queries: [{ ordinal: 1, queryId, kind: "general" as const, stableFingerprint: "a".repeat(64), query: "AI 应用工程师", allowedSiteDomains: [], targetCompanyNames: [], resultLimit: 5 as const }] } };
-    await database.insert(jobAccounts).values({ id: userId });
-    await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: now, updatedAt: now });
-    await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: now });
-    await database.insert(jobSourcePostings).values({ id: sourcePostingId, userId, sourceType: "company_careers", sourceIdentifier: "greenhouse:example:opening-1", sourceId: "greenhouse:example", sourceIdentity: { sourceId: "greenhouse:example", detailId: "opening-1" }, applicationDeadline: null, isOfficial: true, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
+    if (!existing) {
+      await database.insert(jobAccounts).values({ id: userId });
+      await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: now, updatedAt: now });
+      await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: now });
+    }
+    await database.insert(jobSourcePostings).values({ id: sourcePostingId, userId, sourceType: "company_careers", sourceIdentifier: `greenhouse:example:opening-1:${runId}`, sourceId: "greenhouse:example", sourceIdentity: { sourceId: "greenhouse:example", detailId: "opening-1" }, applicationDeadline: null, isOfficial: true, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
     await database.insert(jobSourcePostingVersions).values({ id: sourcePostingVersionId, userId, sourcePostingId, version: 1, contentSha256: "a".repeat(64), rawContentSha256: "b".repeat(64), rawObjectReference: {}, normalizedData: {}, retrievedAt: now, availability: "open", createdAt: now });
     await database.insert(agentRuns).values({ id: runId, userId, targetId, idempotencyKey: crypto.randomUUID(), targetVersion: 1, targetSnapshot, profileSnapshot, watchlistSnapshot, sourceScope, budgetSnapshot: PUBLIC_JOB_DISCOVERY_BUDGET, workflowVersion: LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION, ruleVersion: LAYERED_PUBLIC_JOB_DISCOVERY_RULE_VERSION, adapter: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER, adapterVersion: LAYERED_PUBLIC_JOB_DISCOVERY_ADAPTER_VERSION, outputSchemaVersion: LAYERED_PUBLIC_JOB_DISCOVERY_OUTPUT_SCHEMA_VERSION, toolAllowlist: LAYERED_PUBLIC_JOB_DISCOVERY_TOOL_ALLOWLIST, modelSnapshot: null, status: "queued", currentStep: "queued", controlState: "none", version: 1, attemptCount: 0, activeDurationMs: 0, toolCallCount: 0, sourceRequestCount: 0, modelCallCount: 0, inputTokenCount: 0, outputTokenCount: 0, totalTokenCount: 0, resultCount: 0, usageComplete: false, queuedAt: now, createdAt: now, updatedAt: now });
     await database.insert(agentRunSteps).values(["batch_search", "fetch_details", "persist_results"].map((stepKey, index) => ({ id: crypto.randomUUID(), userId, runId, stepKey, ordinal: index + 1, status: "pending", attemptCount: 0 })));
@@ -3227,6 +3229,73 @@ describe("AgentRunProcessor checkpoints", () => {
     const [version] = await database.select({ id: jobSourcePostingVersions.id, normalizedData: jobSourcePostingVersions.normalizedData }).from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, job.userId)).orderBy(asc(jobSourcePostingVersions.createdAt));
     expect((version!.normalizedData as any).fieldEvidence).toEqual(expect.arrayContaining([expect.objectContaining({ field: "company", sourcePostingVersionId: version!.id })]));
     expect((version!.normalizedData as any).qualifications.requiredSkills).toEqual(expect.objectContaining({ value: ["TypeScript"], evidence: expect.objectContaining({ sourcePostingVersionId: version!.id, path: "lines:5-5" }) }));
+  });
+
+  it("v4 实际 runtime 以冻结模型规范化可信详情、投影 Opportunity，并在后续 run 复用已绑定版本", async () => {
+    const first = await layeredRun();
+    const second = await layeredRun({ userId: first.userId, targetId: first.targetId });
+    await database.update(agentRuns).set({ modelSnapshot: productionNormalizerMetadata }).where(and(eq(agentRuns.userId, first.userId), sql`${agentRuns.id} in (${first.runId}, ${second.runId})`));
+    const store = new Store(); let calls = 0;
+    const runtime = createLayeredPublicJobDiscoveryRuntime({
+      db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => now }), contentStore: store, evidenceStore: store as never,
+      trustedSourceAdapter: {
+        adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION,
+        declareCapabilities: ({ sourceId }: { sourceId: string }) => ({ sourceId, adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, contractVersion: "source-capabilities-v1" as const, capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }),
+        listSource: async ({ source }: any) => ({ ok: true as const, data: { sourceId: source.sourceId, observedDetailIds: ["normalized-1"], candidates: [{ sourceId: source.sourceId, detailId: "normalized-1" }] } }),
+        getSourceDetail: async ({ source, detailId }: any) => ({ ok: true as const, data: { sourceId: source.sourceId, detailId, company: "诱饵公司", title: "诱饵职位", location: "诱饵地点", postedAt: null, deadline: null, sourceType: "company_careers" as const, isOfficial: true as const, rawPayload: { company_name: "Fictional Labs", title: "AI Engineer", location: { name: "Shanghai" }, content: "负责 TypeScript 平台\n必备技能：TypeScript" } } }),
+      },
+      anySearch: { isConfigured: () => false, search: async () => ({ candidates: [] }), extract: async () => { throw new Error("UNUSED"); } }, preflight: async () => null, fetcher: { fetch: async () => { throw new Error("UNUSED"); } },
+    });
+    const normalizer = { metadata: productionNormalizerMetadata, normalize: async (_content: string, options: any) => { calls += 1; await options.beforeRequest(); await options.onUsage({ inputTokens: 3, outputTokens: 5 }); return normalizedTrustedOutput(); } };
+    const processor = createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => runtime }, jobPostingNormalizerResolver: { resolve: () => normalizer }, contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: () => crypto.randomUUID(), clock: () => new Date() });
+
+    await expect(processor.process({ version: 1, ...first, finalAttempt: true })).resolves.toBe("completed");
+    await expect(processor.process({ version: 1, ...second, finalAttempt: true })).resolves.toBe("completed");
+    expect(calls).toBe(1);
+    const [version] = await database.select({ id: jobSourcePostingVersions.id, normalizedData: jobSourcePostingVersions.normalizedData }).from(jobSourcePostingVersions).where(and(eq(jobSourcePostingVersions.userId, first.userId), sql`${jobSourcePostingVersions.normalizedData}->>'company' = 'Fictional Labs'`));
+    expect(version).toBeDefined();
+    expect((version!.normalizedData as any)).toMatchObject({ company: "Fictional Labs", title: "AI Engineer", description: "负责 TypeScript 平台\n必备技能：TypeScript" });
+    expect((version!.normalizedData as any).qualifications.requiredSkills).toEqual(expect.objectContaining({ value: ["TypeScript"], evidence: expect.objectContaining({ sourcePostingVersionId: version!.id, path: "lines:5-5" }) }));
+    await expect(database.select({ company: jobOpportunities.company, title: jobOpportunities.title, description: jobOpportunities.description, sourcePostingVersionId: jobOpportunities.sourcePostingVersionId }).from(jobOpportunities).where(eq(jobOpportunities.userId, first.userId))).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ company: "Fictional Labs", title: "AI Engineer", description: "负责 TypeScript 平台\n必备技能：TypeScript", sourcePostingVersionId: version!.id })]));
+
+    const failed = await layeredRun({ userId: first.userId, targetId: first.targetId });
+    const failedMetadata = { ...productionNormalizerMetadata, normalizerVersion: "openai-responses-job-normalizer-auth-failure" };
+    await database.update(agentRuns).set({ modelSnapshot: failedMetadata }).where(eq(agentRuns.id, failed.runId));
+    const putsBeforeFailure = store.puts.length;
+    const authFailure = { metadata: failedMetadata, normalize: async (_content: string, options: any) => { await options.beforeRequest(); throw new JobNormalizerError("JOB_NORMALIZER_AUTH_FAILED"); } };
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => runtime }, jobPostingNormalizerResolver: { resolve: () => authFailure }, contentStore: store, auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: () => crypto.randomUUID(), clock: () => new Date() }).process({ version: 1, ...failed, finalAttempt: true })).resolves.toBe("failed");
+    expect(store.puts).toHaveLength(putsBeforeFailure);
+    await expect(Promise.all([
+      database.select({ failureCode: agentRuns.failureCode }).from(agentRuns).where(eq(agentRuns.id, failed.runId)),
+      database.select().from(agentRunJobResults).where(eq(agentRunJobResults.runId, failed.runId)),
+      database.select().from(jobSourceHealthChecks).where(eq(jobSourceHealthChecks.runId, failed.runId)),
+    ])).resolves.toEqual([[{ failureCode: "AGENT_RUN_MODEL_AUTH_FAILED" }], [], []]);
+  });
+
+  it("v4 实际 runtime 通过同一冻结 normalizer 将公开页面投影为已绑定 Opportunity", async () => {
+    const job = await layeredRun();
+    await database.update(agentRuns).set({ modelSnapshot: productionNormalizerMetadata }).where(eq(agentRuns.id, job.runId));
+    const url = "https://boards.greenhouse.io/example/jobs/9001";
+    const publicOutput = JobNormalizerOutputSchema.parse({
+      ...productionNormalizerMetadata, company: null, title: "AI 应用工程师", location: null, postedAt: null, deadline: null, description: "职责：构建产品",
+      qualifications: { workMode: null, relocationRequired: null, salary: null, seniority: null, education: null, languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: { value: ["TypeScript"], evidence: { field: "requiredSkills", path: "lines:3-3", value: "TypeScript", rawValue: "TypeScript", normalizedValue: "[\"TypeScript\"]" } } },
+      fieldEvidence: [{ field: "title", path: "lines:1-1", rawValue: "AI 应用工程师", normalizedValue: "AI 应用工程师" }, { field: "description", path: "lines:2-2", rawValue: "职责：构建产品", normalizedValue: "职责：构建产品" }], usage: { status: "known", inputTokens: 3, outputTokens: 5, totalTokens: 8 },
+    });
+    let calls = 0;
+    const evidenceStore = { put: async () => ({ created: true }), delete: async () => undefined };
+    const runtime = createLayeredPublicJobDiscoveryRuntime({
+      db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), contentStore: new Store(), evidenceStore,
+      trustedSourceAdapter: { adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, declareCapabilities: ({ sourceId }: any) => ({ sourceId, adapter: "greenhouse", adapterVersion: GREENHOUSE_SOURCE_HEALTH_ADAPTER_VERSION, contractVersion: "source-capabilities-v1", capabilities: ["active_discovery", "read_details", "continuous_monitoring", "safe_open_original_page"] }), listSource: async ({ source }: any) => ({ ok: true as const, data: { sourceId: source.sourceId, observedDetailIds: [], candidates: [] } }), getSourceDetail: async () => { throw new Error("UNUSED"); } },
+      anySearch: { isConfigured: () => true, search: async ({ beforeRequest }: any) => { await beforeRequest(); return { candidates: [{ normalizedUrl: url, stableFingerprint: createHash("sha256").update(url).digest("hex") }] }; }, extract: async ({ candidate, beforeRequest }: any) => { await beforeRequest(); return { normalizedUrl: candidate.normalizedUrl }; } },
+      preflight: async ({ candidate }: any) => ({ normalizedUrl: candidate.normalizedUrl }),
+      fetcher: { fetch: async ({ candidate }: any) => ({ requestedUrl: candidate.normalizedUrl, finalUrl: candidate.normalizedUrl, canonicalUrl: candidate.normalizedUrl, rawHtml: "<main><h1>AI 应用工程师</h1><p>职责：构建产品</p><p>必备技能：TypeScript</p></main>", visibleText: "AI 应用工程师\n职责：构建产品\n必备技能：TypeScript", pageClassification: "job" as const, sourceKind: "official" as const }) },
+    });
+    const normalizer = { metadata: productionNormalizerMetadata, normalize: async (_content: string, options: any) => { calls += 1; await options.beforeRequest(); await options.onUsage({ inputTokens: 3, outputTokens: 5 }); return publicOutput; } };
+    await expect(createAgentRunProcessor({ db: database, adapterResolver: { resolve: () => { throw new Error("UNUSED"); } }, layeredPublicWorkflowResolver: { resolve: () => runtime }, jobPostingNormalizerResolver: { resolve: () => normalizer }, contentStore: new Store(), auditTrail: createAuditTrail({ db: database, clock: () => new Date() }), id: () => crypto.randomUUID(), clock: () => new Date() }).process({ version: 1, ...job, finalAttempt: true })).resolves.toBe("completed");
+    expect(calls).toBe(1);
+    const [version] = await database.select({ id: jobSourcePostingVersions.id, normalizedData: jobSourcePostingVersions.normalizedData }).from(jobSourcePostingVersions).where(and(eq(jobSourcePostingVersions.userId, job.userId), sql`${jobSourcePostingVersions.normalizedData}->>'title' = 'AI 应用工程师'`));
+    expect((version!.normalizedData as any).qualifications.requiredSkills.evidence).toMatchObject({ sourcePostingVersionId: version!.id, path: "lines:3-3" });
+    await expect(database.select({ title: jobOpportunities.title, description: jobOpportunities.description, sourcePostingVersionId: jobOpportunities.sourcePostingVersionId }).from(jobOpportunities).where(eq(jobOpportunities.userId, job.userId))).resolves.toEqual(expect.arrayContaining([expect.objectContaining({ title: "AI 应用工程师", description: "职责：构建产品", sourcePostingVersionId: version!.id })]));
   });
 
   it("v2 冻结生产 metadata 缺 resolver 时稳定失败且不写入岗位结果", async () => {

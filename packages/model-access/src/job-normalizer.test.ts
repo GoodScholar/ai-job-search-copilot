@@ -4,6 +4,12 @@ import { createOpenAiJobPostingNormalizer } from "./job-normalizer.js";
 const complete = (raw: unknown) => new Response(JSON.stringify({ status: "completed", usage: { input_tokens: 20, output_tokens: 30 }, output: [{ content: [{ type: "output_text", text: JSON.stringify(raw) }] }] }));
 const result = { company: "示例公司", title: "工程师", location: null, postedAt: null, deadline: null, deadlineProvenance: null, description: null, qualifications: { workMode: { value: "remote", evidence: { field: "workMode", path: "lines:3-3", rawValue: "远程", normalizedValue: "remote" } }, relocationRequired: null, salary: null, seniority: null, education: null, languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: null }, fieldEvidence: [{ field: "company", path: "lines:1-1", rawValue: "示例公司", normalizedValue: "示例公司" }, { field: "title", path: "lines:2-2", rawValue: "工程师", normalizedValue: "工程师" }] };
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => { resolve = next; });
+  return { promise, resolve };
+}
+
 function everyObjectIsStrict(schema: any): boolean {
   if (!schema || typeof schema !== "object") return true;
   if (schema.type === "object" && (schema.additionalProperties !== false || !Array.isArray(schema.required) || Object.keys(schema.properties ?? {}).some((key) => !schema.required.includes(key)))) return false;
@@ -86,5 +92,33 @@ describe("OpenAI 岗位规范化", () => {
     }));
     await expect(normalizer.normalize("公司：示例公司\n标题：工程师", { signal: controller.signal, onUsage: cancelledUsage })).rejects.toMatchObject({ code: "JOB_NORMALIZER_CANCELLED" });
     expect(cancelledUsage).toHaveBeenCalledWith({ inputTokens: 20, outputTokens: 30 });
+  });
+
+  it("在读取 Responses body 时受预算超时和取消信号约束", async () => {
+    const timeoutBody = deferred<unknown>();
+    const timeoutStarted = deferred<void>();
+    const timeoutNormalizer = createOpenAiJobPostingNormalizer({ apiKey: "test-key" }, vi.fn().mockResolvedValue({ ok: true, status: 200, json: () => { timeoutStarted.resolve(); return timeoutBody.promise; } } as Response));
+    const timingOut = timeoutNormalizer.normalize("公司：示例公司\n标题：工程师", { budget: { maxInputBytes: 16_384, maxOutputTokens: 2_000, maxTotalTokens: 12_000, timeoutMs: 20 } });
+    await timeoutStarted.promise;
+    await expect(timingOut).rejects.toMatchObject({ code: "JOB_NORMALIZER_BUDGET_EXHAUSTED" });
+    timeoutBody.resolve({});
+
+    const controller = new AbortController();
+    const cancelledBody = deferred<unknown>();
+    const cancelledStarted = deferred<void>();
+    const cancelledNormalizer = createOpenAiJobPostingNormalizer({ apiKey: "test-key" }, vi.fn().mockResolvedValue({ ok: true, status: 200, json: () => { cancelledStarted.resolve(); return cancelledBody.promise; } } as Response));
+    const cancelling = cancelledNormalizer.normalize("公司：示例公司\n标题：工程师", { signal: controller.signal, budget: { maxInputBytes: 16_384, maxOutputTokens: 2_000, maxTotalTokens: 12_000, timeoutMs: 1_000 } });
+    await cancelledStarted.promise;
+    controller.abort();
+    await expect(cancelling).rejects.toMatchObject({ code: "JOB_NORMALIZER_CANCELLED" });
+    cancelledBody.resolve({});
+  });
+
+  it("beforeRequest 期间已取消时不启动 transport", async () => {
+    const controller = new AbortController();
+    const fetcher = vi.fn();
+    const normalizer = createOpenAiJobPostingNormalizer({ apiKey: "test-key" }, fetcher);
+    await expect(normalizer.normalize("公司：示例公司\n标题：工程师", { signal: controller.signal, beforeRequest: async () => { controller.abort(); } })).rejects.toMatchObject({ code: "JOB_NORMALIZER_CANCELLED" });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });

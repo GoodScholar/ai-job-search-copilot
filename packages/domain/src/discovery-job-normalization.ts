@@ -77,6 +77,7 @@ export function createDiscoveryJobNormalizer(input: {
           if (!sameMetadata(output, input.metadata!) || !validateJobNormalizerOutput(value.content, output)) throw new JobNormalizerError("JOB_NORMALIZER_EVIDENCE_INVALID");
           return output;
         } catch (error) {
+          if (error instanceof DiscoveryJobNormalizationError && error.code === "DISCOVERY_JOB_NORMALIZATION_INTERRUPTED") throw error;
           if (input.signal.aborted && !(error instanceof DiscoveryJobNormalizationError && error.code === "DISCOVERY_JOB_NORMALIZATION_USAGE_INCOMPLETE")) {
             if (invocationStarted && !usageSettled) await markIncomplete();
             throw new DiscoveryJobNormalizationError("DISCOVERY_JOB_NORMALIZATION_INTERRUPTED");

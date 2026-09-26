@@ -14,6 +14,16 @@ const RESPONSE_SCHEMA = ModelOutputSchema.toJSONSchema();
 export type OpenAiJobNormalizerConfig = { apiKey: string; model?: string; endpoint?: string; organization?: string; project?: string };
 export type JobNormalizerFetch = (url: string, init: RequestInit) => Promise<Response>;
 
+async function awaitWithAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  // 响应已到达时仍须读取其 usage；只中断开始读取后的悬挂 body。
+  if (signal.aborted) return operation;
+  let rejectAbort!: (reason: unknown) => void;
+  const aborted = new Promise<never>((_resolve, reject) => { rejectAbort = reject; });
+  const onAbort = () => rejectAbort(signal.reason);
+  signal.addEventListener("abort", onAbort, { once: true });
+  try { return await Promise.race([operation, aborted]); } finally { signal.removeEventListener("abort", onAbort); }
+}
+
 export function openAiJobNormalizerMetadata(model: string): JobNormalizerMetadata {
   const digest = createHash("sha256").update(JSON.stringify({ model, prompt: JOB_NORMALIZER_PROMPT_VERSION, schema: JOB_NORMALIZER_OUTPUT_SCHEMA_VERSION })).digest("hex").slice(0, 16);
   return { adapter: "openai", normalizerVersion: `openai-job-normalizer-v1-${digest}`, promptVersion: JOB_NORMALIZER_PROMPT_VERSION, outputSchemaVersion: JOB_NORMALIZER_OUTPUT_SCHEMA_VERSION, ruleVersion: "job-normalization-evidence-v2", model };
@@ -37,6 +47,7 @@ export function createOpenAiJobPostingNormalizer(config: OpenAiJobNormalizerConf
     const budget = assertJobNormalizerInputBudget(content, options);
     if (isJobInstructionLike(content)) throw new JobNormalizerError("JOB_NORMALIZER_INJECTION_DETECTED");
     await options.beforeRequest?.();
+    if (options.signal?.aborted) throw new JobNormalizerError("JOB_NORMALIZER_CANCELLED", unknownJobNormalizerUsage());
     const timeout = AbortSignal.timeout(budget.timeoutMs);
     const signal = options.signal ? AbortSignal.any([options.signal, timeout]) : timeout;
     const headers: Record<string, string> = { authorization: `Bearer ${config.apiKey}`, "content-type": "application/json" };
@@ -56,7 +67,7 @@ export function createOpenAiJobPostingNormalizer(config: OpenAiJobNormalizerConf
     if (response.status === 401 || response.status === 403) throw new JobNormalizerError("JOB_NORMALIZER_AUTH_FAILED", unknownJobNormalizerUsage());
     if (!response.ok) throw new JobNormalizerError("JOB_NORMALIZER_UNAVAILABLE", unknownJobNormalizerUsage());
     let body: unknown;
-    try { body = await response.json(); } catch { throw new JobNormalizerError(options.signal?.aborted ? "JOB_NORMALIZER_CANCELLED" : timeout.aborted ? "JOB_NORMALIZER_BUDGET_EXHAUSTED" : "JOB_NORMALIZER_OUTPUT_INVALID"); }
+    try { body = await awaitWithAbort(Promise.resolve().then(() => response.json()), signal); } catch { throw new JobNormalizerError(options.signal?.aborted ? "JOB_NORMALIZER_CANCELLED" : timeout.aborted ? "JOB_NORMALIZER_BUDGET_EXHAUSTED" : "JOB_NORMALIZER_OUTPUT_INVALID"); }
     let value: { status?: unknown; output?: unknown; usage?: { input_tokens?: unknown; output_tokens?: unknown }; incomplete_details?: { reason?: unknown } };
     let inputTokens: number;
     let outputTokens: number;

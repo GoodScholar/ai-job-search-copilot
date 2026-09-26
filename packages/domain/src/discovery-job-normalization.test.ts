@@ -56,4 +56,15 @@ describe("discovery job normalization", () => {
     await expect(helper.normalizePosting({ identity: "cancelled", content })).rejects.toMatchObject({ code: "DISCOVERY_JOB_NORMALIZATION_INTERRUPTED" });
     expect(markUsageIncomplete).toHaveBeenCalledOnce();
   });
+
+  it("usage checkpoint 已给出预算终态时，即使同时 abort 也保留其权威 kind", async () => {
+    const controller = new AbortController();
+    const checkpoint = { check: vi.fn(async ({ checkpointKey }: { checkpointKey: string }) => {
+      if (checkpointKey.endsWith(":usage")) { controller.abort(); return { kind: "budget_exhausted" }; }
+      return { kind: "continue" };
+    }) };
+    const normalizer = { metadata, normalize: async (_content: string, options: any) => { await options.beforeRequest(); await options.onUsage({ inputTokens: 3, outputTokens: 5 }); return output; } };
+    const helper = createDiscoveryJobNormalizer({ metadata, normalizerResolver: { resolve: () => normalizer }, checkpoint, userId: "user", runId: "run", claimToken: "claim", attemptCount: 1, clock: () => new Date("2026-09-26T00:00:00.000Z"), deadline: new Date("2026-09-26T00:00:10.000Z"), signal: controller.signal, markUsageIncomplete: async () => undefined });
+    await expect(helper.normalizePosting({ identity: "settled-budget", content })).rejects.toMatchObject({ code: "DISCOVERY_JOB_NORMALIZATION_INTERRUPTED", interruption: "budget_exhausted" });
+  });
 });
