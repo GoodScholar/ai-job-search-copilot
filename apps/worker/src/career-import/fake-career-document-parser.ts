@@ -1,7 +1,12 @@
 import {
   CAREER_IMPORT_MAX_FACTS,
+  CareerParserError,
+  assertCareerParserInputBudget,
+  FAKE_CAREER_PARSER_METADATA,
+  isCareerInstructionLike,
   parseMarkdownHeading,
   parseQuotedCareerFactValue,
+  type CareerParserCallOptions,
   type CareerParserFact,
 } from "@job-copilot/contracts/career-import";
 
@@ -25,12 +30,16 @@ type ActiveSection = {
 const listItemPattern = /^\s*(?:[-*+]|\d+[.)])\s+(.+?)\s*$/;
 
 export class FakeCareerDocumentParser {
-  async parse(markdown: string): Promise<unknown> {
+  readonly metadata = FAKE_CAREER_PARSER_METADATA;
+
+  async parse(markdown: string, options: CareerParserCallOptions = {}): Promise<unknown> {
+    const budget = assertCareerParserInputBudget(markdown, options);
     const facts: CareerParserFact[] = [];
     let activeSection: ActiveSection | undefined;
     let lineNumber = 0;
 
     for (const line of normalizedLines(markdown)) {
+      if (options.signal?.aborted) throw new CareerParserError("CAREER_PARSER_CANCELLED");
       if (facts.length >= CAREER_IMPORT_MAX_FACTS + 1) break;
       lineNumber += 1;
       const heading = parseMarkdownHeading(line);
@@ -60,6 +69,11 @@ export class FakeCareerDocumentParser {
       if (fact) facts.push(fact);
     }
 
+    const outputTokenBound = Buffer.byteLength(JSON.stringify({ facts: facts.map((fact) => ({ factType: fact.factType,
+      startLine: fact.evidence.locatorType === "markdown_lines" ? fact.evidence.startLine : 0,
+      endLine: fact.evidence.locatorType === "markdown_lines" ? fact.evidence.endLine : 0 })) }));
+    if (outputTokenBound > budget.maxOutputTokens || budget.inputTokenBound + outputTokenBound > budget.maxTotalTokens)
+      throw new CareerParserError("CAREER_PARSER_BUDGET_EXHAUSTED");
     return {
       adapter: "fake",
       parserVersion: "fake-career-parser-v1",
@@ -88,7 +102,7 @@ function createFact(
   lineNumber: number,
 ): CareerParserFact | undefined {
   const factValue = parseQuotedCareerFactValue(factType, excerpt);
-  if (!factValue) return undefined;
+  if (!factValue || isCareerInstructionLike(excerpt)) return undefined;
 
   const evidence = {
     locatorType: "markdown_lines" as const,

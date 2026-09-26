@@ -393,6 +393,13 @@
       "when": 1789293000000,
       "tag": "0055_account_control_attention_inbox",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1789820000000,
+      "tag": "0056_openai_career_parser",
+      "breakpoints": true
     }
   ]
 }

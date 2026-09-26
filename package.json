@@ -19,6 +19,7 @@
     "lint:web": "pnpm --filter web lint",
     "test:web": "pnpm --filter web test",
     "test:e2e": "pnpm --filter web test:e2e",
+    "verify:career-parser:openai": "tsx apps/worker/src/career-import/verify-openai-career-parser.ts",
     "build:web": "pnpm --filter web build"
   }
 }

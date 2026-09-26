@@ -5,7 +5,7 @@ import { createDatabase, type Database } from "@job-copilot/database";
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
 import { createCareerImportProcessor } from "@job-copilot/domain/career-imports";
 import { CareerImportConsumer } from "./career-import-consumer.js";
-import { FakeCareerDocumentParser } from "./fake-career-document-parser.js";
+import { createConfiguredCareerParser } from "./career-parser-config.js";
 import { MinioCareerDocumentStore } from "./minio-career-document-store.js";
 
 export const CAREER_IMPORT_CONSUMER = Symbol("CAREER_IMPORT_CONSUMER");
@@ -53,7 +53,7 @@ class WorkerDatabase {
           db,
           auditTrail: createAuditTrail({ db, clock: () => new Date() }),
           documentStore,
-          parser: new FakeCareerDocumentParser(),
+          parser: createConfiguredCareerParser(),
           id: randomUUID,
           clock: () => new Date(),
         });
