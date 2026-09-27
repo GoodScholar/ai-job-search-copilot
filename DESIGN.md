@@ -1,159 +1,55 @@
----
-name: AI Job Search Copilot
-description: 面向主动求职者的晨间行动内参。
-colors:
-  ground: "#f4f6f3"
-  surface: "#fffefa"
-  ink: "#15211d"
-  muted: "#657069"
-  emerald: "#246a49"
-  emerald-strong: "#18553a"
-  amber: "#c98532"
-  amber-ink: "#9f5f14"
-  rule: "#d5ddd6"
-typography:
-  display:
-    fontFamily: '"PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif'
-    fontSize: "clamp(2.8rem, 3.5vw, 4.2rem)"
-    fontWeight: 750
-    lineHeight: 1.04
-    letterSpacing: "-0.04em"
-  body:
-    fontFamily: '"PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif'
-    fontSize: "1rem"
-    fontWeight: 400
-    lineHeight: 1.65
-  label:
-    fontFamily: '"PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif'
-    fontSize: "0.75rem"
-    fontWeight: 700
-    letterSpacing: "0.08em"
-rounded:
-  control: "0.625rem"
-spacing:
-  compact: "0.75rem"
-  control: "1rem"
-  section: "clamp(3.5rem, 8vw, 7rem)"
-components:
-  login-cta:
-    backgroundColor: "{colors.emerald}"
-    textColor: "{colors.surface}"
-    rounded: "{rounded.control}"
-    padding: "0 1rem"
-    height: "2.75rem"
-  briefing-paper:
-    backgroundColor: "{colors.surface}"
-    textColor: "{colors.ink}"
-    padding: "clamp(1.25rem, 3vw, 2.2rem)"
-  status-strip:
-    textColor: "{colors.ink}"
-    padding: "0 0 0 1.4rem"
----
+# Job Copilot 设计系统
 
-# Design System: AI Job Search Copilot
+状态：正式设计基线。职业透镜是现有 Alpha 十条路由与四个既有任务态的生产视觉方向，不创建任何新领域能力。
 
-## Overview
+## 权威顺序与边界
 
-**Creative North Star: "晨间求职内参"**
+用户、`PRODUCT.md`、`CONTEXT.md`、ADR、真实 contracts 与权限边界优先；本文件仅规定视觉关系、层级和响应式组织。概念图与静态原型不能作为产品数据来源，也不能使材料、外部投递、投递进展、文本面试、分享或账户删除提前成为可用能力。
 
-页面像一份被优先级整理过的数字档案，而不是聊天入口或后台仪表盘。冷白底和近黑文字保持安静，深祖母绿只用于证据、可继续的行动和可见焦点；琥珀色只标记需要用户确认的边界。
+当前 Alpha 覆盖职业资料、目标与来源、岗位导入、发现与推荐、推荐决策、运行前检查、受控运行、模型诊断和账户运行策略。推荐不等于投递；任何外部行动都必须显式经用户审批。
 
-首屏的主角是可切换的三张错位行动简报：一张完整的当前优先纸，配两张尺度更小、仍可读出类型和状态的待处理纸。页面随后用规则线、证据索引和窄状态条延续同一份内参的阅读节奏。
+## 职业透镜
 
-**Key Characteristics:**
+职业透镜不是产品功能名、评分工具或装饰 Logo。它只在存在真实关联时，把岗位要求、已确认画像证据、版本或用户决定放到两个清楚对象之间；连接线与交点只辅助理解，绝不表达虚构匹配百分比、进度、岗位、事实或转化。
 
-- 今日三件行动先于机制说明。
-- 证据为深绿，审批为琥珀，状态不只依靠颜色。
-- 档案纸是可操作的 tabs，不是静态装饰。
+每页有一个主对象，其余内容是可扫描的证据、状态或下一步。空状态显示真实准备轨道，不画假关系；错误和冲突就近呈现且有恢复动作。
 
-## Colors
+## Tokens
 
-冷白纸张承担大面积留白，少量深绿和琥珀分别承载可追溯证据与审批提醒。
+| 角色 | Token | 色值 |
+| --- | --- | --- |
+| 冰蓝画布 | `--canvas` | `#F5F9FF` |
+| 冰蓝表面 | `--surface-subtle` | `#EEF5FF` |
+| 明亮对象 | `--surface` | `#FFFFFF` |
+| 深墨蓝文字 | `--ink` | `#05133A` |
+| 蓝灰说明 | `--muted` | `#627AAC` |
+| 主行动/焦点 | `--cobalt` | `#0051FF` |
+| 深色 AI 区 | `--ai-night` | `#001C37` |
+| 已确认 | `--signal` | `#13734B` |
+| 需确认 | `--warning` | `#965B00` |
+| 失败/阻塞/冲突 | `--danger` | `#B52B3A` |
 
-### Primary
+中文系统无衬线。营销首屏的 canonical 内板为 1160×638，桌面随整个画幅同比缩放；工作台标题 24–32px、正文 14–16px、元数据 12–13px。主对象圆角 18px，控件圆角 10px，阴影只属于浮起主对象和深色 AI 区。
 
-- **证据深绿**：用于主登录行动、证据标签、离散运行数字与键盘焦点。
-- **推进绿**：用于深绿文字在浅色表面上的高对比状态。
+## 布局与可达性
 
-### Secondary
+桌面（≥1024px）采用 232px 白色侧栏、最大 1280px 内容区、32px 页面内边距。768–1023px 收束为紧凑导航；320–767px 使用安全区底部导航、16px 内边距、先呈现主对象和主动作，详情渐进披露。
 
-- **审批琥珀**：用于指向“由你确认后才继续”的注记箭头。
-- **审批墨色**：由审批琥珀派生，用于审批说明和候选事实的未确认状态，并保持 AA 对比度角色。
+顶层导航固定为首页、推荐、投递、画像。投递在未实现时必须明确不可用；画像上下文保留职业资料、目标与来源、运行策略和模型连接。主要触控目标至少 44px，焦点使用钴蓝双层环；只允许 160–240ms 的连接、阶段和展开动效，`prefers-reduced-motion` 下立即静止。
 
-### Neutral
+深色区域仅承载真实 Agent 运行或模型诊断。状态同时由文字和颜色表达；正文、按钮、错误、警示及深色区都必须在运行时验证 WCAG AA、键盘、焦点、溢出和恢复行为。
 
-- **档案底纸**：页面基础表面。
-- **纸张白**：行动简报和边界清晰的控件表面。
-- **近黑墨色**：标题与主体阅读文字。
-- **静音灰绿**：说明性元数据。
-- **细规则线**：分隔内容，不承担状态含义。
+## Alpha 路由
 
-**The Evidence Before Accent Rule.** 深绿和琥珀必须同时配合文字状态或标签出现；它们不单独传达证据或审批含义。
+- `/`：机会 → 已确认事实 → 有依据再决定，单一登录 CTA 和六步旅程；示例不得伪装成用户数据。
+- `/login`：低对比透镜和紧凑访问面板；保留真实 auth mode、safe returnTo 与登录 action，移动先访问面板。
+- `/home`：真实下一行动、深色运行区、Inbox、首次推荐轨道和审计渐进披露；保留 SSR/SSE/刷新恢复。
+- `/recommendations`：机会对象、相邻决定、证据对照、校准、排除和历史；保留 URL identity、分页和错误恢复。
+- `/profile`：已确认事实、候选事实、冲突、最近导入和明确编辑/导入模式。
+- `/profile/targets`、`/profile/targets/:targetId/watchlist`：主/次目标、约束、公司来源、能力、健康与未检查状态。
+- `/jobs/import`：三种真实输入方式、阶段、原文和 triage。
+- `/profile/run-policy`、`/profile/model-connection`：有效/硬上限对照、全局停止、历史和四项真实模型诊断。
 
-## Typography
+## 禁止项
 
-**Display Font:** PingFang SC、Microsoft YaHei、Noto Sans CJK SC 与系统无衬线回退。
-
-**Body Font:** 同一中文无衬线栈，避免未批准的远程字体。
-
-**Character:** 宽而紧凑的中文标题制造编辑部判断感，正文保持可扫描的行距；所有中文负字距不低于 `-0.04em`。
-
-### Hierarchy
-
-- **Display**（750，`clamp(2.8rem, 3.5vw, 4.2rem)`，1.04）：仅用于首屏承诺。
-- **Headline**（默认粗体，`clamp(2rem, 4vw, 3.5rem)`，1.1）：用于后续章节与最终行动。
-- **Briefing title**（750，`clamp(1.45rem, 2.3vw, 2rem)`，1.15）：用于当前档案纸与可辨的待处理纸。
-- **Body**（400，1rem，1.65）：用于解释性文字，正文容器在宽屏保持有限阅读宽度。
-- **Label**（700，0.75rem，0.08em）：用于编号、示例与状态标签。
-
-## Layout
-
-`.container` 最大宽度为 1440px，横向内边距为 `clamp(1.25rem, 4vw, 4rem)`。桌面首屏采用 12 列：标题 5 列、行动简报 5 列、状态条 2 列；小屏改为单列，Header 只保留品牌和主 CTA。
-
-三张行动纸在桌面通过不同的纸张尺度与右侧错位同时露出类型和状态；在移动端恢复为可读的叠放层级。后续章节以规则线分段，并使用 `clamp(3.5rem, 8vw, 7rem)` 维持稀疏但连续的阅读节奏。
-
-## Elevation & Depth
-
-深度仅属于档案纸，使用一条扩散的纸张阴影（`0 24px 70px rgb(24 32 28 / 0.12)`）表示被拿到桌面的当前任务。其余页面通过冷白底、细规则线和错位关系组织层级，不在每个区块上重复使用阴影。
-
-**The Paper-Only Elevation Rule.** 阴影用于优先级纸张，不用于下半页的说明段或普通控件。
-
-## Shapes
-
-档案纸与内容段落以直线规则边界为主。主 CTA 使用柔和控制圆角（0.625rem）；页面不使用大面积圆角卡片、厚色侧边条或装饰性玻璃效果。
-
-## Components
-
-### Buttons
-
-- **Shape:** 柔和控制圆角（0.625rem）。
-- **Primary:** 深绿底、纸张白文字，至少 44px 高（2.75rem），文案固定为清晰动作“微信登录体验”。
-- **Hover / Focus:** Hover 加深背景；focus-visible 使用 2px 深绿轮廓与底色外扩。
-
-### Navigation
-
-- **Style:** 顶部细规则线下的单行品牌与导航。桌面展示页内锚点与 CTA；640px 以下隐藏页内锚点，保留品牌与 CTA，避免中文逐字换行。
-
-### Action Briefing Tabs
-
-- **Style:** 每张纸本身是可点击的 `tab`，当前项与 `tabpanel` 通过 `aria-controls` 和 `aria-labelledby` 关联。
-- **State:** 当前纸只展示详情标题，避免与摘要标题重复；另外两张只显示任务类型和关键状态。方向键、Home、End 可切换并将焦点移到活动纸；非活动详情标记为 `aria-hidden`，不造成三篇连续阅读。
-- **Motion:** 纸张只在三种明确排序间切换；`prefers-reduced-motion` 下立即完成状态切换。
-
-### Status Strip
-
-- **Style:** 右侧窄规则线、离散任务数字与琥珀箭头注记。
-- **Content:** 运行状态只列“正在检查”“已完成”“外部行动 0”等离散事实，不使用连续进度条。
-
-### Evidence Chain
-
-- **Style:** 一条深绿 1px 证据线串联来源、已验证画像、岗位要求和推荐解释；圆点编号用于真实的证据顺序。
-
-## Do's and Don'ts
-
-- Do 先交代今天的行动，再解释 Copilot 如何工作。
-- Do 在候选事实确认前明确其未计入匹配分或正式画像证据。
-- Do 用键盘可达的真实控件承载纸张切换，并在移动端保持 44px 触控高度。
-- Don't 把首页做成聊天窗口、后台仪表盘或三张等权功能卡。
-- Don't 使用远程字体、虚构 Logo、客户背书、成功率或自动投递承诺。
-- Don't 用颜色、厚侧边条、连续进度条或无限轮播单独表达状态。
+不引入第二套 UI 或动画 runtime，不复制一次性原型 CSS，不添加 API、schema、持久化或领域模型。不得虚构岗位、画像事实、匹配百分比、客户背书、成功率、自动投递或连续运行进度。

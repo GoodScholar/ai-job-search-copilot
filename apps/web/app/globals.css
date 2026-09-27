@@ -24,17 +24,25 @@
 }
 
 :root {
-  --ground: #f4f6f3;
-  --surface: #fffefa;
-  --ink: #15211d;
-  --muted: #657069;
-  --muted-surface: #e8ede8;
-  --emerald: #246a49;
-  --emerald-strong: #18553a;
-  --amber: #c98532;
-  --amber-ink: #9f5f14;
-  --rule: #d5ddd6;
-  --shadow-paper: 0 24px 70px rgb(24 32 28 / 0.12);
+  --canvas: #f5f9ff;
+  --surface-subtle: #eef5ff;
+  --surface: #ffffff;
+  --ink: #05133a;
+  --muted: #627aac;
+  --cobalt: #0051ff;
+  --ai-night: #001c37;
+  --signal: #13734b;
+  --warning: #965b00;
+  --danger: #b52b3a;
+  --spark: #dfff83;
+  --ground: var(--canvas);
+  --muted-surface: var(--surface-subtle);
+  --emerald: var(--cobalt);
+  --emerald-strong: #003bb8;
+  --amber: #f7c85c;
+  --amber-ink: var(--warning);
+  --rule: #cdddf6;
+  --shadow-paper: 0 18px 42px rgb(5 19 58 / 0.1);
   --font-sans: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", system-ui, sans-serif;
   --background: var(--ground);
   --foreground: var(--ink);
@@ -46,7 +54,7 @@
   --border: var(--rule);
   --input: var(--rule);
   --ring: var(--emerald);
-  --destructive: var(--amber);
+  --destructive: var(--danger);
   --radius: 0.625rem;
 }
 
@@ -2180,5 +2188,198 @@ summary.workbench-touch-target:focus-visible,
   .job-target-suggestion-list button,
   .job-target-form > button {
     width: 100%;
+  }
+}
+
+/* Career lens product shell: shared geometry and accessible state treatment. */
+.workbench-shell {
+  min-height: 100dvh;
+}
+
+.workbench-sidebar {
+  background: var(--surface);
+  border-right: 1px solid var(--rule);
+}
+
+.workbench-header {
+  height: 100%;
+}
+
+.workbench-header-inner {
+  align-content: start;
+  display: grid;
+  gap: 1.5rem;
+  height: 100%;
+  padding: 2rem 1rem;
+}
+
+.workbench-brand {
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  text-decoration: none;
+}
+
+.workbench-nav {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.workbench-nav-link,
+.workbench-nav-pending {
+  align-items: center;
+  border-radius: 0.625rem;
+  color: var(--muted);
+  display: flex;
+  font-size: 0.9rem;
+  min-height: 2.75rem;
+  padding-inline: 0.75rem;
+  text-decoration: none;
+}
+
+.workbench-nav-link[aria-current="page"] {
+  background: var(--surface-subtle);
+  color: var(--cobalt);
+  font-weight: 700;
+}
+
+.workbench-nav-pending {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.workbench-signout {
+  margin-top: auto;
+  width: 100%;
+}
+
+.workbench-content {
+  min-width: 0;
+}
+
+.workbench-main,
+.profile-main,
+.job-import-workbench,
+.model-connection-main {
+  max-width: 1280px;
+  padding-block: 2rem 4rem;
+}
+
+.workbench-ledger,
+.job-targets-section,
+.job-import-panel,
+.profile-facts,
+.profile-import-section,
+.model-connection-ledger {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 1.125rem;
+  box-shadow: 0 12px 30px rgb(5 19 58 / 0.06);
+}
+
+.recommendation-run-panel,
+.agent-run-panel,
+.model-connection-ledger {
+  background: var(--ai-night);
+  border-color: color-mix(in srgb, var(--ai-night), white 18%);
+  color: white;
+}
+
+.recommendation-run-panel :is(h2, h3, p, strong, a),
+.agent-run-panel :is(h2, h3, p, strong, a),
+.model-connection-ledger :is(h2, h3, p, strong, a, dt, dd) {
+  color: inherit;
+}
+
+.recommendation-run-panel [data-status="running"] strong,
+.agent-run-panel [data-status="running"] strong,
+.model-connection-ledger [data-status="checking"] strong {
+  color: var(--spark);
+}
+
+.workbench-connection,
+.recommendation-run-message,
+.job-import-failure,
+.model-connection-retry {
+  border-inline-start: 3px solid var(--warning);
+  color: var(--warning);
+  padding-inline-start: 0.75rem;
+}
+
+[data-state="failed"],
+.profile-conflict,
+.job-import-failure {
+  border-color: var(--danger);
+}
+
+@media (min-width: 1024px) {
+  .workbench-shell {
+    display: grid;
+    grid-template-columns: 14.5rem minmax(0, 1fr);
+  }
+
+  .workbench-sidebar {
+    min-height: 100dvh;
+  }
+}
+
+@media (max-width: 1023px) {
+  .workbench-header-inner {
+    align-items: center;
+    display: flex;
+    gap: 0.75rem;
+    min-height: 4rem;
+    padding: 0.5rem 1rem;
+  }
+
+  .workbench-nav {
+    flex: 1;
+    grid-auto-flow: column;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .workbench-nav-link,
+  .workbench-nav-pending {
+    justify-content: center;
+    padding-inline: 0.35rem;
+  }
+
+  .workbench-signout {
+    margin-top: 0;
+    width: auto;
+  }
+}
+
+@media (max-width: 767px) {
+  .workbench-sidebar {
+    border-right: 0;
+  }
+
+  .workbench-header-inner {
+    padding-inline: 1rem;
+  }
+
+  .workbench-nav {
+    background: color-mix(in srgb, var(--surface), transparent 3%);
+    border-top: 1px solid var(--rule);
+    bottom: 0;
+    box-shadow: 0 -8px 24px rgb(5 19 58 / 0.08);
+    gap: 0;
+    left: 0;
+    padding: 0.35rem max(0.5rem, env(safe-area-inset-left)) calc(0.35rem + env(safe-area-inset-bottom)) max(0.5rem, env(safe-area-inset-right));
+    position: fixed;
+    right: 0;
+    z-index: 20;
+  }
+
+  .workbench-nav-link,
+  .workbench-nav-pending {
+    font-size: 0.75rem;
+    min-height: 2.75rem;
+  }
+
+  .workbench-content :is(.workbench-main, .profile-main, .job-import-workbench, .model-connection-main) {
+    padding-bottom: calc(6rem + env(safe-area-inset-bottom));
   }
 }
