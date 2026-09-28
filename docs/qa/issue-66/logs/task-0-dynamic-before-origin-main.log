@@ -1,0 +1,19 @@
+# Issue #66 动态 before 基线来源
+
+- 基线工作树：`/Users/shen/.codex/worktrees/issue-66-baseline-check/AI Job Search Copilot`
+- 基线提交：`fa67dd655aee9bc63eb95e61590648a15cbbdb66`（`origin/main`，本次实现前）
+- 范围：临时只加采证 spec/截图钩子，未改旧 UI；harness 未带入产品分支。
+- 协调者报告的串行命令与结果（本日志不伪造 stdout）：
+  - `pnpm --filter web test:e2e -- issue66-before-dynamic.spec.ts --workers=1`：6 passed。
+  - `ISSUE66_BASELINE_CAPTURE=1 pnpm --filter web test:e2e -- workbench-inbox.spec.ts --workers=1`：ordinary phase 4 passed / 2 skipped；source phase 2 passed / 4 skipped。
+
+| 文件 | SHA-256 |
+| --- | --- |
+| `home-first-recommendation-journey-desktop-chrome.png` | `0f97e2bbe550ecce3e588fc9b8b4d9947b1209e21505a44c9945d2fb4047ee9c` |
+| `home-first-recommendation-journey-mobile-safari.png` | `fd3c2fb5a5735d9f15850cf30b1dede24387c7e6e7ecb9182dfb1dd4c235c635` |
+| `home-inbox-desktop-chrome.png` | `02de04e9f46bf259eec36a2ae76e4183c0894a7708c4fed56e8d6658634b51bf` |
+| `home-inbox-mobile-safari.png` | `62442244e3ae316cb6502d104f75a70e9081158f2ee3a84c111310a0b92d88ad` |
+| `profile-import-review-desktop-chrome.png` | `273fc8f489a2bf7c4048bfddb30d630661001929275d47eb47add09bc738868d` |
+| `profile-import-review-mobile-safari.png` | `202f5fca19a2921de03e26a6007f3cd520e17f6a7ab40cec367d106499b55397` |
+| `recommendations-calibration-desktop-chrome.png` | `80ced0714870fdeb648ff874575d1782809dde8f832737b3b53a52c230443241` |
+| `recommendations-calibration-mobile-safari.png` | `5e730798d4db8122ca68dca3d6807ca5f7437ed1e69e9d6287a2d947d1e7c76c` |

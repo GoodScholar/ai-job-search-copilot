@@ -45,7 +45,7 @@ Task 1–8 的实现、状态覆盖与视觉 AC 已完成。全量指定 E2E 仅
 - Produces: 可重复访问十路由与四任务态的验收入口、真实旧产品桌面/手机截图；不使用静态原型代替。
 
 - [x] **Step 1: 建立只采证的浏览器 spec**：复用现有 fixture/API 初始化路径访问十路由与四任务态，先只断言路由可读和截图成功，不断言尚未实现的新视觉。
-- [ ] **Step 2: 串行采集 before**：静态十路由旧图已来自真实 runtime；**AC-012 动态态旧版 before 为 UNVERIFIED**，待协调者从 `origin/main` 真实运行时补证。本分支不在实现后重建、不伪造动态 before。
+- [x] **Step 2: 串行采集 before**：静态十路由旧图来自真实 runtime；AC-012 四动态态旧图已由独立恢复的 `origin/main`（`fa67dd6`）真实运行时补采并复制，临时采证 harness 未进入本产品分支。来源、命令、结果与 SHA 见 `docs/qa/issue-66/logs/task-0-dynamic-before-origin-main.log`。
 - [x] **Step 3: 审核截图清单**：逐张确认来自真实 Web runtime、画幅正确、没有横向裁切，并在后续各任务中逐步为对应页面加入会先失败的新视觉/可访问行为断言。
 
 ### Task 1: 冻结设计基线与共用视觉骨架
@@ -226,12 +226,12 @@ Task 1–8 的实现、状态覆盖与视觉 AC 已完成。全量指定 E2E 仅
 - Produces: 十路由+四任务态的桌面/移动新旧对照、可访问性/响应式证据、逐页评分和最终命令日志。
 
 - [x] **Step 1: 完成验收 spec**：用真实浏览器和现有 fixture 访问十路由与四任务态，断言 landmark、主对象、真实状态、无横向溢出、44px 命中、键盘焦点、reduced-motion、空/错误恢复；复核各切片已经真实经历 RED，未覆盖项先补失败断言再修复。
-- [ ] **Step 2: 复核 before 证据**：静态十路由截图来自 `fa67dd6` 真实 runtime；**AC-012 动态态旧版 before 仍 UNVERIFIED**，不得在实现后重建或把静态原型冒充旧产品截图。
+- [x] **Step 2: 复核 before 证据**：静态十路由及 AC-012 四动态态截图均来自 `fa67dd6` 真实 runtime；动态态由独立基线工作树串行补采，未在实现后重建、未以静态原型冒充旧产品截图。
 - [x] **Step 3: 验证 GREEN 与保存 after**：在当前 HEAD 运行 `pnpm --filter web test:e2e -- career-lens-acceptance.spec.ts --workers=1`；逐页查看全部 after 截图并与权威图/原型对照，记录布局30/主视觉25/字体色彩20/内容组件15/移动10、具体扣分和关键缺项。
-- [x] **Step 4: 视觉修正闭环**：任何页面低于 95 或关键缺项>0，先补能捕获行为回归的测试，再最小修复并重跑受影响页面；不以平均分放行。（职业资料/运行策略已改为明确操作后展开；Mobile Policy 已经 RED→GREEN 验证两列均可见。）
+- [x] **Step 4: 视觉修正闭环**：任何页面低于 95 或关键缺项>0，先补能捕获行为回归的测试，再最小修复并重跑受影响页面；不以平均分放行。（职业资料/运行策略已改为明确操作后展开；Mobile Policy 已经 RED→GREEN 验证五列以局部横滚保留。）
 - [x] **Step 5: 全量串行验证**：确认无遗留测试进程后，依次运行 `pnpm --filter web test`、`pnpm --filter web typecheck`、`pnpm --filter web lint`、`pnpm --filter web build`，再依次运行 Issue 指定的全部现有 E2E specs；记录退出码与完整日志位置；全局停止状态以 UNVERIFIED 记录。
 - [x] **Step 6: UI 静态检测**：运行 `node /Users/shen/.codex/skills/vibe-ui-orchestrator/scripts/finesse-detect.mjs --json <changed-web-files>` 作为补充，`notCovered` 必须转入人工浏览器检查，不用它替代截图验收。
-- [ ] **Step 7: 完成 QA 报告**：`docs/qa/issue-66/README.md` 已写入参考采用/舍弃、依赖与许可、每页评分、截图清单、键盘/焦点/触控/对比度/reduced-motion/溢出/状态证据、既有 API 失败和未决风险；14 项 after 均 >=95、关键缺项 0，但 **AC-012 动态态旧版 before 和 one-click API/worker 均保持 UNVERIFIED**。
+- [x] **Step 7: 完成 QA 报告**：`docs/qa/issue-66/README.md` 已写入参考采用/舍弃、依赖与许可、每页评分、截图清单、键盘/焦点/触控/对比度/reduced-motion/溢出/状态证据、既有 API 失败和未决风险；14 项 after 均 >=95、关键缺项 0；AC-012 动态态旧版 before 已由 `fa67dd6` 独立基线运行时补证，只有 one-click API/worker 保持 UNVERIFIED。
 - [x] **Step 8: Commit**：`git commit -m "test(web): verify the career lens migration"`。
 
 ## Plan Self-Review
