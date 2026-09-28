@@ -1158,6 +1158,8 @@ summary.workbench-touch-target:focus-visible,
 .agent-inbox-details dd { margin: 0; overflow-wrap: anywhere; }
 .agent-inbox-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 1rem; }
 .job-import-workbench { display: grid; gap: 1.5rem; }
+.job-import-status-panel { align-items: center; background: color-mix(in srgb, var(--cobalt) 8%, var(--surface)); border-inline-start: 0.25rem solid var(--cobalt); display: flex; min-height: 3rem; padding: 0.75rem 1rem; }
+.job-import-status-panel p { color: var(--ink); font-weight: 700; margin: 0; }
 .job-import-panel { background: var(--surface); border: 1px solid var(--rule); box-shadow: var(--shadow-paper); min-width: 0; padding: clamp(1.25rem, 4vw, 2rem); }
 .job-import-panel li, .job-import-panel p { min-width: 0; overflow-wrap: anywhere; }
 .job-import-panel h2 { font-size: 1.35rem; letter-spacing: -0.025em; margin: 0 0 1rem; }
@@ -1726,6 +1728,8 @@ summary.workbench-touch-target:focus-visible,
   max-width: 100%;
   overflow-x: auto;
 }
+
+.account-run-policy-main .run-policy-comparison { border-inline-start: 0.25rem solid var(--cobalt); }
 
 .run-policy-table-wrap table {
   border-collapse: collapse;

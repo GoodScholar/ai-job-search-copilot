@@ -45,6 +45,7 @@ it("为空 Watchlist 呈现目标角色、唯一新增提交和固定安全提�
   render(<CompanyWatchlistView initialOverview={overview()} />);
 
   expect(screen.getByRole("main", { name: "公司来源台账" })).toBeVisible();
+  expect(screen.getByRole("region", { name: "当前 Watchlist 状态" })).toHaveTextContent("Watchlist 版本 0");
   expect(screen.getByRole("heading", { name: "AI 应用工程的目标公司 Watchlist" })).toBeVisible();
   const submitButtons = screen.getAllByRole("button").filter((button) => button.getAttribute("type") === "submit");
   expect(submitButtons).toHaveLength(1);

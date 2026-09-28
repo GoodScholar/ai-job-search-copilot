@@ -62,6 +62,7 @@ export function JobImportView({ initialImports, initialTargets = [] }: JobImport
   const activeImportId = activeImport?.importId;
   const detailImportId = detail?.importId;
   const detailStatus = detail?.status;
+  const activeImportStatus = activeImport ? `${importLabel(activeImport)} · ${statusText[activeImport.status]}` : "尚未选择岗位导入";
 
   const nextEvidenceRevision = useCallback(() => {
     const next = evidenceRevisionRef.current + 1;
@@ -198,6 +199,7 @@ export function JobImportView({ initialImports, initialTargets = [] }: JobImport
         {announcement && <p aria-live="polite">{announcement}</p>}
         {pollingMessage && actionState.ok === false && actionState.message && <p>{pollingMessage}</p>}
       </section>
+      <section aria-label="当前导入任务状态" className="job-import-status-panel"><p>{activeImportStatus}</p></section>
       <div className="job-import-columns">
         <section aria-labelledby="recent-job-imports-title" className="job-import-panel"><h2 id="recent-job-imports-title">最近导入</h2>
           {recentImports.length === 0 ? <p>尚无岗位导入记录。</p> : <ol className="job-import-recent-list">{recentImports.map((item) => <li key={item.importId}><button aria-pressed={activeImport?.importId === item.importId} className="workbench-touch-target" onClick={() => selectImport(item)} type="button"><span>{importLabel(item)}</span><span>{statusText[item.status]}</span></button></li>)}</ol>}

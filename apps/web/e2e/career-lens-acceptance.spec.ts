@@ -53,6 +53,25 @@ async function signIn(page: Page): Promise<void> {
   await expect(page).toHaveURL(/\/home$/u);
 }
 
+async function createCandidateReviewFixture(request: APIRequestContext, project: string): Promise<string> {
+  const session = await request.post(`${apiBaseUrl}/v1/auth/dev/sessions`, {
+    headers: { "x-dev-auth-secret": devAuthSecret }, data: { subject: `career-lens-review-${project}-${Date.now()}` },
+  });
+  expect(session.status()).toBe(201);
+  const token = (await session.json() as { sessionToken: string }).sessionToken;
+  const created = await request.post(`${apiBaseUrl}/v1/career-documents/imports`, {
+    headers: { authorization: `Bearer ${token}` },
+    multipart: { privacyMode: "sanitized_only", file: { name: "career-lens-review.md", mimeType: "text/markdown", buffer: Buffer.from("## 技能\n- TypeScript", "utf8") } },
+  });
+  expect(created.status()).toBe(202);
+  const { importId } = await created.json() as { importId: string };
+  await expect.poll(async () => {
+    const detail = await request.get(`${apiBaseUrl}/v1/career-documents/imports/${importId}`, { headers: { authorization: `Bearer ${token}` } });
+    return detail.ok() ? (await detail.json() as { status: string }).status : "unavailable";
+  }, { timeout: 20_000 }).toBe("completed");
+  return token;
+}
+
 test("captures real Alpha routes for the career lens acceptance review", async ({ page }, testInfo) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/");
@@ -89,4 +108,24 @@ test("captures a seeded real Watchlist route without substituting prototype data
   await expect(page.getByRole("article", { name: "目标公司来源：职业透镜真实验收来源" })).toBeVisible();
   await expect(page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).resolves.toBe(true);
   await page.screenshot({ path: fixtureScreenshotPath("profile-targets-watchlist-seeded", testInfo.project.name), fullPage: true });
+});
+
+test("captures real Inbox、导入审核与首次推荐旅程状态", async ({ page, request }, testInfo) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  const token = await createCandidateReviewFixture(request, testInfo.project.name);
+  await page.context().addCookies([{ name: "job_copilot_session", value: token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
+
+  await page.goto("/home");
+  await expect(page.getByRole("region", { name: "需要你决定的事项", exact: true })).toBeVisible();
+  await expect(page.getByRole("article", { name: "有待确认的画像事实" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "首次推荐旅程" })).toBeVisible();
+  await expect(page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).resolves.toBe(true);
+  await page.screenshot({ path: fixtureScreenshotPath("home-inbox", testInfo.project.name), fullPage: true });
+  await page.screenshot({ path: fixtureScreenshotPath("home-first-recommendation-journey", testInfo.project.name), fullPage: true });
+
+  await page.goto("/profile#candidate-facts");
+  await expect(page.getByRole("heading", { name: "待确认事实" })).toBeVisible();
+  await expect(page.getByText("TypeScript", { exact: true })).toBeVisible();
+  await expect(page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).resolves.toBe(true);
+  await page.screenshot({ path: fixtureScreenshotPath("profile-import-review", testInfo.project.name), fullPage: true });
 });

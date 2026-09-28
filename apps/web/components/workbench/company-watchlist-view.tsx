@@ -208,7 +208,7 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth, ini
   }
 
   return <main aria-label="公司来源台账" className="container workbench-main company-watchlist-main">
-    <section aria-labelledby="company-watchlist-title" className="company-watchlist-intro">
+    <section aria-label="当前 Watchlist 状态" className="company-watchlist-intro">
       <p className="workbench-kicker">求职目标 · 公开来源台账</p>
       <h1 id="company-watchlist-title">{overview.target.roleFamily}的目标公司 Watchlist</h1>
       <p>为已确认的求职目标维护可验证的公开招聘来源。顺序决定优先级，已停用来源不会进入新的运行范围。</p>

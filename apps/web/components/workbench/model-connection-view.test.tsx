@@ -20,6 +20,8 @@ it.each([
   render(<ModelConnectionView initialDiagnostics={initial} />);
   expect(screen.getByRole("main", { name: "模型诊断" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "模型连接" })).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "当前诊断摘要" })).toBeVisible();
+  expect(screen.getByRole("region", { name: "四项模型诊断" })).toBeVisible();
   expect(screen.getByRole("status")).toHaveTextContent(title);
   expect(screen.getByText("身份验证")).toBeInTheDocument();
   expect(screen.getByText("模型可用性")).toBeInTheDocument();

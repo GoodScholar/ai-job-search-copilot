@@ -115,6 +115,8 @@ it("旧停止命令重放后以重新读取的解除状态为准", async () => {
 
 it("未停止时仅说明停止效果，不把当前状态说成已停止", () => {
   render(<AccountRunPolicyView initialControl={activeControl} initialPolicy={initialPolicy} />);
+  expect(screen.getByRole("main", { name: "账户运行策略" })).toHaveClass("account-run-policy-main");
+  expect(screen.getByRole("region", { name: "策略生效对照" })).toBeVisible();
   expect(screen.queryByText("已停止新动作，正在运行的任务将在下一个安全检查点终止。已发出的请求可能仍产生费用")).not.toBeInTheDocument();
   expect(screen.getByText("停止后将阻止新的运行和外部动作，正在运行的任务会在下一个安全检查点终止；已发出的请求可能仍产生费用。")).toBeInTheDocument();
 });

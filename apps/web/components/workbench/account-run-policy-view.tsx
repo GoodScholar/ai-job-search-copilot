@@ -260,7 +260,7 @@ export function AccountRunPolicyView({ initialControl = null, initialPolicy }: {
     }
   }
 
-  return <main aria-label="账户运行策略" className="container profile-main">
+  return <main aria-label="账户运行策略" className="container profile-main account-run-policy-main">
     <section className="profile-intro"><p className="workbench-kicker">求职画像 · 运行策略</p><h1>账户运行策略</h1><p>系统硬上限保护每次运行。你可以保存更保守的额度；手动运行不受后台窗口限制。</p></section>
     <section aria-labelledby="account-run-control-title" className="job-targets-section">
       <h2 id="account-run-control-title">账户运行控制</h2>
@@ -271,7 +271,7 @@ export function AccountRunPolicyView({ initialControl = null, initialPolicy }: {
       {controlUnavailable && !controlMessage ? <p>运行控制暂不可用</p> : null}
       {controlMessage ? <p aria-live="polite" className="run-policy-status" role="status">{controlMessage}</p> : null}
     </section>
-    <section aria-labelledby="run-policy-comparison-title" className="job-targets-section">
+    <section aria-label="策略生效对照" className="job-targets-section run-policy-comparison">
       <h2 id="run-policy-comparison-title">当前策略对照</h2>
       <div aria-label="当前策略对照表，可横向滚动" className="run-policy-table-wrap" tabIndex={0}><table><thead><tr><th scope="col">设置</th><th scope="col">系统默认</th><th scope="col">硬上限</th><th scope="col">你的设置</th><th scope="col">最终生效</th></tr></thead><tbody>
         {(Object.keys(discoveryLabels) as Array<keyof typeof discoveryLabels>).map((key) => <tr key={key}><th scope="row">{discoveryLabels[key]}</th><td>{defaults.discovery[key]}</td><td>{hardLimits.discovery[key]}</td><td>{policy.userSettings?.discovery[key] ?? "系统默认"}</td><td>{policy.effective.discovery[key]}</td></tr>)}
