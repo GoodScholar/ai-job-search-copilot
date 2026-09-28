@@ -2209,6 +2209,7 @@ summary.workbench-touch-target:focus-visible,
   align-content: start;
   display: grid;
   gap: 1.5rem;
+  grid-template-columns: minmax(0, 1fr);
   height: 100%;
   padding: 2rem 1rem;
 }
@@ -2224,6 +2225,7 @@ summary.workbench-touch-target:focus-visible,
 .workbench-nav {
   display: grid;
   gap: 0.25rem;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .workbench-nav-link,

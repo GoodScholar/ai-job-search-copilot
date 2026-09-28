@@ -12,7 +12,8 @@ const authenticatedRoutes = [
 
 function screenshotPath(route: string, project: string): string {
   const filename = `${route === "/" ? "marketing" : route.slice(1).replaceAll("/", "-")}-${project.replaceAll(" ", "-").toLowerCase()}.png`;
-  return `../../docs/qa/issue-66/screenshots/before/${filename}`;
+  const phase = process.env.CAREER_LENS_CAPTURE === "after" ? "after" : "before";
+  return `../../docs/qa/issue-66/screenshots/${phase}/${filename}`;
 }
 
 async function signIn(page: Page): Promise<void> {
@@ -21,19 +22,24 @@ async function signIn(page: Page): Promise<void> {
   await expect(page).toHaveURL(/\/home$/u);
 }
 
-test("captures real Alpha routes before the career lens migration", async ({ page }, testInfo) => {
+test("captures real Alpha routes for the career lens acceptance review", async ({ page }, testInfo) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/");
   await expect(page.getByRole("main")).toBeVisible();
+  await page.waitForTimeout(500);
   await page.screenshot({ path: screenshotPath("/", testInfo.project.name), fullPage: true });
 
   await page.goto("/login?returnTo=%2Fhome");
   await expect(page.getByRole("main")).toBeVisible();
+  await page.waitForTimeout(500);
   await page.screenshot({ path: screenshotPath("/login", testInfo.project.name), fullPage: true });
 
   await signIn(page);
   for (const route of authenticatedRoutes) {
     await page.goto(route);
     await expect(page.getByRole("main")).toBeVisible();
+    await page.waitForTimeout(500);
+    await expect(page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).resolves.toBe(true);
     await page.screenshot({ path: screenshotPath(route, testInfo.project.name), fullPage: true });
   }
 
