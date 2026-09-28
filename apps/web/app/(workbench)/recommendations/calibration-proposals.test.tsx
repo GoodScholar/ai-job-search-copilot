@@ -17,6 +17,13 @@ it("展示校准证据、规则差异、影响预览与可访问的成功状态"
   expect(revise).toHaveBeenCalledOnce();
 });
 
+it("零提案时保留可见的校准空态与下一步说明", () => {
+  render(<CalibrationProposals proposals={[]} reviseAction={vi.fn()} resolveAction={vi.fn()} />);
+  const region = screen.getByRole("region", { name: "校准建议" });
+  expect(region).toHaveTextContent("暂无待审校准建议。");
+  expect(region).toHaveTextContent("继续处理推荐中的保存或忽略决定");
+});
+
 it("失败重渲染仍复用同一幂等键，且不展示内部原因码或 UUID", async () => {
   const revise = vi.fn().mockRejectedValue(new Error("temporary"));
   render(<CalibrationProposals proposals={[proposal]} reviseAction={revise} resolveAction={vi.fn()} />);

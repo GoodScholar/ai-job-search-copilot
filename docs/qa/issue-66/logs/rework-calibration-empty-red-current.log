@@ -1,0 +1,42 @@
+$ vitest run --passWithNoTests -- 'app/(workbench)/recommendations/calibration-proposals.test.tsx'
+
+ RUN  v4.1.11 /Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web
+
+ ❯ app/(workbench)/recommendations/calibration-proposals.test.tsx (9 tests | 1 failed) 738ms
+   × 零提案时保留可见的校准空态与下一步说明 5ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  app/(workbench)/recommendations/calibration-proposals.test.tsx > 零提案时保留可见的校准空态与下一步说明
+TestingLibraryElementError: Unable to find an accessible element with the role "region" and name "校准建议"
+
+There are no accessible roles. But there might be some inaccessible roles. If you wish to access them, then set the `hidden` option to `true`. Learn more about this here: https://testing-library.com/docs/dom-testing-library/api-queries#byrole
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div />[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ app/(workbench)/recommendations/calibration-proposals.test.tsx:22:25
+     20| it("零提案时保留可见的校准空态与下一步说明", () => {
+     21|   render(<CalibrationProposals proposals={[]} reviseAction={vi.fn()} r…
+     22|   const region = screen.getByRole("region", { name: "校准建议" });
+       |                         ^
+     23|   expect(region).toHaveTextContent("暂无待审校准建议。");
+     24|   expect(region).toHaveTextContent("继续处理推荐中的保存或忽略决定");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 94 passed (95)
+      Tests  1 failed | 661 passed (662)
+   Start at  16:58:15
+   Duration  12.74s (transform 3.73s, setup 11.86s, import 11.82s, tests 24.61s, environment 51.67s)
+
+/Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web:
+[ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL] web@0.1.0 test: `vitest run --passWithNoTests -- 'app/(workbench)/recommendations/calibration-proposals.test.tsx'`
+Exit status 1
+TEE_EXIT_CODE=1

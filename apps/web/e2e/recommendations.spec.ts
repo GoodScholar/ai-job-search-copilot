@@ -409,6 +409,10 @@ test("显式 Fake matching 的质量不足候选可生成零推荐清单", async
   await page.reload();
   await expect(page.getByText("稳定排除 1 项岗位：匹配证据不足")).toBeVisible();
   await expect(page.getByRole("list", { name: "推荐岗位" }).locator("li")).toHaveCount(0);
+  const calibration = page.getByRole("region", { name: "校准建议" });
+  await expect(calibration).toContainText("暂无待审校准建议。");
+  await expect(calibration).toContainText("继续处理推荐中的保存或忽略决定");
+  await captureAfterState(page, "recommendations-calibration", "empty", info);
   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });

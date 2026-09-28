@@ -17,13 +17,13 @@
 | 检查 | 当前结果 | 日志 |
 | --- | --- | --- |
 | 受影响 E2E：Profile Markdown / DOCX / PDF | PASS，10 passed | `task-8-markdown-career-import-selector-green.log`（Markdown 4 passed）；`task-8-all-specified-e2e-final.log`（DOCX/PDF 与其余指定 spec 的完整串行输出；仅 one-click 基线缺陷失败） |
-| 返工定向 E2E：运行策略 / Markdown 导入 / 推荐 | PASS，8 / 4 / 定向 2 passed | `task-8-all-specified-e2e-final.log`；`task-8-markdown-career-import-selector-green.log`；`task-8-recommendations-selector-green.log`，均为 `--workers=1` |
+| 返工定向 E2E：运行策略 / Markdown 导入 / 推荐 | PASS，8 / 4 / 本轮推荐 12 passed | `task-8-all-specified-e2e-final.log`；`task-8-markdown-career-import-selector-green.log`；`recommendations-e2e-after-final-current.log`，均为 `--workers=1` |
 | 受影响 E2E：运行策略 / 模型诊断 | PASS，10 passed | `task-8-all-specified-e2e-final.log`（完整串行输出；仅 one-click 基线缺陷失败） |
 | 受影响 E2E：目标 / Watchlist / 岗位导入 / 推荐 | PASS，22 passed | `task-8-all-specified-e2e-final.log`；目标定向见 `task-8-job-targets-selector-green.log`，Watchlist 定向见 `rework-watchlist-e2e-green.log` |
 | 本轮 Watchlist 空态补采 E2E | PASS，4 passed | `task-8-watchlist-empty-after-20260928.log`（本轮 `tee` 保存的完整 stdout/stderr，显式 `CAREER_LENS_CAPTURE=after`） |
 | 受影响 E2E：Inbox | PASS，2 passed、4 skipped（分 phase 设计） | `task-8-workbench-inbox-mobile-fix-green.log`；完整指定 E2E 输出见 `task-8-all-specified-e2e-final.log` |
-| Web Vitest | 已通过；本次仅补采证据，未重跑未改动检查 | `web-test-recovery-final.log`（原始 recovery 输出：93 files / 651 tests） |
-| typecheck / lint / build | 已通过；本次仅补采证据，未重跑未改动检查 | `web-typecheck-recovery-final.log`、`web-lint-recovery-final.log`、`web-build-recovery-final.log` |
+| Web Vitest | PASS，95 files / 662 tests | `web-test-final-current.log`（完整 stdout/stderr） |
+| typecheck / lint / build | PASS | `web-typecheck-final-current.log`、`web-lint-final-current.log`、`web-build-final-current.log`（各自完整 stdout/stderr） |
 | Career Lens acceptance（未设置 capture / 显式 `after`） | PASS，10 / 10 passed；前者未写 before | `rework-acceptance-after-fixture-final.log`、`rework-acceptance-after-final.log`（完整 stdout/stderr）；`task-8-state-matrix-after-20260928.log` 仅为索引摘要 |
 | 动态态 baseline before（`fa67dd6`） | PASS：临时 `issue66-before-dynamic.spec.ts` 6 passed；Inbox 4 passed / 2 skipped、source phase 2 passed / 4 skipped | 来源与哈希：`task-0-dynamic-before-origin-main.log`；原始输出：`task-0-dynamic-before-raw.log`、`task-0-workbench-inbox-before-raw.log`；复现材料：`baseline-harness/` |
 | finesse detector | PASS，P0=0；P1/P2 为既有样式提示 | `finesse-detect-recovery-final.log` |
@@ -36,7 +36,7 @@
 
 ## 视觉与可访问性
 
-状态矩阵的 29 个命名状态视图、58 张本轮 `screenshots/after/*-{desktop-chrome,mobile-safari}.png` 均已逐张查看，Desktop/Mobile 均通过，关键缺项均为 0。评分格式为布局/主视觉/字体色彩/内容组件/移动=总分；每项的唯一扣分是相应长台账或说明的全页信息密度。Mobile Policy 截图只展示横滚容器的左起列；定向 Mobile Safari E2E 已验证五个表头均在可访问树、表格容器确有横滚且根页面不溢出，因此不以“裁切隐藏列”冒充通过。
+状态矩阵的 30 个命名状态视图、60 张本轮 `screenshots/after/*-{desktop-chrome,mobile-safari}.png` 均已逐张查看，Desktop/Mobile 均通过，关键缺项均为 0。评分格式为布局/主视觉/字体色彩/内容组件/移动=总分；每项的唯一扣分是相应长台账或说明的全页信息密度。Mobile Policy 截图只展示横滚容器的左起列；定向 Mobile Safari E2E 已验证五个表头均在可访问树、表格容器确有横滚且根页面不溢出，因此不以“裁切隐藏列”冒充通过。
 
 | 页面或动态态 | 五维评分 | 扣分 |
 | --- | --- | --- |
@@ -95,6 +95,6 @@
 | Inbox 任务态（`/home`） | `home-empty-{desktop-chrome,mobile-safari}.png` | `home-inbox-content-{desktop-chrome,mobile-safari}.png` | `home-inbox-failure-{desktop-chrome,mobile-safari}.png` | 无候选事实时队列不渲染；独立导入审核 fixture 产生 Inbox，离线动作失败后可重试并由轮询确认恢复。96，关键缺项 0。 |
 | 首次推荐旅程（`/home`） | `home-empty-{desktop-chrome,mobile-safari}.png` | `home-first-recommendation-journey-content-{desktop-chrome,mobile-safari}.png` | `home-first-recommendation-journey-failure-{desktop-chrome,mobile-safari}.png` | 空账户尚未满足目标/来源前置条件；独立准备账户显示旅程，物理发现失败图保留下一待办。96，关键缺项 0。 |
 | 导入审核（`/profile#candidate-facts`） | `profile-empty-{desktop-chrome,mobile-safari}.png` | `profile-import-review-content-{desktop-chrome,mobile-safari}.png` | `profile-import-review-failure-{desktop-chrome,mobile-safari}.png` | 无当前/最近导入时为空；解析完成候选事实和并发版本冲突均为真实职业资料导入链路，任务状态持续 `aria-live`。96，关键缺项 0。 |
-| 推荐校准（`/recommendations`） | `recommendations-content-{desktop-chrome,mobile-safari}.png` | `recommendations-calibration-content-{desktop-chrome,mobile-safari}.png` | `recommendations-failure-{desktop-chrome,mobile-safari}.png` | 普通真实推荐列表即“无待审校准提案”的空子态；Inbox 跳转产生审核提案，过期规则冲突是该操作的关键失败并给出重新计算。96，关键缺项 0。 |
+| 推荐校准（`/recommendations`） | `recommendations-calibration-empty-{desktop-chrome,mobile-safari}.png` | `recommendations-calibration-content-{desktop-chrome,mobile-safari}.png` | `recommendations-failure-{desktop-chrome,mobile-safari}.png` | 真实质量不足 fixture 产生零推荐且零提案，显示“暂无待审校准建议”及继续处理推荐决定的说明；Inbox 跳转产生审核提案，过期规则冲突是该操作的关键失败并给出重新计算。96，关键缺项 0。 |
 
-本轮新增/恢复的行为断言首先作为回归测试落地：导入编辑区的真实 `Tab` 顺序到文件输入、Watchlist 的公司名/招聘入口/允许域/来源备注与保存按钮均为 >=44px、运行策略本地超硬上限错误、推荐过期校准错误、职业资料并发冲突以及 Inbox 离线恢复。前两项为既有实现上首次运行即 GREEN 的断言恢复，未伪造 RED；首次推荐旅程曾因旧 E2E 直接操作已折叠文件控件而 RED，改为先点击“开始导入职业资料”后 GREEN。所有采图均只在 `CAREER_LENS_CAPTURE=after` 时写入 after；未设置变量的 acceptance 10 passed，且 before 路径前后无差异。
+本轮新增/恢复的行为断言首先作为回归测试落地：导入编辑区的真实 `Tab` 顺序到文件输入、Watchlist 的公司名/招聘入口/允许域/来源备注与保存按钮均为 >=44px、运行策略本地超硬上限错误、推荐过期校准错误、职业资料并发冲突以及 Inbox 离线恢复。前两项为既有实现上首次运行即 GREEN 的断言恢复，未伪造 RED；首次推荐旅程曾因旧 E2E 直接操作已折叠文件控件而 RED，改为先点击“开始导入职业资料”后 GREEN。本轮校准空态先由 `calibration-proposals.test.tsx` RED（零提案无 named region）证明缺口，再以可见空态 GREEN；真实 recommendations E2E 12 passed 并采双视口图，日志为 `rework-calibration-empty-{red,green}-current.log` 与 `recommendations-e2e-after-final-current.log`。所有采图均只在 `CAREER_LENS_CAPTURE=after` 时写入 after；未设置变量的 acceptance 10 passed，且 before 路径前后无差异。
