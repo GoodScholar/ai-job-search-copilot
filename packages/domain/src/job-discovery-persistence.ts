@@ -1,3 +1,4 @@
+import type { JobQualifications } from "@job-copilot/contracts/job-imports";
 import { createHash } from "node:crypto";
 import { and, asc, desc, eq, gt, sql } from "drizzle-orm";
 import {
@@ -75,6 +76,8 @@ export type DiscoveryDetail = {
   sourceType: string;
   isOfficial: boolean;
   rawPayload: Record<string, unknown>;
+  description?: string | null;
+  qualifications?: JobQualifications;
 };
 
 export type StoredDiscoveryObject = {
@@ -102,11 +105,7 @@ export function discoverySourceIdentifier(sourceId: string, detailId: string): s
 }
 
 function contentSha256(detail: DiscoveryDetail): string {
-  return sha256({
-    sourceId: detail.sourceId, detailId: detail.detailId, company: detail.company, title: detail.title,
-    location: detail.location, postedAt: detail.postedAt, deadline: detail.deadline,
-    sourceType: detail.sourceType, isOfficial: detail.isOfficial,
-  });
+  return sha256(discoveryNormalizedData(detail));
 }
 
 function detailAvailability(detail: DiscoveryDetail, now: Date): Availability {
@@ -365,7 +364,7 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
           await persistJobOpportunity(transaction, {
             id: deps.id, userId: input.userId, importId: null, sourcePostingVersionId: source.sourcePostingVersionId,
             existingOpportunityId, isOfficial: source.isOfficial, company: detail.company, title: detail.title,
-            location: detail.location, postedAt: detail.postedAt, deadline: detail.deadline, description: null,
+            location: detail.location, postedAt: detail.postedAt, deadline: detail.deadline, description: detail.description ?? null,
             normalizedData: discoveryNormalizedData(detail), now: input.now,
           });
           sourcePostingVersionIds.push(source.sourcePostingVersionId);
@@ -511,7 +510,7 @@ export function createJobDiscoveryPersistence(deps: { db: Database; id: () => st
           const evidence = await persistJobOpportunity(transaction, {
             id: deps.id, userId: run.userId, importId: null, sourcePostingVersionId: source.sourcePostingVersionId,
             existingOpportunityId, isOfficial: source.isOfficial, company: detail.company, title: detail.title,
-            location: detail.location, postedAt: detail.postedAt, deadline: detail.deadline, description: null,
+            location: detail.location, postedAt: detail.postedAt, deadline: detail.deadline, description: detail.description ?? null,
             normalizedData: discoveryNormalizedData(detail), now: input.now,
           });
           opportunityIds.add(evidence.opportunityId);

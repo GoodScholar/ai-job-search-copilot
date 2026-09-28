@@ -158,11 +158,10 @@ test("岗位导入在真实运行时完成、去重、保留原文并处理失�
   await expect(page.getByRole("status")).toHaveText("导入完成", { timeout: 15_000 });
   const statusHistory = await visibleStatusHistory(page);
   const importedIndex = statusHistory.findIndex((entry) => /已导入/.test(entry));
-  const normalizingIndex = statusHistory.findIndex((entry, index) => index > importedIndex && /规范化中/.test(entry));
-  const completedIndex = statusHistory.findIndex((entry, index) => index > normalizingIndex && entry === "导入完成");
+  // 快速完成时首次轮询即可读到 completed；中间态展示由组件测试确定性覆盖。
+  const completedIndex = statusHistory.findIndex((entry, index) => index > importedIndex && entry === "导入完成");
   expect(importedIndex).toBeGreaterThanOrEqual(0);
-  expect(normalizingIndex).toBeGreaterThan(importedIndex);
-  expect(completedIndex).toBeGreaterThan(normalizingIndex);
+  expect(completedIndex).toBeGreaterThan(importedIndex);
   await expect(page.locator(".job-import-opportunity")).toContainText("示例科技");
   await expect(page.locator(".job-import-opportunity")).toContainText("高级前端工程师");
   await expect(page.locator(".job-import-opportunity")).toContainText("上海");

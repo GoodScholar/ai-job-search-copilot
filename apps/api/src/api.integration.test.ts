@@ -3,10 +3,11 @@ import "reflect-metadata";
 import { FastifyAdapter, type NestFastifyApplication } from "@nestjs/platform-fastify";
 import { Test } from "@nestjs/testing";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { agentRuns, auditEvents, candidateFactEvidence, candidateFacts, careerDocuments, careerFactConflicts, careerImports, companyWatchlistRevisions, companyWatchlists, createDatabase, firstRecommendationJourneyCompletions, jobProfiles, jobSourceHealthChecks, modelDiagnosticResults, migrateDatabase, profileFactRevisions, profileFacts, type Database } from "@job-copilot/database";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { agentRuns, auditEvents, candidateFactEvidence, candidateFacts, careerDocuments, careerFactConflicts, careerImports, companyWatchlistRevisions, companyWatchlists, createDatabase, firstRecommendationJourneyCompletions, jobOpportunities, jobOpportunitySources, jobProfiles, jobSourceHealthChecks, jobSourcePostingVersions, jobSourcePostings, modelDiagnosticResults, migrateDatabase, profileFactRevisions, profileFacts, type Database } from "@job-copilot/database";
 import type { CareerDocumentStore, CareerImportQueue } from "@job-copilot/domain/career-imports";
 import type { JobContentStore, JobImportQueue } from "@job-copilot/domain/job-imports";
+import type { JobExportQueue, JobExportStore } from "@job-copilot/domain/job-exports";
 import { createAgentRunCommands, createRecommendationRunCommands, type AgentRunQueue } from "@job-copilot/domain/agent-runs";
 import { createReadyRunPreflightEvaluator } from "../../../packages/domain/src/testing/run-preflight.js";
 import { createAuditTrail } from "@job-copilot/domain/audit-trail";
@@ -25,6 +26,7 @@ import { configureApiApplication } from "./configure-api-application.js";
 import { DATABASE, RUNTIME_CONFIG } from "./config/runtime-config.module.js";
 import { CAREER_DOCUMENT_STORE, CAREER_IMPORT_QUEUE } from "./career-import/career-import.tokens.js";
 import { JOB_CONTENT_STORE, JOB_IMPORT_QUEUE, JOB_PAGE_FETCHER } from "./job-imports/job-imports.tokens.js";
+import { JOB_EXPORT_QUEUE, JOB_EXPORT_STORE } from "./job-exports/job-exports.tokens.js";
 import { JobPageFetchError, type JobPageFetcher } from "./job-imports/job-page-fetcher.js";
 import { createMinimalDocx } from "./career-import/minimal-docx.test-support.js";
 import { CAREER_FACT_CONFLICT_REVIEW_COMMANDS, PROFILE_REVIEW_COMMANDS, type ProfileReviewCommands } from "./profile-review/profile-review.tokens.js";
@@ -192,6 +194,10 @@ describe("authenticated workbench HTTP API", () => {
       };
     },
   };
+  const jobExportQueue: JobExportQueue & { jobs: unknown[] } = { jobs: [], async enqueue(job) { this.jobs.push(job); } };
+  const jobExportStore: JobExportStore = {
+    async put() {}, async get() { throw new Error("job export object unavailable"); }, async delete() {},
+  };
   const originalEnvironment = {
     APP_ENV: process.env.APP_ENV,
     AUTH_MODE: process.env.AUTH_MODE,
@@ -224,6 +230,8 @@ describe("authenticated workbench HTTP API", () => {
       .overrideProvider(JOB_CONTENT_STORE).useValue(jobContentStore)
       .overrideProvider(JOB_IMPORT_QUEUE).useValue(jobQueue)
       .overrideProvider(JOB_PAGE_FETCHER).useValue(jobPageFetcher)
+      .overrideProvider(JOB_EXPORT_QUEUE).useValue(jobExportQueue)
+      .overrideProvider(JOB_EXPORT_STORE).useValue(jobExportStore)
       .overrideProvider(AGENT_RUN_QUEUE_PORT).useValue(agentRunQueue)
       .overrideProvider(CAREER_FACT_CONFLICT_REVIEW_COMMANDS).useValue(conflictReviewCommands)
       .overrideProvider(JOB_TRIAGE_COMMANDS).useValue(triageCommands)
@@ -254,6 +262,8 @@ describe("authenticated workbench HTTP API", () => {
     expect(app.get(CAREER_DOCUMENT_STORE)).toBe(documentStore);
     expect(app.get(JOB_IMPORT_QUEUE)).toBe(jobQueue);
     expect(app.get(JOB_CONTENT_STORE)).toBe(jobContentStore);
+    expect(app.get(JOB_EXPORT_QUEUE)).toBe(jobExportQueue);
+    expect(app.get(JOB_EXPORT_STORE)).toBe(jobExportStore);
     expect(app.get(AGENT_RUN_QUEUE_PORT)).toBe(agentRunQueue);
   }, 60_000);
 
@@ -1239,30 +1249,35 @@ describe("authenticated workbench HTTP API", () => {
   });
 
   it("通过真实 HTTP 序列化 Public v2 scheduled run 的 latest 与 detail 响应", async () => {
-    const prepared = await prepareRealPreflightAccount("public-v2-run-response");
-    const { session, targetId, sourceSentinel } = prepared;
-    const setupClock = () => new Date("2026-08-30T01:31:00.000Z");
-    const dueClock = () => new Date("2026-08-31T01:31:00.000Z");
-    const auditTrail = createAuditTrail({ db: database, clock: setupClock });
-    const greenhouseEnvironment = { ...process.env, E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: JSON.stringify({ [randomUUID()]: {} }) };
-    const setupPreflight = productionPreflight(greenhouseEnvironment);
-    const recommendations = createRecommendationRunCommands({ db: database, queue: agentRunQueue, auditTrail, runPreflight: setupPreflight, id: randomUUID, clock: setupClock, executionMode: "greenhouse" });
-    const schedules = createJobDiscoverySchedules({ db: database, recommendations, runPreflight: setupPreflight, auditTrail, id: randomUUID, clock: setupClock });
-    const schedule = await schedules.set({ userId: session.account.userId, targetId, requestId: randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
-    expect(schedule.nextRunAt).toBe("2026-08-31T01:30:00.000Z");
-    const duePreflight = productionPreflight(greenhouseEnvironment);
-    const dueRecommendations = createRecommendationRunCommands({ db: database, queue: agentRunQueue, auditTrail, runPreflight: duePreflight, id: randomUUID, clock: dueClock, executionMode: "greenhouse" });
-    const dueSchedules = createJobDiscoverySchedules({ db: database, recommendations: dueRecommendations, runPreflight: duePreflight, auditTrail, id: randomUUID, clock: dueClock });
-    await dueSchedules.materializeDue({ limit: 1 });
-    await dueSchedules.dispatchPending({ limit: 1 });
-    const headers = bearer(session.sessionToken);
-    const latest = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-runs/latest", headers });
+    // Production preflight and the schedule fixture must observe the same allowed background time.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-31T01:31:00.000Z"));
+    try {
+      const prepared = await prepareRealPreflightAccount("public-v2-run-response");
+      const { session, targetId, sourceSentinel } = prepared;
+      const setupClock = () => new Date("2026-08-30T01:31:00.000Z");
+      const dueClock = () => new Date("2026-08-31T01:31:00.000Z");
+      const auditTrail = createAuditTrail({ db: database, clock: setupClock });
+      const greenhouseEnvironment = { ...process.env, E2E_PUBLIC_SOURCE_HEALTH_SCENARIOS: JSON.stringify({ [randomUUID()]: {} }) };
+      const setupPreflight = productionPreflight(greenhouseEnvironment);
+      const recommendations = createRecommendationRunCommands({ db: database, queue: agentRunQueue, auditTrail, runPreflight: setupPreflight, id: randomUUID, clock: setupClock, executionMode: "greenhouse" });
+      const schedules = createJobDiscoverySchedules({ db: database, recommendations, runPreflight: setupPreflight, auditTrail, id: randomUUID, clock: setupClock });
+      const schedule = await schedules.set({ userId: session.account.userId, targetId, requestId: randomUUID(), command: { expectedVersion: 0, state: "enabled", dailyTime: "09:30" } });
+      expect(schedule.nextRunAt).toBe("2026-08-31T01:30:00.000Z");
+      const duePreflight = productionPreflight(greenhouseEnvironment);
+      const dueRecommendations = createRecommendationRunCommands({ db: database, queue: agentRunQueue, auditTrail, runPreflight: duePreflight, id: randomUUID, clock: dueClock, executionMode: "greenhouse" });
+      const dueSchedules = createJobDiscoverySchedules({ db: database, recommendations: dueRecommendations, runPreflight: duePreflight, auditTrail, id: randomUUID, clock: dueClock });
+      await dueSchedules.materializeDue({ limit: 1 });
+      await dueSchedules.dispatchPending({ limit: 1 });
+      const headers = bearer(session.sessionToken);
+      const latest = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/agent-runs/latest", headers });
 
-    expect(latest.statusCode).toBe(200);
-    expect(latest.json().run).toMatchObject({ adapter: "greenhouse", sourceScope: { sources: [expect.objectContaining({ sourceId: `greenhouse:${sourceSentinel}` })] } });
-    const detail = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/agent-runs/${latest.json().run.runId}`, headers });
-    expect(detail.statusCode).toBe(200);
-    expect(detail.json()).toMatchObject({ adapter: "greenhouse", executionSpec: { adapter: "greenhouse" } });
+      expect(latest.statusCode).toBe(200);
+      expect(latest.json().run).toMatchObject({ adapter: "greenhouse", sourceScope: { sources: [expect.objectContaining({ sourceId: `greenhouse:${sourceSentinel}` })] } });
+      const detail = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/agent-runs/${latest.json().run.runId}`, headers });
+      expect(detail.statusCode).toBe(200);
+      expect(detail.json()).toMatchObject({ adapter: "greenhouse", executionSpec: { adapter: "greenhouse" } });
+    } finally { vi.useRealTimers(); }
   });
 
   it("以认证账户读写、追溯并安全映射账户运行策略", async () => {
@@ -1842,6 +1857,41 @@ describe("authenticated workbench HTTP API", () => {
     expect(retry.json()).toMatchObject({ status: "queued", reused: true });
   });
 
+  it("归档 API 默认隐藏活跃岗位，支持恢复并且不向其他账户泄露资源", async () => {
+    const owner = await createSession(app, "job-opportunity-archive-owner");
+    const other = await createSession(app, "job-opportunity-archive-other");
+    const opportunityId = randomUUID();
+    const sourcePostingId = randomUUID();
+    const sourcePostingVersionId = randomUUID();
+    const digest = sourcePostingId.replaceAll("-", "").padEnd(64, "a");
+    const createdAt = new Date("2026-09-15T08:00:00.000Z");
+    await database.insert(jobSourcePostings).values({ id: sourcePostingId, userId: owner.account.userId, sourceType: "user_import", sourceIdentifier: digest, sourceIdentity: { hash: digest }, isOfficial: false, availability: "open", availabilityUpdatedAt: createdAt, createdAt, updatedAt: createdAt });
+    await database.insert(jobSourcePostingVersions).values({ id: sourcePostingVersionId, userId: owner.account.userId, sourcePostingId, version: 1, contentSha256: digest, rawContentSha256: digest, rawObjectReference: { key: "safe" }, normalizedData: {}, retrievedAt: createdAt, availability: "open", createdAt });
+    await database.insert(jobOpportunities).values({ id: opportunityId, userId: owner.account.userId, importId: null, sourcePostingVersionId, canonicalOpportunityId: null, dedupKey: digest, company: "示例科技", title: "归档测试工程师", location: "上海", postedAt: null, deadline: null, description: "保留的岗位正文", normalizedData: {}, availability: "open", availabilityUpdatedAt: createdAt, createdAt, updatedAt: createdAt });
+    await database.insert(jobOpportunitySources).values({ id: randomUUID(), userId: owner.account.userId, opportunityId, sourcePostingVersionId, createdAt });
+    const commandId = randomUUID();
+    const activeBefore = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/job-opportunities", headers: bearer(owner.sessionToken) });
+    const archived = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/job-opportunities/${opportunityId}/archive-state`, headers: { ...bearer(owner.sessionToken), "content-type": "application/json" }, payload: { action: "archive", commandId, expectedVersion: 0 } });
+    const activeAfter = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/job-opportunities", headers: bearer(owner.sessionToken) });
+    const archivedList = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/job-opportunities?filter=archived", headers: bearer(owner.sessionToken) });
+    const hidden = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/job-opportunities/${opportunityId}/archive-state`, headers: { ...bearer(other.sessionToken), "content-type": "application/json" }, payload: { action: "archive", commandId: randomUUID(), expectedVersion: 0 } });
+    const conflict = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/job-opportunities/${opportunityId}/archive-state`, headers: { ...bearer(owner.sessionToken), "content-type": "application/json" }, payload: { action: "restore", commandId: randomUUID(), expectedVersion: 0 } });
+    const restored = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/job-opportunities/${opportunityId}/archive-state`, headers: { ...bearer(owner.sessionToken), "content-type": "application/json" }, payload: { action: "restore", commandId: randomUUID(), expectedVersion: 1 } });
+    const replayed = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: `/v1/job-opportunities/${opportunityId}/archive-state`, headers: { ...bearer(owner.sessionToken), "content-type": "application/json" }, payload: { action: "archive", commandId, expectedVersion: 0 } });
+
+    expect(activeBefore.statusCode).toBe(200);
+    expect(activeBefore.json()).toMatchObject({ items: [expect.objectContaining({ opportunityId, archivedAt: null, version: 0 })], counts: { active: 1, archived: 0 } });
+    expect(archived.statusCode).toBe(201);
+    expect(archived.json()).toMatchObject({ applied: true, state: { archivedAt: expect.any(String), version: 1 } });
+    expect(activeAfter.json()).toMatchObject({ items: [], counts: { active: 0, archived: 1 } });
+    expect(archivedList.json()).toMatchObject({ items: [expect.objectContaining({ opportunityId, title: "归档测试工程师", version: 1 })], counts: { active: 0, archived: 1 } });
+    expect(hidden.statusCode).toBe(404);
+    expect(conflict.statusCode).toBe(409);
+    expect(restored.json()).toMatchObject({ applied: true, state: { archivedAt: null, version: 2 } });
+    expect(replayed.json()).toEqual(archived.json());
+    await expect(database.execute(`select id from job_opportunity_sources where opportunity_id = '${opportunityId}'`)).resolves.toHaveLength(1);
+  });
+
   it("为 owner 创建、复用并读取岗位导入，且不向其他账户暴露原文", async () => {
     capturedLogs.length = 0;
     const owner = await createSession(app, "job-import-owner");
@@ -2240,6 +2290,22 @@ describe("authenticated workbench HTTP API", () => {
       .rejects.toThrow(/正式环境不能启用 Dev Auth/);
 
     Object.assign(process.env, environment);
+  });
+
+  it("为已认证账户创建不可泄漏对象键的岗位导出快照", async () => {
+    const anonymous = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/job-exports", payload: { commandId: randomUUID(), filter: "active", fieldVersion: 1 } });
+    expect(anonymous.statusCode).toBe(401);
+    const session = await createSession(app, `job-export-${randomUUID()}`);
+    const sourcePostingId = randomUUID(); const sourcePostingVersionId = randomUUID(); const opportunityId = randomUUID(); const digest = sourcePostingId.replaceAll("-", "").padEnd(64, "a"); const now = new Date();
+    await database.insert(jobSourcePostings).values({ id: sourcePostingId, userId: session.account.userId, sourceType: "user_import", sourceIdentifier: digest, sourceId: "https://jobs.example.test/export", sourceIdentity: {}, isOfficial: false, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
+    await database.insert(jobSourcePostingVersions).values({ id: sourcePostingVersionId, userId: session.account.userId, sourcePostingId, version: 1, contentSha256: digest, rawContentSha256: digest, rawObjectReference: {}, normalizedData: {}, retrievedAt: now, availability: "open", createdAt: now });
+    await database.insert(jobOpportunities).values({ id: opportunityId, userId: session.account.userId, importId: null, sourcePostingVersionId, canonicalOpportunityId: null, dedupKey: digest, company: "示例科技", title: "导出岗位", location: "上海", postedAt: null, deadline: null, description: "不得导出", normalizedData: {}, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
+    const created = await app.getHttpAdapter().getInstance().inject({ method: "POST", url: "/v1/job-exports", headers: { ...bearer(session.sessionToken), "content-type": "application/json" }, payload: { commandId: randomUUID(), filter: "active", fieldVersion: 1 } });
+    expect(created.statusCode, JSON.stringify(created.json())).toBe(201); expect(created.json()).toMatchObject({ status: "generating", rowCount: 1, fieldVersion: 1 }); expect(created.json().objectKey).toBeUndefined();
+    const listed = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: "/v1/job-exports", headers: bearer(session.sessionToken) });
+    expect(listed.statusCode).toBe(200); expect(listed.json().items).toEqual([expect.objectContaining({ id: created.json().id })]);
+    const downloading = await app.getHttpAdapter().getInstance().inject({ method: "GET", url: `/v1/job-exports/${created.json().id}/download`, headers: bearer(session.sessionToken) });
+    expect(downloading.statusCode).toBe(409);
   });
 });
 

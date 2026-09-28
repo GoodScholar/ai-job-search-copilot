@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { JobQualificationsSchema } from "./job-imports";
 import { GreenhousePublicSourceSchema } from "./job-discovery-schedules";
 import {
   DiscoveryDiagnosticSchema,
@@ -642,6 +643,7 @@ export const DiscoverySearchSummarySchema = z.object({
 }).strict();
 export const DiscoveryDetailSchema = DiscoverySearchSummarySchema.extend({
   sourceType: z.string().trim().min(1).max(32), isOfficial: z.boolean(), rawPayload: jsonObject,
+  description: nullableJobField.optional(), qualifications: JobQualificationsSchema.optional(),
 }).strict();
 export const DiscoverySearchResultSchema = adapterResult(DiscoverySearchSummarySchema);
 export const FakeDiscoverySourceReceiptSchema = z.object({

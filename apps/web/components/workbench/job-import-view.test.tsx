@@ -67,6 +67,7 @@ it("对非终态导入轮询，并在终态后停止", async () => {
   render(<JobImportView initialImports={[imported]} />);
 
   await act(async () => { await Promise.resolve(); });
+  expect(screen.getByRole("status")).toHaveTextContent("规范化中");
   expect(fetchMock.mock.calls.filter(([url]) => url === `/api/job-imports/${importId}`)).toHaveLength(1);
   await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
   expect(fetchMock.mock.calls.filter(([url]) => url === `/api/job-imports/${importId}`)).toHaveLength(2);

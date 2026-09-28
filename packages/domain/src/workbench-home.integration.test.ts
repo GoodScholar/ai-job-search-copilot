@@ -1,5 +1,6 @@
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
 import {
   candidateFacts,
   candidateFactDecisions,
@@ -250,7 +251,7 @@ describe("workbench home", () => {
     });
   });
 
-  it("只汇总上海当日每个目标最新清单中的推荐条目", async () => {
+  it("只汇总上海当日每个目标最新清单中的活跃推荐条目", async () => {
     const userId = crypto.randomUUID();
     const otherUserId = crypto.randomUUID();
     const targetIds = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()];
@@ -265,21 +266,20 @@ describe("workbench home", () => {
       { id: otherTargetId, userId: otherUserId, version: 1, priority: "primary", state: "active", activeSlot: null },
     ]);
 
+    const opportunityIdByMatchId = new Map<string, string>();
     async function createMatchContext(ownerId: string, targetId: string) {
       const profileId = crypto.randomUUID();
-      const postingId = crypto.randomUUID();
-      const postingVersionId = crypto.randomUUID();
-      const opportunityId = crypto.randomUUID();
-      const triageVersionId = crypto.randomUUID();
-      const sourceHash = crypto.randomUUID().replaceAll("-", "").padEnd(64, "a");
       await database.insert(jobProfiles).values({ id: profileId, userId: ownerId, version: 1, createdAt: now, updatedAt: now });
-      await database.insert(jobSourcePostings).values({ id: postingId, userId: ownerId, sourceType: "user_import", sourceIdentifier: sourceHash, sourceIdentity: { hash: sourceHash }, isOfficial: false, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
-      await database.insert(jobSourcePostingVersions).values({ id: postingVersionId, userId: ownerId, sourcePostingId: postingId, version: 1, contentSha256: sourceHash, rawContentSha256: sourceHash, rawObjectReference: { key: "safe" }, normalizedData: {}, retrievedAt: now, availability: "open", createdAt: now });
-      await database.insert(jobOpportunities).values({ id: opportunityId, userId: ownerId, importId: null, sourcePostingVersionId: postingVersionId, canonicalOpportunityId: null, dedupKey: sourceHash, company: "示例科技", title: "工程师", location: "上海", postedAt: null, deadline: null, description: "TypeScript", normalizedData: {}, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
-      await database.insert(jobTriageVersions).values({ id: triageVersionId, userId: ownerId, opportunityId, sourcePostingVersionId: postingVersionId, profileId, profileVersion: 1, targetId, targetVersion: 1, qualificationRuleVersion: "q1", coarseRuleVersion: "c1", overallVerdict: "pass", gateResults: {}, pendingItems: [], deadlineStatus: "valid", confidenceBasisPoints: 10_000, dimensionScores: {}, overallScore: 80, threshold: 70, sequence: 1, createdAt: now });
       return async (sequence: number) => {
+        const postingId = crypto.randomUUID(), postingVersionId = crypto.randomUUID(), opportunityId = crypto.randomUUID(), triageVersionId = crypto.randomUUID();
+        const sourceHash = crypto.randomUUID().replaceAll("-", "").padEnd(64, "a");
+        await database.insert(jobSourcePostings).values({ id: postingId, userId: ownerId, sourceType: "user_import", sourceIdentifier: sourceHash, sourceIdentity: { hash: sourceHash }, isOfficial: false, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
+        await database.insert(jobSourcePostingVersions).values({ id: postingVersionId, userId: ownerId, sourcePostingId: postingId, version: 1, contentSha256: sourceHash, rawContentSha256: sourceHash, rawObjectReference: { key: "safe" }, normalizedData: {}, retrievedAt: now, availability: "open", createdAt: now });
+        await database.insert(jobOpportunities).values({ id: opportunityId, userId: ownerId, importId: null, sourcePostingVersionId: postingVersionId, canonicalOpportunityId: null, dedupKey: sourceHash, company: "示例科技", title: "工程师", location: "上海", postedAt: null, deadline: null, description: "TypeScript", normalizedData: {}, availability: "open", availabilityUpdatedAt: now, createdAt: now, updatedAt: now });
+        await database.insert(jobTriageVersions).values({ id: triageVersionId, userId: ownerId, opportunityId, sourcePostingVersionId: postingVersionId, profileId, profileVersion: 1, targetId, targetVersion: 1, qualificationRuleVersion: "q1", coarseRuleVersion: "c1", overallVerdict: "pass", gateResults: {}, pendingItems: [], deadlineStatus: "valid", confidenceBasisPoints: 10_000, dimensionScores: {}, overallScore: 80, threshold: 70, sequence: 1, createdAt: now });
         const id = crypto.randomUUID();
         await database.insert(jobMatchVersions).values({ id, userId: ownerId, opportunityId, sourcePostingVersionId: postingVersionId, triageVersionId, profileId, profileVersion: 1, targetId, targetVersion: 1, ruleVersion: "r1", promptVersion: "p1", adapter: "fake", adapterVersion: "v1", model: "fake", outputSchemaVersion: "v1", overallScore: 80, displayBand: "worth_trying", assessment: {}, sequence, createdAt: now });
+        opportunityIdByMatchId.set(id, opportunityId);
         return id;
       };
     }
@@ -308,6 +308,9 @@ describe("workbench home", () => {
       recommendationItem(otherListId!, otherMatchId, 1, otherUserId),
     ]);
 
-    await expect(createHome({ db: database, clock: () => now })({ userId })).resolves.toMatchObject({ summary: { todayRecommendations: 4 } });
+    await database.update(jobOpportunities).set({ canonicalOpportunityId: opportunityIdByMatchId.get(firstMatchId!)! }).where(eq(jobOpportunities.id, opportunityIdByMatchId.get(fourthMatchId!)!));
+    await database.update(jobOpportunities).set({ archivedAt: now, archiveVersion: 1 }).where(eq(jobOpportunities.id, opportunityIdByMatchId.get(secondMatchId!)!));
+
+    await expect(createHome({ db: database, clock: () => now })({ userId })).resolves.toMatchObject({ summary: { todayRecommendations: 2 } });
   });
 });

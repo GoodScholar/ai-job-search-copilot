@@ -400,6 +400,27 @@
       "when": 1789820000000,
       "tag": "0056_openai_career_parser",
       "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "7",
+      "when": 1789820001000,
+      "tag": "0057_job_opportunity_archives",
+      "breakpoints": true
+    },
+    {
+      "idx": 58,
+      "version": "7",
+      "when": 1789820002000,
+      "tag": "0058_job_exports",
+      "breakpoints": true
+    },
+    {
+      "idx": 59,
+      "version": "7",
+      "when": 1789820003000,
+      "tag": "0059_journey_metrics",
+      "breakpoints": true
     }
   ]
 }

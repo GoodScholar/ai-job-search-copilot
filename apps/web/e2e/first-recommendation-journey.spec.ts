@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import AxeBuilder from "@axe-core/playwright";
 import { RunPreflightReportSchema } from "@job-copilot/contracts/run-preflight";
 import { Client } from "pg";
@@ -8,9 +9,7 @@ const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const databaseUrl = process.env.E2E_DATABASE_URL ?? "postgresql://job_copilot:local_only_job_copilot@127.0.0.1:55420/job_copilot";
 const devAuthSecret = "issue-2-e2e-dev-auth-shared-secret";
 const runSuffix = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-const resume = [
-  "# 姓名：张三", "邮箱：first-journey@example.test", "## 工作经历", "- 前端工程师｜示例科技｜2024-至今", "## 技能", "- TypeScript", "## 教育经历", "- 示例大学｜计算机科学｜2020", "## 项目经历", "- 求职工作台｜构建证据驱动的求职流程", "## 语言", "- 英语：专业工作水平", "## 联系方式", "- 电话：13800000000",
-].join("\n");
+const resume = readFileSync(new URL("../../../docs/demo/fictional-career.md", import.meta.url), "utf8");
 
 const runKeys = {
   "Desktop Chrome": { success: "10000000-0000-4000-8000-000000000141", failure: "10000000-0000-4000-8000-000000000104" },
@@ -38,7 +37,7 @@ async function createAccount(request: APIRequestContext, subject: string): Promi
   return { token: session.sessionToken, userId: session.account.userId, subject };
 }
 
-async function useSession(page: Page, token: string): Promise<void> {
+async function setSessionCookie(page: Page, token: string): Promise<void> {
   await page.context().addCookies([{
     name: "job_copilot_session", value: token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax",
   }]);
@@ -112,12 +111,12 @@ async function addTrustedFact(request: APIRequestContext, token: string, expecte
   expect(response.status()).toBe(201);
 }
 
-async function createPrimaryTarget(request: APIRequestContext, token: string): Promise<string> {
+async function createPrimaryTarget(request: APIRequestContext, token: string, roleFamily = "frontend"): Promise<string> {
   const response = await request.post(`${apiBaseUrl}/v1/job-targets`, {
     headers: auth(token), data: {
       priority: "primary",
       constraints: {
-        roleFamily: "frontend", seniority: null, locations: ["上海"], workModes: ["remote"], relocation: "not_willing", salary: null, industries: [],
+        roleFamily, seniority: null, locations: ["上海"], workModes: ["remote"], relocation: "not_willing", salary: null, industries: [],
         dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] },
       },
     },
@@ -155,6 +154,10 @@ async function activate(page: Page, target: Locator, info: TestInfo): Promise<vo
   if (info.project.name === "Desktop Chrome") {
     await tabTo(page, target);
     await expect(target).toBeFocused();
+    expect(await target.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return (style.outlineStyle !== "none" && Number.parseFloat(style.outlineWidth) > 0 && style.outlineColor !== "transparent") || style.boxShadow !== "none";
+    })).toBe(true);
     await page.keyboard.press("Enter");
   } else {
     await target.tap();
@@ -294,7 +297,7 @@ async function removeProfileFacts(request: APIRequestContext, token: string): Pr
 test("首次推荐旅程按真实准备状态推进，并跨刷新、重新登录与新上下文恢复交互", async ({ page, request, browser }, info) => {
   test.setTimeout(90_000);
   const account = await createAccount(request, subjectFor(info, "resume"));
-  await useSession(page, account.token);
+  await setSessionCookie(page, account.token);
   await page.goto("/home");
   await expectActiveJourney(page, "准备可用职业资料");
   await expectJourneyVector(page, ["needs_action", "needs_action", "needs_action", "needs_action", "needs_action", "waiting"]);
@@ -322,14 +325,14 @@ test("首次推荐旅程按真实准备状态推进，并跨刷新、重新登�
   await expect(page).toHaveURL(/\/login$/u);
   const relogin = await createAccount(request, account.subject);
   expect(relogin.userId).toBe(account.userId);
-  await useSession(page, relogin.token);
+  await setSessionCookie(page, relogin.token);
   await page.goto("/home");
   await expectJourneyStep(page, "接通真实岗位来源", "needs_action", true);
 
   const resumedContext = await browser.newContext();
   try {
     const resumedPage = await resumedContext.newPage();
-    await useSession(resumedPage, relogin.token);
+    await setSessionCookie(resumedPage, relogin.token);
     await resumedPage.goto("http://127.0.0.1:3120/home");
     await expectJourneyStep(resumedPage, "接通真实岗位来源", "needs_action", true);
   } finally { await resumedContext.close(); }
@@ -359,13 +362,13 @@ test("首次推荐旅程按真实准备状态推进，并跨刷新、重新登�
 
   await page.getByRole("button", { name: "退出" }).click();
   const afterDismissal = await createAccount(request, account.subject);
-  await useSession(page, afterDismissal.token);
+  await setSessionCookie(page, afterDismissal.token);
   await page.goto("/home");
   await expect(page.getByRole("heading", { name: "首次推荐旅程" })).toHaveCount(0);
   const dismissedContext = await browser.newContext();
   try {
     const dismissedPage = await dismissedContext.newPage();
-    await useSession(dismissedPage, afterDismissal.token);
+    await setSessionCookie(dismissedPage, afterDismissal.token);
     await dismissedPage.goto("http://127.0.0.1:3120/home");
     await expect(dismissedPage.getByRole("heading", { name: "首次推荐旅程" })).toHaveCount(0);
   } finally { await dismissedContext.close(); }
@@ -375,7 +378,7 @@ test("可信非空推荐会永久完成旅程，后续撤销准备条件仍保�
   test.setTimeout(180_000);
   const account = await prepareMatchingAccount(request, info, "permanent");
   const opportunityId = await importAndPassGate(request, account, "首次推荐永久完成夹具");
-  await useSession(page, account.token);
+  await setSessionCookie(page, account.token);
   await installMatchingFixture(account.userId, account.targetId, { overallScoresByOpportunityId: { [opportunityId]: 95 } });
   try {
     const discoveryRunId = await startDiscovery(request, account, keyFor(info).success);
@@ -412,7 +415,7 @@ test("可信非空推荐会永久完成旅程，后续撤销准备条件仍保�
 test("失败运行不会完成首次推荐旅程", async ({ page, request }, info) => {
   test.setTimeout(115_000);
   const failedAccount = await prepareMatchingAccount(request, info, "failed");
-  await useSession(page, failedAccount.token);
+  await setSessionCookie(page, failedAccount.token);
   await importCareerMaterial(page);
   const failedRunId = await startPreparedPhysicalDiscovery(page, failedAccount, keyFor(info).failure);
   await waitForRun(page, failedRunId, "failed");
@@ -425,7 +428,7 @@ test("失败运行不会完成首次推荐旅程", async ({ page, request }, inf
 test("零接受推荐清单不会完成首次推荐旅程", async ({ page, request }, info) => {
   test.setTimeout(165_000);
   const emptyAccount = await prepareMatchingAccount(request, info, "empty");
-  await useSession(page, emptyAccount.token);
+  await setSessionCookie(page, emptyAccount.token);
   await importCareerMaterial(page);
   const excludedOpportunityId = await importAndPassGate(request, emptyAccount, "首次推荐零接受夹具");
   await installMatchingFixture(emptyAccount.userId, emptyAccount.targetId, { qualityInsufficientOpportunityIds: [excludedOpportunityId] });
@@ -445,4 +448,156 @@ test("零接受推荐清单不会完成首次推荐旅程", async ({ page, reque
   await expectActiveJourney(page, "获得第一份推荐结果");
   await expectJourneyVector(page, ["completed", "completed", "completed", "completed", "completed", "needs_action"]);
   await expect(page.getByRole("heading", { name: "首次推荐旅程暂时无法读取" })).toHaveCount(0);
+});
+
+
+// #58 主验收：只在外部 Adapter 边界提供合成输入，不注入来源发布记录、匹配或推荐结果。
+async function startAlphaRecommendation(page: Page, info: TestInfo): Promise<string> {
+  const key = info.project.name === "Desktop Chrome" ? "10000000-0000-4000-8000-000000000581" : "10000000-0000-4000-8000-000000000582";
+  await page.evaluate((value) => {
+    const original = crypto.randomUUID.bind(crypto);
+    let used = false;
+    Object.defineProperty(crypto, "randomUUID", { configurable: true, value: () => { if (used) return original(); used = true; return value; } });
+  }, key);
+  await activate(page, page.getByRole("button", { name: "开始今日发现" }), info);
+  const confirm = page.getByRole("button", { name: "我已了解，开始今日发现" });
+  await expect(confirm).toBeVisible();
+  const response = page.waitForResponse((value) => value.url().endsWith("/api/recommendation-runs") && value.request().method() === "POST");
+  await activate(page, confirm, info);
+  const created = await response;
+  expect(created.status()).toBe(201);
+  const { run } = await created.json() as { run: { runId: string } };
+  await page.waitForURL((url) => url.searchParams.get("runId") === run.runId);
+  return run.runId;
+}
+
+async function alphaResult(page: Page, runId: string) {
+  let run: { status: string; result: { kind: string; evidence: { sourceCoverage: { credibleBranchCount: number }; qualification: { evaluatedCount: number; rejectedCount: number }; deepMatching: { finalRecommendationCount: number } } } } | undefined;
+  await expect.poll(async () => {
+    const response = await page.request.get(`/api/recommendation-runs/${runId}`);
+    expect(response.status()).toBe(200);
+    run = await response.json();
+    return run!.status;
+  }, { timeout: 45_000 }).toBe("completed");
+  return run!.result;
+}
+
+async function assertAlphaAccessibility(page: Page): Promise<void> {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(page.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches)).resolves.toBe(true);
+  expect(await page.locator("main").evaluate((element) => {
+    return [element, ...element.querySelectorAll("*")].every((node) => [null, "::before", "::after"].every((pseudo) => {
+      const style = getComputedStyle(node, pseudo);
+      return style.scrollBehavior !== "smooth" && style.animationDuration.split(",").every((duration) => Number.parseFloat(duration) <= 0.01) && style.transitionDuration.split(",").every((duration) => Number.parseFloat(duration) <= 0.01);
+    }));
+  })).toBe(true);
+  const controls = page.locator("main .workbench-touch-target:visible");
+  expect(await controls.count()).toBeGreaterThan(0);
+  expect(await controls.evaluateAll((nodes) => nodes.every((node) => { const box = node.getBoundingClientRect(); return box.height >= 44 && box.width >= 44; }))).toBe(true);
+  await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+}
+
+async function expectPermanentCompletion(page: Page, request: APIRequestContext, account: Account) {
+  await expect.poll(async () => (await authoritativeHome(request, account.token)).firstRecommendationJourney.status).toBe("completed");
+  await removeProfileFacts(request, account.token);
+  await page.goto("/home");
+  await expect(journey(page)).toHaveCount(0);
+  expect((await authoritativeHome(request, account.token)).firstRecommendationJourney.status).toBe("completed");
+  await page.reload();
+  await expect(journey(page)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "开始今日发现" })).toBeDisabled();
+}
+
+async function prepareAlphaFromHome(page: Page, request: APIRequestContext, info: TestInfo, purpose: string): Promise<PreparedAccount> {
+  const account = await createAccount(request, subjectFor(info, `alpha58-${purpose}`));
+  await setSessionCookie(page, account.token);
+  await page.goto("/home");
+  await expectJourneyVector(page, ["needs_action", "needs_action", "needs_action", "needs_action", "needs_action", "waiting"]);
+  await expect(page.getByRole("button", { name: "开始今日发现" })).toBeDisabled();
+  await assertAlphaAccessibility(page);
+  await importCareerMaterial(page);
+  await page.goto("/home");
+  await expectJourneyStep(page, "准备可用职业资料", "completed");
+  const facts = [
+    ["education", { summary: "本科" }], ["language", { name: "英语", level: "C1" }], ["work_eligibility", { summary: "中国工作许可" }],
+    ["skill", { name: "TypeScript" }], ["experience", { summary: "前端工程实践经验" }], ["project", { summary: "可验证的交付项目" }],
+  ] as const;
+  for (const [version, [type, value]] of facts.entries()) await addTrustedFact(request, account.token, version, type, value);
+  await page.goto("/home");
+  await expectJourneyStep(page, "建立可信求职画像", "completed");
+  const targetId = await createPrimaryTarget(request, account.token, "前端");
+  await enableExecutableSource(request, account.token, targetId, "Alpha 58 Synthetic Fixture");
+  await runModelDiagnostic(request, account.token);
+  await page.goto("/home");
+  await expectJourneyVector(page, ["completed", "completed", "completed", "completed", "completed", "needs_action"]);
+  const report = await page.request.get("/api/recommendation-runs/preparation");
+  expect(report.status()).toBe(200);
+  await expect(report.json()).resolves.toMatchObject({ preflight: { status: "ready_with_warnings" } });
+  return { ...account, targetId };
+}
+
+test("Alpha 主旅程从准备到一键推荐、岗位整理与永久完成", async ({ page, request }, info) => {
+  test.setTimeout(150_000);
+  const account = await prepareAlphaFromHome(page, request, info, "complete");
+  const runId = await startAlphaRecommendation(page, info);
+  const result = await alphaResult(page, runId);
+  expect(result).toMatchObject({ kind: "recommendation_list", evidence: { qualification: { evaluatedCount: 1, rejectedCount: 0 }, deepMatching: { finalRecommendationCount: 1 } } });
+  await page.goto(`/home?runId=${runId}`);
+  await activate(page, page.getByRole("button", { name: "标记已处理：新的推荐清单已生成" }), info);
+  await expect.poll(async () => {
+    const resolved = await page.request.get("/api/agent-inbox?status=resolved");
+    expect(resolved.status()).toBe(200);
+    return (await resolved.json()).items.some((item: { kind: string }) => item.kind === "recommendation_list");
+  }).toBe(true);
+  await activate(page, page.getByRole("link", { name: "查看本次推荐" }), info);
+  await expect(page.getByRole("list", { name: "推荐岗位" })).toContainText("高级前端工程师（合成验收）");
+  await assertAlphaAccessibility(page);
+  await page.goto("/jobs");
+  const creating = page.waitForResponse((response) => response.url().endsWith("/api/job-exports") && response.request().method() === "POST");
+  await activate(page, page.getByRole("button", { name: "生成 CSV 快照" }), info);
+  const created = await creating;
+  expect(created.status()).toBe(201);
+  const snapshot = await created.json() as { id: string; rowCount: number; createdAt: string; expiresAt: string };
+  expect(snapshot.rowCount).toBe(1);
+  expect(Date.parse(snapshot.expiresAt) - Date.parse(snapshot.createdAt)).toBe(86_400_000);
+  await expect(page.getByRole("button", { name: "下载 CSV" })).toBeVisible({ timeout: 20_000 });
+  const file = await page.request.get(`/api/job-exports/${snapshot.id}/download`);
+  expect(file.status()).toBe(200);
+  const bytes = await file.body();
+  expect([...bytes.subarray(0, 3)]).toEqual([239, 187, 191]);
+  expect(bytes.toString("utf8")).toContain('"\'=合成验收公司"');
+  await activate(page, page.getByRole("button", { name: "归档岗位：高级前端工程师（合成验收）" }), info);
+  await expect(page.getByText("已归档，可在归档岗位中恢复。")).toBeVisible();
+  await page.goto("/jobs?filter=archived");
+  const frozen = await page.request.get(`/api/job-exports/${snapshot.id}/download`);
+  expect(frozen.status()).toBe(200);
+  expect(await frozen.body()).toEqual(bytes);
+  await assertAlphaAccessibility(page);
+  await activate(page, page.getByRole("button", { name: "恢复岗位：高级前端工程师（合成验收）" }), info);
+  await expect(page.getByText("已恢复到活跃岗位。")).toBeVisible();
+  const foreign = await createAccount(request, subjectFor(info, "alpha58-foreign"));
+  expect((await request.get(`${apiBaseUrl}/v1/job-exports/${snapshot.id}/download`, { headers: auth(foreign.token) })).status()).toBe(404);
+  await expectPermanentCompletion(page, request, account);
+});
+
+test("Alpha 暂无推荐保留来源覆盖与资格淘汰证据并永久完成旅程", async ({ page, request }, info) => {
+  test.setTimeout(120_000);
+  const account = await prepareAlphaFromHome(page, request, info, "excluded");
+  const response = await request.get(`${apiBaseUrl}/v1/job-targets`, { headers: auth(account.token) });
+  expect(response.status()).toBe(200);
+  const target = (await response.json()).targets.find((item: { targetId: string }) => item.targetId === account.targetId);
+  const updated = await request.post(`${apiBaseUrl}/v1/job-targets/${account.targetId}/revisions`, { headers: auth(account.token), data: { expectedVersion: target.version, priority: "primary", constraints: { ...target.constraints, salary: { minimum: 50000, maximum: 60000, currency: "CNY", period: "month" } } } });
+  expect(updated.status()).toBe(201);
+  await page.reload();
+  const runId = await startAlphaRecommendation(page, info);
+  const result = await alphaResult(page, runId);
+  expect(result).toMatchObject({ kind: "no_recommendations", evidence: { qualification: { evaluatedCount: 1, rejectedCount: 1 }, deepMatching: { finalRecommendationCount: 0 } } });
+  expect(result.evidence.sourceCoverage.credibleBranchCount).toBeGreaterThan(0);
+  await page.goto(`/home?runId=${runId}`);
+  await activate(page, page.getByRole("link", { name: "查看本次结论" }), info);
+  await expect(page.getByRole("heading", { name: "今天暂无推荐" })).toBeVisible();
+  await expect(page.getByRole("list", { name: "推荐岗位" })).toHaveCount(0);
+  await assertAlphaAccessibility(page);
+  await expectPermanentCompletion(page, request, account);
 });

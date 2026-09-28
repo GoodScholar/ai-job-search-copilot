@@ -1,3 +1,4 @@
+import { JobQualificationsSchema } from "@job-copilot/contracts/job-imports";
 import { createHash } from "node:crypto";
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from "@testcontainers/postgresql";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -28,7 +29,7 @@ import { createAuditTrail } from "./audit-trail";
 import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
 import { createAgentRunCommands, type AgentRunQueue } from "./agent-run-control";
 import { createAccountRunControl } from "./account-run-control";
-import { createJobDiscoveryPersistence, discoverySourceIdentifier, readDiscoveryResultCandidatesInTransaction } from "./job-discovery-persistence";
+import { createJobDiscoveryPersistence, discoverySourceIdentifier, readDiscoveryResultCandidatesInTransaction, type DiscoveryDetail } from "./job-discovery-persistence";
 import { persistJobOpportunity } from "./job-opportunity-persistence";
 import { FAKE_JOB_DISCOVERY_WORKFLOW_VERSION, GREENHOUSE_JOB_DISCOVERY_WORKFLOW_VERSION, GREENHOUSE_SOURCE_HEALTH_WORKFLOW_VERSION } from "@job-copilot/contracts/agent-runs";
 import { LAYERED_PUBLIC_JOB_DISCOVERY_WORKFLOW_VERSION } from "@job-copilot/contracts/job-discovery";
@@ -229,18 +230,24 @@ describe("job discovery persistence lifecycle", () => {
       .resolves.toEqual([{ title: "Senior AI Engineer", normalizedData: expect.objectContaining({ title: "Senior AI Engineer" }) }]);
   });
 
-  it("normalized-only 与 raw-only 变化各自追加一个来源版本", async () => {
+  it("normalized-only、raw-only 与资格证据变化各自追加来源版本，重放复用快照", async () => {
     const userId = crypto.randomUUID(); const targetId = crypto.randomUUID();
     await database.insert(jobAccounts).values({ id: userId });
     await database.insert(jobTargets).values({ id: targetId, userId, version: 1, priority: "primary", state: "active", activeSlot: null, createdAt: firstSeen, updatedAt: firstSeen });
     await database.insert(jobTargetRevisions).values({ id: crypto.randomUUID(), userId, targetId, version: 1, priority: "primary", state: "active", constraints, createdAt: firstSeen });
     const persistence = createJobDiscoveryPersistence({ db: database, id: () => crypto.randomUUID(), auditTrail: createAuditTrail({ db: database, clock: () => later }) });
     const sourceId = "greenhouse:hashes"; const base = { sourceId, detailId: "hash", company: "Fictional", title: "AI Engineer", location: null, postedAt: null, deadline: null, sourceType: "company_careers", isOfficial: true, rawPayload: {} };
-    const persist = async (detail: typeof base, rawContentSha256: string) => persistence.persistSuccessfulDiscovery({ run: await claimRun(userId, targetId, later), details: [detail], scans: [{ sourceId, observedDetailIds: [base.detailId], complete: true }], storedObjects: [{ sourceId, detailId: base.detailId, objectKey: `${rawContentSha256}.json`, rawContentSha256 }], now: later });
+    const persist = async (detail: DiscoveryDetail, rawContentSha256: string) => persistence.persistSuccessfulDiscovery({ run: await claimRun(userId, targetId, later), details: [detail], scans: [{ sourceId, observedDetailIds: [base.detailId], complete: true }], storedObjects: [{ sourceId, detailId: base.detailId, objectKey: `${rawContentSha256}.json`, rawContentSha256 }], now: later });
     await persist(base, "a".repeat(64));
     await persist({ ...base, title: "Senior AI Engineer" }, "a".repeat(64));
     await persist({ ...base, title: "Senior AI Engineer" }, "b".repeat(64));
-    await expect(database.select({ version: jobSourcePostingVersions.version }).from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, userId)).orderBy(asc(jobSourcePostingVersions.version))).resolves.toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
+    const withDescription = { ...base, title: "Senior AI Engineer", description: "合成岗位的资格证据" };
+    expect((await persist(withDescription, "b".repeat(64))).cleanupObjectKeys).toEqual([]);
+    const qualifications = JobQualificationsSchema.parse({ workMode: null, relocationRequired: null, salary: null, seniority: null, education: null, languages: null, workEligibility: null, industry: null, employmentType: null, requiredSkills: { value: ["TypeScript"], evidence: { field: "requiredSkills", path: "技能", value: "TypeScript" } } });
+    const withQualifications = { ...withDescription, qualifications };
+    expect((await persist(withQualifications, "b".repeat(64))).cleanupObjectKeys).toEqual([]);
+    expect((await persist(withQualifications, "b".repeat(64))).cleanupObjectKeys).toEqual([`${"b".repeat(64)}.json`]);
+    await expect(database.select({ version: jobSourcePostingVersions.version }).from(jobSourcePostingVersions).where(eq(jobSourcePostingVersions.userId, userId)).orderBy(asc(jobSourcePostingVersions.version))).resolves.toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }]);
   });
 
   it("不完整扫描不关闭，过期详情不写 run result，全部来源关闭后机会关闭", async () => {

@@ -1,6 +1,6 @@
 {
   "name": "@job-copilot/domain",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha",
   "private": true,
   "type": "module",
   "exports": {
@@ -20,6 +20,8 @@
     "./source-capabilities": "./src/source-capabilities.ts",
     "./source-capability-projections": "./src/source-capability-projections.ts",
     "./job-imports": "./src/job-imports.ts",
+    "./job-opportunity-archives": "./src/job-opportunity-archives.ts",
+    "./job-exports": "./src/job-exports.ts",
     "./job-triage": "./src/job-triage.ts",
     "./job-triage-persistence": "./src/job-triage-persistence.ts",
     "./recommendation-queries": "./src/recommendation-queries.ts",
@@ -35,7 +37,8 @@
     "./account-run-control": "./src/account-run-control.ts",
     "./anysearch-query-plan": "./src/anysearch-query-plan.ts",
     "./job-discovery-leads": "./src/job-discovery-leads.public.ts",
-    "./verified-job-source-gate": "./src/verified-job-source-gate.public.ts"
+    "./verified-job-source-gate": "./src/verified-job-source-gate.public.ts",
+    "./journey-metrics": "./src/journey-metrics.ts"
   },
   "scripts": {
     "test": "vitest run --no-file-parallelism",

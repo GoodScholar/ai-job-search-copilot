@@ -12,6 +12,7 @@ import { createDeepMatchCommands, createDeepMatchQueries } from "./deep-match-pe
 import { DEEP_MATCH_DIMENSIONS, FakeDeepMatchAdapter } from "@job-copilot/contracts/deep-match";
 import { createRecommendationFeedbackCommands, createRecommendationFeedbackQueries } from "./recommendation-feedback";
 import { createReadyRunPreflightEvaluator } from "./testing/run-preflight";
+import { createJobExportCommands, createJobExportProcessor, createJobExportQueries, type JobExportStore } from "./job-exports";
 
 const now = new Date("2026-09-02T00:00:00.000Z");
 const constraints = { roleFamily: "frontend", seniority: null, locations: [], workModes: [], relocation: "unknown", salary: null, industries: [], dealBreakers: { excludedCompanies: [], excludedIndustries: [], excludeOutsourcing: false, excludeDispatch: false, excludeHeadhunter: false, other: [] } };
@@ -61,6 +62,33 @@ describe("recommendation feedback persistence", () => {
   function commands() {
     return createRecommendationFeedbackCommands({ db, id: () => crypto.randomUUID(), clock: () => now, auditTrail: createAuditTrail({ db, clock: () => now }) });
   }
+
+  it("导出冻结当前推荐清单项决策，新清单不会继承旧清单的收藏", async () => {
+    const data = await fixture(1);
+    const item = data.items[0]!;
+    const service = commands();
+    await service.recordDecision({ userId: data.userId, recommendationListId: data.listId, recommendationListItemId: item.itemId, command: { decision: "saved", expectedVersion: 0, idempotencyKey: crypto.randomUUID() } });
+    const objects = new Map<string, Uint8Array>();
+    const store: JobExportStore = {
+      put: async ({ objectKey, bytes }) => { objects.set(objectKey, bytes); },
+      get: async ({ objectKey }) => { const bytes = objects.get(objectKey); if (!bytes) throw new Error("missing export"); return bytes; },
+      delete: async ({ objectKey }) => { objects.delete(objectKey); },
+    };
+    const exports = createJobExportCommands({ db, queue: { enqueue: async () => undefined }, id: () => crypto.randomUUID(), clock: () => now });
+    const processor = createJobExportProcessor({ db, store, clock: () => now });
+    const queries = createJobExportQueries({ db, clock: () => now });
+    const first = await exports.create({ userId: data.userId, command: { commandId: crypto.randomUUID(), filter: "all", fieldVersion: 1 } });
+    const secondListId = crypto.randomUUID(); const secondItemId = crypto.randomUUID();
+    await db.insert(recommendationLists).values({ id: secondListId, userId: data.userId, targetId: data.targetId, localDate: "2026-09-02", sequence: 2, createdAt: now });
+    await db.insert(recommendationListItems).values({ id: secondItemId, userId: data.userId, recommendationListId: secondListId, matchVersionId: item.matchId, ordinal: 1, highlighted: false, createdAt: now });
+    const second = await exports.create({ userId: data.userId, command: { commandId: crypto.randomUUID(), filter: "all", fieldVersion: 1 } });
+    await service.recordDecision({ userId: data.userId, recommendationListId: secondListId, recommendationListItemId: secondItemId, command: { decision: "ignored", expectedVersion: 0, idempotencyKey: crypto.randomUUID() } });
+    for (const snapshot of [first, second]) await processor.process({ version: 1, exportId: snapshot.id, userId: data.userId, finalAttempt: false });
+    const csv = async (id: string) => new TextDecoder().decode(await store.get(await queries.download({ userId: data.userId, exportId: id })));
+    expect(await csv(first.id)).toContain('"saved"');
+    expect(await csv(second.id)).toContain('"pending"');
+    expect(await csv(second.id)).not.toContain('"ignored"');
+  });
 
   const acceptableAssessment = (candidate: Awaited<ReturnType<ReturnType<typeof createDeepMatchQueries>["getFrozenCandidates"]>>[number]) => ({
     opportunityId: candidate.opportunityId, overallScore: 90,

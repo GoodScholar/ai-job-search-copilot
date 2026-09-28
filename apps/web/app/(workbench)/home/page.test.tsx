@@ -33,7 +33,7 @@ it("targets 失败不伪造成空数组，并保留成功的运行结果", async
   const run = { runId: "4f8c6eb3-2b92-4d91-aad4-959b7d4cd7a3" };
   mocks.getLatestAgentRun.mockResolvedValue({ run });
   mocks.getOpenAgentInbox.mockResolvedValue({ items: [] });
-  const page = await WorkbenchHomePage();
+  const page = await WorkbenchHomePage({});
   expect(mocks.getWorkbenchHome).toHaveBeenCalledOnce();
   expect(mocks.getJobTargets).toHaveBeenCalledOnce();
   expect(mocks.getLatestAgentRun).toHaveBeenCalledOnce();
@@ -47,7 +47,7 @@ it("运行读取失败不隐藏成功的 targets", async () => {
   mocks.getJobTargets.mockResolvedValue(targets);
   mocks.getLatestAgentRun.mockRejectedValue(new Error("run unavailable"));
   mocks.getOpenAgentInbox.mockResolvedValue({ items: [] });
-  const page = await WorkbenchHomePage();
+  const page = await WorkbenchHomePage({});
   expect(page.props).toMatchObject({ targets, initialRun: null, unavailableSections: ["run"] });
 });
 
@@ -57,7 +57,7 @@ it("不把认证重定向转成局部错误", async () => {
   mocks.getJobTargets.mockResolvedValue({ suggestions: [], targets: [] });
   mocks.getLatestAgentRun.mockResolvedValue({ run: null });
   mocks.getOpenAgentInbox.mockResolvedValue({ items: [] });
-  await expect(WorkbenchHomePage()).rejects.toThrow("NEXT_REDIRECT:/login?returnTo=%2Fhome");
+  await expect(WorkbenchHomePage({})).rejects.toThrow("NEXT_REDIRECT:/login?returnTo=%2Fhome");
   expect(mocks.unstableRethrow).toHaveBeenCalledWith(redirectError);
 });
 
@@ -69,7 +69,7 @@ it("与其他首页投影并行读取主目标的运行前检查，检查失败�
   mocks.getOpenAgentInbox.mockResolvedValue({ items: [] });
   mocks.getRunPreflight.mockRejectedValue(new Error("preflight unavailable"));
 
-  const page = await WorkbenchHomePage();
+  const page = await WorkbenchHomePage({});
   expect(mocks.getRunPreflight).toHaveBeenCalledWith(targets.targets[0].targetId);
   expect(page.props).toMatchObject({ home, targets, initialRun: null, unavailableSections: ["preflight"], preflight: null });
 });
@@ -83,7 +83,7 @@ it("默认并行读取推荐准备和最近逻辑运行，逻辑运行明确 404
   mocks.getRecommendationRunPreparation.mockResolvedValue({ target: null });
   const recommendation = { runId: "8f8c6eb3-2b92-4d91-aad4-959b7d4cd7a3" };
   mocks.getLatestRecommendationRun.mockResolvedValue(recommendation);
-  const page = await WorkbenchHomePage();
+  const page = await WorkbenchHomePage({});
   expect(mocks.getRecommendationRunPreparation).toHaveBeenCalledOnce();
   expect(mocks.getLatestRecommendationRun).toHaveBeenCalledOnce();
   expect(page.props).toMatchObject({ initialRecommendationPreparation: { target: null }, initialRecommendationRun: recommendation });
@@ -145,7 +145,7 @@ it("默认首页在任一推荐读取完成前已并行启动 preparation 和 la
   mocks.getRecommendationRunPreparation.mockReturnValue(new Promise((resolve) => { resolvePreparation = resolve; }));
   mocks.getLatestRecommendationRun.mockReturnValue(new Promise((resolve) => { resolveLatest = resolve; }));
 
-  const pendingPage = WorkbenchHomePage();
+  const pendingPage = WorkbenchHomePage({});
   await Promise.resolve();
   expect(mocks.getRecommendationRunPreparation).toHaveBeenCalledOnce();
   expect(mocks.getLatestRecommendationRun).toHaveBeenCalledOnce();

@@ -1,9 +1,10 @@
 {
   "name": "web",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha",
   "private": true,
   "type": "module",
   "scripts": {
+    "dev:e2e": "next build --webpack && next start --hostname 127.0.0.1",
     "dev": "next dev --hostname 127.0.0.1",
     "build": "next build",
     "start": "next start",

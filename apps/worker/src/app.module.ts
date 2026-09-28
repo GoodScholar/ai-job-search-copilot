@@ -3,6 +3,7 @@ import Redis from "ioredis";
 import { AgentRunModule } from "./agent-runs/agent-run.module.js";
 import { CareerImportModule } from "./career-import/career-import.module.js";
 import { JobImportModule } from "./job-imports/job-import.module.js";
+import { JobExportModule } from "./job-exports/job-export.module.js";
 import { RedisHeartbeatAdapter } from "./heartbeat/redis-heartbeat.adapter.js";
 
 export const WORKER_HEARTBEAT = Symbol("WORKER_HEARTBEAT");
@@ -12,7 +13,7 @@ function getRedisUrl(): string {
 }
 
 @Module({
-  imports: [CareerImportModule, JobImportModule, AgentRunModule],
+  imports: [CareerImportModule, JobImportModule, JobExportModule, AgentRunModule],
   providers: [
     {
       provide: WORKER_HEARTBEAT,

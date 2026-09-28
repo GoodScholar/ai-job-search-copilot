@@ -44,11 +44,11 @@ export default defineConfig({
   testMatch: anysearchPhase ? /anysearch-public-job-discovery\.spec\.ts/ : sourceHealthOnly ? /source-health\.spec\.ts|one-click-recommendation\.spec\.ts/ : workbenchInboxSourceOnly ? /workbench-inbox\.spec\.ts/ : undefined,
   grep: configuredAnysearchPublicJobPhase ? /@configured/ : missingKeyAnysearchPublicJobPhase ? /@missing-key/ : undefined,
   forbidOnly: Boolean(process.env.CI),
-  retries: process.env.CI ? 2 : 0,
+  retries: 0,
   workers: 1,
   use: {
     baseURL,
-    trace: "on-first-retry",
+    trace: "retain-on-failure",
   },
   webServer: {
     command: "node scripts/local-runtime.mjs --test",
@@ -60,6 +60,10 @@ export default defineConfig({
         E2E_JOB_NORMALIZER_DELAY_MS: "750",
         JOB_PAGE_FETCHER_TEST_ORIGIN: "http://127.0.0.1:39333",
         E2E_AGENT_RUN_SCENARIOS: JSON.stringify({
+          "10000000-0000-4000-8000-000000000583": "slow_checkpoint",
+          "10000000-0000-4000-8000-000000000584": "slow_checkpoint",
+          "10000000-0000-4000-8000-000000000581": "first_recommendation",
+          "10000000-0000-4000-8000-000000000582": "first_recommendation",
           "10000000-0000-4000-8000-000000000101": "slow_checkpoint",
           "10000000-0000-4000-8000-000000000102": "slow_checkpoint",
           "10000000-0000-4000-8000-000000000103": "retry_once",

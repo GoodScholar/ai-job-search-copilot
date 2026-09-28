@@ -300,3 +300,31 @@ test("运行详情保留启动快照，当前状态改变后不污染历史，�
   await page.reload();
   await expect(page.getByText("该历史运行创建时尚未记录运行前检查快照", { exact: true })).toBeVisible();
 });
+
+
+test("全局停止让运行中任务在安全检查点终止，明确解除后仍不复活", async ({ page }, info) => {
+  const key = info.project.name === "Desktop Chrome" ? "10000000-0000-4000-8000-000000000583" : "10000000-0000-4000-8000-000000000584";
+  const queue = new Queue(AGENT_RUN_QUEUE, { connection: { host: "127.0.0.1", port: redisPort } });
+  try {
+    await queue.pause();
+    const runId = await startScenario(page, info, key);
+    await page.goto("/profile/run-policy");
+    const stop = page.getByRole("button", { name: "停止全部运行" });
+    await expect(stop).toBeVisible();
+    await queue.resume();
+    await expect.poll(async () => (await getRun(page, runId)).status, { intervals: [50] }).toBe("running");
+    const stopped = page.waitForResponse((response) => response.url().endsWith("/api/account/run-policy/controls") && response.request().method() === "POST");
+    if (info.project.name === "Desktop Chrome") await stop.press("Enter"); else await stop.tap();
+    expect((await stopped).status()).toBe(200);
+    await expect.poll(async () => (await getRun(page, runId)).status).toBe("cancelled");
+    const run = await getRun(page, runId);
+    expect(run.results).toEqual([]);
+    expect(run.events.map((event) => event.eventType)).toEqual(expect.arrayContaining(["run.started", "run.cancel_requested", "run.cancelled"]));
+    await page.reload();
+    const release = page.getByRole("button", { name: "解除全局停止" });
+    await expect(release).toBeVisible();
+    if (info.project.name === "Desktop Chrome") await release.press("Enter"); else await release.tap();
+    await expect(page.getByRole("status")).toContainText("旧运行不会恢复");
+    expect((await getRun(page, runId)).status).toBe("cancelled");
+  } finally { await queue.resume(); await queue.close(); }
+});

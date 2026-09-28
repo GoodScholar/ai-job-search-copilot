@@ -16,7 +16,7 @@ import { formatBand, formatDimensionDetail, formatDimensionLabel, formatEvidence
 import { RecommendationResultSummary } from "./recommendation-result-summary";
 
 
-export default async function RecommendationsPage({ searchParams = Promise.resolve({}) }: { searchParams?: Promise<Record<string, string | string[] | undefined>> } = {}) {
+export default async function RecommendationsPage({ searchParams = Promise.resolve({}) }: { searchParams?: Promise<Record<string, string | string[] | undefined>> }) {
   const params = await searchParams;
   const only = (key: string) => typeof params[key] === "string" && params[key] !== "" && z.uuid().safeParse(params[key]).success ? params[key] : null;
   const runId = only("runId"), resultId = only("resultId"), targetParam = only("targetId"), listParam = only("recommendationListId");
@@ -34,7 +34,7 @@ export default async function RecommendationsPage({ searchParams = Promise.resol
   const runStatus = !resultError && runId && selectedRun && !result ? selectedRun.status === "queued" ? "推荐正在等待开始" : selectedRun.status === "running" ? "推荐正在进行" : selectedRun.status === "paused" ? "推荐已暂停，等待恢复" : selectedRun.status === "failed" ? selectedRun.failure?.summary ?? "本次推荐未能完成" : selectedRun.status === "cancelled" ? "本次推荐已取消" : null : null;
   const exactList = Boolean((result?.kind === "recommendation_list" && targetId) || (targetParam && listParam));
   let list = null;
-  if (!resultError && !runStatus) try { list = result?.kind === "recommendation_list" && targetId ? await getRecommendationList(targetId, result.recommendationListId) : targetParam && listParam ? await getRecommendationList(targetParam, listParam) : targetParam ? await getLatestRecommendations(targetParam) : null; } catch (error) { unstable_rethrow(error); readError = true; resultError = exactList && typeof error === "object" && error !== null && "status" in error && error.status === 404 ? "推荐结果无法确认，请从推荐通知或历史版本重新打开。" : "推荐结果暂时无法读取，请稍后重试。"; }
+  if (!resultError && !runStatus) try { list = result?.kind === "recommendation_list" && targetId ? (!runId && !listParam ? await getRecommendationList(targetId, result.recommendationListId, false) : await getRecommendationList(targetId, result.recommendationListId)) : targetParam && listParam ? await getRecommendationList(targetParam, listParam) : targetParam ? await getLatestRecommendations(targetParam) : null; } catch (error) { unstable_rethrow(error); readError = true; resultError = exactList && typeof error === "object" && error !== null && "status" in error && error.status === 404 ? "推荐结果无法确认，请从推荐通知或历史版本重新打开。" : "推荐结果暂时无法读取，请稍后重试。"; }
   if (!readError && (!list && exactList || list && ((targetParam && list.targetId !== targetParam) || (listParam && list.recommendationListId !== listParam) || (result?.kind === "recommendation_list" && (list.targetId !== targetId || list.recommendationListId !== result.recommendationListId))))) { resultError = "推荐结果无法确认，请从推荐通知或历史版本重新打开。"; list = null; }
   let history: RecommendationListHistoryPage = { items: [], nextCursor: null }, proposals: CalibrationProposal[] = [], sideReadError: string | null = null;
   if (targetId && !resultError) try { history = await getRecommendationHistoryPage(targetId); } catch (error) { unstable_rethrow(error); sideReadError = "历史记录暂时无法读取，请稍后重试。"; }
@@ -45,6 +45,7 @@ export default async function RecommendationsPage({ searchParams = Promise.resol
         <p className="section-kicker">今日处理</p>
         <h1 id="recommendations-title">推荐清单</h1>
         <p>系统会从通过资格门槛的岗位中整理少量推荐，并保留每项判断的岗位与画像证据。</p>
+        <Link className="workbench-touch-target" href="/jobs">管理岗位与已归档岗位</Link>
         {resultError ? <p role="alert">{resultError}</p> : result ? <RecommendationResultSummary result={result} /> : null}
         {sideReadError ? <p role="alert">{sideReadError}</p> : null}
         {runStatus ? <><h2>{runStatus}</h2><Link className="workbench-touch-target" href={`/home?runId=${runId}`}>查看本次推荐</Link></> : null}
@@ -53,6 +54,7 @@ export default async function RecommendationsPage({ searchParams = Promise.resol
           <LatestExclusions key={list.recommendationListId} targetId={targetId!} list={list} />
           <RecommendationHistory key={`${targetId!}:${history.items.map((item) => item.recommendationListId).join(",")}:${history.nextCursor ?? ""}`} targetId={targetId!} initialPage={history} />
           <CalibrationProposals proposals={proposals} reviseAction={reviseCalibrationProposalAction} rebaseAction={rebaseCalibrationProposalAction} resolveAction={resolveCalibrationProposalAction} />
+          {list.items.length === 0 && !runId && !listParam ? <p role="status">当前推荐岗位均已归档。<Link className="workbench-touch-target" href="/jobs?filter=archived">查看已归档岗位</Link></p> : null}
           <ol aria-label="推荐岗位" id="recommendation-list">
             {list.items.map((item) => {
               const assessment = DeepMatchAssessmentSchema.safeParse(item.assessment).data;

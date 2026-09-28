@@ -121,7 +121,7 @@ function normalizedText(value: unknown): string | null {
 }
 
 export function createDeepMatchQueries(deps: { db: Database }) {
-  const readList = async (input: { userId: string; targetId: string; recommendationListId?: string; includeExclusions?: boolean; exclusionLimit?: number }) => {
+  const readList = async (input: { userId: string; targetId: string; recommendationListId?: string; includeArchived?: boolean; includeExclusions?: boolean; exclusionLimit?: number }) => {
     const [list] = await deps.db.select().from(recommendationLists).where(and(
       eq(recommendationLists.userId, input.userId), eq(recommendationLists.targetId, input.targetId),
       ...(input.recommendationListId ? [eq(recommendationLists.id, input.recommendationListId)] : []),
@@ -130,7 +130,7 @@ export function createDeepMatchQueries(deps: { db: Database }) {
       const items = await deps.db.select({ item: recommendationListItems, match: jobMatchVersions, opportunity: jobOpportunities }).from(recommendationListItems)
       .innerJoin(jobMatchVersions, and(eq(jobMatchVersions.userId, recommendationListItems.userId), eq(jobMatchVersions.id, recommendationListItems.matchVersionId)))
       .innerJoin(jobOpportunities, and(eq(jobOpportunities.userId, jobMatchVersions.userId), eq(jobOpportunities.id, jobMatchVersions.opportunityId)))
-      .where(and(eq(recommendationListItems.userId, input.userId), eq(recommendationListItems.recommendationListId, list.id))).orderBy(recommendationListItems.ordinal);
+      .where(and(eq(recommendationListItems.userId, input.userId), eq(recommendationListItems.recommendationListId, list.id), ...(input.includeArchived === false ? [isNull(jobOpportunities.canonicalOpportunityId), isNull(jobOpportunities.archivedAt)] : []))).orderBy(recommendationListItems.ordinal);
     const exclusionRows = input.includeExclusions === false ? [] : await deps.db.select({ id: recommendationExclusions.id, opportunityId: recommendationExclusions.opportunityId, reasonCode: recommendationExclusions.reasonCode }).from(recommendationExclusions)
       .where(and(eq(recommendationExclusions.userId, input.userId), eq(recommendationExclusions.recommendationListId, list.id))).orderBy(asc(recommendationExclusions.createdAt), asc(recommendationExclusions.id)).limit((input.exclusionLimit ?? Number.MAX_SAFE_INTEGER) + 1);
     const exclusions = input.exclusionLimit ? exclusionRows.slice(0, input.exclusionLimit).map(({ opportunityId, reasonCode }) => ({ opportunityId, reasonCode })) : exclusionRows.map(({ opportunityId, reasonCode }) => ({ opportunityId, reasonCode }));
@@ -273,8 +273,8 @@ export function createDeepMatchQueries(deps: { db: Database }) {
     };
   return {
     selectCandidateSelection,
-    async getLatestList(input: { userId: string; targetId: string }) { return readList({ ...input, exclusionLimit: 25 }); },
-    async getList(input: { userId: string; targetId: string; recommendationListId: string }) { return readList({ ...input, recommendationListId: input.recommendationListId, exclusionLimit: 25 }); },
+    async getLatestList(input: { userId: string; targetId: string }) { return readList({ ...input, includeArchived: false, exclusionLimit: 25 }); },
+    async getList(input: { userId: string; targetId: string; recommendationListId: string; includeArchived?: boolean }) { return readList({ ...input, recommendationListId: input.recommendationListId, exclusionLimit: 25 }); },
     async getFrozenCandidates(input: { userId: string; runId: string }): Promise<SelectedDeepMatchCandidate[]> {
       const rows = await deps.db.select({ candidateSnapshot: deepMatchRunCandidates.candidateSnapshot }).from(deepMatchRunCandidates)
         .where(and(eq(deepMatchRunCandidates.userId, input.userId), eq(deepMatchRunCandidates.runId, input.runId))).orderBy(deepMatchRunCandidates.ordinal);
