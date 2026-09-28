@@ -2549,7 +2549,9 @@ summary.workbench-touch-target:focus-visible,
 }
 
 .job-targets-section,
-.company-watchlist-section { border-top: 1px solid var(--rule); }
+.company-watchlist-section { border-top: 1px solid var(--rule); min-width: 0; }
+
+.run-policy-table-wrap { min-width: 0; width: 100%; }
 
 .job-target-suggestion-list article,
 .job-target-history-list article,
