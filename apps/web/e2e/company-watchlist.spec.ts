@@ -47,6 +47,8 @@ test("超长无空格角色名称不会造成 Watchlist 页面横向溢出", asy
 });
 
 async function addCompany(page: Page, company: string, careersUrl: string, domain: string, note = ""): Promise<void> {
+  const addButton = page.getByRole("button", { name: "添加目标公司" });
+  if (await addButton.isVisible()) await addButton.click();
   await page.getByLabel("公司规范名称").fill(company);
   await page.getByLabel("公开招聘入口").fill(careersUrl);
   await page.getByLabel("允许域").fill(domain);
@@ -57,7 +59,8 @@ async function addCompany(page: Page, company: string, careersUrl: string, domai
 
 test("目标公司 Watchlist 可添加、排序、禁用、重载并显示并发冲突", async ({ page, request }, testInfo) => {
   const { token, targetId } = await signInAtWatchlist(page, request, testInfo.project.name);
-  await expect(page.getByText("尚未登记目标公司。添加第一个公开来源后，它会成为优先级 01。")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Watchlist 下一行动" })).toContainText("尚未登记目标公司。添加第一个公开来源后，它会成为优先级 01。");
+  await page.getByRole("button", { name: "添加目标公司" }).click();
   await expect(page.getByText("不要填写账号、密码、Cookie、验证码或绕过登录限制的说明。")).toBeVisible();
 
   await addCompany(page, "曙光云图", "https://careers.aurora.example/jobs", "careers.aurora.example", "优先核验 AI 平台团队");
@@ -103,7 +106,7 @@ test("目标公司 Watchlist 可添加、排序、禁用、重载并显示并发
   await cancel.focus();
   await expect(cancel).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(page.getByRole("heading", { name: "添加目标公司" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "添加目标公司" })).toBeVisible();
   const controls = page.locator([
     ".company-watchlist-main button:not(:disabled):not([aria-disabled=true]):not([aria-hidden=true]):visible",
     ".company-watchlist-main a[href]:not([aria-disabled=true]):not([aria-hidden=true]):visible",
@@ -117,8 +120,6 @@ test("目标公司 Watchlist 可添加、排序、禁用、重载并显示并发
     return counts;
   }, {}));
   expect(controlsByTag.BUTTON).toBeGreaterThan(0);
-  expect(controlsByTag.INPUT).toBeGreaterThan(0);
-  expect(controlsByTag.TEXTAREA).toBeGreaterThan(0);
   for (let index = 0; index < controlCount; index += 1) {
     const box = await controls.nth(index).boundingBox();
     expect(box?.height).toBeGreaterThanOrEqual(44);

@@ -49,6 +49,8 @@ describe("RecommendationsPage", () => {
     expect(screen.getByRole("main", { name: "证据推荐清单" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "推荐清单" })).toBeInTheDocument();
     expect(screen.getByText("暂无可处理的推荐")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "推荐下一行动" })).toHaveTextContent("先建立求职目标");
+    expect(screen.getByRole("link", { name: "建立求职目标" })).toHaveAttribute("href", "/profile/targets");
     expect(screen.queryByText(/%/)).not.toBeInTheDocument();
   });
 

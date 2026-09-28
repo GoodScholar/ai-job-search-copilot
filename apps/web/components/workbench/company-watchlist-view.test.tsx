@@ -47,11 +47,29 @@ it("为空 Watchlist 呈现目标角色、唯一新增提交和固定安全提�
   expect(screen.getByRole("main", { name: "公司来源台账" })).toBeVisible();
   expect(screen.getByRole("region", { name: "当前 Watchlist 状态" })).toHaveTextContent("Watchlist 版本 0");
   expect(screen.getByRole("heading", { name: "AI 应用工程的目标公司 Watchlist" })).toBeVisible();
-  const submitButtons = screen.getAllByRole("button").filter((button) => button.getAttribute("type") === "submit");
-  expect(submitButtons).toHaveLength(1);
-  expect(submitButtons[0]).toHaveAccessibleName("保存目标公司");
-  expect(submitButtons[0]).toHaveClass("workbench-touch-target");
-  expect(screen.getByText("不要填写账号、密码、Cookie、验证码或绕过登录限制的说明。")).toBeVisible();
+  const add = screen.getByRole("button", { name: "添加目标公司" });
+  expect(add).toHaveClass("workbench-touch-target");
+  expect(screen.queryByRole("button", { name: "保存目标公司" })).not.toBeInTheDocument();
+  expect(screen.queryByText("不要填写账号、密码、Cookie、验证码或绕过登录限制的说明。")).not.toBeInTheDocument();
+});
+
+it("仅在用户选择添加或编辑来源后显示 Watchlist 表单", async () => {
+  const user = userEvent.setup();
+  render(<CompanyWatchlistView initialOverview={overview([item(firstItemId, 1, "曙光云图")], 1)} />);
+
+  expect(screen.getByRole("heading", { name: "已登记来源" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "添加目标公司" })).toBeVisible();
+  expect(screen.queryByLabelText("公司规范名称")).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "添加目标公司" }));
+  expect(screen.getByLabelText("公司规范名称")).toBeVisible();
+  expect(screen.getByRole("button", { name: "取消添加" })).toBeVisible();
+
+  await user.click(screen.getByRole("button", { name: "取消添加" }));
+  expect(screen.queryByLabelText("公司规范名称")).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "编辑 曙光云图" }));
+  expect(screen.getByRole("heading", { name: "编辑 曙光云图" })).toBeVisible();
 });
 
 it("初始健康读取降级时保留 Watchlist 控制与可恢复诊断", async () => {
@@ -117,6 +135,7 @@ it("将稳定来源能力与动态来源诊断分区呈现", () => {
 it("分别说明缺少名称、无效 URL、域名不匹配和凭据型 URL", async () => {
   const user = userEvent.setup();
   render(<CompanyWatchlistView initialOverview={overview()} />);
+  await user.click(screen.getByRole("button", { name: "添加目标公司" }));
 
   await user.click(screen.getByRole("button", { name: "保存目标公司" }));
   expect(screen.getByText("请填写公司规范名称。")).toBeVisible();
@@ -143,6 +162,7 @@ it("新增后仅使用已验证响应显示优先级和版本", async () => {
   const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json(next, { status: 201 }));
   vi.stubGlobal("fetch", fetchMock);
   render(<CompanyWatchlistView initialOverview={overview()} />);
+  await user.click(screen.getByRole("button", { name: "添加目标公司" }));
 
   await user.type(screen.getByLabelText("公司规范名称"), "曙光云图");
   await user.type(screen.getByLabelText("公开招聘入口"), "https://careers.aurora.example/jobs");
@@ -184,6 +204,7 @@ it("每次成功写入后都用 BFF 的当前 health 投影替换旧证据", asy
     .mockResolvedValueOnce(Response.json(capabilities(7, [])));
   vi.stubGlobal("fetch", fetchMock);
   render(<CompanyWatchlistView initialOverview={initial} initialSourceHealth={initialHealth} />);
+  await user.click(screen.getByRole("button", { name: "添加目标公司" }));
 
   await user.type(screen.getByLabelText("公司规范名称"), "新来源");
   await user.type(screen.getByLabelText("公开招聘入口"), "https://careers.orbit.example/jobs");
@@ -320,5 +341,5 @@ it("409 保留现有列表和表单数据并给出固定冲突提示", async () 
 it("在停用目标上明确阻止维护", () => {
   render(<CompanyWatchlistView initialOverview={{ ...overview(), target: { targetId, targetVersion: 2, targetState: "inactive", roleFamily: "AI 应用工程" } }} />);
   expect(screen.getByText("该求职目标已停用，不能维护 Watchlist。")).toBeVisible();
-  expect(screen.getByRole("button", { name: "保存目标公司" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "添加目标公司" })).toBeDisabled();
 });

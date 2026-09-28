@@ -10,7 +10,8 @@ import { WorkbenchNavigation } from "./workbench-navigation";
 it("renders the fixed 首页、推荐、投递、画像 order and only links real destinations", () => {
   render(<WorkbenchNavigation />);
 
-  expect(screen.getByRole("navigation")).toHaveAccessibleName("职业透镜工作台导航");
+  expect(screen.getByRole("navigation")).toHaveAccessibleName("求职工作台导航");
+  expect(screen.getByRole("navigation")).not.toHaveAccessibleName(/职业透镜/u);
   expect(screen.getByRole("navigation")).toHaveClass("workbench-navigation-list");
   expect(screen.getByRole("link", { name: "画像" })).toHaveAttribute("aria-current", "page");
   expect(screen.getByRole("link", { name: "首页" })).not.toHaveAttribute("aria-current");

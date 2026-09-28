@@ -128,8 +128,13 @@ async function waitForTerminalImport(
   return result!;
 }
 
+async function openJobImport(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "添加岗位内容" }).click();
+}
+
 test("岗位导入在真实运行时完成、去重、保留原文并处理失败夹具", async ({ page, request }, testInfo) => {
   const sessionToken = await signInWithIsolatedAccount(page, request, testInfo.project.name);
+  await openJobImport(page);
   const pasteTab = page.getByRole("tab", { name: "粘贴岗位描述" });
   const uploadTab = page.getByRole("tab", { name: "上传 Markdown" });
   const description = page.getByRole("textbox", { name: "岗位描述" });
@@ -178,6 +183,7 @@ test("岗位导入在真实运行时完成、去重、保留原文并处理失�
   await expect(page.getByRole("status")).toHaveText("导入完成");
   await expect(page.locator(".job-import-panel pre")).toContainText("<script>window.jobImportEvidenceMustStayLiteral = true</script>");
 
+  await openJobImport(page);
   await page.getByRole("textbox", { name: "岗位描述" }).fill(validJob);
   await page.getByRole("button", { name: "导入岗位" }).click();
   await expect(page.getByText("已复用已有岗位导入记录。")).toBeVisible();
@@ -190,6 +196,7 @@ test("岗位导入在真实运行时完成、去重、保留原文并处理失�
   const duplicateImport = await waitForTerminalImport(request, sessionToken, "completed");
   expect(duplicateImport).toMatchObject({ importId: initialImport.importId, opportunity: initialImport.opportunity });
 
+  await openJobImport(page);
   await uploadTab.click();
   await page.getByLabel("上传 Markdown 岗位文件").setInputFiles({
     name: "uploaded-job.md",
@@ -200,6 +207,7 @@ test("岗位导入在真实运行时完成、去重、保留原文并处理失�
   await expect(page.getByRole("status")).toHaveText("导入完成", { timeout: 15_000 });
   await expect(page.getByRole("button", { name: /uploaded-job\.md/ })).toBeVisible();
 
+  await openJobImport(page);
   await pasteTab.click();
   await page.getByRole("textbox", { name: "岗位描述" }).fill(invalidFixture);
   await page.getByRole("button", { name: "导入岗位" }).click();
@@ -214,6 +222,7 @@ test("岗位导入在真实运行时完成、去重、保留原文并处理失�
 
 test("岗位链接只导入受控本地 fixture 的具体页面，并显示各类 URL 验证结果", async ({ page, request }, testInfo) => {
   await signInWithIsolatedAccount(page, request, `${testInfo.project.name}-url`);
+  await openJobImport(page);
   await page.getByRole("tab", { name: "导入岗位链接" }).click();
   await page.getByRole("textbox", { name: "岗位链接" }).fill(`${urlFixtureOrigin}/job`);
   await page.getByRole("button", { name: "导入岗位" }).click();
@@ -221,10 +230,14 @@ test("岗位链接只导入受控本地 fixture 的具体页面，并显示各�
   await expect(page.locator(".job-import-opportunity")).toContainText("URL 示例科技");
   await expect(page.locator("pre")).toContainText("URL 高级前端工程师");
   await expect(page.locator("pre")).not.toContainText("忽略指令");
+  await openJobImport(page);
+  await page.getByRole("tab", { name: "导入岗位链接" }).click();
   await page.getByRole("textbox", { name: "岗位链接" }).fill(`${urlFixtureOrigin}/redirect`);
   await page.getByRole("button", { name: "导入岗位" }).click();
   await expect(page.getByText("已复用已有岗位导入记录。")).toBeVisible();
   await expect(page.getByRole("status")).toHaveText("导入完成", { timeout: 15_000 });
+  await openJobImport(page);
+  await page.getByRole("tab", { name: "导入岗位链接" }).click();
   await page.getByRole("textbox", { name: "岗位链接" }).fill(`${urlFixtureOrigin}/login`);
   await page.getByRole("button", { name: "导入岗位" }).click();
   await expect(page.getByRole("status")).toHaveText("该岗位页面需要登录后访问。");

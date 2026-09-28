@@ -1,8 +1,10 @@
 # Issue #66 浏览器验收记录
 
-## 当前结论
+## 当前结论（返工后）
 
-Issue #66 的 Career Lens 表现层、十条路由、Watchlist 与四个动态任务态均已实施并由真实运行时覆盖。唯一未闭环项是 `one-click-recommendation.spec.ts` 的账户全局停止状态：测试期望 queued B run 为 `paused`，API/worker 实际稳定返回 `cancelled`。这不是本 Issue 的 Web 表现层修改可处理的范围，故标记为 **UNVERIFIED（基线/非范围）**；除该项外，本记录中的证据均为 PASS。
+十路由与四个动态态已用显式 `CAREER_LENS_CAPTURE=after` 真实运行时重新采集；未设置该变量的采集路径返回 `null`，不会写入 `before`。Inbox、首次旅程与导入审核由不同 fixture/account 采集；Inbox 与首次旅程哈希在双视口均不同。目标、Watchlist、岗位导入和推荐空态已经按“状态 → 下一行动 → 台账/结果”重组，新增/编辑表单只在用户点击操作后出现；E2E 保留真实请求与状态断言。职业资料的上传与运行策略仍保留既有配置表单，因此不把它们误报为已完成“默认隐藏表单”的重构。
+
+完整指定 E2E 仍非全绿：`one-click-recommendation.spec.ts` 的两个视口期望 `paused`、实际 `cancelled`，且协调者已在干净 `origin/main` 独立复现，故为既有 API/worker 缺陷、**UNVERIFIED（基线/非范围）**，未改 API/worker 或弱化断言。其余本轮受影响 Watchlist、岗位导入、推荐、目标和 acceptance 均有串行 GREEN 日志。
 
 ## 实现与动态态
 
@@ -26,7 +28,9 @@ Issue #66 的 Career Lens 表现层、十条路由、Watchlist 与四个动态�
 
 ## 视觉与可访问性
 
-人工查看确认 after 截图在双视口中无根横向溢出，关键路由和四任务态均可读；acceptance 覆盖 landmark、状态对象、reduced motion 和移动无溢出。营销页保留 Axe、键盘顺序、44px CTA 和登录边界断言；其余页面由组件测试与运行时 E2E 覆盖触控及状态路径。finesse 的 P1 side-stripe、P2 palette/stamp 提示已记录，不作为视觉缺项或功能失败处理。
+已逐张查看 `screenshots/after/*.png`。目标、Watchlist、岗位导入和推荐空态达到 96–97；营销/登录为 98，首页与三个首页动态态为 96，模型诊断为 97。职业资料、导入审核与运行策略因默认可见的长表单仅评为 93–94，尚未满足本轮“表单仅在明确编辑模式出现”的视觉 AC；不得据此勾选全面视觉通过。无横向溢出、键盘/焦点、44px 触控、对比度、reduced-motion、空/加载/错误/恢复均有 acceptance/受影响 E2E 证据。finesse 本轮报告一个 `draft.careersUrl.trim(` 的误报 P0（把 TS 表达式误识别为路径）及 P2 stamp 提示，未发现真实死链。
+
+静态旧图可与 `screenshots/before/` 的 18 个受版本控制文件逐项对照；旧动态态没有归档 before，明确标为缺证，未伪造。设计采用浅蓝工作台、深色运行区、可见状态卡和移动底栏；舍弃“职业透镜”作为用户产品名。未添加依赖或资产，现有代码与静态资产许可不变。
 
 ## Before 证据隔离
 
