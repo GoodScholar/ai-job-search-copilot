@@ -16,7 +16,7 @@
 | #59 验收要求 | 实现 / 证据 |
 | --- | --- |
 | 产品与发布版本统一 | package manifests `0.1.0-alpha`、工作台/营销页版本、Next applicationName、OpenAPI info.version、PRODUCT/README/CHANGELOG |
-| 变更与兼容性/迁移/限制 | CHANGELOG：首次闭环、`/v1` 保持、全部迁移到 0058、备份/回退、正式 Beta 后边界 |
+| 变更与兼容性/迁移/限制 | CHANGELOG：首次闭环、`/v1` 保持；原 #59 基线迁移到 0058，本次主线集成重编号到 0059；备份/回退、正式 Beta 后边界 |
 | 干净环境启动完整依赖 | 全新临时源码目录 frozen 安装；演示与 pnpm dev 空卷启动，readiness 全部 ready |
 | 托管/自行部署责任 | docs/releases/v0.1.0-alpha.md：责任表、Dev Auth 与尚未交付的生产托管/微信认证限制 |
 | 服务凭据责任 | 服务端部署者持有，无求职账户秘密管理；模型连接诊断与账户额度只呈现脱敏状态 |

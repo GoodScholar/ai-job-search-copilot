@@ -29,7 +29,7 @@
 | --- | --- | --- |
 | 基线 `pnpm test` | 47/48 domain 文件、789 项通过；`verified-job-source-gate.integration.test.ts` 因 Testcontainers 端口绑定硬编码 10 秒超时失败 | `/tmp/issue70-baseline-test.log` |
 | 受影响测试 | contracts/domain/worker/API/Web 共 208 项通过 | `/tmp/issue70-targeted-tests.log` |
-| 数据库迁移 | 6 文件、54 项通过；集成后复跑同样 54 项通过 | `/tmp/issue70-database-test.log`、`/tmp/issue70-database-rerun.log` |
+| 数据库迁移 | 6 文件、54 项通过；集成后及审查修正后复跑均为 54 项通过；最终 schema 无迁移漂移 | `/tmp/issue70-database-test.log`、`/tmp/issue70-database-rerun.log`、`/tmp/issue70-database-review-fix.log`、`/tmp/issue70-drizzle-review-fix.log` |
 | 全仓类型检查 | 退出 0 | `/tmp/issue70-typecheck.log` |
 | 运行时 | 44 项通过，退出 0 | `/tmp/issue70-runtime.log` |
 | 全工作区测试 | contracts 199、database 54、Web 662、model-access 50、source-access 125、domain 841、API 208、Worker 332；共 243 文件、2,471 项有效通过 | `/tmp/issue70-workspace-tests.log`、`/tmp/issue70-database-rerun.log`、`/tmp/issue70-remaining-workspace-tests.log` |
@@ -39,6 +39,12 @@
 | build | Web、API、Worker 通过，退出 0 | `/tmp/issue70-build.log` |
 
 全工作区首次串行命令在 database 的 `recommendation-runs.migrate.integration.test.ts` 再次遇到同一 Testcontainers 端口绑定超时，40 项通过、14 项因 beforeAll 失败跳过。调查确认 Testcontainers 12.1.0 在 wait strategy 之前使用不可配置的 10 秒端口映射等待；失败容器由 Ryuk 清理，项目代码和迁移未产生断言失败。保留 `/tmp/issue70-workspace-tests.log` 原始失败，不修改依赖或测试超时；随后只重跑受影响 database 套件，并继续尚未执行的工作区套件。该既有环境问题仍由 #71 独立归因。
+
+## 双轴审查
+
+Standards 与 Spec 由两个独立只读代理对固定基线至当前全部变更进行审查，代理未运行测试或服务。首次审查发现并修正三项可验证偏差：`0057`/`0058` 中间快照未承接 #65 的 OpenAI 解析器列及约束；指标文档引用仓库中不存在的 ADR 0039；#59 验收文档仍把迁移终点写作集成前的 0058。修正后重新生成对应阶段快照，`drizzle-kit generate` 确认最终 schema 无漂移，数据库 54 项测试通过；两轴随后复审最终差异。
+
+Standards 另标记 API 与 Worker 各自的 `MinioJobExportStore` 存在相似实现。本次不跨应用抽取：两者位于独立可部署应用的基础设施适配层，分别服务读取与后台写入生命周期；仓库对 career document 等 MinIO 适配器同样保持应用本地实现。为消除十余行重复而新增跨应用共享基础设施依赖会扩大 #70 的集成范围，且不会改变领域端口契约或验收行为。
 
 ## 交付边界
 

@@ -3824,6 +3824,12 @@
           "notNull": true,
           "default": "'fake-career-parser-v1'"
         },
+        "model": {
+          "name": "model",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": false
+        },
         "prompt_version": {
           "name": "prompt_version",
           "type": "varchar(64)",
@@ -3971,11 +3977,11 @@
         },
         "career_imports_parser_adapter_check": {
           "name": "career_imports_parser_adapter_check",
-          "value": "\"career_imports\".\"parser_adapter\" = 'fake'"
+          "value": "\"career_imports\".\"parser_adapter\" in ('fake', 'openai')"
         },
         "career_imports_parser_version_check": {
           "name": "career_imports_parser_version_check",
-          "value": "\"career_imports\".\"parser_version\" = 'fake-career-parser-v1'"
+          "value": "(\"career_imports\".\"parser_adapter\" = 'fake' and \"career_imports\".\"parser_version\" = 'fake-career-parser-v1' and \"career_imports\".\"model\" is null) or (\"career_imports\".\"parser_adapter\" = 'openai' and \"career_imports\".\"parser_version\" ~ '^openai-career-parser-v1-[0-9a-f]{16}$' and \"career_imports\".\"model\" is not null and length(\"career_imports\".\"model\") between 1 and 128)"
         },
         "career_imports_prompt_version_check": {
           "name": "career_imports_prompt_version_check",
