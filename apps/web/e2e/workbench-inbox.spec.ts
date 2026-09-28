@@ -115,6 +115,7 @@ async function assertReducedMotion(page: Page): Promise<void> {
 
 async function addWatchlistSource(page: Page, targetId: string, name: string, board: string): Promise<void> {
   await page.goto(`/profile/targets/${targetId}/watchlist`);
+  await page.getByRole("button", { name: "添加目标公司" }).click();
   await page.getByLabel("公司规范名称").fill(name);
   await page.getByLabel("公开招聘入口").fill(`https://boards.greenhouse.io/${board}`);
   await page.getByLabel("允许域").fill("boards.greenhouse.io, boards-api.greenhouse.io");

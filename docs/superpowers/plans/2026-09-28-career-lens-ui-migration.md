@@ -12,7 +12,7 @@
 
 ## 执行状态（2026-09-28）
 
-Task 1–4、6–7 的实现与状态覆盖已完成；Task 5 的职业资料默认长表单、以及 Task 8 的全面视觉 AC 仍需返工。全量指定 E2E 另保留一个 `UNVERIFIED`：`one-click-recommendation.spec.ts` 的“全局停止后为 paused”断言在本分支与全新 `origin/main` 均稳定得到 `cancelled`；该 API/worker 既有行为不在本计划的 Web UI 修改范围内，未被改写为通过。
+Task 1–8 的实现、状态覆盖与视觉 AC 已完成。全量指定 E2E 仅保留一个 `UNVERIFIED`：`one-click-recommendation.spec.ts` 的“全局停止后为 paused”断言在本分支与全新 `origin/main` 均稳定得到 `cancelled`；该 API/worker 既有行为不在本计划的 Web UI 修改范围内，未被改写为通过。Profile 明确编辑模式切片只保留 GREEN 回归，历史恢复轮未保存 RED 输出。
 
 ## Global Constraints
 
@@ -165,8 +165,8 @@ Task 1–4、6–7 的实现与状态覆盖已完成；Task 5 的职业资料默
 
 - [x] **Step 1: 写失败测试**：覆盖事实分区、空态导入路径、候选事实决定、冲突、隐私检查、导入排队/失败/取消和焦点回归。
 - [x] **Step 2: 验证 RED**：运行 profile 定向 Vitest，确认结构/交互缺失导致预期失败。
-- [ ] **Step 3: 最小实现**：保留单一 client state 与现有请求语义，把常驻长表单改为明确编辑模式并加入语义区块。（返工中：职业资料上传/维护表单仍默认可见。）
-- [ ] **Step 4: 验证 GREEN**：定向 Vitest 后串行运行三种导入 E2E。（等待 Step 3 完成。）
+- [x] **Step 3: 最小实现**：保留单一 client state 与现有请求语义，把常驻长表单改为明确编辑模式并加入语义区块。（返工完成；仅保留 GREEN 回归。）
+- [x] **Step 4: 验证 GREEN**：定向 Vitest 后串行运行三种导入 E2E。（最终串行回归：Markdown / DOCX / PDF 共 10 passed；Profile 明确编辑模式的历史恢复切片仅保留 GREEN 输出。）
 - [x] **Step 5: Commit**：`git commit -m "feat(web): organize the evidence-backed career profile"`。
 
 ### Task 6: 迁移求职目标、来源台账与岗位导入
@@ -228,10 +228,10 @@ Task 1–4、6–7 的实现与状态覆盖已完成；Task 5 的职业资料默
 - [x] **Step 1: 完成验收 spec**：用真实浏览器和现有 fixture 访问十路由与四任务态，断言 landmark、主对象、真实状态、无横向溢出、44px 命中、键盘焦点、reduced-motion、空/错误恢复；复核各切片已经真实经历 RED，未覆盖项先补失败断言再修复。
 - [x] **Step 2: 复核 before 证据**：确认 Task 0 的截图来自 `fa67dd6` 真实 runtime 且清单完整；不得在实现后重建或把静态原型冒充旧产品截图。
 - [x] **Step 3: 验证 GREEN 与保存 after**：在当前 HEAD 运行 `pnpm --filter web test:e2e -- career-lens-acceptance.spec.ts --workers=1`；逐页查看全部 after 截图并与权威图/原型对照，记录布局30/主视觉25/字体色彩20/内容组件15/移动10、具体扣分和关键缺项。
-- [ ] **Step 4: 视觉修正闭环**：任何页面低于 95 或关键缺项>0，先补能捕获行为回归的测试，再最小修复并重跑受影响页面；不以平均分放行。（职业资料/运行策略仍待处理。）
+- [x] **Step 4: 视觉修正闭环**：任何页面低于 95 或关键缺项>0，先补能捕获行为回归的测试，再最小修复并重跑受影响页面；不以平均分放行。（职业资料/运行策略已改为明确操作后展开；Mobile Policy 已经 RED→GREEN 验证两列均可见。）
 - [x] **Step 5: 全量串行验证**：确认无遗留测试进程后，依次运行 `pnpm --filter web test`、`pnpm --filter web typecheck`、`pnpm --filter web lint`、`pnpm --filter web build`，再依次运行 Issue 指定的全部现有 E2E specs；记录退出码与完整日志位置；全局停止状态以 UNVERIFIED 记录。
 - [x] **Step 6: UI 静态检测**：运行 `node /Users/shen/.codex/skills/vibe-ui-orchestrator/scripts/finesse-detect.mjs --json <changed-web-files>` 作为补充，`notCovered` 必须转入人工浏览器检查，不用它替代截图验收。
-- [ ] **Step 7: 完成 QA 报告**：`docs/qa/issue-66/README.md` 写入参考采用/舍弃、依赖与许可、每页评分、截图清单、键盘/焦点/触控/对比度/reduced-motion/溢出/状态证据、既有 API 失败和未决风险。（报告已记录未决视觉 AC。）
+- [x] **Step 7: 完成 QA 报告**：`docs/qa/issue-66/README.md` 写入参考采用/舍弃、依赖与许可、每页评分、截图清单、键盘/焦点/触控/对比度/reduced-motion/溢出/状态证据、既有 API 失败和未决风险。（14 项均 >=95，关键缺项 0；仅 one-click API/worker 基线缺陷保持 UNVERIFIED。）
 - [x] **Step 8: Commit**：`git commit -m "test(web): verify the career lens migration"`。
 
 ## Plan Self-Review
