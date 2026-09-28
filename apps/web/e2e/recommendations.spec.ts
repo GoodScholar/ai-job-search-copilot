@@ -184,7 +184,7 @@ async function ignoreRecommendation(page: Page, title: string, reason: "薪资" 
   if (info.project.name === "Desktop Chrome") await summary.click(); else await summary.tap({ force: true });
   await card.getByRole("radio", { name: reason }).check();
   const confirm = card.getByRole("button", { name: "确认忽略" });
-  if (info.project.name === "Desktop Chrome") await confirm.click(); else await confirm.tap({ force: true });
+  if (info.project.name === "Desktop Chrome") await confirm.click(); else { await confirm.scrollIntoViewIfNeeded(); await confirm.click(); }
   await expect(card.getByText("当前推荐决策：", { exact: false })).toContainText("已忽略");
 }
 
@@ -318,18 +318,18 @@ test("推荐决策与拒绝校准建议保持规则和目标不变", async ({ pa
   const ignoredCard = page.getByRole("listitem").filter({ has: page.getByRole("heading", { name: "反馈岗位二" }) });
   const ignoreWithoutReason = ignoredCard.locator("summary").filter({ hasText: "忽略此推荐" });
   await ignoreWithoutReason.scrollIntoViewIfNeeded();
-  if (info.project.name === "Desktop Chrome") await ignoreWithoutReason.click(); else await ignoreWithoutReason.tap({ force: true });
+  if (info.project.name === "Desktop Chrome") await ignoreWithoutReason.click(); else { await ignoreWithoutReason.scrollIntoViewIfNeeded(); await ignoreWithoutReason.click(); }
   const confirmIgnore = ignoredCard.getByRole("button", { name: "确认忽略" });
-  if (info.project.name === "Desktop Chrome") await confirmIgnore.click(); else await confirmIgnore.tap({ force: true });
+  if (info.project.name === "Desktop Chrome") await confirmIgnore.click(); else { await confirmIgnore.scrollIntoViewIfNeeded(); await confirmIgnore.click(); }
   await expect(ignoredCard.getByText("当前推荐决策：", { exact: false })).toContainText("已忽略");
   const before = await (async () => { const client = new Client({ connectionString: databaseUrl }); await client.connect(); try { return (await client.query("select version from job_targets where id = $1", [account.targetId])).rows[0]!.version as number; } finally { await client.end(); } })();
   for (const title of ["反馈岗位三", "反馈岗位四", "反馈岗位五"]) {
     const card = page.getByRole("listitem").filter({ has: page.getByRole("heading", { name: title }) });
     const summary = card.locator("summary").filter({ hasText: "忽略此推荐" });
-    if (info.project.name === "Desktop Chrome") await summary.click(); else await summary.tap({ force: true });
+    if (info.project.name === "Desktop Chrome") await summary.click(); else { await summary.scrollIntoViewIfNeeded(); await summary.click(); }
     await card.getByRole("radio", { name: "地点" }).check();
     const button = card.getByRole("button", { name: "确认忽略" });
-    if (info.project.name === "Desktop Chrome") await button.click(); else await button.tap({ force: true });
+    if (info.project.name === "Desktop Chrome") await button.click(); else { await button.scrollIntoViewIfNeeded(); await button.click(); }
     await expect(card.getByText("当前推荐决策：", { exact: false })).toContainText("已忽略");
   }
   await expect(page.getByRole("heading", { name: "校准建议" })).toBeVisible();

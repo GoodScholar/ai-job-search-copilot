@@ -2381,7 +2381,7 @@ summary.workbench-touch-target:focus-visible,
     min-height: 2.75rem;
   }
 
-  .workbench-content :is(.workbench-main, .profile-main, .job-import-workbench, .model-connection-main) {
+  .workbench-content :is(.workbench-main, .workbench-page, .profile-main, .job-import-workbench, .model-connection-main) {
     padding-bottom: calc(6rem + env(safe-area-inset-bottom));
   }
 }
