@@ -176,7 +176,7 @@ export function JobImportView({ initialImports, initialTargets = [] }: JobImport
     : pollingMessage ?? (status ? statusText[status] : "尚未导入岗位。");
 
   return (
-    <main className="container workbench-main job-import-workbench">
+    <main aria-label="岗位导入" className="container workbench-main job-import-workbench">
       <section aria-labelledby="job-import-title" className="workbench-intro">
         <p className="workbench-kicker">岗位机会 · 主动导入</p><h1 id="job-import-title">导入岗位</h1>
         <p>提交岗位描述或 Markdown 文件后，系统会保留原始证据，并将可确认的信息规范化为岗位机会。</p>

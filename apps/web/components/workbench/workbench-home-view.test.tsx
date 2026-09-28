@@ -73,6 +73,7 @@ afterEach(() => { refresh.mockClear(); replace.mockClear(); vi.useRealTimers(); 
 
 it("把需要决定的事项放在首页标题，并完整呈现真实摘要和未启用的投递能力", () => {
   render(<WorkbenchHomeView home={home} inbox={{ items: [] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
+  expect(screen.getByRole("main", { name: "今日决策台" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "先处理需要你决定的事项" })).toBeVisible();
   for (const label of ["今日推荐", "待确认事实", "运行中的求职代理", "失败的求职代理", "需要关注的来源", "待决定事项"]) expect(screen.getByText(label)).toBeVisible();
   expect(screen.getByText("投递记录（尚未启用）")).toBeVisible();

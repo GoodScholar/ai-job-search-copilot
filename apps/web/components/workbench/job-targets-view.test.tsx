@@ -59,6 +59,7 @@ it("prepopulates but never saves evidence-labelled candidate directions until th
 
   render(<JobTargetsView initialOverview={overview()} />);
 
+  expect(screen.getByRole("main", { name: "求职目标" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "候选岗位方向" })).toBeVisible();
   expect(screen.getAllByText("建议依据")).toHaveLength(3);
   expect(screen.getByText("AI 应用工程 证据")).toBeVisible();

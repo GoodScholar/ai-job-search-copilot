@@ -207,7 +207,7 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth, ini
     );
   }
 
-  return <main className="container workbench-main company-watchlist-main">
+  return <main aria-label="公司来源台账" className="container workbench-main company-watchlist-main">
     <section aria-labelledby="company-watchlist-title" className="company-watchlist-intro">
       <p className="workbench-kicker">求职目标 · 公开来源台账</p>
       <h1 id="company-watchlist-title">{overview.target.roleFamily}的目标公司 Watchlist</h1>

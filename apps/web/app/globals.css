@@ -2468,7 +2468,9 @@ summary.workbench-touch-target:focus-visible,
 .career-lens-disclaimer { bottom: 1.25rem; left: 50%; position: absolute; transform: translateX(-50%); white-space: nowrap; }
 
 .career-lens-journey {
-  padding-block: clamp(2rem, 5vw, 4rem);
+  grid-column: 1 / -1;
+  padding: 0;
+  width: 100%;
 }
 
 .career-lens-journey h2 { font-size: clamp(1.4rem, 2vw, 2rem); margin: 0; }
@@ -2480,6 +2482,127 @@ summary.workbench-touch-target:focus-visible,
 .login-access-panel { background: var(--surface); border: 1px solid var(--rule); border-radius: 1.125rem; box-shadow: 0 18px 42px rgb(5 19 58 / 0.08); max-width: 38rem; padding: clamp(1.5rem, 4vw, 3rem); position: relative; }
 .login-access-panel::before { background: radial-gradient(circle, rgb(0 81 255 / 0.1), transparent 65%); border: 1px solid rgb(0 81 255 / 0.12); border-radius: 50%; content: ""; height: 13rem; pointer-events: none; position: absolute; right: -5rem; top: -5rem; width: 13rem; }
 .login-access-panel > * { position: relative; }
+
+/* Career lens route surfaces keep the existing data/action seams while presenting one clear object per section. */
+.workbench-page,
+.profile-main,
+.workbench-main {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.workbench-intro,
+.profile-intro,
+.company-watchlist-intro {
+  max-width: 52rem;
+}
+
+.workbench-intro h1,
+.profile-intro h1,
+.company-watchlist-intro h1 {
+  color: var(--ink);
+  font-size: clamp(1.8rem, 3vw, 2.45rem);
+  letter-spacing: -0.045em;
+}
+
+.workbench-summary,
+.workbench-ledger,
+.job-targets-section,
+.job-import-panel,
+.profile-facts,
+.profile-upload,
+.company-watchlist-section,
+.recommendation-result-summary {
+  margin-top: 0;
+  padding: clamp(1rem, 2vw, 1.5rem);
+}
+
+.workbench-summary {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 1.125rem;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  overflow: hidden;
+}
+
+.workbench-summary > div {
+  border-inline-end: 1px solid var(--rule);
+  min-width: 0;
+  padding: 0.25rem 0.75rem;
+}
+
+.workbench-summary > div:last-child { border-inline-end: 0; }
+.workbench-summary dt { color: var(--muted); font-size: 0.75rem; }
+.workbench-summary dd { color: var(--cobalt); font-size: 1.75rem; font-weight: 800; margin: 0.4rem 0 0; }
+
+.job-targets-section,
+.company-watchlist-section,
+.profile-upload,
+.profile-facts,
+.job-import-panel,
+.recommendation-result-summary {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 1.125rem;
+  box-shadow: 0 12px 30px rgb(5 19 58 / 0.05);
+}
+
+.job-targets-section,
+.company-watchlist-section { border-top: 1px solid var(--rule); }
+
+.job-target-suggestion-list article,
+.job-target-history-list article,
+.company-watchlist-list > li,
+.profile-fact-list > li,
+.job-import-recent-list > li,
+.recommendation-result-summary {
+  border-color: var(--rule);
+}
+
+.job-target-watchlist-link,
+.company-watchlist-form-actions button,
+.company-watchlist-actions button,
+.workbench-ledger-link { color: var(--cobalt); }
+
+.company-watchlist-form-actions button:first-child { background: var(--cobalt); border-color: var(--cobalt); }
+
+.recommendation-run-panel,
+.agent-run-panel,
+.model-connection-ledger {
+  background: var(--ai-night);
+  box-shadow: 0 16px 34px rgb(0 28 55 / 0.18);
+}
+
+.recommendation-run-stages,
+.agent-run-timeline {
+  gap: 0.5rem;
+}
+
+.recommendation-run-stages > li,
+.agent-run-timeline > li {
+  border-color: rgb(255 255 255 / 0.2);
+  border-radius: 0.75rem;
+  padding: 0.75rem;
+}
+
+.recommendation-list > li {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 1.125rem;
+  box-shadow: 0 12px 30px rgb(5 19 58 / 0.05);
+  padding: 1.25rem;
+}
+
+@media (max-width: 767px) {
+  .workbench-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .workbench-summary > div:nth-child(2n) { border-inline-end: 0; }
+  .workbench-summary > div { border-bottom: 1px solid var(--rule); padding-block: 0.65rem; }
+  .workbench-summary > div:nth-last-child(-n + 2) { border-bottom: 0; }
+  .profile-main,
+  .workbench-main,
+  .workbench-page { gap: 1rem; }
+}
 
 @media (min-width: 768px) {
   .career-lens-board { grid-template-columns: minmax(0, 0.95fr) minmax(21rem, 1.05fr); }

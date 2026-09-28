@@ -466,7 +466,7 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
         : "请选择一份 Markdown、DOCX 或 PDF 职业资料后上传。";
 
   return (
-    <main className="container profile-main">
+    <main aria-label="职业资料" className="container profile-main">
       <section aria-labelledby="profile-title" className="profile-intro">
         <p className="workbench-kicker">职业资料 · 候选事实</p>
         <h1 id="profile-title">从职业资料建立求职画像</h1>

@@ -23,6 +23,7 @@ afterEach(() => { vi.clearAllMocks(); vi.useRealTimers(); vi.restoreAllMocks(); 
 it("提供粘贴和 Markdown 上传入口、未知字段与可访问状态", async () => {
   const user = userEvent.setup();
   render(<JobImportView initialImports={[]} />);
+  expect(screen.getByRole("main", { name: "岗位导入" })).toBeVisible();
   expect(screen.getByRole("textbox", { name: "岗位描述" })).toBeVisible();
   await user.click(screen.getByRole("tab", { name: "上传 Markdown" }));
   expect(screen.getByLabelText("上传 Markdown 岗位文件")).toHaveAttribute("accept", ".md,text/markdown");

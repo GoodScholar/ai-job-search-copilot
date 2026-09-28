@@ -77,6 +77,7 @@ it("停止全部运行后重新读取权威状态，并说明安全检查点终�
     .mockResolvedValueOnce(Response.json({ stoppedAt: "2026-09-12T00:00:00.000Z", controlVersion: 1, scheduleResumeAfter: null }));
 
   render(<AccountRunPolicyView initialControl={activeControl} initialPolicy={initialPolicy} />);
+  expect(screen.getByRole("main", { name: "账户运行策略" })).toBeVisible();
   const button = screen.getByRole("button", { name: "停止全部运行" });
   expect(button).toBeEnabled();
   await user.click(button);

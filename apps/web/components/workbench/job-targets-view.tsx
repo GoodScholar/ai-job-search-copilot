@@ -62,7 +62,7 @@ export function JobTargetsView({ initialOverview }: { initialOverview: JobTarget
       setOverview(nextOverview.data); if (editingTargetId === target.targetId) { setEditingTargetId(null); setDraft(emptyDraft); } setMessage("求职目标已停用。");
     } catch { setMessage("暂时无法停用求职目标，请稍后重试。"); } finally { setIsSaving(false); }
   }
-  return <main className="container profile-main job-targets-main">
+  return <main aria-label="求职目标" className="container profile-main job-targets-main">
     <section aria-labelledby="job-targets-title" className="profile-intro"><p className="workbench-kicker">求职画像 · 目标确认</p><h1 id="job-targets-title">确认你的求职目标</h1><p>设置一个主目标与最多两个次目标；系统会据此筛选岗位机会，但不会代表你执行外部行动。</p></section>
     <section aria-labelledby="job-target-suggestions-title" className="job-targets-section"><h2 id="job-target-suggestions-title">候选岗位方向</h2><p>候选岗位方向只会预填表单。请核对建议依据并手动确认后再保存。</p><ol className="job-target-suggestion-list">{overview.suggestions.slice(0, 5).map((suggestion) => <li key={suggestion.suggestionId}><article><h3>{suggestion.roleFamily}</h3><p>{suggestion.rationale}</p><strong>建议依据</strong><ul>{suggestion.evidence.map((evidence) => <li key={`${evidence.factId}-${evidence.revisionId}`}>{evidence.label}</li>)}</ul><button className="workbench-touch-target" onClick={() => selectSuggestion(suggestion.roleFamily)} type="button">使用 {suggestion.roleFamily} 建议</button></article></li>)}</ol></section>
     <section aria-labelledby="job-target-form-title" className="job-targets-section"><h2 id="job-target-form-title">{editingTarget ? `修改 ${editingTarget.constraints.roleFamily}` : "手动确认求职目标"}</h2>{noAvailableSlot ? <p className="profile-status" role="status">主目标和两个次目标均已设置。如需新增，请先停用或修改已有目标。</p> : null}<form className="job-target-form" onSubmit={submit}>

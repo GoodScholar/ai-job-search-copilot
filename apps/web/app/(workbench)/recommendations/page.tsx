@@ -23,7 +23,7 @@ export default async function RecommendationsPage({ searchParams = Promise.resol
   const has = (key: string) => Object.hasOwn(params, key);
   const identityKeys = ["runId", "resultId", "targetId", "recommendationListId"];
   const invalid = identityKeys.some((key) => has(key) && only(key) === null) || (has("resultId") && !runId) || (runId && (has("targetId") || has("recommendationListId"))) || (has("recommendationListId") && !targetParam);
-  if (invalid) return <main className="container workbench-page" id="main-content"><section className="job-import-panel"><h1>推荐清单</h1><p role="alert">推荐链接无效，请从推荐通知或历史版本重新打开。</p></section></main>;
+  if (invalid) return <main aria-label="证据推荐清单" className="container workbench-page" id="main-content"><section className="job-import-panel"><h1>推荐清单</h1><p role="alert">推荐链接无效，请从推荐通知或历史版本重新打开。</p></section></main>;
   let selectedRun = null, published = null, readError = false;
   let resultError: string | null = null;
   try { selectedRun = runId ? await getRecommendationRun(runId) : null; published = runId ? selectedRun : targetParam ? null : await getLatestPublishedRecommendationRun(); } catch (error) { unstable_rethrow(error); readError = true; resultError = "推荐结果暂时无法读取，请稍后重试。"; }
@@ -40,7 +40,7 @@ export default async function RecommendationsPage({ searchParams = Promise.resol
   if (targetId && !resultError) try { history = await getRecommendationHistoryPage(targetId); } catch (error) { unstable_rethrow(error); sideReadError = "历史记录暂时无法读取，请稍后重试。"; }
   if (targetId && !resultError) try { proposals = await getCalibrationProposals(targetId); } catch (error) { unstable_rethrow(error); sideReadError ??= "校准建议暂时无法读取，请稍后重试。"; }
   return (
-    <main className="container workbench-page" id="main-content">
+    <main aria-label="证据推荐清单" className="container workbench-page" id="main-content">
       <section aria-labelledby="recommendations-title" className="job-import-panel">
         <p className="section-kicker">今日处理</p>
         <h1 id="recommendations-title">推荐清单</h1>

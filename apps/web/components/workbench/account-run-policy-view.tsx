@@ -260,7 +260,7 @@ export function AccountRunPolicyView({ initialControl = null, initialPolicy }: {
     }
   }
 
-  return <main className="container profile-main">
+  return <main aria-label="账户运行策略" className="container profile-main">
     <section className="profile-intro"><p className="workbench-kicker">求职画像 · 运行策略</p><h1>账户运行策略</h1><p>系统硬上限保护每次运行。你可以保存更保守的额度；手动运行不受后台窗口限制。</p></section>
     <section aria-labelledby="account-run-control-title" className="job-targets-section">
       <h2 id="account-run-control-title">账户运行控制</h2>

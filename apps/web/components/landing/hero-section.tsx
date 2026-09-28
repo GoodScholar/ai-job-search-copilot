@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
+import { CareerLensJourney } from "./career-lens-journey";
 
 export function HeroSection() {
   return (
@@ -18,6 +19,7 @@ export function HeroSection() {
           <article className="career-lens-decision"><span aria-hidden="true">●</span><strong>有依据，再决定</strong><p>外部行动始终由你确认</p></article>
           <p className="career-lens-disclaimer">示例关系，不代表你的岗位或画像</p>
         </div>
+        <CareerLensJourney />
       </div>
     </section>
   );

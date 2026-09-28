@@ -85,7 +85,7 @@ function WorkbenchHomeContent({ home, targets, initialRun, initialRecommendation
   }, [inbox]);
 
   return (
-    <main className="container workbench-main">
+    <main aria-label="今日决策台" className="container workbench-main">
       {(!online || stale || unavailableSections.length > 0) && <p className="workbench-connection" role="status">{!online ? "离线：正在显示上次成功读取的数据，可能已过期。" : stale ? "网络已恢复，正在等待最新数据。" : "部分内容暂时无法读取，其余可用内容仍会保留。"}</p>}
       <section aria-labelledby="workbench-home-title" className="workbench-intro">
         <h1 id="workbench-home-title">{summaryUnavailable ? "待决定事项暂时无法读取" : pendingDecisions > 0 ? "先处理需要你决定的事项" : "今天暂无待决定事项"}</h1>

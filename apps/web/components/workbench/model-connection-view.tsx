@@ -115,7 +115,7 @@ export function ModelConnectionView({ initialDiagnostics }: { initialDiagnostics
   }
 
   const liveText = message || diagnostics.reasonSummary;
-  return <main className="container workbench-main model-connection-main">
+  return <main aria-label="模型诊断" className="container workbench-main model-connection-main">
     <section aria-labelledby="model-connection-title" className="profile-intro">
       <h1 id="model-connection-title">模型连接</h1>
       <p>检查当前部署是否能安全使用模型功能。检查不会展示或请求你的账户信息。</p>

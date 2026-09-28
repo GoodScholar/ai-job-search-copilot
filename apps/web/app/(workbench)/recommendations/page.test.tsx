@@ -46,6 +46,7 @@ describe("RecommendationsPage", () => {
 
   it("explains the evidence-driven recommendation state without exposing a precise score", async () => {
     render(await RecommendationsPage());
+    expect(screen.getByRole("main", { name: "证据推荐清单" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "推荐清单" })).toBeInTheDocument();
     expect(screen.getByText("暂无可处理的推荐")).toBeInTheDocument();
     expect(screen.queryByText(/%/)).not.toBeInTheDocument();

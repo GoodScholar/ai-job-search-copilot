@@ -149,6 +149,7 @@ it("links from trusted profile facts to confirmation of job targets", () => {
     }],
   }} />);
 
+  expect(screen.getByRole("main", { name: "职业资料" })).toBeVisible();
   expect(screen.getByRole("link", { name: "确认求职目标" })).toHaveAttribute("href", "/profile/targets");
 });
 
