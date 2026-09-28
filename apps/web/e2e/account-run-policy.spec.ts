@@ -141,6 +141,7 @@ test("账户运行策略可从首页和画像进入，保存后保留四层值�
   await expect(page.getByLabel("后台允许开始时间")).toHaveValue("23:00");
   await expect(page.getByLabel("后台允许结束时间")).toHaveValue("02:00");
 
+  await page.getByRole("button", { name: "调整运行策略" }).click();
   await page.getByRole("button", { name: "查看修订历史" }).click();
   const history = page.getByRole("region", { name: "修订历史" });
   await expect(history.getByRole("listitem")).toHaveCount(2);
