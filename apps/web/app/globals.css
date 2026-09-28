@@ -697,6 +697,11 @@ body {
     display: none;
   }
 
+  .run-policy-table-wrap th:nth-child(5),
+  .run-policy-table-wrap td:nth-child(5) {
+    display: table-cell !important;
+  }
+
   .marketing-header-inner {
     min-height: 4.5rem;
   }
