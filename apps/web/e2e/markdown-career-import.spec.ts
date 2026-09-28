@@ -210,7 +210,7 @@ test("登录用户可导入、持久化并安全复用 Markdown 职业资料", a
   const profileEntry = page.getByRole("link", { name: "查看待确认事实" });
   await expect(profileEntry).toBeVisible();
   await profileEntry.click();
-  await expect(page).toHaveURL(/\/profile$/);
+  await expect(page).toHaveURL(/\/profile#candidate-facts$/);
 });
 
 test("候选事实的确认、纠正、拒绝、并发冲突和刷新都保持可信画像边界", async ({ page, request }, testInfo) => {

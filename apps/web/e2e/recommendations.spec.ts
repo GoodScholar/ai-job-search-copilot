@@ -236,8 +236,9 @@ test("显式 Fake matching 真实链路交付双方证据、质量排除与单�
   await expect(page.getByRole("list", { name: "推荐岗位" })).toContainText("正式推荐 TypeScript 工程师");
   await expect(page.getByText("稳定排除 1 项岗位：匹配证据不足")).toBeVisible();
   await page.getByText("查看证据与判断").click();
-  await expect(page.getByRole("list", { name: "推荐岗位" }).getByText(/^岗位证据：/u)).toContainText("行业：人工智能");
-  await expect(page.getByRole("list", { name: "推荐岗位" }).getByText(/^画像证据：/u)).toContainText("已确认的岗位方向：frontend");
+  const evidence = page.getByRole("list", { name: "推荐岗位" }).getByRole("region", { name: "岗位证据对照" });
+  await expect(evidence).toContainText("行业：人工智能");
+  await expect(page.getByRole("list", { name: "推荐岗位" }).getByRole("region", { name: "画像证据对照" })).toContainText("已确认的岗位方向：frontend");
   await expect(page.getByRole("list", { name: "推荐岗位" }).locator("details > p > strong")).toHaveCount(6);
   await expect(page.locator("main")).not.toContainText(/(?:评分|score|\d+%)/i);
   const before = await matchSnapshot(account.userId, account.targetId);

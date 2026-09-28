@@ -92,7 +92,7 @@ async function activate(page: Page, info: TestInfo, label: string | RegExp): Pro
 }
 
 async function activateControl(page: Page, control: ReturnType<Page["getByRole"]>, info: TestInfo): Promise<void> {
-  if (info.project.name === "Mobile Safari") await control.tap();
+  if (info.project.name === "Mobile Safari") { await control.scrollIntoViewIfNeeded(); await control.click(); }
   else await control.press("Enter");
 }
 
@@ -349,7 +349,8 @@ test("从首页拒绝校准建议不会修改现行规则", async ({ page, reque
     const summary = card.locator("summary").filter({ hasText: "忽略此推荐" });
     if (info.project.name === "Mobile Safari") await summary.tap({ force: true }); else await summary.click();
     await card.getByRole("radio", { name: reason }).check();
-    if (info.project.name === "Mobile Safari") await card.getByRole("button", { name: "确认忽略" }).tap({ force: true }); else await card.getByRole("button", { name: "确认忽略" }).click();
+    const confirmIgnore = card.getByRole("button", { name: "确认忽略" });
+    if (info.project.name === "Mobile Safari") { await confirmIgnore.scrollIntoViewIfNeeded(); await confirmIgnore.click(); } else await confirmIgnore.click();
     await expect(card.getByText("当前推荐决策：", { exact: false })).toContainText("已忽略");
   }
   const calibration = page.getByRole("heading", { name: "校准建议" }).locator("..");
@@ -371,6 +372,12 @@ test("从首页拒绝校准建议不会修改现行规则", async ({ page, reque
   await expect(page).toHaveURL(/\/recommendations\?targetId=.*#calibration-proposal$/u);
   await page.reload();
   await expect(page.getByRole("button", { name: "拒绝建议" })).toBeEnabled();
+  if (process.env.CAREER_LENS_CAPTURE === "after") {
+    await page.screenshot({
+      path: `../../docs/qa/issue-66/screenshots/after/recommendations-calibration-${info.project.name === "Mobile Safari" ? "mobile-safari" : "desktop-chrome"}.png`,
+      fullPage: true,
+    });
+  }
   await activate(page, info, "拒绝建议");
   await expect.poll(() => activeRuleSnapshot(account.userId, account.targetId)).toEqual(before);
   await expect.poll(() => inboxItemStatus(request, account.token, unread.itemId, "resolved")).toBe("resolved");

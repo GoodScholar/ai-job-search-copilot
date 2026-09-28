@@ -130,7 +130,7 @@ it("从首页运行区域可进入账户运行策略", () => {
 it("待确认事实大于零时保留确认工作流", () => {
   render(<WorkbenchHomeView home={home} inbox={{ items: [] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
   expect(screen.getByRole("heading", { name: "职业资料等待确认" })).toBeVisible();
-  expect(screen.getAllByRole("link", { name: "查看待确认事实" }).some((link) => link.getAttribute("href") === "/profile")).toBe(true);
+  expect(screen.getByRole("link", { name: "管理待确认事实" })).toHaveAttribute("href", "/profile");
 });
 
 it("候选事实 Inbox dismiss 只减少待决定事项，权威刷新后仍保留待确认事实", async () => {
