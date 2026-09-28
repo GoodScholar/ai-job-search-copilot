@@ -684,6 +684,19 @@ body {
 }
 
 @media (max-width: 640px) {
+  .run-policy-table-wrap table {
+    min-width: 0;
+  }
+
+  .run-policy-table-wrap th:nth-child(2),
+  .run-policy-table-wrap td:nth-child(2),
+  .run-policy-table-wrap th:nth-child(3),
+  .run-policy-table-wrap td:nth-child(3),
+  .run-policy-table-wrap th:nth-child(4),
+  .run-policy-table-wrap td:nth-child(4) {
+    display: none;
+  }
+
   .marketing-header-inner {
     min-height: 4.5rem;
   }
