@@ -2,10 +2,11 @@
 
 - 基线工作树：`/Users/shen/.codex/worktrees/issue-66-baseline-check/AI Job Search Copilot`
 - 基线提交：`fa67dd655aee9bc63eb95e61590648a15cbbdb66`（`origin/main`，本次实现前）
-- 范围：临时只加采证 spec/截图钩子，未改旧 UI；harness 未带入产品分支。
-- 协调者报告的串行命令与结果（本日志不伪造 stdout）：
-  - `pnpm --filter web test:e2e -- issue66-before-dynamic.spec.ts --workers=1`：6 passed。
-  - `ISSUE66_BASELINE_CAPTURE=1 pnpm --filter web test:e2e -- workbench-inbox.spec.ts --workers=1`：ordinary phase 4 passed / 2 skipped；source phase 2 passed / 4 skipped。
+- 范围：临时只加采证 spec/截图钩子，未改旧 UI；harness 仅作为 QA 证据存入 `docs/qa/issue-66/baseline-harness/`，不会由产品测试自动执行。
+- 串行命令与可复核结果：
+  - `pnpm --filter web test:e2e -- issue66-before-dynamic.spec.ts --workers=1`：6 passed；完整 stdout：`task-0-dynamic-before-raw.log`。
+  - `ISSUE66_BASELINE_CAPTURE=1 pnpm --filter web test:e2e -- workbench-inbox.spec.ts --workers=1`：ordinary phase 4 passed / 2 skipped；source phase 2 passed / 4 skipped；完整 stdout：`task-0-workbench-inbox-before-raw.log`。
+- 可复现材料：`../baseline-harness/issue66-before-dynamic.spec.ts` 与 `../baseline-harness/workbench-inbox-screenshot-hook.patch`。
 
 | 文件 | SHA-256 |
 | --- | --- |

@@ -2,7 +2,7 @@
 
 ## 当前结论（返工后）
 
-十路由与四个动态态已用显式 `CAREER_LENS_CAPTURE=after` 真实运行时重新采集；未设置该变量的 10 项 acceptance 也已通过，并确认未写入 `screenshots/before/**`。四个动态态的 before 已由恢复的独立 `origin/main` 工作树（`fa67dd655aee9bc63eb95e61590648a15cbbdb66`）真实补采；临时采证 harness 没有进入本产品分支。Inbox、首次旅程与导入审核由不同 fixture/account 采集；Inbox 与首次旅程哈希在双视口均不同。目标、Watchlist、岗位导入、职业资料和运行策略均按“状态 → 下一行动 → 台账/结果”重组，新增/编辑/导入表单只在用户点击操作后出现；E2E 保留真实请求与状态断言。
+十路由与四个动态态已用显式 `CAREER_LENS_CAPTURE=after` 真实运行时重新采集；未设置该变量的 10 项 acceptance 也已通过，并确认未写入 `screenshots/before/**`。四个动态态的 before 已由恢复的独立 `origin/main` 工作树（`fa67dd655aee9bc63eb95e61590648a15cbbdb66`）真实补采；临时采证 harness 仅作为不可自动执行的 QA 复现材料保存在 `baseline-harness/`。Inbox、首次旅程与导入审核由不同 fixture/account 采集；Inbox 与首次旅程哈希在双视口均不同。目标、Watchlist、岗位导入、职业资料和运行策略均按“状态 → 下一行动 → 台账/结果”重组，新增/编辑/导入表单只在用户点击操作后出现；E2E 保留真实请求与状态断言。
 
 完整指定 E2E 仍非全绿：`one-click-recommendation.spec.ts` 的两个视口期望 `paused`、实际 `cancelled`，且协调者已在干净 `origin/main` 独立复现，故为既有 API/worker 缺陷、**UNVERIFIED（基线/非范围）**，未改 API/worker 或弱化断言。其余本轮受影响 Profile、运行策略、模型、Watchlist、岗位导入、推荐、目标、Inbox 和 acceptance 均有无重叠的串行 GREEN 日志。此前两次运行时清理阶段出现重叠，相关输出已作废且未作为下表证据。
 
@@ -24,7 +24,7 @@
 | Web Vitest | PASS，95 files / 661 tests | 本轮串行会话记录 |
 | typecheck / lint / build | PASS | 本轮串行会话记录 |
 | Career Lens acceptance（未设置 capture / 显式 `after`） | PASS，10 / 10 passed；前者未写 before | 本轮串行会话记录 |
-| 动态态 baseline before（`fa67dd6`） | PASS：临时 `issue66-before-dynamic.spec.ts` 6 passed；Inbox 4 passed / 2 skipped、source phase 2 passed / 4 skipped | `task-0-dynamic-before-origin-main.log` |
+| 动态态 baseline before（`fa67dd6`） | PASS：临时 `issue66-before-dynamic.spec.ts` 6 passed；Inbox 4 passed / 2 skipped、source phase 2 passed / 4 skipped | 来源与哈希：`task-0-dynamic-before-origin-main.log`；原始输出：`task-0-dynamic-before-raw.log`、`task-0-workbench-inbox-before-raw.log`；复现材料：`baseline-harness/` |
 | finesse detector | PASS，P0=0；P1/P2 为既有样式提示 | `finesse-detect-recovery-final.log` |
 | 全量串行 E2E | UNVERIFIED，114 passed / 8 skipped / 2 failed | `task-8-all-specified-e2e-final.log` |
 | 全局停止独立复现（清除 `CAREER_LENS_CAPTURE`） | UNVERIFIED，8 passed / 2 failed / 2 skipped | `task-8-one-click-recommendation-rerun.log` |
@@ -56,7 +56,7 @@
 
 键盘焦点、44px 触控、对比度、`prefers-reduced-motion`、无根横向溢出及空/加载/错误/恢复均由 acceptance 和受影响 E2E 覆盖。移动运行策略保留完整五列：设置、系统默认、硬上限、你的设置、最终生效；桌面同样保留五列。采用浅蓝工作台、深色运行区、可见状态卡和移动底栏，舍弃“职业透镜”作为用户产品名；未新增依赖或资产，现有代码与静态资产许可不变。finesse 的 `draft.careersUrl.trim(` 为 TS 表达式路径误报，另有 P2 stamp 提示，无真实死链。
 
-静态旧图可与 `screenshots/before/` 的 18 个受版本控制文件逐项对照；**AC-012 动态态旧版 before 已补证**：协调者在恢复的独立 `origin/main` 工作树（`fa67dd6`）串行真实运行临时采证 spec/截图钩子，未改旧 UI、未把 harness 带入本产品分支。八张动态图的完整 SHA-256 记录在 `logs/task-0-dynamic-before-origin-main.log`。设计采用浅蓝工作台、深色运行区、可见状态卡和移动底栏；舍弃“职业透镜”作为用户产品名。未添加依赖或资产，现有代码与静态资产许可不变。
+静态旧图可与 `screenshots/before/` 的 18 个受版本控制文件逐项对照；**AC-012 动态态旧版 before 已补证**：协调者在恢复的独立 `origin/main` 工作树（`fa67dd6`）串行真实运行临时采证 spec/截图钩子，未改旧 UI。八张动态图的完整 SHA-256 记录在 `logs/task-0-dynamic-before-origin-main.log`；原始 stdout 与可复现 harness/hook 分别保存在 `logs/task-0-*-raw.log` 和 `baseline-harness/`。设计采用浅蓝工作台、深色运行区、可见状态卡和移动底栏；舍弃“职业透镜”作为用户产品名。未添加产品依赖或资产，现有代码与静态资产许可不变。
 
 ### 逐页可访问性、对比度与状态映射
 
