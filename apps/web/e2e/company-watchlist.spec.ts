@@ -61,6 +61,7 @@ async function addCompany(page: Page, company: string, careersUrl: string, domai
 test("目标公司 Watchlist 可添加、排序、禁用、重载并显示并发冲突", async ({ page, request }, testInfo) => {
   const { token, targetId } = await signInAtWatchlist(page, request, testInfo.project.name);
   await expect(page.getByRole("region", { name: "Watchlist 下一行动" })).toContainText("尚未登记目标公司。添加第一个公开来源后，它会成为优先级 01。");
+  await captureAfterState(page, "profile-targets-watchlist", "empty", testInfo);
   await page.getByRole("button", { name: "添加目标公司" }).click();
   await expect(page.getByText("不要填写账号、密码、Cookie、验证码或绕过登录限制的说明。")).toBeVisible();
   const addCompanyName = page.getByLabel("公司规范名称");

@@ -16,14 +16,15 @@
 
 | 检查 | 当前结果 | 日志 |
 | --- | --- | --- |
-| 受影响 E2E：Profile Markdown / DOCX / PDF | PASS，10 passed | 本轮串行会话记录 |
-| 返工定向 E2E：运行策略 / Markdown 导入 / 推荐 | PASS，8 / 4 / 通过 | 本轮串行会话记录；均为 `--workers=1` |
-| 受影响 E2E：运行策略 / 模型诊断 | PASS，10 passed | `serial-final-b-run-policy-model.log`（原始输出，未跟踪） |
-| 受影响 E2E：目标 / Watchlist / 岗位导入 / 推荐 | PASS，22 passed | 本轮串行会话记录 |
-| 受影响 E2E：Inbox | PASS，2 passed、4 skipped（分 phase 设计） | 本轮串行会话记录 |
-| Web Vitest | PASS，95 files / 661 tests | 本轮串行会话记录 |
-| typecheck / lint / build | PASS | 本轮串行会话记录 |
-| Career Lens acceptance（未设置 capture / 显式 `after`） | PASS，10 / 10 passed；前者未写 before | 本轮串行会话记录 |
+| 受影响 E2E：Profile Markdown / DOCX / PDF | PASS，10 passed | `task-8-markdown-career-import-selector-green.log`（Markdown 4 passed）；`task-8-all-specified-e2e-final.log`（DOCX/PDF 与其余指定 spec 的完整串行输出；仅 one-click 基线缺陷失败） |
+| 返工定向 E2E：运行策略 / Markdown 导入 / 推荐 | PASS，8 / 4 / 定向 2 passed | `task-8-all-specified-e2e-final.log`；`task-8-markdown-career-import-selector-green.log`；`task-8-recommendations-selector-green.log`，均为 `--workers=1` |
+| 受影响 E2E：运行策略 / 模型诊断 | PASS，10 passed | `task-8-all-specified-e2e-final.log`（完整串行输出；仅 one-click 基线缺陷失败） |
+| 受影响 E2E：目标 / Watchlist / 岗位导入 / 推荐 | PASS，22 passed | `task-8-all-specified-e2e-final.log`；目标定向见 `task-8-job-targets-selector-green.log`，Watchlist 定向见 `rework-watchlist-e2e-green.log` |
+| 本轮 Watchlist 空态补采 E2E | PASS，4 passed | `task-8-watchlist-empty-after-20260928.log`（本轮 `tee` 保存的完整 stdout/stderr，显式 `CAREER_LENS_CAPTURE=after`） |
+| 受影响 E2E：Inbox | PASS，2 passed、4 skipped（分 phase 设计） | `task-8-workbench-inbox-mobile-fix-green.log`；完整指定 E2E 输出见 `task-8-all-specified-e2e-final.log` |
+| Web Vitest | 已通过；本次仅补采证据，未重跑未改动检查 | `web-test-recovery-final.log`（原始 recovery 输出：93 files / 651 tests） |
+| typecheck / lint / build | 已通过；本次仅补采证据，未重跑未改动检查 | `web-typecheck-recovery-final.log`、`web-lint-recovery-final.log`、`web-build-recovery-final.log` |
+| Career Lens acceptance（未设置 capture / 显式 `after`） | PASS，10 / 10 passed；前者未写 before | `rework-acceptance-after-fixture-final.log`、`rework-acceptance-after-final.log`（完整 stdout/stderr）；`task-8-state-matrix-after-20260928.log` 仅为索引摘要 |
 | 动态态 baseline before（`fa67dd6`） | PASS：临时 `issue66-before-dynamic.spec.ts` 6 passed；Inbox 4 passed / 2 skipped、source phase 2 passed / 4 skipped | 来源与哈希：`task-0-dynamic-before-origin-main.log`；原始输出：`task-0-dynamic-before-raw.log`、`task-0-workbench-inbox-before-raw.log`；复现材料：`baseline-harness/` |
 | finesse detector | PASS，P0=0；P1/P2 为既有样式提示 | `finesse-detect-recovery-final.log` |
 | 全量串行 E2E | UNVERIFIED，114 passed / 8 skipped / 2 failed | `task-8-all-specified-e2e-final.log` |
@@ -35,7 +36,7 @@
 
 ## 视觉与可访问性
 
-已逐张查看 28 张本轮 `screenshots/after/*.png`，Desktop/Mobile 均通过，关键缺项均为 0。评分格式为布局/主视觉/字体色彩/内容组件/移动=总分；每项的唯一扣分是相应长台账或说明的全页信息密度。Mobile Policy 截图只展示横滚容器的左起列；定向 Mobile Safari E2E 已验证五个表头均在可访问树、表格容器确有横滚且根页面不溢出，因此不以“裁切隐藏列”冒充通过。
+状态矩阵的 29 个命名状态视图、58 张本轮 `screenshots/after/*-{desktop-chrome,mobile-safari}.png` 均已逐张查看，Desktop/Mobile 均通过，关键缺项均为 0。评分格式为布局/主视觉/字体色彩/内容组件/移动=总分；每项的唯一扣分是相应长台账或说明的全页信息密度。Mobile Policy 截图只展示横滚容器的左起列；定向 Mobile Safari E2E 已验证五个表头均在可访问树、表格容器确有横滚且根页面不溢出，因此不以“裁切隐藏列”冒充通过。
 
 | 页面或动态态 | 五维评分 | 扣分 |
 | --- | --- | --- |
@@ -77,23 +78,23 @@
 
 ## After 状态矩阵（本轮显式运行时采图）
 
-以下每项均为同一真实 E2E fixture 在 Desktop Chrome 与 Mobile Safari 各采一张，文件名中的 `{desktop-chrome,mobile-safari}` 表示两张均已逐张目视。评分沿用上表对应页面的五维分数；本矩阵额外复核该状态的主对象、状态文案、下一行动和无根横向溢出。加载态不以静态 mock 伪造：相关组件的真实轮询/禁用/aria-live 行为由对应 E2E 断言覆盖，无法在稳定截图时保留的瞬时加载态明确记为“动态断言”。
+下表逐一闭合十路由及 Inbox、首次推荐旅程、导入审核、推荐校准四个任务态的空、内容和关键失败证据。每个文件模式的 `{desktop-chrome,mobile-safari}` 都展开为同一真实 E2E fixture 在两个视口采得的两张图，且已逐张目视；同一页面的父路由与任务子态可共用该真实截图时会在“理由”中明确说明，绝不复制或以静态 mock 冒充状态。评分沿用上表对应页面的五维分数，并额外复核主对象、状态文案、下一行动和无根横向溢出。
 
-| 路由/任务态 | 真实状态与 fixture | 截图（双视口） | 状态检查与评分 |
-| --- | --- | --- | --- |
-| `/` 营销 | 静态落地内容 | `marketing-empty-{desktop-chrome,mobile-safari}.png` | 无账户异步状态，失败/加载 N/A；98，关键缺项 0 |
-| `/login` | 静态登录与 returnTo | `login-empty-{desktop-chrome,mobile-safari}.png` | 无远端读取失败态；98，关键缺项 0 |
-| `/home` | 空账户 | `home-empty-{desktop-chrome,mobile-safari}.png` | 空摘要、首要建目标行动；96，关键缺项 0 |
-| Inbox | 待确认候选事实 / 离线动作失败 | `home-inbox-{content,failure}-{desktop-chrome,mobile-safari}.png` | 真实 API fixture，失败后可重试且恢复以轮询确认；96，关键缺项 0 |
-| 首次旅程 | 独立已准备账户内容 / 物理发现失败 | `home-first-recommendation-journey-{content,failure}-{desktop-chrome,mobile-safari}.png` | 真实目标/来源 fixture 的主步骤与失败后待办同时可读；96，关键缺项 0 |
-| `/recommendations` | 无目标空态 / 真推荐内容 / 校准版本冲突 | `recommendations-{empty,content,failure}-{desktop-chrome,mobile-safari}.png` | 证据 region、过期建议与“重新计算”下一行动可读；96，关键缺项 0 |
-| 推荐校准 | Inbox 跳转后的校准审核内容 | `recommendations-calibration-content-{desktop-chrome,mobile-safari}.png` | 独立 Inbox fixture；96，关键缺项 0 |
-| `/profile` | 空画像 | `profile-empty-{desktop-chrome,mobile-safari}.png` | 收起的编辑表单不抢占主对象；96，关键缺项 0 |
-| 导入审核 | 已解析候选事实 / 版本冲突 | `profile-import-review-{content,failure}-{desktop-chrome,mobile-safari}.png` | 当前任务状态持续 aria-live，刷新后解析完成仍在；96，关键缺项 0 |
-| `/profile/targets` | 空态 / 已保存目标 / 版本冲突 | `profile-targets-{empty,content,failure}-{desktop-chrome,mobile-safari}.png` | 目标与下一维护行动可读；97，关键缺项 0 |
-| Watchlist | 已添加来源 / 并发冲突 | `profile-targets-watchlist-{content,failure}-{desktop-chrome,mobile-safari}.png` | 44px 名称、URL、备注和保存控件由语义定位 E2E 复核；97，关键缺项 0 |
-| `/jobs/import` | 空态 / 完成岗位 / 导入失败 | `jobs-import-{empty,content,failure}-{desktop-chrome,mobile-safari}.png` | 真实三模式导入、轮询和失败恢复；97，关键缺项 0 |
-| `/profile/run-policy` | 空态 / 已保存策略 / 本地硬上限校验 | `profile-run-policy-{empty,content,failure}-{desktop-chrome,mobile-safari}.png` | Mobile 保留五列 DOM，局部横滚，不让根页面溢出；96，关键缺项 0 |
-| `/profile/model-connection` | 空态 / available / authentication_failed | `profile-model-connection-{empty,content,failure}-{desktop-chrome,mobile-safari}.png` | 真实受控诊断 fixture；checking/temporary 为动态 E2E 断言；97，关键缺项 0 |
+| 路由/任务态 | 空态（双视口文件） | 内容态（双视口文件） | 关键失败态（双视口文件） | 真实 fixture、理由与评分 |
+| --- | --- | --- | --- | --- |
+| `/` 营销 | N/A | `marketing-empty-{desktop-chrome,mobile-safari}.png`（文件名沿用旧 capture 命名，画面为静态落地内容） | N/A | 没有账户读取、异步请求或可失败的营销数据源；故不存在产品意义的空/失败态。98，关键缺项 0。 |
+| `/login` | N/A | `login-empty-{desktop-chrome,mobile-safari}.png`（静态登录/returnTo 内容） | N/A | Beta 登录边界未读取远端身份数据，失败由提交登录后的恢复路径处理，不能伪造静态失败图。98，关键缺项 0。 |
+| `/home` | `home-empty-{desktop-chrome,mobile-safari}.png` | `home-inbox-content-{desktop-chrome,mobile-safari}.png`、`home-first-recommendation-journey-content-{desktop-chrome,mobile-safari}.png` | `home-inbox-failure-{desktop-chrome,mobile-safari}.png`、`home-first-recommendation-journey-failure-{desktop-chrome,mobile-safari}.png` | 同一路由的两项真实动态 fixture 分别覆盖待确认事实和首次旅程；空账户图覆盖无任务队列。96，关键缺项 0。 |
+| `/recommendations` | `recommendations-empty-{desktop-chrome,mobile-safari}.png` | `recommendations-content-{desktop-chrome,mobile-safari}.png`、`recommendations-calibration-content-{desktop-chrome,mobile-safari}.png` | `recommendations-failure-{desktop-chrome,mobile-safari}.png` | 无目标、真实推荐列表和真实校准审核均在该路由；过期校准规则冲突给出重新计算行动。96，关键缺项 0。 |
+| `/profile` | `profile-empty-{desktop-chrome,mobile-safari}.png` | `profile-import-review-content-{desktop-chrome,mobile-safari}.png` | `profile-import-review-failure-{desktop-chrome,mobile-safari}.png` | 导入审核在 `/profile#candidate-facts` 真实呈现，是该父路由的内容/并发失败子态；空画像图没有当前导入。96，关键缺项 0。 |
+| `/profile/targets` | `profile-targets-empty-{desktop-chrome,mobile-safari}.png` | `profile-targets-content-{desktop-chrome,mobile-safari}.png` | `profile-targets-failure-{desktop-chrome,mobile-safari}.png` | 真实保存主目标及版本冲突 fixture。97，关键缺项 0。 |
+| `/profile/targets/:id/watchlist` | `profile-targets-watchlist-empty-{desktop-chrome,mobile-safari}.png` | `profile-targets-watchlist-content-{desktop-chrome,mobile-safari}.png` | `profile-targets-watchlist-failure-{desktop-chrome,mobile-safari}.png` | 本轮由既有 Watchlist E2E 在“尚未登记目标公司”断言后补采空台账；随后同一真实 API fixture 添加来源并触发版本冲突。97，关键缺项 0。 |
+| `/jobs/import` | `jobs-import-empty-{desktop-chrome,mobile-safari}.png` | `jobs-import-content-{desktop-chrome,mobile-safari}.png` | `jobs-import-failure-{desktop-chrome,mobile-safari}.png` | 三种真实导入入口、完成岗位和规范化失败恢复。97，关键缺项 0。 |
+| `/profile/run-policy` | `profile-run-policy-empty-{desktop-chrome,mobile-safari}.png` | `profile-run-policy-content-{desktop-chrome,mobile-safari}.png` | `profile-run-policy-failure-{desktop-chrome,mobile-safari}.png` | 无保存策略、保存后台账及本地硬上限校验；Mobile 的五列仍在 DOM 且只在容器局部横滚。96，关键缺项 0。 |
+| `/profile/model-connection` | `profile-model-connection-empty-{desktop-chrome,mobile-safari}.png` | `profile-model-connection-content-{desktop-chrome,mobile-safari}.png` | `profile-model-connection-failure-{desktop-chrome,mobile-safari}.png` | 真实受控诊断的 available/authentication_failed fixture；checking/temporary 是不可稳定截留的真实轮询动态断言，而非 mock 截图。97，关键缺项 0。 |
+| Inbox 任务态（`/home`） | `home-empty-{desktop-chrome,mobile-safari}.png` | `home-inbox-content-{desktop-chrome,mobile-safari}.png` | `home-inbox-failure-{desktop-chrome,mobile-safari}.png` | 无候选事实时队列不渲染；独立导入审核 fixture 产生 Inbox，离线动作失败后可重试并由轮询确认恢复。96，关键缺项 0。 |
+| 首次推荐旅程（`/home`） | `home-empty-{desktop-chrome,mobile-safari}.png` | `home-first-recommendation-journey-content-{desktop-chrome,mobile-safari}.png` | `home-first-recommendation-journey-failure-{desktop-chrome,mobile-safari}.png` | 空账户尚未满足目标/来源前置条件；独立准备账户显示旅程，物理发现失败图保留下一待办。96，关键缺项 0。 |
+| 导入审核（`/profile#candidate-facts`） | `profile-empty-{desktop-chrome,mobile-safari}.png` | `profile-import-review-content-{desktop-chrome,mobile-safari}.png` | `profile-import-review-failure-{desktop-chrome,mobile-safari}.png` | 无当前/最近导入时为空；解析完成候选事实和并发版本冲突均为真实职业资料导入链路，任务状态持续 `aria-live`。96，关键缺项 0。 |
+| 推荐校准（`/recommendations`） | `recommendations-content-{desktop-chrome,mobile-safari}.png` | `recommendations-calibration-content-{desktop-chrome,mobile-safari}.png` | `recommendations-failure-{desktop-chrome,mobile-safari}.png` | 普通真实推荐列表即“无待审校准提案”的空子态；Inbox 跳转产生审核提案，过期规则冲突是该操作的关键失败并给出重新计算。96，关键缺项 0。 |
 
 本轮新增/恢复的行为断言首先作为回归测试落地：导入编辑区的真实 `Tab` 顺序到文件输入、Watchlist 的公司名/招聘入口/允许域/来源备注与保存按钮均为 >=44px、运行策略本地超硬上限错误、推荐过期校准错误、职业资料并发冲突以及 Inbox 离线恢复。前两项为既有实现上首次运行即 GREEN 的断言恢复，未伪造 RED；首次推荐旅程曾因旧 E2E 直接操作已折叠文件控件而 RED，改为先点击“开始导入职业资料”后 GREEN。所有采图均只在 `CAREER_LENS_CAPTURE=after` 时写入 after；未设置变量的 acceptance 10 passed，且 before 路径前后无差异。

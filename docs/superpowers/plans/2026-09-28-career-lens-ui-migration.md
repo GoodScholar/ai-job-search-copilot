@@ -231,7 +231,7 @@ Task 1–8 的实现、状态覆盖与视觉 AC 已完成。本轮为十路由�
 - [x] **Step 4: 视觉修正闭环**：任何页面低于 95 或关键缺项>0，先补能捕获行为回归的测试，再最小修复并重跑受影响页面；不以平均分放行。（职业资料/运行策略已改为明确操作后展开；Mobile Policy 已经 RED→GREEN 验证五列以局部横滚保留。）
 - [x] **Step 5: 全量串行验证**：确认无遗留测试进程后，依次运行 `pnpm --filter web test`、`pnpm --filter web typecheck`、`pnpm --filter web lint`、`pnpm --filter web build`，再依次运行 Issue 指定的全部现有 E2E specs；记录退出码与完整日志位置；全局停止状态以 UNVERIFIED 记录。
 - [x] **Step 6: UI 静态检测**：运行 `node /Users/shen/.codex/skills/vibe-ui-orchestrator/scripts/finesse-detect.mjs --json <changed-web-files>` 作为补充，`notCovered` 必须转入人工浏览器检查，不用它替代截图验收。
-- [x] **Step 7: 完成 QA 报告**：`docs/qa/issue-66/README.md` 已写入参考采用/舍弃、依赖与许可、每页评分、截图清单、键盘/焦点/触控/对比度/reduced-motion/溢出/状态证据、既有 API 失败和未决风险；14 项 after 均 >=95、关键缺项 0；AC-012 动态态旧版 before 已由 `fa67dd6` 独立基线运行时补证，只有 one-click API/worker 保持 UNVERIFIED。
+- [x] **Step 7: 完成 QA 报告**：`docs/qa/issue-66/README.md` 已写入参考采用/舍弃、依赖与许可、每页评分、键盘/焦点/触控/对比度/reduced-motion/溢出和逐态证据；十路由与 Inbox/首次旅程/导入审核/推荐校准逐项映射空、内容、关键失败双视口 after。Watchlist 空台账已在既有真实 E2E fixture 中补采并由 `logs/task-8-watchlist-empty-after-20260928.log` 完整 stdout/stderr 佐证；静态营销/登录的空/失败有产品理由 N/A。各项均 >=95、关键缺项 0；AC-012 动态态旧版 before 已由 `fa67dd6` 独立基线运行时补证，只有 one-click API/worker 保持 UNVERIFIED。
 - [x] **Step 8: Commit**：`git commit -m "test(web): verify the career lens migration"`。
 
 ## Plan Self-Review
