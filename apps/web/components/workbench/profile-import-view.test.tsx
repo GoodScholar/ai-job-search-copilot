@@ -153,6 +153,25 @@ it("links from trusted profile facts to confirmation of job targets", () => {
   expect(screen.getByRole("link", { name: "确认求职目标" })).toHaveAttribute("href", "/profile/targets");
 });
 
+it("默认先展示可信画像，明确操作后才展开手动维护", async () => {
+  const user = userEvent.setup();
+  render(<ProfileImportView initialImports={[]} />);
+  expect(screen.getByRole("region", { name: "画像事实下一行动" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "新增画像事实" }).closest("form")).toHaveClass("profile-maintenance-collapsed");
+  await user.click(screen.getByRole("button", { name: "维护画像事实" }));
+  expect(screen.getByRole("button", { name: "新增画像事实" }).closest("form")).not.toHaveClass("profile-maintenance-collapsed");
+});
+
+it("默认先展示导入下一行动，明确操作后才展开上传区", async () => {
+  const user = userEvent.setup();
+  render(<ProfileImportView initialImports={[]} />);
+  expect(screen.getByRole("region", { name: "职业资料下一行动" })).toBeVisible();
+  const uploadSection = screen.getAllByRole("heading", { name: "导入职业资料" }).map((heading) => heading.closest("section")).find((section) => section?.classList.contains("profile-upload"));
+  expect(uploadSection).toHaveClass("profile-maintenance-collapsed");
+  await user.click(screen.getByRole("button", { name: "开始导入职业资料" }));
+  expect(uploadSection).not.toHaveClass("profile-maintenance-collapsed");
+});
+
 it("detects private information before upload and submits only the sanitized processing copy", async () => {
   let submitted: FormData | undefined;
   mocks.createCareerImportAction.mockImplementation(async (_previous, formData: FormData) => {

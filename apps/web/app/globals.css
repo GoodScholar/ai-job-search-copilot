@@ -1729,6 +1729,14 @@ summary.workbench-touch-target:focus-visible,
   overflow-x: auto;
 }
 
+.run-policy-edit-collapsed {
+  display: none;
+}
+
+.profile-maintenance-collapsed {
+  display: none;
+}
+
 .account-run-policy-main .run-policy-comparison { border-inline-start: 0.25rem solid var(--cobalt); }
 
 .run-policy-table-wrap table {

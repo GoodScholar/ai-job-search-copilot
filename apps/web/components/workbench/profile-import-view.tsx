@@ -204,6 +204,8 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
   const [editingLanguageLevel, setEditingLanguageLevel] = useState("");
   const [removingFactId, setRemovingFactId] = useState<string | null>(null);
   const [removalReason, setRemovalReason] = useState("");
+  const [isMaintainingProfile, setIsMaintainingProfile] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
   const [pollingError, setPollingError] = useState(false);
   const [preparedDocument, setPreparedDocument] = useState<PreparedCareerDocument | null>(null);
   const [privacyMode, setPrivacyMode] = useState<CareerPrivacyMode | null>(null);
@@ -474,7 +476,8 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
         <Link className="profile-target-link workbench-touch-target" href="/profile/run-policy">管理账户运行策略</Link>
       </section>
 
-      <section aria-labelledby="profile-upload-title" className="profile-upload">
+      {!isImporting ? <section aria-label="职业资料下一行动" className="job-import-next-action"><p className="workbench-kicker">下一行动</p><h2>导入职业资料</h2><p>上传前会在浏览器内检查隐私信息，再创建候选事实审核队列。</p><button className="workbench-touch-target" onClick={() => setIsImporting(true)} type="button">开始导入职业资料</button></section> : null}
+      <section aria-labelledby="profile-upload-title" className={`profile-upload ${isImporting ? "" : "profile-maintenance-collapsed"}`}>
         <h2 id="profile-upload-title">导入职业资料</h2>
         <div className="profile-privacy-reminder" role="note">
           <strong>上传前先检查隐私</strong>
@@ -546,6 +549,7 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
           <button className="profile-upload-button workbench-touch-target" disabled={isPending || !canSubmit} type="submit">
             上传并解析
           </button>
+          <button className="workbench-touch-target" onClick={() => setIsImporting(false)} type="button">取消导入</button>
         </form>
         <p aria-live="polite" className="profile-status" role="status">{liveMessage}</p>
       </section>
@@ -667,8 +671,9 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
           <p className="profile-pending">版本 {profile.version}</p>
         </div>
         {profile.facts.length ? <Link className="profile-target-link workbench-touch-target" href="/profile/targets">确认求职目标</Link> : null}
+        {!isMaintainingProfile ? <section aria-label="画像事实下一行动" className="job-import-next-action"><p className="workbench-kicker">下一行动</p><h3>补充或维护可信事实</h3><p>仅在需要新增事实时打开维护表单。</p><button className="workbench-touch-target" onClick={() => setIsMaintainingProfile(true)} type="button">维护画像事实</button></section> : null}
         <form
-          className="profile-fact-correction"
+          className={`profile-fact-correction ${isMaintainingProfile ? "" : "profile-maintenance-collapsed"}`}
           onSubmit={(event) => {
             event.preventDefault();
             if (!manualFactValue.trim()) return;
@@ -689,7 +694,7 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
           {manualFactType === "language" ? <label>画像事实语言级别
             <input onChange={(event) => setManualLanguageLevel(event.target.value)} value={manualLanguageLevel} />
           </label> : null}
-          <button disabled={!manualFactValue.trim()} type="submit">新增画像事实</button>
+          <button disabled={!manualFactValue.trim()} type="submit">新增画像事实</button><button className="workbench-touch-target" onClick={() => setIsMaintainingProfile(false)} type="button">取消维护</button>
         </form>
         {profile.facts.length ? (
           <ol className="profile-fact-list">

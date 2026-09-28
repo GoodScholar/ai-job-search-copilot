@@ -70,6 +70,15 @@ const activeControl: AccountRunControlState = { stoppedAt: null, controlVersion:
 
 afterEach(() => vi.restoreAllMocks());
 
+it("默认先展示策略对象，只有明确操作后才展开编辑设置", async () => {
+  const user = userEvent.setup();
+  render(<AccountRunPolicyView initialControl={activeControl} initialPolicy={initialPolicy} />);
+  expect(screen.getByRole("region", { name: "运行策略下一行动" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "调整运行策略" }).closest("section")).toHaveClass("run-policy-edit-collapsed");
+  await user.click(screen.getByRole("button", { name: "调整运行策略" }));
+  expect(screen.getByRole("heading", { name: "调整运行策略" }).closest("section")).not.toHaveClass("run-policy-edit-collapsed");
+});
+
 it("停止全部运行后重新读取权威状态，并说明安全检查点终止与在途费用", async () => {
   const user = userEvent.setup();
   const fetchMock = vi.spyOn(globalThis, "fetch")
