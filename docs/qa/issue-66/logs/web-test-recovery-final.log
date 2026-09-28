@@ -1,0 +1,10 @@
+$ vitest run --passWithNoTests
+
+ RUN  v4.1.11 /Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web
+
+
+ Test Files  93 passed (93)
+      Tests  651 passed (651)
+   Start at  13:32:39
+   Duration  10.23s (transform 3.31s, setup 8.99s, import 9.99s, tests 19.86s, environment 41.51s)
+

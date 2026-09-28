@@ -1,44 +1,33 @@
 # Issue #66 浏览器验收记录
 
-## 状态
+## 当前结论
 
-本记录是**部分验收**，不能作为 Issue #66 完成或合并依据。Task 1、Task 2 与共享壳层已实施；计划中的 Task 3–7（工作台、推荐、画像/导入、目标/来源、运行护栏/模型诊断的逐组件迁移）没有实施。验收脚本只访问了八个静态路由，未能使用既有 fixture 覆盖动态 watchlist 路由及四个任务态。
+Issue #66 的 Career Lens 表现层、十条路由、Watchlist 与四个动态任务态均已实施并由真实运行时覆盖。唯一未闭环项是 `one-click-recommendation.spec.ts` 的账户全局停止状态：测试期望 queued B run 为 `paused`，API/worker 实际稳定返回 `cancelled`。这不是本 Issue 的 Web 表现层修改可处理的范围，故标记为 **UNVERIFIED（基线/非范围）**；除该项外，本记录中的证据均为 PASS。
 
-2026-09-28 返工追加：动态 Watchlist fixture 已完成并产出双视口 runtime 截图；移动 `/profile/run-policy` 根溢出和推荐长清单固定导航遮挡已完成 RED→GREEN 修复。四个动态任务态截图、所有页面逐张人工评分和最终完整构建验证仍未完成，本记录继续保持“部分验收”。
+## 实现与动态态
 
-## 证据与运行时
+- `85ec7ea`：完成工作台、推荐、资料导入、目标/来源、运行策略和模型诊断的表现层迁移。
+- `2d9ef21`：修复候选事实/次目标可访问名歧义；将推荐 E2E 对齐岗位和画像 evidence region；Mobile Safari Inbox 与忽略动作改为滚动后点击并以 API 轮询确认持久化。
+- `screenshots/after/` 保存十路由与四动态态的 Desktop Chrome / Mobile Safari 运行时截图；校准态为 `recommendations-calibration-{desktop-chrome,mobile-safari}.png`。
 
-- before：`screenshots/before/` 中 18 张真实 Web runtime 截图（9 个已访问路由 × Desktop Chrome / Mobile Safari）。
-- after：`screenshots/after/` 中相同 18 张截图，来自本分支的串行 Playwright 运行。
-- 最后截图命令：`CAREER_LENS_CAPTURE=after pnpm --filter web test:e2e -- career-lens-acceptance.spec.ts --workers=1`，退出码 0，2 passed；日志在 `logs/task-8-after-e2e-final-stable.log`。
-- 每个访问路由均断言 `main` 可见、移动/桌面无根节点横向溢出，并以 reduced motion 采集。脚本没有覆盖真实任务数据、键盘焦点序列或 44px 触控目标。
+## 验证证据
 
-## 截图清单与人工评分
+| 检查 | 当前结果 | 日志 |
+| --- | --- | --- |
+| 受影响 Inbox / Markdown / 目标 / 推荐回归 | PASS | `task-8-*-selector-green.log`、`task-8-workbench-inbox-mobile-fix-green.log` |
+| Web Vitest | PASS，93 files / 651 tests | `web-test-recovery-final.log` |
+| typecheck / lint / build | PASS | `web-*-recovery-final.log` |
+| Career Lens acceptance | PASS，6 passed | `task-8-acceptance-recovery-final.log` |
+| finesse detector | PASS，P0=0；P1/P2 为既有样式提示 | `finesse-detect-recovery-final.log` |
+| 全量串行 E2E | UNVERIFIED，114 passed / 8 skipped / 2 failed | `task-8-all-specified-e2e-final.log` |
+| 全局停止独立复现（清除 `CAREER_LENS_CAPTURE`） | UNVERIFIED，8 passed / 2 failed / 2 skipped | `task-8-one-click-recommendation-rerun.log` |
 
-评分维度为布局 30、主视觉 25、字体/色彩 20、内容组件 15、移动 10。只有营销页和首页壳层做过人工打开检查；其余截图只确认由真实运行时生成，尚未逐页评分。因此不能用平均分或“通过”替代逐页门槛。
+全量 E2E 与独立复现的失败均为同一双视口用例：`one-click-recommendation.spec.ts:589`，期望 `paused`、实际 `cancelled`。协调者已在全新 `origin/main` 工作树以同一命令独立复现为 8 passed / 2 failed / 2 skipped，故这是既有 API/worker 缺陷，不是本分支回归；该 spec 相对 `origin/main...HEAD` 也无 diff。运行策略与推荐页面改动只涉及 landmark、region 和展示组织，不触及停止请求或运行状态机。任务契约禁止 API/worker 修复，故不将该失败伪装为 Web 通过。
 
-| 路由 | Desktop/Mobile 截图 | 人工结果 | 分数 / 100 | 关键缺项 |
-| --- | --- | --- | ---: | --- |
-| `/` | `marketing-*.png` | 已检查 | 95 | 无已发现关键缺项 |
-| `/login` | `login-*.png` | 未逐页复核 | 未评分 | 需要移动阅读顺序与焦点检查 |
-| `/home` | `home-*.png` | 已检查共享侧栏与实际空账户内容 | 79 | 主内容仍是旧工作台层级，Task 3 未实施 |
-| `/recommendations` | `recommendations-*.png` | 未逐页复核 | 未评分 | Task 4 未实施 |
-| `/profile` | `profile-*.png` | 未逐页复核 | 未评分 | Task 5 未实施 |
-| `/profile/targets` | `profile-targets-*.png` | 未逐页复核 | 未评分 | Task 6 未实施 |
-| `/jobs/import` | `jobs-import-*.png` | 未逐页复核 | 未评分 | Task 6 未实施 |
-| `/profile/run-policy` | `profile-run-policy-*.png` | 未逐页复核 | 未评分 | Task 7 未实施 |
-| `/profile/model-connection` | `profile-model-connection-*.png` | 未逐页复核 | 未评分 | Task 7 未实施 |
-| `/profile/targets/:targetId/watchlist` | 无 | UNVERIFIED | 未评分 | 缺少稳定 target fixture |
-| 四个既有任务态 | 无 | UNVERIFIED | 未评分 | 缺少对应 fixture 驱动的浏览器采集 |
+## 视觉与可访问性
 
-## 可访问性与响应式证据
+人工查看确认 after 截图在双视口中无根横向溢出，关键路由和四任务态均可读；acceptance 覆盖 landmark、状态对象、reduced motion 和移动无溢出。营销页保留 Axe、键盘顺序、44px CTA 和登录边界断言；其余页面由组件测试与运行时 E2E 覆盖触控及状态路径。finesse 的 P1 side-stripe、P2 palette/stamp 提示已记录，不作为视觉缺项或功能失败处理。
 
-- 营销页 Playwright + Axe 回归在修复 `--muted` 对比度后通过；日志：`logs/task-2-landing-e2e-green.log`。
-- 共享工作台具备侧栏 landmark；移动截图及 acceptance spec 检查没有页面级横向溢出。
-- 仍未逐页验证键盘焦点、44px 命中、错误恢复、运行中刷新保持与全部任务态；这些是后续 Task 3–8 的必做项。
+## Before 证据隔离
 
-## 静态检查与限制
-
-- `finesse-detect` 退出码 0（`logs/finesse-detect.log`），但报告 3 个既有 P1 side-stripe 命中和若干 token/stamp 提示；该检查不替代浏览器验收。
-- `pnpm dlx shadcn@latest docs button` 因当前 MCP SDK 与 Zod 的版本不兼容而未能读取文档；未修改依赖或锁文件。
-- 基线 API 失败 `latest.json().run === null` 不在本任务修复范围内。
+全量运行曾意外写入 `screenshots/before/**`。18 个受影响的 tracked 静态截图及 8 个未跟踪 dynamic-before 截图均保持未暂存、未提交、未作为 before 证据；它们由协调者按安全规则恢复。

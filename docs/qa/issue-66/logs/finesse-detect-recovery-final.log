@@ -1,0 +1,173 @@
+{
+  "p0": 0,
+  "files": [
+    {
+      "file": "apps/web/app/globals.css",
+      "findings": [
+        {
+          "id": "side-stripe",
+          "severity": "P1",
+          "label": "Side-stripe border (border-left/right > 1px as colored accent)",
+          "fix": "redesign",
+          "count": 4,
+          "hits": [
+            {
+              "line": 1362,
+              "text": "border-left: 3px solid var(--accent)"
+            },
+            {
+              "line": 1379,
+              "text": "border-left: 3px solid var(--amber)"
+            },
+            {
+              "line": 1649,
+              "text": "border-left: 2px solid var(--amber)"
+            },
+            {
+              "line": 1841,
+              "text": "border-left: 2px solid var(--emerald)"
+            }
+          ]
+        },
+        {
+          "id": "default-palette-token",
+          "severity": "P2",
+          "label": "Default-category palette token name (--cream/--sand/--paper…)",
+          "fix": "soul",
+          "count": 1,
+          "hits": [
+            {
+              "line": 1683,
+              "text": "--paper"
+            }
+          ]
+        },
+        {
+          "id": "pure-bw",
+          "severity": "P2",
+          "label": "Pure #fff / #000 (untinted neutral)",
+          "fix": "soul",
+          "count": 5,
+          "hits": [
+            {
+              "line": 29,
+              "text": "#ffffff"
+            },
+            {
+              "line": 2552,
+              "text": "#fff"
+            },
+            {
+              "line": 2555,
+              "text": "#fff"
+            },
+            {
+              "line": 2557,
+              "text": "#fff"
+            },
+            {
+              "line": 2558,
+              "text": "#fff"
+            }
+          ]
+        },
+        {
+          "id": "missing-stamp",
+          "severity": "P2",
+          "label": "No /* finesse · … */ build stamp — next run has nothing to rotate against",
+          "fix": "divergence §4.2",
+          "hits": [
+            {
+              "line": 0,
+              "text": "no five-axis stamp in CSS"
+            }
+          ],
+          "count": 1
+        }
+      ]
+    },
+    {
+      "file": "apps/web/app/(workbench)/recommendations/page.tsx",
+      "findings": [
+        {
+          "id": "missing-stamp",
+          "severity": "P2",
+          "label": "No /* finesse · … */ build stamp — next run has nothing to rotate against",
+          "fix": "divergence §4.2",
+          "hits": [
+            {
+              "line": 0,
+              "text": "no five-axis stamp in CSS"
+            }
+          ],
+          "count": 1
+        }
+      ]
+    },
+    {
+      "file": "apps/web/components/workbench/account-run-policy-view.tsx",
+      "findings": [
+        {
+          "id": "missing-stamp",
+          "severity": "P2",
+          "label": "No /* finesse · … */ build stamp — next run has nothing to rotate against",
+          "fix": "divergence §4.2",
+          "hits": [
+            {
+              "line": 0,
+              "text": "no five-axis stamp in CSS"
+            }
+          ],
+          "count": 1
+        }
+      ]
+    },
+    {
+      "file": "apps/web/components/workbench/job-targets-view.tsx",
+      "findings": [
+        {
+          "id": "missing-stamp",
+          "severity": "P2",
+          "label": "No /* finesse · … */ build stamp — next run has nothing to rotate against",
+          "fix": "divergence §4.2",
+          "hits": [
+            {
+              "line": 0,
+              "text": "no five-axis stamp in CSS"
+            }
+          ],
+          "count": 1
+        }
+      ]
+    },
+    {
+      "file": "apps/web/components/workbench/workbench-home-view.tsx",
+      "findings": [
+        {
+          "id": "missing-stamp",
+          "severity": "P2",
+          "label": "No /* finesse · … */ build stamp — next run has nothing to rotate against",
+          "fix": "divergence §4.2",
+          "hits": [
+            {
+              "line": 0,
+              "text": "no five-axis stamp in CSS"
+            }
+          ],
+          "count": 1
+        }
+      ]
+    }
+  ],
+  "notCovered": [
+    "default-category aesthetic (the vibe, not just token names — beige+brass craft, AI purple-glow)",
+    "div-based fake screenshots / fake dashboards",
+    "identical / generic card grids (icon + title + text × N)",
+    "zero imagery on an image-implied brief (food / hotel / fashion / travel)",
+    "glassmorphism / AI-purple-glow used as decoration",
+    "layout-family repetition (§5) and whether the soul is actually distinct",
+    "whether the engine RENDERS real pixels (needs the Playwright runtime pass, not a grep)",
+    "mobile-floor M3/M4 — clickable text wrapping to two lines, long-word overflow at 320px (needs a rendered page at 320, not a grep)",
+    "root-relative asset paths (`/img/x.png`) — dead-ref only resolves file-relative ones; a broken `/…` link needs the real serving root"
+  ]
+}
