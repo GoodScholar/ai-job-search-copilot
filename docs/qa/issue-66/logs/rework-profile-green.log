@@ -1,0 +1,1542 @@
+
+ RUN  v4.1.11 /Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web
+
+stderr | components/workbench/profile-import-view.test.tsx > 选择无文本层 PDF 时优先显示本次解析错误，且不会提交上传
+An update to ProfileImportView inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ProfileImportView inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ProfileImportView inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ProfileImportView inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+stderr | components/workbench/profile-import-view.test.tsx > gives a new upload failure priority over an existing queued import
+An update to ProfileImportView inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ProfileImportView inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ProfileImportView inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+An update to ProfileImportView inside a test was not wrapped in act(...).
+
+When testing, code that causes React state updates should be wrapped into act(...):
+
+act(() => {
+  /* fire events that update state */
+});
+/* assert on the output */
+
+This ensures that you're testing the behavior the user would see in the browser. Learn more at https://react.dev/link/wrap-tests-with-act
+
+ ❯ components/workbench/profile-import-view.test.tsx (36 tests | 10 failed) 631ms
+   × detects private information before upload and submits only the sanitized processing copy 6ms
+   × 拒绝超限 DOCX，且不会创建上传请求 2ms
+   × can retain a protected original without sending it as the processing copy 2ms
+   × 选择无文本层 PDF 时优先显示本次解析错误，且不会提交上传 3ms
+   × uploads only Markdown files and renders quoted pending facts after polling 2ms
+   × manually adds, revises, and removes a trusted profile fact with reasons 2ms
+   × creates language facts with a level and preserves or changes that level during revision 1ms
+   × maps failures to a fixed Chinese message without exposing internal values 2ms
+   × gives a new upload failure priority over an existing queued import 2ms
+   × shows uploading while retrying after an action failure 1ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 10 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  components/workbench/profile-import-view.test.tsx > detects private information before upload and submits only the sanitized processing copy
+TestingLibraryElementError: Unable to find an element with the text: /姓名、手机号、邮箱、详细住址、证件号码、照片、二维码和社交账号/. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<main[39m
+      [33maria-label[39m=[32m"职业资料"[39m
+      [33mclass[39m=[32m"container profile-main"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-title"[39m
+        [33mclass[39m=[32m"profile-intro"[39m
+      [36m>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"workbench-kicker"[39m
+        [36m>[39m
+          [0m职业资料 · 候选事实[0m
+        [36m</p>[39m
+        [36m<h1[39m
+          [33mid[39m=[32m"profile-title"[39m
+        [36m>[39m
+          [0m从职业资料建立求职画像[0m
+        [36m</h1>[39m
+        [36m<p>[39m
+          [0m系统只会提取带原文证据的候选事实；它们需要你的确认后才会进入求职画像。[0m
+        [36m</p>[39m
+        [36m<a[39m
+          [33mclass[39m=[32m"profile-target-link workbench-touch-target"[39m
+          [33mhref[39m=[32m"/profile/run-policy"[39m
+        [36m>[39m
+          [0m管理账户运行策略[0m
+        [36m</a>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-upload-title"[39m
+        [33mclass[39m=[32m"profile-upload"[39m
+      [36m>[39m
+        [36m<h2[39m
+          [33mid[39m=[32m"profile-upload-title"[39m
+        [36m>[39m
+          [0m导入职业资料[0m
+        [36m</h2>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"职业资料下一行动"[39m
+          [33mclass[39m=[32m"job-import-panel job-import-next-action"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0m下一步[0m
+          [36m</h3>[39m
+          [36m<p>[39m
+            [0m导入一份经过隐私检查的职业资料，系统会提取候选事实，待你确认后才写入求职画像。[0m
+          [36m</p>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m添加职业资料[0m
+          [36m</button>[39m
+        [36m</section>[39m
+        [36m<p[39m
+          [33maria-live[39m=[32m"polite"[39m
+          [33mclass[39m=[32m"profile-status"[39m
+          [33mrole[39m=[32m"status"[39m
+        [36m>[39m
+          [0m请选择一份 Markdown、DOCX 或 PDF 职业资料后上传。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-label[39m=[32m"可信事实台账"[39m
+        [33mclass[39m=[32m"profile-facts profile-trusted-ledger"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"profile-facts-heading"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<p[39m
+              [33mclass[39m=[32m"workbench-kicker"[39m
+            [36m>[39m
+              [0m长期记忆 · 已验证[0m
+            [36m</p>[39m
+            [36m<h2[39m
+              [33mid[39m=[32m"trusted-profile-title"[39m
+            [36m>[39m
+              [0m当前可信画像[0m
+            [36m</h2>[39m
+          [36m</div>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"profile-pending"[39m
+          [36m>[39m
+            [0m版本 [0m
+            [0m0[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"画像事实下一行动"[39m
+          [33mclass[39m=[32m"job-import-panel job-import-next-action"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0m下一步[0m
+          [36m</h3>[39m
+          [36m<p>[39m
+            [0m如职业资料未包含关键信息，可手动补充一条待验证画像事实。[0m
+          [36m</p>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m添加画像事实[0m
+          [36m</button>[39m
+        [36m</section>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"profile-next-step"[39m
+        [36m>[39m
+          [0m尚无已验证画像事实。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+    [36m</main>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ components/workbench/profile-import-view.test.tsx:181:17
+    179|
+    180|   render(<ProfileImportView initialImports={[]} />);
+    181|   expect(screen.getByText(/姓名、手机号、邮箱、详细住址、证件号码、照片、二维码和社交账号/)).toBeInTh…
+       |                 ^
+    182|   await user.upload(screen.getByLabelText("选择 Markdown、DOCX 或 PDF 职业资料…
+    183|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/10]⎯
+
+ FAIL  components/workbench/profile-import-view.test.tsx > 拒绝超限 DOCX，且不会创建上传请求
+TestingLibraryElementError: Unable to find a label with the text of: 选择 Markdown、DOCX 或 PDF 职业资料
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<main[39m
+      [33maria-label[39m=[32m"职业资料"[39m
+      [33mclass[39m=[32m"container profile-main"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-title"[39m
+        [33mclass[39m=[32m"profile-intro"[39m
+      [36m>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"workbench-kicker"[39m
+        [36m>[39m
+          [0m职业资料 · 候选事实[0m
+        [36m</p>[39m
+        [36m<h1[39m
+          [33mid[39m=[32m"profile-title"[39m
+        [36m>[39m
+          [0m从职业资料建立求职画像[0m
+        [36m</h1>[39m
+        [36m<p>[39m
+          [0m系统只会提取带原文证据的候选事实；它们需要你的确认后才会进入求职画像。[0m
+        [36m</p>[39m
+        [36m<a[39m
+          [33mclass[39m=[32m"profile-target-link workbench-touch-target"[39m
+          [33mhref[39m=[32m"/profile/run-policy"[39m
+        [36m>[39m
+          [0m管理账户运行策略[0m
+        [36m</a>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-upload-title"[39m
+        [33mclass[39m=[32m"profile-upload"[39m
+      [36m>[39m
+        [36m<h2[39m
+          [33mid[39m=[32m"profile-upload-title"[39m
+        [36m>[39m
+          [0m导入职业资料[0m
+        [36m</h2>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"职业资料下一行动"[39m
+          [33mclass[39m=[32m"job-import-panel job-import-next-action"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0m下一步[0m
+          [36m</h3>[39m
+          [36m<p>[39m
+            [0m导入一份经过隐私检查的职业资料，系统会提取候选事实，待你确认后才写入求职画像。[0m
+          [36m</p>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m添加职业资料[0m
+          [36m</button>[39m
+        [36m</section>[39m
+        [36m<p[39m
+          [33maria-live[39m=[32m"polite"[39m
+          [33mclass[39m=[32m"profile-status"[39m
+          [33mrole[39m=[32m"status"[39m
+        [36m>[39m
+          [0m请选择一份 Markdown、DOCX 或 PDF 职业资料后上传。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-label[39m=[32m"可信事实台账"[39m
+        [33mclass[39m=[32m"profile-facts profile-trusted-ledger"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"profile-facts-heading"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<p[39m
+              [33mclass[39m=[32m"workbench-kicker"[39m
+            [36m>[39m
+              [0m长期记忆 · 已验证[0m
+            [36m</p>[39m
+            [36m<h2[39m
+              [33mid[39m=[32m"trusted-profile-title"[39m
+            [36m>[39m
+              [0m当前可信画像[0m
+            [36m</h2>[39m
+          [36m</div>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"profile-pending"[39m
+          [36m>[39m
+            [0m版本 [0m
+            [0m0[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"画像事实下一行动"[39m
+          [33mclass[39m=[32m"job-import-panel job-import-next-action"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0m下一步[0m
+          [36m</h3>[39m
+          [36m<p>[39m
+            [0m如职业资料未包含关键信息，可手动补充一条待验证画像事实。[0m
+          [36m</p>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m添加画像事实[0m
+          [36m</button>[39m
+        [36m</section>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"profile-next-step"[39m
+        [36m>[39m
+          [0m尚无已验证画像事实。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+    [36m</main>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ getAllByLabelText ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/queries/label-text.js:111:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ components/workbench/profile-import-view.test.tsx:205:28
+    203|   const user = userEvent.setup();
+    204|   render(<ProfileImportView initialImports={[]} />);
+    205|   await user.upload(screen.getByLabelText("选择 Markdown、DOCX 或 PDF 职业资料…
+       |                            ^
+    206|     type: "application/vnd.openxmlformats-officedocument.wordprocessin…
+    207|   }));
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/10]⎯
+
+ FAIL  components/workbench/profile-import-view.test.tsx > can retain a protected original without sending it as the processing copy
+TestingLibraryElementError: Unable to find a label with the text of: 选择 Markdown、DOCX 或 PDF 职业资料
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<main[39m
+      [33maria-label[39m=[32m"职业资料"[39m
+      [33mclass[39m=[32m"container profile-main"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-title"[39m
+        [33mclass[39m=[32m"profile-intro"[39m
+      [36m>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"workbench-kicker"[39m
+        [36m>[39m
+          [0m职业资料 · 候选事实[0m
+        [36m</p>[39m
+        [36m<h1[39m
+          [33mid[39m=[32m"profile-title"[39m
+        [36m>[39m
+          [0m从职业资料建立求职画像[0m
+        [36m</h1>[39m
+        [36m<p>[39m
+          [0m系统只会提取带原文证据的候选事实；它们需要你的确认后才会进入求职画像。[0m
+        [36m</p>[39m
+        [36m<a[39m
+          [33mclass[39m=[32m"profile-target-link workbench-touch-target"[39m
+          [33mhref[39m=[32m"/profile/run-policy"[39m
+        [36m>[39m
+          [0m管理账户运行策略[0m
+        [36m</a>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-upload-title"[39m
+        [33mclass[39m=[32m"profile-upload"[39m
+      [36m>[39m
+        [36m<h2[39m
+          [33mid[39m=[32m"profile-upload-title"[39m
+        [36m>[39m
+          [0m导入职业资料[0m
+        [36m</h2>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"职业资料下一行动"[39m
+          [33mclass[39m=[32m"job-import-panel job-import-next-action"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0m下一步[0m
+          [36m</h3>[39m
+          [36m<p>[39m
+            [0m导入一份经过隐私检查的职业资料，系统会提取候选事实，待你确认后才写入求职画像。[0m
+          [36m</p>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m添加职业资料[0m
+          [36m</button>[39m
+        [36m</section>[39m
+        [36m<p[39m
+          [33maria-live[39m=[32m"polite"[39m
+          [33mclass[39m=[32m"profile-status"[39m
+          [33mrole[39m=[32m"status"[39m
+        [36m>[39m
+          [0m请选择一份 Markdown、DOCX 或 PDF 职业资料后上传。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-label[39m=[32m"可信事实台账"[39m
+        [33mclass[39m=[32m"profile-facts profile-trusted-ledger"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"profile-facts-heading"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<p[39m
+              [33mclass[39m=[32m"workbench-kicker"[39m
+            [36m>[39m
+              [0m长期记忆 · 已验证[0m
+            [36m</p>[39m
+            [36m<h2[39m
+              [33mid[39m=[32m"trusted-profile-title"[39m
+            [36m>[39m
+              [0m当前可信画像[0m
+            [36m</h2>[39m
+          [36m</div>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"profile-pending"[39m
+          [36m>[39m
+            [0m版本 [0m
+            [0m0[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"画像事实下一行动"[39m
+          [33mclass[39m=[32m"job-import-panel job-import-next-action"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0m下一步[0m
+          [36m</h3>[39m
+          [36m<p>[39m
+            [0m如职业资料未包含关键信息，可手动补充一条待验证画像事实。[0m
+          [36m</p>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m添加画像事实[0m
+          [36m</button>[39m
+        [36m</section>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"profile-next-step"[39m
+        [36m>[39m
+          [0m尚无已验证画像事实。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+    [36m</main>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ getAllByLabelText ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/queries/label-text.js:111:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ components/workbench/profile-import-view.test.tsx:228:28
+    226|
+    227|   render(<ProfileImportView initialImports={[]} />);
+    228|   await user.upload(screen.getByLabelText("选择 Markdown、DOCX 或 PDF 职业资料…
+       |                            ^
+    229|   await user.click(await screen.findByRole("radio", { name: "保留受保护原件（下…
+    230|   await user.click(screen.getByRole("button", { name: "上传并解析" }));
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/10]⎯
+
+ FAIL  components/workbench/profile-import-view.test.tsx > 选择无文本层 PDF 时优先显示本次解析错误，且不会提交上传
+TestingLibraryElementError: Unable to find a label with the text of: 选择 Markdown、DOCX 或 PDF 职业资料
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<main[39m
+      [33maria-label[39m=[32m"职业资料"[39m
+      [33mclass[39m=[32m"container profile-main"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-title"[39m
+        [33mclass[39m=[32m"profile-intro"[39m
+      [36m>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"workbench-kicker"[39m
+        [36m>[39m
+          [0m职业资料 · 候选事实[0m
+        [36m</p>[39m
+        [36m<h1[39m
+          [33mid[39m=[32m"profile-title"[39m
+        [36m>[39m
+          [0m从职业资料建立求职画像[0m
+        [36m</h1>[39m
+        [36m<p>[39m
+          [0m系统只会提取带原文证据的候选事实；它们需要你的确认后才会进入求职画像。[0m
+        [36m</p>[39m
+        [36m<a[39m
+          [33mclass[39m=[32m"profile-target-link workbench-touch-target"[39m
+          [33mhref[39m=[32m"/profile/run-policy"[39m
+        [36m>[39m
+          [0m管理账户运行策略[0m
+        [36m</a>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-upload-title"[39m
+        [33mclass[39m=[32m"profile-upload"[39m
+      [36m>[39m
+        [36m<h2[39m
+          [33mid[39m=[32m"profile-upload-title"[39m
+        [36m>[39m
+          [0m导入职业资料[0m
+        [36m</h2>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"职业资料下一行动"[39m
+          [33mclass[39m=[32m"job-import-panel job-import-next-action"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0m下一步[0m
+          [36m</h3>[39m
+          [36m<p>[39m
+            [0m导入一份经过隐私检查的职业资料，系统会提取候选事实，待你确认后才写入求职画像。[0m
+          [36m</p>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m添加职业资料[0m
+          [36m</button>[39m
+        [36m</section>[39m
+        [36m<p[39m
+          [33maria-live[39m=[32m"polite"[39m
+          [33mclass[39m=[32m"profile-status"[39m
+          [33mrole[39m=[32m"status"[39m
+        [36m>[39m
+          [0m解析完成[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-recent-imports-title"[39m
+        [33mclass[39m=[32m"profile-recent-imports"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"profile-recent-imports-heading"[39m
+        [36m>[39m
+          [36m<h2[39m
+            [33mid[39m=[32m"profile-recent-imports-title"[39m
+          [36m>[39m
+            [0m最近导入[0m
+          [36m</h2>[39m
+          [36m<p>[39m
+            [0m最多显示 20 条职业资料导入记录。[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<ol[39m
+          [33mclass[39m=[32m"profile-recent-import-list"[39m
+        [36m>[39m
+          [36m<li>[39m
+            [36m<button[39m
+              [33maria-pressed[39m=[32m"true"[39m
+              [33mclass[39m=[32m"profile-recent-import-button workbench-touch-target"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<span>[39m
+                [0mcompleted.md[0m
+              [36m</span>[39m
+              [36m<span>[39m
+                [0m解析完成[0m
+              [36m</span>[39m
+              [36m<span>[39m
+                [0m仅保存脱敏副本[0m
+              [36m</span>[39m
+              [36m<span>[39m
+                [0m候选事实 1 条[0m
+              [36m</span>[39m
+              [36m<time[39m
+                [33mdatetime[39m=[32m"2026-08-27T08:00:00.000Z"[39m
+              [36m>[39m
+                [0m2026-08-27 08:00[0m
+              [36m</time>[39m
+            [36m</button>[39m
+          [36m</li>[39m
+        [36m</ol>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-label[39m=[32m"可信事实台账"[39m
+        [33mclass[39m=[32m"profile-facts profile-trusted-ledger"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"profile-facts-heading"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<p[39m
+              [33mclass[39m=[32m"workbench-kicker"[39m
+            [36m>[39m
+              [0m长期记忆 · 已验证[0m
+            [36m</p>[39m
+            [36m<h2[39m
+              [33mid[39m=[32m"trusted-profile-title"[39m
+            [36m>[39m
+              [0m当前可信画像[0m
+            [36m</h2>[39m
+          [36m</div>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"profile-pending"[39m
+          [36m>[39m
+            [0m版本 [0m
+            [0m0[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"画像事实下一行动"[39m
+          [33mclass[39m=[32m"job-import-panel job-import-next-action"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0m下一步[0m
+          [36m</h3>[39m
+          [36m<p>[39m
+            [0m如职业资料未包含关键信息，可手动补充一条待验证画像事实。[0m
+          [36m</p>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m添加画像事实[0m
+          [36m</button>[39m
+        [36m</section>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"profile-next-step"[39m
+        [36m>[39m
+          [0m尚无已验证画像事实。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+    [36m</main>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ getAllByLabelText ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/queries/label-text.js:111:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ components/workbench/profile-import-view.test.tsx:275:12
+    273|   render(<ProfileImportView initialImports={[completedImport]} />);
+    274|   await user.upload(
+    275|     screen.getByLabelText("选择 Markdown、DOCX 或 PDF 职业资料"),
+       |            ^
+    276|     new File(["%PDF-empty"], "scanned.pdf", { type: "application/pdf" …
+    277|   );
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/10]⎯
+
+ FAIL  components/workbench/profile-import-view.test.tsx > uploads only Markdown files and renders quoted pending facts after polling
+TestingLibraryElementError: Unable to find a label with the text of: 选择 Markdown、DOCX 或 PDF 职业资料
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<main[39m
+      [33maria-label[39m=[32m"职业资料"[39m
+      [33mclass[39m=[32m"container profile-main"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-title"[39m
+        [33mclass[39m=[32m"profile-intro"[39m
+      [36m>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"workbench-kicker"[39m
+        [36m>[39m
+          [0m职业资料 · 候选事实[0m
+        [36m</p>[39m
+        [36m<h1[39m
+          [33mid[39m=[32m"profile-title"[39m
+        [36m>[39m
+          [0m从职业资料建立求职画像[0m
+        [36m</h1>[39m
+        [36m<p>[39m
+          [0m系统只会提取带原文证据的候选事实；它们需要你的确认后才会进入求职画像。[0m
+        [36m</p>[39m
+        [36m<a[39m
+          [33mclass[39m=[32m"profile-target-link workbench-touch-target"[39m
+          [33mhref[39m=[32m"/profile/run-policy"[39m
+        [36m>[39m
+          [0m管理账户运行策略[0m
+        [36m</a>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-upload-title"[39m
+        [33mclass[39m=[32m"profile-upload"[39m
+      [36m>[39m
+        [36m<h2[39m
+          [33mid[39m=[32m"profile-upload-title"[39m
+        [36m>[39m
+          [0m导入职业资料[0m
+        [36m</h2>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"职业资料下一行动"[39m
+          [33mclass[39m=[32m"job-import-panel job-import-next-action"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0m下一步[0m
+          [36m</h3>[39m
+          [36m<p>[39m
+            [0m导入一份经过隐私检查的职业资料，系统会提取候选事实，待你确认后才写入求职画像。[0m
+          [36m</p>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m添加职业资料[0m
+          [36m</button>[39m
+        [36m</section>[39m
+        [36m<p[39m
+          [33maria-live[39m=[32m"polite"[39m
+          [33mclass[39m=[32m"profile-status"[39m
+          [33mrole[39m=[32m"status"[39m
+        [36m>[39m
+          [0m请选择一份 Markdown、DOCX 或 PDF 职业资料后上传。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-label[39m=[32m"可信事实台账"[39m
+        [33mclass[39m=[32m"profile-facts profile-trusted-ledger"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"profile-facts-heading"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<p[39m
+              [33mclass[39m=[32m"workbench-kicker"[39m
+            [36m>[39m
+              [0m长期记忆 · 已验证[0m
+            [36m</p>[39m
+            [36m<h2[39m
+              [33mid[39m=[32m"trusted-profile-title"[39m
+            [36m>[39m
+              [0m当前可信画像[0m
+            [36m</h2>[39m
+          [36m</div>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"profile-pending"[39m
+          [36m>[39m
+            [0m版本 [0m
+            [0m0[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"画像事实下一行动"[39m
+          [33mclass[39m=[32m"job-import-panel job-import-next-action"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0m下一步[0m
+          [36m</h3>[39m
+          [36m<p>[39m
+            [0m如职业资料未包含关键信息，可手动补充一条待验证画像事实。[0m
+          [36m</p>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m添加画像事实[0m
+          [36m</button>[39m
+        [36m</section>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"profile-next-step"[39m
+        [36m>[39m
+          [0m尚无已验证画像事实。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+    [36m</main>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ getAllByLabelText ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/queries/label-text.js:111:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ components/workbench/profile-import-view.test.tsx:310:24
+    308|
+    309|   render(<ProfileImportView initialImports={[]} />);
+    310|   const input = screen.getByLabelText("选择 Markdown、DOCX 或 PDF 职业资料");
+       |                        ^
+    311|   expect(input).toHaveAttribute("accept", ".md,.docx,.pdf,text/markdow…
+    312|   await user.upload(input, new File(["## 技能\\n- TypeScript"], "career.…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/10]⎯
+
+ FAIL  components/workbench/profile-import-view.test.tsx > manually adds, revises, and removes a trusted profile fact with reasons
+TestingLibraryElementError: Unable to find a label with the text of: 画像事实类型
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<main[39m
+      [33maria-label[39m=[32m"职业资料"[39m
+      [33mclass[39m=[32m"container profile-main"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-title"[39m
+        [33mclass[39m=[32m"profile-intro"[39m
+      [36m>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"workbench-kicker"[39m
+        [36m>[39m
+          [0m职业资料 · 候选事实[0m
+        [36m</p>[39m
+        [36m<h1[39m
+          [33mid[39m=[32m"profile-title"[39m
+        [36m>[39m
+          [0m从职业资料建立求职画像[0m
+        [36m</h1>[39m
+        [36m<p>[39m
+          [0m系统只会提取带原文证据的候选事实；它们需要你的确认后才会进入求职画像。[0m
+        [36m</p>[39m
+        [36m<a[39m
+          [33mclass[39m=[32m"profile-target-link workbench-touch-target"[39m
+          [33mhref[39m=[32m"/profile/run-policy"[39m
+        [36m>[39m
+          [0m管理账户运行策略[0m
+        [36m</a>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-upload-title"[39m
+        [33mclass[39m=[32m"profile-upload"[39m
+      [36m>[39m
+        [36m<h2[39m
+          [33mid[39m=[32m"profile-upload-title"[39m
+        [36m>[39m
+          [0m导入职业资料[0m
+        [36m</h2>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"职业资料下一行动"[39m
+          [33mclass[39m=[32m"job-import-panel job-import-next-action"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0m下一步[0m
+          [36m</h3>[39m
+          [36m<p>[39m
+            [0m导入一份经过隐私检查的职业资料，系统会提取候选事实，待你确认后才写入求职画像。[0m
+          [36m</p>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m添加职业资料[0m
+          [36m</button>[39m
+        [36m</section>[39m
+        [36m<p[39m
+          [33maria-live[39m=[32m"polite"[39m
+          [33mclass[39m=[32m"profile-status"[39m
+          [33mrole[39m=[32m"status"[39m
+        [36m>[39m
+          [0m请选择一份 Markdown、DOCX 或 PDF 职业资料后上传。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-label[39m=[32m"可信事实台账"[39m
+        [33mclass[39m=[32m"profile-facts profile-trusted-ledger"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"profile-facts-heading"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<p[39m
+              [33mclass[39m=[32m"workbench-kicker"[39m
+            [36m>[39m
+              [0m长期记忆 · 已验证[0m
+            [36m</p>[39m
+            [36m<h2[39m
+              [33mid[39m=[32m"trusted-profile-title"[39m
+            [36m>[39m
+              [0m当前可信画像[0m
+            [36m</h2>[39m
+          [36m</div>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"profile-pending"[39m
+          [36m>[39m
+            [0m版本 [0m
+            [0m0[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"画像事实下一行动"[39m
+          [33mclass[39m=[32m"job-import-panel job-import-next-action"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0m下一步[0m
+          [36m</h3>[39m
+          [36m<p>[39m
+            [0m如职业资料未包含关键信息，可手动补充一条待验证画像事实。[0m
+          [36m</p>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m添加画像事实[0m
+          [36m</button>[39m
+        [36m</section>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"profile-next-step"[39m
+        [36m>[39m
+          [0m尚无已验证画像事实。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+    [36m</main>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ getAllByLabelText ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/queries/label-text.js:111:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ components/workbench/profile-import-view.test.tsx:431:35
+    429|   render(<ProfileImportView initialImports={[]} initialProfile={{ prof…
+    430|
+    431|   await user.selectOptions(screen.getByLabelText("画像事实类型"), "work_elig…
+       |                                   ^
+    432|   await user.type(screen.getByLabelText("画像事实内容"), "可在中国大陆工作");
+    433|   await user.click(screen.getByRole("button", { name: "新增画像事实" }));
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/10]⎯
+
+ FAIL  components/workbench/profile-import-view.test.tsx > creates language facts with a level and preserves or changes that level during revision
+TestingLibraryElementError: Unable to find a label with the text of: 画像事实类型
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<main[39m
+      [33maria-label[39m=[32m"职业资料"[39m
+      [33mclass[39m=[32m"container profile-main"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-title"[39m
+        [33mclass[39m=[32m"profile-intro"[39m
+      [36m>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"workbench-kicker"[39m
+        [36m>[39m
+          [0m职业资料 · 候选事实[0m
+        [36m</p>[39m
+        [36m<h1[39m
+          [33mid[39m=[32m"profile-title"[39m
+        [36m>[39m
+          [0m从职业资料建立求职画像[0m
+        [36m</h1>[39m
+        [36m<p>[39m
+          [0m系统只会提取带原文证据的候选事实；它们需要你的确认后才会进入求职画像。[0m
+        [36m</p>[39m
+        [36m<a[39m
+          [33mclass[39m=[32m"profile-target-link workbench-touch-target"[39m
+          [33mhref[39m=[32m"/profile/run-policy"[39m
+        [36m>[39m
+          [0m管理账户运行策略[0m
+        [36m</a>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-upload-title"[39m
+        [33mclass[39m=[32m"profile-upload"[39m
+      [36m>[39m
+        [36m<h2[39m
+          [33mid[39m=[32m"profile-upload-title"[39m
+        [36m>[39m
+          [0m导入职业资料[0m
+        [36m</h2>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"职业资料下一行动"[39m
+          [33mclass[39m=[32m"job-import-panel job-import-next-action"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0m下一步[0m
+          [36m</h3>[39m
+          [36m<p>[39m
+            [0m导入一份经过隐私检查的职业资料，系统会提取候选事实，待你确认后才写入求职画像。[0m
+          [36m</p>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m添加职业资料[0m
+          [36m</button>[39m
+        [36m</section>[39m
+        [36m<p[39m
+          [33maria-live[39m=[32m"polite"[39m
+          [33mclass[39m=[32m"profile-status"[39m
+          [33mrole[39m=[32m"status"[39m
+        [36m>[39m
+          [0m请选择一份 Markdown、DOCX 或 PDF 职业资料后上传。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-label[39m=[32m"可信事实台账"[39m
+        [33mclass[39m=[32m"profile-facts profile-trusted-ledger"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"profile-facts-heading"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<p[39m
+              [33mclass[39m=[32m"workbench-kicker"[39m
+            [36m>[39m
+              [0m长期记忆 · 已验证[0m
+            [36m</p>[39m
+            [36m<h2[39m
+              [33mid[39m=[32m"trusted-profile-title"[39m
+            [36m>[39m
+              [0m当前可信画像[0m
+            [36m</h2>[39m
+          [36m</div>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"profile-pending"[39m
+          [36m>[39m
+            [0m版本 [0m
+            [0m0[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"画像事实下一行动"[39m
+          [33mclass[39m=[32m"job-import-panel job-import-next-action"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0m下一步[0m
+          [36m</h3>[39m
+          [36m<p>[39m
+            [0m如职业资料未包含关键信息，可手动补充一条待验证画像事实。[0m
+          [36m</p>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m添加画像事实[0m
+          [36m</button>[39m
+        [36m</section>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"profile-next-step"[39m
+        [36m>[39m
+          [0m尚无已验证画像事实。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+    [36m</main>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ getAllByLabelText ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/queries/label-text.js:111:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ components/workbench/profile-import-view.test.tsx:470:35
+    468|   render(<ProfileImportView initialImports={[]} initialProfile={{ prof…
+    469|
+    470|   await user.selectOptions(screen.getByLabelText("画像事实类型"), "language"…
+       |                                   ^
+    471|   await user.type(screen.getByLabelText("画像事实内容"), "英语");
+    472|   await user.type(screen.getByLabelText("画像事实语言级别"), "B2");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/10]⎯
+
+ FAIL  components/workbench/profile-import-view.test.tsx > maps failures to a fixed Chinese message without exposing internal values
+TestingLibraryElementError: Unable to find a label with the text of: 选择 Markdown、DOCX 或 PDF 职业资料
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<main[39m
+      [33maria-label[39m=[32m"职业资料"[39m
+      [33mclass[39m=[32m"container profile-main"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-title"[39m
+        [33mclass[39m=[32m"profile-intro"[39m
+      [36m>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"workbench-kicker"[39m
+        [36m>[39m
+          [0m职业资料 · 候选事实[0m
+        [36m</p>[39m
+        [36m<h1[39m
+          [33mid[39m=[32m"profile-title"[39m
+        [36m>[39m
+          [0m从职业资料建立求职画像[0m
+        [36m</h1>[39m
+        [36m<p>[39m
+          [0m系统只会提取带原文证据的候选事实；它们需要你的确认后才会进入求职画像。[0m
+        [36m</p>[39m
+        [36m<a[39m
+          [33mclass[39m=[32m"profile-target-link workbench-touch-target"[39m
+          [33mhref[39m=[32m"/profile/run-policy"[39m
+        [36m>[39m
+          [0m管理账户运行策略[0m
+        [36m</a>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-upload-title"[39m
+        [33mclass[39m=[32m"profile-upload"[39m
+      [36m>[39m
+        [36m<h2[39m
+          [33mid[39m=[32m"profile-upload-title"[39m
+        [36m>[39m
+          [0m导入职业资料[0m
+        [36m</h2>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"职业资料下一行动"[39m
+          [33mclass[39m=[32m"job-import-panel job-import-next-action"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0m下一步[0m
+          [36m</h3>[39m
+          [36m<p>[39m
+            [0m导入一份经过隐私检查的职业资料，系统会提取候选事实，待你确认后才写入求职画像。[0m
+          [36m</p>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m添加职业资料[0m
+          [36m</button>[39m
+        [36m</section>[39m
+        [36m<p[39m
+          [33maria-live[39m=[32m"polite"[39m
+          [33mclass[39m=[32m"profile-status"[39m
+          [33mrole[39m=[32m"status"[39m
+        [36m>[39m
+          [0m请选择一份 Markdown、DOCX 或 PDF 职业资料后上传。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-label[39m=[32m"可信事实台账"[39m
+        [33mclass[39m=[32m"profile-facts profile-trusted-ledger"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"profile-facts-heading"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<p[39m
+              [33mclass[39m=[32m"workbench-kicker"[39m
+            [36m>[39m
+              [0m长期记忆 · 已验证[0m
+            [36m</p>[39m
+            [36m<h2[39m
+              [33mid[39m=[32m"trusted-profile-title"[39m
+            [36m>[39m
+              [0m当前可信画像[0m
+            [36m</h2>[39m
+          [36m</div>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"profile-pending"[39m
+          [36m>[39m
+            [0m版本 [0m
+            [0m0[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"画像事实下一行动"[39m
+          [33mclass[39m=[32m"job-import-panel job-import-next-action"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0m下一步[0m
+          [36m</h3>[39m
+          [36m<p>[39m
+            [0m如职业资料未包含关键信息，可手动补充一条待验证画像事实。[0m
+          [36m</p>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m添加画像事实[0m
+          [36m</button>[39m
+        [36m</section>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"profile-next-step"[39m
+        [36m>[39m
+          [0m尚无已验证画像事实。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+    [36m</main>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ getAllByLabelText ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/queries/label-text.js:111:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ components/workbench/profile-import-view.test.tsx:528:28
+    526|
+    527|   render(<ProfileImportView initialImports={[]} />);
+    528|   await user.upload(screen.getByLabelText("选择 Markdown、DOCX 或 PDF 职业资料…
+       |                            ^
+    529|   await confirmSanitizedFile(user);
+    530|   await user.click(screen.getByRole("button", { name: "上传并解析" }));
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/10]⎯
+
+ FAIL  components/workbench/profile-import-view.test.tsx > gives a new upload failure priority over an existing queued import
+TestingLibraryElementError: Unable to find a label with the text of: 选择 Markdown、DOCX 或 PDF 职业资料
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<main[39m
+      [33maria-label[39m=[32m"职业资料"[39m
+      [33mclass[39m=[32m"container profile-main"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-title"[39m
+        [33mclass[39m=[32m"profile-intro"[39m
+      [36m>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"workbench-kicker"[39m
+        [36m>[39m
+          [0m职业资料 · 候选事实[0m
+        [36m</p>[39m
+        [36m<h1[39m
+          [33mid[39m=[32m"profile-title"[39m
+        [36m>[39m
+          [0m从职业资料建立求职画像[0m
+        [36m</h1>[39m
+        [36m<p>[39m
+          [0m系统只会提取带原文证据的候选事实；它们需要你的确认后才会进入求职画像。[0m
+        [36m</p>[39m
+        [36m<a[39m
+          [33mclass[39m=[32m"profile-target-link workbench-touch-target"[39m
+          [33mhref[39m=[32m"/profile/run-policy"[39m
+        [36m>[39m
+          [0m管理账户运行策略[0m
+        [36m</a>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-upload-title"[39m
+        [33mclass[39m=[32m"profile-upload"[39m
+      [36m>[39m
+        [36m<h2[39m
+          [33mid[39m=[32m"profile-upload-title"[39m
+        [36m>[39m
+          [0m导入职业资料[0m
+        [36m</h2>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"职业资料下一行动"[39m
+          [33mclass[39m=[32m"job-import-panel job-import-next-action"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0m下一步[0m
+          [36m</h3>[39m
+          [36m<p>[39m
+            [0m导入一份经过隐私检查的职业资料，系统会提取候选事实，待你确认后才写入求职画像。[0m
+          [36m</p>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m添加职业资料[0m
+          [36m</button>[39m
+        [36m</section>[39m
+        [36m<p[39m
+          [33maria-live[39m=[32m"polite"[39m
+          [33mclass[39m=[32m"profile-status"[39m
+          [33mrole[39m=[32m"status"[39m
+        [36m>[39m
+          [0m等待解析[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-recent-imports-title"[39m
+        [33mclass[39m=[32m"profile-recent-imports"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"profile-recent-imports-heading"[39m
+        [36m>[39m
+          [36m<h2[39m
+            [33mid[39m=[32m"profile-recent-imports-title"[39m
+          [36m>[39m
+            [0m最近导入[0m
+          [36m</h2>[39m
+          [36m<p>[39m
+            [0m最多显示 20 条职业资料导入记录。[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<ol[39m
+          [33mclass[39m=[32m"profile-recent-import-list"[39m
+        [36m>[39m
+          [36m<li>[39m
+            [36m<button[39m
+              [33maria-pressed[39m=[32m"true"[39m
+              [33mclass[39m=[32m"profile-recent-import-button workbench-touch-target"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<span>[39m
+                [0mcareer.md[0m
+              [36m</span>[39m
+              [36m<span>[39m
+                [0m等待解析[0m
+              [36m</span>[39m
+              [36m<span>[39m
+                [0m仅保存脱敏副本[0m
+              [36m</span>[39m
+              [36m<span>[39m
+                [0m候选事实 0 条[0m
+              [36m</span>[39m
+              [36m<time[39m
+                [33mdatetime[39m=[32m"2026-08-27T08:00:00.000Z"[39m
+              [36m>[39m
+                [0m2026-08-27 08:00[0m
+              [36m</time>[39m
+            [36m</button>[39m
+          [36m</li>[39m
+        [36m</ol>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-label[39m=[32m"可信事实台账"[39m
+        [33mclass[39m=[32m"profile-facts profile-trusted-ledger"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"profile-facts-heading"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<p[39m
+              [33mclass[39m=[32m"workbench-kicker"[39m
+            [36m>[39m
+              [0m长期记忆 · 已验证[0m
+            [36m</p>[39m
+            [36m<h2[39m
+              [33mid[39m=[32m"trusted-profile-title"[39m
+            [36m>[39m
+              [0m当前可信画像[0m
+            [36m</h2>[39m
+          [36m</div>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"profile-pending"[39m
+          [36m>[39m
+            [0m版本 [0m
+            [0m0[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"画像事实下一行动"[39m
+          [33mclass[39m=[32m"job-import-panel job-import-next-action"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0m下一步[0m
+          [36m</h3>[39m
+          [36m<p>[39m
+            [0m如职业资料未包含关键信息，可手动补充一条待验证画像事实。[0m
+          [36m</p>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m添加画像事实[0m
+          [36m</button>[39m
+        [36m</section>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"profile-next-step"[39m
+        [36m>[39m
+          [0m尚无已验证画像事实。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+    [36m</main>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ getAllByLabelText ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/queries/label-text.js:111:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ components/workbench/profile-import-view.test.tsx:559:28
+    557|
+    558|   render(<ProfileImportView initialImports={[queuedImport]} />);
+    559|   await user.upload(screen.getByLabelText("选择 Markdown、DOCX 或 PDF 职业资料…
+       |                            ^
+    560|   await confirmSanitizedFile(user);
+    561|   await user.click(screen.getByRole("button", { name: "上传并解析" }));
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/10]⎯
+
+ FAIL  components/workbench/profile-import-view.test.tsx > shows uploading while retrying after an action failure
+TestingLibraryElementError: Unable to find a label with the text of: 选择 Markdown、DOCX 或 PDF 职业资料
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<main[39m
+      [33maria-label[39m=[32m"职业资料"[39m
+      [33mclass[39m=[32m"container profile-main"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-title"[39m
+        [33mclass[39m=[32m"profile-intro"[39m
+      [36m>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"workbench-kicker"[39m
+        [36m>[39m
+          [0m职业资料 · 候选事实[0m
+        [36m</p>[39m
+        [36m<h1[39m
+          [33mid[39m=[32m"profile-title"[39m
+        [36m>[39m
+          [0m从职业资料建立求职画像[0m
+        [36m</h1>[39m
+        [36m<p>[39m
+          [0m系统只会提取带原文证据的候选事实；它们需要你的确认后才会进入求职画像。[0m
+        [36m</p>[39m
+        [36m<a[39m
+          [33mclass[39m=[32m"profile-target-link workbench-touch-target"[39m
+          [33mhref[39m=[32m"/profile/run-policy"[39m
+        [36m>[39m
+          [0m管理账户运行策略[0m
+        [36m</a>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-upload-title"[39m
+        [33mclass[39m=[32m"profile-upload"[39m
+      [36m>[39m
+        [36m<h2[39m
+          [33mid[39m=[32m"profile-upload-title"[39m
+        [36m>[39m
+          [0m导入职业资料[0m
+        [36m</h2>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"职业资料下一行动"[39m
+          [33mclass[39m=[32m"job-import-panel job-import-next-action"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0m下一步[0m
+          [36m</h3>[39m
+          [36m<p>[39m
+            [0m导入一份经过隐私检查的职业资料，系统会提取候选事实，待你确认后才写入求职画像。[0m
+          [36m</p>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m添加职业资料[0m
+          [36m</button>[39m
+        [36m</section>[39m
+        [36m<p[39m
+          [33maria-live[39m=[32m"polite"[39m
+          [33mclass[39m=[32m"profile-status"[39m
+          [33mrole[39m=[32m"status"[39m
+        [36m>[39m
+          [0m请选择一份 Markdown、DOCX 或 PDF 职业资料后上传。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-label[39m=[32m"可信事实台账"[39m
+        [33mclass[39m=[32m"profile-facts profile-trusted-ledger"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"profile-facts-heading"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<p[39m
+              [33mclass[39m=[32m"workbench-kicker"[39m
+            [36m>[39m
+              [0m长期记忆 · 已验证[0m
+            [36m</p>[39m
+            [36m<h2[39m
+              [33mid[39m=[32m"trusted-profile-title"[39m
+            [36m>[39m
+              [0m当前可信画像[0m
+            [36m</h2>[39m
+          [36m</div>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"profile-pending"[39m
+          [36m>[39m
+            [0m版本 [0m
+            [0m0[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<section[39m
+          [33maria-label[39m=[32m"画像事实下一行动"[39m
+          [33mclass[39m=[32m"job-import-panel job-import-next-action"[39m
+        [36m>[39m
+          [36m<h3>[39m
+            [0m下一步[0m
+          [36m</h3>[39m
+          [36m<p>[39m
+            [0m如职业资料未包含关键信息，可手动补充一条待验证画像事实。[0m
+          [36m</p>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mtype[39m=[32m"button"[39m
+          [36m>[39m
+            [0m添加画像事实[0m
+          [36m</button>[39m
+        [36m</section>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"profile-next-step"[39m
+        [36m>[39m
+          [0m尚无已验证画像事实。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+    [36m</main>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ getAllByLabelText ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/queries/label-text.js:111:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ components/workbench/profile-import-view.test.tsx:643:28
+    641|
+    642|   render(<ProfileImportView initialImports={[]} />);
+    643|   await user.upload(screen.getByLabelText("选择 Markdown、DOCX 或 PDF 职业资料…
+       |                            ^
+    644|   await confirmSanitizedFile(user);
+    645|   await user.click(screen.getByRole("button", { name: "上传并解析" }));
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/10]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  10 failed | 26 passed (36)
+   Start at  14:18:17
+   Duration  1.25s (transform 74ms, setup 78ms, import 143ms, tests 631ms, environment 338ms)
+
+undefined
+/Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web:
+[ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL] Command failed with exit code 1: vitest run components/workbench/profile-import-view.test.tsx

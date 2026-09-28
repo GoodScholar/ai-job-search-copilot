@@ -1,0 +1,116 @@
+
+ RUN  v4.1.11 /Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web
+
+ ❯ app/(workbench)/recommendations/page.test.tsx (52 tests | 1 failed) 238ms
+     × explains the evidence-driven recommendation state without exposing a precise score 49ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  app/(workbench)/recommendations/page.test.tsx > RecommendationsPage > explains the evidence-driven recommendation state without exposing a precise score
+TestingLibraryElementError: Unable to find an accessible element with the role "region" and name "推荐下一行动"
+
+Here are the accessible roles:
+
+  main:
+
+  Name "证据推荐清单":
+  [36m<main[39m
+    [33maria-label[39m=[32m"证据推荐清单"[39m
+    [33mclass[39m=[32m"container workbench-page"[39m
+    [33mid[39m=[32m"main-content"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  region:
+
+  Name "推荐清单":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"recommendations-title"[39m
+    [33mclass[39m=[32m"job-import-panel"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  paragraph:
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"section-kicker"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  --------------------------------------------------
+  heading:
+
+  Name "推荐清单":
+  [36m<h1[39m
+    [33mid[39m=[32m"recommendations-title"[39m
+  [36m/>[39m
+
+  Name "暂无可处理的推荐":
+  [36m<h2 />[39m
+
+  --------------------------------------------------
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<main[39m
+      [33maria-label[39m=[32m"证据推荐清单"[39m
+      [33mclass[39m=[32m"container workbench-page"[39m
+      [33mid[39m=[32m"main-content"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"recommendations-title"[39m
+        [33mclass[39m=[32m"job-import-panel"[39m
+      [36m>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"section-kicker"[39m
+        [36m>[39m
+          [0m今日处理[0m
+        [36m</p>[39m
+        [36m<h1[39m
+          [33mid[39m=[32m"recommendations-title"[39m
+        [36m>[39m
+          [0m推荐清单[0m
+        [36m</h1>[39m
+        [36m<p>[39m
+          [0m系统会从通过资格门槛的岗位中整理少量推荐，并保留每项判断的岗位与画像证据。[0m
+        [36m</p>[39m
+        [36m<h2>[39m
+          [0m暂无可处理的推荐[0m
+        [36m</h2>[39m
+        [36m<p>[39m
+          [0m完成岗位发现和资格筛选后，这里会显示高度匹配、值得尝试或谨慎考虑的岗位。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+    [36m</main>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ app/(workbench)/recommendations/page.test.tsx:52:19
+     50|     expect(screen.getByRole("heading", { name: "推荐清单" })).toBeInTheDoc…
+     51|     expect(screen.getByText("暂无可处理的推荐")).toBeInTheDocument();
+     52|     expect(screen.getByRole("region", { name: "推荐下一行动" })).toHaveTextC…
+       |                   ^
+     53|     expect(screen.getByRole("link", { name: "建立求职目标" })).toHaveAttribu…
+     54|     expect(screen.queryByText(/%/)).not.toBeInTheDocument();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 51 passed (52)
+   Start at  14:14:35
+   Duration  717ms (transform 96ms, setup 46ms, import 166ms, tests 238ms, environment 209ms)
+
+undefined
+/Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web:
+[ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL] Command failed with exit code 1: vitest run 'app/(workbench)/recommendations/page.test.tsx'
