@@ -581,7 +581,7 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
       ) : null}
 
       {detail?.facts.length ? (
-        <section aria-labelledby="profile-facts-title" className="profile-facts">
+        <section aria-label="候选事实审核队列" className="profile-facts profile-review-queue">
           <div className="profile-facts-heading">
             <div>
               <p className="workbench-kicker">解析结果 · {detail.sourceFilename}</p>
@@ -658,7 +658,7 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
         </article>)}
       </section> : null}
 
-      <section aria-labelledby="trusted-profile-title" className="profile-facts">
+      <section aria-label="可信事实台账" className="profile-facts profile-trusted-ledger">
         <div className="profile-facts-heading">
           <div>
             <p className="workbench-kicker">长期记忆 · 已验证</p>

@@ -1356,6 +1356,14 @@ summary.workbench-touch-target:focus-visible,
   padding: clamp(1.25rem, 4vw, 2rem);
 }
 
+.profile-review-queue {
+  border-left: 3px solid var(--accent);
+}
+
+.profile-trusted-ledger {
+  background: color-mix(in srgb, var(--surface) 90%, var(--accent) 10%);
+}
+
 .profile-upload h2,
 .profile-recent-imports h2,
 .profile-facts h2 {
@@ -2536,6 +2544,17 @@ summary.workbench-touch-target:focus-visible,
 .workbench-summary dt { color: var(--muted); font-size: 0.75rem; }
 .workbench-summary dd { color: var(--cobalt); font-size: 1.75rem; font-weight: 800; margin: 0.4rem 0 0; }
 
+.workbench-status-belt { display: grid; gap: 0.5rem; }
+.workbench-primary-action { align-items: center; background: linear-gradient(135deg, #fff 0%, var(--surface-subtle) 100%); border: 1px solid var(--rule); border-radius: 1.125rem; display: flex; gap: 1rem; justify-content: space-between; padding: clamp(1rem, 2vw, 1.5rem); }
+.workbench-primary-action h2 { margin: 0.2rem 0; }
+.workbench-primary-action p:last-child { color: var(--muted); margin: 0; max-width: 48rem; }
+.workbench-primary-action-link { background: var(--cobalt); border-radius: 0.625rem; color: #fff; flex: 0 0 auto; font-weight: 750; padding: 0.7rem 1rem; text-decoration: none; }
+.workbench-ai-zone { background: var(--ai-night); border-radius: 1.25rem; box-shadow: 0 16px 34px rgb(0 28 55 / 0.18); padding: 1px; }
+.workbench-ai-zone .recommendation-run-panel { background: transparent; border-color: rgb(255 255 255 / 0.2); box-shadow: none; color: #fff; max-width: none; }
+.workbench-ai-zone .recommendation-run-panel :is(h2, h3, p, strong, a, summary, li) { color: #fff !important; }
+.workbench-ai-zone .recommendation-run-panel .recommendation-run-stages > li { border-color: rgb(255 255 255 / 0.2); }
+.workbench-ai-zone .recommendation-run-panel .recommendation-run-start button { background: var(--spark); border-color: var(--spark); color: var(--ai-night); }
+
 .job-targets-section,
 .company-watchlist-section,
 .profile-upload,
@@ -2615,6 +2634,71 @@ summary.workbench-touch-target:focus-visible,
   padding: 1.25rem;
 }
 
+.recommendation-list {
+  display: grid;
+  gap: 1rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.opportunity-card {
+  display: grid;
+  gap: 1rem;
+}
+
+.opportunity-card-heading {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.opportunity-card-actions {
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+}
+
+.evidence-lens {
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+}
+
+.evidence-lens summary {
+  color: var(--foreground);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.evidence-lens-grid {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 0.9rem;
+}
+
+.evidence-lens-grid > section {
+  background: color-mix(in srgb, var(--surface) 84%, var(--accent) 16%);
+  border: 1px solid var(--border);
+  border-radius: 0.85rem;
+  padding: 0.9rem;
+}
+
+.evidence-lens-grid h3 {
+  font-size: 0.82rem;
+  margin: 0 0 0.55rem;
+}
+
+.recommendation-progressive-details {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1.25rem;
+}
+
+@media (max-width: 767px) {
+  .evidence-lens-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 767px) {
   .workbench-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .workbench-summary > div:nth-child(2n) { border-inline-end: 0; }
@@ -2623,6 +2707,8 @@ summary.workbench-touch-target:focus-visible,
   .profile-main,
   .workbench-main,
   .workbench-page { gap: 1rem; }
+  .workbench-primary-action { align-items: stretch; flex-direction: column; }
+  .workbench-primary-action-link { text-align: center; }
 }
 
 @media (min-width: 768px) {

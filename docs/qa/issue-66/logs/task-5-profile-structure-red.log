@@ -1,0 +1,633 @@
+
+ RUN  v4.1.11 /Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web
+
+ ❯ components/workbench/profile-import-view.test.tsx (35 tests | 1 failed) 2193ms
+   × 将可信事实、候选审核和冲突对照作为相互独立的资料对象 32ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  components/workbench/profile-import-view.test.tsx > 将可信事实、候选审核和冲突对照作为相互独立的资料对象
+TestingLibraryElementError: Unable to find an accessible element with the role "region" and name "候选事实审核队列"
+
+Here are the accessible roles:
+
+  main:
+
+  Name "职业资料":
+  [36m<main[39m
+    [33maria-label[39m=[32m"职业资料"[39m
+    [33mclass[39m=[32m"container profile-main"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  region:
+
+  Name "从职业资料建立求职画像":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"profile-title"[39m
+    [33mclass[39m=[32m"profile-intro"[39m
+  [36m/>[39m
+
+  Name "导入职业资料":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"profile-upload-title"[39m
+    [33mclass[39m=[32m"profile-upload"[39m
+  [36m/>[39m
+
+  Name "最近导入":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"profile-recent-imports-title"[39m
+    [33mclass[39m=[32m"profile-recent-imports"[39m
+  [36m/>[39m
+
+  Name "待确认事实":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"profile-facts-title"[39m
+    [33mclass[39m=[32m"profile-facts"[39m
+  [36m/>[39m
+
+  Name "当前可信画像":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"trusted-profile-title"[39m
+    [33mclass[39m=[32m"profile-facts"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  paragraph:
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"workbench-kicker"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"workbench-kicker"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"profile-pending"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"workbench-kicker"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"profile-pending"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"profile-next-step"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  heading:
+
+  Name "从职业资料建立求职画像":
+  [36m<h1[39m
+    [33mid[39m=[32m"profile-title"[39m
+  [36m/>[39m
+
+  Name "导入职业资料":
+  [36m<h2[39m
+    [33mid[39m=[32m"profile-upload-title"[39m
+  [36m/>[39m
+
+  Name "最近导入":
+  [36m<h2[39m
+    [33mid[39m=[32m"profile-recent-imports-title"[39m
+  [36m/>[39m
+
+  Name "待确认事实":
+  [36m<h2[39m
+    [33mid[39m=[32m"profile-facts-title"[39m
+  [36m/>[39m
+
+  Name "当前可信画像":
+  [36m<h2[39m
+    [33mid[39m=[32m"trusted-profile-title"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  link:
+
+  Name "管理账户运行策略":
+  [36m<a[39m
+    [33mclass[39m=[32m"profile-target-link workbench-touch-target"[39m
+    [33mhref[39m=[32m"/profile/run-policy"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  note:
+
+  Name "":
+  [36m<div[39m
+    [33mclass[39m=[32m"profile-privacy-reminder"[39m
+    [33mrole[39m=[32m"note"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  strong:
+
+  Name "":
+  [36m<strong />[39m
+
+  Name "":
+  [36m<strong />[39m
+
+  --------------------------------------------------
+  button:
+
+  Name "上传并解析":
+  [36m<button[39m
+    [33mclass[39m=[32m"profile-upload-button workbench-touch-target"[39m
+    [33mdisabled[39m=[32m""[39m
+    [33mtype[39m=[32m"submit"[39m
+  [36m/>[39m
+
+  Name "completed.md解析完成仅保存脱敏副本候选事实 1 条2026-08-27 08:00":
+  [36m<button[39m
+    [33maria-pressed[39m=[32m"true"[39m
+    [33mclass[39m=[32m"profile-recent-import-button workbench-touch-target"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "确认 TypeScript":
+  [36m<button[39m
+    [33maria-label[39m=[32m"确认 TypeScript"[39m
+    [33mclass[39m=[32m"workbench-touch-target"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "纠正 TypeScript":
+  [36m<button[39m
+    [33maria-label[39m=[32m"纠正 TypeScript"[39m
+    [33mclass[39m=[32m"workbench-touch-target"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "拒绝 TypeScript":
+  [36m<button[39m
+    [33maria-label[39m=[32m"拒绝 TypeScript"[39m
+    [33mclass[39m=[32m"workbench-touch-target"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "新增画像事实":
+  [36m<button[39m
+    [33mdisabled[39m=[32m""[39m
+    [33mtype[39m=[32m"submit"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  status:
+
+  Name "":
+  [36m<p[39m
+    [33maria-live[39m=[32m"polite"[39m
+    [33mclass[39m=[32m"profile-status"[39m
+    [33mrole[39m=[32m"status"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  list:
+
+  Name "":
+  [36m<ol[39m
+    [33mclass[39m=[32m"profile-recent-import-list"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<ol[39m
+    [33mclass[39m=[32m"profile-fact-list"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  listitem:
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  --------------------------------------------------
+  time:
+
+  Name "":
+  [36m<time[39m
+    [33mdatetime[39m=[32m"2026-08-27T08:00:00.000Z"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  blockquote:
+
+  Name "":
+  [36m<blockquote[39m
+    [33mclass[39m=[32m"profile-fact-evidence"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  combobox:
+
+  Name "画像事实类型":
+  [36m<select />[39m
+
+  --------------------------------------------------
+  option:
+
+  Name "工作经历":
+  [36m<option[39m
+    [33mvalue[39m=[32m"experience"[39m
+  [36m/>[39m
+
+  Name "教育经历":
+  [36m<option[39m
+    [33mvalue[39m=[32m"education"[39m
+  [36m/>[39m
+
+  Name "技能":
+  [36m<option[39m
+    [33mvalue[39m=[32m"skill"[39m
+  [36m/>[39m
+
+  Name "项目经历":
+  [36m<option[39m
+    [33mvalue[39m=[32m"project"[39m
+  [36m/>[39m
+
+  Name "语言":
+  [36m<option[39m
+    [33mvalue[39m=[32m"language"[39m
+  [36m/>[39m
+
+  Name "成果":
+  [36m<option[39m
+    [33mvalue[39m=[32m"achievement"[39m
+  [36m/>[39m
+
+  Name "证书":
+  [36m<option[39m
+    [33mvalue[39m=[32m"certification"[39m
+  [36m/>[39m
+
+  Name "工作资格":
+  [36m<option[39m
+    [33mvalue[39m=[32m"work_eligibility"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  textbox:
+
+  Name "画像事实内容":
+  [36m<input[39m
+    [33mvalue[39m=[32m""[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<main[39m
+      [33maria-label[39m=[32m"职业资料"[39m
+      [33mclass[39m=[32m"container profile-main"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-title"[39m
+        [33mclass[39m=[32m"profile-intro"[39m
+      [36m>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"workbench-kicker"[39m
+        [36m>[39m
+          [0m职业资料 · 候选事实[0m
+        [36m</p>[39m
+        [36m<h1[39m
+          [33mid[39m=[32m"profile-title"[39m
+        [36m>[39m
+          [0m从职业资料建立求职画像[0m
+        [36m</h1>[39m
+        [36m<p>[39m
+          [0m系统只会提取带原文证据的候选事实；它们需要你的确认后才会进入求职画像。[0m
+        [36m</p>[39m
+        [36m<a[39m
+          [33mclass[39m=[32m"profile-target-link workbench-touch-target"[39m
+          [33mhref[39m=[32m"/profile/run-policy"[39m
+        [36m>[39m
+          [0m管理账户运行策略[0m
+        [36m</a>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-upload-title"[39m
+        [33mclass[39m=[32m"profile-upload"[39m
+      [36m>[39m
+        [36m<h2[39m
+          [33mid[39m=[32m"profile-upload-title"[39m
+        [36m>[39m
+          [0m导入职业资料[0m
+        [36m</h2>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"profile-privacy-reminder"[39m
+          [33mrole[39m=[32m"note"[39m
+        [36m>[39m
+          [36m<strong>[39m
+            [0m上传前先检查隐私[0m
+          [36m</strong>[39m
+          [36m<p>[39m
+            [0m请检查姓名、手机号、邮箱、详细住址、证件号码、照片、二维码和社交账号。自动检查可能遗漏内容，请勿使用随机生成的真实身份替换。[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<form[39m
+          [33mclass[39m=[32m"profile-upload-form"[39m
+        [36m>[39m
+          [36m<label[39m
+            [33mfor[39m=[32m"career-document"[39m
+          [36m>[39m
+            [0m选择 Markdown、DOCX 或 PDF 职业资料[0m
+          [36m</label>[39m
+          [36m<input[39m
+            [33maccept[39m=[32m".md,.docx,.pdf,text/markdown,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf"[39m
+            [33mclass[39m=[32m"profile-file-input"[39m
+            [33mid[39m=[32m"career-document"[39m
+            [33mname[39m=[32m"careerDocument"[39m
+            [33mtype[39m=[32m"file"[39m
+          [36m/>[39m
+          [36m<button[39m
+            [33mclass[39m=[32m"profile-upload-button workbench-touch-target"[39m
+            [33mdisabled[39m=[32m""[39m
+            [33mtype[39m=[32m"submit"[39m
+          [36m>[39m
+            [0m上传并解析[0m
+          [36m</button>[39m
+        [36m</form>[39m
+        [36m<p[39m
+          [33maria-live[39m=[32m"polite"[39m
+          [33mclass[39m=[32m"profile-status"[39m
+          [33mrole[39m=[32m"status"[39m
+        [36m>[39m
+          [0m解析完成[0m
+        [36m</p>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-recent-imports-title"[39m
+        [33mclass[39m=[32m"profile-recent-imports"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"profile-recent-imports-heading"[39m
+        [36m>[39m
+          [36m<h2[39m
+            [33mid[39m=[32m"profile-recent-imports-title"[39m
+          [36m>[39m
+            [0m最近导入[0m
+          [36m</h2>[39m
+          [36m<p>[39m
+            [0m最多显示 20 条职业资料导入记录。[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<ol[39m
+          [33mclass[39m=[32m"profile-recent-import-list"[39m
+        [36m>[39m
+          [36m<li>[39m
+            [36m<button[39m
+              [33maria-pressed[39m=[32m"true"[39m
+              [33mclass[39m=[32m"profile-recent-import-button workbench-touch-target"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<span>[39m
+                [0mcompleted.md[0m
+              [36m</span>[39m
+              [36m<span>[39m
+                [0m解析完成[0m
+              [36m</span>[39m
+              [36m<span>[39m
+                [0m仅保存脱敏副本[0m
+              [36m</span>[39m
+              [36m<span>[39m
+                [0m候选事实 1 条[0m
+              [36m</span>[39m
+              [36m<time[39m
+                [33mdatetime[39m=[32m"2026-08-27T08:00:00.000Z"[39m
+              [36m>[39m
+                [0m2026-08-27 08:00[0m
+              [36m</time>[39m
+            [36m</button>[39m
+          [36m</li>[39m
+        [36m</ol>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"profile-facts-title"[39m
+        [33mclass[39m=[32m"profile-facts"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"profile-facts-heading"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<p[39m
+              [33mclass[39m=[32m"workbench-kicker"[39m
+            [36m>[39m
+              [0m解析结果 · [0m
+              [0mcareer.md[0m
+            [36m</p>[39m
+            [36m<h2[39m
+              [33mid[39m=[32m"profile-facts-title"[39m
+            [36m>[39m
+              [0m待确认事实[0m
+            [36m</h2>[39m
+          [36m</div>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"profile-pending"[39m
+          [36m>[39m
+            [0m待确认[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<ol[39m
+          [33mclass[39m=[32m"profile-fact-list"[39m
+        [36m>[39m
+          [36m<li>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"profile-fact-value"[39m
+            [36m>[39m
+              [36m<p>[39m
+                [0m技能[0m
+              [36m</p>[39m
+              [36m<strong>[39m
+                [0mTypeScript[0m
+              [36m</strong>[39m
+              [36m<span>[39m
+                [0m来源：[0m
+                [0mcareer.md[0m
+                [0m · [0m
+                [36m<span>[39m
+                  [0m第 6 行[0m
+                [36m</span>[39m
+              [36m</span>[39m
+            [36m</div>[39m
+            [36m<blockquote[39m
+              [33mclass[39m=[32m"profile-fact-evidence"[39m
+            [36m>[39m
+              [0m- TypeScript[0m
+            [36m</blockquote>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"profile-fact-actions"[39m
+            [36m>[39m
+              [36m<button[39m
+                [33maria-label[39m=[32m"确认 TypeScript"[39m
+                [33mclass[39m=[32m"workbench-touch-target"[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [0m确认[0m
+              [36m</button>[39m
+              [36m<button[39m
+                [33maria-label[39m=[32m"纠正 TypeScript"[39m
+                [33mclass[39m=[32m"workbench-touch-target"[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [0m纠正[0m
+              [36m</button>[39m
+              [36m<button[39m
+                [33maria-label[39m=[32m"拒绝 TypeScript"[39m
+                [33mclass[39m=[32m"workbench-touch-target"[39m
+                [33mtype[39m=[32m"button"[39m
+              [36m>[39m
+                [0m拒绝[0m
+              [36m</button>[39m
+            [36m</div>[39m
+          [36m</li>[39m
+        [36m</ol>[39m
+      [36m</section>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"trusted-profile-title"[39m
+        [33mclass[39m=[32m"profile-facts"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"profile-facts-heading"[39m
+        [36m>[39m
+          [36m<div>[39m
+            [36m<p[39m
+              [33mclass[39m=[32m"workbench-kicker"[39m
+            [36m>[39m
+              [0m长期记忆 · 已验证[0m
+            [36m</p>[39m
+            [36m<h2[39m
+              [33mid[39m=[32m"trusted-profile-title"[39m
+            [36m>[39m
+              [0m当前可信画像[0m
+            [36m</h2>[39m
+          [36m</div>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"profile-pending"[39m
+          [36m>[39m
+            [0m版本 [0m
+            [0m0[0m
+          [36m</p>[39m
+        [36m</div>[39m
+        [36m<form[39m
+          [33mclass[39m=[32m"profile-fact-correction"[39m
+        [36m>[39m
+          [36m<label>[39m
+            [0m画像事实类型[0m
+            [36m<select>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m"experience"[39m
+              [36m>[39m
+                [0m工作经历[0m
+              [36m</option>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m"education"[39m
+              [36m>[39m
+                [0m教育经历[0m
+              [36m</option>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m"skill"[39m
+              [36m>[39m
+                [0m技能[0m
+              [36m</option>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m"project"[39m
+              [36m>[39m
+                [0m项目经历[0m
+              [36m</option>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m"language"[39m
+              [36m>[39m
+                [0m语言[0m
+              [36m</option>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m"achievement"[39m
+              [36m>[39m
+                [0m成果[0m
+              [36m</option>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m"certification"[39m
+              [36m>[39m
+                [0m证书[0m
+              [36m</option>[39m
+              [36m<option[39m
+                [33mvalue[39m=[32m"work_eligibility"[39m
+              [36m>[39m
+                [0m工作资格[0m
+              [36m</option>[39m
+            [36m</select>[39m
+          [36m</label>[39m
+          [36m<label>[39m
+            [0m画像事实内容[0m
+            [36m<input[39m
+              [33mvalue[39m=[32m""[39m
+            [36m/>[39m
+          [36m</label>[39m
+          [36m<button[39m
+            [33mdisabled[39m=[32m""[39m
+            [33mtype[39m=[32m"submit"[39m
+          [36m>[39m
+            [0m新增画像事实[0m
+          [36m</button>[39m
+        [36m</form>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"profile-next-step"[39m
+        [36m>[39m
+          [0m尚无已验证画像事实。[0m
+        [36m</p>[39m
+      [36m</section>[39m
+    [36m</main>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ components/workbench/profile-import-view.test.tsx:342:17
+    340|
+    341|   await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    342|   expect(screen.getByRole("region", { name: "候选事实审核队列" })).toHaveTextC…
+       |                 ^
+    343|   expect(screen.getByRole("region", { name: "可信事实台账" })).toHaveTextCon…
+    344| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 34 passed (35)
+   Start at  09:03:42
+   Duration  2.61s (transform 68ms, setup 43ms, import 119ms, tests 2.19s, environment 203ms)
+
+undefined
+/Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web:
+[ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL] Command failed with exit code 1: vitest run components/workbench/profile-import-view.test.tsx

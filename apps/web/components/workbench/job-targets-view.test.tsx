@@ -52,6 +52,13 @@ function activeSecondary(targetId: string) {
 
 afterEach(() => vi.unstubAllGlobals());
 
+it("以主次目标台账、约束编辑和候选方向组织求职目标", () => {
+  render(<JobTargetsView initialOverview={overview([activeTarget()])} />);
+  expect(screen.getByRole("region", { name: "候选方向证据" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "手动确认求职目标" })).toBeVisible();
+  expect(screen.getByRole("region", { name: "主次目标台账" })).toHaveTextContent("AI 应用工程");
+});
+
 it("prepopulates but never saves evidence-labelled candidate directions until the user submits the complete target form", async () => {
   const user = userEvent.setup();
   const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json(overview([activeTarget(1)]), { status: 201 }));

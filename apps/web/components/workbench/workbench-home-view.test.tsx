@@ -80,7 +80,23 @@ it("把需要决定的事项放在首页标题，并完整呈现真实摘要和�
   expect(screen.getByText("投递记录功能尚未启用，当前不会保存或显示投递数据。")).toBeVisible();
 });
 
-it("在工作台导语之后、摘要之前原样交给首次推荐旅程区域", () => {
+it("以状态带、真实下一步、运行区、决策队列和旅程组织今日决策台", () => {
+  const { container } = render(<WorkbenchHomeView home={home} inbox={{ items: [] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
+
+  const statusBelt = screen.getByRole("region", { name: "今日状态带" });
+  const nextAction = screen.getByRole("region", { name: "今日下一步" });
+  const recommendationRun = screen.getByRole("region", { name: "开始今日完整推荐" });
+  const inbox = screen.getByRole("region", { name: "需要你决定的事项" });
+  const journey = screen.getByRole("region", { name: "首次推荐旅程暂时无法读取" });
+  expect(statusBelt.compareDocumentPosition(nextAction)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  expect(nextAction.compareDocumentPosition(recommendationRun)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  expect(recommendationRun.compareDocumentPosition(inbox)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  expect(inbox.compareDocumentPosition(journey)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  expect(nextAction).toHaveTextContent("查看待确认事实");
+  expect(container.querySelector(".workbench-ai-zone")).toContainElement(recommendationRun);
+});
+
+it("在决策队列之后保留首次推荐旅程区域", () => {
   const journey = {
     status: "active" as const,
     interactionVersion: 4,
@@ -91,13 +107,11 @@ it("在工作台导语之后、摘要之前原样交给首次推荐旅程区域"
       ["job_sources", "接通真实岗位来源"], ["run_readiness", "确认今天可以开始"], ["first_result", "获得第一份推荐结果"],
     ].map(([id, title]) => ({ id, title, status: id === "career_materials" ? "needs_action" as const : "waiting" as const, stateLabel: id === "career_materials" ? "需要处理" : "等待开始", impact: "请完成当前准备事项。", action: { label: "继续准备", href: "/profile" } })),
   } as FirstRecommendationJourney;
-  const { container } = render(<WorkbenchHomeView home={{ ...home, firstRecommendationJourney: journey }} inbox={{ items: [] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
+  render(<WorkbenchHomeView home={{ ...home, firstRecommendationJourney: journey }} inbox={{ items: [] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
 
-  const intro = container.querySelector(".workbench-intro");
   const journeyRegion = screen.getByRole("region", { name: "首次推荐旅程" });
-  const summary = screen.getByLabelText("当前求职记录摘要");
-  expect(intro?.compareDocumentPosition(journeyRegion) ?? 0).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-  expect(journeyRegion.compareDocumentPosition(summary)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  const inbox = screen.getByRole("region", { name: "需要你决定的事项" });
+  expect(inbox.compareDocumentPosition(journeyRegion)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
 });
 
 it("待确认事实为零时不推断职业资料尚未建立", () => {
@@ -116,7 +130,7 @@ it("从首页运行区域可进入账户运行策略", () => {
 it("待确认事实大于零时保留确认工作流", () => {
   render(<WorkbenchHomeView home={home} inbox={{ items: [] }} initialRun={null} targets={{ suggestions: [], targets: [] }} />);
   expect(screen.getByRole("heading", { name: "职业资料等待确认" })).toBeVisible();
-  expect(screen.getByRole("link", { name: "查看待确认事实" })).toHaveAttribute("href", "/profile");
+  expect(screen.getAllByRole("link", { name: "查看待确认事实" }).some((link) => link.getAttribute("href") === "/profile")).toBe(true);
 });
 
 it("候选事实 Inbox dismiss 只减少待决定事项，权威刷新后仍保留待确认事实", async () => {

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 
@@ -332,6 +332,15 @@ it("keeps pending candidates separate from the current trusted profile", async (
   expect(screen.getByRole("heading", { name: "当前可信画像" })).toBeInTheDocument();
   expect(screen.getByText("React", { exact: true })).toBeInTheDocument();
   expect(screen.queryByText("确认、修改和拒绝将在下一阶段开放")).not.toBeInTheDocument();
+});
+
+it("将可信事实、候选审核和冲突对照作为相互独立的资料对象", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(completedDetail));
+  render(<ProfileImportView initialImports={[completedImport]} initialProfile={{ profileId: null, version: 0, facts: [] }} />);
+
+  await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+  expect(within(screen.getByRole("region", { name: "候选事实审核队列" })).getByRole("button", { name: "确认 TypeScript" })).toBeVisible();
+  expect(within(screen.getByRole("region", { name: "可信事实台账" })).getByRole("heading", { name: "当前可信画像" })).toBeVisible();
 });
 
 it("confirms a candidate with the current profile version and moves it into trusted facts", async () => {
