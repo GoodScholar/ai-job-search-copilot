@@ -1,6 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { AccountRunPolicyResponse, AccountRunPolicySettings } from "@job-copilot/contracts/account-run-policies";
 import { expect, test, type APIRequestContext, type APIResponse, type Page } from "@playwright/test";
+import { captureAfterState } from "./career-lens-state-capture";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const testDevAuthSecret = "issue-2-e2e-dev-auth-shared-secret";
@@ -128,6 +129,13 @@ test("账户运行策略可从首页和画像进入，保存后保留四层值�
   expect((await saveResponse).status()).toBe(200);
   await expect(page.getByRole("status")).toHaveText("运行策略已保存。");
   await expect(page.getByText("当前修订：1", { exact: true })).toBeVisible();
+  await captureAfterState(page, "profile-run-policy", "content", testInfo);
+
+  const queryLimit = page.getByLabel("每次运行最多执行公开查询");
+  await queryLimit.fill(String(initial.system.hardLimits.discovery.publicQueryLimit + 1));
+  if (testInfo.project.name === "Desktop Chrome") await save.click(); else await save.tap();
+  await expect(page.getByText("公开查询次数上限不得超过", { exact: false })).toBeVisible();
+  await captureAfterState(page, "profile-run-policy", "failure", testInfo);
 
   await expect(comparison.locator("tbody tr").filter({ hasText: "每次运行来源数量" }).locator("td")).toHaveText([
     String(initial.system.defaults.discovery.trustedSourceLimit), String(initial.system.hardLimits.discovery.trustedSourceLimit), "18", "18",

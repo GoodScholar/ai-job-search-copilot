@@ -12,7 +12,7 @@
 
 ## 执行状态（2026-09-28）
 
-Task 1–8 的实现、状态覆盖与视觉 AC 已完成。全量指定 E2E 仅保留一个 `UNVERIFIED`：`one-click-recommendation.spec.ts` 的“全局停止后为 paused”断言在本分支与全新 `origin/main` 均稳定得到 `cancelled`；该 API/worker 既有行为不在本计划的 Web UI 修改范围内，未被改写为通过。Profile 明确编辑模式切片只保留 GREEN 回归，历史恢复轮未保存 RED 输出。
+Task 1–8 的实现、状态覆盖与视觉 AC 已完成。本轮为十路由及四个任务态补充了真实 after 空/内容/关键失败矩阵；静态营销/登录的失败和加载为 N/A，瞬时加载仅由真实轮询/aria-live E2E 断言覆盖而不伪造静态图。全量指定 E2E 仅保留一个 `UNVERIFIED`：`one-click-recommendation.spec.ts` 的“全局停止后为 paused”断言在本分支与全新 `origin/main` 均稳定得到 `cancelled`；该 API/worker 既有行为不在本计划的 Web UI 修改范围内，未被改写为通过。Profile 明确编辑模式切片只保留 GREEN 回归，历史恢复轮未保存 RED 输出。
 
 ## Global Constraints
 
@@ -227,7 +227,7 @@ Task 1–8 的实现、状态覆盖与视觉 AC 已完成。全量指定 E2E 仅
 
 - [x] **Step 1: 完成验收 spec**：用真实浏览器和现有 fixture 访问十路由与四任务态，断言 landmark、主对象、真实状态、无横向溢出、44px 命中、键盘焦点、reduced-motion、空/错误恢复；复核各切片已经真实经历 RED，未覆盖项先补失败断言再修复。
 - [x] **Step 2: 复核 before 证据**：静态十路由及 AC-012 四动态态截图均来自 `fa67dd6` 真实 runtime；动态态由独立基线工作树串行补采，未在实现后重建、未以静态原型冒充旧产品截图。
-- [x] **Step 3: 验证 GREEN 与保存 after**：在当前 HEAD 运行 `pnpm --filter web test:e2e -- career-lens-acceptance.spec.ts --workers=1`；逐页查看全部 after 截图并与权威图/原型对照，记录布局30/主视觉25/字体色彩20/内容组件15/移动10、具体扣分和关键缺项。
+- [x] **Step 3: 验证 GREEN 与保存 after**：在当前 HEAD 运行默认与显式 `CAREER_LENS_CAPTURE=after` 的 `pnpm --filter web test:e2e -- career-lens-acceptance.spec.ts --workers=1`（各 10 passed；默认运行确认未写 before）；逐页查看 after 状态矩阵截图并与权威图/原型对照，记录布局30/主视觉25/字体色彩20/内容组件15/移动10、具体扣分和关键缺项。
 - [x] **Step 4: 视觉修正闭环**：任何页面低于 95 或关键缺项>0，先补能捕获行为回归的测试，再最小修复并重跑受影响页面；不以平均分放行。（职业资料/运行策略已改为明确操作后展开；Mobile Policy 已经 RED→GREEN 验证五列以局部横滚保留。）
 - [x] **Step 5: 全量串行验证**：确认无遗留测试进程后，依次运行 `pnpm --filter web test`、`pnpm --filter web typecheck`、`pnpm --filter web lint`、`pnpm --filter web build`，再依次运行 Issue 指定的全部现有 E2E specs；记录退出码与完整日志位置；全局停止状态以 UNVERIFIED 记录。
 - [x] **Step 6: UI 静态检测**：运行 `node /Users/shen/.codex/skills/vibe-ui-orchestrator/scripts/finesse-detect.mjs --json <changed-web-files>` 作为补充，`notCovered` 必须转入人工浏览器检查，不用它替代截图验收。

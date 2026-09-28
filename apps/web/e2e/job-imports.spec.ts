@@ -1,6 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { createServer, type Server } from "node:http";
+import { captureAfterState } from "./career-lens-state-capture";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const testDevAuthSecret = "issue-2-e2e-dev-auth-shared-secret";
@@ -174,6 +175,7 @@ test("岗位导入在真实运行时完成、去重、保留原文并处理失�
   await expect(page.locator(".job-import-opportunity")).toContainText("2026");
   await expect(page.locator(".job-import-opportunity").locator("div").filter({ hasText: "截止日期" })).toContainText("未知");
   await expect(page.locator(".job-import-panel pre")).toContainText("<script>window.jobImportEvidenceMustStayLiteral = true</script>");
+  await captureAfterState(page, "jobs-import", "content", testInfo);
   await expect(page.evaluate(() => Reflect.get(window, "jobImportEvidenceMustStayLiteral"))).resolves.toBeUndefined();
 
   const initialImport = await waitForTerminalImport(request, sessionToken, "completed");
@@ -213,6 +215,7 @@ test("岗位导入在真实运行时完成、去重、保留原文并处理失�
   await page.getByRole("button", { name: "导入岗位" }).click();
   await expect(page.getByRole("status")).toHaveText("导入失败", { timeout: 15_000 });
   await expect(page.getByText("岗位信息暂时无法规范化，请稍后重试。")).toBeVisible();
+  await captureAfterState(page, "jobs-import", "failure", testInfo);
 
   const targets = page.locator(".job-import-workbench .workbench-touch-target");
   expect(await targets.evaluateAll((elements) => elements.every((element) => element.getBoundingClientRect().height >= 44))).toBe(true);

@@ -1,5 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { captureAfterState } from "./career-lens-state-capture";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const testDevAuthSecret = "issue-2-e2e-dev-auth-shared-secret";
@@ -62,8 +63,18 @@ test("目标公司 Watchlist 可添加、排序、禁用、重载并显示并发
   await expect(page.getByRole("region", { name: "Watchlist 下一行动" })).toContainText("尚未登记目标公司。添加第一个公开来源后，它会成为优先级 01。");
   await page.getByRole("button", { name: "添加目标公司" }).click();
   await expect(page.getByText("不要填写账号、密码、Cookie、验证码或绕过登录限制的说明。")).toBeVisible();
+  const addCompanyName = page.getByLabel("公司规范名称");
+  const addCareersUrl = page.getByLabel("公开招聘入口");
+  const addAllowedDomains = page.getByLabel("允许域");
+  const addSourceNote = page.getByLabel("来源备注");
+  const saveCompany = page.getByRole("button", { name: "保存目标公司" });
+  for (const control of [addCompanyName, addCareersUrl, addAllowedDomains, addSourceNote, saveCompany]) {
+    const box = await control.boundingBox();
+    expect(box?.height).toBeGreaterThanOrEqual(44);
+  }
 
   await addCompany(page, "曙光云图", "https://careers.aurora.example/jobs", "careers.aurora.example", "优先核验 AI 平台团队");
+  await captureAfterState(page, "profile-targets-watchlist", "content", testInfo);
   await addCompany(page, "星轨智造", "https://careers.orbit.example/jobs", "careers.orbit.example");
   await page.getByRole("button", { name: "上移 星轨智造" }).click();
   await expect(page.getByRole("status")).toHaveText("Watchlist 优先级已更新。");
@@ -101,6 +112,7 @@ test("目标公司 Watchlist 可添加、排序、禁用、重载并显示并发
   await page.getByRole("button", { name: "保存修改" }).click();
   await expect(page.getByRole("status")).toHaveText("Watchlist 已在其他位置更新，请刷新后重试。");
   await expect(page.getByLabel("来源备注")).toHaveValue("保持可见的过期编辑");
+  await captureAfterState(page, "profile-targets-watchlist", "failure", testInfo);
 
   const cancel = page.getByRole("button", { name: "取消编辑" });
   await cancel.focus();

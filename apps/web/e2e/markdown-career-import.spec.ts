@@ -1,5 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { captureAfterState } from "./career-lens-state-capture";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const testDevAuthSecret = "issue-2-e2e-dev-auth-shared-secret";
@@ -119,6 +120,8 @@ test("登录用户可导入、持久化并安全复用 Markdown 职业资料", a
     await page.getByRole("button", { name: "开始导入职业资料" }).focus();
     await page.keyboard.press("Enter");
     await expect(fileInput).toBeVisible();
+    await page.keyboard.press("Tab");
+    await expect(fileInput).toBeFocused();
   }
 
   await fileInput.setInputFiles(resumeFile);
@@ -257,6 +260,7 @@ test("候选事实的确认、纠正、拒绝、并发冲突和刷新都保持�
   const staleConfirm = page.getByRole("button", { name: /^确认 / }).first();
   await staleConfirm.click();
   await expect(page.getByText("画像已在其他位置更新，请刷新后重试。")).toBeVisible();
+  await captureAfterState(page, "profile-import-review", "failure", testInfo);
 
   await page.reload();
   await expect(page.getByText("版本 4", { exact: true })).toBeVisible();

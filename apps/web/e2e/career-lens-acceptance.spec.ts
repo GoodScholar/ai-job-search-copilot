@@ -1,5 +1,6 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { careerLensCaptureDirectory } from "../lib/career-lens-capture";
+import { captureAfterState } from "./career-lens-state-capture";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const devAuthSecret = "issue-2-e2e-dev-auth-shared-secret";
@@ -85,11 +86,13 @@ test("captures real Alpha routes for the career lens acceptance review", async (
   await expect(page.getByRole("main")).toBeVisible();
   await page.waitForTimeout(500);
   await capture(page, screenshotPath("/", testInfo.project.name));
+  await captureAfterState(page, "marketing", "empty", testInfo);
 
   await page.goto("/login?returnTo=%2Fhome");
   await expect(page.getByRole("main")).toBeVisible();
   await page.waitForTimeout(500);
   await capture(page, screenshotPath("/login", testInfo.project.name));
+  await captureAfterState(page, "login", "empty", testInfo);
 
   await signIn(page);
   for (const route of authenticatedRoutes) {
@@ -98,6 +101,7 @@ test("captures real Alpha routes for the career lens acceptance review", async (
     await page.waitForTimeout(500);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth), `${route} must not overflow at the active viewport`).toBe(true);
     await capture(page, screenshotPath(route, testInfo.project.name));
+    await captureAfterState(page, route.slice(1).replaceAll("/", "-") || "marketing", "empty", testInfo);
   }
 
   testInfo.annotations.push({
@@ -115,6 +119,7 @@ test("captures a seeded real Watchlist route without substituting prototype data
   await expect(page.getByRole("article", { name: "目标公司来源：真实验收来源" })).toBeVisible();
   await expect(page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).resolves.toBe(true);
   await capture(page, fixtureScreenshotPath("profile-targets-watchlist-seeded", testInfo.project.name));
+  await captureAfterState(page, "profile-targets-watchlist", "content", testInfo);
 });
 
 test("captures a real Inbox state from its own review fixture", async ({ page, request }, testInfo) => {
@@ -127,16 +132,20 @@ test("captures a real Inbox state from its own review fixture", async ({ page, r
   await expect(page.getByRole("article", { name: "有待确认的画像事实" })).toBeVisible();
   await expect(page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).resolves.toBe(true);
   await capture(page, fixtureScreenshotPath("home-inbox", testInfo.project.name));
+  await captureAfterState(page, "home-inbox", "content", testInfo);
 });
 
-test("captures the real first-recommendation journey from a separate fresh account", async ({ page }, testInfo) => {
+test("captures the real first-recommendation journey from a separate prepared account", async ({ page, request }, testInfo) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
-  await signIn(page);
+  const fixture = await createWatchlistFixture(request, `${testInfo.project.name}-first-journey`);
+  await page.context().addCookies([{ name: "job_copilot_session", value: fixture.token, domain: "127.0.0.1", path: "/", httpOnly: true, sameSite: "Lax" }]);
+  await page.goto("/home");
 
   await expect(page.getByRole("region", { name: "首次推荐旅程" })).toBeVisible();
   await expect(page.getByRole("region", { name: "需要你决定的事项", exact: true })).toBeVisible();
   await expect(page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).resolves.toBe(true);
   await capture(page, fixtureScreenshotPath("home-first-recommendation-journey", testInfo.project.name));
+  await captureAfterState(page, "home-first-recommendation-journey", "content", testInfo);
 });
 
 test("captures a real import-review state from its own review fixture", async ({ page, request }, testInfo) => {
@@ -149,4 +158,5 @@ test("captures a real import-review state from its own review fixture", async ({
   await expect(page.getByText("TypeScript", { exact: true })).toBeVisible();
   await expect(page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).resolves.toBe(true);
   await capture(page, fixtureScreenshotPath("profile-import-review", testInfo.project.name));
+  await captureAfterState(page, "profile-import-review", "content", testInfo);
 });

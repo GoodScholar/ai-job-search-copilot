@@ -74,3 +74,26 @@
 ## Before 证据隔离
 
 历史全量运行曾意外写入 `screenshots/before/**`；那批污染文件不作为证据。当前提交的八张动态 before 则由协调者从恢复的独立基线工作树复制而来，来源、命令、结果与 SHA-256 均在 `logs/task-0-dynamic-before-origin-main.log` 可核对。
+
+## After 状态矩阵（本轮显式运行时采图）
+
+以下每项均为同一真实 E2E fixture 在 Desktop Chrome 与 Mobile Safari 各采一张，文件名中的 `{desktop-chrome,mobile-safari}` 表示两张均已逐张目视。评分沿用上表对应页面的五维分数；本矩阵额外复核该状态的主对象、状态文案、下一行动和无根横向溢出。加载态不以静态 mock 伪造：相关组件的真实轮询/禁用/aria-live 行为由对应 E2E 断言覆盖，无法在稳定截图时保留的瞬时加载态明确记为“动态断言”。
+
+| 路由/任务态 | 真实状态与 fixture | 截图（双视口） | 状态检查与评分 |
+| --- | --- | --- | --- |
+| `/` 营销 | 静态落地内容 | `marketing-empty-{desktop-chrome,mobile-safari}.png` | 无账户异步状态，失败/加载 N/A；98，关键缺项 0 |
+| `/login` | 静态登录与 returnTo | `login-empty-{desktop-chrome,mobile-safari}.png` | 无远端读取失败态；98，关键缺项 0 |
+| `/home` | 空账户 | `home-empty-{desktop-chrome,mobile-safari}.png` | 空摘要、首要建目标行动；96，关键缺项 0 |
+| Inbox | 待确认候选事实 / 离线动作失败 | `home-inbox-{content,failure}-{desktop-chrome,mobile-safari}.png` | 真实 API fixture，失败后可重试且恢复以轮询确认；96，关键缺项 0 |
+| 首次旅程 | 独立已准备账户内容 / 物理发现失败 | `home-first-recommendation-journey-{content,failure}-{desktop-chrome,mobile-safari}.png` | 真实目标/来源 fixture 的主步骤与失败后待办同时可读；96，关键缺项 0 |
+| `/recommendations` | 无目标空态 / 真推荐内容 / 校准版本冲突 | `recommendations-{empty,content,failure}-{desktop-chrome,mobile-safari}.png` | 证据 region、过期建议与“重新计算”下一行动可读；96，关键缺项 0 |
+| 推荐校准 | Inbox 跳转后的校准审核内容 | `recommendations-calibration-content-{desktop-chrome,mobile-safari}.png` | 独立 Inbox fixture；96，关键缺项 0 |
+| `/profile` | 空画像 | `profile-empty-{desktop-chrome,mobile-safari}.png` | 收起的编辑表单不抢占主对象；96，关键缺项 0 |
+| 导入审核 | 已解析候选事实 / 版本冲突 | `profile-import-review-{content,failure}-{desktop-chrome,mobile-safari}.png` | 当前任务状态持续 aria-live，刷新后解析完成仍在；96，关键缺项 0 |
+| `/profile/targets` | 空态 / 已保存目标 / 版本冲突 | `profile-targets-{empty,content,failure}-{desktop-chrome,mobile-safari}.png` | 目标与下一维护行动可读；97，关键缺项 0 |
+| Watchlist | 已添加来源 / 并发冲突 | `profile-targets-watchlist-{content,failure}-{desktop-chrome,mobile-safari}.png` | 44px 名称、URL、备注和保存控件由语义定位 E2E 复核；97，关键缺项 0 |
+| `/jobs/import` | 空态 / 完成岗位 / 导入失败 | `jobs-import-{empty,content,failure}-{desktop-chrome,mobile-safari}.png` | 真实三模式导入、轮询和失败恢复；97，关键缺项 0 |
+| `/profile/run-policy` | 空态 / 已保存策略 / 本地硬上限校验 | `profile-run-policy-{empty,content,failure}-{desktop-chrome,mobile-safari}.png` | Mobile 保留五列 DOM，局部横滚，不让根页面溢出；96，关键缺项 0 |
+| `/profile/model-connection` | 空态 / available / authentication_failed | `profile-model-connection-{empty,content,failure}-{desktop-chrome,mobile-safari}.png` | 真实受控诊断 fixture；checking/temporary 为动态 E2E 断言；97，关键缺项 0 |
+
+本轮新增/恢复的行为断言首先作为回归测试落地：导入编辑区的真实 `Tab` 顺序到文件输入、Watchlist 的公司名/招聘入口/允许域/来源备注与保存按钮均为 >=44px、运行策略本地超硬上限错误、推荐过期校准错误、职业资料并发冲突以及 Inbox 离线恢复。前两项为既有实现上首次运行即 GREEN 的断言恢复，未伪造 RED；首次推荐旅程曾因旧 E2E 直接操作已折叠文件控件而 RED，改为先点击“开始导入职业资料”后 GREEN。所有采图均只在 `CAREER_LENS_CAPTURE=after` 时写入 after；未设置变量的 acceptance 10 passed，且 before 路径前后无差异。

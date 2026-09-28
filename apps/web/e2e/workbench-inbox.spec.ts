@@ -2,6 +2,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { Client } from "pg";
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
 import { startPhysicalDiscovery } from "./support/start-physical-discovery";
+import { captureAfterState } from "./career-lens-state-capture";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const databaseUrl = process.env.E2E_DATABASE_URL ?? "postgresql://job_copilot:local_only_job_copilot@127.0.0.1:55420/job_copilot";
@@ -228,6 +229,7 @@ test("从首页将候选事实由未读标记为已读并确认解决", async ({
   await activate(page, info, "标记为已读：有待确认的画像事实");
   await expect(inboxStatusMessage).toContainText("暂时无法处理该事项，请稍后重试。");
   await expect(article).toBeVisible();
+  await captureAfterState(page, "home-inbox", "failure", info);
   await page.context().setOffline(false);
   await activate(page, info, "标记为已读：有待确认的画像事实");
   await expect(inboxStatusMessage).toContainText("事项已标记为已读。");
@@ -373,12 +375,7 @@ test("从首页拒绝校准建议不会修改现行规则", async ({ page, reque
   await expect(page).toHaveURL(/\/recommendations\?targetId=.*#calibration-proposal$/u);
   await page.reload();
   await expect(page.getByRole("button", { name: "拒绝建议" })).toBeEnabled();
-  if (process.env.CAREER_LENS_CAPTURE === "after") {
-    await page.screenshot({
-      path: `../../docs/qa/issue-66/screenshots/after/recommendations-calibration-${info.project.name === "Mobile Safari" ? "mobile-safari" : "desktop-chrome"}.png`,
-      fullPage: true,
-    });
-  }
+  await captureAfterState(page, "recommendations-calibration", "content", info);
   await activate(page, info, "拒绝建议");
   await expect.poll(() => activeRuleSnapshot(account.userId, account.targetId)).toEqual(before);
   await expect.poll(() => inboxItemStatus(request, account.token, unread.itemId, "resolved")).toBe("resolved");

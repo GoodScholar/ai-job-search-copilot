@@ -2,6 +2,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { Queue } from "bullmq";
 import { Client } from "pg";
 import { expect, test, type APIRequestContext, type Locator, type Page, type TestInfo } from "@playwright/test";
+import { captureAfterState } from "./career-lens-state-capture";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const databaseUrl = process.env.E2E_DATABASE_URL ?? "postgresql://job_copilot:local_only_job_copilot@127.0.0.1:55420/job_copilot";
@@ -241,6 +242,7 @@ test("显式 Fake matching 真实链路交付双方证据、质量排除与单�
   await expect(page.getByRole("list", { name: "推荐岗位" }).getByRole("region", { name: "画像证据对照" })).toContainText("已确认的岗位方向：frontend");
   await expect(page.getByRole("list", { name: "推荐岗位" }).locator("details > p > strong")).toHaveCount(6);
   await expect(page.locator("main")).not.toContainText(/(?:评分|score|\d+%)/i);
+  await captureAfterState(page, "recommendations", "content", info);
   const before = await matchSnapshot(account.userId, account.targetId);
   const listsBefore = await listSnapshot(account.userId, account.targetId);
   const reevaluate = page.getByRole("button", { name: "重新评估此岗位" });
@@ -380,6 +382,7 @@ test("交错批准后立即锁定过期建议，刷新读模型并重新计算�
   await expect(page.getByText("规则已更新，请先刷新后重新计算或修改建议。")).toBeVisible();
   await expect(approve).toBeDisabled();
   await expect(locationProposal.getByRole("button", { name: "重新计算" })).toBeVisible();
+  await captureAfterState(page, "recommendations", "failure", info);
   const rebase = locationProposal.getByRole("button", { name: "重新计算" });
   if (info.project.name === "Desktop Chrome") await rebase.click(); else await rebase.tap();
   await expect.poll(async () => {
