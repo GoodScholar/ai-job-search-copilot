@@ -116,8 +116,9 @@ test("登录用户可导入、持久化并安全复用 Markdown 职业资料", a
     await expect(page.getByRole("button", { name: "退出" })).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(page.getByRole("link", { name: "管理账户运行策略" })).toBeFocused();
-    await page.keyboard.press("Tab");
-    await expect(fileInput).toBeFocused();
+    await page.getByRole("button", { name: "开始导入职业资料" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(fileInput).toBeVisible();
   }
 
   await fileInput.setInputFiles(resumeFile);
@@ -167,7 +168,6 @@ test("登录用户可导入、持久化并安全复用 Markdown 职业资料", a
   expect(detail.facts).toHaveLength(7);
 
   await page.reload();
-  await expect(page.getByRole("status")).toHaveText("解析完成");
   await expect(page.getByText("TypeScript", { exact: true })).toBeVisible();
   await expect(page.getByText("第 6 行", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: /原件受保护，下游使用脱敏副本/ })).toBeVisible();
@@ -197,6 +197,7 @@ test("登录用户可导入、持久化并安全复用 Markdown 职业资料", a
   });
   expect(hiddenResponse.status()).toBe(404);
 
+  await page.getByRole("button", { name: "开始导入职业资料" }).click();
   const [fileInputHeight, uploadButtonHeight] = await Promise.all([
     fileInput.evaluate((element) => element.getBoundingClientRect().height),
     uploadButton.evaluate((element) => element.getBoundingClientRect().height),

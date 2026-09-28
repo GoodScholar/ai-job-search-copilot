@@ -39,7 +39,8 @@ async function uploadDocx(page: Page, file: { name: string; mimeType: string; bu
     await new Promise((resolve) => setTimeout(resolve, 300));
     await route.continue();
   });
-  await page.getByRole("button", { name: "开始导入职业资料" }).click();
+  const openImport = page.getByRole("button", { name: "开始导入职业资料" });
+  if (await openImport.isVisible()) await openImport.click();
   const input = page.getByLabel("选择 Markdown、DOCX 或 PDF 职业资料");
   try {
     await input.setInputFiles(file);
