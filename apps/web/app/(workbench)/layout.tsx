@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 export default function WorkbenchLayout({ children }: { children: ReactNode }) {
   return (
     <div className="workbench-shell">
-      <aside aria-label="职业透镜工作台侧栏" className="workbench-sidebar">
+      <aside aria-label="求职工作台" className="workbench-sidebar">
         <WorkbenchHeader />
       </aside>
       <div className="workbench-content">{children}</div>

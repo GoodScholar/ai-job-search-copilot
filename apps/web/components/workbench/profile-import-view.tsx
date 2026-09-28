@@ -549,8 +549,11 @@ export function ProfileImportView({ initialImports, initialProfile = { profileId
           <button className="profile-upload-button workbench-touch-target" disabled={isPending || !canSubmit} type="submit">
             上传并解析
           </button>
-          <button className="workbench-touch-target" onClick={() => setIsImporting(false)} type="button">取消导入</button>
+          <button className="workbench-touch-target" onClick={() => setIsImporting(false)} type="button">收起导入区</button>
         </form>
+      </section>
+
+      <section aria-label="当前导入任务状态" className="profile-import-status">
         <p aria-live="polite" className="profile-status" role="status">{liveMessage}</p>
       </section>
 

@@ -172,6 +172,22 @@ it("默认先展示导入下一行动，明确操作后才展开上传区", asyn
   expect(uploadSection).not.toHaveClass("profile-maintenance-collapsed");
 });
 
+it("收起导入区后仍把当前和最近导入任务状态保留在可见 live 区域", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(completedDetail));
+  const user = userEvent.setup();
+  render(<ProfileImportView initialImports={[completedImport]} />);
+
+  expect(await screen.findByRole("status")).toHaveTextContent("解析完成");
+  expect(screen.getByRole("status")).toBeVisible();
+  expect(screen.getByRole("heading", { name: "最近导入" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "开始导入职业资料" }));
+  await user.click(screen.getByRole("button", { name: "收起导入区" }));
+  expect(screen.getByRole("status")).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent("解析完成");
+  expect(screen.getByRole("button", { name: /completed\.md/ })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "取消导入" })).not.toBeInTheDocument();
+});
+
 it("detects private information before upload and submits only the sanitized processing copy", async () => {
   let submitted: FormData | undefined;
   mocks.createCareerImportAction.mockImplementation(async (_previous, formData: FormData) => {

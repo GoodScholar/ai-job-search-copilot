@@ -48,7 +48,7 @@ export default async function RecommendationsPage({ searchParams = Promise.resol
         {resultError ? <p role="alert">{resultError}</p> : result ? <RecommendationResultSummary result={result} /> : null}
         {sideReadError ? <p role="alert">{sideReadError}</p> : null}
         {runStatus ? <><h2>{runStatus}</h2><Link className="workbench-touch-target" href={`/home?runId=${runId}`}>查看本次推荐</Link></> : null}
-        {!list && !result && !resultError && !runStatus ? <><h2>暂无可处理的推荐</h2><p>完成岗位发现和资格筛选后，这里会显示高度匹配、值得尝试或谨慎考虑的岗位。</p><section aria-label="推荐下一行动" className="job-import-panel job-import-next-action"><h2>下一步：先建立求职目标</h2><p>建立一个主求职目标，再从首页启动岗位发现；完成资格筛选后，推荐会在这里按证据呈现。</p><Link className="workbench-touch-target" href="/profile/targets">建立求职目标</Link></section></> : list ? <>
+        {!list && !result && !resultError && !runStatus ? <><h2>暂无可处理的推荐</h2><p>完成岗位发现和资格筛选后，这里会显示高度匹配、值得尝试或谨慎考虑的岗位。</p><section aria-label="推荐下一行动" className="job-import-panel job-import-next-action">{targetId ? <><h2>下一步：从首页启动或查看今日推荐</h2><p>你已经建立主求职目标。请从首页查看推荐准备、阻塞项或启动今天的推荐；结果发布后会在这里按证据呈现。</p><Link className="workbench-touch-target" href="/home#recommendation-run">查看推荐准备</Link></> : <><h2>下一步：先建立求职目标</h2><p>建立一个主求职目标，再从首页启动岗位发现；完成资格筛选后，推荐会在这里按证据呈现。</p><Link className="workbench-touch-target" href="/profile/targets">建立求职目标</Link></>}</section></> : list ? <>
           <p aria-label="推荐清单版本">清单版本 {list.sequence} · {list.localDate}</p>
           <ol aria-label="推荐岗位" className="recommendation-list" id="recommendation-list">
             {list.items.map((item) => {

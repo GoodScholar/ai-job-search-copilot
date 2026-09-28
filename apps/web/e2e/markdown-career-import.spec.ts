@@ -148,6 +148,11 @@ test("登录用户可导入、持久化并安全复用 Markdown 职业资料", a
   await expect(page.getByText("待确认", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "最近导入" })).toBeVisible();
   await expect(page.getByRole("button", { name: /career\.md/ })).toBeVisible();
+  await page.getByRole("button", { name: "收起导入区" }).click();
+  await expect(page.getByRole("status")).toHaveText("解析完成");
+  await expect(page.getByRole("heading", { name: "最近导入" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /career\.md/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "取消导入" })).toHaveCount(0);
   expect(await importStatusHistory(page)).toEqual(expect.arrayContaining([
     expect.stringMatching(/等待解析|解析中/),
   ]));

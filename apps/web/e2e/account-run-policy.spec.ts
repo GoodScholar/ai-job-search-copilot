@@ -90,9 +90,19 @@ test("账户运行策略可从首页和画像进入，保存后保留四层值�
   const comparison = page.locator(".run-policy-table-wrap table");
   const sourceLimitRow = comparison.locator("tbody tr").filter({ hasText: "每次运行来源数量" });
   if (testInfo.project.name === "Mobile Safari") {
-    const effectiveValue = sourceLimitRow.locator("td").nth(3);
-    await expect(effectiveValue).toHaveText(String(initial.effective.discovery.trustedSourceLimit));
-    await expect(effectiveValue.evaluate((element) => element.getBoundingClientRect().right <= window.innerWidth)).resolves.toBe(true);
+    const comparisonWrap = page.getByLabel("当前策略对照表，可横向滚动");
+    await expect(comparison.locator("thead th")).toHaveText(["设置", "系统默认", "硬上限", "你的设置", "最终生效"]);
+    await expect(sourceLimitRow.locator("td")).toHaveText([
+      String(initial.system.defaults.discovery.trustedSourceLimit),
+      String(initial.system.hardLimits.discovery.trustedSourceLimit),
+      "系统默认",
+      String(initial.effective.discovery.trustedSourceLimit),
+    ]);
+    await expect(comparison.locator("thead th").evaluateAll((cells) => cells.map((cell) => getComputedStyle(cell).display))).resolves.toEqual([
+      "table-cell", "table-cell", "table-cell", "table-cell", "table-cell",
+    ]);
+    await expect(comparisonWrap.evaluate((element) => element.scrollWidth > element.clientWidth)).resolves.toBe(true);
+    await expect(page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).resolves.toBe(true);
   }
 
   await page.getByRole("button", { name: "调整运行策略" }).click();

@@ -54,6 +54,17 @@ describe("RecommendationsPage", () => {
     expect(screen.queryByText(/%/)).not.toBeInTheDocument();
   });
 
+  it("有活动主目标但尚无推荐时引导查看或启动推荐，而非重新建立目标", async () => {
+    mocks.getJobTargets.mockResolvedValue({ targets: [{ targetId: targetA, state: "active", priority: "primary" }] });
+
+    render(await RecommendationsPage());
+
+    const nextAction = screen.getByRole("region", { name: "推荐下一行动" });
+    expect(nextAction).toHaveTextContent("从首页启动或查看今日推荐");
+    expect(within(nextAction).getByRole("link", { name: "查看推荐准备" })).toHaveAttribute("href", "/home#recommendation-run");
+    expect(within(nextAction).queryByRole("link", { name: "建立求职目标" })).not.toBeInTheDocument();
+  });
+
   it("将每个真实岗位作为机会对象，并把岗位与画像证据放入可展开对照", async () => {
     mocks.getLatestPublishedRecommendationRun.mockResolvedValue(published(targetB, listA));
     mocks.getRecommendationList.mockResolvedValue(list(listA, targetB, "结构化岗位"));

@@ -2,7 +2,7 @@
 
 ## 当前结论（返工后）
 
-十路由与四个动态态已用显式 `CAREER_LENS_CAPTURE=after` 真实运行时重新采集；未设置该变量的采集路径返回 `null`，不会写入 `before`。Inbox、首次旅程与导入审核由不同 fixture/account 采集；Inbox 与首次旅程哈希在双视口均不同。目标、Watchlist、岗位导入、职业资料和运行策略均按“状态 → 下一行动 → 台账/结果”重组，新增/编辑/导入表单只在用户点击操作后出现；E2E 保留真实请求与状态断言。
+十路由与四个动态态已用显式 `CAREER_LENS_CAPTURE=after` 真实运行时重新采集；未设置该变量的 10 项 acceptance 也已通过，并确认未写入 `screenshots/before/**`。Inbox、首次旅程与导入审核由不同 fixture/account 采集；Inbox 与首次旅程哈希在双视口均不同。目标、Watchlist、岗位导入、职业资料和运行策略均按“状态 → 下一行动 → 台账/结果”重组，新增/编辑/导入表单只在用户点击操作后出现；E2E 保留真实请求与状态断言。
 
 完整指定 E2E 仍非全绿：`one-click-recommendation.spec.ts` 的两个视口期望 `paused`、实际 `cancelled`，且协调者已在干净 `origin/main` 独立复现，故为既有 API/worker 缺陷、**UNVERIFIED（基线/非范围）**，未改 API/worker 或弱化断言。其余本轮受影响 Profile、运行策略、模型、Watchlist、岗位导入、推荐、目标、Inbox 和 acceptance 均有无重叠的串行 GREEN 日志。此前两次运行时清理阶段出现重叠，相关输出已作废且未作为下表证据。
 
@@ -17,12 +17,13 @@
 | 检查 | 当前结果 | 日志 |
 | --- | --- | --- |
 | 受影响 E2E：Profile Markdown / DOCX / PDF | PASS，10 passed | 本轮串行会话记录 |
+| 返工定向 E2E：运行策略 / Markdown 导入 / 推荐 | PASS，8 / 4 / 通过 | 本轮串行会话记录；均为 `--workers=1` |
 | 受影响 E2E：运行策略 / 模型诊断 | PASS，10 passed | `serial-final-b-run-policy-model.log`（原始输出，未跟踪） |
 | 受影响 E2E：目标 / Watchlist / 岗位导入 / 推荐 | PASS，22 passed | 本轮串行会话记录 |
 | 受影响 E2E：Inbox | PASS，2 passed、4 skipped（分 phase 设计） | 本轮串行会话记录 |
-| Web Vitest | PASS，94 files / 655 tests | `rework-web-test-final.log` |
-| typecheck / lint / build | PASS | `web-*-recovery-final.log` |
-| Career Lens acceptance（显式 `after`） | PASS，10 passed | `rework-acceptance-after-final.log` |
+| Web Vitest | PASS，95 files / 661 tests | 本轮串行会话记录 |
+| typecheck / lint / build | PASS | 本轮串行会话记录 |
+| Career Lens acceptance（未设置 capture / 显式 `after`） | PASS，10 / 10 passed；前者未写 before | 本轮串行会话记录 |
 | finesse detector | PASS，P0=0；P1/P2 为既有样式提示 | `finesse-detect-recovery-final.log` |
 | 全量串行 E2E | UNVERIFIED，114 passed / 8 skipped / 2 failed | `task-8-all-specified-e2e-final.log` |
 | 全局停止独立复现（清除 `CAREER_LENS_CAPTURE`） | UNVERIFIED，8 passed / 2 failed / 2 skipped | `task-8-one-click-recommendation-rerun.log` |
@@ -33,7 +34,7 @@
 
 ## 视觉与可访问性
 
-已逐张查看 28 张 `screenshots/after/*.png`，Desktop/Mobile 均通过，关键缺项均为 0。评分格式为布局/主视觉/字体色彩/内容组件/移动=总分；每项的唯一扣分是相应长台账或说明的全页信息密度。
+已逐张查看 28 张本轮 `screenshots/after/*.png`，Desktop/Mobile 均通过，关键缺项均为 0。评分格式为布局/主视觉/字体色彩/内容组件/移动=总分；每项的唯一扣分是相应长台账或说明的全页信息密度。Mobile Policy 截图只展示横滚容器的左起列；定向 Mobile Safari E2E 已验证五个表头均在可访问树、表格容器确有横滚且根页面不溢出，因此不以“裁切隐藏列”冒充通过。
 
 | 页面或动态态 | 五维评分 | 扣分 |
 | --- | --- | --- |
@@ -45,16 +46,29 @@
 | 求职目标 `/profile/targets` | 30/24/19/15/9 = 97 | 约束字段长度 |
 | 公司来源 `/profile/targets/:id/watchlist` | 30/24/19/15/9 = 97 | 来源 URL/字段长度 |
 | 岗位导入 `/jobs/import` | 30/24/19/15/9 = 97 | 导入模式说明 |
-| 运行策略 `/profile/run-policy` | 29/24/19/15/9 = 96 | 移动两列策略表较长 |
+| 运行策略 `/profile/run-policy` | 29/24/19/15/9 = 96 | 移动五列通过容器局部横滚阅读，首次视口只显示左起列 |
 | 模型诊断 `/profile/model-connection` | 30/24/19/15/9 = 97 | 诊断说明 |
 | Inbox 动态态 | 29/24/19/15/9 = 96 | 决策队列长度 |
 | 首次推荐旅程动态态 | 29/24/19/15/9 = 96 | 步骤状态密度 |
 | 导入审核动态态 | 29/24/19/15/9 = 96 | 原文证据密度 |
 | 推荐校准动态态 | 29/24/19/15/9 = 96 | 规则/证据密度 |
 
-键盘焦点、44px 触控、对比度、`prefers-reduced-motion`、无根横向溢出及空/加载/错误/恢复均由 acceptance 和受影响 E2E 覆盖。移动运行策略显示“设置/最终生效”两列，桌面保留完整五列。采用浅蓝工作台、深色运行区、可见状态卡和移动底栏，舍弃“职业透镜”作为用户产品名；未新增依赖或资产，现有代码与静态资产许可不变。finesse 的 `draft.careersUrl.trim(` 为 TS 表达式路径误报，另有 P2 stamp 提示，无真实死链。
+键盘焦点、44px 触控、对比度、`prefers-reduced-motion`、无根横向溢出及空/加载/错误/恢复均由 acceptance 和受影响 E2E 覆盖。移动运行策略保留完整五列：设置、系统默认、硬上限、你的设置、最终生效；桌面同样保留五列。采用浅蓝工作台、深色运行区、可见状态卡和移动底栏，舍弃“职业透镜”作为用户产品名；未新增依赖或资产，现有代码与静态资产许可不变。finesse 的 `draft.careersUrl.trim(` 为 TS 表达式路径误报，另有 P2 stamp 提示，无真实死链。
 
-静态旧图可与 `screenshots/before/` 的 18 个受版本控制文件逐项对照；旧动态态没有归档 before，明确标为缺证，未伪造。设计采用浅蓝工作台、深色运行区、可见状态卡和移动底栏；舍弃“职业透镜”作为用户产品名。未添加依赖或资产，现有代码与静态资产许可不变。
+静态旧图可与 `screenshots/before/` 的 18 个受版本控制文件逐项对照；**AC-012 动态态旧版 before 为 UNVERIFIED**：旧动态态没有归档 before，协调者将从 `origin/main` 的真实运行时另行补证，本分支没有生成或伪造任何 before。设计采用浅蓝工作台、深色运行区、可见状态卡和移动底栏；舍弃“职业透镜”作为用户产品名。未添加依赖或资产，现有代码与静态资产许可不变。
+
+### 逐页可访问性、对比度与状态映射
+
+| 页面或动态态 | 对比度检查 | 空、加载、错误与恢复检查 |
+| --- | --- | --- |
+| 营销、登录 | 深蓝正文/白或浅蓝背景、蓝色 CTA/白字均由 `landing.spec.ts` 与截图复核 | 无异步数据；登录安全 returnTo 和本地体验登录 action 保持可恢复 |
+| 首页、首次旅程、Inbox | 深色运行区白字与浅卡深蓝字；状态卡不依赖仅颜色 | 空账户、准备中、运行/阻塞、Inbox 忽略后的 API 刷新恢复由 `workbench-inbox.spec.ts` 与 acceptance fixture 覆盖 |
+| 推荐、推荐校准 | 机会标题、证据区与操作蓝色均有文字标签 | 无目标空态、已有目标零推荐下一步、运行状态、校准冲突/重算/刷新由 `recommendations.spec.ts` 覆盖 |
+| 职业资料、导入审核 | 深蓝正文、琥珀待确认标签均有文本状态 | 导入等待/解析完成/失败、刷新、候选事实决定与收起导入区后 live 状态由 Markdown/DOCX/PDF E2E 覆盖 |
+| 求职目标、Watchlist | 卡片和来源状态使用文本+边框，不以颜色单独表达 | 目标空态、容量/冲突，来源未检查/失败/停用/排序与刷新由对应 E2E 覆盖 |
+| 岗位导入 | 信息带和规范化字段深蓝/浅蓝对比，状态有文字 | 三种导入、轮询、原文、失败与恢复由 `job-imports.spec.ts` 覆盖 |
+| 运行策略 | 五列表头/数值在白卡深蓝文字中可读 | 保存、硬上限字段错误、停止/解除和历史刷新；Mobile 容器横滚/根不溢出由 `account-run-policy.spec.ts` 覆盖 |
+| 模型诊断 | 深色边框/深蓝正文与显式状态文字 | checking、failed、temporary、retryAt、aria-live 与重试由 `model-diagnostics.spec.ts` 覆盖 |
 
 ## Before 证据隔离
 
