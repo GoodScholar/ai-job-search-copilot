@@ -1,0 +1,531 @@
+$ PLAYWRIGHT_HTML_OPEN=never node scripts/e2e-runner.mjs -- landing.spec.ts --workers=1
+[WebServer] (node:65573) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] Docker Compose version v5.1.3
+[WebServer] time="2026-09-28T07:59:08+08:00" level=warning msg="Warning: No resource found to remove for project \"job-copilot-issue-2-e2e\"."
+[WebServer]  Network job-copilot-issue-2-e2e_default Creating 
+[WebServer]  Network job-copilot-issue-2-e2e_default Created 
+[WebServer]  Volume job-copilot-issue-2-e2e_redis-data Creating 
+[WebServer]  Volume job-copilot-issue-2-e2e_redis-data Created 
+[WebServer]  Volume job-copilot-issue-2-e2e_minio-data Creating 
+[WebServer]  Volume job-copilot-issue-2-e2e_minio-data Created 
+[WebServer]  Volume job-copilot-issue-2-e2e_postgres-data Creating 
+[WebServer]  Volume job-copilot-issue-2-e2e_postgres-data Created 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Creating 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Creating 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Creating 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Creating 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Created 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Created 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Created 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Created 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Starting 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Starting 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Starting 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Starting 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Started 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Started 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Started 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Started 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Waiting 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Waiting 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Waiting 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Waiting 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Healthy 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Healthy 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Healthy 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Healthy 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Running 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Creating 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Created 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Waiting 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Healthy 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Starting 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Started 
+[WebServer] container "7a64ad844413a802dbab43d5b566d40250d987684dc48e7727e84d35feb205c8" exited with status code 0
+[WebServer] (node:65653) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] Reading config file '/Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/packages/database/drizzle.config.ts'
+[WebServer] (node:65655) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] Using 'pg' driver for database querying
+[WebServer] [⣷] applying migrations...[WebServer] [⣯] applying migrations...[WebServer] [⣟] applying migrations...[WebServer] [✓] migrations applied successfully![WebServer] (node:65689) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] Scope: 3 of 9 workspace projects
+[WebServer] apps/api dev$ node ../../scripts/nest-dev.mjs
+[WebServer] apps/web dev$ next dev --hostname 127.0.0.1
+[WebServer] apps/worker dev$ node ../../scripts/nest-dev.mjs
+[WebServer] apps/worker dev: (node:65735) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/worker dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/api dev: (node:65734) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/api dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/worker dev: (node:65736) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/worker dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/api dev: (node:65737) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/api dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:65715) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:65738) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: ▲ Next.js 16.3.2 (Turbopack)
+[WebServer] apps/web dev: - Local:         http://127.0.0.1:3120
+[WebServer] apps/web dev: - Network:       http://127.0.0.1:3120
+[WebServer] apps/web dev: ✓ Ready in 258ms
+[WebServer] apps/web dev: ✓ Running next.config.ts took 63ms
+[WebServer] apps/worker dev: [Nest] 65736  - 09/28/2026, 7:59:13 AM     LOG [NestFactory] Starting Nest application...
+[WebServer] apps/worker dev: [Nest] 65736  - 09/28/2026, 7:59:13 AM     LOG [InstanceLoader] AppModule dependencies initialized +18ms
+[WebServer] apps/worker dev: [Nest] 65736  - 09/28/2026, 7:59:13 AM     LOG [InstanceLoader] CareerImportModule dependencies initialized +2ms
+[WebServer] apps/worker dev: [Nest] 65736  - 09/28/2026, 7:59:13 AM     LOG [InstanceLoader] JobImportModule dependencies initialized +0ms
+[WebServer] apps/worker dev: [Nest] 65736  - 09/28/2026, 7:59:13 AM     LOG [InstanceLoader] AgentRunModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [NestFactory] Starting Nest application...
+[WebServer] apps/web dev: (node:65740) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [InstanceLoader] RuntimeConfigModule dependencies initialized +25ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [InstanceLoader] HealthModule dependencies initialized +3ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [InstanceLoader] CareerImportModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [InstanceLoader] ProfileReviewModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [InstanceLoader] JobTargetsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [InstanceLoader] CompanyWatchlistsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [InstanceLoader] JobImportsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [InstanceLoader] JobTriageModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [InstanceLoader] AccountRunPoliciesModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [InstanceLoader] ModelDiagnosticsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [InstanceLoader] AppModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [InstanceLoader] AuthModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [InstanceLoader] RunPreflightModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [InstanceLoader] WorkbenchModule dependencies initialized +1ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [InstanceLoader] AgentRunsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [InstanceLoader] RecommendationsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [InstanceLoader] RecommendationRunsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [InstanceLoader] JobDiscoverySchedulesModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [InstanceLoader] AgentInboxModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RoutesResolver] AccountsController {/v1/accounts}: +179ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/accounts/:userId, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RoutesResolver] AuthController {/v1/auth}: +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/auth/dev/sessions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/auth/sessions/current, DELETE} route +1ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RoutesResolver] HealthController {/health}: +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/health/live, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/health/ready, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RoutesResolver] WorkbenchController {/v1/workbench}: +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/workbench/home, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/workbench/first-recommendation-journey, PUT} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RoutesResolver] RunPreflightController {/v1/run-preflight}: +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/run-preflight, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RoutesResolver] ModelDiagnosticsController {/v1/model-diagnostics}: +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/model-diagnostics, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/model-diagnostics, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RoutesResolver] CareerImportController {/v1/career-documents/imports}: +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/career-documents/imports, POST} route +1ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/career-documents/imports, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/career-documents/imports/:importId, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RoutesResolver] ProfileReviewController {/v1/profile}: +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/profile, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/profile/candidate-facts/:factId/decisions, POST} route +1ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/profile/facts, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/profile/facts/:factId/revisions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/profile/facts/:factId/removals, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RoutesResolver] CareerFactConflictReviewController {/v1/career-documents/fact-conflicts}: +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/career-documents/fact-conflicts/:conflictId/resolutions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RoutesResolver] JobTargetsController {/v1/job-targets}: +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/job-targets, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/job-targets, POST} route +1ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/revisions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/deactivations, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RoutesResolver] CompanyWatchlistsController {/v1/job-targets/:targetId/company-watchlist}: +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/company-watchlist, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/company-watchlist/items, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/company-watchlist/items/:itemId/revisions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/company-watchlist/items/:itemId/state-changes, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/company-watchlist/reorders, POST} route +1ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RoutesResolver] SourceHealthController {/v1/job-targets/:targetId/source-health}: +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/source-health, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RoutesResolver] SourceCapabilitiesController {/v1/job-targets/:targetId/source-capabilities}: +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/source-capabilities, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RoutesResolver] JobDiscoverySchedulesController {/v1/job-targets/:targetId/discovery-schedule}: +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/discovery-schedule, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/discovery-schedule, PUT} route +1ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RoutesResolver] AgentRunsController {/v1/agent-runs}: +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/agent-runs, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/agent-runs/:runId/controls, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/agent-runs/latest, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/agent-runs/:runId/events, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/agent-runs/:runId, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RoutesResolver] JobImportsController {/v1/job-imports}: +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/job-imports, POST} route +1ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/job-imports, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/job-imports/:importId/raw, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/job-imports/:importId, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RoutesResolver] JobTriageController {/v1/job-opportunities/:opportunityId/triage-versions}: +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/job-opportunities/:opportunityId/triage-versions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/job-opportunities/:opportunityId/triage-versions/latest, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/job-opportunities/:opportunityId/triage-versions/:triageVersionId, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RoutesResolver] RecommendationRunsController {/v1/recommendation-runs}: +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/recommendation-runs/preparation, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/recommendation-runs, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/recommendation-runs/latest, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/recommendation-runs/latest-result, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/recommendation-runs/:runId, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/recommendation-runs/:runId/controls, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RoutesResolver] AgentInboxController {/v1/agent-inbox}: +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/agent-inbox, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/agent-inbox/:itemId/actions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RoutesResolver] RecommendationsController {/v1/recommendations}: +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/latest, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/lists/:recommendationListId, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/history, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/lists/:recommendationListId/exclusions, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/runs, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/lists/:listId/items/:itemId/decisions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/calibration-proposals, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/calibration-proposals/:id/revisions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/calibration-proposals/:id/rebases, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/calibration-proposals/:id/resolutions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RoutesResolver] AccountRunPoliciesController {/v1/account/run-policy}: +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/account/run-policy, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/account/run-policy/control, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/account/run-policy/history, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/account/run-policy/history/:revisionNumber, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/account/run-policy, PUT} route +1ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [RouterExplorer] Mapped {/v1/account/run-policy/controls, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 65737  - 09/28/2026, 7:59:14 AM     LOG [NestApplication] Nest application successfully started +2ms
+[WebServer] 本地测试运行时已就绪
+[WebServer] apps/web dev:  GET /login 200 in 336ms (next.js: 204ms, application-code: 132ms)
+
+Running 4 tests using 1 worker
+
+(node:65753) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET / 200 in 37ms (next.js: 10ms, application-code: 27ms)
+  ✓  1 [Desktop Chrome] › e2e/landing.spec.ts:4:1 › 职业透镜首页展示机会、事实、决定和完整旅程 (373ms)
+  -  2 [Desktop Chrome] › e2e/landing.spec.ts:13:1 › 手机首页保持可触达主行动且无横向溢出
+(node:65761) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET / 200 in 29ms (next.js: 2ms, application-code: 27ms)
+  ✓  3 [Mobile Safari] › e2e/landing.spec.ts:4:1 › 职业透镜首页展示机会、事实、决定和完整旅程 (651ms)
+[WebServer] apps/web dev:  GET / 200 in 15ms (next.js: 1.4ms, application-code: 13ms)
+  ✘  4 [Mobile Safari] › e2e/landing.spec.ts:13:1 › 手机首页保持可触达主行动且无横向溢出 (547ms)
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Stopping 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Stopping 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Stopping 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Stopping 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Stopped 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Removing 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Removed 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Stopping 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Stopped 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Removing 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Removed 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Stopped 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Removing 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Removed 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Stopped 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Removing 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Removed 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Stopped 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Removing 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Removed 
+[WebServer]  Network job-copilot-issue-2-e2e_default Removing 
+[WebServer]  Volume job-copilot-issue-2-e2e_redis-data Removing 
+[WebServer]  Volume job-copilot-issue-2-e2e_minio-data Removing 
+[WebServer]  Volume job-copilot-issue-2-e2e_postgres-data Removing 
+[WebServer]  Volume job-copilot-issue-2-e2e_postgres-data Removed 
+[WebServer]  Volume job-copilot-issue-2-e2e_minio-data Removed 
+[WebServer]  Volume job-copilot-issue-2-e2e_redis-data Removed 
+[WebServer]  Network job-copilot-issue-2-e2e_default Removed 
+
+
+  1) [Mobile Safari] › e2e/landing.spec.ts:13:1 › 手机首页保持可触达主行动且无横向溢出 ───────────────────────────────
+
+    Error: expect(received).resolves.toMatchObject(expected)
+
+    - Expected  -   1
+    + Received  + 268
+
+      Object {
+    -   "violations": Array [],
+    +   "violations": Array [
+    +     Object {
+    +       "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    +       "help": "Elements must meet minimum color contrast ratio thresholds",
+    +       "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/color-contrast?application=playwright",
+    +       "id": "color-contrast",
+    +       "impact": "serious",
+    +       "nodes": Array [
+    +         Object {
+    +           "all": Array [],
+    +           "any": Array [
+    +             Object {
+    +               "data": Object {
+    +                 "bgColor": "#ffffff",
+    +                 "contrastRatio": 4.28,
+    +                 "expectedContrastRatio": "4.5:1",
+    +                 "fgColor": "#627aac",
+    +                 "fontSize": "12.0pt (16px)",
+    +                 "fontWeight": "normal",
+    +                 "messageKey": null,
+    +               },
+    +               "id": "color-contrast",
+    +               "impact": "serious",
+    +               "message": "Element has insufficient color contrast of 4.28 (foreground color: #627aac, background color: #ffffff, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +               "relatedNodes": Array [
+    +                 Object {
+    +                   "html": "<div class=\"container career-lens-board\">",
+    +                   "target": Array [
+    +                     ".career-lens-board",
+    +                   ],
+    +                 },
+    +               ],
+    +             },
+    +           ],
+    +           "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.28 (foreground color: #627aac, background color: #ffffff, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +           "html": "<p>把真实岗位、已确认职业事实和你的决定放在同一条可追溯的路径上。</p>",
+    +           "impact": "serious",
+    +           "none": Array [],
+    +           "target": Array [
+    +             ".career-lens-copy > p:nth-child(3)",
+    +           ],
+    +         },
+    +         Object {
+    +           "all": Array [],
+    +           "any": Array [
+    +             Object {
+    +               "data": Object {
+    +                 "bgColor": "#ffffff",
+    +                 "contrastRatio": 4.28,
+    +                 "expectedContrastRatio": "4.5:1",
+    +                 "fgColor": "#627aac",
+    +                 "fontSize": "9.4pt (12.48px)",
+    +                 "fontWeight": "normal",
+    +                 "messageKey": null,
+    +               },
+    +               "id": "color-contrast",
+    +               "impact": "serious",
+    +               "message": "Element has insufficient color contrast of 4.28 (foreground color: #627aac, background color: #ffffff, font size: 9.4pt (12.48px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +               "relatedNodes": Array [
+    +                 Object {
+    +                   "html": "<article class=\"career-lens-object career-lens-opportunity\"><p>岗位机会</p><strong>值得进一步判断的机会</strong><span>示例，不是你的岗位</span></article>",
+    +                   "target": Array [
+    +                     ".career-lens-opportunity",
+    +                   ],
+    +                 },
+    +               ],
+    +             },
+    +           ],
+    +           "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.28 (foreground color: #627aac, background color: #ffffff, font size: 9.4pt (12.48px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +           "html": "<p>岗位机会</p>",
+    +           "impact": "serious",
+    +           "none": Array [],
+    +           "target": Array [
+    +             ".career-lens-opportunity > p",
+    +           ],
+    +         },
+    +         Object {
+    +           "all": Array [],
+    +           "any": Array [
+    +             Object {
+    +               "data": Object {
+    +                 "bgColor": "#ffffff",
+    +                 "contrastRatio": 4.28,
+    +                 "expectedContrastRatio": "4.5:1",
+    +                 "fgColor": "#627aac",
+    +                 "fontSize": "9.4pt (12.48px)",
+    +                 "fontWeight": "normal",
+    +                 "messageKey": null,
+    +               },
+    +               "id": "color-contrast",
+    +               "impact": "serious",
+    +               "message": "Element has insufficient color contrast of 4.28 (foreground color: #627aac, background color: #ffffff, font size: 9.4pt (12.48px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +               "relatedNodes": Array [
+    +                 Object {
+    +                   "html": "<article class=\"career-lens-object career-lens-opportunity\"><p>岗位机会</p><strong>值得进一步判断的机会</strong><span>示例，不是你的岗位</span></article>",
+    +                   "target": Array [
+    +                     ".career-lens-opportunity",
+    +                   ],
+    +                 },
+    +               ],
+    +             },
+    +           ],
+    +           "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.28 (foreground color: #627aac, background color: #ffffff, font size: 9.4pt (12.48px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +           "html": "<span>示例，不是你的岗位</span>",
+    +           "impact": "serious",
+    +           "none": Array [],
+    +           "target": Array [
+    +             ".career-lens-opportunity > span",
+    +           ],
+    +         },
+    +         Object {
+    +           "all": Array [],
+    +           "any": Array [
+    +             Object {
+    +               "data": Object {
+    +                 "bgColor": "#ffffff",
+    +                 "contrastRatio": 4.28,
+    +                 "expectedContrastRatio": "4.5:1",
+    +                 "fgColor": "#627aac",
+    +                 "fontSize": "9.4pt (12.48px)",
+    +                 "fontWeight": "normal",
+    +                 "messageKey": null,
+    +               },
+    +               "id": "color-contrast",
+    +               "impact": "serious",
+    +               "message": "Element has insufficient color contrast of 4.28 (foreground color: #627aac, background color: #ffffff, font size: 9.4pt (12.48px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +               "relatedNodes": Array [
+    +                 Object {
+    +                   "html": "<article class=\"career-lens-object career-lens-fact\"><p>已确认事实</p><strong>可追溯的职业资料</strong><span>只使用真实证据</span></article>",
+    +                   "target": Array [
+    +                     ".career-lens-fact",
+    +                   ],
+    +                 },
+    +               ],
+    +             },
+    +           ],
+    +           "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.28 (foreground color: #627aac, background color: #ffffff, font size: 9.4pt (12.48px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +           "html": "<span>只使用真实证据</span>",
+    +           "impact": "serious",
+    +           "none": Array [],
+    +           "target": Array [
+    +             ".career-lens-fact > span",
+    +           ],
+    +         },
+    +         Object {
+    +           "all": Array [],
+    +           "any": Array [
+    +             Object {
+    +               "data": Object {
+    +                 "bgColor": "#ffffff",
+    +                 "contrastRatio": 4.28,
+    +                 "expectedContrastRatio": "4.5:1",
+    +                 "fgColor": "#627aac",
+    +                 "fontSize": "9.4pt (12.48px)",
+    +                 "fontWeight": "normal",
+    +                 "messageKey": null,
+    +               },
+    +               "id": "color-contrast",
+    +               "impact": "serious",
+    +               "message": "Element has insufficient color contrast of 4.28 (foreground color: #627aac, background color: #ffffff, font size: 9.4pt (12.48px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +               "relatedNodes": Array [
+    +                 Object {
+    +                   "html": "<article class=\"career-lens-decision\"><span aria-hidden=\"true\">●</span><strong>有依据，再决定</strong><p>外部行动始终由你确认</p></article>",
+    +                   "target": Array [
+    +                     ".career-lens-decision",
+    +                   ],
+    +                 },
+    +               ],
+    +             },
+    +           ],
+    +           "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.28 (foreground color: #627aac, background color: #ffffff, font size: 9.4pt (12.48px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +           "html": "<p>外部行动始终由你确认</p>",
+    +           "impact": "serious",
+    +           "none": Array [],
+    +           "target": Array [
+    +             ".career-lens-decision > p",
+    +           ],
+    +         },
+    +         Object {
+    +           "all": Array [],
+    +           "any": Array [
+    +             Object {
+    +               "data": Object {
+    +                 "bgColor": "#f5f9ff",
+    +                 "contrastRatio": 4.05,
+    +                 "expectedContrastRatio": "4.5:1",
+    +                 "fgColor": "#627aac",
+    +                 "fontSize": "12.0pt (16px)",
+    +                 "fontWeight": "normal",
+    +                 "messageKey": null,
+    +               },
+    +               "id": "color-contrast",
+    +               "impact": "serious",
+    +               "message": "Element has insufficient color contrast of 4.05 (foreground color: #627aac, background color: #f5f9ff, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +               "relatedNodes": Array [
+    +                 Object {
+    +                   "html": "<body data-impeccable-seed=\"4e302c13\">",
+    +                   "target": Array [
+    +                     "body",
+    +                   ],
+    +                 },
+    +               ],
+    +             },
+    +           ],
+    +           "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.05 (foreground color: #627aac, background color: #f5f9ff, font size: 12.0pt (16px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +           "html": "<p>当前 Alpha 聚焦资料、目标、来源、岗位发现与推荐；后续环节不会伪装成已上线功能。</p>",
+    +           "impact": "serious",
+    +           "none": Array [],
+    +           "target": Array [
+    +             ".career-lens-journey > p",
+    +           ],
+    +         },
+    +         Object {
+    +           "all": Array [],
+    +           "any": Array [
+    +             Object {
+    +               "data": Object {
+    +                 "bgColor": "#f5f9ff",
+    +                 "contrastRatio": 4.05,
+    +                 "expectedContrastRatio": "4.5:1",
+    +                 "fgColor": "#627aac",
+    +                 "fontSize": "9.6pt (12.8px)",
+    +                 "fontWeight": "normal",
+    +                 "messageKey": null,
+    +               },
+    +               "id": "color-contrast",
+    +               "impact": "serious",
+    +               "message": "Element has insufficient color contrast of 4.05 (foreground color: #627aac, background color: #f5f9ff, font size: 9.6pt (12.8px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +               "relatedNodes": Array [
+    +                 Object {
+    +                   "html": "<body data-impeccable-seed=\"4e302c13\">",
+    +                   "target": Array [
+    +                     "body",
+    +                   ],
+    +                 },
+    +               ],
+    +             },
+    +           ],
+    +           "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 4.05 (foreground color: #627aac, background color: #f5f9ff, font size: 9.6pt (12.8px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +           "html": "<p>本地邀请制 Beta · 外部行动需确认</p>",
+    +           "impact": "serious",
+    +           "none": Array [],
+    +           "target": Array [
+    +             "p:nth-child(2)",
+    +           ],
+    +         },
+    +       ],
+    +       "tags": Array [
+    +         "cat.color",
+    +         "wcag2aa",
+    +         "wcag143",
+    +         "TTv5",
+    +         "TT13.c",
+    +         "EN-301-549",
+    +         "EN-9.1.4.3",
+    +         "ACT",
+    +         "RGAAv4",
+    +         "RGAA-3.2.1",
+    +       ],
+    +     },
+    +   ],
+      }
+
+      18 |   expect(await action.evaluate((node) => node.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
+      19 |   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
+    > 20 |   await expect(new AxeBuilder({ page }).analyze()).resolves.toMatchObject({ violations: [] });
+         |                                                             ^
+      21 | });
+      22 |
+        at /Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web/e2e/landing.spec.ts:20:61
+
+    Error Context: test-results/landing-手机首页保持可触达主行动且无横向溢出-Mobile-Safari/error-context.md
+
+  1 failed
+    [Mobile Safari] › e2e/landing.spec.ts:13:1 › 手机首页保持可触达主行动且无横向溢出 ────────────────────────────────
+  1 skipped
+  2 passed (10.7s)
+[ELIFECYCLE] Command failed with exit code 1.

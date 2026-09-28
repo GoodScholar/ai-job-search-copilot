@@ -1,0 +1,441 @@
+$ PLAYWRIGHT_HTML_OPEN=never node scripts/e2e-runner.mjs -- recommendations.spec.ts --workers=1
+[WebServer] (node:73736) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] Docker Compose version v5.1.3
+[WebServer] time="2026-09-28T16:59:16+08:00" level=warning msg="Warning: No resource found to remove for project \"job-copilot-issue-2-e2e\"."
+[WebServer]  Network job-copilot-issue-2-e2e_default Creating 
+[WebServer]  Network job-copilot-issue-2-e2e_default Created 
+[WebServer]  Volume job-copilot-issue-2-e2e_minio-data Creating 
+[WebServer]  Volume job-copilot-issue-2-e2e_minio-data Created 
+[WebServer]  Volume job-copilot-issue-2-e2e_postgres-data Creating 
+[WebServer]  Volume job-copilot-issue-2-e2e_postgres-data Created 
+[WebServer]  Volume job-copilot-issue-2-e2e_redis-data Creating 
+[WebServer]  Volume job-copilot-issue-2-e2e_redis-data Created 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Creating 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Creating 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Creating 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Creating 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Created 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Created 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Created 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Created 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Starting 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Starting 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Starting 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Starting 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Started 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Started 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Started 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Started 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Waiting 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Waiting 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Waiting 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Waiting 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Healthy 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Healthy 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Healthy 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Healthy 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Running 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Creating 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Created 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Waiting 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Healthy 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Starting 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Started 
+[WebServer] container "d6b69e72bbe88a153a2e8ab7ee03fcc232d5d2f99d6386cc5420bbdf513c309b" exited with status code 0
+[WebServer] (node:73849) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] Reading config file '/Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/packages/database/drizzle.config.ts'
+[WebServer] (node:73850) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] Using 'pg' driver for database querying
+[WebServer] [⣷] applying migrations...[WebServer] [⣯] applying migrations...[WebServer] [⣟] applying migrations...[WebServer] [✓] migrations applied successfully![WebServer] (node:73884) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] Scope: 3 of 9 workspace projects
+[WebServer] apps/api dev$ node ../../scripts/nest-dev.mjs
+[WebServer] apps/web dev$ next dev --hostname 127.0.0.1
+[WebServer] apps/worker dev$ node ../../scripts/nest-dev.mjs
+[WebServer] apps/worker dev: (node:73932) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/worker dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/api dev: (node:73933) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/api dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/api dev: (node:73935) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/api dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/worker dev: (node:73934) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/worker dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:73900) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:73936) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: ▲ Next.js 16.3.2 (Turbopack)
+[WebServer] apps/web dev: - Local:         http://127.0.0.1:3120
+[WebServer] apps/web dev: - Network:       http://127.0.0.1:3120
+[WebServer] apps/web dev: ✓ Ready in 261ms
+[WebServer] apps/web dev: ✓ Running next.config.ts took 52ms
+[WebServer] apps/worker dev: [Nest] 73934  - 09/28/2026, 4:59:22 PM     LOG [NestFactory] Starting Nest application...
+[WebServer] apps/worker dev: [Nest] 73934  - 09/28/2026, 4:59:22 PM     LOG [InstanceLoader] AppModule dependencies initialized +37ms
+[WebServer] apps/worker dev: [Nest] 73934  - 09/28/2026, 4:59:22 PM     LOG [InstanceLoader] CareerImportModule dependencies initialized +3ms
+[WebServer] apps/worker dev: [Nest] 73934  - 09/28/2026, 4:59:22 PM     LOG [InstanceLoader] JobImportModule dependencies initialized +0ms
+[WebServer] apps/worker dev: [Nest] 73934  - 09/28/2026, 4:59:22 PM     LOG [InstanceLoader] AgentRunModule dependencies initialized +0ms
+[WebServer] apps/web dev: (node:73938) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:22 PM     LOG [NestFactory] Starting Nest application...
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:22 PM     LOG [InstanceLoader] RuntimeConfigModule dependencies initialized +22ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:22 PM     LOG [InstanceLoader] HealthModule dependencies initialized +1ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:22 PM     LOG [InstanceLoader] CareerImportModule dependencies initialized +1ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:22 PM     LOG [InstanceLoader] ProfileReviewModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:22 PM     LOG [InstanceLoader] JobTargetsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:22 PM     LOG [InstanceLoader] CompanyWatchlistsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:22 PM     LOG [InstanceLoader] JobImportsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:22 PM     LOG [InstanceLoader] JobTriageModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:22 PM     LOG [InstanceLoader] AccountRunPoliciesModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:22 PM     LOG [InstanceLoader] ModelDiagnosticsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:22 PM     LOG [InstanceLoader] AppModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:22 PM     LOG [InstanceLoader] AuthModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:22 PM     LOG [InstanceLoader] RunPreflightModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:22 PM     LOG [InstanceLoader] WorkbenchModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:22 PM     LOG [InstanceLoader] AgentRunsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:22 PM     LOG [InstanceLoader] RecommendationsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:22 PM     LOG [InstanceLoader] RecommendationRunsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:22 PM     LOG [InstanceLoader] JobDiscoverySchedulesModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:22 PM     LOG [InstanceLoader] AgentInboxModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RoutesResolver] AccountsController {/v1/accounts}: +163ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/accounts/:userId, GET} route +2ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RoutesResolver] AuthController {/v1/auth}: +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/auth/dev/sessions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/auth/sessions/current, DELETE} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RoutesResolver] HealthController {/health}: +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/health/live, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/health/ready, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RoutesResolver] WorkbenchController {/v1/workbench}: +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/workbench/home, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/workbench/first-recommendation-journey, PUT} route +1ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RoutesResolver] RunPreflightController {/v1/run-preflight}: +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/run-preflight, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RoutesResolver] ModelDiagnosticsController {/v1/model-diagnostics}: +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/model-diagnostics, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/model-diagnostics, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RoutesResolver] CareerImportController {/v1/career-documents/imports}: +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/career-documents/imports, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/career-documents/imports, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/career-documents/imports/:importId, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RoutesResolver] ProfileReviewController {/v1/profile}: +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/profile, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/profile/candidate-facts/:factId/decisions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/profile/facts, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/profile/facts/:factId/revisions, POST} route +1ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/profile/facts/:factId/removals, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RoutesResolver] CareerFactConflictReviewController {/v1/career-documents/fact-conflicts}: +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/career-documents/fact-conflicts/:conflictId/resolutions, POST} route +1ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RoutesResolver] JobTargetsController {/v1/job-targets}: +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/job-targets, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/job-targets, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/revisions, POST} route +1ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/deactivations, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RoutesResolver] CompanyWatchlistsController {/v1/job-targets/:targetId/company-watchlist}: +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/company-watchlist, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/company-watchlist/items, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/company-watchlist/items/:itemId/revisions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/company-watchlist/items/:itemId/state-changes, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/company-watchlist/reorders, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RoutesResolver] SourceHealthController {/v1/job-targets/:targetId/source-health}: +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/source-health, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RoutesResolver] SourceCapabilitiesController {/v1/job-targets/:targetId/source-capabilities}: +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/source-capabilities, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RoutesResolver] JobDiscoverySchedulesController {/v1/job-targets/:targetId/discovery-schedule}: +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/discovery-schedule, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/discovery-schedule, PUT} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RoutesResolver] AgentRunsController {/v1/agent-runs}: +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/agent-runs, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/agent-runs/:runId/controls, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/agent-runs/latest, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/agent-runs/:runId/events, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/agent-runs/:runId, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RoutesResolver] JobImportsController {/v1/job-imports}: +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/job-imports, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/job-imports, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/job-imports/:importId/raw, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/job-imports/:importId, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RoutesResolver] JobTriageController {/v1/job-opportunities/:opportunityId/triage-versions}: +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/job-opportunities/:opportunityId/triage-versions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/job-opportunities/:opportunityId/triage-versions/latest, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/job-opportunities/:opportunityId/triage-versions/:triageVersionId, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RoutesResolver] RecommendationRunsController {/v1/recommendation-runs}: +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/recommendation-runs/preparation, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/recommendation-runs, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/recommendation-runs/latest, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/recommendation-runs/latest-result, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/recommendation-runs/:runId, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/recommendation-runs/:runId/controls, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RoutesResolver] AgentInboxController {/v1/agent-inbox}: +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/agent-inbox, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/agent-inbox/:itemId/actions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RoutesResolver] RecommendationsController {/v1/recommendations}: +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/recommendations/latest, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/recommendations/lists/:recommendationListId, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/recommendations/history, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/recommendations/lists/:recommendationListId/exclusions, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/recommendations/runs, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/recommendations/lists/:listId/items/:itemId/decisions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/recommendations/calibration-proposals, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/recommendations/calibration-proposals/:id/revisions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/recommendations/calibration-proposals/:id/rebases, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/recommendations/calibration-proposals/:id/resolutions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RoutesResolver] AccountRunPoliciesController {/v1/account/run-policy}: +1ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/account/run-policy, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/account/run-policy/control, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/account/run-policy/history, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/account/run-policy/history/:revisionNumber, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/account/run-policy, PUT} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [RouterExplorer] Mapped {/v1/account/run-policy/controls, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 73935  - 09/28/2026, 4:59:23 PM     LOG [NestApplication] Nest application successfully started +2ms
+[WebServer] 本地测试运行时已就绪
+[WebServer] apps/web dev:  GET /login 200 in 331ms (next.js: 212ms, application-code: 119ms)
+
+Running 12 tests using 1 worker
+
+(node:73974) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /recommendations?targetId=1de53768-c32e-46dc-bbb0-4d0b2461f5f7 200 in 181ms (next.js: 44ms, application-code: 138ms)
+[WebServer] apps/web dev: (node:73984) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/e493ee48-9aa5-4fee-9358-747fa7bf6b98 200 in 597ms (next.js: 519ms, application-code: 78ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/d7a81d7d-ff31-4c9d-a9ed-7dd891719e08 200 in 30ms (next.js: 5ms, application-code: 26ms)
+[WebServer] apps/web dev: (node:73985) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /recommendations?targetId=1de53768-c32e-46dc-bbb0-4d0b2461f5f7 200 in 86ms (next.js: 1.1ms, application-code: 84ms)
+[WebServer] apps/web dev:  POST /recommendations?targetId=1de53768-c32e-46dc-bbb0-4d0b2461f5f7 200 in 100ms (next.js: 1.1ms, application-code: 99ms)
+[WebServer] apps/web dev:   └─ ƒ requestRecommendationReevaluationAction("1de53768-c32e-46dc-bbb0-4d0b2461f5f7", "c22f2555-66d2-4ff0-bfbd-085469e3a406", {}) in 56ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=1de53768-c32e-46dc-bbb0-4d0b2461f5f7 200 in 75ms (next.js: 1.5ms, application-code: 74ms)
+[WebServer] apps/web dev:   └─ ƒ requestRecommendationReevaluationAction("1de53768-c32e-46dc-bbb0-4d0b2461f5f7", "c22f2555-66d2-4ff0-bfbd-085469e3a406", {}) in 22ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  GET /recommendations?targetId=1de53768-c32e-46dc-bbb0-4d0b2461f5f7 200 in 97ms (next.js: 1.3ms, application-code: 95ms)
+[WebServer] apps/web dev: (node:73994) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/recommendations/lists/53f9a2ec-3cb0-416a-a8db-831241dd000b/exclusions?targetId=1de53768-c32e-46dc-bbb0-4d0b2461f5f7&cursor=d8383717-2b1c-4833-9b5e-e750d2ee9735 200 in 447ms (next.js: 431ms, application-code: 16ms)
+[WebServer] apps/web dev:  GET /api/recommendations/history?targetId=1de53768-c32e-46dc-bbb0-4d0b2461f5f7&cursor=ee87849e-cad6-4a48-8d48-59ea7ecb3f93 200 in 39ms (next.js: 23ms, application-code: 17ms)
+[WebServer] apps/web dev:  GET /api/recommendations/lists/fa35eaca-4906-421c-b31a-13cd8d08c618/exclusions?targetId=1de53768-c32e-46dc-bbb0-4d0b2461f5f7 200 in 13ms (next.js: 2ms, application-code: 11ms)
+[WebServer] apps/web dev: (node:73995) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+  ✓   1 [Desktop Chrome] › e2e/recommendations.spec.ts:222:1 › 显式 Fake matching 真实链路交付双方证据、质量排除与单岗位重评历史 (5.8s)
+[WebServer] apps/web dev:  GET /recommendations?targetId=513856cd-1753-42f7-8a52-bc351a911e69 200 in 65ms (next.js: 1.9ms, application-code: 63ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/c5282450-6667-4a36-9386-134003a14c91 200 in 36ms (next.js: 6ms, application-code: 30ms)
+[WebServer] apps/web dev: (node:74052) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/c5282450-6667-4a36-9386-134003a14c91 200 in 12ms (next.js: 0.8ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/ef2fb6d5-4fad-44fa-a10d-0ba11ae3d623 200 in 16ms (next.js: 0.9ms, application-code: 15ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/ef2fb6d5-4fad-44fa-a10d-0ba11ae3d623 200 in 13ms (next.js: 0.7ms, application-code: 13ms)
+[WebServer] apps/web dev:  GET /recommendations?targetId=513856cd-1753-42f7-8a52-bc351a911e69 200 in 96ms (next.js: 1.0ms, application-code: 95ms)
+[WebServer] apps/web dev:  POST /recommendations?targetId=513856cd-1753-42f7-8a52-bc351a911e69 200 in 67ms (next.js: 1.8ms, application-code: 65ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("d80fccf8-75a4-40f4-91d9-9e4235c564ec", "b673b22e-a7b2-41ef-a998-0f693a837cdd", {}) in 17ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=513856cd-1753-42f7-8a52-bc351a911e69 200 in 68ms (next.js: 1.3ms, application-code: 67ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("d80fccf8-75a4-40f4-91d9-9e4235c564ec", "25090338-c618-486d-8af8-967493cfc216", {}) in 18ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=513856cd-1753-42f7-8a52-bc351a911e69 200 in 74ms (next.js: 1.3ms, application-code: 72ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("d80fccf8-75a4-40f4-91d9-9e4235c564ec", "b673b22e-a7b2-41ef-a998-0f693a837cdd", {}) in 22ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=513856cd-1753-42f7-8a52-bc351a911e69 200 in 86ms (next.js: 1.8ms, application-code: 84ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("d80fccf8-75a4-40f4-91d9-9e4235c564ec", "0675e918-3b35-46a5-9c07-78e74ef3d3d6", {}) in 19ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=513856cd-1753-42f7-8a52-bc351a911e69 200 in 96ms (next.js: 1.4ms, application-code: 94ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("d80fccf8-75a4-40f4-91d9-9e4235c564ec", "a5eb8020-19a0-4a74-990e-132212493038", {}) in 32ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=513856cd-1753-42f7-8a52-bc351a911e69 200 in 92ms (next.js: 1.2ms, application-code: 91ms)
+[WebServer] apps/web dev:   └─ ƒ reviseCalibrationProposalAction("2e7eeebc-19b5-401b-8028-bbe64d2f213a", {}) in 20ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=513856cd-1753-42f7-8a52-bc351a911e69 200 in 75ms (next.js: 1.8ms, application-code: 74ms)
+[WebServer] apps/web dev:   └─ ƒ reviseCalibrationProposalAction("2e7eeebc-19b5-401b-8028-bbe64d2f213a", {}) in 17ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=513856cd-1753-42f7-8a52-bc351a911e69 200 in 60ms (next.js: 0.9ms, application-code: 60ms)
+[WebServer] apps/web dev:   └─ ƒ resolveCalibrationProposalAction("2e7eeebc-19b5-401b-8028-bbe64d2f213a", {}) in 15ms app/(workbench)/recommendations/actions.ts
+  ✓   2 [Desktop Chrome] › e2e/recommendations.spec.ts:305:1 › 推荐决策与拒绝校准建议保持规则和目标不变 (6.7s)
+[WebServer] apps/web dev:  GET /recommendations?targetId=f7c0c8d5-533e-42a1-8d7c-d20e570530f1 200 in 43ms (next.js: 2ms, application-code: 41ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/c64d8b09-8982-4949-928b-2024b17a6297 200 in 26ms (next.js: 4ms, application-code: 21ms)
+[WebServer] apps/web dev: (node:74069) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/c64d8b09-8982-4949-928b-2024b17a6297 200 in 10ms (next.js: 0.7ms, application-code: 9ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/070f5a2c-4098-4e82-a348-fe1427189db7 200 in 16ms (next.js: 0.7ms, application-code: 16ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/070f5a2c-4098-4e82-a348-fe1427189db7 200 in 13ms (next.js: 0.9ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/070f5a2c-4098-4e82-a348-fe1427189db7 200 in 21ms (next.js: 2ms, application-code: 18ms)
+[WebServer] apps/web dev: (node:74070) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /recommendations?targetId=f7c0c8d5-533e-42a1-8d7c-d20e570530f1 200 in 114ms (next.js: 1.1ms, application-code: 113ms)
+[WebServer] apps/web dev:  POST /recommendations?targetId=f7c0c8d5-533e-42a1-8d7c-d20e570530f1 200 in 75ms (next.js: 1.4ms, application-code: 74ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("f8bc03ac-7395-4c19-b2ec-e3b90af2d6c9", "f76c77f7-2a4c-494e-8d78-eb66d7dced96", {}) in 16ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=f7c0c8d5-533e-42a1-8d7c-d20e570530f1 200 in 78ms (next.js: 1.7ms, application-code: 76ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("f8bc03ac-7395-4c19-b2ec-e3b90af2d6c9", "e728bca1-13a1-45f6-8c71-1c4d35ec3ca5", {}) in 17ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=f7c0c8d5-533e-42a1-8d7c-d20e570530f1 200 in 102ms (next.js: 2.0ms, application-code: 100ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("f8bc03ac-7395-4c19-b2ec-e3b90af2d6c9", "f814d09b-a2bc-4f66-b83b-73c024608f29", {}) in 31ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=f7c0c8d5-533e-42a1-8d7c-d20e570530f1 200 in 81ms (next.js: 1.1ms, application-code: 80ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("f8bc03ac-7395-4c19-b2ec-e3b90af2d6c9", "1ecb384f-3864-43e4-a7e7-b0ff9c1b8652", {}) in 15ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=f7c0c8d5-533e-42a1-8d7c-d20e570530f1 200 in 85ms (next.js: 1.3ms, application-code: 84ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("f8bc03ac-7395-4c19-b2ec-e3b90af2d6c9", "3ec8333b-4fba-41e4-9b2b-9f11852ac5ae", {}) in 17ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=f7c0c8d5-533e-42a1-8d7c-d20e570530f1 200 in 100ms (next.js: 1.2ms, application-code: 98ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("f8bc03ac-7395-4c19-b2ec-e3b90af2d6c9", "12d97a22-87e3-4236-a9d1-d705def92dcb", {}) in 35ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=f7c0c8d5-533e-42a1-8d7c-d20e570530f1 200 in 161ms (next.js: 1.9ms, application-code: 159ms)
+[WebServer] apps/web dev:   └─ ƒ resolveCalibrationProposalAction("1d1feaf2-e5a5-45f9-927e-d6409f43478f", {}) in 15ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  GET /recommendations?targetId=f7c0c8d5-533e-42a1-8d7c-d20e570530f1 200 in 127ms (next.js: 5ms, application-code: 123ms)
+[WebServer] apps/web dev:  POST /recommendations?targetId=f7c0c8d5-533e-42a1-8d7c-d20e570530f1 200 in 69ms (next.js: 1.0ms, application-code: 68ms)
+[WebServer] apps/web dev:   └─ ƒ rebaseCalibrationProposalAction("1d1feaf2-e5a5-45f9-927e-d6409f43478f", {}) in 14ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=f7c0c8d5-533e-42a1-8d7c-d20e570530f1 200 in 71ms (next.js: 1.1ms, application-code: 70ms)
+[WebServer] apps/web dev:   └─ ƒ resolveCalibrationProposalAction("1d1feaf2-e5a5-45f9-927e-d6409f43478f", {}) in 14ms app/(workbench)/recommendations/actions.ts
+  ✓   3 [Desktop Chrome] › e2e/recommendations.spec.ts:360:1 › 交错批准后立即锁定过期建议，刷新读模型并重新计算后可批准 (8.3s)
+[WebServer] apps/web dev:  GET /recommendations?targetId=d5214b2d-e63a-4043-85c8-2973d5fd9fec 200 in 47ms (next.js: 1.9ms, application-code: 45ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/203f189e-931b-44a9-866b-b6b7cb18c902 200 in 20ms (next.js: 6ms, application-code: 15ms)
+[WebServer] apps/web dev: (node:74072) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/203f189e-931b-44a9-866b-b6b7cb18c902 200 in 11ms (next.js: 0.6ms, application-code: 10ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/38e7e74e-685f-4149-9f7f-06412278a342 200 in 13ms (next.js: 1.0ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/38e7e74e-685f-4149-9f7f-06412278a342 200 in 13ms (next.js: 0.8ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /recommendations?targetId=d5214b2d-e63a-4043-85c8-2973d5fd9fec 200 in 41ms (next.js: 1.1ms, application-code: 40ms)
+  ✓   4 [Desktop Chrome] › e2e/recommendations.spec.ts:397:1 › 显式 Fake matching 的质量不足候选可生成零推荐清单 (1.9s)
+[WebServer] apps/web dev:  GET /api/agent-runs/fd497414-18f3-4449-975a-532cd867835a 200 in 12ms (next.js: 1.7ms, application-code: 10ms)
+[WebServer] apps/web dev: (node:74111) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/fd497414-18f3-4449-975a-532cd867835a 200 in 10ms (next.js: 0.7ms, application-code: 9ms)
+  ✓   5 [Desktop Chrome] › e2e/recommendations.spec.ts:420:1 › automatic deep-match 遇到运行前阻塞不会创建 child，也不会回滚已完成的 discovery 父运行 (1.2s)
+[WebServer] apps/web dev:  GET /recommendations?targetId=3d851ef8-d3f4-4fd1-be5d-d5d23180030e 200 in 87ms (next.js: 3ms, application-code: 83ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/5324b288-3b76-415b-aeb4-e6691c1542af 200 in 32ms (next.js: 6ms, application-code: 26ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/5324b288-3b76-415b-aeb4-e6691c1542af 200 in 15ms (next.js: 0.8ms, application-code: 15ms)
+[WebServer] apps/web dev: (node:74139) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/49872373-c8aa-4971-abc5-a5bc831699f7 200 in 17ms (next.js: 0.9ms, application-code: 16ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/49872373-c8aa-4971-abc5-a5bc831699f7 200 in 21ms (next.js: 0.9ms, application-code: 20ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/49872373-c8aa-4971-abc5-a5bc831699f7 200 in 16ms (next.js: 1.5ms, application-code: 15ms)
+[WebServer] apps/web dev: (node:74140) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /home?runId=49872373-c8aa-4971-abc5-a5bc831699f7 200 in 187ms (next.js: 18ms, application-code: 168ms)
+[WebServer] apps/web dev: (node:74146) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/job-targets/3d851ef8-d3f4-4fd1-be5d-d5d23180030e/discovery-schedule 200 in 256ms
+[WebServer] apps/web dev:  GET /recommendations?targetId=3d851ef8-d3f4-4fd1-be5d-d5d23180030e 200 in 227ms (next.js: 0.8ms, application-code: 226ms)
+  ✓   6 [Desktop Chrome] › e2e/recommendations.spec.ts:451:1 › 真实 discovery 自动 child 以深评稳定重排十项并标出正确 Top3 与 matching 面板 (10.9s)
+(node:74147) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /recommendations?targetId=84df8a70-3fc3-4f15-99ab-20cbd04a691e 200 in 43ms (next.js: 2ms, application-code: 41ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/f06ea74f-7138-4fb7-98dd-f2c7ed442e8d 200 in 20ms (next.js: 3ms, application-code: 17ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/c40d2e13-2038-448d-83ad-0bec9fcc2a2c 200 in 21ms (next.js: 2ms, application-code: 19ms)
+[WebServer] apps/web dev: (node:74194) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/c40d2e13-2038-448d-83ad-0bec9fcc2a2c 200 in 19ms (next.js: 0.7ms, application-code: 19ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/c40d2e13-2038-448d-83ad-0bec9fcc2a2c 200 in 21ms (next.js: 1.1ms, application-code: 20ms)
+[WebServer] apps/web dev:  GET /recommendations?targetId=84df8a70-3fc3-4f15-99ab-20cbd04a691e 200 in 50ms (next.js: 0.9ms, application-code: 49ms)
+[WebServer] apps/web dev:  POST /recommendations?targetId=84df8a70-3fc3-4f15-99ab-20cbd04a691e 200 in 67ms (next.js: 1.6ms, application-code: 65ms)
+[WebServer] apps/web dev:   └─ ƒ requestRecommendationReevaluationAction("84df8a70-3fc3-4f15-99ab-20cbd04a691e", "8c909e1e-322f-410e-a555-ab76133e704a", {}) in 28ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=84df8a70-3fc3-4f15-99ab-20cbd04a691e 200 in 69ms (next.js: 2.0ms, application-code: 67ms)
+[WebServer] apps/web dev:   └─ ƒ requestRecommendationReevaluationAction("84df8a70-3fc3-4f15-99ab-20cbd04a691e", "8c909e1e-322f-410e-a555-ab76133e704a", {}) in 24ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  GET /recommendations?targetId=84df8a70-3fc3-4f15-99ab-20cbd04a691e 200 in 72ms (next.js: 1.5ms, application-code: 70ms)
+[WebServer] apps/web dev:  GET /api/recommendations/lists/a88c7973-9eb5-4c26-9885-0e8da101255e/exclusions?targetId=84df8a70-3fc3-4f15-99ab-20cbd04a691e&cursor=f3fa4d9e-0a3d-41d8-85fd-8fd51ff67713 200 in 16ms (next.js: 3ms, application-code: 13ms)
+[WebServer] apps/web dev: (node:74199) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/recommendations/history?targetId=84df8a70-3fc3-4f15-99ab-20cbd04a691e&cursor=53425069-c29d-4cb0-ba08-33f271970d90 200 in 19ms (next.js: 1.0ms, application-code: 18ms)
+[WebServer] apps/web dev:  GET /api/recommendations/lists/bf671cd4-0630-4909-8f8f-2880e44f7801/exclusions?targetId=84df8a70-3fc3-4f15-99ab-20cbd04a691e 200 in 9ms (next.js: 1.3ms, application-code: 8ms)
+  ✓   7 [Mobile Safari] › e2e/recommendations.spec.ts:222:1 › 显式 Fake matching 真实链路交付双方证据、质量排除与单岗位重评历史 (5.3s)
+[WebServer] apps/web dev:  GET /recommendations?targetId=bd6c6650-f14b-4ea1-afe4-cca236baad8c 200 in 43ms (next.js: 2ms, application-code: 41ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/f9772ec5-0b2c-4c72-a010-b7810bdcdeac 200 in 24ms (next.js: 4ms, application-code: 19ms)
+[WebServer] apps/web dev: (node:74227) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/f9772ec5-0b2c-4c72-a010-b7810bdcdeac 200 in 10ms (next.js: 0.7ms, application-code: 9ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/4fb28b98-0d9d-49ed-a45d-f811180d17d5 200 in 12ms (next.js: 0.9ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/4fb28b98-0d9d-49ed-a45d-f811180d17d5 200 in 12ms (next.js: 0.7ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /recommendations?targetId=bd6c6650-f14b-4ea1-afe4-cca236baad8c 200 in 117ms (next.js: 0.9ms, application-code: 116ms)
+[WebServer] apps/web dev:  POST /recommendations?targetId=bd6c6650-f14b-4ea1-afe4-cca236baad8c 200 in 63ms (next.js: 1.0ms, application-code: 62ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("c8166066-2b12-4fad-99dc-7bfc9227b2dd", "18ffea64-b067-4072-a4f6-0e4c6417aa1d", {}) in 18ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=bd6c6650-f14b-4ea1-afe4-cca236baad8c 200 in 94ms (next.js: 2ms, application-code: 91ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("c8166066-2b12-4fad-99dc-7bfc9227b2dd", "2c6967a7-4ddd-4427-a014-bac0bce436ba", {}) in 19ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=bd6c6650-f14b-4ea1-afe4-cca236baad8c 200 in 80ms (next.js: 1.3ms, application-code: 79ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("c8166066-2b12-4fad-99dc-7bfc9227b2dd", "f07f6637-5a50-42e6-bce0-ecb8432e5a66", {}) in 20ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=bd6c6650-f14b-4ea1-afe4-cca236baad8c 200 in 89ms (next.js: 1.6ms, application-code: 87ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("c8166066-2b12-4fad-99dc-7bfc9227b2dd", "18ffea64-b067-4072-a4f6-0e4c6417aa1d", {}) in 20ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=bd6c6650-f14b-4ea1-afe4-cca236baad8c 200 in 100ms (next.js: 1.9ms, application-code: 98ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("c8166066-2b12-4fad-99dc-7bfc9227b2dd", "df0893ff-18e9-4d79-bdd0-b3bba27f9038", {}) in 30ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=bd6c6650-f14b-4ea1-afe4-cca236baad8c 200 in 85ms (next.js: 1.2ms, application-code: 84ms)
+[WebServer] apps/web dev:   └─ ƒ reviseCalibrationProposalAction("6cb5e6d0-c523-4caa-b464-5a9b4e8d1ba2", {}) in 18ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=bd6c6650-f14b-4ea1-afe4-cca236baad8c 200 in 75ms (next.js: 1.1ms, application-code: 74ms)
+[WebServer] apps/web dev:   └─ ƒ reviseCalibrationProposalAction("6cb5e6d0-c523-4caa-b464-5a9b4e8d1ba2", {}) in 14ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=bd6c6650-f14b-4ea1-afe4-cca236baad8c 200 in 58ms (next.js: 1.0ms, application-code: 57ms)
+[WebServer] apps/web dev:   └─ ƒ resolveCalibrationProposalAction("6cb5e6d0-c523-4caa-b464-5a9b4e8d1ba2", {}) in 11ms app/(workbench)/recommendations/actions.ts
+  ✓   8 [Mobile Safari] › e2e/recommendations.spec.ts:305:1 › 推荐决策与拒绝校准建议保持规则和目标不变 (7.5s)
+[WebServer] apps/web dev:  GET /recommendations?targetId=3c2d66f1-492f-4252-bd27-7d11ace0351b 200 in 40ms (next.js: 1.4ms, application-code: 39ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/38957fe6-d509-45a8-9d47-a2be19cd230e 200 in 139ms (next.js: 48ms, application-code: 91ms)
+[WebServer] apps/web dev: (node:74282) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/38957fe6-d509-45a8-9d47-a2be19cd230e 200 in 13ms (next.js: 0.9ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/a899b36e-7a40-4e43-b57f-69bdaebbca9f 200 in 12ms (next.js: 0.6ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/a899b36e-7a40-4e43-b57f-69bdaebbca9f 200 in 22ms (next.js: 1.8ms, application-code: 20ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/a899b36e-7a40-4e43-b57f-69bdaebbca9f 200 in 21ms (next.js: 3ms, application-code: 18ms)
+[WebServer] apps/web dev: (node:74288) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /recommendations?targetId=3c2d66f1-492f-4252-bd27-7d11ace0351b 200 in 123ms (next.js: 1.8ms, application-code: 122ms)
+[WebServer] apps/web dev:  POST /recommendations?targetId=3c2d66f1-492f-4252-bd27-7d11ace0351b 200 in 89ms (next.js: 1.3ms, application-code: 88ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("1edcb6a9-c045-43e5-9dd6-6f622b4eb6a4", "22f80f13-0f24-4b6d-a12f-322412a31bc9", {}) in 16ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=3c2d66f1-492f-4252-bd27-7d11ace0351b 200 in 75ms (next.js: 1.1ms, application-code: 74ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("1edcb6a9-c045-43e5-9dd6-6f622b4eb6a4", "9178037e-1697-4ab0-bf8d-a7ccdd8b3827", {}) in 16ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=3c2d66f1-492f-4252-bd27-7d11ace0351b 200 in 88ms (next.js: 1.2ms, application-code: 87ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("1edcb6a9-c045-43e5-9dd6-6f622b4eb6a4", "01a58966-63d7-4fd2-8328-d344b3d5b9fa", {}) in 25ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=3c2d66f1-492f-4252-bd27-7d11ace0351b 200 in 98ms (next.js: 2ms, application-code: 96ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("1edcb6a9-c045-43e5-9dd6-6f622b4eb6a4", "70f979a7-ebb0-4ada-8e40-66419a5b13ba", {}) in 19ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=3c2d66f1-492f-4252-bd27-7d11ace0351b 200 in 99ms (next.js: 1.9ms, application-code: 97ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("1edcb6a9-c045-43e5-9dd6-6f622b4eb6a4", "558acdfd-f130-48d1-bbb6-6693d9547093", {}) in 19ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=3c2d66f1-492f-4252-bd27-7d11ace0351b 200 in 105ms (next.js: 2ms, application-code: 103ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("1edcb6a9-c045-43e5-9dd6-6f622b4eb6a4", "4a4ebb52-f9c8-4875-a5f4-8498b0f06cb4", {}) in 33ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=3c2d66f1-492f-4252-bd27-7d11ace0351b 200 in 101ms (next.js: 1.4ms, application-code: 100ms)
+[WebServer] apps/web dev:   └─ ƒ resolveCalibrationProposalAction("3e2f3241-9977-43f8-8dd8-5085c02b568e", {}) in 14ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  GET /recommendations?targetId=3c2d66f1-492f-4252-bd27-7d11ace0351b 200 in 87ms (next.js: 5ms, application-code: 82ms)
+[WebServer] apps/web dev:  POST /recommendations?targetId=3c2d66f1-492f-4252-bd27-7d11ace0351b 200 in 70ms (next.js: 1.1ms, application-code: 69ms)
+[WebServer] apps/web dev:   └─ ƒ rebaseCalibrationProposalAction("3e2f3241-9977-43f8-8dd8-5085c02b568e", {}) in 13ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=3c2d66f1-492f-4252-bd27-7d11ace0351b 200 in 64ms (next.js: 0.9ms, application-code: 63ms)
+[WebServer] apps/web dev:   └─ ƒ resolveCalibrationProposalAction("3e2f3241-9977-43f8-8dd8-5085c02b568e", {}) in 13ms app/(workbench)/recommendations/actions.ts
+  ✓   9 [Mobile Safari] › e2e/recommendations.spec.ts:360:1 › 交错批准后立即锁定过期建议，刷新读模型并重新计算后可批准 (9.4s)
+[WebServer] apps/web dev:  GET /recommendations?targetId=203a4a32-1c64-4936-a79f-8f1a3f401820 200 in 57ms (next.js: 1.3ms, application-code: 55ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/2331d5b0-ad22-4a95-a7cb-24039a8cc15e 200 in 14ms (next.js: 1.8ms, application-code: 12ms)
+[WebServer] apps/web dev: (node:74304) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/2331d5b0-ad22-4a95-a7cb-24039a8cc15e 200 in 11ms (next.js: 0.7ms, application-code: 10ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/548b5790-d03a-4d31-9c89-fa0ad2f562e7 200 in 12ms (next.js: 0.8ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/548b5790-d03a-4d31-9c89-fa0ad2f562e7 200 in 13ms (next.js: 0.9ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /recommendations?targetId=203a4a32-1c64-4936-a79f-8f1a3f401820 200 in 40ms (next.js: 1.1ms, application-code: 39ms)
+  ✓  10 [Mobile Safari] › e2e/recommendations.spec.ts:397:1 › 显式 Fake matching 的质量不足候选可生成零推荐清单 (2.0s)
+[WebServer] apps/web dev:  GET /api/agent-runs/eb8787d8-9abb-46f1-ab6b-f6a6926b4745 200 in 14ms (next.js: 3ms, application-code: 11ms)
+[WebServer] apps/web dev: (node:74310) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/eb8787d8-9abb-46f1-ab6b-f6a6926b4745 200 in 13ms (next.js: 1.1ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/eb8787d8-9abb-46f1-ab6b-f6a6926b4745 200 in 16ms (next.js: 0.8ms, application-code: 15ms)
+  ✓  11 [Mobile Safari] › e2e/recommendations.spec.ts:420:1 › automatic deep-match 遇到运行前阻塞不会创建 child，也不会回滚已完成的 discovery 父运行 (1.6s)
+[WebServer] apps/web dev:  GET /recommendations?targetId=41ed8323-85c0-4987-b4ab-bacd6c515002 200 in 54ms (next.js: 4ms, application-code: 50ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/61b507ea-996d-492f-9bf3-9fc6161a6aed 200 in 16ms (next.js: 3ms, application-code: 13ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/61b507ea-996d-492f-9bf3-9fc6161a6aed 200 in 11ms (next.js: 0.8ms, application-code: 10ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/7383f030-e07b-4471-a869-53dcc09b5dda 200 in 14ms (next.js: 0.6ms, application-code: 14ms)
+[WebServer] apps/web dev: (node:74385) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/7383f030-e07b-4471-a869-53dcc09b5dda 200 in 14ms (next.js: 0.9ms, application-code: 13ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/7383f030-e07b-4471-a869-53dcc09b5dda 200 in 14ms (next.js: 1.8ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /home?runId=7383f030-e07b-4471-a869-53dcc09b5dda 200 in 61ms (next.js: 1.4ms, application-code: 60ms)
+[WebServer] apps/web dev: (node:74387) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /recommendations?targetId=41ed8323-85c0-4987-b4ab-bacd6c515002 200 in 175ms (next.js: 1.2ms, application-code: 174ms)
+  ✓  12 [Mobile Safari] › e2e/recommendations.spec.ts:451:1 › 真实 discovery 自动 child 以深评稳定重排十项并标出正确 Top3 与 matching 面板 (10.6s)
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Stopping 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Stopping 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Stopping 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Stopping 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Stopped 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Removing 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Removed 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Stopping 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Stopped 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Removing 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Removed 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Stopped 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Removing 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Removed 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Stopped 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Removing 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Removed 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Stopped 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Removing 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Removed 
+[WebServer]  Volume job-copilot-issue-2-e2e_redis-data Removing 
+[WebServer]  Network job-copilot-issue-2-e2e_default Removing 
+[WebServer]  Volume job-copilot-issue-2-e2e_minio-data Removing 
+[WebServer]  Volume job-copilot-issue-2-e2e_postgres-data Removing 
+[WebServer]  Volume job-copilot-issue-2-e2e_minio-data Removed 
+[WebServer]  Volume job-copilot-issue-2-e2e_redis-data Removed 
+[WebServer]  Volume job-copilot-issue-2-e2e_postgres-data Removed 
+[WebServer]  Network job-copilot-issue-2-e2e_default Removed 
+
+  12 passed (1.3m)
+TEE_EXIT_CODE=0

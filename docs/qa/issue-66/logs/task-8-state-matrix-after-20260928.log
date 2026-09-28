@@ -1,0 +1,48 @@
+Issue #66 after 状态矩阵采证摘要（仅记录可核实结果；原始 runner stdout 不纳入提交）
+
+所有 Playwright 命令均以 --workers=1 串行执行，且每次启动前确认没有遗留 Vitest、Playwright、Next、Nest 或 pnpm test 进程。
+
+CAREER_LENS_CAPTURE=after pnpm --filter web test:e2e -- account-run-policy.spec.ts --workers=1
+8 passed
+
+CAREER_LENS_CAPTURE=after pnpm --filter web test:e2e -- company-watchlist.spec.ts --workers=1
+4 passed
+
+CAREER_LENS_CAPTURE=after pnpm --filter web test:e2e -- job-targets.spec.ts --workers=1
+2 passed
+
+CAREER_LENS_CAPTURE=after pnpm --filter web test:e2e -- markdown-career-import.spec.ts --workers=1
+4 passed
+
+CAREER_LENS_CAPTURE=after E2E_MODEL_DIAGNOSTIC_SCENARIO=success pnpm --filter web test:e2e -- model-diagnostics.spec.ts --workers=1
+2 passed
+
+CAREER_LENS_CAPTURE=after E2E_MODEL_DIAGNOSTIC_SCENARIO=authentication_failed pnpm --filter web test:e2e -- model-diagnostics.spec.ts --workers=1
+2 passed
+
+CAREER_LENS_CAPTURE=after pnpm --filter web test:e2e -- workbench-inbox.spec.ts --workers=1
+passed（该 spec 的 source-only phase 有预期 skipped）
+
+CAREER_LENS_CAPTURE=after pnpm --filter web test:e2e -- first-recommendation-journey.spec.ts --workers=1
+首次运行 RED：旧 helper 直接操作折叠文件控件，敏感信息节点隐藏；修正为先点击“开始导入职业资料”后重跑 passed。
+
+CAREER_LENS_CAPTURE=after pnpm --filter web test:e2e -- recommendations.spec.ts --workers=1
+passed
+
+pnpm --filter web test
+95 files / 661 tests passed
+
+pnpm --filter web typecheck
+passed
+
+pnpm --filter web lint
+passed
+
+pnpm --filter web build
+passed
+
+env -u CAREER_LENS_CAPTURE pnpm --filter web test:e2e -- career-lens-acceptance.spec.ts --workers=1
+10 passed；运行前后 screenshots/before 路径无差异。
+
+CAREER_LENS_CAPTURE=after pnpm --filter web test:e2e -- career-lens-acceptance.spec.ts --workers=1
+10 passed

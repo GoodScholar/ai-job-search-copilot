@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, vi } from "vitest";
 import { RecommendationRunSchema } from "@job-copilot/contracts/recommendation-runs";
 import { RecommendationListSchema } from "@job-copilot/contracts/recommendations";
@@ -46,9 +46,38 @@ describe("RecommendationsPage", () => {
 
   it("explains the evidence-driven recommendation state without exposing a precise score", async () => {
     render(await RecommendationsPage());
+    expect(screen.getByRole("main", { name: "证据推荐清单" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "推荐清单" })).toBeInTheDocument();
     expect(screen.getByText("暂无可处理的推荐")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "推荐下一行动" })).toHaveTextContent("先建立求职目标");
+    expect(screen.getByRole("link", { name: "建立求职目标" })).toHaveAttribute("href", "/profile/targets");
     expect(screen.queryByText(/%/)).not.toBeInTheDocument();
+  });
+
+  it("有活动主目标但尚无推荐时引导查看或启动推荐，而非重新建立目标", async () => {
+    mocks.getJobTargets.mockResolvedValue({ targets: [{ targetId: targetA, state: "active", priority: "primary" }] });
+
+    render(await RecommendationsPage());
+
+    const nextAction = screen.getByRole("region", { name: "推荐下一行动" });
+    expect(nextAction).toHaveTextContent("从首页启动或查看今日推荐");
+    expect(within(nextAction).getByRole("link", { name: "查看推荐准备" })).toHaveAttribute("href", "/home#recommendation-run");
+    expect(within(nextAction).queryByRole("link", { name: "建立求职目标" })).not.toBeInTheDocument();
+  });
+
+  it("将每个真实岗位作为机会对象，并把岗位与画像证据放入可展开对照", async () => {
+    mocks.getLatestPublishedRecommendationRun.mockResolvedValue(published(targetB, listA));
+    mocks.getRecommendationList.mockResolvedValue(list(listA, targetB, "结构化岗位"));
+    render(await RecommendationsPage());
+    const opportunity = screen.getByRole("article", { name: "机会：结构化岗位" });
+    expect(opportunity).toHaveTextContent("绑定公司 · 上海");
+    expect(within(opportunity).getByRole("button", { name: "收藏" })).toBeVisible();
+    expect(
+      within(opportunity).getByRole("region", { name: "岗位证据对照" }),
+    ).toBeInTheDocument();
+    expect(
+      within(opportunity).getByRole("region", { name: "画像证据对照" }),
+    ).toBeInTheDocument();
   });
 
   it("default 将最新已发布结果绑定到其精确清单，而非首个活动目标的最新清单", async () => {
@@ -248,14 +277,15 @@ describe("RecommendationsPage", () => {
     }], nextCursor: null });
 
     render(await RecommendationsPage({ searchParams: Promise.resolve({ targetId: "00000000-0000-4000-8000-000000000001" }) }));
+    fireEvent.click(screen.getByText("查看证据与判断"));
     expect(screen.getByText("高度匹配")).toBeInTheDocument();
     expect(screen.getByText("今日优先处理")).toBeInTheDocument();
     expect(screen.getByText(/岗位要求与已确认技能相符/u)).toBeInTheDocument();
     expect(screen.getAllByText("技能").length).toBeGreaterThan(1);
     expect(screen.getAllByText("资格风险").length).toBeGreaterThan(1);
-    expect(screen.getByText(/岗位证据：工作方式：远程办公/u)).toBeInTheDocument();
+    expect(screen.getByText(/工作方式：远程办公/u)).toBeInTheDocument();
     expect(screen.getByText(/薪资：月薪 3-4.5 万；行业：AI 基础设施；雇佣类型：正式直聘/u)).toBeInTheDocument();
-    expect(screen.getByText(/画像证据：已确认 TypeScript 经历/u)).toBeInTheDocument();
+    expect(screen.getByText(/已确认 TypeScript 经历/u)).toBeInTheDocument();
     expect(screen.getByText(/稳定排除 1 项岗位：匹配证据不足/u)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重新评估此岗位" })).toBeInTheDocument();
     expect(screen.getByLabelText("推荐清单版本")).toHaveTextContent("清单版本 2");

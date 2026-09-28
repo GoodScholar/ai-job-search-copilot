@@ -1,0 +1,934 @@
+$ PLAYWRIGHT_HTML_OPEN=never node scripts/e2e-runner.mjs -- recommendations.spec.ts markdown-career-import.spec.ts docx-career-import.spec.ts pdf-career-import.spec.ts job-targets.spec.ts company-watchlist.spec.ts job-imports.spec.ts source-health.spec.ts account-run-policy.spec.ts model-diagnostics.spec.ts --workers=1
+[WebServer] (node:77536) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] Docker Compose version v5.1.3
+[WebServer] time="2026-09-28T08:43:45+08:00" level=warning msg="Warning: No resource found to remove for project \"job-copilot-issue-2-e2e\"."
+[WebServer]  Network job-copilot-issue-2-e2e_default Creating 
+[WebServer]  Network job-copilot-issue-2-e2e_default Created 
+[WebServer]  Volume job-copilot-issue-2-e2e_minio-data Creating 
+[WebServer]  Volume job-copilot-issue-2-e2e_minio-data Created 
+[WebServer]  Volume job-copilot-issue-2-e2e_postgres-data Creating 
+[WebServer]  Volume job-copilot-issue-2-e2e_postgres-data Created 
+[WebServer]  Volume job-copilot-issue-2-e2e_redis-data Creating 
+[WebServer]  Volume job-copilot-issue-2-e2e_redis-data Created 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Creating 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Creating 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Creating 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Creating 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Created 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Created 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Created 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Created 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Starting 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Starting 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Starting 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Starting 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Started 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Started 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Started 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Started 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Waiting 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Waiting 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Waiting 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Waiting 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Healthy 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Healthy 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Healthy 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Healthy 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Running 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Creating 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Created 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Waiting 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Healthy 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Starting 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Started 
+[WebServer] container "6eb34ce4ece4c016489e8c054524caffce3db711c91a573b930edd70273084f4" exited with status code 0
+[WebServer] (node:77614) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] Reading config file '/Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/packages/database/drizzle.config.ts'
+[WebServer] (node:77615) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] Using 'pg' driver for database querying
+[WebServer] [⣷] applying migrations...[WebServer] [⣯] applying migrations...[WebServer] [⣟] applying migrations...[WebServer] [✓] migrations applied successfully![WebServer] (node:77649) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] Scope: 3 of 9 workspace projects
+[WebServer] apps/api dev$ node ../../scripts/nest-dev.mjs
+[WebServer] apps/worker dev$ node ../../scripts/nest-dev.mjs
+[WebServer] apps/web dev$ next dev --hostname 127.0.0.1
+[WebServer] apps/api dev: (node:77694) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/api dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/worker dev: (node:77695) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/worker dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/worker dev: (node:77697) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/worker dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/api dev: (node:77696) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/api dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:77688) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:77698) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: ▲ Next.js 16.3.2 (Turbopack)
+[WebServer] apps/web dev: - Local:         http://127.0.0.1:3120
+[WebServer] apps/web dev: - Network:       http://127.0.0.1:3120
+[WebServer] apps/web dev: ✓ Ready in 178ms
+[WebServer] apps/web dev: ✓ Running next.config.ts took 18ms
+[WebServer] apps/web dev: (node:77701) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/worker dev: [Nest] 77697  - 09/28/2026, 8:43:50 AM     LOG [NestFactory] Starting Nest application...
+[WebServer] apps/worker dev: [Nest] 77697  - 09/28/2026, 8:43:50 AM     LOG [InstanceLoader] AppModule dependencies initialized +11ms
+[WebServer] apps/worker dev: [Nest] 77697  - 09/28/2026, 8:43:50 AM     LOG [InstanceLoader] CareerImportModule dependencies initialized +1ms
+[WebServer] apps/worker dev: [Nest] 77697  - 09/28/2026, 8:43:50 AM     LOG [InstanceLoader] JobImportModule dependencies initialized +0ms
+[WebServer] apps/worker dev: [Nest] 77697  - 09/28/2026, 8:43:50 AM     LOG [InstanceLoader] AgentRunModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [NestFactory] Starting Nest application...
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [InstanceLoader] RuntimeConfigModule dependencies initialized +10ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [InstanceLoader] HealthModule dependencies initialized +1ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [InstanceLoader] CareerImportModule dependencies initialized +1ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [InstanceLoader] ProfileReviewModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [InstanceLoader] JobTargetsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [InstanceLoader] CompanyWatchlistsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [InstanceLoader] JobImportsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [InstanceLoader] JobTriageModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [InstanceLoader] AccountRunPoliciesModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [InstanceLoader] ModelDiagnosticsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [InstanceLoader] AppModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [InstanceLoader] AuthModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [InstanceLoader] RunPreflightModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [InstanceLoader] WorkbenchModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [InstanceLoader] AgentRunsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [InstanceLoader] RecommendationsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [InstanceLoader] RecommendationRunsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [InstanceLoader] JobDiscoverySchedulesModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [InstanceLoader] AgentInboxModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RoutesResolver] AccountsController {/v1/accounts}: +105ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/accounts/:userId, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RoutesResolver] AuthController {/v1/auth}: +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/auth/dev/sessions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/auth/sessions/current, DELETE} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RoutesResolver] HealthController {/health}: +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/health/live, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/health/ready, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RoutesResolver] WorkbenchController {/v1/workbench}: +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/workbench/home, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/workbench/first-recommendation-journey, PUT} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RoutesResolver] RunPreflightController {/v1/run-preflight}: +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/run-preflight, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RoutesResolver] ModelDiagnosticsController {/v1/model-diagnostics}: +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/model-diagnostics, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/model-diagnostics, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RoutesResolver] CareerImportController {/v1/career-documents/imports}: +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/career-documents/imports, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/career-documents/imports, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/career-documents/imports/:importId, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RoutesResolver] ProfileReviewController {/v1/profile}: +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/profile, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/profile/candidate-facts/:factId/decisions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/profile/facts, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/profile/facts/:factId/revisions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/profile/facts/:factId/removals, POST} route +1ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RoutesResolver] CareerFactConflictReviewController {/v1/career-documents/fact-conflicts}: +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/career-documents/fact-conflicts/:conflictId/resolutions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RoutesResolver] JobTargetsController {/v1/job-targets}: +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/job-targets, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/job-targets, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/revisions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/deactivations, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RoutesResolver] CompanyWatchlistsController {/v1/job-targets/:targetId/company-watchlist}: +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/company-watchlist, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/company-watchlist/items, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/company-watchlist/items/:itemId/revisions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/company-watchlist/items/:itemId/state-changes, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/company-watchlist/reorders, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RoutesResolver] SourceHealthController {/v1/job-targets/:targetId/source-health}: +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/source-health, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RoutesResolver] SourceCapabilitiesController {/v1/job-targets/:targetId/source-capabilities}: +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/source-capabilities, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RoutesResolver] JobDiscoverySchedulesController {/v1/job-targets/:targetId/discovery-schedule}: +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/discovery-schedule, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/discovery-schedule, PUT} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RoutesResolver] AgentRunsController {/v1/agent-runs}: +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/agent-runs, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/agent-runs/:runId/controls, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/agent-runs/latest, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/agent-runs/:runId/events, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/agent-runs/:runId, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RoutesResolver] JobImportsController {/v1/job-imports}: +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/job-imports, POST} route +1ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/job-imports, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/job-imports/:importId/raw, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/job-imports/:importId, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RoutesResolver] JobTriageController {/v1/job-opportunities/:opportunityId/triage-versions}: +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/job-opportunities/:opportunityId/triage-versions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/job-opportunities/:opportunityId/triage-versions/latest, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/job-opportunities/:opportunityId/triage-versions/:triageVersionId, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RoutesResolver] RecommendationRunsController {/v1/recommendation-runs}: +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/recommendation-runs/preparation, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/recommendation-runs, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/recommendation-runs/latest, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/recommendation-runs/latest-result, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/recommendation-runs/:runId, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/recommendation-runs/:runId/controls, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RoutesResolver] AgentInboxController {/v1/agent-inbox}: +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/agent-inbox, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/agent-inbox/:itemId/actions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RoutesResolver] RecommendationsController {/v1/recommendations}: +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/latest, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/lists/:recommendationListId, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/history, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/lists/:recommendationListId/exclusions, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/runs, POST} route +1ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/lists/:listId/items/:itemId/decisions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/calibration-proposals, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/calibration-proposals/:id/revisions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/calibration-proposals/:id/rebases, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/calibration-proposals/:id/resolutions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RoutesResolver] AccountRunPoliciesController {/v1/account/run-policy}: +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/account/run-policy, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/account/run-policy/control, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/account/run-policy/history, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/account/run-policy/history/:revisionNumber, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/account/run-policy, PUT} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [RouterExplorer] Mapped {/v1/account/run-policy/controls, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 77696  - 09/28/2026, 8:43:50 AM     LOG [NestApplication] Nest application successfully started +1ms
+[WebServer] 本地测试运行时已就绪
+[WebServer] apps/web dev:  GET /login 200 in 252ms (next.js: 131ms, application-code: 121ms)
+
+Running 42 tests using 1 worker
+
+(node:77703) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /home 200 in 199ms (next.js: 18ms, application-code: 181ms)
+[WebServer] apps/web dev:  GET /profile/run-policy 200 in 29ms (next.js: 8ms, application-code: 21ms)
+[WebServer] apps/web dev:  GET /profile 200 in 56ms (next.js: 9ms, application-code: 47ms)
+[WebServer] apps/web dev:  GET /profile/run-policy 200 in 25ms (next.js: 1.2ms, application-code: 24ms)
+[WebServer] apps/web dev:  PUT /api/account/run-policy 200 in 274ms (next.js: 220ms, application-code: 53ms)
+[WebServer] apps/web dev:  GET /profile/run-policy 200 in 33ms (next.js: 0.9ms, application-code: 32ms)
+[WebServer] apps/web dev:  GET /api/account/run-policy/history 200 in 68ms (next.js: 53ms, application-code: 15ms)
+  ✓   1 [Desktop Chrome] › e2e/account-run-policy.spec.ts:76:1 › 账户运行策略可从首页和画像进入，保存后保留四层值、刷新与修订历史 (2.1s)
+[WebServer] apps/web dev:  PUT /api/account/run-policy 400 in 4ms (next.js: 0.9ms, application-code: 3ms)
+  ✓   2 [Desktop Chrome] › e2e/account-run-policy.spec.ts:149:1 › 超硬上限在 API 和 BFF 返回稳定的字段错误契约 (53ms)
+  ✓   3 [Desktop Chrome] › e2e/account-run-policy.spec.ts:165:1 › 账户运行策略按会话隔离，并拒绝未认证或伪造 userId 的请求 (65ms)
+[WebServer] apps/web dev:  GET /profile/run-policy 200 in 27ms (next.js: 0.9ms, application-code: 26ms)
+[WebServer] apps/web dev:  POST /api/account/run-policy/controls 200 in 83ms (next.js: 53ms, application-code: 30ms)
+[WebServer] apps/web dev:  GET /api/account/run-policy/control 200 in 53ms (next.js: 49ms, application-code: 4ms)
+[WebServer] apps/web dev:  GET /profile/run-policy 200 in 48ms (next.js: 0.8ms, application-code: 47ms)
+[WebServer] apps/web dev:  POST /api/account/run-policy/controls 200 in 16ms (next.js: 0.6ms, application-code: 15ms)
+[WebServer] apps/web dev:  GET /api/account/run-policy/control 200 in 8ms (next.js: 0.8ms, application-code: 7ms)
+  ✓   4 [Desktop Chrome] › e2e/account-run-policy.spec.ts:198:1 › 账户全局停止持久化到刷新后，解除不恢复任何旧运行 (496ms)
+[WebServer] apps/web dev: (node:77712) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /profile/targets/03db74d0-8add-49b6-b375-7a24f128d0bb/watchlist 200 in 426ms (next.js: 388ms, application-code: 38ms)
+  ✓   5 [Desktop Chrome] › e2e/company-watchlist.spec.ts:41:1 › 超长无空格角色名称不会造成 Watchlist 页面横向溢出 (593ms)
+[WebServer] apps/web dev:  GET /profile/targets/046271f8-ea67-4f07-879e-b684d4cbc95d/watchlist 200 in 29ms (next.js: 2ms, application-code: 27ms)
+[WebServer] apps/web dev: (node:77716) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:77717) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  POST /api/job-targets/046271f8-ea67-4f07-879e-b684d4cbc95d/company-watchlist/items 201 in 506ms (next.js: 483ms, application-code: 23ms)
+[WebServer] apps/web dev: (node:77718) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:77719) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/job-targets/046271f8-ea67-4f07-879e-b684d4cbc95d/source-capabilities 200 in 479ms (next.js: 465ms, application-code: 15ms)
+[WebServer] apps/web dev:  GET /api/job-targets/046271f8-ea67-4f07-879e-b684d4cbc95d/source-health 200 in 481ms (next.js: 470ms, application-code: 11ms)
+[WebServer] apps/web dev:  POST /api/job-targets/046271f8-ea67-4f07-879e-b684d4cbc95d/company-watchlist/items 201 in 27ms (next.js: 4ms, application-code: 22ms)
+[WebServer] apps/web dev:  GET /api/job-targets/046271f8-ea67-4f07-879e-b684d4cbc95d/source-health 200 in 23ms (next.js: 4ms, application-code: 20ms)
+[WebServer] apps/web dev:  GET /api/job-targets/046271f8-ea67-4f07-879e-b684d4cbc95d/source-capabilities 200 in 24ms (next.js: 7ms, application-code: 17ms)
+[WebServer] apps/web dev: (node:77721) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:77722) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:77723) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:77724) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  POST /api/job-targets/046271f8-ea67-4f07-879e-b684d4cbc95d/company-watchlist/reorders 201 in 469ms (next.js: 455ms, application-code: 15ms)
+[WebServer] apps/web dev:  GET /api/job-targets/046271f8-ea67-4f07-879e-b684d4cbc95d/source-capabilities 200 in 11ms (next.js: 4ms, application-code: 7ms)
+[WebServer] apps/web dev:  GET /api/job-targets/046271f8-ea67-4f07-879e-b684d4cbc95d/source-health 200 in 12ms (next.js: 3ms, application-code: 9ms)
+[WebServer] apps/web dev: (node:77726) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:77725) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:77727) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  POST /api/job-targets/046271f8-ea67-4f07-879e-b684d4cbc95d/company-watchlist/items/245b4868-4b76-4d46-8397-099242a73f8d/state-changes 201 in 488ms (next.js: 469ms, application-code: 19ms)
+[WebServer] apps/web dev:  GET /api/job-targets/046271f8-ea67-4f07-879e-b684d4cbc95d/source-capabilities 200 in 12ms (next.js: 4ms, application-code: 8ms)
+[WebServer] apps/web dev:  GET /api/job-targets/046271f8-ea67-4f07-879e-b684d4cbc95d/source-health 200 in 13ms (next.js: 1.9ms, application-code: 11ms)
+[WebServer] apps/web dev: (node:77729) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:77728) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /profile/targets/046271f8-ea67-4f07-879e-b684d4cbc95d/watchlist 200 in 37ms (next.js: 3ms, application-code: 34ms)
+[WebServer] apps/web dev: (node:77730) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:77731) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  POST /api/job-targets/046271f8-ea67-4f07-879e-b684d4cbc95d/company-watchlist/items/245b4868-4b76-4d46-8397-099242a73f8d/revisions 409 in 478ms (next.js: 464ms, application-code: 14ms)
+  ✓   6 [Desktop Chrome] › e2e/company-watchlist.spec.ts:58:1 › 目标公司 Watchlist 可添加、排序、禁用、重载并显示并发冲突 (4.6s)
+[WebServer] apps/web dev:  GET /profile 200 in 23ms (next.js: 1.4ms, application-code: 21ms)
+[WebServer] apps/web dev:  POST /profile 200 in 45ms (next.js: 1.1ms, application-code: 44ms)
+[WebServer] apps/web dev:   └─ ƒ createCareerImportAction({"code":"","message":"","ok":false}, {}) in 40ms app/(workbench)/profile/actions.ts
+[WebServer] apps/web dev: (node:77736) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/career-imports/943e899a-c277-4567-9ae8-fb175d6f5798 200 in 503ms (next.js: 482ms, application-code: 21ms)
+[WebServer] apps/web dev:  POST /profile 200 in 29ms (next.js: 1.1ms, application-code: 28ms)
+[WebServer] apps/web dev:   └─ ƒ createCareerImportAction({"code":"","message":"","ok":false}, {}) in 25ms app/(workbench)/profile/actions.ts
+[WebServer] apps/web dev:  GET /api/career-imports/92e6564d-0eff-43b1-b3fa-b9a706e48db5 200 in 27ms (next.js: 4ms, application-code: 23ms)
+[WebServer] apps/web dev:  GET /api/career-imports/943e899a-c277-4567-9ae8-fb175d6f5798 200 in 19ms (next.js: 1.1ms, application-code: 18ms)
+[WebServer] apps/web dev: (node:77737) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:77738) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  POST /api/profile/fact-conflicts/020ae33b-eea3-45ee-abaf-bcea34a777b1/resolutions 200 in 469ms (next.js: 437ms, application-code: 33ms)
+[WebServer] apps/web dev:  GET /profile 200 in 44ms (next.js: 2.0ms, application-code: 42ms)
+[WebServer] apps/web dev:  GET /api/career-imports/92e6564d-0eff-43b1-b3fa-b9a706e48db5 200 in 4ms (next.js: 2ms, application-code: 1.3ms)
+[WebServer] apps/web dev:  GET /api/career-imports/92e6564d-0eff-43b1-b3fa-b9a706e48db5 200 in 15ms (next.js: 0.7ms, application-code: 14ms)
+  ✓   7 [Desktop Chrome] › e2e/docx-career-import.spec.ts:64:1 › DOCX 浏览器脱敏副本经过队列处理后显示段落证据、跨文档冲突并可解决 (2.7s)
+[WebServer] apps/web dev: (node:77742) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /profile 200 in 21ms (next.js: 0.8ms, application-code: 20ms)
+[WebServer] apps/web dev:  POST /profile 200 in 97ms (next.js: 1.1ms, application-code: 96ms)
+[WebServer] apps/web dev:   └─ ƒ createCareerImportAction({"code":"","message":"","ok":false}, {}) in 93ms app/(workbench)/profile/actions.ts
+[WebServer] apps/web dev:  GET /api/career-imports/e7a9425d-18f3-473c-a53e-b6091a933293 200 in 12ms (next.js: 2.0ms, application-code: 10ms)
+[WebServer] apps/web dev: (node:77744) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+  ✓   8 [Desktop Chrome] › e2e/docx-career-import.spec.ts:95:1 › 含嵌入媒体的 DOCX 在浏览器先进入隐私确认，处理副本不显示原媒体字节 (525ms)
+[WebServer] apps/web dev:  GET /jobs/import 200 in 38ms (next.js: 8ms, application-code: 30ms)
+[WebServer] apps/web dev:  POST /jobs/import 200 in 29ms (next.js: 1.0ms, application-code: 28ms)
+[WebServer] apps/web dev:   └─ ƒ createJobImportAction({"code":"","message":"","ok":false}, {}) in 24ms app/(workbench)/jobs/import/actions.ts
+[WebServer] apps/web dev: (node:77747) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/job-imports/313a75e9-8c7e-4229-9da2-3c7c6040471f 200 in 485ms (next.js: 468ms, application-code: 17ms)
+[WebServer] apps/web dev:  GET /api/job-imports/313a75e9-8c7e-4229-9da2-3c7c6040471f 200 in 29ms (next.js: 6ms, application-code: 23ms)
+[WebServer] apps/web dev: (node:77758) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:77759) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/job-imports/313a75e9-8c7e-4229-9da2-3c7c6040471f/raw 200 in 472ms (next.js: 451ms, application-code: 20ms)
+[WebServer] apps/web dev:  GET /jobs/import 200 in 24ms (next.js: 0.9ms, application-code: 24ms)
+[WebServer] apps/web dev:  GET /api/job-imports/313a75e9-8c7e-4229-9da2-3c7c6040471f 200 in 18ms (next.js: 2.0ms, application-code: 16ms)
+[WebServer] apps/web dev:  GET /api/job-imports/313a75e9-8c7e-4229-9da2-3c7c6040471f 200 in 14ms (next.js: 1.1ms, application-code: 13ms)
+[WebServer] apps/web dev:  GET /api/job-imports/313a75e9-8c7e-4229-9da2-3c7c6040471f/raw 200 in 10ms (next.js: 1.6ms, application-code: 8ms)
+[WebServer] apps/web dev: (node:77762) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:77763) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  POST /jobs/import 200 in 13ms (next.js: 0.9ms, application-code: 13ms)
+[WebServer] apps/web dev:   └─ ƒ createJobImportAction({"code":"","message":"","ok":false}, {}) in 10ms app/(workbench)/jobs/import/actions.ts
+[WebServer] apps/web dev:  GET /api/job-imports/313a75e9-8c7e-4229-9da2-3c7c6040471f 200 in 7ms (next.js: 0.6ms, application-code: 6ms)
+[WebServer] apps/web dev:  GET /api/job-imports/313a75e9-8c7e-4229-9da2-3c7c6040471f/raw 200 in 13ms (next.js: 3ms, application-code: 11ms)
+[WebServer] apps/web dev:  POST /jobs/import 200 in 26ms (next.js: 1.0ms, application-code: 25ms)
+[WebServer] apps/web dev:   └─ ƒ createJobImportAction({"code":"","message":"","ok":false}, {}) in 23ms app/(workbench)/jobs/import/actions.ts
+[WebServer] apps/web dev:  GET /api/job-imports/47cda5ca-c44d-4aa0-ab9c-c9cc7ebe97af 200 in 9ms (next.js: 0.9ms, application-code: 8ms)
+[WebServer] apps/web dev:  POST /jobs/import 200 in 28ms (next.js: 2ms, application-code: 25ms)
+[WebServer] apps/web dev:   └─ ƒ createJobImportAction({"code":"","message":"","ok":false}, {}) in 22ms app/(workbench)/jobs/import/actions.ts
+[WebServer] apps/web dev:  GET /api/job-imports/276e708f-33f2-4f64-a173-55036e3ded96 200 in 10ms (next.js: 1.5ms, application-code: 8ms)
+[WebServer] apps/web dev:  GET /api/job-imports/276e708f-33f2-4f64-a173-55036e3ded96 200 in 17ms (next.js: 4ms, application-code: 13ms)
+[WebServer] apps/web dev:  GET /api/job-imports/276e708f-33f2-4f64-a173-55036e3ded96/raw 200 in 13ms (next.js: 3ms, application-code: 10ms)
+[WebServer] apps/web dev: (node:77765) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:77766) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+  ✓   9 [Desktop Chrome] › e2e/job-imports.spec.ts:131:1 › 岗位导入在真实运行时完成、去重、保留原文并处理失败夹具 (4.3s)
+[WebServer] apps/web dev:  GET /jobs/import 200 in 22ms (next.js: 0.9ms, application-code: 21ms)
+[WebServer] apps/web dev:  POST /jobs/import 200 in 36ms (next.js: 1.1ms, application-code: 35ms)
+[WebServer] apps/web dev:   └─ ƒ createJobImportAction({"code":"","message":"","ok":false}, {}) in 33ms app/(workbench)/jobs/import/actions.ts
+[WebServer] apps/web dev:  GET /api/job-imports/9ca6c0b4-b58f-4fef-8a88-0fe91bd6c1cf 200 in 11ms (next.js: 1.9ms, application-code: 9ms)
+[WebServer] apps/web dev: (node:77769) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/job-imports/9ca6c0b4-b58f-4fef-8a88-0fe91bd6c1cf 200 in 20ms (next.js: 5ms, application-code: 15ms)
+[WebServer] apps/web dev:  GET /api/job-imports/9ca6c0b4-b58f-4fef-8a88-0fe91bd6c1cf/raw 200 in 13ms (next.js: 2ms, application-code: 11ms)
+[WebServer] apps/web dev: (node:77770) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:77771) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  POST /jobs/import 200 in 16ms (next.js: 1.7ms, application-code: 14ms)
+[WebServer] apps/web dev:   └─ ƒ createJobImportAction({"code":"","message":"","ok":false}, {}) in 11ms app/(workbench)/jobs/import/actions.ts
+[WebServer] apps/web dev:  GET /api/job-imports/9ca6c0b4-b58f-4fef-8a88-0fe91bd6c1cf 200 in 10ms (next.js: 0.8ms, application-code: 9ms)
+[WebServer] apps/web dev:  GET /api/job-imports/9ca6c0b4-b58f-4fef-8a88-0fe91bd6c1cf/raw 200 in 9ms (next.js: 0.6ms, application-code: 9ms)
+[WebServer] apps/web dev:  POST /jobs/import 200 in 11ms (next.js: 1.0ms, application-code: 10ms)
+[WebServer] apps/web dev:   └─ ƒ createJobImportAction({"code":"","message":"","ok":false}, {}) in 7ms app/(workbench)/jobs/import/actions.ts
+[WebServer] apps/web dev:  POST /jobs/import 200 in 10ms (next.js: 1.4ms, application-code: 9ms)
+[WebServer] apps/web dev:   └─ ƒ createJobImportAction({"code":"","message":"","ok":false}, {}) in 6ms app/(workbench)/jobs/import/actions.ts
+[WebServer] apps/web dev:  POST /jobs/import 200 in 10ms (next.js: 0.9ms, application-code: 9ms)
+[WebServer] apps/web dev:   └─ ƒ createJobImportAction({"code":"","message":"","ok":false}, {}) in 7ms app/(workbench)/jobs/import/actions.ts
+  ✓  10 [Desktop Chrome] › e2e/job-imports.spec.ts:215:1 › 岗位链接只导入受控本地 fixture 的具体页面，并显示各类 URL 验证结果 (1.8s)
+[WebServer] apps/web dev:  GET /profile/targets 200 in 35ms (next.js: 8ms, application-code: 26ms)
+[WebServer] apps/web dev:  POST /api/job-targets 201 in 50ms (next.js: 27ms, application-code: 23ms)
+[WebServer] apps/web dev:  POST /api/job-targets 201 in 22ms (next.js: 0.9ms, application-code: 21ms)
+[WebServer] apps/web dev:  GET /profile/targets 200 in 25ms (next.js: 1.1ms, application-code: 24ms)
+[WebServer] apps/web dev: (node:77773) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  POST /api/job-targets/465930a7-71f1-4b36-82f5-8f14ebe7028c/revisions 409 in 458ms (next.js: 445ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /profile/targets 200 in 47ms (next.js: 2ms, application-code: 44ms)
+[WebServer] apps/web dev:  POST /api/job-targets/465930a7-71f1-4b36-82f5-8f14ebe7028c/revisions 201 in 18ms (next.js: 1.9ms, application-code: 16ms)
+[WebServer] apps/web dev: (node:77779) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:77780) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  POST /api/job-targets/465930a7-71f1-4b36-82f5-8f14ebe7028c/deactivations 201 in 487ms (next.js: 466ms, application-code: 20ms)
+  ✓  11 [Desktop Chrome] › e2e/job-targets.spec.ts:46:1 › 求职目标可由可信画像建议确认、持久化、并发提示并停用 (3.0s)
+[WebServer] apps/web dev:  GET /login?returnTo=%2Fprofile 200 in 10ms (next.js: 1.2ms, application-code: 9ms)
+[WebServer] apps/web dev:  GET /profile 200 in 16ms (next.js: 0.9ms, application-code: 15ms)
+[WebServer] apps/web dev:  POST /login?returnTo=%2Fprofile 200 in 33ms (next.js: 1.0ms, application-code: 32ms)
+[WebServer] apps/web dev:   └─ ƒ startDevSessionAction({}) in 12ms app/login/actions.ts
+[WebServer] apps/web dev:  GET /profile 200 in 23ms (next.js: 0.9ms, application-code: 22ms)
+  ✘  12 [Desktop Chrome] › e2e/markdown-career-import.spec.ts:90:1 › 登录用户可导入、持久化并安全复用 Markdown 职业资料 (5.3s)
+(node:77813) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /login?returnTo=%2Fprofile 200 in 15ms (next.js: 3ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /profile 200 in 19ms (next.js: 3ms, application-code: 16ms)
+[WebServer] apps/web dev:  POST /login?returnTo=%2Fprofile 200 in 48ms (next.js: 1.0ms, application-code: 47ms)
+[WebServer] apps/web dev:   └─ ƒ startDevSessionAction({}) in 23ms app/login/actions.ts
+[WebServer] apps/web dev:  GET /profile 200 in 23ms (next.js: 0.9ms, application-code: 22ms)
+[WebServer] apps/web dev:  GET /profile 200 in 23ms (next.js: 1.0ms, application-code: 22ms)
+[WebServer] apps/web dev:  GET /api/career-imports/10e2e8b1-fd4b-4c90-83de-42a61c395ef0 200 in 5ms (next.js: 3ms, application-code: 1.9ms)
+[WebServer] apps/web dev:  GET /api/career-imports/10e2e8b1-fd4b-4c90-83de-42a61c395ef0 200 in 9ms (next.js: 0.6ms, application-code: 9ms)
+[WebServer] apps/web dev: (node:77819) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:77820) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  POST /api/profile/candidate-facts/7fb73db6-ef1c-4c8b-b2d6-3a880543fa80/decisions 201 in 507ms (next.js: 481ms, application-code: 26ms)
+[WebServer] apps/web dev:  POST /api/profile/candidate-facts/6988c654-f560-43f1-ab70-4c950cebc399/decisions 201 in 25ms (next.js: 1.9ms, application-code: 23ms)
+[WebServer] apps/web dev: (node:77821) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  POST /api/profile/candidate-facts/92d683cd-ead3-4357-a82e-6c9971cf10ba/decisions 201 in 18ms (next.js: 0.9ms, application-code: 17ms)
+[WebServer] apps/web dev:  POST /api/profile/candidate-facts/5cbd6b7c-6a9a-405d-857a-7ad5fcbde985/decisions 409 in 9ms (next.js: 0.7ms, application-code: 8ms)
+[WebServer] apps/web dev:  GET /profile 200 in 26ms (next.js: 0.9ms, application-code: 25ms)
+[WebServer] apps/web dev:  GET /api/career-imports/10e2e8b1-fd4b-4c90-83de-42a61c395ef0 200 in 4ms (next.js: 2ms, application-code: 1.6ms)
+[WebServer] apps/web dev:  GET /api/career-imports/10e2e8b1-fd4b-4c90-83de-42a61c395ef0 200 in 11ms (next.js: 0.7ms, application-code: 10ms)
+[WebServer] apps/web dev: (node:77822) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  POST /api/profile/candidate-facts/5cbd6b7c-6a9a-405d-857a-7ad5fcbde985/decisions 201 in 21ms (next.js: 0.7ms, application-code: 20ms)
+  ✓  13 [Desktop Chrome] › e2e/markdown-career-import.spec.ts:216:1 › 候选事实的确认、纠正、拒绝、并发冲突和刷新都保持可信画像边界 (1.7s)
+[WebServer] apps/web dev:  GET /home 200 in 62ms (next.js: 1.7ms, application-code: 60ms)
+[WebServer] apps/web dev:  GET /profile/model-connection 200 in 33ms (next.js: 11ms, application-code: 22ms)
+[WebServer] apps/web dev:  POST /api/model-diagnostics 200 in 70ms (next.js: 48ms, application-code: 21ms)
+[WebServer] apps/web dev:  GET /profile/model-connection 200 in 31ms (next.js: 1.6ms, application-code: 29ms)
+  ✓  14 [Desktop Chrome] › e2e/model-diagnostics.spec.ts:50:1 › 从运行设置进入模型连接页并以受控 Fake 展示稳定状态 (953ms)
+[WebServer] apps/web dev:  GET /profile 200 in 21ms (next.js: 0.8ms, application-code: 20ms)
+[WebServer] apps/web dev:  POST /profile 200 in 35ms (next.js: 1.1ms, application-code: 34ms)
+[WebServer] apps/web dev:   └─ ƒ createCareerImportAction({"code":"","message":"","ok":false}, {}) in 30ms app/(workbench)/profile/actions.ts
+[WebServer] apps/web dev:  GET /api/career-imports/9553e288-b1e6-44bc-b94a-74b7b5a35a97 200 in 16ms (next.js: 4ms, application-code: 12ms)
+[WebServer] apps/web dev: (node:77826) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/career-imports/9553e288-b1e6-44bc-b94a-74b7b5a35a97 200 in 20ms (next.js: 5ms, application-code: 15ms)
+[WebServer] apps/web dev: (node:77827) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  15 [Desktop Chrome] › e2e/pdf-career-import.spec.ts:30:1 › 文本型 PDF 经完整导入链路显示页码证据，无文本层 PDF 诚实失败且不入队 (1.9s)
+[WebServer] apps/web dev:  GET /recommendations?targetId=70806aa9-c1cd-4079-9f92-0482e0b03143 200 in 73ms (next.js: 25ms, application-code: 48ms)
+[WebServer] apps/web dev: (node:77831) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/e475a0ad-f9c3-4470-9af2-1e802cc427a5 200 in 447ms (next.js: 423ms, application-code: 24ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/fcd44902-ebca-43de-bd6b-9a8cfa897eb5 200 in 23ms (next.js: 1.5ms, application-code: 22ms)
+[WebServer] apps/web dev: (node:77833) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /recommendations?targetId=70806aa9-c1cd-4079-9f92-0482e0b03143 200 in 62ms (next.js: 0.8ms, application-code: 61ms)
+[WebServer] apps/web dev:  POST /recommendations?targetId=70806aa9-c1cd-4079-9f92-0482e0b03143 200 in 70ms (next.js: 1.1ms, application-code: 69ms)
+[WebServer] apps/web dev:   └─ ƒ requestRecommendationReevaluationAction("70806aa9-c1cd-4079-9f92-0482e0b03143", "bddd0009-8fca-47d1-bd2d-dbfa0ead2650", {}) in 29ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=70806aa9-c1cd-4079-9f92-0482e0b03143 200 in 73ms (next.js: 1.2ms, application-code: 72ms)
+[WebServer] apps/web dev:   └─ ƒ requestRecommendationReevaluationAction("70806aa9-c1cd-4079-9f92-0482e0b03143", "bddd0009-8fca-47d1-bd2d-dbfa0ead2650", {}) in 28ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  GET /recommendations?targetId=70806aa9-c1cd-4079-9f92-0482e0b03143 200 in 95ms (next.js: 2ms, application-code: 93ms)
+[WebServer] apps/web dev: (node:77835) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/recommendations/lists/09a22edf-f146-48d3-9859-5bfd04541896/exclusions?targetId=70806aa9-c1cd-4079-9f92-0482e0b03143&cursor=cae1ee70-b76b-474e-aafc-e6b4dff5b565 200 in 469ms (next.js: 455ms, application-code: 14ms)
+[WebServer] apps/web dev:  GET /api/recommendations/history?targetId=70806aa9-c1cd-4079-9f92-0482e0b03143&cursor=f654f538-f33e-4fd6-9129-a4065d7f4aca 200 in 67ms (next.js: 51ms, application-code: 16ms)
+[WebServer] apps/web dev:  GET /api/recommendations/lists/d9748282-8b7f-4404-b34e-6b0a74155b25/exclusions?targetId=70806aa9-c1cd-4079-9f92-0482e0b03143 200 in 12ms (next.js: 1.7ms, application-code: 11ms)
+[WebServer] apps/web dev: (node:77838) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  16 [Desktop Chrome] › e2e/recommendations.spec.ts:221:1 › 显式 Fake matching 真实链路交付双方证据、质量排除与单岗位重评历史 (4.9s)
+[WebServer] apps/web dev:  GET /recommendations?targetId=9bb1aa50-f134-4f02-ba61-dd4c071a2e44 200 in 48ms (next.js: 2ms, application-code: 46ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/e92adbe5-8293-489c-a75f-b0ccbe5dab64 200 in 13ms (next.js: 1.6ms, application-code: 11ms)
+[WebServer] apps/web dev: (node:77845) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/e92adbe5-8293-489c-a75f-b0ccbe5dab64 200 in 10ms (next.js: 0.7ms, application-code: 9ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/5174a04d-01a9-4711-b5d0-40a01821e63d 200 in 13ms (next.js: 0.7ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/5174a04d-01a9-4711-b5d0-40a01821e63d 200 in 14ms (next.js: 0.8ms, application-code: 13ms)
+[WebServer] apps/web dev:  GET /recommendations?targetId=9bb1aa50-f134-4f02-ba61-dd4c071a2e44 200 in 86ms (next.js: 0.8ms, application-code: 85ms)
+[WebServer] apps/web dev:  POST /recommendations?targetId=9bb1aa50-f134-4f02-ba61-dd4c071a2e44 200 in 57ms (next.js: 1.2ms, application-code: 56ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("0c5b84aa-8d78-47f7-a37e-45034c7c72d1", "10af35e7-36b2-40b2-84e6-ce8d00863457", {}) in 15ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=9bb1aa50-f134-4f02-ba61-dd4c071a2e44 200 in 75ms (next.js: 1.2ms, application-code: 74ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("0c5b84aa-8d78-47f7-a37e-45034c7c72d1", "6a4f90b0-db60-43ef-996a-11d1c4a39ddb", {}) in 16ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=9bb1aa50-f134-4f02-ba61-dd4c071a2e44 200 in 65ms (next.js: 1.4ms, application-code: 63ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("0c5b84aa-8d78-47f7-a37e-45034c7c72d1", "63e36e9e-51eb-4617-9986-407d22118d1d", {}) in 17ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=9bb1aa50-f134-4f02-ba61-dd4c071a2e44 200 in 57ms (next.js: 1.0ms, application-code: 56ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("0c5b84aa-8d78-47f7-a37e-45034c7c72d1", "10af35e7-36b2-40b2-84e6-ce8d00863457", {}) in 13ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=9bb1aa50-f134-4f02-ba61-dd4c071a2e44 200 in 80ms (next.js: 1.1ms, application-code: 79ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("0c5b84aa-8d78-47f7-a37e-45034c7c72d1", "fa0d46e6-3b90-42d9-917b-62845d452613", {}) in 29ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=9bb1aa50-f134-4f02-ba61-dd4c071a2e44 200 in 73ms (next.js: 1.4ms, application-code: 71ms)
+[WebServer] apps/web dev:   └─ ƒ reviseCalibrationProposalAction("14c2a88c-fb56-43b4-92ad-9fff332dcc86", {}) in 16ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=9bb1aa50-f134-4f02-ba61-dd4c071a2e44 200 in 62ms (next.js: 1.0ms, application-code: 61ms)
+[WebServer] apps/web dev:   └─ ƒ reviseCalibrationProposalAction("14c2a88c-fb56-43b4-92ad-9fff332dcc86", {}) in 14ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=9bb1aa50-f134-4f02-ba61-dd4c071a2e44 200 in 62ms (next.js: 1.3ms, application-code: 61ms)
+[WebServer] apps/web dev:   └─ ƒ resolveCalibrationProposalAction("14c2a88c-fb56-43b4-92ad-9fff332dcc86", {}) in 12ms app/(workbench)/recommendations/actions.ts
+  ✓  17 [Desktop Chrome] › e2e/recommendations.spec.ts:302:1 › 推荐决策与拒绝校准建议保持规则和目标不变 (6.5s)
+[WebServer] apps/web dev:  GET /recommendations?targetId=71fa619d-5e7c-4960-8228-0aea32099f67 200 in 53ms (next.js: 2ms, application-code: 51ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/74b77479-808e-44a0-9335-4da8021401ad 200 in 14ms (next.js: 2.0ms, application-code: 12ms)
+[WebServer] apps/web dev: (node:77860) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/74b77479-808e-44a0-9335-4da8021401ad 200 in 9ms (next.js: 0.7ms, application-code: 8ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/0015f408-3993-41a6-8813-cb433424b210 200 in 13ms (next.js: 0.6ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/0015f408-3993-41a6-8813-cb433424b210 200 in 13ms (next.js: 0.7ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /recommendations?targetId=71fa619d-5e7c-4960-8228-0aea32099f67 200 in 88ms (next.js: 0.8ms, application-code: 87ms)
+[WebServer] apps/web dev:  POST /recommendations?targetId=71fa619d-5e7c-4960-8228-0aea32099f67 200 in 80ms (next.js: 1.2ms, application-code: 79ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("f5a7442e-0833-4635-8020-7aa2daa1bfe5", "304133d7-4a80-42c0-88e3-9ad5d8591bd1", {}) in 18ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=71fa619d-5e7c-4960-8228-0aea32099f67 200 in 68ms (next.js: 1.5ms, application-code: 67ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("f5a7442e-0833-4635-8020-7aa2daa1bfe5", "81381cf8-8a7e-43cf-a47a-243e2377323c", {}) in 16ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=71fa619d-5e7c-4960-8228-0aea32099f67 200 in 79ms (next.js: 1.5ms, application-code: 78ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("f5a7442e-0833-4635-8020-7aa2daa1bfe5", "3ff3f952-90ab-40b2-bb03-5ecff8aee535", {}) in 25ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=71fa619d-5e7c-4960-8228-0aea32099f67 200 in 66ms (next.js: 1.4ms, application-code: 65ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("f5a7442e-0833-4635-8020-7aa2daa1bfe5", "d34d2f59-129e-4d8e-ba02-25aac715d5d7", {}) in 14ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=71fa619d-5e7c-4960-8228-0aea32099f67 200 in 63ms (next.js: 1.1ms, application-code: 62ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("f5a7442e-0833-4635-8020-7aa2daa1bfe5", "2370172f-4a67-44d6-902e-07a1b06218d3", {}) in 13ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=71fa619d-5e7c-4960-8228-0aea32099f67 200 in 74ms (next.js: 1.1ms, application-code: 73ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("f5a7442e-0833-4635-8020-7aa2daa1bfe5", "13d95daa-f9d0-4f00-847e-baf5edebef3a", {}) in 25ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=71fa619d-5e7c-4960-8228-0aea32099f67 200 in 84ms (next.js: 1.5ms, application-code: 82ms)
+[WebServer] apps/web dev:   └─ ƒ resolveCalibrationProposalAction("32fa3afb-e691-4bc8-8336-07faa55b9f58", {}) in 9ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  GET /recommendations?targetId=71fa619d-5e7c-4960-8228-0aea32099f67 200 in 60ms (next.js: 1.0ms, application-code: 59ms)
+[WebServer] apps/web dev:  POST /recommendations?targetId=71fa619d-5e7c-4960-8228-0aea32099f67 200 in 65ms (next.js: 1.1ms, application-code: 64ms)
+[WebServer] apps/web dev:   └─ ƒ rebaseCalibrationProposalAction("32fa3afb-e691-4bc8-8336-07faa55b9f58", {}) in 13ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=71fa619d-5e7c-4960-8228-0aea32099f67 200 in 61ms (next.js: 1.2ms, application-code: 59ms)
+[WebServer] apps/web dev:   └─ ƒ resolveCalibrationProposalAction("32fa3afb-e691-4bc8-8336-07faa55b9f58", {}) in 14ms app/(workbench)/recommendations/actions.ts
+  ✓  18 [Desktop Chrome] › e2e/recommendations.spec.ts:357:1 › 交错批准后立即锁定过期建议，刷新读模型并重新计算后可批准 (7.5s)
+[WebServer] apps/web dev:  GET /recommendations?targetId=84e3faef-ab7b-47db-82d0-cddf7487348c 200 in 50ms (next.js: 2ms, application-code: 48ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/1744acd7-6dd3-4764-b755-37a48ae0884e 200 in 13ms (next.js: 2ms, application-code: 10ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/54c291e5-1e8a-498d-a501-4f34883c7de0 200 in 14ms (next.js: 1.0ms, application-code: 13ms)
+[WebServer] apps/web dev: (node:77862) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/54c291e5-1e8a-498d-a501-4f34883c7de0 200 in 12ms (next.js: 0.6ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /recommendations?targetId=84e3faef-ab7b-47db-82d0-cddf7487348c 200 in 35ms (next.js: 0.8ms, application-code: 34ms)
+  ✓  19 [Desktop Chrome] › e2e/recommendations.spec.ts:393:1 › 显式 Fake matching 的质量不足候选可生成零推荐清单 (1.6s)
+[WebServer] apps/web dev:  GET /api/agent-runs/f6ad0cee-df2f-4200-bd24-10b48ebe9ad7 200 in 12ms (next.js: 2ms, application-code: 10ms)
+[WebServer] apps/web dev: (node:77865) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/f6ad0cee-df2f-4200-bd24-10b48ebe9ad7 200 in 10ms (next.js: 0.6ms, application-code: 9ms)
+  ✓  20 [Desktop Chrome] › e2e/recommendations.spec.ts:412:1 › automatic deep-match 遇到运行前阻塞不会创建 child，也不会回滚已完成的 discovery 父运行 (1.2s)
+[WebServer] apps/web dev:  GET /recommendations?targetId=019d507d-df4f-47ca-b5f5-42fdc31429ed 200 in 54ms (next.js: 2ms, application-code: 51ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/913cf429-4bcf-4168-96d8-3d6b9e523c20 200 in 12ms (next.js: 1.8ms, application-code: 10ms)
+[WebServer] apps/web dev: (node:77877) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/913cf429-4bcf-4168-96d8-3d6b9e523c20 200 in 9ms (next.js: 0.7ms, application-code: 8ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/539d9445-e26c-4c09-954d-7e19b7280415 200 in 12ms (next.js: 0.7ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/539d9445-e26c-4c09-954d-7e19b7280415 200 in 12ms (next.js: 0.7ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/539d9445-e26c-4c09-954d-7e19b7280415 200 in 20ms (next.js: 5ms, application-code: 15ms)
+[WebServer] apps/web dev: (node:77878) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /home?runId=539d9445-e26c-4c09-954d-7e19b7280415 200 in 74ms (next.js: 1.4ms, application-code: 73ms)
+[WebServer] apps/web dev: (node:77879) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/job-targets/019d507d-df4f-47ca-b5f5-42fdc31429ed/discovery-schedule 200 in 185ms
+[WebServer] apps/web dev:  GET /recommendations?targetId=019d507d-df4f-47ca-b5f5-42fdc31429ed 200 in 159ms (next.js: 1.2ms, application-code: 158ms)
+  ✓  21 [Desktop Chrome] › e2e/recommendations.spec.ts:443:1 › 真实 discovery 自动 child 以深评稳定重排十项并标出正确 Top3 与 matching 面板 (10.7s)
+(node:77882) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /home 200 in 48ms (next.js: 1.0ms, application-code: 47ms)
+[WebServer] apps/web dev:  GET /profile/run-policy 200 in 19ms (next.js: 2ms, application-code: 17ms)
+[WebServer] apps/web dev:  GET /profile 200 in 25ms (next.js: 1.5ms, application-code: 23ms)
+[WebServer] apps/web dev:  GET /profile/run-policy 200 in 18ms (next.js: 1.0ms, application-code: 17ms)
+[WebServer] apps/web dev:  PUT /api/account/run-policy 200 in 14ms (next.js: 1.5ms, application-code: 13ms)
+[WebServer] apps/web dev:  GET /profile/run-policy 200 in 24ms (next.js: 1.0ms, application-code: 23ms)
+[WebServer] apps/web dev:  GET /api/account/run-policy/history 200 in 11ms (next.js: 3ms, application-code: 9ms)
+  ✓  22 [Mobile Safari] › e2e/account-run-policy.spec.ts:76:1 › 账户运行策略可从首页和画像进入，保存后保留四层值、刷新与修订历史 (1.7s)
+[WebServer] apps/web dev:  PUT /api/account/run-policy 400 in 4ms (next.js: 0.7ms, application-code: 3ms)
+  ✓  23 [Mobile Safari] › e2e/account-run-policy.spec.ts:149:1 › 超硬上限在 API 和 BFF 返回稳定的字段错误契约 (128ms)
+  ✓  24 [Mobile Safari] › e2e/account-run-policy.spec.ts:165:1 › 账户运行策略按会话隔离，并拒绝未认证或伪造 userId 的请求 (46ms)
+[WebServer] apps/web dev:  GET /profile/run-policy 200 in 23ms (next.js: 0.9ms, application-code: 22ms)
+[WebServer] apps/web dev:  POST /api/account/run-policy/controls 200 in 23ms (next.js: 6ms, application-code: 17ms)
+[WebServer] apps/web dev:  GET /api/account/run-policy/control 200 in 5ms (next.js: 4ms, application-code: 1.7ms)
+[WebServer] apps/web dev:  GET /profile/run-policy 200 in 25ms (next.js: 1.1ms, application-code: 24ms)
+[WebServer] apps/web dev:  POST /api/account/run-policy/controls 200 in 16ms (next.js: 0.9ms, application-code: 15ms)
+[WebServer] apps/web dev:  GET /api/account/run-policy/control 200 in 7ms (next.js: 0.6ms, application-code: 6ms)
+  ✓  25 [Mobile Safari] › e2e/account-run-policy.spec.ts:198:1 › 账户全局停止持久化到刷新后，解除不恢复任何旧运行 (521ms)
+[WebServer] apps/web dev:  GET /profile/targets/1994a312-60be-46ec-bc92-804da83193f3/watchlist 200 in 31ms (next.js: 3ms, application-code: 28ms)
+[WebServer] apps/web dev: (node:77902) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  26 [Mobile Safari] › e2e/company-watchlist.spec.ts:41:1 › 超长无空格角色名称不会造成 Watchlist 页面横向溢出 (273ms)
+[WebServer] apps/web dev:  GET /profile/targets/d899a82e-d339-4bba-b45d-72f8ed2da803/watchlist 200 in 30ms (next.js: 1.8ms, application-code: 28ms)
+[WebServer] apps/web dev: (node:77904) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  POST /api/job-targets/d899a82e-d339-4bba-b45d-72f8ed2da803/company-watchlist/items 201 in 18ms (next.js: 3ms, application-code: 15ms)
+[WebServer] apps/web dev:  GET /api/job-targets/d899a82e-d339-4bba-b45d-72f8ed2da803/source-health 200 in 13ms (next.js: 2ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /api/job-targets/d899a82e-d339-4bba-b45d-72f8ed2da803/source-capabilities 200 in 14ms (next.js: 6ms, application-code: 8ms)
+[WebServer] apps/web dev: (node:77905) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:77906) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:77907) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  POST /api/job-targets/d899a82e-d339-4bba-b45d-72f8ed2da803/company-watchlist/items 201 in 12ms (next.js: 0.8ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /api/job-targets/d899a82e-d339-4bba-b45d-72f8ed2da803/source-health 200 in 8ms (next.js: 0.7ms, application-code: 8ms)
+[WebServer] apps/web dev:  GET /api/job-targets/d899a82e-d339-4bba-b45d-72f8ed2da803/source-capabilities 200 in 9ms (next.js: 2.0ms, application-code: 7ms)
+[WebServer] apps/web dev:  POST /api/job-targets/d899a82e-d339-4bba-b45d-72f8ed2da803/company-watchlist/reorders 201 in 20ms (next.js: 6ms, application-code: 14ms)
+[WebServer] apps/web dev:  GET /api/job-targets/d899a82e-d339-4bba-b45d-72f8ed2da803/source-health 200 in 10ms (next.js: 1.0ms, application-code: 9ms)
+[WebServer] apps/web dev:  GET /api/job-targets/d899a82e-d339-4bba-b45d-72f8ed2da803/source-capabilities 200 in 10ms (next.js: 2ms, application-code: 8ms)
+[WebServer] apps/web dev: (node:77908) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  POST /api/job-targets/d899a82e-d339-4bba-b45d-72f8ed2da803/company-watchlist/items/316091c2-0939-4a7c-a8f0-8d1f60f2a1a9/state-changes 201 in 18ms (next.js: 3ms, application-code: 15ms)
+[WebServer] apps/web dev:  GET /api/job-targets/d899a82e-d339-4bba-b45d-72f8ed2da803/source-health 200 in 12ms (next.js: 0.8ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /api/job-targets/d899a82e-d339-4bba-b45d-72f8ed2da803/source-capabilities 200 in 13ms (next.js: 2ms, application-code: 10ms)
+[WebServer] apps/web dev: (node:77909) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /profile/targets/d899a82e-d339-4bba-b45d-72f8ed2da803/watchlist 200 in 67ms (next.js: 4ms, application-code: 64ms)
+[WebServer] apps/web dev: (node:77910) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  POST /api/job-targets/d899a82e-d339-4bba-b45d-72f8ed2da803/company-watchlist/items/316091c2-0939-4a7c-a8f0-8d1f60f2a1a9/revisions 409 in 17ms (next.js: 3ms, application-code: 14ms)
+[WebServer] apps/web dev: (node:77911) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  27 [Mobile Safari] › e2e/company-watchlist.spec.ts:58:1 › 目标公司 Watchlist 可添加、排序、禁用、重载并显示并发冲突 (1.3s)
+[WebServer] apps/web dev:  GET /profile 200 in 22ms (next.js: 0.9ms, application-code: 21ms)
+[WebServer] apps/web dev:  POST /profile 200 in 35ms (next.js: 1.2ms, application-code: 34ms)
+[WebServer] apps/web dev:   └─ ƒ createCareerImportAction({"code":"","message":"","ok":false}, {}) in 31ms app/(workbench)/profile/actions.ts
+[WebServer] apps/web dev:  GET /api/career-imports/bfd4e667-1f93-4f45-a7e7-d995e1605423 200 in 22ms (next.js: 5ms, application-code: 18ms)
+[WebServer] apps/web dev: (node:77914) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  POST /profile 200 in 25ms (next.js: 1.2ms, application-code: 23ms)
+[WebServer] apps/web dev:   └─ ƒ createCareerImportAction({"code":"","message":"","ok":false}, {}) in 21ms app/(workbench)/profile/actions.ts
+[WebServer] apps/web dev:  GET /api/career-imports/f87e8a27-0d3e-438d-a1f8-b65fd43d10ec 200 in 12ms (next.js: 1.7ms, application-code: 11ms)
+[WebServer] apps/web dev: (node:77917) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/career-imports/bfd4e667-1f93-4f45-a7e7-d995e1605423 200 in 13ms (next.js: 0.8ms, application-code: 13ms)
+[WebServer] apps/web dev:  POST /api/profile/fact-conflicts/c9767455-7cdb-4658-8eb8-cc09af218fdb/resolutions 200 in 38ms (next.js: 3ms, application-code: 35ms)
+[WebServer] apps/web dev: (node:77918) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /profile 200 in 29ms (next.js: 0.9ms, application-code: 28ms)
+[WebServer] apps/web dev:  GET /api/career-imports/f87e8a27-0d3e-438d-a1f8-b65fd43d10ec 200 in 15ms (next.js: 1.1ms, application-code: 14ms)
+  ✓  28 [Mobile Safari] › e2e/docx-career-import.spec.ts:64:1 › DOCX 浏览器脱敏副本经过队列处理后显示段落证据、跨文档冲突并可解决 (1.6s)
+[WebServer] apps/web dev:  GET /profile 200 in 22ms (next.js: 1.0ms, application-code: 21ms)
+[WebServer] apps/web dev:  POST /profile 200 in 35ms (next.js: 1.3ms, application-code: 34ms)
+[WebServer] apps/web dev:   └─ ƒ createCareerImportAction({"code":"","message":"","ok":false}, {}) in 31ms app/(workbench)/profile/actions.ts
+[WebServer] apps/web dev:  GET /api/career-imports/1cfd2cf3-3245-46fd-9290-c5fe0a41669b 200 in 11ms (next.js: 2ms, application-code: 9ms)
+  ✓  29 [Mobile Safari] › e2e/docx-career-import.spec.ts:95:1 › 含嵌入媒体的 DOCX 在浏览器先进入隐私确认，处理副本不显示原媒体字节 (634ms)
+[WebServer] apps/web dev: (node:77920) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /jobs/import 200 in 22ms (next.js: 1.7ms, application-code: 21ms)
+[WebServer] apps/web dev:  POST /jobs/import 200 in 20ms (next.js: 1.1ms, application-code: 19ms)
+[WebServer] apps/web dev:   └─ ƒ createJobImportAction({"code":"","message":"","ok":false}, {}) in 17ms app/(workbench)/jobs/import/actions.ts
+[WebServer] apps/web dev:  GET /api/job-imports/bf38a70d-eef2-4146-a03d-f37edbc8a408 200 in 14ms (next.js: 3ms, application-code: 10ms)
+[WebServer] apps/web dev: (node:77922) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/job-imports/bf38a70d-eef2-4146-a03d-f37edbc8a408 200 in 19ms (next.js: 5ms, application-code: 15ms)
+[WebServer] apps/web dev:  GET /api/job-imports/bf38a70d-eef2-4146-a03d-f37edbc8a408/raw 200 in 14ms (next.js: 5ms, application-code: 9ms)
+[WebServer] apps/web dev: (node:77923) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:77924) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /jobs/import 200 in 25ms (next.js: 1.2ms, application-code: 24ms)
+[WebServer] apps/web dev:  GET /api/job-imports/bf38a70d-eef2-4146-a03d-f37edbc8a408 200 in 9ms (next.js: 1.4ms, application-code: 8ms)
+[WebServer] apps/web dev:  GET /api/job-imports/bf38a70d-eef2-4146-a03d-f37edbc8a408 200 in 10ms (next.js: 1.5ms, application-code: 9ms)
+[WebServer] apps/web dev:  GET /api/job-imports/bf38a70d-eef2-4146-a03d-f37edbc8a408/raw 200 in 9ms (next.js: 0.7ms, application-code: 8ms)
+[WebServer] apps/web dev:  POST /jobs/import 200 in 17ms (next.js: 2ms, application-code: 15ms)
+[WebServer] apps/web dev:   └─ ƒ createJobImportAction({"code":"","message":"","ok":false}, {}) in 11ms app/(workbench)/jobs/import/actions.ts
+[WebServer] apps/web dev:  GET /api/job-imports/bf38a70d-eef2-4146-a03d-f37edbc8a408 200 in 10ms (next.js: 1.7ms, application-code: 8ms)
+[WebServer] apps/web dev:  GET /api/job-imports/bf38a70d-eef2-4146-a03d-f37edbc8a408/raw 200 in 12ms (next.js: 3ms, application-code: 9ms)
+[WebServer] apps/web dev: (node:77925) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  POST /jobs/import 200 in 19ms (next.js: 1.0ms, application-code: 18ms)
+[WebServer] apps/web dev:   └─ ƒ createJobImportAction({"code":"","message":"","ok":false}, {}) in 15ms app/(workbench)/jobs/import/actions.ts
+[WebServer] apps/web dev:  GET /api/job-imports/a0544c7d-e4cb-41e8-aba5-30aac628e1eb 200 in 8ms (next.js: 0.7ms, application-code: 7ms)
+[WebServer] apps/web dev:  POST /jobs/import 200 in 20ms (next.js: 1.0ms, application-code: 19ms)
+[WebServer] apps/web dev:   └─ ƒ createJobImportAction({"code":"","message":"","ok":false}, {}) in 17ms app/(workbench)/jobs/import/actions.ts
+[WebServer] apps/web dev:  GET /api/job-imports/d8968082-57fd-40dc-b71d-a80960cf235e 200 in 9ms (next.js: 0.7ms, application-code: 8ms)
+[WebServer] apps/web dev:  GET /api/job-imports/d8968082-57fd-40dc-b71d-a80960cf235e 200 in 19ms (next.js: 5ms, application-code: 14ms)
+[WebServer] apps/web dev:  GET /api/job-imports/d8968082-57fd-40dc-b71d-a80960cf235e/raw 200 in 15ms (next.js: 3ms, application-code: 11ms)
+[WebServer] apps/web dev: (node:77926) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:77927) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  30 [Mobile Safari] › e2e/job-imports.spec.ts:131:1 › 岗位导入在真实运行时完成、去重、保留原文并处理失败夹具 (3.6s)
+[WebServer] apps/web dev:  GET /jobs/import 200 in 24ms (next.js: 0.9ms, application-code: 23ms)
+[WebServer] apps/web dev:  POST /jobs/import 200 in 25ms (next.js: 1.0ms, application-code: 24ms)
+[WebServer] apps/web dev:   └─ ƒ createJobImportAction({"code":"","message":"","ok":false}, {}) in 21ms app/(workbench)/jobs/import/actions.ts
+[WebServer] apps/web dev:  GET /api/job-imports/a4f3a6cb-68fa-4a70-9359-278d113773c8 200 in 8ms (next.js: 1.5ms, application-code: 6ms)
+[WebServer] apps/web dev: (node:77932) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/job-imports/a4f3a6cb-68fa-4a70-9359-278d113773c8 200 in 17ms (next.js: 5ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /api/job-imports/a4f3a6cb-68fa-4a70-9359-278d113773c8/raw 200 in 11ms (next.js: 3ms, application-code: 8ms)
+[WebServer] apps/web dev: (node:77934) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:77935) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  POST /jobs/import 200 in 18ms (next.js: 1.2ms, application-code: 16ms)
+[WebServer] apps/web dev:   └─ ƒ createJobImportAction({"code":"","message":"","ok":false}, {}) in 13ms app/(workbench)/jobs/import/actions.ts
+[WebServer] apps/web dev:  GET /api/job-imports/a4f3a6cb-68fa-4a70-9359-278d113773c8 200 in 11ms (next.js: 0.9ms, application-code: 10ms)
+[WebServer] apps/web dev:  GET /api/job-imports/a4f3a6cb-68fa-4a70-9359-278d113773c8/raw 200 in 12ms (next.js: 2.0ms, application-code: 10ms)
+[WebServer] apps/web dev:  POST /jobs/import 200 in 10ms (next.js: 1.0ms, application-code: 9ms)
+[WebServer] apps/web dev:   └─ ƒ createJobImportAction({"code":"","message":"","ok":false}, {}) in 7ms app/(workbench)/jobs/import/actions.ts
+[WebServer] apps/web dev:  POST /jobs/import 200 in 11ms (next.js: 1.3ms, application-code: 10ms)
+[WebServer] apps/web dev:   └─ ƒ createJobImportAction({"code":"","message":"","ok":false}, {}) in 7ms app/(workbench)/jobs/import/actions.ts
+[WebServer] apps/web dev:  POST /jobs/import 200 in 10ms (next.js: 1.0ms, application-code: 9ms)
+[WebServer] apps/web dev:   └─ ƒ createJobImportAction({"code":"","message":"","ok":false}, {}) in 7ms app/(workbench)/jobs/import/actions.ts
+  ✓  31 [Mobile Safari] › e2e/job-imports.spec.ts:215:1 › 岗位链接只导入受控本地 fixture 的具体页面，并显示各类 URL 验证结果 (1.9s)
+[WebServer] apps/web dev:  GET /profile/targets 200 in 22ms (next.js: 3ms, application-code: 20ms)
+[WebServer] apps/web dev:  POST /api/job-targets 201 in 19ms (next.js: 4ms, application-code: 15ms)
+[WebServer] apps/web dev:  POST /api/job-targets 201 in 22ms (next.js: 1.2ms, application-code: 21ms)
+[WebServer] apps/web dev:  GET /profile/targets 200 in 27ms (next.js: 1.3ms, application-code: 26ms)
+[WebServer] apps/web dev:  POST /api/job-targets/e1e49279-c5f4-4a87-ae07-fae9d8114e0e/revisions 409 in 15ms (next.js: 4ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /profile/targets 200 in 23ms (next.js: 1.3ms, application-code: 22ms)
+[WebServer] apps/web dev: (node:77937) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  POST /api/job-targets/e1e49279-c5f4-4a87-ae07-fae9d8114e0e/revisions 201 in 18ms (next.js: 1.1ms, application-code: 17ms)
+[WebServer] apps/web dev:  POST /api/job-targets/e1e49279-c5f4-4a87-ae07-fae9d8114e0e/deactivations 201 in 29ms (next.js: 7ms, application-code: 22ms)
+[WebServer] apps/web dev: (node:77938) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  32 [Mobile Safari] › e2e/job-targets.spec.ts:46:1 › 求职目标可由可信画像建议确认、持久化、并发提示并停用 (1.6s)
+[WebServer] apps/web dev:  GET /login?returnTo=%2Fprofile 200 in 11ms (next.js: 1.7ms, application-code: 10ms)
+[WebServer] apps/web dev:  GET /profile 200 in 17ms (next.js: 1.0ms, application-code: 16ms)
+[WebServer] apps/web dev:  POST /login?returnTo=%2Fprofile 200 in 45ms (next.js: 1.3ms, application-code: 43ms)
+[WebServer] apps/web dev:   └─ ƒ startDevSessionAction({}) in 22ms app/login/actions.ts
+[WebServer] apps/web dev:  GET /profile 200 in 22ms (next.js: 0.9ms, application-code: 21ms)
+  ✘  33 [Mobile Safari] › e2e/markdown-career-import.spec.ts:90:1 › 登录用户可导入、持久化并安全复用 Markdown 职业资料 (5.4s)
+(node:77942) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /login?returnTo=%2Fprofile 200 in 10ms (next.js: 0.9ms, application-code: 9ms)
+[WebServer] apps/web dev:  GET /profile 200 in 15ms (next.js: 1.0ms, application-code: 14ms)
+[WebServer] apps/web dev:  POST /login?returnTo=%2Fprofile 200 in 38ms (next.js: 0.9ms, application-code: 38ms)
+[WebServer] apps/web dev:   └─ ƒ startDevSessionAction({}) in 19ms app/login/actions.ts
+[WebServer] apps/web dev:  GET /profile 200 in 20ms (next.js: 0.9ms, application-code: 19ms)
+[WebServer] apps/web dev:  GET /profile 200 in 19ms (next.js: 0.9ms, application-code: 18ms)
+[WebServer] apps/web dev:  GET /api/career-imports/5efbf699-b14e-4512-b799-4437d49593bd 200 in 4ms (next.js: 2ms, application-code: 2ms)
+[WebServer] apps/web dev:  GET /api/career-imports/5efbf699-b14e-4512-b799-4437d49593bd 200 in 11ms (next.js: 1.1ms, application-code: 10ms)
+[WebServer] apps/web dev: (node:77966) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  POST /api/profile/candidate-facts/13c2b165-bc83-4022-ab22-9800f4469b89/decisions 201 in 21ms (next.js: 2ms, application-code: 18ms)
+[WebServer] apps/web dev: (node:77967) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  POST /api/profile/candidate-facts/29d60ebc-d51a-40d9-9634-ad22bb3fefcf/decisions 201 in 21ms (next.js: 1.6ms, application-code: 19ms)
+[WebServer] apps/web dev:  POST /api/profile/candidate-facts/66991f52-ab18-496a-8c1f-bfcb7e9311a9/decisions 201 in 19ms (next.js: 1.1ms, application-code: 18ms)
+[WebServer] apps/web dev:  POST /api/profile/candidate-facts/39d83788-fb37-4427-b990-9f2b2ca202ac/decisions 409 in 14ms (next.js: 0.8ms, application-code: 13ms)
+[WebServer] apps/web dev:  GET /profile 200 in 27ms (next.js: 1.2ms, application-code: 26ms)
+[WebServer] apps/web dev:  GET /api/career-imports/5efbf699-b14e-4512-b799-4437d49593bd 200 in 16ms (next.js: 3ms, application-code: 13ms)
+[WebServer] apps/web dev:  POST /api/profile/candidate-facts/39d83788-fb37-4427-b990-9f2b2ca202ac/decisions 201 in 21ms (next.js: 1.3ms, application-code: 20ms)
+  ✓  34 [Mobile Safari] › e2e/markdown-career-import.spec.ts:216:1 › 候选事实的确认、纠正、拒绝、并发冲突和刷新都保持可信画像边界 (1.1s)
+[WebServer] apps/web dev: (node:77968) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /home 200 in 37ms (next.js: 1.3ms, application-code: 36ms)
+[WebServer] apps/web dev:  GET /profile/model-connection 200 in 21ms (next.js: 2ms, application-code: 19ms)
+[WebServer] apps/web dev:  POST /api/model-diagnostics 200 in 15ms (next.js: 1.5ms, application-code: 13ms)
+[WebServer] apps/web dev:  GET /profile/model-connection 200 in 19ms (next.js: 0.9ms, application-code: 19ms)
+  ✓  35 [Mobile Safari] › e2e/model-diagnostics.spec.ts:50:1 › 从运行设置进入模型连接页并以受控 Fake 展示稳定状态 (788ms)
+[WebServer] apps/web dev:  GET /profile 200 in 23ms (next.js: 1.0ms, application-code: 21ms)
+[WebServer] apps/web dev:  POST /profile 200 in 39ms (next.js: 1.9ms, application-code: 37ms)
+[WebServer] apps/web dev:   └─ ƒ createCareerImportAction({"code":"","message":"","ok":false}, {}) in 33ms app/(workbench)/profile/actions.ts
+[WebServer] apps/web dev:  GET /api/career-imports/1ef46de8-4a5f-4a75-957a-c32e9ed44536 200 in 12ms (next.js: 2ms, application-code: 9ms)
+  ✓  36 [Mobile Safari] › e2e/pdf-career-import.spec.ts:30:1 › 文本型 PDF 经完整导入链路显示页码证据，无文本层 PDF 诚实失败且不入队 (591ms)
+[WebServer] apps/web dev: (node:77977) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /recommendations?targetId=83d26cba-77cb-4c92-80fa-7a4e095f6bb7 200 in 42ms (next.js: 3ms, application-code: 39ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/f775822b-d6f0-4828-9f2f-7b9b0451838b 200 in 14ms (next.js: 1.9ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/6512d1bc-f215-409e-9b83-5298e6290434 200 in 21ms (next.js: 1.5ms, application-code: 19ms)
+[WebServer] apps/web dev: (node:77979) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/6512d1bc-f215-409e-9b83-5298e6290434 200 in 12ms (next.js: 0.7ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /recommendations?targetId=83d26cba-77cb-4c92-80fa-7a4e095f6bb7 200 in 41ms (next.js: 0.8ms, application-code: 40ms)
+[WebServer] apps/web dev:  POST /recommendations?targetId=83d26cba-77cb-4c92-80fa-7a4e095f6bb7 200 in 68ms (next.js: 1.3ms, application-code: 67ms)
+[WebServer] apps/web dev:   └─ ƒ requestRecommendationReevaluationAction("83d26cba-77cb-4c92-80fa-7a4e095f6bb7", "8df51b03-b9bb-4bc4-b78b-78531d1ab579", {}) in 27ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  POST /recommendations?targetId=83d26cba-77cb-4c92-80fa-7a4e095f6bb7 200 in 64ms (next.js: 1.5ms, application-code: 62ms)
+[WebServer] apps/web dev:   └─ ƒ requestRecommendationReevaluationAction("83d26cba-77cb-4c92-80fa-7a4e095f6bb7", "8df51b03-b9bb-4bc4-b78b-78531d1ab579", {}) in 27ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  GET /recommendations?targetId=83d26cba-77cb-4c92-80fa-7a4e095f6bb7 200 in 83ms (next.js: 2ms, application-code: 80ms)
+[WebServer] apps/web dev:  GET /api/recommendations/lists/95467bb3-eedb-4fcc-ab8e-950beed563a5/exclusions?targetId=83d26cba-77cb-4c92-80fa-7a4e095f6bb7&cursor=e9efa499-4c8a-475a-8dd6-c9b1a7a27349 200 in 12ms (next.js: 2ms, application-code: 10ms)
+[WebServer] apps/web dev: (node:77988) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/recommendations/history?targetId=83d26cba-77cb-4c92-80fa-7a4e095f6bb7&cursor=3533605d-2640-4681-9eac-86e438a0c3a0 200 in 14ms (next.js: 1.6ms, application-code: 13ms)
+[WebServer] apps/web dev:  GET /api/recommendations/lists/61e837f2-ac12-43ff-bd96-fd92cce04ecb/exclusions?targetId=83d26cba-77cb-4c92-80fa-7a4e095f6bb7 200 in 12ms (next.js: 0.9ms, application-code: 11ms)
+  ✓  37 [Mobile Safari] › e2e/recommendations.spec.ts:221:1 › 显式 Fake matching 真实链路交付双方证据、质量排除与单岗位重评历史 (4.2s)
+[WebServer] apps/web dev:  GET /recommendations?targetId=be72136b-6487-456b-9317-6e8de2a110b5 200 in 33ms (next.js: 1.1ms, application-code: 32ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/2eb13a8a-a3e3-4d07-b41a-226d8ff46f73 200 in 13ms (next.js: 1.9ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/801748e2-845b-47f5-9368-90c3850961b6 200 in 14ms (next.js: 0.8ms, application-code: 13ms)
+[WebServer] apps/web dev: (node:77994) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/801748e2-845b-47f5-9368-90c3850961b6 200 in 12ms (next.js: 0.9ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/801748e2-845b-47f5-9368-90c3850961b6 200 in 13ms (next.js: 0.7ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /recommendations?targetId=be72136b-6487-456b-9317-6e8de2a110b5 200 in 88ms (next.js: 0.8ms, application-code: 87ms)
+[WebServer] apps/web dev:  POST /recommendations?targetId=be72136b-6487-456b-9317-6e8de2a110b5 200 in 52ms (next.js: 1.0ms, application-code: 51ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("4c412aab-e105-421e-9355-fa09806378b0", "1ea8ed58-e7a9-48ec-be81-b4223cdcfaad", {}) in 10ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  GET /recommendations 200 in 4ms (next.js: 1.2ms, application-code: 3ms)
+[WebServer] apps/web dev:  GET /recommendations 200 in 39ms (next.js: 1.4ms, application-code: 37ms)
+  ✘  38 [Mobile Safari] › e2e/recommendations.spec.ts:302:1 › 推荐决策与拒绝校准建议保持规则和目标不变 (10.0s)
+(node:77997) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /recommendations?targetId=230bf73e-bf27-4199-b120-2cc4d6c1a6ad 200 in 42ms (next.js: 2ms, application-code: 40ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/1e2507b1-5df7-4d21-9a7b-e1717b02f0b9 200 in 12ms (next.js: 2.0ms, application-code: 10ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/416915d5-4d4c-4e53-bb67-f477d212d227 200 in 13ms (next.js: 1.2ms, application-code: 12ms)
+[WebServer] apps/web dev: (node:78013) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/416915d5-4d4c-4e53-bb67-f477d212d227 200 in 11ms (next.js: 0.7ms, application-code: 10ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/416915d5-4d4c-4e53-bb67-f477d212d227 200 in 14ms (next.js: 1.8ms, application-code: 12ms)
+[WebServer] apps/web dev: (node:78014) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /recommendations?targetId=230bf73e-bf27-4199-b120-2cc4d6c1a6ad 200 in 113ms (next.js: 0.8ms, application-code: 113ms)
+[WebServer] apps/web dev:  POST /recommendations?targetId=230bf73e-bf27-4199-b120-2cc4d6c1a6ad 200 in 74ms (next.js: 1.4ms, application-code: 72ms)
+[WebServer] apps/web dev:   └─ ƒ recordRecommendationDecisionAction("8d5218af-982c-4b7b-bfae-29831c7412c1", "01cf72ad-34c2-454d-8568-4894d8e3bb03", {}) in 17ms app/(workbench)/recommendations/actions.ts
+[WebServer] apps/web dev:  GET /recommendations 200 in 3ms (next.js: 1.1ms, application-code: 1.7ms)
+[WebServer] apps/web dev:  GET /recommendations 200 in 38ms (next.js: 1.2ms, application-code: 37ms)
+  ✘  39 [Mobile Safari] › e2e/recommendations.spec.ts:357:1 › 交错批准后立即锁定过期建议，刷新读模型并重新计算后可批准 (11.3s)
+(node:78018) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /recommendations?targetId=5c4582f5-35f4-400a-94b8-278df42a6f50 200 in 39ms (next.js: 1.4ms, application-code: 37ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/cddaffe7-859a-422f-8b7f-90a622084de7 200 in 12ms (next.js: 1.7ms, application-code: 10ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/dd2045a1-cfd1-4374-b5b9-b24948d41d32 200 in 15ms (next.js: 0.9ms, application-code: 14ms)
+[WebServer] apps/web dev: (node:78031) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/dd2045a1-cfd1-4374-b5b9-b24948d41d32 200 in 10ms (next.js: 0.7ms, application-code: 9ms)
+[WebServer] apps/web dev:  GET /recommendations?targetId=5c4582f5-35f4-400a-94b8-278df42a6f50 200 in 34ms (next.js: 1.0ms, application-code: 33ms)
+  ✓  40 [Mobile Safari] › e2e/recommendations.spec.ts:393:1 › 显式 Fake matching 的质量不足候选可生成零推荐清单 (1.8s)
+[WebServer] apps/web dev:  GET /api/agent-runs/403fc057-b29f-4436-ac97-428cb9c83046 200 in 13ms (next.js: 1.7ms, application-code: 11ms)
+[WebServer] apps/web dev: (node:78036) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/403fc057-b29f-4436-ac97-428cb9c83046 200 in 10ms (next.js: 0.7ms, application-code: 9ms)
+  ✓  41 [Mobile Safari] › e2e/recommendations.spec.ts:412:1 › automatic deep-match 遇到运行前阻塞不会创建 child，也不会回滚已完成的 discovery 父运行 (1.3s)
+[WebServer] apps/web dev:  GET /recommendations?targetId=f3e8c29d-711a-41db-9a02-bd8eed3ff4d1 200 in 40ms (next.js: 2ms, application-code: 38ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/93da4697-b6ac-4542-93a0-0e13e57df129 200 in 13ms (next.js: 2ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/93da4697-b6ac-4542-93a0-0e13e57df129 200 in 10ms (next.js: 0.7ms, application-code: 9ms)
+[WebServer] apps/web dev: (node:78044) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/1968b1e2-475f-4786-a785-1053f6dd45e1 200 in 12ms (next.js: 0.6ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/1968b1e2-475f-4786-a785-1053f6dd45e1 200 in 13ms (next.js: 0.9ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/1968b1e2-475f-4786-a785-1053f6dd45e1 200 in 14ms (next.js: 1.6ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /home?runId=1968b1e2-475f-4786-a785-1053f6dd45e1 200 in 59ms (next.js: 1.5ms, application-code: 58ms)
+[WebServer] apps/web dev: (node:78046) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /recommendations?targetId=f3e8c29d-711a-41db-9a02-bd8eed3ff4d1 200 in 127ms (next.js: 0.9ms, application-code: 126ms)
+  ✓  42 [Mobile Safari] › e2e/recommendations.spec.ts:443:1 › 真实 discovery 自动 child 以深评稳定重排十项并标出正确 Top3 与 matching 面板 (10.7s)
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Stopping 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Stopping 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Stopping 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Stopping 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Stopped 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Removing 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Removed 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Stopping 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Stopped 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Removing 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Removed 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Stopped 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Removing 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Removed 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Stopped 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Removing 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Removed 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Stopped 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Removing 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Removed 
+[WebServer]  Volume job-copilot-issue-2-e2e_redis-data Removing 
+[WebServer]  Volume job-copilot-issue-2-e2e_postgres-data Removing 
+[WebServer]  Volume job-copilot-issue-2-e2e_minio-data Removing 
+[WebServer]  Network job-copilot-issue-2-e2e_default Removing 
+[WebServer]  Volume job-copilot-issue-2-e2e_minio-data Removed 
+[WebServer]  Volume job-copilot-issue-2-e2e_redis-data Removed 
+[WebServer]  Volume job-copilot-issue-2-e2e_postgres-data Removed 
+[WebServer]  Network job-copilot-issue-2-e2e_default Removed 
+
+
+  1) [Desktop Chrome] › e2e/markdown-career-import.spec.ts:90:1 › 登录用户可导入、持久化并安全复用 Markdown 职业资料 ───
+
+    Error: expect(locator).toHaveText(expected) failed
+
+    Locator: getByRole('navigation', { name: '求职工作台导航' })
+    Expected: "首页推荐投递画像"
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toHaveText" getByRole('navigation', { name: '求职工作台导航' }) with timeout 5000ms
+      - waiting for getByRole('navigation', { name: '求职工作台导航' })
+
+
+      100 |   const fileInput = page.getByLabel("选择 Markdown、DOCX 或 PDF 职业资料");
+      101 |   const uploadButton = page.getByRole("button", { name: "上传并解析" });
+    > 102 |   await expect(page.getByRole("navigation", { name: "求职工作台导航" })).toHaveText("首页推荐投递画像");
+          |                                                                   ^
+      103 |   if (testInfo.project.name === "Desktop Chrome") {
+      104 |     await page.goto("/profile");
+      105 |     await page.keyboard.press("Tab");
+        at /Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web/e2e/markdown-career-import.spec.ts:102:67
+
+    Error Context: test-results/markdown-career-import-登录用户可导入、持久化并安全复用-Markdown-职业资料-Desktop-Chrome/error-context.md
+
+  2) [Mobile Safari] › e2e/markdown-career-import.spec.ts:90:1 › 登录用户可导入、持久化并安全复用 Markdown 职业资料 ────
+
+    Error: expect(locator).toHaveText(expected) failed
+
+    Locator: getByRole('navigation', { name: '求职工作台导航' })
+    Expected: "首页推荐投递画像"
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toHaveText" getByRole('navigation', { name: '求职工作台导航' }) with timeout 5000ms
+      - waiting for getByRole('navigation', { name: '求职工作台导航' })
+
+
+      100 |   const fileInput = page.getByLabel("选择 Markdown、DOCX 或 PDF 职业资料");
+      101 |   const uploadButton = page.getByRole("button", { name: "上传并解析" });
+    > 102 |   await expect(page.getByRole("navigation", { name: "求职工作台导航" })).toHaveText("首页推荐投递画像");
+          |                                                                   ^
+      103 |   if (testInfo.project.name === "Desktop Chrome") {
+      104 |     await page.goto("/profile");
+      105 |     await page.keyboard.press("Tab");
+        at /Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web/e2e/markdown-career-import.spec.ts:102:67
+
+    Error Context: test-results/markdown-career-import-登录用户可导入、持久化并安全复用-Markdown-职业资料-Mobile-Safari/error-context.md
+
+  3) [Mobile Safari] › e2e/recommendations.spec.ts:302:1 › 推荐决策与拒绝校准建议保持规则和目标不变 ────────────────────
+
+    Error: expect(locator).toContainText(expected) failed
+
+    Locator: getByRole('listitem').filter({ has: getByRole('heading', { name: '反馈岗位二' }) }).getByText('当前推荐决策：')
+    Expected substring: "已忽略"
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toContainText" getByRole('listitem').filter({ has: getByRole('heading', { name: '反馈岗位二' }) }).getByText('当前推荐决策：') with timeout 5000ms
+      - waiting for getByRole('listitem').filter({ has: getByRole('heading', { name: '反馈岗位二' }) }).getByText('当前推荐决策：')
+        2 × locator resolved to <p>…</p>
+          - unexpected value "当前推荐决策：待查看"
+
+
+      322 |   const confirmIgnore = ignoredCard.getByRole("button", { name: "确认忽略" });
+      323 |   if (info.project.name === "Desktop Chrome") await confirmIgnore.click(); else await confirmIgnore.tap({ force: true });
+    > 324 |   await expect(ignoredCard.getByText("当前推荐决策：", { exact: false })).toContainText("已忽略");
+          |                                                                    ^
+      325 |   const before = await (async () => { const client = new Client({ connectionString: databaseUrl }); await client.connect(); try { return (await client.query("select version from job_targets where id = $1", [account.targetId])).rows[0]!.version as number; } finally { await client.end(); } })();
+      326 |   for (const title of ["反馈岗位三", "反馈岗位四", "反馈岗位五"]) {
+      327 |     const card = page.getByRole("listitem").filter({ has: page.getByRole("heading", { name: title }) });
+        at /Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web/e2e/recommendations.spec.ts:324:68
+
+    Error Context: test-results/recommendations-推荐决策与拒绝校准建议保持规则和目标不变-Mobile-Safari/error-context.md
+
+  4) [Mobile Safari] › e2e/recommendations.spec.ts:357:1 › 交错批准后立即锁定过期建议，刷新读模型并重新计算后可批准 ────────────
+
+    Error: expect(locator).toContainText(expected) failed
+
+    Locator: getByRole('listitem').filter({ has: getByRole('heading', { name: '薪酬反馈二' }) }).getByText('当前推荐决策：')
+    Expected substring: "已忽略"
+    Timeout: 5000ms
+    Error: element(s) not found
+
+    Call log:
+      - Expect "toContainText" getByRole('listitem').filter({ has: getByRole('heading', { name: '薪酬反馈二' }) }).getByText('当前推荐决策：') with timeout 5000ms
+      - waiting for getByRole('listitem').filter({ has: getByRole('heading', { name: '薪酬反馈二' }) }).getByText('当前推荐决策：')
+        2 × locator resolved to <p>…</p>
+          - unexpected value "当前推荐决策：待查看"
+
+
+      186 |   const confirm = card.getByRole("button", { name: "确认忽略" });
+      187 |   if (info.project.name === "Desktop Chrome") await confirm.click(); else await confirm.tap({ force: true });
+    > 188 |   await expect(card.getByText("当前推荐决策：", { exact: false })).toContainText("已忽略");
+          |                                                             ^
+      189 | }
+      190 |
+      191 | async function seedPaginatedRecommendationFixtures(userId: string, targetId: string, latestListId: string) {
+        at ignoreRecommendation (/Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web/e2e/recommendations.spec.ts:188:61)
+        at /Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web/e2e/recommendations.spec.ts:366:52
+
+    Error Context: test-results/recommendations-交错批准后立即锁定过期建议，刷新读模型并重新计算后可批准-Mobile-Safari/error-context.md
+
+  4 failed
+    [Desktop Chrome] › e2e/markdown-career-import.spec.ts:90:1 › 登录用户可导入、持久化并安全复用 Markdown 职业资料 ────
+    [Mobile Safari] › e2e/markdown-career-import.spec.ts:90:1 › 登录用户可导入、持久化并安全复用 Markdown 职业资料 ─────
+    [Mobile Safari] › e2e/recommendations.spec.ts:302:1 › 推荐决策与拒绝校准建议保持规则和目标不变 ─────────────────────
+    [Mobile Safari] › e2e/recommendations.spec.ts:357:1 › 交错批准后立即锁定过期建议，刷新读模型并重新计算后可批准 ─────────────
+  38 passed (2.2m)
+/Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web:
+[ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL] web@0.1.0 test:e2e: `PLAYWRIGHT_HTML_OPEN=never node scripts/e2e-runner.mjs -- recommendations.spec.ts markdown-career-import.spec.ts docx-career-import.spec.ts pdf-career-import.spec.ts job-targets.spec.ts company-watchlist.spec.ts job-imports.spec.ts source-health.spec.ts account-run-policy.spec.ts model-diagnostics.spec.ts --workers=1`
+Exit status 1

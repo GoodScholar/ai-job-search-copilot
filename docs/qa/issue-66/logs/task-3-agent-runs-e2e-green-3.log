@@ -1,0 +1,1536 @@
+$ PLAYWRIGHT_HTML_OPEN=never node scripts/e2e-runner.mjs -- agent-runs.spec.ts --workers=1
+[WebServer] (node:75390) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] Docker Compose version v5.1.3
+[WebServer] time="2026-09-28T08:32:29+08:00" level=warning msg="Warning: No resource found to remove for project \"job-copilot-issue-2-e2e\"."
+[WebServer]  Network job-copilot-issue-2-e2e_default Creating 
+[WebServer]  Network job-copilot-issue-2-e2e_default Created 
+[WebServer]  Volume job-copilot-issue-2-e2e_postgres-data Creating 
+[WebServer]  Volume job-copilot-issue-2-e2e_postgres-data Created 
+[WebServer]  Volume job-copilot-issue-2-e2e_redis-data Creating 
+[WebServer]  Volume job-copilot-issue-2-e2e_redis-data Created 
+[WebServer]  Volume job-copilot-issue-2-e2e_minio-data Creating 
+[WebServer]  Volume job-copilot-issue-2-e2e_minio-data Created 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Creating 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Creating 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Creating 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Creating 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Created 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Created 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Created 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Created 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Starting 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Starting 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Starting 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Starting 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Started 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Started 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Started 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Started 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Waiting 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Waiting 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Waiting 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Waiting 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Healthy 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Healthy 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Healthy 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Healthy 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Running 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Creating 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Created 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Waiting 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Healthy 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Starting 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Started 
+[WebServer] container "ecf3fe314d7bed3ea8edc763f1c931f2a9b04400a67b9db98e3531c2d7849352" exited with status code 0
+[WebServer] (node:75466) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] Reading config file '/Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/packages/database/drizzle.config.ts'
+[WebServer] (node:75467) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] Using 'pg' driver for database querying
+[WebServer] [⣷] applying migrations...[WebServer] [⣯] applying migrations...[WebServer] [⣟] applying migrations...[WebServer] [✓] migrations applied successfully![WebServer] (node:75501) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] Scope: 3 of 9 workspace projects
+[WebServer] apps/api dev$ node ../../scripts/nest-dev.mjs
+[WebServer] apps/web dev$ next dev --hostname 127.0.0.1
+[WebServer] apps/worker dev$ node ../../scripts/nest-dev.mjs
+[WebServer] apps/worker dev: (node:75546) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/worker dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/api dev: (node:75547) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/api dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/api dev: (node:75549) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/api dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/worker dev: (node:75548) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/worker dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:75514) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:75550) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: ▲ Next.js 16.3.2 (Turbopack)
+[WebServer] apps/web dev: - Local:         http://127.0.0.1:3120
+[WebServer] apps/web dev: - Network:       http://127.0.0.1:3120
+[WebServer] apps/web dev: ✓ Ready in 186ms
+[WebServer] apps/web dev: ✓ Running next.config.ts took 14ms
+[WebServer] apps/web dev: (node:75552) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/worker dev: [Nest] 75548  - 09/28/2026, 8:32:35 AM     LOG [NestFactory] Starting Nest application...
+[WebServer] apps/worker dev: [Nest] 75548  - 09/28/2026, 8:32:35 AM     LOG [InstanceLoader] AppModule dependencies initialized +14ms
+[WebServer] apps/worker dev: [Nest] 75548  - 09/28/2026, 8:32:35 AM     LOG [InstanceLoader] CareerImportModule dependencies initialized +1ms
+[WebServer] apps/worker dev: [Nest] 75548  - 09/28/2026, 8:32:35 AM     LOG [InstanceLoader] JobImportModule dependencies initialized +0ms
+[WebServer] apps/worker dev: [Nest] 75548  - 09/28/2026, 8:32:35 AM     LOG [InstanceLoader] AgentRunModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [NestFactory] Starting Nest application...
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [InstanceLoader] RuntimeConfigModule dependencies initialized +10ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [InstanceLoader] HealthModule dependencies initialized +1ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [InstanceLoader] CareerImportModule dependencies initialized +1ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [InstanceLoader] ProfileReviewModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [InstanceLoader] JobTargetsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [InstanceLoader] CompanyWatchlistsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [InstanceLoader] JobImportsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [InstanceLoader] JobTriageModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [InstanceLoader] AccountRunPoliciesModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [InstanceLoader] ModelDiagnosticsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [InstanceLoader] AppModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [InstanceLoader] AuthModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [InstanceLoader] RunPreflightModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [InstanceLoader] WorkbenchModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [InstanceLoader] AgentRunsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [InstanceLoader] RecommendationsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [InstanceLoader] RecommendationRunsModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [InstanceLoader] JobDiscoverySchedulesModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [InstanceLoader] AgentInboxModule dependencies initialized +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RoutesResolver] AccountsController {/v1/accounts}: +116ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/accounts/:userId, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RoutesResolver] AuthController {/v1/auth}: +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/auth/dev/sessions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/auth/sessions/current, DELETE} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RoutesResolver] HealthController {/health}: +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/health/live, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/health/ready, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RoutesResolver] WorkbenchController {/v1/workbench}: +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/workbench/home, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/workbench/first-recommendation-journey, PUT} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RoutesResolver] RunPreflightController {/v1/run-preflight}: +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/run-preflight, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RoutesResolver] ModelDiagnosticsController {/v1/model-diagnostics}: +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/model-diagnostics, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/model-diagnostics, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RoutesResolver] CareerImportController {/v1/career-documents/imports}: +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/career-documents/imports, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/career-documents/imports, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/career-documents/imports/:importId, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RoutesResolver] ProfileReviewController {/v1/profile}: +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/profile, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/profile/candidate-facts/:factId/decisions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/profile/facts, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/profile/facts/:factId/revisions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/profile/facts/:factId/removals, POST} route +1ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RoutesResolver] CareerFactConflictReviewController {/v1/career-documents/fact-conflicts}: +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/career-documents/fact-conflicts/:conflictId/resolutions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RoutesResolver] JobTargetsController {/v1/job-targets}: +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/job-targets, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/job-targets, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/revisions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/deactivations, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RoutesResolver] CompanyWatchlistsController {/v1/job-targets/:targetId/company-watchlist}: +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/company-watchlist, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/company-watchlist/items, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/company-watchlist/items/:itemId/revisions, POST} route +1ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/company-watchlist/items/:itemId/state-changes, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/company-watchlist/reorders, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RoutesResolver] SourceHealthController {/v1/job-targets/:targetId/source-health}: +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/source-health, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RoutesResolver] SourceCapabilitiesController {/v1/job-targets/:targetId/source-capabilities}: +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/source-capabilities, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RoutesResolver] JobDiscoverySchedulesController {/v1/job-targets/:targetId/discovery-schedule}: +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/discovery-schedule, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/job-targets/:targetId/discovery-schedule, PUT} route +1ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RoutesResolver] AgentRunsController {/v1/agent-runs}: +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/agent-runs, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/agent-runs/:runId/controls, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/agent-runs/latest, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/agent-runs/:runId/events, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/agent-runs/:runId, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RoutesResolver] JobImportsController {/v1/job-imports}: +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/job-imports, POST} route +1ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/job-imports, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/job-imports/:importId/raw, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/job-imports/:importId, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RoutesResolver] JobTriageController {/v1/job-opportunities/:opportunityId/triage-versions}: +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/job-opportunities/:opportunityId/triage-versions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/job-opportunities/:opportunityId/triage-versions/latest, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/job-opportunities/:opportunityId/triage-versions/:triageVersionId, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RoutesResolver] RecommendationRunsController {/v1/recommendation-runs}: +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/recommendation-runs/preparation, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/recommendation-runs, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/recommendation-runs/latest, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/recommendation-runs/latest-result, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/recommendation-runs/:runId, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/recommendation-runs/:runId/controls, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RoutesResolver] AgentInboxController {/v1/agent-inbox}: +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/agent-inbox, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/agent-inbox/:itemId/actions, POST} route +1ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RoutesResolver] RecommendationsController {/v1/recommendations}: +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/latest, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/lists/:recommendationListId, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/history, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/lists/:recommendationListId/exclusions, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/runs, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/lists/:listId/items/:itemId/decisions, POST} route +1ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/calibration-proposals, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/calibration-proposals/:id/revisions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/calibration-proposals/:id/rebases, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/recommendations/calibration-proposals/:id/resolutions, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RoutesResolver] AccountRunPoliciesController {/v1/account/run-policy}: +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/account/run-policy, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/account/run-policy/control, GET} route +1ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/account/run-policy/history, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/account/run-policy/history/:revisionNumber, GET} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/account/run-policy, PUT} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [RouterExplorer] Mapped {/v1/account/run-policy/controls, POST} route +0ms
+[WebServer] apps/api dev: [Nest] 75549  - 09/28/2026, 8:32:35 AM     LOG [NestApplication] Nest application successfully started +1ms
+[WebServer] 本地测试运行时已就绪
+[WebServer] apps/web dev:  GET /login 200 in 295ms (next.js: 169ms, application-code: 126ms)
+
+Running 10 tests using 1 worker
+
+(node:75554) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /profile/targets 200 in 89ms (next.js: 18ms, application-code: 70ms)
+[WebServer] apps/web dev:  POST /api/job-targets 201 in 120ms (next.js: 46ms, application-code: 74ms)
+[WebServer] apps/web dev:  GET /api/run-preflight?targetId=e1784f2d-5dbd-4e1a-b5e2-da1112ca1c99 200 in 37ms (next.js: 17ms, application-code: 20ms)
+[WebServer] apps/web dev:  POST /api/agent-runs 201 in 49ms (next.js: 18ms, application-code: 32ms)
+[WebServer] apps/web dev:  POST /api/agent-runs 200 in 10ms (next.js: 0.7ms, application-code: 9ms)
+[WebServer] apps/web dev:  GET /home?runId=9abac6fb-3014-4f0d-92a5-a1a710a810c1 200 in 121ms (next.js: 5ms, application-code: 115ms)
+[WebServer] apps/web dev:  GET /api/job-targets/e1784f2d-5dbd-4e1a-b5e2-da1112ca1c99/discovery-schedule 200 in 76ms
+[WebServer] apps/web dev:  GET /api/agent-runs/9abac6fb-3014-4f0d-92a5-a1a710a810c1/events?afterEventId=1 200 in 76ms
+[WebServer] apps/web dev:  GET /home?runId=9abac6fb-3014-4f0d-92a5-a1a710a810c1 200 in 81ms (next.js: 1.3ms, application-code: 80ms)
+[WebServer] apps/web dev: (node:75561) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:75562) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/job-targets/e1784f2d-5dbd-4e1a-b5e2-da1112ca1c99/discovery-schedule 200 in 110ms (next.js: 83ms, application-code: 28ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/9abac6fb-3014-4f0d-92a5-a1a710a810c1/events?afterEventId=1 200 in 125ms (next.js: 90ms, application-code: 35ms)
+[WebServer] apps/web dev: (node:75563) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:75565) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  POST /api/agent-runs/9abac6fb-3014-4f0d-92a5-a1a710a810c1/controls 200 in 485ms (next.js: 460ms, application-code: 25ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/9abac6fb-3014-4f0d-92a5-a1a710a810c1/events?afterEventId=8 200 in 375ms (next.js: 1.9ms, application-code: 373ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/9abac6fb-3014-4f0d-92a5-a1a710a810c1/events?afterEventId=8 200 in 22ms (next.js: 0.7ms, application-code: 21ms)
+[WebServer] apps/web dev: (node:75567) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/9abac6fb-3014-4f0d-92a5-a1a710a810c1/events?afterEventId=9 200 in 550ms (next.js: 1.6ms, application-code: 548ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/9abac6fb-3014-4f0d-92a5-a1a710a810c1/events?afterEventId=10 200 in 17ms (next.js: 2ms, application-code: 15ms)
+[WebServer] apps/web dev: (node:75568) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:75569) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/9abac6fb-3014-4f0d-92a5-a1a710a810c1 200 in 430ms (next.js: 412ms, application-code: 19ms)
+[WebServer] apps/web dev:  GET /api/agent-inbox?status=pending 200 in 28ms (next.js: 15ms, application-code: 13ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/9abac6fb-3014-4f0d-92a5-a1a710a810c1 200 in 25ms (next.js: 4ms, application-code: 21ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/9abac6fb-3014-4f0d-92a5-a1a710a810c1 200 in 13ms (next.js: 0.8ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /api/agent-inbox?status=pending 200 in 12ms (next.js: 0.7ms, application-code: 12ms)
+[WebServer] apps/web dev: (node:75570) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /home?runId=9abac6fb-3014-4f0d-92a5-a1a710a810c1 200 in 66ms (next.js: 0.9ms, application-code: 65ms)
+[WebServer] apps/web dev:  GET /api/job-targets/e1784f2d-5dbd-4e1a-b5e2-da1112ca1c99/discovery-schedule 200 in 11ms (next.js: 1.6ms, application-code: 9ms)
+[WebServer] apps/web dev: (node:75571) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:75572) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  POST /api/agent-inbox/3701d10b-fd37-4adf-980d-2068e43bd497/actions 200 in 452ms (next.js: 415ms, application-code: 37ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/9abac6fb-3014-4f0d-92a5-a1a710a810c1 200 in 50ms (next.js: 34ms, application-code: 16ms)
+[WebServer] apps/web dev:  GET /home?runId=9abac6fb-3014-4f0d-92a5-a1a710a810c1 200 in 88ms (next.js: 2ms, application-code: 85ms)
+[WebServer] apps/web dev:  GET /home?runId=9abac6fb-3014-4f0d-92a5-a1a710a810c1 200 in 59ms (next.js: 1.3ms, application-code: 57ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/9abac6fb-3014-4f0d-92a5-a1a710a810c1/events?afterEventId=19 200 in 46ms (next.js: 3ms, application-code: 44ms)
+[WebServer] apps/web dev: (node:75573) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:75574) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/9abac6fb-3014-4f0d-92a5-a1a710a810c1/events?afterEventId=19 200 in 807ms (next.js: 0.7ms, application-code: 806ms)
+[WebServer] apps/web dev: (node:75575) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/9abac6fb-3014-4f0d-92a5-a1a710a810c1/events?afterEventId=25 200 in 816ms (next.js: 3ms, application-code: 813ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/9abac6fb-3014-4f0d-92a5-a1a710a810c1/events?afterEventId=26 200 in 30ms (next.js: 3ms, application-code: 27ms)
+[WebServer] apps/web dev: (node:75576) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/9abac6fb-3014-4f0d-92a5-a1a710a810c1/events?afterEventId=27 200 in 793ms (next.js: 1.0ms, application-code: 792ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/9abac6fb-3014-4f0d-92a5-a1a710a810c1 200 in 23ms (next.js: 3ms, application-code: 20ms)
+[WebServer] apps/web dev:  GET /api/agent-inbox?status=pending 200 in 8ms (next.js: 0.7ms, application-code: 7ms)
+[WebServer] apps/web dev: (node:75578) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/9abac6fb-3014-4f0d-92a5-a1a710a810c1 200 in 16ms (next.js: 1.2ms, application-code: 15ms)
+[WebServer] apps/web dev:  GET /api/agent-inbox?status=pending 200 in 10ms (next.js: 0.7ms, application-code: 10ms)
+  ✘   1 [Desktop Chrome] › e2e/agent-runs.spec.ts:152:1 › 暂停会持久化到 Inbox，刷新后用 SSE 游标恢复并可继续完成 (7.9s)
+(node:75581) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /profile/targets 200 in 25ms (next.js: 0.8ms, application-code: 24ms)
+[WebServer] apps/web dev:  POST /api/job-targets 201 in 15ms (next.js: 0.7ms, application-code: 14ms)
+[WebServer] apps/web dev:  GET /api/run-preflight?targetId=6461efe9-7229-4979-8e83-4be04d3a6f56 200 in 16ms (next.js: 0.6ms, application-code: 15ms)
+[WebServer] apps/web dev:  POST /api/agent-runs 201 in 24ms (next.js: 0.6ms, application-code: 23ms)
+[WebServer] apps/web dev:  POST /api/agent-runs 200 in 8ms (next.js: 0.6ms, application-code: 8ms)
+[WebServer] apps/web dev:  GET /home?runId=c67fb8b0-97d3-44f2-96bf-fe4846bb8e0f 200 in 64ms (next.js: 0.8ms, application-code: 63ms)
+[WebServer] apps/web dev:  GET /api/job-targets/6461efe9-7229-4979-8e83-4be04d3a6f56/discovery-schedule 200 in 8ms (next.js: 5ms, application-code: 3ms)
+[WebServer] apps/web dev:  GET /api/job-targets/6461efe9-7229-4979-8e83-4be04d3a6f56/discovery-schedule 200 in 15ms (next.js: 1.3ms, application-code: 13ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/c67fb8b0-97d3-44f2-96bf-fe4846bb8e0f 200 in 17ms (next.js: 3ms, application-code: 14ms)
+[WebServer] apps/web dev:  POST /api/agent-runs/c67fb8b0-97d3-44f2-96bf-fe4846bb8e0f/controls 200 in 28ms (next.js: 3ms, application-code: 25ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/c67fb8b0-97d3-44f2-96bf-fe4846bb8e0f/events?afterEventId=8 200 in 38ms (next.js: 2ms, application-code: 36ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/c67fb8b0-97d3-44f2-96bf-fe4846bb8e0f/events?afterEventId=8 200 in 23ms (next.js: 1.2ms, application-code: 22ms)
+[WebServer] apps/web dev: (node:75586) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:75587) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:75588) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:75589) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/c67fb8b0-97d3-44f2-96bf-fe4846bb8e0f 200 in 13ms (next.js: 0.6ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/c67fb8b0-97d3-44f2-96bf-fe4846bb8e0f 200 in 20ms (next.js: 1.5ms, application-code: 18ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/c67fb8b0-97d3-44f2-96bf-fe4846bb8e0f/events?afterEventId=9 200 in 534ms (next.js: 0.8ms, application-code: 533ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/c67fb8b0-97d3-44f2-96bf-fe4846bb8e0f/events?afterEventId=10 200 in 14ms (next.js: 2ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/c67fb8b0-97d3-44f2-96bf-fe4846bb8e0f 200 in 13ms (next.js: 2ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /api/agent-inbox?status=pending 200 in 9ms (next.js: 1.0ms, application-code: 8ms)
+[WebServer] apps/web dev: (node:75592) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:75593) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/c67fb8b0-97d3-44f2-96bf-fe4846bb8e0f 200 in 13ms (next.js: 0.7ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /api/agent-inbox?status=pending 200 in 10ms (next.js: 0.6ms, application-code: 9ms)
+  ✘   2 [Desktop Chrome] › e2e/agent-runs.spec.ts:203:1 › 取消会在安全检查点终止且不会保存岗位结果 (2.1s)
+(node:75595) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /profile/targets 200 in 24ms (next.js: 0.9ms, application-code: 23ms)
+[WebServer] apps/web dev:  POST /api/job-targets 201 in 15ms (next.js: 0.8ms, application-code: 14ms)
+[WebServer] apps/web dev:  GET /api/run-preflight?targetId=71446f4c-e3c0-4c27-a7c5-bd9721da4435 200 in 16ms (next.js: 0.6ms, application-code: 15ms)
+[WebServer] apps/web dev:  POST /api/agent-runs 201 in 21ms (next.js: 0.5ms, application-code: 20ms)
+[WebServer] apps/web dev:  POST /api/agent-runs 200 in 11ms (next.js: 0.6ms, application-code: 10ms)
+[WebServer] apps/web dev:  GET /home?runId=e3e0ee1f-615e-407d-a3a0-b9ee49692830 200 in 76ms (next.js: 0.9ms, application-code: 76ms)
+[WebServer] apps/web dev:  GET /api/job-targets/71446f4c-e3c0-4c27-a7c5-bd9721da4435/discovery-schedule 200 in 18ms (next.js: 3ms, application-code: 15ms)
+[WebServer] apps/web dev: (node:75601) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:75600) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/e3e0ee1f-615e-407d-a3a0-b9ee49692830/events?afterEventId=10 200 in 30.9s (next.js: 1.6ms, application-code: 30.9s)
+[WebServer] apps/web dev:  GET /api/agent-runs/e3e0ee1f-615e-407d-a3a0-b9ee49692830/events?afterEventId=28 200 in 22ms (next.js: 3ms, application-code: 18ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/e3e0ee1f-615e-407d-a3a0-b9ee49692830/events?afterEventId=32 200 in 18ms (next.js: 0.7ms, application-code: 18ms)
+[WebServer] apps/web dev: (node:75611) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/e3e0ee1f-615e-407d-a3a0-b9ee49692830/events?afterEventId=33 200 in 267ms (next.js: 0.7ms, application-code: 267ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/e3e0ee1f-615e-407d-a3a0-b9ee49692830 200 in 16ms (next.js: 4ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /api/agent-inbox?status=pending 200 in 9ms (next.js: 1.6ms, application-code: 7ms)
+[WebServer] apps/web dev: (node:75613) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/e3e0ee1f-615e-407d-a3a0-b9ee49692830 200 in 12ms (next.js: 1.2ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /api/agent-inbox?status=pending 200 in 11ms (next.js: 1.1ms, application-code: 9ms)
+  ✘   3 [Desktop Chrome] › e2e/agent-runs.spec.ts:224:1 › 来源临时失败后会在重试预算内完成第二次尝试 (32.8s)
+(node:75615) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /profile/targets 200 in 46ms (next.js: 22ms, application-code: 24ms)
+[WebServer] apps/web dev:  POST /api/job-targets 201 in 15ms (next.js: 1.6ms, application-code: 14ms)
+[WebServer] apps/web dev:  GET /api/run-preflight?targetId=8853311b-e0f9-41fa-b58a-ee9c2c9ab46a 200 in 19ms (next.js: 1.4ms, application-code: 18ms)
+[WebServer] apps/web dev:  POST /api/agent-runs 201 in 23ms (next.js: 1.0ms, application-code: 22ms)
+[WebServer] apps/web dev:  POST /api/agent-runs 200 in 11ms (next.js: 0.6ms, application-code: 10ms)
+[WebServer] apps/web dev:  GET /home?runId=fbcc1074-3c40-4002-bb7f-31a97da0cb2e 200 in 74ms (next.js: 10ms, application-code: 64ms)
+[WebServer] apps/web dev:  GET /api/job-targets/8853311b-e0f9-41fa-b58a-ee9c2c9ab46a/discovery-schedule 200 in 15ms (next.js: 0.8ms, application-code: 14ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/fbcc1074-3c40-4002-bb7f-31a97da0cb2e/events?afterEventId=9 200 in 27ms (next.js: 3ms, application-code: 25ms)
+[WebServer] apps/web dev: (node:75620) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:75621) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/fbcc1074-3c40-4002-bb7f-31a97da0cb2e/events?afterEventId=10 200 in 30.9s (next.js: 1.3ms, application-code: 30.9s)
+[WebServer] apps/web dev: (node:75629) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/fbcc1074-3c40-4002-bb7f-31a97da0cb2e/events?afterEventId=19 200 in 31.0s (next.js: 4ms, application-code: 31.0s)
+[WebServer] apps/web dev:  GET /api/agent-runs/fbcc1074-3c40-4002-bb7f-31a97da0cb2e 200 in 19ms (next.js: 5ms, application-code: 15ms)
+[WebServer] apps/web dev:  GET /api/agent-inbox?status=pending 200 in 11ms (next.js: 1.7ms, application-code: 9ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/fbcc1074-3c40-4002-bb7f-31a97da0cb2e 200 in 11ms (next.js: 0.6ms, application-code: 10ms)
+[WebServer] apps/web dev: (node:75642) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-inbox?status=pending 200 in 11ms (next.js: 0.6ms, application-code: 10ms)
+[WebServer] apps/web dev:  POST /api/agent-inbox/948b91fe-9898-4b6e-9f18-f4baa1f4729f/actions 200 in 31ms (next.js: 8ms, application-code: 23ms)
+[WebServer] apps/web dev:  GET /home?runId=fbcc1074-3c40-4002-bb7f-31a97da0cb2e 200 in 37ms (next.js: 3ms, application-code: 34ms)
+[WebServer] apps/web dev:  GET /api/agent-inbox?status=pending 200 in 9ms (next.js: 1.0ms, application-code: 8ms)
+[WebServer] apps/web dev: (node:75644) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+  ✘   4 [Desktop Chrome] › e2e/agent-runs.spec.ts:241:1 › 重试预算耗尽会安全失败、说明原因并允许在 Inbox 标记已处理 (1.1m)
+(node:75646) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /profile/targets 200 in 26ms (next.js: 1.7ms, application-code: 25ms)
+[WebServer] apps/web dev:  POST /api/job-targets 201 in 20ms (next.js: 5ms, application-code: 15ms)
+[WebServer] apps/web dev:  GET /api/run-preflight?targetId=aaece3bf-62b2-4427-a1a9-68490a6d9120 200 in 16ms (next.js: 0.9ms, application-code: 15ms)
+[WebServer] apps/web dev:  POST /api/agent-runs 201 in 24ms (next.js: 0.8ms, application-code: 23ms)
+[WebServer] apps/web dev:  POST /api/agent-runs 200 in 11ms (next.js: 0.6ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /home?runId=1760eb28-d30f-4e65-aac8-442d04d99d08 200 in 57ms (next.js: 0.8ms, application-code: 57ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/1760eb28-d30f-4e65-aac8-442d04d99d08 200 in 10ms (next.js: 1.7ms, application-code: 9ms)
+[WebServer] apps/web dev: (node:75652) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/1760eb28-d30f-4e65-aac8-442d04d99d08 200 in 9ms (next.js: 0.6ms, application-code: 8ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/1760eb28-d30f-4e65-aac8-442d04d99d08 200 in 8ms (next.js: 0.5ms, application-code: 7ms)
+[WebServer] apps/web dev:  GET /api/job-targets/aaece3bf-62b2-4427-a1a9-68490a6d9120/discovery-schedule 200 in 15ms (next.js: 2ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/1760eb28-d30f-4e65-aac8-442d04d99d08/events?afterEventId=9 200 in 19ms (next.js: 4ms, application-code: 15ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/1760eb28-d30f-4e65-aac8-442d04d99d08 200 in 18ms (next.js: 1.5ms, application-code: 16ms)
+[WebServer] apps/web dev:  GET /api/agent-inbox?status=pending 200 in 12ms (next.js: 1.5ms, application-code: 11ms)
+[WebServer] apps/web dev: (node:75653) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:75654) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /home?runId=1760eb28-d30f-4e65-aac8-442d04d99d08 200 in 105ms (next.js: 0.9ms, application-code: 104ms)
+[WebServer] apps/web dev:  GET /api/job-targets/aaece3bf-62b2-4427-a1a9-68490a6d9120/discovery-schedule 200 in 12ms (next.js: 0.7ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /home?runId=1760eb28-d30f-4e65-aac8-442d04d99d08 200 in 48ms (next.js: 0.8ms, application-code: 47ms)
+[WebServer] apps/web dev:  GET /api/job-targets/aaece3bf-62b2-4427-a1a9-68490a6d9120/discovery-schedule 200 in 5ms (next.js: 3ms, application-code: 1.6ms)
+  ✓   5 [Desktop Chrome] › e2e/agent-runs.spec.ts:270:1 › 运行详情保留启动快照，当前状态改变后不污染历史，并兼容 pre-0047 空快照 (1.6s)
+[WebServer] apps/web dev: (node:75655) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+(node:75656) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /profile/targets 200 in 28ms (next.js: 0.8ms, application-code: 27ms)
+[WebServer] apps/web dev:  POST /api/job-targets 201 in 18ms (next.js: 0.8ms, application-code: 17ms)
+[WebServer] apps/web dev:  GET /api/run-preflight?targetId=4fbe100d-6c49-4409-9705-2b267b873820 200 in 17ms (next.js: 0.6ms, application-code: 17ms)
+[WebServer] apps/web dev:  POST /api/agent-runs 201 in 20ms (next.js: 0.6ms, application-code: 20ms)
+[WebServer] apps/web dev:  POST /api/agent-runs 200 in 8ms (next.js: 0.5ms, application-code: 8ms)
+[WebServer] apps/web dev:  GET /home?runId=ab5ba3e4-136d-40c3-a67c-9448bb86d809 200 in 41ms (next.js: 0.7ms, application-code: 41ms)
+[WebServer] apps/web dev:  GET /api/job-targets/4fbe100d-6c49-4409-9705-2b267b873820/discovery-schedule 200 in 10ms (next.js: 1.5ms, application-code: 8ms)
+[WebServer] apps/web dev: (node:75669) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:75670) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/ab5ba3e4-136d-40c3-a67c-9448bb86d809/events?afterEventId=1 200 in 93ms (next.js: 1.4ms, application-code: 91ms)
+[WebServer] apps/web dev:  GET /home?runId=ab5ba3e4-136d-40c3-a67c-9448bb86d809 200 in 40ms (next.js: 0.8ms, application-code: 39ms)
+[WebServer] apps/web dev:  GET /api/job-targets/4fbe100d-6c49-4409-9705-2b267b873820/discovery-schedule 200 in 11ms (next.js: 0.7ms, application-code: 10ms)
+[WebServer] apps/web dev:  POST /api/agent-runs/ab5ba3e4-136d-40c3-a67c-9448bb86d809/controls 200 in 19ms (next.js: 4ms, application-code: 15ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/ab5ba3e4-136d-40c3-a67c-9448bb86d809/events?afterEventId=1 200 in 67ms (next.js: 1.6ms, application-code: 65ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/ab5ba3e4-136d-40c3-a67c-9448bb86d809/events?afterEventId=1 200 in 21ms (next.js: 0.7ms, application-code: 20ms)
+[WebServer] apps/web dev: (node:75671) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/ab5ba3e4-136d-40c3-a67c-9448bb86d809/events?afterEventId=9 200 in 799ms (next.js: 0.8ms, application-code: 799ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/ab5ba3e4-136d-40c3-a67c-9448bb86d809/events?afterEventId=10 200 in 20ms (next.js: 4ms, application-code: 17ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/ab5ba3e4-136d-40c3-a67c-9448bb86d809 200 in 14ms (next.js: 2ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /api/agent-inbox?status=pending 200 in 8ms (next.js: 1.4ms, application-code: 7ms)
+[WebServer] apps/web dev: (node:75672) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:75675) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/ab5ba3e4-136d-40c3-a67c-9448bb86d809 200 in 12ms (next.js: 1.5ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/ab5ba3e4-136d-40c3-a67c-9448bb86d809 200 in 10ms (next.js: 0.6ms, application-code: 10ms)
+[WebServer] apps/web dev:  GET /api/agent-inbox?status=pending 200 in 9ms (next.js: 0.6ms, application-code: 8ms)
+[WebServer] apps/web dev: (node:75676) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /home?runId=ab5ba3e4-136d-40c3-a67c-9448bb86d809 200 in 46ms (next.js: 0.8ms, application-code: 45ms)
+[WebServer] apps/web dev:  GET /api/job-targets/4fbe100d-6c49-4409-9705-2b267b873820/discovery-schedule 200 in 19ms (next.js: 1.8ms, application-code: 17ms)
+[WebServer] apps/web dev:  POST /api/agent-inbox/a9606ab5-12da-4b94-9c9b-bdedf248a8f6/actions 200 in 30ms (next.js: 1.8ms, application-code: 28ms)
+[WebServer] apps/web dev: (node:75677) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/ab5ba3e4-136d-40c3-a67c-9448bb86d809 200 in 32ms (next.js: 11ms, application-code: 21ms)
+[WebServer] apps/web dev: (node:75678) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /home?runId=ab5ba3e4-136d-40c3-a67c-9448bb86d809 200 in 61ms (next.js: 2ms, application-code: 59ms)
+[WebServer] apps/web dev:  GET /home?runId=ab5ba3e4-136d-40c3-a67c-9448bb86d809 200 in 67ms (next.js: 12ms, application-code: 55ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/ab5ba3e4-136d-40c3-a67c-9448bb86d809/events?afterEventId=18 200 in 13ms (next.js: 2ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/ab5ba3e4-136d-40c3-a67c-9448bb86d809/events?afterEventId=18 200 in 15ms (next.js: 0.7ms, application-code: 14ms)
+[WebServer] apps/web dev: (node:75679) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/ab5ba3e4-136d-40c3-a67c-9448bb86d809/events?afterEventId=19 200 in 794ms (next.js: 1.0ms, application-code: 793ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/ab5ba3e4-136d-40c3-a67c-9448bb86d809/events?afterEventId=22 200 in 24ms (next.js: 4ms, application-code: 19ms)
+[WebServer] apps/web dev: (node:75680) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/ab5ba3e4-136d-40c3-a67c-9448bb86d809/events?afterEventId=25 200 in 799ms (next.js: 0.7ms, application-code: 798ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/ab5ba3e4-136d-40c3-a67c-9448bb86d809/events?afterEventId=26 200 in 26ms (next.js: 4ms, application-code: 22ms)
+[WebServer] apps/web dev: (node:75681) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/ab5ba3e4-136d-40c3-a67c-9448bb86d809/events?afterEventId=27 200 in 798ms (next.js: 0.8ms, application-code: 797ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/ab5ba3e4-136d-40c3-a67c-9448bb86d809/events?afterEventId=34 200 in 19ms (next.js: 2ms, application-code: 17ms)
+[WebServer] apps/web dev: (node:75682) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/ab5ba3e4-136d-40c3-a67c-9448bb86d809/events?afterEventId=35 200 in 270ms (next.js: 0.8ms, application-code: 269ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/ab5ba3e4-136d-40c3-a67c-9448bb86d809 200 in 14ms (next.js: 3ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /api/agent-inbox?status=pending 200 in 10ms (next.js: 0.9ms, application-code: 9ms)
+[WebServer] apps/web dev: (node:75683) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/ab5ba3e4-136d-40c3-a67c-9448bb86d809 200 in 14ms (next.js: 3ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /api/agent-inbox?status=pending 200 in 8ms (next.js: 0.6ms, application-code: 8ms)
+[WebServer] apps/web dev: (node:75684) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+  ✘   6 [Mobile Safari] › e2e/agent-runs.spec.ts:152:1 › 暂停会持久化到 Inbox，刷新后用 SSE 游标恢复并可继续完成 (6.4s)
+(node:75686) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /profile/targets 200 in 26ms (next.js: 3ms, application-code: 23ms)
+[WebServer] apps/web dev:  POST /api/job-targets 201 in 16ms (next.js: 0.8ms, application-code: 15ms)
+[WebServer] apps/web dev:  GET /api/run-preflight?targetId=bb152be4-0e7f-40d1-8309-b0b49e22dcad 200 in 16ms (next.js: 0.6ms, application-code: 15ms)
+[WebServer] apps/web dev:  POST /api/agent-runs 201 in 23ms (next.js: 0.7ms, application-code: 22ms)
+[WebServer] apps/web dev:  POST /api/agent-runs 200 in 13ms (next.js: 0.5ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /home?runId=7bcf45c7-fac8-4fba-92df-e1550830690e 200 in 63ms (next.js: 0.8ms, application-code: 62ms)
+[WebServer] apps/web dev:  GET /api/job-targets/bb152be4-0e7f-40d1-8309-b0b49e22dcad/discovery-schedule 200 in 3ms (next.js: 2ms, application-code: 1.3ms)
+[WebServer] apps/web dev:  GET /api/job-targets/bb152be4-0e7f-40d1-8309-b0b49e22dcad/discovery-schedule 200 in 11ms (next.js: 0.5ms, application-code: 11ms)
+[WebServer] apps/web dev: (node:75700) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:75701) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/7bcf45c7-fac8-4fba-92df-e1550830690e 200 in 12ms (next.js: 1.7ms, application-code: 10ms)
+[WebServer] apps/web dev:  POST /api/agent-runs/7bcf45c7-fac8-4fba-92df-e1550830690e/controls 200 in 23ms (next.js: 4ms, application-code: 19ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/7bcf45c7-fac8-4fba-92df-e1550830690e/events?afterEventId=8 200 in 129ms (next.js: 1.1ms, application-code: 128ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/7bcf45c7-fac8-4fba-92df-e1550830690e/events?afterEventId=8 200 in 24ms (next.js: 0.9ms, application-code: 23ms)
+[WebServer] apps/web dev: (node:75702) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:75703) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/7bcf45c7-fac8-4fba-92df-e1550830690e 200 in 15ms (next.js: 0.6ms, application-code: 14ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/7bcf45c7-fac8-4fba-92df-e1550830690e 200 in 11ms (next.js: 0.7ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/7bcf45c7-fac8-4fba-92df-e1550830690e/events?afterEventId=9 200 in 536ms (next.js: 0.6ms, application-code: 535ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/7bcf45c7-fac8-4fba-92df-e1550830690e/events?afterEventId=10 200 in 14ms (next.js: 2ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/7bcf45c7-fac8-4fba-92df-e1550830690e 200 in 15ms (next.js: 2ms, application-code: 13ms)
+[WebServer] apps/web dev:  GET /api/agent-inbox?status=pending 200 in 8ms (next.js: 0.7ms, application-code: 7ms)
+[WebServer] apps/web dev: (node:75704) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:75705) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/7bcf45c7-fac8-4fba-92df-e1550830690e 200 in 13ms (next.js: 0.9ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /api/agent-inbox?status=pending 200 in 9ms (next.js: 0.7ms, application-code: 8ms)
+  ✘   7 [Mobile Safari] › e2e/agent-runs.spec.ts:203:1 › 取消会在安全检查点终止且不会保存岗位结果 (2.1s)
+(node:75707) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /profile/targets 200 in 24ms (next.js: 0.9ms, application-code: 24ms)
+[WebServer] apps/web dev:  POST /api/job-targets 201 in 16ms (next.js: 0.8ms, application-code: 15ms)
+[WebServer] apps/web dev:  GET /api/run-preflight?targetId=49eb2311-3576-4141-a586-96a1e9dbe995 200 in 18ms (next.js: 0.6ms, application-code: 18ms)
+[WebServer] apps/web dev:  POST /api/agent-runs 201 in 22ms (next.js: 1.1ms, application-code: 21ms)
+[WebServer] apps/web dev:  POST /api/agent-runs 200 in 12ms (next.js: 0.7ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /home?runId=a07f0fec-1682-472d-a99d-37c34066b610 200 in 54ms (next.js: 0.9ms, application-code: 54ms)
+[WebServer] apps/web dev:  GET /api/job-targets/49eb2311-3576-4141-a586-96a1e9dbe995/discovery-schedule 200 in 3ms (next.js: 1.5ms, application-code: 1.6ms)
+[WebServer] apps/web dev:  GET /api/job-targets/49eb2311-3576-4141-a586-96a1e9dbe995/discovery-schedule 200 in 10ms (next.js: 0.6ms, application-code: 9ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/a07f0fec-1682-472d-a99d-37c34066b610/events?afterEventId=8 200 in 26ms (next.js: 3ms, application-code: 24ms)
+[WebServer] apps/web dev: (node:75720) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:75721) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/a07f0fec-1682-472d-a99d-37c34066b610/events?afterEventId=10 200 in 31.1s (next.js: 1.6ms, application-code: 31.1s)
+[WebServer] apps/web dev:  GET /api/agent-runs/a07f0fec-1682-472d-a99d-37c34066b610 200 in 15ms (next.js: 2ms, application-code: 13ms)
+[WebServer] apps/web dev:  GET /api/agent-inbox?status=pending 200 in 8ms (next.js: 1.4ms, application-code: 6ms)
+[WebServer] apps/web dev: (node:75778) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/a07f0fec-1682-472d-a99d-37c34066b610 200 in 17ms (next.js: 1.9ms, application-code: 15ms)
+[WebServer] apps/web dev:  GET /api/agent-inbox?status=pending 200 in 12ms (next.js: 1.3ms, application-code: 11ms)
+[WebServer] apps/web dev: (node:75797) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+  ✘   8 [Mobile Safari] › e2e/agent-runs.spec.ts:224:1 › 来源临时失败后会在重试预算内完成第二次尝试 (32.9s)
+(node:75799) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /profile/targets 200 in 38ms (next.js: 3ms, application-code: 35ms)
+[WebServer] apps/web dev:  POST /api/job-targets 201 in 14ms (next.js: 0.9ms, application-code: 13ms)
+[WebServer] apps/web dev:  GET /api/run-preflight?targetId=11817312-ec52-42aa-8ce2-94740717344b 200 in 14ms (next.js: 1.0ms, application-code: 13ms)
+[WebServer] apps/web dev:  POST /api/agent-runs 201 in 18ms (next.js: 0.8ms, application-code: 18ms)
+[WebServer] apps/web dev:  POST /api/agent-runs 200 in 12ms (next.js: 0.6ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /home?runId=47df2f96-99b0-4289-8e55-a639dc87e4ee 200 in 52ms (next.js: 1.6ms, application-code: 51ms)
+[WebServer] apps/web dev:  GET /api/job-targets/11817312-ec52-42aa-8ce2-94740717344b/discovery-schedule 200 in 4ms (next.js: 3ms, application-code: 1.3ms)
+[WebServer] apps/web dev:  GET /api/job-targets/11817312-ec52-42aa-8ce2-94740717344b/discovery-schedule 200 in 10ms (next.js: 0.6ms, application-code: 9ms)
+[WebServer] apps/web dev: (node:75812) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:75813) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/47df2f96-99b0-4289-8e55-a639dc87e4ee/events?afterEventId=10 200 in 31.2s (next.js: 3ms, application-code: 31.2s)
+[WebServer] apps/web dev: (node:75829) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/47df2f96-99b0-4289-8e55-a639dc87e4ee/events?afterEventId=19 200 in 30.9s (next.js: 4ms, application-code: 30.9s)
+[WebServer] apps/web dev:  GET /api/agent-runs/47df2f96-99b0-4289-8e55-a639dc87e4ee/events?afterEventId=25 200 in 23ms (next.js: 6ms, application-code: 17ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/47df2f96-99b0-4289-8e55-a639dc87e4ee 200 in 28ms (next.js: 2ms, application-code: 26ms)
+[WebServer] apps/web dev:  GET /api/agent-inbox?status=pending 200 in 13ms (next.js: 1.9ms, application-code: 11ms)
+[WebServer] apps/web dev: (node:75851) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:75853) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/47df2f96-99b0-4289-8e55-a639dc87e4ee 200 in 14ms (next.js: 0.7ms, application-code: 13ms)
+[WebServer] apps/web dev:  GET /api/agent-inbox?status=pending 200 in 11ms (next.js: 0.6ms, application-code: 10ms)
+[WebServer] apps/web dev:  POST /api/agent-inbox/ccf67255-5a50-4538-8134-cebdfcdb495d/actions 200 in 27ms (next.js: 4ms, application-code: 23ms)
+[WebServer] apps/web dev:  GET /home?runId=47df2f96-99b0-4289-8e55-a639dc87e4ee 200 in 46ms (next.js: 1.9ms, application-code: 44ms)
+[WebServer] apps/web dev:  GET /api/agent-inbox?status=pending 200 in 9ms (next.js: 1.2ms, application-code: 7ms)
+[WebServer] apps/web dev: (node:75854) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+  ✘   9 [Mobile Safari] › e2e/agent-runs.spec.ts:241:1 › 重试预算耗尽会安全失败、说明原因并允许在 Inbox 标记已处理 (1.1m)
+(node:75856) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /profile/targets 200 in 26ms (next.js: 1.8ms, application-code: 24ms)
+[WebServer] apps/web dev:  POST /api/job-targets 201 in 15ms (next.js: 1.3ms, application-code: 13ms)
+[WebServer] apps/web dev:  GET /api/run-preflight?targetId=225bfe29-0a38-4de7-be39-60497726c519 200 in 14ms (next.js: 1.0ms, application-code: 13ms)
+[WebServer] apps/web dev:  POST /api/agent-runs 201 in 18ms (next.js: 0.7ms, application-code: 17ms)
+[WebServer] apps/web dev:  POST /api/agent-runs 200 in 12ms (next.js: 0.6ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /home?runId=e4cea1a6-c892-4e0b-a22d-cf3fecb4f344 200 in 48ms (next.js: 0.8ms, application-code: 47ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/e4cea1a6-c892-4e0b-a22d-cf3fecb4f344 200 in 16ms (next.js: 3ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /api/job-targets/225bfe29-0a38-4de7-be39-60497726c519/discovery-schedule 200 in 3ms (next.js: 2.0ms, application-code: 1.5ms)
+[WebServer] apps/web dev:  GET /api/job-targets/225bfe29-0a38-4de7-be39-60497726c519/discovery-schedule 200 in 13ms (next.js: 0.7ms, application-code: 13ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/e4cea1a6-c892-4e0b-a22d-cf3fecb4f344/events?afterEventId=9 200 in 42ms (next.js: 2ms, application-code: 40ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/e4cea1a6-c892-4e0b-a22d-cf3fecb4f344/events?afterEventId=21 200 in 20ms (next.js: 0.8ms, application-code: 20ms)
+[WebServer] apps/web dev: (node:75868) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/e4cea1a6-c892-4e0b-a22d-cf3fecb4f344/events?afterEventId=23 200 in 21ms (next.js: 1.1ms, application-code: 19ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/e4cea1a6-c892-4e0b-a22d-cf3fecb4f344 200 in 12ms (next.js: 2ms, application-code: 10ms)
+[WebServer] apps/web dev: (node:75869) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev: (node:75870) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/agent-runs/e4cea1a6-c892-4e0b-a22d-cf3fecb4f344/events?afterEventId=24 200 in 271ms (next.js: 1.4ms, application-code: 269ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/e4cea1a6-c892-4e0b-a22d-cf3fecb4f344 200 in 13ms (next.js: 1.1ms, application-code: 12ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/e4cea1a6-c892-4e0b-a22d-cf3fecb4f344 200 in 12ms (next.js: 0.8ms, application-code: 11ms)
+[WebServer] apps/web dev:  GET /api/agent-runs/e4cea1a6-c892-4e0b-a22d-cf3fecb4f344 200 in 16ms (next.js: 0.8ms, application-code: 15ms)
+[WebServer] apps/web dev:  GET /api/agent-inbox?status=pending 200 in 10ms (next.js: 3ms, application-code: 8ms)
+[WebServer] apps/web dev:  GET /home?runId=e4cea1a6-c892-4e0b-a22d-cf3fecb4f344 200 in 78ms (next.js: 3ms, application-code: 75ms)
+[WebServer] apps/web dev:  GET /api/job-targets/225bfe29-0a38-4de7-be39-60497726c519/discovery-schedule 200 in 10ms (next.js: 1.4ms, application-code: 9ms)
+[WebServer] apps/web dev:  GET /home?runId=e4cea1a6-c892-4e0b-a22d-cf3fecb4f344 200 in 47ms (next.js: 0.8ms, application-code: 46ms)
+[WebServer] apps/web dev: (node:75872) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] apps/web dev: (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] apps/web dev:  GET /api/job-targets/225bfe29-0a38-4de7-be39-60497726c519/discovery-schedule 200 in 10ms (next.js: 0.6ms, application-code: 9ms)
+[WebServer] apps/web dev:  GET /home?runId=e4cea1a6-c892-4e0b-a22d-cf3fecb4f344 200 in 42ms (next.js: 0.9ms, application-code: 41ms)
+  ✓  10 [Mobile Safari] › e2e/agent-runs.spec.ts:270:1 › 运行详情保留启动快照，当前状态改变后不污染历史，并兼容 pre-0047 空快照 (1.4s)
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Stopping 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Stopping 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Stopping 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Stopping 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Stopped 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Removing 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-init-1 Removed 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Stopping 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Stopped 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Removing 
+[WebServer]  Container job-copilot-issue-2-e2e-redis-1 Removed 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Stopped 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Removing 
+[WebServer]  Container job-copilot-issue-2-e2e-minio-1 Removed 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Stopped 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Removing 
+[WebServer]  Container job-copilot-issue-2-e2e-postgres-1 Removed 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Stopped 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Removing 
+[WebServer]  Container job-copilot-issue-2-e2e-mailpit-1 Removed 
+[WebServer]  Network job-copilot-issue-2-e2e_default Removing 
+[WebServer]  Volume job-copilot-issue-2-e2e_postgres-data Removing 
+[WebServer]  Volume job-copilot-issue-2-e2e_redis-data Removing 
+[WebServer]  Volume job-copilot-issue-2-e2e_minio-data Removing 
+[WebServer]  Volume job-copilot-issue-2-e2e_postgres-data Removed 
+[WebServer]  Volume job-copilot-issue-2-e2e_redis-data Removed 
+[WebServer]  Volume job-copilot-issue-2-e2e_minio-data Removed 
+[WebServer]  Network job-copilot-issue-2-e2e_default Removed 
+
+
+  1) [Desktop Chrome] › e2e/agent-runs.spec.ts:152:1 › 暂停会持久化到 Inbox，刷新后用 SSE 游标恢复并可继续完成 ───────────
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    - Expected  -  1
+    + Received  + 93
+
+    - Array []
+    + Array [
+    +   Object {
+    +     "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    +     "help": "Elements must meet minimum color contrast ratio thresholds",
+    +     "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/color-contrast?application=playwright",
+    +     "id": "color-contrast",
+    +     "impact": "serious",
+    +     "nodes": Array [
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#0051ff",
+    +               "contrastRatio": 3.11,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#05133a",
+    +               "fontSize": "10.5pt (14px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +                 "target": Array [
+    +                   ".recommendation-run-start > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".recommendation-run-start > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#0051ff",
+    +               "contrastRatio": 3.11,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#05133a",
+    +               "fontSize": "10.5pt (14px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +                 "target": Array [
+    +                   ".discovery-schedule-actions > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".discovery-schedule-actions > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +         ],
+    +       },
+    +     ],
+    +     "tags": Array [
+    +       "cat.color",
+    +       "wcag2aa",
+    +       "wcag143",
+    +       "TTv5",
+    +       "TT13.c",
+    +       "EN-301-549",
+    +       "EN-9.1.4.3",
+    +       "ACT",
+    +       "RGAAv4",
+    +       "RGAA-3.2.1",
+    +     ],
+    +   },
+    + ]
+
+      138 |   expect(await controls.evaluateAll((elements) => elements.every((element) => element.getBoundingClientRect().height >= 44))).toBe(true);
+      139 |   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
+    > 140 |   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+          |                                                                 ^
+      141 |
+      142 |   if (testInfo.project.name === "Desktop Chrome") {
+      143 |     const scheduleTime = page.getByLabel("每日检查时间（北京时间 / Asia/Shanghai）");
+        at assertAccessibleControls (/Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web/e2e/agent-runs.spec.ts:140:65)
+        at /Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web/e2e/agent-runs.spec.ts:196:5
+
+    Error Context: test-results/agent-runs-暂停会持久化到-Inbox，刷新后用-SSE-游标恢复并可继续完成-Desktop-Chrome/error-context.md
+
+  2) [Desktop Chrome] › e2e/agent-runs.spec.ts:203:1 › 取消会在安全检查点终止且不会保存岗位结果 ────────────────────────
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    - Expected  -  1
+    + Received  + 93
+
+    - Array []
+    + Array [
+    +   Object {
+    +     "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    +     "help": "Elements must meet minimum color contrast ratio thresholds",
+    +     "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/color-contrast?application=playwright",
+    +     "id": "color-contrast",
+    +     "impact": "serious",
+    +     "nodes": Array [
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#0051ff",
+    +               "contrastRatio": 3.11,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#05133a",
+    +               "fontSize": "10.5pt (14px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +                 "target": Array [
+    +                   ".recommendation-run-start > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".recommendation-run-start > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#0051ff",
+    +               "contrastRatio": 3.11,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#05133a",
+    +               "fontSize": "10.5pt (14px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +                 "target": Array [
+    +                   ".discovery-schedule-actions > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".discovery-schedule-actions > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +         ],
+    +       },
+    +     ],
+    +     "tags": Array [
+    +       "cat.color",
+    +       "wcag2aa",
+    +       "wcag143",
+    +       "TTv5",
+    +       "TT13.c",
+    +       "EN-301-549",
+    +       "EN-9.1.4.3",
+    +       "ACT",
+    +       "RGAAv4",
+    +       "RGAA-3.2.1",
+    +     ],
+    +   },
+    + ]
+
+      138 |   expect(await controls.evaluateAll((elements) => elements.every((element) => element.getBoundingClientRect().height >= 44))).toBe(true);
+      139 |   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
+    > 140 |   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+          |                                                                 ^
+      141 |
+      142 |   if (testInfo.project.name === "Desktop Chrome") {
+      143 |     const scheduleTime = page.getByLabel("每日检查时间（北京时间 / Asia/Shanghai）");
+        at assertAccessibleControls (/Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web/e2e/agent-runs.spec.ts:140:65)
+        at /Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web/e2e/agent-runs.spec.ts:221:3
+
+    Error Context: test-results/agent-runs-取消会在安全检查点终止且不会保存岗位结果-Desktop-Chrome/error-context.md
+
+  3) [Desktop Chrome] › e2e/agent-runs.spec.ts:224:1 › 来源临时失败后会在重试预算内完成第二次尝试 ───────────────────────
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    - Expected  -  1
+    + Received  + 93
+
+    - Array []
+    + Array [
+    +   Object {
+    +     "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    +     "help": "Elements must meet minimum color contrast ratio thresholds",
+    +     "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/color-contrast?application=playwright",
+    +     "id": "color-contrast",
+    +     "impact": "serious",
+    +     "nodes": Array [
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#0051ff",
+    +               "contrastRatio": 3.11,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#05133a",
+    +               "fontSize": "10.5pt (14px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +                 "target": Array [
+    +                   ".recommendation-run-start > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".recommendation-run-start > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#0051ff",
+    +               "contrastRatio": 3.11,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#05133a",
+    +               "fontSize": "10.5pt (14px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +                 "target": Array [
+    +                   ".discovery-schedule-actions > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".discovery-schedule-actions > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +         ],
+    +       },
+    +     ],
+    +     "tags": Array [
+    +       "cat.color",
+    +       "wcag2aa",
+    +       "wcag143",
+    +       "TTv5",
+    +       "TT13.c",
+    +       "EN-301-549",
+    +       "EN-9.1.4.3",
+    +       "ACT",
+    +       "RGAAv4",
+    +       "RGAA-3.2.1",
+    +     ],
+    +   },
+    + ]
+
+      138 |   expect(await controls.evaluateAll((elements) => elements.every((element) => element.getBoundingClientRect().height >= 44))).toBe(true);
+      139 |   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
+    > 140 |   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+          |                                                                 ^
+      141 |
+      142 |   if (testInfo.project.name === "Desktop Chrome") {
+      143 |     const scheduleTime = page.getByLabel("每日检查时间（北京时间 / Asia/Shanghai）");
+        at assertAccessibleControls (/Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web/e2e/agent-runs.spec.ts:140:65)
+        at /Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web/e2e/agent-runs.spec.ts:238:3
+
+    Error Context: test-results/agent-runs-来源临时失败后会在重试预算内完成第二次尝试-Desktop-Chrome/error-context.md
+
+  4) [Desktop Chrome] › e2e/agent-runs.spec.ts:241:1 › 重试预算耗尽会安全失败、说明原因并允许在 Inbox 标记已处理 ────────────
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    - Expected  -  1
+    + Received  + 93
+
+    - Array []
+    + Array [
+    +   Object {
+    +     "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    +     "help": "Elements must meet minimum color contrast ratio thresholds",
+    +     "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/color-contrast?application=playwright",
+    +     "id": "color-contrast",
+    +     "impact": "serious",
+    +     "nodes": Array [
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#0051ff",
+    +               "contrastRatio": 3.11,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#05133a",
+    +               "fontSize": "10.5pt (14px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +                 "target": Array [
+    +                   ".recommendation-run-start > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".recommendation-run-start > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#0051ff",
+    +               "contrastRatio": 3.11,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#05133a",
+    +               "fontSize": "10.5pt (14px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +                 "target": Array [
+    +                   ".discovery-schedule-actions > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".discovery-schedule-actions > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +         ],
+    +       },
+    +     ],
+    +     "tags": Array [
+    +       "cat.color",
+    +       "wcag2aa",
+    +       "wcag143",
+    +       "TTv5",
+    +       "TT13.c",
+    +       "EN-301-549",
+    +       "EN-9.1.4.3",
+    +       "ACT",
+    +       "RGAAv4",
+    +       "RGAA-3.2.1",
+    +     ],
+    +   },
+    + ]
+
+      138 |   expect(await controls.evaluateAll((elements) => elements.every((element) => element.getBoundingClientRect().height >= 44))).toBe(true);
+      139 |   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
+    > 140 |   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+          |                                                                 ^
+      141 |
+      142 |   if (testInfo.project.name === "Desktop Chrome") {
+      143 |     const scheduleTime = page.getByLabel("每日检查时间（北京时间 / Asia/Shanghai）");
+        at assertAccessibleControls (/Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web/e2e/agent-runs.spec.ts:140:65)
+        at /Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web/e2e/agent-runs.spec.ts:267:3
+
+    Error Context: test-results/agent-runs-重试预算耗尽会安全失败、说明原因并允许在-Inbox-标记已处理-Desktop-Chrome/error-context.md
+
+  5) [Mobile Safari] › e2e/agent-runs.spec.ts:152:1 › 暂停会持久化到 Inbox，刷新后用 SSE 游标恢复并可继续完成 ────────────
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    - Expected  -  1
+    + Received  + 93
+
+    - Array []
+    + Array [
+    +   Object {
+    +     "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    +     "help": "Elements must meet minimum color contrast ratio thresholds",
+    +     "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/color-contrast?application=playwright",
+    +     "id": "color-contrast",
+    +     "impact": "serious",
+    +     "nodes": Array [
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#0051ff",
+    +               "contrastRatio": 3.11,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#05133a",
+    +               "fontSize": "10.5pt (14px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +                 "target": Array [
+    +                   ".recommendation-run-start > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".recommendation-run-start > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#0051ff",
+    +               "contrastRatio": 3.11,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#05133a",
+    +               "fontSize": "10.5pt (14px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +                 "target": Array [
+    +                   ".discovery-schedule-actions > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".discovery-schedule-actions > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +         ],
+    +       },
+    +     ],
+    +     "tags": Array [
+    +       "cat.color",
+    +       "wcag2aa",
+    +       "wcag143",
+    +       "TTv5",
+    +       "TT13.c",
+    +       "EN-301-549",
+    +       "EN-9.1.4.3",
+    +       "ACT",
+    +       "RGAAv4",
+    +       "RGAA-3.2.1",
+    +     ],
+    +   },
+    + ]
+
+      138 |   expect(await controls.evaluateAll((elements) => elements.every((element) => element.getBoundingClientRect().height >= 44))).toBe(true);
+      139 |   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
+    > 140 |   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+          |                                                                 ^
+      141 |
+      142 |   if (testInfo.project.name === "Desktop Chrome") {
+      143 |     const scheduleTime = page.getByLabel("每日检查时间（北京时间 / Asia/Shanghai）");
+        at assertAccessibleControls (/Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web/e2e/agent-runs.spec.ts:140:65)
+        at /Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web/e2e/agent-runs.spec.ts:196:5
+
+    Error Context: test-results/agent-runs-暂停会持久化到-Inbox，刷新后用-SSE-游标恢复并可继续完成-Mobile-Safari/error-context.md
+
+  6) [Mobile Safari] › e2e/agent-runs.spec.ts:203:1 › 取消会在安全检查点终止且不会保存岗位结果 ─────────────────────────
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    - Expected  -  1
+    + Received  + 93
+
+    - Array []
+    + Array [
+    +   Object {
+    +     "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    +     "help": "Elements must meet minimum color contrast ratio thresholds",
+    +     "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/color-contrast?application=playwright",
+    +     "id": "color-contrast",
+    +     "impact": "serious",
+    +     "nodes": Array [
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#0051ff",
+    +               "contrastRatio": 3.11,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#05133a",
+    +               "fontSize": "10.5pt (14px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +                 "target": Array [
+    +                   ".recommendation-run-start > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".recommendation-run-start > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#0051ff",
+    +               "contrastRatio": 3.11,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#05133a",
+    +               "fontSize": "10.5pt (14px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +                 "target": Array [
+    +                   ".discovery-schedule-actions > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".discovery-schedule-actions > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +         ],
+    +       },
+    +     ],
+    +     "tags": Array [
+    +       "cat.color",
+    +       "wcag2aa",
+    +       "wcag143",
+    +       "TTv5",
+    +       "TT13.c",
+    +       "EN-301-549",
+    +       "EN-9.1.4.3",
+    +       "ACT",
+    +       "RGAAv4",
+    +       "RGAA-3.2.1",
+    +     ],
+    +   },
+    + ]
+
+      138 |   expect(await controls.evaluateAll((elements) => elements.every((element) => element.getBoundingClientRect().height >= 44))).toBe(true);
+      139 |   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
+    > 140 |   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+          |                                                                 ^
+      141 |
+      142 |   if (testInfo.project.name === "Desktop Chrome") {
+      143 |     const scheduleTime = page.getByLabel("每日检查时间（北京时间 / Asia/Shanghai）");
+        at assertAccessibleControls (/Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web/e2e/agent-runs.spec.ts:140:65)
+        at /Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web/e2e/agent-runs.spec.ts:221:3
+
+    Error Context: test-results/agent-runs-取消会在安全检查点终止且不会保存岗位结果-Mobile-Safari/error-context.md
+
+  7) [Mobile Safari] › e2e/agent-runs.spec.ts:224:1 › 来源临时失败后会在重试预算内完成第二次尝试 ────────────────────────
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    - Expected  -  1
+    + Received  + 93
+
+    - Array []
+    + Array [
+    +   Object {
+    +     "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    +     "help": "Elements must meet minimum color contrast ratio thresholds",
+    +     "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/color-contrast?application=playwright",
+    +     "id": "color-contrast",
+    +     "impact": "serious",
+    +     "nodes": Array [
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#0051ff",
+    +               "contrastRatio": 3.11,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#05133a",
+    +               "fontSize": "10.5pt (14px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +                 "target": Array [
+    +                   ".recommendation-run-start > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".recommendation-run-start > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#0051ff",
+    +               "contrastRatio": 3.11,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#05133a",
+    +               "fontSize": "10.5pt (14px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +                 "target": Array [
+    +                   ".discovery-schedule-actions > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".discovery-schedule-actions > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +         ],
+    +       },
+    +     ],
+    +     "tags": Array [
+    +       "cat.color",
+    +       "wcag2aa",
+    +       "wcag143",
+    +       "TTv5",
+    +       "TT13.c",
+    +       "EN-301-549",
+    +       "EN-9.1.4.3",
+    +       "ACT",
+    +       "RGAAv4",
+    +       "RGAA-3.2.1",
+    +     ],
+    +   },
+    + ]
+
+      138 |   expect(await controls.evaluateAll((elements) => elements.every((element) => element.getBoundingClientRect().height >= 44))).toBe(true);
+      139 |   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
+    > 140 |   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+          |                                                                 ^
+      141 |
+      142 |   if (testInfo.project.name === "Desktop Chrome") {
+      143 |     const scheduleTime = page.getByLabel("每日检查时间（北京时间 / Asia/Shanghai）");
+        at assertAccessibleControls (/Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web/e2e/agent-runs.spec.ts:140:65)
+        at /Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web/e2e/agent-runs.spec.ts:238:3
+
+    Error Context: test-results/agent-runs-来源临时失败后会在重试预算内完成第二次尝试-Mobile-Safari/error-context.md
+
+  8) [Mobile Safari] › e2e/agent-runs.spec.ts:241:1 › 重试预算耗尽会安全失败、说明原因并允许在 Inbox 标记已处理 ─────────────
+
+    Error: expect(received).toEqual(expected) // deep equality
+
+    - Expected  -  1
+    + Received  + 93
+
+    - Array []
+    + Array [
+    +   Object {
+    +     "description": "Ensure the contrast between foreground and background colors meets WCAG 2 AA minimum contrast ratio thresholds",
+    +     "help": "Elements must meet minimum color contrast ratio thresholds",
+    +     "helpUrl": "https://dequeuniversity.com/rules/axe/4.13/color-contrast?application=playwright",
+    +     "id": "color-contrast",
+    +     "impact": "serious",
+    +     "nodes": Array [
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#0051ff",
+    +               "contrastRatio": 3.11,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#05133a",
+    +               "fontSize": "10.5pt (14px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +                 "target": Array [
+    +                   ".recommendation-run-start > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".recommendation-run-start > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +         ],
+    +       },
+    +       Object {
+    +         "all": Array [],
+    +         "any": Array [
+    +           Object {
+    +             "data": Object {
+    +               "bgColor": "#0051ff",
+    +               "contrastRatio": 3.11,
+    +               "expectedContrastRatio": "4.5:1",
+    +               "fgColor": "#05133a",
+    +               "fontSize": "10.5pt (14px)",
+    +               "fontWeight": "normal",
+    +               "messageKey": null,
+    +             },
+    +             "id": "color-contrast",
+    +             "impact": "serious",
+    +             "message": "Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +             "relatedNodes": Array [
+    +               Object {
+    +                 "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +                 "target": Array [
+    +                   ".discovery-schedule-actions > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +                 ],
+    +               },
+    +             ],
+    +           },
+    +         ],
+    +         "failureSummary": "Fix any of the following:
+    +   Element has insufficient color contrast of 3.11 (foreground color: #05133a, background color: #0051ff, font size: 10.5pt (14px), font weight: normal). Expected contrast ratio of 4.5:1",
+    +         "html": "<button type=\"button\" tabindex=\"0\" data-slot=\"button\" class=\"group/button inline-...\">",
+    +         "impact": "serious",
+    +         "none": Array [],
+    +         "target": Array [
+    +           ".discovery-schedule-actions > .bg-primary.text-primary-foreground.hover\\:bg-\\[var\\(--emerald-strong\\)\\]",
+    +         ],
+    +       },
+    +     ],
+    +     "tags": Array [
+    +       "cat.color",
+    +       "wcag2aa",
+    +       "wcag143",
+    +       "TTv5",
+    +       "TT13.c",
+    +       "EN-301-549",
+    +       "EN-9.1.4.3",
+    +       "ACT",
+    +       "RGAAv4",
+    +       "RGAA-3.2.1",
+    +     ],
+    +   },
+    + ]
+
+      138 |   expect(await controls.evaluateAll((elements) => elements.every((element) => element.getBoundingClientRect().height >= 44))).toBe(true);
+      139 |   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
+    > 140 |   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+          |                                                                 ^
+      141 |
+      142 |   if (testInfo.project.name === "Desktop Chrome") {
+      143 |     const scheduleTime = page.getByLabel("每日检查时间（北京时间 / Asia/Shanghai）");
+        at assertAccessibleControls (/Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web/e2e/agent-runs.spec.ts:140:65)
+        at /Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web/e2e/agent-runs.spec.ts:267:3
+
+    Error Context: test-results/agent-runs-重试预算耗尽会安全失败、说明原因并允许在-Inbox-标记已处理-Mobile-Safari/error-context.md
+
+  8 failed
+    [Desktop Chrome] › e2e/agent-runs.spec.ts:152:1 › 暂停会持久化到 Inbox，刷新后用 SSE 游标恢复并可继续完成 ────────────
+    [Desktop Chrome] › e2e/agent-runs.spec.ts:203:1 › 取消会在安全检查点终止且不会保存岗位结果 ─────────────────────────
+    [Desktop Chrome] › e2e/agent-runs.spec.ts:224:1 › 来源临时失败后会在重试预算内完成第二次尝试 ────────────────────────
+    [Desktop Chrome] › e2e/agent-runs.spec.ts:241:1 › 重试预算耗尽会安全失败、说明原因并允许在 Inbox 标记已处理 ─────────────
+    [Mobile Safari] › e2e/agent-runs.spec.ts:152:1 › 暂停会持久化到 Inbox，刷新后用 SSE 游标恢复并可继续完成 ─────────────
+    [Mobile Safari] › e2e/agent-runs.spec.ts:203:1 › 取消会在安全检查点终止且不会保存岗位结果 ──────────────────────────
+    [Mobile Safari] › e2e/agent-runs.spec.ts:224:1 › 来源临时失败后会在重试预算内完成第二次尝试 ─────────────────────────
+    [Mobile Safari] › e2e/agent-runs.spec.ts:241:1 › 重试预算耗尽会安全失败、说明原因并允许在 Inbox 标记已处理 ──────────────
+  2 passed (3.8m)
+/Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web:
+[ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL] web@0.1.0 test:e2e: `PLAYWRIGHT_HTML_OPEN=never node scripts/e2e-runner.mjs -- agent-runs.spec.ts --workers=1`
+Exit status 1

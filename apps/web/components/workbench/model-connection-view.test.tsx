@@ -18,7 +18,10 @@ it.each([
   [unverified, "尚未完成模型连接检查"], [checking, "模型连接正在检查"], [available, "模型连接正常"], [failed, "模型服务认证失败"], [temporarilyUnavailable, "模型服务暂不可用"],
 ] as const)("用文字、标题和实时区域展示 %s 状态", (initial, title) => {
   render(<ModelConnectionView initialDiagnostics={initial} />);
+  expect(screen.getByRole("main", { name: "模型诊断" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "模型连接" })).toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "当前诊断摘要" })).toBeVisible();
+  expect(screen.getByRole("region", { name: "四项模型诊断" })).toBeVisible();
   expect(screen.getByRole("status")).toHaveTextContent(title);
   expect(screen.getByText("身份验证")).toBeInTheDocument();
   expect(screen.getByText("模型可用性")).toBeInTheDocument();

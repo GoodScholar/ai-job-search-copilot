@@ -2,6 +2,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { Client } from "pg";
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
 import { startPhysicalDiscovery } from "./support/start-physical-discovery";
+import { captureAfterState } from "./career-lens-state-capture";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const databaseUrl = process.env.E2E_DATABASE_URL ?? "postgresql://job_copilot:local_only_job_copilot@127.0.0.1:55420/job_copilot";
@@ -92,7 +93,7 @@ async function activate(page: Page, info: TestInfo, label: string | RegExp): Pro
 }
 
 async function activateControl(page: Page, control: ReturnType<Page["getByRole"]>, info: TestInfo): Promise<void> {
-  if (info.project.name === "Mobile Safari") await control.tap();
+  if (info.project.name === "Mobile Safari") { await control.scrollIntoViewIfNeeded(); await control.click(); }
   else await control.press("Enter");
 }
 
@@ -115,6 +116,7 @@ async function assertReducedMotion(page: Page): Promise<void> {
 
 async function addWatchlistSource(page: Page, targetId: string, name: string, board: string): Promise<void> {
   await page.goto(`/profile/targets/${targetId}/watchlist`);
+  await page.getByRole("button", { name: "添加目标公司" }).click();
   await page.getByLabel("公司规范名称").fill(name);
   await page.getByLabel("公开招聘入口").fill(`https://boards.greenhouse.io/${board}`);
   await page.getByLabel("允许域").fill("boards.greenhouse.io, boards-api.greenhouse.io");
@@ -227,6 +229,7 @@ test("从首页将候选事实由未读标记为已读并确认解决", async ({
   await activate(page, info, "标记为已读：有待确认的画像事实");
   await expect(inboxStatusMessage).toContainText("暂时无法处理该事项，请稍后重试。");
   await expect(article).toBeVisible();
+  await captureAfterState(page, "home-inbox", "failure", info);
   await page.context().setOffline(false);
   await activate(page, info, "标记为已读：有待确认的画像事实");
   await expect(inboxStatusMessage).toContainText("事项已标记为已读。");
@@ -349,7 +352,8 @@ test("从首页拒绝校准建议不会修改现行规则", async ({ page, reque
     const summary = card.locator("summary").filter({ hasText: "忽略此推荐" });
     if (info.project.name === "Mobile Safari") await summary.tap({ force: true }); else await summary.click();
     await card.getByRole("radio", { name: reason }).check();
-    if (info.project.name === "Mobile Safari") await card.getByRole("button", { name: "确认忽略" }).tap({ force: true }); else await card.getByRole("button", { name: "确认忽略" }).click();
+    const confirmIgnore = card.getByRole("button", { name: "确认忽略" });
+    if (info.project.name === "Mobile Safari") { await confirmIgnore.scrollIntoViewIfNeeded(); await confirmIgnore.click(); } else await confirmIgnore.click();
     await expect(card.getByText("当前推荐决策：", { exact: false })).toContainText("已忽略");
   }
   const calibration = page.getByRole("heading", { name: "校准建议" }).locator("..");
@@ -371,6 +375,7 @@ test("从首页拒绝校准建议不会修改现行规则", async ({ page, reque
   await expect(page).toHaveURL(/\/recommendations\?targetId=.*#calibration-proposal$/u);
   await page.reload();
   await expect(page.getByRole("button", { name: "拒绝建议" })).toBeEnabled();
+  await captureAfterState(page, "recommendations-calibration", "content", info);
   await activate(page, info, "拒绝建议");
   await expect.poll(() => activeRuleSnapshot(account.userId, account.targetId)).toEqual(before);
   await expect.poll(() => inboxItemStatus(request, account.token, unread.itemId, "resolved")).toBe("resolved");

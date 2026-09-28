@@ -1,0 +1,17 @@
+diff --git a/apps/web/e2e/workbench-inbox.spec.ts b/apps/web/e2e/workbench-inbox.spec.ts
+index 43235e9..02a8d99 100644
+--- a/apps/web/e2e/workbench-inbox.spec.ts
++++ b/apps/web/e2e/workbench-inbox.spec.ts
+@@ -355,6 +355,12 @@ test("从首页拒绝校准建议不会修改现行规则", async ({ page, reque
+   const calibration = page.getByRole("heading", { name: "校准建议" }).locator("..");
+   await expect(calibration).toBeVisible();
+   await expect(calibration.getByRole("article")).toHaveCount(2);
++  if (process.env.ISSUE66_BASELINE_CAPTURE === "1") {
++    await page.screenshot({
++      path: `../../docs/qa/issue-66/screenshots/before/recommendations-calibration-${info.project.name === "Mobile Safari" ? "mobile-safari" : "desktop-chrome"}.png`,
++      fullPage: true,
++    });
++  }
+   await activateControl(page, calibration.getByRole("button", { name: "批准建议" }).first(), info);
+   await expect(calibration.getByText("状态：已批准")).toBeVisible();
+   const before = await activeRuleSnapshot(account.userId, account.targetId);

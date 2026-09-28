@@ -1,0 +1,120 @@
+{
+  "p0": 1,
+  "files": [
+    {
+      "file": "apps/web/components/workbench/job-targets-view.tsx",
+      "findings": [
+        {
+          "id": "missing-stamp",
+          "severity": "P2",
+          "label": "No /* finesse · … */ build stamp — next run has nothing to rotate against",
+          "fix": "divergence §4.2",
+          "hits": [
+            {
+              "line": 0,
+              "text": "no five-axis stamp in CSS"
+            }
+          ],
+          "count": 1
+        }
+      ]
+    },
+    {
+      "file": "apps/web/components/workbench/company-watchlist-view.tsx",
+      "findings": [
+        {
+          "id": "dead-local-ref",
+          "severity": "P0",
+          "label": "1 local file reference(s) point at nothing on disk: draft.careersUrl.trim(",
+          "fix": "write the missing file (or fix the path) before delivery",
+          "total": 1,
+          "hits": [
+            {
+              "line": 57,
+              "text": "draft.careersUrl.trim("
+            }
+          ],
+          "count": 1
+        },
+        {
+          "id": "missing-stamp",
+          "severity": "P2",
+          "label": "No /* finesse · … */ build stamp — next run has nothing to rotate against",
+          "fix": "divergence §4.2",
+          "hits": [
+            {
+              "line": 0,
+              "text": "no five-axis stamp in CSS"
+            }
+          ],
+          "count": 1
+        }
+      ]
+    },
+    {
+      "file": "apps/web/components/workbench/job-import-view.tsx",
+      "findings": [
+        {
+          "id": "missing-stamp",
+          "severity": "P2",
+          "label": "No /* finesse · … */ build stamp — next run has nothing to rotate against",
+          "fix": "divergence §4.2",
+          "hits": [
+            {
+              "line": 0,
+              "text": "no five-axis stamp in CSS"
+            }
+          ],
+          "count": 1
+        }
+      ]
+    },
+    {
+      "file": "apps/web/app/(workbench)/recommendations/page.tsx",
+      "findings": [
+        {
+          "id": "missing-stamp",
+          "severity": "P2",
+          "label": "No /* finesse · … */ build stamp — next run has nothing to rotate against",
+          "fix": "divergence §4.2",
+          "hits": [
+            {
+              "line": 0,
+              "text": "no five-axis stamp in CSS"
+            }
+          ],
+          "count": 1
+        }
+      ]
+    },
+    {
+      "file": "apps/web/e2e/career-lens-acceptance.spec.ts",
+      "findings": [
+        {
+          "id": "missing-stamp",
+          "severity": "P2",
+          "label": "No /* finesse · … */ build stamp — next run has nothing to rotate against",
+          "fix": "divergence §4.2",
+          "hits": [
+            {
+              "line": 0,
+              "text": "no five-axis stamp in CSS"
+            }
+          ],
+          "count": 1
+        }
+      ]
+    }
+  ],
+  "notCovered": [
+    "default-category aesthetic (the vibe, not just token names — beige+brass craft, AI purple-glow)",
+    "div-based fake screenshots / fake dashboards",
+    "identical / generic card grids (icon + title + text × N)",
+    "zero imagery on an image-implied brief (food / hotel / fashion / travel)",
+    "glassmorphism / AI-purple-glow used as decoration",
+    "layout-family repetition (§5) and whether the soul is actually distinct",
+    "whether the engine RENDERS real pixels (needs the Playwright runtime pass, not a grep)",
+    "mobile-floor M3/M4 — clickable text wrapping to two lines, long-word overflow at 320px (needs a rendered page at 320, not a grep)",
+    "root-relative asset paths (`/img/x.png`) — dead-ref only resolves file-relative ones; a broken `/…` link needs the real serving root"
+  ]
+}

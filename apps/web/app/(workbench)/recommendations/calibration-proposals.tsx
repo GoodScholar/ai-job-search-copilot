@@ -46,7 +46,7 @@ function ProposalOperationControls({ proposal, pending, locked, submit, reviseAc
 
 export function CalibrationProposals({ proposals, reviseAction, rebaseAction = reviseAction, resolveAction }: { proposals: CalibrationProposal[]; reviseAction: Action; rebaseAction?: Action; resolveAction: Action }) {
   const router = useRouter(); const [pending, startTransition] = useTransition(); const [message, setMessage] = useState<string | null>(null); const [error, setError] = useState<string | null>(null); const [conflicts, setConflicts] = useState<Record<string, string>>({});
-  if (!proposals.length) return null;
+  if (!proposals.length) return <section aria-labelledby="calibration-proposals-title" className="flex flex-col gap-2"><h2 id="calibration-proposals-title">校准建议</h2><p>暂无待审校准建议。</p><p>继续处理推荐中的保存或忽略决定；出现足够一致的反馈后，这里会显示可审核的规则调整建议。</p></section>;
   const submit = (event: FormEvent<HTMLFormElement>, proposal: CalibrationProposal, action: SubmitAction, success: string) => {
     event.preventDefault(); setMessage(null); setError(null);
     const formData = new FormData(event.currentTarget);

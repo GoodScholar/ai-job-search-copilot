@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 
@@ -149,7 +149,43 @@ it("links from trusted profile facts to confirmation of job targets", () => {
     }],
   }} />);
 
+  expect(screen.getByRole("main", { name: "职业资料" })).toBeVisible();
   expect(screen.getByRole("link", { name: "确认求职目标" })).toHaveAttribute("href", "/profile/targets");
+});
+
+it("默认先展示可信画像，明确操作后才展开手动维护", async () => {
+  const user = userEvent.setup();
+  render(<ProfileImportView initialImports={[]} />);
+  expect(screen.getByRole("region", { name: "画像事实下一行动" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "新增画像事实" }).closest("form")).toHaveClass("profile-maintenance-collapsed");
+  await user.click(screen.getByRole("button", { name: "维护画像事实" }));
+  expect(screen.getByRole("button", { name: "新增画像事实" }).closest("form")).not.toHaveClass("profile-maintenance-collapsed");
+});
+
+it("默认先展示导入下一行动，明确操作后才展开上传区", async () => {
+  const user = userEvent.setup();
+  render(<ProfileImportView initialImports={[]} />);
+  expect(screen.getByRole("region", { name: "职业资料下一行动" })).toBeVisible();
+  const uploadSection = screen.getAllByRole("heading", { name: "导入职业资料" }).map((heading) => heading.closest("section")).find((section) => section?.classList.contains("profile-upload"));
+  expect(uploadSection).toHaveClass("profile-maintenance-collapsed");
+  await user.click(screen.getByRole("button", { name: "开始导入职业资料" }));
+  expect(uploadSection).not.toHaveClass("profile-maintenance-collapsed");
+});
+
+it("收起导入区后仍把当前和最近导入任务状态保留在可见 live 区域", async () => {
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(completedDetail));
+  const user = userEvent.setup();
+  render(<ProfileImportView initialImports={[completedImport]} />);
+
+  expect(await screen.findByRole("status")).toHaveTextContent("解析完成");
+  expect(screen.getByRole("status")).toBeVisible();
+  expect(screen.getByRole("heading", { name: "最近导入" })).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "开始导入职业资料" }));
+  await user.click(screen.getByRole("button", { name: "收起导入区" }));
+  expect(screen.getByRole("status")).toBeVisible();
+  expect(screen.getByRole("status")).toHaveTextContent("解析完成");
+  expect(screen.getByRole("button", { name: /completed\.md/ })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "取消导入" })).not.toBeInTheDocument();
 });
 
 it("detects private information before upload and submits only the sanitized processing copy", async () => {
@@ -331,6 +367,15 @@ it("keeps pending candidates separate from the current trusted profile", async (
   expect(screen.getByRole("heading", { name: "当前可信画像" })).toBeInTheDocument();
   expect(screen.getByText("React", { exact: true })).toBeInTheDocument();
   expect(screen.queryByText("确认、修改和拒绝将在下一阶段开放")).not.toBeInTheDocument();
+});
+
+it("将可信事实、候选审核和冲突对照作为相互独立的资料对象", async () => {
+  const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json(completedDetail));
+  render(<ProfileImportView initialImports={[completedImport]} initialProfile={{ profileId: null, version: 0, facts: [] }} />);
+
+  await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+  expect(within(screen.getByRole("region", { name: "候选事实审核队列" })).getByRole("button", { name: "确认 TypeScript" })).toBeVisible();
+  expect(within(screen.getByRole("region", { name: "可信事实台账" })).getByRole("heading", { name: "当前可信画像" })).toBeVisible();
 });
 
 it("confirms a candidate with the current profile version and moves it into trusted facts", async () => {

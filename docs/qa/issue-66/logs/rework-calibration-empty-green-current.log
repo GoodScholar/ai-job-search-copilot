@@ -1,0 +1,11 @@
+$ vitest run --passWithNoTests -- 'app/(workbench)/recommendations/calibration-proposals.test.tsx'
+
+ RUN  v4.1.11 /Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web
+
+
+ Test Files  95 passed (95)
+      Tests  662 passed (662)
+   Start at  16:58:51
+   Duration  11.73s (transform 3.74s, setup 10.92s, import 10.99s, tests 21.94s, environment 48.24s)
+
+TEE_EXIT_CODE=0

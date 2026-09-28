@@ -44,6 +44,7 @@ function importLabel(item: JobImportSummary): string {
 }
 
 export function JobImportView({ initialImports, initialTargets = [] }: JobImportViewProps) {
+  const [isAdding, setIsAdding] = useState(false);
   const [mode, setMode] = useState<InputMode>("paste");
   const [content, setContent] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -62,6 +63,7 @@ export function JobImportView({ initialImports, initialTargets = [] }: JobImport
   const activeImportId = activeImport?.importId;
   const detailImportId = detail?.importId;
   const detailStatus = detail?.status;
+  const activeImportStatus = activeImport ? `${importLabel(activeImport)} · ${statusText[activeImport.status]}` : "尚未选择岗位导入";
 
   const nextEvidenceRevision = useCallback(() => {
     const next = evidenceRevisionRef.current + 1;
@@ -165,7 +167,7 @@ export function JobImportView({ initialImports, initialTargets = [] }: JobImport
       setRecentImports((previous) => insertRecent(previous, summary));
       selectImport(summary);
       if (result.import.reused) setAnnouncement("已复用已有岗位导入记录。");
-      setContent(""); setFile(null); setUrl("");
+      setContent(""); setFile(null); setUrl(""); setIsAdding(false);
     });
   }
 
@@ -176,12 +178,17 @@ export function JobImportView({ initialImports, initialTargets = [] }: JobImport
     : pollingMessage ?? (status ? statusText[status] : "尚未导入岗位。");
 
   return (
-    <main className="container workbench-main job-import-workbench">
+    <main aria-label="岗位导入" className="container workbench-main job-import-workbench">
       <section aria-labelledby="job-import-title" className="workbench-intro">
         <p className="workbench-kicker">岗位机会 · 主动导入</p><h1 id="job-import-title">导入岗位</h1>
         <p>提交岗位描述或 Markdown 文件后，系统会保留原始证据，并将可确认的信息规范化为岗位机会。</p>
       </section>
-      <section aria-labelledby="job-import-form-title" className="job-import-panel">
+      <section aria-label="岗位导入下一行动" className="job-import-panel job-import-next-action">
+        <h2>下一步</h2>
+        <p>{recentImports.length ? "选择已有导入核对证据，或添加新的岗位内容。" : "尚未导入岗位。添加你已查看的公开岗位内容后，系统会保留原始证据。"}</p>
+        <button className="workbench-touch-target" onClick={() => setIsAdding(true)} type="button">添加岗位内容</button>
+      </section>
+      {isAdding ? <section aria-labelledby="job-import-form-title" className="job-import-panel">
         <h2 id="job-import-form-title">添加岗位内容</h2>
         <div aria-label="导入方式" className="job-import-tabs" role="tablist">
           <button aria-controls="paste-panel" aria-selected={mode === "paste"} className="workbench-touch-target" id="paste-tab" onClick={() => selectMode("paste")} onKeyDown={(event) => onTabKeyDown(event, "paste")} role="tab" tabIndex={mode === "paste" ? 0 : -1} type="button">粘贴岗位描述</button>
@@ -192,12 +199,13 @@ export function JobImportView({ initialImports, initialTargets = [] }: JobImport
           {mode === "paste" ? <div aria-labelledby="paste-tab" id="paste-panel" role="tabpanel"><label htmlFor="job-description">岗位描述</label><textarea id="job-description" onChange={(event) => setContent(event.target.value)} placeholder="粘贴你已查看的岗位描述" required value={content} /></div>
             : mode === "url" ? <div aria-labelledby="url-tab" id="url-panel" role="tabpanel"><label htmlFor="job-url">岗位链接</label><input id="job-url" onChange={(event) => setUrl(event.target.value)} placeholder="https://..." required type="url" value={url} /><p>仅导入公开、可访问的具体岗位页面。</p></div>
             : <div aria-labelledby="upload-tab" id="upload-panel" role="tabpanel"><label htmlFor="job-markdown">上传 Markdown 岗位文件</label><input accept=".md,text/markdown" id="job-markdown" onChange={(event) => setFile(event.currentTarget.files?.[0] ?? null)} type="file" /><p>仅支持 UTF-8 Markdown，文件最大 512 KiB。</p></div>}
-          <button className="workbench-touch-target job-import-submit" disabled={isPending || (mode === "upload" && !file)} type="submit">{isPending ? "正在导入" : "导入岗位"}</button>
+          <div className="profile-fact-actions"><button className="workbench-touch-target job-import-submit" disabled={isPending || (mode === "upload" && !file)} type="submit">{isPending ? "正在导入" : "导入岗位"}</button><button className="workbench-touch-target" disabled={isPending} onClick={() => { setContent(""); setFile(null); setUrl(""); setIsAdding(false); }} type="button">取消导入</button></div>
         </form>
-        <p aria-live="polite" className="job-import-live" role="status">{message}</p>
-        {announcement && <p aria-live="polite">{announcement}</p>}
-        {pollingMessage && actionState.ok === false && actionState.message && <p>{pollingMessage}</p>}
-      </section>
+      </section> : null}
+      <p aria-live="polite" className="job-import-live" role="status">{message}</p>
+      {announcement && <p aria-live="polite">{announcement}</p>}
+      {pollingMessage && actionState.ok === false && actionState.message && <p>{pollingMessage}</p>}
+      <section aria-label="当前导入任务状态" className="job-import-status-panel"><p>{activeImportStatus}</p></section>
       <div className="job-import-columns">
         <section aria-labelledby="recent-job-imports-title" className="job-import-panel"><h2 id="recent-job-imports-title">最近导入</h2>
           {recentImports.length === 0 ? <p>尚无岗位导入记录。</p> : <ol className="job-import-recent-list">{recentImports.map((item) => <li key={item.importId}><button aria-pressed={activeImport?.importId === item.importId} className="workbench-touch-target" onClick={() => selectImport(item)} type="button"><span>{importLabel(item)}</span><span>{statusText[item.status]}</span></button></li>)}</ol>}

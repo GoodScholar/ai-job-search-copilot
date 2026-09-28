@@ -22,8 +22,8 @@ export default async function LoginPage({ searchParams }: LoginPageProps) {
     : "本地开发登录";
 
   return (
-    <main className="container py-16 sm:py-24">
-      <section aria-labelledby="login-boundary-title" className="max-w-2xl border-y border-[var(--rule)] py-10">
+    <main className="container career-lens-login">
+      <section aria-labelledby="login-boundary-title" className="login-access-panel">
         <p className="section-kicker">登录边界 · 邀请制 Beta</p>
         <h1 id="login-boundary-title" className="mt-3 text-[clamp(2.25rem,5vw,4rem)] font-bold tracking-[-0.04em] leading-[1.05]">
           登录尚未开放

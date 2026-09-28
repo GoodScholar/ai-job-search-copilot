@@ -90,12 +90,14 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth, ini
   const [sourceCapabilities, setSourceCapabilities] = useState(initialSourceCapabilities);
   const [draft, setDraft] = useState<Draft>(emptyDraft);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [isCreating, setIsCreating] = useState(false);
   const [message, setMessage] = useState("");
   const [healthRefreshFailure, setHealthRefreshFailure] = useState<RefreshFailure>(initialHealthRefreshFailed ? "initial" : null);
   const [capabilityRefreshFailure, setCapabilityRefreshFailure] = useState<RefreshFailure>(initialCapabilityRefreshFailed ? "initial" : null);
   const [isSaving, setIsSaving] = useState(false);
   const inactive = overview.target.targetState === "inactive";
   const editingItem = overview.items.find((item) => item.itemId === editingItemId) ?? null;
+  const isFormVisible = isCreating || editingItem !== null;
   const healthRefreshMessage = healthRefreshFailure === "initial" ? initialHealthRefreshMessage : "来源诊断未能更新。请重新加载或刷新页面。";
   const capabilitySources = sourceCapabilities?.sources ?? [];
 
@@ -166,7 +168,7 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth, ini
       const parsed = CompanyWatchlistOverviewSchema.safeParse(await response.json());
       if (!parsed.success) { setMessage("暂时无法保存目标公司，请稍后重试。"); return; }
       await applySuccessfulMutation(parsed.data, editingItem ? "目标公司已更新。" : "目标公司已添加。");
-      setDraft(emptyDraft); setEditingItemId(null);
+      setDraft(emptyDraft); setEditingItemId(null); setIsCreating(false);
     } catch {
       setMessage("暂时无法保存目标公司，请稍后重试。");
     } finally {
@@ -191,7 +193,15 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth, ini
   }
 
   function startEditing(item: CompanyWatchlistItem) {
-    setDraft(draftFrom(item)); setEditingItemId(item.itemId); setMessage("");
+    setDraft(draftFrom(item)); setEditingItemId(item.itemId); setIsCreating(false); setMessage("");
+  }
+
+  function startCreating() {
+    setDraft(emptyDraft); setEditingItemId(null); setIsCreating(true); setMessage("");
+  }
+
+  function cancelForm() {
+    setDraft(emptyDraft); setEditingItemId(null); setIsCreating(false); setMessage("");
   }
 
   function move(item: CompanyWatchlistItem, direction: -1 | 1) {
@@ -207,8 +217,8 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth, ini
     );
   }
 
-  return <main className="container workbench-main company-watchlist-main">
-    <section aria-labelledby="company-watchlist-title" className="company-watchlist-intro">
+  return <main aria-label="公司来源台账" className="container workbench-main company-watchlist-main">
+    <section aria-label="当前 Watchlist 状态" className="company-watchlist-intro">
       <p className="workbench-kicker">求职目标 · 公开来源台账</p>
       <h1 id="company-watchlist-title">{overview.target.roleFamily}的目标公司 Watchlist</h1>
       <p>为已确认的求职目标维护可验证的公开招聘来源。顺序决定优先级，已停用来源不会进入新的运行范围。</p>
@@ -216,7 +226,13 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth, ini
       {inactive ? <p className="profile-status" role="status">该求职目标已停用，不能维护 Watchlist。</p> : null}
     </section>
 
-    <section aria-labelledby="company-watchlist-form-title" className="company-watchlist-section">
+    <section aria-label="Watchlist 下一行动" className="company-watchlist-section company-watchlist-next-action">
+      <h2>下一步</h2>
+      <p>{overview.items.length ? "核对已登记来源的优先级和状态，或添加一个新的公开招聘来源。" : "尚未登记目标公司。添加第一个公开来源后，它会成为优先级 01。"}</p>
+      <button className="workbench-touch-target" disabled={inactive || isSaving} onClick={startCreating} type="button">添加目标公司</button>
+    </section>
+
+    {isFormVisible ? <section aria-labelledby="company-watchlist-form-title" className="company-watchlist-section">
       <h2 id="company-watchlist-form-title">{editingItem ? `编辑 ${editingItem.canonicalCompanyName}` : "添加目标公司"}</h2>
       <p className="company-watchlist-notice">{safetyNotice}</p>
       <form className="company-watchlist-form" onSubmit={save}>
@@ -226,11 +242,11 @@ export function CompanyWatchlistView({ initialOverview, initialSourceHealth, ini
         <label>来源备注<textarea disabled={inactive || isSaving} onChange={(event) => updateDraft("sourceNote", event.target.value)} value={draft.sourceNote} /></label>
         <div className="company-watchlist-form-actions">
           <button className="workbench-touch-target" disabled={inactive || isSaving} type="submit">{editingItem ? "保存修改" : "保存目标公司"}</button>
-          {editingItem ? <button className="workbench-touch-target" disabled={isSaving} onClick={() => { setEditingItemId(null); setDraft(emptyDraft); setMessage(""); }} type="button">取消编辑</button> : null}
+          <button className="workbench-touch-target" disabled={isSaving} onClick={cancelForm} type="button">{editingItem ? "取消编辑" : "取消添加"}</button>
         </div>
       </form>
       {message ? <p aria-live="polite" className="profile-status" role="status">{message}</p> : null}
-    </section>
+    </section> : message ? <p aria-live="polite" className="profile-status" role="status">{message}</p> : null}
 
     <section aria-labelledby="company-watchlist-ledger-title" className="company-watchlist-section">
       <h2 id="company-watchlist-ledger-title">已登记来源</h2>

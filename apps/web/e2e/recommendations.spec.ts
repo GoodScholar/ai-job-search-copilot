@@ -2,6 +2,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { Queue } from "bullmq";
 import { Client } from "pg";
 import { expect, test, type APIRequestContext, type Locator, type Page, type TestInfo } from "@playwright/test";
+import { captureAfterState } from "./career-lens-state-capture";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const databaseUrl = process.env.E2E_DATABASE_URL ?? "postgresql://job_copilot:local_only_job_copilot@127.0.0.1:55420/job_copilot";
@@ -184,7 +185,7 @@ async function ignoreRecommendation(page: Page, title: string, reason: "薪资" 
   if (info.project.name === "Desktop Chrome") await summary.click(); else await summary.tap({ force: true });
   await card.getByRole("radio", { name: reason }).check();
   const confirm = card.getByRole("button", { name: "确认忽略" });
-  if (info.project.name === "Desktop Chrome") await confirm.click(); else await confirm.tap({ force: true });
+  if (info.project.name === "Desktop Chrome") await confirm.click(); else { await confirm.scrollIntoViewIfNeeded(); await confirm.click(); }
   await expect(card.getByText("当前推荐决策：", { exact: false })).toContainText("已忽略");
 }
 
@@ -236,10 +237,12 @@ test("显式 Fake matching 真实链路交付双方证据、质量排除与单�
   await expect(page.getByRole("list", { name: "推荐岗位" })).toContainText("正式推荐 TypeScript 工程师");
   await expect(page.getByText("稳定排除 1 项岗位：匹配证据不足")).toBeVisible();
   await page.getByText("查看证据与判断").click();
-  await expect(page.getByRole("list", { name: "推荐岗位" }).getByText(/^岗位证据：/u)).toContainText("行业：人工智能");
-  await expect(page.getByRole("list", { name: "推荐岗位" }).getByText(/^画像证据：/u)).toContainText("已确认的岗位方向：frontend");
+  const evidence = page.getByRole("list", { name: "推荐岗位" }).getByRole("region", { name: "岗位证据对照" });
+  await expect(evidence).toContainText("行业：人工智能");
+  await expect(page.getByRole("list", { name: "推荐岗位" }).getByRole("region", { name: "画像证据对照" })).toContainText("已确认的岗位方向：frontend");
   await expect(page.getByRole("list", { name: "推荐岗位" }).locator("details > p > strong")).toHaveCount(6);
   await expect(page.locator("main")).not.toContainText(/(?:评分|score|\d+%)/i);
+  await captureAfterState(page, "recommendations", "content", info);
   const before = await matchSnapshot(account.userId, account.targetId);
   const listsBefore = await listSnapshot(account.userId, account.targetId);
   const reevaluate = page.getByRole("button", { name: "重新评估此岗位" });
@@ -318,18 +321,18 @@ test("推荐决策与拒绝校准建议保持规则和目标不变", async ({ pa
   const ignoredCard = page.getByRole("listitem").filter({ has: page.getByRole("heading", { name: "反馈岗位二" }) });
   const ignoreWithoutReason = ignoredCard.locator("summary").filter({ hasText: "忽略此推荐" });
   await ignoreWithoutReason.scrollIntoViewIfNeeded();
-  if (info.project.name === "Desktop Chrome") await ignoreWithoutReason.click(); else await ignoreWithoutReason.tap({ force: true });
+  if (info.project.name === "Desktop Chrome") await ignoreWithoutReason.click(); else { await ignoreWithoutReason.scrollIntoViewIfNeeded(); await ignoreWithoutReason.click(); }
   const confirmIgnore = ignoredCard.getByRole("button", { name: "确认忽略" });
-  if (info.project.name === "Desktop Chrome") await confirmIgnore.click(); else await confirmIgnore.tap({ force: true });
+  if (info.project.name === "Desktop Chrome") await confirmIgnore.click(); else { await confirmIgnore.scrollIntoViewIfNeeded(); await confirmIgnore.click(); }
   await expect(ignoredCard.getByText("当前推荐决策：", { exact: false })).toContainText("已忽略");
   const before = await (async () => { const client = new Client({ connectionString: databaseUrl }); await client.connect(); try { return (await client.query("select version from job_targets where id = $1", [account.targetId])).rows[0]!.version as number; } finally { await client.end(); } })();
   for (const title of ["反馈岗位三", "反馈岗位四", "反馈岗位五"]) {
     const card = page.getByRole("listitem").filter({ has: page.getByRole("heading", { name: title }) });
     const summary = card.locator("summary").filter({ hasText: "忽略此推荐" });
-    if (info.project.name === "Desktop Chrome") await summary.click(); else await summary.tap({ force: true });
+    if (info.project.name === "Desktop Chrome") await summary.click(); else { await summary.scrollIntoViewIfNeeded(); await summary.click(); }
     await card.getByRole("radio", { name: "地点" }).check();
     const button = card.getByRole("button", { name: "确认忽略" });
-    if (info.project.name === "Desktop Chrome") await button.click(); else await button.tap({ force: true });
+    if (info.project.name === "Desktop Chrome") await button.click(); else { await button.scrollIntoViewIfNeeded(); await button.click(); }
     await expect(card.getByText("当前推荐决策：", { exact: false })).toContainText("已忽略");
   }
   await expect(page.getByRole("heading", { name: "校准建议" })).toBeVisible();
@@ -379,6 +382,7 @@ test("交错批准后立即锁定过期建议，刷新读模型并重新计算�
   await expect(page.getByText("规则已更新，请先刷新后重新计算或修改建议。")).toBeVisible();
   await expect(approve).toBeDisabled();
   await expect(locationProposal.getByRole("button", { name: "重新计算" })).toBeVisible();
+  await captureAfterState(page, "recommendations", "failure", info);
   const rebase = locationProposal.getByRole("button", { name: "重新计算" });
   if (info.project.name === "Desktop Chrome") await rebase.click(); else await rebase.tap();
   await expect.poll(async () => {
@@ -405,6 +409,10 @@ test("显式 Fake matching 的质量不足候选可生成零推荐清单", async
   await page.reload();
   await expect(page.getByText("稳定排除 1 项岗位：匹配证据不足")).toBeVisible();
   await expect(page.getByRole("list", { name: "推荐岗位" }).locator("li")).toHaveCount(0);
+  const calibration = page.getByRole("region", { name: "校准建议" });
+  await expect(calibration).toContainText("暂无待审校准建议。");
+  await expect(calibration).toContainText("继续处理推荐中的保存或忽略决定");
+  await captureAfterState(page, "recommendations-calibration", "empty", info);
   await expect(page.evaluate(() => document.documentElement.scrollWidth === document.documentElement.clientWidth)).resolves.toBe(true);
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 });

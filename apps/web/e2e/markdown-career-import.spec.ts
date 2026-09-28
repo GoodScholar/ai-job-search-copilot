@@ -1,5 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { captureAfterState } from "./career-lens-state-capture";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const testDevAuthSecret = "issue-2-e2e-dev-auth-shared-secret";
@@ -97,6 +98,8 @@ test("登录用户可导入、持久化并安全复用 Markdown 职业资料", a
   expect(emptyImportResponse.status()).toBe(200);
   await expect(emptyImportResponse.json()).resolves.toEqual({ imports: [] });
 
+  await page.getByRole("button", { name: "开始导入职业资料" }).click();
+
   const fileInput = page.getByLabel("选择 Markdown、DOCX 或 PDF 职业资料");
   const uploadButton = page.getByRole("button", { name: "上传并解析" });
   await expect(page.getByRole("navigation", { name: "求职工作台导航" })).toHaveText("首页推荐投递画像");
@@ -114,6 +117,9 @@ test("登录用户可导入、持久化并安全复用 Markdown 职业资料", a
     await expect(page.getByRole("button", { name: "退出" })).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(page.getByRole("link", { name: "管理账户运行策略" })).toBeFocused();
+    await page.getByRole("button", { name: "开始导入职业资料" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(fileInput).toBeVisible();
     await page.keyboard.press("Tab");
     await expect(fileInput).toBeFocused();
   }
@@ -145,6 +151,11 @@ test("登录用户可导入、持久化并安全复用 Markdown 职业资料", a
   await expect(page.getByText("待确认", { exact: true })).toBeVisible();
   await expect(page.getByRole("heading", { name: "最近导入" })).toBeVisible();
   await expect(page.getByRole("button", { name: /career\.md/ })).toBeVisible();
+  await page.getByRole("button", { name: "收起导入区" }).click();
+  await expect(page.getByRole("status")).toHaveText("解析完成");
+  await expect(page.getByRole("heading", { name: "最近导入" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /career\.md/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: "取消导入" })).toHaveCount(0);
   expect(await importStatusHistory(page)).toEqual(expect.arrayContaining([
     expect.stringMatching(/等待解析|解析中/),
   ]));
@@ -165,7 +176,6 @@ test("登录用户可导入、持久化并安全复用 Markdown 职业资料", a
   expect(detail.facts).toHaveLength(7);
 
   await page.reload();
-  await expect(page.getByRole("status")).toHaveText("解析完成");
   await expect(page.getByText("TypeScript", { exact: true })).toBeVisible();
   await expect(page.getByText("第 6 行", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: /原件受保护，下游使用脱敏副本/ })).toBeVisible();
@@ -195,6 +205,7 @@ test("登录用户可导入、持久化并安全复用 Markdown 职业资料", a
   });
   expect(hiddenResponse.status()).toBe(404);
 
+  await page.getByRole("button", { name: "开始导入职业资料" }).click();
   const [fileInputHeight, uploadButtonHeight] = await Promise.all([
     fileInput.evaluate((element) => element.getBoundingClientRect().height),
     uploadButton.evaluate((element) => element.getBoundingClientRect().height),
@@ -210,7 +221,7 @@ test("登录用户可导入、持久化并安全复用 Markdown 职业资料", a
   const profileEntry = page.getByRole("link", { name: "查看待确认事实" });
   await expect(profileEntry).toBeVisible();
   await profileEntry.click();
-  await expect(page).toHaveURL(/\/profile$/);
+  await expect(page).toHaveURL(/\/profile#candidate-facts$/);
 });
 
 test("候选事实的确认、纠正、拒绝、并发冲突和刷新都保持可信画像边界", async ({ page, request }, testInfo) => {
@@ -249,6 +260,7 @@ test("候选事实的确认、纠正、拒绝、并发冲突和刷新都保持�
   const staleConfirm = page.getByRole("button", { name: /^确认 / }).first();
   await staleConfirm.click();
   await expect(page.getByText("画像已在其他位置更新，请刷新后重试。")).toBeVisible();
+  await captureAfterState(page, "profile-import-review", "failure", testInfo);
 
   await page.reload();
   await expect(page.getByText("版本 4", { exact: true })).toBeVisible();

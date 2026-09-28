@@ -1,6 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import type { AccountRunPolicyResponse, AccountRunPolicySettings } from "@job-copilot/contracts/account-run-policies";
 import { expect, test, type APIRequestContext, type APIResponse, type Page } from "@playwright/test";
+import { captureAfterState } from "./career-lens-state-capture";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const testDevAuthSecret = "issue-2-e2e-dev-auth-shared-secret";
@@ -87,6 +88,26 @@ test("账户运行策略可从首页和画像进入，保存后保留四层值�
   await expect(page).toHaveURL(/\/profile\/run-policy$/u);
   await expect(page.getByRole("heading", { name: "账户运行策略" })).toBeVisible();
 
+  const comparison = page.locator(".run-policy-table-wrap table");
+  const sourceLimitRow = comparison.locator("tbody tr").filter({ hasText: "每次运行来源数量" });
+  if (testInfo.project.name === "Mobile Safari") {
+    const comparisonWrap = page.getByLabel("当前策略对照表，可横向滚动");
+    await expect(comparison.locator("thead th")).toHaveText(["设置", "系统默认", "硬上限", "你的设置", "最终生效"]);
+    await expect(sourceLimitRow.locator("td")).toHaveText([
+      String(initial.system.defaults.discovery.trustedSourceLimit),
+      String(initial.system.hardLimits.discovery.trustedSourceLimit),
+      "系统默认",
+      String(initial.effective.discovery.trustedSourceLimit),
+    ]);
+    await expect(comparison.locator("thead th").evaluateAll((cells) => cells.map((cell) => getComputedStyle(cell).display))).resolves.toEqual([
+      "table-cell", "table-cell", "table-cell", "table-cell", "table-cell",
+    ]);
+    await expect(comparisonWrap.evaluate((element) => element.scrollWidth > element.clientWidth)).resolves.toBe(true);
+    await expect(page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).resolves.toBe(true);
+  }
+
+  await page.getByRole("button", { name: "调整运行策略" }).click();
+
   await page.getByLabel("每次运行来源数量").fill("18");
   await page.getByLabel("每次运行最多执行公开查询").fill("2");
   await page.getByLabel("每次运行最多验证候选").fill("6");
@@ -108,8 +129,14 @@ test("账户运行策略可从首页和画像进入，保存后保留四层值�
   expect((await saveResponse).status()).toBe(200);
   await expect(page.getByRole("status")).toHaveText("运行策略已保存。");
   await expect(page.getByText("当前修订：1", { exact: true })).toBeVisible();
+  await captureAfterState(page, "profile-run-policy", "content", testInfo);
 
-  const comparison = page.locator(".run-policy-table-wrap table");
+  const queryLimit = page.getByLabel("每次运行最多执行公开查询");
+  await queryLimit.fill(String(initial.system.hardLimits.discovery.publicQueryLimit + 1));
+  if (testInfo.project.name === "Desktop Chrome") await save.click(); else await save.tap();
+  await expect(page.getByText("公开查询次数上限不得超过", { exact: false })).toBeVisible();
+  await captureAfterState(page, "profile-run-policy", "failure", testInfo);
+
   await expect(comparison.locator("tbody tr").filter({ hasText: "每次运行来源数量" }).locator("td")).toHaveText([
     String(initial.system.defaults.discovery.trustedSourceLimit), String(initial.system.hardLimits.discovery.trustedSourceLimit), "18", "18",
   ]);
@@ -132,6 +159,7 @@ test("账户运行策略可从首页和画像进入，保存后保留四层值�
   await expect(page.getByLabel("后台允许开始时间")).toHaveValue("23:00");
   await expect(page.getByLabel("后台允许结束时间")).toHaveValue("02:00");
 
+  await page.getByRole("button", { name: "调整运行策略" }).click();
   await page.getByRole("button", { name: "查看修订历史" }).click();
   const history = page.getByRole("region", { name: "修订历史" });
   await expect(history.getByRole("listitem")).toHaveCount(2);

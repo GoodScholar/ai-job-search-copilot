@@ -11,7 +11,7 @@ export function WorkbenchHeader() {
 
   return (
     <header className="workbench-header">
-      <div className="container workbench-header-inner">
+      <div className="workbench-header-inner">
         <Link className="workbench-brand workbench-touch-target" href="/home">AI Job Search Copilot</Link>
         <WorkbenchNavigation />
         <form action={submitEndSession}>

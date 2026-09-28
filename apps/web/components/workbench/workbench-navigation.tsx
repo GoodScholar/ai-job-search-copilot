@@ -14,7 +14,7 @@ export function WorkbenchNavigation() {
   const pathname = usePathname();
 
   return (
-    <nav aria-label="求职工作台导航" className="workbench-nav">
+    <nav aria-label="求职工作台导航" className="workbench-nav workbench-navigation-list">
       {navigation.map(({ href, label }) => href ? (
         <Link
           aria-current={pathname === href || (href === "/profile" && pathname.startsWith("/profile/")) ? "page" : undefined}

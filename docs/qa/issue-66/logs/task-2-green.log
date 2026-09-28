@@ -1,0 +1,9 @@
+
+ RUN  v4.1.11 /Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web
+
+
+ Test Files  3 passed (3)
+      Tests  4 passed (4)
+   Start at  07:58:33
+   Duration  861ms (transform 139ms, setup 381ms, import 246ms, tests 132ms, environment 1.50s)
+

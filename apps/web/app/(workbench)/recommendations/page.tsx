@@ -23,7 +23,7 @@ export default async function RecommendationsPage({ searchParams = Promise.resol
   const has = (key: string) => Object.hasOwn(params, key);
   const identityKeys = ["runId", "resultId", "targetId", "recommendationListId"];
   const invalid = identityKeys.some((key) => has(key) && only(key) === null) || (has("resultId") && !runId) || (runId && (has("targetId") || has("recommendationListId"))) || (has("recommendationListId") && !targetParam);
-  if (invalid) return <main className="container workbench-page" id="main-content"><section className="job-import-panel"><h1>推荐清单</h1><p role="alert">推荐链接无效，请从推荐通知或历史版本重新打开。</p></section></main>;
+  if (invalid) return <main aria-label="证据推荐清单" className="container workbench-page" id="main-content"><section className="job-import-panel"><h1>推荐清单</h1><p role="alert">推荐链接无效，请从推荐通知或历史版本重新打开。</p></section></main>;
   let selectedRun = null, published = null, readError = false;
   let resultError: string | null = null;
   try { selectedRun = runId ? await getRecommendationRun(runId) : null; published = runId ? selectedRun : targetParam ? null : await getLatestPublishedRecommendationRun(); } catch (error) { unstable_rethrow(error); readError = true; resultError = "推荐结果暂时无法读取，请稍后重试。"; }
@@ -40,7 +40,7 @@ export default async function RecommendationsPage({ searchParams = Promise.resol
   if (targetId && !resultError) try { history = await getRecommendationHistoryPage(targetId); } catch (error) { unstable_rethrow(error); sideReadError = "历史记录暂时无法读取，请稍后重试。"; }
   if (targetId && !resultError) try { proposals = await getCalibrationProposals(targetId); } catch (error) { unstable_rethrow(error); sideReadError ??= "校准建议暂时无法读取，请稍后重试。"; }
   return (
-    <main className="container workbench-page" id="main-content">
+    <main aria-label="证据推荐清单" className="container workbench-page" id="main-content">
       <section aria-labelledby="recommendations-title" className="job-import-panel">
         <p className="section-kicker">今日处理</p>
         <h1 id="recommendations-title">推荐清单</h1>
@@ -48,17 +48,16 @@ export default async function RecommendationsPage({ searchParams = Promise.resol
         {resultError ? <p role="alert">{resultError}</p> : result ? <RecommendationResultSummary result={result} /> : null}
         {sideReadError ? <p role="alert">{sideReadError}</p> : null}
         {runStatus ? <><h2>{runStatus}</h2><Link className="workbench-touch-target" href={`/home?runId=${runId}`}>查看本次推荐</Link></> : null}
-        {!list && !result && !resultError && !runStatus ? <><h2>暂无可处理的推荐</h2><p>完成岗位发现和资格筛选后，这里会显示高度匹配、值得尝试或谨慎考虑的岗位。</p></> : list ? <>
+        {!list && !result && !resultError && !runStatus ? <><h2>暂无可处理的推荐</h2><p>完成岗位发现和资格筛选后，这里会显示高度匹配、值得尝试或谨慎考虑的岗位。</p><section aria-label="推荐下一行动" className="job-import-panel job-import-next-action">{targetId ? <><h2>下一步：从首页启动或查看今日推荐</h2><p>你已经建立主求职目标。请从首页查看推荐准备、阻塞项或启动今天的推荐；结果发布后会在这里按证据呈现。</p><Link className="workbench-touch-target" href="/home#recommendation-run">查看推荐准备</Link></> : <><h2>下一步：先建立求职目标</h2><p>建立一个主求职目标，再从首页启动岗位发现；完成资格筛选后，推荐会在这里按证据呈现。</p><Link className="workbench-touch-target" href="/profile/targets">建立求职目标</Link></>}</section></> : list ? <>
           <p aria-label="推荐清单版本">清单版本 {list.sequence} · {list.localDate}</p>
-          <LatestExclusions key={list.recommendationListId} targetId={targetId!} list={list} />
-          <RecommendationHistory key={`${targetId!}:${history.items.map((item) => item.recommendationListId).join(",")}:${history.nextCursor ?? ""}`} targetId={targetId!} initialPage={history} />
-          <CalibrationProposals proposals={proposals} reviseAction={reviseCalibrationProposalAction} rebaseAction={rebaseCalibrationProposalAction} resolveAction={resolveCalibrationProposalAction} />
-          <ol aria-label="推荐岗位" id="recommendation-list">
+          <ol aria-label="推荐岗位" className="recommendation-list" id="recommendation-list">
             {list.items.map((item) => {
               const assessment = DeepMatchAssessmentSchema.safeParse(item.assessment).data;
-              return <li key={item.matchVersionId}><h2>{item.title ?? "岗位机会"}</h2><p>{item.company ?? "来源待确认"} · {item.location ?? "地点待确认"} · <strong>{formatBand(item.displayBand)}</strong></p>{item.highlighted ? <p><strong>今日优先处理</strong></p> : null}<RecommendationDecision item={item} action={recordRecommendationDecisionAction.bind(null, list.recommendationListId, item.recommendationListItemId ?? "")} /><ReevaluationForm action={requestRecommendationReevaluationAction.bind(null, targetId!, item.opportunityId)} /><details><summary className="workbench-touch-target">查看证据与判断</summary><p>匹配版本：{item.matchVersionId}</p><p>岗位证据：{formatEvidence(item.jobEvidence)}</p><p>画像证据：{formatProfileEvidence(item.profileEvidence)}</p>{assessment?.dimensions.map((dimension) => <p key={dimension.dimension}><strong>{formatDimensionLabel(dimension)}</strong>：{formatDimensionDetail(dimension)}</p>)}</details></li>;
+              const title = item.title ?? "岗位机会";
+              return <li key={item.matchVersionId}><article aria-label={`机会：${title}`} className="opportunity-card"><header className="opportunity-card-heading"><p className="workbench-kicker">机会 {item.ordinal ?? ""}</p><h2>{title}</h2><p>{item.company ?? "来源待确认"} · {item.location ?? "地点待确认"} · <strong>{formatBand(item.displayBand)}</strong></p>{item.highlighted ? <p><strong>今日优先处理</strong></p> : null}</header><section aria-label={`${title}的决定`} className="opportunity-card-actions"><RecommendationDecision item={item} action={recordRecommendationDecisionAction.bind(null, list.recommendationListId, item.recommendationListItemId ?? "")} /><ReevaluationForm action={requestRecommendationReevaluationAction.bind(null, targetId!, item.opportunityId)} /></section><details className="evidence-lens"><summary className="workbench-touch-target">查看证据与判断</summary><p>匹配版本：{item.matchVersionId}</p><div className="evidence-lens-grid"><section aria-label="岗位证据对照"><h3>岗位证据</h3><p>{formatEvidence(item.jobEvidence)}</p></section><section aria-label="画像证据对照"><h3>画像证据</h3><p>{formatProfileEvidence(item.profileEvidence)}</p></section></div>{assessment?.dimensions.map((dimension) => <p key={dimension.dimension}><strong>{formatDimensionLabel(dimension)}</strong>：{formatDimensionDetail(dimension)}</p>)}</details></article></li>;
             })}
           </ol>
+          <div className="recommendation-progressive-details"><LatestExclusions key={list.recommendationListId} targetId={targetId!} list={list} /><CalibrationProposals proposals={proposals} reviseAction={reviseCalibrationProposalAction} rebaseAction={rebaseCalibrationProposalAction} resolveAction={resolveCalibrationProposalAction} /><RecommendationHistory key={`${targetId!}:${history.items.map((item) => item.recommendationListId).join(",")}:${history.nextCursor ?? ""}`} targetId={targetId!} initialPage={history} /></div>
         </> : null}
         {!list && targetId && !resultError ? <RecommendationHistory key={`${targetId}:${history.items.map((item) => item.recommendationListId).join(",")}:${history.nextCursor ?? ""}`} targetId={targetId} initialPage={history} /> : null}
       </section>

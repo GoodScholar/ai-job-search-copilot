@@ -18,11 +18,20 @@ function deferred<T>() {
   return { promise: new Promise<T>((next) => { resolve = next; }), resolve };
 }
 
+async function openImportForm(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: "添加岗位内容" }));
+}
+
 afterEach(() => { vi.clearAllMocks(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 it("提供粘贴和 Markdown 上传入口、未知字段与可访问状态", async () => {
   const user = userEvent.setup();
   render(<JobImportView initialImports={[]} />);
+  expect(screen.getByRole("main", { name: "岗位导入" })).toBeVisible();
+  expect(screen.getByRole("region", { name: "当前导入任务状态" })).toHaveTextContent("尚未选择岗位导入");
+  expect(screen.getByRole("button", { name: "添加岗位内容" })).toBeVisible();
+  expect(screen.queryByRole("textbox", { name: "岗位描述" })).not.toBeInTheDocument();
+  await openImportForm(user);
   expect(screen.getByRole("textbox", { name: "岗位描述" })).toBeVisible();
   await user.click(screen.getByRole("tab", { name: "上传 Markdown" }));
   expect(screen.getByLabelText("上传 Markdown 岗位文件")).toHaveAttribute("accept", ".md,text/markdown");
@@ -49,6 +58,7 @@ it("将复用通知告知用户，并以 literal pre 展示不可信 Markdown", 
     .mockResolvedValueOnce(new Response("<img src=x onerror=alert(1)>\n# 不执行", { headers: { "content-type": "text/plain" } }));
   render(<JobImportView initialImports={[]} />);
 
+  await openImportForm(user);
   await user.type(screen.getByRole("textbox", { name: "岗位描述" }), "岗位正文");
   await user.click(screen.getByRole("button", { name: "导入岗位" }));
   await waitFor(() => expect(screen.getByText("已复用已有岗位导入记录。")).toBeInTheDocument());
@@ -112,6 +122,7 @@ it("用简短中文提示轮询和提交失败", async () => {
   const user = userEvent.setup();
   render(<JobImportView initialImports={[imported]} />);
 
+  await openImportForm(user);
   await user.type(screen.getByRole("textbox", { name: "岗位描述" }), "岗位正文");
   await user.click(screen.getByRole("button", { name: "导入岗位" }));
   await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("岗位导入暂时不可用，请稍后重试。"));
@@ -207,6 +218,7 @@ it("复用当前记录后仍显示真实的终态，且提示不会遮蔽切换�
   render(<JobImportView initialImports={[completed, failed]} />);
   await screen.findByText("原文");
 
+  await openImportForm(user);
   await user.type(screen.getByRole("textbox", { name: "岗位描述" }), "重复岗位正文");
   await user.click(screen.getByRole("button", { name: "导入岗位" }));
   expect(await screen.findByText("已复用已有岗位导入记录。")).toBeInTheDocument();
@@ -241,6 +253,7 @@ it("在非终态等待原始证据，并可重试失败的原始证据读取", a
 it("按 WAI-ARIA roving tabIndex 用键盘切换导入方式", async () => {
   const user = userEvent.setup();
   render(<JobImportView initialImports={[]} />);
+  await openImportForm(user);
   const pasteTab = screen.getByRole("tab", { name: "粘贴岗位描述" });
   const uploadTab = screen.getByRole("tab", { name: "上传 Markdown" });
 

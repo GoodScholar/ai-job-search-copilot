@@ -1,0 +1,76 @@
+$ next build
+▲ Next.js 16.3.2 (Turbopack)
+✓ Running next.config.ts took 40ms
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 690ms
+  Running TypeScript ...
+  Finished TypeScript in 1457ms ...
+  Collecting page data using 9 workers ...
+  Generating static pages using 9 workers (0/28) ...
+  Generating static pages using 9 workers (7/28) 
+  Generating static pages using 9 workers (14/28) 
+  Generating static pages using 9 workers (21/28) 
+✓ Generating static pages using 9 workers (28/28) in 105ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ƒ /api/account/run-policy
+├ ƒ /api/account/run-policy/control
+├ ƒ /api/account/run-policy/controls
+├ ƒ /api/account/run-policy/history
+├ ƒ /api/account/run-policy/history/[revisionNumber]
+├ ƒ /api/agent-inbox
+├ ƒ /api/agent-inbox/[itemId]/actions
+├ ƒ /api/agent-runs
+├ ƒ /api/agent-runs/[runId]
+├ ƒ /api/agent-runs/[runId]/controls
+├ ƒ /api/agent-runs/[runId]/events
+├ ƒ /api/career-imports/[importId]
+├ ƒ /api/job-imports/[importId]
+├ ƒ /api/job-imports/[importId]/raw
+├ ƒ /api/job-opportunities/[opportunityId]/triage-versions
+├ ƒ /api/job-targets
+├ ƒ /api/job-targets/[targetId]/company-watchlist
+├ ƒ /api/job-targets/[targetId]/company-watchlist/items
+├ ƒ /api/job-targets/[targetId]/company-watchlist/items/[itemId]/revisions
+├ ƒ /api/job-targets/[targetId]/company-watchlist/items/[itemId]/state-changes
+├ ƒ /api/job-targets/[targetId]/company-watchlist/reorders
+├ ƒ /api/job-targets/[targetId]/deactivations
+├ ƒ /api/job-targets/[targetId]/discovery-schedule
+├ ƒ /api/job-targets/[targetId]/revisions
+├ ƒ /api/job-targets/[targetId]/source-capabilities
+├ ƒ /api/job-targets/[targetId]/source-health
+├ ƒ /api/model-diagnostics
+├ ƒ /api/profile/candidate-facts/[factId]/decisions
+├ ƒ /api/profile/fact-conflicts/[conflictId]/resolutions
+├ ƒ /api/profile/facts
+├ ƒ /api/profile/facts/[factId]/removals
+├ ƒ /api/profile/facts/[factId]/revisions
+├ ƒ /api/recommendation-runs
+├ ƒ /api/recommendation-runs/[runId]
+├ ƒ /api/recommendation-runs/[runId]/controls
+├ ƒ /api/recommendation-runs/latest
+├ ƒ /api/recommendation-runs/latest-result
+├ ƒ /api/recommendation-runs/preparation
+├ ƒ /api/recommendations/history
+├ ƒ /api/recommendations/lists/[recommendationListId]
+├ ƒ /api/recommendations/lists/[recommendationListId]/exclusions
+├ ƒ /api/run-preflight
+├ ƒ /api/workbench/first-recommendation-journey
+├ ƒ /home
+├ ƒ /jobs/import
+├ ƒ /login
+├ ƒ /profile
+├ ƒ /profile/model-connection
+├ ƒ /profile/run-policy
+├ ƒ /profile/targets
+├ ƒ /profile/targets/[targetId]/watchlist
+└ ƒ /recommendations
+
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

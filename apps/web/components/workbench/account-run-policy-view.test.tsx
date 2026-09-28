@@ -70,6 +70,15 @@ const activeControl: AccountRunControlState = { stoppedAt: null, controlVersion:
 
 afterEach(() => vi.restoreAllMocks());
 
+it("默认先展示策略对象，只有明确操作后才展开编辑设置", async () => {
+  const user = userEvent.setup();
+  render(<AccountRunPolicyView initialControl={activeControl} initialPolicy={initialPolicy} />);
+  expect(screen.getByRole("region", { name: "运行策略下一行动" })).toBeVisible();
+  expect(screen.getByRole("heading", { name: "调整运行策略" }).closest("section")).toHaveClass("run-policy-edit-collapsed");
+  await user.click(screen.getByRole("button", { name: "调整运行策略" }));
+  expect(screen.getByRole("heading", { name: "调整运行策略" }).closest("section")).not.toHaveClass("run-policy-edit-collapsed");
+});
+
 it("停止全部运行后重新读取权威状态，并说明安全检查点终止与在途费用", async () => {
   const user = userEvent.setup();
   const fetchMock = vi.spyOn(globalThis, "fetch")
@@ -77,6 +86,7 @@ it("停止全部运行后重新读取权威状态，并说明安全检查点终�
     .mockResolvedValueOnce(Response.json({ stoppedAt: "2026-09-12T00:00:00.000Z", controlVersion: 1, scheduleResumeAfter: null }));
 
   render(<AccountRunPolicyView initialControl={activeControl} initialPolicy={initialPolicy} />);
+  expect(screen.getByRole("main", { name: "账户运行策略" })).toBeVisible();
   const button = screen.getByRole("button", { name: "停止全部运行" });
   expect(button).toBeEnabled();
   await user.click(button);
@@ -114,6 +124,8 @@ it("旧停止命令重放后以重新读取的解除状态为准", async () => {
 
 it("未停止时仅说明停止效果，不把当前状态说成已停止", () => {
   render(<AccountRunPolicyView initialControl={activeControl} initialPolicy={initialPolicy} />);
+  expect(screen.getByRole("main", { name: "账户运行策略" })).toHaveClass("account-run-policy-main");
+  expect(screen.getByRole("region", { name: "策略生效对照" })).toBeVisible();
   expect(screen.queryByText("已停止新动作，正在运行的任务将在下一个安全检查点终止。已发出的请求可能仍产生费用")).not.toBeInTheDocument();
   expect(screen.getByText("停止后将阻止新的运行和外部动作，正在运行的任务会在下一个安全检查点终止；已发出的请求可能仍产生费用。")).toBeInTheDocument();
 });

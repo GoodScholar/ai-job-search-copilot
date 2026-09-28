@@ -3,6 +3,7 @@ import { RunPreflightReportSchema } from "@job-copilot/contracts/run-preflight";
 import { Client } from "pg";
 import { expect, test, type APIRequestContext, type Locator, type Page, type TestInfo } from "@playwright/test";
 import { startPhysicalDiscovery } from "./support/start-physical-discovery";
+import { captureAfterState } from "./career-lens-state-capture";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const databaseUrl = process.env.E2E_DATABASE_URL ?? "postgresql://job_copilot:local_only_job_copilot@127.0.0.1:55420/job_copilot";
@@ -93,6 +94,7 @@ async function expectActiveJourney(page: Page, currentTitle: string): Promise<vo
 
 async function importCareerMaterial(page: Page): Promise<void> {
   await page.goto("/profile");
+  await page.getByRole("button", { name: "开始导入职业资料" }).click();
   await page.getByLabel("选择 Markdown、DOCX 或 PDF 职业资料").setInputFiles({
     name: "first-recommendation-career.md", mimeType: "text/markdown", buffer: Buffer.from(resume, "utf8"),
   });
@@ -419,6 +421,7 @@ test("失败运行不会完成首次推荐旅程", async ({ page, request }, inf
   await page.reload();
   await expectActiveJourney(page, "获得第一份推荐结果");
   await expectJourneyStep(page, "获得第一份推荐结果", "needs_action", true);
+  await captureAfterState(page, "home-first-recommendation-journey", "failure", info);
 
 });
 

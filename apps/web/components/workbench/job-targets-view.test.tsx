@@ -52,6 +52,29 @@ function activeSecondary(targetId: string) {
 
 afterEach(() => vi.unstubAllGlobals());
 
+it("以主次目标台账、约束编辑和候选方向组织求职目标", () => {
+  render(<JobTargetsView initialOverview={overview([activeTarget()])} />);
+  expect(screen.getByRole("region", { name: "候选方向证据" })).toBeVisible();
+  expect(screen.getByRole("region", { name: "已确认目标台账" })).toHaveTextContent("AI 应用工程");
+  expect(screen.getByRole("button", { name: "新增求职目标" })).toBeVisible();
+  expect(screen.queryByRole("heading", { name: "手动确认求职目标" })).not.toBeInTheDocument();
+});
+
+it("仅在明确新增或修改后显示求职目标表单，避免台账首屏成为长表单", async () => {
+  const user = userEvent.setup();
+  render(<JobTargetsView initialOverview={overview([activeTarget()])} />);
+
+  await user.click(screen.getByRole("button", { name: "新增求职目标" }));
+  expect(screen.getByRole("heading", { name: "手动确认求职目标" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "取消新增" })).toBeVisible();
+
+  await user.click(screen.getByRole("button", { name: "取消新增" }));
+  expect(screen.queryByRole("heading", { name: "手动确认求职目标" })).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "修改 AI 应用工程" }));
+  expect(screen.getByRole("heading", { name: "修改 AI 应用工程" })).toBeVisible();
+});
+
 it("prepopulates but never saves evidence-labelled candidate directions until the user submits the complete target form", async () => {
   const user = userEvent.setup();
   const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(Response.json(overview([activeTarget(1)]), { status: 201 }));
@@ -59,6 +82,7 @@ it("prepopulates but never saves evidence-labelled candidate directions until th
 
   render(<JobTargetsView initialOverview={overview()} />);
 
+  expect(screen.getByRole("main", { name: "求职目标" })).toBeVisible();
   expect(screen.getByRole("heading", { name: "候选岗位方向" })).toBeVisible();
   expect(screen.getAllByText("建议依据")).toHaveLength(3);
   expect(screen.getByText("AI 应用工程 证据")).toBeVisible();
@@ -156,6 +180,8 @@ it("为每个已确认求职目标提供维护目标公司 Watchlist 的同源�
 it("defaults a new target to the remaining secondary slot when a primary target already exists", () => {
   render(<JobTargetsView initialOverview={overview([activeTarget(1)])} />);
 
+  fireEvent.click(screen.getByRole("button", { name: "新增求职目标" }));
+
   expect(screen.getByLabelText("主目标")).toBeDisabled();
   expect(screen.getByLabelText("主目标")).not.toBeChecked();
   expect(screen.getByLabelText("次目标")).toBeEnabled();
@@ -171,10 +197,9 @@ it("disables new-target submission without a request when all one-plus-two slots
   ])} />);
 
   expect(screen.getByText("主目标和两个次目标均已设置。如需新增，请先停用或修改已有目标。")).toBeVisible();
-  expect(screen.getByLabelText("主目标")).toBeDisabled();
-  expect(screen.getByLabelText("次目标")).toBeDisabled();
-  const submit = screen.getByRole("button", { name: "保存求职目标" });
-  expect(submit).toBeDisabled();
-  fireEvent.submit(submit.closest("form")!);
+  const add = screen.getByRole("button", { name: "新增求职目标" });
+  expect(add).toBeDisabled();
+  expect(screen.queryByRole("heading", { name: "手动确认求职目标" })).not.toBeInTheDocument();
+  fireEvent.click(add);
   expect(fetchMock).not.toHaveBeenCalled();
 });

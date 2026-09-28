@@ -1,0 +1,4 @@
+$ next typegen && tsc --noEmit
+Generating route types...
+✓ Types generated successfully
+TEE_EXIT_CODE=0

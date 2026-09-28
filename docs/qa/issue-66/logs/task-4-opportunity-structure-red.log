@@ -1,0 +1,741 @@
+
+ RUN  v4.1.11 /Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web
+
+ ❯ app/(workbench)/recommendations/page.test.tsx (52 tests | 1 failed) 253ms
+     × 将每个真实岗位作为机会对象，并把岗位与画像证据放入可展开对照 70ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  app/(workbench)/recommendations/page.test.tsx > RecommendationsPage > 将每个真实岗位作为机会对象，并把岗位与画像证据放入可展开对照
+TestingLibraryElementError: Unable to find an accessible element with the role "article" and name "机会：结构化岗位"
+
+Here are the accessible roles:
+
+  main:
+
+  Name "证据推荐清单":
+  [36m<main[39m
+    [33maria-label[39m=[32m"证据推荐清单"[39m
+    [33mclass[39m=[32m"container workbench-page"[39m
+    [33mid[39m=[32m"main-content"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  region:
+
+  Name "推荐清单":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"recommendations-title"[39m
+    [33mclass[39m=[32m"job-import-panel"[39m
+  [36m/>[39m
+
+  Name "本次推荐已准备好":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"recommendation-result-title"[39m
+    [33mclass[39m=[32m"recommendation-result-summary"[39m
+    [33mid[39m=[32m"recommendation-result"[39m
+  [36m/>[39m
+
+  Name "本次覆盖证据":
+  [36m<section[39m
+    [33maria-label[39m=[32m"本次覆盖证据"[39m
+    [33mclass[39m=[32m"recommendation-result-evidence"[39m
+  [36m/>[39m
+
+  Name "覆盖情况":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"recommendation-coverage-title"[39m
+    [33mclass[39m=[32m"recommendation-result-coverage"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  paragraph:
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"section-kicker"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "推荐清单版本":
+  [36m<p[39m
+    [33maria-label[39m=[32m"推荐清单版本"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  --------------------------------------------------
+  heading:
+
+  Name "推荐清单":
+  [36m<h1[39m
+    [33mid[39m=[32m"recommendations-title"[39m
+  [36m/>[39m
+
+  Name "本次推荐已准备好":
+  [36m<h2[39m
+    [33mid[39m=[32m"recommendation-result-title"[39m
+  [36m/>[39m
+
+  Name "覆盖情况":
+  [36m<h3[39m
+    [33mid[39m=[32m"recommendation-coverage-title"[39m
+  [36m/>[39m
+
+  Name "结构化岗位":
+  [36m<h2 />[39m
+
+  --------------------------------------------------
+  link:
+
+  Name "查看推荐岗位":
+  [36m<a[39m
+    [33mclass[39m=[32m"workbench-touch-target"[39m
+    [33mhref[39m=[32m"#recommendation-list"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  group:
+
+  Name "":
+  [36m<details />[39m
+
+  Name "":
+  [36m<details />[39m
+
+  Name "忽略原因（可跳过）":
+  [36m<fieldset />[39m
+
+  Name "":
+  [36m<details />[39m
+
+  --------------------------------------------------
+  list:
+
+  Name "":
+  [36m<ol />[39m
+
+  Name "推荐岗位":
+  [36m<ol[39m
+    [33maria-label[39m=[32m"推荐岗位"[39m
+    [33mid[39m=[32m"recommendation-list"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  listitem:
+
+  Name "":
+  [36m<li />[39m
+
+  --------------------------------------------------
+  strong:
+
+  Name "":
+  [36m<strong />[39m
+
+  Name "":
+  [36m<strong />[39m
+
+  Name "":
+  [36m<strong />[39m
+
+  Name "":
+  [36m<strong />[39m
+
+  Name "":
+  [36m<strong />[39m
+
+  Name "":
+  [36m<strong />[39m
+
+  Name "":
+  [36m<strong />[39m
+
+  Name "":
+  [36m<strong />[39m
+
+  Name "":
+  [36m<strong />[39m
+
+  --------------------------------------------------
+  button:
+
+  Name "收藏":
+  [36m<button[39m
+    [33mclass[39m=[32m"workbench-touch-target"[39m
+    [33mtype[39m=[32m"submit"[39m
+  [36m/>[39m
+
+  Name "确认忽略":
+  [36m<button[39m
+    [33mclass[39m=[32m"workbench-touch-target"[39m
+    [33mtype[39m=[32m"submit"[39m
+  [36m/>[39m
+
+  Name "重新评估此岗位":
+  [36m<button[39m
+    [33mclass[39m=[32m"group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 bg-primary text-primary-foreground hover:bg-[var(--emerald-strong)] h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 workbench-touch-target"[39m
+    [33mdata-slot[39m=[32m"button"[39m
+    [33mtabindex[39m=[32m"0"[39m
+    [33mtype[39m=[32m"submit"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  radio:
+
+  Name "岗位方向":
+  [36m<input[39m
+    [33mname[39m=[32m"reason"[39m
+    [33mtype[39m=[32m"radio"[39m
+    [33mvalue[39m=[32m"ROLE_DIRECTION"[39m
+  [36m/>[39m
+
+  Name "地点":
+  [36m<input[39m
+    [33mname[39m=[32m"reason"[39m
+    [33mtype[39m=[32m"radio"[39m
+    [33mvalue[39m=[32m"LOCATION"[39m
+  [36m/>[39m
+
+  Name "薪资":
+  [36m<input[39m
+    [33mname[39m=[32m"reason"[39m
+    [33mtype[39m=[32m"radio"[39m
+    [33mvalue[39m=[32m"SALARY"[39m
+  [36m/>[39m
+
+  Name "公司":
+  [36m<input[39m
+    [33mname[39m=[32m"reason"[39m
+    [33mtype[39m=[32m"radio"[39m
+    [33mvalue[39m=[32m"COMPANY"[39m
+  [36m/>[39m
+
+  Name "行业":
+  [36m<input[39m
+    [33mname[39m=[32m"reason"[39m
+    [33mtype[39m=[32m"radio"[39m
+    [33mvalue[39m=[32m"INDUSTRY"[39m
+  [36m/>[39m
+
+  Name "职级":
+  [36m<input[39m
+    [33mname[39m=[32m"reason"[39m
+    [33mtype[39m=[32m"radio"[39m
+    [33mvalue[39m=[32m"SENIORITY"[39m
+  [36m/>[39m
+
+  Name "不匹配":
+  [36m<input[39m
+    [33mname[39m=[32m"reason"[39m
+    [33mtype[39m=[32m"radio"[39m
+    [33mvalue[39m=[32m"MISMATCH"[39m
+  [36m/>[39m
+
+  Name "已过期":
+  [36m<input[39m
+    [33mname[39m=[32m"reason"[39m
+    [33mtype[39m=[32m"radio"[39m
+    [33mvalue[39m=[32m"EXPIRED"[39m
+  [36m/>[39m
+
+  Name "已处理":
+  [36m<input[39m
+    [33mname[39m=[32m"reason"[39m
+    [33mtype[39m=[32m"radio"[39m
+    [33mvalue[39m=[32m"ALREADY_HANDLED"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  textbox:
+
+  Name "备注（可选，最多 500 字）":
+  [36m<textarea[39m
+    [33mmaxlength[39m=[32m"500"[39m
+    [33mname[39m=[32m"note"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<main[39m
+      [33maria-label[39m=[32m"证据推荐清单"[39m
+      [33mclass[39m=[32m"container workbench-page"[39m
+      [33mid[39m=[32m"main-content"[39m
+    [36m>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"recommendations-title"[39m
+        [33mclass[39m=[32m"job-import-panel"[39m
+      [36m>[39m
+        [36m<p[39m
+          [33mclass[39m=[32m"section-kicker"[39m
+        [36m>[39m
+          [0m今日处理[0m
+        [36m</p>[39m
+        [36m<h1[39m
+          [33mid[39m=[32m"recommendations-title"[39m
+        [36m>[39m
+          [0m推荐清单[0m
+        [36m</h1>[39m
+        [36m<p>[39m
+          [0m系统会从通过资格门槛的岗位中整理少量推荐，并保留每项判断的岗位与画像证据。[0m
+        [36m</p>[39m
+        [36m<section[39m
+          [33maria-labelledby[39m=[32m"recommendation-result-title"[39m
+          [33mclass[39m=[32m"recommendation-result-summary"[39m
+          [33mid[39m=[32m"recommendation-result"[39m
+        [36m>[39m
+          [36m<h2[39m
+            [33mid[39m=[32m"recommendation-result-title"[39m
+          [36m>[39m
+            [0m本次推荐已准备好[0m
+          [36m</h2>[39m
+          [36m<p>[39m
+            [0m已整理 [0m
+            [0m1[0m
+            [0m 个值得优先查看的岗位。[0m
+          [36m</p>[39m
+          [36m<a[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+            [33mhref[39m=[32m"#recommendation-list"[39m
+          [36m>[39m
+            [0m查看推荐岗位[0m
+          [36m</a>[39m
+          [36m<section[39m
+            [33maria-label[39m=[32m"本次覆盖证据"[39m
+            [33mclass[39m=[32m"recommendation-result-evidence"[39m
+          [36m>[39m
+            [36m<p>[39m
+              [0m来源覆盖：计划可信来源 [0m
+              [0m1[0m
+              [0m 个、公开查询 [0m
+              [0m0[0m
+              [0m 个；已检查 [0m
+              [0m1[0m
+              [0m 项，可信 [0m
+              [0m1[0m
+              [0m 项；已验证并发现岗位 [0m
+              [0m1[0m
+              [0m 个[0m
+              [0m。[0m
+            [36m</p>[39m
+            [36m<p>[39m
+              [0m资格筛选：评估 [0m
+              [0m1[0m
+              [0m 个，淘汰 [0m
+              [0m0[0m
+              [0m 个，信息不足 [0m
+              [0m0[0m
+              [0m 个，已过期 [0m
+              [0m0[0m
+              [0m 个。[0m
+            [36m</p>[39m
+            [36m<p>[39m
+              [0m初步排序：合格 [0m
+              [0m1[0m
+              [0m 个，低于阈值 [0m
+              [0m0[0m
+              [0m 个，规则排除 [0m
+              [0m0[0m
+              [0m 个，候选上限外 [0m
+              [0m0[0m
+              [0m 个，进入深度匹配 [0m
+              [0m1[0m
+              [0m 个。[0m
+            [36m</p>[39m
+            [36m<p>[39m
+              [0m深度匹配：评估 [0m
+              [0m1[0m
+              [0m 个，质量不足 [0m
+              [0m0[0m
+              [0m 个，最终推荐 [0m
+              [0m1[0m
+              [0m 个。[0m
+            [36m</p>[39m
+          [36m</section>[39m
+          [36m<section[39m
+            [33maria-labelledby[39m=[32m"recommendation-coverage-title"[39m
+            [33mclass[39m=[32m"recommendation-result-coverage"[39m
+          [36m>[39m
+            [36m<h3[39m
+              [33mid[39m=[32m"recommendation-coverage-title"[39m
+            [36m>[39m
+              [0m覆盖情况[0m
+            [36m</h3>[39m
+            [36m<p>[39m
+              [0m本次没有覆盖损失。[0m
+            [36m</p>[39m
+          [36m</section>[39m
+        [36m</section>[39m
+        [36m<p[39m
+          [33maria-label[39m=[32m"推荐清单版本"[39m
+        [36m>[39m
+          [0m清单版本 [0m
+          [0m1[0m
+          [0m · [0m
+          [0m2026-09-14[0m
+        [36m</p>[39m
+        [36m<details>[39m
+          [36m<summary[39m
+            [33mclass[39m=[32m"workbench-touch-target"[39m
+          [36m>[39m
+            [0m历史版本[0m
+          [36m</summary>[39m
+          [36m<ol />[39m
+        [36m</details>[39m
+        [36m<ol[39m
+          [33maria-label[39m=[32m"推荐岗位"[39m
+          [33mid[39m=[32m"recommendation-list"[39m
+        [36m>[39m
+          [36m<li>[39m
+            [36m<h2>[39m
+              [0m结构化岗位[0m
+            [36m</h2>[39m
+            [36m<p>[39m
+              [0m绑定公司[0m
+              [0m · [0m
+              [0m上海[0m
+              [0m · [0m
+              [36m<strong>[39m
+                [0m高度匹配[0m
+              [36m</strong>[39m
+            [36m</p>[39m
+            [36m<p>[39m
+              [36m<strong>[39m
+                [0m今日优先处理[0m
+              [36m</strong>[39m
+            [36m</p>[39m
+            [36m<div[39m
+              [33mclass[39m=[32m"flex flex-col gap-3"[39m
+            [36m>[39m
+              [36m<p>[39m
+                [0m当前推荐决策：[0m
+                [36m<strong>[39m
+                  [0m待查看[0m
+                [36m</strong>[39m
+              [36m</p>[39m
+              [36m<form[39m
+                [33maction[39m=[32m"javascript:throw new Error('A React form was unexpectedly submitted. If you called form.submit() manually, consider using form.requestSubmit() instead. If you\\'re trying to use event.stopPropagation() in a submit event handler, consider also calling event.preventDefault().')"[39m
+                [33mclass[39m=[32m"flex flex-wrap gap-2"[39m
+              [36m>[39m
+                [36m<input[39m
+                  [33mname[39m=[32m"decision"[39m
+                  [33mtype[39m=[32m"hidden"[39m
+                  [33mvalue[39m=[32m"saved"[39m
+                [36m/>[39m
+                [36m<input[39m
+                  [33mname[39m=[32m"expectedVersion"[39m
+                  [33mtype[39m=[32m"hidden"[39m
+                  [33mvalue[39m=[32m"0"[39m
+                [36m/>[39m
+                [36m<input[39m
+                  [33mname[39m=[32m"idempotencyKey"[39m
+                  [33mtype[39m=[32m"hidden"[39m
+                  [33mvalue[39m=[32m"c1a94b7d-30df-46c0-8709-1e2ff8631be8"[39m
+                [36m/>[39m
+                [36m<button[39m
+                  [33mclass[39m=[32m"workbench-touch-target"[39m
+                  [33mtype[39m=[32m"submit"[39m
+                [36m>[39m
+                  [0m收藏[0m
+                [36m</button>[39m
+              [36m</form>[39m
+              [36m<details>[39m
+                [36m<summary[39m
+                  [33mclass[39m=[32m"workbench-touch-target"[39m
+                [36m>[39m
+                  [0m忽略此推荐[0m
+                [36m</summary>[39m
+                [36m<form[39m
+                  [33maction[39m=[32m"javascript:throw new Error('A React form was unexpectedly submitted. If you called form.submit() manually, consider using form.requestSubmit() instead. If you\\'re trying to use event.stopPropagation() in a submit event handler, consider also calling event.preventDefault().')"[39m
+                  [33mclass[39m=[32m"flex flex-col gap-3"[39m
+                [36m>[39m
+                  [36m<input[39m
+                    [33mname[39m=[32m"decision"[39m
+                    [33mtype[39m=[32m"hidden"[39m
+                    [33mvalue[39m=[32m"ignored"[39m
+                  [36m/>[39m
+                  [36m<input[39m
+                    [33mname[39m=[32m"expectedVersion"[39m
+                    [33mtype[39m=[32m"hidden"[39m
+                    [33mvalue[39m=[32m"0"[39m
+                  [36m/>[39m
+                  [36m<input[39m
+                    [33mname[39m=[32m"idempotencyKey"[39m
+                    [33mtype[39m=[32m"hidden"[39m
+                    [33mvalue[39m=[32m"b32ab312-87f2-481b-a551-44f5491b7f6f"[39m
+                  [36m/>[39m
+                  [36m<fieldset>[39m
+                    [36m<legend>[39m
+                      [0m忽略原因（可跳过）[0m
+                    [36m</legend>[39m
+                    [36m<div[39m
+                      [33mclass[39m=[32m"flex flex-wrap gap-2"[39m
+                    [36m>[39m
+                      [36m<label>[39m
+                        [36m<input[39m
+                          [33mname[39m=[32m"reason"[39m
+                          [33mtype[39m=[32m"radio"[39m
+                          [33mvalue[39m=[32m"ROLE_DIRECTION"[39m
+                        [36m/>[39m
+                        [0m [0m
+                        [0m岗位方向[0m
+                      [36m</label>[39m
+                      [36m<label>[39m
+                        [36m<input[39m
+                          [33mname[39m=[32m"reason"[39m
+                          [33mtype[39m=[32m"radio"[39m
+                          [33mvalue[39m=[32m"LOCATION"[39m
+                        [36m/>[39m
+                        [0m [0m
+                        [0m地点[0m
+                      [36m</label>[39m
+                      [36m<label>[39m
+                        [36m<input[39m
+                          [33mname[39m=[32m"reason"[39m
+                          [33mtype[39m=[32m"radio"[39m
+                          [33mvalue[39m=[32m"SALARY"[39m
+                        [36m/>[39m
+                        [0m [0m
+                        [0m薪资[0m
+                      [36m</label>[39m
+                      [36m<label>[39m
+                        [36m<input[39m
+                          [33mname[39m=[32m"reason"[39m
+                          [33mtype[39m=[32m"radio"[39m
+                          [33mvalue[39m=[32m"COMPANY"[39m
+                        [36m/>[39m
+                        [0m [0m
+                        [0m公司[0m
+                      [36m</label>[39m
+                      [36m<label>[39m
+                        [36m<input[39m
+                          [33mname[39m=[32m"reason"[39m
+                          [33mtype[39m=[32m"radio"[39m
+                          [33mvalue[39m=[32m"INDUSTRY"[39m
+                        [36m/>[39m
+                        [0m [0m
+                        [0m行业[0m
+                      [36m</label>[39m
+                      [36m<label>[39m
+                        [36m<input[39m
+                          [33mname[39m=[32m"reason"[39m
+                          [33mtype[39m=[32m"radio"[39m
+                          [33mvalue[39m=[32m"SENIORITY"[39m
+                        [36m/>[39m
+                        [0m [0m
+                        [0m职级[0m
+                      [36m</label>[39m
+                      [36m<label>[39m
+                        [36m<input[39m
+                          [33mname[39m=[32m"reason"[39m
+                          [33mtype[39m=[32m"radio"[39m
+                          [33mvalue[39m=[32m"MISMATCH"[39m
+                        [36m/>[39m
+                        [0m [0m
+                        [0m不匹配[0m
+                      [36m</label>[39m
+                      [36m<label>[39m
+                        [36m<input[39m
+                          [33mname[39m=[32m"reason"[39m
+                          [33mtype[39m=[32m"radio"[39m
+                          [33mvalue[39m=[32m"EXPIRED"[39m
+                        [36m/>[39m
+                        [0m [0m
+                        [0m已过期[0m
+                      [36m</label>[39m
+                      [36m<label>[39m
+                        [36m<input[39m
+                          [33mname[39m=[32m"reason"[39m
+                          [33mtype[39m=[32m"radio"[39m
+                          [33mvalue[39m=[32m"ALREADY_HANDLED"[39m
+                        [36m/>[39m
+                        [0m [0m
+                        [0m已处理[0m
+                      [36m</label>[39m
+                    [36m</div>[39m
+                  [36m</fieldset>[39m
+                  [36m<label>[39m
+                    [0m备注（可选，最多 500 字）[0m
+                    [36m<textarea[39m
+                      [33mmaxlength[39m=[32m"500"[39m
+                      [33mname[39m=[32m"note"[39m
+                    [36m/>[39m
+                  [36m</label>[39m
+                  [36m<button[39m
+                    [33mclass[39m=[32m"workbench-touch-target"[39m
+                    [33mtype[39m=[32m"submit"[39m
+                  [36m>[39m
+                    [0m确认忽略[0m
+                  [36m</button>[39m
+                [36m</form>[39m
+              [36m</details>[39m
+            [36m</div>[39m
+            [36m<form[39m
+              [33maction[39m=[32m"javascript:throw new Error('A React form was unexpectedly submitted. If you called form.submit() manually, consider using form.requestSubmit() instead. If you\\'re trying to use event.stopPropagation() in a submit event handler, consider also calling event.preventDefault().')"[39m
+            [36m>[39m
+              [36m<input[39m
+                [33mname[39m=[32m"idempotencyKey"[39m
+                [33mtype[39m=[32m"hidden"[39m
+                [33mvalue[39m=[32m"b8e2982c-7dea-4f3a-aec4-d7bc3b21fd53"[39m
+              [36m/>[39m
+              [36m<input[39m
+                [33mname[39m=[32m"warningFingerprint"[39m
+                [33mtype[39m=[32m"hidden"[39m
+                [33mvalue[39m=[32m""[39m
+              [36m/>[39m
+              [36m<button[39m
+                [33mclass[39m=[32m"group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 bg-primary text-primary-foreground hover:bg-[var(--emerald-strong)] h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 workbench-touch-target"[39m
+                [33mdata-slot[39m=[32m"button"[39m
+                [33mtabindex[39m=[32m"0"[39m
+                [33mtype[39m=[32m"submit"[39m
+              [36m>[39m
+                [0m重新评估此岗位[0m
+              [36m</button>[39m
+            [36m</form>[39m
+            [36m<details>[39m
+              [36m<summary[39m
+                [33mclass[39m=[32m"workbench-touch-target"[39m
+              [36m>[39m
+                [0m查看证据与判断[0m
+              [36m</summary>[39m
+              [36m<p>[39m
+                [0m匹配版本：[0m
+                [0m00000000-0000-4000-8000-000000000007[0m
+              [36m</p>[39m
+              [36m<p>[39m
+                [0m岗位证据：[0m
+                [0m岗位证据[0m
+              [36m</p>[39m
+              [36m<p>[39m
+                [0m画像证据：[0m
+                [0m画像证据[0m
+              [36m</p>[39m
+              [36m<p>[39m
+                [36m<strong>[39m
+                  [0m技能[0m
+                [36m</strong>[39m
+                [0m：[0m
+                [0m证据支持的推断；证据支持的推断。[0m
+              [36m</p>[39m
+              [36m<p>[39m
+                [36m<strong>[39m
+                  [0m经验[0m
+                [36m</strong>[39m
+                [0m：[0m
+                [0m证据支持的推断；证据支持的推断。[0m
+              [36m</p>[39m
+              [36m<p>[39m
+                [36m<strong>[39m
+                  [0m项目深度[0m
+                [36m</strong>[39m
+                [0m：[0m
+                [0m证据支持的推断；证据支持的推断。[0m
+              [36m</p>[39m
+              [36m<p>[39m
+                [36m<strong>[39m
+                  [0m岗位方向[0m
+                [36m</strong>[39m
+                [0m：[0m
+                [0m证据支持的推断；证据支持的推断。[0m
+              [36m</p>[39m
+              [36m<p>[39m
+                [36m<strong>[39m
+                  [0m地点与工作方式[0m
+                [36m</strong>[39m
+                [0m：[0m
+                [0m证据支持的推断；证据支持的推断。[0m
+              [36m</p>[39m
+              [36m<p>[39m
+                [36m<strong>[39m
+                  [0m资格风险[0m
+                [36m</strong>[39m
+                [0m：[0m
+                [0m证据支持的推断；证据支持的推断。[0m
+              [36m</p>[39m
+            [36m</details>[39m
+          [36m</li>[39m
+        [36m</ol>[39m
+      [36m</section>[39m
+    [36m</main>[39m
+  [36m</div>[39m
+[36m</body>[39m
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ app/(workbench)/recommendations/page.test.tsx:59:32
+     57|     mocks.getRecommendationList.mockResolvedValue(list(listA, targetB,…
+     58|     render(await RecommendationsPage());
+     59|     const opportunity = screen.getByRole("article", { name: "机会：结构化岗位"…
+       |                                ^
+     60|     expect(opportunity).toHaveTextContent("绑定公司 · 上海");
+     61|     expect(opportunity.getByRole("button", { name: "收藏" })).toBeVisibl…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 51 passed (52)
+   Start at  08:59:59
+   Duration  715ms (transform 90ms, setup 44ms, import 161ms, tests 253ms, environment 202ms)
+
+undefined
+/Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web:
+[ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL] Command failed with exit code 1: vitest run 'app/(workbench)/recommendations/page.test.tsx'

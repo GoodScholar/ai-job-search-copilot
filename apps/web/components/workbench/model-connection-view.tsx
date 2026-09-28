@@ -115,12 +115,12 @@ export function ModelConnectionView({ initialDiagnostics }: { initialDiagnostics
   }
 
   const liveText = message || diagnostics.reasonSummary;
-  return <main className="container workbench-main model-connection-main">
+  return <main aria-label="模型诊断" className="container workbench-main model-connection-main">
     <section aria-labelledby="model-connection-title" className="profile-intro">
       <h1 id="model-connection-title">模型连接</h1>
       <p>检查当前部署是否能安全使用模型功能。检查不会展示或请求你的账户信息。</p>
     </section>
-    <section aria-labelledby="model-connection-status-title" className="workbench-ledger model-connection-ledger">
+    <section aria-label="当前诊断摘要" className="workbench-ledger model-connection-ledger">
       <div className="workbench-ledger-heading"><h2 id="model-connection-status-title" title={statusTitle[diagnostics.status]}>{statusTitle[diagnostics.status]}</h2></div>
       <p aria-live="polite" className="model-connection-live" role="status">{liveText}</p>
       <dl className="model-connection-details">
@@ -129,7 +129,7 @@ export function ModelConnectionView({ initialDiagnostics }: { initialDiagnostics
         <div><dt>上次检查</dt><dd>{formatTime(diagnostics.checkedAt) ?? "尚未检查"}</dd></div>
         <div><dt>响应速度</dt><dd>{diagnostics.latencyBucket ? { under_1s: "1 秒内", "1_to_5s": "1–5 秒", "5_to_10s": "5–10 秒", "10_to_20s": "10–20 秒", timeout: "已超时" }[diagnostics.latencyBucket] : "尚未检查"}</dd></div>
       </dl>
-      <section aria-labelledby="model-connection-checks-title" className="model-connection-checks">
+      <section aria-label="四项模型诊断" className="model-connection-checks">
         <h3 id="model-connection-checks-title">检查项目</h3>
         <ul>{checks.map(([key, label]) => <li key={key}><span>{label}</span><strong title={`${label}：${statusText[diagnostics.checks[key]]}`}>{statusText[diagnostics.checks[key]]}</strong></li>)}</ul>
       </section>

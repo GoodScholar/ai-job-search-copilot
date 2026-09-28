@@ -1,6 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { Client } from "pg";
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from "@playwright/test";
+import { captureAfterState } from "./career-lens-state-capture";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const databaseUrl = process.env.E2E_DATABASE_URL ?? "postgresql://job_copilot:local_only_job_copilot@127.0.0.1:55420/job_copilot";
@@ -73,5 +74,6 @@ test("从运行设置进入模型连接页并以受控 Fake 展示稳定状态",
   }
 
   await expect(page.locator("body")).not.toContainText(/API Key|供应商账户|组织\/项目|配置指纹|模型 ID/u);
+  await captureAfterState(page, "profile-model-connection", scenario === "success" ? "content" : "failure", testInfo);
   await verifyCommonAccessibility(page, testInfo);
 });

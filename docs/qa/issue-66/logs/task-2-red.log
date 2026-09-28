@@ -1,0 +1,794 @@
+
+ RUN  v4.1.11 /Users/shen/.codex/worktrees/issue-66-career-lens/AI Job Search Copilot/apps/web
+
+ ❯ app/(marketing)/page-content.test.tsx (1 test | 1 failed) 31ms
+   × keeps the career lens journey free from invented user records 30ms
+ ❯ app/(marketing)/page.test.tsx (1 test | 1 failed) 126ms
+   × renders the opportunity, confirmed fact, and decision relationship before the login boundary 125ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  app/(marketing)/page-content.test.tsx > keeps the career lens journey free from invented user records
+TestingLibraryElementError: Unable to find an element with the text: 示例关系，不代表你的岗位或画像. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<main>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"hero-title"[39m
+        [33mclass[39m=[32m"hero-section container"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"hero-intro"[39m
+        [36m>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"hero-eyebrow"[39m
+          [36m>[39m
+            [0m晨间求职内参 · 今日行动优先[0m
+          [36m</p>[39m
+          [36m<h1[39m
+            [33mid[39m=[32m"hero-title"[39m
+          [36m>[39m
+            [0m今天，只处理最值得投的 3 件事[0m
+          [36m</h1>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"hero-summary"[39m
+          [36m>[39m
+            [0m推荐、确认和材料准备，按价值排好顺序。[0m
+          [36m</p>[39m
+          [36m<a[39m
+            [33mclass[39m=[32m"group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 bg-primary text-primary-foreground hover:bg-[var(--emerald-strong)] h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 marketing-cta"[39m
+            [33mhref[39m=[32m"/login?returnTo=%2Fhome"[39m
+          [36m>[39m
+            [0m微信登录体验[0m
+          [36m</a>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33maria-label[39m=[32m"今日行动简报"[39m
+          [33mclass[39m=[32m"briefing-stack"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33maria-label[39m=[32m"切换行动简报"[39m
+            [33mclass[39m=[32m"briefing-cards"[39m
+            [33mrole[39m=[32m"tablist"[39m
+          [36m>[39m
+            [36m<button[39m
+              [33maria-controls[39m=[32m"briefing-panel-recommendation"[39m
+              [33maria-label[39m=[32m"AI 应用工程师（示例）"[39m
+              [33maria-selected[39m=[32m"true"[39m
+              [33mclass[39m=[32m"briefing-card"[39m
+              [33mdata-active[39m=[32m"true"[39m
+              [33mdata-position[39m=[32m"0"[39m
+              [33mid[39m=[32m"briefing-tab-recommendation"[39m
+              [33mrole[39m=[32m"tab"[39m
+              [33mtabindex[39m=[32m"0"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33maria-hidden[39m=[32m"true"[39m
+                [33mclass[39m=[32m"briefing-card-content"[39m
+              [36m>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"briefing-card-heading"[39m
+                [36m>[39m
+                  [36m<span>[39m
+                    [0m01[0m
+                    [0m / [0m
+                    [0m当前优先[0m
+                  [36m</span>[39m
+                  [36m<span>[39m
+                    [0m示例[0m
+                  [36m</span>[39m
+                [36m</span>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"briefing-card-title"[39m
+                [36m>[39m
+                  [36m<span>[39m
+                    [0mAI 应用工程师[0m
+                  [36m</span>[39m
+                  [36m<span>[39m
+                    [0m匹配 [0m
+                    [36m<strong>[39m
+                      [0m91[0m
+                    [36m</strong>[39m
+                  [36m</span>[39m
+                [36m</span>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"briefing-meta"[39m
+                [36m>[39m
+                  [0m极光科技 · 北京 · 25–40K · 发布 2 小时[0m
+                [36m</span>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"briefing-evidence"[39m
+                [36m>[39m
+                  [36m<strong>[39m
+                    [0m强证据[0m
+                  [36m</strong>[39m
+                  [36m<span>[39m
+                    [0mReact 架构 · Agent 工作流[0m
+                  [36m</span>[39m
+                [36m</span>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"briefing-gap"[39m
+                [36m>[39m
+                  [36m<strong>[39m
+                    [0m主要缺口[0m
+                  [36m</strong>[39m
+                  [36m<span>[39m
+                    [0m大模型评测经验[0m
+                  [36m</span>[39m
+                [36m</span>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"briefing-footnote"[39m
+                [36m>[39m
+                  [0m推荐理由：你的项目经历与岗位要求逐条对照（示例）[0m
+                [36m</span>[39m
+              [36m</span>[39m
+            [36m</button>[39m
+            [36m<button[39m
+              [33maria-controls[39m=[32m"briefing-panel-facts"[39m
+              [33maria-label[39m=[32m"确认 2 条候选事实（示例）"[39m
+              [33maria-selected[39m=[32m"false"[39m
+              [33mclass[39m=[32m"briefing-card"[39m
+              [33mdata-active[39m=[32m"false"[39m
+              [33mdata-position[39m=[32m"1"[39m
+              [33mid[39m=[32m"briefing-tab-facts"[39m
+              [33mrole[39m=[32m"tab"[39m
+              [33mtabindex[39m=[32m"-1"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33maria-hidden[39m=[32m"true"[39m
+                [33mclass[39m=[32m"briefing-card-content"[39m
+              [36m>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"briefing-card-heading"[39m
+                [36m>[39m
+                  [36m<span>[39m
+                    [0m02[0m
+                    [0m / [0m
+                    [0m待处理[0m
+                  [36m</span>[39m
+                  [36m<span>[39m
+                    [0m示例[0m
+                  [36m</span>[39m
+                [36m</span>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"briefing-card-glance"[39m
+                [36m>[39m
+                  [36m<span>[39m
+                    [0m确认 2 条候选事实[0m
+                  [36m</span>[39m
+                  [36m<strong>[39m
+                    [0m待你确认[0m
+                  [36m</strong>[39m
+                [36m</span>[39m
+              [36m</span>[39m
+            [36m</button>[39m
+            [36m<button[39m
+              [33maria-controls[39m=[32m"briefing-panel-resume"[39m
+              [33maria-label[39m=[32m"审核 1 份定制简历（示例）"[39m
+              [33maria-selected[39m=[32m"false"[39m
+              [33mclass[39m=[32m"briefing-card"[39m...
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ app/(marketing)/page-content.test.tsx:7:17
+      5|   render(<MarketingPage />);
+      6|
+      7|   expect(screen.getByText("示例关系，不代表你的岗位或画像")).toBeInTheDocument();
+       |                 ^
+      8|   expect(screen.getByText("外部行动始终由你确认")).toBeInTheDocument();
+      9|   expect(screen.queryByText(/成功率\s*\d+%|无需确认即可自动投递|全自动投递/)).not.toBeIn…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  app/(marketing)/page.test.tsx > renders the opportunity, confirmed fact, and decision relationship before the login boundary
+TestingLibraryElementError: Unable to find an accessible element with the role "heading" and name "从值得投的机会，走向准备充分的面试。"
+
+Here are the accessible roles:
+
+  main:
+
+  Name "":
+  [36m<main />[39m
+
+  --------------------------------------------------
+  region:
+
+  Name "今天，只处理最值得投的 3 件事":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"hero-title"[39m
+    [33mclass[39m=[32m"hero-section container"[39m
+  [36m/>[39m
+
+  Name "Copilot 在后台工作，你只处理关键决定":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"background-work-title"[39m
+    [33mclass[39m=[32m"marketing-section background-work-section container"[39m
+    [33mid[39m=[32m"how-it-works"[39m
+  [36m/>[39m
+
+  Name "值得投，不只是一个分数":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"evidence-chain-title"[39m
+    [33mclass[39m=[32m"marketing-section evidence-chain-section container"[39m
+    [33mid[39m=[32m"evidence-and-control"[39m
+  [36m/>[39m
+
+  Name "任何外部行动，都先经过你的确认":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"approval-boundary-title"[39m
+    [33mclass[39m=[32m"marketing-section approval-boundary-section container"[39m
+  [36m/>[39m
+
+  Name "一份画像，多种简历格式":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"resume-format-title"[39m
+    [33mclass[39m=[32m"marketing-section resume-format-section container"[39m
+  [36m/>[39m
+
+  Name "把判断留给自己，把准备交给 Copilot":
+  [36m<section[39m
+    [33maria-labelledby[39m=[32m"final-cta-title"[39m
+    [33mclass[39m=[32m"final-cta container"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  paragraph:
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"hero-eyebrow"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"hero-summary"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"copilot-annotation"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"copilot-status-title"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"section-kicker"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"workflow-outcome"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"section-kicker"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"section-kicker"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"approval-note"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"section-kicker"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"format-note"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p[39m
+    [33mclass[39m=[32m"section-kicker"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<p />[39m
+
+  Name "":
+  [36m<p />[39m
+
+  --------------------------------------------------
+  heading:
+
+  Name "今天，只处理最值得投的 3 件事":
+  [36m<h1[39m
+    [33mid[39m=[32m"hero-title"[39m
+  [36m/>[39m
+
+  Name "Copilot 在后台工作，你只处理关键决定":
+  [36m<h2[39m
+    [33mid[39m=[32m"background-work-title"[39m
+  [36m/>[39m
+
+  Name "检查目标公司":
+  [36m<h3 />[39m
+
+  Name "资格门槛":
+  [36m<h3 />[39m
+
+  Name "证据匹配":
+  [36m<h3 />[39m
+
+  Name "生成今日清单":
+  [36m<h3 />[39m
+
+  Name "值得投，不只是一个分数":
+  [36m<h2[39m
+    [33mid[39m=[32m"evidence-chain-title"[39m
+  [36m/>[39m
+
+  Name "简历来源":
+  [36m<h3 />[39m
+
+  Name "已验证画像事实":
+  [36m<h3 />[39m
+
+  Name "岗位要求":
+  [36m<h3 />[39m
+
+  Name "推荐解释":
+  [36m<h3 />[39m
+
+  Name "任何外部行动，都先经过你的确认":
+  [36m<h2[39m
+    [33mid[39m=[32m"approval-boundary-title"[39m
+  [36m/>[39m
+
+  Name "审批线内":
+  [36m<h3 />[39m
+
+  Name "审批线外":
+  [36m<h3 />[39m
+
+  Name "一份画像，多种简历格式":
+  [36m<h2[39m
+    [33mid[39m=[32m"resume-format-title"[39m
+  [36m/>[39m
+
+  Name "把判断留给自己，把准备交给 Copilot":
+  [36m<h2[39m
+    [33mid[39m=[32m"final-cta-title"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  link:
+
+  Name "微信登录体验":
+  [36m<a[39m
+    [33mclass[39m=[32m"group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 bg-primary text-primary-foreground hover:bg-[var(--emerald-strong)] h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 marketing-cta"[39m
+    [33mhref[39m=[32m"/login?returnTo=%2Fhome"[39m
+  [36m/>[39m
+
+  Name "微信登录体验":
+  [36m<a[39m
+    [33mclass[39m=[32m"group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 bg-primary text-primary-foreground hover:bg-[var(--emerald-strong)] h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 marketing-cta"[39m
+    [33mhref[39m=[32m"/login?returnTo=%2Fhome"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  tablist:
+
+  Name "切换行动简报":
+  [36m<div[39m
+    [33maria-label[39m=[32m"切换行动简报"[39m
+    [33mclass[39m=[32m"briefing-cards"[39m
+    [33mrole[39m=[32m"tablist"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  tab:
+
+  Name "AI 应用工程师（示例）":
+  [36m<button[39m
+    [33maria-controls[39m=[32m"briefing-panel-recommendation"[39m
+    [33maria-label[39m=[32m"AI 应用工程师（示例）"[39m
+    [33maria-selected[39m=[32m"true"[39m
+    [33mclass[39m=[32m"briefing-card"[39m
+    [33mdata-active[39m=[32m"true"[39m
+    [33mdata-position[39m=[32m"0"[39m
+    [33mid[39m=[32m"briefing-tab-recommendation"[39m
+    [33mrole[39m=[32m"tab"[39m
+    [33mtabindex[39m=[32m"0"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "确认 2 条候选事实（示例）":
+  [36m<button[39m
+    [33maria-controls[39m=[32m"briefing-panel-facts"[39m
+    [33maria-label[39m=[32m"确认 2 条候选事实（示例）"[39m
+    [33maria-selected[39m=[32m"false"[39m
+    [33mclass[39m=[32m"briefing-card"[39m
+    [33mdata-active[39m=[32m"false"[39m
+    [33mdata-position[39m=[32m"1"[39m
+    [33mid[39m=[32m"briefing-tab-facts"[39m
+    [33mrole[39m=[32m"tab"[39m
+    [33mtabindex[39m=[32m"-1"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  Name "审核 1 份定制简历（示例）":
+  [36m<button[39m
+    [33maria-controls[39m=[32m"briefing-panel-resume"[39m
+    [33maria-label[39m=[32m"审核 1 份定制简历（示例）"[39m
+    [33maria-selected[39m=[32m"false"[39m
+    [33mclass[39m=[32m"briefing-card"[39m
+    [33mdata-active[39m=[32m"false"[39m
+    [33mdata-position[39m=[32m"2"[39m
+    [33mid[39m=[32m"briefing-tab-resume"[39m
+    [33mrole[39m=[32m"tab"[39m
+    [33mtabindex[39m=[32m"-1"[39m
+    [33mtype[39m=[32m"button"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  tabpanel:
+
+  Name "AI 应用工程师（示例）":
+  [36m<section[39m
+    [33maria-hidden[39m=[32m"false"[39m
+    [33maria-labelledby[39m=[32m"briefing-tab-recommendation"[39m
+    [33mclass[39m=[32m"sr-only"[39m
+    [33mid[39m=[32m"briefing-panel-recommendation"[39m
+    [33mrole[39m=[32m"tabpanel"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  strong:
+
+  Name "":
+  [36m<strong />[39m
+
+  Name "":
+  [36m<strong />[39m
+
+  Name "":
+  [36m<strong />[39m
+
+  --------------------------------------------------
+  complementary:
+
+  Name "Copilot 示例运行状态":
+  [36m<aside[39m
+    [33maria-label[39m=[32m"Copilot 示例运行状态"[39m
+    [33mclass[39m=[32m"copilot-status"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+  term:
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  Name "":
+  [36m<dt />[39m
+
+  --------------------------------------------------
+  definition:
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  Name "":
+  [36m<dd />[39m
+
+  --------------------------------------------------
+  list:
+
+  Name "":
+  [36m<ol[39m
+    [33mclass[39m=[32m"editorial-workflow"[39m
+  [36m/>[39m
+
+  Name "推荐依据示例":
+  [36m<ol[39m
+    [33maria-label[39m=[32m"推荐依据示例"[39m
+    [33mclass[39m=[32m"evidence-chain"[39m
+  [36m/>[39m
+
+  Name "":
+  [36m<ul />[39m
+
+  --------------------------------------------------
+  listitem:
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  Name "":
+  [36m<li />[39m
+
+  --------------------------------------------------
+  contentinfo:
+
+  Name "":
+  [36m<footer[39m
+    [33mclass[39m=[32m"marketing-footer"[39m
+  [36m/>[39m
+
+  --------------------------------------------------
+
+Ignored nodes: comments, script, style
+[36m<body>[39m
+  [36m<div>[39m
+    [36m<main>[39m
+      [36m<section[39m
+        [33maria-labelledby[39m=[32m"hero-title"[39m
+        [33mclass[39m=[32m"hero-section container"[39m
+      [36m>[39m
+        [36m<div[39m
+          [33mclass[39m=[32m"hero-intro"[39m
+        [36m>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"hero-eyebrow"[39m
+          [36m>[39m
+            [0m晨间求职内参 · 今日行动优先[0m
+          [36m</p>[39m
+          [36m<h1[39m
+            [33mid[39m=[32m"hero-title"[39m
+          [36m>[39m
+            [0m今天，只处理最值得投的 3 件事[0m
+          [36m</h1>[39m
+          [36m<p[39m
+            [33mclass[39m=[32m"hero-summary"[39m
+          [36m>[39m
+            [0m推荐、确认和材料准备，按价值排好顺序。[0m
+          [36m</p>[39m
+          [36m<a[39m
+            [33mclass[39m=[32m"group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-all outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 bg-primary text-primary-foreground hover:bg-[var(--emerald-strong)] h-9 gap-1.5 px-2.5 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 marketing-cta"[39m
+            [33mhref[39m=[32m"/login?returnTo=%2Fhome"[39m
+          [36m>[39m
+            [0m微信登录体验[0m
+          [36m</a>[39m
+        [36m</div>[39m
+        [36m<div[39m
+          [33maria-label[39m=[32m"今日行动简报"[39m
+          [33mclass[39m=[32m"briefing-stack"[39m
+        [36m>[39m
+          [36m<div[39m
+            [33maria-label[39m=[32m"切换行动简报"[39m
+            [33mclass[39m=[32m"briefing-cards"[39m
+            [33mrole[39m=[32m"tablist"[39m
+          [36m>[39m
+            [36m<button[39m
+              [33maria-controls[39m=[32m"briefing-panel-recommendation"[39m
+              [33maria-label[39m=[32m"AI 应用工程师（示例）"[39m
+              [33maria-selected[39m=[32m"true"[39m
+              [33mclass[39m=[32m"briefing-card"[39m
+              [33mdata-active[39m=[32m"true"[39m
+              [33mdata-position[39m=[32m"0"[39m
+              [33mid[39m=[32m"briefing-tab-recommendation"[39m
+              [33mrole[39m=[32m"tab"[39m
+              [33mtabindex[39m=[32m"0"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33maria-hidden[39m=[32m"true"[39m
+                [33mclass[39m=[32m"briefing-card-content"[39m
+              [36m>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"briefing-card-heading"[39m
+                [36m>[39m
+                  [36m<span>[39m
+                    [0m01[0m
+                    [0m / [0m
+                    [0m当前优先[0m
+                  [36m</span>[39m
+                  [36m<span>[39m
+                    [0m示例[0m
+                  [36m</span>[39m
+                [36m</span>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"briefing-card-title"[39m
+                [36m>[39m
+                  [36m<span>[39m
+                    [0mAI 应用工程师[0m
+                  [36m</span>[39m
+                  [36m<span>[39m
+                    [0m匹配 [0m
+                    [36m<strong>[39m
+                      [0m91[0m
+                    [36m</strong>[39m
+                  [36m</span>[39m
+                [36m</span>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"briefing-meta"[39m
+                [36m>[39m
+                  [0m极光科技 · 北京 · 25–40K · 发布 2 小时[0m
+                [36m</span>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"briefing-evidence"[39m
+                [36m>[39m
+                  [36m<strong>[39m
+                    [0m强证据[0m
+                  [36m</strong>[39m
+                  [36m<span>[39m
+                    [0mReact 架构 · Agent 工作流[0m
+                  [36m</span>[39m
+                [36m</span>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"briefing-gap"[39m
+                [36m>[39m
+                  [36m<strong>[39m
+                    [0m主要缺口[0m
+                  [36m</strong>[39m
+                  [36m<span>[39m
+                    [0m大模型评测经验[0m
+                  [36m</span>[39m
+                [36m</span>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"briefing-footnote"[39m
+                [36m>[39m
+                  [0m推荐理由：你的项目经历与岗位要求逐条对照（示例）[0m
+                [36m</span>[39m
+              [36m</span>[39m
+            [36m</button>[39m
+            [36m<button[39m
+              [33maria-controls[39m=[32m"briefing-panel-facts"[39m
+              [33maria-label[39m=[32m"确认 2 条候选事实（示例）"[39m
+              [33maria-selected[39m=[32m"false"[39m
+              [33mclass[39m=[32m"briefing-card"[39m
+              [33mdata-active[39m=[32m"false"[39m
+              [33mdata-position[39m=[32m"1"[39m
+              [33mid[39m=[32m"briefing-tab-facts"[39m
+              [33mrole[39m=[32m"tab"[39m
+              [33mtabindex[39m=[32m"-1"[39m
+              [33mtype[39m=[32m"button"[39m
+            [36m>[39m
+              [36m<span[39m
+                [33maria-hidden[39m=[32m"true"[39m
+                [33mclass[39m=[32m"briefing-card-content"[39m
+              [36m>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"briefing-card-heading"[39m
+                [36m>[39m
+                  [36m<span>[39m
+                    [0m02[0m
+                    [0m / [0m
+                    [0m待处理[0m
+                  [36m</span>[39m
+                  [36m<span>[39m
+                    [0m示例[0m
+                  [36m</span>[39m
+                [36m</span>[39m
+                [36m<span[39m
+                  [33mclass[39m=[32m"briefing-card-glance"[39m
+                [36m>[39m
+                  [36m<span>[39m
+                    [0m确认 2 条候选事实[0m
+                  [36m</span>[39m
+                  [36m<strong>[39m
+                    [0m待你确认[0m
+                  [36m</strong>[39m
+                [36m</span>[39m
+              [36m</span>[39m
+            [36m</button>[39m
+            [36m<button[39m
+              [33maria-controls[39m=[32m"briefing-panel-resume"[39m
+              [33maria-label[39m=[32m"审核 1 份定制简历（示例）"[39m
+              [33maria-selected[39m=[32m"false"[39m
+              [33mclass[39m=[32m"briefing-card"[39m...
+ ❯ Object.getElementError ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/config.js:37:19
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:76:38
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:52:17
+ ❯ ../../node_modules/.pnpm/@testing-library+dom@10.4.1/node_modules/@testing-library/dom/dist/query-helpers.js:95:19
+ ❯ app/(marketing)/page.test.tsx:7:17
+      5|   render(<MarketingPage />);
+      6|
+      7|   expect(screen.getByRole("heading", { level: 1, name: "从值得投的机会，走向准备充分…
+       |                 ^
+      8|   expect(screen.getByText("已确认事实")).toBeInTheDocument();
+      9|   expect(screen.getByText("有依据，再决定")).toBeInTheDocument();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  2 failed | 1 passed (3)
+      Tests  2 failed | 2 passed (4)
+   Start at  07:57:07
+   Duration  910ms (transform 139ms, setup 368ms, import 278ms, tests 217ms, environment 1.42s)
+

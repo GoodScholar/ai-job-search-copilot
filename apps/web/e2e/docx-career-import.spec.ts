@@ -39,6 +39,8 @@ async function uploadDocx(page: Page, file: { name: string; mimeType: string; bu
     await new Promise((resolve) => setTimeout(resolve, 300));
     await route.continue();
   });
+  const openImport = page.getByRole("button", { name: "开始导入职业资料" });
+  if (await openImport.isVisible()) await openImport.click();
   const input = page.getByLabel("选择 Markdown、DOCX 或 PDF 职业资料");
   try {
     await input.setInputFiles(file);
@@ -94,6 +96,7 @@ test("DOCX 浏览器脱敏副本经过队列处理后显示段落证据、跨文
 
 test("含嵌入媒体的 DOCX 在浏览器先进入隐私确认，处理副本不显示原媒体字节", async ({ page, request }, testInfo) => {
   await signInWithIsolatedAccount(page, request, `${testInfo.project.name}-media`);
+  await page.getByRole("button", { name: "开始导入职业资料" }).click();
   const mediaOnly = {
     name: "photo-resume.docx",
     mimeType: docxMime,

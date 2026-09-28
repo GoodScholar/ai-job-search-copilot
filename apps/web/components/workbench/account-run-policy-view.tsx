@@ -79,6 +79,7 @@ export function AccountRunPolicyView({ initialControl = null, initialPolicy }: {
   const [controlUnavailable, setControlUnavailable] = useState(initialControl === null);
   const [controlling, setControlling] = useState(false);
   const [controlMessage, setControlMessage] = useState("");
+  const [isEditing, setIsEditing] = useState(false);
   const pendingControlCommand = useRef<{ commandId: string; expectedVersion: number; action: "stop" | "release" } | null>(null);
   const { defaults, hardLimits } = policy.system;
 
@@ -260,7 +261,7 @@ export function AccountRunPolicyView({ initialControl = null, initialPolicy }: {
     }
   }
 
-  return <main className="container profile-main">
+  return <main aria-label="账户运行策略" className="container profile-main account-run-policy-main">
     <section className="profile-intro"><p className="workbench-kicker">求职画像 · 运行策略</p><h1>账户运行策略</h1><p>系统硬上限保护每次运行。你可以保存更保守的额度；手动运行不受后台窗口限制。</p></section>
     <section aria-labelledby="account-run-control-title" className="job-targets-section">
       <h2 id="account-run-control-title">账户运行控制</h2>
@@ -271,7 +272,7 @@ export function AccountRunPolicyView({ initialControl = null, initialPolicy }: {
       {controlUnavailable && !controlMessage ? <p>运行控制暂不可用</p> : null}
       {controlMessage ? <p aria-live="polite" className="run-policy-status" role="status">{controlMessage}</p> : null}
     </section>
-    <section aria-labelledby="run-policy-comparison-title" className="job-targets-section">
+    <section aria-label="策略生效对照" className="job-targets-section run-policy-comparison">
       <h2 id="run-policy-comparison-title">当前策略对照</h2>
       <div aria-label="当前策略对照表，可横向滚动" className="run-policy-table-wrap" tabIndex={0}><table><thead><tr><th scope="col">设置</th><th scope="col">系统默认</th><th scope="col">硬上限</th><th scope="col">你的设置</th><th scope="col">最终生效</th></tr></thead><tbody>
         {(Object.keys(discoveryLabels) as Array<keyof typeof discoveryLabels>).map((key) => <tr key={key}><th scope="row">{discoveryLabels[key]}</th><td>{defaults.discovery[key]}</td><td>{hardLimits.discovery[key]}</td><td>{policy.userSettings?.discovery[key] ?? "系统默认"}</td><td>{policy.effective.discovery[key]}</td></tr>)}
@@ -280,7 +281,11 @@ export function AccountRunPolicyView({ initialControl = null, initialPolicy }: {
         <tr><th scope="row">后台运行时间</th><td>{defaults.backgroundWindow.start}–{defaults.backgroundWindow.end}</td><td>全天可用</td><td>{policy.userSettings ? `${policy.userSettings.backgroundWindow.start}–${policy.userSettings.backgroundWindow.end}` : "系统默认"}</td><td>{policy.effective.backgroundWindow.start}–{policy.effective.backgroundWindow.end}</td></tr>
       </tbody></table></div>
     </section>
-    <section aria-labelledby="run-policy-settings-title" className="job-targets-section">
+    {!isEditing ? <section aria-label="运行策略下一行动" className="job-import-next-action">
+      <p className="workbench-kicker">下一行动</p><h2>按需要收紧运行额度</h2><p>先查看当前生效策略；仅在需要变更时打开编辑设置。</p>
+      <Button className="workbench-touch-target" onClick={() => setIsEditing(true)} size="lg" type="button">调整运行策略</Button>
+    </section> : null}
+    <section aria-labelledby="run-policy-settings-title" className={`job-targets-section ${isEditing ? "" : "run-policy-edit-collapsed"}`}>
       <h2 id="run-policy-settings-title">调整运行策略</h2><p>当前修订：{policy.revision.revisionNumber}{policy.revision.isSystemBaseline ? "（账户初始基线）" : ""}</p><p>以下设置只会收紧账户运行策略，不能超过系统硬上限。</p>
       <fieldset className="run-policy-fieldset"><legend>公开岗位发现</legend><div className="run-policy-field-grid">
         {(Object.keys(discoveryLabels) as Array<keyof typeof discoveryLabels>).map((key) => {
@@ -304,7 +309,7 @@ export function AccountRunPolicyView({ initialControl = null, initialPolicy }: {
         <label>后台允许开始时间<input aria-describedby={fieldErrors["backgroundWindow.start"] ? "background-window-error" : undefined} aria-invalid={Boolean(fieldErrors["backgroundWindow.start"])} onChange={(event) => setSettings((current) => ({ ...current, backgroundWindow: { ...current.backgroundWindow, start: event.target.value } }))} type="time" value={settings.backgroundWindow.start} /></label>
         <label>后台允许结束时间<input aria-describedby={fieldErrors["backgroundWindow.end"] ? "background-window-error" : undefined} aria-invalid={Boolean(fieldErrors["backgroundWindow.end"])} onChange={(event) => setSettings((current) => ({ ...current, backgroundWindow: { ...current.backgroundWindow, end: event.target.value } }))} type="time" value={settings.backgroundWindow.end} /></label>
       </div>{fieldErrors["backgroundWindow.end"] ? <p id="background-window-error">{fieldErrors["backgroundWindow.end"]}</p> : null}</fieldset>
-      <div className="run-policy-actions"><Button className="workbench-touch-target" disabled={saving || reloading} onClick={() => void save()} size="lg" type="button">{saving ? "正在保存…" : "保存运行策略"}</Button>{hasConflict ? <Button className="workbench-touch-target" disabled={reloading} onClick={() => void reload()} size="lg" type="button" variant="outline">{reloading ? "正在重新读取…" : "重新读取最新策略"}</Button> : null}<Button className="workbench-touch-target" disabled={loadingHistory} onClick={() => void loadHistory()} size="lg" type="button" variant="outline">{loadingHistory ? "正在读取历史…" : "查看修订历史"}</Button></div>
+      <div className="run-policy-actions"><Button className="workbench-touch-target" disabled={saving || reloading} onClick={() => void save()} size="lg" type="button">{saving ? "正在保存…" : "保存运行策略"}</Button>{hasConflict ? <Button className="workbench-touch-target" disabled={reloading} onClick={() => void reload()} size="lg" type="button" variant="outline">{reloading ? "正在重新读取…" : "重新读取最新策略"}</Button> : null}<Button className="workbench-touch-target" disabled={loadingHistory} onClick={() => void loadHistory()} size="lg" type="button" variant="outline">{loadingHistory ? "正在读取历史…" : "查看修订历史"}</Button><Button className="workbench-touch-target" onClick={() => setIsEditing(false)} size="lg" type="button" variant="outline">取消编辑</Button></div>
       {message ? <p aria-live="polite" className="run-policy-status" role="status">{message}</p> : null}
     </section>
     {history ? <section aria-labelledby="run-policy-history-title" className="job-targets-section"><h2 id="run-policy-history-title">修订历史</h2><ol className="run-policy-history">{history.map((revision) => <li key={revision.revisionNumber}><strong>修订 {revision.revisionNumber}{revision.isSystemBaseline ? "（账户初始基线）" : ""}</strong><time dateTime={revision.createdAt}>{formatShanghai(revision.createdAt)}</time><p>{revisionSetting(revision)}</p>{revisionDetails(revision)}</li>)}</ol></section> : null}

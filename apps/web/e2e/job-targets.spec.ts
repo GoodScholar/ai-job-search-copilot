@@ -1,5 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { captureAfterState } from "./career-lens-state-capture";
 
 const apiBaseUrl = process.env.E2E_API_BASE_URL ?? "http://127.0.0.1:3121";
 const testDevAuthSecret = "issue-2-e2e-dev-auth-shared-secret";
@@ -55,6 +56,7 @@ test("求职目标可由可信画像建议确认、持久化、并发提示并�
   await completeConstraints(page);
   await page.getByRole("button", { name: "保存主目标" }).click();
   await expect(page.getByRole("status")).toHaveText("求职目标已保存。");
+  await captureAfterState(page, "profile-targets", "content", testInfo);
   await expect(page.getByText(/版本 1/)).toBeVisible();
 
   await page.getByRole("button", { name: "使用 前端工程师 建议" }).click();
@@ -76,6 +78,7 @@ test("求职目标可由可信画像建议确认、持久化、并发提示并�
   expect(advance.status()).toBe(201);
   await page.getByRole("button", { name: "保存修改" }).click();
   await expect(page.getByRole("status")).toHaveText("目标已在其他位置更新，请刷新后重试。");
+  await captureAfterState(page, "profile-targets", "failure", testInfo);
 
   await page.reload();
   await page.getByRole("button", { name: "修改 AI 应用工程师" }).click();
