@@ -685,7 +685,8 @@ body {
 
 @media (max-width: 640px) {
   .run-policy-table-wrap table {
-    min-width: 0;
+    min-width: 100% !important;
+    table-layout: fixed;
   }
 
   .run-policy-table-wrap th:nth-child(2),
@@ -700,6 +701,13 @@ body {
   .run-policy-table-wrap th:nth-child(5),
   .run-policy-table-wrap td:nth-child(5) {
     display: table-cell !important;
+    width: 4.5rem;
+  }
+
+  .run-policy-table-wrap th:first-child,
+  .run-policy-table-wrap td:first-child {
+    width: auto;
+    overflow-wrap: anywhere;
   }
 
   .marketing-header-inner {

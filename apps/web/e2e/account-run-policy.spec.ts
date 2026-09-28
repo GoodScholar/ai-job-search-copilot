@@ -87,6 +87,16 @@ test("账户运行策略可从首页和画像进入，保存后保留四层值�
   await expect(page).toHaveURL(/\/profile\/run-policy$/u);
   await expect(page.getByRole("heading", { name: "账户运行策略" })).toBeVisible();
 
+  const comparison = page.locator(".run-policy-table-wrap table");
+  const sourceLimitRow = comparison.locator("tbody tr").filter({ hasText: "每次运行来源数量" });
+  if (testInfo.project.name === "Mobile Safari") {
+    const effectiveValue = sourceLimitRow.locator("td").nth(3);
+    await expect(effectiveValue).toHaveText(String(initial.effective.discovery.trustedSourceLimit));
+    await expect(effectiveValue.evaluate((element) => element.getBoundingClientRect().right <= window.innerWidth)).resolves.toBe(true);
+  }
+
+  await page.getByRole("button", { name: "调整运行策略" }).click();
+
   await page.getByLabel("每次运行来源数量").fill("18");
   await page.getByLabel("每次运行最多执行公开查询").fill("2");
   await page.getByLabel("每次运行最多验证候选").fill("6");
@@ -109,7 +119,6 @@ test("账户运行策略可从首页和画像进入，保存后保留四层值�
   await expect(page.getByRole("status")).toHaveText("运行策略已保存。");
   await expect(page.getByText("当前修订：1", { exact: true })).toBeVisible();
 
-  const comparison = page.locator(".run-policy-table-wrap table");
   await expect(comparison.locator("tbody tr").filter({ hasText: "每次运行来源数量" }).locator("td")).toHaveText([
     String(initial.system.defaults.discovery.trustedSourceLimit), String(initial.system.hardLimits.discovery.trustedSourceLimit), "18", "18",
   ]);
