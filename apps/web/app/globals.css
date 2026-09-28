@@ -2479,7 +2479,7 @@ summary.workbench-touch-target:focus-visible,
 .career-lens-journey > p { color: var(--muted); margin: 0; max-width: 48rem; }
 
 .career-lens-login { align-items: center; display: grid; min-height: calc(100dvh - 4.5rem); padding-block: 2rem; }
-.login-access-panel { background: var(--surface); border: 1px solid var(--rule); border-radius: 1.125rem; box-shadow: 0 18px 42px rgb(5 19 58 / 0.08); max-width: 38rem; padding: clamp(1.5rem, 4vw, 3rem); position: relative; }
+.login-access-panel { background: var(--surface); border: 1px solid var(--rule); border-radius: 1.125rem; box-shadow: 0 18px 42px rgb(5 19 58 / 0.08); max-width: 38rem; overflow: hidden; padding: clamp(1.5rem, 4vw, 3rem); position: relative; }
 .login-access-panel::before { background: radial-gradient(circle, rgb(0 81 255 / 0.1), transparent 65%); border: 1px solid rgb(0 81 255 / 0.12); border-radius: 50%; content: ""; height: 13rem; pointer-events: none; position: absolute; right: -5rem; top: -5rem; width: 13rem; }
 .login-access-panel > * { position: relative; }
 
@@ -2570,8 +2570,27 @@ summary.workbench-touch-target:focus-visible,
 .recommendation-run-panel,
 .agent-run-panel,
 .model-connection-ledger {
-  background: var(--ai-night);
-  box-shadow: 0 16px 34px rgb(0 28 55 / 0.18);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 16px 34px rgb(5 19 58 / 0.08);
+}
+
+.recommendation-run-panel :is(h1, h2, h3, h4, p, span, strong, a, summary, dt, dd, li),
+.agent-run-panel :is(h1, h2, h3, h4, p, span, strong, a, summary, dt, dd, li),
+.model-connection-ledger :is(h1, h2, h3, h4, p, span, strong, a, summary, dt, dd, li) {
+  color: inherit;
+}
+
+.recommendation-run-panel :is(input, textarea, select),
+.agent-run-panel :is(input, textarea, select),
+.model-connection-ledger :is(input, textarea, select) {
+  color: var(--ink);
+}
+
+.recommendation-run-panel [data-severity="warning"],
+.agent-run-panel [data-severity="warning"],
+.model-connection-ledger [data-status="temporarily_unavailable"] {
+  color: var(--amber-ink);
 }
 
 .recommendation-run-stages,
